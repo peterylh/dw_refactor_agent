@@ -1,0 +1,30 @@
+-- ODS 商品品类表
+DROP TABLE IF EXISTS shop_dm.ods_category;
+CREATE TABLE IF NOT EXISTS shop_dm.ods_category (
+    category_id        BIGINT      NOT NULL COMMENT '品类ID',
+    category_name      VARCHAR(64) NOT NULL COMMENT '品类名称',
+    parent_category_id BIGINT      NULL COMMENT '上级品类ID',
+    category_level     TINYINT     NOT NULL COMMENT '品类层级:1/2/3',
+    sort_order         INT         NULL COMMENT '排序',
+    create_time        DATETIME    NOT NULL COMMENT '创建时间'
+) ENGINE=OLAP
+DUPLICATE KEY(category_id)
+DISTRIBUTED BY HASH(category_id) BUCKETS 10
+PROPERTIES (
+    "replication_num" = "1"
+);
+
+INSERT INTO shop_dm.ods_category VALUES
+(1,  '食品饮料', NULL, 1, 1, '2025-01-01 08:00:00'),
+(2,  '日用百货', NULL, 1, 2, '2025-01-01 08:00:00'),
+(3,  '个护清洁', NULL, 1, 3, '2025-01-01 08:00:00'),
+(4,  '烟酒茶叶', NULL, 1, 4, '2025-01-01 08:00:00'),
+(11, '休闲零食', 1, 2, 1, '2025-01-01 08:00:00'),
+(12, '饮料冲调', 1, 2, 2, '2025-01-01 08:00:00'),
+(13, '乳制品',   1, 2, 3, '2025-01-01 08:00:00'),
+(21, '厨房用品', 2, 2, 1, '2025-01-01 08:00:00'),
+(22, '清洁工具', 2, 2, 2, '2025-01-01 08:00:00'),
+(31, '洗发护发', 3, 2, 1, '2025-01-01 08:00:00'),
+(32, '口腔护理', 3, 2, 2, '2025-01-01 08:00:00'),
+(41, '白酒',     4, 2, 1, '2025-01-01 08:00:00'),
+(42, '茶叶',     4, 2, 2, '2025-01-01 08:00:00');
