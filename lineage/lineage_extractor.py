@@ -5,11 +5,43 @@
 支持: INSERT, UPDATE, CTAS, CREATE VIEW, SELECT INTO, MERGE
 """
 
-import json, os
+import json, os, argparse
 from pathlib import Path
 import sqlglot
 from sqlglot import exp
 from sqlglot.lineage import lineage
+
+
+# ============================================================
+# 0. 项目配置
+# ============================================================
+
+PROJECT_CONFIG = {
+    "shop": {
+        "db": "shop_dm",
+        "dir": "shop",
+    },
+    "olist": {
+        "db": "olist_dm",
+        "dir": "olist",
+    },
+}
+
+CURRENT_PROJECT = "shop"
+CURRENT_DB = "shop_dm"
+
+
+def configure_project(project_name):
+    global CURRENT_PROJECT, CURRENT_DB
+    cfg = PROJECT_CONFIG.get(project_name)
+    if not cfg:
+        raise ValueError(f"未知项目: {project_name}, 可选: {list(PROJECT_CONFIG.keys())}")
+    CURRENT_PROJECT = project_name
+    CURRENT_DB = cfg["db"]
+
+
+def _strip_db(name):
+    return name.replace(f"{CURRENT_DB}.", "")
 
 
 # ============================================================
@@ -61,7 +93,7 @@ _SHORT_LAYER = {
 
 
 def determine_layer(table_name):
-    short = table_name.replace("shop_dm.", "")
+    short = _strip_db(table_name)
     for prefix, layer in _SHORT_LAYER.items():
         if short.startswith(prefix):
             return layer
@@ -118,18 +150,18 @@ def _walk_leaf(node, target_table, target_col, edges):
         if isinstance(expr, exp.Table):
             edges.append(
                 {
-                    "source_table": _table_name(expr).replace("shop_dm.", ""),
+                    "source_table": _strip_db(_table_name(expr)),
                     "source_column": node.name.split(".")[-1],
-                    "target_table": target_table.replace("shop_dm.", ""),
+                    "target_table": _strip_db(target_table),
                     "target_column": target_col,
                 }
             )
         elif isinstance(expr, exp.Column):
             edges.append(
                 {
-                    "source_table": (expr.table or "UNKNOWN").replace("shop_dm.", ""),
+                    "source_table": _strip_db(expr.table or "UNKNOWN"),
                     "source_column": expr.name,
-                    "target_table": target_table.replace("shop_dm.", ""),
+                    "target_table": _strip_db(target_table),
                     "target_column": target_col,
                 }
             )
@@ -148,7 +180,7 @@ def _indirect_entries_from_select(
 ):
     """从 SELECT 的 WHERE / JOIN ON / GROUP BY / HAVING 中提取间接血缘条目"""
     entries = []
-    target_table_short = target_table.replace("shop_dm.", "")
+    target_table_short = _strip_db(target_table)
 
     # 收集 FROM/JOIN 中的来源表名,并建立 别名→真实表名 映射
     from_tables = set()
@@ -156,7 +188,7 @@ def _indirect_entries_from_select(
     from_ = select_expr.args.get("from_")
     if from_:
         for table in from_.find_all(exp.Table):
-            tbl = _table_name(table).replace("shop_dm.", "")
+            tbl = _strip_db(_table_name(table))
             if tbl and tbl != "UNKNOWN":
                 from_tables.add(tbl)
                 alias = table.alias or table.name
@@ -164,7 +196,7 @@ def _indirect_entries_from_select(
     joins = select_expr.args.get("joins") or []
     for join in joins:
         for table in join.find_all(exp.Table):
-            tbl = _table_name(table).replace("shop_dm.", "")
+            tbl = _strip_db(_table_name(table))
             if tbl and tbl != "UNKNOWN":
                 from_tables.add(tbl)
                 alias = table.alias or table.name
@@ -173,10 +205,10 @@ def _indirect_entries_from_select(
     def _resolve_table(col):
         tbl_or_alias = col.table
         if tbl_or_alias:
-            return alias_map.get(tbl_or_alias, tbl_or_alias).replace("shop_dm.", "")
+            return _strip_db(alias_map.get(tbl_or_alias, tbl_or_alias))
         if len(from_tables) == 1:
             return next(iter(from_tables))
-        return (default_table or "UNKNOWN").replace("shop_dm.", "")
+        return _strip_db(default_table or "UNKNOWN")
 
     def _add_entries(condition_type, expression, columns):
         for col in columns:
@@ -231,7 +263,7 @@ def _indirect_entries_from_select(
 def _extract_indirect_from_with(select_expr, target_table, file_path):
     """从 Select 的 with_ 参数中提取 CTE 定义内部的间接血缘"""
     entries = []
-    default_table = target_table.replace("shop_dm.", "")
+    default_table = _strip_db(target_table)
     with_ = select_expr.args.get("with_")
     if with_:
         for cte in with_.expressions:
@@ -248,7 +280,7 @@ def _extract_indirect_from_with(select_expr, target_table, file_path):
 def _extract_indirect(inner, target_table, file_path):
     """从可能包含 CTE 的 SELECT 中提取间接血缘"""
     entries = []
-    default_table = target_table.replace("shop_dm.", "")
+    default_table = _strip_db(target_table)
     # CTE 定义内部 (存储在 select.args['with_'] 中)
     if isinstance(inner, (exp.Select, exp.SetOperation)):
         with_ = inner.args.get("with_")
@@ -273,12 +305,12 @@ def _extract_indirect(inner, target_table, file_path):
 
 def _extract_indirect_from_delete(delete_stmt, file_path):
     """DELETE 语句的 WHERE 条件产生自引用间接血缘"""
-    target_table = delete_stmt.this.sql(dialect="doris").replace("shop_dm.", "")
+    target_table = _strip_db(delete_stmt.this.sql(dialect="doris"))
     entries = []
     where = delete_stmt.args.get("where")
     if where:
         for col in where.this.find_all(exp.Column):
-            tbl = (col.table or target_table).replace("shop_dm.", "")
+            tbl = _strip_db(col.table or target_table)
             entries.append(
                 {
                     "lineage_type": "indirect",
@@ -467,11 +499,9 @@ def _extract_values_lineage(target_table, insert_or_values, file_path):
         for col_ref in val.find_all(exp.Column):
             entries.append(
                 {
-                    "source_table": (col_ref.table or "UNKNOWN").replace(
-                        "shop_dm.", ""
-                    ),
+                    "source_table": _strip_db(col_ref.table or "UNKNOWN"),
                     "source_column": col_ref.name,
-                    "target_table": target_table.replace("shop_dm.", ""),
+                    "target_table": _strip_db(target_table),
                     "target_column": col_name,
                     "expression": val.sql(dialect="doris")
                     if hasattr(val, "sql")
@@ -488,7 +518,13 @@ def _extract_values_lineage(target_table, insert_or_values, file_path):
 
 
 def main():
-    project_dir = Path(__file__).parent.parent / "shop"
+    parser = argparse.ArgumentParser(description="SQL 血缘采集器")
+    parser.add_argument("--project", default="shop", choices=list(PROJECT_CONFIG.keys()),
+                        help="项目名称, 对应 PROJECT_CONFIG 中的 key")
+    args = parser.parse_args()
+    configure_project(args.project)
+    cfg = PROJECT_CONFIG[args.project]
+    project_dir = Path(__file__).parent.parent / cfg["dir"]
     tasks_dir = project_dir / "tasks"
     ddl_dir = project_dir / "ddl"
 
@@ -544,7 +580,7 @@ def main():
         if tbl not in tables:
             tables[tbl] = {
                 "name": tbl,
-                "full_name": f"shop_dm.{tbl}",
+                "full_name": f"{CURRENT_DB}.{tbl}",
                 "layer": determine_layer(tbl),
                 "columns": [],
             }
@@ -592,13 +628,24 @@ def main():
             }
         )
 
+    # 7. 合并 DDL 中无血缘边的列到 tables 输出
+    for db_name, db_tables in schema.items():
+        for tbl_name, cols in db_tables.items():
+            if tbl_name in tables:
+                existing_cols = {c["name"] for c in tables[tbl_name]["columns"]}
+                for col_name, col_type in cols.items():
+                    if col_name not in existing_cols:
+                        tables[tbl_name]["columns"].append(
+                            {"name": col_name, "type": col_type}
+                        )
+
     output = {
         "nodes": list(nodes.values()),
         "edges": edges,
         "tables": list(tables.values()),
         "indirect_edges": indirect_edges,
     }
-    output_path = Path(__file__).parent / "lineage_data.json"
+    output_path = Path(__file__).parent / f"lineage_data_{CURRENT_PROJECT}.json"
     with open(output_path, "w", encoding="utf-8") as fp:
         json.dump(output, fp, ensure_ascii=False, indent=2)
 

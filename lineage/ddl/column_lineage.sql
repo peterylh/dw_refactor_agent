@@ -1,6 +1,6 @@
 -- 字段级直接血缘表
-DROP TABLE IF EXISTS lineage.column_lineage;
-CREATE TABLE IF NOT EXISTS lineage.column_lineage (
+DROP TABLE IF EXISTS column_lineage;
+CREATE TABLE IF NOT EXISTS column_lineage (
     id                BIGINT       NOT NULL COMMENT '记录ID',
     source_table_id   BIGINT       NOT NULL COMMENT '来源表ID',
     source_column_id  BIGINT       NOT NULL COMMENT '来源字段ID',
@@ -13,5 +13,5 @@ DUPLICATE KEY(id)
 DISTRIBUTED BY HASH(id) BUCKETS 10
 PROPERTIES ("replication_num" = "1");
 
-INSERT INTO lineage.column_lineage VALUES
+INSERT INTO column_lineage VALUES
 (1, 1, 1, 2, 1, 1, 'o.id');
