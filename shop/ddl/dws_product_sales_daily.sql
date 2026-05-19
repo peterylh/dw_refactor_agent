@@ -1,4 +1,5 @@
 -- DWS 商品日销售汇总表
+-- table_id: 4fe902ed-0260-41fe-aaf6-57875f91700d
 DROP TABLE IF EXISTS shop_dm.dws_product_sales_daily;
 CREATE TABLE IF NOT EXISTS shop_dm.dws_product_sales_daily (
     product_id      BIGINT        NOT NULL COMMENT '商品ID',

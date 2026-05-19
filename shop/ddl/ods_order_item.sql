@@ -1,4 +1,5 @@
 -- ODS 订单明细表
+-- table_id: 3ef976ba-17e4-49ca-83c1-85f1163e192f
 DROP TABLE IF EXISTS shop_dm.ods_order_item;
 CREATE TABLE IF NOT EXISTS shop_dm.ods_order_item (
     order_item_id BIGINT        NOT NULL COMMENT '订单明细ID',

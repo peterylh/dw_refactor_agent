@@ -1,4 +1,5 @@
 -- ODS 商品品类表
+-- table_id: bf1e1a62-7080-419d-bcba-448c95b0f068
 DROP TABLE IF EXISTS shop_dm.ods_category;
 CREATE TABLE IF NOT EXISTS shop_dm.ods_category (
     category_id        BIGINT      NOT NULL COMMENT '品类ID',

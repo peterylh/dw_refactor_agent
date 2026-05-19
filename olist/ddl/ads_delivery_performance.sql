@@ -1,4 +1,5 @@
 -- ADS Olist 配送绩效分析表
+-- table_id: d258a6a4-5a10-4d69-8e89-fc1715d43ebb
 DROP TABLE IF EXISTS olist_dm.ads_delivery_performance;
 CREATE TABLE IF NOT EXISTS olist_dm.ads_delivery_performance (
     stat_date          DATE          NOT NULL COMMENT '统计日期',

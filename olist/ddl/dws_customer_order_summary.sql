@@ -1,4 +1,5 @@
 -- DWS Olist 客户订单汇总表
+-- table_id: 79790dde-df2d-4550-a7c7-b9cbe70d9c59
 DROP TABLE IF EXISTS olist_dm.dws_customer_order_summary;
 CREATE TABLE IF NOT EXISTS olist_dm.dws_customer_order_summary (
     customer_id      VARCHAR(64)   NOT NULL COMMENT '客户ID',

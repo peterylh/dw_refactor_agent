@@ -1,4 +1,5 @@
 -- ADS Olist 商品销售排行表
+-- table_id: 23db7c6f-c66c-4b23-9ed2-2f59add87663
 DROP TABLE IF EXISTS olist_dm.ads_product_topn;
 CREATE TABLE IF NOT EXISTS olist_dm.ads_product_topn (
     stat_date       DATE          NOT NULL COMMENT '统计日期',

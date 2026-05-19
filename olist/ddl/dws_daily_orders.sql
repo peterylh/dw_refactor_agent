@@ -1,4 +1,5 @@
 -- DWS Olist 日订单汇总表
+-- table_id: ac7874db-b66b-4ca9-a38d-34353b6e49b2
 DROP TABLE IF EXISTS olist_dm.dws_daily_orders;
 CREATE TABLE IF NOT EXISTS olist_dm.dws_daily_orders (
     stat_date        DATE          NOT NULL COMMENT '统计日期',

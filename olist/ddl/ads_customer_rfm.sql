@@ -1,4 +1,5 @@
 -- ADS Olist 客户RFM分析表
+-- table_id: 6991c9a5-c26f-4c55-afc2-19cc50a9baa1
 DROP TABLE IF EXISTS olist_dm.ads_customer_rfm;
 CREATE TABLE IF NOT EXISTS olist_dm.ads_customer_rfm (
     customer_id      VARCHAR(64)   NOT NULL COMMENT '客户ID',

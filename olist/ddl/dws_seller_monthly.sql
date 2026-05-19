@@ -1,4 +1,5 @@
 -- DWS Olist 卖家月度销售汇总
+-- table_id: b055e4f0-9d31-40f4-ae50-a8508752e2e6
 DROP TABLE IF EXISTS olist_dm.dws_seller_monthly;
 CREATE TABLE IF NOT EXISTS olist_dm.dws_seller_monthly (
     seller_id        VARCHAR(64)   NOT NULL COMMENT '卖家ID',

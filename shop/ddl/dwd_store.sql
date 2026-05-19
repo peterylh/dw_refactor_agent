@@ -1,4 +1,5 @@
 -- DWD 门店维度宽表
+-- table_id: 93c07cba-3c14-4486-9a5d-ddee38caaf4c
 DROP TABLE IF EXISTS shop_dm.dwd_store;
 CREATE TABLE IF NOT EXISTS shop_dm.dwd_store (
     store_id     BIGINT        NOT NULL COMMENT '门店ID',

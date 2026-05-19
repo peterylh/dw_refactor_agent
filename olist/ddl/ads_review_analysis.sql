@@ -1,4 +1,5 @@
 -- ADS Olist 评价分析表
+-- table_id: fb074d33-1aab-4d6c-99af-43980f2d8dc5
 DROP TABLE IF EXISTS olist_dm.ads_review_analysis;
 CREATE TABLE IF NOT EXISTS olist_dm.ads_review_analysis (
     stat_month        VARCHAR(7)    NOT NULL COMMENT '统计月份:YYYY-MM',

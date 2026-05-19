@@ -1,4 +1,5 @@
 -- DWD 商品维度宽表
+-- table_id: a7d83b46-0937-444c-81be-161a8996e580
 DROP TABLE IF EXISTS shop_dm.dwd_product;
 CREATE TABLE IF NOT EXISTS shop_dm.dwd_product (
     product_id        BIGINT        NOT NULL COMMENT '商品ID',

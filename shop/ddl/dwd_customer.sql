@@ -1,4 +1,5 @@
 -- DWD 客户明细宽表
+-- table_id: 3cacec5e-705c-430a-ae82-b6b0915d9096
 DROP TABLE IF EXISTS shop_dm.dwd_customer;
 CREATE TABLE IF NOT EXISTS shop_dm.dwd_customer (
     customer_id    BIGINT       NOT NULL COMMENT '客户ID',

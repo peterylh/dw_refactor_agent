@@ -1,4 +1,5 @@
 -- DWD Olist 商品明细维表
+-- table_id: a84d01a7-b554-43ba-9141-fc3e047da9d9
 DROP TABLE IF EXISTS olist_dm.dwd_product;
 CREATE TABLE IF NOT EXISTS olist_dm.dwd_product (
     product_id               VARCHAR(64)  NOT NULL COMMENT '商品ID',

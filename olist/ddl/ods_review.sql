@@ -1,4 +1,5 @@
 -- ODS Olist 订单评价表
+-- table_id: fb989fdd-8e28-460c-bc1a-4ee1e7e72fc0
 DROP TABLE IF EXISTS olist_dm.ods_review;
 CREATE TABLE IF NOT EXISTS olist_dm.ods_review (
     review_id               VARCHAR(64) NOT NULL COMMENT '评价ID',

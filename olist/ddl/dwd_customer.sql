@@ -1,4 +1,5 @@
 -- DWD Olist 客户明细维表(纯维度)
+-- table_id: 4ec17b4d-7c54-4bca-8359-11ede1e0a519
 DROP TABLE IF EXISTS olist_dm.dwd_customer;
 CREATE TABLE IF NOT EXISTS olist_dm.dwd_customer (
     customer_id          VARCHAR(64) NOT NULL COMMENT '客户ID',

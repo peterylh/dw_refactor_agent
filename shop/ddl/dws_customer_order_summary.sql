@@ -1,4 +1,5 @@
 -- DWS 客户订单汇总表
+-- table_id: 674c2c22-95c3-47f2-92f0-2d9fcd34b4f0
 DROP TABLE IF EXISTS shop_dm.dws_customer_order_summary;
 CREATE TABLE IF NOT EXISTS shop_dm.dws_customer_order_summary (
     customer_id      BIGINT        NOT NULL COMMENT '客户ID',

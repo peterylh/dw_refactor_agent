@@ -1,4 +1,5 @@
 -- ODS Olist 订单主表
+-- table_id: d38b509b-4a34-44fb-ac6e-b5d7dff08eae
 DROP TABLE IF EXISTS olist_dm.ods_order;
 CREATE TABLE IF NOT EXISTS olist_dm.ods_order (
     order_id                   VARCHAR(64) NOT NULL COMMENT '订单ID',

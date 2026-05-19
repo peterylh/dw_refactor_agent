@@ -1,4 +1,5 @@
 -- ODS Olist 客户信息表
+-- table_id: a5797e8d-1c1b-404d-b613-71ce19eeb968
 DROP TABLE IF EXISTS olist_dm.ods_customer;
 CREATE TABLE IF NOT EXISTS olist_dm.ods_customer (
     customer_id          VARCHAR(64)  NOT NULL COMMENT '客户ID',

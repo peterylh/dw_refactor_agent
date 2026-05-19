@@ -1,4 +1,5 @@
 -- ADS Olist 支付方式分析表
+-- table_id: 4ee56f00-48c8-4117-8147-205aee68237f
 DROP TABLE IF EXISTS olist_dm.ads_payment_analysis;
 CREATE TABLE IF NOT EXISTS olist_dm.ads_payment_analysis (
     stat_month          VARCHAR(7)    NOT NULL COMMENT '统计月份:YYYY-MM',

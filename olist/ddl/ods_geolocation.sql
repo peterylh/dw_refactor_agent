@@ -1,4 +1,5 @@
 -- ODS Olist 地理位置表
+-- table_id: e8bfee9d-6c64-4af4-a41d-2c1b7743828e
 DROP TABLE IF EXISTS olist_dm.ods_geolocation;
 CREATE TABLE IF NOT EXISTS olist_dm.ods_geolocation (
     geolocation_zip_code_prefix VARCHAR(8)    NOT NULL COMMENT '邮编前缀',

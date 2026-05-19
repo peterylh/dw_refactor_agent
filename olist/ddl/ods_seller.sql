@@ -1,4 +1,5 @@
 -- ODS Olist 卖家信息表
+-- table_id: aa210538-89ee-4a06-8d00-b8bf91ff1467
 DROP TABLE IF EXISTS olist_dm.ods_seller;
 CREATE TABLE IF NOT EXISTS olist_dm.ods_seller (
     seller_id               VARCHAR(64) NOT NULL COMMENT '卖家ID',

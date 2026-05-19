@@ -1,4 +1,5 @@
 -- ODS Olist 商品信息表
+-- table_id: 35ca73db-9696-461d-9268-09c428b3d111
 DROP TABLE IF EXISTS olist_dm.ods_product;
 CREATE TABLE IF NOT EXISTS olist_dm.ods_product (
     product_id               VARCHAR(64)  NOT NULL COMMENT '商品ID',

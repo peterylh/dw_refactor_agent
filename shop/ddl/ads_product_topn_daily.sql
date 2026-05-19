@@ -1,4 +1,5 @@
 -- ADS 商品日销售排行TOP N表
+-- table_id: 208649ff-2988-4a90-b1a6-1359c8334e18
 DROP TABLE IF EXISTS shop_dm.ads_product_topn_daily;
 CREATE TABLE IF NOT EXISTS shop_dm.ads_product_topn_daily (
     stat_date      DATE          NOT NULL COMMENT '统计日期',

@@ -1,4 +1,5 @@
 -- ADS Olist 卖家绩效排名表
+-- table_id: 1693cfab-81bd-4f38-8523-9b14124ccb5d
 DROP TABLE IF EXISTS olist_dm.ads_seller_performance_ranking;
 CREATE TABLE IF NOT EXISTS olist_dm.ads_seller_performance_ranking (
     stat_month       VARCHAR(7)    NOT NULL COMMENT '统计月份:YYYY-MM',

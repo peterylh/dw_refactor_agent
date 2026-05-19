@@ -1,4 +1,5 @@
 -- DWS Olist 品类月度销售汇总
+-- table_id: 74294541-b7fe-4468-ba35-dbfdf4c5482a
 DROP TABLE IF EXISTS olist_dm.dws_product_category_monthly;
 CREATE TABLE IF NOT EXISTS olist_dm.dws_product_category_monthly (
     product_category_name_english VARCHAR(64) NOT NULL COMMENT '品类英语名称',

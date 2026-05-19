@@ -1,4 +1,5 @@
 -- ADS Olist 品类月度趋势分析表
+-- table_id: 3f5ab96c-5808-405a-9ed7-5d18b6c146c9
 DROP TABLE IF EXISTS olist_dm.ads_category_monthly_trend;
 CREATE TABLE IF NOT EXISTS olist_dm.ads_category_monthly_trend (
     product_category_name_english VARCHAR(64) NOT NULL COMMENT '品类英语名称',

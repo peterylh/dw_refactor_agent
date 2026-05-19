@@ -1,4 +1,5 @@
 -- ODS Olist 订单支付表
+-- table_id: e60660fe-1fcb-4f64-8336-445f6f735751
 DROP TABLE IF EXISTS olist_dm.ods_payment;
 CREATE TABLE IF NOT EXISTS olist_dm.ods_payment (
     order_id            VARCHAR(64)   NOT NULL COMMENT '订单ID',

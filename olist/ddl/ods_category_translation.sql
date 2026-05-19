@@ -1,4 +1,5 @@
 -- ODS Olist 品类名称翻译表
+-- table_id: d48c54b1-dd5c-483b-97ff-992fae02afe2
 DROP TABLE IF EXISTS olist_dm.ods_category_translation;
 CREATE TABLE IF NOT EXISTS olist_dm.ods_category_translation (
     product_category_name            VARCHAR(64) NOT NULL COMMENT '品类葡萄牙语名称',

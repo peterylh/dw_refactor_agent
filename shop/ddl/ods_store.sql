@@ -1,4 +1,5 @@
 -- ODS 门店信息表
+-- table_id: 9b80e880-ad2c-444d-92c5-c01b8130a0a1
 DROP TABLE IF EXISTS shop_dm.ods_store;
 CREATE TABLE IF NOT EXISTS shop_dm.ods_store (
     store_id    BIGINT       NOT NULL COMMENT '门店ID',

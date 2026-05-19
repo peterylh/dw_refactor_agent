@@ -1,4 +1,5 @@
 -- DWD Olist 订单明细事实表
+-- table_id: ed9acf7c-d9e8-4361-ab38-6b5e26b634b7
 DROP TABLE IF EXISTS olist_dm.dwd_order_detail;
 CREATE TABLE IF NOT EXISTS olist_dm.dwd_order_detail (
     order_id                VARCHAR(64)   NOT NULL COMMENT '订单ID',

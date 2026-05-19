@@ -1,4 +1,5 @@
 -- ADS Olist 地理销售分析表
+-- table_id: 883314ce-ea9f-477c-b94d-d7fc14dda961
 DROP TABLE IF EXISTS olist_dm.ads_geographic_sales;
 CREATE TABLE IF NOT EXISTS olist_dm.ads_geographic_sales (
     stat_month       VARCHAR(7)    NOT NULL COMMENT '统计月份:YYYY-MM',
