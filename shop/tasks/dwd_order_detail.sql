@@ -2,6 +2,7 @@
 -- 加工作业: DWD 订单明细事实表
 -- 源表: ods_order, ods_order_item, ods_product
 -- 加工逻辑: 多表关联 -> 计算毛利 -> 回填成本 -> 剔除无效订单
+-- 写入模式: 全量刷新,按 order_date 分区
 -- ============================================================
 
 -- Step 1: 清空目标表
@@ -12,12 +13,12 @@ INSERT INTO shop_dm.dwd_order_detail
 SELECT
     o.order_id,
     oi.order_item_id,
+    o.order_date,
     o.customer_id,
     o.store_id,
     oi.product_id,
     p.category_id,
     o.promotion_id,
-    o.order_date,
     DATE_FORMAT(o.order_date, '%Y-%m') AS order_month,
     oi.quantity,
     oi.unit_price,

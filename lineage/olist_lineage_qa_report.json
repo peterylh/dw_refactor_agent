@@ -1,0 +1,156 @@
+{
+  "report_id": "lineage_qa_olist_20260517_120000",
+  "project": "olist",
+  "timestamp": "2026-05-17T12:00:00+08:00",
+  "summary": {
+    "total": 10,
+    "passed": 5,
+    "failed": 4,
+    "errors": 1
+  },
+  "results": [
+    {
+      "id": "A1",
+      "name": "无断连节点",
+      "status": "PASS",
+      "details": "所有 196 条 edge 的 source/target 均在 nodes 中存在。检查了所有直接边和间接边的 source 和 target 引用，均有对应的 node 定义。"
+    },
+    {
+      "id": "A2",
+      "name": "每张表存在至少一条边",
+      "status": "FAIL",
+      "details": "以下表的 columns 在 lineage 中缺少对应的边，导致这些列未出现在 nodes/tables 中: ads_customer_rfm.stat_date (CURDATE() 无列依赖)、ads_payment_analysis.transaction_count (COUNT(*) 无列依赖)、ads_review_analysis.review_count (COUNT(*) 无列依赖)、ads_review_analysis.score_pct (依赖 review_count 链)。这些列虽定义在 DDL 中，但因无物理源列而未被 lineage() 输出边，导致 tables 结构不完整。",
+      "suggestion": "修改 lineage_extractor.py 的 _ensure_node 逻辑: 在执行完血缘提取后，将 build_schema_from_ddl 产出的 DDL 列与 tables 输出做合并，确保 DDL 定义的所有列都出现在 tables 中，即使没有血缘边。或者在 _trace_lineage 中为无下游的列（如 COUNT(*) 和 CURDATE()）生成一个标记边。"
+    },
+    {
+      "id": "A3",
+      "name": "ODS 表不能作为 target",
+      "status": "PASS",
+      "details": "所有 ODS 表 (ods_customer, ods_order, ods_order_item, ods_product, ods_payment, ods_review, ods_seller, ods_category_translation, ods_geolocation) 均只出现在 edge 的 source 端，没有作为 target。"
+    },
+    {
+      "id": "A4",
+      "name": "ADS 表必须为 target",
+      "status": "PASS",
+      "details": "所有 ADS 表 (ads_geographic_sales, ads_customer_rfm, ads_delivery_performance, ads_payment_analysis, ads_product_topn, ads_review_analysis, ads_seller_performance_ranking) 均只出现在 edge 的 target 端。没有 ADS 表作为 source 被引用。"
+    },
+    {
+      "id": "A5",
+      "name": "INSERT 血缘追踪正确",
+      "status": "FAIL",
+      "details": "数据流检查中共发现 2 类问题:\n\n"
+        + "1. [CRITICAL] ads_payment_analysis 的 transaction_count 列无血缘边。SQL 中为 COUNT(*) AS transaction_count (CTE payment_monthly), "
+        + "lineage() 无法将其解析到物理源列，因此无 edge 产生。同理 ads_review_analysis 的 review_count 和 score_pct 列也缺失血缘边。\n\n"
+        + "2. [CRITICAL] ads_customer_rfm 的 stat_date 列 (CURDATE() AS stat_date) 在 lineage_data_olist.json 的 tables 中缺失。"
+        + "CURDATE() 为无源列依赖的函数，lineage() 的 _extract_leaf_edges 不会为其产生边。\n\n"
+        + "3. [INFO] 其余所有列的追踪正确: 包括 CTE 链展开 (dwd_customer 的 customer_orders 正确展开到 ods_order/ods_payment、"
+        + "ads_customer_rfm 的 rfm_base/rfm_scored 正确展开到 dws_customer_order_summary)、"
+        + "聚合列 (SUM/COUNT/AVG) 的依赖、CASE WHEN 表达式、窗口函数 (NTILE/RANK) 等均正确追踪到源列。",
+      "suggestion": "1. 在 _trace_lineage 中，对于无下游的 lineage 节点（如 COUNT(*) 和 CURDATE()），可生成一条标记 edge 指向同一个表或标记为 'FUNCTION' "
+        + "以便识别这些特殊来源。\n"
+        + "2. 改进 _ensure_node: 从 build_schema_from_ddl 产出的完整 schema 中，将 DDL 中存在但未出现在血缘输出中的列，追加到 tables 的 columns 中。"
+    },
+    {
+      "id": "A6",
+      "name": "UPDATE 血缘追踪正确",
+      "status": "PASS",
+      "details": "共 15 条 UPDATE 语句，全部为常量赋值 (SET col = 0/3.00/'desconhecido' 等)，无表达式中包含列引用的自引用更新。"
+        + "所有 UPDATE 的正确性已验证:\n"
+        + "- dwd_customer: 3 条 UPDATE (常量赋值, WHERE 条件正确)\n"
+        + "- dwd_order_detail: 4 条 UPDATE (常量赋值, WHERE 条件正确)\n"
+        + "- dwd_product: 2 条 UPDATE (常量赋值)\n"
+        + "- dwd_seller: 2 条 UPDATE (常量赋值)\n"
+        + "- dws_customer_order_summary: 1 条 UPDATE\n"
+        + "- dws_daily_orders: 1 条 UPDATE\n"
+        + "- dws_product_category_monthly: 1 条 UPDATE\n"
+        + "- dws_seller_monthly: 1 条 UPDATE\n"
+        + "- 各 ADS: 共 9 条 UPDATE\n\n"
+        + "没有需要列引用的自引用 UPDATE 场景，因此所有 UPDATE 正确不产生血缘边。"
+    },
+    {
+      "id": "A7",
+      "name": "分层流向正确",
+      "status": "FAIL",
+      "details": "发现 1 处跨层违规:\n\n"
+        + "[MAJOR] ads_payment_analysis.sql 直接从 ODS 层读取数据:\n"
+        + "  - 源表: olist_dm.ods_payment, olist_dm.ods_order\n"
+        + "  - 加工逻辑: INNER JOIN ods_order + ods_payment, WHERE order_status = 'delivered'\n"
+        + "  - 目标: ADS 层 ads_payment_analysis\n\n"
+        + "ADS 应只读取 DWS 或 DWD 层数据, 不应直接从 ODS 读取。odps_order 和 ods_payment 的数据在 dwd_order_detail 中已整合可用。\n\n"
+        + "其他 ADS 表流向正确:\n"
+        + "  - ads_customer_rfm: DWS → ADS ✓\n"
+        + "  - ads_delivery_performance: DWD → ADS (可直接聚合, 合理)\n"
+        + "  - ads_geographic_sales: DWD → ADS (需要 DWD 的州+区域维度关联)\n"
+        + "  - ads_product_topn: DWD → ADS (需要 DWD 商品维度关联)\n"
+        + "  - ads_review_analysis: DWD → ADS (需要 DWD 评价数据)\n"
+        + "  - ads_seller_performance_ranking: DWS+DWD → ADS ✓\n\n"
+        + "所有 DWS 表流向正确: DWD → DWS ✓\n"
+        + "所有 DWD 表流向正确: ODS → DWD ✓",
+      "suggestion": "建议重构 ads_payment_analysis.sql, 从 olist_dm.dwd_order_detail 读取支付数据而非直接从 ODS 读取。"
+        + "dwd_order_detail 已经包含了 payment_type, payment_installments 等支付字段。如果需要更大范围的聚合，"
+        + "可考虑先建立 dws_payment_monthly 中间层再供 ADS 使用。"
+    },
+    {
+      "id": "A8",
+      "name": "边数/节点数合理",
+      "status": "ERROR",
+      "details": "无法精确验证边数合理性，因为 A2 中发现的缺失列会导致计数偏差。当前统计:\n\n"
+        + "直接血缘边: 196 条\n"
+        + "间接血缘边: 95 条\n"
+        + "节点数: 192 个\n"
+        + "表数: 24 个 (含 5 个 CTE/OTHER 中间表: payment_monthly, monthly_totals, review_monthly, customer_orders, seller_agg)\n\n"
+        + "每个 INSERT SELECT 的文件产出的边数大致合理:\n"
+        + "  dwd_customer.sql: ~9 边 (9 个 SELECT 列, 其中 8 个有源列, 1 个 NOW() 无源)\n"
+        + "  dwd_order_detail.sql: ~20 边 (21 个 SELECT 列, 其中 20 个有源列)\n"
+        + "  dwd_product.sql: ~12 边 (11 个 SELECT 列, 部分多源表达式) \n"
+        + "  ads_customer_rfm.sql: ~10 边 (10 个 SELECT 列, 大部分有源)\n\n"
+        + "不符合 DDL 列数的表 (因缺少无血缘边的列):\n"
+        + "  ads_customer_rfm: DDL 11 列, tables 仅 9 列 (缺 stat_date, etl_time)\n"
+        + "  ads_payment_analysis: DDL 7 列, tables 仅 5 列 (缺 transaction_count, etl_time)\n"
+        + "  ads_review_analysis: DDL 6 列, tables 仅 3 列 (缺 review_count, score_pct, etl_time)",
+      "suggestion": "修复 A2 问题后边数和列数会自动匹配 DDL。"
+        + "另外可考虑在输出中排除 CTE 中间表 (payment_monthly, monthly_totals 等), 或在 tables 中增加 'is_cte' 标记。"
+    },
+    {
+      "id": "A9",
+      "name": "间接血缘条目不缺失",
+      "status": "FAIL",
+      "details": "间接血缘检查结果:\n\n"
+        + "1. [PASS] WHERE 条件: 所有 UPDATE 和 DELETE 的 WHERE 条件均已正确生成自引用间接边。如: "
+        + "customer_state IS NULL, total_revenue = 0, rank_num > 20 等。\n\n"
+        + "2. [PASS] JOIN ON 条件: 所有 JOIN 的 ON 条件均已生成间接边。如: "
+        + "dod.customer_id = dc.customer_id, sm.seller_id = ds.seller_id, oi.order_id = o.order_id 等。\n\n"
+        + "3. [PASS] GROUP BY 条件: 大多数 GROUP BY 均生成了间接边。如: "
+        + "customer_id, TO_DATE(order_purchase_timestamp), dod.product_id 等。\n\n"
+        + "4. [MINOR] CTE 中间表的间接边使用了 CTE 列名而非物理列名:\n"
+        + "   - ads_payment_analysis: `payment_monthly.stat_month` → GROUP_BY (应展开为 ods_order.order_purchase_timestamp)\n"
+        + "   - ads_payment_analysis: `monthly_totals.stat_month` → JOIN_ON\n"
+        + "   - ads_review_analysis: `review_monthly.stat_month` → GROUP_BY/JOIN_ON\n"
+        + "   - dwd_customer: `customer_orders.customer_id` → JOIN_ON\n"
+        + "   - dwd_seller: `seller_agg.seller_id` → JOIN_ON\n\n"
+        + "   这些 CTE 列名虽然没有错误，但无法追溯到物理表。理想情况是展开到物理源。\n\n"
+        + "5. [MINOR] 缺失 2 条 GROUP BY 间接边: 在 ads_product_topn 中，GROUP BY 包含 "
+        + "dod.product_id 和 dp.product_category_name_english, 但 GROUP BY 间接边应有对应的源物理列引用。",
+      "suggestion": "优化 _indirect_entries_from_select 函数，对 CTE 引入的列做解析展开到物理表层面。"
+        + "或在输出侧对 CTE 暂存表 (OTHER 层) 加标记，消费方通过拼接连贯表达式自行推断物理源。"
+    },
+    {
+      "id": "A10",
+      "name": "列名与 DDL 一致性",
+      "status": "FAIL",
+      "details": "发现 1 处 DDL 定义但未被 lineage 正确捕获的异常:\n\n"
+        + "[CRITICAL] ads_customer_rfm 的 stat_date 列在 DDL 中有定义 (DATE NOT NULL COMMENT '统计日期')，"
+        + "在 task SQL 中为 CURDATE() AS stat_date，但在 lineage_data_olist.json 的 tables 中完全缺失。\n\n"
+        + "影响范围:\n"
+        + "  ads_customer_rfm: DDL 有 11 列, lineage tables 仅 9 列\n"
+        + "    - 缺少: stat_date (CURDATE()), etl_time (NOW()) — 两者均无列依赖\n"
+        + "  ads_payment_analysis: DDL 有 7 列, lineage tables 仅 5 列\n"
+        + "    - 缺少: transaction_count (COUNT(*)), etl_time (NOW())\n"
+        + "  ads_review_analysis: DDL 有 6 列, lineage tables 仅 3 列\n"
+        + "    - 缺少: review_count (COUNT(*)), score_pct (依赖 COUNT(*)), etl_time (NOW())\n\n"
+        + "其余 20 个表的列数与 DDL 一致 (除 etl_time 外所有列均在 lineage 中有记录)。",
+      "suggestion": "根本修复: 在 output 构建阶段, 将 build_schema_from_ddl 产出的 DDL schema 与 lineage 边产出的列做合并。"
+        + "具体在 _ensure_node 之后, 遍历 schema 中所有表的所有列, 确保每个列都在 tables[table]['columns'] 中。"
+    }
+  ]
+}
