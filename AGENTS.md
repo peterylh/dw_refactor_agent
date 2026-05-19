@@ -109,7 +109,7 @@ shop-dm/
 - 主键: `NOT NULL COMMENT '中文说明'`, 数值型 BIGINT > DECIMAL(12,2) > DATE/DATETIME
 - 字符串: `VARCHAR(n)` 可 NULL, 枚举值用 COMMENT 说明 (例: `COMMENT '状态:已完成/已取消'`)
 - 金额: `DECIMAL(12,2)` 默认 0.00
-- DDL 中包含真实度高的 INIT 示例数据 (INSERT INTO ... VALUES)
+- ODS 的数据初始化脚本独立放在 `shop/data` 目录下。非 ODS 层表，不带数据初始化内容。
 - 文件头加注释说明表用途: `-- ODS xxxx表`
 
 DDL 模板:
@@ -124,7 +124,6 @@ DUPLICATE KEY(id)
 DISTRIBUTED BY HASH(id) BUCKETS 10
 PROPERTIES ("replication_num" = "1");
 
-INSERT INTO shop_dm.ods_xxx VALUES ...;
 ```
 
 ## ETL 任务编写规范
