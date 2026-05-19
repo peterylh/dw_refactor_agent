@@ -2,14 +2,15 @@
 -- 加工作业: DWD 门店维度宽表 (每日快照)
 -- 源表: ods_store
 -- 加工逻辑: 门店分级 -> 计算开业年限 -> 补全缺失值
--- 写入模式: 追加每日快照,按 etl_time 分区
+-- 写入模式: 追加每日快照,按 snapshot_date 分区
 -- ============================================================
 
 -- Step 1: 全量加载 + 门店评级 + 开业年限 + 回填合并
 INSERT INTO shop_dm.dwd_store
 SELECT
     store_id,
-    CAST(CURDATE() AS DATETIME) AS etl_time,
+    CURDATE() AS snapshot_date,
+    NOW() AS etl_time,
     store_name,
     COALESCE(NULLIF(store_type, ''),
         CASE

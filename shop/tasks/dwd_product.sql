@@ -2,14 +2,15 @@
 -- 加工作业: DWD 商品维度宽表 (每日快照)
 -- 源表: ods_product, ods_category
 -- 加工逻辑: 关联品类维表 -> 计算毛利率 -> 清理异常值
--- 写入模式: 追加每日快照,按 etl_time 分区
+-- 写入模式: 追加每日快照,按 snapshot_date 分区
 -- ============================================================
 
 -- Step 1: 关联品类表，计算毛利率，回填合并
 INSERT INTO shop_dm.dwd_product
 SELECT
     p.product_id,
-    CAST(CURDATE() AS DATETIME) AS etl_time,
+    CURDATE() AS snapshot_date,
+    NOW() AS etl_time,
     p.product_name,
     p.category_id,
     COALESCE(c.category_name, '未分类') AS category_name,

@@ -2,14 +2,15 @@
 -- 加工作业: DWD 客户明细宽表 (每日快照)
 -- 源表: ods_customer
 -- 加工逻辑: 清洗客户数据 -> 划分年龄段 -> 补全缺失值
--- 写入模式: 追加每日快照,按 etl_time 分区
+-- 写入模式: 追加每日快照,按 snapshot_date 分区
 -- ============================================================
 
 -- Step 1: 全量加载 + 年龄段派生 + 回填合并
 INSERT INTO shop_dm.dwd_customer
 SELECT
     customer_id,
-    CAST(CURDATE() AS DATETIME) AS etl_time,
+    CURDATE() AS snapshot_date,
+    NOW() AS etl_time,
     customer_name,
     gender,
     age,
