@@ -12,7 +12,6 @@ CREATE TABLE IF NOT EXISTS shop_dm.dws_customer_order_summary (
     etl_time         DATETIME      NOT NULL COMMENT 'ETL处理时间'
 ) ENGINE=OLAP
 UNIQUE KEY(customer_id, stat_date)
-DISTRIBUTED BY HASH(customer_id) BUCKETS 10
 PARTITION BY RANGE(stat_date) (
     PARTITION p202501 VALUES LESS THAN ("2025-02-01"),
     PARTITION p202502 VALUES LESS THAN ("2025-03-01"),
@@ -21,6 +20,7 @@ PARTITION BY RANGE(stat_date) (
     PARTITION p202505 VALUES LESS THAN ("2025-06-01"),
     PARTITION p_future VALUES LESS THAN MAXVALUE
 )
+DISTRIBUTED BY HASH(customer_id) BUCKETS 10
 PROPERTIES (
     "replication_num" = "1"
 );
