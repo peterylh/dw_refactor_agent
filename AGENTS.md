@@ -193,7 +193,27 @@ olist 项目: 输出到 `olist/lineage.html` 和 `olist/lineage_job.html`
 
 ## ETL 参数
 
-详见 [dbenv.md](./dbenv.md#etl-参数)。
+支持 `@etl_date` 变量，用于重跑历史数据：
+默认值 `CURDATE()`，不传参时按今天跑。
+
+## ETL 执行
+
+```bash
+# 默认（当天）
+mysql -h<host> -P<port> -u<user> -p<password> < shop/tasks/dwd_customer.sql
+
+# 重跑历史某天
+mysql -h<host> -P<port> -u<user> -p<password> \
+  -e "SET @etl_date = '2025-01-01'; source shop/tasks/dwd_customer.sql;"
+
+# 批量重跑（3 天维度快照 + 3 个月度）
+for d in 2025-01-01 2025-01-02 2025-01-03; do
+  for t in dwd_customer dwd_product dwd_store_new; do
+    mysql -h<host> -P<port> -u<user> -p<password> \
+      -e "SET @etl_date = '$d'; source shop/tasks/${t}.sql;"
+  done
+done
+```
 
 ## 分支策略
 
