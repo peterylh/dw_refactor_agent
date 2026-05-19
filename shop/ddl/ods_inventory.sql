@@ -1,4 +1,5 @@
 -- ODS 库存记录表
+-- table_id: 6930c57e-9d4f-43ed-b276-a160e4031d6c
 DROP TABLE IF EXISTS shop_dm.ods_inventory;
 CREATE TABLE IF NOT EXISTS shop_dm.ods_inventory (
     inventory_id    BIGINT   NOT NULL COMMENT '库存记录ID',

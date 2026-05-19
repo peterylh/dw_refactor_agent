@@ -2,34 +2,64 @@
 """
 血缘 HTML 刷新工具
 读取 lineage_data.json, 注入到 lineage_job.html 中重新生成
+支持: shop(默认) / olist 项目
 """
 
-import json, re
+import json, re, argparse
 from pathlib import Path
 from collections import OrderedDict
 import sqlglot
 from sqlglot import exp
 
+CURRENT_DB = "shop_dm"
+
 LINEAGE_DIR = Path(__file__).parent
-TASKS_DIR = Path(__file__).parent.parent / "shop" / "tasks"
-JOB_LOGIC = {
-    "dwd_customer": "清洗客户数据 → 划分年龄段 → 补全缺失值",
-    "dwd_order_detail": "多表关联 → 计算毛利 → 回填成本 → 剔除无效订单",
-    "dwd_product": "关联品类维表 → 计算毛利率 → 清理异常值",
-    "dwd_store": "门店分级 → 计算开业年限 → 补全缺失值",
-    "dws_category_sales_monthly": "按品类+月份汇总 → 清理空值 → 剔除无效数据",
-    "dws_customer_order_summary": "按客户+日期汇总 → 修正异常值 → 剔除无效记录",
-    "dws_product_sales_daily": "按商品+日期汇总 → 清理空值 → 剔除异常数据",
-    "dws_store_sales_daily": "按门店+日期汇总 → 清理空值 → 剔除异常数据",
-    "ads_customer_rfm": "计算RFM指标 → NTILE打分 → 客户分层 → 填充默认值",
-    "ads_product_topn_daily": "每日排名 → 关联商品维表 → 剔除超出TOP10的数据",
-    "ads_sales_dashboard": "多店日汇总 → 计算环比增长率 → 填充空值",
-    "ads_store_performance": "按月汇总门店KPI → 归一化评分 → 填充空值",
+
+PROJECT_MAP = {
+    "shop": {
+        "tasks_dir": Path(__file__).parent.parent / "shop" / "tasks",
+        "job_logic": {
+            "dwd_customer": "清洗客户数据 → 划分年龄段 → 补全缺失值",
+            "dwd_order_detail": "多表关联 → 计算毛利 → 回填成本 → 剔除无效订单",
+            "dwd_product": "关联品类维表 → 计算毛利率 → 清理异常值",
+            "dwd_store": "门店分级 → 计算开业年限 → 补全缺失值",
+            "dws_category_sales_monthly": "按品类+月份汇总 → 清理空值 → 剔除无效数据",
+            "dws_customer_order_summary": "按客户+日期汇总 → 修正异常值 → 剔除无效记录",
+            "dws_product_sales_daily": "按商品+日期汇总 → 清理空值 → 剔除异常数据",
+            "dws_store_sales_daily": "按门店+日期汇总 → 清理空值 → 剔除异常数据",
+            "ads_customer_rfm": "计算RFM指标 → NTILE打分 → 客户分层 → 填充默认值",
+            "ads_product_topn_daily": "每日排名 → 关联商品维表 → 剔除超出TOP10的数据",
+            "ads_sales_dashboard": "多店日汇总 → 计算环比增长率 → 填充空值",
+            "ads_store_performance": "按月汇总门店KPI → 归一化评分 → 填充空值",
+        },
+    },
+    "olist": {
+        "tasks_dir": Path(__file__).parent.parent / "olist" / "tasks",
+        "job_logic": {
+            "dwd_customer": "客户基本信息 → 地理区域划分 → 补全缺失值",
+            "dwd_order_detail": "多表关联 → 品类翻译 → 配送天数计算 → 延迟判断",
+            "dwd_product": "品类翻译 → 体积计算 → 重量分级",
+            "dwd_seller": "地理区域划分 → 补全缺失值",
+            "dws_seller_monthly": "按月+卖家汇总 → 修正空值",
+            "dws_product_category_monthly": "按月+品类汇总 → 修正空值",
+            "dws_customer_order_summary": "按客户+日期汇总 → 修正空值 → 删除异常",
+            "dws_daily_orders": "按日汇总 → 计算延迟配送数 → 修正空值",
+            "ads_seller_performance_ranking": "窗口排名 → 综合评分 → 修正空值",
+            "ads_product_topn": "按日排名 → 关联品类 → 截取 Top N",
+            "ads_payment_analysis": "按月+支付方式汇总 → 计算占比 → 修正异常",
+            "ads_review_analysis": "按月+评分汇总 → 计算占比与配送天数",
+            "ads_category_monthly_trend": "复用 DWS 月度汇总 → LAG 计算环比增长率",
+            "ads_delivery_performance": "从 DWS 日汇总读取配送指标 → 计算准时率",
+            "ads_customer_rfm": "RFM指标计算 → NTILE打分 → 客户分层",
+            "ads_geographic_sales": "按月+州汇总 → 区域划分 → 修正空值",
+        },
+    },
 }
 
 
-def load_lineage_data():
-    with open(LINEAGE_DIR / "lineage_data.json", encoding="utf-8") as f:
+def load_lineage_data(project="shop"):
+    path = LINEAGE_DIR / f"lineage_data_{project}.json"
+    with open(path, encoding="utf-8") as f:
         return json.load(f)
 
 
@@ -46,17 +76,21 @@ def _layer_priority(tbl):
 
 
 def _strip_db(name):
-    return name.replace("shop_dm.", "")
+    return name.replace(f"{CURRENT_DB}.", "")
 
 
-def generate_jobs(data):
+def generate_jobs(data, cfg=None):
+    if cfg is None:
+        cfg = PROJECT_MAP["shop"]
     file_edges = {}
     for e in data["edges"]:
         fname = e.get("source_file", "")
         file_edges.setdefault(fname, []).append(e)
 
+    tasks_dir = cfg["tasks_dir"]
+    job_logic = cfg["job_logic"]
     jobs = []
-    for f in sorted(TASKS_DIR.glob("*.sql")):
+    for f in sorted(tasks_dir.glob("*.sql")):
         fname = f.name
         edges = file_edges.get(fname, [])
 
@@ -97,7 +131,7 @@ def generate_jobs(data):
                     ("source", sorted(sources)),
                     ("target", short),
                     ("layer", layer),
-                    ("logic", JOB_LOGIC.get(f.stem, "-")),
+                    ("logic", job_logic.get(f.stem, "-")),
                 ]
             )
         )
@@ -124,9 +158,9 @@ def inject_into_html(template_path, output_path, lineage_json, jobs_json):
         f.write(html)
 
 
-def update_lineage_html(data, lineage_json):
+def update_lineage_html(data, lineage_json, output_html=None):
     """更新只含字段级视图的 lineage.html."""
-    path = LINEAGE_DIR / "lineage.html"
+    path = output_html or (LINEAGE_DIR / "lineage.html")
     if not path.exists():
         return
     with open(path, encoding="utf-8") as f:
@@ -143,19 +177,37 @@ def update_lineage_html(data, lineage_json):
 
 
 def main():
-    data = load_lineage_data()
-    jobs = generate_jobs(data)
+    parser = argparse.ArgumentParser(description="血缘 HTML 刷新工具")
+    parser.add_argument("--project", default="shop", choices=list(PROJECT_MAP.keys()),
+                        help="项目名称")
+    args = parser.parse_args()
+
+    global CURRENT_DB
+    cfg = PROJECT_MAP[args.project]
+    if args.project == "olist":
+        CURRENT_DB = "olist_dm"
+
+    data = load_lineage_data(project=args.project)
+    jobs = generate_jobs(data, cfg=cfg)
 
     lineage_json = json.dumps(data, ensure_ascii=False, indent=2)
     jobs_json = json.dumps(jobs, ensure_ascii=False, indent=2)
 
-    template = LINEAGE_DIR / "lineage_job.html"
+    if args.project == "olist":
+        olist_dir = LINEAGE_DIR.parent / "olist"
+        olist_dir.mkdir(parents=True, exist_ok=True)
+        template = olist_dir / "lineage_job.html"
+        output_html = olist_dir / "lineage.html"
+    else:
+        template = LINEAGE_DIR / "lineage_job.html"
+        output_html = LINEAGE_DIR / "lineage.html"
+
     if not template.exists():
         print(f"模板不存在: {template}")
         return
 
     inject_into_html(template, template, lineage_json, jobs_json)
-    update_lineage_html(data, lineage_json)
+    update_lineage_html(data, lineage_json, output_html=output_html)
 
     print("HTML 已刷新:", template)
     print(

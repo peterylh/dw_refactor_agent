@@ -1,4 +1,5 @@
 -- ADS 销售驾驶舱汇总表
+-- table_id: cd82b3a9-ec2f-4269-8cd0-d4e8d5476a01
 DROP TABLE IF EXISTS shop_dm.ads_sales_dashboard;
 CREATE TABLE IF NOT EXISTS shop_dm.ads_sales_dashboard (
     stat_date          DATE          NOT NULL COMMENT '统计日期',

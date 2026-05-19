@@ -1,4 +1,5 @@
 -- DWS 品类月度销售汇总表
+-- table_id: e424c979-4953-4c9a-b9d6-19ae25b4b180
 DROP TABLE IF EXISTS shop_dm.dws_category_sales_monthly;
 CREATE TABLE IF NOT EXISTS shop_dm.dws_category_sales_monthly (
     category_id    BIGINT        NOT NULL COMMENT '品类ID',

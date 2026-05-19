@@ -1,6 +1,6 @@
 -- 表级血缘关系表
-DROP TABLE IF EXISTS lineage.table_lineage;
-CREATE TABLE IF NOT EXISTS lineage.table_lineage (
+DROP TABLE IF EXISTS table_lineage;
+CREATE TABLE IF NOT EXISTS table_lineage (
     id              BIGINT NOT NULL COMMENT '记录ID',
     source_table_id BIGINT NOT NULL COMMENT '上游来源表ID',
     target_table_id BIGINT NOT NULL COMMENT '下游目标表ID',
@@ -10,5 +10,5 @@ DUPLICATE KEY(id)
 DISTRIBUTED BY HASH(id) BUCKETS 10
 PROPERTIES ("replication_num" = "1");
 
-INSERT INTO lineage.table_lineage VALUES
+INSERT INTO table_lineage VALUES
 (1, 1, 2, 1);

@@ -1,4 +1,5 @@
 -- ADS 客户RFM分析表
+-- table_id: b79f7d88-bbb7-4fbc-b61e-96f6c3aafd11
 DROP TABLE IF EXISTS shop_dm.ads_customer_rfm;
 CREATE TABLE IF NOT EXISTS shop_dm.ads_customer_rfm (
     customer_id      BIGINT        NOT NULL COMMENT '客户ID',

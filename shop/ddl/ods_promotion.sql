@@ -1,4 +1,5 @@
 -- ODS 促销活动表
+-- table_id: 1b96955c-e1c0-48a7-85ee-b5c5078bc741
 DROP TABLE IF EXISTS shop_dm.ods_promotion;
 CREATE TABLE IF NOT EXISTS shop_dm.ods_promotion (
     promotion_id   BIGINT        NOT NULL COMMENT '促销ID',

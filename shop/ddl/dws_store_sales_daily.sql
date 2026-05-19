@@ -1,4 +1,5 @@
 -- DWS 门店日销售汇总表
+-- table_id: c888836b-b989-4845-998f-882c362cca3f
 DROP TABLE IF EXISTS shop_dm.dws_store_sales_daily;
 CREATE TABLE IF NOT EXISTS shop_dm.dws_store_sales_daily (
     store_id        BIGINT        NOT NULL COMMENT '门店ID',

@@ -1,4 +1,5 @@
 -- ODS 客户信息表
+-- table_id: 2aaceda8-a2cf-409e-82fa-57158161e20d
 DROP TABLE IF EXISTS shop_dm.ods_customer;
 CREATE TABLE IF NOT EXISTS shop_dm.ods_customer (
     customer_id   BIGINT       NOT NULL COMMENT '客户ID',

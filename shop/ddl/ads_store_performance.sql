@@ -1,4 +1,5 @@
 -- ADS 门店绩效评估表
+-- table_id: b6e00810-e675-41a8-bc53-22b826fa1e23
 DROP TABLE IF EXISTS shop_dm.ads_store_performance;
 CREATE TABLE IF NOT EXISTS shop_dm.ads_store_performance (
     store_id         BIGINT        NOT NULL COMMENT '门店ID',

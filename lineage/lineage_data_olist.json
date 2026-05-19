@@ -1,0 +1,3610 @@
+{
+  "nodes": [
+    {
+      "id": "dws_product_category_monthly.product_category_name_english",
+      "table": "dws_product_category_monthly",
+      "column": "product_category_name_english",
+      "layer": "DWS"
+    },
+    {
+      "id": "ads_category_monthly_trend.product_category_name_english",
+      "table": "ads_category_monthly_trend",
+      "column": "product_category_name_english",
+      "layer": "ADS"
+    },
+    {
+      "id": "dws_product_category_monthly.stat_month",
+      "table": "dws_product_category_monthly",
+      "column": "stat_month",
+      "layer": "DWS"
+    },
+    {
+      "id": "ads_category_monthly_trend.stat_month",
+      "table": "ads_category_monthly_trend",
+      "column": "stat_month",
+      "layer": "ADS"
+    },
+    {
+      "id": "dws_product_category_monthly.order_count",
+      "table": "dws_product_category_monthly",
+      "column": "order_count",
+      "layer": "DWS"
+    },
+    {
+      "id": "ads_category_monthly_trend.order_count",
+      "table": "ads_category_monthly_trend",
+      "column": "order_count",
+      "layer": "ADS"
+    },
+    {
+      "id": "dws_product_category_monthly.item_count",
+      "table": "dws_product_category_monthly",
+      "column": "item_count",
+      "layer": "DWS"
+    },
+    {
+      "id": "ads_category_monthly_trend.item_count",
+      "table": "ads_category_monthly_trend",
+      "column": "item_count",
+      "layer": "ADS"
+    },
+    {
+      "id": "dws_product_category_monthly.total_revenue",
+      "table": "dws_product_category_monthly",
+      "column": "total_revenue",
+      "layer": "DWS"
+    },
+    {
+      "id": "ads_category_monthly_trend.total_revenue",
+      "table": "ads_category_monthly_trend",
+      "column": "total_revenue",
+      "layer": "ADS"
+    },
+    {
+      "id": "dws_product_category_monthly.avg_price",
+      "table": "dws_product_category_monthly",
+      "column": "avg_price",
+      "layer": "DWS"
+    },
+    {
+      "id": "ads_category_monthly_trend.avg_price",
+      "table": "ads_category_monthly_trend",
+      "column": "avg_price",
+      "layer": "ADS"
+    },
+    {
+      "id": "dws_product_category_monthly.avg_review_score",
+      "table": "dws_product_category_monthly",
+      "column": "avg_review_score",
+      "layer": "DWS"
+    },
+    {
+      "id": "ads_category_monthly_trend.avg_review_score",
+      "table": "ads_category_monthly_trend",
+      "column": "avg_review_score",
+      "layer": "ADS"
+    },
+    {
+      "id": "ads_category_monthly_trend.revenue_growth_rate",
+      "table": "ads_category_monthly_trend",
+      "column": "revenue_growth_rate",
+      "layer": "ADS"
+    },
+    {
+      "id": "dws_customer_order_summary.customer_id",
+      "table": "dws_customer_order_summary",
+      "column": "customer_id",
+      "layer": "DWS"
+    },
+    {
+      "id": "ads_customer_rfm.customer_id",
+      "table": "ads_customer_rfm",
+      "column": "customer_id",
+      "layer": "ADS"
+    },
+    {
+      "id": "dws_customer_order_summary.stat_date",
+      "table": "dws_customer_order_summary",
+      "column": "stat_date",
+      "layer": "DWS"
+    },
+    {
+      "id": "ads_customer_rfm.recency_days",
+      "table": "ads_customer_rfm",
+      "column": "recency_days",
+      "layer": "ADS"
+    },
+    {
+      "id": "dws_customer_order_summary.order_count",
+      "table": "dws_customer_order_summary",
+      "column": "order_count",
+      "layer": "DWS"
+    },
+    {
+      "id": "ads_customer_rfm.frequency",
+      "table": "ads_customer_rfm",
+      "column": "frequency",
+      "layer": "ADS"
+    },
+    {
+      "id": "dws_customer_order_summary.total_revenue",
+      "table": "dws_customer_order_summary",
+      "column": "total_revenue",
+      "layer": "DWS"
+    },
+    {
+      "id": "ads_customer_rfm.monetary",
+      "table": "ads_customer_rfm",
+      "column": "monetary",
+      "layer": "ADS"
+    },
+    {
+      "id": "ads_customer_rfm.r_score",
+      "table": "ads_customer_rfm",
+      "column": "r_score",
+      "layer": "ADS"
+    },
+    {
+      "id": "ads_customer_rfm.f_score",
+      "table": "ads_customer_rfm",
+      "column": "f_score",
+      "layer": "ADS"
+    },
+    {
+      "id": "ads_customer_rfm.m_score",
+      "table": "ads_customer_rfm",
+      "column": "m_score",
+      "layer": "ADS"
+    },
+    {
+      "id": "ads_customer_rfm.rfm_score",
+      "table": "ads_customer_rfm",
+      "column": "rfm_score",
+      "layer": "ADS"
+    },
+    {
+      "id": "ads_customer_rfm.customer_segment",
+      "table": "ads_customer_rfm",
+      "column": "customer_segment",
+      "layer": "ADS"
+    },
+    {
+      "id": "dws_daily_orders.stat_date",
+      "table": "dws_daily_orders",
+      "column": "stat_date",
+      "layer": "DWS"
+    },
+    {
+      "id": "ads_delivery_performance.stat_date",
+      "table": "ads_delivery_performance",
+      "column": "stat_date",
+      "layer": "ADS"
+    },
+    {
+      "id": "dws_daily_orders.order_count",
+      "table": "dws_daily_orders",
+      "column": "order_count",
+      "layer": "DWS"
+    },
+    {
+      "id": "ads_delivery_performance.order_count",
+      "table": "ads_delivery_performance",
+      "column": "order_count",
+      "layer": "ADS"
+    },
+    {
+      "id": "dws_daily_orders.on_time_count",
+      "table": "dws_daily_orders",
+      "column": "on_time_count",
+      "layer": "DWS"
+    },
+    {
+      "id": "ads_delivery_performance.on_time_count",
+      "table": "ads_delivery_performance",
+      "column": "on_time_count",
+      "layer": "ADS"
+    },
+    {
+      "id": "dws_daily_orders.late_delivery_count",
+      "table": "dws_daily_orders",
+      "column": "late_delivery_count",
+      "layer": "DWS"
+    },
+    {
+      "id": "ads_delivery_performance.late_count",
+      "table": "ads_delivery_performance",
+      "column": "late_count",
+      "layer": "ADS"
+    },
+    {
+      "id": "ads_delivery_performance.on_time_rate",
+      "table": "ads_delivery_performance",
+      "column": "on_time_rate",
+      "layer": "ADS"
+    },
+    {
+      "id": "dws_daily_orders.avg_delivery_days",
+      "table": "dws_daily_orders",
+      "column": "avg_delivery_days",
+      "layer": "DWS"
+    },
+    {
+      "id": "ads_delivery_performance.avg_delivery_days",
+      "table": "ads_delivery_performance",
+      "column": "avg_delivery_days",
+      "layer": "ADS"
+    },
+    {
+      "id": "dws_daily_orders.avg_delay_days",
+      "table": "dws_daily_orders",
+      "column": "avg_delay_days",
+      "layer": "DWS"
+    },
+    {
+      "id": "ads_delivery_performance.avg_delay_days",
+      "table": "ads_delivery_performance",
+      "column": "avg_delay_days",
+      "layer": "ADS"
+    },
+    {
+      "id": "dws_daily_orders.max_delay_days",
+      "table": "dws_daily_orders",
+      "column": "max_delay_days",
+      "layer": "DWS"
+    },
+    {
+      "id": "ads_delivery_performance.max_delay_days",
+      "table": "ads_delivery_performance",
+      "column": "max_delay_days",
+      "layer": "ADS"
+    },
+    {
+      "id": "dwd_order_detail.order_month",
+      "table": "dwd_order_detail",
+      "column": "order_month",
+      "layer": "DWD"
+    },
+    {
+      "id": "ads_geographic_sales.stat_month",
+      "table": "ads_geographic_sales",
+      "column": "stat_month",
+      "layer": "ADS"
+    },
+    {
+      "id": "dwd_customer.customer_state",
+      "table": "dwd_customer",
+      "column": "customer_state",
+      "layer": "DWD"
+    },
+    {
+      "id": "ads_geographic_sales.customer_state",
+      "table": "ads_geographic_sales",
+      "column": "customer_state",
+      "layer": "ADS"
+    },
+    {
+      "id": "dwd_customer.customer_region",
+      "table": "dwd_customer",
+      "column": "customer_region",
+      "layer": "DWD"
+    },
+    {
+      "id": "ads_geographic_sales.customer_region",
+      "table": "ads_geographic_sales",
+      "column": "customer_region",
+      "layer": "ADS"
+    },
+    {
+      "id": "dwd_order_detail.order_id",
+      "table": "dwd_order_detail",
+      "column": "order_id",
+      "layer": "DWD"
+    },
+    {
+      "id": "ads_geographic_sales.order_count",
+      "table": "ads_geographic_sales",
+      "column": "order_count",
+      "layer": "ADS"
+    },
+    {
+      "id": "dwd_order_detail.customer_id",
+      "table": "dwd_order_detail",
+      "column": "customer_id",
+      "layer": "DWD"
+    },
+    {
+      "id": "ads_geographic_sales.customer_count",
+      "table": "ads_geographic_sales",
+      "column": "customer_count",
+      "layer": "ADS"
+    },
+    {
+      "id": "dwd_order_detail.freight_value",
+      "table": "dwd_order_detail",
+      "column": "freight_value",
+      "layer": "DWD"
+    },
+    {
+      "id": "ads_geographic_sales.total_revenue",
+      "table": "ads_geographic_sales",
+      "column": "total_revenue",
+      "layer": "ADS"
+    },
+    {
+      "id": "dwd_order_detail.price",
+      "table": "dwd_order_detail",
+      "column": "price",
+      "layer": "DWD"
+    },
+    {
+      "id": "ads_geographic_sales.avg_freight",
+      "table": "ads_geographic_sales",
+      "column": "avg_freight",
+      "layer": "ADS"
+    },
+    {
+      "id": "ads_payment_analysis.stat_month",
+      "table": "ads_payment_analysis",
+      "column": "stat_month",
+      "layer": "ADS"
+    },
+    {
+      "id": "dwd_order_detail.payment_type",
+      "table": "dwd_order_detail",
+      "column": "payment_type",
+      "layer": "DWD"
+    },
+    {
+      "id": "ads_payment_analysis.payment_type",
+      "table": "ads_payment_analysis",
+      "column": "payment_type",
+      "layer": "ADS"
+    },
+    {
+      "id": "ads_payment_analysis.total_value",
+      "table": "ads_payment_analysis",
+      "column": "total_value",
+      "layer": "ADS"
+    },
+    {
+      "id": "dwd_order_detail.payment_installments",
+      "table": "dwd_order_detail",
+      "column": "payment_installments",
+      "layer": "DWD"
+    },
+    {
+      "id": "ads_payment_analysis.avg_installments",
+      "table": "ads_payment_analysis",
+      "column": "avg_installments",
+      "layer": "ADS"
+    },
+    {
+      "id": "ads_payment_analysis.payment_pct",
+      "table": "ads_payment_analysis",
+      "column": "payment_pct",
+      "layer": "ADS"
+    },
+    {
+      "id": "dwd_order_detail.order_purchase_timestamp",
+      "table": "dwd_order_detail",
+      "column": "order_purchase_timestamp",
+      "layer": "DWD"
+    },
+    {
+      "id": "ads_product_topn.stat_date",
+      "table": "ads_product_topn",
+      "column": "stat_date",
+      "layer": "ADS"
+    },
+    {
+      "id": "dwd_order_detail.product_id",
+      "table": "dwd_order_detail",
+      "column": "product_id",
+      "layer": "DWD"
+    },
+    {
+      "id": "ads_product_topn.product_id",
+      "table": "ads_product_topn",
+      "column": "product_id",
+      "layer": "ADS"
+    },
+    {
+      "id": "dwd_product.product_category_name_english",
+      "table": "dwd_product",
+      "column": "product_category_name_english",
+      "layer": "DWD"
+    },
+    {
+      "id": "ads_product_topn.product_category_name_english",
+      "table": "ads_product_topn",
+      "column": "product_category_name_english",
+      "layer": "ADS"
+    },
+    {
+      "id": "dwd_order_detail.order_item_id",
+      "table": "dwd_order_detail",
+      "column": "order_item_id",
+      "layer": "DWD"
+    },
+    {
+      "id": "ads_product_topn.item_count",
+      "table": "ads_product_topn",
+      "column": "item_count",
+      "layer": "ADS"
+    },
+    {
+      "id": "ads_product_topn.total_revenue",
+      "table": "ads_product_topn",
+      "column": "total_revenue",
+      "layer": "ADS"
+    },
+    {
+      "id": "ads_product_topn.avg_price",
+      "table": "ads_product_topn",
+      "column": "avg_price",
+      "layer": "ADS"
+    },
+    {
+      "id": "ads_product_topn.rank_num",
+      "table": "ads_product_topn",
+      "column": "rank_num",
+      "layer": "ADS"
+    },
+    {
+      "id": "ads_review_analysis.stat_month",
+      "table": "ads_review_analysis",
+      "column": "stat_month",
+      "layer": "ADS"
+    },
+    {
+      "id": "dwd_order_detail.review_score",
+      "table": "dwd_order_detail",
+      "column": "review_score",
+      "layer": "DWD"
+    },
+    {
+      "id": "ads_review_analysis.review_score",
+      "table": "ads_review_analysis",
+      "column": "review_score",
+      "layer": "ADS"
+    },
+    {
+      "id": "dwd_order_detail.delivery_days",
+      "table": "dwd_order_detail",
+      "column": "delivery_days",
+      "layer": "DWD"
+    },
+    {
+      "id": "ads_review_analysis.avg_delivery_days",
+      "table": "ads_review_analysis",
+      "column": "avg_delivery_days",
+      "layer": "ADS"
+    },
+    {
+      "id": "dws_seller_monthly.stat_month",
+      "table": "dws_seller_monthly",
+      "column": "stat_month",
+      "layer": "DWS"
+    },
+    {
+      "id": "ads_seller_performance_ranking.stat_month",
+      "table": "ads_seller_performance_ranking",
+      "column": "stat_month",
+      "layer": "ADS"
+    },
+    {
+      "id": "dws_seller_monthly.seller_id",
+      "table": "dws_seller_monthly",
+      "column": "seller_id",
+      "layer": "DWS"
+    },
+    {
+      "id": "ads_seller_performance_ranking.seller_id",
+      "table": "ads_seller_performance_ranking",
+      "column": "seller_id",
+      "layer": "ADS"
+    },
+    {
+      "id": "dwd_seller.seller_city",
+      "table": "dwd_seller",
+      "column": "seller_city",
+      "layer": "DWD"
+    },
+    {
+      "id": "ads_seller_performance_ranking.seller_city",
+      "table": "ads_seller_performance_ranking",
+      "column": "seller_city",
+      "layer": "ADS"
+    },
+    {
+      "id": "dwd_seller.seller_state",
+      "table": "dwd_seller",
+      "column": "seller_state",
+      "layer": "DWD"
+    },
+    {
+      "id": "ads_seller_performance_ranking.seller_state",
+      "table": "ads_seller_performance_ranking",
+      "column": "seller_state",
+      "layer": "ADS"
+    },
+    {
+      "id": "dws_seller_monthly.order_count",
+      "table": "dws_seller_monthly",
+      "column": "order_count",
+      "layer": "DWS"
+    },
+    {
+      "id": "ads_seller_performance_ranking.order_count",
+      "table": "ads_seller_performance_ranking",
+      "column": "order_count",
+      "layer": "ADS"
+    },
+    {
+      "id": "dws_seller_monthly.total_revenue",
+      "table": "dws_seller_monthly",
+      "column": "total_revenue",
+      "layer": "DWS"
+    },
+    {
+      "id": "ads_seller_performance_ranking.total_revenue",
+      "table": "ads_seller_performance_ranking",
+      "column": "total_revenue",
+      "layer": "ADS"
+    },
+    {
+      "id": "dws_seller_monthly.avg_review_score",
+      "table": "dws_seller_monthly",
+      "column": "avg_review_score",
+      "layer": "DWS"
+    },
+    {
+      "id": "ads_seller_performance_ranking.avg_review_score",
+      "table": "ads_seller_performance_ranking",
+      "column": "avg_review_score",
+      "layer": "ADS"
+    },
+    {
+      "id": "ads_seller_performance_ranking.revenue_rank",
+      "table": "ads_seller_performance_ranking",
+      "column": "revenue_rank",
+      "layer": "ADS"
+    },
+    {
+      "id": "ads_seller_performance_ranking.score_rank",
+      "table": "ads_seller_performance_ranking",
+      "column": "score_rank",
+      "layer": "ADS"
+    },
+    {
+      "id": "ads_seller_performance_ranking.performance_score",
+      "table": "ads_seller_performance_ranking",
+      "column": "performance_score",
+      "layer": "ADS"
+    },
+    {
+      "id": "ods_customer.customer_id",
+      "table": "ods_customer",
+      "column": "customer_id",
+      "layer": "ODS"
+    },
+    {
+      "id": "dwd_customer.customer_id",
+      "table": "dwd_customer",
+      "column": "customer_id",
+      "layer": "DWD"
+    },
+    {
+      "id": "ods_customer.customer_unique_id",
+      "table": "ods_customer",
+      "column": "customer_unique_id",
+      "layer": "ODS"
+    },
+    {
+      "id": "dwd_customer.customer_unique_id",
+      "table": "dwd_customer",
+      "column": "customer_unique_id",
+      "layer": "DWD"
+    },
+    {
+      "id": "ods_customer.customer_city",
+      "table": "ods_customer",
+      "column": "customer_city",
+      "layer": "ODS"
+    },
+    {
+      "id": "dwd_customer.customer_city",
+      "table": "dwd_customer",
+      "column": "customer_city",
+      "layer": "DWD"
+    },
+    {
+      "id": "ods_customer.customer_state",
+      "table": "ods_customer",
+      "column": "customer_state",
+      "layer": "ODS"
+    },
+    {
+      "id": "ods_order_item.order_id",
+      "table": "ods_order_item",
+      "column": "order_id",
+      "layer": "ODS"
+    },
+    {
+      "id": "ods_order_item.order_item_id",
+      "table": "ods_order_item",
+      "column": "order_item_id",
+      "layer": "ODS"
+    },
+    {
+      "id": "ods_order.customer_id",
+      "table": "ods_order",
+      "column": "customer_id",
+      "layer": "ODS"
+    },
+    {
+      "id": "ods_order_item.seller_id",
+      "table": "ods_order_item",
+      "column": "seller_id",
+      "layer": "ODS"
+    },
+    {
+      "id": "dwd_order_detail.seller_id",
+      "table": "dwd_order_detail",
+      "column": "seller_id",
+      "layer": "DWD"
+    },
+    {
+      "id": "ods_order_item.product_id",
+      "table": "ods_order_item",
+      "column": "product_id",
+      "layer": "ODS"
+    },
+    {
+      "id": "ods_product.product_category_name",
+      "table": "ods_product",
+      "column": "product_category_name",
+      "layer": "ODS"
+    },
+    {
+      "id": "dwd_order_detail.product_category_name",
+      "table": "dwd_order_detail",
+      "column": "product_category_name",
+      "layer": "DWD"
+    },
+    {
+      "id": "ods_category_translation.product_category_name_english",
+      "table": "ods_category_translation",
+      "column": "product_category_name_english",
+      "layer": "ODS"
+    },
+    {
+      "id": "dwd_order_detail.product_category_name_english",
+      "table": "dwd_order_detail",
+      "column": "product_category_name_english",
+      "layer": "DWD"
+    },
+    {
+      "id": "ods_order.order_status",
+      "table": "ods_order",
+      "column": "order_status",
+      "layer": "ODS"
+    },
+    {
+      "id": "dwd_order_detail.order_status",
+      "table": "dwd_order_detail",
+      "column": "order_status",
+      "layer": "DWD"
+    },
+    {
+      "id": "ods_order.order_purchase_timestamp",
+      "table": "ods_order",
+      "column": "order_purchase_timestamp",
+      "layer": "ODS"
+    },
+    {
+      "id": "ods_order.order_delivered_customer_date",
+      "table": "ods_order",
+      "column": "order_delivered_customer_date",
+      "layer": "ODS"
+    },
+    {
+      "id": "dwd_order_detail.order_delivered_customer_date",
+      "table": "dwd_order_detail",
+      "column": "order_delivered_customer_date",
+      "layer": "DWD"
+    },
+    {
+      "id": "ods_order.order_estimated_delivery_date",
+      "table": "ods_order",
+      "column": "order_estimated_delivery_date",
+      "layer": "ODS"
+    },
+    {
+      "id": "dwd_order_detail.order_estimated_delivery_date",
+      "table": "dwd_order_detail",
+      "column": "order_estimated_delivery_date",
+      "layer": "DWD"
+    },
+    {
+      "id": "ods_order_item.price",
+      "table": "ods_order_item",
+      "column": "price",
+      "layer": "ODS"
+    },
+    {
+      "id": "ods_order_item.freight_value",
+      "table": "ods_order_item",
+      "column": "freight_value",
+      "layer": "ODS"
+    },
+    {
+      "id": "ods_payment.payment_type",
+      "table": "ods_payment",
+      "column": "payment_type",
+      "layer": "ODS"
+    },
+    {
+      "id": "ods_payment.payment_installments",
+      "table": "ods_payment",
+      "column": "payment_installments",
+      "layer": "ODS"
+    },
+    {
+      "id": "ods_review.review_score",
+      "table": "ods_review",
+      "column": "review_score",
+      "layer": "ODS"
+    },
+    {
+      "id": "dwd_order_detail.estimated_delivery_days",
+      "table": "dwd_order_detail",
+      "column": "estimated_delivery_days",
+      "layer": "DWD"
+    },
+    {
+      "id": "dwd_order_detail.delivery_delay_days",
+      "table": "dwd_order_detail",
+      "column": "delivery_delay_days",
+      "layer": "DWD"
+    },
+    {
+      "id": "ods_product.product_id",
+      "table": "ods_product",
+      "column": "product_id",
+      "layer": "ODS"
+    },
+    {
+      "id": "dwd_product.product_id",
+      "table": "dwd_product",
+      "column": "product_id",
+      "layer": "DWD"
+    },
+    {
+      "id": "dwd_product.product_category_name",
+      "table": "dwd_product",
+      "column": "product_category_name",
+      "layer": "DWD"
+    },
+    {
+      "id": "ods_product.product_name_lenght",
+      "table": "ods_product",
+      "column": "product_name_lenght",
+      "layer": "ODS"
+    },
+    {
+      "id": "dwd_product.product_name_length",
+      "table": "dwd_product",
+      "column": "product_name_length",
+      "layer": "DWD"
+    },
+    {
+      "id": "ods_product.product_description_lenght",
+      "table": "ods_product",
+      "column": "product_description_lenght",
+      "layer": "ODS"
+    },
+    {
+      "id": "dwd_product.product_description_length",
+      "table": "dwd_product",
+      "column": "product_description_length",
+      "layer": "DWD"
+    },
+    {
+      "id": "ods_product.product_photos_qty",
+      "table": "ods_product",
+      "column": "product_photos_qty",
+      "layer": "ODS"
+    },
+    {
+      "id": "dwd_product.product_photos_qty",
+      "table": "dwd_product",
+      "column": "product_photos_qty",
+      "layer": "DWD"
+    },
+    {
+      "id": "ods_product.product_weight_g",
+      "table": "ods_product",
+      "column": "product_weight_g",
+      "layer": "ODS"
+    },
+    {
+      "id": "dwd_product.product_weight_g",
+      "table": "dwd_product",
+      "column": "product_weight_g",
+      "layer": "DWD"
+    },
+    {
+      "id": "ods_product.product_length_cm",
+      "table": "ods_product",
+      "column": "product_length_cm",
+      "layer": "ODS"
+    },
+    {
+      "id": "dwd_product.product_length_cm",
+      "table": "dwd_product",
+      "column": "product_length_cm",
+      "layer": "DWD"
+    },
+    {
+      "id": "ods_product.product_height_cm",
+      "table": "ods_product",
+      "column": "product_height_cm",
+      "layer": "ODS"
+    },
+    {
+      "id": "dwd_product.product_height_cm",
+      "table": "dwd_product",
+      "column": "product_height_cm",
+      "layer": "DWD"
+    },
+    {
+      "id": "ods_product.product_width_cm",
+      "table": "ods_product",
+      "column": "product_width_cm",
+      "layer": "ODS"
+    },
+    {
+      "id": "dwd_product.product_width_cm",
+      "table": "dwd_product",
+      "column": "product_width_cm",
+      "layer": "DWD"
+    },
+    {
+      "id": "dwd_product.product_volume_cm3",
+      "table": "dwd_product",
+      "column": "product_volume_cm3",
+      "layer": "DWD"
+    },
+    {
+      "id": "dwd_product.product_weight_class",
+      "table": "dwd_product",
+      "column": "product_weight_class",
+      "layer": "DWD"
+    },
+    {
+      "id": "ods_seller.seller_id",
+      "table": "ods_seller",
+      "column": "seller_id",
+      "layer": "ODS"
+    },
+    {
+      "id": "dwd_seller.seller_id",
+      "table": "dwd_seller",
+      "column": "seller_id",
+      "layer": "DWD"
+    },
+    {
+      "id": "ods_seller.seller_city",
+      "table": "ods_seller",
+      "column": "seller_city",
+      "layer": "ODS"
+    },
+    {
+      "id": "ods_seller.seller_state",
+      "table": "ods_seller",
+      "column": "seller_state",
+      "layer": "ODS"
+    },
+    {
+      "id": "dwd_seller.seller_region",
+      "table": "dwd_seller",
+      "column": "seller_region",
+      "layer": "DWD"
+    },
+    {
+      "id": "ods_seller.seller_zip_code_prefix",
+      "table": "ods_seller",
+      "column": "seller_zip_code_prefix",
+      "layer": "ODS"
+    },
+    {
+      "id": "dwd_seller.seller_zip_code_prefix",
+      "table": "dwd_seller",
+      "column": "seller_zip_code_prefix",
+      "layer": "DWD"
+    },
+    {
+      "id": "dws_customer_order_summary.total_price",
+      "table": "dws_customer_order_summary",
+      "column": "total_price",
+      "layer": "DWS"
+    },
+    {
+      "id": "dws_customer_order_summary.total_freight",
+      "table": "dws_customer_order_summary",
+      "column": "total_freight",
+      "layer": "DWS"
+    },
+    {
+      "id": "dws_customer_order_summary.avg_order_value",
+      "table": "dws_customer_order_summary",
+      "column": "avg_order_value",
+      "layer": "DWS"
+    },
+    {
+      "id": "dws_daily_orders.customer_count",
+      "table": "dws_daily_orders",
+      "column": "customer_count",
+      "layer": "DWS"
+    },
+    {
+      "id": "dws_daily_orders.item_count",
+      "table": "dws_daily_orders",
+      "column": "item_count",
+      "layer": "DWS"
+    },
+    {
+      "id": "dws_daily_orders.total_revenue",
+      "table": "dws_daily_orders",
+      "column": "total_revenue",
+      "layer": "DWS"
+    },
+    {
+      "id": "dws_daily_orders.total_freight",
+      "table": "dws_daily_orders",
+      "column": "total_freight",
+      "layer": "DWS"
+    },
+    {
+      "id": "dws_daily_orders.avg_order_value",
+      "table": "dws_daily_orders",
+      "column": "avg_order_value",
+      "layer": "DWS"
+    },
+    {
+      "id": "dws_product_category_monthly.avg_freight",
+      "table": "dws_product_category_monthly",
+      "column": "avg_freight",
+      "layer": "DWS"
+    },
+    {
+      "id": "dws_seller_monthly.item_count",
+      "table": "dws_seller_monthly",
+      "column": "item_count",
+      "layer": "DWS"
+    },
+    {
+      "id": "dws_seller_monthly.total_price",
+      "table": "dws_seller_monthly",
+      "column": "total_price",
+      "layer": "DWS"
+    },
+    {
+      "id": "dws_seller_monthly.total_freight",
+      "table": "dws_seller_monthly",
+      "column": "total_freight",
+      "layer": "DWS"
+    },
+    {
+      "id": "payment_monthly.stat_month",
+      "table": "payment_monthly",
+      "column": "stat_month",
+      "layer": "OTHER"
+    },
+    {
+      "id": "monthly_totals.stat_month",
+      "table": "monthly_totals",
+      "column": "stat_month",
+      "layer": "OTHER"
+    },
+    {
+      "id": "review_monthly.stat_month",
+      "table": "review_monthly",
+      "column": "stat_month",
+      "layer": "OTHER"
+    },
+    {
+      "id": "ods_order.order_id",
+      "table": "ods_order",
+      "column": "order_id",
+      "layer": "ODS"
+    },
+    {
+      "id": "ods_category_translation.product_category_name",
+      "table": "ods_category_translation",
+      "column": "product_category_name",
+      "layer": "ODS"
+    },
+    {
+      "id": "ods_payment.order_id",
+      "table": "ods_payment",
+      "column": "order_id",
+      "layer": "ODS"
+    },
+    {
+      "id": "ods_payment.payment_sequential",
+      "table": "ods_payment",
+      "column": "payment_sequential",
+      "layer": "ODS"
+    },
+    {
+      "id": "r.order_id",
+      "table": "r",
+      "column": "order_id",
+      "layer": "OTHER"
+    },
+    {
+      "id": "r.rn",
+      "table": "r",
+      "column": "rn",
+      "layer": "OTHER"
+    }
+  ],
+  "edges": [
+    {
+      "source": "dws_product_category_monthly.product_category_name_english",
+      "target": "ads_category_monthly_trend.product_category_name_english",
+      "expression": "dws_product_category_monthly.product_category_name_english AS product_category_name_english",
+      "source_file": "ads_category_monthly_trend.sql"
+    },
+    {
+      "source": "dws_product_category_monthly.stat_month",
+      "target": "ads_category_monthly_trend.stat_month",
+      "expression": "dws_product_category_monthly.stat_month AS stat_month",
+      "source_file": "ads_category_monthly_trend.sql"
+    },
+    {
+      "source": "dws_product_category_monthly.order_count",
+      "target": "ads_category_monthly_trend.order_count",
+      "expression": "dws_product_category_monthly.order_count AS order_count",
+      "source_file": "ads_category_monthly_trend.sql"
+    },
+    {
+      "source": "dws_product_category_monthly.item_count",
+      "target": "ads_category_monthly_trend.item_count",
+      "expression": "dws_product_category_monthly.item_count AS item_count",
+      "source_file": "ads_category_monthly_trend.sql"
+    },
+    {
+      "source": "dws_product_category_monthly.total_revenue",
+      "target": "ads_category_monthly_trend.total_revenue",
+      "expression": "dws_product_category_monthly.total_revenue AS total_revenue",
+      "source_file": "ads_category_monthly_trend.sql"
+    },
+    {
+      "source": "dws_product_category_monthly.avg_price",
+      "target": "ads_category_monthly_trend.avg_price",
+      "expression": "dws_product_category_monthly.avg_price AS avg_price",
+      "source_file": "ads_category_monthly_trend.sql"
+    },
+    {
+      "source": "dws_product_category_monthly.avg_review_score",
+      "target": "ads_category_monthly_trend.avg_review_score",
+      "expression": "dws_product_category_monthly.avg_review_score AS avg_review_score",
+      "source_file": "ads_category_monthly_trend.sql"
+    },
+    {
+      "source": "dws_product_category_monthly.total_revenue",
+      "target": "ads_category_monthly_trend.revenue_growth_rate",
+      "expression": "ROUND((dws_product_category_monthly.total_revenue - LAG(dws_product_category_monthly.total_revenue, 1, NULL) OVER (PARTITION BY dws_product_category_monthly.product_category_name_english ORDER BY dws_product_category_monthly.stat_month)) / NULLIF(LAG(dws_product_category_monthly.total_revenue, 1, NULL) OVER (PARTITION BY dws_product_category_monthly.product_category_name_english ORDER BY dws_product_category_monthly.stat_month), 0) * 100, 2) AS revenue_growth_rate",
+      "source_file": "ads_category_monthly_trend.sql"
+    },
+    {
+      "source": "dws_product_category_monthly.product_category_name_english",
+      "target": "ads_category_monthly_trend.revenue_growth_rate",
+      "expression": "ROUND((dws_product_category_monthly.total_revenue - LAG(dws_product_category_monthly.total_revenue, 1, NULL) OVER (PARTITION BY dws_product_category_monthly.product_category_name_english ORDER BY dws_product_category_monthly.stat_month)) / NULLIF(LAG(dws_product_category_monthly.total_revenue, 1, NULL) OVER (PARTITION BY dws_product_category_monthly.product_category_name_english ORDER BY dws_product_category_monthly.stat_month), 0) * 100, 2) AS revenue_growth_rate",
+      "source_file": "ads_category_monthly_trend.sql"
+    },
+    {
+      "source": "dws_product_category_monthly.stat_month",
+      "target": "ads_category_monthly_trend.revenue_growth_rate",
+      "expression": "ROUND((dws_product_category_monthly.total_revenue - LAG(dws_product_category_monthly.total_revenue, 1, NULL) OVER (PARTITION BY dws_product_category_monthly.product_category_name_english ORDER BY dws_product_category_monthly.stat_month)) / NULLIF(LAG(dws_product_category_monthly.total_revenue, 1, NULL) OVER (PARTITION BY dws_product_category_monthly.product_category_name_english ORDER BY dws_product_category_monthly.stat_month), 0) * 100, 2) AS revenue_growth_rate",
+      "source_file": "ads_category_monthly_trend.sql"
+    },
+    {
+      "source": "dws_customer_order_summary.customer_id",
+      "target": "ads_customer_rfm.customer_id",
+      "expression": "rfm_scored.customer_id AS customer_id",
+      "source_file": "ads_customer_rfm.sql"
+    },
+    {
+      "source": "dws_customer_order_summary.stat_date",
+      "target": "ads_customer_rfm.recency_days",
+      "expression": "rfm_scored.recency_days AS recency_days",
+      "source_file": "ads_customer_rfm.sql"
+    },
+    {
+      "source": "dws_customer_order_summary.order_count",
+      "target": "ads_customer_rfm.frequency",
+      "expression": "rfm_scored.frequency AS frequency",
+      "source_file": "ads_customer_rfm.sql"
+    },
+    {
+      "source": "dws_customer_order_summary.total_revenue",
+      "target": "ads_customer_rfm.monetary",
+      "expression": "rfm_scored.monetary AS monetary",
+      "source_file": "ads_customer_rfm.sql"
+    },
+    {
+      "source": "dws_customer_order_summary.stat_date",
+      "target": "ads_customer_rfm.r_score",
+      "expression": "rfm_scored.r_score AS r_score",
+      "source_file": "ads_customer_rfm.sql"
+    },
+    {
+      "source": "dws_customer_order_summary.order_count",
+      "target": "ads_customer_rfm.f_score",
+      "expression": "rfm_scored.f_score AS f_score",
+      "source_file": "ads_customer_rfm.sql"
+    },
+    {
+      "source": "dws_customer_order_summary.total_revenue",
+      "target": "ads_customer_rfm.m_score",
+      "expression": "rfm_scored.m_score AS m_score",
+      "source_file": "ads_customer_rfm.sql"
+    },
+    {
+      "source": "dws_customer_order_summary.order_count",
+      "target": "ads_customer_rfm.rfm_score",
+      "expression": "rfm_scored.r_score + rfm_scored.f_score + rfm_scored.m_score AS rfm_score",
+      "source_file": "ads_customer_rfm.sql"
+    },
+    {
+      "source": "dws_customer_order_summary.total_revenue",
+      "target": "ads_customer_rfm.rfm_score",
+      "expression": "rfm_scored.r_score + rfm_scored.f_score + rfm_scored.m_score AS rfm_score",
+      "source_file": "ads_customer_rfm.sql"
+    },
+    {
+      "source": "dws_customer_order_summary.stat_date",
+      "target": "ads_customer_rfm.rfm_score",
+      "expression": "rfm_scored.r_score + rfm_scored.f_score + rfm_scored.m_score AS rfm_score",
+      "source_file": "ads_customer_rfm.sql"
+    },
+    {
+      "source": "dws_customer_order_summary.order_count",
+      "target": "ads_customer_rfm.customer_segment",
+      "expression": "CASE WHEN rfm_scored.r_score >= 4 AND rfm_scored.f_score >= 4 AND rfm_scored.m_score >= 4 THEN '高价值客户' WHEN rfm_scored.r_score >= 3 AND rfm_scored.f_score >= 3 AND rfm_scored.m_score >= 3 THEN '重要保持客户' WHEN rfm_scored.r_score >= 3 AND (rfm_scored.f_score < 3 OR rfm_scored.m_score < 3) THEN '重要发展客户' WHEN rfm_scored.r_score < 3 AND rfm_scored.f_score >= 3 AND rfm_scored.m_score >= 3 THEN '重要挽留客户' WHEN rfm_scored.r_score < 3 AND rfm_scored.f_score < 3 AND rfm_scored.m_score < 3 THEN '流失预警客户' ELSE '一般价值客户' END AS customer_segment",
+      "source_file": "ads_customer_rfm.sql"
+    },
+    {
+      "source": "dws_customer_order_summary.total_revenue",
+      "target": "ads_customer_rfm.customer_segment",
+      "expression": "CASE WHEN rfm_scored.r_score >= 4 AND rfm_scored.f_score >= 4 AND rfm_scored.m_score >= 4 THEN '高价值客户' WHEN rfm_scored.r_score >= 3 AND rfm_scored.f_score >= 3 AND rfm_scored.m_score >= 3 THEN '重要保持客户' WHEN rfm_scored.r_score >= 3 AND (rfm_scored.f_score < 3 OR rfm_scored.m_score < 3) THEN '重要发展客户' WHEN rfm_scored.r_score < 3 AND rfm_scored.f_score >= 3 AND rfm_scored.m_score >= 3 THEN '重要挽留客户' WHEN rfm_scored.r_score < 3 AND rfm_scored.f_score < 3 AND rfm_scored.m_score < 3 THEN '流失预警客户' ELSE '一般价值客户' END AS customer_segment",
+      "source_file": "ads_customer_rfm.sql"
+    },
+    {
+      "source": "dws_customer_order_summary.stat_date",
+      "target": "ads_customer_rfm.customer_segment",
+      "expression": "CASE WHEN rfm_scored.r_score >= 4 AND rfm_scored.f_score >= 4 AND rfm_scored.m_score >= 4 THEN '高价值客户' WHEN rfm_scored.r_score >= 3 AND rfm_scored.f_score >= 3 AND rfm_scored.m_score >= 3 THEN '重要保持客户' WHEN rfm_scored.r_score >= 3 AND (rfm_scored.f_score < 3 OR rfm_scored.m_score < 3) THEN '重要发展客户' WHEN rfm_scored.r_score < 3 AND rfm_scored.f_score >= 3 AND rfm_scored.m_score >= 3 THEN '重要挽留客户' WHEN rfm_scored.r_score < 3 AND rfm_scored.f_score < 3 AND rfm_scored.m_score < 3 THEN '流失预警客户' ELSE '一般价值客户' END AS customer_segment",
+      "source_file": "ads_customer_rfm.sql"
+    },
+    {
+      "source": "dws_daily_orders.stat_date",
+      "target": "ads_delivery_performance.stat_date",
+      "expression": "dws_daily_orders.stat_date AS stat_date",
+      "source_file": "ads_delivery_performance.sql"
+    },
+    {
+      "source": "dws_daily_orders.order_count",
+      "target": "ads_delivery_performance.order_count",
+      "expression": "dws_daily_orders.order_count AS order_count",
+      "source_file": "ads_delivery_performance.sql"
+    },
+    {
+      "source": "dws_daily_orders.on_time_count",
+      "target": "ads_delivery_performance.on_time_count",
+      "expression": "dws_daily_orders.on_time_count AS on_time_count",
+      "source_file": "ads_delivery_performance.sql"
+    },
+    {
+      "source": "dws_daily_orders.late_delivery_count",
+      "target": "ads_delivery_performance.late_count",
+      "expression": "dws_daily_orders.late_delivery_count AS late_count",
+      "source_file": "ads_delivery_performance.sql"
+    },
+    {
+      "source": "dws_daily_orders.on_time_count",
+      "target": "ads_delivery_performance.on_time_rate",
+      "expression": "ROUND(dws_daily_orders.on_time_count / NULLIF(dws_daily_orders.order_count, 0) * 100, 2) AS on_time_rate",
+      "source_file": "ads_delivery_performance.sql"
+    },
+    {
+      "source": "dws_daily_orders.order_count",
+      "target": "ads_delivery_performance.on_time_rate",
+      "expression": "ROUND(dws_daily_orders.on_time_count / NULLIF(dws_daily_orders.order_count, 0) * 100, 2) AS on_time_rate",
+      "source_file": "ads_delivery_performance.sql"
+    },
+    {
+      "source": "dws_daily_orders.avg_delivery_days",
+      "target": "ads_delivery_performance.avg_delivery_days",
+      "expression": "dws_daily_orders.avg_delivery_days AS avg_delivery_days",
+      "source_file": "ads_delivery_performance.sql"
+    },
+    {
+      "source": "dws_daily_orders.avg_delay_days",
+      "target": "ads_delivery_performance.avg_delay_days",
+      "expression": "dws_daily_orders.avg_delay_days AS avg_delay_days",
+      "source_file": "ads_delivery_performance.sql"
+    },
+    {
+      "source": "dws_daily_orders.max_delay_days",
+      "target": "ads_delivery_performance.max_delay_days",
+      "expression": "dws_daily_orders.max_delay_days AS max_delay_days",
+      "source_file": "ads_delivery_performance.sql"
+    },
+    {
+      "source": "dwd_order_detail.order_month",
+      "target": "ads_geographic_sales.stat_month",
+      "expression": "dod.order_month AS stat_month",
+      "source_file": "ads_geographic_sales.sql"
+    },
+    {
+      "source": "dwd_customer.customer_state",
+      "target": "ads_geographic_sales.customer_state",
+      "expression": "dc.customer_state AS customer_state",
+      "source_file": "ads_geographic_sales.sql"
+    },
+    {
+      "source": "dwd_customer.customer_region",
+      "target": "ads_geographic_sales.customer_region",
+      "expression": "dc.customer_region AS customer_region",
+      "source_file": "ads_geographic_sales.sql"
+    },
+    {
+      "source": "dwd_order_detail.order_id",
+      "target": "ads_geographic_sales.order_count",
+      "expression": "COUNT(DISTINCT dod.order_id) AS order_count",
+      "source_file": "ads_geographic_sales.sql"
+    },
+    {
+      "source": "dwd_order_detail.customer_id",
+      "target": "ads_geographic_sales.customer_count",
+      "expression": "COUNT(DISTINCT dod.customer_id) AS customer_count",
+      "source_file": "ads_geographic_sales.sql"
+    },
+    {
+      "source": "dwd_order_detail.freight_value",
+      "target": "ads_geographic_sales.total_revenue",
+      "expression": "ROUND(SUM(dod.price + dod.freight_value), 2) AS total_revenue",
+      "source_file": "ads_geographic_sales.sql"
+    },
+    {
+      "source": "dwd_order_detail.price",
+      "target": "ads_geographic_sales.total_revenue",
+      "expression": "ROUND(SUM(dod.price + dod.freight_value), 2) AS total_revenue",
+      "source_file": "ads_geographic_sales.sql"
+    },
+    {
+      "source": "dwd_order_detail.freight_value",
+      "target": "ads_geographic_sales.avg_freight",
+      "expression": "ROUND(AVG(dod.freight_value), 2) AS avg_freight",
+      "source_file": "ads_geographic_sales.sql"
+    },
+    {
+      "source": "dwd_order_detail.order_month",
+      "target": "ads_payment_analysis.stat_month",
+      "expression": "pm.stat_month AS stat_month",
+      "source_file": "ads_payment_analysis.sql"
+    },
+    {
+      "source": "dwd_order_detail.payment_type",
+      "target": "ads_payment_analysis.payment_type",
+      "expression": "pm.payment_type AS payment_type",
+      "source_file": "ads_payment_analysis.sql"
+    },
+    {
+      "source": "dwd_order_detail.freight_value",
+      "target": "ads_payment_analysis.total_value",
+      "expression": "pm.total_value AS total_value",
+      "source_file": "ads_payment_analysis.sql"
+    },
+    {
+      "source": "dwd_order_detail.price",
+      "target": "ads_payment_analysis.total_value",
+      "expression": "pm.total_value AS total_value",
+      "source_file": "ads_payment_analysis.sql"
+    },
+    {
+      "source": "dwd_order_detail.payment_installments",
+      "target": "ads_payment_analysis.avg_installments",
+      "expression": "pm.avg_installments AS avg_installments",
+      "source_file": "ads_payment_analysis.sql"
+    },
+    {
+      "source": "dwd_order_detail.freight_value",
+      "target": "ads_payment_analysis.payment_pct",
+      "expression": "ROUND(pm.total_value / NULLIF(mt.grand_total, 0) * 100, 2) AS payment_pct",
+      "source_file": "ads_payment_analysis.sql"
+    },
+    {
+      "source": "dwd_order_detail.price",
+      "target": "ads_payment_analysis.payment_pct",
+      "expression": "ROUND(pm.total_value / NULLIF(mt.grand_total, 0) * 100, 2) AS payment_pct",
+      "source_file": "ads_payment_analysis.sql"
+    },
+    {
+      "source": "dwd_order_detail.order_purchase_timestamp",
+      "target": "ads_product_topn.stat_date",
+      "expression": "TO_DATE(dod.order_purchase_timestamp) AS stat_date",
+      "source_file": "ads_product_topn.sql"
+    },
+    {
+      "source": "dwd_order_detail.product_id",
+      "target": "ads_product_topn.product_id",
+      "expression": "dod.product_id AS product_id",
+      "source_file": "ads_product_topn.sql"
+    },
+    {
+      "source": "dwd_product.product_category_name_english",
+      "target": "ads_product_topn.product_category_name_english",
+      "expression": "dp.product_category_name_english AS product_category_name_english",
+      "source_file": "ads_product_topn.sql"
+    },
+    {
+      "source": "dwd_order_detail.order_item_id",
+      "target": "ads_product_topn.item_count",
+      "expression": "COUNT(DISTINCT dod.order_item_id) AS item_count",
+      "source_file": "ads_product_topn.sql"
+    },
+    {
+      "source": "dwd_order_detail.freight_value",
+      "target": "ads_product_topn.total_revenue",
+      "expression": "ROUND(SUM(dod.price + dod.freight_value), 2) AS total_revenue",
+      "source_file": "ads_product_topn.sql"
+    },
+    {
+      "source": "dwd_order_detail.price",
+      "target": "ads_product_topn.total_revenue",
+      "expression": "ROUND(SUM(dod.price + dod.freight_value), 2) AS total_revenue",
+      "source_file": "ads_product_topn.sql"
+    },
+    {
+      "source": "dwd_order_detail.price",
+      "target": "ads_product_topn.avg_price",
+      "expression": "ROUND(AVG(dod.price), 2) AS avg_price",
+      "source_file": "ads_product_topn.sql"
+    },
+    {
+      "source": "dwd_order_detail.freight_value",
+      "target": "ads_product_topn.rank_num",
+      "expression": "RANK() OVER (PARTITION BY TO_DATE(dod.order_purchase_timestamp) ORDER BY SUM(dod.price + dod.freight_value) DESC) AS rank_num",
+      "source_file": "ads_product_topn.sql"
+    },
+    {
+      "source": "dwd_order_detail.price",
+      "target": "ads_product_topn.rank_num",
+      "expression": "RANK() OVER (PARTITION BY TO_DATE(dod.order_purchase_timestamp) ORDER BY SUM(dod.price + dod.freight_value) DESC) AS rank_num",
+      "source_file": "ads_product_topn.sql"
+    },
+    {
+      "source": "dwd_order_detail.order_purchase_timestamp",
+      "target": "ads_product_topn.rank_num",
+      "expression": "RANK() OVER (PARTITION BY TO_DATE(dod.order_purchase_timestamp) ORDER BY SUM(dod.price + dod.freight_value) DESC) AS rank_num",
+      "source_file": "ads_product_topn.sql"
+    },
+    {
+      "source": "dwd_order_detail.order_month",
+      "target": "ads_review_analysis.stat_month",
+      "expression": "rm.stat_month AS stat_month",
+      "source_file": "ads_review_analysis.sql"
+    },
+    {
+      "source": "dwd_order_detail.review_score",
+      "target": "ads_review_analysis.review_score",
+      "expression": "rm.review_score AS review_score",
+      "source_file": "ads_review_analysis.sql"
+    },
+    {
+      "source": "dwd_order_detail.delivery_days",
+      "target": "ads_review_analysis.avg_delivery_days",
+      "expression": "rm.avg_delivery_days AS avg_delivery_days",
+      "source_file": "ads_review_analysis.sql"
+    },
+    {
+      "source": "dws_seller_monthly.stat_month",
+      "target": "ads_seller_performance_ranking.stat_month",
+      "expression": "seller_scored.stat_month AS stat_month",
+      "source_file": "ads_seller_performance_ranking.sql"
+    },
+    {
+      "source": "dws_seller_monthly.seller_id",
+      "target": "ads_seller_performance_ranking.seller_id",
+      "expression": "seller_scored.seller_id AS seller_id",
+      "source_file": "ads_seller_performance_ranking.sql"
+    },
+    {
+      "source": "dwd_seller.seller_city",
+      "target": "ads_seller_performance_ranking.seller_city",
+      "expression": "seller_scored.seller_city AS seller_city",
+      "source_file": "ads_seller_performance_ranking.sql"
+    },
+    {
+      "source": "dwd_seller.seller_state",
+      "target": "ads_seller_performance_ranking.seller_state",
+      "expression": "seller_scored.seller_state AS seller_state",
+      "source_file": "ads_seller_performance_ranking.sql"
+    },
+    {
+      "source": "dws_seller_monthly.order_count",
+      "target": "ads_seller_performance_ranking.order_count",
+      "expression": "seller_scored.order_count AS order_count",
+      "source_file": "ads_seller_performance_ranking.sql"
+    },
+    {
+      "source": "dws_seller_monthly.total_revenue",
+      "target": "ads_seller_performance_ranking.total_revenue",
+      "expression": "seller_scored.total_revenue AS total_revenue",
+      "source_file": "ads_seller_performance_ranking.sql"
+    },
+    {
+      "source": "dws_seller_monthly.avg_review_score",
+      "target": "ads_seller_performance_ranking.avg_review_score",
+      "expression": "seller_scored.avg_review_score AS avg_review_score",
+      "source_file": "ads_seller_performance_ranking.sql"
+    },
+    {
+      "source": "dws_seller_monthly.total_revenue",
+      "target": "ads_seller_performance_ranking.revenue_rank",
+      "expression": "seller_scored.revenue_rank AS revenue_rank",
+      "source_file": "ads_seller_performance_ranking.sql"
+    },
+    {
+      "source": "dws_seller_monthly.stat_month",
+      "target": "ads_seller_performance_ranking.revenue_rank",
+      "expression": "seller_scored.revenue_rank AS revenue_rank",
+      "source_file": "ads_seller_performance_ranking.sql"
+    },
+    {
+      "source": "dws_seller_monthly.avg_review_score",
+      "target": "ads_seller_performance_ranking.score_rank",
+      "expression": "seller_scored.score_rank AS score_rank",
+      "source_file": "ads_seller_performance_ranking.sql"
+    },
+    {
+      "source": "dws_seller_monthly.stat_month",
+      "target": "ads_seller_performance_ranking.score_rank",
+      "expression": "seller_scored.score_rank AS score_rank",
+      "source_file": "ads_seller_performance_ranking.sql"
+    },
+    {
+      "source": "dws_seller_monthly.avg_review_score",
+      "target": "ads_seller_performance_ranking.performance_score",
+      "expression": "ROUND((100 - seller_scored.revenue_rank + 1) * 0.6 + (CASE WHEN NOT seller_scored.avg_review_score IS NULL THEN seller_scored.avg_review_score * 20 ELSE 60 END) * 0.4, 2) AS performance_score",
+      "source_file": "ads_seller_performance_ranking.sql"
+    },
+    {
+      "source": "dws_seller_monthly.total_revenue",
+      "target": "ads_seller_performance_ranking.performance_score",
+      "expression": "ROUND((100 - seller_scored.revenue_rank + 1) * 0.6 + (CASE WHEN NOT seller_scored.avg_review_score IS NULL THEN seller_scored.avg_review_score * 20 ELSE 60 END) * 0.4, 2) AS performance_score",
+      "source_file": "ads_seller_performance_ranking.sql"
+    },
+    {
+      "source": "dws_seller_monthly.stat_month",
+      "target": "ads_seller_performance_ranking.performance_score",
+      "expression": "ROUND((100 - seller_scored.revenue_rank + 1) * 0.6 + (CASE WHEN NOT seller_scored.avg_review_score IS NULL THEN seller_scored.avg_review_score * 20 ELSE 60 END) * 0.4, 2) AS performance_score",
+      "source_file": "ads_seller_performance_ranking.sql"
+    },
+    {
+      "source": "ods_customer.customer_id",
+      "target": "dwd_customer.customer_id",
+      "expression": "ods_customer.customer_id AS customer_id",
+      "source_file": "dwd_customer.sql"
+    },
+    {
+      "source": "ods_customer.customer_unique_id",
+      "target": "dwd_customer.customer_unique_id",
+      "expression": "ods_customer.customer_unique_id AS customer_unique_id",
+      "source_file": "dwd_customer.sql"
+    },
+    {
+      "source": "ods_customer.customer_city",
+      "target": "dwd_customer.customer_city",
+      "expression": "ods_customer.customer_city AS customer_city",
+      "source_file": "dwd_customer.sql"
+    },
+    {
+      "source": "ods_customer.customer_state",
+      "target": "dwd_customer.customer_state",
+      "expression": "ods_customer.customer_state AS customer_state",
+      "source_file": "dwd_customer.sql"
+    },
+    {
+      "source": "ods_customer.customer_state",
+      "target": "dwd_customer.customer_region",
+      "expression": "CASE WHEN ods_customer.customer_state IN ('AC', 'AP', 'AM', 'PA', 'RO', 'RR', 'TO') THEN 'Norte' WHEN ods_customer.customer_state IN ('AL', 'BA', 'CE', 'MA', 'PB', 'PE', 'PI', 'RN', 'SE') THEN 'Nordeste' WHEN ods_customer.customer_state IN ('DF', 'GO', 'MT', 'MS') THEN 'Centro-Oeste' WHEN ods_customer.customer_state IN ('ES', 'MG', 'RJ', 'SP') THEN 'Sudeste' WHEN ods_customer.customer_state IN ('PR', 'RS', 'SC') THEN 'Sul' ELSE 'Desconhecido' END AS customer_region",
+      "source_file": "dwd_customer.sql"
+    },
+    {
+      "source": "ods_order_item.order_id",
+      "target": "dwd_order_detail.order_id",
+      "expression": "oi.order_id AS order_id",
+      "source_file": "dwd_order_detail.sql"
+    },
+    {
+      "source": "ods_order_item.order_item_id",
+      "target": "dwd_order_detail.order_item_id",
+      "expression": "oi.order_item_id AS order_item_id",
+      "source_file": "dwd_order_detail.sql"
+    },
+    {
+      "source": "ods_order.customer_id",
+      "target": "dwd_order_detail.customer_id",
+      "expression": "o.customer_id AS customer_id",
+      "source_file": "dwd_order_detail.sql"
+    },
+    {
+      "source": "ods_order_item.seller_id",
+      "target": "dwd_order_detail.seller_id",
+      "expression": "oi.seller_id AS seller_id",
+      "source_file": "dwd_order_detail.sql"
+    },
+    {
+      "source": "ods_order_item.product_id",
+      "target": "dwd_order_detail.product_id",
+      "expression": "oi.product_id AS product_id",
+      "source_file": "dwd_order_detail.sql"
+    },
+    {
+      "source": "ods_product.product_category_name",
+      "target": "dwd_order_detail.product_category_name",
+      "expression": "p.product_category_name AS product_category_name",
+      "source_file": "dwd_order_detail.sql"
+    },
+    {
+      "source": "ods_category_translation.product_category_name_english",
+      "target": "dwd_order_detail.product_category_name_english",
+      "expression": "ct.product_category_name_english AS product_category_name_english",
+      "source_file": "dwd_order_detail.sql"
+    },
+    {
+      "source": "ods_order.order_status",
+      "target": "dwd_order_detail.order_status",
+      "expression": "o.order_status AS order_status",
+      "source_file": "dwd_order_detail.sql"
+    },
+    {
+      "source": "ods_order.order_purchase_timestamp",
+      "target": "dwd_order_detail.order_purchase_timestamp",
+      "expression": "o.order_purchase_timestamp AS order_purchase_timestamp",
+      "source_file": "dwd_order_detail.sql"
+    },
+    {
+      "source": "ods_order.order_delivered_customer_date",
+      "target": "dwd_order_detail.order_delivered_customer_date",
+      "expression": "o.order_delivered_customer_date AS order_delivered_customer_date",
+      "source_file": "dwd_order_detail.sql"
+    },
+    {
+      "source": "ods_order.order_estimated_delivery_date",
+      "target": "dwd_order_detail.order_estimated_delivery_date",
+      "expression": "o.order_estimated_delivery_date AS order_estimated_delivery_date",
+      "source_file": "dwd_order_detail.sql"
+    },
+    {
+      "source": "ods_order.order_purchase_timestamp",
+      "target": "dwd_order_detail.order_month",
+      "expression": "DATE_FORMAT(o.order_purchase_timestamp, '%Y-%m') AS order_month",
+      "source_file": "dwd_order_detail.sql"
+    },
+    {
+      "source": "ods_order_item.price",
+      "target": "dwd_order_detail.price",
+      "expression": "oi.price AS price",
+      "source_file": "dwd_order_detail.sql"
+    },
+    {
+      "source": "ods_order_item.freight_value",
+      "target": "dwd_order_detail.freight_value",
+      "expression": "oi.freight_value AS freight_value",
+      "source_file": "dwd_order_detail.sql"
+    },
+    {
+      "source": "ods_payment.payment_type",
+      "target": "dwd_order_detail.payment_type",
+      "expression": "py.payment_type AS payment_type",
+      "source_file": "dwd_order_detail.sql"
+    },
+    {
+      "source": "ods_payment.payment_installments",
+      "target": "dwd_order_detail.payment_installments",
+      "expression": "py.payment_installments AS payment_installments",
+      "source_file": "dwd_order_detail.sql"
+    },
+    {
+      "source": "ods_review.review_score",
+      "target": "dwd_order_detail.review_score",
+      "expression": "r.review_score AS review_score",
+      "source_file": "dwd_order_detail.sql"
+    },
+    {
+      "source": "ods_order.order_delivered_customer_date",
+      "target": "dwd_order_detail.delivery_days",
+      "expression": "DATEDIFF(o.order_delivered_customer_date, o.order_purchase_timestamp) AS delivery_days",
+      "source_file": "dwd_order_detail.sql"
+    },
+    {
+      "source": "ods_order.order_purchase_timestamp",
+      "target": "dwd_order_detail.delivery_days",
+      "expression": "DATEDIFF(o.order_delivered_customer_date, o.order_purchase_timestamp) AS delivery_days",
+      "source_file": "dwd_order_detail.sql"
+    },
+    {
+      "source": "ods_order.order_purchase_timestamp",
+      "target": "dwd_order_detail.estimated_delivery_days",
+      "expression": "DATEDIFF(o.order_estimated_delivery_date, o.order_purchase_timestamp) AS estimated_delivery_days",
+      "source_file": "dwd_order_detail.sql"
+    },
+    {
+      "source": "ods_order.order_estimated_delivery_date",
+      "target": "dwd_order_detail.estimated_delivery_days",
+      "expression": "DATEDIFF(o.order_estimated_delivery_date, o.order_purchase_timestamp) AS estimated_delivery_days",
+      "source_file": "dwd_order_detail.sql"
+    },
+    {
+      "source": "ods_order.order_delivered_customer_date",
+      "target": "dwd_order_detail.delivery_delay_days",
+      "expression": "GREATEST(DATEDIFF(o.order_delivered_customer_date, o.order_estimated_delivery_date), 0) AS delivery_delay_days",
+      "source_file": "dwd_order_detail.sql"
+    },
+    {
+      "source": "ods_order.order_estimated_delivery_date",
+      "target": "dwd_order_detail.delivery_delay_days",
+      "expression": "GREATEST(DATEDIFF(o.order_delivered_customer_date, o.order_estimated_delivery_date), 0) AS delivery_delay_days",
+      "source_file": "dwd_order_detail.sql"
+    },
+    {
+      "source": "ods_product.product_id",
+      "target": "dwd_product.product_id",
+      "expression": "p.product_id AS product_id",
+      "source_file": "dwd_product.sql"
+    },
+    {
+      "source": "ods_product.product_category_name",
+      "target": "dwd_product.product_category_name",
+      "expression": "p.product_category_name AS product_category_name",
+      "source_file": "dwd_product.sql"
+    },
+    {
+      "source": "ods_category_translation.product_category_name_english",
+      "target": "dwd_product.product_category_name_english",
+      "expression": "ct.product_category_name_english AS product_category_name_english",
+      "source_file": "dwd_product.sql"
+    },
+    {
+      "source": "ods_product.product_name_lenght",
+      "target": "dwd_product.product_name_length",
+      "expression": "p.product_name_lenght AS product_name_length",
+      "source_file": "dwd_product.sql"
+    },
+    {
+      "source": "ods_product.product_description_lenght",
+      "target": "dwd_product.product_description_length",
+      "expression": "p.product_description_lenght AS product_description_length",
+      "source_file": "dwd_product.sql"
+    },
+    {
+      "source": "ods_product.product_photos_qty",
+      "target": "dwd_product.product_photos_qty",
+      "expression": "p.product_photos_qty AS product_photos_qty",
+      "source_file": "dwd_product.sql"
+    },
+    {
+      "source": "ods_product.product_weight_g",
+      "target": "dwd_product.product_weight_g",
+      "expression": "p.product_weight_g AS product_weight_g",
+      "source_file": "dwd_product.sql"
+    },
+    {
+      "source": "ods_product.product_length_cm",
+      "target": "dwd_product.product_length_cm",
+      "expression": "p.product_length_cm AS product_length_cm",
+      "source_file": "dwd_product.sql"
+    },
+    {
+      "source": "ods_product.product_height_cm",
+      "target": "dwd_product.product_height_cm",
+      "expression": "p.product_height_cm AS product_height_cm",
+      "source_file": "dwd_product.sql"
+    },
+    {
+      "source": "ods_product.product_width_cm",
+      "target": "dwd_product.product_width_cm",
+      "expression": "p.product_width_cm AS product_width_cm",
+      "source_file": "dwd_product.sql"
+    },
+    {
+      "source": "ods_product.product_height_cm",
+      "target": "dwd_product.product_volume_cm3",
+      "expression": "ROUND(p.product_length_cm * p.product_height_cm * p.product_width_cm, 2) AS product_volume_cm3",
+      "source_file": "dwd_product.sql"
+    },
+    {
+      "source": "ods_product.product_length_cm",
+      "target": "dwd_product.product_volume_cm3",
+      "expression": "ROUND(p.product_length_cm * p.product_height_cm * p.product_width_cm, 2) AS product_volume_cm3",
+      "source_file": "dwd_product.sql"
+    },
+    {
+      "source": "ods_product.product_width_cm",
+      "target": "dwd_product.product_volume_cm3",
+      "expression": "ROUND(p.product_length_cm * p.product_height_cm * p.product_width_cm, 2) AS product_volume_cm3",
+      "source_file": "dwd_product.sql"
+    },
+    {
+      "source": "ods_product.product_weight_g",
+      "target": "dwd_product.product_weight_class",
+      "expression": "CASE WHEN p.product_weight_g IS NULL THEN 'unknown' WHEN p.product_weight_g < 200 THEN '轻' WHEN p.product_weight_g < 1000 THEN '中' WHEN p.product_weight_g < 5000 THEN '重' ELSE '超重' END AS product_weight_class",
+      "source_file": "dwd_product.sql"
+    },
+    {
+      "source": "ods_seller.seller_id",
+      "target": "dwd_seller.seller_id",
+      "expression": "ods_seller.seller_id AS seller_id",
+      "source_file": "dwd_seller.sql"
+    },
+    {
+      "source": "ods_seller.seller_city",
+      "target": "dwd_seller.seller_city",
+      "expression": "ods_seller.seller_city AS seller_city",
+      "source_file": "dwd_seller.sql"
+    },
+    {
+      "source": "ods_seller.seller_state",
+      "target": "dwd_seller.seller_state",
+      "expression": "ods_seller.seller_state AS seller_state",
+      "source_file": "dwd_seller.sql"
+    },
+    {
+      "source": "ods_seller.seller_state",
+      "target": "dwd_seller.seller_region",
+      "expression": "CASE WHEN ods_seller.seller_state IN ('AC', 'AP', 'AM', 'PA', 'RO', 'RR', 'TO') THEN 'Norte' WHEN ods_seller.seller_state IN ('AL', 'BA', 'CE', 'MA', 'PB', 'PE', 'PI', 'RN', 'SE') THEN 'Nordeste' WHEN ods_seller.seller_state IN ('DF', 'GO', 'MT', 'MS') THEN 'Centro-Oeste' WHEN ods_seller.seller_state IN ('ES', 'MG', 'RJ', 'SP') THEN 'Sudeste' WHEN ods_seller.seller_state IN ('PR', 'RS', 'SC') THEN 'Sul' ELSE 'Desconhecido' END AS seller_region",
+      "source_file": "dwd_seller.sql"
+    },
+    {
+      "source": "ods_seller.seller_zip_code_prefix",
+      "target": "dwd_seller.seller_zip_code_prefix",
+      "expression": "ods_seller.seller_zip_code_prefix AS seller_zip_code_prefix",
+      "source_file": "dwd_seller.sql"
+    },
+    {
+      "source": "dwd_order_detail.customer_id",
+      "target": "dws_customer_order_summary.customer_id",
+      "expression": "dwd_order_detail.customer_id AS customer_id",
+      "source_file": "dws_customer_order_summary.sql"
+    },
+    {
+      "source": "dwd_order_detail.order_purchase_timestamp",
+      "target": "dws_customer_order_summary.stat_date",
+      "expression": "TO_DATE(dwd_order_detail.order_purchase_timestamp) AS stat_date",
+      "source_file": "dws_customer_order_summary.sql"
+    },
+    {
+      "source": "dwd_order_detail.order_id",
+      "target": "dws_customer_order_summary.order_count",
+      "expression": "COUNT(DISTINCT dwd_order_detail.order_id) AS order_count",
+      "source_file": "dws_customer_order_summary.sql"
+    },
+    {
+      "source": "dwd_order_detail.price",
+      "target": "dws_customer_order_summary.total_price",
+      "expression": "ROUND(SUM(dwd_order_detail.price), 2) AS total_price",
+      "source_file": "dws_customer_order_summary.sql"
+    },
+    {
+      "source": "dwd_order_detail.freight_value",
+      "target": "dws_customer_order_summary.total_freight",
+      "expression": "ROUND(SUM(dwd_order_detail.freight_value), 2) AS total_freight",
+      "source_file": "dws_customer_order_summary.sql"
+    },
+    {
+      "source": "dwd_order_detail.freight_value",
+      "target": "dws_customer_order_summary.total_revenue",
+      "expression": "ROUND(SUM(dwd_order_detail.price + dwd_order_detail.freight_value), 2) AS total_revenue",
+      "source_file": "dws_customer_order_summary.sql"
+    },
+    {
+      "source": "dwd_order_detail.price",
+      "target": "dws_customer_order_summary.total_revenue",
+      "expression": "ROUND(SUM(dwd_order_detail.price + dwd_order_detail.freight_value), 2) AS total_revenue",
+      "source_file": "dws_customer_order_summary.sql"
+    },
+    {
+      "source": "dwd_order_detail.freight_value",
+      "target": "dws_customer_order_summary.avg_order_value",
+      "expression": "ROUND(SUM(dwd_order_detail.price + dwd_order_detail.freight_value) / NULLIF(COUNT(DISTINCT dwd_order_detail.order_id), 0), 2) AS avg_order_value",
+      "source_file": "dws_customer_order_summary.sql"
+    },
+    {
+      "source": "dwd_order_detail.order_id",
+      "target": "dws_customer_order_summary.avg_order_value",
+      "expression": "ROUND(SUM(dwd_order_detail.price + dwd_order_detail.freight_value) / NULLIF(COUNT(DISTINCT dwd_order_detail.order_id), 0), 2) AS avg_order_value",
+      "source_file": "dws_customer_order_summary.sql"
+    },
+    {
+      "source": "dwd_order_detail.price",
+      "target": "dws_customer_order_summary.avg_order_value",
+      "expression": "ROUND(SUM(dwd_order_detail.price + dwd_order_detail.freight_value) / NULLIF(COUNT(DISTINCT dwd_order_detail.order_id), 0), 2) AS avg_order_value",
+      "source_file": "dws_customer_order_summary.sql"
+    },
+    {
+      "source": "dwd_order_detail.order_purchase_timestamp",
+      "target": "dws_daily_orders.stat_date",
+      "expression": "TO_DATE(dwd_order_detail.order_purchase_timestamp) AS stat_date",
+      "source_file": "dws_daily_orders.sql"
+    },
+    {
+      "source": "dwd_order_detail.order_id",
+      "target": "dws_daily_orders.order_count",
+      "expression": "COUNT(DISTINCT dwd_order_detail.order_id) AS order_count",
+      "source_file": "dws_daily_orders.sql"
+    },
+    {
+      "source": "dwd_order_detail.customer_id",
+      "target": "dws_daily_orders.customer_count",
+      "expression": "COUNT(DISTINCT dwd_order_detail.customer_id) AS customer_count",
+      "source_file": "dws_daily_orders.sql"
+    },
+    {
+      "source": "dwd_order_detail.order_item_id",
+      "target": "dws_daily_orders.item_count",
+      "expression": "COUNT(DISTINCT dwd_order_detail.order_item_id) AS item_count",
+      "source_file": "dws_daily_orders.sql"
+    },
+    {
+      "source": "dwd_order_detail.freight_value",
+      "target": "dws_daily_orders.total_revenue",
+      "expression": "ROUND(SUM(dwd_order_detail.price + dwd_order_detail.freight_value), 2) AS total_revenue",
+      "source_file": "dws_daily_orders.sql"
+    },
+    {
+      "source": "dwd_order_detail.price",
+      "target": "dws_daily_orders.total_revenue",
+      "expression": "ROUND(SUM(dwd_order_detail.price + dwd_order_detail.freight_value), 2) AS total_revenue",
+      "source_file": "dws_daily_orders.sql"
+    },
+    {
+      "source": "dwd_order_detail.freight_value",
+      "target": "dws_daily_orders.total_freight",
+      "expression": "ROUND(SUM(dwd_order_detail.freight_value), 2) AS total_freight",
+      "source_file": "dws_daily_orders.sql"
+    },
+    {
+      "source": "dwd_order_detail.freight_value",
+      "target": "dws_daily_orders.avg_order_value",
+      "expression": "ROUND(SUM(dwd_order_detail.price + dwd_order_detail.freight_value) / NULLIF(COUNT(DISTINCT dwd_order_detail.order_id), 0), 2) AS avg_order_value",
+      "source_file": "dws_daily_orders.sql"
+    },
+    {
+      "source": "dwd_order_detail.order_id",
+      "target": "dws_daily_orders.avg_order_value",
+      "expression": "ROUND(SUM(dwd_order_detail.price + dwd_order_detail.freight_value) / NULLIF(COUNT(DISTINCT dwd_order_detail.order_id), 0), 2) AS avg_order_value",
+      "source_file": "dws_daily_orders.sql"
+    },
+    {
+      "source": "dwd_order_detail.price",
+      "target": "dws_daily_orders.avg_order_value",
+      "expression": "ROUND(SUM(dwd_order_detail.price + dwd_order_detail.freight_value) / NULLIF(COUNT(DISTINCT dwd_order_detail.order_id), 0), 2) AS avg_order_value",
+      "source_file": "dws_daily_orders.sql"
+    },
+    {
+      "source": "dwd_order_detail.delivery_delay_days",
+      "target": "dws_daily_orders.late_delivery_count",
+      "expression": "SUM(CASE WHEN dwd_order_detail.delivery_delay_days > 0 THEN 1 ELSE 0 END) AS late_delivery_count",
+      "source_file": "dws_daily_orders.sql"
+    },
+    {
+      "source": "dwd_order_detail.delivery_delay_days",
+      "target": "dws_daily_orders.on_time_count",
+      "expression": "SUM(CASE WHEN dwd_order_detail.delivery_delay_days = 0 THEN 1 ELSE 0 END) AS on_time_count",
+      "source_file": "dws_daily_orders.sql"
+    },
+    {
+      "source": "dwd_order_detail.delivery_days",
+      "target": "dws_daily_orders.avg_delivery_days",
+      "expression": "ROUND(AVG(dwd_order_detail.delivery_days), 2) AS avg_delivery_days",
+      "source_file": "dws_daily_orders.sql"
+    },
+    {
+      "source": "dwd_order_detail.delivery_delay_days",
+      "target": "dws_daily_orders.avg_delay_days",
+      "expression": "ROUND(AVG(CASE WHEN dwd_order_detail.delivery_delay_days > 0 THEN dwd_order_detail.delivery_delay_days ELSE NULL END), 2) AS avg_delay_days",
+      "source_file": "dws_daily_orders.sql"
+    },
+    {
+      "source": "dwd_order_detail.delivery_delay_days",
+      "target": "dws_daily_orders.max_delay_days",
+      "expression": "MAX(dwd_order_detail.delivery_delay_days) AS max_delay_days",
+      "source_file": "dws_daily_orders.sql"
+    },
+    {
+      "source": "dwd_order_detail.product_category_name_english",
+      "target": "dws_product_category_monthly.product_category_name_english",
+      "expression": "dwd_order_detail.product_category_name_english AS product_category_name_english",
+      "source_file": "dws_product_category_monthly.sql"
+    },
+    {
+      "source": "dwd_order_detail.order_month",
+      "target": "dws_product_category_monthly.stat_month",
+      "expression": "dwd_order_detail.order_month AS stat_month",
+      "source_file": "dws_product_category_monthly.sql"
+    },
+    {
+      "source": "dwd_order_detail.order_id",
+      "target": "dws_product_category_monthly.order_count",
+      "expression": "COUNT(DISTINCT dwd_order_detail.order_id) AS order_count",
+      "source_file": "dws_product_category_monthly.sql"
+    },
+    {
+      "source": "dwd_order_detail.order_item_id",
+      "target": "dws_product_category_monthly.item_count",
+      "expression": "COUNT(DISTINCT dwd_order_detail.order_item_id) AS item_count",
+      "source_file": "dws_product_category_monthly.sql"
+    },
+    {
+      "source": "dwd_order_detail.freight_value",
+      "target": "dws_product_category_monthly.total_revenue",
+      "expression": "ROUND(SUM(dwd_order_detail.price + dwd_order_detail.freight_value), 2) AS total_revenue",
+      "source_file": "dws_product_category_monthly.sql"
+    },
+    {
+      "source": "dwd_order_detail.price",
+      "target": "dws_product_category_monthly.total_revenue",
+      "expression": "ROUND(SUM(dwd_order_detail.price + dwd_order_detail.freight_value), 2) AS total_revenue",
+      "source_file": "dws_product_category_monthly.sql"
+    },
+    {
+      "source": "dwd_order_detail.price",
+      "target": "dws_product_category_monthly.avg_price",
+      "expression": "ROUND(AVG(dwd_order_detail.price), 2) AS avg_price",
+      "source_file": "dws_product_category_monthly.sql"
+    },
+    {
+      "source": "dwd_order_detail.freight_value",
+      "target": "dws_product_category_monthly.avg_freight",
+      "expression": "ROUND(AVG(dwd_order_detail.freight_value), 2) AS avg_freight",
+      "source_file": "dws_product_category_monthly.sql"
+    },
+    {
+      "source": "dwd_order_detail.review_score",
+      "target": "dws_product_category_monthly.avg_review_score",
+      "expression": "ROUND(AVG(dwd_order_detail.review_score), 2) AS avg_review_score",
+      "source_file": "dws_product_category_monthly.sql"
+    },
+    {
+      "source": "dwd_order_detail.seller_id",
+      "target": "dws_seller_monthly.seller_id",
+      "expression": "dwd_order_detail.seller_id AS seller_id",
+      "source_file": "dws_seller_monthly.sql"
+    },
+    {
+      "source": "dwd_order_detail.order_month",
+      "target": "dws_seller_monthly.stat_month",
+      "expression": "dwd_order_detail.order_month AS stat_month",
+      "source_file": "dws_seller_monthly.sql"
+    },
+    {
+      "source": "dwd_order_detail.order_id",
+      "target": "dws_seller_monthly.order_count",
+      "expression": "COUNT(DISTINCT dwd_order_detail.order_id) AS order_count",
+      "source_file": "dws_seller_monthly.sql"
+    },
+    {
+      "source": "dwd_order_detail.order_item_id",
+      "target": "dws_seller_monthly.item_count",
+      "expression": "COUNT(DISTINCT dwd_order_detail.order_item_id) AS item_count",
+      "source_file": "dws_seller_monthly.sql"
+    },
+    {
+      "source": "dwd_order_detail.freight_value",
+      "target": "dws_seller_monthly.total_revenue",
+      "expression": "ROUND(SUM(dwd_order_detail.price + dwd_order_detail.freight_value), 2) AS total_revenue",
+      "source_file": "dws_seller_monthly.sql"
+    },
+    {
+      "source": "dwd_order_detail.price",
+      "target": "dws_seller_monthly.total_revenue",
+      "expression": "ROUND(SUM(dwd_order_detail.price + dwd_order_detail.freight_value), 2) AS total_revenue",
+      "source_file": "dws_seller_monthly.sql"
+    },
+    {
+      "source": "dwd_order_detail.price",
+      "target": "dws_seller_monthly.total_price",
+      "expression": "ROUND(SUM(dwd_order_detail.price), 2) AS total_price",
+      "source_file": "dws_seller_monthly.sql"
+    },
+    {
+      "source": "dwd_order_detail.freight_value",
+      "target": "dws_seller_monthly.total_freight",
+      "expression": "ROUND(SUM(dwd_order_detail.freight_value), 2) AS total_freight",
+      "source_file": "dws_seller_monthly.sql"
+    },
+    {
+      "source": "dwd_order_detail.review_score",
+      "target": "dws_seller_monthly.avg_review_score",
+      "expression": "ROUND(AVG(dwd_order_detail.review_score), 2) AS avg_review_score",
+      "source_file": "dws_seller_monthly.sql"
+    }
+  ],
+  "tables": [
+    {
+      "name": "dws_product_category_monthly",
+      "full_name": "olist_dm.dws_product_category_monthly",
+      "layer": "DWS",
+      "columns": [
+        {
+          "name": "product_category_name_english",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "stat_month",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "order_count",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "item_count",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "total_revenue",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "avg_price",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "avg_review_score",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "avg_freight",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "etl_time",
+          "type": "DATETIME"
+        }
+      ]
+    },
+    {
+      "name": "ads_category_monthly_trend",
+      "full_name": "olist_dm.ads_category_monthly_trend",
+      "layer": "ADS",
+      "columns": [
+        {
+          "name": "product_category_name_english",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "stat_month",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "order_count",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "item_count",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "total_revenue",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "avg_price",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "avg_review_score",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "revenue_growth_rate",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "etl_time",
+          "type": "DATETIME"
+        }
+      ]
+    },
+    {
+      "name": "dws_customer_order_summary",
+      "full_name": "olist_dm.dws_customer_order_summary",
+      "layer": "DWS",
+      "columns": [
+        {
+          "name": "customer_id",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "stat_date",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "order_count",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "total_revenue",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "total_price",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "total_freight",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "avg_order_value",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "etl_time",
+          "type": "DATETIME"
+        }
+      ]
+    },
+    {
+      "name": "ads_customer_rfm",
+      "full_name": "olist_dm.ads_customer_rfm",
+      "layer": "ADS",
+      "columns": [
+        {
+          "name": "customer_id",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "recency_days",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "frequency",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "monetary",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "r_score",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "f_score",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "m_score",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "rfm_score",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "customer_segment",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "stat_date",
+          "type": "DATE"
+        },
+        {
+          "name": "etl_time",
+          "type": "DATETIME"
+        }
+      ]
+    },
+    {
+      "name": "dws_daily_orders",
+      "full_name": "olist_dm.dws_daily_orders",
+      "layer": "DWS",
+      "columns": [
+        {
+          "name": "stat_date",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "order_count",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "on_time_count",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "late_delivery_count",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "avg_delivery_days",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "avg_delay_days",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "max_delay_days",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "customer_count",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "item_count",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "total_revenue",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "total_freight",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "avg_order_value",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "etl_time",
+          "type": "DATETIME"
+        }
+      ]
+    },
+    {
+      "name": "ads_delivery_performance",
+      "full_name": "olist_dm.ads_delivery_performance",
+      "layer": "ADS",
+      "columns": [
+        {
+          "name": "stat_date",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "order_count",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "on_time_count",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "late_count",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "on_time_rate",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "avg_delivery_days",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "avg_delay_days",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "max_delay_days",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "etl_time",
+          "type": "DATETIME"
+        }
+      ]
+    },
+    {
+      "name": "dwd_order_detail",
+      "full_name": "olist_dm.dwd_order_detail",
+      "layer": "DWD",
+      "columns": [
+        {
+          "name": "order_month",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "order_id",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "customer_id",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "freight_value",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "price",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "payment_type",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "payment_installments",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "order_purchase_timestamp",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "product_id",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "order_item_id",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "review_score",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "delivery_days",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "seller_id",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "product_category_name",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "product_category_name_english",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "order_status",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "order_delivered_customer_date",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "order_estimated_delivery_date",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "estimated_delivery_days",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "delivery_delay_days",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "etl_time",
+          "type": "DATETIME"
+        }
+      ]
+    },
+    {
+      "name": "ads_geographic_sales",
+      "full_name": "olist_dm.ads_geographic_sales",
+      "layer": "ADS",
+      "columns": [
+        {
+          "name": "stat_month",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "customer_state",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "customer_region",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "order_count",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "customer_count",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "total_revenue",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "avg_freight",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "etl_time",
+          "type": "DATETIME"
+        }
+      ]
+    },
+    {
+      "name": "dwd_customer",
+      "full_name": "olist_dm.dwd_customer",
+      "layer": "DWD",
+      "columns": [
+        {
+          "name": "customer_state",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "customer_region",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "customer_id",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "customer_unique_id",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "customer_city",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "etl_time",
+          "type": "DATETIME"
+        }
+      ]
+    },
+    {
+      "name": "ads_payment_analysis",
+      "full_name": "olist_dm.ads_payment_analysis",
+      "layer": "ADS",
+      "columns": [
+        {
+          "name": "stat_month",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "payment_type",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "total_value",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "avg_installments",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "payment_pct",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "transaction_count",
+          "type": "INT"
+        },
+        {
+          "name": "etl_time",
+          "type": "DATETIME"
+        }
+      ]
+    },
+    {
+      "name": "ads_product_topn",
+      "full_name": "olist_dm.ads_product_topn",
+      "layer": "ADS",
+      "columns": [
+        {
+          "name": "stat_date",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "product_id",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "product_category_name_english",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "item_count",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "total_revenue",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "avg_price",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "rank_num",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "etl_time",
+          "type": "DATETIME"
+        }
+      ]
+    },
+    {
+      "name": "dwd_product",
+      "full_name": "olist_dm.dwd_product",
+      "layer": "DWD",
+      "columns": [
+        {
+          "name": "product_category_name_english",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "product_id",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "product_category_name",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "product_name_length",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "product_description_length",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "product_photos_qty",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "product_weight_g",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "product_length_cm",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "product_height_cm",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "product_width_cm",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "product_volume_cm3",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "product_weight_class",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "etl_time",
+          "type": "DATETIME"
+        }
+      ]
+    },
+    {
+      "name": "ads_review_analysis",
+      "full_name": "olist_dm.ads_review_analysis",
+      "layer": "ADS",
+      "columns": [
+        {
+          "name": "stat_month",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "review_score",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "avg_delivery_days",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "review_count",
+          "type": "INT"
+        },
+        {
+          "name": "score_pct",
+          "type": "DECIMAL(5, 2)"
+        },
+        {
+          "name": "etl_time",
+          "type": "DATETIME"
+        }
+      ]
+    },
+    {
+      "name": "dws_seller_monthly",
+      "full_name": "olist_dm.dws_seller_monthly",
+      "layer": "DWS",
+      "columns": [
+        {
+          "name": "stat_month",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "seller_id",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "order_count",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "total_revenue",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "avg_review_score",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "item_count",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "total_price",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "total_freight",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "etl_time",
+          "type": "DATETIME"
+        }
+      ]
+    },
+    {
+      "name": "ads_seller_performance_ranking",
+      "full_name": "olist_dm.ads_seller_performance_ranking",
+      "layer": "ADS",
+      "columns": [
+        {
+          "name": "stat_month",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "seller_id",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "seller_city",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "seller_state",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "order_count",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "total_revenue",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "avg_review_score",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "revenue_rank",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "score_rank",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "performance_score",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "etl_time",
+          "type": "DATETIME"
+        }
+      ]
+    },
+    {
+      "name": "dwd_seller",
+      "full_name": "olist_dm.dwd_seller",
+      "layer": "DWD",
+      "columns": [
+        {
+          "name": "seller_city",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "seller_state",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "seller_id",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "seller_region",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "seller_zip_code_prefix",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "etl_time",
+          "type": "DATETIME"
+        }
+      ]
+    },
+    {
+      "name": "ods_customer",
+      "full_name": "olist_dm.ods_customer",
+      "layer": "ODS",
+      "columns": [
+        {
+          "name": "customer_id",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "customer_unique_id",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "customer_city",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "customer_state",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "customer_zip_code_prefix",
+          "type": "VARCHAR(8)"
+        }
+      ]
+    },
+    {
+      "name": "ods_order_item",
+      "full_name": "olist_dm.ods_order_item",
+      "layer": "ODS",
+      "columns": [
+        {
+          "name": "order_id",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "order_item_id",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "seller_id",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "product_id",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "price",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "freight_value",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "shipping_limit_date",
+          "type": "DATETIME"
+        }
+      ]
+    },
+    {
+      "name": "ods_order",
+      "full_name": "olist_dm.ods_order",
+      "layer": "ODS",
+      "columns": [
+        {
+          "name": "customer_id",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "order_status",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "order_purchase_timestamp",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "order_delivered_customer_date",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "order_estimated_delivery_date",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "order_id",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "order_approved_at",
+          "type": "DATETIME"
+        },
+        {
+          "name": "order_delivered_carrier_date",
+          "type": "DATETIME"
+        }
+      ]
+    },
+    {
+      "name": "ods_product",
+      "full_name": "olist_dm.ods_product",
+      "layer": "ODS",
+      "columns": [
+        {
+          "name": "product_category_name",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "product_id",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "product_name_lenght",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "product_description_lenght",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "product_photos_qty",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "product_weight_g",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "product_length_cm",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "product_height_cm",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "product_width_cm",
+          "type": "UNKNOWN"
+        }
+      ]
+    },
+    {
+      "name": "ods_category_translation",
+      "full_name": "olist_dm.ods_category_translation",
+      "layer": "ODS",
+      "columns": [
+        {
+          "name": "product_category_name_english",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "product_category_name",
+          "type": "UNKNOWN"
+        }
+      ]
+    },
+    {
+      "name": "ods_payment",
+      "full_name": "olist_dm.ods_payment",
+      "layer": "ODS",
+      "columns": [
+        {
+          "name": "payment_type",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "payment_installments",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "order_id",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "payment_sequential",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "payment_value",
+          "type": "DECIMAL(12, 2)"
+        }
+      ]
+    },
+    {
+      "name": "ods_review",
+      "full_name": "olist_dm.ods_review",
+      "layer": "ODS",
+      "columns": [
+        {
+          "name": "review_score",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "review_id",
+          "type": "VARCHAR(64)"
+        },
+        {
+          "name": "order_id",
+          "type": "VARCHAR(64)"
+        },
+        {
+          "name": "review_comment_title",
+          "type": "VARCHAR(128)"
+        },
+        {
+          "name": "review_comment_message",
+          "type": "STRING"
+        },
+        {
+          "name": "review_creation_date",
+          "type": "DATETIME"
+        },
+        {
+          "name": "review_answer_timestamp",
+          "type": "DATETIME"
+        }
+      ]
+    },
+    {
+      "name": "ods_seller",
+      "full_name": "olist_dm.ods_seller",
+      "layer": "ODS",
+      "columns": [
+        {
+          "name": "seller_id",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "seller_city",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "seller_state",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "seller_zip_code_prefix",
+          "type": "UNKNOWN"
+        }
+      ]
+    },
+    {
+      "name": "payment_monthly",
+      "full_name": "olist_dm.payment_monthly",
+      "layer": "OTHER",
+      "columns": [
+        {
+          "name": "stat_month",
+          "type": "UNKNOWN"
+        }
+      ]
+    },
+    {
+      "name": "monthly_totals",
+      "full_name": "olist_dm.monthly_totals",
+      "layer": "OTHER",
+      "columns": [
+        {
+          "name": "stat_month",
+          "type": "UNKNOWN"
+        }
+      ]
+    },
+    {
+      "name": "review_monthly",
+      "full_name": "olist_dm.review_monthly",
+      "layer": "OTHER",
+      "columns": [
+        {
+          "name": "stat_month",
+          "type": "UNKNOWN"
+        }
+      ]
+    },
+    {
+      "name": "r",
+      "full_name": "olist_dm.r",
+      "layer": "OTHER",
+      "columns": [
+        {
+          "name": "order_id",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "rn",
+          "type": "UNKNOWN"
+        }
+      ]
+    }
+  ],
+  "indirect_edges": [
+    {
+      "source": "ads_category_monthly_trend.revenue_growth_rate",
+      "target_table": "ads_category_monthly_trend",
+      "condition_type": "WHERE",
+      "condition_expression": "revenue_growth_rate IS NULL",
+      "source_file": "ads_category_monthly_trend.sql"
+    },
+    {
+      "source": "ads_category_monthly_trend.avg_review_score",
+      "target_table": "ads_category_monthly_trend",
+      "condition_type": "WHERE",
+      "condition_expression": "avg_review_score IS NULL",
+      "source_file": "ads_category_monthly_trend.sql"
+    },
+    {
+      "source": "ads_category_monthly_trend.total_revenue",
+      "target_table": "ads_category_monthly_trend",
+      "condition_type": "WHERE",
+      "condition_expression": "total_revenue = 0",
+      "source_file": "ads_category_monthly_trend.sql"
+    },
+    {
+      "source": "dws_customer_order_summary.customer_id",
+      "target_table": "ads_customer_rfm",
+      "condition_type": "GROUP_BY",
+      "condition_expression": "customer_id",
+      "source_file": "ads_customer_rfm.sql"
+    },
+    {
+      "source": "ads_customer_rfm.customer_segment",
+      "target_table": "ads_customer_rfm",
+      "condition_type": "WHERE",
+      "condition_expression": "customer_segment IS NULL",
+      "source_file": "ads_customer_rfm.sql"
+    },
+    {
+      "source": "ads_delivery_performance.on_time_rate",
+      "target_table": "ads_delivery_performance",
+      "condition_type": "WHERE",
+      "condition_expression": "on_time_rate IS NULL",
+      "source_file": "ads_delivery_performance.sql"
+    },
+    {
+      "source": "ads_delivery_performance.order_count",
+      "target_table": "ads_delivery_performance",
+      "condition_type": "WHERE",
+      "condition_expression": "order_count = 0",
+      "source_file": "ads_delivery_performance.sql"
+    },
+    {
+      "source": "dwd_order_detail.customer_id",
+      "target_table": "ads_geographic_sales",
+      "condition_type": "JOIN_ON",
+      "condition_expression": "dod.customer_id = dc.customer_id",
+      "source_file": "ads_geographic_sales.sql"
+    },
+    {
+      "source": "dwd_customer.customer_id",
+      "target_table": "ads_geographic_sales",
+      "condition_type": "JOIN_ON",
+      "condition_expression": "dod.customer_id = dc.customer_id",
+      "source_file": "ads_geographic_sales.sql"
+    },
+    {
+      "source": "dwd_order_detail.order_month",
+      "target_table": "ads_geographic_sales",
+      "condition_type": "GROUP_BY",
+      "condition_expression": "dod.order_month",
+      "source_file": "ads_geographic_sales.sql"
+    },
+    {
+      "source": "dwd_customer.customer_state",
+      "target_table": "ads_geographic_sales",
+      "condition_type": "GROUP_BY",
+      "condition_expression": "dc.customer_state",
+      "source_file": "ads_geographic_sales.sql"
+    },
+    {
+      "source": "dwd_customer.customer_region",
+      "target_table": "ads_geographic_sales",
+      "condition_type": "GROUP_BY",
+      "condition_expression": "dc.customer_region",
+      "source_file": "ads_geographic_sales.sql"
+    },
+    {
+      "source": "ads_geographic_sales.customer_state",
+      "target_table": "ads_geographic_sales",
+      "condition_type": "WHERE",
+      "condition_expression": "customer_state IS NULL",
+      "source_file": "ads_geographic_sales.sql"
+    },
+    {
+      "source": "ads_geographic_sales.total_revenue",
+      "target_table": "ads_geographic_sales",
+      "condition_type": "WHERE",
+      "condition_expression": "total_revenue = 0",
+      "source_file": "ads_geographic_sales.sql"
+    },
+    {
+      "source": "dwd_order_detail.payment_type",
+      "target_table": "ads_payment_analysis",
+      "condition_type": "WHERE",
+      "condition_expression": "NOT payment_type IS NULL",
+      "source_file": "ads_payment_analysis.sql"
+    },
+    {
+      "source": "dwd_order_detail.order_month",
+      "target_table": "ads_payment_analysis",
+      "condition_type": "GROUP_BY",
+      "condition_expression": "order_month",
+      "source_file": "ads_payment_analysis.sql"
+    },
+    {
+      "source": "dwd_order_detail.payment_type",
+      "target_table": "ads_payment_analysis",
+      "condition_type": "GROUP_BY",
+      "condition_expression": "payment_type",
+      "source_file": "ads_payment_analysis.sql"
+    },
+    {
+      "source": "payment_monthly.stat_month",
+      "target_table": "ads_payment_analysis",
+      "condition_type": "GROUP_BY",
+      "condition_expression": "stat_month",
+      "source_file": "ads_payment_analysis.sql"
+    },
+    {
+      "source": "payment_monthly.stat_month",
+      "target_table": "ads_payment_analysis",
+      "condition_type": "JOIN_ON",
+      "condition_expression": "pm.stat_month = mt.stat_month",
+      "source_file": "ads_payment_analysis.sql"
+    },
+    {
+      "source": "monthly_totals.stat_month",
+      "target_table": "ads_payment_analysis",
+      "condition_type": "JOIN_ON",
+      "condition_expression": "pm.stat_month = mt.stat_month",
+      "source_file": "ads_payment_analysis.sql"
+    },
+    {
+      "source": "ads_payment_analysis.payment_pct",
+      "target_table": "ads_payment_analysis",
+      "condition_type": "WHERE",
+      "condition_expression": "payment_pct IS NULL",
+      "source_file": "ads_payment_analysis.sql"
+    },
+    {
+      "source": "ads_payment_analysis.total_value",
+      "target_table": "ads_payment_analysis",
+      "condition_type": "WHERE",
+      "condition_expression": "total_value = 0",
+      "source_file": "ads_payment_analysis.sql"
+    },
+    {
+      "source": "dwd_order_detail.product_id",
+      "target_table": "ads_product_topn",
+      "condition_type": "JOIN_ON",
+      "condition_expression": "dod.product_id = dp.product_id",
+      "source_file": "ads_product_topn.sql"
+    },
+    {
+      "source": "dwd_product.product_id",
+      "target_table": "ads_product_topn",
+      "condition_type": "JOIN_ON",
+      "condition_expression": "dod.product_id = dp.product_id",
+      "source_file": "ads_product_topn.sql"
+    },
+    {
+      "source": "dwd_order_detail.order_purchase_timestamp",
+      "target_table": "ads_product_topn",
+      "condition_type": "GROUP_BY",
+      "condition_expression": "TO_DATE(dod.order_purchase_timestamp)",
+      "source_file": "ads_product_topn.sql"
+    },
+    {
+      "source": "dwd_order_detail.product_id",
+      "target_table": "ads_product_topn",
+      "condition_type": "GROUP_BY",
+      "condition_expression": "dod.product_id",
+      "source_file": "ads_product_topn.sql"
+    },
+    {
+      "source": "dwd_product.product_category_name_english",
+      "target_table": "ads_product_topn",
+      "condition_type": "GROUP_BY",
+      "condition_expression": "dp.product_category_name_english",
+      "source_file": "ads_product_topn.sql"
+    },
+    {
+      "source": "ads_product_topn.product_category_name_english",
+      "target_table": "ads_product_topn",
+      "condition_type": "WHERE",
+      "condition_expression": "product_category_name_english IS NULL",
+      "source_file": "ads_product_topn.sql"
+    },
+    {
+      "source": "ads_product_topn.rank_num",
+      "target_table": "ads_product_topn",
+      "condition_type": "WHERE",
+      "condition_expression": "rank_num > 20",
+      "source_file": "ads_product_topn.sql"
+    },
+    {
+      "source": "dwd_order_detail.review_score",
+      "target_table": "ads_review_analysis",
+      "condition_type": "WHERE",
+      "condition_expression": "NOT review_score IS NULL",
+      "source_file": "ads_review_analysis.sql"
+    },
+    {
+      "source": "dwd_order_detail.order_month",
+      "target_table": "ads_review_analysis",
+      "condition_type": "GROUP_BY",
+      "condition_expression": "order_month",
+      "source_file": "ads_review_analysis.sql"
+    },
+    {
+      "source": "dwd_order_detail.review_score",
+      "target_table": "ads_review_analysis",
+      "condition_type": "GROUP_BY",
+      "condition_expression": "review_score",
+      "source_file": "ads_review_analysis.sql"
+    },
+    {
+      "source": "review_monthly.stat_month",
+      "target_table": "ads_review_analysis",
+      "condition_type": "GROUP_BY",
+      "condition_expression": "stat_month",
+      "source_file": "ads_review_analysis.sql"
+    },
+    {
+      "source": "review_monthly.stat_month",
+      "target_table": "ads_review_analysis",
+      "condition_type": "JOIN_ON",
+      "condition_expression": "rm.stat_month = mt.stat_month",
+      "source_file": "ads_review_analysis.sql"
+    },
+    {
+      "source": "monthly_totals.stat_month",
+      "target_table": "ads_review_analysis",
+      "condition_type": "JOIN_ON",
+      "condition_expression": "rm.stat_month = mt.stat_month",
+      "source_file": "ads_review_analysis.sql"
+    },
+    {
+      "source": "dws_seller_monthly.seller_id",
+      "target_table": "ads_seller_performance_ranking",
+      "condition_type": "JOIN_ON",
+      "condition_expression": "sm.seller_id = ds.seller_id",
+      "source_file": "ads_seller_performance_ranking.sql"
+    },
+    {
+      "source": "dwd_seller.seller_id",
+      "target_table": "ads_seller_performance_ranking",
+      "condition_type": "JOIN_ON",
+      "condition_expression": "sm.seller_id = ds.seller_id",
+      "source_file": "ads_seller_performance_ranking.sql"
+    },
+    {
+      "source": "ads_seller_performance_ranking.seller_city",
+      "target_table": "ads_seller_performance_ranking",
+      "condition_type": "WHERE",
+      "condition_expression": "seller_city IS NULL",
+      "source_file": "ads_seller_performance_ranking.sql"
+    },
+    {
+      "source": "ads_seller_performance_ranking.performance_score",
+      "target_table": "ads_seller_performance_ranking",
+      "condition_type": "WHERE",
+      "condition_expression": "performance_score IS NULL",
+      "source_file": "ads_seller_performance_ranking.sql"
+    },
+    {
+      "source": "dwd_customer.customer_city",
+      "target_table": "dwd_customer",
+      "condition_type": "WHERE",
+      "condition_expression": "customer_city IS NULL OR customer_city = ''",
+      "source_file": "dwd_customer.sql"
+    },
+    {
+      "source": "dwd_customer.customer_region",
+      "target_table": "dwd_customer",
+      "condition_type": "WHERE",
+      "condition_expression": "customer_region IS NULL",
+      "source_file": "dwd_customer.sql"
+    },
+    {
+      "source": "ods_order_item.order_id",
+      "target_table": "dwd_order_detail",
+      "condition_type": "JOIN_ON",
+      "condition_expression": "oi.order_id = o.order_id",
+      "source_file": "dwd_order_detail.sql"
+    },
+    {
+      "source": "ods_order.order_id",
+      "target_table": "dwd_order_detail",
+      "condition_type": "JOIN_ON",
+      "condition_expression": "oi.order_id = o.order_id",
+      "source_file": "dwd_order_detail.sql"
+    },
+    {
+      "source": "ods_order_item.product_id",
+      "target_table": "dwd_order_detail",
+      "condition_type": "JOIN_ON",
+      "condition_expression": "oi.product_id = p.product_id",
+      "source_file": "dwd_order_detail.sql"
+    },
+    {
+      "source": "ods_product.product_id",
+      "target_table": "dwd_order_detail",
+      "condition_type": "JOIN_ON",
+      "condition_expression": "oi.product_id = p.product_id",
+      "source_file": "dwd_order_detail.sql"
+    },
+    {
+      "source": "ods_product.product_category_name",
+      "target_table": "dwd_order_detail",
+      "condition_type": "JOIN_ON",
+      "condition_expression": "p.product_category_name = ct.product_category_name",
+      "source_file": "dwd_order_detail.sql"
+    },
+    {
+      "source": "ods_category_translation.product_category_name",
+      "target_table": "dwd_order_detail",
+      "condition_type": "JOIN_ON",
+      "condition_expression": "p.product_category_name = ct.product_category_name",
+      "source_file": "dwd_order_detail.sql"
+    },
+    {
+      "source": "ods_payment.order_id",
+      "target_table": "dwd_order_detail",
+      "condition_type": "JOIN_ON",
+      "condition_expression": "oi.order_id = py.order_id AND py.payment_sequential = 1",
+      "source_file": "dwd_order_detail.sql"
+    },
+    {
+      "source": "ods_payment.payment_sequential",
+      "target_table": "dwd_order_detail",
+      "condition_type": "JOIN_ON",
+      "condition_expression": "oi.order_id = py.order_id AND py.payment_sequential = 1",
+      "source_file": "dwd_order_detail.sql"
+    },
+    {
+      "source": "r.order_id",
+      "target_table": "dwd_order_detail",
+      "condition_type": "JOIN_ON",
+      "condition_expression": "oi.order_id = r.order_id AND r.rn = 1",
+      "source_file": "dwd_order_detail.sql"
+    },
+    {
+      "source": "r.rn",
+      "target_table": "dwd_order_detail",
+      "condition_type": "JOIN_ON",
+      "condition_expression": "oi.order_id = r.order_id AND r.rn = 1",
+      "source_file": "dwd_order_detail.sql"
+    },
+    {
+      "source": "dwd_order_detail.order_status",
+      "target_table": "dwd_order_detail",
+      "condition_type": "WHERE",
+      "condition_expression": "order_status <> 'delivered'",
+      "source_file": "dwd_order_detail.sql"
+    },
+    {
+      "source": "dwd_order_detail.payment_type",
+      "target_table": "dwd_order_detail",
+      "condition_type": "WHERE",
+      "condition_expression": "payment_type IS NULL OR payment_type = ''",
+      "source_file": "dwd_order_detail.sql"
+    },
+    {
+      "source": "dwd_order_detail.review_score",
+      "target_table": "dwd_order_detail",
+      "condition_type": "WHERE",
+      "condition_expression": "review_score IS NULL",
+      "source_file": "dwd_order_detail.sql"
+    },
+    {
+      "source": "dwd_order_detail.product_category_name",
+      "target_table": "dwd_order_detail",
+      "condition_type": "WHERE",
+      "condition_expression": "product_category_name IS NULL",
+      "source_file": "dwd_order_detail.sql"
+    },
+    {
+      "source": "dwd_order_detail.delivery_days",
+      "target_table": "dwd_order_detail",
+      "condition_type": "WHERE",
+      "condition_expression": "delivery_days IS NULL",
+      "source_file": "dwd_order_detail.sql"
+    },
+    {
+      "source": "ods_product.product_category_name",
+      "target_table": "dwd_product",
+      "condition_type": "JOIN_ON",
+      "condition_expression": "p.product_category_name = ct.product_category_name",
+      "source_file": "dwd_product.sql"
+    },
+    {
+      "source": "ods_category_translation.product_category_name",
+      "target_table": "dwd_product",
+      "condition_type": "JOIN_ON",
+      "condition_expression": "p.product_category_name = ct.product_category_name",
+      "source_file": "dwd_product.sql"
+    },
+    {
+      "source": "dwd_product.product_category_name",
+      "target_table": "dwd_product",
+      "condition_type": "WHERE",
+      "condition_expression": "product_category_name IS NULL",
+      "source_file": "dwd_product.sql"
+    },
+    {
+      "source": "dwd_product.product_weight_class",
+      "target_table": "dwd_product",
+      "condition_type": "WHERE",
+      "condition_expression": "product_weight_class IS NULL",
+      "source_file": "dwd_product.sql"
+    },
+    {
+      "source": "dwd_seller.seller_city",
+      "target_table": "dwd_seller",
+      "condition_type": "WHERE",
+      "condition_expression": "seller_city IS NULL OR seller_city = ''",
+      "source_file": "dwd_seller.sql"
+    },
+    {
+      "source": "dwd_seller.seller_region",
+      "target_table": "dwd_seller",
+      "condition_type": "WHERE",
+      "condition_expression": "seller_region IS NULL",
+      "source_file": "dwd_seller.sql"
+    },
+    {
+      "source": "dwd_order_detail.customer_id",
+      "target_table": "dws_customer_order_summary",
+      "condition_type": "GROUP_BY",
+      "condition_expression": "customer_id",
+      "source_file": "dws_customer_order_summary.sql"
+    },
+    {
+      "source": "dwd_order_detail.order_purchase_timestamp",
+      "target_table": "dws_customer_order_summary",
+      "condition_type": "GROUP_BY",
+      "condition_expression": "TO_DATE(order_purchase_timestamp)",
+      "source_file": "dws_customer_order_summary.sql"
+    },
+    {
+      "source": "dws_customer_order_summary.avg_order_value",
+      "target_table": "dws_customer_order_summary",
+      "condition_type": "WHERE",
+      "condition_expression": "avg_order_value IS NULL",
+      "source_file": "dws_customer_order_summary.sql"
+    },
+    {
+      "source": "dws_customer_order_summary.total_revenue",
+      "target_table": "dws_customer_order_summary",
+      "condition_type": "WHERE",
+      "condition_expression": "total_revenue = 0",
+      "source_file": "dws_customer_order_summary.sql"
+    },
+    {
+      "source": "dwd_order_detail.order_purchase_timestamp",
+      "target_table": "dws_daily_orders",
+      "condition_type": "GROUP_BY",
+      "condition_expression": "TO_DATE(order_purchase_timestamp)",
+      "source_file": "dws_daily_orders.sql"
+    },
+    {
+      "source": "dws_daily_orders.avg_order_value",
+      "target_table": "dws_daily_orders",
+      "condition_type": "WHERE",
+      "condition_expression": "avg_order_value IS NULL",
+      "source_file": "dws_daily_orders.sql"
+    },
+    {
+      "source": "dws_daily_orders.avg_delay_days",
+      "target_table": "dws_daily_orders",
+      "condition_type": "WHERE",
+      "condition_expression": "avg_delay_days IS NULL",
+      "source_file": "dws_daily_orders.sql"
+    },
+    {
+      "source": "dws_daily_orders.order_count",
+      "target_table": "dws_daily_orders",
+      "condition_type": "WHERE",
+      "condition_expression": "order_count = 0",
+      "source_file": "dws_daily_orders.sql"
+    },
+    {
+      "source": "dwd_order_detail.product_category_name_english",
+      "target_table": "dws_product_category_monthly",
+      "condition_type": "GROUP_BY",
+      "condition_expression": "product_category_name_english",
+      "source_file": "dws_product_category_monthly.sql"
+    },
+    {
+      "source": "dwd_order_detail.order_month",
+      "target_table": "dws_product_category_monthly",
+      "condition_type": "GROUP_BY",
+      "condition_expression": "order_month",
+      "source_file": "dws_product_category_monthly.sql"
+    },
+    {
+      "source": "dws_product_category_monthly.avg_review_score",
+      "target_table": "dws_product_category_monthly",
+      "condition_type": "WHERE",
+      "condition_expression": "avg_review_score IS NULL",
+      "source_file": "dws_product_category_monthly.sql"
+    },
+    {
+      "source": "dws_product_category_monthly.total_revenue",
+      "target_table": "dws_product_category_monthly",
+      "condition_type": "WHERE",
+      "condition_expression": "total_revenue = 0",
+      "source_file": "dws_product_category_monthly.sql"
+    },
+    {
+      "source": "dwd_order_detail.seller_id",
+      "target_table": "dws_seller_monthly",
+      "condition_type": "GROUP_BY",
+      "condition_expression": "seller_id",
+      "source_file": "dws_seller_monthly.sql"
+    },
+    {
+      "source": "dwd_order_detail.order_month",
+      "target_table": "dws_seller_monthly",
+      "condition_type": "GROUP_BY",
+      "condition_expression": "order_month",
+      "source_file": "dws_seller_monthly.sql"
+    },
+    {
+      "source": "dws_seller_monthly.avg_review_score",
+      "target_table": "dws_seller_monthly",
+      "condition_type": "WHERE",
+      "condition_expression": "avg_review_score IS NULL",
+      "source_file": "dws_seller_monthly.sql"
+    },
+    {
+      "source": "dws_seller_monthly.total_revenue",
+      "target_table": "dws_seller_monthly",
+      "condition_type": "WHERE",
+      "condition_expression": "total_revenue = 0",
+      "source_file": "dws_seller_monthly.sql"
+    }
+  ]
+}

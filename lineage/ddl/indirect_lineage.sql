@@ -1,6 +1,6 @@
 -- 间接血缘表(WHERE/JOIN_ON/GROUP_BY/HAVING 条件依赖)
-DROP TABLE IF EXISTS lineage.indirect_lineage;
-CREATE TABLE IF NOT EXISTS lineage.indirect_lineage (
+DROP TABLE IF EXISTS indirect_lineage;
+CREATE TABLE IF NOT EXISTS indirect_lineage (
     id                   BIGINT       NOT NULL COMMENT '记录ID',
     source_table_id      BIGINT       NOT NULL COMMENT '来源表ID(被引用的字段所属表)',
     source_column_id     BIGINT       NOT NULL COMMENT '来源字段ID',
@@ -13,5 +13,5 @@ DUPLICATE KEY(id)
 DISTRIBUTED BY HASH(id) BUCKETS 10
 PROPERTIES ("replication_num" = "1");
 
-INSERT INTO lineage.indirect_lineage VALUES
+INSERT INTO indirect_lineage VALUES
 (1, 1, 2, 2, 1, 'WHERE', 'o.order_status = ''已完成''');

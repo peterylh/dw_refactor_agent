@@ -1,4 +1,5 @@
 -- ODS 商品信息表
+-- table_id: 1207263c-6522-4830-a666-14a1b616cf20
 DROP TABLE IF EXISTS shop_dm.ods_product;
 CREATE TABLE IF NOT EXISTS shop_dm.ods_product (
     product_id   BIGINT       NOT NULL COMMENT '商品ID',

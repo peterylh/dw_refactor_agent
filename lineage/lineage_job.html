@@ -1065,6 +1065,18 @@ const LD = {
       "table": "dws_store_sales_daily",
       "column": "discount_amount",
       "layer": "DWS"
+    },
+    {
+      "id": "ods_order_item.order_id",
+      "table": "ods_order_item",
+      "column": "order_id",
+      "layer": "ODS"
+    },
+    {
+      "id": "ods_category.category_id",
+      "table": "ods_category",
+      "column": "category_id",
+      "layer": "ODS"
     }
   ],
   "edges": [
@@ -1111,6 +1123,12 @@ const LD = {
       "source_file": "ads_customer_rfm.sql"
     },
     {
+      "source": "dws_customer_order_summary.order_count",
+      "target": "ads_customer_rfm.rfm_score",
+      "expression": "rfm_scored.r_score + rfm_scored.f_score + rfm_scored.m_score AS rfm_score",
+      "source_file": "ads_customer_rfm.sql"
+    },
+    {
       "source": "dws_customer_order_summary.payment_amount",
       "target": "ads_customer_rfm.rfm_score",
       "expression": "rfm_scored.r_score + rfm_scored.f_score + rfm_scored.m_score AS rfm_score",
@@ -1124,8 +1142,8 @@ const LD = {
     },
     {
       "source": "dws_customer_order_summary.order_count",
-      "target": "ads_customer_rfm.rfm_score",
-      "expression": "rfm_scored.r_score + rfm_scored.f_score + rfm_scored.m_score AS rfm_score",
+      "target": "ads_customer_rfm.customer_segment",
+      "expression": "CASE WHEN rfm_scored.r_score >= 4 AND rfm_scored.f_score >= 4 AND rfm_scored.m_score >= 4 THEN '高价值客户' WHEN rfm_scored.r_score >= 3 AND rfm_scored.f_score >= 3 AND rfm_scored.m_score >= 3 THEN '重要保持客户' WHEN rfm_scored.r_score >= 3 AND (rfm_scored.f_score < 3 OR rfm_scored.m_score < 3) THEN '重要发展客户' WHEN rfm_scored.r_score < 3 AND rfm_scored.f_score >= 3 AND rfm_scored.m_score >= 3 THEN '重要挽留客户' WHEN rfm_scored.r_score < 3 AND rfm_scored.f_score < 3 AND rfm_scored.m_score < 3 THEN '流失预警客户' WHEN rfm_scored.f_score <= 2 AND rfm_scored.r_score >= 3 AND rfm_scored.m_score >= 3 THEN '新晋优质客户' ELSE '一般价值客户' END AS customer_segment",
       "source_file": "ads_customer_rfm.sql"
     },
     {
@@ -1136,12 +1154,6 @@ const LD = {
     },
     {
       "source": "dws_customer_order_summary.stat_date",
-      "target": "ads_customer_rfm.customer_segment",
-      "expression": "CASE WHEN rfm_scored.r_score >= 4 AND rfm_scored.f_score >= 4 AND rfm_scored.m_score >= 4 THEN '高价值客户' WHEN rfm_scored.r_score >= 3 AND rfm_scored.f_score >= 3 AND rfm_scored.m_score >= 3 THEN '重要保持客户' WHEN rfm_scored.r_score >= 3 AND (rfm_scored.f_score < 3 OR rfm_scored.m_score < 3) THEN '重要发展客户' WHEN rfm_scored.r_score < 3 AND rfm_scored.f_score >= 3 AND rfm_scored.m_score >= 3 THEN '重要挽留客户' WHEN rfm_scored.r_score < 3 AND rfm_scored.f_score < 3 AND rfm_scored.m_score < 3 THEN '流失预警客户' WHEN rfm_scored.f_score <= 2 AND rfm_scored.r_score >= 3 AND rfm_scored.m_score >= 3 THEN '新晋优质客户' ELSE '一般价值客户' END AS customer_segment",
-      "source_file": "ads_customer_rfm.sql"
-    },
-    {
-      "source": "dws_customer_order_summary.order_count",
       "target": "ads_customer_rfm.customer_segment",
       "expression": "CASE WHEN rfm_scored.r_score >= 4 AND rfm_scored.f_score >= 4 AND rfm_scored.m_score >= 4 THEN '高价值客户' WHEN rfm_scored.r_score >= 3 AND rfm_scored.f_score >= 3 AND rfm_scored.m_score >= 3 THEN '重要保持客户' WHEN rfm_scored.r_score >= 3 AND (rfm_scored.f_score < 3 OR rfm_scored.m_score < 3) THEN '重要发展客户' WHEN rfm_scored.r_score < 3 AND rfm_scored.f_score >= 3 AND rfm_scored.m_score >= 3 THEN '重要挽留客户' WHEN rfm_scored.r_score < 3 AND rfm_scored.f_score < 3 AND rfm_scored.m_score < 3 THEN '流失预警客户' WHEN rfm_scored.f_score <= 2 AND rfm_scored.r_score >= 3 AND rfm_scored.m_score >= 3 THEN '新晋优质客户' ELSE '一般价值客户' END AS customer_segment",
       "source_file": "ads_customer_rfm.sql"
@@ -1231,13 +1243,13 @@ const LD = {
       "source_file": "ads_sales_dashboard.sql"
     },
     {
-      "source": "dwd_order_detail.discount",
+      "source": "dwd_order_detail.order_id",
       "target": "ads_sales_dashboard.avg_order_amount",
       "expression": "daily_base.avg_order_amount AS avg_order_amount",
       "source_file": "ads_sales_dashboard.sql"
     },
     {
-      "source": "dwd_order_detail.order_id",
+      "source": "dwd_order_detail.discount",
       "target": "ads_sales_dashboard.avg_order_amount",
       "expression": "daily_base.avg_order_amount AS avg_order_amount",
       "source_file": "ads_sales_dashboard.sql"
@@ -1339,13 +1351,13 @@ const LD = {
       "source_file": "ads_store_performance.sql"
     },
     {
-      "source": "dws_store_sales_daily.customer_count",
+      "source": "dws_store_sales_daily.total_amount",
       "target": "ads_store_performance.performance_score",
       "expression": "ROUND(store_monthly.total_orders / NULLIF(MAX(store_monthly.total_orders) OVER (PARTITION BY store_monthly.stat_month), 0) * 30 + store_monthly.total_amount / NULLIF(MAX(store_monthly.total_amount) OVER (PARTITION BY store_monthly.stat_month), 0) * 40 + store_monthly.customer_count / NULLIF(MAX(store_monthly.customer_count) OVER (PARTITION BY store_monthly.stat_month), 0) * 30, 2) AS performance_score",
       "source_file": "ads_store_performance.sql"
     },
     {
-      "source": "dws_store_sales_daily.total_amount",
+      "source": "dws_store_sales_daily.customer_count",
       "target": "ads_store_performance.performance_score",
       "expression": "ROUND(store_monthly.total_orders / NULLIF(MAX(store_monthly.total_orders) OVER (PARTITION BY store_monthly.stat_month), 0) * 30 + store_monthly.total_amount / NULLIF(MAX(store_monthly.total_amount) OVER (PARTITION BY store_monthly.stat_month), 0) * 40 + store_monthly.customer_count / NULLIF(MAX(store_monthly.customer_count) OVER (PARTITION BY store_monthly.stat_month), 0) * 30, 2) AS performance_score",
       "source_file": "ads_store_performance.sql"
@@ -1429,13 +1441,13 @@ const LD = {
       "source_file": "dwd_customer.sql"
     },
     {
-      "source": "dwd_customer.province",
+      "source": "dwd_customer.city",
       "target": "dwd_customer.province",
       "expression": "CASE WHEN dwd_customer.city = '北京' THEN '北京' WHEN dwd_customer.city = '上海' THEN '上海' WHEN dwd_customer.city IN ('广州', '深圳') THEN '广东' WHEN dwd_customer.city = '成都' THEN '四川' WHEN dwd_customer.city = '杭州' THEN '浙江' WHEN dwd_customer.city = '重庆' THEN '重庆' WHEN dwd_customer.city = '南京' THEN '江苏' WHEN dwd_customer.city = '济南' THEN '山东' WHEN dwd_customer.city = '天津' THEN '天津' ELSE dwd_customer.province END AS province",
       "source_file": "dwd_customer.sql"
     },
     {
-      "source": "dwd_customer.city",
+      "source": "dwd_customer.province",
       "target": "dwd_customer.province",
       "expression": "CASE WHEN dwd_customer.city = '北京' THEN '北京' WHEN dwd_customer.city = '上海' THEN '上海' WHEN dwd_customer.city IN ('广州', '深圳') THEN '广东' WHEN dwd_customer.city = '成都' THEN '四川' WHEN dwd_customer.city = '杭州' THEN '浙江' WHEN dwd_customer.city = '重庆' THEN '重庆' WHEN dwd_customer.city = '南京' THEN '江苏' WHEN dwd_customer.city = '济南' THEN '山东' WHEN dwd_customer.city = '天津' THEN '天津' ELSE dwd_customer.province END AS province",
       "source_file": "dwd_customer.sql"
@@ -1525,13 +1537,13 @@ const LD = {
       "source_file": "dwd_order_detail.sql"
     },
     {
-      "source": "ods_product.cost_price",
+      "source": "ods_order_item.quantity",
       "target": "dwd_order_detail.gross_profit",
       "expression": "ROUND(oi.subtotal - p.cost_price * oi.quantity, 2) AS gross_profit",
       "source_file": "dwd_order_detail.sql"
     },
     {
-      "source": "ods_order_item.quantity",
+      "source": "ods_product.cost_price",
       "target": "dwd_order_detail.gross_profit",
       "expression": "ROUND(oi.subtotal - p.cost_price * oi.quantity, 2) AS gross_profit",
       "source_file": "dwd_order_detail.sql"
@@ -1639,13 +1651,13 @@ const LD = {
       "source_file": "dwd_product.sql"
     },
     {
-      "source": "ods_product.unit_price",
+      "source": "ods_product.cost_price",
       "target": "dwd_product.gross_margin",
       "expression": "ROUND((p.unit_price - p.cost_price) / NULLIF(p.unit_price, 0) * 100, 2) AS gross_margin",
       "source_file": "dwd_product.sql"
     },
     {
-      "source": "ods_product.cost_price",
+      "source": "ods_product.unit_price",
       "target": "dwd_product.gross_margin",
       "expression": "ROUND((p.unit_price - p.cost_price) / NULLIF(p.unit_price, 0) * 100, 2) AS gross_margin",
       "source_file": "dwd_product.sql"
@@ -1960,6 +1972,10 @@ const LD = {
         {
           "name": "avg_order_amount",
           "type": "UNKNOWN"
+        },
+        {
+          "name": "etl_time",
+          "type": "DATETIME"
         }
       ]
     },
@@ -2003,6 +2019,14 @@ const LD = {
         {
           "name": "customer_segment",
           "type": "UNKNOWN"
+        },
+        {
+          "name": "stat_date",
+          "type": "DATE"
+        },
+        {
+          "name": "etl_time",
+          "type": "DATETIME"
         }
       ]
     },
@@ -2034,6 +2058,10 @@ const LD = {
         {
           "name": "discount_amount",
           "type": "UNKNOWN"
+        },
+        {
+          "name": "etl_time",
+          "type": "DATETIME"
         }
       ]
     },
@@ -2069,6 +2097,10 @@ const LD = {
         {
           "name": "rank_num",
           "type": "UNKNOWN"
+        },
+        {
+          "name": "etl_time",
+          "type": "DATETIME"
         }
       ]
     },
@@ -2132,6 +2164,10 @@ const LD = {
         {
           "name": "status",
           "type": "UNKNOWN"
+        },
+        {
+          "name": "etl_time",
+          "type": "DATETIME"
         }
       ]
     },
@@ -2207,6 +2243,10 @@ const LD = {
         {
           "name": "order_status",
           "type": "UNKNOWN"
+        },
+        {
+          "name": "etl_time",
+          "type": "DATETIME"
         }
       ]
     },
@@ -2246,6 +2286,10 @@ const LD = {
         {
           "name": "amount_growth_rate",
           "type": "UNKNOWN"
+        },
+        {
+          "name": "etl_time",
+          "type": "DATETIME"
         }
       ]
     },
@@ -2281,6 +2325,10 @@ const LD = {
         {
           "name": "discount_amount",
           "type": "UNKNOWN"
+        },
+        {
+          "name": "etl_time",
+          "type": "DATETIME"
         }
       ]
     },
@@ -2328,6 +2376,10 @@ const LD = {
         {
           "name": "performance_score",
           "type": "UNKNOWN"
+        },
+        {
+          "name": "etl_time",
+          "type": "DATETIME"
         }
       ]
     },
@@ -2379,6 +2431,10 @@ const LD = {
         {
           "name": "status",
           "type": "UNKNOWN"
+        },
+        {
+          "name": "etl_time",
+          "type": "DATETIME"
         }
       ]
     },
@@ -2430,6 +2486,10 @@ const LD = {
         {
           "name": "register_date",
           "type": "UNKNOWN"
+        },
+        {
+          "name": "create_time",
+          "type": "DATETIME"
         }
       ]
     },
@@ -2485,6 +2545,10 @@ const LD = {
         {
           "name": "register_date",
           "type": "UNKNOWN"
+        },
+        {
+          "name": "etl_time",
+          "type": "DATETIME"
         }
       ]
     },
@@ -2520,6 +2584,22 @@ const LD = {
         {
           "name": "order_status",
           "type": "UNKNOWN"
+        },
+        {
+          "name": "total_amount",
+          "type": "DECIMAL(12, 2)"
+        },
+        {
+          "name": "discount_amount",
+          "type": "DECIMAL(12, 2)"
+        },
+        {
+          "name": "payment_amount",
+          "type": "DECIMAL(12, 2)"
+        },
+        {
+          "name": "create_time",
+          "type": "DATETIME"
         }
       ]
     },
@@ -2551,6 +2631,14 @@ const LD = {
         {
           "name": "subtotal",
           "type": "UNKNOWN"
+        },
+        {
+          "name": "order_id",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "create_time",
+          "type": "DATETIME"
         }
       ]
     },
@@ -2598,6 +2686,10 @@ const LD = {
         {
           "name": "status",
           "type": "UNKNOWN"
+        },
+        {
+          "name": "create_time",
+          "type": "DATETIME"
         }
       ]
     },
@@ -2617,6 +2709,18 @@ const LD = {
         {
           "name": "category_level",
           "type": "UNKNOWN"
+        },
+        {
+          "name": "category_id",
+          "type": "UNKNOWN"
+        },
+        {
+          "name": "sort_order",
+          "type": "INT"
+        },
+        {
+          "name": "create_time",
+          "type": "DATETIME"
         }
       ]
     },
@@ -2660,6 +2764,10 @@ const LD = {
         {
           "name": "status",
           "type": "UNKNOWN"
+        },
+        {
+          "name": "create_time",
+          "type": "DATETIME"
         }
       ]
     },
@@ -2687,8 +2795,378 @@ const LD = {
         {
           "name": "sale_amount",
           "type": "UNKNOWN"
+        },
+        {
+          "name": "etl_time",
+          "type": "DATETIME"
         }
       ]
+    }
+  ],
+  "indirect_edges": [
+    {
+      "source": "dws_customer_order_summary.customer_id",
+      "target_table": "ads_customer_rfm",
+      "condition_type": "GROUP_BY",
+      "condition_expression": "customer_id",
+      "source_file": "ads_customer_rfm.sql"
+    },
+    {
+      "source": "ads_customer_rfm.customer_segment",
+      "target_table": "ads_customer_rfm",
+      "condition_type": "WHERE",
+      "condition_expression": "customer_segment IS NULL",
+      "source_file": "ads_customer_rfm.sql"
+    },
+    {
+      "source": "dws_product_sales_daily.sale_amount",
+      "target_table": "ads_product_topn_daily",
+      "condition_type": "WHERE",
+      "condition_expression": "psd.sale_amount > 0",
+      "source_file": "ads_product_topn_daily.sql"
+    },
+    {
+      "source": "dws_product_sales_daily.product_id",
+      "target_table": "ads_product_topn_daily",
+      "condition_type": "JOIN_ON",
+      "condition_expression": "psd.product_id = p.product_id",
+      "source_file": "ads_product_topn_daily.sql"
+    },
+    {
+      "source": "dwd_product.product_id",
+      "target_table": "ads_product_topn_daily",
+      "condition_type": "JOIN_ON",
+      "condition_expression": "psd.product_id = p.product_id",
+      "source_file": "ads_product_topn_daily.sql"
+    },
+    {
+      "source": "ads_product_topn_daily.category_name",
+      "target_table": "ads_product_topn_daily",
+      "condition_type": "WHERE",
+      "condition_expression": "category_name IS NULL",
+      "source_file": "ads_product_topn_daily.sql"
+    },
+    {
+      "source": "ads_product_topn_daily.product_name",
+      "target_table": "ads_product_topn_daily",
+      "condition_type": "WHERE",
+      "condition_expression": "product_name IS NULL",
+      "source_file": "ads_product_topn_daily.sql"
+    },
+    {
+      "source": "ads_product_topn_daily.rank_num",
+      "target_table": "ads_product_topn_daily",
+      "condition_type": "WHERE",
+      "condition_expression": "rank_num > 10",
+      "source_file": "ads_product_topn_daily.sql"
+    },
+    {
+      "source": "dwd_order_detail.order_date",
+      "target_table": "ads_sales_dashboard",
+      "condition_type": "GROUP_BY",
+      "condition_expression": "order_date",
+      "source_file": "ads_sales_dashboard.sql"
+    },
+    {
+      "source": "ads_sales_dashboard.order_growth_rate",
+      "target_table": "ads_sales_dashboard",
+      "condition_type": "WHERE",
+      "condition_expression": "order_growth_rate IS NULL",
+      "source_file": "ads_sales_dashboard.sql"
+    },
+    {
+      "source": "ads_sales_dashboard.amount_growth_rate",
+      "target_table": "ads_sales_dashboard",
+      "condition_type": "WHERE",
+      "condition_expression": "amount_growth_rate IS NULL",
+      "source_file": "ads_sales_dashboard.sql"
+    },
+    {
+      "source": "dws_store_sales_daily.store_id",
+      "target_table": "ads_store_performance",
+      "condition_type": "JOIN_ON",
+      "condition_expression": "ssd.store_id = s.store_id",
+      "source_file": "ads_store_performance.sql"
+    },
+    {
+      "source": "dwd_store.store_id",
+      "target_table": "ads_store_performance",
+      "condition_type": "JOIN_ON",
+      "condition_expression": "ssd.store_id = s.store_id",
+      "source_file": "ads_store_performance.sql"
+    },
+    {
+      "source": "dws_store_sales_daily.store_id",
+      "target_table": "ads_store_performance",
+      "condition_type": "GROUP_BY",
+      "condition_expression": "ssd.store_id",
+      "source_file": "ads_store_performance.sql"
+    },
+    {
+      "source": "dws_store_sales_daily.stat_date",
+      "target_table": "ads_store_performance",
+      "condition_type": "GROUP_BY",
+      "condition_expression": "DATE_FORMAT(ssd.stat_date, '%Y-%m')",
+      "source_file": "ads_store_performance.sql"
+    },
+    {
+      "source": "ads_store_performance.performance_score",
+      "target_table": "ads_store_performance",
+      "condition_type": "WHERE",
+      "condition_expression": "performance_score IS NULL",
+      "source_file": "ads_store_performance.sql"
+    },
+    {
+      "source": "ads_store_performance.store_type",
+      "target_table": "ads_store_performance",
+      "condition_type": "WHERE",
+      "condition_expression": "store_type IS NULL OR store_type = ''",
+      "source_file": "ads_store_performance.sql"
+    },
+    {
+      "source": "ads_store_performance.avg_order_amount",
+      "target_table": "ads_store_performance",
+      "condition_type": "WHERE",
+      "condition_expression": "avg_order_amount IS NULL",
+      "source_file": "ads_store_performance.sql"
+    },
+    {
+      "source": "ods_customer.customer_name",
+      "target_table": "dwd_customer",
+      "condition_type": "WHERE",
+      "condition_expression": "NOT customer_name IS NULL",
+      "source_file": "dwd_customer.sql"
+    },
+    {
+      "source": "dwd_customer.member_level",
+      "target_table": "dwd_customer",
+      "condition_type": "WHERE",
+      "condition_expression": "member_level IS NULL OR member_level = ''",
+      "source_file": "dwd_customer.sql"
+    },
+    {
+      "source": "dwd_customer.province",
+      "target_table": "dwd_customer",
+      "condition_type": "WHERE",
+      "condition_expression": "province IS NULL",
+      "source_file": "dwd_customer.sql"
+    },
+    {
+      "source": "ods_order.order_status",
+      "target_table": "dwd_order_detail",
+      "condition_type": "WHERE",
+      "condition_expression": "o.order_status = '已完成'",
+      "source_file": "dwd_order_detail.sql"
+    },
+    {
+      "source": "ods_order.order_id",
+      "target_table": "dwd_order_detail",
+      "condition_type": "JOIN_ON",
+      "condition_expression": "o.order_id = oi.order_id",
+      "source_file": "dwd_order_detail.sql"
+    },
+    {
+      "source": "ods_order_item.order_id",
+      "target_table": "dwd_order_detail",
+      "condition_type": "JOIN_ON",
+      "condition_expression": "o.order_id = oi.order_id",
+      "source_file": "dwd_order_detail.sql"
+    },
+    {
+      "source": "ods_order_item.product_id",
+      "target_table": "dwd_order_detail",
+      "condition_type": "JOIN_ON",
+      "condition_expression": "oi.product_id = p.product_id",
+      "source_file": "dwd_order_detail.sql"
+    },
+    {
+      "source": "ods_product.product_id",
+      "target_table": "dwd_order_detail",
+      "condition_type": "JOIN_ON",
+      "condition_expression": "oi.product_id = p.product_id",
+      "source_file": "dwd_order_detail.sql"
+    },
+    {
+      "source": "dwd_order_detail.cost_price",
+      "target_table": "dwd_order_detail",
+      "condition_type": "WHERE",
+      "condition_expression": "cost_price IS NULL",
+      "source_file": "dwd_order_detail.sql"
+    },
+    {
+      "source": "dwd_order_detail.payment_method",
+      "target_table": "dwd_order_detail",
+      "condition_type": "WHERE",
+      "condition_expression": "payment_method IS NULL OR payment_method = ''",
+      "source_file": "dwd_order_detail.sql"
+    },
+    {
+      "source": "ods_product.category_id",
+      "target_table": "dwd_product",
+      "condition_type": "JOIN_ON",
+      "condition_expression": "p.category_id = c.category_id",
+      "source_file": "dwd_product.sql"
+    },
+    {
+      "source": "ods_category.category_id",
+      "target_table": "dwd_product",
+      "condition_type": "JOIN_ON",
+      "condition_expression": "p.category_id = c.category_id",
+      "source_file": "dwd_product.sql"
+    },
+    {
+      "source": "dwd_product.category_name",
+      "target_table": "dwd_product",
+      "condition_type": "WHERE",
+      "condition_expression": "category_name IS NULL",
+      "source_file": "dwd_product.sql"
+    },
+    {
+      "source": "dwd_product.brand",
+      "target_table": "dwd_product",
+      "condition_type": "WHERE",
+      "condition_expression": "brand IS NULL OR brand = ''",
+      "source_file": "dwd_product.sql"
+    },
+    {
+      "source": "dwd_store.store_type",
+      "target_table": "dwd_store",
+      "condition_type": "WHERE",
+      "condition_expression": "store_type IS NULL OR store_type = ''",
+      "source_file": "dwd_store.sql"
+    },
+    {
+      "source": "dwd_store.province",
+      "target_table": "dwd_store",
+      "condition_type": "WHERE",
+      "condition_expression": "province IS NULL",
+      "source_file": "dwd_store.sql"
+    },
+    {
+      "source": "dwd_order_detail.category_id",
+      "target_table": "dws_category_sales_monthly",
+      "condition_type": "WHERE",
+      "condition_expression": "NOT category_id IS NULL",
+      "source_file": "dws_category_sales_monthly.sql"
+    },
+    {
+      "source": "dwd_order_detail.category_id",
+      "target_table": "dws_category_sales_monthly",
+      "condition_type": "GROUP_BY",
+      "condition_expression": "category_id",
+      "source_file": "dws_category_sales_monthly.sql"
+    },
+    {
+      "source": "dwd_order_detail.order_month",
+      "target_table": "dws_category_sales_monthly",
+      "condition_type": "GROUP_BY",
+      "condition_expression": "order_month",
+      "source_file": "dws_category_sales_monthly.sql"
+    },
+    {
+      "source": "dws_category_sales_monthly.sale_quantity",
+      "target_table": "dws_category_sales_monthly",
+      "condition_type": "WHERE",
+      "condition_expression": "sale_quantity IS NULL",
+      "source_file": "dws_category_sales_monthly.sql"
+    },
+    {
+      "source": "dws_category_sales_monthly.sale_amount",
+      "target_table": "dws_category_sales_monthly",
+      "condition_type": "WHERE",
+      "condition_expression": "sale_amount = 0",
+      "source_file": "dws_category_sales_monthly.sql"
+    },
+    {
+      "source": "dwd_order_detail.customer_id",
+      "target_table": "dws_customer_order_summary",
+      "condition_type": "GROUP_BY",
+      "condition_expression": "customer_id",
+      "source_file": "dws_customer_order_summary.sql"
+    },
+    {
+      "source": "dwd_order_detail.order_date",
+      "target_table": "dws_customer_order_summary",
+      "condition_type": "GROUP_BY",
+      "condition_expression": "order_date",
+      "source_file": "dws_customer_order_summary.sql"
+    },
+    {
+      "source": "dws_customer_order_summary.avg_order_amount",
+      "target_table": "dws_customer_order_summary",
+      "condition_type": "WHERE",
+      "condition_expression": "avg_order_amount IS NULL",
+      "source_file": "dws_customer_order_summary.sql"
+    },
+    {
+      "source": "dws_customer_order_summary.payment_amount",
+      "target_table": "dws_customer_order_summary",
+      "condition_type": "WHERE",
+      "condition_expression": "payment_amount < 0",
+      "source_file": "dws_customer_order_summary.sql"
+    },
+    {
+      "source": "dwd_order_detail.product_id",
+      "target_table": "dws_product_sales_daily",
+      "condition_type": "GROUP_BY",
+      "condition_expression": "product_id",
+      "source_file": "dws_product_sales_daily.sql"
+    },
+    {
+      "source": "dwd_order_detail.order_date",
+      "target_table": "dws_product_sales_daily",
+      "condition_type": "GROUP_BY",
+      "condition_expression": "order_date",
+      "source_file": "dws_product_sales_daily.sql"
+    },
+    {
+      "source": "dws_product_sales_daily.discount_amount",
+      "target_table": "dws_product_sales_daily",
+      "condition_type": "WHERE",
+      "condition_expression": "discount_amount IS NULL",
+      "source_file": "dws_product_sales_daily.sql"
+    },
+    {
+      "source": "dws_product_sales_daily.sale_amount",
+      "target_table": "dws_product_sales_daily",
+      "condition_type": "WHERE",
+      "condition_expression": "sale_amount < 0",
+      "source_file": "dws_product_sales_daily.sql"
+    },
+    {
+      "source": "dwd_order_detail.store_id",
+      "target_table": "dws_store_sales_daily",
+      "condition_type": "GROUP_BY",
+      "condition_expression": "store_id",
+      "source_file": "dws_store_sales_daily.sql"
+    },
+    {
+      "source": "dwd_order_detail.order_date",
+      "target_table": "dws_store_sales_daily",
+      "condition_type": "GROUP_BY",
+      "condition_expression": "order_date",
+      "source_file": "dws_store_sales_daily.sql"
+    },
+    {
+      "source": "dws_store_sales_daily.discount_amount",
+      "target_table": "dws_store_sales_daily",
+      "condition_type": "WHERE",
+      "condition_expression": "discount_amount IS NULL",
+      "source_file": "dws_store_sales_daily.sql"
+    },
+    {
+      "source": "dws_store_sales_daily.order_count",
+      "target_table": "dws_store_sales_daily",
+      "condition_type": "WHERE",
+      "condition_expression": "order_count = 0",
+      "source_file": "dws_store_sales_daily.sql"
+    },
+    {
+      "source": "dws_store_sales_daily.payment_amount",
+      "target_table": "dws_store_sales_daily",
+      "condition_type": "WHERE",
+      "condition_expression": "payment_amount < 0",
+      "source_file": "dws_store_sales_daily.sql"
     }
   ]
 };

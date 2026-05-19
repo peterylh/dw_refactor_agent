@@ -1,0 +1,940 @@
+"""DDL 自动推导功能测试: 覆盖 5 类场景。"""
+
+from pathlib import Path
+
+import pytest
+
+from ddl_deriver.ddl_deriver import (
+    CreateTable,
+    DropTable,
+    RenameTable,
+    AlterTable,
+    ColumnDef,
+    TableDef,
+    derive_ddl_changes,
+    load_tables_from_dir,
+    parse_create_table,
+    format_changes,
+    changes_to_json,
+    extract_table_id,
+    inject_table_id,
+    generate_table_id,
+)
+
+# ============================================================
+# 测试数据
+# ============================================================
+
+BASE_TABLES = {
+    "ods_customer": TableDef(
+        full_name="shop_dm.ods_customer",
+        short_name="ods_customer",
+        columns=[
+            ColumnDef("customer_id", "BIGINT", nullable=False),
+            ColumnDef("customer_name", "VARCHAR(64)", nullable=False),
+            ColumnDef("gender", "VARCHAR(4)", nullable=True),
+            ColumnDef("age", "INT", nullable=True),
+            ColumnDef("phone", "VARCHAR(20)", nullable=True),
+        ],
+        key_type="DUPLICATE",
+        key_columns=["customer_id"],
+        distribution_col="customer_id",
+        raw_ddl="",
+    ),
+    "ods_order": TableDef(
+        full_name="shop_dm.ods_order",
+        short_name="ods_order",
+        columns=[
+            ColumnDef("order_id", "BIGINT", nullable=False),
+            ColumnDef("customer_id", "BIGINT", nullable=False),
+            ColumnDef("total_amount", "DECIMAL(12,2)", nullable=False),
+        ],
+        key_type="DUPLICATE",
+        key_columns=["order_id"],
+        distribution_col="order_id",
+        raw_ddl="",
+    ),
+}
+
+
+# ============================================================
+# 1. 新增表 (CREATE TABLE)
+# ============================================================
+
+
+def test_create_table():
+    old = {}
+    new = {
+        "ods_customer": BASE_TABLES["ods_customer"],
+    }
+    changes = derive_ddl_changes(old, new)
+    assert len(changes) == 1
+    assert isinstance(changes[0], CreateTable)
+    assert changes[0].table_def.short_name == "ods_customer"
+
+
+# ============================================================
+# 2. 删除表 (DROP TABLE)
+# ============================================================
+
+
+def test_drop_table():
+    old = {
+        "ods_customer": BASE_TABLES["ods_customer"],
+    }
+    new = {}
+    changes = derive_ddl_changes(old, new)
+    assert len(changes) == 1
+    assert isinstance(changes[0], DropTable)
+    assert changes[0].table_name == "shop_dm.ods_customer"
+
+
+# ============================================================
+# 3. 表重命名 (RENAME TABLE)
+# ============================================================
+
+
+def test_rename_table():
+    renamed = TableDef(
+        full_name="shop_dm.ods_customer_v2",
+        short_name="ods_customer_v2",
+        columns=[
+            ColumnDef("customer_id", "BIGINT", nullable=False),
+            ColumnDef("customer_name", "VARCHAR(64)", nullable=False),
+            ColumnDef("gender", "VARCHAR(4)", nullable=True),
+            ColumnDef("age", "INT", nullable=True),
+            ColumnDef("phone", "VARCHAR(20)", nullable=True),
+        ],
+        key_type="DUPLICATE",
+        key_columns=["customer_id"],
+        distribution_col="customer_id",
+        raw_ddl="",
+    )
+    old = {"ods_customer": BASE_TABLES["ods_customer"]}
+    new = {"ods_customer_v2": renamed}
+    changes = derive_ddl_changes(old, new)
+    assert len(changes) == 1
+    assert isinstance(changes[0], RenameTable)
+    assert changes[0].old_name == "shop_dm.ods_customer"
+    assert changes[0].new_name == "shop_dm.ods_customer_v2"
+
+
+def test_rename_prefers_high_similarity():
+    """重命名检测: 结构差异大的不应匹配为 RENAME."""
+    very_different = TableDef(
+        full_name="shop_dm.ods_other",
+        short_name="ods_other",
+        columns=[ColumnDef("id", "BIGINT", nullable=False)],
+        key_type="DUPLICATE",
+        key_columns=["id"],
+        distribution_col="id",
+        raw_ddl="",
+    )
+    old = {"ods_customer": BASE_TABLES["ods_customer"]}
+    new = {"ods_other": very_different}
+    changes = derive_ddl_changes(old, new)
+    assert len(changes) == 2
+    assert any(isinstance(c, DropTable) for c in changes)
+    assert any(isinstance(c, CreateTable) for c in changes)
+    assert not any(isinstance(c, RenameTable) for c in changes)
+
+
+def test_rename_add_column():
+    """RENAME + ADD COLUMN: 旧表重命名并新增列."""
+    old_t = TableDef(
+        full_name="shop_dm.ods_user_info",
+        short_name="ods_user_info",
+        columns=[
+            ColumnDef("id", "BIGINT", nullable=False),
+            ColumnDef("name", "VARCHAR(64)", nullable=False),
+            ColumnDef("age", "INT", nullable=True),
+            ColumnDef("phone", "VARCHAR(20)", nullable=True),
+        ],
+        key_type="DUPLICATE",
+        key_columns=["id"],
+        distribution_col="id",
+    )
+    new_t = TableDef(
+        full_name="shop_dm.ods_customer",
+        short_name="ods_customer",
+        columns=[
+            ColumnDef("id", "BIGINT", nullable=False),
+            ColumnDef("name", "VARCHAR(64)", nullable=False),
+            ColumnDef("age", "INT", nullable=True),
+            ColumnDef("phone", "VARCHAR(20)", nullable=True),
+            ColumnDef("address", "VARCHAR(256)", nullable=True, comment="地址"),
+        ],
+        key_type="DUPLICATE",
+        key_columns=["id"],
+        distribution_col="id",
+    )
+    changes = derive_ddl_changes({"ods_user_info": old_t}, {"ods_customer": new_t})
+    assert len(changes) == 2
+    assert isinstance(changes[0], RenameTable)
+    assert changes[0].old_name == "shop_dm.ods_user_info"
+    assert changes[0].new_name == "shop_dm.ods_customer"
+    assert isinstance(changes[1], AlterTable)
+    assert changes[1].table_name == "shop_dm.ods_customer"
+    assert len(changes[1].adds) == 1
+    assert changes[1].adds[0].name == "address"
+
+
+def test_rename_drop_column():
+    """RENAME + DROP COLUMN."""
+    old_t = TableDef(
+        full_name="shop_dm.ods_user_info",
+        short_name="ods_user_info",
+        columns=[
+            ColumnDef("id", "BIGINT", nullable=False),
+            ColumnDef("name", "VARCHAR(64)", nullable=False),
+            ColumnDef("age", "INT", nullable=True),
+            ColumnDef("phone", "VARCHAR(20)", nullable=True),
+            ColumnDef("status", "VARCHAR(8)", nullable=True),
+        ],
+        key_type="DUPLICATE",
+        key_columns=["id"],
+        distribution_col="id",
+    )
+    new_t = TableDef(
+        full_name="shop_dm.ods_customer",
+        short_name="ods_customer",
+        columns=[
+            ColumnDef("id", "BIGINT", nullable=False),
+            ColumnDef("name", "VARCHAR(64)", nullable=False),
+            ColumnDef("age", "INT", nullable=True),
+            ColumnDef("phone", "VARCHAR(20)", nullable=True),
+        ],
+        key_type="DUPLICATE",
+        key_columns=["id"],
+        distribution_col="id",
+    )
+    changes = derive_ddl_changes({"ods_user_info": old_t}, {"ods_customer": new_t})
+    assert len(changes) == 2
+    assert isinstance(changes[0], RenameTable)
+    assert isinstance(changes[1], AlterTable)
+    assert changes[1].table_name == "shop_dm.ods_customer"
+    assert len(changes[1].drops) == 1
+    assert changes[1].drops[0].name == "status"
+
+
+def test_rename_modify_column():
+    """RENAME + MODIFY COLUMN: 当仅改类型的签名相似度低于阈值,退化 DROP+CREATE."""
+    old_t = TableDef(
+        full_name="shop_dm.ods_user_info",
+        short_name="ods_user_info",
+        columns=[
+            ColumnDef("id", "BIGINT", nullable=False),
+            ColumnDef("name", "VARCHAR(64)", nullable=False),
+            ColumnDef("age", "INT", nullable=True),
+            ColumnDef("phone", "VARCHAR(20)", nullable=True),
+        ],
+        key_type="DUPLICATE",
+        key_columns=["id"],
+        distribution_col="id",
+    )
+    new_t = TableDef(
+        full_name="shop_dm.ods_customer",
+        short_name="ods_customer",
+        columns=[
+            ColumnDef("id", "BIGINT", nullable=False),
+            ColumnDef("name", "VARCHAR(128)", nullable=False),
+            ColumnDef("age", "INT", nullable=True),
+            ColumnDef("phone", "VARCHAR(32)", nullable=True, comment="手机号"),
+        ],
+        key_type="DUPLICATE",
+        key_columns=["id"],
+        distribution_col="id",
+    )
+    # 类型变化导致签名不匹配,相似度仅 2/6=0.33,退化 DROP+CREATE
+    changes = derive_ddl_changes({"ods_user_info": old_t}, {"ods_customer": new_t})
+    assert len(changes) == 2
+    assert not any(isinstance(c, RenameTable) for c in changes)
+    assert any(isinstance(c, DropTable) for c in changes)
+    assert any(isinstance(c, CreateTable) for c in changes)
+
+
+def test_rename_too_different_falls_back_to_drop_create():
+    """大规模结构变更,退化 DROP + CREATE 而非 RENAME."""
+    old_t = TableDef(
+        full_name="shop_dm.ods_user_info",
+        short_name="ods_user_info",
+        columns=[
+            ColumnDef("id", "BIGINT", nullable=False),
+            ColumnDef("name", "VARCHAR(64)", nullable=False),
+            ColumnDef("age", "INT", nullable=True),
+            ColumnDef("phone", "VARCHAR(20)", nullable=True),
+            ColumnDef("status", "VARCHAR(8)", nullable=True),
+        ],
+        key_type="DUPLICATE",
+        key_columns=["id"],
+        distribution_col="id",
+    )
+    new_t = TableDef(
+        full_name="shop_dm.ods_customer",
+        short_name="ods_customer",
+        columns=[
+            ColumnDef("id", "BIGINT", nullable=False),
+            ColumnDef("name", "VARCHAR(128)", nullable=False, comment="全名"),
+            ColumnDef("phone", "VARCHAR(32)", nullable=True),
+            ColumnDef("email", "VARCHAR(128)", nullable=True),
+        ],
+        key_type="DUPLICATE",
+        key_columns=["id"],
+        distribution_col="id",
+    )
+    changes = derive_ddl_changes({"ods_user_info": old_t}, {"ods_customer": new_t})
+    assert len(changes) == 2
+    assert any(isinstance(c, DropTable) for c in changes)
+    assert any(isinstance(c, CreateTable) for c in changes)
+    assert not any(isinstance(c, RenameTable) for c in changes)
+
+
+# ============================================================
+# 4. 修改表结构 (ALTER TABLE)
+# ============================================================
+
+
+def test_alter_add_column():
+    old = {"ods_customer": BASE_TABLES["ods_customer"]}
+    new_t = TableDef(
+        full_name="shop_dm.ods_customer",
+        short_name="ods_customer",
+        columns=[
+            ColumnDef("customer_id", "BIGINT", nullable=False),
+            ColumnDef("customer_name", "VARCHAR(64)", nullable=False),
+            ColumnDef("gender", "VARCHAR(4)", nullable=True),
+            ColumnDef("age", "INT", nullable=True),
+            ColumnDef("phone", "VARCHAR(20)", nullable=True),
+            ColumnDef("email", "VARCHAR(128)", nullable=True, comment="邮箱"),
+        ],
+        key_type="DUPLICATE",
+        key_columns=["customer_id"],
+        distribution_col="customer_id",
+        raw_ddl="",
+    )
+    new = {"ods_customer": new_t}
+    changes = derive_ddl_changes(old, new)
+    assert len(changes) == 1
+    assert isinstance(changes[0], AlterTable)
+    assert len(changes[0].adds) == 1
+    assert changes[0].adds[0].name == "email"
+    assert len(changes[0].drops) == 0
+    assert len(changes[0].modifies) == 0
+
+
+def test_alter_drop_column():
+    old = {"ods_customer": BASE_TABLES["ods_customer"]}
+    new_t = TableDef(
+        full_name="shop_dm.ods_customer",
+        short_name="ods_customer",
+        columns=[
+            ColumnDef("customer_id", "BIGINT", nullable=False),
+            ColumnDef("customer_name", "VARCHAR(64)", nullable=False),
+            ColumnDef("gender", "VARCHAR(4)", nullable=True),
+            ColumnDef("age", "INT", nullable=True),
+        ],
+        key_type="DUPLICATE",
+        key_columns=["customer_id"],
+        distribution_col="customer_id",
+        raw_ddl="",
+    )
+    new = {"ods_customer": new_t}
+    changes = derive_ddl_changes(old, new)
+    assert len(changes) == 1
+    assert isinstance(changes[0], AlterTable)
+    assert len(changes[0].drops) == 1
+    assert changes[0].drops[0].name == "phone"
+    assert len(changes[0].adds) == 0
+
+
+def test_alter_modify_column():
+    old = {"ods_customer": BASE_TABLES["ods_customer"]}
+    new_t = TableDef(
+        full_name="shop_dm.ods_customer",
+        short_name="ods_customer",
+        columns=[
+            ColumnDef("customer_id", "BIGINT", nullable=False),
+            ColumnDef("customer_name", "VARCHAR(128)", nullable=False),  # 64→128
+            ColumnDef("gender", "VARCHAR(4)", nullable=True),
+            ColumnDef("age", "INT", nullable=True),
+            ColumnDef("phone", "VARCHAR(20)", nullable=True),
+        ],
+        key_type="DUPLICATE",
+        key_columns=["customer_id"],
+        distribution_col="customer_id",
+        raw_ddl="",
+    )
+    new = {"ods_customer": new_t}
+    changes = derive_ddl_changes(old, new)
+    assert len(changes) == 1
+    assert isinstance(changes[0], AlterTable)
+    assert len(changes[0].modifies) == 1
+    assert changes[0].modifies[0][0].name == "customer_name"
+    assert changes[0].modifies[0][1].data_type == "VARCHAR(128)"
+
+
+def test_alter_modify_default():
+    """ALTER TABLE: 仅修改列的默认值."""
+    old_t = TableDef(
+        full_name="shop_dm.ods_order",
+        short_name="ods_order",
+        columns=[
+            ColumnDef("order_id", "BIGINT", nullable=False),
+            ColumnDef("status", "VARCHAR(8)", nullable=False, default="NEW"),
+        ],
+        key_type="DUPLICATE",
+        key_columns=["order_id"],
+        distribution_col="order_id",
+    )
+    new_t = TableDef(
+        full_name="shop_dm.ods_order",
+        short_name="ods_order",
+        columns=[
+            ColumnDef("order_id", "BIGINT", nullable=False),
+            ColumnDef("status", "VARCHAR(8)", nullable=False, default="DONE"),
+        ],
+        key_type="DUPLICATE",
+        key_columns=["order_id"],
+        distribution_col="order_id",
+    )
+    changes = derive_ddl_changes({"ods_order": old_t}, {"ods_order": new_t})
+    assert len(changes) == 1
+    assert isinstance(changes[0], AlterTable)
+    assert len(changes[0].modifies) == 1
+    assert changes[0].modifies[0][0].name == "status"
+
+
+def test_alter_modify_comment():
+    """ALTER TABLE: 仅修改列注释."""
+    old_t = TableDef(
+        full_name="shop_dm.ods_order",
+        short_name="ods_order",
+        columns=[ColumnDef("order_id", "BIGINT", nullable=False, comment="订单ID")],
+        key_type="DUPLICATE",
+        key_columns=["order_id"],
+        distribution_col="order_id",
+    )
+    new_t = TableDef(
+        full_name="shop_dm.ods_order",
+        short_name="ods_order",
+        columns=[ColumnDef("order_id", "BIGINT", nullable=False, comment="订单主键")],
+        key_type="DUPLICATE",
+        key_columns=["order_id"],
+        distribution_col="order_id",
+    )
+    changes = derive_ddl_changes({"ods_order": old_t}, {"ods_order": new_t})
+    assert len(changes) == 1
+    assert isinstance(changes[0], AlterTable)
+    assert len(changes[0].modifies) == 1
+    assert changes[0].modifies[0][0].name == "order_id"
+
+
+def test_alter_default_and_comment_and_type():
+    """ALTER TABLE: 同时修改默认值+注释+类型."""
+    old_t = TableDef(
+        full_name="shop_dm.ods_product",
+        short_name="ods_product",
+        columns=[
+            ColumnDef("id", "BIGINT", nullable=False),
+            ColumnDef(
+                "price", "DECIMAL(10,2)", nullable=False, default="0.00", comment="原价"
+            ),
+        ],
+        key_type="DUPLICATE",
+        key_columns=["id"],
+        distribution_col="id",
+    )
+    new_t = TableDef(
+        full_name="shop_dm.ods_product",
+        short_name="ods_product",
+        columns=[
+            ColumnDef("id", "BIGINT", nullable=False),
+            ColumnDef(
+                "price", "DECIMAL(12,2)", nullable=True, default="9.99", comment="售价"
+            ),
+        ],
+        key_type="DUPLICATE",
+        key_columns=["id"],
+        distribution_col="id",
+    )
+    changes = derive_ddl_changes({"ods_product": old_t}, {"ods_product": new_t})
+    assert len(changes) == 1
+    assert isinstance(changes[0], AlterTable)
+    assert len(changes[0].modifies) == 1
+    assert changes[0].modifies[0][0].name == "price"
+    sql = changes[0].to_sql()
+    assert "DECIMAL(12,2)" in sql
+    assert "NULL" in sql
+    assert "9.99" in sql
+    assert "售价" in sql
+
+
+def test_batch_create_drop():
+    """批量: 同时 3 表新增 + 2 表删除 + 1 表修改,互不干扰."""
+    # 各表用不同列名避免 rename 误匹配
+    old_tables = {
+        "a_old": TableDef(
+            full_name="shop_dm.a_old",
+            short_name="a_old",
+            columns=[ColumnDef("a_id", "BIGINT")],
+            key_type="DUPLICATE",
+            key_columns=["a_id"],
+            distribution_col="a_id",
+        ),
+        "b_old": TableDef(
+            full_name="shop_dm.b_old",
+            short_name="b_old",
+            columns=[ColumnDef("b_id", "BIGINT")],
+            key_type="DUPLICATE",
+            key_columns=["b_id"],
+            distribution_col="b_id",
+        ),
+        "c": TableDef(
+            full_name="shop_dm.c",
+            short_name="c",
+            columns=[ColumnDef("c_id", "BIGINT")],
+            key_type="DUPLICATE",
+            key_columns=["c_id"],
+            distribution_col="c_id",
+        ),
+        "keep": TableDef(
+            full_name="shop_dm.keep",
+            short_name="keep",
+            columns=[ColumnDef("id", "BIGINT"), ColumnDef("x", "INT")],
+            key_type="DUPLICATE",
+            key_columns=["id"],
+            distribution_col="id",
+        ),
+    }
+    new_tables = {
+        "c": TableDef(
+            full_name="shop_dm.c",
+            short_name="c",
+            columns=[ColumnDef("c_id", "BIGINT")],
+            key_type="DUPLICATE",
+            key_columns=["c_id"],
+            distribution_col="c_id",
+        ),
+        "keep": TableDef(
+            full_name="shop_dm.keep",
+            short_name="keep",
+            columns=[ColumnDef("id", "BIGINT"), ColumnDef("x", "VARCHAR(32)")],
+            key_type="DUPLICATE",
+            key_columns=["id"],
+            distribution_col="id",
+        ),
+        "d_new": TableDef(
+            full_name="shop_dm.d_new",
+            short_name="d_new",
+            columns=[ColumnDef("d_id", "BIGINT")],
+            key_type="DUPLICATE",
+            key_columns=["d_id"],
+            distribution_col="d_id",
+        ),
+        "e_new": TableDef(
+            full_name="shop_dm.e_new",
+            short_name="e_new",
+            columns=[ColumnDef("e_id", "BIGINT")],
+            key_type="DUPLICATE",
+            key_columns=["e_id"],
+            distribution_col="e_id",
+        ),
+        "f_new": TableDef(
+            full_name="shop_dm.f_new",
+            short_name="f_new",
+            columns=[ColumnDef("f_id", "BIGINT")],
+            key_type="DUPLICATE",
+            key_columns=["f_id"],
+            distribution_col="f_id",
+        ),
+    }
+    changes = derive_ddl_changes(old_tables, new_tables)
+    types = {c.change_type for c in changes}
+    assert types == {"CREATE", "DROP", "ALTER"}
+    assert sum(1 for c in changes if c.change_type == "CREATE") == 3
+    assert sum(1 for c in changes if c.change_type == "DROP") == 2
+    assert sum(1 for c in changes if c.change_type == "ALTER") == 1
+
+
+def test_alter_mixed():
+    """增/删/改列同时发生."""
+    old_t = TableDef(
+        full_name="shop_dm.dwd_customer",
+        short_name="dwd_customer",
+        columns=[
+            ColumnDef("customer_id", "BIGINT", nullable=False),
+            ColumnDef("name", "VARCHAR(64)", nullable=False),
+            ColumnDef("age", "INT", nullable=True),
+            ColumnDef("phone", "VARCHAR(20)", nullable=True),
+            ColumnDef("status", "VARCHAR(8)", nullable=True),
+        ],
+        key_type="UNIQUE",
+        key_columns=["customer_id"],
+        distribution_col="customer_id",
+    )
+    new_t = TableDef(
+        full_name="shop_dm.dwd_customer",
+        short_name="dwd_customer",
+        columns=[
+            ColumnDef("customer_id", "BIGINT", nullable=False),
+            ColumnDef("full_name", "VARCHAR(128)", nullable=False),  # renamed
+            ColumnDef("age", "INT", nullable=True),
+            ColumnDef(
+                "phone", "VARCHAR(32)", nullable=False, comment="手机号"
+            ),  # type+nullable
+            ColumnDef("email", "VARCHAR(128)", nullable=True),  # new
+        ],
+        key_type="UNIQUE",
+        key_columns=["customer_id"],
+        distribution_col="customer_id",
+    )
+    old, new = {"dwd_customer": old_t}, {"dwd_customer": new_t}
+    changes = derive_ddl_changes(old, new)
+    assert len(changes) == 1
+    a = changes[0]
+    assert isinstance(a, AlterTable)
+    assert {c.name for c in a.drops} == {"name", "status"}
+    assert {c.name for c in a.adds} == {"full_name", "email"}
+    assert {old.name for old, new in a.modifies} == {"phone"}
+
+
+# ============================================================
+# 5. 无变更
+# ============================================================
+
+
+def test_no_changes():
+    old = {"ods_customer": BASE_TABLES["ods_customer"]}
+    new = {"ods_customer": BASE_TABLES["ods_customer"]}
+    changes = derive_ddl_changes(old, new)
+    assert len(changes) == 0
+
+
+# ============================================================
+# 6. 集成测试: 从真实 DDL 文件加载并推导
+# ============================================================
+
+
+def test_from_real_ddl_single_change(tmp_path):
+    """真实 DDL 文件: 重命名 ods_customer → ods_customer_v2."""
+    src = Path(__file__).parent.parent.parent / "shop" / "ddl"
+    old_dir = tmp_path / "old"
+    new_dir = tmp_path / "new"
+    old_dir.mkdir()
+    new_dir.mkdir()
+
+    ods_customer_file = src / "ods_customer.sql"
+    if not ods_customer_file.exists():
+        pytest.skip("shop/ddl/ods_customer.sql not found")
+
+    # old: copy ods_customer.sql
+    content = ods_customer_file.read_text(encoding="utf-8")
+    (old_dir / "ods_customer.sql").write_text(content)
+
+    # new: rewrite as ods_customer_v2.sql
+    new_content = content.replace("ods_customer", "ods_customer_v2")
+    (new_dir / "ods_customer_v2.sql").write_text(new_content)
+
+    old_tables = load_tables_from_dir(old_dir)
+    new_tables = load_tables_from_dir(new_dir)
+    changes = derive_ddl_changes(old_tables, new_tables)
+
+    assert len(changes) >= 1
+    renames = [c for c in changes if isinstance(c, RenameTable)]
+    assert len(renames) == 1
+    assert "ods_customer" in renames[0].old_name
+    assert "ods_customer_v2" in renames[0].new_name
+
+
+# ============================================================
+# 7. 输出格式测试
+# ============================================================
+
+
+def test_format_changes():
+    old = {"t": BASE_TABLES["ods_customer"]}
+    new = {}
+    changes = derive_ddl_changes(old, new)
+    sql = format_changes(changes)
+    assert "DROP TABLE" in sql
+    assert "shop_dm.ods_customer" in sql
+
+
+def test_changes_to_json():
+    old = {"t": BASE_TABLES["ods_customer"]}
+    new = {}
+    changes = derive_ddl_changes(old, new)
+    result = changes_to_json(changes)
+    assert "changes" in result
+    assert result["changes"][0]["change_type"] == "DROP"
+    assert "sql" in result["changes"][0]
+
+
+# ============================================================
+# 8. 边界情况
+# ============================================================
+
+
+def test_both_empty():
+    assert derive_ddl_changes({}, {}) == []
+
+
+def test_rename_and_alter_same_table():
+    """同名表修改 + 其他表重命名同时发生."""
+    old = {
+        "ods_customer": BASE_TABLES["ods_customer"],
+        "ods_order": BASE_TABLES["ods_order"],
+    }
+    new_customer = TableDef(
+        full_name="shop_dm.ods_customer_v2",
+        short_name="ods_customer_v2",
+        columns=BASE_TABLES["ods_customer"].columns.copy(),
+        key_type="DUPLICATE",
+        key_columns=["customer_id"],
+        distribution_col="customer_id",
+    )
+    new_order = TableDef(
+        full_name="shop_dm.ods_order",
+        short_name="ods_order",
+        columns=[
+            ColumnDef("order_id", "BIGINT", nullable=False),
+            ColumnDef("customer_id", "BIGINT", nullable=False),
+            ColumnDef("total_amount", "DECIMAL(14,2)", nullable=False),  # type changed
+            ColumnDef("discount", "DECIMAL(12,2)", nullable=True),  # new column
+        ],
+        key_type="DUPLICATE",
+        key_columns=["order_id"],
+        distribution_col="order_id",
+    )
+    new = {"ods_customer_v2": new_customer, "ods_order": new_order}
+    changes = derive_ddl_changes(old, new)
+
+    types = {c.change_type for c in changes}
+    assert "RENAME" in types
+    assert "ALTER" in types
+
+    renames = [c for c in changes if isinstance(c, RenameTable)]
+    alters = [c for c in changes if isinstance(c, AlterTable)]
+    assert len(renames) == 1
+    assert len(alters) == 1
+    assert alters[0].table_name == "shop_dm.ods_order"
+    assert {c.name for c in alters[0].adds} == {"discount"}
+    assert {c.name for c in alters[0].drops} == set()
+    assert {o.name for o, n in alters[0].modifies} == {"total_amount"}
+
+
+def test_parse_real_ddl_file():
+    """验证真实 DDL 文件能被正确解析."""
+    src = Path(__file__).parent.parent.parent / "shop" / "ddl"
+    for f in sorted(src.glob("*.sql")):
+        content = f.read_text(encoding="utf-8")
+        t = parse_create_table(content)
+        assert t is not None, f"Failed to parse {f.name}"
+        assert t.short_name == f.stem
+        assert len(t.columns) >= 1
+
+
+# ============================================================
+# 9. UUID 表唯一标识测试
+# ============================================================
+
+
+def test_extract_table_id():
+    assert extract_table_id("-- table_id: a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d\nSELECT 1") == "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"
+    assert extract_table_id("SELECT 1") == ""
+
+
+def test_inject_table_id():
+    tid = "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"
+    text = "-- ODS 表\nCREATE TABLE t (id INT);"
+    result = inject_table_id(text, tid)
+    assert f"-- table_id: {tid}" in result
+    # 幂等性: 重复注入不生成双行
+    result2 = inject_table_id(result, tid)
+    assert result2.count("table_id") == 1
+
+
+def test_generate_table_id_format():
+    tid = generate_table_id()
+    parts = tid.split("-")
+    assert len(parts) == 5
+    assert len(parts[0]) == 8
+
+
+def test_rename_by_uuid():
+    """相同 UUID + 不同表名 → 识别为 RENAME."""
+    tid = generate_table_id()
+    old_t = TableDef(
+        full_name="shop_dm.ods_user_info",
+        short_name="ods_user_info",
+        columns=[
+            ColumnDef("id", "BIGINT", nullable=False),
+            ColumnDef("name", "VARCHAR(64)", nullable=False),
+            ColumnDef("age", "INT", nullable=True),
+        ],
+        key_type="DUPLICATE",
+        key_columns=["id"],
+        distribution_col="id",
+        table_id=tid,
+    )
+    new_t = TableDef(
+        full_name="shop_dm.ods_customer",
+        short_name="ods_customer",
+        columns=[
+            ColumnDef("id", "BIGINT", nullable=False),
+            ColumnDef("name", "VARCHAR(64)", nullable=False),
+            ColumnDef("age", "INT", nullable=True),
+        ],
+        key_type="DUPLICATE",
+        key_columns=["id"],
+        distribution_col="id",
+        table_id=tid,
+    )
+    changes = derive_ddl_changes({"ods_user_info": old_t}, {"ods_customer": new_t})
+    assert len(changes) == 1
+    assert isinstance(changes[0], RenameTable)
+    assert changes[0].old_name == "shop_dm.ods_user_info"
+    assert changes[0].new_name == "shop_dm.ods_customer"
+
+
+def test_rename_by_uuid_with_alter():
+    """相同 UUID + 列结构大改 → RENAME + ALTER,而非 DROP+CREATE."""
+    tid = generate_table_id()
+    old_t = TableDef(
+        full_name="shop_dm.ods_user_info",
+        short_name="ods_user_info",
+        columns=[
+            ColumnDef("id", "BIGINT", nullable=False),
+            ColumnDef("name", "VARCHAR(64)", nullable=False),
+            ColumnDef("age", "INT", nullable=True),
+            ColumnDef("phone", "VARCHAR(20)", nullable=True),
+        ],
+        key_type="DUPLICATE",
+        key_columns=["id"],
+        distribution_col="id",
+        table_id=tid,
+    )
+    # 大幅变更: 仅 id 列相同,其余全变
+    new_t = TableDef(
+        full_name="shop_dm.ods_customer_profile",
+        short_name="ods_customer_profile",
+        columns=[
+            ColumnDef("id", "BIGINT", nullable=False),
+            ColumnDef("full_name", "VARCHAR(128)", nullable=False),
+            ColumnDef("email", "VARCHAR(256)", nullable=True),
+            ColumnDef("address", "VARCHAR(512)", nullable=True),
+        ],
+        key_type="DUPLICATE",
+        key_columns=["id"],
+        distribution_col="id",
+        table_id=tid,
+    )
+    changes = derive_ddl_changes({"ods_user_info": old_t}, {"ods_customer_profile": new_t})
+    assert len(changes) == 2
+    assert isinstance(changes[0], RenameTable)
+    assert isinstance(changes[1], AlterTable)
+    assert {c.name for c in changes[1].drops} == {"name", "age", "phone"}
+    assert {c.name for c in changes[1].adds} == {"full_name", "email", "address"}
+
+
+def test_rename_by_uuid_takes_precedence():
+    """
+    UUID 匹配优先于 Jaccard 相似度。
+    即使另一个 rename 候选的结构相似度更高,UUID 匹配优先。
+    """
+    tid = generate_table_id()
+    old_tables = {
+        "ods_old_a": TableDef(
+            full_name="shop_dm.ods_old_a",
+            short_name="ods_old_a",
+            columns=[ColumnDef("id", "BIGINT"), ColumnDef("val", "VARCHAR(16)")],
+            key_type="DUPLICATE",
+            key_columns=["id"],
+            distribution_col="id",
+            table_id=tid,
+        ),
+        "ods_old_b": TableDef(
+            full_name="shop_dm.ods_old_b",
+            short_name="ods_old_b",
+            columns=[ColumnDef("x", "BIGINT"), ColumnDef("y", "BIGINT")],
+            key_type="DUPLICATE",
+            key_columns=["x"],
+            distribution_col="x",
+        ),
+    }
+    new_tables = {
+        "ods_new_a": TableDef(
+            full_name="shop_dm.ods_new_a",
+            short_name="ods_new_a",
+            columns=[ColumnDef("id", "BIGINT"), ColumnDef("val", "VARCHAR(16)")],
+            key_type="DUPLICATE",
+            key_columns=["id"],
+            distribution_col="id",
+            table_id=tid,
+        ),
+        # 结构完全匹配 ods_old_b,但 UUID 不存在
+        "ods_new_b": TableDef(
+            full_name="shop_dm.ods_new_b",
+            short_name="ods_new_b",
+            columns=[ColumnDef("x", "BIGINT"), ColumnDef("y", "BIGINT")],
+            key_type="DUPLICATE",
+            key_columns=["x"],
+            distribution_col="x",
+        ),
+    }
+    changes = derive_ddl_changes(old_tables, new_tables)
+    renames = [c for c in changes if isinstance(c, RenameTable)]
+    assert len(renames) == 2
+    # ods_old_a → ods_new_a (UUID 匹配)
+    # ods_old_b → ods_new_b (Jaccard 回退)
+    rename_old_names = {r.old_short for r in renames}
+    rename_new_names = {r.new_short for r in renames}
+    assert rename_old_names == {"ods_old_a", "ods_old_b"}
+    assert rename_new_names == {"ods_new_a", "ods_new_b"}
+
+
+def test_different_uuid_low_jaccard_not_rename():
+    """不同 UUID + 低 Jaccard 相似度 → DROP + CREATE,不视为 RENAME."""
+    old_t = TableDef(
+        full_name="shop_dm.ods_order",
+        short_name="ods_order",
+        columns=[ColumnDef("id", "BIGINT"), ColumnDef("amount", "DECIMAL(12,2)")],
+        key_type="DUPLICATE",
+        key_columns=["id"],
+        distribution_col="id",
+        table_id=generate_table_id(),
+    )
+    new_t = TableDef(
+        full_name="shop_dm.ods_order_v2",
+        short_name="ods_order_v2",
+        columns=[ColumnDef("order_key", "BIGINT"), ColumnDef("value", "DECIMAL(14,2)")],
+        key_type="DUPLICATE",
+        key_columns=["order_key"],
+        distribution_col="order_key",
+        table_id=generate_table_id(),
+    )
+    changes = derive_ddl_changes({"ods_order": old_t}, {"ods_order_v2": new_t})
+    assert len(changes) == 2
+    assert any(isinstance(c, CreateTable) for c in changes)
+    assert any(isinstance(c, DropTable) for c in changes)
+    assert not any(isinstance(c, RenameTable) for c in changes)
+
+
+def test_create_table_auto_uuid():
+    """新表自动获得 table_id."""
+    new_t = TableDef(
+        full_name="shop_dm.ods_new_table",
+        short_name="ods_new_table",
+        columns=[ColumnDef("id", "BIGINT", nullable=False)],
+        key_type="DUPLICATE",
+        key_columns=["id"],
+        distribution_col="id",
+        raw_ddl="CREATE TABLE shop_dm.ods_new_table (id BIGINT NOT NULL) ENGINE=OLAP DUPLICATE KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 10 PROPERTIES (\"replication_num\" = \"1\");",
+    )
+    changes = derive_ddl_changes({}, {"ods_new_table": new_t})
+    assert len(changes) == 1
+    assert isinstance(changes[0], CreateTable)
+    create = changes[0]
+    assert create.table_def.table_id
+    # raw_ddl 应包含注入的 UUID
+    assert f"-- table_id: {create.table_def.table_id}" in create.table_def.raw_ddl

@@ -1,4 +1,5 @@
 -- DWD 订单明细事实表
+-- table_id: dd97001f-7b9a-412f-bdde-4f5a5ec0b76f
 DROP TABLE IF EXISTS shop_dm.dwd_order_detail;
 CREATE TABLE IF NOT EXISTS shop_dm.dwd_order_detail (
     order_id        BIGINT        NOT NULL COMMENT '订单ID',
