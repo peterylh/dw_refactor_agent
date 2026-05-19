@@ -193,6 +193,35 @@ olist 项目: 输出到 `olist/lineage.html` 和 `olist/lineage_job.html`
 
 分区保留窗口: 7 天 + 1 个 `p_future` 分区。
 
+## ETL 参数
+
+支持 `@etl_date` 变量，用于重跑历史数据：
+
+| 目标表 | 参数用法 | `snapshot_date` |
+|--------|----------|-----------------|
+| dwd_customer / dwd_product / dwd_store | `CAST(@etl_date AS DATE)` | 按 `@etl_date` 生成 |
+| dws_category_sales_monthly / ads_store_performance | `DATE_FORMAT(@etl_date, '%Y-%m')` | 按 `@etl_date` 所在月处理 |
+
+默认值 `CURDATE()`，不传参时按今天跑。
+
+调用方式：
+```bash
+# 默认（当天）
+mysql -h172.16.0.90 -P9030 -uroot < shop/tasks/dwd_customer.sql
+
+# 重跑历史某天
+mysql -h172.16.0.90 -P9030 -uroot \
+  -e "SET @etl_date = '2025-01-01'; source shop/tasks/dwd_customer.sql;"
+
+# 批量重跑（3 天维度快照 + 3 个月度）
+for d in 2025-01-01 2025-01-02 2025-01-03; do
+  for t in dwd_customer dwd_product dwd_store; do
+    mysql -h172.16.0.90 -P9030 -uroot \
+      -e "SET @etl_date = '$d'; source shop/tasks/${t}.sql;"
+  done
+done
+```
+
 ## 分支策略
 
 - 每次 DDL 或 ETL 变更必须在新分支上开发

@@ -5,11 +5,13 @@
 -- 写入模式: 追加每日快照,按 snapshot_date 分区
 -- ============================================================
 
+SET @etl_date = COALESCE(@etl_date, CURDATE());
+
 -- Step 1: 全量加载 + 门店评级 + 开业年限 + 回填合并
 INSERT INTO shop_dm.dwd_store
 SELECT
     store_id,
-    CURDATE() AS snapshot_date,
+    CAST(@etl_date AS DATE) AS snapshot_date,
     NOW() AS etl_time,
     store_name,
     COALESCE(NULLIF(store_type, ''),
@@ -40,4 +42,10 @@ SELECT
     open_date,
     ROUND(TIMESTAMPDIFF(MONTH, open_date, CURDATE()) / 12.0, 1) AS open_years,
     status
-FROM shop_dm.ods_store;
+FROM (
+    SELECT *,
+        ROW_NUMBER() OVER (PARTITION BY store_id ORDER BY create_time DESC) AS rn
+    FROM shop_dm.ods_store
+    WHERE DATE(create_time) <= CAST(@etl_date AS DATE)
+) t
+WHERE rn = 1;

@@ -5,11 +5,13 @@
 -- 写入模式: 追加每日快照,按 snapshot_date 分区
 -- ============================================================
 
+SET @etl_date = COALESCE(@etl_date, CURDATE());
+
 -- Step 1: 关联品类表，计算毛利率，回填合并
 INSERT INTO shop_dm.dwd_product
 SELECT
     p.product_id,
-    CURDATE() AS snapshot_date,
+    CAST(@etl_date AS DATE) AS snapshot_date,
     NOW() AS etl_time,
     p.product_name,
     p.category_id,
@@ -24,5 +26,11 @@ SELECT
     p.spec,
     p.barcode,
     p.status
-FROM shop_dm.ods_product p
-LEFT JOIN shop_dm.ods_category c ON p.category_id = c.category_id;
+FROM (
+    SELECT *,
+        ROW_NUMBER() OVER (PARTITION BY product_id ORDER BY create_time DESC) AS rn
+    FROM shop_dm.ods_product
+    WHERE DATE(create_time) <= CAST(@etl_date AS DATE)
+) p
+LEFT JOIN shop_dm.ods_category c ON p.category_id = c.category_id
+WHERE p.rn = 1;

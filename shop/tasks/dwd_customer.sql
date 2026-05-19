@@ -5,11 +5,13 @@
 -- 写入模式: 追加每日快照,按 snapshot_date 分区
 -- ============================================================
 
+SET @etl_date = COALESCE(@etl_date, CURDATE());
+
 -- Step 1: 全量加载 + 年龄段派生 + 回填合并
 INSERT INTO shop_dm.dwd_customer
 SELECT
     customer_id,
-    CURDATE() AS snapshot_date,
+    CAST(@etl_date AS DATE) AS snapshot_date,
     NOW() AS etl_time,
     customer_name,
     gender,
@@ -40,5 +42,11 @@ SELECT
     ) AS province,
     COALESCE(NULLIF(member_level, ''), '普通') AS member_level,
     register_date
-FROM shop_dm.ods_customer
-WHERE customer_name IS NOT NULL;
+FROM (
+    SELECT *,
+        ROW_NUMBER() OVER (PARTITION BY customer_id ORDER BY create_time DESC) AS rn
+    FROM shop_dm.ods_customer
+    WHERE DATE(create_time) <= CAST(@etl_date AS DATE)
+      AND customer_name IS NOT NULL
+) t
+WHERE rn = 1;
