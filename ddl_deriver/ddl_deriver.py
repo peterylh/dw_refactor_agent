@@ -29,6 +29,7 @@ from typing import List, Optional, Tuple
 
 import sqlglot
 from sqlglot import exp
+from sqlglot.errors import ErrorLevel
 from sqlglot.expressions.properties import (
     DuplicateKeyProperty,
     UniqueKeyProperty,
@@ -244,7 +245,8 @@ def parse_column_def(col_node: exp.ColumnDef) -> Optional[ColumnDef]:
 
 def parse_create_table(sql_text: str) -> Optional[TableDef]:
     try:
-        statements = sqlglot.parse(sql_text, dialect="doris")
+        statements = sqlglot.parse(sql_text, dialect="doris",
+                                   error_level=ErrorLevel.IGNORE)
     except Exception:
         return None
 

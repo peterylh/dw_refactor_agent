@@ -12,7 +12,7 @@
 ## 技术栈
 
 - **血缘提取**: sqlglot提供了 lineage 方法
-- **Doris连接**: mysql -h172.16.0.90 -P9030 -uroot
+- **环境配置**: 见 [dbenv.md](./dbenv.md)
 
 ## 目录结构
 
@@ -91,8 +91,7 @@ shop-dm/
 | DWS  | 服务层,轻度聚合,面向主题   | `dws_`   | `dws_store_sales_daily`  |
 | ADS  | 应用层,面向具体报表/看板   | `ads_`   | `ads_sales_dashboard`    |
 
-shop 项目: 库名前缀 `shop_dm.`
-olist 项目: 库名前缀 `olist_dm.`
+
 
 ## DDL 编写规范
 
@@ -191,42 +190,94 @@ olist 项目: 输出到 `olist/lineage.html` 和 `olist/lineage_job.html`
 | ADS 日表 | `stat_date` | 全量刷新，按统计日期分区 |
 | ADS 月表 | `stat_month_date` | 仅刷新当月分区，DELETE + INSERT |
 
-分区保留窗口: 7 天 + 1 个 `p_future` 分区。
 
 ## ETL 参数
 
-支持 `@etl_date` 变量，用于重跑历史数据：
-
-| 目标表 | 参数用法 | `snapshot_date` |
-|--------|----------|-----------------|
-| dwd_customer / dwd_product / dwd_store | `CAST(@etl_date AS DATE)` | 按 `@etl_date` 生成 |
-| dws_category_sales_monthly / ads_store_performance | `DATE_FORMAT(@etl_date, '%Y-%m')` | 按 `@etl_date` 所在月处理 |
-
-默认值 `CURDATE()`，不传参时按今天跑。
-
-调用方式：
-```bash
-# 默认（当天）
-mysql -h172.16.0.90 -P9030 -uroot < shop/tasks/dwd_customer.sql
-
-# 重跑历史某天
-mysql -h172.16.0.90 -P9030 -uroot \
-  -e "SET @etl_date = '2025-01-01'; source shop/tasks/dwd_customer.sql;"
-
-# 批量重跑（3 天维度快照 + 3 个月度）
-for d in 2025-01-01 2025-01-02 2025-01-03; do
-  for t in dwd_customer dwd_product dwd_store; do
-    mysql -h172.16.0.90 -P9030 -uroot \
-      -e "SET @etl_date = '$d'; source shop/tasks/${t}.sql;"
-  done
-done
-```
+详见 [dbenv.md](./dbenv.md#etl-参数)。
 
 ## 分支策略
 
 - 每次 DDL 或 ETL 变更必须在新分支上开发
 - 分支命名: `feat/<描述>` 或 `refactor/<描述>`
 - 完成后合并回主干并推送 GitHub
+
+## 重构验证工具 (refact/)
+
+`refact/` 下提供了一套完整的数仓重构验证工具链：
+
+### 工作流
+
+```bash
+# 1. 分析变更 → 元数据 (检测 DDL/作业变更 + 血缘追踪 + 锚点发现 + 分区选择)
+python refact/analyze_refact.py
+
+# 2. 预览执行计划
+python refact/verify_run.py --metadata refact/refact_metadata.json --dry-run
+
+# 3. 执行验证 (自动重置验证库 + 基线建表 + DDL + SQL 表映射执行)
+python refact/verify_run.py --metadata refact/refact_metadata.json
+
+# 4. 校验对比 (支持 count / row_compare / 抽样 / 精度配置)
+python refact/verify_check.py --metadata refact/refact_metadata.json --method all
+```
+
+### analyze_refact.py
+
+重构检测脚本。通过 git diff 发现 DDL 和作业变更，利用血缘追踪下游，自动选择验证锚点和分区，输出元数据文件。
+
+```
+python refact/analyze_refact.py                          # shop 项目
+python refact/analyze_refact.py --project olist           # olist 项目
+python refact/analyze_refact.py --partition 2025-01-15    # 手工指定分区
+python refact/analyze_refact.py --anchor ads_sales_dashboard  # 手工锚点
+```
+
+输出 `refact/refact_metadata.json`，包含：
+- `baseline_ddl`: merge_base 时的完整 DDL (建表用, INSERT 数据已剥离)
+- `ddl_changes`: 从 ddl_deriver 推导的 DDL 变更
+- `modified_jobs` / `downstream_tables`: 变更波及范围
+- `anchors`: 验证锚点 (ADS 层表)
+- `partition_info`: 自动选择的最新公共分区
+- `jobs_to_run`: 需执行的作业清单 (按 DWD→DWS→ADS 排序)
+- `verification.checks`: 自动配置的校验项
+
+### verify_run.py
+
+验证执行脚本。根据元数据执行三阶段操作：
+
+**Phase 0 - 重置**: `DROP DATABASE IF EXISTS shop_dm_qa` + `CREATE DATABASE shop_dm_qa`
+
+**Phase 1 - 基线建表**: 用 `baseline_ddl` 还原所有表结构到 merge_base 状态。
+
+**Phase 2 - DDL 变更**: 应用 `ddl_changes` (ALTER / CREATE / DROP / RENAME)。
+
+**Phase 3 - 执行作业**: 按依赖顺序执行 ETL 作业。关键: **SQL Glot 表映射**：
+
+| 表引用类型 | 改写目标 | 说明 |
+|-----------|---------|------|
+| DML 目标 (INSERT/UPDATE/目标等) | `shop_dm_qa.` | 写入验证库 |
+| 前序已执行作业的 target | `shop_dm_qa.` | 读刚算好的 QA 数据 |
+| ODS / 未修改中间表 | `shop_dm.` (保留) | 读生产数据 |
+
+即: 作业读取生产 ODS 和已算好的中间结果，产出写入验证库，**不复制数据**。
+
+### verify_check.py
+
+验证校验脚本。支持可配置的校验方法：
+
+```
+python refact/verify_check.py --metadata refact/refact_metadata.json
+python refact/verify_check.py --metadata refact/refact_metadata.json --method count
+python refact/verify_check.py --metadata refact/refact_metadata.json --method row_compare --sample 1000
+python refact/verify_check.py --metadata refact/refact_metadata.json --precision 0.001
+```
+
+| 方法 | 说明 | 参数 |
+|------|------|------|
+| `count` | 行数对比 | - |
+| `row_compare` | 逐行逐列对比 | `--sample N` 抽样行数, `--precision 0.01` 精度容差 |
+
+输出结果到 `refact/verify_result.json`。
 
 ## Git Commit 规范
 
