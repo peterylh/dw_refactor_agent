@@ -136,7 +136,7 @@ mysql -h<host> -P<port> -u<user> -p<password> \
 
 # 批量重跑（3 天维度快照 + 3 个月度）
 for d in 2025-01-01 2025-01-02 2025-01-03; do
-  for t in dwd_customer dwd_product dwd_store_new; do
+  for t in dwd_customer dwd_product dwd_store; do
     mysql -h<host> -P<port> -u<user> -p<password> \
       -e "SET @etl_date = '$d'; source shop/tasks/${t}.sql;"
   done
