@@ -19,7 +19,6 @@ from ddl_deriver.ddl_deriver import (
     _find_git_root,
     _get_merge_base,
     _git_cmd,
-    AlterTable,
     derive_ddl_changes,
     load_tables_from_dir,
     _load_git_tables,
@@ -184,49 +183,26 @@ def main():
     table_to_job = {f.stem: f.stem for f in tasks_dir.glob("*.sql")}
     modified_tables = set(ddl_table_names) | modified_jobs
 
-    # ── 下游追踪 (表级 + 列级) ──
+    # ── 下游追踪 ──
     downstream = dag.bfs_downstream(lineage_search_names)
     print(f"  修改表: {sorted(modified_tables)}")
     print(f"  表级下游表: {sorted(downstream)}")
 
-    # ── 列级下游: 从 DDL 变更中提取被修改的列, 查列级血缘找到真正受影响的表 ──
-    changed_columns = {}  # short_table_name → set of old column names
-    for ch in ddl_changes:
-        if isinstance(ch, AlterTable):
-            short = ch.table_name.split(".")[-1] if "." in ch.table_name else ch.table_name
-            cc = changed_columns.setdefault(short, set())
-            for old_name, new_name in ch.renames:
-                cc.add(old_name)
-            for col in ch.drops:
-                cc.add(col.name)
-            for old, new in ch.modifies:
-                cc.add(old.name)
+    # ── 变更源: DDL 变更表 + 作业变更 ──
+    changed_sources = set(modified_tables) | modified_jobs
 
-    column_downstream = set()
-    for short, cols in changed_columns.items():
-        for col in cols:
-            source_id = f"{short}.{col}"
-            for edge in lineage.get("edges", []):
-                if edge.get("source") == source_id:
-                    target_table = edge["target"].rsplit(".", 1)[0]
-                    if target_table != short:
-                        column_downstream.add(target_table)
-
-    print(f"  列级下游表: {sorted(column_downstream)}")
-
-    # ── 受影响集合 = 修改表 + 列级下游 + 两者之间的传递下游 ──
-    column_all_affected = set(modified_tables) | column_downstream
-    # 把列级下游及其到 ADS 之间的中间表也补全
-    column_all_affected.update(dag.bfs_downstream(column_downstream))
-    all_affected = column_all_affected | set(modified_tables)
-
-    # ── 锚点 ──
+    # ── 锚点: 变更源的直接下游作业产出的表 (不限层) ──
     if args.anchor:
         anchors = list(args.anchor)
     else:
-        anchors = sorted(t for t in column_downstream
-                        if determine_layer(t) == "ADS")
+        anchors = set()
+        for s in changed_sources:
+            anchors.update(dag._deps.get(s, set()))
+        anchors = sorted(anchors)
     print(f"  锚点表: {anchors}")
+
+    # ── 全部受影响 (用于 jobs_to_run + 基线 DDL) ──
+    all_affected = changed_sources | set(anchors)
 
     # ── 基线 DDL (先加载, 分区选择需要它解析列名) ──
     print("\n=== 基线 DDL ===")
@@ -383,9 +359,9 @@ def main():
     print(f"  锚点表:   {anchors}")
     print(f"  分区:     {pinfo.get('partition', 'N/A')}")
 
-    if not anchors and ddl_changes:
+    if not anchors:
         print()
-        print("  ⚠ 警告: 无锚点表 (没有 ADS 层表受变更影响)")
+        print("  ⚠ 警告: 无锚点表 (没有下游作业直接依赖变更结果)")
         print("    后续 verify_run.py 虽能执行作业，但 verify_check.py 将无表可对比校验")
         print("    数据一致性无法自动验证，请确认变更是否符合预期")
 
