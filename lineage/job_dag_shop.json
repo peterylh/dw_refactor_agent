@@ -1,0 +1,158 @@
+{
+  "edges": [
+    {
+      "source": "dws_customer_order_summary",
+      "target": "ads_customer_rfm"
+    },
+    {
+      "source": "dws_product_sales_daily",
+      "target": "ads_product_topn_daily"
+    },
+    {
+      "source": "dwd_product",
+      "target": "ads_product_topn_daily"
+    },
+    {
+      "source": "dwd_order_detail",
+      "target": "ads_sales_dashboard"
+    },
+    {
+      "source": "dws_store_sales_daily",
+      "target": "ads_store_performance"
+    },
+    {
+      "source": "dwd_store",
+      "target": "ads_store_performance"
+    },
+    {
+      "source": "ods_customer",
+      "target": "dwd_customer"
+    },
+    {
+      "source": "ods_order",
+      "target": "dwd_order_detail"
+    },
+    {
+      "source": "ods_order_item",
+      "target": "dwd_order_detail"
+    },
+    {
+      "source": "ods_product",
+      "target": "dwd_order_detail"
+    },
+    {
+      "source": "ods_product",
+      "target": "dwd_product"
+    },
+    {
+      "source": "ods_category",
+      "target": "dwd_product"
+    },
+    {
+      "source": "ods_store",
+      "target": "dwd_store"
+    },
+    {
+      "source": "dwd_order_detail",
+      "target": "dws_category_sales_monthly"
+    },
+    {
+      "source": "dwd_order_detail",
+      "target": "dws_customer_order_summary"
+    },
+    {
+      "source": "dwd_order_detail",
+      "target": "dws_product_sales_daily"
+    },
+    {
+      "source": "dwd_order_detail",
+      "target": "dws_store_sales_daily"
+    }
+  ],
+  "deps": {
+    "dws_customer_order_summary": [
+      "ads_customer_rfm"
+    ],
+    "dws_product_sales_daily": [
+      "ads_product_topn_daily"
+    ],
+    "dwd_product": [
+      "ads_product_topn_daily"
+    ],
+    "dwd_order_detail": [
+      "ads_sales_dashboard",
+      "dws_category_sales_monthly",
+      "dws_customer_order_summary",
+      "dws_product_sales_daily",
+      "dws_store_sales_daily"
+    ],
+    "dws_store_sales_daily": [
+      "ads_store_performance"
+    ],
+    "dwd_store": [
+      "ads_store_performance"
+    ],
+    "ods_customer": [
+      "dwd_customer"
+    ],
+    "ods_order": [
+      "dwd_order_detail"
+    ],
+    "ods_order_item": [
+      "dwd_order_detail"
+    ],
+    "ods_product": [
+      "dwd_order_detail",
+      "dwd_product"
+    ],
+    "ods_category": [
+      "dwd_product"
+    ],
+    "ods_store": [
+      "dwd_store"
+    ]
+  },
+  "rev": {
+    "ads_customer_rfm": [
+      "dws_customer_order_summary"
+    ],
+    "ads_product_topn_daily": [
+      "dwd_product",
+      "dws_product_sales_daily"
+    ],
+    "ads_sales_dashboard": [
+      "dwd_order_detail"
+    ],
+    "ads_store_performance": [
+      "dwd_store",
+      "dws_store_sales_daily"
+    ],
+    "dwd_customer": [
+      "ods_customer"
+    ],
+    "dwd_order_detail": [
+      "ods_order",
+      "ods_order_item",
+      "ods_product"
+    ],
+    "dwd_product": [
+      "ods_category",
+      "ods_product"
+    ],
+    "dwd_store": [
+      "ods_store"
+    ],
+    "dws_category_sales_monthly": [
+      "dwd_order_detail"
+    ],
+    "dws_customer_order_summary": [
+      "dwd_order_detail"
+    ],
+    "dws_product_sales_daily": [
+      "dwd_order_detail"
+    ],
+    "dws_store_sales_daily": [
+      "dwd_order_detail"
+    ]
+  }
+}
