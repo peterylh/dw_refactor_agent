@@ -6,13 +6,14 @@
 
 import json, argparse, subprocess, sys
 from pathlib import Path
-from collections import defaultdict, deque
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import sqlglot
 from sqlglot import exp
 from sqlglot.errors import ErrorLevel
+
+from lineage.job_dag import JobDAG
 
 from ddl_deriver.ddl_deriver import (
     _find_git_root,
@@ -97,31 +98,6 @@ def run_doris(sql: str, db: str = "") -> str:
     return r.stdout.strip()
 
 
-def build_dep_graph(edges: list) -> tuple:
-    """从 lineage edges 构建表级依赖图."""
-    deps = defaultdict(set)      # source → targets
-    rev = defaultdict(set)       # target → sources
-    for e in edges:
-        src = e["source"].rsplit(".", 1)[0]
-        tgt = e["target"].rsplit(".", 1)[0]
-        if src != tgt:
-            deps[src].add(tgt)
-            rev[tgt].add(src)
-    return deps, rev
-
-
-def bfs_downstream(seeds: set, deps: dict) -> set:
-    visited = set(seeds)
-    q = deque(seeds)
-    while q:
-        t = q.popleft()
-        for dt in deps.get(t, set()):
-            if dt not in visited:
-                visited.add(dt)
-                q.append(dt)
-    return visited - seeds
-
-
 # ============================================================
 # 主流程
 # ============================================================
@@ -190,7 +166,7 @@ def main():
         sys.exit(1)
     with open(lineage_path, encoding="utf-8") as f:
         lineage = json.load(f)
-    deps, rev = build_dep_graph(lineage.get("edges", []))
+    dag = JobDAG(lineage.get("edges", []))
     n = len(lineage.get("tables", []))
     e = len(lineage.get("edges", []))
     print(f"  血缘: {n} 表, {e} 边")
@@ -200,7 +176,7 @@ def main():
     modified_tables = set(ddl_table_names) | modified_jobs
 
     # ── 下游追踪 ──
-    downstream = bfs_downstream(modified_tables, deps)
+    downstream = dag.bfs_downstream(modified_tables)
     all_affected = modified_tables | downstream
     print(f"  修改表: {sorted(modified_tables)}")
     print(f"  下游表: {sorted(downstream)}")
@@ -271,13 +247,10 @@ def main():
         if t in table_to_job:
             jobs_set.add(t)
 
-    def _layer_sort_key(j):
-        order = {"dwd_": 1, "dws_": 2, "ads_": 3}
-        for p, o in order.items():
-            if j.startswith(p):
-                return o
-        return 4
-    jobs_sorted = sorted(jobs_set, key=_layer_sort_key)
+    try:
+        jobs_sorted = dag.topological_sort(jobs_set)
+    except ValueError:
+        jobs_sorted = sorted(jobs_set, key=lambda j: {"dwd_": 1, "dws_": 2, "ads_": 3}.get(j[:4], 4))
 
     jobs_to_run = []
     for jn in jobs_sorted:
