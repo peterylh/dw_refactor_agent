@@ -131,7 +131,7 @@ def rewrite_sql(sql_text: str, prod_db: str, qa_db: str,
 
         rewritten.append(stmt.sql(dialect="doris"))
 
-    return "\n".join(rewritten)
+    return ";\n".join(rewritten) + ";"
 
 
 # ============================================================
