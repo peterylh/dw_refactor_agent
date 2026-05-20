@@ -87,77 +87,6 @@ shop-dm/
 
 ```
 
-## 库名映射规范
-
-每个数据集市项目在同一环境中拥有两个库:
-
-| 项目 | 生产库 (db) | 验证库 (qa_db) |
-|------|-------------|----------------|
-| shop | `shop_dm` | `shop_dm_qa` |
-| olist | `olist_dm` | `olist_dm_qa` |
-
-验证库用于重构验证: verify_run 读取生产库, 写入验证库, 不复制数据。
-
-## 分层命名规范
-
-| 层   | 含义                     | 表名前缀 | 示例                     |
-|------|--------------------------|----------|--------------------------|
-| ODS  | 贴源层,与源系统结构一致    | `ods_`   | `ods_order`              |
-| DWD  | 明细宽表层,清洗+维度关联   | `dwd_`   | `dwd_order_detail`       |
-| DWS  | 服务层,轻度聚合,面向主题   | `dws_`   | `dws_store_sales_daily`  |
-| ADS  | 应用层,面向具体报表/看板   | `ads_`   | `ads_sales_dashboard`    |
-
-
-
-## DDL 编写规范
-
-- 引擎: `ENGINE=OLAP`, DUPLICATE KEY 取主键第一列, HASH 分桶数 10, 单副本
-- 主键: `NOT NULL COMMENT '中文说明'`, 数值型 BIGINT > DECIMAL(12,2) > DATE/DATETIME
-- 字符串: `VARCHAR(n)` 可 NULL, 枚举值用 COMMENT 说明 (例: `COMMENT '状态:已完成/已取消'`)
-- 金额: `DECIMAL(12,2)` 默认 0.00
-- ODS 的数据初始化脚本独立放在 `shop/data` 目录下。非 ODS 层表，不带数据初始化内容。
-- 文件头加注释说明表用途: `-- ODS xxxx表`
-
-DDL 模板:
-```sql
--- ODS xxxx表
-DROP TABLE IF EXISTS shop_dm.ods_xxx;
-CREATE TABLE IF NOT EXISTS shop_dm.ods_xxx (
-    id BIGINT NOT NULL COMMENT 'ID',
-    ...
-) ENGINE=OLAP
-DUPLICATE KEY(id)
-DISTRIBUTED BY HASH(id) BUCKETS 10
-PROPERTIES ("replication_num" = "1");
-
-```
-
-## ETL 任务编写规范
-
-- 文件名与目标表同名 (例: `dwd_customer.sql` → `shop_dm.dwd_customer`)
-- 开头: TRUNCATE TABLE 清空目标表
-- 核心: `INSERT INTO ... SELECT ... FROM` 关联多表 + 字段计算
-- 宽表策略: 多表 JOIN, LEFT JOIN 优先于 INNER JOIN, 建表维度先行
-- 增量字段: `NOW() AS etl_time` 记录加工时间
-- NULL 回填: UPDATE 分步完成,每步 SET 1-2 列,后续 JOIN 加提示性注释
-- 维度表: 少量维表逻辑 JOIN 处理中嵌入, 禁止 UNION ALL DML; GROUP BY 仅 dws/ads 使用
-- 头部写清楚: 目标, 源表, 加工逻辑
-
-模板:
-```sql
--- 加工作业: DWD xxx表
--- 源表: ods_a, ods_b
--- 加工逻辑: 关联 -> 计算 -> 回填
-
-TRUNCATE TABLE shop_dm.dwd_xxx;
-
-INSERT INTO shop_dm.dwd_xxx
-SELECT ... FROM shop_dm.ods_a a
-LEFT JOIN shop_dm.ods_b b ON a.id = b.id;
-
-UPDATE shop_dm.dwd_xxx SET col = default WHERE col IS NULL;
-```
-
 ## 血缘工具
 
 ### lineage_extractor.py
@@ -191,27 +120,11 @@ olist 项目: 输出到 `olist/lineage.html` 和 `olist/lineage_job.html`
 
 `lineage/ddl/` 下定义了 lineage 数据库的 7 张表: `datasource`, `table_info`, `column_info`, `job`, `column_lineage`, `indirect_lineage`, `table_lineage`。
 
-## 分区策略
 
-所有表按以下规则引入 RANGE 分区：
-
-| 层 | 分区列 | 说明 |
-|----|--------|------|
-| ODS | `create_time` | 全量刷新，按源系统创建时间分区 |
-| DWD 维度 | `snapshot_date` | 每日快照，追加模式，UNIQUE KEY 含 `snapshot_date`，`etl_time` 为纯加工时间戳 |
-| DWD 事实 | `order_date` | 全量刷新，按业务日期分区 |
-| DWS 日表 | `stat_date` | 全量刷新，按统计日期分区 |
-| DWS 月表 | `stat_month_date` | 仅刷新当月分区，DELETE + INSERT |
-| ADS 日表 | `stat_date` | 全量刷新，按统计日期分区 |
-| ADS 月表 | `stat_month_date` | 仅刷新当月分区，DELETE + INSERT |
-
-
-## ETL 参数
+## ETL 执行
 
 支持 `@etl_date` 变量，用于重跑历史数据：
 默认值 `CURDATE()`，不传参时按今天跑。
-
-## ETL 执行
 
 ```bash
 # 默认（当天）
@@ -230,11 +143,6 @@ for d in 2025-01-01 2025-01-02 2025-01-03; do
 done
 ```
 
-## 分支策略
-
-- 每次 DDL 或 ETL 变更必须在新分支上开发
-- 分支命名: `feat/<描述>` 或 `refactor/<描述>`
-- 完成后合并回主干并推送 GitHub
 
 ## 重构验证工具 (refact/)
 
@@ -314,6 +222,22 @@ python refact/verify_check.py --metadata refact/refact_metadata.json --precision
 
 输出结果到 `refact/verify_result.json`。
 
+
+## 分支策略
+
+- 每次 DDL 或 ETL 变更必须在新分支上开发
+- 分支命名: `feat/<描述>` 或 `refactor/<描述>`
+- 完成后合并回主干并推送 GitHub
+
+
 ## Git Commit 规范
 
 参见 [commit_message.md](./commit_message.md)。
+
+## Python 编码规范
+
+参见 [python_coding_standards.md](./python_coding_standards.md)。
+
+## SQL 数据开发规范
+
+参见 [sql_dev_standards.md](./sql_dev_standards.md)。
