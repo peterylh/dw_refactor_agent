@@ -1,6 +1,6 @@
 {
   "project": "shop",
-  "overall": 70.8,
+  "overall": 70.4,
   "weights": {
     "reuse": 0.25,
     "depth": 0.25,
@@ -126,7 +126,7 @@
     ]
   },
   "naming": {
-    "score": 77.5,
+    "score": 75.7,
     "details": [
       {
         "table": "dws_customer_order_summary",
@@ -191,15 +191,17 @@
           "violations": []
         },
         "column_checks": {
-          "passed": 15,
+          "passed": 13,
           "total": 18,
           "violations": [
+            "discount",
             "gross_profit",
             "order_month",
-            "quantity"
+            "quantity",
+            "subtotal"
           ]
         },
-        "score": 85.7
+        "score": 76.2
       },
       {
         "table": "dws_store_sales_daily",
@@ -318,7 +320,7 @@
       },
       "无匹配模式": {
         "pass_count": 0,
-        "total": 25,
+        "total": 27,
         "pct": 0.0
       },
       "通用列名": {
@@ -346,11 +348,6 @@
         "total": 4,
         "pct": 100.0
       },
-      "金额字段 subtotal/discount": {
-        "pass_count": 2,
-        "total": 2,
-        "pct": 100.0
-      },
       "后缀 _method": {
         "pass_count": 1,
         "total": 1,
@@ -367,9 +364,9 @@
         "pct": 100.0
       },
       "列名总计": {
-        "pass_count": 62,
+        "pass_count": 60,
         "total": 87,
-        "pct": 71.3
+        "pct": 69.0
       }
     }
   }

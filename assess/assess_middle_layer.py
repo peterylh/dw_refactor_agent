@@ -326,15 +326,6 @@ def _check_column_name(col_name: str) -> tuple[bool, list[str]]:
                     matched.append(f"前缀 {v}_")
                     break
 
-    # 额外特殊列名
-    extra = {
-        "subtotal": "金额字段 subtotal/discount",
-        "discount": "金额字段 subtotal/discount",
-        "rank_num": "排名字段 rank_num",
-    }
-    if col_name in extra:
-        matched.append(extra[col_name])
-
     return bool(matched), matched
 
 
