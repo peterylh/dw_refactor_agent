@@ -63,6 +63,10 @@ shop-dm/
 │   ├── lineage_data.json    # 血缘中间数据
 │   ├── lineage.html         # 表/列级血缘可视化
 │   └── lineage_job.html     # 作业级血缘可视化
+├── assess/                  # 数据集市中间层评估工具
+│   ├── assess_middle_layer.py # 中间层复用度/链路长度/依赖健康度/命名规范评估
+│   ├── assess_result_shop.json
+│   └── assess_result_olist.json
 ├── exec/                    # 作业执行与初始化工具
 │   ├── reinit_project.py    # 数据重新初始化脚本 (清空表 -> ODS初始化 -> 重算DAG)
 │   └── task_run.py          # 按 DAG 依赖顺序执行 ETL 作业
@@ -221,6 +225,29 @@ python refact/verify_check.py --metadata refact/refact_metadata.json --precision
 | `row_compare` | 逐行逐列对比 | `--sample N` 抽样行数, `--precision 0.01` 精度容差 |
 
 输出结果到 `refact/verify_result.json`。
+
+
+## 数据集市评估工具 (assess/)
+
+`assess/assess_middle_layer.py` 是数据集市中间层评估工具，基于血缘数据 (`lineage_data.json`) 从四个维度评估 DWD/DWS 层质量：
+
+```
+python assess/assess_middle_layer.py                           # shop 项目
+python assess/assess_middle_layer.py --project olist            # olist 项目
+python assess/assess_middle_layer.py --output report.json       # 指定输出路径
+python assess/assess_middle_layer.py --reuse-weight 0.3 --depth-weight 0.2  # 自定义权重
+```
+
+### 评估维度
+
+| 维度 | 权重(默认) | 说明 |
+|------|-----------|------|
+| 复用度 | 25% | 中间表被下游引用的次数，≥3 次引用满分 |
+| 链路长度 | 25% | ADS 到 ODS 的 DWD/DWS 中间层深度，depth=2 最优 |
+| 依赖健康度 | 25% | 检测跨层依赖违规（反向依赖、跳过中间层等） |
+| 命名规范 | 25% | 表名前缀匹配分层、全小写下划线、字段命名合规 |
+
+输出结果到 `assess/assess_result_{project}.json`。
 
 
 ## 分支策略

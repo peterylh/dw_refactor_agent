@@ -1,6 +1,6 @@
 {
   "project": "shop",
-  "overall": 71.1,
+  "overall": 70.8,
   "weights": {
     "reuse": 0.25,
     "depth": 0.25,
@@ -126,7 +126,7 @@
     ]
   },
   "naming": {
-    "score": 78.4,
+    "score": 77.5,
     "details": [
       {
         "table": "dws_customer_order_summary",
@@ -191,14 +191,15 @@
           "violations": []
         },
         "column_checks": {
-          "passed": 16,
+          "passed": 15,
           "total": 18,
           "violations": [
             "gross_profit",
-            "order_month"
+            "order_month",
+            "quantity"
           ]
         },
-        "score": 90.5
+        "score": 85.7
       },
       {
         "table": "dws_store_sales_daily",
@@ -295,100 +296,80 @@
         "total": 8,
         "pct": 100.0
       },
-      "主键/外键 _id": {
+      "后缀 _id": {
         "pass_count": 16,
-        "total": 79,
-        "pct": 20.3
+        "total": 16,
+        "pct": 100.0
       },
-      "日期字段 _date": {
+      "后缀 _date": {
         "pass_count": 6,
-        "total": 79,
-        "pct": 7.6
+        "total": 6,
+        "pct": 100.0
       },
-      "时间字段 _time": {
-        "pass_count": 0,
-        "total": 79,
-        "pct": 0.0
+      "后缀 _count": {
+        "pass_count": 5,
+        "total": 5,
+        "pct": 100.0
       },
-      "金额字段 _amount": {
+      "后缀 _amount": {
         "pass_count": 9,
-        "total": 79,
-        "pct": 11.4
+        "total": 9,
+        "pct": 100.0
       },
-      "金额字段 _price": {
-        "pass_count": 4,
-        "total": 79,
-        "pct": 5.1
-      },
-      "金额字段 _cost": {
+      "无匹配模式": {
         "pass_count": 0,
-        "total": 79,
+        "total": 25,
         "pct": 0.0
+      },
+      "通用列名": {
+        "pass_count": 8,
+        "total": 8,
+        "pct": 100.0
+      },
+      "后缀 _quantity": {
+        "pass_count": 2,
+        "total": 2,
+        "pct": 100.0
+      },
+      "后缀 _name": {
+        "pass_count": 4,
+        "total": 4,
+        "pct": 100.0
+      },
+      "后缀 _level": {
+        "pass_count": 3,
+        "total": 3,
+        "pct": 100.0
+      },
+      "后缀 _price": {
+        "pass_count": 4,
+        "total": 4,
+        "pct": 100.0
       },
       "金额字段 subtotal/discount": {
         "pass_count": 2,
-        "total": 79,
-        "pct": 2.5
+        "total": 2,
+        "pct": 100.0
       },
-      "统计字段 _count": {
-        "pass_count": 5,
-        "total": 79,
-        "pct": 6.3
-      },
-      "数量字段 quantity": {
-        "pass_count": 3,
-        "total": 79,
-        "pct": 3.8
-      },
-      "标志字段 is_": {
-        "pass_count": 0,
-        "total": 79,
-        "pct": 0.0
-      },
-      "等级字段 _level": {
-        "pass_count": 3,
-        "total": 79,
-        "pct": 3.8
-      },
-      "类型字段 _type": {
+      "后缀 _method": {
         "pass_count": 1,
-        "total": 79,
-        "pct": 1.3
+        "total": 1,
+        "pct": 100.0
       },
-      "名称字段 _name": {
-        "pass_count": 4,
-        "total": 79,
-        "pct": 5.1
-      },
-      "评分字段 _score": {
-        "pass_count": 0,
-        "total": 79,
-        "pct": 0.0
-      },
-      "排名字段 _num": {
-        "pass_count": 0,
-        "total": 79,
-        "pct": 0.0
-      },
-      "方法字段 _method": {
+      "后缀 _status": {
         "pass_count": 1,
-        "total": 79,
-        "pct": 1.3
+        "total": 1,
+        "pct": 100.0
       },
-      "状态字段 _status": {
+      "后缀 _type": {
         "pass_count": 1,
-        "total": 79,
-        "pct": 1.3
+        "total": 1,
+        "pct": 100.0
       },
-      "分段字段 _segment": {
-        "pass_count": 0,
-        "total": 79,
-        "pct": 0.0
-      },
-      "ETL元数据字段": {
-        "pass_count": 0,
-        "total": 79,
-        "pct": 0.0
+      "列名总计": {
+        "pass_count": 62,
+        "total": 87,
+        "pct": 71.3
       }
     }
   }

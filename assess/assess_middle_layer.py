@@ -17,6 +17,11 @@ import sys
 from pathlib import Path
 from collections import defaultdict
 
+# 将项目根目录加入 sys.path 以便导入 config
+_root = Path(__file__).resolve().parent.parent
+if str(_root) not in sys.path:
+    sys.path.insert(0, str(_root))
+
 # ============================================================
 # 评分配置
 # ============================================================
