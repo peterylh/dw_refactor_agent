@@ -381,51 +381,112 @@
   "classification": [
     {
       "table_name": "dws_customer_order_summary",
+      "inferred_layer": "DWS",
       "table_type": "fact",
-      "confidence": 1.0,
-      "reason": "DWS层汇总事实表，包含订单数、金额等可聚合度量，按日期分区，下游用于RFM分析。"
+      "confidence": 0.95,
+      "reasoning_steps": [
+        "ETL 加工逻辑中包含明确的 GROUP BY 聚合操作（COUNT(DISTINCT order_id)、SUM(subtotal) 等），因此排除 ODS 和 DWD。",
+        "下游被引用次数为 1，不为 0，且 ADS 通常下游引用为 0，因此排除 ADS。",
+        "主键为 (customer_id, stat_date) 是复合主键，不是单一实体 ID，因此不是维度表，排除 DIM。",
+        "表包含大量可聚合的度量字段（order_count, total_amount, payment_amount 等），并按客户+日期进行汇总，符合 DWS 汇总层特征（公共维度下的周期性指标），且可被下游复用（如 ads_customer_rfm）。",
+        "原始配置层级为 DWS，与推断一致，未违反名称。"
+      ],
+      "is_violating_current_name": false
     },
     {
       "table_name": "dws_product_sales_daily",
+      "inferred_layer": "DWS",
       "table_type": "fact",
       "confidence": 0.95,
-      "reason": "DWS层汇总表，包含可聚合度量字段，按日期分区，从明细事实表汇总而来。"
+      "reasoning_steps": [
+        "ETL SQL 中包含 GROUP BY 和 SUM/COUNT 聚合操作，排除了 ODS（无聚合）和 DWD（需保持明细粒度）的可能性。",
+        "下游被引用次数为1（ads_product_topn_daily），ADS 通常出度为0，因此排除 ADS。",
+        "主键为 product_id+stat_date 复合键，且包含度量字段，不符合 DIM 的单一实体主键特征。",
+        "表包含按日期和商品的聚合度量（订单笔数、销售数量、金额等），属于公共维度下的周期性汇总，符合 DWS 定义。",
+        "原始配置层级为 DWS，与推断结果一致，因此不违反当前命名。"
+      ],
+      "is_violating_current_name": false
     },
     {
       "table_name": "dwd_product",
+      "inferred_layer": "DWD",
       "table_type": "dimension",
       "confidence": 0.95,
-      "reason": "商品维度每日快照表，描述商品实体属性，缓慢变化，下游ads引用做JOIN"
+      "reasoning_steps": [
+        "ETL过程中无GROUP BY聚合操作，仅包含JOIN、计算字段和窗口函数去重，符合DWD层特征（明细宽表、保持事务粒度）。",
+        "下游被引用次数为1，非0，排除ADS；距ODS最小跳数为1，属于ODS之上的第一层加工，符合DWD定位。",
+        "主键为(product_id, snapshot_date)，每日快照记录商品属性变化，属于维度表（SCD Type 2），包含度量字段但本质是实体属性描述，非事实事件。",
+        "DDL中字段以商品属性为主，且表注释为'商品维度宽表'，进一步确认为维度表。",
+        "当前命名与推断层级一致，未违反命名约定。"
+      ],
+      "is_violating_current_name": false
     },
     {
       "table_name": "dwd_order_detail",
+      "inferred_layer": "DWD",
       "table_type": "fact",
-      "confidence": 0.95,
-      "reason": "记录订单明细事件，含可聚合度量字段，按日期分区，属于DWD事实表。"
+      "confidence": 0.98,
+      "reasoning_steps": [
+        "ETL 加工逻辑为多表 JOIN（ods_order、ods_order_item、ods_product），无 GROUP BY 或聚合函数，保持事务明细粒度。",
+        "DDL 中主键为 (order_id, order_item_id, order_date)，且包含大量度量字段（quantity、unit_price、subtotal、gross_profit 等），符合事务事实表特征。",
+        "下游被引用 5 次，说明该表被多个下游宽表或汇总表使用，但自身并未聚合，符合 DWD 明细宽表层被复用的特性。",
+        "距 ODS 最小跳数为 1，直接由 ODS 层加工而来，未经过聚合，归属 DWD 层合理。",
+        "原始配置层级已是 DWD，当前分析结果一致，不违反命名。"
+      ],
+      "is_violating_current_name": false
     },
     {
       "table_name": "dws_store_sales_daily",
+      "inferred_layer": "DWS",
       "table_type": "fact",
-      "confidence": 1.0,
-      "reason": "DWS层汇总表，包含可聚合度量字段，按时间分区，从明细事实表汇总而来。"
+      "confidence": 0.95,
+      "reasoning_steps": [
+        "1. ETL加工逻辑中包含明确的GROUP BY聚合操作（COUNT(DISTINCT order_id), SUM等），排除了ODS和DWD，因为DWD要求保持事务明细粒度，禁止聚合。",
+        "2. 下游被引用次数为1，虽然DWS通常被多个下游复用，但此表仍是面向公共维度的汇总指标，且不是出度为0的ADS，因此仍符合DWS特征。",
+        "3. 主键为(store_id, stat_date)，是门店+日期的组合，不是单一实体ID，故不是维度表；包含大量可聚合度量字段（order_count, total_amount等），属于事实表。",
+        "4. 原始配置层级为DWS，且逻辑与DWS定义一致：对明细数据进行聚合，产出公共维度下的周期性指标。",
+        "5. 距ODS最小跳数为2，说明经过DWD层后聚合到DWS，符合典型数仓分层路径。"
+      ],
+      "is_violating_current_name": false
     },
     {
       "table_name": "dwd_store",
+      "inferred_layer": "DWD",
       "table_type": "dimension",
       "confidence": 0.95,
-      "reason": "描述门店业务属性，每日快照缓慢变化，被下游表引用做JOIN"
+      "reasoning_steps": [
+        "1. ETL SQL 中未包含任何 GROUP BY/SUM/COUNT 等聚合操作,仅使用了窗口函数 ROW_NUMBER() 去重和 CASE WHEN 字段转换,符合 DWD 保持明细粒度的特征,排除了 DWS/ADS 的可能。",
+        "2. 下游被引用次数为 1 (被 ads_store_performance 引用),既不是出度为 0 的 ADS,也不是被多个下游复用的 DWS,而 DWD 有 1 个下游引用是正常现象,可匹配 DWD 层。",
+        "3. 主键为 (store_id, snapshot_date) — store_id 是门店实体 ID,加上快照日期后为每天一条记录,描述门店各属性(如名称、类型、级别、面积等),没有可聚合的度量字段(如销售额),属于典型的维度表特征(缓慢变化维度,类型2)。",
+        "4. DDL 中字段均为门店描述属性(名称、类型、地址、省份、开业年限等),无事实度量列,进一步确认其为维度表而非事实表。"
+      ],
+      "is_violating_current_name": false
     },
     {
       "table_name": "dwd_customer",
+      "inferred_layer": "DWD",
       "table_type": "dimension",
-      "confidence": 0.95,
-      "reason": "每日快照客户属性，描述业务实体，缓慢变化，无度量字段，属于维度表"
+      "confidence": 0.85,
+      "reasoning_steps": [
+        "ETL 中无 GROUP BY 等聚合操作，仅使用窗口函数 ROW_NUMBER 去重取最新记录，保持了每日客户状态的明细粒度，符合 DWD 定义。",
+        "表字段均为客户属性（姓名、性别、年龄、地址、会员等级等），无任何可聚合的度量字段，因此属于维度表。",
+        "下游被引用次数为0，但表中无聚合或复杂衍生指标，不符合典型的 ADS 特征；且原始配置层级和表名均为 DWD，逻辑上归属 DWD 层更合理。",
+        "主键为 customer_id+snapshot_date，是每日快照维度表，通常置于 DWD 层作为客户主题明细宽表，而非 DIM（DIM 主键通常为单一实体 ID）。"
+      ],
+      "is_violating_current_name": false
     },
     {
       "table_name": "dws_category_sales_monthly",
+      "inferred_layer": "ADS",
       "table_type": "fact",
-      "confidence": 1.0,
-      "reason": "DWS层汇总事实表，包含可聚合度量字段，按月分区，按品类+月份从明细事实表汇总。"
+      "confidence": 0.9,
+      "reasoning_steps": [
+        "ETL 加工逻辑包含 GROUP BY 和聚合函数 (COUNT, SUM)，排除 ODS 和 DWD 层。",
+        "下游被引用次数为 0，符合 ADS 层出度为 0 的特征，而非 DWS 层预期被多个下游复用的特征。",
+        "主键为 category_id、stat_month、stat_month_date 组合键，且包含可聚合度量字段，属于事实表而非维度表。",
+        "原始配置层级为 DWS，但实际特征与 ADS 更吻合，因此判定当前命名存在违反。"
+      ],
+      "is_violating_current_name": true
     }
   ]
 }

@@ -13,6 +13,7 @@ class TableContext:
     etl_sql: str
     upstream_tables: list[str]
     downstream_tables: list[str]
+    depth_from_ods: int = 0
 
 
 def extract_dependencies(lineage_data: dict) -> tuple[dict, dict]:
@@ -53,6 +54,23 @@ def build_contexts(project: str,
     upstream, downstream = extract_dependencies(lineage_data)
     contexts = []
 
+    memo = {}
+    def get_depth_from_ods(table_name: str, visiting: set = None) -> int:
+        if visiting is None: visiting = set()
+        if table_name in memo: return memo[table_name]
+        if table_name in visiting: return 0
+        visiting.add(table_name)
+        
+        parents = upstream.get(table_name, set())
+        if not parents:
+            result = 0 if table_name.startswith("ods_") else 1
+        else:
+            result = min(get_depth_from_ods(p, visiting) for p in parents) + 1
+            
+        visiting.remove(table_name)
+        memo[table_name] = result
+        return result
+
     for table in lineage_data.get("tables", []):
         layer = table.get("layer", "")
         if layer not in ("DWD", "DWS", "DIM"):
@@ -79,6 +97,7 @@ def build_contexts(project: str,
                          upstream_tables=sorted(list(upstream.get(name,
                                                                   set()))),
                          downstream_tables=sorted(
-                             list(downstream.get(name, set())))))
+                             list(downstream.get(name, set()))),
+                         depth_from_ods=get_depth_from_ods(name)))
 
     return contexts
