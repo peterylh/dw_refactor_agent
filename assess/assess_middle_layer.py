@@ -41,9 +41,21 @@ REUSE_FULL_SCORE_AT = 3
 DEFAULT_WEIGHTS = {
     "reuse": 0.25,
     "depth": 0.25,
-    "health": 0.25,
+    "dep_health": 0.25,
     "naming": 0.25,
 }
+
+# 依赖健康度展示分采用分段线性映射:
+# - 保持单调
+# - 高分段更敏感
+# - 避免 90->60 这类过于激进的硬映射
+DEP_HEALTH_DISPLAY_POINTS = [
+    (0.0, 0.0),
+    (60.0, 30.0),
+    (80.0, 55.0),
+    (95.0, 85.0),
+    (100.0, 100.0),
+]
 
 # 从命名规范配置获取分层序号
 from config import get_naming_config
@@ -53,6 +65,38 @@ _nc = get_naming_config()
 
 def _layer_rank(layer: str) -> int:
     return _nc.layer_rank(layer)
+
+
+def _piecewise_linear_map(score: float,
+                          points: list[tuple[float, float]]) -> float:
+    if not points:
+        return round(score, 1)
+    if score <= points[0][0]:
+        return round(points[0][1], 1)
+    if score >= points[-1][0]:
+        return round(points[-1][1], 1)
+
+    for (x0, y0), (x1, y1) in zip(points, points[1:]):
+        if x0 <= score <= x1:
+            if x1 == x0:
+                return round(y1, 1)
+            ratio = (score - x0) / (x1 - x0)
+            return round(y0 + ratio * (y1 - y0), 1)
+    return round(score, 1)
+
+
+def map_dep_health_display(raw_score: float) -> float:
+    return _piecewise_linear_map(raw_score, DEP_HEALTH_DISPLAY_POINTS)
+
+
+def build_metric_result(metric: dict, display_score: float | None = None) -> dict:
+    raw = metric["score"]
+    display = raw if display_score is None else display_score
+    result = dict(metric)
+    del result["score"]
+    result["raw"] = raw
+    result["display"] = display
+    return result
 
 
 # 依赖违规定义: 通过 src/tgt 层序号差自动判定
@@ -534,25 +578,29 @@ def generate_report(scores: dict, weights: dict, project: str) -> str:
     # ============================================================
     # 头部 & 总体评分
     # ============================================================
-    overall = scores["overall"]
+    overall_raw = scores["overall_raw"]
+    overall_display = scores["overall_display"]
     parts.append(
         f"╔{'═' * 62}╗\n"
         f"║{'数据集市中间层评估报告':^62}║\n"
         f"║{'─' * 62}║\n"
-        f"║{'项目: ' + project:<30}{'总体评分:':>15}{overall:>6.1f} / 100{' ' * 4}║\n"
+        f"║{'项目: ' + project:<24}{'总体评分(展示):':>18}{overall_display:>6.1f} / 100{' ' * 2}║\n"
+        f"║{'':<24}{'总体评分(原始):':>18}{overall_raw:>6.1f} / 100{' ' * 2}║\n"
         f"╠{'═' * 62}╣")
 
     dims = [
         ("复用度", "reuse"),
         ("链路长度(中间层)", "depth"),
-        ("依赖健康度", "health"),
+        ("依赖健康度", "dep_health"),
         ("命名规范", "naming"),
     ]
     for label, key in dims:
-        s = scores[key]["score"]
+        metric = scores[key]
+        disp = metric["display"]
+        raw = metric["raw"]
         w = weights[key] * 100
         parts.append(
-            f"║ {label:<18} {s:>5.1f} / 100{' ' * 5}权重: {w:>2.0f}%{' ' * 17}║")
+            f"║ {label:<12} 展示:{disp:>5.1f} 原始:{raw:>5.1f}  权重:{w:>2.0f}%{' ' * 11}║")
 
     parts.append(f"╚{'═' * 62}╝")
 
@@ -562,7 +610,7 @@ def generate_report(scores: dict, weights: dict, project: str) -> str:
     reuse = scores["reuse"]
     parts.append(f"\n{'=' * 62}")
     parts.append(
-        f"【复用度】评分: {reuse['score']}  |  平均复用次数: {reuse['avg_reuse_count']}")
+        f"【复用度】评分(展示/原始): {reuse['display']} / {reuse['raw']}  |  平均复用次数: {reuse['avg_reuse_count']}")
     parts.append(f"{'=' * 62}")
 
     headers = ["表名", "层", "下游引用", "得分"]
@@ -587,7 +635,7 @@ def generate_report(scores: dict, weights: dict, project: str) -> str:
     depth = scores["depth"]
     parts.append(f"\n{'=' * 62}")
     parts.append(
-        f"【链路长度(中间层深度)】评分: {depth['score']}  |  平均深度: {depth['avg_middle_depth']}"
+        f"【链路长度(中间层深度)】评分(展示/原始): {depth['display']} / {depth['raw']}  |  平均深度: {depth['avg_middle_depth']}"
     )
     parts.append(f"{'=' * 62}")
 
@@ -609,14 +657,15 @@ def generate_report(scores: dict, weights: dict, project: str) -> str:
     # ============================================================
     # 依赖健康度
     # ============================================================
-    health = scores["health"]
+    dep_health = scores["dep_health"]
     parts.append(f"\n{'=' * 62}")
-    parts.append(f"【依赖健康度】评分: {health['score']}")
+    parts.append(
+        f"【依赖健康度】评分(展示/原始): {dep_health['display']} / {dep_health['raw']}")
     parts.append(f"{'=' * 62}")
 
     # 按规则汇总
     rule_groups = defaultdict(lambda: dict(label="", sev="", pen=0, count=0))
-    for v in health["violations"]:
+    for v in dep_health["violations"]:
         key = v["description"]
         if key not in rule_groups:
             rule_groups[key] = dict(label=key,
@@ -640,11 +689,11 @@ def generate_report(scores: dict, weights: dict, project: str) -> str:
     parts.append(_fmt_table(headers, rows, col_w))
 
     parts.append(
-        f"\n  累计扣分: {health['total_penalty']}  |  最终得分: {health['score']}")
+        f"\n  累计扣分: {dep_health['total_penalty']}  |  原始分: {dep_health['raw']}  |  展示分: {dep_health['display']}")
 
-    if health["violations"]:
+    if dep_health["violations"]:
         parts.append(f"\n  违规详情:")
-        for v in health["violations"]:
+        for v in dep_health["violations"]:
             parts.append(
                 f"    ✗ {v['source']} → {v['target']}  [{v['severity']}] {v['description']} ({v['source_file']})"
             )
@@ -657,7 +706,7 @@ def generate_report(scores: dict, weights: dict, project: str) -> str:
     # ============================================================
     naming = scores["naming"]
     parts.append(f"\n{'=' * 62}")
-    parts.append(f"【命名规范】评分: {naming['score']}")
+    parts.append(f"【命名规范】评分(展示/原始): {naming['display']} / {naming['raw']}")
     parts.append(f"{'=' * 62}")
 
     # 规则汇总表
@@ -744,28 +793,41 @@ def assess(project: str = "shop",
         else:
             print("警告: 未提供 DEEPSEEK_API_KEY 环境变量，跳过分类。")
 
-    upstream, downstream = build_table_graph(edges, indirect_edges)
+    _, downstream = build_table_graph(edges, indirect_edges)
 
-    reuse_score = score_reusability(tables, downstream)
-    depth_score = score_lineage_depth(tables, edges, indirect_edges)
-    health_score = score_dependency_health(tables, edges, indirect_edges)
-    naming_score = score_naming_conventions(tables)
+    reuse_score = build_metric_result(score_reusability(tables, downstream))
+    depth_score = build_metric_result(
+        score_lineage_depth(tables, edges, indirect_edges))
+    dep_health_raw = score_dependency_health(tables, edges, indirect_edges)
+    dep_health_score = build_metric_result(
+        dep_health_raw,
+        display_score=map_dep_health_display(dep_health_raw["score"]),
+    )
+    naming_score = build_metric_result(score_naming_conventions(tables))
 
-    overall = round(
-        weights["reuse"] * reuse_score["score"] +
-        weights["depth"] * depth_score["score"] +
-        weights["health"] * health_score["score"] +
-        weights["naming"] * naming_score["score"],
+    overall_raw = round(
+        weights["reuse"] * reuse_score["raw"] +
+        weights["depth"] * depth_score["raw"] +
+        weights["dep_health"] * dep_health_score["raw"] +
+        weights["naming"] * naming_score["raw"],
+        1,
+    )
+    overall_display = round(
+        weights["reuse"] * reuse_score["display"] +
+        weights["depth"] * depth_score["display"] +
+        weights["dep_health"] * dep_health_score["display"] +
+        weights["naming"] * naming_score["display"],
         1,
     )
 
     result = dict(
         project=project,
-        overall=overall,
+        overall_raw=overall_raw,
+        overall_display=overall_display,
         weights=weights,
         reuse=reuse_score,
         depth=depth_score,
-        health=health_score,
+        dep_health=dep_health_score,
         naming=naming_score,
     )
 
@@ -799,7 +861,7 @@ def main():
     weights = dict(
         reuse=args.reuse_weight,
         depth=args.depth_weight,
-        health=args.health_weight,
+        dep_health=args.health_weight,
         naming=args.naming_weight,
         do_classify=args.classify,
         no_cache=args.no_cache,
