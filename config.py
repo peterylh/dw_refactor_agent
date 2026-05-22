@@ -353,9 +353,28 @@ def load_naming_config(path=None):
         if td.regex:
             td._compiled = re.compile(td.regex)
         types[name] = td
-    layers = {}
+    rank_map = {}
     layer_order = []
-    for rank, (name, template) in enumerate(raw.get("table", {}).items()):
+    layer_cfg = raw.get("layers", [])
+    if layer_cfg:
+        for r, item in enumerate(layer_cfg):
+            if isinstance(item, list):
+                for name in item:
+                    rank_map[name] = r
+                    if name not in layer_order:
+                        layer_order.append(name)
+            else:
+                rank_map[item] = r
+                if item not in layer_order:
+                    layer_order.append(item)
+    else:
+        for r, name in enumerate(raw.get("table", {}).keys()):
+            rank_map[name] = r
+            if name not in layer_order:
+                layer_order.append(name)
+
+    layers = {}
+    for name, template in raw.get("table", {}).items():
         segments = _parse_template(template, types)
         # prefix: 收集开头的字面量直到遇到 type
         prefix_parts = []
@@ -369,8 +388,10 @@ def load_naming_config(path=None):
             else:
                 break
         prefix = "".join(prefix_parts)
+        rank = rank_map.get(name, -1)
         layers[name] = LayerDef(prefix=prefix, rank=rank, segments=segments)
-        layer_order.append(name)
+        if name not in layer_order:
+            layer_order.append(name)
     col_cfg = raw.get("columns", {})
     raw_col_seg = col_cfg.get("segments") or col_cfg.get("pattern", "")
     column_segments = _parse_template(raw_col_seg, types) if raw_col_seg else []

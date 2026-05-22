@@ -1,11 +1,13 @@
 {
   "project": "olist",
-  "overall": 60.8,
+  "overall": 61.5,
   "weights": {
     "reuse": 0.25,
     "depth": 0.25,
     "health": 0.25,
-    "naming": 0.25
+    "naming": 0.25,
+    "do_classify": true,
+    "no_cache": false
   },
   "reuse": {
     "score": 41.6,
@@ -37,13 +39,13 @@
       },
       {
         "table": "dwd_customer",
-        "layer": "DWD",
+        "layer": "DIM",
         "downstream_count": 1,
         "score": 33.3
       },
       {
         "table": "dwd_product",
-        "layer": "DWD",
+        "layer": "DIM",
         "downstream_count": 1,
         "score": 33.3
       },
@@ -55,7 +57,7 @@
       },
       {
         "table": "dwd_seller",
-        "layer": "DWD",
+        "layer": "DIM",
         "downstream_count": 1,
         "score": 33.3
       }
@@ -124,15 +126,15 @@
         "target": "ads_geographic_sales(ADS)",
         "severity": "低",
         "penalty": 5,
-        "description": "跳过中间层(DWD→ADS 或 ODS→DWS)",
+        "description": "跳过中间层(DWD/DIM→ADS 或 ODS→DWS)",
         "source_file": "ads_geographic_sales.sql"
       },
       {
-        "source": "dwd_customer(DWD)",
+        "source": "dwd_customer(DIM)",
         "target": "ads_geographic_sales(ADS)",
         "severity": "低",
         "penalty": 5,
-        "description": "跳过中间层(DWD→ADS 或 ODS→DWS)",
+        "description": "跳过中间层(DWD/DIM→ADS 或 ODS→DWS)",
         "source_file": "ads_geographic_sales.sql"
       },
       {
@@ -140,7 +142,7 @@
         "target": "ads_payment_analysis(ADS)",
         "severity": "低",
         "penalty": 5,
-        "description": "跳过中间层(DWD→ADS 或 ODS→DWS)",
+        "description": "跳过中间层(DWD/DIM→ADS 或 ODS→DWS)",
         "source_file": "ads_payment_analysis.sql"
       },
       {
@@ -148,15 +150,15 @@
         "target": "ads_product_topn(ADS)",
         "severity": "低",
         "penalty": 5,
-        "description": "跳过中间层(DWD→ADS 或 ODS→DWS)",
+        "description": "跳过中间层(DWD/DIM→ADS 或 ODS→DWS)",
         "source_file": "ads_product_topn.sql"
       },
       {
-        "source": "dwd_product(DWD)",
+        "source": "dwd_product(DIM)",
         "target": "ads_product_topn(ADS)",
         "severity": "低",
         "penalty": 5,
-        "description": "跳过中间层(DWD→ADS 或 ODS→DWS)",
+        "description": "跳过中间层(DWD/DIM→ADS 或 ODS→DWS)",
         "source_file": "ads_product_topn.sql"
       },
       {
@@ -164,21 +166,21 @@
         "target": "ads_review_analysis(ADS)",
         "severity": "低",
         "penalty": 5,
-        "description": "跳过中间层(DWD→ADS 或 ODS→DWS)",
+        "description": "跳过中间层(DWD/DIM→ADS 或 ODS→DWS)",
         "source_file": "ads_review_analysis.sql"
       },
       {
-        "source": "dwd_seller(DWD)",
+        "source": "dwd_seller(DIM)",
         "target": "ads_seller_performance_ranking(ADS)",
         "severity": "低",
         "penalty": 5,
-        "description": "跳过中间层(DWD→ADS 或 ODS→DWS)",
+        "description": "跳过中间层(DWD/DIM→ADS 或 ODS→DWS)",
         "source_file": "ads_seller_performance_ranking.sql"
       }
     ]
   },
   "naming": {
-    "score": 61.5,
+    "score": 64.2,
     "details": [
       {
         "table": "dws_product_category_monthly",
@@ -189,16 +191,15 @@
           "violations": []
         },
         "column_checks": {
-          "passed": 5,
+          "passed": 6,
           "total": 9,
           "violations": [
-            "avg_freight",
             "product_category_name_english",
             "stat_month",
             "total_revenue"
           ]
         },
-        "score": 66.7
+        "score": 75.0
       },
       {
         "table": "dws_customer_order_summary",
@@ -209,15 +210,14 @@
           "violations": []
         },
         "column_checks": {
-          "passed": 5,
+          "passed": 6,
           "total": 8,
           "violations": [
-            "avg_order_value",
             "total_freight",
             "total_revenue"
           ]
         },
-        "score": 72.7
+        "score": 81.8
       },
       {
         "table": "dws_daily_orders",
@@ -228,18 +228,14 @@
           "violations": []
         },
         "column_checks": {
-          "passed": 7,
+          "passed": 11,
           "total": 13,
           "violations": [
-            "avg_delay_days",
-            "avg_delivery_days",
-            "avg_order_value",
-            "max_delay_days",
             "total_freight",
             "total_revenue"
           ]
         },
-        "score": 62.5
+        "score": 87.5
       },
       {
         "table": "dwd_order_detail",
@@ -268,11 +264,13 @@
       },
       {
         "table": "dwd_customer",
-        "layer": "DWD",
+        "layer": "DIM",
         "table_checks": {
-          "passed": 3,
+          "passed": 2,
           "total": 3,
-          "violations": []
+          "violations": [
+            "违反: 表名前缀匹配分层"
+          ]
         },
         "column_checks": {
           "passed": 3,
@@ -283,15 +281,17 @@
             "customer_state"
           ]
         },
-        "score": 66.7
+        "score": 55.6
       },
       {
         "table": "dwd_product",
-        "layer": "DWD",
+        "layer": "DIM",
         "table_checks": {
-          "passed": 3,
+          "passed": 2,
           "total": 3,
-          "violations": []
+          "violations": [
+            "违反: 表名前缀匹配分层"
+          ]
         },
         "column_checks": {
           "passed": 3,
@@ -309,7 +309,7 @@
             "product_width_cm"
           ]
         },
-        "score": 37.5
+        "score": 31.2
       },
       {
         "table": "dws_seller_monthly",
@@ -332,11 +332,13 @@
       },
       {
         "table": "dwd_seller",
-        "layer": "DWD",
+        "layer": "DIM",
         "table_checks": {
-          "passed": 3,
+          "passed": 2,
           "total": 3,
-          "violations": []
+          "violations": [
+            "违反: 表名前缀匹配分层"
+          ]
         },
         "column_checks": {
           "passed": 2,
@@ -348,14 +350,14 @@
             "seller_zip_code_prefix"
           ]
         },
-        "score": 55.6
+        "score": 44.4
       }
     ],
     "rule_summary": {
       "表名前缀匹配分层": {
-        "pass_count": 8,
+        "pass_count": 5,
         "total": 8,
-        "pct": 100.0
+        "pct": 62.5
       },
       "表名全小写下划线": {
         "pass_count": 8,
@@ -367,101 +369,121 @@
         "total": 8,
         "pct": 100.0
       },
-      "主键/外键 _id": {
-        "pass_count": 11,
-        "total": 77,
-        "pct": 14.3
-      },
-      "日期字段 _date": {
-        "pass_count": 4,
-        "total": 77,
-        "pct": 5.2
-      },
-      "时间字段 _time": {
+      "无匹配模式": {
         "pass_count": 0,
-        "total": 77,
+        "total": 36,
         "pct": 0.0
       },
-      "金额字段 _amount": {
-        "pass_count": 0,
-        "total": 77,
-        "pct": 0.0
-      },
-      "金额字段 _price": {
-        "pass_count": 3,
-        "total": 77,
-        "pct": 3.9
-      },
-      "金额字段 _cost": {
-        "pass_count": 0,
-        "total": 77,
-        "pct": 0.0
-      },
-      "金额字段 subtotal/discount": {
-        "pass_count": 0,
-        "total": 77,
-        "pct": 0.0
-      },
-      "统计字段 _count": {
+      "后缀 _count": {
         "pass_count": 10,
-        "total": 77,
-        "pct": 13.0
+        "total": 10,
+        "pct": 100.0
       },
-      "数量字段 quantity": {
-        "pass_count": 0,
-        "total": 77,
-        "pct": 0.0
-      },
-      "标志字段 is_": {
-        "pass_count": 0,
-        "total": 77,
-        "pct": 0.0
-      },
-      "等级字段 _level": {
-        "pass_count": 0,
-        "total": 77,
-        "pct": 0.0
-      },
-      "类型字段 _type": {
-        "pass_count": 1,
-        "total": 77,
-        "pct": 1.3
-      },
-      "名称字段 _name": {
-        "pass_count": 2,
-        "total": 77,
-        "pct": 2.6
-      },
-      "评分字段 _score": {
+      "后缀 _price": {
         "pass_count": 3,
-        "total": 77,
-        "pct": 3.9
+        "total": 3,
+        "pct": 100.0
       },
-      "排名字段 _num": {
-        "pass_count": 0,
-        "total": 77,
-        "pct": 0.0
+      "后缀 _score": {
+        "pass_count": 3,
+        "total": 3,
+        "pct": 100.0
       },
-      "方法字段 _method": {
-        "pass_count": 0,
-        "total": 77,
-        "pct": 0.0
+      "前缀 avg_": {
+        "pass_count": 5,
+        "total": 5,
+        "pct": 100.0
       },
-      "状态字段 _status": {
+      "通用列名": {
+        "pass_count": 8,
+        "total": 8,
+        "pct": 100.0
+      },
+      "后缀 _id": {
+        "pass_count": 11,
+        "total": 11,
+        "pct": 100.0
+      },
+      "后缀 _date": {
+        "pass_count": 4,
+        "total": 4,
+        "pct": 100.0
+      },
+      "前缀 max_": {
         "pass_count": 1,
-        "total": 77,
-        "pct": 1.3
+        "total": 1,
+        "pct": 100.0
       },
-      "分段字段 _segment": {
-        "pass_count": 0,
-        "total": 77,
-        "pct": 0.0
+      "后缀 _type": {
+        "pass_count": 1,
+        "total": 1,
+        "pct": 100.0
       },
-      "ETL元数据字段": {
-        "pass_count": 0,
-        "total": 77,
-        "pct": 0.0
+      "后缀 _name": {
+        "pass_count": 2,
+        "total": 2,
+        "pct": 100.0
+      },
+      "后缀 _status": {
+        "pass_count": 1,
+        "total": 1,
+        "pct": 100.0
+      },
+      "列名总计": {
+        "pass_count": 49,
+        "total": 85,
+        "pct": 57.6
       }
     }
-  }
+  },
+  "classification": [
+    {
+      "table_name": "dws_product_category_monthly",
+      "table_type": "fact",
+      "confidence": 1.0,
+      "reason": "DWS层月度汇总表，包含可聚合度量字段（订单数、收入等），属于汇总事实表。"
+    },
+    {
+      "table_name": "dws_customer_order_summary",
+      "table_type": "fact",
+      "confidence": 1.0,
+      "reason": "DWS层汇总表，按客户+日期聚合订单度量，属于汇总事实表。"
+    },
+    {
+      "table_name": "dws_daily_orders",
+      "table_type": "fact",
+      "confidence": 1.0,
+      "reason": "DWS层日订单汇总表，包含可聚合度量字段，按时间分区，属于汇总事实表。"
+    },
+    {
+      "table_name": "dwd_order_detail",
+      "table_type": "fact",
+      "confidence": 0.95,
+      "reason": "DWD层订单明细表，包含价格、运费、评分等度量，有时间分区，多表关联加工，下游是汇总事实表。"
+    },
+    {
+      "table_name": "dwd_customer",
+      "table_type": "dimension",
+      "confidence": 0.98,
+      "reason": "表名及注释明确为'客户明细维表(纯维度)'，描述客户属性，被下游引用做JOIN。"
+    },
+    {
+      "table_name": "dwd_product",
+      "table_type": "dimension",
+      "confidence": 0.95,
+      "reason": "表名和DDL描述为商品维表，存储商品属性，无度量字段，用于JOIN关联。"
+    },
+    {
+      "table_name": "dws_seller_monthly",
+      "table_type": "fact",
+      "confidence": 1.0,
+      "reason": "DWS层汇总事实表，按月+卖家聚合订单数、收入等可度量字段，符合事实表特征。"
+    },
+    {
+      "table_name": "dwd_seller",
+      "table_type": "dimension",
+      "confidence": 1.0,
+      "reason": "表描述为纯维度，包含卖家属性字段，无度量，全量加载，符合维度表特征。"
+    }
+  ]
 }

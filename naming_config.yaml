@@ -61,12 +61,18 @@ types:
       - desc
       - note
 
+layers:
+  - ODS
+  - [DIM, DWD]
+  - DWS
+  - ADS
+
 table:
   ODS: [ods, $source, $entity, $load_type]
+  DIM: [dim, $entity]
   DWD: [dwd, $entity]
   DWS: [dws, $entity, "$time_granularity?"]
   ADS: [ads, $business_view]
-  DIM: [dim, $entity]
 
 columns:
   segments: ["$prefix_field?", $entity, "$suffix_field?"]

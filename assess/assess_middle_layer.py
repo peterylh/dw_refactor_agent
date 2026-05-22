@@ -16,11 +16,15 @@ import re
 import sys
 from pathlib import Path
 from collections import defaultdict
+import os
 
 # 将项目根目录加入 sys.path 以便导入 config
 _root = Path(__file__).resolve().parent.parent
 if str(_root) not in sys.path:
     sys.path.insert(0, str(_root))
+
+from assess.context_builder import build_contexts
+from assess.table_classifier import TableClassifier
 
 # ============================================================
 # 评分配置
@@ -43,9 +47,13 @@ DEFAULT_WEIGHTS = {
 
 # 从命名规范配置获取分层序号
 from config import get_naming_config
+
 _nc = get_naming_config()
+
+
 def _layer_rank(layer: str) -> int:
     return _nc.layer_rank(layer)
+
 
 # 依赖违规定义: 通过 src/tgt 层序号差自动判定
 # rank_diff = src_rank - tgt_rank
@@ -57,10 +65,11 @@ def _layer_rank(layer: str) -> int:
 
 DEP_VIOLATION_RULES = [
     # (rank_diff, description, severity, penalty)
-    (2, "反向依赖: 跳过两层以上", "严重", 30),
+    (3, "反向依赖: 跳过三层(ADS→ODS)", "严重", 40),
+    (2, "反向依赖: 跳过两层", "严重", 30),
     (1, "反向依赖: 跳过一层", "高", 20),
     (0, "同层依赖(非必要)", "低", 2),
-    (-2, "跳过中间层(DWD→ADS 或 ODS→DWS)", "低", 5),
+    (-2, "跳过中间层(DWD/DIM→ADS 或 ODS→DWS)", "低", 5),
     (-3, "跳过两层(ODS→ADS)", "中", 10),
 ]
 
@@ -80,17 +89,14 @@ def load_lineage_data(project: str) -> dict:
             with open(path) as f:
                 return json.load(f)
     raise FileNotFoundError(
-        f"未找到 {project} 的血缘数据文件 (lineage_data_{project}.json)"
-    )
+        f"未找到 {project} 的血缘数据文件 (lineage_data_{project}.json)")
 
 
 def _table_from_node(node_id: str) -> str:
     return node_id.rsplit(".", 1)[0]
 
 
-def build_table_graph(
-    edges: list, indirect_edges: list
-) -> tuple[dict, dict]:
+def build_table_graph(edges: list, indirect_edges: list) -> tuple[dict, dict]:
     upstream = defaultdict(set)
     downstream = defaultdict(set)
 
@@ -121,7 +127,7 @@ def build_table_layer_map(tables: list) -> dict:
 
 
 def score_reusability(tables: list, downstream_map: dict) -> dict:
-    middle = [t for t in tables if t["layer"] in ("DWD", "DWS")]
+    middle = [t for t in tables if t["layer"] in ("DWD", "DWS", "DIM")]
 
     rows = []
     for t in middle:
@@ -129,19 +135,22 @@ def score_reusability(tables: list, downstream_map: dict) -> dict:
         cnt = len(downstream_map.get(name, set()))
         score = min(100, cnt / REUSE_FULL_SCORE_AT * 100)
         rows.append(
-            dict(table=name, layer=t["layer"], downstream_count=cnt, score=round(score, 1))
-        )
+            dict(table=name,
+                 layer=t["layer"],
+                 downstream_count=cnt,
+                 score=round(score, 1)))
 
-    avg_score = round(sum(r["score"] for r in rows) / len(rows), 1) if rows else 0.0
-    avg_reuse = (
-        round(sum(r["downstream_count"] for r in rows) / len(rows), 2)
-        if rows
-        else 0.0
-    )
+    avg_score = round(sum(r["score"]
+                          for r in rows) / len(rows), 1) if rows else 0.0
+    avg_reuse = (round(
+        sum(r["downstream_count"]
+            for r in rows) / len(rows), 2) if rows else 0.0)
 
     dist = dict(
-        high=sum(1 for r in rows if r["downstream_count"] >= REUSE_FULL_SCORE_AT),
-        medium=sum(1 for r in rows if 1 <= r["downstream_count"] < REUSE_FULL_SCORE_AT),
+        high=sum(1 for r in rows
+                 if r["downstream_count"] >= REUSE_FULL_SCORE_AT),
+        medium=sum(1 for r in rows
+                   if 1 <= r["downstream_count"] < REUSE_FULL_SCORE_AT),
         none=sum(1 for r in rows if r["downstream_count"] == 0),
     )
 
@@ -178,7 +187,7 @@ def _max_middle_depth(
     visiting.add(table)
 
     layer = table_layers.get(table, "OTHER")
-    contribution = 1 if layer in ("DWD", "DWS") else 0
+    contribution = 1 if layer in ("DWD", "DWS", "DIM") else 0
 
     parents = upstream_map.get(table, set())
     if not parents:
@@ -186,7 +195,10 @@ def _max_middle_depth(
     else:
         max_sub = 0
         for p in parents:
-            max_sub = max(max_sub, _max_middle_depth(p, upstream_map, table_layers, memo, visiting))
+            max_sub = max(
+                max_sub,
+                _max_middle_depth(p, upstream_map, table_layers, memo,
+                                  visiting))
         result = contribution + max_sub
 
     visiting.remove(table)
@@ -198,7 +210,8 @@ def _depth_to_score(depth: int) -> int:
     return MIDDLE_DEPTH_SCORE.get(depth, MIDDLE_DEPTH_FALLBACK)
 
 
-def score_lineage_depth(tables: list, edges: list, indirect_edges: list) -> dict:
+def score_lineage_depth(tables: list, edges: list,
+                        indirect_edges: list) -> dict:
     table_layers = build_table_layer_map(tables)
     upstream, _ = build_table_graph(edges, indirect_edges)
 
@@ -217,8 +230,10 @@ def score_lineage_depth(tables: list, edges: list, indirect_edges: list) -> dict
         score = _depth_to_score(depth)
         rows.append(dict(table=name, max_middle_depth=depth, score=score))
 
-    avg_score = round(sum(r["score"] for r in rows) / len(rows), 1) if rows else 100.0
-    avg_depth = round(sum(r["max_middle_depth"] for r in rows) / len(rows), 2) if rows else 0.0
+    avg_score = round(sum(r["score"]
+                          for r in rows) / len(rows), 1) if rows else 100.0
+    avg_depth = round(sum(r["max_middle_depth"]
+                          for r in rows) / len(rows), 2) if rows else 0.0
 
     return dict(score=avg_score, avg_middle_depth=avg_depth, details=rows)
 
@@ -228,7 +243,8 @@ def score_lineage_depth(tables: list, edges: list, indirect_edges: list) -> dict
 # ============================================================
 
 
-def score_dependency_health(tables: list, edges: list, indirect_edges: list) -> dict:
+def score_dependency_health(tables: list, edges: list,
+                            indirect_edges: list) -> dict:
     table_layers = build_table_layer_map(tables)
 
     # 收集表级边 (去重)
@@ -271,8 +287,7 @@ def score_dependency_health(tables: list, edges: list, indirect_edges: list) -> 
                         penalty=penalty,
                         description=desc,
                         source_file=", ".join(sorted(files)),
-                    )
-                )
+                    ))
                 penalty_total += penalty
 
     score = max(0, 100 - penalty_total)
@@ -330,7 +345,7 @@ def _check_column_name(col_name: str) -> tuple[bool, list[str]]:
 
 
 def score_naming_conventions(tables: list) -> dict:
-    middle = [t for t in tables if t["layer"] in ("DWD", "DWS")]
+    middle = [t for t in tables if t["layer"] in ("DWD", "DWS", "DIM")]
 
     table_results = []
     total_checks = 0
@@ -368,26 +383,29 @@ def score_naming_conventions(tables: list) -> dict:
 
         table_pass = tbl_passed + col_passed
         table_check = tbl_total + col_total
-        table_score = round(table_pass / table_check * 100, 1) if table_check else 100.0
+        table_score = round(table_pass / table_check *
+                            100, 1) if table_check else 100.0
 
         table_results.append(
             dict(
                 table=name,
                 layer=layer,
-                table_checks=dict(passed=tbl_passed, total=tbl_total, violations=tbl_violations),
+                table_checks=dict(passed=tbl_passed,
+                                  total=tbl_total,
+                                  violations=tbl_violations),
                 column_checks=dict(
                     passed=col_passed,
                     total=col_total,
                     violations=sorted(col_violations),
                 ),
                 score=table_score,
-            )
-        )
+            ))
 
         total_passed += table_pass
         total_checks += table_check
 
-    overall = round(total_passed / total_checks * 100, 1) if total_checks else 100.0
+    overall = round(total_passed / total_checks *
+                    100, 1) if total_checks else 100.0
 
     # 规则汇总
     rule_summary = {}
@@ -395,7 +413,8 @@ def score_naming_conventions(tables: list) -> dict:
         passed = sum(1 for t in middle if fn(t["name"], t["layer"]))
         total = len(middle)
         rule_summary[desc] = dict(
-            pass_count=passed, total=total,
+            pass_count=passed,
+            total=total,
             pct=round(passed / total * 100, 1) if total else 0,
         )
 
@@ -422,10 +441,54 @@ def score_naming_conventions(tables: list) -> dict:
     # 确保 col 总结显示
     pct = round(col_passed / col_total * 100, 1) if col_total else 0
     rule_summary["列名总计"] = dict(
-        pass_count=col_passed, total=col_total, pct=pct,
+        pass_count=col_passed,
+        total=col_total,
+        pct=pct,
     )
 
-    return dict(score=overall, details=table_results, rule_summary=rule_summary)
+    return dict(score=overall,
+                details=table_results,
+                rule_summary=rule_summary)
+
+
+# ============================================================
+# 表分类报告
+# ============================================================
+
+
+def format_classification_report(classify_results: list) -> str:
+    parts = []
+    parts.append(f"\n{'=' * 62}")
+    parts.append(f"【LLM 表分类报告】 (DWD/DWS层)")
+    parts.append(f"{'=' * 62}")
+
+    if not classify_results:
+        parts.append("  (未开启分类或无结果)")
+        return "\n".join(parts)
+
+    headers = ["表名", "类型", "置信度", "判断依据"]
+    col_w = [30, 10, 8, 40]
+    rows = []
+
+    # 统计
+    summary = defaultdict(int)
+
+    for r in classify_results:
+        reason = r.reason.replace("\n", " ")
+        if len(reason) > 37:
+            reason = reason[:34] + "..."
+        rows.append(
+            [r.table_name, r.table_type, f"{r.confidence:.2f}", reason])
+        summary[r.table_type] += 1
+
+    parts.append(_fmt_table(headers, rows, col_w))
+
+    parts.append("\n  分类统计:")
+    for t_type, count in summary.items():
+        parts.append(f"    - {t_type}: {count} 张表")
+
+    parts.append(f"{'=' * 62}")
+    return "\n".join(parts)
 
 
 # ============================================================
@@ -464,8 +527,7 @@ def generate_report(scores: dict, weights: dict, project: str) -> str:
         f"║{'数据集市中间层评估报告':^62}║\n"
         f"║{'─' * 62}║\n"
         f"║{'项目: ' + project:<30}{'总体评分:':>15}{overall:>6.1f} / 100{' ' * 4}║\n"
-        f"╠{'═' * 62}╣"
-    )
+        f"╠{'═' * 62}╣")
 
     dims = [
         ("复用度", "reuse"),
@@ -476,7 +538,8 @@ def generate_report(scores: dict, weights: dict, project: str) -> str:
     for label, key in dims:
         s = scores[key]["score"]
         w = weights[key] * 100
-        parts.append(f"║ {label:<18} {s:>5.1f} / 100{' ' * 5}权重: {w:>2.0f}%{' ' * 17}║")
+        parts.append(
+            f"║ {label:<18} {s:>5.1f} / 100{' ' * 5}权重: {w:>2.0f}%{' ' * 17}║")
 
     parts.append(f"╚{'═' * 62}╝")
 
@@ -485,14 +548,19 @@ def generate_report(scores: dict, weights: dict, project: str) -> str:
     # ============================================================
     reuse = scores["reuse"]
     parts.append(f"\n{'=' * 62}")
-    parts.append(f"【复用度】评分: {reuse['score']}  |  平均复用次数: {reuse['avg_reuse_count']}")
+    parts.append(
+        f"【复用度】评分: {reuse['score']}  |  平均复用次数: {reuse['avg_reuse_count']}")
     parts.append(f"{'=' * 62}")
 
     headers = ["表名", "层", "下游引用", "得分"]
     col_w = [34, 6, 10, 6]
     rows = []
     for r in reuse["details"]:
-        rows.append([r["table"], r["layer"], str(r["downstream_count"]), str(r["score"])])
+        rows.append([
+            r["table"], r["layer"],
+            str(r["downstream_count"]),
+            str(r["score"])
+        ])
     parts.append(_fmt_table(headers, rows, col_w))
 
     d = reuse["distribution"]
@@ -505,7 +573,9 @@ def generate_report(scores: dict, weights: dict, project: str) -> str:
     # ============================================================
     depth = scores["depth"]
     parts.append(f"\n{'=' * 62}")
-    parts.append(f"【链路长度(中间层深度)】评分: {depth['score']}  |  平均深度: {depth['avg_middle_depth']}")
+    parts.append(
+        f"【链路长度(中间层深度)】评分: {depth['score']}  |  平均深度: {depth['avg_middle_depth']}"
+    )
     parts.append(f"{'=' * 62}")
 
     headers = ["ADS表", "最大中间层深度", "得分", "含义"]
@@ -536,7 +606,10 @@ def generate_report(scores: dict, weights: dict, project: str) -> str:
     for v in health["violations"]:
         key = v["description"]
         if key not in rule_groups:
-            rule_groups[key] = dict(label=key, sev=v["severity"], pen=v["penalty"], count=0)
+            rule_groups[key] = dict(label=key,
+                                    sev=v["severity"],
+                                    pen=v["penalty"],
+                                    count=0)
         rule_groups[key]["count"] += 1
 
     headers = ["违规类型", "严重度", "单次扣分", "次数", "扣分小计"]
@@ -544,17 +617,24 @@ def generate_report(scores: dict, weights: dict, project: str) -> str:
     rows = []
     for g in rule_groups.values():
         sub = g["count"] * g["pen"]
-        rows.append([g["label"], g["sev"], str(g["pen"]), str(g["count"]), str(sub)])
+        rows.append(
+            [g["label"], g["sev"],
+             str(g["pen"]),
+             str(g["count"]),
+             str(sub)])
     if not rows:
         rows.append(["(无违规)", "", "", "", ""])
     parts.append(_fmt_table(headers, rows, col_w))
 
-    parts.append(f"\n  累计扣分: {health['total_penalty']}  |  最终得分: {health['score']}")
+    parts.append(
+        f"\n  累计扣分: {health['total_penalty']}  |  最终得分: {health['score']}")
 
     if health["violations"]:
         parts.append(f"\n  违规详情:")
         for v in health["violations"]:
-            parts.append(f"    ✗ {v['source']} → {v['target']}  [{v['severity']}] {v['description']} ({v['source_file']})")
+            parts.append(
+                f"    ✗ {v['source']} → {v['target']}  [{v['severity']}] {v['description']} ({v['source_file']})"
+            )
     else:
         parts.append(f"\n  无违规 ✓")
     parts.append(sep)
@@ -572,7 +652,11 @@ def generate_report(scores: dict, weights: dict, project: str) -> str:
     col_w = [36, 6, 6, 8]
     rows = []
     for desc, cnts in sorted(naming["rule_summary"].items()):
-        rows.append([desc, str(cnts["pass_count"]), str(cnts["total"]), f"{cnts['pct']}%"])
+        rows.append([
+            desc,
+            str(cnts["pass_count"]),
+            str(cnts["total"]), f"{cnts['pct']}%"
+        ])
     parts.append(_fmt_table(headers, rows, col_w))
 
     # 表级详情 (只显示有违规的表)
@@ -581,19 +665,25 @@ def generate_report(scores: dict, weights: dict, project: str) -> str:
         issues = []
         issues.extend(r["table_checks"]["violations"])
         if r["column_checks"]["violations"]:
-            issues.append(f"不合规字段: {', '.join(r['column_checks']['violations'][:10])}")
+            issues.append(
+                f"不合规字段: {', '.join(r['column_checks']['violations'][:10])}")
             if len(r["column_checks"]["violations"]) > 10:
-                issues[-1] += f"... (共{len(r['column_checks']['violations'])}个)"
+                issues[
+                    -1] += f"... (共{len(r['column_checks']['violations'])}个)"
         if issues:
             if not has_viz:
                 parts.append(f"\n  偏离详情:")
                 has_viz = True
-            parts.append(f"\n    {r['table']}({r['layer']}) [得分: {r['score']}]")
+            parts.append(
+                f"\n    {r['table']}({r['layer']}) [得分: {r['score']}]")
             for iss in issues:
                 parts.append(f"      {iss}")
 
     if not has_viz:
         parts.append(f"\n  无违规 ✓")
+
+    if "classification" in scores:
+        parts.append(format_classification_report(scores["classification"]))
 
     parts.append(f"\n{'=' * 62}")
     return "\n".join(parts)
@@ -604,7 +694,9 @@ def generate_report(scores: dict, weights: dict, project: str) -> str:
 # ============================================================
 
 
-def assess(project: str = "shop", weights: dict = None, output: str = None) -> dict:
+def assess(project: str = "shop",
+           weights: dict = None,
+           output: str = None) -> dict:
     if weights is None:
         weights = DEFAULT_WEIGHTS.copy()
 
@@ -612,6 +704,31 @@ def assess(project: str = "shop", weights: dict = None, output: str = None) -> d
     edges = data.get("edges", [])
     indirect_edges = data.get("indirect_edges", [])
     tables = data.get("tables", [])
+
+    classification_results = []
+    if weights.get("do_classify", False):
+        api_key = os.environ.get("DEEPSEEK_API_KEY")
+        if api_key:
+            print("正在调用 DeepSeek API 进行表分类，请稍候...")
+            contexts = build_contexts(project, data)
+            cache_file = Path(__file__).resolve(
+            ).parent / "cache" / f"classify_{project}.json"
+            if weights.get("no_cache", False) and cache_file.exists():
+                cache_file.unlink()
+            classifier = TableClassifier(api_key, cache_file=cache_file)
+            classification_results = classifier.classify_batch(contexts)
+            
+            # 将分类结果注入 tables, 并修正 dimension 的层级
+            cls_map = {r.table_name: r for r in classification_results}
+            for t in tables:
+                name = t["name"]
+                if name in cls_map:
+                    res = cls_map[name]
+                    t["classification"] = res
+                    if res.table_type == "dimension":
+                        t["layer"] = "DIM"
+        else:
+            print("警告: 未提供 DEEPSEEK_API_KEY 环境变量，跳过分类。")
 
     upstream, downstream = build_table_graph(edges, indirect_edges)
 
@@ -621,10 +738,10 @@ def assess(project: str = "shop", weights: dict = None, output: str = None) -> d
     naming_score = score_naming_conventions(tables)
 
     overall = round(
-        weights["reuse"] * reuse_score["score"]
-        + weights["depth"] * depth_score["score"]
-        + weights["health"] * health_score["score"]
-        + weights["naming"] * naming_score["score"],
+        weights["reuse"] * reuse_score["score"] +
+        weights["depth"] * depth_score["score"] +
+        weights["health"] * health_score["score"] +
+        weights["naming"] * naming_score["score"],
         1,
     )
 
@@ -638,18 +755,31 @@ def assess(project: str = "shop", weights: dict = None, output: str = None) -> d
         naming=naming_score,
     )
 
+    if classification_results:
+        result["classification"] = classification_results
+
     return result
 
 
 def main():
     parser = argparse.ArgumentParser(description="数据集市中间层评估工具")
-    parser.add_argument("--project", default="shop", choices=["shop", "olist"],
+    parser.add_argument("--project",
+                        default="shop",
+                        choices=["shop", "olist"],
                         help="项目名称 (shop / olist)")
-    parser.add_argument("--output", help="输出 JSON 文件路径 (默认 assess/assess_result_{project}.json)")
+    parser.add_argument(
+        "--output",
+        help="输出 JSON 文件路径 (默认 assess/assess_result_{project}.json)")
     parser.add_argument("--reuse-weight", type=float, default=0.25)
     parser.add_argument("--depth-weight", type=float, default=0.25)
     parser.add_argument("--health-weight", type=float, default=0.25)
     parser.add_argument("--naming-weight", type=float, default=0.25)
+    parser.add_argument("--classify",
+                        action="store_true",
+                        help="调用 DeepSeek API 对表进行分类")
+    parser.add_argument("--no-cache",
+                        action="store_true",
+                        help="禁用分类缓存，强制重新调用 API")
     args = parser.parse_args()
 
     weights = dict(
@@ -657,6 +787,8 @@ def main():
         depth=args.depth_weight,
         health=args.health_weight,
         naming=args.naming_weight,
+        do_classify=args.classify,
+        no_cache=args.no_cache,
     )
 
     result = assess(args.project, weights)
@@ -665,7 +797,14 @@ def main():
 
     output_path = args.output
     if not output_path:
-        output_path = str(Path(__file__).resolve().parent / f"assess_result_{args.project}.json")
+        output_path = str(
+            Path(__file__).resolve().parent /
+            f"assess_result_{args.project}.json")
+            
+    if "classification" in result:
+        from dataclasses import asdict
+        result["classification"] = [asdict(r) for r in result["classification"]]
+        
     with open(output_path, "w") as f:
         json.dump(result, f, ensure_ascii=False, indent=2)
     print(f"\n结果已写入: {output_path}")

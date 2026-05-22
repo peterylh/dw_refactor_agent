@@ -1,11 +1,13 @@
 {
   "project": "shop",
-  "overall": 70.4,
+  "overall": 69.7,
   "weights": {
     "reuse": 0.25,
     "depth": 0.25,
     "health": 0.25,
-    "naming": 0.25
+    "naming": 0.25,
+    "do_classify": true,
+    "no_cache": false
   },
   "reuse": {
     "score": 33.3,
@@ -25,7 +27,7 @@
       },
       {
         "table": "dwd_product",
-        "layer": "DWD",
+        "layer": "DIM",
         "downstream_count": 1,
         "score": 33.3
       },
@@ -43,13 +45,13 @@
       },
       {
         "table": "dwd_store",
-        "layer": "DWD",
+        "layer": "DIM",
         "downstream_count": 1,
         "score": 33.3
       },
       {
         "table": "dwd_customer",
-        "layer": "DWD",
+        "layer": "DIM",
         "downstream_count": 0,
         "score": 0.0
       },
@@ -100,11 +102,11 @@
     },
     "violations": [
       {
-        "source": "dwd_product(DWD)",
+        "source": "dwd_product(DIM)",
         "target": "ads_product_topn_daily(ADS)",
         "severity": "低",
         "penalty": 5,
-        "description": "跳过中间层(DWD→ADS 或 ODS→DWS)",
+        "description": "跳过中间层(DWD/DIM→ADS 或 ODS→DWS)",
         "source_file": "ads_product_topn_daily.sql"
       },
       {
@@ -112,21 +114,21 @@
         "target": "ads_sales_dashboard(ADS)",
         "severity": "低",
         "penalty": 5,
-        "description": "跳过中间层(DWD→ADS 或 ODS→DWS)",
+        "description": "跳过中间层(DWD/DIM→ADS 或 ODS→DWS)",
         "source_file": "ads_sales_dashboard.sql"
       },
       {
-        "source": "dwd_store(DWD)",
+        "source": "dwd_store(DIM)",
         "target": "ads_store_performance(ADS)",
         "severity": "低",
         "penalty": 5,
-        "description": "跳过中间层(DWD→ADS 或 ODS→DWS)",
+        "description": "跳过中间层(DWD/DIM→ADS 或 ODS→DWS)",
         "source_file": "ads_store_performance.sql"
       }
     ]
   },
   "naming": {
-    "score": 75.7,
+    "score": 73.0,
     "details": [
       {
         "table": "dws_customer_order_summary",
@@ -162,11 +164,13 @@
       },
       {
         "table": "dwd_product",
-        "layer": "DWD",
+        "layer": "DIM",
         "table_checks": {
-          "passed": 3,
+          "passed": 2,
           "total": 3,
-          "violations": []
+          "violations": [
+            "违反: 表名前缀匹配分层"
+          ]
         },
         "column_checks": {
           "passed": 9,
@@ -180,7 +184,7 @@
             "unit"
           ]
         },
-        "score": 66.7
+        "score": 61.1
       },
       {
         "table": "dwd_order_detail",
@@ -220,11 +224,13 @@
       },
       {
         "table": "dwd_store",
-        "layer": "DWD",
+        "layer": "DIM",
         "table_checks": {
-          "passed": 3,
+          "passed": 2,
           "total": 3,
-          "violations": []
+          "violations": [
+            "违反: 表名前缀匹配分层"
+          ]
         },
         "column_checks": {
           "passed": 6,
@@ -238,15 +244,17 @@
             "status"
           ]
         },
-        "score": 60.0
+        "score": 53.3
       },
       {
         "table": "dwd_customer",
-        "layer": "DWD",
+        "layer": "DIM",
         "table_checks": {
-          "passed": 3,
+          "passed": 2,
           "total": 3,
-          "violations": []
+          "violations": [
+            "违反: 表名前缀匹配分层"
+          ]
         },
         "column_checks": {
           "passed": 5,
@@ -262,7 +270,7 @@
             "province"
           ]
         },
-        "score": 50.0
+        "score": 43.8
       },
       {
         "table": "dws_category_sales_monthly",
@@ -284,9 +292,9 @@
     ],
     "rule_summary": {
       "表名前缀匹配分层": {
-        "pass_count": 8,
+        "pass_count": 5,
         "total": 8,
-        "pct": 100.0
+        "pct": 62.5
       },
       "表名全小写下划线": {
         "pass_count": 8,
@@ -369,5 +377,55 @@
         "pct": 69.0
       }
     }
-  }
+  },
+  "classification": [
+    {
+      "table_name": "dws_customer_order_summary",
+      "table_type": "fact",
+      "confidence": 1.0,
+      "reason": "DWS层汇总事实表，包含订单数、金额等可聚合度量，按日期分区，下游用于RFM分析。"
+    },
+    {
+      "table_name": "dws_product_sales_daily",
+      "table_type": "fact",
+      "confidence": 0.95,
+      "reason": "DWS层汇总表，包含可聚合度量字段，按日期分区，从明细事实表汇总而来。"
+    },
+    {
+      "table_name": "dwd_product",
+      "table_type": "dimension",
+      "confidence": 0.95,
+      "reason": "商品维度每日快照表，描述商品实体属性，缓慢变化，下游ads引用做JOIN"
+    },
+    {
+      "table_name": "dwd_order_detail",
+      "table_type": "fact",
+      "confidence": 0.95,
+      "reason": "记录订单明细事件，含可聚合度量字段，按日期分区，属于DWD事实表。"
+    },
+    {
+      "table_name": "dws_store_sales_daily",
+      "table_type": "fact",
+      "confidence": 1.0,
+      "reason": "DWS层汇总表，包含可聚合度量字段，按时间分区，从明细事实表汇总而来。"
+    },
+    {
+      "table_name": "dwd_store",
+      "table_type": "dimension",
+      "confidence": 0.95,
+      "reason": "描述门店业务属性，每日快照缓慢变化，被下游表引用做JOIN"
+    },
+    {
+      "table_name": "dwd_customer",
+      "table_type": "dimension",
+      "confidence": 0.95,
+      "reason": "每日快照客户属性，描述业务实体，缓慢变化，无度量字段，属于维度表"
+    },
+    {
+      "table_name": "dws_category_sales_monthly",
+      "table_type": "fact",
+      "confidence": 1.0,
+      "reason": "DWS层汇总事实表，包含可聚合度量字段，按月分区，按品类+月份从明细事实表汇总。"
+    }
+  ]
 }

@@ -4,3 +4,5 @@ __pycache__/
 .pytest_cache/
 dbenv.md
 refact/refact_metadata.json
+refact/verify_result.json
+assess/cache/
