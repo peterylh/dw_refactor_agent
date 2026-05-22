@@ -312,10 +312,8 @@ def score_dependency_health(tables: list, edges: list,
 _nc_col = get_naming_config()
 
 TABLE_NAME_CHECKS = [
-    ("表名前缀匹配分层",
-     lambda name, layer: name.startswith(_nc_col.layers[layer].prefix)),
-    ("表名全小写下划线", lambda name, _: bool(re.match(r"^[a-z][a-z0-9_]*$", name))),
-    ("表名不含中文", lambda name, _: not bool(re.search(r"[\u4e00-\u9fff]", name))),
+    ("表名符合规范模板",
+     lambda name, layer: _nc_col._match_segments(name, _nc_col.layers[layer].segments) is not None if layer in _nc_col.layers else False),
 ]
 
 COMMON_COLUMNS = _nc_col.common_columns
@@ -459,33 +457,48 @@ def score_naming_conventions(tables: list) -> dict:
 def format_classification_report(classify_results: list) -> str:
     parts = []
     parts.append(f"\n{'=' * 62}")
-    parts.append(f"【LLM 表分类报告】 (DWD/DWS层)")
+    parts.append(f"【LLM 智能分层巡检报告】 (DWD/DWS层)")
     parts.append(f"{'=' * 62}")
 
     if not classify_results:
         parts.append("  (未开启分类或无结果)")
         return "\n".join(parts)
 
-    headers = ["表名", "类型", "置信度", "判断依据"]
-    col_w = [30, 10, 8, 40]
+    headers = ["表名", "推断层级", "表类型", "当前层级", "是否错配", "置信度"]
+    col_w = [30, 10, 10, 10, 10, 8]
     rows = []
 
     # 统计
-    summary = defaultdict(int)
+    violations = 0
 
     for r in classify_results:
-        reason = r.reason.replace("\n", " ")
-        if len(reason) > 37:
-            reason = reason[:34] + "..."
+        # Determine current layer from table name for display
+        current_layer = "OTHER"
+        if "ods" in r.table_name: current_layer = "ODS"
+        elif "dwd" in r.table_name: current_layer = "DWD"
+        elif "dws" in r.table_name: current_layer = "DWS"
+        elif "ads" in r.table_name: current_layer = "ADS"
+        elif "dim" in r.table_name: current_layer = "DIM"
+        
+        is_violating = "✗ 是" if r.is_violating_current_name else "✓ 否"
+        if r.is_violating_current_name:
+            violations += 1
+            
         rows.append(
-            [r.table_name, r.table_type, f"{r.confidence:.2f}", reason])
-        summary[r.table_type] += 1
+            [r.table_name, r.inferred_layer, r.table_type, current_layer, is_violating, f"{r.confidence:.2f}"])
 
     parts.append(_fmt_table(headers, rows, col_w))
 
-    parts.append("\n  分类统计:")
-    for t_type, count in summary.items():
-        parts.append(f"    - {t_type}: {count} 张表")
+    parts.append(f"\n  巡检总结: 共检查 {len(classify_results)} 张表, 发现 {violations} 个疑似分层错配。")
+    
+    # 打印错配详情
+    if violations > 0:
+        parts.append("\n  错配详情 (推理过程):")
+        for r in classify_results:
+            if r.is_violating_current_name:
+                parts.append(f"    - {r.table_name} -> 建议: {r.inferred_layer}")
+                for step in r.reasoning_steps:
+                    parts.append(f"      * {step}")
 
     parts.append(f"{'=' * 62}")
     return "\n".join(parts)
@@ -718,13 +731,14 @@ def assess(project: str = "shop",
             classifier = TableClassifier(api_key, cache_file=cache_file)
             classification_results = classifier.classify_batch(contexts)
             
-            # 将分类结果注入 tables, 并修正 dimension 的层级
+            # 将分类结果注入 tables
             cls_map = {r.table_name: r for r in classification_results}
             for t in tables:
                 name = t["name"]
                 if name in cls_map:
                     res = cls_map[name]
                     t["classification"] = res
+                    # 如果大模型判定为维度表，我们覆盖其 layer 为 DIM，以便后续 score_reusability 将其纳入考量
                     if res.table_type == "dimension":
                         t["layer"] = "DIM"
         else:
