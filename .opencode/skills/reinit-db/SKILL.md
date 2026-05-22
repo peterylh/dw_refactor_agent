@@ -1,3 +1,10 @@
+---
+name: reinit-db
+description: |
+  清空 shop_dm/olist_dm 所有表数据 → 重灌 ODS → 按 DAG 拓扑重算全层。
+  适用于开发环境首次部署初始化、数据紊乱重建、回归验证基线数据等场景。触发词：初始化数据库、重置数据、重建数仓、reinit。
+---
+
 # 初始化数据库 (reinit-db)
 
 清空 shop_dm 所有表数据 → 重灌 ODS → 按 DAG 拓扑重算全层。

@@ -236,13 +236,13 @@ python assess/assess_middle_layer.py                           # shop 项目
 python assess/assess_middle_layer.py --project olist            # olist 项目
 python assess/assess_middle_layer.py --output report.json       # 指定输出路径
 python assess/assess_middle_layer.py --reuse-weight 0.3 --depth-weight 0.2  # 自定义权重
-python assess/assess_middle_layer.py --classify                 # 启用 LLM 智能分层巡检(DWD/DWS 表分类)
-python assess/assess_middle_layer.py --classify --no-cache      # 强制重新调用 API，不使用缓存
+python assess/assess_middle_layer.py --llm                 # 启用 LLM 智能分层巡检(DWD/DWS 表分类)
+python assess/assess_middle_layer.py --llm --no-cache      # 强制重新调用 API，不使用缓存
 ```
 
 | 参数 | 说明 |
 |------|------|
-| `--classify` | 调用 DeepSeek API 对 DWD/DWS 表进行 LLM 智能分层巡检，检测分层错配（需设置 `DEEPSEEK_API_KEY` 环境变量） |
+| `--llm` | 调用 DeepSeek API 对 DWD/DWS 表进行 LLM 智能分层巡检，检测分层错配（需设置 `DEEPSEEK_API_KEY` 环境变量） |
 | `--no-cache` | 配合 `--classify` 使用，跳过缓存强制重新调用 API |
 
 ### 评估维度

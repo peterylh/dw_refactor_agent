@@ -1,6 +1,14 @@
+---
+name: assess-datamart
+description: |
+  评估 shop/olist等数据集市中间层（DWD/DWS）的建设质量，从复用度、链路长度、架构合理性、命名规范四个维度打分。
+  适用于数仓中间层质量审计、巡检、命名合规检查等场景。触发词：数据集市评估、质量评分、数仓审计、中间层巡检。
+---
+
 # 数据集市建设质量评估 (assess-datamart)
 
-评估数仓 DWD/DWS 中间层的建设质量，从复用度、链路长度、架构合理性、命名规范四个维度打分，输出详细分析与改进建议。
+评估数仓数据集市 DWD/DWS 中间层的建设质量，从复用度、链路长度、架构合理性、命名规范四个维度打分，输出评分明细与违规清单。
+详细分析问题和改进建议供人工（或 agent）后续处理时参考。
 
 ## 使用场景
 
@@ -11,12 +19,24 @@
 
 ## 执行流程
 
+1. 检测 llm 配置
+echo "${DEEPSEEK_API_KEY:+DEEPSEEK_API_KEY 已设置}"
+
+2. 执行assess_middle_layer检测脚本
+
 ```bash
 python assess/assess_middle_layer.py --project {shop|olist} [--llm] [--no-cache]
 ```
 
 - 结果写入 `assess/assess_result_{project}.json`
-- 如果配置了 `DEEPSEEK_API_KEY`，自动追加 `--llm` 启用 LLM 智能分层巡检。LLM 会对每张 DWD/DWS 表推断真实层级和表类型(dimension/fact)，检测出的违规（分层错配、维度表位置不当）直接计入**架构合理性**维度。`--no-cache` 可强制重新调用 API
+- `--llm` 参数可启用 LLM 智能分层巡检（如果运行环境用 `DEEPSEEK_API_KEY` 环境变量，则加上--llm）。LLM 会对每张 DWD/DWS 表推断真实层级和表类型(dimension/fact)，检测出的更多违规（分层错配、维度表位置不当）
+- `--no-cache` 可强制重新调用LLM API。 LLM 调用代价大，尽量不要使用no-cache,除非你知道 cache 不是最新的
+
+3.  展示总结报告
+报告格式要求：
+- 展示整体评分
+- 分四个维度详细展示每个维度的评分标准和得分
+- 按优先级给出解决建议
 
 ## 四个评分维度
 
@@ -110,13 +130,4 @@ python assess/assess_middle_layer.py --project {shop|olist} [--llm] [--no-cache]
 - 少量字段命名不合规 → 补充 `naming_config.yaml` 后缀或 `common_columns`
 - LLM 置信度 < 0.8 的分类结果 → 人工复核
 
-## 相关文件
 
-| 文件 | 说明 |
-|------|------|
-| `assess/assess_middle_layer.py` | 评估主入口 |
-| `assess/context_builder.py` | 构建 LLM 分类上下文 |
-| `assess/table_classifier.py` | DeepSeek API 调用与结果解析 |
-| `assess/assess_result_{project}.json` | 评估结果 JSON |
-| `naming_config.yaml` | 命名规范配置 |
-| `lineage/lineage_data_{project}.json` | 血缘数据（评估输入） |
