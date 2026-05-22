@@ -229,7 +229,7 @@ python refact/verify_check.py --metadata refact/refact_metadata.json --precision
 
 ## 数据集市评估工具 (assess/)
 
-`assess/assess_middle_layer.py` 是数据集市中间层评估工具，基于血缘数据 (`lineage_data.json`) 从四个维度评估 DWD/DWS 层质量：
+`assess/assess_middle_layer.py` 是数据集市中间层评估工具， 从四个维度评估 DWD/DWS 层质量
 
 ```
 python assess/assess_middle_layer.py                           # shop 项目

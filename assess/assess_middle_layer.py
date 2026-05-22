@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 数据集市中间层评估工具
-评估 DWD/DWS 层的复用度、链路长度(中间层)、依赖健康度、命名规范。
+评估 DWD/DWS 层的复用度、链路长度(中间层)、架构合理性、命名规范。
 
 用法:
     python assess/assess_middle_layer.py
@@ -41,15 +41,15 @@ REUSE_FULL_SCORE_AT = 3
 DEFAULT_WEIGHTS = {
     "reuse": 0.25,
     "depth": 0.25,
-    "dep_health": 0.25,
+    "architecture": 0.25,
     "naming": 0.25,
 }
 
-# 依赖健康度展示分采用分段线性映射:
+# 架构合理性展示分采用分段线性映射:
 # - 保持单调
 # - 高分段更敏感
 # - 避免 90->60 这类过于激进的硬映射
-DEP_HEALTH_DISPLAY_POINTS = [
+ARCH_DISPLAY_POINTS = [
     (0.0, 0.0),
     (60.0, 30.0),
     (80.0, 55.0),
@@ -85,8 +85,8 @@ def _piecewise_linear_map(score: float,
     return round(score, 1)
 
 
-def map_dep_health_display(raw_score: float) -> float:
-    return _piecewise_linear_map(raw_score, DEP_HEALTH_DISPLAY_POINTS)
+def map_architecture_display(raw_score: float) -> float:
+    return _piecewise_linear_map(raw_score, ARCH_DISPLAY_POINTS)
 
 
 def build_metric_result(metric: dict, display_score: float | None = None) -> dict:
@@ -107,7 +107,7 @@ def build_metric_result(metric: dict, display_score: float | None = None) -> dic
 # -2    → 跳过一层 (DWD→ADS 或 ODS→DWS)
 # -3    → 跳过两层 (ODS→ADS)
 
-DEP_VIOLATION_RULES = [
+ARCH_VIOLATION_RULES = [
     # (rank_diff, description, severity, penalty)
     (3, "反向依赖: 跳过三层(ADS→ODS)", "严重", 40),
     (2, "反向依赖: 跳过两层", "严重", 30),
@@ -283,12 +283,13 @@ def score_lineage_depth(tables: list, edges: list,
 
 
 # ============================================================
-# 依赖健康度评分
+# 架构合理性评分
 # ============================================================
 
 
-def score_dependency_health(tables: list, edges: list,
-                            indirect_edges: list) -> dict:
+def score_architecture_health(tables: list, edges: list,
+                              indirect_edges: list,
+                              llm_results: list = None) -> dict:
     table_layers = build_table_layer_map(tables)
 
     # 收集表级边 (去重)
@@ -307,6 +308,7 @@ def score_dependency_health(tables: list, edges: list,
     violations = []
     penalty_total = 0
 
+    # ---- 规则检测: 跨层/反向/跳层依赖 ----
     for (src, tgt), files in table_edges.items():
         src_layer = table_layers.get(src, "OTHER")
         tgt_layer = table_layers.get(tgt, "OTHER")
@@ -321,7 +323,7 @@ def score_dependency_health(tables: list, edges: list,
         if rank_diff == -1:
             continue
 
-        for diff, desc, severity, penalty in DEP_VIOLATION_RULES:
+        for diff, desc, severity, penalty in ARCH_VIOLATION_RULES:
             if rank_diff == diff:
                 violations.append(
                     dict(
@@ -333,6 +335,39 @@ def score_dependency_health(tables: list, edges: list,
                         source_file=", ".join(sorted(files)),
                     ))
                 penalty_total += penalty
+
+    # ---- LLM 检测: 分层错配 & 维度表位置不当 ----
+    if llm_results:
+        cls_map = {r.table_name: r for r in llm_results}
+        table_map = {t["name"]: t for t in tables}
+        for name, res in cls_map.items():
+            layer = table_map[name]["layer"] if name in table_map else "OTHER"
+
+            # 分层错配: 表名层 ≠ LLM 推断层
+            if res.is_violating_current_name:
+                violations.append(dict(
+                    source=f"{name}({layer})",
+                    target=f"{name}({res.inferred_layer})",
+                    severity="中",
+                    penalty=10,
+                    description=f"分层错配(LLM): 命名层={layer}, 推断层={res.inferred_layer}",
+                    source_file="",
+                    source_type="llm",
+                ))
+                penalty_total += 10
+
+            # 维度表位置不当: 维度表放在 DWD 层而非 DIM
+            if res.table_type == "dimension" and layer == "DWD":
+                violations.append(dict(
+                    source=f"{name}({layer})",
+                    target="建议: DIM",
+                    severity="低",
+                    penalty=5,
+                    description="维度表位置不当(LLM): 维度表应置于 DIM 层",
+                    source_file="",
+                    source_type="llm",
+                ))
+                penalty_total += 5
 
     score = max(0, 100 - penalty_total)
 
@@ -392,8 +427,6 @@ def score_naming_conventions(tables: list) -> dict:
     table_results = []
     total_checks = 0
     total_passed = 0
-    pass  # placeholder
-
     for t in middle:
         name = t["name"]
         layer = t["layer"]
@@ -421,7 +454,6 @@ def score_naming_conventions(tables: list) -> dict:
                 col_passed += 1
             else:
                 col_violations.append(col_name)
-            pass
 
         table_pass = tbl_passed + col_passed
         table_check = tbl_total + col_total
@@ -494,61 +526,6 @@ def score_naming_conventions(tables: list) -> dict:
 
 
 # ============================================================
-# 表分类报告
-# ============================================================
-
-
-def format_classification_report(classify_results: list) -> str:
-    parts = []
-    parts.append(f"\n{'=' * 62}")
-    parts.append(f"【LLM 智能分层巡检报告】 (DWD/DWS层)")
-    parts.append(f"{'=' * 62}")
-
-    if not classify_results:
-        parts.append("  (未开启分类或无结果)")
-        return "\n".join(parts)
-
-    headers = ["表名", "推断层级", "表类型", "当前层级", "是否错配", "置信度"]
-    col_w = [30, 10, 10, 10, 10, 8]
-    rows = []
-
-    # 统计
-    violations = 0
-
-    for r in classify_results:
-        # Determine current layer from table name for display
-        current_layer = "OTHER"
-        if "ods" in r.table_name: current_layer = "ODS"
-        elif "dwd" in r.table_name: current_layer = "DWD"
-        elif "dws" in r.table_name: current_layer = "DWS"
-        elif "ads" in r.table_name: current_layer = "ADS"
-        elif "dim" in r.table_name: current_layer = "DIM"
-        
-        is_violating = "✗ 是" if r.is_violating_current_name else "✓ 否"
-        if r.is_violating_current_name:
-            violations += 1
-            
-        rows.append(
-            [r.table_name, r.inferred_layer, r.table_type, current_layer, is_violating, f"{r.confidence:.2f}"])
-
-    parts.append(_fmt_table(headers, rows, col_w))
-
-    parts.append(f"\n  巡检总结: 共检查 {len(classify_results)} 张表, 发现 {violations} 个疑似分层错配。")
-    
-    # 打印错配详情
-    if violations > 0:
-        parts.append("\n  错配详情 (推理过程):")
-        for r in classify_results:
-            if r.is_violating_current_name:
-                parts.append(f"    - {r.table_name} -> 建议: {r.inferred_layer}")
-                for step in r.reasoning_steps:
-                    parts.append(f"      * {step}")
-
-    parts.append(f"{'=' * 62}")
-    return "\n".join(parts)
-
-
-# ============================================================
 # 报告格式化
 # ============================================================
 
@@ -591,7 +568,7 @@ def generate_report(scores: dict, weights: dict, project: str) -> str:
     dims = [
         ("复用度", "reuse"),
         ("链路长度(中间层)", "depth"),
-        ("依赖健康度", "dep_health"),
+        ("架构合理性", "architecture"),
         ("命名规范", "naming"),
     ]
     for label, key in dims:
@@ -655,23 +632,24 @@ def generate_report(scores: dict, weights: dict, project: str) -> str:
     parts.append(sep)
 
     # ============================================================
-    # 依赖健康度
+    # 架构合理性
     # ============================================================
-    dep_health = scores["dep_health"]
+    architecture = scores["architecture"]
     parts.append(f"\n{'=' * 62}")
     parts.append(
-        f"【依赖健康度】评分(展示/原始): {dep_health['display']} / {dep_health['raw']}")
+        f"【架构合理性】评分(展示/原始): {architecture['display']} / {architecture['raw']}")
     parts.append(f"{'=' * 62}")
 
     # 按规则汇总
-    rule_groups = defaultdict(lambda: dict(label="", sev="", pen=0, count=0))
-    for v in dep_health["violations"]:
+    rule_groups = defaultdict(lambda: dict(label="", sev="", pen=0, count=0, has_llm=False))
+    for v in architecture["violations"]:
         key = v["description"]
         if key not in rule_groups:
             rule_groups[key] = dict(label=key,
                                     sev=v["severity"],
                                     pen=v["penalty"],
-                                    count=0)
+                                    count=0,
+                                    has_llm=v.get("source_type") == "llm")
         rule_groups[key]["count"] += 1
 
     headers = ["违规类型", "严重度", "单次扣分", "次数", "扣分小计"]
@@ -679,26 +657,27 @@ def generate_report(scores: dict, weights: dict, project: str) -> str:
     rows = []
     for g in rule_groups.values():
         sub = g["count"] * g["pen"]
-        rows.append(
-            [g["label"], g["sev"],
-             str(g["pen"]),
-             str(g["count"]),
-             str(sub)])
+        label = f"[LLM推断] {g['label']}" if g["has_llm"] else g["label"]
+        rows.append([label, g["sev"], str(g["pen"]), str(g["count"]), str(sub)])
     if not rows:
         rows.append(["(无违规)", "", "", "", ""])
     parts.append(_fmt_table(headers, rows, col_w))
 
     parts.append(
-        f"\n  累计扣分: {dep_health['total_penalty']}  |  原始分: {dep_health['raw']}  |  展示分: {dep_health['display']}")
+        f"\n  累计扣分: {architecture['total_penalty']}  |  原始分: {architecture['raw']}  |  展示分: {architecture['display']}")
 
-    if dep_health["violations"]:
+    if architecture["violations"]:
         parts.append(f"\n  违规详情:")
-        for v in dep_health["violations"]:
+        for v in architecture["violations"]:
+            llm_tag = "[LLM推断] " if v.get("source_type") == "llm" else ""
             parts.append(
-                f"    ✗ {v['source']} → {v['target']}  [{v['severity']}] {v['description']} ({v['source_file']})"
+                f"    ✗ {llm_tag}{v['source']} → {v['target']}  [{v['severity']}] {v['description']} ({v['source_file']})"
             )
     else:
         parts.append(f"\n  无违规 ✓")
+
+    if any(v.get("source_type") == "llm" for v in architecture["violations"]):
+        parts.append(f"\n  * 分层错配与维度表位置由 LLM 推断，仅供参考，不一定 100% 正确")
     parts.append(sep)
 
     # ============================================================
@@ -744,9 +723,6 @@ def generate_report(scores: dict, weights: dict, project: str) -> str:
     if not has_viz:
         parts.append(f"\n  无违规 ✓")
 
-    if "classification" in scores:
-        parts.append(format_classification_report(scores["classification"]))
-
     parts.append(f"\n{'=' * 62}")
     return "\n".join(parts)
 
@@ -767,8 +743,8 @@ def assess(project: str = "shop",
     indirect_edges = data.get("indirect_edges", [])
     tables = data.get("tables", [])
 
-    classification_results = []
-    if weights.get("do_classify", False):
+    llm_results = []
+    if weights.get("enable_llm", False):
         api_key = os.environ.get("DEEPSEEK_API_KEY")
         if api_key:
             print("正在调用 DeepSeek API 进行表分类，请稍候...")
@@ -778,18 +754,7 @@ def assess(project: str = "shop",
             if weights.get("no_cache", False) and cache_file.exists():
                 cache_file.unlink()
             classifier = TableClassifier(api_key, cache_file=cache_file)
-            classification_results = classifier.classify_batch(contexts)
-            
-            # 将分类结果注入 tables
-            cls_map = {r.table_name: r for r in classification_results}
-            for t in tables:
-                name = t["name"]
-                if name in cls_map:
-                    res = cls_map[name]
-                    t["classification"] = res
-                    # 如果大模型判定为维度表，我们覆盖其 layer 为 DIM，以便后续 score_reusability 将其纳入考量
-                    if res.table_type == "dimension":
-                        t["layer"] = "DIM"
+            llm_results = classifier.classify_batch(contexts)
         else:
             print("警告: 未提供 DEEPSEEK_API_KEY 环境变量，跳过分类。")
 
@@ -798,24 +763,25 @@ def assess(project: str = "shop",
     reuse_score = build_metric_result(score_reusability(tables, downstream))
     depth_score = build_metric_result(
         score_lineage_depth(tables, edges, indirect_edges))
-    dep_health_raw = score_dependency_health(tables, edges, indirect_edges)
-    dep_health_score = build_metric_result(
-        dep_health_raw,
-        display_score=map_dep_health_display(dep_health_raw["score"]),
+    architecture_raw = score_architecture_health(tables, edges, indirect_edges,
+                                                  llm_results)
+    architecture_score = build_metric_result(
+        architecture_raw,
+        display_score=map_architecture_display(architecture_raw["score"]),
     )
     naming_score = build_metric_result(score_naming_conventions(tables))
 
     overall_raw = round(
         weights["reuse"] * reuse_score["raw"] +
         weights["depth"] * depth_score["raw"] +
-        weights["dep_health"] * dep_health_score["raw"] +
+        weights["architecture"] * architecture_score["raw"] +
         weights["naming"] * naming_score["raw"],
         1,
     )
     overall_display = round(
         weights["reuse"] * reuse_score["display"] +
         weights["depth"] * depth_score["display"] +
-        weights["dep_health"] * dep_health_score["display"] +
+        weights["architecture"] * architecture_score["display"] +
         weights["naming"] * naming_score["display"],
         1,
     )
@@ -827,12 +793,9 @@ def assess(project: str = "shop",
         weights=weights,
         reuse=reuse_score,
         depth=depth_score,
-        dep_health=dep_health_score,
+        architecture=architecture_score,
         naming=naming_score,
     )
-
-    if classification_results:
-        result["classification"] = classification_results
 
     return result
 
@@ -848,22 +811,22 @@ def main():
         help="输出 JSON 文件路径 (默认 assess/assess_result_{project}.json)")
     parser.add_argument("--reuse-weight", type=float, default=0.25)
     parser.add_argument("--depth-weight", type=float, default=0.25)
-    parser.add_argument("--health-weight", type=float, default=0.25)
+    parser.add_argument("--architecture-weight", type=float, default=0.25)
     parser.add_argument("--naming-weight", type=float, default=0.25)
-    parser.add_argument("--classify",
+    parser.add_argument("--llm",
                         action="store_true",
-                        help="调用 DeepSeek API 对表进行分类")
+                        help="调用 DeepSeek API 进行 LLM 智能分层检测")
     parser.add_argument("--no-cache",
                         action="store_true",
-                        help="禁用分类缓存，强制重新调用 API")
+                        help="禁用 LLM 缓存，强制重新调用 API")
     args = parser.parse_args()
 
     weights = dict(
         reuse=args.reuse_weight,
         depth=args.depth_weight,
-        dep_health=args.health_weight,
+        architecture=args.architecture_weight,
         naming=args.naming_weight,
-        do_classify=args.classify,
+        enable_llm=args.llm,
         no_cache=args.no_cache,
     )
 
@@ -877,10 +840,6 @@ def main():
             Path(__file__).resolve().parent /
             f"assess_result_{args.project}.json")
             
-    if "classification" in result:
-        from dataclasses import asdict
-        result["classification"] = [asdict(r) for r in result["classification"]]
-        
     with open(output_path, "w") as f:
         json.dump(result, f, ensure_ascii=False, indent=2)
     print(f"\n结果已写入: {output_path}")
