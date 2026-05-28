@@ -44,8 +44,8 @@ SELECT
     status
 FROM (
     SELECT *,
-        ROW_NUMBER() OVER (PARTITION BY store_id ORDER BY create_time DESC) AS rn
+        ROW_NUMBER() OVER (PARTITION BY store_id ORDER BY load_time DESC) AS rn
     FROM shop_dm.ods_store
-    WHERE DATE(create_time) <= CAST(@etl_date AS DATE)
+    WHERE DATE(load_time) <= CAST(@etl_date AS DATE)
 ) t
 WHERE rn = 1;

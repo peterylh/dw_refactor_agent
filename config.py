@@ -442,7 +442,7 @@ PROJECT_MAP = PROJECT_CONFIG
 # 环境 = 物理集群, 不同的 host/port 组合
 # qa_user = 操作验证库 (qa_db) 的专用用户, 权限仅限 qa_db
 DB_ENV_CONFIG = {
-    "prod": {"host": "172.16.0.90", "port": 9030, "user": "root", "qa_user": "qa"},
+    "prod": {"host": "172.16.0.90", "port": 19030, "user": "root", "qa_user": "qa"},
     "test": {"host": "172.16.0.90", "port": 9034, "user": "root", "qa_user": "qa"},
 }
 

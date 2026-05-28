@@ -28,9 +28,9 @@ SELECT
     p.status
 FROM (
     SELECT *,
-        ROW_NUMBER() OVER (PARTITION BY product_id ORDER BY create_time DESC) AS rn
+        ROW_NUMBER() OVER (PARTITION BY product_id ORDER BY load_time DESC) AS rn
     FROM shop_dm.ods_product
-    WHERE DATE(create_time) <= CAST(@etl_date AS DATE)
+    WHERE DATE(load_time) <= CAST(@etl_date AS DATE)
 ) p
 LEFT JOIN shop_dm.ods_category c ON p.category_id = c.category_id
 WHERE p.rn = 1;

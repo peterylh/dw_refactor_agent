@@ -1,16 +1,18 @@
--- ODS 商品品类表 (每日快照,按load_time分区)
--- table_id: bf1e1a62-7080-419d-bcba-448c95b0f068
-DROP TABLE IF EXISTS shop_dm.ods_category;
-CREATE TABLE IF NOT EXISTS shop_dm.ods_category (
-    category_id        BIGINT      NOT NULL COMMENT '品类ID',
-    category_name      VARCHAR(64) NOT NULL COMMENT '品类名称',
-    parent_category_id BIGINT      NULL COMMENT '上级品类ID',
-    category_level     TINYINT     NOT NULL COMMENT '品类层级:1/2/3',
-    sort_order         INT         NULL COMMENT '排序',
-    load_time          DATETIME    NOT NULL COMMENT '数据导入时间(分区列)'
+-- DWS 库存日汇总表
+-- table_id: c4d5e6f7-a8b9-4c0d-1e2f-3a4b5c6d7e8f
+DROP TABLE IF EXISTS shop_dm.dws_inventory_daily;
+CREATE TABLE IF NOT EXISTS shop_dm.dws_inventory_daily (
+    product_id        BIGINT      NOT NULL COMMENT '商品ID',
+    store_id          BIGINT      NOT NULL COMMENT '门店ID',
+    stat_date         DATE        NOT NULL COMMENT '统计日期',
+    quantity          INT         NOT NULL DEFAULT 0 COMMENT '库存数量',
+    safety_stock      INT         NOT NULL DEFAULT 10 COMMENT '安全库存',
+    stock_status      VARCHAR(16) NULL COMMENT '库存状态:正常/偏低/缺货预警/缺货',
+    days_since_restock INT        NULL COMMENT '距上次补货天数',
+    etl_time          DATETIME    NOT NULL COMMENT 'ETL处理时间'
 ) ENGINE=OLAP
-DUPLICATE KEY(category_id)
-PARTITION BY RANGE(load_time) (
+UNIQUE KEY(product_id, store_id, stat_date)
+PARTITION BY RANGE(stat_date) (
     PARTITION p20240601 VALUES LESS THAN ("2024-06-02"),
     PARTITION p20240602 VALUES LESS THAN ("2024-06-03"),
     PARTITION p20240603 VALUES LESS THAN ("2024-06-04"),
@@ -229,7 +231,7 @@ PARTITION BY RANGE(load_time) (
     PARTITION p20250102 VALUES LESS THAN ("2025-01-03"),
     PARTITION p20250103 VALUES LESS THAN ("2025-01-04")
 )
-DISTRIBUTED BY HASH(category_id) BUCKETS 1
+DISTRIBUTED BY HASH(product_id) BUCKETS 1
 PROPERTIES (
     "replication_num" = "1"
 );

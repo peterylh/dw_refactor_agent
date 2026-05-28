@@ -12,10 +12,10 @@ CREATE TABLE IF NOT EXISTS shop_dm.ods_order (
     payment_method VARCHAR(16)   NULL COMMENT '支付方式:微信/支付宝/银行卡/现金',
     order_status   VARCHAR(16)   NOT NULL DEFAULT '已完成' COMMENT '订单状态:已完成/已取消/退货',
     promotion_id   BIGINT        NULL COMMENT '促销活动ID',
-    create_time    DATETIME      NOT NULL COMMENT '创建时间'
+    load_time    DATETIME      NOT NULL COMMENT '数据导入时间(分区列)'
 ) ENGINE=OLAP
 DUPLICATE KEY(order_id)
-PARTITION BY RANGE(create_time) (
+PARTITION BY RANGE(load_time) (
     PARTITION p20240601 VALUES LESS THAN ("2024-06-02"),
     PARTITION p20240602 VALUES LESS THAN ("2024-06-03"),
     PARTITION p20240603 VALUES LESS THAN ("2024-06-04"),
@@ -234,7 +234,7 @@ PARTITION BY RANGE(create_time) (
     PARTITION p20250102 VALUES LESS THAN ("2025-01-03"),
     PARTITION p20250103 VALUES LESS THAN ("2025-01-04")
 )
-DISTRIBUTED BY HASH(order_id) BUCKETS 10
+DISTRIBUTED BY HASH(order_id) BUCKETS 1
 PROPERTIES (
     "replication_num" = "1"
 );
