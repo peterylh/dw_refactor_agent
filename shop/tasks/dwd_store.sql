@@ -6,7 +6,6 @@
 -- ============================================================
 
 SET @etl_date = COALESCE(@etl_date, CURDATE());
-
 -- Step 1: 全量加载 + 门店评级 + 开业年限 + 回填合并
 INSERT INTO shop_dm.dwd_store
 SELECT

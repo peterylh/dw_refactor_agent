@@ -6,7 +6,6 @@
 -- ============================================================
 
 SET @etl_date = COALESCE(@etl_date, CURDATE());
-
 -- Step 1: 关联品类表，计算毛利率，回填合并
 INSERT INTO shop_dm.dwd_product
 SELECT

@@ -6,7 +6,6 @@
 -- ============================================================
 
 SET @etl_date = COALESCE(@etl_date, CURDATE());
-
 INSERT INTO shop_dm.dwd_promotion
 SELECT
     promotion_id,

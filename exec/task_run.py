@@ -16,6 +16,7 @@ import subprocess
 import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta
 from pathlib import Path
 
 _root = Path(__file__).resolve().parent.parent
@@ -25,6 +26,19 @@ from lineage.job_dag import JobDAG
 from config import PROJECT_CONFIG, DB_ENV_CONFIG, get_mysql_cmd
 
 _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+_TIME_UNIT_RE = re.compile(r'"dynamic_partition\.time_unit"\s*=\s*"(\w+)"', re.IGNORECASE)
+_TABLE_PARTITION_UNITS: dict[str, str] | None = None
+
+
+def _load_partition_units(project: str) -> dict[str, str]:
+    """从 DDL 文件中读取每张表的 dynamic_partition.time_unit."""
+    ddl_dir = _root / PROJECT_CONFIG[project]["dir"] / "ddl"
+    units: dict[str, str] = {}
+    for f in sorted(ddl_dir.glob("*.sql")):
+        m = _TIME_UNIT_RE.search(f.read_text(encoding="utf-8"))
+        if m:
+            units[f.stem] = m.group(1).upper()
+    return units
 
 
 def _build_job_dag(project: str) -> JobDAG:
@@ -56,8 +70,38 @@ def _get_task_files(project: str) -> dict[str, Path]:
     return {f.stem: f for f in sorted(tasks_dir.glob("*.sql"))}
 
 
+def _ensure_partition(db_name: str, table_name: str, etl_date: str,
+                      mysql_cmd: list[str]) -> None:
+    dt = datetime.strptime(etl_date, "%Y-%m-%d").date()
+    full_name = f"{db_name}.{table_name}"
+
+    time_unit = _TABLE_PARTITION_UNITS.get(table_name, "DAY") if _TABLE_PARTITION_UNITS else "DAY"
+    if time_unit == "MONTH":
+        p_name = f"p{dt.strftime('%Y%m')}"
+        month_start = dt.replace(day=1)
+        next_month = (month_start.replace(day=28) + timedelta(days=4)).replace(day=1)
+        next_val = next_month.strftime("%Y-%m-%d")
+    else:
+        p_name = f"p{dt.strftime('%Y%m%d')}"
+        next_val = (dt + timedelta(days=1)).strftime("%Y-%m-%d")
+
+    drop_sql = f"ALTER TABLE {full_name} DROP PARTITION IF EXISTS {p_name};\n"
+    add_sql = f"ALTER TABLE {full_name} ADD PARTITION {p_name} VALUES LESS THAN (\"{next_val}\");"
+
+    r = subprocess.run(
+        mysql_cmd + [db_name],
+        input=drop_sql + add_sql,
+        capture_output=True, text=True, timeout=60,
+    )
+    if r.returncode != 0:
+        stderr = r.stderr.strip()
+        if "already exists" not in stderr.lower():
+            print(f"  [{table_name}] [PARTITION WARN] {stderr}")
+
+
 def _run_job(etl_date: str, job_name: str, sql_file: Path,
              mysql_cmd: list[str], db_name: str) -> None:
+    _ensure_partition(db_name, job_name, etl_date, mysql_cmd)
     sql_text = sql_file.read_text(encoding="utf-8")
     full_sql = f"SET @etl_date = '{etl_date}';\n{sql_text}"
     r = subprocess.run(
@@ -142,6 +186,9 @@ def main():
     if parallel < 1:
         print("错误: --parallel 必须 >= 1")
         sys.exit(1)
+
+    global _TABLE_PARTITION_UNITS
+    _TABLE_PARTITION_UNITS = _load_partition_units(project)
 
     for d in args.etl_dates:
         if not _DATE_RE.match(d):

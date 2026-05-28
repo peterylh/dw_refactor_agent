@@ -6,7 +6,6 @@
 -- ============================================================
 
 SET @etl_date = COALESCE(@etl_date, CURDATE());
-
 DELETE FROM shop_dm.ads_promotion_roi WHERE stat_date = CAST(@etl_date AS DATE);
 
 INSERT INTO shop_dm.ads_promotion_roi

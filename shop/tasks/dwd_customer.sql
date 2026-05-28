@@ -6,7 +6,6 @@
 -- ============================================================
 
 SET @etl_date = COALESCE(@etl_date, CURDATE());
-
 -- Step 1: 全量加载 + 年龄段派生 + 回填合并
 INSERT INTO shop_dm.dwd_customer
 SELECT

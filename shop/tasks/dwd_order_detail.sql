@@ -6,7 +6,6 @@
 -- ============================================================
 
 SET @etl_date = COALESCE(@etl_date, CURDATE());
-
 -- Step 1: 删除当前日期的数据
 DELETE FROM shop_dm.dwd_order_detail WHERE order_date = CAST(@etl_date AS DATE);
 

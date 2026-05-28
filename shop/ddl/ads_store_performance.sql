@@ -17,16 +17,15 @@ CREATE TABLE IF NOT EXISTS shop_dm.ads_store_performance (
 ) ENGINE=OLAP
 UNIQUE KEY(store_id, stat_month, stat_month_date)
 PARTITION BY RANGE(stat_month_date) (
-    PARTITION p202406 VALUES LESS THAN ("2024-07-01"),
-    PARTITION p202407 VALUES LESS THAN ("2024-08-01"),
-    PARTITION p202408 VALUES LESS THAN ("2024-09-01"),
-    PARTITION p202409 VALUES LESS THAN ("2024-10-01"),
-    PARTITION p202410 VALUES LESS THAN ("2024-11-01"),
-    PARTITION p202411 VALUES LESS THAN ("2024-12-01"),
-    PARTITION p202412 VALUES LESS THAN ("2025-01-01"),
-    PARTITION p202501 VALUES LESS THAN ("2025-02-01")
+    PARTITION p202406 VALUES LESS THAN ("2024-07-01")
 )
 DISTRIBUTED BY HASH(store_id) BUCKETS 1
 PROPERTIES (
-    "replication_num" = "1"
+    "replication_num" = "1",
+    "dynamic_partition.enable" = "true",
+    "dynamic_partition.time_unit" = "MONTH",
+    "dynamic_partition.start" = "-24",
+    "dynamic_partition.end" = "3",
+    "dynamic_partition.prefix" = "p",
+    "dynamic_partition.buckets" = "1"
 );

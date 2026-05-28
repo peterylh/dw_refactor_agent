@@ -319,9 +319,9 @@
       "layer": "ADS"
     },
     {
-      "id": "dwd_order_detail.freight_value",
+      "id": "dwd_order_detail.price",
       "table": "dwd_order_detail",
-      "column": "freight_value",
+      "column": "price",
       "layer": "DWD"
     },
     {
@@ -331,9 +331,9 @@
       "layer": "ADS"
     },
     {
-      "id": "dwd_order_detail.price",
+      "id": "dwd_order_detail.freight_value",
       "table": "dwd_order_detail",
-      "column": "price",
+      "column": "freight_value",
       "layer": "DWD"
     },
     {
@@ -1101,13 +1101,13 @@
       "source_file": "ads_category_monthly_trend.sql"
     },
     {
-      "source": "dws_product_category_monthly.product_category_name_english",
+      "source": "dws_product_category_monthly.stat_month",
       "target": "ads_category_monthly_trend.revenue_growth_rate",
       "expression": "ROUND((dws_product_category_monthly.total_revenue - LAG(dws_product_category_monthly.total_revenue, 1, NULL) OVER (PARTITION BY dws_product_category_monthly.product_category_name_english ORDER BY dws_product_category_monthly.stat_month)) / NULLIF(LAG(dws_product_category_monthly.total_revenue, 1, NULL) OVER (PARTITION BY dws_product_category_monthly.product_category_name_english ORDER BY dws_product_category_monthly.stat_month), 0) * 100, 2) AS revenue_growth_rate",
       "source_file": "ads_category_monthly_trend.sql"
     },
     {
-      "source": "dws_product_category_monthly.stat_month",
+      "source": "dws_product_category_monthly.product_category_name_english",
       "target": "ads_category_monthly_trend.revenue_growth_rate",
       "expression": "ROUND((dws_product_category_monthly.total_revenue - LAG(dws_product_category_monthly.total_revenue, 1, NULL) OVER (PARTITION BY dws_product_category_monthly.product_category_name_english ORDER BY dws_product_category_monthly.stat_month)) / NULLIF(LAG(dws_product_category_monthly.total_revenue, 1, NULL) OVER (PARTITION BY dws_product_category_monthly.product_category_name_english ORDER BY dws_product_category_monthly.stat_month), 0) * 100, 2) AS revenue_growth_rate",
       "source_file": "ads_category_monthly_trend.sql"
@@ -1161,13 +1161,13 @@
       "source_file": "ads_customer_rfm.sql"
     },
     {
-      "source": "dws_customer_order_summary.total_revenue",
+      "source": "dws_customer_order_summary.stat_date",
       "target": "ads_customer_rfm.rfm_score",
       "expression": "rfm_scored.r_score + rfm_scored.f_score + rfm_scored.m_score AS rfm_score",
       "source_file": "ads_customer_rfm.sql"
     },
     {
-      "source": "dws_customer_order_summary.stat_date",
+      "source": "dws_customer_order_summary.total_revenue",
       "target": "ads_customer_rfm.rfm_score",
       "expression": "rfm_scored.r_score + rfm_scored.f_score + rfm_scored.m_score AS rfm_score",
       "source_file": "ads_customer_rfm.sql"
@@ -1179,13 +1179,13 @@
       "source_file": "ads_customer_rfm.sql"
     },
     {
-      "source": "dws_customer_order_summary.total_revenue",
+      "source": "dws_customer_order_summary.stat_date",
       "target": "ads_customer_rfm.customer_segment",
       "expression": "CASE WHEN rfm_scored.r_score >= 4 AND rfm_scored.f_score >= 4 AND rfm_scored.m_score >= 4 THEN '高价值客户' WHEN rfm_scored.r_score >= 3 AND rfm_scored.f_score >= 3 AND rfm_scored.m_score >= 3 THEN '重要保持客户' WHEN rfm_scored.r_score >= 3 AND (rfm_scored.f_score < 3 OR rfm_scored.m_score < 3) THEN '重要发展客户' WHEN rfm_scored.r_score < 3 AND rfm_scored.f_score >= 3 AND rfm_scored.m_score >= 3 THEN '重要挽留客户' WHEN rfm_scored.r_score < 3 AND rfm_scored.f_score < 3 AND rfm_scored.m_score < 3 THEN '流失预警客户' ELSE '一般价值客户' END AS customer_segment",
       "source_file": "ads_customer_rfm.sql"
     },
     {
-      "source": "dws_customer_order_summary.stat_date",
+      "source": "dws_customer_order_summary.total_revenue",
       "target": "ads_customer_rfm.customer_segment",
       "expression": "CASE WHEN rfm_scored.r_score >= 4 AND rfm_scored.f_score >= 4 AND rfm_scored.m_score >= 4 THEN '高价值客户' WHEN rfm_scored.r_score >= 3 AND rfm_scored.f_score >= 3 AND rfm_scored.m_score >= 3 THEN '重要保持客户' WHEN rfm_scored.r_score >= 3 AND (rfm_scored.f_score < 3 OR rfm_scored.m_score < 3) THEN '重要发展客户' WHEN rfm_scored.r_score < 3 AND rfm_scored.f_score >= 3 AND rfm_scored.m_score >= 3 THEN '重要挽留客户' WHEN rfm_scored.r_score < 3 AND rfm_scored.f_score < 3 AND rfm_scored.m_score < 3 THEN '流失预警客户' ELSE '一般价值客户' END AS customer_segment",
       "source_file": "ads_customer_rfm.sql"
@@ -1253,13 +1253,13 @@
     {
       "source": "dwd_customer.customer_state",
       "target": "ads_geographic_sales.customer_state",
-      "expression": "dc.customer_state AS customer_state",
+      "expression": "COALESCE(dc.customer_state, 'ZZ') AS customer_state",
       "source_file": "ads_geographic_sales.sql"
     },
     {
       "source": "dwd_customer.customer_region",
       "target": "ads_geographic_sales.customer_region",
-      "expression": "dc.customer_region AS customer_region",
+      "expression": "COALESCE(dc.customer_region, 'Desconhecido') AS customer_region",
       "source_file": "ads_geographic_sales.sql"
     },
     {
@@ -1275,13 +1275,13 @@
       "source_file": "ads_geographic_sales.sql"
     },
     {
-      "source": "dwd_order_detail.freight_value",
+      "source": "dwd_order_detail.price",
       "target": "ads_geographic_sales.total_revenue",
       "expression": "ROUND(SUM(dod.price + dod.freight_value), 2) AS total_revenue",
       "source_file": "ads_geographic_sales.sql"
     },
     {
-      "source": "dwd_order_detail.price",
+      "source": "dwd_order_detail.freight_value",
       "target": "ads_geographic_sales.total_revenue",
       "expression": "ROUND(SUM(dod.price + dod.freight_value), 2) AS total_revenue",
       "source_file": "ads_geographic_sales.sql"
@@ -1359,13 +1359,13 @@
       "source_file": "ads_product_topn.sql"
     },
     {
-      "source": "dwd_order_detail.freight_value",
+      "source": "dwd_order_detail.price",
       "target": "ads_product_topn.total_revenue",
       "expression": "ROUND(SUM(dod.price + dod.freight_value), 2) AS total_revenue",
       "source_file": "ads_product_topn.sql"
     },
     {
-      "source": "dwd_order_detail.price",
+      "source": "dwd_order_detail.freight_value",
       "target": "ads_product_topn.total_revenue",
       "expression": "ROUND(SUM(dod.price + dod.freight_value), 2) AS total_revenue",
       "source_file": "ads_product_topn.sql"
@@ -1377,12 +1377,6 @@
       "source_file": "ads_product_topn.sql"
     },
     {
-      "source": "dwd_order_detail.freight_value",
-      "target": "ads_product_topn.rank_num",
-      "expression": "RANK() OVER (PARTITION BY TO_DATE(dod.order_purchase_timestamp) ORDER BY SUM(dod.price + dod.freight_value) DESC) AS rank_num",
-      "source_file": "ads_product_topn.sql"
-    },
-    {
       "source": "dwd_order_detail.price",
       "target": "ads_product_topn.rank_num",
       "expression": "RANK() OVER (PARTITION BY TO_DATE(dod.order_purchase_timestamp) ORDER BY SUM(dod.price + dod.freight_value) DESC) AS rank_num",
@@ -1390,6 +1384,12 @@
     },
     {
       "source": "dwd_order_detail.order_purchase_timestamp",
+      "target": "ads_product_topn.rank_num",
+      "expression": "RANK() OVER (PARTITION BY TO_DATE(dod.order_purchase_timestamp) ORDER BY SUM(dod.price + dod.freight_value) DESC) AS rank_num",
+      "source_file": "ads_product_topn.sql"
+    },
+    {
+      "source": "dwd_order_detail.freight_value",
       "target": "ads_product_topn.rank_num",
       "expression": "RANK() OVER (PARTITION BY TO_DATE(dod.order_purchase_timestamp) ORDER BY SUM(dod.price + dod.freight_value) DESC) AS rank_num",
       "source_file": "ads_product_topn.sql"
@@ -1479,12 +1479,6 @@
       "source_file": "ads_seller_performance_ranking.sql"
     },
     {
-      "source": "dws_seller_monthly.avg_review_score",
-      "target": "ads_seller_performance_ranking.performance_score",
-      "expression": "ROUND((100 - seller_scored.revenue_rank + 1) * 0.6 + (CASE WHEN NOT seller_scored.avg_review_score IS NULL THEN seller_scored.avg_review_score * 20 ELSE 60 END) * 0.4, 2) AS performance_score",
-      "source_file": "ads_seller_performance_ranking.sql"
-    },
-    {
       "source": "dws_seller_monthly.total_revenue",
       "target": "ads_seller_performance_ranking.performance_score",
       "expression": "ROUND((100 - seller_scored.revenue_rank + 1) * 0.6 + (CASE WHEN NOT seller_scored.avg_review_score IS NULL THEN seller_scored.avg_review_score * 20 ELSE 60 END) * 0.4, 2) AS performance_score",
@@ -1492,6 +1486,12 @@
     },
     {
       "source": "dws_seller_monthly.stat_month",
+      "target": "ads_seller_performance_ranking.performance_score",
+      "expression": "ROUND((100 - seller_scored.revenue_rank + 1) * 0.6 + (CASE WHEN NOT seller_scored.avg_review_score IS NULL THEN seller_scored.avg_review_score * 20 ELSE 60 END) * 0.4, 2) AS performance_score",
+      "source_file": "ads_seller_performance_ranking.sql"
+    },
+    {
+      "source": "dws_seller_monthly.avg_review_score",
       "target": "ads_seller_performance_ranking.performance_score",
       "expression": "ROUND((100 - seller_scored.revenue_rank + 1) * 0.6 + (CASE WHEN NOT seller_scored.avg_review_score IS NULL THEN seller_scored.avg_review_score * 20 ELSE 60 END) * 0.4, 2) AS performance_score",
       "source_file": "ads_seller_performance_ranking.sql"
@@ -1629,15 +1629,21 @@
       "source_file": "dwd_order_detail.sql"
     },
     {
+      "source": "ods_order.order_purchase_timestamp",
+      "target": "dwd_order_detail.delivery_days",
+      "expression": "DATEDIFF(o.order_delivered_customer_date, o.order_purchase_timestamp) AS delivery_days",
+      "source_file": "dwd_order_detail.sql"
+    },
+    {
       "source": "ods_order.order_delivered_customer_date",
       "target": "dwd_order_detail.delivery_days",
       "expression": "DATEDIFF(o.order_delivered_customer_date, o.order_purchase_timestamp) AS delivery_days",
       "source_file": "dwd_order_detail.sql"
     },
     {
-      "source": "ods_order.order_purchase_timestamp",
-      "target": "dwd_order_detail.delivery_days",
-      "expression": "DATEDIFF(o.order_delivered_customer_date, o.order_purchase_timestamp) AS delivery_days",
+      "source": "ods_order.order_estimated_delivery_date",
+      "target": "dwd_order_detail.estimated_delivery_days",
+      "expression": "DATEDIFF(o.order_estimated_delivery_date, o.order_purchase_timestamp) AS estimated_delivery_days",
       "source_file": "dwd_order_detail.sql"
     },
     {
@@ -1648,18 +1654,12 @@
     },
     {
       "source": "ods_order.order_estimated_delivery_date",
-      "target": "dwd_order_detail.estimated_delivery_days",
-      "expression": "DATEDIFF(o.order_estimated_delivery_date, o.order_purchase_timestamp) AS estimated_delivery_days",
-      "source_file": "dwd_order_detail.sql"
-    },
-    {
-      "source": "ods_order.order_delivered_customer_date",
       "target": "dwd_order_detail.delivery_delay_days",
       "expression": "GREATEST(DATEDIFF(o.order_delivered_customer_date, o.order_estimated_delivery_date), 0) AS delivery_delay_days",
       "source_file": "dwd_order_detail.sql"
     },
     {
-      "source": "ods_order.order_estimated_delivery_date",
+      "source": "ods_order.order_delivered_customer_date",
       "target": "dwd_order_detail.delivery_delay_days",
       "expression": "GREATEST(DATEDIFF(o.order_delivered_customer_date, o.order_estimated_delivery_date), 0) AS delivery_delay_days",
       "source_file": "dwd_order_detail.sql"
@@ -2334,11 +2334,11 @@
           "type": "UNKNOWN"
         },
         {
-          "name": "freight_value",
+          "name": "price",
           "type": "UNKNOWN"
         },
         {
-          "name": "price",
+          "name": "freight_value",
           "type": "UNKNOWN"
         },
         {
@@ -3142,13 +3142,6 @@
       "target_table": "ads_geographic_sales",
       "condition_type": "GROUP_BY",
       "condition_expression": "dc.customer_region",
-      "source_file": "ads_geographic_sales.sql"
-    },
-    {
-      "source": "ads_geographic_sales.customer_state",
-      "target_table": "ads_geographic_sales",
-      "condition_type": "WHERE",
-      "condition_expression": "customer_state IS NULL",
       "source_file": "ads_geographic_sales.sql"
     },
     {

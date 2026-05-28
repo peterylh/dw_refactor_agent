@@ -6,7 +6,6 @@
 -- ============================================================
 
 SET @etl_date = COALESCE(@etl_date, CURDATE());
-
 DELETE FROM shop_dm.dws_inventory_daily WHERE stat_date = CAST(@etl_date AS DATE);
 
 INSERT INTO shop_dm.dws_inventory_daily

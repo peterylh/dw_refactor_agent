@@ -6,7 +6,6 @@
 -- ============================================================
 
 SET @etl_date = COALESCE(@etl_date, CURDATE());
-
 -- Step 1: 删除当月分区数据（保留历史月份）
 DELETE FROM shop_dm.ads_store_performance
 WHERE stat_month = DATE_FORMAT(@etl_date, '%Y-%m');

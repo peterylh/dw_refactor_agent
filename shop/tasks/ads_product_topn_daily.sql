@@ -6,7 +6,6 @@
 -- ============================================================
 
 SET @etl_date = COALESCE(@etl_date, CURDATE());
-
 -- Step 1: 删除当前统计日期的数据
 DELETE FROM shop_dm.ads_product_topn_daily WHERE stat_date = CAST(@etl_date AS DATE);
 
