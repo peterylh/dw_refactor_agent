@@ -3,7 +3,7 @@
 数据重新初始化.
 
 流程:
-  1. 清空所有表数据
+  1. 重建所有表 (执行 ddl/*.sql, DROP + CREATE)
   2. 初始化 ODS 层数据
   3. 从 ODS 表自动发现分区日期, 确定 etl_dates
   4. 调用 task_run.py 按 DAG 拓扑重算上层表
@@ -62,35 +62,32 @@ def main():
     db_name = cfg["db"]
     data_dir = _root / cfg["dir"] / "data"
 
+    ddl_dir = _root / cfg["dir"] / "ddl"
+
     print(f"项目: {project}")
     print(f"数据库: {db_name}")
     print(f"环境: {args.db_env}")
 
-    # ── Step 1: 清空所有表 ──
+    # ── Step 1: 重建所有表 ──
     print(f"\n{'=' * 60}")
-    print("Step 1: 清空所有表数据")
+    print("Step 1: 重建所有表 (执行 ddl/*.sql)")
 
-    result = run_sql("SHOW TABLES", db_name, env_cmd)
-    tables = [line.strip() for line in result.strip().split("\n")[1:] if line.strip()]
+    if not ddl_dir.exists():
+        print(f"  [FAIL] DDL 目录不存在: {ddl_dir}")
+        sys.exit(1)
 
-    if not tables:
-        print("  数据库中无表, 跳过清空步骤")
-    else:
-        from config import get_naming_config
-        nc = get_naming_config()
+    ddl_files = sorted(ddl_dir.glob("*.sql"))
+    if not ddl_files:
+        print("  DDL 目录中无 SQL 文件")
+        sys.exit(1)
 
-        def sort_key(t):
-            for layer_name in reversed(nc.layer_order):
-                if t.startswith(nc.layers[layer_name].prefix):
-                    return nc.layers[layer_name].rank
-            return 4
-
-        for t in sorted(tables, key=sort_key, reverse=True):
-            try:
-                run_sql(f"TRUNCATE TABLE {db_name}.{t}", db_name, env_cmd)
-                print(f"  [TRUNCATE] {t}")
-            except Exception as e:
-                print(f"  [SKIP] {t}: {e}")
+    for f in ddl_files:
+        print(f"  [DDL] {f.name}")
+        try:
+            run_sql(f.read_text(encoding="utf-8"), db_name, env_cmd)
+        except Exception as e:
+            print(f"  [FAIL] {f.name}: {e}")
+            sys.exit(1)
 
     # ── Step 2: 初始化 ODS ──
     print(f"\n{'=' * 60}")
