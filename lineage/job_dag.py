@@ -21,10 +21,10 @@ from collections import defaultdict, deque
 class JobDAG:
     """基于血缘边构建的作业 DAG, 支持序列化持久化."""
 
-    def __init__(self, edges: list = None):
+    def __init__(self, edges: list | None = None):
         self._edges = edges or []
-        self._deps: dict[str, set[str]] = {}   # source → [targets]
-        self._rev: dict[str, set[str]] = {}    # target → [sources]
+        self._deps: dict[str, set[str]] = {}
+        self._rev: dict[str, set[str]] = {}
         self._build()
 
     # ── 图构建 ──
@@ -42,7 +42,6 @@ class JobDAG:
         self._rev = dict(rev)
 
     def add_edge(self, source: str, target: str):
-        """动态添加一条边, source/target 为简单表名."""
         if source != target:
             self._deps.setdefault(source, set()).add(target)
             self._rev.setdefault(target, set()).add(source)
@@ -51,7 +50,6 @@ class JobDAG:
     # ── 遍历 ──
 
     def bfs_downstream(self, seeds: set) -> set:
-        """BFS 下游追踪, 返回 seeds 下游的所有表 (不含 seeds)."""
         visited = set(seeds)
         q = deque(seeds)
         while q:
@@ -62,25 +60,30 @@ class JobDAG:
                     q.append(dt)
         return visited - seeds
 
-    def topological_sort(self, jobs_set: set) -> list:
-        """Kahn 拓扑排序.  jobs_set 内存在环时抛出 ValueError."""
-        in_degree = {j: 0 for j in jobs_set}
-        adj = defaultdict(set)
+    def get_downstream(self, job: str) -> set[str]:
+        return self._deps.get(job, set())
 
+    def compute_in_degree(self, jobs_set: set) -> tuple[dict[str, int], dict[str, list[str]]]:
+        in_degree = {j: 0 for j in jobs_set}
+        adj: dict[str, list[str]] = {j: [] for j in jobs_set}
         for src, targets in self._deps.items():
             if src not in jobs_set:
                 continue
             for tgt in targets:
                 if tgt in jobs_set:
-                    adj[src].add(tgt)
+                    adj[src].append(tgt)
                     in_degree[tgt] = in_degree.get(tgt, 0) + 1
+        return in_degree, adj
+
+    def topological_sort(self, jobs_set: set) -> list:
+        in_degree, adj = self.compute_in_degree(jobs_set)
 
         queue = deque([j for j, d in in_degree.items() if d == 0])
         result = []
         while queue:
             node = queue.popleft()
             result.append(node)
-            for neighbor in adj.get(node, set()):
+            for neighbor in adj.get(node, []):
                 in_degree[neighbor] -= 1
                 if in_degree[neighbor] == 0:
                     queue.append(neighbor)
@@ -90,6 +93,25 @@ class JobDAG:
             raise ValueError(f"Detected cycle among jobs: {sorted(cycle)}")
 
         return result
+
+    def topological_layers(self, jobs_set: set) -> list[list[str]]:
+        in_degree, adj = self.compute_in_degree(jobs_set)
+
+        layers = []
+        remaining = set(jobs_set)
+        while remaining:
+            current = [j for j in remaining if in_degree.get(j, 0) == 0]
+            if not current:
+                raise ValueError(
+                    f"Detected cycle among jobs: {sorted(remaining)}"
+                )
+            layers.append(current)
+            for node in current:
+                for neighbor in adj.get(node, []):
+                    in_degree[neighbor] -= 1
+                remaining.remove(node)
+
+        return layers
 
     # ── 序列化 ──
 

@@ -12,13 +12,16 @@
     python exec/reinit_project.py --project shop
 """
 
-import argparse, subprocess, sys
+import argparse
+import subprocess
+import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 _root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_root))
 
-from config import PROJECT_CONFIG, DB_ENV_CONFIG, get_mysql_cmd
+from config import PROJECT_CONFIG, DB_ENV_CONFIG, get_mysql_cmd, get_naming_config
 
 
 def run_sql(sql_text: str, db: str, env_cmd: list[str]) -> str:
@@ -33,14 +36,13 @@ def run_sql(sql_text: str, db: str, env_cmd: list[str]) -> str:
 def get_etl_date_partitions(db: str, env_cmd: list[str]) -> list[str]:
     result = run_sql("SHOW TABLES", db, env_cmd)
     tables = [line.strip() for line in result.strip().split("\n")[1:] if line.strip()]
-    from config import get_naming_config
-    _nc = get_naming_config()
-    _ods_prefix = _nc.layers["ODS"].prefix
-    ods_tables = [t for t in tables if t.startswith(_ods_prefix)]
+    nc = get_naming_config()
+    ods_prefix = nc.layers["ODS"].prefix
+    ods_tables = [t for t in tables if t.startswith(ods_prefix)]
     all_dates = set()
     for tbl in ods_tables:
         result = run_sql(
-            f"SELECT DISTINCT DATE(create_time) AS d FROM {db}.{tbl} ORDER BY d",
+            f"SELECT DISTINCT DATE(load_time) AS d FROM {db}.{tbl} ORDER BY d",
             db, env_cmd,
         )
         dates = [line.strip() for line in result.strip().split("\n")[1:] if line.strip()]
@@ -54,6 +56,8 @@ def main():
     parser.add_argument("--db-env", default="prod", choices=list(DB_ENV_CONFIG.keys()))
     parser.add_argument("--etl-dates", nargs="*", default=None,
                         help="ETL 日期列表 (YYYY-MM-DD), 不传则自动从 ODS 发现")
+    parser.add_argument("--parallel", type=int, default=1,
+                        help="并行度, 默认 1 (串行)")
     args = parser.parse_args()
 
     project = args.project
@@ -61,10 +65,15 @@ def main():
     cfg = PROJECT_CONFIG[project]
     db_name = cfg["db"]
     data_dir = _root / cfg["dir"] / "data"
+    parallel = args.parallel
+    if parallel < 1:
+        print("错误: --parallel 必须 >= 1")
+        sys.exit(1)
 
     print(f"项目: {project}")
     print(f"数据库: {db_name}")
     print(f"环境: {args.db_env}")
+    print(f"并行度: {parallel}")
 
     # ── Step 1: 清空所有表 ──
     print(f"\n{'=' * 60}")
@@ -76,7 +85,6 @@ def main():
     if not tables:
         print("  数据库中无表, 跳过清空步骤")
     else:
-        from config import get_naming_config
         nc = get_naming_config()
 
         def sort_key(t):
@@ -92,18 +100,40 @@ def main():
             except Exception as e:
                 print(f"  [SKIP] {t}: {e}")
 
-    # ── Step 2: 初始化 ODS ──
+    # ── Step 2: 初始化 ODS (并行) ──
     print(f"\n{'=' * 60}")
-    print("Step 2: 初始化 ODS 层")
+    print(f"Step 2: 初始化 ODS 层  (并行度: {parallel})")
 
     if data_dir.exists():
-        for f in sorted(data_dir.glob("*.sql")):
-            print(f"  [ODS INIT] {f.name}")
-            sql = f.read_text(encoding="utf-8")
+        ods_files = sorted(data_dir.glob("*.sql"))
+        if parallel == 1:
+            for f in ods_files:
+                print(f"  [ODS INIT] {f.name}")
+                try:
+                    run_sql(f.read_text(encoding="utf-8"), db_name, env_cmd)
+                except Exception as e:
+                    print(f"  [FAIL] {f.name}: {e}")
+                    sys.exit(1)
+        else:
+            def load_ods(f: Path) -> Path:
+                run_sql(f.read_text(encoding="utf-8"), db_name, env_cmd)
+                return f
+
+            ods_error: str | None = None
+            executor = ThreadPoolExecutor(max_workers=parallel)
             try:
-                run_sql(sql, db_name, env_cmd)
-            except Exception as e:
-                print(f"  [FAIL] {f.name}: {e}")
+                fut_to_file = {executor.submit(load_ods, f): f for f in ods_files}
+                for future in as_completed(fut_to_file):
+                    f = fut_to_file[future]
+                    exc = future.exception()
+                    if exc is not None:
+                        ods_error = f"[FAIL] {f.name}: {exc}"
+                        break
+                    print(f"  [ODS INIT] {f.name}")
+            finally:
+                executor.shutdown(wait=False, cancel_futures=True)
+            if ods_error:
+                print(f"  {ods_error}")
                 sys.exit(1)
     else:
         print(f"  {project} 项目无 data/ 目录, 请手动导入 ODS 数据")
@@ -134,6 +164,7 @@ def main():
         "--etl-dates", *etl_dates,
         "--db-env", args.db_env,
         "--refresh-dag",
+        "--parallel", str(parallel),
     ]
     print(f"  执行: {' '.join(cmd)}")
     result = subprocess.run(cmd, cwd=_root)
