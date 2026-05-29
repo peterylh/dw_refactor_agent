@@ -102,14 +102,14 @@ def _ensure_partition(db_name: str, table_name: str, etl_date: str,
         p_name = f"p{dt.strftime('%Y%m%d')}"
         next_val = (dt + timedelta(days=1)).strftime("%Y-%m-%d")
 
-    drop_sql = f"ALTER TABLE {full_name} DROP PARTITION IF EXISTS {p_name};\n"
-    add_sql = f"ALTER TABLE {full_name} ADD PARTITION {p_name} VALUES LESS THAN (\"{next_val}\");"
-
-    r = subprocess.run(
-        mysql_cmd + [db_name],
-        input=drop_sql + add_sql,
-        capture_output=True, text=True, timeout=60,
+    run = lambda sql: subprocess.run(
+        mysql_cmd + [db_name], input=sql,
+        capture_output=True, text=True, timeout=30,
     )
+    run(f"ALTER TABLE {full_name} SET ('dynamic_partition.enable' = 'false');")
+    run(f"ALTER TABLE {full_name} DROP PARTITION IF EXISTS {p_name};")
+    r = run(f"ALTER TABLE {full_name} ADD PARTITION {p_name} VALUES LESS THAN (\"{next_val}\");")
+    run(f"ALTER TABLE {full_name} SET ('dynamic_partition.enable' = 'true');")
     if r.returncode != 0:
         stderr = r.stderr.strip()
         if "already exists" not in stderr.lower():
@@ -120,7 +120,7 @@ def _run_job(etl_date: str, job_name: str, sql_file: Path,
              mysql_cmd: list[str], db_name: str) -> None:
     _ensure_partition(db_name, job_name, etl_date, mysql_cmd)
     sql_text = sql_file.read_text(encoding="utf-8")
-    full_sql = f"SET @etl_date = '{etl_date}';\n{sql_text}"
+    full_sql = f"SET @etl_date = '{etl_date}';\nSET @full_refresh = 0;\n{sql_text}"
     r = subprocess.run(
         mysql_cmd + [db_name],
         input=full_sql, capture_output=True, text=True, timeout=600,
@@ -200,11 +200,10 @@ def _run_job_full_refresh(job_name: str, sql_file: Path,
     materialized = _get_materialized(schema, job_name)
     task_dir = sql_file.parent
 
-    _ensure_full_refresh_partitions(db_name, job_name, all_dates, mysql_cmd)
-
     if materialized == 'snapshot':
         companion = _get_full_refresh_path(task_dir, job_name)
         if companion:
+            _ensure_full_refresh_partitions(db_name, job_name, all_dates, mysql_cmd)
             sql_text = companion.read_text(encoding="utf-8")
             full_sql = f"SET @full_refresh = 1;\n{sql_text}"
             r = subprocess.run(
@@ -216,8 +215,28 @@ def _run_job_full_refresh(job_name: str, sql_file: Path,
             print(f"  [{job_name}] [OK] (full-refresh companion)")
             return
         else:
-            print(f"  [{job_name}] 未找到伴生文件, 跳过 (请创建 {job_name}_full_refresh.sql)")
+            print(f"  [{job_name}] 未找到伴生文件, 按逐日模式执行 ({len(all_dates)} 个日期)")
+            # 清理可能存在的宽分区 (来自 previous full-refresh run)
+            run = lambda sql: subprocess.run(
+                mysql_cmd + [db_name], input=sql,
+                capture_output=True, text=True, timeout=30,
+            )
+            run(f"ALTER TABLE {db_name}.{job_name} DROP PARTITION IF EXISTS p_full;")
+            run(f"ALTER TABLE {db_name}.{job_name} SET ('dynamic_partition.enable' = 'true');")
+            for etl_date in all_dates:
+                _ensure_partition(db_name, job_name, etl_date, mysql_cmd)
+                sql_text = sql_file.read_text(encoding="utf-8")
+                full_sql = f"SET @etl_date = '{etl_date}';\nSET @full_refresh = 0;\n{sql_text}"
+                r = subprocess.run(
+                    mysql_cmd + [db_name],
+                    input=full_sql, capture_output=True, text=True, timeout=600,
+                )
+                if r.returncode != 0:
+                    raise RuntimeError(f"[{job_name}] [FAIL] (date={etl_date})\n  {r.stderr.strip()}")
+                print(f"  [{job_name}] [OK] (date={etl_date})")
             return
+
+    _ensure_full_refresh_partitions(db_name, job_name, all_dates, mysql_cmd)
 
     if materialized == 'full':
         sql_text = sql_file.read_text(encoding="utf-8")

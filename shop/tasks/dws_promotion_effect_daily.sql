@@ -6,7 +6,6 @@
 -- ============================================================
 
 SET @etl_date = COALESCE(@etl_date, CURDATE());
-SET @full_refresh = COALESCE(@full_refresh, 0);
 DELETE FROM shop_dm.dws_promotion_effect_daily WHERE IF(@full_refresh = 1, 1=1, stat_date = CAST(@etl_date AS DATE));
 
 INSERT INTO shop_dm.dws_promotion_effect_daily

@@ -6,7 +6,6 @@
 -- ============================================================
 
 SET @etl_date = COALESCE(@etl_date, CURDATE());
-SET @full_refresh = COALESCE(@full_refresh, 0);
 -- Step 1: 删除当前统计日期的数据
 DELETE FROM shop_dm.dws_customer_order_summary WHERE IF(@full_refresh = 1, 1=1, stat_date = CAST(@etl_date AS DATE));
 

@@ -6,7 +6,6 @@
 -- ============================================================
 
 SET @etl_date = COALESCE(@etl_date, CURDATE());
-SET @full_refresh = COALESCE(@full_refresh, 0);
 -- Step 1: 删除当月分区数据（保留历史月份）
 DELETE FROM shop_dm.dws_category_sales_monthly
 WHERE IF(@full_refresh = 1, 1=1, stat_month = DATE_FORMAT(@etl_date, '%Y-%m'));
