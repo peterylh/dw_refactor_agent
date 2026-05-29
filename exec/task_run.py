@@ -31,6 +31,7 @@ from config import PROJECT_CONFIG, DB_ENV_CONFIG, get_mysql_cmd, get_naming_conf
 _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _TIME_UNIT_RE = re.compile(r'"dynamic_partition\.time_unit"\s*=\s*"(\w+)"', re.IGNORECASE)
 _TABLE_PARTITION_UNITS: dict[str, str] | None = None
+_TABLE_PARTITIONED_CACHE: dict[tuple[str, str], bool] = {}
 _SCHEMA_CONFIG_CACHE: dict | None = None
 
 
@@ -87,8 +88,31 @@ def _get_full_refresh_path(task_dir: Path, job_name: str) -> Path | None:
     return companion if companion.exists() else None
 
 
+def _is_partitioned_table(db_name: str, table_name: str, mysql_cmd: list[str]) -> bool:
+    """检查目标表是否为分区表，结果按库表缓存。"""
+    cache_key = (db_name, table_name)
+    if cache_key in _TABLE_PARTITIONED_CACHE:
+        return _TABLE_PARTITIONED_CACHE[cache_key]
+
+    full_name = f"{db_name}.{table_name}"
+    r = subprocess.run(
+        mysql_cmd + [db_name],
+        input=f"SHOW CREATE TABLE {full_name};",
+        capture_output=True, text=True, timeout=30,
+    )
+    if r.returncode != 0:
+        raise RuntimeError(f"[{table_name}] [SHOW CREATE FAIL]\n  {r.stderr.strip()}")
+
+    is_partitioned = "PARTITION BY" in r.stdout.upper()
+    _TABLE_PARTITIONED_CACHE[cache_key] = is_partitioned
+    return is_partitioned
+
+
 def _ensure_partition(db_name: str, table_name: str, etl_date: str,
                       mysql_cmd: list[str]) -> None:
+    if not _is_partitioned_table(db_name, table_name, mysql_cmd):
+        return
+
     dt = datetime.strptime(etl_date, "%Y-%m-%d").date()
     full_name = f"{db_name}.{table_name}"
 
@@ -159,6 +183,9 @@ def _ensure_full_refresh_partitions(db_name: str, table_name: str,
                                     all_dates: list[str],
                                     mysql_cmd: list[str]) -> None:
     """为全量刷新模式重建分区: 清除所有旧分区, 建单个覆盖全 ODS 范围的分区."""
+    if not _is_partitioned_table(db_name, table_name, mysql_cmd):
+        return
+
     full_name = f"{db_name}.{table_name}"
 
     # 1) 禁用动态分区
@@ -216,13 +243,14 @@ def _run_job_full_refresh(job_name: str, sql_file: Path,
             return
         else:
             print(f"  [{job_name}] 未找到伴生文件, 按逐日模式执行 ({len(all_dates)} 个日期)")
-            # 清理可能存在的宽分区 (来自 previous full-refresh run)
-            run = lambda sql: subprocess.run(
-                mysql_cmd + [db_name], input=sql,
-                capture_output=True, text=True, timeout=30,
-            )
-            run(f"ALTER TABLE {db_name}.{job_name} DROP PARTITION IF EXISTS p_full;")
-            run(f"ALTER TABLE {db_name}.{job_name} SET ('dynamic_partition.enable' = 'true');")
+            if _is_partitioned_table(db_name, job_name, mysql_cmd):
+                # 清理可能存在的宽分区 (来自 previous full-refresh run)
+                run = lambda sql: subprocess.run(
+                    mysql_cmd + [db_name], input=sql,
+                    capture_output=True, text=True, timeout=30,
+                )
+                run(f"ALTER TABLE {db_name}.{job_name} DROP PARTITION IF EXISTS p_full;")
+                run(f"ALTER TABLE {db_name}.{job_name} SET ('dynamic_partition.enable' = 'true');")
             for etl_date in all_dates:
                 _ensure_partition(db_name, job_name, etl_date, mysql_cmd)
                 sql_text = sql_file.read_text(encoding="utf-8")

@@ -13,16 +13,7 @@ CREATE TABLE IF NOT EXISTS shop_dm.ads_sales_dashboard (
     etl_time           DATETIME      NOT NULL COMMENT 'ETL处理时间'
 ) ENGINE=OLAP
 UNIQUE KEY(stat_date)
-PARTITION BY RANGE(stat_date) (
-    PARTITION p20240601 VALUES LESS THAN ("2024-06-02")
-)
 DISTRIBUTED BY HASH(stat_date) BUCKETS 1
 PROPERTIES (
-    "replication_num" = "1",
-    "dynamic_partition.enable" = "true",
-    "dynamic_partition.time_unit" = "DAY",
-    "dynamic_partition.start" = "-365",
-    "dynamic_partition.end" = "3",
-    "dynamic_partition.prefix" = "p",
-    "dynamic_partition.buckets" = "1"
+    "replication_num" = "1"
 );
