@@ -35,9 +35,8 @@ class TypeDef:
 
 @dataclass
 class LayerDef:
-    prefix: str
     rank: int
-    segments: list
+    templates: list
 
 
 @dataclass
@@ -51,8 +50,10 @@ class NamingConfig:
     def determine_layer(self, table_name: str) -> str:
         short = table_name.split(".")[-1]
         for name in self.layer_order:
-            if short.startswith(self.layers[name].prefix):
-                return name
+            if name in self.layers:
+                for segs in self.layers[name].templates:
+                    if self._match_segments(short, segs) is not None:
+                        return name
         return "OTHER"
 
     def layer_rank(self, layer_name: str) -> int:
@@ -60,6 +61,15 @@ class NamingConfig:
         return layer.rank if layer else -1
 
     def _match_segments(self, name: str, segments: list) -> Optional[dict]:
+        def _assign(res, k, v):
+            if k in res:
+                if isinstance(res[k], list):
+                    res[k].append(v)
+                else:
+                    res[k] = [res[k], v]
+            else:
+                res[k] = v
+
         """
         三段式匹配:
           1. 从左匹配固定值段（字面量 + values type）
@@ -151,14 +161,16 @@ class NamingConfig:
                 break  # 只有 values type 能从右侧匹配
 
             sep_before = seg.get("sep_before", "")
-            # 如果 sep_before 为空，可能是独立 _ 字面量在前
-            check_prefix = sep_before or "_"
+            if seg.get("concat_left"):
+                check_prefix = ""
+            else:
+                check_prefix = sep_before or "_"
             matched = None
             for v in sorted(td.values, key=len, reverse=True):
                 suffix = check_prefix + str(v)
                 if remaining.endswith(suffix):
                     # 如果是独立 _，前一段应该是 _ 字面量，一并跳过
-                    if not sep_before and right > left:
+                    if not sep_before and not seg.get("concat_left") and right > left:
                         prev = segments[right - 1]
                         if prev["kind"] == "literal" and prev["name"] == "_":
                             right -= 1  # skip the _ literal
@@ -207,7 +219,7 @@ class NamingConfig:
                             remaining = rest[len(v):]
                             break
                     if matched is not None:
-                        result[sname] = matched
+                        _assign(result, sname, matched)
                         left += 1
                     elif optional:
                         left += 1
@@ -227,16 +239,16 @@ class NamingConfig:
                                 if idx >= 0:
                                     candidate = rest[:idx]
                                     if td.validate(candidate):
-                                        result[sname] = candidate
+                                        _assign(result, sname, candidate)
                                         remaining = rest[idx:]
                                         left += 1
                                         continue
                             # fallback: 消耗全部
-                            result[sname] = rest
+                            _assign(result, sname, rest)
                             remaining = ""
                             left += 1
                         else:
-                            result[sname] = rest
+                            _assign(result, sname, rest)
                             remaining = ""
                             left += 1
                     else:
@@ -245,12 +257,12 @@ class NamingConfig:
                         if idx >= 0:
                             candidate = rest[:idx]
                             if td.validate(candidate):
-                                result[sname] = candidate
+                                _assign(result, sname, candidate)
                                 remaining = rest[idx:]
                                 left += 1
                                 continue
                         if td.validate(rest) and rest:
-                            result[sname] = rest
+                            _assign(result, sname, rest)
                             remaining = ""
                             left += 1
                         else:
@@ -281,10 +293,14 @@ def _parse_segments(raw: list, types: dict) -> list:
         raw_str = str(item)
         optional = False
         is_type = False
+        concat_left = False
 
         if raw_str.startswith("$"):
             is_type = True
             raw_str = raw_str[1:]
+            if raw_str.startswith("+"):
+                concat_left = True
+                raw_str = raw_str[1:]
 
         if raw_str.endswith("?"):
             optional = True
@@ -292,22 +308,24 @@ def _parse_segments(raw: list, types: dict) -> list:
 
         if is_type:
             parsed.append({"name": raw_str, "kind": "type", "optional": optional,
-                           "sep_before": "", "sep_after": ""})
+                           "sep_before": "", "sep_after": "", "concat_left": concat_left})
         else:
             parsed.append({"name": raw_str, "kind": "literal", "optional": optional,
-                           "sep_before": "", "sep_after": ""})
+                           "sep_before": "", "sep_after": "", "concat_left": concat_left})
 
     i = 0
     while i < len(parsed) - 1:
         left = parsed[i]
         right = parsed[i + 1]
-        if right["optional"]:
+        if right.get("concat_left"):
+            pass
+        elif right["optional"]:
             right["sep_before"] = "_" + right["sep_before"]
         elif left["optional"]:
             left["sep_after"] = left["sep_after"] + "_"
         else:
             literal = {"name": "_", "kind": "literal", "optional": False,
-                       "sep_before": "", "sep_after": ""}
+                       "sep_before": "", "sep_after": "", "concat_left": False}
             parsed.insert(i + 1, literal)
             i += 1
         i += 1
@@ -374,28 +392,25 @@ def load_naming_config(path=None):
                 layer_order.append(name)
 
     layers = {}
-    for name, template in raw.get("table", {}).items():
-        segments = _parse_template(template, types)
-        # prefix: 收集开头的字面量直到遇到 type
-        prefix_parts = []
-        for s in segments:
-            if s["kind"] == "literal":
-                prefix_parts.append(s["name"])
-                prefix_parts.append(s.get("sep_after", ""))
-            elif s.get("sep_before"):
-                prefix_parts.append(s["sep_before"])
-                break
-            else:
-                break
-        prefix = "".join(prefix_parts)
-        rank = rank_map.get(name, -1)
-        layers[name] = LayerDef(prefix=prefix, rank=rank, segments=segments)
-        if name not in layer_order:
-            layer_order.append(name)
+    for layer_name, template_defs in raw.get("table", {}).items():
+        if isinstance(template_defs[0], str):
+            template_defs = [template_defs]
+        
+        templates = []
+        for template in template_defs:
+            parsed = _parse_template(template, types)
+            templates.append(parsed)
+
+        rank = rank_map.get(layer_name, -1)
+        layers[layer_name] = LayerDef(rank=rank, templates=templates)
+        if layer_name not in layer_order:
+            layer_order.append(layer_name)
+
     col_cfg = raw.get("columns", {})
     raw_col_seg = col_cfg.get("segments") or col_cfg.get("pattern", "")
     column_segments = _parse_template(raw_col_seg, types) if raw_col_seg else []
     common_columns = set(col_cfg.get("common_columns", []))
+    
     return NamingConfig(
         types=types,
         layers=layers,
@@ -405,14 +420,24 @@ def load_naming_config(path=None):
     )
 
 
-_naming_config_cache = None
+_naming_config_cache = {}
 
 
-def get_naming_config():
+def get_naming_config(project: str = None, config_file: str = None) -> NamingConfig:
     global _naming_config_cache
-    if _naming_config_cache is None:
-        _naming_config_cache = load_naming_config()
-    return _naming_config_cache
+    if config_file:
+        cfg_file = config_file
+        key = cfg_file
+    elif project and project in PROJECT_CONFIG:
+        cfg_file = PROJECT_CONFIG[project].get("naming_config", "naming_config.yaml")
+        key = cfg_file
+    else:
+        cfg_file = "naming_config.yaml"
+        key = "__default__"
+
+    if key not in _naming_config_cache:
+        _naming_config_cache[key] = load_naming_config(PROJECT_ROOT / cfg_file)
+    return _naming_config_cache[key]
 
 
 
@@ -426,6 +451,7 @@ PROJECT_CONFIG = {
         "db": "shop_dm",
         "qa_db": "shop_dm_qa",
         "lineage_db": "shop_lineage",
+        "naming_config": "naming_config_enterprise.yaml"
     },
     "finance_analytics": {
         "dir": "finance_analytics",

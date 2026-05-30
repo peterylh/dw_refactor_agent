@@ -1,17 +1,17 @@
 {
   "project": "shop",
-  "overall_raw": 63.1,
-  "overall_display": 55.6,
+  "overall_raw": 65.4,
+  "overall_display": 65.4,
   "weights": {
     "reuse": 0.25,
     "depth": 0.25,
     "architecture": 0.25,
     "naming": 0.25,
-    "enable_llm": true,
+    "enable_llm": false,
     "no_cache": false
   },
   "reuse": {
-    "avg_reuse_count": 1.25,
+    "avg_reuse_count": 1.5,
     "details": [
       {
         "table": "dws_customer_order_summary",
@@ -20,7 +20,7 @@
         "score": 33.3
       },
       {
-        "table": "dws_product_sales_daily",
+        "table": "dws_inventory_daily",
         "layer": "DWS",
         "downstream_count": 1,
         "score": 33.3
@@ -28,24 +28,36 @@
       {
         "table": "dwd_product",
         "layer": "DWD",
+        "downstream_count": 2,
+        "score": 66.7
+      },
+      {
+        "table": "dwd_store",
+        "layer": "DWD",
+        "downstream_count": 2,
+        "score": 66.7
+      },
+      {
+        "table": "dws_product_sales_daily",
+        "layer": "DWS",
+        "downstream_count": 2,
+        "score": 66.7
+      },
+      {
+        "table": "dws_promotion_effect_daily",
+        "layer": "DWS",
         "downstream_count": 1,
         "score": 33.3
       },
       {
         "table": "dwd_order_detail",
         "layer": "DWD",
-        "downstream_count": 5,
+        "downstream_count": 6,
         "score": 100
       },
       {
         "table": "dws_store_sales_daily",
         "layer": "DWS",
-        "downstream_count": 1,
-        "score": 33.3
-      },
-      {
-        "table": "dwd_store",
-        "layer": "DWD",
         "downstream_count": 1,
         "score": 33.3
       },
@@ -56,6 +68,18 @@
         "score": 0.0
       },
       {
+        "table": "dwd_inventory",
+        "layer": "DWD",
+        "downstream_count": 1,
+        "score": 33.3
+      },
+      {
+        "table": "dwd_promotion",
+        "layer": "DWD",
+        "downstream_count": 1,
+        "score": 33.3
+      },
+      {
         "table": "dws_category_sales_monthly",
         "layer": "DWS",
         "downstream_count": 0,
@@ -64,14 +88,14 @@
     ],
     "distribution": {
       "high": 1,
-      "medium": 5,
+      "medium": 9,
       "none": 2
     },
-    "raw": 33.3,
-    "display": 33.3
+    "raw": 41.7,
+    "display": 41.7
   },
   "depth": {
-    "avg_middle_depth": 1.75,
+    "avg_middle_depth": 1.83,
     "details": [
       {
         "table": "ads_customer_rfm",
@@ -79,7 +103,17 @@
         "score": 100
       },
       {
+        "table": "ads_inventory_alert",
+        "max_middle_depth": 2,
+        "score": 100
+      },
+      {
         "table": "ads_product_topn_daily",
+        "max_middle_depth": 2,
+        "score": 100
+      },
+      {
+        "table": "ads_promotion_roi",
         "max_middle_depth": 2,
         "score": 100
       },
@@ -94,79 +128,70 @@
         "score": 100
       }
     ],
-    "raw": 87.5,
-    "display": 87.5
+    "raw": 91.7,
+    "display": 91.7
   },
   "architecture": {
-    "total_penalty": 40,
+    "table_count": 28,
+    "capped_total": 5,
+    "table_capped": {
+      "ads_inventory_alert": 2,
+      "ads_product_topn_daily": 1,
+      "ads_sales_dashboard": 1,
+      "ads_store_performance": 1
+    },
     "violation_summary": {
-      "低": 6,
-      "中": 1
+      "低": 5
     },
     "violations": [
       {
         "source": "dwd_product(DWD)",
+        "target": "ads_inventory_alert(ADS)",
+        "severity": "低",
+        "weight": 1,
+        "description": "跳过中间层(DWD/DIM→ADS 或 ODS→DWS)",
+        "source_file": "ads_inventory_alert.sql",
+        "belongs_to": "ads_inventory_alert"
+      },
+      {
+        "source": "dwd_store(DWD)",
+        "target": "ads_inventory_alert(ADS)",
+        "severity": "低",
+        "weight": 1,
+        "description": "跳过中间层(DWD/DIM→ADS 或 ODS→DWS)",
+        "source_file": "ads_inventory_alert.sql",
+        "belongs_to": "ads_inventory_alert"
+      },
+      {
+        "source": "dwd_product(DWD)",
         "target": "ads_product_topn_daily(ADS)",
         "severity": "低",
-        "penalty": 5,
+        "weight": 1,
         "description": "跳过中间层(DWD/DIM→ADS 或 ODS→DWS)",
-        "source_file": "ads_product_topn_daily.sql"
+        "source_file": "ads_product_topn_daily.sql",
+        "belongs_to": "ads_product_topn_daily"
       },
       {
         "source": "dwd_order_detail(DWD)",
         "target": "ads_sales_dashboard(ADS)",
         "severity": "低",
-        "penalty": 5,
+        "weight": 1,
         "description": "跳过中间层(DWD/DIM→ADS 或 ODS→DWS)",
-        "source_file": "ads_sales_dashboard.sql"
+        "source_file": "ads_sales_dashboard.sql",
+        "belongs_to": "ads_sales_dashboard"
       },
       {
         "source": "dwd_store(DWD)",
         "target": "ads_store_performance(ADS)",
         "severity": "低",
-        "penalty": 5,
+        "weight": 1,
         "description": "跳过中间层(DWD/DIM→ADS 或 ODS→DWS)",
-        "source_file": "ads_store_performance.sql"
-      },
-      {
-        "source": "dwd_product(DWD)",
-        "target": "建议: DIM",
-        "severity": "低",
-        "penalty": 5,
-        "description": "维度表位置不当(LLM): 维度表应置于 DIM 层",
-        "source_file": "",
-        "source_type": "llm"
-      },
-      {
-        "source": "dwd_store(DWD)",
-        "target": "建议: DIM",
-        "severity": "低",
-        "penalty": 5,
-        "description": "维度表位置不当(LLM): 维度表应置于 DIM 层",
-        "source_file": "",
-        "source_type": "llm"
-      },
-      {
-        "source": "dwd_customer(DWD)",
-        "target": "建议: DIM",
-        "severity": "低",
-        "penalty": 5,
-        "description": "维度表位置不当(LLM): 维度表应置于 DIM 层",
-        "source_file": "",
-        "source_type": "llm"
-      },
-      {
-        "source": "dws_category_sales_monthly(DWS)",
-        "target": "dws_category_sales_monthly(ADS)",
-        "severity": "中",
-        "penalty": 10,
-        "description": "分层错配(LLM): 命名层=DWS, 推断层=ADS",
-        "source_file": "",
-        "source_type": "llm"
+        "source_file": "ads_store_performance.sql",
+        "belongs_to": "ads_store_performance"
       }
     ],
-    "raw": 60,
-    "display": 30.0
+    "raw": 82.1,
+    "display": 82.1
   },
   "naming": {
     "details": [
@@ -174,125 +199,205 @@
         "table": "dws_customer_order_summary",
         "layer": "DWS",
         "table_checks": {
-          "passed": 1,
+          "passed": 0,
           "total": 1,
-          "violations": []
+          "violations": [
+            "违反: 表名符合规范模板"
+          ]
         },
         "column_checks": {
-          "passed": 7,
+          "passed": 3,
           "total": 8,
           "violations": [
+            "avg_order_amount",
+            "order_count",
+            "payment_amount",
+            "total_amount",
             "total_discount"
           ]
         },
-        "score": 88.9
+        "score": 33.3
       },
       {
-        "table": "dws_product_sales_daily",
+        "table": "dws_inventory_daily",
         "layer": "DWS",
         "table_checks": {
-          "passed": 1,
+          "passed": 0,
           "total": 1,
-          "violations": []
+          "violations": [
+            "违反: 表名符合规范模板"
+          ]
         },
         "column_checks": {
-          "passed": 7,
-          "total": 7,
-          "violations": []
+          "passed": 5,
+          "total": 8,
+          "violations": [
+            "days_since_restock",
+            "quantity",
+            "safety_stock"
+          ]
         },
-        "score": 100.0
+        "score": 55.6
       },
       {
         "table": "dwd_product",
         "layer": "DWD",
         "table_checks": {
-          "passed": 1,
+          "passed": 0,
           "total": 1,
-          "violations": []
+          "violations": [
+            "违反: 表名符合规范模板"
+          ]
         },
         "column_checks": {
-          "passed": 9,
-          "total": 15,
+          "passed": 7,
+          "total": 16,
           "violations": [
             "barcode",
             "brand",
+            "category_level",
+            "cost_price",
             "gross_margin",
             "spec",
             "status",
-            "unit"
+            "unit",
+            "unit_price"
           ]
         },
-        "score": 62.5
-      },
-      {
-        "table": "dwd_order_detail",
-        "layer": "DWD",
-        "table_checks": {
-          "passed": 1,
-          "total": 1,
-          "violations": []
-        },
-        "column_checks": {
-          "passed": 13,
-          "total": 18,
-          "violations": [
-            "discount",
-            "gross_profit",
-            "order_month",
-            "quantity",
-            "subtotal"
-          ]
-        },
-        "score": 73.7
-      },
-      {
-        "table": "dws_store_sales_daily",
-        "layer": "DWS",
-        "table_checks": {
-          "passed": 1,
-          "total": 1,
-          "violations": []
-        },
-        "column_checks": {
-          "passed": 8,
-          "total": 8,
-          "violations": []
-        },
-        "score": 100.0
+        "score": 41.2
       },
       {
         "table": "dwd_store",
         "layer": "DWD",
         "table_checks": {
-          "passed": 1,
+          "passed": 0,
           "total": 1,
-          "violations": []
+          "violations": [
+            "违反: 表名符合规范模板"
+          ]
         },
         "column_checks": {
           "passed": 6,
-          "total": 12,
+          "total": 13,
           "violations": [
             "address",
             "area_size",
             "city",
             "open_years",
             "province",
-            "status"
+            "status",
+            "store_level"
           ]
         },
-        "score": 53.8
+        "score": 42.9
+      },
+      {
+        "table": "dws_product_sales_daily",
+        "layer": "DWS",
+        "table_checks": {
+          "passed": 0,
+          "total": 1,
+          "violations": [
+            "违反: 表名符合规范模板"
+          ]
+        },
+        "column_checks": {
+          "passed": 3,
+          "total": 7,
+          "violations": [
+            "discount_amount",
+            "order_count",
+            "sale_amount",
+            "sale_quantity"
+          ]
+        },
+        "score": 37.5
+      },
+      {
+        "table": "dws_promotion_effect_daily",
+        "layer": "DWS",
+        "table_checks": {
+          "passed": 0,
+          "total": 1,
+          "violations": [
+            "违反: 表名符合规范模板"
+          ]
+        },
+        "column_checks": {
+          "passed": 5,
+          "total": 10,
+          "violations": [
+            "customer_count",
+            "discount_amount",
+            "order_count",
+            "sale_amount",
+            "sale_quantity"
+          ]
+        },
+        "score": 45.5
+      },
+      {
+        "table": "dwd_order_detail",
+        "layer": "DWD",
+        "table_checks": {
+          "passed": 0,
+          "total": 1,
+          "violations": [
+            "违反: 表名符合规范模板"
+          ]
+        },
+        "column_checks": {
+          "passed": 10,
+          "total": 18,
+          "violations": [
+            "cost_price",
+            "discount",
+            "gross_profit",
+            "order_month",
+            "payment_method",
+            "quantity",
+            "subtotal",
+            "unit_price"
+          ]
+        },
+        "score": 52.6
+      },
+      {
+        "table": "dws_store_sales_daily",
+        "layer": "DWS",
+        "table_checks": {
+          "passed": 0,
+          "total": 1,
+          "violations": [
+            "违反: 表名符合规范模板"
+          ]
+        },
+        "column_checks": {
+          "passed": 3,
+          "total": 8,
+          "violations": [
+            "customer_count",
+            "discount_amount",
+            "order_count",
+            "payment_amount",
+            "total_amount"
+          ]
+        },
+        "score": 33.3
       },
       {
         "table": "dwd_customer",
         "layer": "DWD",
         "table_checks": {
-          "passed": 1,
+          "passed": 0,
           "total": 1,
-          "violations": []
+          "violations": [
+            "违反: 表名符合规范模板"
+          ]
         },
         "column_checks": {
           "passed": 5,
-          "total": 13,
+          "total": 14,
           "violations": [
             "address",
             "age",
@@ -300,108 +405,136 @@
             "city",
             "email",
             "gender",
+            "member_level",
             "phone",
             "province"
           ]
         },
-        "score": 42.9
+        "score": 33.3
+      },
+      {
+        "table": "dwd_inventory",
+        "layer": "DWD",
+        "table_checks": {
+          "passed": 0,
+          "total": 1,
+          "violations": [
+            "违反: 表名符合规范模板"
+          ]
+        },
+        "column_checks": {
+          "passed": 7,
+          "total": 10,
+          "violations": [
+            "days_since_restock",
+            "quantity",
+            "safety_stock"
+          ]
+        },
+        "score": 63.6
+      },
+      {
+        "table": "dwd_promotion",
+        "layer": "DWD",
+        "table_checks": {
+          "passed": 0,
+          "total": 1,
+          "violations": [
+            "违反: 表名符合规范模板"
+          ]
+        },
+        "column_checks": {
+          "passed": 9,
+          "total": 12,
+          "violations": [
+            "duration_days",
+            "min_amount",
+            "status"
+          ]
+        },
+        "score": 69.2
       },
       {
         "table": "dws_category_sales_monthly",
         "layer": "DWS",
         "table_checks": {
-          "passed": 1,
+          "passed": 0,
           "total": 1,
-          "violations": []
+          "violations": [
+            "违反: 表名符合规范模板"
+          ]
         },
         "column_checks": {
-          "passed": 5,
-          "total": 6,
+          "passed": 3,
+          "total": 7,
           "violations": [
+            "order_count",
+            "sale_amount",
+            "sale_quantity",
             "stat_month"
           ]
         },
-        "score": 85.7
+        "score": 37.5
       }
     ],
     "rule_summary": {
       "表名符合规范模板": {
-        "pass_count": 8,
-        "total": 8,
-        "pct": 100.0
+        "pass_count": 0,
+        "total": 12,
+        "pct": 0.0
       },
       "后缀 _id": {
-        "pass_count": 16,
-        "total": 16,
+        "pass_count": 23,
+        "total": 23,
         "pct": 100.0
       },
       "后缀 _date": {
-        "pass_count": 6,
-        "total": 6,
-        "pct": 100.0
-      },
-      "后缀 _count": {
-        "pass_count": 5,
-        "total": 5,
-        "pct": 100.0
-      },
-      "后缀 _amount": {
-        "pass_count": 9,
-        "total": 9,
+        "pass_count": 12,
+        "total": 12,
         "pct": 100.0
       },
       "无匹配模式": {
         "pass_count": 0,
-        "total": 27,
+        "total": 65,
         "pct": 0.0
       },
       "通用列名": {
-        "pass_count": 8,
-        "total": 8,
+        "pass_count": 17,
+        "total": 17,
         "pct": 100.0
       },
-      "后缀 _quantity": {
-        "pass_count": 2,
-        "total": 2,
-        "pct": 100.0
-      },
-      "后缀 _name": {
-        "pass_count": 4,
-        "total": 4,
-        "pct": 100.0
-      },
-      "后缀 _level": {
+      "后缀 _status": {
         "pass_count": 3,
         "total": 3,
         "pct": 100.0
       },
-      "后缀 _price": {
-        "pass_count": 4,
-        "total": 4,
-        "pct": 100.0
-      },
-      "后缀 _method": {
-        "pass_count": 1,
-        "total": 1,
-        "pct": 100.0
-      },
-      "后缀 _status": {
-        "pass_count": 1,
-        "total": 1,
+      "后缀 _name": {
+        "pass_count": 6,
+        "total": 6,
         "pct": 100.0
       },
       "后缀 _type": {
+        "pass_count": 3,
+        "total": 3,
+        "pct": 100.0
+      },
+      "后缀 _rate": {
+        "pass_count": 1,
+        "total": 1,
+        "pct": 100.0
+      },
+      "前缀 is_": {
         "pass_count": 1,
         "total": 1,
         "pct": 100.0
       },
       "列名总计": {
-        "pass_count": 60,
-        "total": 87,
-        "pct": 69.0
+        "pass_count": 66,
+        "total": 131,
+        "pct": 50.4
       }
     },
-    "raw": 71.6,
-    "display": 71.6
+    "raw": 46.2,
+    "display": 46.2
   }
 }

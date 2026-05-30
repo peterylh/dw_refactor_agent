@@ -49,33 +49,33 @@ class TestParseSegments:
         result = _parse_segments(["ods", "$source", "$entity"], {})
         assert len(result) == 5
         assert result[0] == {"name": "ods", "kind": "literal", "optional": False,
-                             "sep_before": "", "sep_after": ""}
+                             "sep_before": "", "sep_after": "", "concat_left": False}
         assert result[1] == {"name": "_", "kind": "literal", "optional": False,
-                             "sep_before": "", "sep_after": ""}
+                             "sep_before": "", "sep_after": "", "concat_left": False}
         assert result[2] == {"name": "source", "kind": "type", "optional": False,
-                             "sep_before": "", "sep_after": ""}
+                             "sep_before": "", "sep_after": "", "concat_left": False}
         assert result[3] == {"name": "_", "kind": "literal", "optional": False,
-                             "sep_before": "", "sep_after": ""}
+                             "sep_before": "", "sep_after": "", "concat_left": False}
         assert result[4] == {"name": "entity", "kind": "type", "optional": False,
-                             "sep_before": "", "sep_after": ""}
+                             "sep_before": "", "sep_after": "", "concat_left": False}
 
     def test_optional_right_gets_sep_before(self):
         """[$entity, "$time_granularity?"] → 右侧可选段获得 sep_before，不插入独立 _"""
         result = _parse_segments(["$entity", "$time_granularity?"], {})
         assert len(result) == 2
         assert result[0] == {"name": "entity", "kind": "type", "optional": False,
-                             "sep_before": "", "sep_after": ""}
+                             "sep_before": "", "sep_after": "", "concat_left": False}
         assert result[1] == {"name": "time_granularity", "kind": "type", "optional": True,
-                             "sep_before": "_", "sep_after": ""}
+                             "sep_before": "_", "sep_after": "", "concat_left": False}
 
     def test_optional_left_gets_sep_after(self):
         """["$prefix_field?", $entity] → 左侧可选段获得 sep_after"""
         result = _parse_segments(["$prefix_field?", "$entity"], {})
         assert len(result) == 2
         assert result[0] == {"name": "prefix_field", "kind": "type", "optional": True,
-                             "sep_before": "", "sep_after": "_"}
+                             "sep_before": "", "sep_after": "_", "concat_left": False}
         assert result[1] == {"name": "entity", "kind": "type", "optional": False,
-                             "sep_before": "", "sep_after": ""}
+                             "sep_before": "", "sep_after": "", "concat_left": False}
 
     def test_double_optional(self):
         """["$prefix_field?", "$entity", "$suffix_field?"] → 混合可选绑定"""
@@ -192,10 +192,8 @@ def _build_nc(table_cfg=None, col_segments=None, common_cols=None):
             elif s.get("sep_before"):
                 prefix_parts.append(s["sep_before"])
                 break
-            else:
-                break
         prefix = "".join(prefix_parts)
-        layers[name] = LayerDef(prefix=prefix, rank=rank, segments=parsed)
+        layers[name] = LayerDef(rank=rank, templates=[parsed])
         order.append(name)
     return NamingConfig(
         types=types,
@@ -216,32 +214,32 @@ class TestMatchOds:
         return _build_nc({"ODS": ["ods", "$source", "$entity", "$load_type"]})
 
     def test_full_match(self, nc):
-        segs = nc.layers["ODS"].segments
+        segs = nc.layers["ODS"].templates[0]
         r = nc._match_segments("ods_mysql_orders_full", segs)
         assert r == {"source": "mysql", "entity": "orders", "load_type": "full"}
 
     def test_inc_variant(self, nc):
-        segs = nc.layers["ODS"].segments
+        segs = nc.layers["ODS"].templates[0]
         r = nc._match_segments("ods_erp_customer_inc", segs)
         assert r == {"source": "erp", "entity": "customer", "load_type": "inc"}
 
     def test_missing_load_type(self, nc):
         """ODS 要求 load_type，缺失则返回 None"""
-        segs = nc.layers["ODS"].segments
+        segs = nc.layers["ODS"].templates[0]
         assert nc._match_segments("ods_mysql_customer", segs) is None
 
     def test_missing_source(self, nc):
         """ODS 要求 source，缺失则返回 None"""
-        segs = nc.layers["ODS"].segments
+        segs = nc.layers["ODS"].templates[0]
         assert nc._match_segments("ods_customer_full", segs) is None
 
     def test_no_match_prefix(self, nc):
-        segs = nc.layers["ODS"].segments
+        segs = nc.layers["ODS"].templates[0]
         assert nc._match_segments("xxx_customer_full", segs) is None
 
     def test_db_prefixed_name(self, nc):
         """_match_segments 不会自动剥离 db 前缀"""
-        segs = nc.layers["ODS"].segments
+        segs = nc.layers["ODS"].templates[0]
         assert nc._match_segments("shop_dm.ods_mysql_orders_full", segs) is None
 
 
@@ -255,17 +253,17 @@ class TestMatchDwd:
         return _build_nc({"DWD": ["dwd", "$entity"]})
 
     def test_basic(self, nc):
-        segs = nc.layers["DWD"].segments
+        segs = nc.layers["DWD"].templates[0]
         r = nc._match_segments("dwd_customer", segs)
         assert r == {"entity": "customer"}
 
     def test_with_underscore(self, nc):
-        segs = nc.layers["DWD"].segments
+        segs = nc.layers["DWD"].templates[0]
         r = nc._match_segments("dwd_order_detail", segs)
         assert r == {"entity": "order_detail"}
 
     def test_no_match(self, nc):
-        segs = nc.layers["DWD"].segments
+        segs = nc.layers["DWD"].templates[0]
         assert nc._match_segments("ods_customer", segs) is None
 
 
@@ -279,18 +277,18 @@ class TestMatchDws:
         return _build_nc({"DWS": ["dws", "$entity", "$time_granularity?"]})
 
     def test_with_granularity(self, nc):
-        segs = nc.layers["DWS"].segments
+        segs = nc.layers["DWS"].templates[0]
         r = nc._match_segments("dws_store_sales_daily", segs)
         assert r == {"entity": "store_sales", "time_granularity": "daily"}
 
     def test_with_monthly(self, nc):
-        segs = nc.layers["DWS"].segments
+        segs = nc.layers["DWS"].templates[0]
         r = nc._match_segments("dws_category_sales_monthly", segs)
         assert r == {"entity": "category_sales", "time_granularity": "monthly"}
 
     def test_without_granularity(self, nc):
         """可选段缺失时只返回 entity"""
-        segs = nc.layers["DWS"].segments
+        segs = nc.layers["DWS"].templates[0]
         r = nc._match_segments("dws_customer_order_summary", segs)
         assert r == {"entity": "customer_order_summary"}
 
@@ -305,12 +303,12 @@ class TestMatchAds:
         return _build_nc({"ADS": ["ads", "$business_view"]})
 
     def test_basic(self, nc):
-        segs = nc.layers["ADS"].segments
+        segs = nc.layers["ADS"].templates[0]
         r = nc._match_segments("ads_customer_rfm", segs)
         assert r == {"business_view": "customer_rfm"}
 
     def test_with_underscore(self, nc):
-        segs = nc.layers["ADS"].segments
+        segs = nc.layers["ADS"].templates[0]
         r = nc._match_segments("ads_product_topn_daily", segs)
         assert r == {"business_view": "product_topn_daily"}
 
@@ -325,7 +323,7 @@ class TestMatchDim:
         return _build_nc({"DIM": ["dim", "$entity"]})
 
     def test_basic(self, nc):
-        segs = nc.layers["DIM"].segments
+        segs = nc.layers["DIM"].templates[0]
         r = nc._match_segments("dim_date", segs)
         assert r == {"entity": "date"}
 
@@ -448,14 +446,6 @@ class TestLoadNamingConfig:
         for layer in ("ODS", "DWD", "DWS", "ADS", "DIM"):
             assert layer in nc.layers
 
-    def test_prefix_extraction(self):
-        nc = load_naming_config()
-        assert nc.layers["ODS"].prefix == "ods_"
-        assert nc.layers["DWD"].prefix == "dwd_"
-        assert nc.layers["DWS"].prefix == "dws_"
-        assert nc.layers["ADS"].prefix == "ads_"
-        assert nc.layers["DIM"].prefix == "dim_"
-
     def test_rank_auto_derivation(self):
         nc = load_naming_config()
         ranks = [nc.layers[l].rank for l in nc.layer_order]
@@ -473,3 +463,118 @@ class TestLoadNamingConfig:
     def test_yaml_file_not_found(self):
         with pytest.raises(FileNotFoundError):
             load_naming_config("/nonexistent/path.yaml")
+
+
+# ============================================================
+# Enterprise V2 Naming Tests
+# ============================================================
+
+from config import get_naming_config, PROJECT_ROOT
+
+class TestConcatSyntax:
+    def test_parse_concat(self):
+        result = _parse_segments(["$a", "$+b"], {})
+        assert len(result) == 2
+        assert result[1].get("concat_left") is True
+        assert result[0].get("sep_after", "") == ""
+        assert result[1].get("sep_before", "") == ""
+
+
+class TestEnterpriseNaming:
+    @pytest.fixture
+    def nc(self):
+        return load_naming_config(PROJECT_ROOT / "naming_config_enterprise.yaml")
+
+    def test_match_dwd_v2(self, nc):
+        segs = nc.layers["DWD"].templates[0]
+        r = nc._match_segments("M_WEMG_04_CHREM_DI", segs)
+        assert r == {
+            "BIZ_MODULE": "WEMG",
+            "DOMAIN_CODE": "04",
+            "BIZ_PROCESS": "CHREM",
+            "TIME_PERIOD": "D",
+            "DWD_GRANULARITY": "I",
+        }
+
+    def test_match_dws_v2(self, nc):
+        segs = nc.layers["DWS"].templates[0]
+        r = nc._match_segments("I_FRTN_CUST_PROD_BAL_DS", segs)
+        assert r == {
+            "BIZ_MODULE": "FRTN",
+            "ENTITY": ["CUST", "PROD"],
+            "METRICS_DESC": "BAL",
+            "TIME_PERIOD": "D",
+            "DWS_GRANULARITY": "S",
+        }
+
+    def test_match_ads_v2(self, nc):
+        segs = nc.layers["ADS"].templates[0]
+        r = nc._match_segments("A13_CUST_DS", segs)
+        assert r == {
+            "ADS_PREFIX": "A13",
+            "ADS_TOPIC": "CUST",
+            "TIME_PERIOD": "D",
+            "ADS_GRANULARITY": "S",
+        }
+
+    def test_match_dim_v2(self, nc):
+        segs = nc.layers["DIM"].templates[0]
+        r = nc._match_segments("DIM_BASE_CUST_INFO_INFO", segs)
+        assert r == {
+            "DIM_SCOPE": "BASE",
+            "ENTITY": "CUST",
+            "DIM_DESC": "INFO",
+            "DIM_TYPE": "INFO",
+        }
+
+    def test_match_dim_v2_addt(self, nc):
+        segs = nc.layers["DIM"].templates[0]
+        r = nc._match_segments("DIM_ADDT_CUST_SCTY_RELA_INFO", segs)
+        assert r == {
+            "DIM_SCOPE": "ADDT",
+            "ENTITY": "CUST",
+            "DIM_DESC": "SCTY_RELA",
+            "DIM_TYPE": "INFO",
+        }
+
+    def test_match_dim_pm(self, nc):
+        segs = nc.layers["DIM"].templates[1]
+        r = nc._match_segments("DIM_PM_CD", segs)
+        assert r == {"DIM_DESC": "CD"}
+
+
+class TestEnterpriseDetermineLayer:
+    @pytest.fixture
+    def nc(self):
+        return load_naming_config(PROJECT_ROOT / "naming_config_enterprise.yaml")
+
+    def test_dwd_v2(self, nc):
+        assert nc.determine_layer("M_WEMG_04_CHREM_DI") == "DWD"
+
+    def test_dws_v2(self, nc):
+        assert nc.determine_layer("I_FRTN_CUST_PROD_BAL_DS") == "DWS"
+
+    def test_ads_v2(self, nc):
+        assert nc.determine_layer("A13_CUST_DS") == "ADS"
+
+    def test_dim_v2(self, nc):
+        assert nc.determine_layer("DIM_BASE_CUST_INFO_INFO") == "DIM"
+
+    def test_dim_pm(self, nc):
+        assert nc.determine_layer("DIM_PM_CD") == "DIM"
+
+
+class TestGetNamingConfigByProject:
+    def test_default(self):
+        nc = get_naming_config()
+        # DWD layer should exist but its template shouldn't be the enterprise one
+        # Let's just check the number of templates in DWD
+        assert len(nc.layers["DWD"].templates) == 1
+
+    def test_enterprise_project(self):
+        # Temporarily mock PROJECT_CONFIG
+        import config
+        config.PROJECT_CONFIG["test_enterprise"] = {"naming_config": "naming_config_enterprise.yaml"}
+        nc = get_naming_config("test_enterprise")
+        assert "DWD" in nc.layers
+

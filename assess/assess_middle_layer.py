@@ -50,14 +50,8 @@ SEVERITY_WEIGHT = {"严重": 4, "高": 3, "中": 2, "低": 1}
 # 每表扣分上限 (cap)，防止单张高频表拖垮整体评分
 PER_TABLE_CAP = 4
 
-# 从命名规范配置获取分层序号
-from config import get_naming_config
-
-_nc = get_naming_config()
-
-
-def _layer_rank(layer: str) -> int:
-    return _nc.layer_rank(layer)
+def _layer_rank(layer: str, nc) -> int:
+    return nc.layer_rank(layer)
 
 
 def build_metric_result(metric: dict, display_score: float | None = None) -> dict:
@@ -226,15 +220,14 @@ def _depth_to_score(depth: int) -> int:
 
 
 def score_lineage_depth(tables: list, edges: list,
-                        indirect_edges: list) -> dict:
+                        indirect_edges: list, nc) -> dict:
     table_layers = build_table_layer_map(tables)
     upstream, _ = build_table_graph(edges, indirect_edges)
 
     # 补齐上游中可能缺失的层信息（按表名前缀推断）
-    _inf_nc = _nc
     for tbl in upstream:
         if tbl not in table_layers:
-            table_layers[tbl] = _inf_nc.determine_layer(tbl)
+            table_layers[tbl] = nc.determine_layer(tbl)
 
     ads = [t for t in tables if t["layer"] == "ADS"]
 
@@ -260,7 +253,8 @@ def score_lineage_depth(tables: list, edges: list,
 
 def score_architecture_health(tables: list, edges: list,
                               indirect_edges: list,
-                              llm_results: list = None) -> dict:
+                              llm_results: list = None,
+                              nc = None) -> dict:
     table_layers = build_table_layer_map(tables)
     table_count = len(tables)  # 全部表数 (ODS+DWD+DWS+DIM+ADS)
 
@@ -285,8 +279,8 @@ def score_architecture_health(tables: list, edges: list,
     for (src, tgt), files in table_edges.items():
         src_layer = table_layers.get(src, "OTHER")
         tgt_layer = table_layers.get(tgt, "OTHER")
-        src_rank = _layer_rank(src_layer)
-        tgt_rank = _layer_rank(tgt_layer)
+        src_rank = _layer_rank(src_layer, nc)
+        tgt_rank = _layer_rank(tgt_layer, nc)
         if src_rank < 0 or tgt_rank < 0:
             continue
 
@@ -375,31 +369,29 @@ def score_architecture_health(tables: list, edges: list,
 # 命名规范评分
 # ============================================================
 
-# 从命名规范配置生成命名检查规则
-_nc_col = get_naming_config()
+def _check_table_name_any_template(name: str, layer: str, nc) -> bool:
+    ldef = nc.layers.get(layer)
+    if not ldef:
+        return False
+    for segs in ldef.templates:
+        if nc._match_segments(name, segs) is not None:
+            return True
+    return False
 
-TABLE_NAME_CHECKS = [
-    ("表名符合规范模板",
-     lambda name, layer: _nc_col._match_segments(name, _nc_col.layers[layer].segments) is not None if layer in _nc_col.layers else False),
-]
-
-COMMON_COLUMNS = _nc_col.common_columns
-
-
-def _check_column_name(col_name: str) -> tuple[bool, list[str]]:
-    if col_name in COMMON_COLUMNS:
+def _check_column_name(col_name: str, nc) -> tuple[bool, list[str]]:
+    if col_name in nc.common_columns:
         return True, ["通用列名"]
 
     # OR 匹配：字段只要匹配任意一个已知后缀/前缀模式即合规
     matched = []
-    sf = _nc_col.types.get("suffix_field")
+    sf = nc.types.get("suffix_field")
     if sf and sf.values:
         for v in sorted(sf.values, key=len, reverse=True):
             if col_name.endswith(f"_{v}"):
                 matched.append(f"后缀 _{v}")
                 break
     if not matched:
-        pf = _nc_col.types.get("prefix_field")
+        pf = nc.types.get("prefix_field")
         if pf and pf.values:
             for v in sorted(pf.values, key=len, reverse=True):
                 if col_name.startswith(f"{v}_"):
@@ -409,7 +401,7 @@ def _check_column_name(col_name: str) -> tuple[bool, list[str]]:
     return bool(matched), matched
 
 
-def score_naming_conventions(tables: list) -> dict:
+def score_naming_conventions(tables: list, nc) -> dict:
     middle = [t for t in tables if t["layer"] in ("DWD", "DWS", "DIM")]
 
     table_results = []
@@ -422,13 +414,12 @@ def score_naming_conventions(tables: list) -> dict:
 
         # --- 表名检查 ---
         tbl_passed = 0
-        tbl_total = len(TABLE_NAME_CHECKS)
+        tbl_total = 1
         tbl_violations = []
-        for desc, fn in TABLE_NAME_CHECKS:
-            if fn(name, layer):
-                tbl_passed += 1
-            else:
-                tbl_violations.append(f"违反: {desc}")
+        if _check_table_name_any_template(name, layer, nc):
+            tbl_passed += 1
+        else:
+            tbl_violations.append(f"违反: 表名符合规范模板")
 
         # --- 字段检查 ---
         col_violations = []
@@ -437,7 +428,7 @@ def score_naming_conventions(tables: list) -> dict:
 
         for col in columns:
             col_name = col["name"]
-            ok, matched = _check_column_name(col_name)
+            ok, matched = _check_column_name(col_name, nc)
             if ok:
                 col_passed += 1
             else:
@@ -471,14 +462,14 @@ def score_naming_conventions(tables: list) -> dict:
 
     # 规则汇总
     rule_summary = {}
-    for desc, fn in TABLE_NAME_CHECKS:
-        passed = sum(1 for t in middle if fn(t["name"], t["layer"]))
-        total = len(middle)
-        rule_summary[desc] = dict(
-            pass_count=passed,
-            total=total,
-            pct=round(passed / total * 100, 1) if total else 0,
-        )
+    passed = sum(1 for t in middle if _check_table_name_any_template(t["name"], t["layer"], nc))
+    total = len(middle)
+    rule_summary["表名符合规范模板"] = dict(
+        pass_count=passed,
+        total=total,
+        pct=round(passed / total * 100, 1) if total else 0,
+    )
+
 
     col_total = 0
     col_passed = 0
@@ -486,7 +477,7 @@ def score_naming_conventions(tables: list) -> dict:
         for col in t.get("columns", []):
             col_name = col["name"]
             col_total += 1
-            ok, matched = _check_column_name(col_name)
+            ok, matched = _check_column_name(col_name, nc)
             if ok:
                 col_passed += 1
             for m in matched:
@@ -727,11 +718,12 @@ def generate_report(scores: dict, weights: dict, project: str) -> str:
 # ============================================================
 
 
-def assess(project: str = "shop",
-           weights: dict = None,
-           output: str = None) -> dict:
+def assess(project: str, weights: dict = None, config_file: str = None) -> dict:
     if weights is None:
         weights = DEFAULT_WEIGHTS.copy()
+
+    from config import get_naming_config
+    nc = get_naming_config(project, config_file)
 
     data = load_lineage_data(project)
     edges = data.get("edges", [])
@@ -757,11 +749,11 @@ def assess(project: str = "shop",
 
     reuse_score = build_metric_result(score_reusability(tables, downstream))
     depth_score = build_metric_result(
-        score_lineage_depth(tables, edges, indirect_edges))
+        score_lineage_depth(tables, edges, indirect_edges, nc))
     architecture_raw = score_architecture_health(tables, edges, indirect_edges,
-                                                  llm_results)
+                                                  llm_results, nc)
     architecture_score = build_metric_result(architecture_raw)
-    naming_score = build_metric_result(score_naming_conventions(tables))
+    naming_score = build_metric_result(score_naming_conventions(tables, nc))
 
     overall_raw = round(
         weights["reuse"] * reuse_score["raw"] +
@@ -801,6 +793,9 @@ def main():
     parser.add_argument(
         "--output",
         help="输出 JSON 文件路径 (默认 assess/assess_result_{project}.json)")
+    parser.add_argument(
+        "--config",
+        help="覆盖默认的命名规范配置文件路径 (例如 naming_config_enterprise.yaml)")
     parser.add_argument("--reuse-weight", type=float, default=0.25)
     parser.add_argument("--depth-weight", type=float, default=0.25)
     parser.add_argument("--architecture-weight", type=float, default=0.25)
@@ -822,7 +817,7 @@ def main():
         no_cache=args.no_cache,
     )
 
-    result = assess(args.project, weights)
+    result = assess(args.project, weights, args.config)
 
     print(generate_report(result, weights, args.project))
 
