@@ -3,8 +3,11 @@ import re
 import sys
 import types
 
-if "sqlglot" not in sys.modules:
+try:
+    import sqlglot  # noqa: F401
+except ModuleNotFoundError:
     fake_sqlglot = types.ModuleType("sqlglot")
+    fake_sqlglot_errors = types.ModuleType("sqlglot.errors")
 
     class _FakeTable:
         def __init__(self, sql_text):
@@ -25,7 +28,7 @@ if "sqlglot" not in sys.modules:
         def __init__(self, target):
             self.this = _FakeTable(target)
 
-    def _fake_parse(sql_text, dialect="doris"):
+    def _fake_parse(sql_text, dialect="doris", **_kwargs):
         statements = []
         insert_match = re.search(r"INSERT\s+INTO\s+([^\s(]+)", sql_text, re.IGNORECASE)
         if insert_match:
@@ -44,9 +47,13 @@ if "sqlglot" not in sys.modules:
         Create=_FakeCreate,
         Update=_FakeUpdate,
     )
+    fake_sqlglot_errors.ErrorLevel = types.SimpleNamespace(IGNORE="IGNORE")
     sys.modules["sqlglot"] = fake_sqlglot
+    sys.modules["sqlglot.errors"] = fake_sqlglot_errors
 
-if "yaml" not in sys.modules:
+try:
+    import yaml  # noqa: F401
+except ModuleNotFoundError:
     fake_yaml = types.ModuleType("yaml")
     fake_yaml.safe_load = lambda _: {}
     sys.modules["yaml"] = fake_yaml
@@ -84,17 +91,6 @@ def test_resolve_output_paths_uses_project_isolation_for_non_shop(monkeypatch, t
 
 
 def test_generate_jobs_strips_project_db_and_defaults_logic(tmp_path, monkeypatch):
-    class _FakeNamingConfig:
-        def determine_layer(self, table_name):
-            return "DWD" if table_name.startswith("dwd_") else "OTHER"
-
-        def layer_rank(self, layer_name):
-            return {"DWD": 2, "OTHER": -1}.get(layer_name, -1)
-
-    monkeypatch.setattr(
-        "config.get_naming_config",
-        lambda: _FakeNamingConfig(),
-    )
     monkeypatch.setattr(
         refresh_html,
         "determine_layer",

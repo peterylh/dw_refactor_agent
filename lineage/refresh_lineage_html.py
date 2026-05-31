@@ -17,7 +17,7 @@ import sqlglot
 from sqlglot import exp
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from config import PROJECT_CONFIG, determine_layer
+from config import PROJECT_CONFIG, determine_layer, layer_rank
 
 LINEAGE_DIR = Path(__file__).parent
 
@@ -59,10 +59,8 @@ def load_lineage_data(project):
 
 
 def _layer_priority(tbl, project):
-    from config import get_naming_config
-    nc = get_naming_config()
     layer = determine_layer(tbl, project)
-    rank = nc.layer_rank(layer)
+    rank = layer_rank(layer)
     return rank + 1 if rank >= 0 else 0
 
 

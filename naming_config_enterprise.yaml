@@ -78,11 +78,6 @@ columns:
     - create_time
     - update_time
 
-layers:
-  - [DIM, DWD]
-  - DWS
-  - ADS
-
 table:
   constraints:
     max_length: 30

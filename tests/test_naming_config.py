@@ -5,6 +5,7 @@ import config
 from config import (
     TypeDef, LayerDef, NamingConfig,
     _parse_segments, _parse_template, load_naming_config,
+    layer_rank,
 )
 
 
@@ -182,24 +183,12 @@ def _make_types():
 def _build_nc(table_cfg=None, col_segments=None, common_cols=None):
     types = _make_types()
     layers = {}
-    order = []
-    for rank, (name, segs) in enumerate((table_cfg or {}).items()):
+    for name, segs in (table_cfg or {}).items():
         parsed = _parse_template(segs, types)
-        prefix_parts = []
-        for s in parsed:
-            if s["kind"] == "literal":
-                prefix_parts.append(s["name"])
-                prefix_parts.append(s.get("sep_after", ""))
-            elif s.get("sep_before"):
-                prefix_parts.append(s["sep_before"])
-                break
-        prefix = "".join(prefix_parts)
-        layers[name] = LayerDef(rank=rank, templates=[parsed])
-        order.append(name)
+        layers[name] = LayerDef(templates=[parsed])
     return NamingConfig(
         types=types,
         layers=layers,
-        layer_order=order,
         column_segments=_parse_template(col_segments or [], types),
         common_columns=set(common_cols or []),
     )
@@ -397,25 +386,22 @@ class TestTopLevelDetermineLayer:
 
 
 # ============================================================
-# NamingConfig.layer_rank
+# 独立层级排序
 # ============================================================
 
 class TestLayerRank:
-    @pytest.fixture
-    def nc(self):
-        return _build_nc({
-            "ODS": ["ods", "$entity"],
-            "DWD": ["dwd", "$entity"],
-            "ADS": ["ads", "$entity"],
-        })
+    def test_ordered(self):
+        assert layer_rank("ODS") == 0
+        assert layer_rank("DIM") == 1
+        assert layer_rank("DWD") == 1
+        assert layer_rank("DWS") == 2
+        assert layer_rank("ADS") == 3
 
-    def test_ordered(self, nc):
-        assert nc.layer_rank("ODS") == 0
-        assert nc.layer_rank("DWD") == 1
-        assert nc.layer_rank("ADS") == 2
+    def test_unknown(self):
+        assert layer_rank("UNKNOWN") == -1
 
-    def test_unknown(self, nc):
-        assert nc.layer_rank("UNKNOWN") == -1
+    def test_normalizes_case(self):
+        assert layer_rank("dwd") == 1
 
 
 # ============================================================
@@ -429,10 +415,10 @@ class TestLoadNamingConfig:
         for layer in ("ODS", "DWD", "DWS", "ADS", "DIM"):
             assert layer in nc.layers
 
-    def test_rank_auto_derivation(self):
+    def test_table_templates_do_not_require_layers_block(self):
         nc = load_naming_config()
-        ranks = [nc.layers[l].rank for l in nc.layer_order]
-        assert ranks == sorted(ranks), "rank 未按定义顺序自动推导"
+        assert "DWD" in nc.layers
+        assert len(nc.layers["DWD"].templates) == 1
 
     def test_column_segments(self):
         nc = load_naming_config()

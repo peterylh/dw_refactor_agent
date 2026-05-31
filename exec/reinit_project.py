@@ -22,7 +22,12 @@ from pathlib import Path
 _root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_root))
 
-from config import PROJECT_CONFIG, DB_ENV_CONFIG, get_mysql_cmd, get_naming_config
+from config import (
+    PROJECT_CONFIG,
+    DB_ENV_CONFIG,
+    get_model_names_by_layer,
+    get_mysql_cmd,
+)
 
 
 def run_sql(sql_text: str, db: str, env_cmd: list[str]) -> str:
@@ -34,12 +39,12 @@ def run_sql(sql_text: str, db: str, env_cmd: list[str]) -> str:
     return r.stdout
 
 
-def get_etl_date_partitions(db: str, env_cmd: list[str]) -> list[str]:
+def get_etl_date_partitions(project: str, db: str,
+                            env_cmd: list[str]) -> list[str]:
     result = run_sql("SHOW TABLES", db, env_cmd)
     tables = [line.strip() for line in result.strip().split("\n")[1:] if line.strip()]
-    nc = get_naming_config()
-    ods_prefix = nc.layers["ODS"].prefix
-    ods_tables = [t for t in tables if t.startswith(ods_prefix)]
+    ods_model_tables = set(get_model_names_by_layer(project, "ODS"))
+    ods_tables = [t for t in tables if t in ods_model_tables]
     all_dates = set()
     for tbl in ods_tables:
         result = run_sql(
@@ -161,7 +166,7 @@ def main():
             print(f"Step 3: 使用指定的 ETL 日期 ({len(etl_dates)} 个)")
         else:
             print("Step 3: 自动发现 ODS 分区日期")
-            etl_dates = get_etl_date_partitions(db_name, env_cmd)
+            etl_dates = get_etl_date_partitions(project, db_name, env_cmd)
             if not etl_dates:
                 print("  ODS 表中无数据, 无法确定 etl_date")
                 sys.exit(1)

@@ -31,6 +31,7 @@ from config import (
     DORIS_PORT,
     DORIS_USER,
     determine_layer as determine_config_layer,
+    layer_rank,
 )
 
 # ============================================================
@@ -274,9 +275,14 @@ def main():
     try:
         jobs_sorted = dag.topological_sort(jobs_set)
     except ValueError:
-        from config import get_naming_config
-        nc = get_naming_config()
-        jobs_sorted = sorted(jobs_set, key=lambda j: next((nc.layers[l].rank for l in nc.layer_order if j.startswith(nc.layers[l].prefix)), 4))
+        def _job_layer_sort_key(job_name: str) -> int:
+            rank = layer_rank(determine_layer(job_name))
+            return rank if rank >= 0 else 4
+
+        jobs_sorted = sorted(
+            jobs_set,
+            key=_job_layer_sort_key,
+        )
 
     jobs_to_run = []
     for jn in jobs_sorted:

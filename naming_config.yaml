@@ -61,12 +61,6 @@ types:
       - desc
       - note
 
-layers:
-  - ODS
-  - [DIM, DWD]
-  - DWS
-  - ADS
-
 table:
   ODS:
     - [ods, $source, $entity, $load_type]

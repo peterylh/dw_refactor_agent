@@ -10,6 +10,15 @@ from typing import Optional
 # 项目根目录
 PROJECT_ROOT = Path(__file__).resolve().parent
 
+# 项目层级顺序。表的实际层级来自 models/{table}.yaml，这里只定义跨层依赖
+# 和展示排序时需要的稳定顺序。
+LAYER_ORDER = [
+    ["ODS"],
+    ["DIM", "DWD"],
+    ["DWS"],
+    ["ADS"],
+]
+
 # ============================================================
 # 命名规范配置
 # ============================================================
@@ -35,7 +44,6 @@ class TypeDef:
 
 @dataclass
 class LayerDef:
-    rank: int
     templates: list
 
 
@@ -43,14 +51,9 @@ class LayerDef:
 class NamingConfig:
     types: dict[str, TypeDef]
     layers: dict[str, LayerDef]
-    layer_order: list[str]
     column_segments: list
     common_columns: set[str]
     table_name_max_length: Optional[int] = None
-
-    def layer_rank(self, layer_name: str) -> int:
-        layer = self.layers.get(layer_name)
-        return layer.rank if layer else -1
 
     def _match_segments(self, name: str, segments: list) -> Optional[dict]:
         def _assign(res, k, v):
@@ -382,26 +385,6 @@ def load_naming_config(path=None):
                 if name not in ("constraints", "rules")
             }
 
-    rank_map = {}
-    layer_order = []
-    layer_cfg = raw.get("layers", [])
-    if layer_cfg:
-        for r, item in enumerate(layer_cfg):
-            if isinstance(item, list):
-                for name in item:
-                    rank_map[name] = r
-                    if name not in layer_order:
-                        layer_order.append(name)
-            else:
-                rank_map[item] = r
-                if item not in layer_order:
-                    layer_order.append(item)
-    else:
-        for r, name in enumerate(table_templates_cfg.keys()):
-            rank_map[name] = r
-            if name not in layer_order:
-                layer_order.append(name)
-
     layers = {}
     for layer_name, template_defs in table_templates_cfg.items():
         if isinstance(template_defs, str):
@@ -418,10 +401,7 @@ def load_naming_config(path=None):
             parsed = _parse_template(template, types)
             templates.append(parsed)
 
-        rank = rank_map.get(layer_name, -1)
-        layers[layer_name] = LayerDef(rank=rank, templates=templates)
-        if layer_name not in layer_order:
-            layer_order.append(layer_name)
+        layers[layer_name] = LayerDef(templates=templates)
 
     col_cfg = raw.get("columns", {})
     raw_col_seg = col_cfg.get("segments") or col_cfg.get("pattern", "")
@@ -450,7 +430,6 @@ def load_naming_config(path=None):
     return NamingConfig(
         types=types,
         layers=layers,
-        layer_order=layer_order,
         column_segments=column_segments,
         common_columns=common_columns,
         table_name_max_length=table_name_max_length,
@@ -503,6 +482,17 @@ def get_model_layer(table_name: str, project: str) -> Optional[str]:
     return str(layer).upper() if layer else None
 
 
+def get_model_names_by_layer(project: str, layer: str) -> list[str]:
+    """按 models 元数据返回指定层级的表名."""
+    target_layer = str(layer).upper()
+    names = []
+    for name, metadata in load_model_metadata(project).items():
+        model_layer = metadata.get("layer")
+        if model_layer and str(model_layer).upper() == target_layer:
+            names.append(name)
+    return sorted(names)
+
+
 def determine_layer(table_name: str, project: str = None) -> str:
     """从项目 models 显式元数据获取表层级."""
     short = table_name.split(".")[-1]
@@ -511,12 +501,18 @@ def determine_layer(table_name: str, project: str = None) -> str:
     return get_model_layer(short, project) or "OTHER"
 
 
-def get_naming_config(project: str = None, config_file: str = None) -> NamingConfig:
+def layer_rank(layer_name: str) -> int:
+    """返回稳定的项目层级顺序，未知层级返回 -1."""
+    normalized = str(layer_name or "").upper()
+    for rank, group in enumerate(LAYER_ORDER):
+        if normalized in group:
+            return rank
+    return -1
+
+
+def get_naming_config(project: str = None) -> NamingConfig:
     global _naming_config_cache
-    if config_file:
-        cfg_file = config_file
-        key = cfg_file
-    elif project and project in PROJECT_CONFIG:
+    if project and project in PROJECT_CONFIG:
         cfg_file = PROJECT_CONFIG[project].get("naming_config", "naming_config.yaml")
         key = cfg_file
     else:

@@ -26,7 +26,12 @@ _root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_root))
 
 from lineage.job_dag import JobDAG
-from config import PROJECT_CONFIG, DB_ENV_CONFIG, get_mysql_cmd, get_naming_config
+from config import (
+    PROJECT_CONFIG,
+    DB_ENV_CONFIG,
+    get_model_names_by_layer,
+    get_mysql_cmd,
+)
 
 _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _TIME_UNIT_RE = re.compile(r'"dynamic_partition\.time_unit"\s*=\s*"(\w+)"', re.IGNORECASE)
@@ -307,16 +312,16 @@ def _run_job_full_refresh(job_name: str, sql_file: Path,
     print(f"  [{job_name}] [OK] (full-refresh)")
 
 
-def _discover_ods_dates(db_name: str, mysql_cmd: list[str]) -> list[str]:
+def _discover_ods_dates(project: str, db_name: str,
+                        mysql_cmd: list[str]) -> list[str]:
     """从 ODS 表发现所有日期."""
-    nc = get_naming_config()
-    ods_prefix = nc.layers["ODS"].prefix
+    ods_model_tables = set(get_model_names_by_layer(project, "ODS"))
     r = subprocess.run(
         mysql_cmd + [db_name],
         input="SHOW TABLES", capture_output=True, text=True, timeout=60,
     )
     tables = [line.strip() for line in r.stdout.strip().split("\n")[1:] if line.strip()]
-    ods_tables = [t for t in tables if t.startswith(ods_prefix)]
+    ods_tables = [t for t in tables if t in ods_model_tables]
     all_dates: set[str] = set()
     for tbl in ods_tables:
         r = subprocess.run(
@@ -462,7 +467,7 @@ def main():
         print(f"{'=' * 60}")
         schema = _load_schema(project)
         print(f"发现 ODS 日期分区...")
-        all_dates = _discover_ods_dates(db_name, mysql_cmd)
+        all_dates = _discover_ods_dates(project, db_name, mysql_cmd)
         print(f"  {len(all_dates)} 个日期")
         for job_name in exec_order:
             try:

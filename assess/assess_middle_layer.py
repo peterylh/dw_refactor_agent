@@ -25,6 +25,7 @@ if str(_root) not in sys.path:
 
 from assess.context_builder import build_contexts
 from assess.table_classifier import TableClassifier
+from config import layer_rank
 
 # ============================================================
 # 评分配置
@@ -49,10 +50,6 @@ DEFAULT_WEIGHTS = {
 SEVERITY_WEIGHT = {"严重": 4, "高": 3, "中": 2, "低": 1}
 # 每表扣分上限 (cap)，防止单张高频表拖垮整体评分
 PER_TABLE_CAP = 4
-
-def _layer_rank(layer: str, nc) -> int:
-    return nc.layer_rank(layer)
-
 
 def build_metric_result(metric: dict, display_score: float | None = None) -> dict:
     raw = metric["score"]
@@ -220,7 +217,7 @@ def _depth_to_score(depth: int) -> int:
 
 
 def score_lineage_depth(tables: list, edges: list,
-                        indirect_edges: list, nc=None) -> dict:
+                        indirect_edges: list) -> dict:
     table_layers = build_table_layer_map(tables)
     upstream, _ = build_table_graph(edges, indirect_edges)
 
@@ -250,8 +247,7 @@ def score_lineage_depth(tables: list, edges: list,
 
 def score_architecture_health(tables: list, edges: list,
                               indirect_edges: list,
-                              llm_results: list = None,
-                              nc = None) -> dict:
+                              llm_results: list = None) -> dict:
     table_layers = build_table_layer_map(tables)
     table_count = len(tables)  # 全部表数 (ODS+DWD+DWS+DIM+ADS)
 
@@ -276,8 +272,8 @@ def score_architecture_health(tables: list, edges: list,
     for (src, tgt), files in table_edges.items():
         src_layer = table_layers.get(src, "OTHER")
         tgt_layer = table_layers.get(tgt, "OTHER")
-        src_rank = _layer_rank(src_layer, nc)
-        tgt_rank = _layer_rank(tgt_layer, nc)
+        src_rank = layer_rank(src_layer)
+        tgt_rank = layer_rank(tgt_layer)
         if src_rank < 0 or tgt_rank < 0:
             continue
 
@@ -733,12 +729,12 @@ def generate_report(scores: dict, weights: dict, project: str) -> str:
 # ============================================================
 
 
-def assess(project: str, weights: dict = None, config_file: str = None) -> dict:
+def assess(project: str, weights: dict = None) -> dict:
     if weights is None:
         weights = DEFAULT_WEIGHTS.copy()
 
     from config import get_naming_config
-    nc = get_naming_config(project, config_file)
+    nc = get_naming_config(project)
 
     data = load_lineage_data(project)
     edges = data.get("edges", [])
@@ -764,9 +760,9 @@ def assess(project: str, weights: dict = None, config_file: str = None) -> dict:
 
     reuse_score = build_metric_result(score_reusability(tables, downstream))
     depth_score = build_metric_result(
-        score_lineage_depth(tables, edges, indirect_edges, nc))
+        score_lineage_depth(tables, edges, indirect_edges))
     architecture_raw = score_architecture_health(tables, edges, indirect_edges,
-                                                  llm_results, nc)
+                                                  llm_results)
     architecture_score = build_metric_result(architecture_raw)
     naming_score = build_metric_result(score_naming_conventions(tables, nc))
 
@@ -808,9 +804,6 @@ def main():
     parser.add_argument(
         "--output",
         help="输出 JSON 文件路径 (默认 assess/assess_result_{project}.json)")
-    parser.add_argument(
-        "--config",
-        help="覆盖默认的命名规范配置文件路径 (例如 naming_config_enterprise.yaml)")
     parser.add_argument("--reuse-weight", type=float, default=0.25)
     parser.add_argument("--depth-weight", type=float, default=0.25)
     parser.add_argument("--architecture-weight", type=float, default=0.25)
@@ -832,7 +825,7 @@ def main():
         no_cache=args.no_cache,
     )
 
-    result = assess(args.project, weights, args.config)
+    result = assess(args.project, weights)
 
     print(generate_report(result, weights, args.project))
 

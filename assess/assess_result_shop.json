@@ -1,13 +1,13 @@
 {
   "project": "shop",
-  "overall_raw": 55.8,
-  "overall_display": 55.8,
+  "overall_raw": 66.5,
+  "overall_display": 66.5,
   "weights": {
     "reuse": 0.25,
     "depth": 0.25,
     "architecture": 0.25,
     "naming": 0.25,
-    "enable_llm": true,
+    "enable_llm": false,
     "no_cache": false
   },
   "reuse": {
@@ -133,21 +133,15 @@
   },
   "architecture": {
     "table_count": 28,
-    "capped_total": 17,
+    "capped_total": 5,
     "table_capped": {
       "ads_inventory_alert": 2,
       "ads_product_topn_daily": 1,
       "ads_sales_dashboard": 1,
-      "ads_store_performance": 1,
-      "dwd_product": 3,
-      "dwd_store": 3,
-      "dwd_customer": 3,
-      "dwd_promotion": 1,
-      "dws_category_sales_monthly": 2
+      "ads_store_performance": 1
     },
     "violation_summary": {
-      "低": 9,
-      "中": 4
+      "低": 5
     },
     "violations": [
       {
@@ -194,90 +188,10 @@
         "description": "跳过中间层(DWD/DIM→ADS 或 ODS→DWS)",
         "source_file": "ads_store_performance.sql",
         "belongs_to": "ads_store_performance"
-      },
-      {
-        "source": "dwd_product(DWD)",
-        "target": "dwd_product(DIM)",
-        "severity": "中",
-        "weight": 2,
-        "description": "分层配置疑似错误(LLM): 配置层=DWD, 推断层=DIM",
-        "source_file": "",
-        "source_type": "llm",
-        "belongs_to": "dwd_product"
-      },
-      {
-        "source": "dwd_product(DWD)",
-        "target": "建议: DIM",
-        "severity": "低",
-        "weight": 1,
-        "description": "维度表位置不当(LLM): 维度表应置于 DIM 层",
-        "source_file": "",
-        "source_type": "llm",
-        "belongs_to": "dwd_product"
-      },
-      {
-        "source": "dwd_store(DWD)",
-        "target": "dwd_store(DIM)",
-        "severity": "中",
-        "weight": 2,
-        "description": "分层配置疑似错误(LLM): 配置层=DWD, 推断层=DIM",
-        "source_file": "",
-        "source_type": "llm",
-        "belongs_to": "dwd_store"
-      },
-      {
-        "source": "dwd_store(DWD)",
-        "target": "建议: DIM",
-        "severity": "低",
-        "weight": 1,
-        "description": "维度表位置不当(LLM): 维度表应置于 DIM 层",
-        "source_file": "",
-        "source_type": "llm",
-        "belongs_to": "dwd_store"
-      },
-      {
-        "source": "dwd_customer(DWD)",
-        "target": "dwd_customer(ADS)",
-        "severity": "中",
-        "weight": 2,
-        "description": "分层配置疑似错误(LLM): 配置层=DWD, 推断层=ADS",
-        "source_file": "",
-        "source_type": "llm",
-        "belongs_to": "dwd_customer"
-      },
-      {
-        "source": "dwd_customer(DWD)",
-        "target": "建议: DIM",
-        "severity": "低",
-        "weight": 1,
-        "description": "维度表位置不当(LLM): 维度表应置于 DIM 层",
-        "source_file": "",
-        "source_type": "llm",
-        "belongs_to": "dwd_customer"
-      },
-      {
-        "source": "dwd_promotion(DWD)",
-        "target": "建议: DIM",
-        "severity": "低",
-        "weight": 1,
-        "description": "维度表位置不当(LLM): 维度表应置于 DIM 层",
-        "source_file": "",
-        "source_type": "llm",
-        "belongs_to": "dwd_promotion"
-      },
-      {
-        "source": "dws_category_sales_monthly(DWS)",
-        "target": "dws_category_sales_monthly(ADS)",
-        "severity": "中",
-        "weight": 2,
-        "description": "分层配置疑似错误(LLM): 配置层=DWS, 推断层=ADS",
-        "source_file": "",
-        "source_type": "llm",
-        "belongs_to": "dws_category_sales_monthly"
       }
     ],
-    "raw": 39.3,
-    "display": 39.3
+    "raw": 82.1,
+    "display": 82.1
   },
   "naming": {
     "details": [

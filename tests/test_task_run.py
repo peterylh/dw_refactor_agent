@@ -2,6 +2,7 @@ import importlib.util
 import subprocess
 from pathlib import Path
 
+import config
 
 MODULE_PATH = Path(__file__).resolve().parent.parent / "exec" / "task_run.py"
 SPEC = importlib.util.spec_from_file_location("task_run_module", MODULE_PATH)
@@ -146,3 +147,50 @@ def test_load_schema_cache_is_scoped_by_project(monkeypatch, tmp_path):
 
     assert task_run._load_schema("shop_like") == {"same_name": "snapshot"}
     assert task_run._load_schema("finance_like") == {"same_name": "full"}
+
+
+def test_discover_ods_dates_uses_model_layer(monkeypatch, tmp_path):
+    models_dir = tmp_path / "demo_project" / "models"
+    models_dir.mkdir(parents=True)
+    (models_dir / "source_events.yaml").write_text(
+        "version: 2\n"
+        "name: source_events\n"
+        "layer: ODS\n",
+        encoding="utf-8",
+    )
+    (models_dir / "ods_legacy.yaml").write_text(
+        "version: 2\n"
+        "name: ods_legacy\n"
+        "layer: DWD\n",
+        encoding="utf-8",
+    )
+
+    calls = []
+
+    def fake_run(*args, **kwargs):
+        sql = kwargs.get("input", "")
+        calls.append(sql)
+        if sql == "SHOW TABLES":
+            return _completed(
+                stdout=(
+                    "Tables_in_demo_db\n"
+                    "source_events\n"
+                    "ods_legacy\n"
+                )
+            )
+        return _completed(stdout="d\n2025-01-02\n2025-01-01\n")
+
+    monkeypatch.setattr(config, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setitem(task_run.PROJECT_CONFIG, "demo", {"dir": "demo_project"})
+    monkeypatch.setattr(task_run.subprocess, "run", fake_run)
+    config._model_metadata_cache.clear()
+
+    assert task_run._discover_ods_dates("demo", "demo_db", ["mysql"]) == [
+        "2025-01-01",
+        "2025-01-02",
+    ]
+    assert calls == [
+        "SHOW TABLES",
+        "SELECT DISTINCT DATE(load_time) AS d FROM demo_db.source_events ORDER BY d",
+    ]
+    config._model_metadata_cache.clear()
