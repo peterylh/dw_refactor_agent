@@ -5,6 +5,6 @@ config:
   materialized: full
 atomic_metrics:
 - amount_recovered
-derived_metrics:
-- resolution_days
 - recovered_amount
+calculated_metrics:
+- resolution_days

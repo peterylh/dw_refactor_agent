@@ -3,3 +3,11 @@ name: dws_regulatory_reports
 layer: DWS
 config:
   materialized: full
+atomic_metrics:
+- amount_reported
+- penalty_amount
+- report_count
+calculated_metrics:
+- days_from_due_date
+- processing_days
+- risk_score

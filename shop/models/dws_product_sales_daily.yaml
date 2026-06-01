@@ -4,3 +4,8 @@ layer: DWS
 description: 商品日销售汇总
 config:
   materialized: incremental
+derived_metrics:
+- order_count
+- sale_quantity
+- sale_amount
+- discount_amount

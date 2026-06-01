@@ -5,5 +5,4 @@ config:
   materialized: full
 atomic_metrics:
 - duration_minutes
-derived_metrics:
 - sentiment_score

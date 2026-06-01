@@ -5,9 +5,10 @@ config:
   materialized: full
 atomic_metrics:
 - amount
-derived_metrics:
 - amount_abs
 - fraud_score
+- distance_from_home_km
 - merchant_risk_score
 - velocity_24h
 - amount_deviation_score
+- processing_time_ms

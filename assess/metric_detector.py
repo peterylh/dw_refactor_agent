@@ -1,18 +1,19 @@
 #!/usr/bin/env python3
 """
-DWD 指标提取与模型回写工具。
+DWD/DWS 指标提取与模型回写工具。
 
-复用 table_inspector 的单次 DeepSeek 调用结果，将 DWD 表中的
-指标字段按 atomic_metrics / derived_metrics 覆盖写入
-models/{table}.yaml，并把 DWD 事实表的 derived_metrics 输出为违规项。
+复用 table_inspector 的单次 DeepSeek 调用结果，将 DWD/DWS 表中的
+指标字段按 atomic_metrics / derived_metrics / calculated_metrics 覆盖写入
+models/{table}.yaml，并把 DWD 事实表的非原子指标输出为违规项。
 """
 
 import argparse
 import json
 import os
 import sys
+import threading
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import yaml
 
@@ -31,12 +32,24 @@ from assess.table_inspector import (
 from config import PROJECT_CONFIG, PROJECT_ROOT
 
 
+METRIC_LAYERS = {"DWD", "DWS"}
+
+
 def build_dwd_contexts(project: str,
                        lineage_data: dict[str, Any]) -> list[TableContext]:
     """构建项目 DWD 层表的识别上下文。"""
     return [
         ctx for ctx in build_contexts(project, lineage_data)
         if ctx.layer == "DWD"
+    ]
+
+
+def build_metric_contexts(project: str,
+                          lineage_data: dict[str, Any]) -> list[TableContext]:
+    """构建项目指标识别上下文，覆盖 DWD 与 DWS。"""
+    return [
+        ctx for ctx in build_contexts(project, lineage_data)
+        if ctx.layer in METRIC_LAYERS
     ]
 
 
@@ -47,26 +60,35 @@ def model_path_for_table(project: str, table_name: str) -> Path:
 
 
 def metric_violations(result: TableInspectResult) -> list[dict[str, Any]]:
-    """返回 DWD 事实表中的派生指标违规项。"""
+    """返回 DWD 事实表中的派生/衍生指标违规项。"""
     if result.declared_layer != "DWD" or not result.is_fact_table:
         return []
-    return [
-        {
-            "table": result.table_name,
-            "column": metric["name"],
-            "metric_type": "derived",
-            "reason": metric.get("reason", ""),
-            "confidence": metric.get("confidence", 0.0),
-        }
-        for metric in result.derived_metrics
-    ]
+
+    violations = []
+    for metric_type, metrics in (
+        ("derived", result.derived_metrics),
+        ("calculated", result.calculated_metrics),
+    ):
+        for metric in metrics:
+            violations.append({
+                "table": result.table_name,
+                "column": metric["name"],
+                "metric_type": metric_type,
+                "reason": metric.get("reason", ""),
+                "confidence": metric.get("confidence", 0.0),
+            })
+    return violations
 
 
 def metric_names_for_model(result: TableInspectResult) -> list[str]:
     """生成写入 models YAML 的指标名列表。"""
     groups = metric_groups_for_model(result)
     names = []
-    for metric in groups["atomic_metrics"] + groups["derived_metrics"]:
+    for metric in (
+        groups["atomic_metrics"]
+        + groups["derived_metrics"]
+        + groups["calculated_metrics"]
+    ):
         if metric not in names:
             names.append(metric)
     return names
@@ -86,7 +108,22 @@ def metric_groups_for_model(result: TableInspectResult) -> dict[str, list[str]]:
     return {
         "atomic_metrics": _metric_names(result.atomic_metrics),
         "derived_metrics": _metric_names(result.derived_metrics),
+        "calculated_metrics": _metric_names(result.calculated_metrics),
     }
+
+
+def _violation_count(results: list[TableInspectResult],
+                     metric_attr: str | None = None) -> int:
+    """统计 DWD fact 中的非原子指标违规数量。"""
+    count = 0
+    for result in results:
+        if result.declared_layer != "DWD" or not result.is_fact_table:
+            continue
+        if metric_attr:
+            count += len(getattr(result, metric_attr))
+        else:
+            count += len(result.derived_metrics) + len(result.calculated_metrics)
+    return count
 
 
 def _metric_names_from_raw(raw_metrics: Any) -> list[str]:
@@ -113,7 +150,12 @@ def _metric_names_from_raw(raw_metrics: Any) -> list[str]:
 
 def _extract_existing_metric_names(model_data: dict[str, Any]) -> list[str]:
     names = []
-    for key in ("metrics", "atomic_metrics", "derived_metrics"):
+    for key in (
+        "metrics",
+        "atomic_metrics",
+        "derived_metrics",
+        "calculated_metrics",
+    ):
         for name in _metric_names_from_raw(model_data.get(key, []) or []):
             if name and name not in names:
                 names.append(name)
@@ -141,7 +183,7 @@ def update_model_yaml(project: str,
     if path_exists or detected_metrics:
         updated.setdefault("version", 2)
         updated.setdefault("name", result.table_name)
-        updated.setdefault("layer", "DWD")
+        updated.setdefault("layer", result.declared_layer or "DWD")
     if detected_metrics:
         if detected_groups["atomic_metrics"]:
             updated["atomic_metrics"] = detected_groups["atomic_metrics"]
@@ -151,11 +193,17 @@ def update_model_yaml(project: str,
             updated["derived_metrics"] = detected_groups["derived_metrics"]
         else:
             updated.pop("derived_metrics", None)
+        if detected_groups["calculated_metrics"]:
+            updated["calculated_metrics"] = detected_groups[
+                "calculated_metrics"]
+        else:
+            updated.pop("calculated_metrics", None)
         updated.pop("metrics", None)
     else:
         updated.pop("metrics", None)
         updated.pop("atomic_metrics", None)
         updated.pop("derived_metrics", None)
+        updated.pop("calculated_metrics", None)
 
     changed = updated != existing
     if not dry_run and changed:
@@ -187,6 +235,63 @@ def result_for_report(result: TableInspectResult) -> dict[str, Any]:
     return data
 
 
+def _format_progress_message(event: dict[str, Any]) -> str:
+    table_label = (
+        f"[{event.get('index', '?')}/{event.get('total', '?')}] "
+        f"{event.get('table')}({event.get('layer')})"
+    )
+    event_name = event.get("event")
+    if event_name == "start":
+        return f"{table_label} 开始巡检"
+    if event_name == "cache_hit":
+        return f"{table_label} 命中缓存，跳过 API"
+    if event_name == "api_call":
+        return (
+            f"{table_label} 调用 DeepSeek "
+            f"({event.get('attempt')}/{event.get('max_attempts')})"
+        )
+    if event_name == "api_error":
+        return (
+            f"{table_label} DeepSeek 调用失败 "
+            f"({event.get('attempt')}/{event.get('max_attempts')}): "
+            f"{event.get('error')}"
+        )
+    if event_name == "validation_retry":
+        validation = event.get("validation") or {}
+        issue_count = sum(len(items) for items in validation.values())
+        return (
+            f"{table_label} 返回校验为 {event.get('status')}，"
+            f"发现 {issue_count} 个字段问题，准备重试"
+        )
+    if event_name == "unexpected_error":
+        return f"{table_label} 巡检异常: {event.get('error')}"
+    if event_name == "finish":
+        metric_count = (
+            int(event.get("atomic_metric_count", 0) or 0)
+            + int(event.get("derived_metric_count", 0) or 0)
+            + int(event.get("calculated_metric_count", 0) or 0)
+        )
+        return (
+            f"{table_label} 完成: status={event.get('status')}, "
+            f"retry={event.get('retry_count')}, metrics={metric_count} "
+            f"(atomic={event.get('atomic_metric_count')}, "
+            f"derived={event.get('derived_metric_count')}, "
+            f"calculated={event.get('calculated_metric_count')})"
+        )
+    return f"{table_label} {event_name}"
+
+
+def build_progress_callback() -> Callable[[dict[str, Any]], None]:
+    """构建线程安全的 CLI 进度输出回调。"""
+    print_lock = threading.Lock()
+
+    def callback(event: dict[str, Any]) -> None:
+        with print_lock:
+            print(_format_progress_message(event), flush=True)
+
+    return callback
+
+
 def run_detection(project: str,
                   *,
                   api_key: str,
@@ -194,10 +299,11 @@ def run_detection(project: str,
                   max_retries: int = 1,
                   parallelism: int = 2,
                   no_cache: bool = False,
-                  dry_run: bool = False) -> dict[str, Any]:
-    """运行项目级 DWD 指标检测。"""
+                  dry_run: bool = False,
+                  show_progress: bool = False) -> dict[str, Any]:
+    """运行项目级 DWD/DWS 指标检测。"""
     data = load_lineage_data(project)
-    contexts = build_dwd_contexts(project, data)
+    contexts = build_metric_contexts(project, data)
     cache_file = Path(__file__).resolve(
     ).parent / "cache" / f"inspect_{project}.json"
     if no_cache and cache_file.exists():
@@ -210,12 +316,14 @@ def run_detection(project: str,
         max_retries=max_retries,
         parallelism=parallelism,
     )
+    if show_progress:
+        inspector.progress_callback = build_progress_callback()
     results = inspector.inspect_batch(contexts)
 
     yaml_updates = []
     skipped_updates = []
     for result in results:
-        if result.declared_layer != "DWD":
+        if result.declared_layer not in METRIC_LAYERS:
             continue
         if result.status == "blocked":
             skipped_updates.append({
@@ -234,15 +342,23 @@ def run_detection(project: str,
 
     return {
         "project": project,
-        "dwd_table_count": len(contexts),
+        "metric_table_count": len(contexts),
+        "dwd_table_count": sum(1 for c in contexts if c.layer == "DWD"),
+        "dws_table_count": sum(1 for c in contexts if c.layer == "DWS"),
         "fact_table_count": sum(1 for r in results if r.is_fact_table),
         "passed_table_count": sum(1 for r in results if r.status == "passed"),
         "warning_table_count": sum(1 for r in results if r.status == "warning"),
         "blocked_table_count": sum(1 for r in results if r.status == "blocked"),
         "atomic_metric_count": sum(len(r.atomic_metrics) for r in results),
+        "derived_metric_count": sum(len(r.derived_metrics) for r in results),
+        "calculated_metric_count": sum(
+            len(r.calculated_metrics) for r in results),
         "metric_count": sum(len(metric_names_for_model(r)) for r in results),
-        "derived_metric_violation_count": sum(
-            len(metric_violations(r)) for r in results),
+        "derived_metric_violation_count": _violation_count(
+            results, "derived_metrics"),
+        "calculated_metric_violation_count": _violation_count(
+            results, "calculated_metrics"),
+        "non_atomic_metric_violation_count": _violation_count(results),
         "tables": [result_for_report(r) for r in results],
         "model_updates": yaml_updates,
         "skipped_model_updates": skipped_updates,
@@ -250,7 +366,7 @@ def run_detection(project: str,
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="DWD 指标提取与模型回写工具")
+    parser = argparse.ArgumentParser(description="DWD/DWS 指标提取与模型回写工具")
     parser.add_argument("--project",
                         default="shop",
                         choices=list(PROJECT_CONFIG.keys()),
@@ -275,6 +391,9 @@ def main() -> None:
                         type=int,
                         default=2,
                         help="LLM 并发调用数，默认 2")
+    parser.add_argument("--quiet",
+                        action="store_true",
+                        help="不打印单表巡检进度")
     args = parser.parse_args()
 
     api_key = os.environ.get("DEEPSEEK_API_KEY")
@@ -289,6 +408,7 @@ def main() -> None:
         parallelism=args.parallel,
         no_cache=args.no_cache,
         dry_run=args.dry_run,
+        show_progress=not args.quiet,
     )
 
     output_path = Path(args.output) if args.output else (
@@ -298,9 +418,11 @@ def main() -> None:
                            encoding="utf-8")
     print(f"结果已写入: {output_path}")
     print(
-        "DWD表: {dwd_table_count}, 事实表: {fact_table_count}, "
-        "指标: {metric_count}, 原子指标: {atomic_metric_count}, 派生指标违规: "
-        "{derived_metric_violation_count}".format(**result))
+        "指标识别表: {metric_table_count}, DWD表: {dwd_table_count}, "
+        "DWS表: {dws_table_count}, 事实表: {fact_table_count}, "
+        "指标: {metric_count}, 原子指标: {atomic_metric_count}, "
+        "派生指标: {derived_metric_count}, 衍生指标: {calculated_metric_count}, "
+        "非原子指标违规: {non_atomic_metric_violation_count}".format(**result))
 
 
 if __name__ == "__main__":

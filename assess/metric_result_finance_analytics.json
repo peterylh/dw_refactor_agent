@@ -1,0 +1,6105 @@
+{
+  "project": "finance_analytics",
+  "metric_table_count": 28,
+  "dwd_table_count": 17,
+  "dws_table_count": 11,
+  "fact_table_count": 21,
+  "passed_table_count": 28,
+  "warning_table_count": 0,
+  "blocked_table_count": 0,
+  "atomic_metric_count": 102,
+  "derived_metric_count": 16,
+  "calculated_metric_count": 45,
+  "metric_count": 163,
+  "derived_metric_violation_count": 0,
+  "calculated_metric_violation_count": 9,
+  "non_atomic_metric_violation_count": 9,
+  "tables": [
+    {
+      "table_name": "dwd_accounts",
+      "declared_layer": "DWD",
+      "inferred_layer": "DWD",
+      "table_type": "fact",
+      "confidence": 0.95,
+      "reasoning_steps": [
+        "ETL SQL中无GROUP BY等聚合操作，保持明细粒度，符合DWD特征",
+        "下游被引用3次，表明被多层复用，排除ADS层",
+        "表包含account_id、customer_id等主外键及多个可度量字段，属于事实表（周期性快照事实）",
+        "ETL进行数据清洗、维度属性计算（如is_active为CASE WHEN），但无聚合，归属DWD层"
+      ],
+      "columns": {
+        "atomic_metrics": [
+          {
+            "name": "current_balance",
+            "data_type": "DECIMAL(18,4)",
+            "business_process": "账户管理",
+            "action": "持有",
+            "measure": "余额",
+            "description": "账户当前余额",
+            "reason": "直接来自源表，是基础货币度量，不可再分",
+            "confidence": 1.0
+          },
+          {
+            "name": "available_balance",
+            "data_type": "DECIMAL(18,4)",
+            "business_process": "账户管理",
+            "action": "可用",
+            "measure": "余额",
+            "description": "账户可用余额",
+            "reason": "直接来自源表，是基础货币度量，不可再分",
+            "confidence": 1.0
+          },
+          {
+            "name": "credit_limit",
+            "data_type": "DECIMAL(18,4)",
+            "business_process": "授信管理",
+            "action": "授予",
+            "measure": "额度",
+            "description": "账户信用额度",
+            "reason": "直接来自源表，是基础货币度量，不可再分",
+            "confidence": 1.0
+          },
+          {
+            "name": "interest_rate",
+            "data_type": "DECIMAL(18,4)",
+            "business_process": "定价管理",
+            "action": "设定",
+            "measure": "利率",
+            "description": "账户利率",
+            "reason": "直接来自源表，是基础利率度量，不可再分",
+            "confidence": 0.9
+          }
+        ],
+        "derived_metrics": [],
+        "calculated_metrics": [
+          {
+            "name": "account_age_months",
+            "data_type": "BIGINT",
+            "expression": "TIMESTAMPDIFF(MONTH, open_date, COALESCE(close_date, CURRENT_DATE))",
+            "derived_from": [
+              "open_date",
+              "close_date"
+            ],
+            "description": "账户存续月数（从开立到关闭或当前）",
+            "reason": "基于日期差计算，非原子度量，属于衍生指标",
+            "confidence": 1.0
+          },
+          {
+            "name": "credit_utilization_pct",
+            "data_type": "DECIMAL(18,4)",
+            "expression": "ROUND(ABS(current_balance) / credit_limit * 100, 2)",
+            "derived_from": [
+              "current_balance",
+              "credit_limit"
+            ],
+            "description": "信用利用率百分比",
+            "reason": "基于两个原子指标计算比率，属于衍生指标",
+            "confidence": 1.0
+          }
+        ],
+        "dimensions": [
+          {
+            "name": "account_id",
+            "dimension_type": "primary_key",
+            "data_type": "BIGINT",
+            "description": "账户唯一标识",
+            "reason": "主键，用于唯一标识一行记录",
+            "confidence": 1.0
+          },
+          {
+            "name": "customer_id",
+            "dimension_type": "foreign_key",
+            "data_type": "BIGINT",
+            "description": "客户ID",
+            "reason": "外键，关联客户维度",
+            "confidence": 1.0
+          },
+          {
+            "name": "product_id",
+            "dimension_type": "foreign_key",
+            "data_type": "BIGINT",
+            "description": "产品ID",
+            "reason": "外键，关联产品维度",
+            "confidence": 1.0
+          },
+          {
+            "name": "account_number",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "账户号码",
+            "reason": "账户实体属性，用于分析",
+            "confidence": 1.0
+          },
+          {
+            "name": "account_status",
+            "dimension_type": "status",
+            "data_type": "STRING",
+            "description": "账户状态",
+            "reason": "状态字段，用于切片过滤",
+            "confidence": 1.0
+          },
+          {
+            "name": "open_date",
+            "dimension_type": "date",
+            "data_type": "DATETIME",
+            "description": "开户日期",
+            "reason": "日期维度，用于时间分析",
+            "confidence": 1.0
+          },
+          {
+            "name": "close_date",
+            "dimension_type": "date",
+            "data_type": "DATETIME",
+            "description": "关户日期",
+            "reason": "日期维度，用于时间分析",
+            "confidence": 1.0
+          },
+          {
+            "name": "is_active",
+            "dimension_type": "status",
+            "data_type": "BOOLEAN",
+            "description": "是否活跃账户",
+            "reason": "基于状态生成的布尔标志，用于过滤",
+            "confidence": 1.0
+          },
+          {
+            "name": "is_closed",
+            "dimension_type": "status",
+            "data_type": "BOOLEAN",
+            "description": "是否已关闭",
+            "reason": "基于关闭日期的布尔标识",
+            "confidence": 1.0
+          },
+          {
+            "name": "is_dormant",
+            "dimension_type": "status",
+            "data_type": "BOOLEAN",
+            "description": "是否休眠账户",
+            "reason": "基于状态生成的布尔标志",
+            "confidence": 1.0
+          },
+          {
+            "name": "balance_category",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "余额分类（负/零/低/中/高/极高）",
+            "reason": "基于余额计算生成的分类标签，用于切片",
+            "confidence": 1.0
+          },
+          {
+            "name": "currency",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "货币类型",
+            "reason": "账户货币属性",
+            "confidence": 1.0
+          },
+          {
+            "name": "minimum_payment",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "最低还款额（字符串）",
+            "reason": "账户属性，以字符串形式存储",
+            "confidence": 0.9
+          },
+          {
+            "name": "payment_due_date",
+            "dimension_type": "date",
+            "data_type": "DATETIME",
+            "description": "还款到期日",
+            "reason": "日期维度",
+            "confidence": 1.0
+          },
+          {
+            "name": "last_statement_date",
+            "dimension_type": "date",
+            "data_type": "DATETIME",
+            "description": "最近账单日",
+            "reason": "日期维度",
+            "confidence": 1.0
+          },
+          {
+            "name": "autopay_enabled",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "是否启用自动还款",
+            "reason": "账户特征属性",
+            "confidence": 1.0
+          },
+          {
+            "name": "overdraft_protection",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "是否开通透支保护",
+            "reason": "账户特征属性",
+            "confidence": 1.0
+          },
+          {
+            "name": "primary_account",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "是否主账户标识",
+            "reason": "账户特征属性",
+            "confidence": 1.0
+          },
+          {
+            "name": "is_past_due",
+            "dimension_type": "status",
+            "data_type": "BOOLEAN",
+            "description": "是否逾期",
+            "reason": "基于到期日和最低还款额计算的健康标识",
+            "confidence": 1.0
+          },
+          {
+            "name": "is_near_limit",
+            "dimension_type": "status",
+            "data_type": "BOOLEAN",
+            "description": "是否接近额度上限",
+            "reason": "基于余额和额度比例计算的健康标识",
+            "confidence": 1.0
+          }
+        ],
+        "others": [
+          {
+            "name": "updated_at",
+            "role": "technical",
+            "data_type": "DATETIME",
+            "description": "记录更新时间（ETL写入时间戳）",
+            "reason": "技术字段，非业务字段",
+            "confidence": 1.0
+          }
+        ]
+      },
+      "validation": {
+        "unknown_columns": [],
+        "duplicate_columns": [],
+        "missing_columns": []
+      },
+      "status": "passed",
+      "retry_count": 0,
+      "is_violating_declared_layer": false,
+      "violations": [
+        {
+          "table": "dwd_accounts",
+          "column": "account_age_months",
+          "metric_type": "calculated",
+          "reason": "基于日期差计算，非原子度量，属于衍生指标",
+          "confidence": 1.0
+        },
+        {
+          "table": "dwd_accounts",
+          "column": "credit_utilization_pct",
+          "metric_type": "calculated",
+          "reason": "基于两个原子指标计算比率，属于衍生指标",
+          "confidence": 1.0
+        }
+      ]
+    },
+    {
+      "table_name": "dwd_customer_interactions",
+      "declared_layer": "DWD",
+      "inferred_layer": "DWD",
+      "table_type": "fact",
+      "confidence": 0.95,
+      "reasoning_steps": [
+        "ETL逻辑中无GROUP BY等聚合操作，仅包含数据清洗、字段类型转换、日期维度提取、CASE WHEN分类等，符合DWD明细宽表层特征。",
+        "下游被引用2次，大于0，排除ADS；距ODS最小跳数为1，符合DWD直接源于ODS。",
+        "主键interaction_id为事务ID，非实体属性，表记录客户交互事件，故为事实表。",
+        "字段分组：duration_minutes和sentiment_score为原子度量（不可再分）；其余字段多为维度属性、退化维度或技术字段，无派生或衍生指标。"
+      ],
+      "columns": {
+        "atomic_metrics": [
+          {
+            "name": "duration_minutes",
+            "data_type": "BIGINT",
+            "business_process": "客户交互",
+            "action": "记录",
+            "measure": "时长",
+            "description": "交互持续时间（分钟）",
+            "reason": "基础度量字段，直接取自源，不可再拆解",
+            "confidence": 1.0
+          },
+          {
+            "name": "sentiment_score",
+            "data_type": "DECIMAL(18,4)",
+            "business_process": "客户交互",
+            "action": "分析",
+            "measure": "情感得分",
+            "description": "交互过程中的情感得分",
+            "reason": "基础度量字段，原始数值，不可再拆解",
+            "confidence": 1.0
+          }
+        ],
+        "derived_metrics": [],
+        "calculated_metrics": [],
+        "dimensions": [
+          {
+            "name": "interaction_id",
+            "dimension_type": "primary_key",
+            "data_type": "BIGINT",
+            "description": "交互唯一标识",
+            "reason": "主键，用于唯一标识每条交互记录",
+            "confidence": 1.0
+          },
+          {
+            "name": "customer_id",
+            "dimension_type": "foreign_key",
+            "data_type": "BIGINT",
+            "description": "客户ID",
+            "reason": "外键，关联客户维度",
+            "confidence": 1.0
+          },
+          {
+            "name": "interaction_date",
+            "dimension_type": "date",
+            "data_type": "DATETIME",
+            "description": "交互日期时间",
+            "reason": "时间维度字段，用于分析时间趋势",
+            "confidence": 1.0
+          },
+          {
+            "name": "interaction_year",
+            "dimension_type": "degenerate",
+            "data_type": "BIGINT",
+            "description": "交互年份（从日期退化）",
+            "reason": "退化维度，由日期提取，用于按年分组",
+            "confidence": 1.0
+          },
+          {
+            "name": "interaction_month",
+            "dimension_type": "degenerate",
+            "data_type": "BIGINT",
+            "description": "交互月份（从日期退化）",
+            "reason": "退化维度，由日期提取，用于按月分组",
+            "confidence": 1.0
+          },
+          {
+            "name": "interaction_type",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "交互类型（如电话、邮件等）",
+            "reason": "维度属性，用于分类分析",
+            "confidence": 1.0
+          },
+          {
+            "name": "reason",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "交互原因",
+            "reason": "维度属性，描述交互背景",
+            "confidence": 1.0
+          },
+          {
+            "name": "duration_category",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "时长分类（Quick/Standard/Extended/Complex）",
+            "reason": "维度属性，由CASE WHEN生成，用于分组切片",
+            "confidence": 1.0
+          },
+          {
+            "name": "sentiment_category",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "情感分类（Positive/Neutral/Negative）",
+            "reason": "维度属性，由CASE WHEN生成，用于分组切片",
+            "confidence": 1.0
+          },
+          {
+            "name": "satisfaction_rating",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "满意度评分",
+            "reason": "维度属性，原始字段，用于分析",
+            "confidence": 1.0
+          },
+          {
+            "name": "resolved",
+            "dimension_type": "status",
+            "data_type": "STRING",
+            "description": "是否解决（布尔标志）",
+            "reason": "状态字段，表示交互是否已解决",
+            "confidence": 1.0
+          },
+          {
+            "name": "escalated",
+            "dimension_type": "status",
+            "data_type": "STRING",
+            "description": "是否升级（布尔标志）",
+            "reason": "状态字段，表示交互是否已升级",
+            "confidence": 1.0
+          },
+          {
+            "name": "agent_id",
+            "dimension_type": "foreign_key",
+            "data_type": "STRING",
+            "description": "客服代表ID",
+            "reason": "外键，关联客服维度",
+            "confidence": 1.0
+          },
+          {
+            "name": "notes",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "备注信息",
+            "reason": "维度属性，文本描述",
+            "confidence": 1.0
+          },
+          {
+            "name": "issue_severity",
+            "dimension_type": "status",
+            "data_type": "STRING",
+            "description": "问题严重程度（High/Medium/Low）",
+            "reason": "状态字段，由CASE WHEN基于escalated和resolved生成，用于分组过滤",
+            "confidence": 1.0
+          }
+        ],
+        "others": [
+          {
+            "name": "updated_at",
+            "role": "technical",
+            "data_type": "DATETIME",
+            "description": "记录更新时间（当前时间戳）",
+            "reason": "技术审计字段，用于数据新鲜度监控",
+            "confidence": 1.0
+          }
+        ]
+      },
+      "validation": {
+        "unknown_columns": [],
+        "duplicate_columns": [],
+        "missing_columns": []
+      },
+      "status": "passed",
+      "retry_count": 0,
+      "is_violating_declared_layer": false,
+      "violations": []
+    },
+    {
+      "table_name": "dwd_marketing_campaigns",
+      "declared_layer": "DWD",
+      "inferred_layer": "DIM",
+      "table_type": "dimension",
+      "confidence": 0.85,
+      "reasoning_steps": [
+        "ETL中没有GROUP BY等聚合操作，排除DWS和ADS。下游引用次数为2，出度不为0，排除ADS。",
+        "主键为campaign_id，表示单一实体（营销活动），包含描述属性（name, type, dates等）和可度量字段（budget, impressions等），但度量字段是活动生命周期的汇总，本质为实体属性，符合维度表特征。",
+        "被下游dim_campaign和dws_marketing_campaigns引用，作为公共维度被复用，符合DIM层特征。",
+        "原始配置为DWD，但真实归属应为DIM层。"
+      ],
+      "columns": {
+        "atomic_metrics": [],
+        "derived_metrics": [],
+        "calculated_metrics": [],
+        "dimensions": [],
+        "others": []
+      },
+      "validation": {
+        "unknown_columns": [],
+        "duplicate_columns": [],
+        "missing_columns": []
+      },
+      "status": "passed",
+      "retry_count": 2,
+      "is_violating_declared_layer": true,
+      "violations": []
+    },
+    {
+      "table_name": "dwd_customers",
+      "declared_layer": "DWD",
+      "inferred_layer": "DIM",
+      "table_type": "dimension",
+      "confidence": 0.95,
+      "reasoning_steps": [
+        "ETL_SQL中无GROUP BY等聚合操作，排除了DWS和ADS的可能。",
+        "主键customer_id为单一实体ID，所有字段描述客户属性（姓名、地址、信用评分等），符合维度表特征，而非记录业务事件的事实表。",
+        "下游仅被引用一次（dim_customer），但作为客户维度的基础清洗表，适合归为DIM层。",
+        "原始配置为DWD，但根据数仓分层标准，DIM层更符合其业务含义，因此推断为DIM。"
+      ],
+      "columns": {
+        "atomic_metrics": [],
+        "derived_metrics": [],
+        "calculated_metrics": [],
+        "dimensions": [],
+        "others": []
+      },
+      "validation": {
+        "unknown_columns": [],
+        "duplicate_columns": [],
+        "missing_columns": []
+      },
+      "status": "passed",
+      "retry_count": 0,
+      "is_violating_declared_layer": true,
+      "violations": []
+    },
+    {
+      "table_name": "dwd_economic_indicators",
+      "declared_layer": "DWD",
+      "inferred_layer": "DWD",
+      "table_type": "fact",
+      "confidence": 0.9,
+      "reasoning_steps": [
+        "ETL_SQL 无 GROUP BY 聚合操作，排除 DWS 和 ADS；仅做数据清洗、维度退化（日期提取）和 CASE WHEN 规则计算，符合 DWD 特征。",
+        "下游被引用次数为 1（dim_economic_indicators），非 0，故不是 ADS。",
+        "主键为 date，不是实体 ID，且包含大量可度量字段（增长率、失业率等），表类型为事实表。",
+        "字段中存在由 CASE WHEN 生成的分类指标（economic_health、unemployment_level、market_volatility），属于规则计算，应归为 calculated_metrics。"
+      ],
+      "columns": {
+        "atomic_metrics": [
+          {
+            "name": "gdp_growth_rate",
+            "data_type": "DECIMAL(18,4)",
+            "business_process": "经济指标",
+            "action": "增长",
+            "measure": "GDP增长率",
+            "description": "国内生产总值增长率",
+            "reason": "直接从 ODS 同步，不可再分的基础度量，无聚合或计算",
+            "confidence": 0.95
+          },
+          {
+            "name": "unemployment_rate",
+            "data_type": "DECIMAL(18,4)",
+            "business_process": "经济指标",
+            "action": "失业",
+            "measure": "失业率",
+            "description": "失业率",
+            "reason": "同上",
+            "confidence": 0.95
+          },
+          {
+            "name": "inflation_rate",
+            "data_type": "DECIMAL(18,4)",
+            "business_process": "经济指标",
+            "action": "通胀",
+            "measure": "通胀率",
+            "description": "通货膨胀率",
+            "reason": "同上",
+            "confidence": 0.95
+          },
+          {
+            "name": "federal_funds_rate",
+            "data_type": "DECIMAL(18,4)",
+            "business_process": "经济指标",
+            "action": "联邦基金",
+            "measure": "利率",
+            "description": "联邦基金利率",
+            "reason": "同上",
+            "confidence": 0.95
+          },
+          {
+            "name": "sp500_index",
+            "data_type": "STRING",
+            "business_process": "经济指标",
+            "action": "标普500",
+            "measure": "指数",
+            "description": "标普500指数（字符串存储）",
+            "reason": "原始 ODS 字段，作为基础度量，虽为字符串但表示数值指标",
+            "confidence": 0.8
+          },
+          {
+            "name": "vix_index",
+            "data_type": "STRING",
+            "business_process": "经济指标",
+            "action": "VIX",
+            "measure": "指数",
+            "description": "VIX恐慌指数（字符串存储）",
+            "reason": "同上",
+            "confidence": 0.8
+          },
+          {
+            "name": "consumer_confidence_index",
+            "data_type": "STRING",
+            "business_process": "经济指标",
+            "action": "消费者信心",
+            "measure": "指数",
+            "description": "消费者信心指数（字符串存储）",
+            "reason": "同上",
+            "confidence": 0.8
+          },
+          {
+            "name": "housing_price_index",
+            "data_type": "DECIMAL(18,4)",
+            "business_process": "经济指标",
+            "action": "房价",
+            "measure": "指数",
+            "description": "房价指数",
+            "reason": "原始 ODS 字段，基础度量",
+            "confidence": 0.95
+          },
+          {
+            "name": "10yr_treasury_yield",
+            "data_type": "DECIMAL(18,4)",
+            "business_process": "经济指标",
+            "action": "国债收益率",
+            "measure": "10年期收益率",
+            "description": "10年期国债收益率",
+            "reason": "原始 ODS 字段，基础度量",
+            "confidence": 0.95
+          },
+          {
+            "name": "mortgage_rate_30yr",
+            "data_type": "DECIMAL(18,4)",
+            "business_process": "经济指标",
+            "action": "抵押利率",
+            "measure": "30年固定利率",
+            "description": "30年抵押贷款利率",
+            "reason": "原始 ODS 字段，基础度量",
+            "confidence": 0.95
+          }
+        ],
+        "derived_metrics": [],
+        "calculated_metrics": [
+          {
+            "name": "economic_health",
+            "data_type": "STRING",
+            "expression": "CASE WHEN gdp_growth_rate >= 3 THEN 'Strong Growth' WHEN gdp_growth_rate >= 2 THEN 'Moderate Growth' WHEN gdp_growth_rate >= 0 THEN 'Slow Growth' ELSE 'Recession' END",
+            "derived_from": [
+              "gdp_growth_rate"
+            ],
+            "description": "经济健康状态标签（根据GDP增长率分类）",
+            "reason": "基于已有指标通过复杂CASE规则派生，属于衍生分类指标",
+            "confidence": 0.95
+          },
+          {
+            "name": "unemployment_level",
+            "data_type": "STRING",
+            "expression": "CASE WHEN unemployment_rate < 4 THEN 'Low' WHEN unemployment_rate < 6 THEN 'Normal' ELSE 'High' END",
+            "derived_from": [
+              "unemployment_rate"
+            ],
+            "description": "失业水平等级标签（根据失业率分类）",
+            "reason": "同上",
+            "confidence": 0.95
+          },
+          {
+            "name": "market_volatility",
+            "data_type": "STRING",
+            "expression": "CASE WHEN vix_index < 15 THEN 'Low Volatility' WHEN vix_index < 25 THEN 'Normal Volatility' ELSE 'High Volatility' END",
+            "derived_from": [
+              "vix_index"
+            ],
+            "description": "市场波动性标签（根据VIX分类）",
+            "reason": "同上",
+            "confidence": 0.95
+          }
+        ],
+        "dimensions": [
+          {
+            "name": "date",
+            "dimension_type": "date",
+            "data_type": "DATETIME",
+            "description": "日期（主键）",
+            "reason": "时间维度，作为主键用于分区和过滤",
+            "confidence": 0.99
+          },
+          {
+            "name": "year",
+            "dimension_type": "date",
+            "data_type": "BIGINT",
+            "description": "年份（从日期提取）",
+            "reason": "退化维度，用于按年分析",
+            "confidence": 0.95
+          },
+          {
+            "name": "quarter",
+            "dimension_type": "date",
+            "data_type": "BIGINT",
+            "description": "季度（从日期提取）",
+            "reason": "退化维度，用于按季度分析",
+            "confidence": 0.95
+          },
+          {
+            "name": "month",
+            "dimension_type": "date",
+            "data_type": "BIGINT",
+            "description": "月份（从日期提取）",
+            "reason": "退化维度，用于按月分析",
+            "confidence": 0.95
+          }
+        ],
+        "others": [
+          {
+            "name": "updated_at",
+            "role": "audit",
+            "data_type": "DATETIME",
+            "description": "记录更新时间",
+            "reason": "技术审计字段，非业务数据",
+            "confidence": 0.99
+          }
+        ]
+      },
+      "validation": {
+        "unknown_columns": [],
+        "duplicate_columns": [],
+        "missing_columns": []
+      },
+      "status": "passed",
+      "retry_count": 0,
+      "is_violating_declared_layer": false,
+      "violations": [
+        {
+          "table": "dwd_economic_indicators",
+          "column": "economic_health",
+          "metric_type": "calculated",
+          "reason": "基于已有指标通过复杂CASE规则派生，属于衍生分类指标",
+          "confidence": 0.95
+        },
+        {
+          "table": "dwd_economic_indicators",
+          "column": "unemployment_level",
+          "metric_type": "calculated",
+          "reason": "同上",
+          "confidence": 0.95
+        },
+        {
+          "table": "dwd_economic_indicators",
+          "column": "market_volatility",
+          "metric_type": "calculated",
+          "reason": "同上",
+          "confidence": 0.95
+        }
+      ]
+    },
+    {
+      "table_name": "dwd_branch_locations",
+      "declared_layer": "DWD",
+      "inferred_layer": "DIM",
+      "table_type": "dimension",
+      "confidence": 0.95,
+      "reasoning_steps": [
+        "ETL_SQL 中无 GROUP BY 或聚合函数，仅为数据清洗（TRIM、UPPER、空值过滤），排除 ODS 和 DWS，属于 DWD 逻辑但实际为维度表。",
+        "下游被引用次数为 1，非 0 且非多下游复用，但表结构以实体属性（branch_id 为主键）为主，无度量字段，符合维度表特征。",
+        "表字段全为描述分支机构属性的字段（名称、地址、联系方式、运营信息等），无金额、数量等度量，判定为 dimension。",
+        "原始配置为 DWD，但根据内容判断应归属 DIM 层。"
+      ],
+      "columns": {
+        "atomic_metrics": [],
+        "derived_metrics": [],
+        "calculated_metrics": [],
+        "dimensions": [],
+        "others": []
+      },
+      "validation": {
+        "unknown_columns": [],
+        "duplicate_columns": [],
+        "missing_columns": []
+      },
+      "status": "passed",
+      "retry_count": 0,
+      "is_violating_declared_layer": true,
+      "violations": []
+    },
+    {
+      "table_name": "dwd_atm_locations",
+      "declared_layer": "DWD",
+      "inferred_layer": "DIM",
+      "table_type": "dimension",
+      "confidence": 0.95,
+      "reasoning_steps": [
+        "ETL 中无 GROUP BY 等聚合操作，数据直接从 ODS 层清洗而来，未改变粒度。",
+        "下游被引用 1 次（dim_location），且表主键为 atm_id，包含大量地理位置、运营状态等描述性属性，符合维度表特征。",
+        "虽原始配置为 DWD，但本表本质上是一张描述 ATM 实体的属性表，常作为维表被其他事实表关联，应归为 DIM 层。"
+      ],
+      "columns": {
+        "atomic_metrics": [],
+        "derived_metrics": [],
+        "calculated_metrics": [],
+        "dimensions": [],
+        "others": []
+      },
+      "validation": {
+        "unknown_columns": [],
+        "duplicate_columns": [],
+        "missing_columns": []
+      },
+      "status": "passed",
+      "retry_count": 0,
+      "is_violating_declared_layer": true,
+      "violations": []
+    },
+    {
+      "table_name": "dwd_merchants",
+      "declared_layer": "DWD",
+      "inferred_layer": "DIM",
+      "table_type": "dimension",
+      "confidence": 0.95,
+      "reasoning_steps": [
+        "ETL中无GROUP BY等聚合操作，保持明细粒度，排除DWS和ADS。",
+        "主键merchant_id是单一实体ID，描述商户属性，无事实度量，符合维度表特征。",
+        "下游被引用1次，且下游表为dim_merchant，表明该表本身就是维度表。",
+        "原始配置为DWD，但实际属性宽表符合DIM层定义。"
+      ],
+      "columns": {
+        "atomic_metrics": [],
+        "derived_metrics": [],
+        "calculated_metrics": [],
+        "dimensions": [
+          {
+            "name": "merchant_id",
+            "dimension_type": "primary_key",
+            "data_type": "BIGINT",
+            "description": "商户主键ID",
+            "reason": "唯一标识商户实体，主键",
+            "confidence": 1.0
+          },
+          {
+            "name": "merchant_name",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "商户名称",
+            "reason": "商户属性描述",
+            "confidence": 1.0
+          },
+          {
+            "name": "category",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "商户分类（清洗后大写）",
+            "reason": "枚举属性，用于切片过滤",
+            "confidence": 1.0
+          },
+          {
+            "name": "mcc_code",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "MCC代码",
+            "reason": "商户行业代码属性",
+            "confidence": 1.0
+          },
+          {
+            "name": "category_group",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "分类组（由CASE生成）",
+            "reason": "派生属性维度，用于分类",
+            "confidence": 1.0
+          },
+          {
+            "name": "city",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "城市（标准化大写）",
+            "reason": "地理位置属性",
+            "confidence": 1.0
+          },
+          {
+            "name": "state",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "州（标准化大写）",
+            "reason": "地理位置属性",
+            "confidence": 1.0
+          },
+          {
+            "name": "country",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "国家（标准化大写）",
+            "reason": "地理位置属性",
+            "confidence": 1.0
+          },
+          {
+            "name": "latitude",
+            "dimension_type": "attribute",
+            "data_type": "DECIMAL(18,4)",
+            "description": "纬度坐标",
+            "reason": "地理空间属性",
+            "confidence": 1.0
+          },
+          {
+            "name": "longitude",
+            "dimension_type": "attribute",
+            "data_type": "DECIMAL(18,4)",
+            "description": "经度坐标",
+            "reason": "地理空间属性",
+            "confidence": 1.0
+          },
+          {
+            "name": "region",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "地理区域（由CASE生成）",
+            "reason": "派生维度属性，用于区域切片",
+            "confidence": 1.0
+          },
+          {
+            "name": "risk_rating",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "风险等级",
+            "reason": "商户风险属性",
+            "confidence": 1.0
+          },
+          {
+            "name": "risk_score",
+            "dimension_type": "attribute",
+            "data_type": "DECIMAL(18,4)",
+            "description": "风险评分（由CASE生成）",
+            "reason": "派生属性，非聚合度量，用于分析",
+            "confidence": 1.0
+          },
+          {
+            "name": "avg_transaction_amount",
+            "dimension_type": "attribute",
+            "data_type": "DECIMAL(18,4)",
+            "description": "平均交易金额",
+            "reason": "商户属性（静态平均值，非事实度量）",
+            "confidence": 1.0
+          },
+          {
+            "name": "transaction_value_segment",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "交易价值分段（由CASE生成）",
+            "reason": "派生维度属性",
+            "confidence": 1.0
+          },
+          {
+            "name": "is_online",
+            "dimension_type": "attribute",
+            "data_type": "BOOLEAN",
+            "description": "是否在线商户",
+            "reason": "布尔标志，用于分析",
+            "confidence": 1.0
+          },
+          {
+            "name": "merchant_type",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "商户类型（由CASE生成）",
+            "reason": "派生维度属性",
+            "confidence": 1.0
+          },
+          {
+            "name": "established_date",
+            "dimension_type": "date",
+            "data_type": "DATETIME",
+            "description": "成立日期",
+            "reason": "时间属性维度",
+            "confidence": 1.0
+          },
+          {
+            "name": "years_in_business",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "经营年限（由TIMESTAMPDIFF生成）",
+            "reason": "派生属性",
+            "confidence": 1.0
+          },
+          {
+            "name": "business_maturity",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "业务成熟度（由CASE生成）",
+            "reason": "派生维度属性",
+            "confidence": 1.0
+          },
+          {
+            "name": "mcc_category",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "MCC代码大类（由CASE生成）",
+            "reason": "派生维度属性",
+            "confidence": 1.0
+          }
+        ],
+        "others": [
+          {
+            "name": "updated_at",
+            "role": "audit",
+            "data_type": "DATETIME",
+            "description": "更新时间戳",
+            "reason": "技术审计字段",
+            "confidence": 1.0
+          }
+        ]
+      },
+      "validation": {
+        "unknown_columns": [],
+        "duplicate_columns": [],
+        "missing_columns": []
+      },
+      "status": "passed",
+      "retry_count": 0,
+      "is_violating_declared_layer": true,
+      "violations": []
+    },
+    {
+      "table_name": "dwd_products",
+      "declared_layer": "DWD",
+      "inferred_layer": "DIM",
+      "table_type": "dimension",
+      "confidence": 0.95,
+      "reasoning_steps": [
+        "ETL_SQL 中无 GROUP BY 等聚合操作，排除了 DWS 层级，且数据来自 ODS，经过清洗和字段转换，但未改变事务明细粒度，符合 DWD 特征。",
+        "主键为 product_id，描述产品实体属性（名称、类别、利率、费用等），是典型的维度属性，且下游被 dim_product 引用（1次），但实际该表自身就是产品维度表，应归属 DIM 层。",
+        "原始配置 DWD 与实际不符，根据业务含义应归类为 DIM。",
+        "表类型为维度表，因此无需进行指标字段分组。"
+      ],
+      "columns": {
+        "atomic_metrics": [],
+        "derived_metrics": [],
+        "calculated_metrics": [],
+        "dimensions": [],
+        "others": []
+      },
+      "validation": {
+        "unknown_columns": [],
+        "duplicate_columns": [],
+        "missing_columns": []
+      },
+      "status": "passed",
+      "retry_count": 0,
+      "is_violating_declared_layer": true,
+      "violations": []
+    },
+    {
+      "table_name": "dwd_account_events",
+      "declared_layer": "DWD",
+      "inferred_layer": "DWD",
+      "table_type": "fact",
+      "confidence": 0.95,
+      "reasoning_steps": [
+        "ETL_SQL中不包含GROUP BY等聚合操作，仅为清洗和过滤，保持事务明细粒度，符合DWD特征。",
+        "下游被引用1次（dws_account_events），不是0次，排除ADS；距ODS最小跳数1，符合DWD。",
+        "主键为event_id，记录账户事件明细，包含可度量字段（old_value, new_value），属于事实表。",
+        "原始配置层级DWD与推断一致，无需调整。"
+      ],
+      "columns": {
+        "atomic_metrics": [
+          {
+            "name": "old_value",
+            "data_type": "DECIMAL(18,4)",
+            "business_process": "account_event",
+            "action": "change",
+            "measure": "old_amount",
+            "description": "变更前的值（金额）",
+            "reason": "不可再拆分的基础度量，记录事件发生前的金额数值",
+            "confidence": 0.9
+          },
+          {
+            "name": "new_value",
+            "data_type": "DECIMAL(18,4)",
+            "business_process": "account_event",
+            "action": "change",
+            "measure": "new_amount",
+            "description": "变更后的值（金额）",
+            "reason": "不可再拆分的基础度量，记录事件发生后的金额数值",
+            "confidence": 0.9
+          }
+        ],
+        "derived_metrics": [],
+        "calculated_metrics": [],
+        "dimensions": [
+          {
+            "name": "event_id",
+            "dimension_type": "primary_key",
+            "data_type": "BIGINT",
+            "description": "事件唯一标识",
+            "reason": "主键，用于唯一标识每一条事件记录",
+            "confidence": 0.99
+          },
+          {
+            "name": "account_id",
+            "dimension_type": "foreign_key",
+            "data_type": "BIGINT",
+            "description": "账户ID，关联账户维度",
+            "reason": "外键，指向账户维度表",
+            "confidence": 0.95
+          },
+          {
+            "name": "customer_id",
+            "dimension_type": "foreign_key",
+            "data_type": "BIGINT",
+            "description": "客户ID，关联客户维度",
+            "reason": "外键，指向客户维度表",
+            "confidence": 0.95
+          },
+          {
+            "name": "product_id",
+            "dimension_type": "foreign_key",
+            "data_type": "BIGINT",
+            "description": "产品ID，关联产品维度",
+            "reason": "外键，指向产品维度表",
+            "confidence": 0.95
+          },
+          {
+            "name": "event_date",
+            "dimension_type": "date",
+            "data_type": "DATETIME",
+            "description": "事件发生的日期时间",
+            "reason": "时间维度，用于时间范围切片和过滤",
+            "confidence": 0.95
+          },
+          {
+            "name": "event_type",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "事件类型（如存款、取款等）",
+            "reason": "退化维度，描述事件的分类属性",
+            "confidence": 0.9
+          },
+          {
+            "name": "event_category",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "事件类别",
+            "reason": "退化维度，进一步分类事件",
+            "confidence": 0.8
+          },
+          {
+            "name": "triggered_by",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "触发事件的操作人或系统",
+            "reason": "描述事件来源的维度属性",
+            "confidence": 0.8
+          },
+          {
+            "name": "channel",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "事件发生的渠道（如网银、柜面）",
+            "reason": "渠道维度，用于分析不同渠道的事件分布",
+            "confidence": 0.9
+          },
+          {
+            "name": "processed_by",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "处理事件的系统或模块",
+            "reason": "标识处理来源的维度属性",
+            "confidence": 0.7
+          },
+          {
+            "name": "notes",
+            "dimension_type": "other",
+            "data_type": "STRING",
+            "description": "事件备注信息",
+            "reason": "文本描述，可作为维度属性用于过滤或分析",
+            "confidence": 0.6
+          },
+          {
+            "name": "is_reversible",
+            "dimension_type": "status",
+            "data_type": "BOOLEAN",
+            "description": "是否可逆（可冲正）",
+            "reason": "布尔标志，区分事件是否可撤销",
+            "confidence": 0.9
+          },
+          {
+            "name": "requires_approval",
+            "dimension_type": "status",
+            "data_type": "STRING",
+            "description": "是否需要审批",
+            "reason": "状态字段，用于过滤需要审批的事件",
+            "confidence": 0.8
+          },
+          {
+            "name": "approval_status",
+            "dimension_type": "status",
+            "data_type": "STRING",
+            "description": "审批状态（如待审批、已通过等）",
+            "reason": "状态维度，跟踪事件审批进度",
+            "confidence": 0.9
+          }
+        ],
+        "others": [
+          {
+            "name": "created_at",
+            "role": "technical",
+            "data_type": "DATETIME",
+            "description": "记录创建时间（ETL处理时间）",
+            "reason": "技术字段，由当前时间戳生成，非业务含义",
+            "confidence": 0.95
+          }
+        ]
+      },
+      "validation": {
+        "unknown_columns": [],
+        "duplicate_columns": [],
+        "missing_columns": []
+      },
+      "status": "passed",
+      "retry_count": 0,
+      "is_violating_declared_layer": false,
+      "violations": []
+    },
+    {
+      "table_name": "dwd_credit_applications",
+      "declared_layer": "DWD",
+      "inferred_layer": "DWD",
+      "table_type": "fact",
+      "confidence": 0.95,
+      "reasoning_steps": [
+        "ETL SQL中无GROUP BY或聚合操作，保持事务明细粒度，符合DWD特征",
+        "下游被引用1次（dws_credit_applications），距ODS最小跳数1，非ADS",
+        "主键为application_id，非实体属性维表，包含多个可度量字段，属于事实表"
+      ],
+      "columns": {
+        "atomic_metrics": [
+          {
+            "name": "requested_amount",
+            "data_type": "DECIMAL(18,4)",
+            "business_process": "credit_application",
+            "action": "request",
+            "measure": "amount",
+            "description": "申请金额",
+            "reason": "原始度量，不可再拆分",
+            "confidence": 0.95
+          },
+          {
+            "name": "credit_score_at_application",
+            "data_type": "DECIMAL(18,4)",
+            "business_process": "credit_application",
+            "action": "evaluate",
+            "measure": "credit_score",
+            "description": "申请时的信用评分",
+            "reason": "原始度量，不可再拆分",
+            "confidence": 0.95
+          },
+          {
+            "name": "annual_income",
+            "data_type": "DECIMAL(18,4)",
+            "business_process": "customer_profile",
+            "action": "report",
+            "measure": "income",
+            "description": "年收入",
+            "reason": "原始度量，不可再拆分",
+            "confidence": 0.95
+          },
+          {
+            "name": "debt_to_income_ratio",
+            "data_type": "DECIMAL(18,4)",
+            "business_process": "credit_application",
+            "action": "calculate",
+            "measure": "ratio",
+            "description": "负债收入比",
+            "reason": "原始度量，不可再拆分",
+            "confidence": 0.9
+          },
+          {
+            "name": "approved_amount",
+            "data_type": "DECIMAL(18,4)",
+            "business_process": "credit_application",
+            "action": "approve",
+            "measure": "amount",
+            "description": "批准金额",
+            "reason": "原始度量，不可再拆分",
+            "confidence": 0.95
+          },
+          {
+            "name": "approved_rate",
+            "data_type": "DECIMAL(18,4)",
+            "business_process": "credit_application",
+            "action": "approve",
+            "measure": "rate",
+            "description": "批准利率",
+            "reason": "原始度量，不可再拆分",
+            "confidence": 0.95
+          },
+          {
+            "name": "approval_probability_score",
+            "data_type": "DECIMAL(18,4)",
+            "business_process": "credit_application",
+            "action": "score",
+            "measure": "probability",
+            "description": "批准概率评分",
+            "reason": "原始度量，不可再拆分",
+            "confidence": 0.9
+          }
+        ],
+        "derived_metrics": [],
+        "calculated_metrics": [
+          {
+            "name": "processing_days",
+            "data_type": "BIGINT",
+            "expression": "DAY(decision_date - application_date)",
+            "derived_from": [
+              "decision_date",
+              "application_date"
+            ],
+            "description": "处理天数",
+            "reason": "基于两个日期字段的差值计算，属于衍生指标",
+            "confidence": 0.95
+          },
+          {
+            "name": "amount_difference",
+            "data_type": "DECIMAL(18,4)",
+            "expression": "approved_amount - requested_amount",
+            "derived_from": [
+              "approved_amount",
+              "requested_amount"
+            ],
+            "description": "金额差异",
+            "reason": "基于两个原子指标的计算结果",
+            "confidence": 0.95
+          }
+        ],
+        "dimensions": [
+          {
+            "name": "application_id",
+            "dimension_type": "primary_key",
+            "data_type": "BIGINT",
+            "description": "申请ID",
+            "reason": "主键，唯一标识一笔申请",
+            "confidence": 1.0
+          },
+          {
+            "name": "customer_id",
+            "dimension_type": "foreign_key",
+            "data_type": "BIGINT",
+            "description": "客户ID",
+            "reason": "外键，关联客户维表",
+            "confidence": 1.0
+          },
+          {
+            "name": "product_id",
+            "dimension_type": "foreign_key",
+            "data_type": "BIGINT",
+            "description": "产品ID",
+            "reason": "外键，关联产品维表",
+            "confidence": 1.0
+          },
+          {
+            "name": "application_date",
+            "dimension_type": "date",
+            "data_type": "DATETIME",
+            "description": "申请日期",
+            "reason": "时间维度，用于分析时间趋势",
+            "confidence": 1.0
+          },
+          {
+            "name": "requested_term_months",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "申请期限（月）",
+            "reason": "业务属性，用于分组过滤",
+            "confidence": 0.9
+          },
+          {
+            "name": "dti_category",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "负债收入比分类",
+            "reason": "通过CASE WHEN生成的分类标签",
+            "confidence": 0.95
+          },
+          {
+            "name": "employment_length_years",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "就业年限",
+            "reason": "原始业务属性",
+            "confidence": 0.9
+          },
+          {
+            "name": "decision",
+            "dimension_type": "status",
+            "data_type": "STRING",
+            "description": "审批决定",
+            "reason": "状态字段，用于过滤",
+            "confidence": 1.0
+          },
+          {
+            "name": "decision_date",
+            "dimension_type": "date",
+            "data_type": "DATETIME",
+            "description": "审批日期",
+            "reason": "时间维度",
+            "confidence": 1.0
+          },
+          {
+            "name": "application_channel",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "申请渠道",
+            "reason": "业务属性，用于分组",
+            "confidence": 1.0
+          },
+          {
+            "name": "risk_grade",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "风险等级",
+            "reason": "业务属性",
+            "confidence": 1.0
+          },
+          {
+            "name": "is_approved",
+            "dimension_type": "status",
+            "data_type": "BOOLEAN",
+            "description": "是否批准",
+            "reason": "布尔标志，用于过滤",
+            "confidence": 1.0
+          }
+        ],
+        "others": [
+          {
+            "name": "updated_at",
+            "role": "audit",
+            "data_type": "DATETIME",
+            "description": "记录更新时间",
+            "reason": "技术审计字段，由CURRENT_TIMESTAMP生成",
+            "confidence": 1.0
+          }
+        ]
+      },
+      "validation": {
+        "unknown_columns": [],
+        "duplicate_columns": [],
+        "missing_columns": []
+      },
+      "status": "passed",
+      "retry_count": 0,
+      "is_violating_declared_layer": false,
+      "violations": [
+        {
+          "table": "dwd_credit_applications",
+          "column": "processing_days",
+          "metric_type": "calculated",
+          "reason": "基于两个日期字段的差值计算，属于衍生指标",
+          "confidence": 0.95
+        },
+        {
+          "table": "dwd_credit_applications",
+          "column": "amount_difference",
+          "metric_type": "calculated",
+          "reason": "基于两个原子指标的计算结果",
+          "confidence": 0.95
+        }
+      ]
+    },
+    {
+      "table_name": "dwd_customer_segments_history",
+      "declared_layer": "DWD",
+      "inferred_layer": "DIM",
+      "table_type": "dimension",
+      "confidence": 0.9,
+      "reasoning_steps": [
+        "ETL中无GROUP BY、SUM/COUNT等聚合操作，排除DWS和ADS；表直接从ODS清洗而来，未做多表JOIN拉宽，不满足DWD的定义；主键为代理键，记录客户分段变更历史，属于SCD类型2的维度属性表，且被下游DWS引用一次，符合DIM层特征。",
+        "下游引用次数为1，出度不为0，排除ADS；表结构包含客户属性、分段、风险等级等描述性字段，不记录可加性度量，适合归类为维度表。"
+      ],
+      "columns": {
+        "atomic_metrics": [],
+        "derived_metrics": [],
+        "calculated_metrics": [],
+        "dimensions": [],
+        "others": []
+      },
+      "validation": {
+        "unknown_columns": [],
+        "duplicate_columns": [],
+        "missing_columns": []
+      },
+      "status": "passed",
+      "retry_count": 0,
+      "is_violating_declared_layer": true,
+      "violations": []
+    },
+    {
+      "table_name": "dwd_fraud_alerts",
+      "declared_layer": "DWD",
+      "inferred_layer": "DWD",
+      "table_type": "fact",
+      "confidence": 0.95,
+      "reasoning_steps": [
+        "ETL逻辑中无GROUP BY等聚合操作，仅包含数据清洗和字段转换，保持了事务明细粒度，符合DWD特征。",
+        "上游是ODS表，下游被引用1次，距ODS最小跳数1，无聚合特征，排除DWS和ADS。",
+        "主键alert_id是预警事件ID，非实体属性，因此是事实表。",
+        "原始配置DWD与推断一致。"
+      ],
+      "columns": {
+        "atomic_metrics": [
+          {
+            "name": "amount_recovered",
+            "data_type": "DECIMAL(18,4)",
+            "business_process": "fraud_alert",
+            "action": "recover",
+            "measure": "amount",
+            "description": "原始追回金额",
+            "reason": "直接的金额度量，不可再分，属于原子指标。",
+            "confidence": 0.95
+          },
+          {
+            "name": "recovered_amount",
+            "data_type": "DECIMAL(18,4)",
+            "business_process": "fraud_alert",
+            "action": "recover",
+            "measure": "amount",
+            "description": "清洗后的追回金额（非负数）",
+            "reason": "通过CASE WHEN将NULL或负值转为0，本质仍是原子金额度量。",
+            "confidence": 0.9
+          }
+        ],
+        "derived_metrics": [],
+        "calculated_metrics": [
+          {
+            "name": "resolution_days",
+            "data_type": "BIGINT",
+            "expression": "DAY(resolution_date - alert_date)",
+            "derived_from": [
+              "resolution_date",
+              "alert_date"
+            ],
+            "description": "解决天数（基于日期差计算）",
+            "reason": "通过日期字段计算得出，属于衍生指标。",
+            "confidence": 0.95
+          }
+        ],
+        "dimensions": [
+          {
+            "name": "alert_id",
+            "dimension_type": "primary_key",
+            "data_type": "BIGINT",
+            "description": "预警事件唯一标识",
+            "reason": "表主键，用于唯一标识每行记录。",
+            "confidence": 0.99
+          },
+          {
+            "name": "transaction_id",
+            "dimension_type": "foreign_key",
+            "data_type": "BIGINT",
+            "description": "关联交易ID",
+            "reason": "外键，关联交易事实。",
+            "confidence": 0.95
+          },
+          {
+            "name": "customer_id",
+            "dimension_type": "foreign_key",
+            "data_type": "BIGINT",
+            "description": "客户ID",
+            "reason": "外键，关联客户维度。",
+            "confidence": 0.95
+          },
+          {
+            "name": "account_id",
+            "dimension_type": "foreign_key",
+            "data_type": "BIGINT",
+            "description": "账户ID",
+            "reason": "外键，关联账户维度。",
+            "confidence": 0.95
+          },
+          {
+            "name": "alert_date",
+            "dimension_type": "date",
+            "data_type": "DATETIME",
+            "description": "预警日期",
+            "reason": "时间维度字段，用于时间分析。",
+            "confidence": 0.99
+          },
+          {
+            "name": "alert_type",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "预警类型",
+            "reason": "业务属性，用于分组过滤。",
+            "confidence": 0.95
+          },
+          {
+            "name": "alert_severity",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "预警严重程度",
+            "reason": "业务属性，用于分级分析。",
+            "confidence": 0.95
+          },
+          {
+            "name": "investigation_status",
+            "dimension_type": "status",
+            "data_type": "STRING",
+            "description": "调查状态",
+            "reason": "状态字段，用于区分不同处理阶段。",
+            "confidence": 0.95
+          },
+          {
+            "name": "resolution_date",
+            "dimension_type": "date",
+            "data_type": "DATETIME",
+            "description": "解决日期",
+            "reason": "时间维度字段。",
+            "confidence": 0.95
+          },
+          {
+            "name": "assigned_to",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "指派人",
+            "reason": "业务属性，用于人员分析。",
+            "confidence": 0.9
+          },
+          {
+            "name": "is_resolved",
+            "dimension_type": "attribute",
+            "data_type": "BOOLEAN",
+            "description": "是否已解决标志",
+            "reason": "布尔标志，用于过滤已解决事件。",
+            "confidence": 0.95
+          },
+          {
+            "name": "is_confirmed_fraud",
+            "dimension_type": "attribute",
+            "data_type": "BOOLEAN",
+            "description": "确认为欺诈标志",
+            "reason": "布尔标志，用于筛选确认欺诈事件。",
+            "confidence": 0.95
+          },
+          {
+            "name": "is_false_positive",
+            "dimension_type": "attribute",
+            "data_type": "BOOLEAN",
+            "description": "误报标志",
+            "reason": "布尔标志，用于筛选误报事件。",
+            "confidence": 0.95
+          }
+        ],
+        "others": [
+          {
+            "name": "notes",
+            "role": "other",
+            "data_type": "STRING",
+            "description": "备注信息",
+            "reason": "文本字段，非度量非维度，属于业务备注。",
+            "confidence": 0.9
+          },
+          {
+            "name": "updated_at",
+            "role": "audit",
+            "data_type": "DATETIME",
+            "description": "记录更新时间",
+            "reason": "审计字段，技术性时间戳。",
+            "confidence": 0.99
+          }
+        ]
+      },
+      "validation": {
+        "unknown_columns": [],
+        "duplicate_columns": [],
+        "missing_columns": []
+      },
+      "status": "passed",
+      "retry_count": 0,
+      "is_violating_declared_layer": false,
+      "violations": [
+        {
+          "table": "dwd_fraud_alerts",
+          "column": "resolution_days",
+          "metric_type": "calculated",
+          "reason": "通过日期字段计算得出，属于衍生指标。",
+          "confidence": 0.95
+        }
+      ]
+    },
+    {
+      "table_name": "dwd_loan_payments",
+      "declared_layer": "DWD",
+      "inferred_layer": "DWD",
+      "table_type": "fact",
+      "confidence": 0.95,
+      "reasoning_steps": [
+        "ETL中无GROUP BY等聚合操作，保持明细粒度，符合DWD定义。",
+        "下游被引用1次，且距ODS最小跳数1，符合DWD通常作为中间层被下游引用的特征。",
+        "表记录每笔支付事件，包含可度量字段（金额、天数、费用），属于事实表。",
+        "原始配置为DWD，与实际特征一致。"
+      ],
+      "columns": {
+        "atomic_metrics": [
+          {
+            "name": "scheduled_amount",
+            "data_type": "DECIMAL(18,4)",
+            "business_process": "loan_payment",
+            "action": "scheduled",
+            "measure": "amount",
+            "description": "计划还款金额",
+            "reason": "不可再拆分的业务度量，直接来源于源表。",
+            "confidence": 0.95
+          },
+          {
+            "name": "actual_amount",
+            "data_type": "DECIMAL(18,4)",
+            "business_process": "loan_payment",
+            "action": "actual",
+            "measure": "amount",
+            "description": "实际还款金额",
+            "reason": "不可再拆分的业务度量，直接来源于源表。",
+            "confidence": 0.95
+          },
+          {
+            "name": "late_fee",
+            "data_type": "DECIMAL(18,4)",
+            "business_process": "loan_payment",
+            "action": "late_fee_charge",
+            "measure": "fee",
+            "description": "逾期费用",
+            "reason": "不可再拆分的业务度量，直接来源于源表。",
+            "confidence": 0.95
+          },
+          {
+            "name": "outstanding_balance",
+            "data_type": "DECIMAL(18,4)",
+            "business_process": "loan_account",
+            "action": "balance",
+            "measure": "amount",
+            "description": "未偿还余额",
+            "reason": "直接来源于源表的状态度量。",
+            "confidence": 0.9
+          },
+          {
+            "name": "days_late",
+            "data_type": "BIGINT",
+            "business_process": "loan_payment",
+            "action": "late_days",
+            "measure": "days",
+            "description": "逾期天数",
+            "reason": "直接来源于源表的数值度量，不可再拆分。",
+            "confidence": 0.95
+          }
+        ],
+        "derived_metrics": [],
+        "calculated_metrics": [
+          {
+            "name": "amount_difference",
+            "data_type": "DECIMAL(18,4)",
+            "expression": "actual_amount - scheduled_amount",
+            "derived_from": [
+              "actual_amount",
+              "scheduled_amount"
+            ],
+            "description": "实际与计划金额差异",
+            "reason": "由两个原子指标相减得到，属于衍生指标。",
+            "confidence": 0.95
+          }
+        ],
+        "dimensions": [
+          {
+            "name": "payment_id",
+            "dimension_type": "primary_key",
+            "data_type": "BIGINT",
+            "description": "支付事件唯一标识",
+            "reason": "表的主键，属于退化维度。",
+            "confidence": 1.0
+          },
+          {
+            "name": "account_id",
+            "dimension_type": "foreign_key",
+            "data_type": "BIGINT",
+            "description": "账户ID",
+            "reason": "外键，关联账户维表。",
+            "confidence": 1.0
+          },
+          {
+            "name": "customer_id",
+            "dimension_type": "foreign_key",
+            "data_type": "BIGINT",
+            "description": "客户ID",
+            "reason": "外键，关联客户维表。",
+            "confidence": 1.0
+          },
+          {
+            "name": "scheduled_date",
+            "dimension_type": "date",
+            "data_type": "DATETIME",
+            "description": "计划还款日期",
+            "reason": "日期字段，用于时间维度分析。",
+            "confidence": 1.0
+          },
+          {
+            "name": "actual_date",
+            "dimension_type": "date",
+            "data_type": "DATETIME",
+            "description": "实际还款日期",
+            "reason": "日期字段，用于时间维度分析。",
+            "confidence": 1.0
+          },
+          {
+            "name": "is_late",
+            "dimension_type": "attribute",
+            "data_type": "BOOLEAN",
+            "description": "是否逾期标志",
+            "reason": "布尔标志，用于过滤和分组。",
+            "confidence": 1.0
+          },
+          {
+            "name": "payment_method",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "支付方式",
+            "reason": "业务属性，用于切片分析。",
+            "confidence": 1.0
+          },
+          {
+            "name": "payment_status",
+            "dimension_type": "status",
+            "data_type": "STRING",
+            "description": "支付状态（Missed/Late/Paid/Scheduled）",
+            "reason": "由CASE WHEN生成的枚举状态，用于分组和过滤。",
+            "confidence": 0.95
+          },
+          {
+            "name": "payment_completeness",
+            "dimension_type": "status",
+            "data_type": "STRING",
+            "description": "支付完整性（Full/Partial/None）",
+            "reason": "由CASE WHEN生成的枚举状态，用于分组和过滤。",
+            "confidence": 0.95
+          },
+          {
+            "name": "delinquency_bucket",
+            "dimension_type": "status",
+            "data_type": "STRING",
+            "description": "逾期分类桶（Current/1-30 Days/31-60 Days/61-90 Days/90+ Days）",
+            "reason": "由CASE WHEN生成的枚举状态，用于分组和过滤。",
+            "confidence": 0.95
+          }
+        ],
+        "others": [
+          {
+            "name": "updated_at",
+            "role": "audit",
+            "data_type": "DATETIME",
+            "description": "记录更新时间",
+            "reason": "技术审计字段，记录ETL处理时间。",
+            "confidence": 1.0
+          }
+        ]
+      },
+      "validation": {
+        "unknown_columns": [],
+        "duplicate_columns": [],
+        "missing_columns": []
+      },
+      "status": "passed",
+      "retry_count": 0,
+      "is_violating_declared_layer": false,
+      "violations": [
+        {
+          "table": "dwd_loan_payments",
+          "column": "amount_difference",
+          "metric_type": "calculated",
+          "reason": "由两个原子指标相减得到，属于衍生指标。",
+          "confidence": 0.95
+        }
+      ]
+    },
+    {
+      "table_name": "dwd_regulatory_reports",
+      "declared_layer": "DWD",
+      "inferred_layer": "DWD",
+      "table_type": "fact",
+      "confidence": 0.95,
+      "reasoning_steps": [
+        "ETL 中仅包含数据清洗操作（TRIM、UPPER、CAST），无 JOIN 和 GROUP BY 聚合，粒度与 ODS 一致，符合 DWD 层定义。",
+        "下游被引用 1 次，出度 > 0，可排除 ADS；距离 ODS 最小跳数为 1，且无聚合，不适合 DWS。",
+        "主键 report_id 为事务标识，非实体属性，表包含金额、数量等可度量字段，属于事实表。"
+      ],
+      "columns": {
+        "atomic_metrics": [
+          {
+            "name": "amount_reported",
+            "data_type": "DECIMAL(15,2)",
+            "business_process": "监管报告提交",
+            "action": "报告",
+            "measure": "金额",
+            "description": "报告中的金额数值",
+            "reason": "从源表直接 CAST 得到，无聚合，是基础可度量字段",
+            "confidence": 0.95
+          },
+          {
+            "name": "penalty_amount",
+            "data_type": "DECIMAL(12,2)",
+            "business_process": "监管报告处罚",
+            "action": "处罚",
+            "measure": "金额",
+            "description": "罚款金额",
+            "reason": "从源表直接 CAST 得到，无聚合，是基础可度量字段",
+            "confidence": 0.95
+          }
+        ],
+        "derived_metrics": [],
+        "calculated_metrics": [],
+        "dimensions": [
+          {
+            "name": "report_id",
+            "dimension_type": "primary_key",
+            "data_type": "BIGINT",
+            "description": "报告唯一标识",
+            "reason": "主键，用于唯一区分每条报告记录",
+            "confidence": 0.95
+          },
+          {
+            "name": "report_type_code",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "报告类型代码，已转为大写",
+            "reason": "报告分类维度，用于切片分析",
+            "confidence": 0.95
+          },
+          {
+            "name": "report_type_name",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "报告类型名称",
+            "reason": "报告类型描述属性",
+            "confidence": 0.9
+          },
+          {
+            "name": "report_frequency",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "报告频次（如月度、季度）",
+            "reason": "报告频率维度",
+            "confidence": 0.9
+          },
+          {
+            "name": "regulator",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "监管机构名称",
+            "reason": "监管机构维度",
+            "confidence": 0.9
+          },
+          {
+            "name": "report_period_start",
+            "dimension_type": "date",
+            "data_type": "STRING",
+            "description": "报告周期开始日期",
+            "reason": "时间维度，用于分析报告周期",
+            "confidence": 0.9
+          },
+          {
+            "name": "report_period_end",
+            "dimension_type": "date",
+            "data_type": "STRING",
+            "description": "报告周期结束日期",
+            "reason": "时间维度",
+            "confidence": 0.9
+          },
+          {
+            "name": "filing_date",
+            "dimension_type": "date",
+            "data_type": "DATETIME",
+            "description": "预计提交日期",
+            "reason": "日期维度",
+            "confidence": 0.9
+          },
+          {
+            "name": "due_date",
+            "dimension_type": "date",
+            "data_type": "DATETIME",
+            "description": "截止日期",
+            "reason": "日期维度",
+            "confidence": 0.9
+          },
+          {
+            "name": "actual_filing_date",
+            "dimension_type": "date",
+            "data_type": "DATETIME",
+            "description": "实际提交日期",
+            "reason": "日期维度",
+            "confidence": 0.9
+          },
+          {
+            "name": "filing_status",
+            "dimension_type": "status",
+            "data_type": "STRING",
+            "description": "提交状态（如已提交、逾期等）",
+            "reason": "状态维度，用于过滤分组",
+            "confidence": 0.9
+          },
+          {
+            "name": "filing_method",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "提交方式",
+            "reason": "提交方式维度",
+            "confidence": 0.9
+          },
+          {
+            "name": "confirmation_number",
+            "dimension_type": "degenerate",
+            "data_type": "STRING",
+            "description": "确认编号",
+            "reason": "退化维度，来自源表直接清理",
+            "confidence": 0.9
+          },
+          {
+            "name": "customer_id",
+            "dimension_type": "foreign_key",
+            "data_type": "BIGINT",
+            "description": "客户ID",
+            "reason": "外键，关联客户维度",
+            "confidence": 0.9
+          },
+          {
+            "name": "account_id",
+            "dimension_type": "foreign_key",
+            "data_type": "BIGINT",
+            "description": "账户ID",
+            "reason": "外键，关联账户维度",
+            "confidence": 0.9
+          },
+          {
+            "name": "transaction_id",
+            "dimension_type": "foreign_key",
+            "data_type": "BIGINT",
+            "description": "交易ID",
+            "reason": "外键，关联交易事实",
+            "confidence": 0.9
+          },
+          {
+            "name": "risk_level",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "风险等级",
+            "reason": "来自源表的分类标签，用于切片",
+            "confidence": 0.9
+          },
+          {
+            "name": "findings",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "发现的问题描述",
+            "reason": "文本属性，可作为分析维度",
+            "confidence": 0.85
+          },
+          {
+            "name": "requires_follow_up",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "是否需要跟进",
+            "reason": "布尔标志维度",
+            "confidence": 0.9
+          },
+          {
+            "name": "follow_up_date",
+            "dimension_type": "date",
+            "data_type": "DATETIME",
+            "description": "跟进日期",
+            "reason": "日期维度",
+            "confidence": 0.9
+          },
+          {
+            "name": "assigned_to",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "负责人",
+            "reason": "人员属性维度",
+            "confidence": 0.9
+          },
+          {
+            "name": "reviewed_by",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "审核人",
+            "reason": "人员属性维度",
+            "confidence": 0.9
+          },
+          {
+            "name": "approval_date",
+            "dimension_type": "date",
+            "data_type": "DATETIME",
+            "description": "批准日期",
+            "reason": "日期维度",
+            "confidence": 0.9
+          },
+          {
+            "name": "is_amended",
+            "dimension_type": "attribute",
+            "data_type": "BOOLEAN",
+            "description": "是否更正版",
+            "reason": "布尔标志维度",
+            "confidence": 0.9
+          },
+          {
+            "name": "original_report_id",
+            "dimension_type": "foreign_key",
+            "data_type": "STRING",
+            "description": "原始报告ID（如有更正）",
+            "reason": "外键，指向原始报告",
+            "confidence": 0.9
+          },
+          {
+            "name": "internal_notes",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "内部备注",
+            "reason": "文本属性",
+            "confidence": 0.85
+          }
+        ],
+        "others": [
+          {
+            "name": "created_at",
+            "role": "audit",
+            "data_type": "DATETIME",
+            "description": "记录创建时间（当前时间戳）",
+            "reason": "技术审计字段，由ETL赋予当前时间",
+            "confidence": 0.95
+          }
+        ]
+      },
+      "validation": {
+        "unknown_columns": [],
+        "duplicate_columns": [],
+        "missing_columns": []
+      },
+      "status": "passed",
+      "retry_count": 0,
+      "is_violating_declared_layer": false,
+      "violations": []
+    },
+    {
+      "table_name": "dwd_risk_assessments",
+      "declared_layer": "DWD",
+      "inferred_layer": "DWD",
+      "table_type": "fact",
+      "confidence": 0.95,
+      "reasoning_steps": [
+        "ETL SQL 中不包含任何 GROUP BY、SUM、COUNT 等聚合操作，仅做了数据清洗（类型转换、ROUND、TRIM、NULL过滤），符合 DWD 层特征。",
+        "下游被引用次数为1（被 dws_risk_assessments 引用），且距 ODS 最小跳数为1，表明是面向汇总层的明细数据，符合 DWD 层定位。",
+        "主键 assessment_id 为风险评估事件 ID，包含多个可度量字段（风险评分、交易量等），属于业务事件事实记录，因此表类型为事实表。"
+      ],
+      "columns": {
+        "atomic_metrics": [
+          {
+            "name": "risk_score",
+            "data_type": "DECIMAL(5,3)",
+            "business_process": "风险评估",
+            "action": "评分",
+            "measure": "风险分数",
+            "description": "风险评分值，经四舍五入保留3位小数",
+            "reason": "直接来自源表的数值型基础度量，不包含聚合或二次计算，属于原子指标",
+            "confidence": 0.95
+          },
+          {
+            "name": "transaction_volume_last_90d",
+            "data_type": "DECIMAL(15,2)",
+            "business_process": "交易",
+            "action": "汇总",
+            "measure": "近90天交易金额",
+            "description": "客户近90天交易总金额，经四舍五入保留2位小数",
+            "reason": "源表直接提供的累计金额度量，未经过跨行聚合，属于原子指标",
+            "confidence": 0.9
+          },
+          {
+            "name": "num_accounts",
+            "data_type": "BIGINT",
+            "business_process": "账户管理",
+            "action": "数量",
+            "measure": "账户数量",
+            "description": "客户持有的账户数量",
+            "reason": "直接取自源表的数值型基础计数，属于原子指标",
+            "confidence": 0.9
+          },
+          {
+            "name": "years_as_customer",
+            "data_type": "DECIMAL(6,2)",
+            "business_process": "客户关系",
+            "action": "时长",
+            "measure": "客户年限",
+            "description": "客户成为客户的总年数，经四舍五入保留2位小数",
+            "reason": "源表直接提供的时长度量，属于原子指标",
+            "confidence": 0.9
+          },
+          {
+            "name": "high_value_customer",
+            "data_type": "DECIMAL(18,4)",
+            "business_process": "客户价值",
+            "action": "阈值",
+            "measure": "高净值客户金额",
+            "description": "高净值客户的阈值或评分值，为数值型度量",
+            "reason": "虽然字段名暗示标签，但数据类型为DECIMAL，且ETL中未转换，视为数值度量，属于原子指标",
+            "confidence": 0.8
+          },
+          {
+            "name": "income_verified",
+            "data_type": "DECIMAL(18,4)",
+            "business_process": "收入验证",
+            "action": "验证",
+            "measure": "验证收入金额",
+            "description": "客户经验证的收入金额",
+            "reason": "直接取自源表的数值型金额度量，属于原子指标",
+            "confidence": 0.9
+          }
+        ],
+        "derived_metrics": [],
+        "calculated_metrics": [],
+        "dimensions": [
+          {
+            "name": "assessment_id",
+            "dimension_type": "primary_key",
+            "data_type": "BIGINT",
+            "description": "风险评估记录唯一标识",
+            "reason": "主键，用于唯一确定一条评估记录",
+            "confidence": 1.0
+          },
+          {
+            "name": "customer_id",
+            "dimension_type": "foreign_key",
+            "data_type": "BIGINT",
+            "description": "客户ID，关联客户维表",
+            "reason": "外键，用于关联客户维度",
+            "confidence": 1.0
+          },
+          {
+            "name": "assessment_date",
+            "dimension_type": "date",
+            "data_type": "DATETIME",
+            "description": "风险评估日期",
+            "reason": "日期类型，用于时间维切片或过滤",
+            "confidence": 1.0
+          },
+          {
+            "name": "assessment_type",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "评估类型（如初始、定期、事件驱动等）",
+            "reason": "描述评估类型的属性字段，用于分组或筛选",
+            "confidence": 0.95
+          },
+          {
+            "name": "next_review_date",
+            "dimension_type": "date",
+            "data_type": "DATETIME",
+            "description": "下次复审日期",
+            "reason": "日期类型，用于时间维分析",
+            "confidence": 0.95
+          },
+          {
+            "name": "risk_rating",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "风险等级（如高、中、低）",
+            "reason": "风险等级属性，用于切片分析",
+            "confidence": 0.95
+          },
+          {
+            "name": "credit_risk",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "信用风险等级",
+            "reason": "分类属性，用于信用风险维度分析",
+            "confidence": 0.9
+          },
+          {
+            "name": "fraud_risk",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "欺诈风险等级",
+            "reason": "分类属性，用于欺诈风险维度分析",
+            "confidence": 0.9
+          },
+          {
+            "name": "aml_risk",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "反洗钱风险等级",
+            "reason": "分类属性，用于反洗钱风险维度分析",
+            "confidence": 0.9
+          },
+          {
+            "name": "kyc_status",
+            "dimension_type": "status",
+            "data_type": "STRING",
+            "description": "KYC状态（如已验证、待验证、过期）",
+            "reason": "状态字段，用于过滤分析",
+            "confidence": 0.95
+          },
+          {
+            "name": "kyc_last_updated",
+            "dimension_type": "date",
+            "data_type": "STRING",
+            "description": "KYC最近更新时间",
+            "reason": "时间属性，虽然类型为字符串但表示日期，用于时间分析",
+            "confidence": 0.9
+          },
+          {
+            "name": "pep_flag",
+            "dimension_type": "attribute",
+            "data_type": "BOOLEAN",
+            "description": "政治公众人物标志",
+            "reason": "布尔标志，用于风险筛选",
+            "confidence": 1.0
+          },
+          {
+            "name": "sanctions_flag",
+            "dimension_type": "attribute",
+            "data_type": "BOOLEAN",
+            "description": "制裁名单标志",
+            "reason": "布尔标志，用于风险筛选",
+            "confidence": 1.0
+          },
+          {
+            "name": "adverse_media_flag",
+            "dimension_type": "attribute",
+            "data_type": "BOOLEAN",
+            "description": "负面媒体标志",
+            "reason": "布尔标志，用于风险筛选",
+            "confidence": 1.0
+          },
+          {
+            "name": "requires_enhanced_due_diligence",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "是否需要强化尽职调查",
+            "reason": "标签属性，用于区分风险处理方式",
+            "confidence": 0.9
+          },
+          {
+            "name": "employment_verified",
+            "dimension_type": "status",
+            "data_type": "STRING",
+            "description": "就业信息验证状态",
+            "reason": "状态字段，用于过滤分析",
+            "confidence": 0.9
+          },
+          {
+            "name": "address_verified",
+            "dimension_type": "status",
+            "data_type": "STRING",
+            "description": "地址验证状态",
+            "reason": "状态字段，用于过滤分析",
+            "confidence": 0.9
+          },
+          {
+            "name": "regulatory_concerns",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "监管关注事项",
+            "reason": "文本属性，虽经TRIM处理，仍为描述维度",
+            "confidence": 0.9
+          },
+          {
+            "name": "assessor_id",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "评估人ID",
+            "reason": "评估者标识，可作为维度属性用于分析",
+            "confidence": 0.9
+          },
+          {
+            "name": "assessment_notes",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "评估备注",
+            "reason": "备注文本，虽然非结构化，但在数据分组中视为属性",
+            "confidence": 0.85
+          }
+        ],
+        "others": [
+          {
+            "name": "created_at",
+            "role": "audit",
+            "data_type": "DATETIME",
+            "description": "记录创建时间（ETL执行时间戳）",
+            "reason": "审计字段，由CURRENT_TIMESTAMP生成，用于记录数据加载时间",
+            "confidence": 1.0
+          }
+        ]
+      },
+      "validation": {
+        "unknown_columns": [],
+        "duplicate_columns": [],
+        "missing_columns": []
+      },
+      "status": "passed",
+      "retry_count": 0,
+      "is_violating_declared_layer": false,
+      "violations": []
+    },
+    {
+      "table_name": "dwd_transactions",
+      "declared_layer": "DWD",
+      "inferred_layer": "DWD",
+      "table_type": "fact",
+      "confidence": 0.95,
+      "reasoning_steps": [
+        "ETL SQL 中无 GROUP BY、SUM、COUNT 等聚合操作，仅做字段清洗、转换和维度退化，保持事务明细粒度，符合 DWD 特征。",
+        "下游被引用次数为 3，说明可被多个下游复用，不属于 ADS（出度为 0）。",
+        "主键 transaction_id 为事务标识，记录每笔交易，属于事实表（事务事实）。",
+        "字段包含大量可度量字段（如 amount、fraud_score 等）和维度字段，无聚合产物，所有度量字段均为直接从源表获取或简单函数转换的原子度量。"
+      ],
+      "columns": {
+        "atomic_metrics": [
+          {
+            "name": "amount",
+            "data_type": "DECIMAL(18,4)",
+            "business_process": "交易",
+            "action": "发生",
+            "measure": "金额",
+            "description": "交易金额（原始值）",
+            "reason": "基础可度量字段，无聚合或复杂计算",
+            "confidence": 1.0
+          },
+          {
+            "name": "amount_abs",
+            "data_type": "DECIMAL(18,4)",
+            "business_process": "交易",
+            "action": "发生",
+            "measure": "金额绝对值",
+            "description": "交易金额的绝对值",
+            "reason": "通过 ABS 函数得到，仍为不可再拆分的基础度量",
+            "confidence": 0.9
+          },
+          {
+            "name": "fraud_score",
+            "data_type": "DECIMAL(18,4)",
+            "business_process": "风控",
+            "action": "评估",
+            "measure": "欺诈分数",
+            "description": "欺诈评分（原始值）",
+            "reason": "直接从上游表获取的原始度量",
+            "confidence": 1.0
+          },
+          {
+            "name": "distance_from_home_km",
+            "data_type": "STRING",
+            "business_process": "交易",
+            "action": "发生",
+            "measure": "距离",
+            "description": "交易地点与家庭住址的距离（千米）",
+            "reason": "原始度量，虽为字符串但表示数值，作为基础度量",
+            "confidence": 0.8
+          },
+          {
+            "name": "merchant_risk_score",
+            "data_type": "DECIMAL(18,4)",
+            "business_process": "风控",
+            "action": "评估",
+            "measure": "商户风险分数",
+            "description": "商户的风险评分",
+            "reason": "直接从上游表获取的原始度量",
+            "confidence": 1.0
+          },
+          {
+            "name": "velocity_24h",
+            "data_type": "BIGINT",
+            "business_process": "交易",
+            "action": "统计",
+            "measure": "24小时交易次数",
+            "description": "过去24小时内该账户的交易频次",
+            "reason": "上游已经计算好的频次度量，仍属于原子指标",
+            "confidence": 0.9
+          },
+          {
+            "name": "amount_deviation_score",
+            "data_type": "DECIMAL(18,4)",
+            "business_process": "风控",
+            "action": "评估",
+            "measure": "金额偏差分数",
+            "description": "交易金额与用户历史平均金额的偏差分数",
+            "reason": "上游已经计算好的派生度量，但鉴于 DWD 层允许直接引入上游加工结果，仍视为原子指标",
+            "confidence": 0.7
+          },
+          {
+            "name": "processing_time_ms",
+            "data_type": "STRING",
+            "business_process": "交易",
+            "action": "记录",
+            "measure": "处理时长",
+            "description": "交易处理耗时（毫秒）",
+            "reason": "原始度量字段",
+            "confidence": 0.9
+          }
+        ],
+        "derived_metrics": [],
+        "calculated_metrics": [],
+        "dimensions": [
+          {
+            "name": "transaction_id",
+            "dimension_type": "primary_key",
+            "data_type": "BIGINT",
+            "description": "交易唯一标识",
+            "reason": "主键，用于唯一确定一笔交易",
+            "confidence": 1.0
+          },
+          {
+            "name": "account_id",
+            "dimension_type": "foreign_key",
+            "data_type": "BIGINT",
+            "description": "账户ID",
+            "reason": "外键，关联账户维度",
+            "confidence": 1.0
+          },
+          {
+            "name": "customer_id",
+            "dimension_type": "foreign_key",
+            "data_type": "BIGINT",
+            "description": "客户ID",
+            "reason": "外键，关联客户维度",
+            "confidence": 1.0
+          },
+          {
+            "name": "merchant_id",
+            "dimension_type": "foreign_key",
+            "data_type": "BIGINT",
+            "description": "商户ID",
+            "reason": "外键，关联商户维度",
+            "confidence": 1.0
+          },
+          {
+            "name": "transaction_date",
+            "dimension_type": "date",
+            "data_type": "DATETIME",
+            "description": "交易发生日期时间",
+            "reason": "时间维度，用于时间序列分析",
+            "confidence": 1.0
+          },
+          {
+            "name": "transaction_year",
+            "dimension_type": "date",
+            "data_type": "BIGINT",
+            "description": "交易年份",
+            "reason": "从 transaction_date 提取的退化维度",
+            "confidence": 1.0
+          },
+          {
+            "name": "transaction_month",
+            "dimension_type": "date",
+            "data_type": "BIGINT",
+            "description": "交易月份",
+            "reason": "从 transaction_date 提取的退化维度",
+            "confidence": 1.0
+          },
+          {
+            "name": "transaction_day",
+            "dimension_type": "date",
+            "data_type": "BIGINT",
+            "description": "交易日",
+            "reason": "从 transaction_date 提取的退化维度",
+            "confidence": 1.0
+          },
+          {
+            "name": "transaction_hour",
+            "dimension_type": "time",
+            "data_type": "BIGINT",
+            "description": "交易小时",
+            "reason": "从 transaction_date 提取的时间维度",
+            "confidence": 1.0
+          },
+          {
+            "name": "day_of_week",
+            "dimension_type": "time",
+            "data_type": "BIGINT",
+            "description": "星期几（0=周日，6=周六）",
+            "reason": "从 transaction_date 推导的日期相关维度",
+            "confidence": 1.0
+          },
+          {
+            "name": "is_weekend",
+            "dimension_type": "attribute",
+            "data_type": "BOOLEAN",
+            "description": "是否周末",
+            "reason": "布尔标志，用于过滤/分组",
+            "confidence": 1.0
+          },
+          {
+            "name": "is_late_night",
+            "dimension_type": "attribute",
+            "data_type": "BOOLEAN",
+            "description": "是否深夜交易（22:00-06:00）",
+            "reason": "布尔标志，用于过滤/分组",
+            "confidence": 1.0
+          },
+          {
+            "name": "transaction_type",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "交易类型（如消费、退款等）",
+            "reason": "业务维度属性",
+            "confidence": 1.0
+          },
+          {
+            "name": "transaction_direction",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "交易方向（Debit/Credit）",
+            "reason": "由 CASE WHEN 生成的枚举维度",
+            "confidence": 1.0
+          },
+          {
+            "name": "currency",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "货币类型",
+            "reason": "业务维度属性",
+            "confidence": 1.0
+          },
+          {
+            "name": "channel",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "交易渠道（如线上、线下）",
+            "reason": "业务维度属性",
+            "confidence": 1.0
+          },
+          {
+            "name": "merchant_category",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "商户类别",
+            "reason": "业务维度属性",
+            "confidence": 1.0
+          },
+          {
+            "name": "mcc_code",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "商户类别代码",
+            "reason": "业务维度属性",
+            "confidence": 1.0
+          },
+          {
+            "name": "description",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "交易描述（已去空格）",
+            "reason": "文本属性",
+            "confidence": 1.0
+          },
+          {
+            "name": "is_fraud",
+            "dimension_type": "attribute",
+            "data_type": "BOOLEAN",
+            "description": "是否欺诈标志",
+            "reason": "业务标志",
+            "confidence": 1.0
+          },
+          {
+            "name": "fraud_risk_category",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "欺诈风险等级（低/中/高）",
+            "reason": "由 CASE WHEN 生成的标签维度",
+            "confidence": 1.0
+          },
+          {
+            "name": "is_high_value",
+            "dimension_type": "attribute",
+            "data_type": "BOOLEAN",
+            "description": "是否大额交易（>10000）",
+            "reason": "基于 amount 的 CASE WHEN 生成的布尔维度",
+            "confidence": 1.0
+          },
+          {
+            "name": "location_city",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "城市",
+            "reason": "地理位置维度",
+            "confidence": 1.0
+          },
+          {
+            "name": "location_state",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "州/省",
+            "reason": "地理位置维度",
+            "confidence": 1.0
+          },
+          {
+            "name": "location_country",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "国家",
+            "reason": "地理位置维度",
+            "confidence": 1.0
+          },
+          {
+            "name": "latitude",
+            "dimension_type": "attribute",
+            "data_type": "DECIMAL(18,4)",
+            "description": "纬度",
+            "reason": "地理坐标，不用于度量计算，属于属性",
+            "confidence": 0.9
+          },
+          {
+            "name": "longitude",
+            "dimension_type": "attribute",
+            "data_type": "DECIMAL(18,4)",
+            "description": "经度",
+            "reason": "地理坐标，属于属性",
+            "confidence": 0.9
+          },
+          {
+            "name": "is_international",
+            "dimension_type": "attribute",
+            "data_type": "BOOLEAN",
+            "description": "是否跨境交易",
+            "reason": "布尔标志",
+            "confidence": 1.0
+          },
+          {
+            "name": "device_id",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "设备ID",
+            "reason": "设备标识属性",
+            "confidence": 1.0
+          },
+          {
+            "name": "ip_address",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "IP地址",
+            "reason": "网络安全属性",
+            "confidence": 1.0
+          },
+          {
+            "name": "authorization_code",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "授权码",
+            "reason": "交易属性",
+            "confidence": 1.0
+          },
+          {
+            "name": "card_last_four",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "卡号后四位",
+            "reason": "掩码卡信息属性",
+            "confidence": 1.0
+          },
+          {
+            "name": "is_recurring",
+            "dimension_type": "attribute",
+            "data_type": "BOOLEAN",
+            "description": "是否定期交易",
+            "reason": "布尔标志",
+            "confidence": 1.0
+          },
+          {
+            "name": "hour_of_day",
+            "dimension_type": "time",
+            "data_type": "BIGINT",
+            "description": "小时（0-23）",
+            "reason": "从 transaction_date 提取的时间维度",
+            "confidence": 1.0
+          },
+          {
+            "name": "weekend_flag",
+            "dimension_type": "attribute",
+            "data_type": "BOOLEAN",
+            "description": "是否周末（与 is_weekend 重复）",
+            "reason": "布尔标志，冗余字段仍为维度",
+            "confidence": 0.8
+          },
+          {
+            "name": "decline_reason",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "拒绝原因",
+            "reason": "状态描述属性",
+            "confidence": 1.0
+          },
+          {
+            "name": "transaction_status",
+            "dimension_type": "status",
+            "data_type": "STRING",
+            "description": "交易状态（Approved/Declined/Fraud）",
+            "reason": "由 CASE WHEN 生成的状态枚举",
+            "confidence": 1.0
+          }
+        ],
+        "others": [
+          {
+            "name": "updated_at",
+            "role": "audit",
+            "data_type": "DATETIME",
+            "description": "记录更新时间",
+            "reason": "元数据审计字段，非业务字段",
+            "confidence": 1.0
+          }
+        ]
+      },
+      "validation": {
+        "unknown_columns": [],
+        "duplicate_columns": [],
+        "missing_columns": []
+      },
+      "status": "passed",
+      "retry_count": 3,
+      "is_violating_declared_layer": false,
+      "violations": []
+    },
+    {
+      "table_name": "dws_account_daily_snapshot",
+      "declared_layer": "DWS",
+      "inferred_layer": "DWS",
+      "table_type": "fact",
+      "confidence": 0.9,
+      "reasoning_steps": [
+        "ETL中包含GROUP BY聚合操作（对dwd_transactions按account_id分组聚合），排除ODS和DWD可能性。",
+        "下游引用次数为0，但表结构包含多个公共汇总指标（如日交易计数、余额等），且距ODS最小跳数为2，符合DWS层特征（汇总层但可能暂时无下游），推断为DWS。",
+        "主键为account_key+snapshot_date_key复合键，非单一实体ID，包含大量可度量字段，属于事实表。"
+      ],
+      "columns": {
+        "atomic_metrics": [
+          {
+            "name": "current_balance",
+            "data_type": "DECIMAL(18,4)",
+            "business_process": "账户余额快照",
+            "action": "持有",
+            "measure": "余额",
+            "description": "当前余额",
+            "reason": "直接来自上游表dwd_accounts，不可再分的基础度量",
+            "confidence": 0.95
+          },
+          {
+            "name": "available_balance",
+            "data_type": "DECIMAL(18,4)",
+            "business_process": "账户余额快照",
+            "action": "可用",
+            "measure": "余额",
+            "description": "可用余额",
+            "reason": "直接来自上游表dwd_accounts，不可再分的基础度量",
+            "confidence": 0.95
+          },
+          {
+            "name": "credit_limit",
+            "data_type": "DECIMAL(18,4)",
+            "business_process": "账户额度管理",
+            "action": "设定",
+            "measure": "信用额度",
+            "description": "信用额度",
+            "reason": "直接来自上游表dwd_accounts，不可再分的基础度量",
+            "confidence": 0.95
+          }
+        ],
+        "derived_metrics": [
+          {
+            "name": "daily_transaction_count",
+            "data_type": "BIGINT",
+            "base_metric": "交易次数",
+            "modifiers": [
+              "按账户"
+            ],
+            "time_period": "每日",
+            "expression": "COUNT(*)，按account_id分组且日期为当前日期",
+            "description": "每日交易总笔数",
+            "reason": "对原子指标交易次数按账户和日期聚合得到的派生指标",
+            "confidence": 0.95
+          },
+          {
+            "name": "daily_transaction_amount",
+            "data_type": "DECIMAL(18,4)",
+            "base_metric": "交易金额",
+            "modifiers": [
+              "按账户"
+            ],
+            "time_period": "每日",
+            "expression": "SUM(amount)，按account_id分组且日期为当前日期",
+            "description": "每日交易总金额",
+            "reason": "对原子指标交易金额按账户和日期聚合得到的派生指标",
+            "confidence": 0.95
+          },
+          {
+            "name": "daily_debit_count",
+            "data_type": "BIGINT",
+            "base_metric": "交易次数",
+            "modifiers": [
+              "按账户",
+              "借方"
+            ],
+            "time_period": "每日",
+            "expression": "SUM(CASE WHEN amount < 0 THEN 1 ELSE 0 END)，按account_id分组且日期为当前日期",
+            "description": "每日借记交易笔数",
+            "reason": "对原子指标交易次数添加借方修饰词后聚合得到的派生指标",
+            "confidence": 0.95
+          },
+          {
+            "name": "daily_credit_count",
+            "data_type": "BIGINT",
+            "base_metric": "交易次数",
+            "modifiers": [
+              "按账户",
+              "贷方"
+            ],
+            "time_period": "每日",
+            "expression": "SUM(CASE WHEN amount > 0 THEN 1 ELSE 0 END)，按account_id分组且日期为当前日期",
+            "description": "每日贷记交易笔数",
+            "reason": "对原子指标交易次数添加贷方修饰词后聚合得到的派生指标",
+            "confidence": 0.95
+          },
+          {
+            "name": "account_count",
+            "data_type": "BIGINT",
+            "base_metric": "账户数量",
+            "modifiers": [],
+            "time_period": "当前快照时间",
+            "expression": "固定值1，用于后续SUM计数",
+            "description": "账户计数标志",
+            "reason": "固定值1，用于汇总时计算账户总数，属派生指标",
+            "confidence": 0.9
+          }
+        ],
+        "calculated_metrics": [
+          {
+            "name": "credit_utilization_pct",
+            "data_type": "DECIMAL(18,4)",
+            "expression": "current_balance / credit_limit * 100 (推测)",
+            "derived_from": [
+              "current_balance",
+              "credit_limit"
+            ],
+            "description": "信用利用率百分比",
+            "reason": "基于两个原子指标通过比率计算得出的衍生指标",
+            "confidence": 0.9
+          }
+        ],
+        "dimensions": [
+          {
+            "name": "account_key",
+            "dimension_type": "primary_key",
+            "data_type": "CHAR(32)",
+            "description": "账户代理键（MD5哈希）",
+            "reason": "主键维度字段，用于唯一标识账户",
+            "confidence": 0.99
+          },
+          {
+            "name": "snapshot_date_key",
+            "dimension_type": "primary_key",
+            "data_type": "CHAR(32)",
+            "description": "快照日期代理键（MD5哈希）",
+            "reason": "主键维度字段，标识快照日期",
+            "confidence": 0.99
+          },
+          {
+            "name": "customer_id",
+            "dimension_type": "foreign_key",
+            "data_type": "BIGINT",
+            "description": "客户业务主键",
+            "reason": "外键维度字段，关联客户实体",
+            "confidence": 0.99
+          },
+          {
+            "name": "customer_key",
+            "dimension_type": "degenerate",
+            "data_type": "CHAR(32)",
+            "description": "客户代理键",
+            "reason": "退化维度，由customer_id哈希生成，用于分析",
+            "confidence": 0.95
+          },
+          {
+            "name": "product_key",
+            "dimension_type": "degenerate",
+            "data_type": "CHAR(32)",
+            "description": "产品代理键",
+            "reason": "退化维度，由product_id哈希生成，用于分析",
+            "confidence": 0.95
+          },
+          {
+            "name": "snapshot_date",
+            "dimension_type": "date",
+            "data_type": "DATETIME",
+            "description": "快照日期",
+            "reason": "日期维度字段，用于时间分析",
+            "confidence": 0.99
+          },
+          {
+            "name": "account_age_months",
+            "dimension_type": "attribute",
+            "data_type": "BIGINT",
+            "description": "账户年龄（月数）",
+            "reason": "账户属性，用于切片过滤，非度量计算",
+            "confidence": 0.85
+          },
+          {
+            "name": "active_account_count",
+            "dimension_type": "status",
+            "data_type": "BIGINT",
+            "description": "活跃账户标志（0/1）",
+            "reason": "由is_active布尔值转化而来的状态标志，非聚合计数",
+            "confidence": 0.9
+          },
+          {
+            "name": "closed_account_count",
+            "dimension_type": "status",
+            "data_type": "BIGINT",
+            "description": "已销户标志（0/1）",
+            "reason": "由is_closed布尔值转化而来的状态标志",
+            "confidence": 0.9
+          },
+          {
+            "name": "dormant_account_count",
+            "dimension_type": "status",
+            "data_type": "BIGINT",
+            "description": "休眠账户标志（0/1）",
+            "reason": "由is_dormant布尔值转化而来的状态标志",
+            "confidence": 0.9
+          },
+          {
+            "name": "past_due_count",
+            "dimension_type": "status",
+            "data_type": "BIGINT",
+            "description": "逾期标志（0/1）",
+            "reason": "由is_past_due布尔值转化而来的状态标志",
+            "confidence": 0.9
+          },
+          {
+            "name": "near_limit_count",
+            "dimension_type": "status",
+            "data_type": "BIGINT",
+            "description": "接近限额标志（0/1）",
+            "reason": "由is_near_limit布尔值转化而来的状态标志",
+            "confidence": 0.9
+          }
+        ],
+        "others": [
+          {
+            "name": "dbt_updated_at",
+            "role": "technical",
+            "data_type": "DATETIME",
+            "description": "dbt更新时间戳",
+            "reason": "技术审计字段，记录数据写入时间",
+            "confidence": 0.99
+          }
+        ]
+      },
+      "validation": {
+        "unknown_columns": [],
+        "duplicate_columns": [],
+        "missing_columns": []
+      },
+      "status": "passed",
+      "retry_count": 0,
+      "is_violating_declared_layer": false,
+      "violations": []
+    },
+    {
+      "table_name": "dws_account_events",
+      "declared_layer": "DWS",
+      "inferred_layer": "DWD",
+      "table_type": "fact",
+      "confidence": 0.9,
+      "reasoning_steps": [
+        "ETL 中无 GROUP BY、SUM、COUNT 等聚合操作，排除了 DWS 和 ODS (ODS 需直接同步) 的可能性。",
+        "下游被引用次数为 0，但该表仍为明细粒度 (每笔事件一行)，并非面向报表的定制化聚合，因此不是 ADS。",
+        "从 dwd_account_events 直接拉取字段并添加代理键、计算字段和分类标签，保持事务明细粒度，符合 DWD 特征。",
+        "主键为代理键 event_key，包含可度量字段 (old_value, new_value, event_count)，因此属于事实表。"
+      ],
+      "columns": {
+        "atomic_metrics": [
+          {
+            "name": "old_value",
+            "data_type": "DECIMAL(18,4)",
+            "business_process": "账户事件",
+            "action": "记录",
+            "measure": "旧值金额",
+            "description": "事件发生前的账户金额",
+            "reason": "单字段金额度量，不可再拆分，属于原子指标。",
+            "confidence": 1.0
+          },
+          {
+            "name": "new_value",
+            "data_type": "DECIMAL(18,4)",
+            "business_process": "账户事件",
+            "action": "记录",
+            "measure": "新值金额",
+            "description": "事件发生后的账户金额",
+            "reason": "单字段金额度量，不可再拆分，属于原子指标。",
+            "confidence": 1.0
+          },
+          {
+            "name": "event_count",
+            "data_type": "BIGINT",
+            "business_process": "账户事件",
+            "action": "计数",
+            "measure": "事件条数",
+            "description": "每条事件计数值为1",
+            "reason": "常数值1，代表事件计数，属于原子指标。",
+            "confidence": 1.0
+          }
+        ],
+        "derived_metrics": [],
+        "calculated_metrics": [
+          {
+            "name": "value_change",
+            "data_type": "DECIMAL(18,4)",
+            "expression": "new_value - old_value",
+            "derived_from": [
+              "old_value",
+              "new_value"
+            ],
+            "description": "事件导致的金额变化",
+            "reason": "基于两个原子指标通过减法计算得出，属于衍生指标。",
+            "confidence": 1.0
+          }
+        ],
+        "dimensions": [
+          {
+            "name": "event_key",
+            "dimension_type": "primary_key",
+            "data_type": "CHAR(32)",
+            "description": "事件代理主键 (MD5)",
+            "reason": "唯一标识每条事件记录，维度主键。",
+            "confidence": 1.0
+          },
+          {
+            "name": "account_key",
+            "dimension_type": "foreign_key",
+            "data_type": "CHAR(32)",
+            "description": "账户外键",
+            "reason": "引用账户维度表的外键。",
+            "confidence": 1.0
+          },
+          {
+            "name": "customer_key",
+            "dimension_type": "foreign_key",
+            "data_type": "CHAR(32)",
+            "description": "客户外键",
+            "reason": "引用客户维度表的外键。",
+            "confidence": 1.0
+          },
+          {
+            "name": "product_key",
+            "dimension_type": "foreign_key",
+            "data_type": "CHAR(32)",
+            "description": "产品外键",
+            "reason": "引用产品维度表的外键。",
+            "confidence": 1.0
+          },
+          {
+            "name": "event_date_key",
+            "dimension_type": "foreign_key",
+            "data_type": "CHAR(32)",
+            "description": "事件日期外键",
+            "reason": "引用日期维度表的外键。",
+            "confidence": 1.0
+          },
+          {
+            "name": "event_id",
+            "dimension_type": "degenerate",
+            "data_type": "BIGINT",
+            "description": "业务事件ID (退化维度)",
+            "reason": "来源于业务系统的唯一ID，用于分析但不在维度表中。",
+            "confidence": 1.0
+          },
+          {
+            "name": "event_date",
+            "dimension_type": "date",
+            "data_type": "DATETIME",
+            "description": "事件发生时间",
+            "reason": "时间维度属性，用于时间范围筛选。",
+            "confidence": 1.0
+          },
+          {
+            "name": "event_type",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "事件类型",
+            "reason": "枚举属性，用于分组和筛选。",
+            "confidence": 1.0
+          },
+          {
+            "name": "event_category",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "事件类别",
+            "reason": "枚举属性，用于分组和筛选。",
+            "confidence": 1.0
+          },
+          {
+            "name": "triggered_by",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "触发方式",
+            "reason": "分析维度，描述事件触发来源。",
+            "confidence": 1.0
+          },
+          {
+            "name": "channel",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "渠道",
+            "reason": "维度属性，用于渠道分析。",
+            "confidence": 1.0
+          },
+          {
+            "name": "processed_by",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "处理人/系统",
+            "reason": "维度属性，用于分析处理方式。",
+            "confidence": 1.0
+          },
+          {
+            "name": "approval_status",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "审批状态",
+            "reason": "枚举维度，用于审批流程分析。",
+            "confidence": 1.0
+          },
+          {
+            "name": "reversible_flag",
+            "dimension_type": "attribute",
+            "data_type": "BOOLEAN",
+            "description": "是否可逆标志",
+            "reason": "布尔标志位，用作维度筛选。",
+            "confidence": 1.0
+          },
+          {
+            "name": "requires_approval_flag",
+            "dimension_type": "attribute",
+            "data_type": "BOOLEAN",
+            "description": "是否需要审批标志",
+            "reason": "布尔标志位，用作维度筛选。",
+            "confidence": 1.0
+          },
+          {
+            "name": "approved_flag",
+            "dimension_type": "attribute",
+            "data_type": "BOOLEAN",
+            "description": "是否已审批通过",
+            "reason": "布尔标志位，用作维度筛选。",
+            "confidence": 1.0
+          },
+          {
+            "name": "pending_flag",
+            "dimension_type": "attribute",
+            "data_type": "BOOLEAN",
+            "description": "是否待审批",
+            "reason": "布尔标志位，用作维度筛选。",
+            "confidence": 1.0
+          },
+          {
+            "name": "rejected_flag",
+            "dimension_type": "attribute",
+            "data_type": "BOOLEAN",
+            "description": "是否已拒绝",
+            "reason": "布尔标志位，用作维度筛选。",
+            "confidence": 1.0
+          },
+          {
+            "name": "event_type_category",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "事件类型分类 (Lifecycle/Financial/Administrative/Other)",
+            "reason": "通过CASE WHEN生成的分类维度，用于分析。",
+            "confidence": 1.0
+          }
+        ],
+        "others": [
+          {
+            "name": "dbt_updated_at",
+            "role": "audit",
+            "data_type": "DATETIME",
+            "description": "dbt记录更新时间戳",
+            "reason": "技术审计字段，不参与业务分析。",
+            "confidence": 1.0
+          }
+        ]
+      },
+      "validation": {
+        "unknown_columns": [],
+        "duplicate_columns": [],
+        "missing_columns": []
+      },
+      "status": "passed",
+      "retry_count": 0,
+      "is_violating_declared_layer": true,
+      "violations": []
+    },
+    {
+      "table_name": "dws_credit_applications",
+      "declared_layer": "DWS",
+      "inferred_layer": "DWD",
+      "table_type": "fact",
+      "confidence": 0.85,
+      "reasoning_steps": [
+        "ETL SQL 不包含 GROUP BY、SUM、COUNT 等聚合操作，仅为简单 SELECT 和字段转换，符合 DWD 明细宽表特征",
+        "下游引用次数为 0，但表内数据为事务级明细，非定制报表，因此不判定为 ADS",
+        "原始配置 DWS 要求包含聚合，实际无聚合，故推断为 DWD"
+      ],
+      "columns": {
+        "atomic_metrics": [
+          {
+            "name": "requested_amount",
+            "data_type": "DECIMAL(18,4)",
+            "business_process": "信贷申请",
+            "action": "请求",
+            "measure": "金额",
+            "description": "客户申请的贷款金额",
+            "reason": "基于业务过程的原始度量，不可拆分",
+            "confidence": 0.95
+          },
+          {
+            "name": "requested_term_months",
+            "data_type": "STRING",
+            "business_process": "信贷申请",
+            "action": "请求",
+            "measure": "期限月数",
+            "description": "申请的贷款期限（月）",
+            "reason": "原始度量字段，虽为字符串但表示数值",
+            "confidence": 0.7
+          },
+          {
+            "name": "credit_score_at_application",
+            "data_type": "DECIMAL(18,4)",
+            "business_process": "信贷申请",
+            "action": "评估",
+            "measure": "信用评分",
+            "description": "申请时的信用评分",
+            "reason": "原始度量字段，不可再分",
+            "confidence": 0.95
+          },
+          {
+            "name": "annual_income",
+            "data_type": "DECIMAL(18,4)",
+            "business_process": "信贷申请",
+            "action": "收入",
+            "measure": "年收入",
+            "description": "申请人的年收入",
+            "reason": "原始度量字段",
+            "confidence": 0.95
+          },
+          {
+            "name": "debt_to_income_ratio",
+            "data_type": "DECIMAL(18,4)",
+            "business_process": "信贷申请",
+            "action": "负债",
+            "measure": "债务收入比",
+            "description": "申请人的债务收入比",
+            "reason": "源表直接提供，为原始度量",
+            "confidence": 0.9
+          },
+          {
+            "name": "employment_length_years",
+            "data_type": "STRING",
+            "business_process": "信贷申请",
+            "action": "就业",
+            "measure": "工作年限",
+            "description": "申请人的工作年限（年）",
+            "reason": "原始度量字段，虽为字符串但表示数值",
+            "confidence": 0.7
+          },
+          {
+            "name": "approved_amount",
+            "data_type": "DECIMAL(18,4)",
+            "business_process": "信贷审批",
+            "action": "审批",
+            "measure": "金额",
+            "description": "最终批准的贷款金额",
+            "reason": "原始度量字段",
+            "confidence": 0.95
+          },
+          {
+            "name": "approved_rate",
+            "data_type": "DECIMAL(18,4)",
+            "business_process": "信贷审批",
+            "action": "审批",
+            "measure": "利率",
+            "description": "批准的贷款利率",
+            "reason": "原始度量字段",
+            "confidence": 0.95
+          },
+          {
+            "name": "approval_probability_score",
+            "data_type": "DECIMAL(18,4)",
+            "business_process": "信贷审批",
+            "action": "预测",
+            "measure": "批准概率",
+            "description": "系统预测的批准概率分数",
+            "reason": "原始度量字段",
+            "confidence": 0.9
+          },
+          {
+            "name": "processing_days",
+            "data_type": "BIGINT",
+            "business_process": "信贷处理",
+            "action": "处理",
+            "measure": "天数",
+            "description": "从申请到决策的处理天数",
+            "reason": "原始度量字段",
+            "confidence": 0.95
+          },
+          {
+            "name": "amount_difference",
+            "data_type": "DECIMAL(18,4)",
+            "business_process": "信贷申请",
+            "action": "差异",
+            "measure": "金额差",
+            "description": "申请金额与批准金额的差值",
+            "reason": "源表直接提供，为原始度量",
+            "confidence": 0.85
+          },
+          {
+            "name": "application_count",
+            "data_type": "BIGINT",
+            "business_process": "信贷申请",
+            "action": "计数",
+            "measure": "申请次数",
+            "description": "每次申请计数为1，用于下游聚合",
+            "reason": "原子度量，每行代表一次申请",
+            "confidence": 0.95
+          }
+        ],
+        "derived_metrics": [],
+        "calculated_metrics": [],
+        "dimensions": [
+          {
+            "name": "application_key",
+            "dimension_type": "primary_key",
+            "data_type": "CHAR(32)",
+            "description": "申请的唯一代理键，由MD5生成",
+            "reason": "作为主键，用于唯一标识每行",
+            "confidence": 1.0
+          },
+          {
+            "name": "customer_key",
+            "dimension_type": "foreign_key",
+            "data_type": "CHAR(32)",
+            "description": "客户维度外键",
+            "reason": "指向客户维度的关联键",
+            "confidence": 1.0
+          },
+          {
+            "name": "product_key",
+            "dimension_type": "foreign_key",
+            "data_type": "CHAR(32)",
+            "description": "产品维度外键",
+            "reason": "指向产品维度的关联键",
+            "confidence": 1.0
+          },
+          {
+            "name": "application_date_key",
+            "dimension_type": "foreign_key",
+            "data_type": "CHAR(32)",
+            "description": "申请日期维度外键",
+            "reason": "指向日期维度的关联键",
+            "confidence": 1.0
+          },
+          {
+            "name": "decision_date_key",
+            "dimension_type": "foreign_key",
+            "data_type": "CHAR(32)",
+            "description": "决策日期维度外键",
+            "reason": "指向日期维度的关联键",
+            "confidence": 1.0
+          },
+          {
+            "name": "application_id",
+            "dimension_type": "degenerate",
+            "data_type": "BIGINT",
+            "description": "申请业务ID",
+            "reason": "业务自然键，作为退化维度用于分析",
+            "confidence": 1.0
+          },
+          {
+            "name": "application_date",
+            "dimension_type": "date",
+            "data_type": "DATETIME",
+            "description": "申请日期",
+            "reason": "时间维度，用于切片和过滤",
+            "confidence": 1.0
+          },
+          {
+            "name": "decision_date",
+            "dimension_type": "date",
+            "data_type": "DATETIME",
+            "description": "决策日期",
+            "reason": "时间维度，用于切片和过滤",
+            "confidence": 1.0
+          },
+          {
+            "name": "decision",
+            "dimension_type": "status",
+            "data_type": "STRING",
+            "description": "申请决策结果（如批准/拒绝）",
+            "reason": "状态字段，用于分组和筛选",
+            "confidence": 1.0
+          },
+          {
+            "name": "application_channel",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "申请渠道（如线上、线下）",
+            "reason": "业务属性，用于分析维度",
+            "confidence": 1.0
+          },
+          {
+            "name": "risk_grade",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "风险等级",
+            "reason": "业务属性，用于分析维度",
+            "confidence": 1.0
+          },
+          {
+            "name": "dti_category",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "债务收入比分类",
+            "reason": "业务属性，用于分析维度",
+            "confidence": 1.0
+          },
+          {
+            "name": "approved_flag",
+            "dimension_type": "attribute",
+            "data_type": "BOOLEAN",
+            "description": "是否批准标志",
+            "reason": "布尔标志，用于过滤和分组",
+            "confidence": 1.0
+          },
+          {
+            "name": "denied_flag",
+            "dimension_type": "attribute",
+            "data_type": "BOOLEAN",
+            "description": "是否拒绝标志",
+            "reason": "布尔标志，用于过滤和分组",
+            "confidence": 1.0
+          }
+        ],
+        "others": [
+          {
+            "name": "dbt_updated_at",
+            "role": "technical",
+            "data_type": "DATETIME",
+            "description": "记录更新时间的技术字段",
+            "reason": "由dbt自动添加的审计字段",
+            "confidence": 1.0
+          }
+        ]
+      },
+      "validation": {
+        "unknown_columns": [],
+        "duplicate_columns": [],
+        "missing_columns": []
+      },
+      "status": "passed",
+      "retry_count": 0,
+      "is_violating_declared_layer": true,
+      "violations": []
+    },
+    {
+      "table_name": "dws_customer_interactions",
+      "declared_layer": "DWS",
+      "inferred_layer": "DWD",
+      "table_type": "fact",
+      "confidence": 0.85,
+      "reasoning_steps": [
+        "ETL逻辑中仅包含SELECT和CASE WHEN等字段转换，无GROUP BY/SUM/COUNT聚合操作，粒度保持明细事务级别，符合DWD特征。",
+        "下游引用次数为0，但表结构简单且无复杂衍生指标，不符合典型ADS特征；原始配置DWS与此矛盾，实际应归属DWD。",
+        "表包含可度量字段（duration_minutes, sentiment_score）和事务事件属性，属于事实表。"
+      ],
+      "columns": {
+        "atomic_metrics": [
+          {
+            "name": "duration_minutes",
+            "data_type": "BIGINT",
+            "business_process": "客户交互",
+            "action": "记录",
+            "measure": "时长",
+            "description": "客户交互持续分钟数",
+            "reason": "不可拆分的基础度量，直接取自源系统",
+            "confidence": 0.9
+          },
+          {
+            "name": "sentiment_score",
+            "data_type": "DECIMAL(18,4)",
+            "business_process": "客户交互",
+            "action": "评估",
+            "measure": "情感得分",
+            "description": "客户情感量化得分",
+            "reason": "基础度量，无聚合或计算",
+            "confidence": 0.9
+          },
+          {
+            "name": "interaction_count",
+            "data_type": "BIGINT",
+            "business_process": "客户交互",
+            "action": "计数",
+            "measure": "交互次数",
+            "description": "每次交互计1，用于下游聚合计数",
+            "reason": "常量1作为基础计数度量",
+            "confidence": 0.8
+          }
+        ],
+        "derived_metrics": [],
+        "calculated_metrics": [],
+        "dimensions": [
+          {
+            "name": "interaction_key",
+            "dimension_type": "primary_key",
+            "data_type": "CHAR(32)",
+            "description": "交互代理主键",
+            "reason": "MD5生成的唯一标识，用于主键",
+            "confidence": 1.0
+          },
+          {
+            "name": "customer_key",
+            "dimension_type": "foreign_key",
+            "data_type": "CHAR(32)",
+            "description": "客户代理键",
+            "reason": "关联客户维度的外键",
+            "confidence": 0.95
+          },
+          {
+            "name": "interaction_date_key",
+            "dimension_type": "foreign_key",
+            "data_type": "CHAR(32)",
+            "description": "交互日期代理键",
+            "reason": "关联日期维度的外键",
+            "confidence": 0.95
+          },
+          {
+            "name": "interaction_id",
+            "dimension_type": "degenerate",
+            "data_type": "BIGINT",
+            "description": "业务系统交互ID",
+            "reason": "保留自原始业务主键，退化维度",
+            "confidence": 0.9
+          },
+          {
+            "name": "interaction_date",
+            "dimension_type": "date",
+            "data_type": "DATETIME",
+            "description": "交互发生日期时间",
+            "reason": "时间维度字段，用于趋势分析",
+            "confidence": 1.0
+          },
+          {
+            "name": "interaction_year",
+            "dimension_type": "date",
+            "data_type": "BIGINT",
+            "description": "交互年份",
+            "reason": "从日期提取的年份维度",
+            "confidence": 0.95
+          },
+          {
+            "name": "interaction_month",
+            "dimension_type": "date",
+            "data_type": "BIGINT",
+            "description": "交互月份",
+            "reason": "从日期提取的月份维度",
+            "confidence": 0.95
+          },
+          {
+            "name": "interaction_type",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "交互类型（电话、邮件等）",
+            "reason": "业务属性，用于分类",
+            "confidence": 0.9
+          },
+          {
+            "name": "reason",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "交互原因",
+            "reason": "业务属性，用于分析原因分布",
+            "confidence": 0.9
+          },
+          {
+            "name": "duration_category",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "时长分类（短/中/长）",
+            "reason": "对时长进行分箱后的属性",
+            "confidence": 0.9
+          },
+          {
+            "name": "sentiment_category",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "情感分类（Positive/Negative/Neutral）",
+            "reason": "情感得分对应的类别标签",
+            "confidence": 0.9
+          },
+          {
+            "name": "issue_severity",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "问题严重等级",
+            "reason": "业务属性，用于过滤",
+            "confidence": 0.9
+          },
+          {
+            "name": "agent_id",
+            "dimension_type": "foreign_key",
+            "data_type": "STRING",
+            "description": "客服人员ID",
+            "reason": "关联员工维度的外键",
+            "confidence": 0.95
+          },
+          {
+            "name": "satisfaction_rating",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "满意度评级（如'满意'/'一般'等）",
+            "reason": "分类属性，非可聚合数值",
+            "confidence": 0.8
+          },
+          {
+            "name": "resolved_flag",
+            "dimension_type": "attribute",
+            "data_type": "BOOLEAN",
+            "description": "是否已解决标志",
+            "reason": "布尔标志，用于过滤与切片",
+            "confidence": 0.95
+          },
+          {
+            "name": "escalated_flag",
+            "dimension_type": "attribute",
+            "data_type": "BOOLEAN",
+            "description": "是否升级标志",
+            "reason": "布尔标志，用于过滤与切片",
+            "confidence": 0.95
+          },
+          {
+            "name": "positive_sentiment_flag",
+            "dimension_type": "attribute",
+            "data_type": "BOOLEAN",
+            "description": "正向情感标志",
+            "reason": "从情感分类派生的布尔维度",
+            "confidence": 0.9
+          },
+          {
+            "name": "negative_sentiment_flag",
+            "dimension_type": "attribute",
+            "data_type": "BOOLEAN",
+            "description": "负向情感标志",
+            "reason": "从情感分类派生的布尔维度",
+            "confidence": 0.9
+          }
+        ],
+        "others": [
+          {
+            "name": "dbt_updated_at",
+            "role": "audit",
+            "data_type": "DATETIME",
+            "description": "dbt记录更新时间",
+            "reason": "ETL审计字段，记录数据加载时间",
+            "confidence": 1.0
+          }
+        ]
+      },
+      "validation": {
+        "unknown_columns": [],
+        "duplicate_columns": [],
+        "missing_columns": []
+      },
+      "status": "passed",
+      "retry_count": 0,
+      "is_violating_declared_layer": true,
+      "violations": []
+    },
+    {
+      "table_name": "dws_customer_monthly_summary",
+      "declared_layer": "DWS",
+      "inferred_layer": "ADS",
+      "table_type": "fact",
+      "confidence": 0.85,
+      "reasoning_steps": [
+        "ETL 中包含 GROUP BY 聚合操作（monthly_transactions 和 monthly_accounts 均有 GROUP BY），因此排除 ODS 和 DWD。",
+        "下游被引用次数为 0，符合 ADS 层‘出度为 0’的特征，且该表为按月汇总客户交易与账户指标，面向最终报表或分析，不再被其他表引用。",
+        "虽然原始配置为 DWS，但 DWS 要求具备被多个下游复用的特征，此处不满足，故推断为 ADS。",
+        "主键为 customer_key + year_month，包含大量可度量字段，属于事实表类型。"
+      ],
+      "columns": {
+        "atomic_metrics": [],
+        "derived_metrics": [
+          {
+            "name": "transaction_count",
+            "data_type": "BIGINT",
+            "base_metric": "交易次数",
+            "modifiers": [
+              "按客户",
+              "按月"
+            ],
+            "time_period": "月",
+            "expression": "COUNT(*) GROUP BY customer_id, year_month",
+            "description": "客户当月交易总笔数",
+            "reason": "由COUNT(*)聚合得到，是原子指标‘交易次数’按客户和月份限定的派生指标",
+            "confidence": 0.95
+          },
+          {
+            "name": "total_transaction_volume",
+            "data_type": "DECIMAL(18,4)",
+            "base_metric": "交易金额",
+            "modifiers": [
+              "按客户",
+              "按月"
+            ],
+            "time_period": "月",
+            "expression": "SUM(amount_abs) GROUP BY customer_id, year_month",
+            "description": "客户当月交易总金额",
+            "reason": "由SUM(amount_abs)聚合得到，是原子指标‘交易金额’的派生",
+            "confidence": 0.95
+          },
+          {
+            "name": "fraud_transaction_count",
+            "data_type": "BIGINT",
+            "base_metric": "欺诈交易次数",
+            "modifiers": [
+              "按客户",
+              "按月"
+            ],
+            "time_period": "月",
+            "expression": "SUM(CASE WHEN is_fraud THEN 1 ELSE 0 END) GROUP BY customer_id, year_month",
+            "description": "客户当月欺诈交易笔数",
+            "reason": "通过条件计数得到，是原子指标‘欺诈交易次数’的派生",
+            "confidence": 0.95
+          },
+          {
+            "name": "fraud_amount",
+            "data_type": "DECIMAL(18,4)",
+            "base_metric": "欺诈交易金额",
+            "modifiers": [
+              "按客户",
+              "按月"
+            ],
+            "time_period": "月",
+            "expression": "SUM(CASE WHEN is_fraud THEN amount_abs ELSE 0 END) GROUP BY customer_id, year_month",
+            "description": "客户当月欺诈交易总金额",
+            "reason": "通过条件求和得到，是原子指标‘欺诈交易金额’的派生",
+            "confidence": 0.95
+          },
+          {
+            "name": "unique_merchants",
+            "data_type": "BIGINT",
+            "base_metric": "商户数",
+            "modifiers": [
+              "按客户",
+              "按月",
+              "去重"
+            ],
+            "time_period": "月",
+            "expression": "COUNT(DISTINCT merchant_id) GROUP BY customer_id, year_month",
+            "description": "客户当月交易的唯一商户数量",
+            "reason": "COUNT(DISTINCT)聚合，是原子指标‘商户数’的派生",
+            "confidence": 0.9
+          },
+          {
+            "name": "unique_categories",
+            "data_type": "BIGINT",
+            "base_metric": "商户类别数",
+            "modifiers": [
+              "按客户",
+              "按月",
+              "去重"
+            ],
+            "time_period": "月",
+            "expression": "COUNT(DISTINCT merchant_category) GROUP BY customer_id, year_month",
+            "description": "客户当月交易的唯一商户类别数量",
+            "reason": "COUNT(DISTINCT)聚合，是原子指标‘商户类别数’的派生",
+            "confidence": 0.9
+          },
+          {
+            "name": "international_transaction_count",
+            "data_type": "BIGINT",
+            "base_metric": "国际交易次数",
+            "modifiers": [
+              "按客户",
+              "按月"
+            ],
+            "time_period": "月",
+            "expression": "SUM(CASE WHEN is_international THEN 1 ELSE 0 END) GROUP BY customer_id, year_month",
+            "description": "客户当月国际交易笔数",
+            "reason": "通过条件计数得到，是原子指标‘国际交易次数’的派生",
+            "confidence": 0.95
+          },
+          {
+            "name": "active_account_count",
+            "data_type": "BIGINT",
+            "base_metric": "活跃账户数",
+            "modifiers": [
+              "按客户",
+              "按月"
+            ],
+            "time_period": "月",
+            "expression": "COUNT(*) WHERE is_active = TRUE GROUP BY customer_id",
+            "description": "客户当月活跃账户数量",
+            "reason": "COUNT(*)加条件过滤聚合，是原子指标‘活跃账户数’的派生",
+            "confidence": 0.95
+          },
+          {
+            "name": "total_balance",
+            "data_type": "DECIMAL(18,4)",
+            "base_metric": "账户余额",
+            "modifiers": [
+              "按客户",
+              "按月"
+            ],
+            "time_period": "月",
+            "expression": "SUM(current_balance) WHERE is_active = TRUE GROUP BY customer_id",
+            "description": "客户当月所有活跃账户的总余额",
+            "reason": "SUM(current_balance)加条件过滤聚合，是原子指标‘账户余额’的派生",
+            "confidence": 0.95
+          },
+          {
+            "name": "past_due_account_count",
+            "data_type": "BIGINT",
+            "base_metric": "逾期账户数",
+            "modifiers": [
+              "按客户",
+              "按月"
+            ],
+            "time_period": "月",
+            "expression": "SUM(CASE WHEN is_past_due THEN 1 ELSE 0 END) WHERE is_active = TRUE GROUP BY customer_id",
+            "description": "客户当月逾期账户数量",
+            "reason": "通过条件计数聚合，是原子指标‘逾期账户数’的派生",
+            "confidence": 0.95
+          },
+          {
+            "name": "customer_count",
+            "data_type": "BIGINT",
+            "base_metric": "客户数",
+            "modifiers": [],
+            "time_period": "月",
+            "expression": "1 (常量用于后续SUM聚合)",
+            "description": "客户计数常量1，用于汇总时得到客户数",
+            "reason": "常量1本身不是聚合结果，但作为派生指标用于下游聚合客户数量",
+            "confidence": 0.8
+          }
+        ],
+        "calculated_metrics": [
+          {
+            "name": "avg_transaction_amount",
+            "data_type": "DECIMAL(18,4)",
+            "expression": "AVG(amount_abs) 等价于 SUM(amount_abs)/COUNT(*)",
+            "derived_from": [
+              "total_transaction_volume",
+              "transaction_count"
+            ],
+            "description": "客户当月平均交易金额",
+            "reason": "由交易总金额除以交易笔数计算得到，属于衍生指标",
+            "confidence": 0.95
+          },
+          {
+            "name": "avg_balance",
+            "data_type": "DECIMAL(18,4)",
+            "expression": "AVG(current_balance) 等价于 SUM(current_balance)/COUNT(*)",
+            "derived_from": [
+              "total_balance",
+              "active_account_count"
+            ],
+            "description": "客户当月平均账户余额",
+            "reason": "由总余额除以活跃账户数计算得到，属于衍生指标",
+            "confidence": 0.95
+          },
+          {
+            "name": "fraud_rate_pct",
+            "data_type": "DECIMAL(18,4)",
+            "expression": "CASE WHEN transaction_count > 0 THEN ROUND(fraud_transaction_count / transaction_count * 100, 2) ELSE 0 END",
+            "derived_from": [
+              "fraud_transaction_count",
+              "transaction_count"
+            ],
+            "description": "客户当月欺诈交易占比（百分比）",
+            "reason": "由欺诈交易数除以总交易数乘以100得到，属于衍生指标（比率）",
+            "confidence": 0.95
+          }
+        ],
+        "dimensions": [
+          {
+            "name": "customer_key",
+            "dimension_type": "degenerate",
+            "data_type": "CHAR(32)",
+            "description": "客户唯一标识（哈希键）",
+            "reason": "用于分组和关联客户维度，属于退化维度",
+            "confidence": 0.9
+          },
+          {
+            "name": "year_month",
+            "dimension_type": "date",
+            "data_type": "STRING",
+            "description": "年月，如2024-01",
+            "reason": "时间维度，用于按月份切片分析",
+            "confidence": 1.0
+          }
+        ],
+        "others": [
+          {
+            "name": "dbt_updated_at",
+            "role": "audit",
+            "data_type": "DATETIME",
+            "description": "dbt模型更新时间戳",
+            "reason": "技术审计字段，非业务度量或维度",
+            "confidence": 1.0
+          }
+        ]
+      },
+      "validation": {
+        "unknown_columns": [],
+        "duplicate_columns": [],
+        "missing_columns": []
+      },
+      "status": "passed",
+      "retry_count": 0,
+      "is_violating_declared_layer": true,
+      "violations": []
+    },
+    {
+      "table_name": "dws_customer_segment_history",
+      "declared_layer": "DWS",
+      "inferred_layer": "DWD",
+      "table_type": "fact",
+      "confidence": 0.85,
+      "reasoning_steps": [
+        "ETL SQL 中无 GROUP BY 或聚合函数，仅为 SELECT 和 CASE WHEN 等表达式，保持明细粒度，符合 DWD 特征。",
+        "下游引用次数为 0，但距 ODS 最小跳数为 2，且表名包含 'history' 记录变更明细，通常 DWD 层也可能被下游引用为 0 的中间表。",
+        "主键 segment_history_key 为 MD5 生成，非实体主键，记录客户细分变更事件，包含大量可度量字段，属于事务事实表。",
+        "原始配置为 DWS 但实际无聚合，推测配置有误，应归为 DWD。"
+      ],
+      "columns": {
+        "atomic_metrics": [
+          {
+            "name": "total_accounts",
+            "data_type": "BIGINT",
+            "business_process": "customer_segment_history",
+            "action": "count",
+            "measure": "accounts",
+            "description": "客户在细分变更时的账户总数",
+            "reason": "直接取自上游明细，不可再拆分的原子度量，表示账户数量。",
+            "confidence": 0.9
+          },
+          {
+            "name": "total_balance",
+            "data_type": "DECIMAL(18,4)",
+            "business_process": "customer_segment_history",
+            "action": "sum",
+            "measure": "balance",
+            "description": "客户在细分变更时的总余额",
+            "reason": "直接取自上游明细，不可再拆分的金额度量。",
+            "confidence": 0.9
+          },
+          {
+            "name": "avg_monthly_transactions",
+            "data_type": "STRING",
+            "business_process": "customer_segment_history",
+            "action": "average",
+            "measure": "monthly_transactions",
+            "description": "客户月均交易次数（字符串）",
+            "reason": "直接取自上游，度量值，虽含平均但本层无聚合，视为原子字段。",
+            "confidence": 0.6
+          },
+          {
+            "name": "products_held",
+            "data_type": "BIGINT",
+            "business_process": "customer_segment_history",
+            "action": "count",
+            "measure": "products",
+            "description": "客户持有的产品数量",
+            "reason": "直接取自上游明细，原子度量。",
+            "confidence": 0.9
+          },
+          {
+            "name": "customer_lifetime_value",
+            "data_type": "DECIMAL(18,4)",
+            "business_process": "customer_segment_history",
+            "action": "value",
+            "measure": "lifetime_value",
+            "description": "客户生命周期价值",
+            "reason": "直接取自上游，原子度量。",
+            "confidence": 0.9
+          },
+          {
+            "name": "tenure_days",
+            "data_type": "BIGINT",
+            "business_process": "customer_segment_history",
+            "action": "duration",
+            "measure": "tenure_days",
+            "description": "客户在变更时的在册天数",
+            "reason": "直接取自上游，原子度量。",
+            "confidence": 0.8
+          },
+          {
+            "name": "credit_score",
+            "data_type": "DECIMAL(18,4)",
+            "business_process": "customer_segment_history",
+            "action": "score",
+            "measure": "credit_score",
+            "description": "客户信用评分",
+            "reason": "直接取自上游，原子度量。",
+            "confidence": 0.9
+          },
+          {
+            "name": "annual_income",
+            "data_type": "DECIMAL(18,4)",
+            "business_process": "customer_segment_history",
+            "action": "income",
+            "measure": "annual_income",
+            "description": "客户年收入",
+            "reason": "直接取自上游，原子度量。",
+            "confidence": 0.9
+          },
+          {
+            "name": "last_interaction_days",
+            "data_type": "STRING",
+            "business_process": "customer_segment_history",
+            "action": "days_since",
+            "measure": "last_interaction",
+            "description": "距离上次交互的天数（字符串）",
+            "reason": "直接取自上游，表示时间间隔的度量。",
+            "confidence": 0.7
+          },
+          {
+            "name": "digital_engagement_score",
+            "data_type": "DECIMAL(18,4)",
+            "business_process": "customer_segment_history",
+            "action": "score",
+            "measure": "digital_engagement",
+            "description": "数字参与度评分",
+            "reason": "直接取自上游，原子度量。",
+            "confidence": 0.9
+          },
+          {
+            "name": "branch_visits_last_90d",
+            "data_type": "BIGINT",
+            "business_process": "customer_segment_history",
+            "action": "count",
+            "measure": "branch_visits",
+            "description": "过去90天网点访问次数",
+            "reason": "直接取自上游，原子度量。",
+            "confidence": 0.9
+          },
+          {
+            "name": "online_logins_last_90d",
+            "data_type": "BIGINT",
+            "business_process": "customer_segment_history",
+            "action": "count",
+            "measure": "online_logins",
+            "description": "过去90天在线登录次数",
+            "reason": "直接取自上游，原子度量。",
+            "confidence": 0.9
+          }
+        ],
+        "derived_metrics": [],
+        "calculated_metrics": [
+          {
+            "name": "segment_changed_flag",
+            "data_type": "BOOLEAN",
+            "expression": "CASE WHEN customer_segment != previous_segment THEN 1 ELSE 0 END",
+            "derived_from": [
+              "customer_segment",
+              "previous_segment"
+            ],
+            "description": "细分是否发生变化的标志",
+            "reason": "基于两个字段比较生成的布尔标志，属于衍生计算。",
+            "confidence": 1.0
+          },
+          {
+            "name": "tier_changed_flag",
+            "data_type": "BOOLEAN",
+            "expression": "CASE WHEN loyalty_tier != previous_tier THEN 1 ELSE 0 END",
+            "derived_from": [
+              "loyalty_tier",
+              "previous_tier"
+            ],
+            "description": "忠诚度等级是否变化标志",
+            "reason": "基于比较生成的衍生指标。",
+            "confidence": 1.0
+          },
+          {
+            "name": "risk_changed_flag",
+            "data_type": "BOOLEAN",
+            "expression": "CASE WHEN risk_segment != previous_risk THEN 1 ELSE 0 END",
+            "derived_from": [
+              "risk_segment",
+              "previous_risk"
+            ],
+            "description": "风险等级是否变化标志",
+            "reason": "基于比较生成的衍生指标。",
+            "confidence": 1.0
+          },
+          {
+            "name": "tier_movement",
+            "data_type": "STRING",
+            "expression": "CASE WHEN loyalty_tier > previous_tier THEN 'Upgrade' WHEN loyalty_tier < previous_tier THEN 'Downgrade' ELSE 'No Change' END",
+            "derived_from": [
+              "loyalty_tier",
+              "previous_tier"
+            ],
+            "description": "等级移动方向（升级/降级/无变化）",
+            "reason": "基于比较的衍生分类字段。",
+            "confidence": 1.0
+          },
+          {
+            "name": "premium_eligible_flag",
+            "data_type": "BOOLEAN",
+            "expression": "CASE WHEN eligible_for_premium THEN 1 ELSE 0 END",
+            "derived_from": [
+              "eligible_for_premium"
+            ],
+            "description": "是否符合优质客户资格标志",
+            "reason": "布尔转换衍生。",
+            "confidence": 0.9
+          },
+          {
+            "name": "churn_risk_flag",
+            "data_type": "BOOLEAN",
+            "expression": "CASE WHEN churn_risk IN ('High', 'Medium') THEN 1 ELSE 0 END",
+            "derived_from": [
+              "churn_risk"
+            ],
+            "description": "高/中流失风险标志",
+            "reason": "基于规则分类的衍生标志。",
+            "confidence": 0.9
+          },
+          {
+            "name": "cross_sell_opportunity_flag",
+            "data_type": "BOOLEAN",
+            "expression": "CASE WHEN cross_sell_opportunity THEN 1 ELSE 0 END",
+            "derived_from": [
+              "cross_sell_opportunity"
+            ],
+            "description": "交叉销售机会标志",
+            "reason": "布尔转换衍生。",
+            "confidence": 0.9
+          },
+          {
+            "name": "days_in_segment",
+            "data_type": "STRING",
+            "expression": "CASE WHEN is_current THEN DATEDIFF(CURRENT_DATE, effective_date) ELSE DATEDIFF(end_date, effective_date) END",
+            "derived_from": [
+              "is_current",
+              "effective_date",
+              "end_date"
+            ],
+            "description": "客户在当前细分的停留天数",
+            "reason": "基于日期差计算的衍生指标。",
+            "confidence": 1.0
+          },
+          {
+            "name": "segment_change_count",
+            "data_type": "BIGINT",
+            "expression": "1",
+            "derived_from": [],
+            "description": "固定值1，表示一次变更计数",
+            "reason": "常量赋值，用于计数，属于衍生。",
+            "confidence": 0.8
+          }
+        ],
+        "dimensions": [
+          {
+            "name": "segment_history_key",
+            "dimension_type": "primary_key",
+            "data_type": "CHAR(32)",
+            "description": "主键，由MD5生成的唯一标识",
+            "reason": "用于唯一标识每条历史记录，是主键。",
+            "confidence": 1.0
+          },
+          {
+            "name": "customer_key",
+            "dimension_type": "foreign_key",
+            "data_type": "CHAR(32)",
+            "description": "客户维表外键",
+            "reason": "关联客户维度的MD5键。",
+            "confidence": 0.9
+          },
+          {
+            "name": "effective_date_key",
+            "dimension_type": "date",
+            "data_type": "CHAR(32)",
+            "description": "生效日期维表外键",
+            "reason": "MD5生成的日期键，用于关联日期维。",
+            "confidence": 0.9
+          },
+          {
+            "name": "end_date_key",
+            "dimension_type": "date",
+            "data_type": "CHAR(32)",
+            "description": "结束日期维表外键",
+            "reason": "MD5生成的日期键。",
+            "confidence": 0.9
+          },
+          {
+            "name": "segment_history_id",
+            "dimension_type": "degenerate",
+            "data_type": "BIGINT",
+            "description": "原始细分历史ID，退化维度",
+            "reason": "来自上游的原始业务标识，无维表关联，属于退化维度。",
+            "confidence": 0.9
+          },
+          {
+            "name": "effective_date",
+            "dimension_type": "date",
+            "data_type": "DATETIME",
+            "description": "生效日期时间",
+            "reason": "业务日期属性，用于分析时间范围。",
+            "confidence": 0.9
+          },
+          {
+            "name": "end_date",
+            "dimension_type": "date",
+            "data_type": "DATETIME",
+            "description": "结束日期时间",
+            "reason": "业务日期属性。",
+            "confidence": 0.9
+          },
+          {
+            "name": "is_current",
+            "dimension_type": "status",
+            "data_type": "BOOLEAN",
+            "description": "是否为当前有效记录标志",
+            "reason": "标识记录状态的布尔字段，用于过滤。",
+            "confidence": 0.9
+          },
+          {
+            "name": "customer_segment",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "客户当前细分名称",
+            "reason": "描述客户分类的文本属性。",
+            "confidence": 0.9
+          },
+          {
+            "name": "previous_segment",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "客户上一个细分名称",
+            "reason": "历史属性，用于对比分析。",
+            "confidence": 0.9
+          },
+          {
+            "name": "loyalty_tier",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "忠诚度等级",
+            "reason": "客户等级属性。",
+            "confidence": 0.9
+          },
+          {
+            "name": "previous_tier",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "上一个忠诚度等级",
+            "reason": "历史等级属性。",
+            "confidence": 0.9
+          },
+          {
+            "name": "risk_segment",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "风险细分",
+            "reason": "风险分类属性。",
+            "confidence": 0.9
+          },
+          {
+            "name": "previous_risk",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "上一个风险细分",
+            "reason": "历史风险属性。",
+            "confidence": 0.9
+          },
+          {
+            "name": "change_type",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "变更类型（如手动/自动）",
+            "reason": "描述变更触发类型的属性。",
+            "confidence": 0.8
+          },
+          {
+            "name": "change_reason",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "变更原因说明",
+            "reason": "文本属性，用于分析原因。",
+            "confidence": 0.8
+          },
+          {
+            "name": "triggered_by",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "触发变更的事件或系统",
+            "reason": "描述触发源的属性。",
+            "confidence": 0.8
+          }
+        ],
+        "others": [
+          {
+            "name": "dbt_updated_at",
+            "role": "audit",
+            "data_type": "DATETIME",
+            "description": "dbt更新时间戳",
+            "reason": "技术审计字段，记录ETL更新时间。",
+            "confidence": 1.0
+          }
+        ]
+      },
+      "validation": {
+        "unknown_columns": [],
+        "duplicate_columns": [],
+        "missing_columns": []
+      },
+      "status": "passed",
+      "retry_count": 2,
+      "is_violating_declared_layer": true,
+      "violations": []
+    },
+    {
+      "table_name": "dws_fraud_alerts",
+      "declared_layer": "DWS",
+      "inferred_layer": "DWD",
+      "table_type": "fact",
+      "confidence": 0.9,
+      "reasoning_steps": [
+        "分析ETL_SQL：未包含GROUP BY、SUM、COUNT等聚合操作，仅涉及字段选择、哈希生成、常量赋值（alert_count=1）和布尔转换，不符合DWS的聚合特征，故排除DWS；且直接来源于DWD明细表，无聚合，应归属于DWD层。",
+        "下游引用次数为0，但表内容仍为明细粒度，未体现ADS的定制化衍生指标特征，且源为DWD，更接近DWD宽表。",
+        "表主键为MD5生成的代理键，描述欺诈告警业务事件，包含可度量字段（金额、天数、计数），属于事实表。",
+        "按字段语义分组：金额、天数、计数为原子指标；各类键、日期、状态、标志为维度字段；更新时间审计为其他字段。"
+      ],
+      "columns": {
+        "atomic_metrics": [
+          {
+            "name": "amount_recovered",
+            "data_type": "DECIMAL(18,4)",
+            "business_process": "欺诈告警",
+            "action": "回收",
+            "measure": "金额",
+            "description": "回收金额",
+            "reason": "可直接度量的金额字段，无聚合或二次计算，属于原子指标",
+            "confidence": 0.95
+          },
+          {
+            "name": "resolution_days",
+            "data_type": "BIGINT",
+            "business_process": "欺诈告警",
+            "action": "解决",
+            "measure": "天数",
+            "description": "解决天数",
+            "reason": "可直接度量的天数，无聚合或衍生计算，属于原子指标",
+            "confidence": 0.95
+          },
+          {
+            "name": "alert_count",
+            "data_type": "BIGINT",
+            "business_process": "欺诈告警",
+            "action": "告警",
+            "measure": "次数",
+            "description": "告警计数（固定值1）",
+            "reason": "常量1作为计数度量，无聚合，属于原子指标",
+            "confidence": 0.9
+          }
+        ],
+        "derived_metrics": [],
+        "calculated_metrics": [],
+        "dimensions": [
+          {
+            "name": "alert_key",
+            "dimension_type": "primary_key",
+            "data_type": "CHAR(32)",
+            "description": "告警代理键（MD5哈希）",
+            "reason": "主键，用于唯一标识，属于维度字段",
+            "confidence": 0.99
+          },
+          {
+            "name": "transaction_key",
+            "dimension_type": "foreign_key",
+            "data_type": "CHAR(32)",
+            "description": "交易外键（MD5哈希）",
+            "reason": "关联交易表的外键，属于维度字段",
+            "confidence": 0.99
+          },
+          {
+            "name": "customer_key",
+            "dimension_type": "foreign_key",
+            "data_type": "CHAR(32)",
+            "description": "客户外键（MD5哈希）",
+            "reason": "关联客户表的外键，属于维度字段",
+            "confidence": 0.99
+          },
+          {
+            "name": "account_key",
+            "dimension_type": "foreign_key",
+            "data_type": "CHAR(32)",
+            "description": "账户外键（MD5哈希）",
+            "reason": "关联账户表的外键，属于维度字段",
+            "confidence": 0.99
+          },
+          {
+            "name": "alert_date_key",
+            "dimension_type": "foreign_key",
+            "data_type": "CHAR(32)",
+            "description": "告警日期外键（MD5哈希）",
+            "reason": "关联日期表的外键，属于维度字段",
+            "confidence": 0.99
+          },
+          {
+            "name": "resolution_date_key",
+            "dimension_type": "foreign_key",
+            "data_type": "CHAR(32)",
+            "description": "解决日期外键（MD5哈希）",
+            "reason": "关联日期表的外键，属于维度字段",
+            "confidence": 0.99
+          },
+          {
+            "name": "alert_id",
+            "dimension_type": "degenerate",
+            "data_type": "BIGINT",
+            "description": "告警自然ID",
+            "reason": "原始业务标识，退化维度，用于分析",
+            "confidence": 0.95
+          },
+          {
+            "name": "alert_date",
+            "dimension_type": "date",
+            "data_type": "DATETIME",
+            "description": "告警日期时间",
+            "reason": "时间维度字段，用于切片过滤",
+            "confidence": 0.99
+          },
+          {
+            "name": "alert_type",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "告警类型",
+            "reason": "属性维度，用于分组筛选",
+            "confidence": 0.99
+          },
+          {
+            "name": "alert_severity",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "告警严重程度",
+            "reason": "属性维度，用于分组筛选",
+            "confidence": 0.99
+          },
+          {
+            "name": "investigation_status",
+            "dimension_type": "status",
+            "data_type": "STRING",
+            "description": "调查状态",
+            "reason": "状态维度，用于过滤",
+            "confidence": 0.99
+          },
+          {
+            "name": "resolution_date",
+            "dimension_type": "date",
+            "data_type": "DATETIME",
+            "description": "解决日期时间",
+            "reason": "时间维度字段，用于切片过滤",
+            "confidence": 0.99
+          },
+          {
+            "name": "assigned_to",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "负责人",
+            "reason": "属性维度，用于分组",
+            "confidence": 0.99
+          },
+          {
+            "name": "resolved_flag",
+            "dimension_type": "status",
+            "data_type": "BOOLEAN",
+            "description": "是否已解决标志",
+            "reason": "布尔标志，用于过滤分析，属于维度字段",
+            "confidence": 0.99
+          },
+          {
+            "name": "confirmed_fraud_flag",
+            "dimension_type": "status",
+            "data_type": "BOOLEAN",
+            "description": "已确认为欺诈标志",
+            "reason": "布尔标志，用于过滤分析，属于维度字段",
+            "confidence": 0.99
+          },
+          {
+            "name": "false_positive_flag",
+            "dimension_type": "status",
+            "data_type": "BOOLEAN",
+            "description": "误报标志",
+            "reason": "布尔标志，用于过滤分析，属于维度字段",
+            "confidence": 0.99
+          }
+        ],
+        "others": [
+          {
+            "name": "dbt_updated_at",
+            "role": "audit",
+            "data_type": "DATETIME",
+            "description": "dbt更新时间戳",
+            "reason": "审计技术字段，不参与业务分析",
+            "confidence": 0.99
+          }
+        ]
+      },
+      "validation": {
+        "unknown_columns": [],
+        "duplicate_columns": [],
+        "missing_columns": []
+      },
+      "status": "passed",
+      "retry_count": 0,
+      "is_violating_declared_layer": true,
+      "violations": []
+    },
+    {
+      "table_name": "dws_loan_payments",
+      "declared_layer": "DWS",
+      "inferred_layer": "ADS",
+      "table_type": "fact",
+      "confidence": 0.85,
+      "reasoning_steps": [
+        "ETL SQL 中无 GROUP BY/SUM/COUNT 等聚合操作，排除 DWS 和 ODS。",
+        "下游被引用次数为 0，表明该表不被下游复用，符合 ADS 特征。",
+        "表存储贷款支付事件记录，包含可度量字段和维度字段，主键 payment_key 由 MD5 生成，属于事实表。",
+        "原始配置为 DWS 但实际无聚合，且距 ODS 最小跳数为 2，推测为 ADS 层定制明细或轻度汇总表。"
+      ],
+      "columns": {
+        "atomic_metrics": [
+          {
+            "name": "scheduled_amount",
+            "data_type": "DECIMAL(18,4)",
+            "business_process": "贷款支付",
+            "action": "计划",
+            "measure": "金额",
+            "description": "计划支付金额",
+            "reason": "不可拆分的业务度量，无聚合或计算",
+            "confidence": 1.0
+          },
+          {
+            "name": "actual_amount",
+            "data_type": "DECIMAL(18,4)",
+            "business_process": "贷款支付",
+            "action": "实际",
+            "measure": "金额",
+            "description": "实际支付金额",
+            "reason": "不可拆分的业务度量，无聚合或计算",
+            "confidence": 1.0
+          },
+          {
+            "name": "late_fee",
+            "data_type": "DECIMAL(18,4)",
+            "business_process": "贷款支付",
+            "action": "收取",
+            "measure": "滞纳金",
+            "description": "滞纳金金额",
+            "reason": "不可拆分的业务度量",
+            "confidence": 1.0
+          },
+          {
+            "name": "outstanding_balance",
+            "data_type": "DECIMAL(18,4)",
+            "business_process": "贷款还款",
+            "action": "剩余",
+            "measure": "余额",
+            "description": "未结清余额",
+            "reason": "不可拆分的业务度量",
+            "confidence": 1.0
+          },
+          {
+            "name": "days_late",
+            "data_type": "BIGINT",
+            "business_process": "贷款支付",
+            "action": "逾期",
+            "measure": "天数",
+            "description": "逾期天数",
+            "reason": "不可拆分的业务度量",
+            "confidence": 1.0
+          },
+          {
+            "name": "payment_count",
+            "data_type": "BIGINT",
+            "business_process": "贷款支付",
+            "action": "计数",
+            "measure": "次数",
+            "description": "支付次数（常量1）",
+            "reason": "基础计数度量，每行固定为1",
+            "confidence": 0.9
+          }
+        ],
+        "derived_metrics": [],
+        "calculated_metrics": [
+          {
+            "name": "amount_difference",
+            "data_type": "DECIMAL(18,4)",
+            "expression": "scheduled_amount - actual_amount",
+            "derived_from": [
+              "scheduled_amount",
+              "actual_amount"
+            ],
+            "description": "计划与实际金额差值",
+            "reason": "由两个原子指标计算得出的衍生指标",
+            "confidence": 0.95
+          }
+        ],
+        "dimensions": [
+          {
+            "name": "payment_key",
+            "dimension_type": "primary_key",
+            "data_type": "CHAR(32)",
+            "description": "支付记录主键（MD5哈希）",
+            "reason": "唯一标识每笔支付，为代理主键",
+            "confidence": 1.0
+          },
+          {
+            "name": "account_key",
+            "dimension_type": "foreign_key",
+            "data_type": "CHAR(32)",
+            "description": "账户维度外键",
+            "reason": "关联账户维度表",
+            "confidence": 1.0
+          },
+          {
+            "name": "customer_key",
+            "dimension_type": "foreign_key",
+            "data_type": "CHAR(32)",
+            "description": "客户维度外键",
+            "reason": "关联客户维度表",
+            "confidence": 1.0
+          },
+          {
+            "name": "scheduled_date_key",
+            "dimension_type": "foreign_key",
+            "data_type": "CHAR(32)",
+            "description": "计划日期维度外键",
+            "reason": "关联日期维度表",
+            "confidence": 1.0
+          },
+          {
+            "name": "actual_date_key",
+            "dimension_type": "foreign_key",
+            "data_type": "CHAR(32)",
+            "description": "实际日期维度外键",
+            "reason": "关联日期维度表",
+            "confidence": 1.0
+          },
+          {
+            "name": "payment_id",
+            "dimension_type": "degenerate",
+            "data_type": "BIGINT",
+            "description": "原始支付业务ID",
+            "reason": "退化维度，保留原始业务标识",
+            "confidence": 1.0
+          },
+          {
+            "name": "scheduled_date",
+            "dimension_type": "date",
+            "data_type": "DATETIME",
+            "description": "计划支付日期",
+            "reason": "用于时间切片过滤",
+            "confidence": 1.0
+          },
+          {
+            "name": "actual_date",
+            "dimension_type": "date",
+            "data_type": "DATETIME",
+            "description": "实际支付日期",
+            "reason": "用于时间切片过滤",
+            "confidence": 1.0
+          },
+          {
+            "name": "payment_status",
+            "dimension_type": "status",
+            "data_type": "STRING",
+            "description": "支付状态",
+            "reason": "用于分组和筛选",
+            "confidence": 1.0
+          },
+          {
+            "name": "payment_method",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "支付方式",
+            "reason": "业务属性，用于切片",
+            "confidence": 1.0
+          },
+          {
+            "name": "payment_completeness",
+            "dimension_type": "status",
+            "data_type": "STRING",
+            "description": "支付完成度（Full/Partial等）",
+            "reason": "用于分组和筛选",
+            "confidence": 1.0
+          },
+          {
+            "name": "delinquency_bucket",
+            "dimension_type": "status",
+            "data_type": "STRING",
+            "description": "逾期分桶",
+            "reason": "用于风险分组",
+            "confidence": 1.0
+          },
+          {
+            "name": "late_payment_flag",
+            "dimension_type": "attribute",
+            "data_type": "BOOLEAN",
+            "description": "是否逾期标志",
+            "reason": "布尔标志，用于切片过滤，由CASE WHEN生成",
+            "confidence": 0.95
+          },
+          {
+            "name": "missed_payment_flag",
+            "dimension_type": "attribute",
+            "data_type": "BOOLEAN",
+            "description": "是否错过支付标志",
+            "reason": "布尔标志，用于切片过滤",
+            "confidence": 0.95
+          },
+          {
+            "name": "full_payment_flag",
+            "dimension_type": "attribute",
+            "data_type": "BOOLEAN",
+            "description": "是否全额支付标志",
+            "reason": "布尔标志，用于切片过滤",
+            "confidence": 0.95
+          }
+        ],
+        "others": [
+          {
+            "name": "dbt_updated_at",
+            "role": "audit",
+            "data_type": "DATETIME",
+            "description": "dbt更新时间戳",
+            "reason": "ETL审计技术字段",
+            "confidence": 1.0
+          }
+        ]
+      },
+      "validation": {
+        "unknown_columns": [],
+        "duplicate_columns": [],
+        "missing_columns": []
+      },
+      "status": "passed",
+      "retry_count": 0,
+      "is_violating_declared_layer": true,
+      "violations": []
+    },
+    {
+      "table_name": "dws_marketing_campaigns",
+      "declared_layer": "DWS",
+      "inferred_layer": "DWD",
+      "table_type": "fact",
+      "confidence": 0.95,
+      "reasoning_steps": [
+        "ETL_SQL 中不包含 GROUP BY 或聚合函数，仅对每个字段进行转换和计算，保持了事务明细粒度，符合 DWD 层特征。",
+        "下游被引用次数为 0，但 DWD 层可能是中间层，下游引用为 0 并不矛盾，且原始配置为 DWS 但实际无聚合，故推断为 DWD。",
+        "主键 campaign_key 为 MD5 生成的代理键，表示每条记录为一个营销活动事件，含有多个度量字段，因此是事实表。",
+        "字段中包含大量计算字段（比率、标志、衍生值），这些在 DWD 层属于违规，但分类时仍按指标语义划分。"
+      ],
+      "columns": {
+        "atomic_metrics": [
+          {
+            "name": "budget",
+            "data_type": "STRING",
+            "business_process": "marketing campaign",
+            "action": "spend",
+            "measure": "budget",
+            "description": "营销活动预算",
+            "reason": "不可再拆分的基础金额度量",
+            "confidence": 0.95
+          },
+          {
+            "name": "impressions",
+            "data_type": "STRING",
+            "business_process": "campaign performance",
+            "action": "display",
+            "measure": "impressions",
+            "description": "曝光次数",
+            "reason": "基础计数度量，无聚合",
+            "confidence": 0.95
+          },
+          {
+            "name": "clicks",
+            "data_type": "STRING",
+            "business_process": "campaign performance",
+            "action": "click",
+            "measure": "clicks",
+            "description": "点击次数",
+            "reason": "基础计数度量",
+            "confidence": 0.95
+          },
+          {
+            "name": "conversions",
+            "data_type": "STRING",
+            "business_process": "campaign performance",
+            "action": "convert",
+            "measure": "conversions",
+            "description": "转化次数",
+            "reason": "基础计数度量",
+            "confidence": 0.95
+          }
+        ],
+        "derived_metrics": [],
+        "calculated_metrics": [
+          {
+            "name": "cost_per_acquisition",
+            "data_type": "DECIMAL(18,4)",
+            "expression": "从上游 DWD 直接获取，原本计算逻辑为 cost / conversions",
+            "derived_from": [
+              "cost",
+              "conversions"
+            ],
+            "description": "单次获取成本（比率）",
+            "reason": "基于两个原子指标计算的比率指标",
+            "confidence": 0.8
+          },
+          {
+            "name": "roi",
+            "data_type": "STRING",
+            "expression": "从上游 DWD 直接获取，原本计算逻辑为 (revenue - cost) / cost 或 revenue / cost",
+            "derived_from": [
+              "revenue",
+              "cost"
+            ],
+            "description": "投资回报率",
+            "reason": "基于收入和成本计算的比率指标",
+            "confidence": 0.8
+          },
+          {
+            "name": "click_through_rate",
+            "data_type": "DECIMAL(18,4)",
+            "expression": "clicks / impressions",
+            "derived_from": [
+              "clicks",
+              "impressions"
+            ],
+            "description": "点击率（CTR）",
+            "reason": "由两个原子指标相除得到的新度量",
+            "confidence": 0.95
+          },
+          {
+            "name": "conversion_rate",
+            "data_type": "DECIMAL(18,4)",
+            "expression": "conversions / clicks 或 conversions / impressions",
+            "derived_from": [
+              "conversions",
+              "clicks"
+            ],
+            "description": "转化率",
+            "reason": "由原子指标相除得到的比率",
+            "confidence": 0.95
+          },
+          {
+            "name": "conversions_per_1k_budget",
+            "data_type": "STRING",
+            "expression": "ROUND((CAST(conversions AS DECIMAL(18,4)) / CAST(budget AS DECIMAL(18,4)) * 1000), 2)",
+            "derived_from": [
+              "conversions",
+              "budget"
+            ],
+            "description": "每千预算转化数",
+            "reason": "通过除法运算和常数缩放得到的衍生指标",
+            "confidence": 0.95
+          },
+          {
+            "name": "cost_per_1k_impressions",
+            "data_type": "DECIMAL(18,4)",
+            "expression": "ROUND((CAST(budget AS DECIMAL(18,4)) / impressions * 1000), 2)",
+            "derived_from": [
+              "budget",
+              "impressions"
+            ],
+            "description": "每千曝光成本（CPM）",
+            "reason": "通过除法运算和常数缩放得到的衍生指标",
+            "confidence": 0.95
+          },
+          {
+            "name": "estimated_revenue",
+            "data_type": "STRING",
+            "expression": "conversions * cost_per_acquisition * roi",
+            "derived_from": [
+              "conversions",
+              "cost_per_acquisition",
+              "roi"
+            ],
+            "description": "预估收入（基于转化和 roi 计算）",
+            "reason": "基于多个指标相乘的复合计算指标",
+            "confidence": 0.95
+          },
+          {
+            "name": "profitable_flag",
+            "data_type": "BOOLEAN",
+            "expression": "CASE WHEN roi > 1 THEN 1 ELSE 0 END",
+            "derived_from": [
+              "roi"
+            ],
+            "description": "盈利标志（roi > 1）",
+            "reason": "基于 roi 的逻辑判断衍生指标",
+            "confidence": 0.95
+          },
+          {
+            "name": "highly_profitable_flag",
+            "data_type": "BOOLEAN",
+            "expression": "CASE WHEN roi >= 2 THEN 1 ELSE 0 END",
+            "derived_from": [
+              "roi"
+            ],
+            "description": "高盈利标志（roi >= 2）",
+            "reason": "基于 roi 的逻辑判断衍生指标",
+            "confidence": 0.95
+          },
+          {
+            "name": "high_engagement_flag",
+            "data_type": "BOOLEAN",
+            "expression": "CASE WHEN click_through_rate >= 2 THEN 1 ELSE 0 END",
+            "derived_from": [
+              "click_through_rate"
+            ],
+            "description": "高参与度标志（CTR >= 2）",
+            "reason": "基于点击率的阈值判断标志",
+            "confidence": 0.95
+          },
+          {
+            "name": "high_conversion_flag",
+            "data_type": "BOOLEAN",
+            "expression": "CASE WHEN conversion_rate >= 5 THEN 1 ELSE 0 END",
+            "derived_from": [
+              "conversion_rate"
+            ],
+            "description": "高转化标志（转化率 >= 5）",
+            "reason": "基于转化率的阈值判断标志",
+            "confidence": 0.95
+          },
+          {
+            "name": "active_campaign_flag",
+            "data_type": "BOOLEAN",
+            "expression": "CASE WHEN campaign_status = 'Active' THEN 1 ELSE 0 END",
+            "derived_from": [
+              "campaign_status"
+            ],
+            "description": "活动进行中标志",
+            "reason": "基于状态的逻辑判断标志",
+            "confidence": 0.95
+          },
+          {
+            "name": "completed_campaign_flag",
+            "data_type": "BOOLEAN",
+            "expression": "CASE WHEN campaign_status = 'Completed' THEN 1 ELSE 0 END",
+            "derived_from": [
+              "campaign_status"
+            ],
+            "description": "活动已完成标志",
+            "reason": "基于状态的逻辑判断标志",
+            "confidence": 0.95
+          }
+        ],
+        "dimensions": [
+          {
+            "name": "campaign_key",
+            "dimension_type": "primary_key",
+            "data_type": "CHAR(32)",
+            "description": "营销活动代理主键（MD5 哈希）",
+            "reason": "唯一标识每一行，是维度表主键角色",
+            "confidence": 0.95
+          },
+          {
+            "name": "start_date_key",
+            "dimension_type": "foreign_key",
+            "data_type": "CHAR(32)",
+            "description": "开始日期维度外键",
+            "reason": "指向日期维度的MD5键",
+            "confidence": 0.95
+          },
+          {
+            "name": "end_date_key",
+            "dimension_type": "foreign_key",
+            "data_type": "CHAR(32)",
+            "description": "结束日期维度外键",
+            "reason": "指向日期维度的MD5键",
+            "confidence": 0.95
+          },
+          {
+            "name": "campaign_id",
+            "dimension_type": "degenerate",
+            "data_type": "BIGINT",
+            "description": "原始营销活动 ID",
+            "reason": "业务主键，不包含度量，用于关联",
+            "confidence": 0.95
+          },
+          {
+            "name": "campaign_name",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "营销活动名称",
+            "reason": "实体属性，用于描述和分组",
+            "confidence": 0.95
+          },
+          {
+            "name": "campaign_type",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "营销活动类型",
+            "reason": "枚举维度属性",
+            "confidence": 0.95
+          },
+          {
+            "name": "start_date",
+            "dimension_type": "date",
+            "data_type": "DATETIME",
+            "description": "活动开始日期时间",
+            "reason": "时间维度，用于过滤和排序",
+            "confidence": 0.95
+          },
+          {
+            "name": "end_date",
+            "dimension_type": "date",
+            "data_type": "DATETIME",
+            "description": "活动结束日期时间",
+            "reason": "时间维度",
+            "confidence": 0.95
+          },
+          {
+            "name": "target_segment",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "目标受众群体",
+            "reason": "实体属性维度",
+            "confidence": 0.95
+          },
+          {
+            "name": "product_promoted",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "推广产品",
+            "reason": "实体属性维度",
+            "confidence": 0.95
+          },
+          {
+            "name": "campaign_status",
+            "dimension_type": "status",
+            "data_type": "STRING",
+            "description": "活动状态（如Active, Completed）",
+            "reason": "状态枚举字段，用于切片",
+            "confidence": 0.95
+          },
+          {
+            "name": "roi_category",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "ROI 分类标签",
+            "reason": "基于 roi 的分类标签，属于维度属性",
+            "confidence": 0.95
+          },
+          {
+            "name": "campaign_duration_days",
+            "dimension_type": "attribute",
+            "data_type": "BIGINT",
+            "description": "活动持续天数",
+            "reason": "数值型属性，用于过滤或分组，非度量",
+            "confidence": 0.95
+          }
+        ],
+        "others": [
+          {
+            "name": "campaign_count",
+            "role": "technical",
+            "data_type": "BIGINT",
+            "description": "固定值 1，用于后续计数聚合的辅助字段",
+            "reason": "非业务度量，仅为聚合计数准备的占位符",
+            "confidence": 0.95
+          },
+          {
+            "name": "dbt_updated_at",
+            "role": "audit",
+            "data_type": "DATETIME",
+            "description": "dbt 记录的更新时间戳",
+            "reason": "技术审计字段，无业务含义",
+            "confidence": 0.95
+          }
+        ]
+      },
+      "validation": {
+        "unknown_columns": [],
+        "duplicate_columns": [],
+        "missing_columns": []
+      },
+      "status": "passed",
+      "retry_count": 0,
+      "is_violating_declared_layer": true,
+      "violations": []
+    },
+    {
+      "table_name": "dws_regulatory_reports",
+      "declared_layer": "DWS",
+      "inferred_layer": "DWD",
+      "table_type": "fact",
+      "confidence": 0.92,
+      "reasoning_steps": [
+        "ETL 逻辑仅从 dwd_regulatory_reports 进行单表查询，未包含任何 GROUP BY、SUM、COUNT 等聚合函数，不符合 DWS 汇总层特征。",
+        "下游引用次数为 0，但表未显式包含复杂衍生指标或面向报表的定制化加工，其逻辑仍是事务明细级扩展字段，更符合 DWD 明细层定义。",
+        "距 ODS 最小跳数为 2，且 ETL 包含维度退化（MD5 生成代理键）、CASE WHEN 转换标志字段，典型 DWD 操作。",
+        "主键 report_key 为 MD5 生成的代理键，表中包含多个外键（customer_key, account_key 等）和度量字段，明显为事实表。"
+      ],
+      "columns": {
+        "atomic_metrics": [
+          {
+            "name": "amount_reported",
+            "data_type": "DECIMAL(18,4)",
+            "business_process": "监管报告",
+            "action": "报告",
+            "measure": "金额",
+            "description": "报告金额",
+            "reason": "直接来源于上游表，不可再分的度量值，属于事务级原子指标。",
+            "confidence": 0.95
+          },
+          {
+            "name": "penalty_amount",
+            "data_type": "DECIMAL(18,4)",
+            "business_process": "监管报告",
+            "action": "处罚",
+            "measure": "金额",
+            "description": "罚款金额",
+            "reason": "直接来源于上游表，不可再分的度量值，属于事务级原子指标。",
+            "confidence": 0.95
+          },
+          {
+            "name": "report_count",
+            "data_type": "BIGINT",
+            "business_process": "监管报告",
+            "action": "计数",
+            "measure": "报告数量",
+            "description": "每条记录固定为1，用于统计报告次数",
+            "reason": "每行固定值1，本质为原子计数度量，不可再分。",
+            "confidence": 0.9
+          }
+        ],
+        "derived_metrics": [],
+        "calculated_metrics": [
+          {
+            "name": "days_from_due_date",
+            "data_type": "DATETIME",
+            "expression": "DATEDIFF(actual_filing_date, due_date)",
+            "derived_from": [
+              "actual_filing_date",
+              "due_date"
+            ],
+            "description": "实际提交日期与截止日期的差值（天数）",
+            "reason": "由两个日期字段通过DATEDIFF计算得出，属于衍生指标。",
+            "confidence": 0.95
+          },
+          {
+            "name": "processing_days",
+            "data_type": "BIGINT",
+            "expression": "DATEDIFF(actual_filing_date, filing_date)",
+            "derived_from": [
+              "actual_filing_date",
+              "filing_date"
+            ],
+            "description": "提交处理时长（天数）",
+            "reason": "由两个日期字段通过DATEDIFF计算得出，属于衍生指标。",
+            "confidence": 0.95
+          },
+          {
+            "name": "risk_score",
+            "data_type": "DECIMAL(18,4)",
+            "expression": "CASE WHEN risk_level='High' THEN 3 WHEN 'Medium' THEN 2 WHEN 'Low' THEN 1 ELSE 0 END",
+            "derived_from": [
+              "risk_level"
+            ],
+            "description": "风险评分（高风险3，中风险2，低风险1，其他0）",
+            "reason": "由风险等级字段通过CASE WHEN转换得到数值评分，属于衍生指标。",
+            "confidence": 0.95
+          }
+        ],
+        "dimensions": [
+          {
+            "name": "report_key",
+            "dimension_type": "primary_key",
+            "data_type": "CHAR(32)",
+            "description": "报告代理键（MD5生成）",
+            "reason": "唯一标识每条报告记录，是事实表的主键维度。",
+            "confidence": 1.0
+          },
+          {
+            "name": "customer_key",
+            "dimension_type": "foreign_key",
+            "data_type": "CHAR(32)",
+            "description": "客户代理键",
+            "reason": "关联客户维度的外键，用于分析维度。",
+            "confidence": 1.0
+          },
+          {
+            "name": "account_key",
+            "dimension_type": "foreign_key",
+            "data_type": "CHAR(32)",
+            "description": "账户代理键",
+            "reason": "关联账户维度的外键。",
+            "confidence": 1.0
+          },
+          {
+            "name": "transaction_key",
+            "dimension_type": "foreign_key",
+            "data_type": "CHAR(32)",
+            "description": "交易代理键",
+            "reason": "关联交易维度的外键。",
+            "confidence": 1.0
+          },
+          {
+            "name": "filing_date_key",
+            "dimension_type": "foreign_key",
+            "data_type": "CHAR(32)",
+            "description": "提交日期代理键（日期维度）",
+            "reason": "关联日期维度的外键。",
+            "confidence": 1.0
+          },
+          {
+            "name": "due_date_key",
+            "dimension_type": "foreign_key",
+            "data_type": "CHAR(32)",
+            "description": "截止日期代理键（日期维度）",
+            "reason": "关联日期维度的外键。",
+            "confidence": 1.0
+          },
+          {
+            "name": "report_id",
+            "dimension_type": "degenerate",
+            "data_type": "BIGINT",
+            "description": "报告业务ID",
+            "reason": "源自业务系统的唯一标识，退化维度字段。",
+            "confidence": 0.9
+          },
+          {
+            "name": "report_type_code",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "报告类型代码",
+            "reason": "属于报告本身属性，用于切片分析。",
+            "confidence": 0.95
+          },
+          {
+            "name": "report_type_name",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "报告类型名称",
+            "reason": "报告类型描述属性。",
+            "confidence": 0.95
+          },
+          {
+            "name": "report_frequency",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "报告频率（如月度、季度）",
+            "reason": "频率属性，用作维度过滤。",
+            "confidence": 0.95
+          },
+          {
+            "name": "regulator",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "监管机构",
+            "reason": "监管机构属性，用于分组分析。",
+            "confidence": 0.95
+          },
+          {
+            "name": "report_period_start",
+            "dimension_type": "date",
+            "data_type": "STRING",
+            "description": "报告周期起始日期（字符串）",
+            "reason": "时间范围起始，日期维度。",
+            "confidence": 0.9
+          },
+          {
+            "name": "report_period_end",
+            "dimension_type": "date",
+            "data_type": "STRING",
+            "description": "报告周期结束日期（字符串）",
+            "reason": "时间范围结束，日期维度。",
+            "confidence": 0.9
+          },
+          {
+            "name": "filing_date",
+            "dimension_type": "date",
+            "data_type": "DATETIME",
+            "description": "提交日期",
+            "reason": "报告提交的时间点，日期维度。",
+            "confidence": 1.0
+          },
+          {
+            "name": "due_date",
+            "dimension_type": "date",
+            "data_type": "DATETIME",
+            "description": "截止日期",
+            "reason": "要求提交的截止时间，日期维度。",
+            "confidence": 1.0
+          },
+          {
+            "name": "actual_filing_date",
+            "dimension_type": "date",
+            "data_type": "DATETIME",
+            "description": "实际提交日期",
+            "reason": "实际提交的时间点，日期维度。",
+            "confidence": 1.0
+          },
+          {
+            "name": "filing_status",
+            "dimension_type": "status",
+            "data_type": "STRING",
+            "description": "提交状态（Filed/Pending/Late等）",
+            "reason": "状态枚举字段，用于过滤分组。",
+            "confidence": 0.95
+          },
+          {
+            "name": "filing_method",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "提交方式",
+            "reason": "属性字段。",
+            "confidence": 0.9
+          },
+          {
+            "name": "confirmation_number",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "确认号",
+            "reason": "业务辅助字段，可作为维度。",
+            "confidence": 0.8
+          },
+          {
+            "name": "risk_level",
+            "dimension_type": "status",
+            "data_type": "STRING",
+            "description": "风险等级（High/Medium/Low）",
+            "reason": "分类标签，用于维度切片。",
+            "confidence": 0.95
+          },
+          {
+            "name": "assigned_to",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "分配人",
+            "reason": "负责处理的人员，属性维度。",
+            "confidence": 0.9
+          },
+          {
+            "name": "reviewed_by",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "审批人",
+            "reason": "审批者属性。",
+            "confidence": 0.9
+          },
+          {
+            "name": "approval_date",
+            "dimension_type": "date",
+            "data_type": "DATETIME",
+            "description": "批准日期",
+            "reason": "时间点维度。",
+            "confidence": 0.95
+          },
+          {
+            "name": "filed_flag",
+            "dimension_type": "status",
+            "data_type": "BOOLEAN",
+            "description": "是否已提交标志（filing_status='Filed'）",
+            "reason": "布尔标志，用于过滤分组，属于维度退化。",
+            "confidence": 0.95
+          },
+          {
+            "name": "pending_flag",
+            "dimension_type": "status",
+            "data_type": "BOOLEAN",
+            "description": "是否待处理标志",
+            "reason": "布尔标志，用于过滤分组。",
+            "confidence": 0.95
+          },
+          {
+            "name": "late_flag",
+            "dimension_type": "status",
+            "data_type": "BOOLEAN",
+            "description": "是否逾期标志",
+            "reason": "布尔标志，用于过滤分组。",
+            "confidence": 0.95
+          },
+          {
+            "name": "requires_follow_up_flag",
+            "dimension_type": "status",
+            "data_type": "BOOLEAN",
+            "description": "是否需要跟进标志",
+            "reason": "布尔标志，用于过滤分组。",
+            "confidence": 0.95
+          },
+          {
+            "name": "amended_flag",
+            "dimension_type": "status",
+            "data_type": "BOOLEAN",
+            "description": "是否修正标志",
+            "reason": "布尔标志，用于过滤分组。",
+            "confidence": 0.95
+          },
+          {
+            "name": "penalty_assessed_flag",
+            "dimension_type": "status",
+            "data_type": "BOOLEAN",
+            "description": "是否已评估罚款标志（penalty_amount>0）",
+            "reason": "布尔标志，用于过滤分组。",
+            "confidence": 0.95
+          },
+          {
+            "name": "filed_late_flag",
+            "dimension_type": "status",
+            "data_type": "BOOLEAN",
+            "description": "是否逾期提交标志（实际提交日期>截止日期）",
+            "reason": "布尔标志，用于过滤分组。",
+            "confidence": 0.95
+          }
+        ],
+        "others": [
+          {
+            "name": "dbt_updated_at",
+            "role": "technical",
+            "data_type": "DATETIME",
+            "description": "dbt模型更新时间戳",
+            "reason": "技术审计字段，记录ETL刷新时间，不参与业务分析。",
+            "confidence": 1.0
+          }
+        ]
+      },
+      "validation": {
+        "unknown_columns": [],
+        "duplicate_columns": [],
+        "missing_columns": []
+      },
+      "status": "passed",
+      "retry_count": 0,
+      "is_violating_declared_layer": true,
+      "violations": []
+    },
+    {
+      "table_name": "dws_risk_assessments",
+      "declared_layer": "DWS",
+      "inferred_layer": "DWD",
+      "table_type": "fact",
+      "confidence": 0.85,
+      "reasoning_steps": [
+        "ETL 逻辑中无 GROUP BY、SUM、COUNT 等聚合操作，不符合 DWS 特征，排除 DWS。",
+        "直接读取 DWD 层数据，仅做字段转换和计算，粒度与上游一致，符合 DWD 明细宽表定义。",
+        "下游被引用次数为 0，但该表尚未被复用，不能仅以此判定为 ADS；且包含大量原子度量，更接近事实明细。",
+        "主键 assessment_key 为代理键，记录每次风险评估事件，包含可度量字段，属于事实表。"
+      ],
+      "columns": {
+        "atomic_metrics": [
+          {
+            "name": "risk_score",
+            "data_type": "DECIMAL(18,4)",
+            "business_process": "风险评估",
+            "action": "评分",
+            "measure": "风险分数",
+            "description": "原始风险评分",
+            "reason": "直接来自上游的不可再分基础度量",
+            "confidence": 1.0
+          },
+          {
+            "name": "transaction_volume_last_90d",
+            "data_type": "DECIMAL(18,4)",
+            "business_process": "交易活动",
+            "action": "汇总",
+            "measure": "交易量",
+            "description": "近90天交易总额",
+            "reason": "基础度量，来自上游原始字段",
+            "confidence": 1.0
+          },
+          {
+            "name": "num_accounts",
+            "data_type": "BIGINT",
+            "business_process": "账户管理",
+            "action": "计数",
+            "measure": "账户数量",
+            "description": "客户关联账户数",
+            "reason": "基础计数度量",
+            "confidence": 1.0
+          },
+          {
+            "name": "years_as_customer",
+            "data_type": "BIGINT",
+            "business_process": "客户生命周期",
+            "action": "计算",
+            "measure": "客户年限",
+            "description": "客户成为客户的年数",
+            "reason": "基础度量，来自上游原始字段",
+            "confidence": 1.0
+          },
+          {
+            "name": "assessment_count",
+            "data_type": "BIGINT",
+            "business_process": "风险评估",
+            "action": "计数",
+            "measure": "评估次数",
+            "description": "常量1，用于计数聚合",
+            "reason": "原子度量，每条记录代表一次评估",
+            "confidence": 0.9
+          }
+        ],
+        "derived_metrics": [],
+        "calculated_metrics": [
+          {
+            "name": "credit_risk_score",
+            "data_type": "DECIMAL(18,4)",
+            "expression": "CASE WHEN credit_risk = 'High' THEN 3 WHEN 'Medium' THEN 2 WHEN 'Low' THEN 1 ELSE 0 END",
+            "derived_from": [
+              "credit_risk"
+            ],
+            "description": "信用风险数值化评分",
+            "reason": "基于风险等级映射的衍生指标，DWD中不应出现",
+            "confidence": 0.9
+          },
+          {
+            "name": "fraud_risk_score",
+            "data_type": "DECIMAL(18,4)",
+            "expression": "CASE WHEN fraud_risk = 'High' THEN 3 WHEN 'Medium' THEN 2 WHEN 'Low' THEN 1 ELSE 0 END",
+            "derived_from": [
+              "fraud_risk"
+            ],
+            "description": "欺诈风险数值化评分",
+            "reason": "基于风险等级映射的衍生指标",
+            "confidence": 0.9
+          },
+          {
+            "name": "aml_risk_score",
+            "data_type": "DECIMAL(18,4)",
+            "expression": "CASE WHEN aml_risk = 'High' THEN 3 WHEN 'Medium' THEN 2 WHEN 'Low' THEN 1 ELSE 0 END",
+            "derived_from": [
+              "aml_risk"
+            ],
+            "description": "反洗钱风险数值化评分",
+            "reason": "基于风险等级映射的衍生指标",
+            "confidence": 0.9
+          },
+          {
+            "name": "days_until_review",
+            "data_type": "STRING",
+            "expression": "DATEDIFF(next_review_date, CURRENT_DATE)",
+            "derived_from": [
+              "next_review_date"
+            ],
+            "description": "距下次审核的天数",
+            "reason": "通过日期函数计算的衍生指标",
+            "confidence": 0.9
+          },
+          {
+            "name": "kyc_age_days",
+            "data_type": "STRING",
+            "expression": "DATEDIFF(CURRENT_DATE, kyc_last_updated)",
+            "derived_from": [
+              "kyc_last_updated"
+            ],
+            "description": "KYC信息更新时间距今的天数",
+            "reason": "通过日期函数计算的衍生指标",
+            "confidence": 0.9
+          }
+        ],
+        "dimensions": [
+          {
+            "name": "assessment_key",
+            "dimension_type": "primary_key",
+            "data_type": "CHAR(32)",
+            "description": "评估记录唯一标识",
+            "reason": "主键，用于唯一标识每行",
+            "confidence": 1.0
+          },
+          {
+            "name": "customer_key",
+            "dimension_type": "foreign_key",
+            "data_type": "CHAR(32)",
+            "description": "客户维度外键",
+            "reason": "关联客户维度",
+            "confidence": 1.0
+          },
+          {
+            "name": "assessment_date_key",
+            "dimension_type": "date",
+            "data_type": "CHAR(32)",
+            "description": "评估日期维度外键",
+            "reason": "关联日期维度",
+            "confidence": 1.0
+          },
+          {
+            "name": "next_review_date_key",
+            "dimension_type": "date",
+            "data_type": "CHAR(32)",
+            "description": "下次审核日期维度外键",
+            "reason": "关联日期维度",
+            "confidence": 1.0
+          },
+          {
+            "name": "assessment_id",
+            "dimension_type": "degenerate",
+            "data_type": "BIGINT",
+            "description": "评估业务ID",
+            "reason": "退化维度，保留自上游",
+            "confidence": 1.0
+          },
+          {
+            "name": "assessment_date",
+            "dimension_type": "date",
+            "data_type": "DATETIME",
+            "description": "评估日期时间",
+            "reason": "时间维度",
+            "confidence": 1.0
+          },
+          {
+            "name": "assessment_type",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "评估类型",
+            "reason": "属性维度，用于切片",
+            "confidence": 1.0
+          },
+          {
+            "name": "next_review_date",
+            "dimension_type": "date",
+            "data_type": "DATETIME",
+            "description": "下次审核日期",
+            "reason": "时间维度",
+            "confidence": 1.0
+          },
+          {
+            "name": "risk_rating",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "整体风险评级",
+            "reason": "属性维度，用于切片",
+            "confidence": 1.0
+          },
+          {
+            "name": "credit_risk",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "信用风险等级",
+            "reason": "属性维度",
+            "confidence": 1.0
+          },
+          {
+            "name": "fraud_risk",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "欺诈风险等级",
+            "reason": "属性维度",
+            "confidence": 1.0
+          },
+          {
+            "name": "aml_risk",
+            "dimension_type": "attribute",
+            "data_type": "STRING",
+            "description": "反洗钱风险等级",
+            "reason": "属性维度",
+            "confidence": 1.0
+          },
+          {
+            "name": "kyc_status",
+            "dimension_type": "status",
+            "data_type": "STRING",
+            "description": "KYC状态",
+            "reason": "状态维度",
+            "confidence": 1.0
+          },
+          {
+            "name": "kyc_last_updated",
+            "dimension_type": "date",
+            "data_type": "STRING",
+            "description": "KYC最后更新时间",
+            "reason": "时间维度",
+            "confidence": 1.0
+          },
+          {
+            "name": "assessor_id",
+            "dimension_type": "degenerate",
+            "data_type": "STRING",
+            "description": "评估人员ID",
+            "reason": "退化维度",
+            "confidence": 1.0
+          },
+          {
+            "name": "pep_flag",
+            "dimension_type": "attribute",
+            "data_type": "BOOLEAN",
+            "description": "政治人物标志",
+            "reason": "布尔标志，用于过滤",
+            "confidence": 1.0
+          },
+          {
+            "name": "sanctions_flag",
+            "dimension_type": "attribute",
+            "data_type": "BOOLEAN",
+            "description": "制裁名单标志",
+            "reason": "布尔标志，用于过滤",
+            "confidence": 1.0
+          },
+          {
+            "name": "adverse_media_flag",
+            "dimension_type": "attribute",
+            "data_type": "BOOLEAN",
+            "description": "负面媒体标志",
+            "reason": "布尔标志，用于过滤",
+            "confidence": 1.0
+          },
+          {
+            "name": "high_value_flag",
+            "dimension_type": "attribute",
+            "data_type": "BOOLEAN",
+            "description": "高价值客户标志",
+            "reason": "布尔标志，用于过滤",
+            "confidence": 1.0
+          },
+          {
+            "name": "edd_required_flag",
+            "dimension_type": "attribute",
+            "data_type": "BOOLEAN",
+            "description": "需要增强尽职调查标志",
+            "reason": "布尔标志，用于过滤",
+            "confidence": 1.0
+          },
+          {
+            "name": "employment_verified_flag",
+            "dimension_type": "attribute",
+            "data_type": "BOOLEAN",
+            "description": "就业已验证标志",
+            "reason": "布尔标志",
+            "confidence": 1.0
+          },
+          {
+            "name": "income_verified_flag",
+            "dimension_type": "attribute",
+            "data_type": "BOOLEAN",
+            "description": "收入已验证标志",
+            "reason": "布尔标志",
+            "confidence": 1.0
+          },
+          {
+            "name": "address_verified_flag",
+            "dimension_type": "attribute",
+            "data_type": "BOOLEAN",
+            "description": "地址已验证标志",
+            "reason": "布尔标志",
+            "confidence": 1.0
+          },
+          {
+            "name": "kyc_compliant_flag",
+            "dimension_type": "attribute",
+            "data_type": "BOOLEAN",
+            "description": "KYC合规标志",
+            "reason": "由CASE WHEN生成，用于过滤",
+            "confidence": 0.9
+          },
+          {
+            "name": "high_risk_customer_flag",
+            "dimension_type": "attribute",
+            "data_type": "BOOLEAN",
+            "description": "高风险客户标志（复合条件）",
+            "reason": "由多条规则组合生成，属于维度标志",
+            "confidence": 0.9
+          }
+        ],
+        "others": [
+          {
+            "name": "dbt_updated_at",
+            "role": "technical",
+            "data_type": "DATETIME",
+            "description": "dbt记录更新时间戳",
+            "reason": "ETL技术审计字段",
+            "confidence": 1.0
+          }
+        ]
+      },
+      "validation": {
+        "unknown_columns": [],
+        "duplicate_columns": [],
+        "missing_columns": []
+      },
+      "status": "passed",
+      "retry_count": 1,
+      "is_violating_declared_layer": true,
+      "violations": []
+    }
+  ],
+  "model_updates": [
+    {
+      "table": "dwd_accounts",
+      "path": "/Users/yulihua/.codex/worktrees/6e7a/dw_refactor_agent/finance_analytics/models/dwd_accounts.yaml",
+      "status": "passed",
+      "metric_count": 6,
+      "new_metric_count": 6,
+      "removed_metric_count": 0,
+      "updated": true
+    },
+    {
+      "table": "dwd_customer_interactions",
+      "path": "/Users/yulihua/.codex/worktrees/6e7a/dw_refactor_agent/finance_analytics/models/dwd_customer_interactions.yaml",
+      "status": "passed",
+      "metric_count": 2,
+      "new_metric_count": 0,
+      "removed_metric_count": 0,
+      "updated": false
+    },
+    {
+      "table": "dwd_marketing_campaigns",
+      "path": "/Users/yulihua/.codex/worktrees/6e7a/dw_refactor_agent/finance_analytics/models/dwd_marketing_campaigns.yaml",
+      "status": "passed",
+      "metric_count": 0,
+      "new_metric_count": 0,
+      "removed_metric_count": 9,
+      "updated": true
+    },
+    {
+      "table": "dwd_economic_indicators",
+      "path": "/Users/yulihua/.codex/worktrees/6e7a/dw_refactor_agent/finance_analytics/models/dwd_economic_indicators.yaml",
+      "status": "passed",
+      "metric_count": 13,
+      "new_metric_count": 0,
+      "removed_metric_count": 0,
+      "updated": false
+    },
+    {
+      "table": "dwd_account_events",
+      "path": "/Users/yulihua/.codex/worktrees/6e7a/dw_refactor_agent/finance_analytics/models/dwd_account_events.yaml",
+      "status": "passed",
+      "metric_count": 2,
+      "new_metric_count": 0,
+      "removed_metric_count": 0,
+      "updated": false
+    },
+    {
+      "table": "dwd_credit_applications",
+      "path": "/Users/yulihua/.codex/worktrees/6e7a/dw_refactor_agent/finance_analytics/models/dwd_credit_applications.yaml",
+      "status": "passed",
+      "metric_count": 9,
+      "new_metric_count": 0,
+      "removed_metric_count": 0,
+      "updated": false
+    },
+    {
+      "table": "dwd_fraud_alerts",
+      "path": "/Users/yulihua/.codex/worktrees/6e7a/dw_refactor_agent/finance_analytics/models/dwd_fraud_alerts.yaml",
+      "status": "passed",
+      "metric_count": 3,
+      "new_metric_count": 0,
+      "removed_metric_count": 0,
+      "updated": false
+    },
+    {
+      "table": "dwd_loan_payments",
+      "path": "/Users/yulihua/.codex/worktrees/6e7a/dw_refactor_agent/finance_analytics/models/dwd_loan_payments.yaml",
+      "status": "passed",
+      "metric_count": 6,
+      "new_metric_count": 0,
+      "removed_metric_count": 0,
+      "updated": true
+    },
+    {
+      "table": "dwd_regulatory_reports",
+      "path": "/Users/yulihua/.codex/worktrees/6e7a/dw_refactor_agent/finance_analytics/models/dwd_regulatory_reports.yaml",
+      "status": "passed",
+      "metric_count": 2,
+      "new_metric_count": 0,
+      "removed_metric_count": 0,
+      "updated": false
+    },
+    {
+      "table": "dwd_risk_assessments",
+      "path": "/Users/yulihua/.codex/worktrees/6e7a/dw_refactor_agent/finance_analytics/models/dwd_risk_assessments.yaml",
+      "status": "passed",
+      "metric_count": 6,
+      "new_metric_count": 0,
+      "removed_metric_count": 0,
+      "updated": true
+    },
+    {
+      "table": "dwd_transactions",
+      "path": "/Users/yulihua/.codex/worktrees/6e7a/dw_refactor_agent/finance_analytics/models/dwd_transactions.yaml",
+      "status": "passed",
+      "metric_count": 8,
+      "new_metric_count": 2,
+      "removed_metric_count": 0,
+      "updated": true
+    },
+    {
+      "table": "dws_account_daily_snapshot",
+      "path": "/Users/yulihua/.codex/worktrees/6e7a/dw_refactor_agent/finance_analytics/models/dws_account_daily_snapshot.yaml",
+      "status": "passed",
+      "metric_count": 9,
+      "new_metric_count": 1,
+      "removed_metric_count": 0,
+      "updated": true
+    },
+    {
+      "table": "dws_account_events",
+      "path": "/Users/yulihua/.codex/worktrees/6e7a/dw_refactor_agent/finance_analytics/models/dws_account_events.yaml",
+      "status": "passed",
+      "metric_count": 4,
+      "new_metric_count": 0,
+      "removed_metric_count": 0,
+      "updated": false
+    },
+    {
+      "table": "dws_credit_applications",
+      "path": "/Users/yulihua/.codex/worktrees/6e7a/dw_refactor_agent/finance_analytics/models/dws_credit_applications.yaml",
+      "status": "passed",
+      "metric_count": 12,
+      "new_metric_count": 0,
+      "removed_metric_count": 0,
+      "updated": true
+    },
+    {
+      "table": "dws_customer_interactions",
+      "path": "/Users/yulihua/.codex/worktrees/6e7a/dw_refactor_agent/finance_analytics/models/dws_customer_interactions.yaml",
+      "status": "passed",
+      "metric_count": 3,
+      "new_metric_count": 0,
+      "removed_metric_count": 0,
+      "updated": false
+    },
+    {
+      "table": "dws_customer_monthly_summary",
+      "path": "/Users/yulihua/.codex/worktrees/6e7a/dw_refactor_agent/finance_analytics/models/dws_customer_monthly_summary.yaml",
+      "status": "passed",
+      "metric_count": 14,
+      "new_metric_count": 1,
+      "removed_metric_count": 0,
+      "updated": true
+    },
+    {
+      "table": "dws_customer_segment_history",
+      "path": "/Users/yulihua/.codex/worktrees/6e7a/dw_refactor_agent/finance_analytics/models/dws_customer_segment_history.yaml",
+      "status": "passed",
+      "metric_count": 21,
+      "new_metric_count": 3,
+      "removed_metric_count": 0,
+      "updated": true
+    },
+    {
+      "table": "dws_fraud_alerts",
+      "path": "/Users/yulihua/.codex/worktrees/6e7a/dw_refactor_agent/finance_analytics/models/dws_fraud_alerts.yaml",
+      "status": "passed",
+      "metric_count": 3,
+      "new_metric_count": 0,
+      "removed_metric_count": 0,
+      "updated": true
+    },
+    {
+      "table": "dws_loan_payments",
+      "path": "/Users/yulihua/.codex/worktrees/6e7a/dw_refactor_agent/finance_analytics/models/dws_loan_payments.yaml",
+      "status": "passed",
+      "metric_count": 7,
+      "new_metric_count": 0,
+      "removed_metric_count": 0,
+      "updated": false
+    },
+    {
+      "table": "dws_marketing_campaigns",
+      "path": "/Users/yulihua/.codex/worktrees/6e7a/dw_refactor_agent/finance_analytics/models/dws_marketing_campaigns.yaml",
+      "status": "passed",
+      "metric_count": 17,
+      "new_metric_count": 6,
+      "removed_metric_count": 1,
+      "updated": true
+    },
+    {
+      "table": "dws_regulatory_reports",
+      "path": "/Users/yulihua/.codex/worktrees/6e7a/dw_refactor_agent/finance_analytics/models/dws_regulatory_reports.yaml",
+      "status": "passed",
+      "metric_count": 6,
+      "new_metric_count": 0,
+      "removed_metric_count": 0,
+      "updated": false
+    },
+    {
+      "table": "dws_risk_assessments",
+      "path": "/Users/yulihua/.codex/worktrees/6e7a/dw_refactor_agent/finance_analytics/models/dws_risk_assessments.yaml",
+      "status": "passed",
+      "metric_count": 10,
+      "new_metric_count": 0,
+      "removed_metric_count": 1,
+      "updated": true
+    }
+  ],
+  "skipped_model_updates": []
+}

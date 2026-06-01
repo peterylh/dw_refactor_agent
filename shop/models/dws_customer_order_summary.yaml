@@ -4,3 +4,10 @@ layer: DWS
 description: 客户订单汇总
 config:
   materialized: incremental
+derived_metrics:
+- order_count
+- total_amount
+- total_discount
+calculated_metrics:
+- payment_amount
+- avg_order_amount

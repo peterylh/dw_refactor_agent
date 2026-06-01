@@ -3,3 +3,9 @@ name: dws_account_events
 layer: DWS
 config:
   materialized: full
+atomic_metrics:
+- old_value
+- new_value
+- event_count
+calculated_metrics:
+- value_change

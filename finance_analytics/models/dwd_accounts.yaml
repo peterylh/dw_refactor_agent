@@ -3,3 +3,11 @@ name: dwd_accounts
 layer: DWD
 config:
   materialized: full
+atomic_metrics:
+- current_balance
+- available_balance
+- credit_limit
+- interest_rate
+calculated_metrics:
+- account_age_months
+- credit_utilization_pct

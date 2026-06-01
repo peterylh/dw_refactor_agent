@@ -9,5 +9,5 @@ atomic_metrics:
 - late_fee
 - outstanding_balance
 - days_late
-derived_metrics:
+calculated_metrics:
 - amount_difference

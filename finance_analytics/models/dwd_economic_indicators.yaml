@@ -8,10 +8,13 @@ atomic_metrics:
 - unemployment_rate
 - inflation_rate
 - federal_funds_rate
+- sp500_index
+- vix_index
+- consumer_confidence_index
 - housing_price_index
 - 10yr_treasury_yield
 - mortgage_rate_30yr
-derived_metrics:
+calculated_metrics:
 - economic_health
 - unemployment_level
 - market_volatility

@@ -3,3 +3,7 @@ name: dws_customer_interactions
 layer: DWS
 config:
   materialized: full
+atomic_metrics:
+- duration_minutes
+- sentiment_score
+- interaction_count

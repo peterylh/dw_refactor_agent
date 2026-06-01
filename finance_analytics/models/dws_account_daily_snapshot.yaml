@@ -3,3 +3,15 @@ name: dws_account_daily_snapshot
 layer: DWS
 config:
   materialized: full
+atomic_metrics:
+- current_balance
+- available_balance
+- credit_limit
+derived_metrics:
+- daily_transaction_count
+- daily_transaction_amount
+- daily_debit_count
+- daily_credit_count
+- account_count
+calculated_metrics:
+- credit_utilization_pct
