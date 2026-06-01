@@ -4,10 +4,11 @@ layer: DWD
 description: 订单明细事实表
 config:
   materialized: incremental
-metrics:
+atomic_metrics:
 - quantity
 - unit_price
 - discount
-- subtotal
 - cost_price
+derived_metrics:
+- subtotal
 - gross_profit

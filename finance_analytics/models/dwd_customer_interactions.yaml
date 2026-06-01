@@ -3,6 +3,7 @@ name: dwd_customer_interactions
 layer: DWD
 config:
   materialized: full
-metrics:
+atomic_metrics:
 - duration_minutes
+derived_metrics:
 - sentiment_score

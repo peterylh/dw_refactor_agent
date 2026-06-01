@@ -3,12 +3,13 @@ name: dwd_credit_applications
 layer: DWD
 config:
   materialized: full
-metrics:
+atomic_metrics:
 - requested_amount
-- credit_score_at_application
 - annual_income
-- debt_to_income_ratio
 - approved_amount
+derived_metrics:
+- credit_score_at_application
+- debt_to_income_ratio
 - approved_rate
 - approval_probability_score
 - processing_days

@@ -3,8 +3,8 @@
 DWD 指标提取与模型回写工具。
 
 复用 table_inspector 的单次 DeepSeek 调用结果，将 DWD 表中的
-所有指标字段覆盖写入 models/{table}.yaml，并把 DWD 事实表的
-derived_metrics 输出为违规项。
+指标字段按 atomic_metrics / derived_metrics 覆盖写入
+models/{table}.yaml，并把 DWD 事实表的 derived_metrics 输出为违规项。
 """
 
 import argparse
@@ -64,9 +64,48 @@ def metric_violations(result: TableInspectResult) -> list[dict[str, Any]]:
 
 def metric_names_for_model(result: TableInspectResult) -> list[str]:
     """生成写入 models YAML 的指标名列表。"""
+    groups = metric_groups_for_model(result)
     names = []
-    for metric in result.atomic_metrics + result.derived_metrics:
+    for metric in groups["atomic_metrics"] + groups["derived_metrics"]:
+        if metric not in names:
+            names.append(metric)
+    return names
+
+
+def _metric_names(metrics: list[dict[str, Any]]) -> list[str]:
+    names = []
+    for metric in metrics:
         name = str(metric.get("name") or "").strip()
+        if name and name not in names:
+            names.append(name)
+    return names
+
+
+def metric_groups_for_model(result: TableInspectResult) -> dict[str, list[str]]:
+    """生成写入 models YAML 的分类指标名列表。"""
+    return {
+        "atomic_metrics": _metric_names(result.atomic_metrics),
+        "derived_metrics": _metric_names(result.derived_metrics),
+    }
+
+
+def _metric_names_from_raw(raw_metrics: Any) -> list[str]:
+    names = []
+    if isinstance(raw_metrics, dict):
+        iterable = []
+        for group_metrics in raw_metrics.values():
+            if isinstance(group_metrics, list):
+                iterable.extend(group_metrics)
+    elif isinstance(raw_metrics, list):
+        iterable = raw_metrics
+    else:
+        iterable = []
+
+    for item in iterable:
+        if isinstance(item, dict):
+            name = str(item.get("name") or item.get("column") or "").strip()
+        else:
+            name = str(item or "").strip()
         if name and name not in names:
             names.append(name)
     return names
@@ -75,12 +114,7 @@ def metric_names_for_model(result: TableInspectResult) -> list[str]:
 def _extract_existing_metric_names(model_data: dict[str, Any]) -> list[str]:
     names = []
     for key in ("metrics", "atomic_metrics", "derived_metrics"):
-        raw_metrics = model_data.get(key, []) or []
-        for item in raw_metrics:
-            if isinstance(item, dict):
-                name = str(item.get("name") or item.get("column") or "").strip()
-            else:
-                name = str(item or "").strip()
+        for name in _metric_names_from_raw(model_data.get(key, []) or []):
             if name and name not in names:
                 names.append(name)
     return names
@@ -100,6 +134,7 @@ def update_model_yaml(project: str,
         existing = {}
 
     existing_metrics = _extract_existing_metric_names(existing)
+    detected_groups = metric_groups_for_model(result)
     detected_metrics = metric_names_for_model(result)
 
     updated = dict(existing)
@@ -108,11 +143,19 @@ def update_model_yaml(project: str,
         updated.setdefault("name", result.table_name)
         updated.setdefault("layer", "DWD")
     if detected_metrics:
-        updated["metrics"] = detected_metrics
+        if detected_groups["atomic_metrics"]:
+            updated["atomic_metrics"] = detected_groups["atomic_metrics"]
+        else:
+            updated.pop("atomic_metrics", None)
+        if detected_groups["derived_metrics"]:
+            updated["derived_metrics"] = detected_groups["derived_metrics"]
+        else:
+            updated.pop("derived_metrics", None)
+        updated.pop("metrics", None)
     else:
         updated.pop("metrics", None)
-    updated.pop("atomic_metrics", None)
-    updated.pop("derived_metrics", None)
+        updated.pop("atomic_metrics", None)
+        updated.pop("derived_metrics", None)
 
     changed = updated != existing
     if not dry_run and changed:

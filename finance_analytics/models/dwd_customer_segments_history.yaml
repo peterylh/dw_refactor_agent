@@ -3,7 +3,7 @@ name: dwd_customer_segments_history
 layer: DWD
 config:
   materialized: full
-metrics:
+atomic_metrics:
 - total_accounts
 - total_balance
 - avg_monthly_transactions

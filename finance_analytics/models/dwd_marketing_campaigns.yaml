@@ -3,13 +3,14 @@ name: dwd_marketing_campaigns
 layer: DWD
 config:
   materialized: full
-metrics:
+atomic_metrics:
 - budget
 - impressions
 - clicks
 - conversions
 - cost_per_acquisition
 - roi
+derived_metrics:
 - campaign_duration_days
 - click_through_rate
 - conversion_rate

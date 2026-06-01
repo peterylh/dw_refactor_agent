@@ -2,6 +2,7 @@ import yaml
 
 from assess.metric_detector import (
     build_dwd_contexts,
+    metric_groups_for_model,
     metric_violations,
     metric_names_for_model,
     run_detection,
@@ -69,6 +70,15 @@ def test_metric_names_for_model_includes_atomic_and_derived_metrics():
     assert metrics == ["pay_amt", "gross_profit"]
 
 
+def test_metric_groups_for_model_splits_atomic_and_derived_metrics():
+    metric_groups = metric_groups_for_model(_sample_fact_result())
+
+    assert metric_groups == {
+        "atomic_metrics": ["pay_amt"],
+        "derived_metrics": ["gross_profit"],
+    }
+
+
 def test_metric_violations_uses_derived_group_only():
     violations = metric_violations(_sample_fact_result())
 
@@ -131,7 +141,9 @@ def test_update_model_yaml_preserves_existing_metadata(tmp_path, monkeypatch):
     assert update["new_metric_count"] == 2
     assert saved["description"] == "订单明细事实表"
     assert saved["config"]["materialized"] == "incremental"
-    assert saved["metrics"] == ["pay_amt", "gross_profit"]
+    assert saved["atomic_metrics"] == ["pay_amt"]
+    assert saved["derived_metrics"] == ["gross_profit"]
+    assert "metrics" not in saved
 
 
 def test_update_model_yaml_replaces_existing_metrics(tmp_path, monkeypatch):
@@ -161,10 +173,12 @@ def test_update_model_yaml_replaces_existing_metrics(tmp_path, monkeypatch):
     assert update["metric_count"] == 2
     assert update["new_metric_count"] == 1
     assert update["removed_metric_count"] == 1
-    assert saved["metrics"] == ["pay_amt", "gross_profit"]
+    assert saved["atomic_metrics"] == ["pay_amt"]
+    assert saved["derived_metrics"] == ["gross_profit"]
+    assert "metrics" not in saved
 
 
-def test_update_model_yaml_removes_legacy_metric_fields(tmp_path, monkeypatch):
+def test_update_model_yaml_replaces_legacy_metric_fields(tmp_path, monkeypatch):
     import assess.metric_detector as detector_module
 
     project_root = tmp_path
@@ -191,8 +205,9 @@ def test_update_model_yaml_removes_legacy_metric_fields(tmp_path, monkeypatch):
     assert update["metric_count"] == 2
     assert update["new_metric_count"] == 2
     assert update["removed_metric_count"] == 1
-    assert saved["metrics"] == ["pay_amt", "gross_profit"]
-    assert "atomic_metrics" not in saved
+    assert saved["atomic_metrics"] == ["pay_amt"]
+    assert saved["derived_metrics"] == ["gross_profit"]
+    assert "metrics" not in saved
 
 
 def test_update_model_yaml_removes_metrics_when_none_detected(tmp_path,

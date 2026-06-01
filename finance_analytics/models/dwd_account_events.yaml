@@ -3,6 +3,6 @@ name: dwd_account_events
 layer: DWD
 config:
   materialized: full
-metrics:
+atomic_metrics:
 - old_value
 - new_value

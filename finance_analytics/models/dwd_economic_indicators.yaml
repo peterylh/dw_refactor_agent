@@ -3,7 +3,7 @@ name: dwd_economic_indicators
 layer: DWD
 config:
   materialized: full
-metrics:
+atomic_metrics:
 - gdp_growth_rate
 - unemployment_rate
 - inflation_rate
@@ -11,6 +11,7 @@ metrics:
 - housing_price_index
 - 10yr_treasury_yield
 - mortgage_rate_30yr
+derived_metrics:
 - economic_health
 - unemployment_level
 - market_volatility
