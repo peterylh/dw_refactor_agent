@@ -30,21 +30,39 @@ NAMING_CONFIG_PATH = PROJECT_ROOT / "naming_config.yaml"
 class TypeDef:
     label: str
     desc: str = ""
-    regex: Optional[str] = None
+    allow: Optional[list[str]] = None
+    patterns: list[str] = field(default_factory=list)
     values: Optional[list[str]] = None
-    _compiled: Optional[re.Pattern] = None
+    regex: Optional[str] = None
+    _compiled: list[re.Pattern] = field(default_factory=list)
+
+    def __post_init__(self):
+        if self.allow is None and self.values is not None:
+            self.allow = self.values
+        if self.regex and not self.patterns:
+            self.patterns = [self.regex]
+        if self.allow is not None:
+            self.values = self.allow
+        self.regex = self.patterns[0] if self.patterns else None
+        if self.patterns and not self._compiled:
+            self._compiled = [re.compile(pattern) for pattern in self.patterns]
 
     def validate(self, value: str) -> bool:
-        if self.values is not None:
-            return value in self.values
-        if self._compiled is not None:
-            return bool(self._compiled.match(value))
-        return True
+        matched = False
+        has_validator = False
+        if self.allow is not None:
+            has_validator = True
+            matched = value in self.allow
+        if self._compiled:
+            has_validator = True
+            matched = matched or any(pattern.match(value) for pattern in self._compiled)
+        return matched if has_validator else True
 
 
 @dataclass
 class LayerDef:
     templates: list
+    constraints: list[dict] = field(default_factory=list)
 
 
 @dataclass
@@ -53,8 +71,19 @@ class NamingConfig:
     layers: dict[str, LayerDef]
     column_segments: list
     common_columns: set[str]
+    column_templates: list = field(default_factory=list)
     table_name_max_length: Optional[int] = None
     metric_rules: dict[str, list] = field(default_factory=dict)
+    metric_rule_labels: dict[str, str] = field(default_factory=dict)
+
+    def table_max_length_for(self, name: str, layer: str) -> Optional[int]:
+        ldef = self.layers.get(layer)
+        if ldef:
+            for segs, constraints in zip(ldef.templates, ldef.constraints):
+                max_length = constraints.get("max_length")
+                if max_length is not None and self._match_segments(name, segs) is not None:
+                    return int(max_length)
+        return self.table_name_max_length
 
     def _match_segments(self, name: str, segments: list) -> Optional[dict]:
         def _assign(res, k, v):
@@ -85,7 +114,7 @@ class NamingConfig:
                 # 有 leading separator → 不是从开头开始的段，暂停
                 if seg["kind"] == "type":
                     td = self.types.get(seg["name"])
-                    if td and td.values is not None:
+                    if td and td.allow is not None:
                         # Same as below
                         pass
                     else:
@@ -121,9 +150,9 @@ class NamingConfig:
 
             elif seg["kind"] == "type":
                 td = self.types.get(sname)
-                if td and td.values is not None:
+                if td and td.allow is not None:
                     matched = None
-                    for v in sorted(td.values, key=len, reverse=True):
+                    for v in sorted(td.allow, key=len, reverse=True):
                         core = str(v)
                         if rest.startswith(core):
                             after = rest[len(core):]
@@ -137,6 +166,8 @@ class NamingConfig:
                     if matched is not None:
                         result[sname] = matched
                         left += 1
+                    elif td.patterns:
+                        break
                     elif seg.get("optional", False):
                         left += 1
                     else:
@@ -151,7 +182,7 @@ class NamingConfig:
             seg = segments[right]
             sname = seg["name"]
             td = self.types.get(sname)
-            has_values = td and td.values is not None
+            has_values = td and td.allow is not None
 
             if not has_values:
                 break  # 只有 values type 能从右侧匹配
@@ -162,7 +193,7 @@ class NamingConfig:
             else:
                 check_prefix = sep_before or "_"
             matched = None
-            for v in sorted(td.values, key=len, reverse=True):
+            for v in sorted(td.allow, key=len, reverse=True):
                 suffix = check_prefix + str(v)
                 if remaining.endswith(suffix):
                     # 如果是独立 _，前一段应该是 _ 字面量，一并跳过
@@ -207,9 +238,9 @@ class NamingConfig:
 
             elif seg["kind"] == "type":
                 td = self.types.get(sname)
-                if td and td.values is not None:
+                if td and td.allow is not None:
                     matched = None
-                    for v in sorted(td.values, key=len, reverse=True):
+                    for v in sorted(td.allow, key=len, reverse=True):
                         if rest.startswith(v):
                             matched = v
                             remaining = rest[len(v):]
@@ -217,13 +248,16 @@ class NamingConfig:
                     if matched is not None:
                         _assign(result, sname, matched)
                         left += 1
-                    elif optional:
-                        left += 1
-                    else:
+                        continue
+                    if not td.patterns:
+                        if optional:
+                            left += 1
+                            continue
                         return None
-                elif td and td.regex is not None:
+
+                if td and td.patterns:
                     # 判断 regex 是否允许下划线
-                    allows_underscore = "_" in (td.regex or "")
+                    allows_underscore = any("_" in pattern for pattern in td.patterns)
                     if allows_underscore:
                         # 变长 type：消耗到下一个段之前
                         if left + 1 <= right and not optional:
@@ -240,13 +274,19 @@ class NamingConfig:
                                         left += 1
                                         continue
                             # fallback: 消耗全部
-                            _assign(result, sname, rest)
-                            remaining = ""
-                            left += 1
+                            if td.validate(rest) and rest:
+                                _assign(result, sname, rest)
+                                remaining = ""
+                                left += 1
+                            else:
+                                return None
                         else:
-                            _assign(result, sname, rest)
-                            remaining = ""
-                            left += 1
+                            if td.validate(rest) and rest:
+                                _assign(result, sname, rest)
+                                remaining = ""
+                                left += 1
+                            else:
+                                return None
                     else:
                         # 定长 regex（如 source: 不含 _）→ 按 _ 切分
                         idx = rest.find("_")
@@ -271,8 +311,178 @@ class NamingConfig:
 
         return result if not remaining else None
 
+    def _assign_match_value(self, result: dict, key: str, value):
+        if key in result:
+            if isinstance(result[key], list):
+                if isinstance(value, list):
+                    result[key].extend(value)
+                else:
+                    result[key].append(value)
+            else:
+                if isinstance(value, list):
+                    result[key] = [result[key], *value]
+                else:
+                    result[key] = [result[key], value]
+        else:
+            result[key] = value
 
-def _parse_segments(raw: list, types: dict) -> list:
+    def _merge_match_dict(self, base: dict, extra: dict) -> dict:
+        merged = dict(base)
+        for key, value in extra.items():
+            self._assign_match_value(merged, key, value)
+        return merged
+
+    def _match_metric_rule_impl(
+        self,
+        name: str,
+        rule_name: str,
+        active_rules: tuple[str, ...],
+    ) -> Optional[dict]:
+        if rule_name in active_rules:
+            return None
+
+        rule_defs = self.metric_rules.get(rule_name, [])
+        for rule_def in rule_defs:
+            kind = rule_def.get("kind")
+            if kind == "segments":
+                matched = self._match_segments(name, rule_def["template"])
+            elif kind == "sequence":
+                matched = self._match_metric_sequence(
+                    name,
+                    rule_def["nodes"],
+                    active_rules + (rule_name,),
+                )
+            else:
+                matched = None
+
+            if matched is not None:
+                return matched
+        return None
+
+    def _match_metric_sequence(
+        self,
+        name: str,
+        nodes: list[dict],
+        active_rules: tuple[str, ...],
+    ) -> Optional[dict]:
+        parts = name.split("_")
+        if not parts or any(not part for part in parts):
+            return None
+
+        memo: dict[tuple[int, int], Optional[dict]] = {}
+
+        def visit(node_idx: int, part_idx: int) -> Optional[dict]:
+            key = (node_idx, part_idx)
+            if key in memo:
+                return memo[key]
+
+            if node_idx == len(nodes):
+                result = {} if part_idx == len(parts) else None
+                memo[key] = result
+                return result
+
+            node = nodes[node_idx]
+            repeat = node.get("repeat", {"min": 1, "max": 1})
+            min_repeat = int(repeat.get("min", 1))
+            max_repeat = repeat.get("max")
+            max_repeat = int(max_repeat) if max_repeat is not None else None
+
+            def consume(
+                current_idx: int,
+                consumed: int,
+                acc: dict,
+            ) -> Optional[dict]:
+                if consumed >= min_repeat:
+                    tail = visit(node_idx + 1, current_idx)
+                    if tail is not None:
+                        return self._merge_match_dict(acc, tail)
+
+                if current_idx >= len(parts):
+                    return None
+                if max_repeat is not None and consumed >= max_repeat:
+                    return None
+
+                for end in range(current_idx + 1, len(parts) + 1):
+                    candidate = "_".join(parts[current_idx:end])
+                    item_match = self._match_metric_item(
+                        candidate,
+                        node,
+                        active_rules,
+                    )
+                    if item_match is None:
+                        continue
+                    merged = self._merge_match_dict(acc, item_match)
+                    result = consume(end, consumed + 1, merged)
+                    if result is not None:
+                        return result
+                return None
+
+            result = consume(part_idx, 0, {})
+            memo[key] = result
+            return result
+
+        return visit(0, 0)
+
+    def _match_metric_item(
+        self,
+        candidate: str,
+        node: dict,
+        active_rules: tuple[str, ...],
+    ) -> Optional[dict]:
+        kind = node.get("kind")
+        if kind == "literal":
+            if candidate == node["name"]:
+                return {}
+            return None
+
+        if kind == "type":
+            type_def = self.types.get(node["name"])
+            if type_def and type_def.validate(candidate):
+                return {node["name"]: candidate}
+            return None
+
+        if kind == "rule":
+            return self._match_metric_rule_impl(
+                candidate,
+                node["name"],
+                active_rules,
+            )
+
+        return None
+
+    def match_metric_rule(self, name: str, rule_name: str) -> Optional[dict]:
+        return self._match_metric_rule_impl(name, rule_name, ())
+
+
+_REPEAT_RE = re.compile(r"^(?P<name>.+)\{(?P<min>\d+),(?P<max>\d*)\}$")
+
+
+def _split_repeat_suffix(raw: str) -> tuple[str, dict, bool]:
+    if raw.endswith("?"):
+        return raw[:-1], {"min": 0, "max": 1}, True
+
+    match = _REPEAT_RE.match(raw)
+    if match:
+        max_value = match.group("max")
+        return (
+            match.group("name"),
+            {
+                "min": int(match.group("min")),
+                "max": int(max_value) if max_value else None,
+            },
+            False,
+        )
+
+    return raw, {"min": 1, "max": 1}, False
+
+
+def _raw_segment_item(item) -> tuple[str, bool]:
+    if isinstance(item, dict) and "token" in item:
+        return str(item["token"]), bool(item.get("concat_left", False))
+    return str(item), False
+
+
+def _parse_segments(raw: list, _types: dict) -> list:
     """
     解析列表格式的 segments。
 
@@ -286,10 +496,9 @@ def _parse_segments(raw: list, types: dict) -> list:
     """
     parsed = []
     for item in raw:
-        raw_str = str(item)
-        optional = False
+        raw_str, forced_concat_left = _raw_segment_item(item)
         is_type = False
-        concat_left = False
+        concat_left = forced_concat_left
 
         if raw_str.startswith("$"):
             is_type = True
@@ -298,9 +507,7 @@ def _parse_segments(raw: list, types: dict) -> list:
                 concat_left = True
                 raw_str = raw_str[1:]
 
-        if raw_str.endswith("?"):
-            optional = True
-            raw_str = raw_str[:-1]
+        raw_str, _, optional = _split_repeat_suffix(raw_str)
 
         if is_type:
             parsed.append({"name": raw_str, "kind": "type", "optional": optional,
@@ -328,6 +535,44 @@ def _parse_segments(raw: list, types: dict) -> list:
     return parsed
 
 
+def _split_join_expression(expr) -> tuple[str, list]:
+    if isinstance(expr, list):
+        if expr and isinstance(expr[0], str) and expr[0] in ("", "_"):
+            return expr[0], expr[1:]
+        return "_", expr
+    return "_", [expr]
+
+
+def _mark_concat_left(items: list) -> list:
+    if not items:
+        return []
+    first, *rest = items
+    if isinstance(first, dict):
+        first = {**first, "concat_left": True}
+    else:
+        first = {"token": first, "concat_left": True}
+    return [first, *rest]
+
+
+def _expr_to_segment_items(expr) -> list:
+    separator, parts = _split_join_expression(expr)
+    items = []
+    for part in parts:
+        part_items = (
+            _expr_to_segment_items(part)
+            if isinstance(part, list)
+            else [part]
+        )
+        if items and separator == "":
+            part_items = _mark_concat_left(part_items)
+        items.extend(part_items)
+    return items
+
+
+def _parse_rule_expression(expr, types: dict) -> list:
+    return _parse_segments(_expr_to_segment_items(expr), types)
+
+
 def _parse_template(template, types: dict) -> list:
     """支持列表或字符串格式。"""
     if isinstance(template, list):
@@ -352,7 +597,7 @@ def _parse_template(template, types: dict) -> list:
     return _parse_segments(raw, types)
 
 
-def _parse_explicit_pattern(template: str, types: dict) -> list:
+def _parse_explicit_pattern(template: str, _types: dict) -> list:
     """解析显式分隔符字符串，不自动补充下划线。"""
     parsed = []
     i = 0
@@ -394,6 +639,219 @@ def _parse_explicit_pattern(template: str, types: dict) -> list:
     return parsed
 
 
+def _normalize_metric_repeat(repeat) -> dict:
+    if repeat is None:
+        return {"min": 1, "max": 1}
+    if isinstance(repeat, int):
+        return {"min": repeat, "max": repeat}
+    if isinstance(repeat, str):
+        raw, parsed, changed = _split_repeat_suffix(repeat)
+        if changed and not raw:
+            return parsed
+    if isinstance(repeat, dict):
+        return {
+            "min": int(repeat.get("min", 1)),
+            "max": (
+                int(repeat["max"])
+                if repeat.get("max") is not None
+                else None
+            ),
+        }
+    raise ValueError(f"Unsupported metric repeat config: {repeat!r}")
+
+
+def _parse_metric_sequence_item(item: dict | str) -> dict:
+    if isinstance(item, str):
+        if item.endswith(("+", "*")):
+            raise ValueError(
+                "Use {min,max} repeat syntax instead of '+' or '*' in metric rules")
+        raw, repeat, _ = _split_repeat_suffix(item)
+
+        if raw.startswith("$"):
+            return {
+                "kind": "type",
+                "name": raw[1:],
+                "repeat": repeat,
+            }
+        if raw.startswith("@"):
+            return {
+                "kind": "rule",
+                "name": raw[1:],
+                "repeat": repeat,
+            }
+        return {
+            "kind": "literal",
+            "name": raw,
+            "repeat": repeat,
+        }
+
+    if "type" in item:
+        kind = "type"
+        name = str(item["type"])
+    elif "rule" in item:
+        kind = "rule"
+        name = str(item["rule"])
+    elif "literal" in item:
+        kind = "literal"
+        name = str(item["literal"])
+    else:
+        raise ValueError(f"Metric sequence item must define type/rule/literal: {item!r}")
+
+    return {
+        "kind": kind,
+        "name": name,
+        "repeat": _normalize_metric_repeat(item.get("repeat")),
+    }
+
+
+def _parse_metric_sequence(sequence: list) -> dict:
+    separator, sequence = _split_join_expression(sequence)
+    if separator != "_":
+        raise ValueError("Metric rules currently require '_' as the join separator")
+    return {
+        "kind": "sequence",
+        "nodes": [_parse_metric_sequence_item(item) for item in sequence],
+    }
+
+
+def _parse_metric_rule_defs(rule_cfg, types: dict) -> list[dict]:
+    if isinstance(rule_cfg, dict) and "sequence" in rule_cfg:
+        return [_parse_metric_sequence(rule_cfg.get("sequence") or [])]
+
+    parser = _parse_template
+    if isinstance(rule_cfg, dict):
+        if (
+            isinstance(rule_cfg.get("pattern"), str)
+            and "templates" not in rule_cfg
+            and "segments" not in rule_cfg
+        ):
+            parser = _parse_explicit_pattern
+            template_defs = rule_cfg.get("pattern") or []
+        else:
+            template_defs = (
+                rule_cfg.get("templates")
+                or rule_cfg.get("segments")
+                or []
+            )
+    else:
+        template_defs = rule_cfg
+
+    if isinstance(template_defs, str):
+        template_defs = [template_defs]
+    elif (
+        isinstance(template_defs, list)
+        and template_defs
+        and isinstance(template_defs[0], str)
+    ):
+        template_defs = [template_defs]
+
+    return [
+        {"kind": "segments", "template": parser(template, types)}
+        for template in template_defs
+    ]
+
+
+def _as_list(value) -> list:
+    if value is None:
+        return []
+    return value if isinstance(value, list) else [value]
+
+
+def _rule_name(ref) -> str:
+    raw = str(ref)
+    return raw[1:] if raw.startswith("@") else raw
+
+
+def _rule_cfg(rule_defs: dict, ref):
+    name = _rule_name(ref)
+    if name not in rule_defs:
+        raise ValueError(f"Unknown naming rule reference: @{name}")
+    return rule_defs[name]
+
+
+def _rule_expr(rule_defs: dict, ref):
+    cfg = _rule_cfg(rule_defs, ref)
+    if isinstance(cfg, dict) and "expr" in cfg:
+        return cfg["expr"]
+    return cfg
+
+
+def _rule_constraints(rule_defs: dict, ref) -> dict:
+    cfg = _rule_cfg(rule_defs, ref)
+    if isinstance(cfg, dict):
+        return cfg.get("constraints") or {}
+    return {}
+
+
+def _rule_desc(rule_defs: dict, ref) -> str:
+    cfg = _rule_cfg(rule_defs, ref)
+    if isinstance(cfg, dict):
+        return str(cfg.get("desc") or "").strip()
+    return ""
+
+
+def _compile_rule_expr_as_segments(rule_defs: dict, ref, types: dict) -> list:
+    return _parse_rule_expression(_rule_expr(rule_defs, ref), types)
+
+
+def _compile_rule_expr_as_metric(rule_defs: dict, ref) -> dict:
+    return _parse_metric_sequence(_rule_expr(rule_defs, ref))
+
+
+def _compile_table_bindings(
+    table_bindings: dict,
+    rule_defs: dict,
+    types: dict,
+) -> tuple[dict[str, LayerDef], Optional[int]]:
+    layers = {}
+    max_lengths = []
+    for layer_name, refs in table_bindings.items():
+        templates = []
+        constraints_list = []
+        for ref in _as_list(refs):
+            templates.append(_compile_rule_expr_as_segments(rule_defs, ref, types))
+            constraints = _rule_constraints(rule_defs, ref)
+            constraints_list.append(constraints)
+            if constraints.get("max_length") is not None:
+                max_lengths.append(int(constraints["max_length"]))
+        layers[layer_name] = LayerDef(
+            templates=templates,
+            constraints=constraints_list,
+        )
+
+    table_name_max_length = min(max_lengths) if max_lengths else None
+    return layers, table_name_max_length
+
+
+def _compile_column_bindings(
+    column_binding: dict,
+    rule_defs: dict,
+    types: dict,
+) -> tuple[list, list, set[str]]:
+    column_templates = [
+        _compile_rule_expr_as_segments(rule_defs, ref, types)
+        for ref in _as_list(column_binding.get("rules"))
+    ]
+    column_segments = column_templates[0] if column_templates else []
+    common_columns = set(column_binding.get("allow", []))
+    return column_segments, column_templates, common_columns
+
+
+def _compile_metric_bindings(metric_binding: dict, rule_defs: dict) -> tuple[dict, dict]:
+    metric_rules = {}
+    metric_rule_labels = {}
+    for binding_name, ref in metric_binding.items():
+        rule_name = _rule_name(ref)
+        compiled = [_compile_rule_expr_as_metric(rule_defs, ref)]
+        metric_rules[binding_name] = compiled
+        metric_rules[rule_name] = compiled
+        desc = _rule_desc(rule_defs, ref)
+        if desc:
+            metric_rule_labels[binding_name] = desc
+            metric_rule_labels[rule_name] = desc
+    return metric_rules, metric_rule_labels
+
+
 def load_naming_config(path=None):
     path = Path(path) if path else NAMING_CONFIG_PATH
     with open(path, encoding="utf-8") as f:
@@ -403,94 +861,97 @@ def load_naming_config(path=None):
         td = TypeDef(
             label=cfg.get("label", name),
             desc=cfg.get("desc", ""),
-            regex=cfg.get("regex"),
-            values=cfg.get("values"),
+            allow=cfg.get("allow", cfg.get("values")),
+            patterns=_as_list(cfg.get("patterns", cfg.get("regex"))),
         )
-        if td.regex:
-            td._compiled = re.compile(td.regex)
         types[name] = td
 
-    table_cfg = raw.get("table", {}) or {}
-    table_constraints = {}
-    table_templates_cfg = table_cfg
-    if isinstance(table_cfg, dict):
-        table_constraints = (
-            table_cfg.get("constraints")
-            or table_cfg.get("rules")
-            or {}
+    rule_defs = raw.get("rules", {}) or {}
+    bindings = raw.get("bindings", {}) or {}
+
+    table_name_max_length = None
+    if bindings.get("table"):
+        layers, table_name_max_length = _compile_table_bindings(
+            bindings.get("table") or {},
+            rule_defs,
+            types,
         )
-        if "templates" in table_cfg:
-            table_templates_cfg = table_cfg.get("templates") or {}
-        else:
-            table_templates_cfg = {
-                name: cfg
-                for name, cfg in table_cfg.items()
-                if name not in ("constraints", "rules")
-            }
+        table_constraints = {}
+    else:
+        table_cfg = raw.get("table", {}) or {}
+        table_constraints = {}
+        table_templates_cfg = table_cfg
+        if isinstance(table_cfg, dict):
+            table_constraints = (
+                table_cfg.get("constraints")
+                or table_cfg.get("rules")
+                or {}
+            )
+            if "templates" in table_cfg:
+                table_templates_cfg = table_cfg.get("templates") or {}
+            else:
+                table_templates_cfg = {
+                    name: cfg
+                    for name, cfg in table_cfg.items()
+                    if name not in ("constraints", "rules")
+                }
 
-    layers = {}
-    for layer_name, template_defs in table_templates_cfg.items():
-        if isinstance(template_defs, str):
-            template_defs = [template_defs]
-        elif (
-            isinstance(template_defs, list)
-            and template_defs
-            and isinstance(template_defs[0], str)
-        ):
-            template_defs = [template_defs]
+        layers = {}
+        for layer_name, template_defs in table_templates_cfg.items():
+            if isinstance(template_defs, str):
+                template_defs = [template_defs]
+            elif (
+                isinstance(template_defs, list)
+                and template_defs
+                and isinstance(template_defs[0], str)
+            ):
+                template_defs = [template_defs]
 
-        templates = []
-        for template in template_defs:
-            parsed = _parse_template(template, types)
-            templates.append(parsed)
+            templates = []
+            for template in template_defs:
+                parsed = _parse_template(template, types)
+                templates.append(parsed)
 
-        layers[layer_name] = LayerDef(templates=templates)
+            layers[layer_name] = LayerDef(
+                templates=templates,
+                constraints=[table_constraints] * len(templates),
+            )
 
-    col_cfg = raw.get("columns", {})
-    raw_col_seg = col_cfg.get("segments") or col_cfg.get("pattern", "")
-    column_segments = _parse_template(raw_col_seg, types) if raw_col_seg else []
-    common_columns = set(col_cfg.get("common_columns", []))
+    if bindings.get("column"):
+        column_segments, column_templates, common_columns = _compile_column_bindings(
+            bindings.get("column") or {},
+            rule_defs,
+            types,
+        )
+    else:
+        col_cfg = raw.get("columns", {}) or {}
+        raw_col_seg = col_cfg.get("segments") or col_cfg.get("pattern", "")
+        column_segments = _parse_template(raw_col_seg, types) if raw_col_seg else []
+        column_templates = [column_segments] if column_segments else []
+        common_columns = set(col_cfg.get("common_columns", []))
 
     metric_rules = {}
+    metric_rule_labels = {}
+    if bindings.get("metric"):
+        bound_metric_rules, bound_metric_labels = _compile_metric_bindings(
+            bindings.get("metric") or {},
+            rule_defs,
+        )
+        metric_rules.update(bound_metric_rules)
+        metric_rule_labels.update(bound_metric_labels)
     metric_cfg = raw.get("metrics", {}) or {}
     for rule_name, rule_cfg in metric_cfg.items():
-        parser = _parse_template
-        if isinstance(rule_cfg, dict):
-            if (
-                "pattern" in rule_cfg
-                and "templates" not in rule_cfg
-                and "segments" not in rule_cfg
-            ):
-                parser = _parse_explicit_pattern
-            template_defs = (
-                rule_cfg.get("templates")
-                or rule_cfg.get("segments")
-                or rule_cfg.get("pattern")
-                or []
-            )
-        else:
-            template_defs = rule_cfg
-
-        if isinstance(template_defs, str):
-            template_defs = [template_defs]
-        elif (
-            isinstance(template_defs, list)
-            and template_defs
-            and isinstance(template_defs[0], str)
-        ):
-            template_defs = [template_defs]
-
-        metric_rules[rule_name] = [
-            parser(template, types)
-            for template in template_defs
-        ]
+        metric_rules[rule_name] = _parse_metric_rule_defs(rule_cfg, types)
+        if isinstance(rule_cfg, dict) and rule_cfg.get("desc"):
+            metric_rule_labels[rule_name] = str(rule_cfg["desc"])
 
     table_name_cfg = raw.get("table_name", {})
-    table_name_max_length = (
-        table_constraints.get("max_length")
-        if isinstance(table_constraints, dict)
-        else None
-    )
+    if table_name_max_length is None:
+        table_name_max_length = (
+            table_constraints.get("max_length")
+            if isinstance(table_constraints, dict)
+            else None
+        )
     if table_name_max_length is None:
         table_name_max_length = (
             table_name_cfg.get("max_length")
@@ -509,8 +970,10 @@ def load_naming_config(path=None):
         layers=layers,
         column_segments=column_segments,
         common_columns=common_columns,
+        column_templates=column_templates,
         table_name_max_length=table_name_max_length,
         metric_rules=metric_rules,
+        metric_rule_labels=metric_rule_labels,
     )
 
 

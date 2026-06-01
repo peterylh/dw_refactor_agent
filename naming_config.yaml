@@ -1,43 +1,64 @@
 # ============================================================
 # 命名规范配置
 # ============================================================
-# types: 段类型定义
-#   regex - 正则校验
-#   values - 枚举白名单
-# table: 各层的表名模板
-#   YAML 列表格式: 段名列表，段间自动用 _ 连接
-#   ? 后缀 = 可选段（缺失时相邻 _ 也不出现）
-# columns: 字段名模板与通用列白名单
+# rules: 可复用命名表达式
+#   ["_", ...] - 子项之间用 _ 连接
+#   ["", ...]  - 子项之间不加分隔符
+#   $TYPE?     - 可选段
+# bindings: 将规则绑定到表、字段、指标等检查场景
 
 types:
   source:
     label: 来源系统
     desc: 来源业务系统或 CDC 标识
-    regex: "^[a-z0-9]+$"
+    patterns:
+      - "^[a-z0-9]+$"
+
   entity:
     label: 业务实体
     desc: 业务主体名称
-    regex: "^[a-z][a-z0-9_]*$"
+    patterns:
+      - "^[a-z][a-z0-9_]*$"
+
   business_view:
     label: 业务视图
     desc: ADS 层业务视图名称
-    regex: "^[a-z][a-z0-9_]*$"
+    patterns:
+      - "^[a-z][a-z0-9_]*$"
+
   load_type:
     label: 装载类型
     desc: 全量/增量标识
-    values: [full, inc]
+    allow:
+      - full
+      - inc
+
   time_granularity:
     label: 时间粒度
     desc: 汇总时间周期
-    values: [daily, monthly, weekly, yearly]
+    allow:
+      - daily
+      - monthly
+      - weekly
+      - yearly
+
   prefix_field:
     label: 字段限定前缀
     desc: 度量或布尔限定词
-    values: [min, max, avg, sum, first, last, is, has]
+    allow:
+      - min
+      - max
+      - avg
+      - sum
+      - first
+      - last
+      - is
+      - has
+
   suffix_field:
     label: 字段后缀类型
     desc: 字段的业务类型后缀
-    values:
+    allow:
       - id
       - name
       - code
@@ -61,22 +82,50 @@ types:
       - desc
       - note
 
-table:
-  ODS:
-    - [ods, $source, $entity, $load_type]
-  DIM:
-    - [dim, $entity]
-  DWD:
-    - [dwd, $entity]
-  DWS:
-    - [dws, $entity, "$time_granularity?"]
-  ADS:
-    - [ads, $business_view]
+  metric_name:
+    label: 指标名
+    desc: 默认小写下划线指标名
+    patterns:
+      - "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$"
 
-columns:
-  segments: ["$prefix_field?", $entity, "$suffix_field?"]
-  common_columns:
-    - etl_time
-    - snapshot_date
-    - create_time
-    - update_time
+rules:
+  TABLE_ODS: ["_", ods, "$source", "$entity", "$load_type"]
+  TABLE_DIM: ["_", dim, "$entity"]
+  TABLE_DWD: ["_", dwd, "$entity"]
+  TABLE_DWS: ["_", dws, "$entity", "$time_granularity?"]
+  TABLE_ADS: ["_", ads, "$business_view"]
+  COLUMN_DEFAULT: ["_", "$prefix_field?", "$entity", "$suffix_field?"]
+
+  ATOMIC_METRIC:
+    desc: 原子指标命名 lower_snake_case
+    expr: "$metric_name"
+
+  DERIVED_METRIC:
+    desc: 派生指标命名 lower_snake_case
+    expr: "$metric_name"
+
+bindings:
+  table:
+    ODS:
+      - "@TABLE_ODS"
+    DIM:
+      - "@TABLE_DIM"
+    DWD:
+      - "@TABLE_DWD"
+    DWS:
+      - "@TABLE_DWS"
+    ADS:
+      - "@TABLE_ADS"
+
+  column:
+    allow:
+      - etl_time
+      - snapshot_date
+      - create_time
+      - update_time
+    rules:
+      - "@COLUMN_DEFAULT"
+
+  metric:
+    atomic: "@ATOMIC_METRIC"
+    derived: "@DERIVED_METRIC"

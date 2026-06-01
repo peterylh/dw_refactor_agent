@@ -4,7 +4,7 @@ import pytest
 import config
 from config import (
     TypeDef, LayerDef, NamingConfig,
-    _parse_segments, _parse_template, load_naming_config,
+    _parse_rule_expression, _parse_segments, _parse_template, load_naming_config,
     layer_rank,
 )
 
@@ -14,31 +14,39 @@ from config import (
 # ============================================================
 
 class TestTypeDef:
-    def test_values_match(self):
-        td = TypeDef(label="load_type", values=["full", "inc"])
+    def test_allow_match(self):
+        td = TypeDef(label="load_type", allow=["full", "inc"])
         assert td.validate("full") is True
         assert td.validate("inc") is True
 
-    def test_values_no_match(self):
-        td = TypeDef(label="load_type", values=["full", "inc"])
+    def test_allow_no_match(self):
+        td = TypeDef(label="load_type", allow=["full", "inc"])
         assert td.validate("daily") is False
         assert td.validate("") is False
 
-    def test_regex_match(self):
-        td = TypeDef(label="source", regex="^[a-z0-9]+$")
-        td._compiled = re.compile(td.regex)
+    def test_patterns_match(self):
+        td = TypeDef(label="source", patterns=["^[a-z0-9]+$"])
         assert td.validate("mysql") is True
         assert td.validate("erp01") is True
 
-    def test_regex_no_match(self):
-        td = TypeDef(label="source", regex="^[a-z0-9]+$")
-        td._compiled = re.compile(td.regex)
+    def test_patterns_no_match(self):
+        td = TypeDef(label="source", patterns=["^[a-z0-9]+$"])
         assert td.validate("MySql") is False
         assert td.validate("") is False
 
-    def test_neither_values_nor_regex(self):
+    def test_neither_allow_nor_patterns(self):
         td = TypeDef(label="freeform")
         assert td.validate("anything") is True
+
+    def test_allow_and_patterns_are_or_validators(self):
+        td = TypeDef(
+            label="period",
+            patterns=["^[0-9]+D$"],
+            allow=["D", "MTD"],
+        )
+        assert td.validate("D") is True
+        assert td.validate("7D") is True
+        assert td.validate("0M") is False
 
 
 # ============================================================
@@ -158,24 +166,27 @@ class TestParseTemplate:
 
 def _make_types():
     return {
-        "source": TypeDef(label="source", regex="^[a-z0-9]+$"),
-        "entity": TypeDef(label="entity", regex="^[a-z][a-z0-9_]*$"),
-        "load_type": TypeDef(label="load_type", values=["full", "inc"]),
+        "source": TypeDef(label="source", patterns=["^[a-z0-9]+$"]),
+        "entity": TypeDef(label="entity", patterns=["^[a-z][a-z0-9_]*$"]),
+        "load_type": TypeDef(label="load_type", allow=["full", "inc"]),
         "time_granularity": TypeDef(
             label="time_granularity",
-            values=["daily", "monthly", "weekly", "yearly"],
+            allow=["daily", "monthly", "weekly", "yearly"],
         ),
-        "business_view": TypeDef(label="business_view", regex="^[a-z][a-z0-9_]*$"),
+        "business_view": TypeDef(
+            label="business_view",
+            patterns=["^[a-z][a-z0-9_]*$"],
+        ),
         "prefix_field": TypeDef(
             label="prefix_field",
-            values=["min", "max", "avg", "sum", "first", "last", "is", "has"],
+            allow=["min", "max", "avg", "sum", "first", "last", "is", "has"],
         ),
         "suffix_field": TypeDef(
             label="suffix_field",
-            values=["id", "name", "code", "date", "time", "amount",
-                    "price", "cost", "count", "quantity", "status",
-                    "type", "level", "score", "segment", "method",
-                    "num", "rate", "ratio", "flag", "desc", "note"],
+            allow=["id", "name", "code", "date", "time", "amount",
+                   "price", "cost", "count", "quantity", "status",
+                   "type", "level", "score", "segment", "method",
+                   "num", "rate", "ratio", "flag", "desc", "note"],
         ),
     }
 
@@ -439,9 +450,12 @@ class TestLoadNamingConfig:
             """
 types:
   ACTION_VERB:
-    regex: "^[A-Z][A-Z0-9]*$"
+    patterns:
+      - "^[A-Z][A-Z0-9]*$"
   MEASURE_NOUN:
-    values: [AMT, CNT]
+    allow:
+      - AMT
+      - CNT
 metrics:
   atomic_metrics:
     pattern: "{ACTION_VERB}_{MEASURE_NOUN}"
@@ -450,13 +464,32 @@ metrics:
         )
 
         nc = load_naming_config(cfg_path)
-        segs = nc.metric_rules["atomic_metrics"][0]
-
-        assert nc._match_segments("PAY_AMT", segs) == {
+        assert nc.match_metric_rule("PAY_AMT", "atomic_metrics") == {
             "ACTION_VERB": "PAY",
             "MEASURE_NOUN": "AMT",
         }
-        assert nc._match_segments("PAY__AMT", segs) is None
+        assert nc.match_metric_rule("PAY__AMT", "atomic_metrics") is None
+
+    def test_metric_rules_reject_plus_repeat_shorthand(self, tmp_path):
+        cfg_path = tmp_path / "naming.yaml"
+        cfg_path.write_text(
+            """
+types:
+  METRIC_PART:
+    patterns:
+      - "^[A-Z]+$"
+rules:
+  BAD_METRIC:
+    expr: ["_", "$METRIC_PART+"]
+bindings:
+  metric:
+    atomic: "@BAD_METRIC"
+""",
+            encoding="utf-8",
+        )
+
+        with pytest.raises(ValueError, match=r"\{min,max\} repeat syntax"):
+            load_naming_config(cfg_path)
 
 
 # ============================================================
@@ -465,13 +498,27 @@ metrics:
 
 from config import get_naming_config, PROJECT_ROOT
 
-class TestConcatSyntax:
-    def test_parse_concat(self):
-        result = _parse_segments(["$a", "$+b"], {})
-        assert len(result) == 2
-        assert result[1].get("concat_left") is True
-        assert result[0].get("sep_after", "") == ""
-        assert result[1].get("sep_before", "") == ""
+class TestJoinExpressionSyntax:
+    def test_parse_nested_empty_join(self):
+        result = _parse_rule_expression(["_", "$a", ["", "$b", "$c"]], {})
+        assert [item["name"] for item in result] == ["a", "_", "b", "c"]
+        assert result[3].get("concat_left") is True
+
+    def test_segment_match_uses_patterns_when_allow_misses(self):
+        td = TypeDef(label="period", patterns=["^[0-9]+D$"], allow=["D"])
+        types = {"period": td}
+        nc = NamingConfig(
+            types=types,
+            layers={"X": LayerDef(templates=[_parse_template(["x", "$period"], types)])},
+            column_segments=[],
+            common_columns=set(),
+        )
+        assert nc._match_segments("x_D", nc.layers["X"].templates[0]) == {
+            "period": "D",
+        }
+        assert nc._match_segments("x_30D", nc.layers["X"].templates[0]) == {
+            "period": "30D",
+        }
 
 
 class TestEnterpriseNaming:
@@ -542,23 +589,41 @@ class TestEnterpriseNaming:
     def test_atomic_metric_rule(self, nc):
         assert nc.types["ACTION_VERB"].validate("PAY") is True
         assert nc.types["ACTION_VERB"].validate("pay") is False
-        assert "AMT" in nc.types["MEASURE_NOUN"].values
+        assert "AMT" in nc.types["MEASURE_NOUN"].allow
 
-        segs = nc.metric_rules["atomic_metrics"][0]
-        assert nc._match_segments("PAY_AMT", segs) == {
+        assert nc.match_metric_rule("PAY_AMT", "atomic") == {
             "ACTION_VERB": "PAY",
             "MEASURE_NOUN": "AMT",
         }
-        assert nc._match_segments("PAY_UNKNOWN", segs) is None
-        assert nc._match_segments("pay_amt", segs) is None
+        assert nc.match_metric_rule("PAY_UNKNOWN", "atomic") is None
+        assert nc.match_metric_rule("pay_amt", "atomic") is None
 
     def test_derived_metric_types(self, nc):
-        assert "7D" in nc.types["METRIC_TIME_PERIOD"].values
-        assert "L1M" in nc.types["METRIC_TIME_PERIOD"].values
+        assert "7D" not in nc.types["METRIC_TIME_PERIOD"].allow
+        assert nc.types["METRIC_TIME_PERIOD"].validate("7D") is True
+        assert nc.types["METRIC_TIME_PERIOD"].validate("L13M") is True
+        assert nc.types["METRIC_TIME_PERIOD"].validate("0D") is False
+        assert nc.types["METRIC_TIME_PERIOD"].validate("AD") is False
         assert nc.types["METRIC_MODIFIER"].validate("OLD") is True
         assert nc.types["METRIC_MODIFIER"].validate("HIGH_NET") is True
         assert nc.types["METRIC_MODIFIER"].validate("OL") is False
         assert nc.types["METRIC_MODIFIER"].validate("high_net") is False
+        assert nc.metric_rules["derived"][0]["nodes"] == [
+            {"kind": "type", "name": "METRIC_TIME_PERIOD", "repeat": {"min": 1, "max": 1}},
+            {"kind": "type", "name": "METRIC_MODIFIER", "repeat": {"min": 1, "max": None}},
+            {"kind": "rule", "name": "ATOMIC_METRIC", "repeat": {"min": 1, "max": 1}},
+        ]
+        assert nc.match_metric_rule(
+            "7D_OLD_CHREM_PAY_AMT",
+            "derived",
+        ) == {
+            "METRIC_TIME_PERIOD": "7D",
+            "METRIC_MODIFIER": ["OLD", "CHREM"],
+            "ACTION_VERB": "PAY",
+            "MEASURE_NOUN": "AMT",
+        }
+        assert nc.match_metric_rule("OLD_7D_PAY_AMT", "derived") is None
+        assert nc.match_metric_rule("7D_OL_PAY_AMT", "derived") is None
 
 
 class TestGetNamingConfigByProject:
@@ -567,6 +632,9 @@ class TestGetNamingConfigByProject:
         # DWD layer should exist but its template shouldn't be the enterprise one
         # Let's just check the number of templates in DWD
         assert len(nc.layers["DWD"].templates) == 1
+        assert nc.match_metric_rule("transaction_count", "derived") == {
+            "metric_name": "transaction_count",
+        }
 
     def test_enterprise_project(self):
         # Temporarily mock PROJECT_CONFIG

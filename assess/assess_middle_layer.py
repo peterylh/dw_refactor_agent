@@ -12,7 +12,6 @@
 
 import json
 import argparse
-import re
 import sys
 from pathlib import Path
 from collections import defaultdict
@@ -54,30 +53,6 @@ ATOMIC_METRIC_RULE_NAME = "原子指标命名 {ACTION_VERB}_{MEASURE_NOUN}"
 DERIVED_METRIC_RULE_NAME = (
     "派生指标命名 {TIME_PERIOD}_{MODIFIER...}_{ATOMIC_METRIC}"
 )
-DEFAULT_DERIVED_METRIC_TIME_PERIODS = {
-    "D",
-    "W",
-    "M",
-    "Q",
-    "Y",
-    "TD",
-    "MTD",
-    "QTD",
-    "YTD",
-    "7D",
-    "14D",
-    "30D",
-    "60D",
-    "90D",
-    "L7D",
-    "L30D",
-    "L1M",
-    "L3M",
-    "L1Q",
-    "L1Y",
-}
-DEFAULT_DERIVED_MODIFIER_RE = re.compile(
-    r"^(?=.{3,8}$)[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)*$")
 
 def build_metric_result(metric: dict, display_score: float | None = None) -> dict:
     raw = metric["score"]
@@ -428,26 +403,42 @@ def _check_table_name_any_template(name: str, layer: str, nc) -> bool:
             return True
     return False
 
-def _check_table_name_length(name: str, nc) -> bool:
-    max_length = getattr(nc, "table_name_max_length", None)
+def _table_name_max_length(name: str, layer: str, nc) -> int | None:
+    if hasattr(nc, "table_max_length_for"):
+        return nc.table_max_length_for(name, layer)
+    return getattr(nc, "table_name_max_length", None)
+
+
+def _check_table_name_length(name: str, layer: str, nc) -> bool:
+    max_length = _table_name_max_length(name, layer, nc)
     return max_length is None or len(name) <= max_length
 
 def _check_column_name(col_name: str, nc) -> tuple[bool, list[str]]:
     if col_name in nc.common_columns:
         return True, ["通用列名"]
 
+    templates = getattr(nc, "column_templates", None) or (
+        [nc.column_segments] if getattr(nc, "column_segments", None) else []
+    )
+    for template in templates:
+        if nc._match_segments(col_name, template) is not None:
+            return True, ["字段命名模板"]
+
+    if templates:
+        return False, []
+
     # OR 匹配：字段只要匹配任意一个已知后缀/前缀模式即合规
     matched = []
     sf = nc.types.get("suffix_field")
-    if sf and sf.values:
-        for v in sorted(sf.values, key=len, reverse=True):
+    if sf and sf.allow:
+        for v in sorted(sf.allow, key=len, reverse=True):
             if col_name.endswith(f"_{v}"):
                 matched.append(f"后缀 _{v}")
                 break
     if not matched:
         pf = nc.types.get("prefix_field")
-        if pf and pf.values:
-            for v in sorted(pf.values, key=len, reverse=True):
+        if pf and pf.allow:
+            for v in sorted(pf.allow, key=len, reverse=True):
                 if col_name.startswith(f"{v}_"):
                     matched.append(f"前缀 {v}_")
                     break
@@ -455,100 +446,37 @@ def _check_column_name(col_name: str, nc) -> tuple[bool, list[str]]:
     return bool(matched), matched
 
 
-def _metric_rule_templates(nc, *rule_names: str) -> list:
+def _metric_rule_name(nc, *rule_names: str) -> str | None:
     metric_rules = getattr(nc, "metric_rules", {}) or {}
     for rule_name in rule_names:
-        templates = metric_rules.get(rule_name)
-        if templates:
-            return templates
-    return []
+        if metric_rules.get(rule_name):
+            return rule_name
+    return None
+
+
+def _metric_rule_label(nc, fallback: str, rule_name: str | None) -> str:
+    if not rule_name:
+        return fallback
+    labels = getattr(nc, "metric_rule_labels", {}) or {}
+    return labels.get(rule_name) or fallback
 
 
 def _check_atomic_metric_name(metric_name: str, nc) -> bool:
-    templates = _metric_rule_templates(nc, "atomic_metrics", "atomic")
-    if not templates:
+    rule_name = _metric_rule_name(nc, "atomic", "atomic_metrics")
+    if not rule_name:
         return True
-    return any(
-        nc._match_segments(metric_name, template) is not None
-        for template in templates
-    )
-
-
-def _type_values(nc, type_name: str) -> set[str]:
-    type_def = nc.types.get(type_name)
-    values = getattr(type_def, "values", None)
-    if not values:
-        return set()
-    return {str(value).strip() for value in values if str(value).strip()}
-
-
-def _derived_metric_time_periods(nc) -> set[str]:
-    configured = _type_values(nc, "METRIC_TIME_PERIOD")
-    if configured:
-        return configured
-    return DEFAULT_DERIVED_METRIC_TIME_PERIODS
-
-
-def _check_derived_modifier(modifier: str, nc) -> bool:
-    type_def = nc.types.get("METRIC_MODIFIER")
-    if type_def:
-        return type_def.validate(modifier)
-    return bool(DEFAULT_DERIVED_MODIFIER_RE.fullmatch(modifier))
-
-
-def _modifier_parts_can_partition(parts: list[str], nc) -> bool:
-    if not parts:
-        return False
-
-    memo: dict[int, bool] = {}
-
-    def visit(start: int) -> bool:
-        if start == len(parts):
-            return True
-        if start in memo:
-            return memo[start]
-
-        for end in range(start + 1, len(parts) + 1):
-            modifier = "_".join(parts[start:end])
-            if len(modifier) > 8:
-                break
-            if _check_derived_modifier(modifier, nc) and visit(end):
-                memo[start] = True
-                return True
-
-        memo[start] = False
-        return False
-
-    return visit(0)
+    return nc.match_metric_rule(metric_name, rule_name) is not None
 
 
 def _check_derived_metric_name(metric_name: str, nc) -> bool:
-    """校验派生指标: 时间周期 + 至少一个修饰词 + 原子指标。"""
-    parts = metric_name.split("_")
-    if len(parts) < 4 or any(not part for part in parts):
+    rule_name = _metric_rule_name(nc, "derived", "derived_metrics")
+    if not rule_name:
         return False
-
-    if parts[0] not in _derived_metric_time_periods(nc):
-        return False
-
-    for atomic_start in range(2, len(parts) - 1):
-        modifier_parts = parts[1:atomic_start]
-        atomic_metric_name = "_".join(parts[atomic_start:])
-        if (
-            _modifier_parts_can_partition(modifier_parts, nc)
-            and _check_atomic_metric_name(atomic_metric_name, nc)
-        ):
-            return True
-
-    return False
+    return nc.match_metric_rule(metric_name, rule_name) is not None
 
 
 def _has_derived_metric_rule(nc) -> bool:
-    return bool(
-        _metric_rule_templates(nc, "derived_metrics", "derived")
-        or _metric_rule_templates(nc, "atomic_metrics", "atomic")
-        or _type_values(nc, "METRIC_TIME_PERIOD")
-    )
+    return _metric_rule_name(nc, "derived", "derived_metrics") is not None
 
 
 def _metric_names_from_raw(raw_metrics) -> list[str]:
@@ -594,9 +522,14 @@ def score_naming_conventions(
     model_metadata: dict | None = None,
 ) -> dict:
     middle = [t for t in tables if t["layer"] in ("DWD", "DWS", "DIM")]
-    has_atomic_metric_rule = bool(
-        _metric_rule_templates(nc, "atomic_metrics", "atomic"))
-    has_derived_metric_rule = _has_derived_metric_rule(nc)
+    atomic_rule_name = _metric_rule_name(nc, "atomic", "atomic_metrics")
+    derived_rule_name = _metric_rule_name(nc, "derived", "derived_metrics")
+    has_atomic_metric_rule = atomic_rule_name is not None
+    has_derived_metric_rule = derived_rule_name is not None
+    atomic_rule_label = _metric_rule_label(
+        nc, ATOMIC_METRIC_RULE_NAME, atomic_rule_name)
+    derived_rule_label = _metric_rule_label(
+        nc, DERIVED_METRIC_RULE_NAME, derived_rule_name)
 
     table_results = []
     total_checks = 0
@@ -614,12 +547,13 @@ def score_naming_conventions(
             tbl_passed += 1
         else:
             tbl_violations.append(f"违反: 表名符合规范模板")
-        if getattr(nc, "table_name_max_length", None) is not None:
+        max_length = _table_name_max_length(name, layer, nc)
+        if max_length is not None:
             tbl_total += 1
-            if _check_table_name_length(name, nc):
+            if _check_table_name_length(name, layer, nc):
                 tbl_passed += 1
             else:
-                tbl_violations.append(f"违反: 表名长度 <= {nc.table_name_max_length}")
+                tbl_violations.append(f"违反: 表名长度 <= {max_length}")
 
         # --- 原子指标检查 ---
         metric_violations = []
@@ -730,13 +664,26 @@ def score_naming_conventions(
         pct=round(passed / total * 100, 1) if total else 0,
     )
 
-    max_length = getattr(nc, "table_name_max_length", None)
-    if max_length is not None:
-        passed = sum(1 for t in middle if _check_table_name_length(t["name"], nc))
+    table_max_lengths = sorted({
+        max_length
+        for t in middle
+        for max_length in [_table_name_max_length(t["name"], t["layer"], nc)]
+        if max_length is not None
+    })
+    for max_length in table_max_lengths:
+        relevant_tables = [
+            t for t in middle
+            if _table_name_max_length(t["name"], t["layer"], nc) == max_length
+        ]
+        passed = sum(
+            1 for t in relevant_tables
+            if _check_table_name_length(t["name"], t["layer"], nc)
+        )
         rule_summary[f"表名长度 <= {max_length}"] = dict(
             pass_count=passed,
-            total=total,
-            pct=round(passed / total * 100, 1) if total else 0,
+            total=len(relevant_tables),
+            pct=round(passed / len(relevant_tables) * 100, 1)
+            if relevant_tables else 0,
         )
 
     col_total = 0
@@ -766,7 +713,7 @@ def score_naming_conventions(
             if not ok:
                 rule_summary.setdefault("无匹配模式", {"pass_count": 0, "total": 0})
                 rule_summary["无匹配模式"]["total"] += 1
-    for k, v in rule_summary.items():
+    for _, v in rule_summary.items():
         if v["total"]:
             v["pct"] = round(v["pass_count"] / v["total"] * 100, 1)
     # 确保 col 总结显示
@@ -785,7 +732,7 @@ def score_naming_conventions(
                 metric_total += 1
                 if _check_atomic_metric_name(metric_name, nc):
                     metric_passed += 1
-        rule_summary[ATOMIC_METRIC_RULE_NAME] = dict(
+        rule_summary[atomic_rule_label] = dict(
             pass_count=metric_passed,
             total=metric_total,
             pct=round(metric_passed / metric_total * 100, 1)
@@ -800,7 +747,7 @@ def score_naming_conventions(
                 metric_total += 1
                 if _check_derived_metric_name(metric_name, nc):
                     metric_passed += 1
-        rule_summary[DERIVED_METRIC_RULE_NAME] = dict(
+        rule_summary[derived_rule_label] = dict(
             pass_count=metric_passed,
             total=metric_total,
             pct=round(metric_passed / metric_total * 100, 1)
