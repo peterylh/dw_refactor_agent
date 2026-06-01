@@ -4,3 +4,6 @@ layer: DWD
 description: 库存每日快照
 config:
   materialized: snapshot
+metrics:
+- quantity
+- days_since_restock

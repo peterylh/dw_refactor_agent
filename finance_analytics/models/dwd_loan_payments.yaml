@@ -3,3 +3,10 @@ name: dwd_loan_payments
 layer: DWD
 config:
   materialized: full
+metrics:
+- scheduled_amount
+- actual_amount
+- late_fee
+- outstanding_balance
+- days_late
+- amount_difference

@@ -24,7 +24,7 @@ if str(_root) not in sys.path:
     sys.path.insert(0, str(_root))
 
 from assess.context_builder import build_contexts
-from assess.table_classifier import TableClassifier
+from assess.table_inspector import TableInspector
 from config import layer_rank
 
 # ============================================================
@@ -86,14 +86,16 @@ ARCH_VIOLATION_RULES = [
 
 def load_lineage_data(project: str) -> dict:
     lineage_dir = Path(__file__).resolve().parent.parent / "lineage"
-    candidates = [
-        lineage_dir / f"lineage_data_{project}.json",
-        lineage_dir / "lineage_data.json",
-    ]
-    for path in candidates:
-        if path.exists():
-            with open(path) as f:
-                return json.load(f)
+    project_path = lineage_dir / f"lineage_data_{project}.json"
+    if project_path.exists():
+        with open(project_path) as f:
+            return json.load(f)
+
+    legacy_path = lineage_dir / "lineage_data.json"
+    if project == "shop" and legacy_path.exists():
+        with open(legacy_path) as f:
+            return json.load(f)
+
     raise FileNotFoundError(
         f"未找到 {project} 的血缘数据文件 (lineage_data_{project}.json)")
 
@@ -751,8 +753,8 @@ def assess(project: str, weights: dict = None) -> dict:
             ).parent / "cache" / f"classify_{project}.json"
             if weights.get("no_cache", False) and cache_file.exists():
                 cache_file.unlink()
-            classifier = TableClassifier(api_key, cache_file=cache_file)
-            llm_results = classifier.classify_batch(contexts)
+            inspector = TableInspector(api_key, cache_file=cache_file)
+            llm_results = inspector.inspect_batch(contexts)
         else:
             print("警告: 未提供 DEEPSEEK_API_KEY 环境变量，跳过分类。")
 

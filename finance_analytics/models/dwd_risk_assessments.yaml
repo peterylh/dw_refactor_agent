@@ -3,3 +3,10 @@ name: dwd_risk_assessments
 layer: DWD
 config:
   materialized: full
+metrics:
+- risk_score
+- high_value_customer
+- transaction_volume_last_90d
+- num_accounts
+- years_as_customer
+- income_verified

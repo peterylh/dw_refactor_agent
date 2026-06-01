@@ -4,3 +4,6 @@ layer: DWD
 description: 促销活动每日快照
 config:
   materialized: snapshot
+metrics:
+- min_amount
+- duration_days
