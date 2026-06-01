@@ -59,6 +59,16 @@ types:
     label: 时间周期
     values: [D, W, M, Q, Y, S]
 
+  METRIC_TIME_PERIOD:
+    label: 指标时间周期
+    desc: 派生指标时间周期，如 D(日)、MTD(月初至今)、7D(近7日)、L1M(上个月)
+    values: [D, W, M, Q, Y, TD, MTD, QTD, YTD, 7D, 14D, 30D, 60D, 90D, L7D, L30D, L1M, L3M, L1Q, L1Y]
+
+  METRIC_MODIFIER:
+    label: 指标修饰词
+    desc: 来自维度属性的业务限定，3~8 字符英文缩写
+    regex: "^(?=.{3,8}$)[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)*$"
+
   DWD_GRANULARITY:
     label: DWD粒度后缀
     desc: I=事务增量, F=周期快照, A=累积快照
@@ -114,6 +124,8 @@ metrics:
   atomic_metrics:
     desc: "原子指标命名格式: {动作动词}_{度量名词}"
     segments: [$ACTION_VERB, $MEASURE_NOUN]
+  derived_metrics:
+    desc: "派生指标命名格式: {时间周期}_{修饰词1}_{修饰词2}..._{原子指标}"
 
 table:
   constraints:

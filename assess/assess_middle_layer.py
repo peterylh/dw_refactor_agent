@@ -51,6 +51,33 @@ SEVERITY_WEIGHT = {"严重": 4, "高": 3, "中": 2, "低": 1}
 # 每表扣分上限 (cap)，防止单张高频表拖垮整体评分
 PER_TABLE_CAP = 4
 ATOMIC_METRIC_RULE_NAME = "原子指标命名 {ACTION_VERB}_{MEASURE_NOUN}"
+DERIVED_METRIC_RULE_NAME = (
+    "派生指标命名 {TIME_PERIOD}_{MODIFIER...}_{ATOMIC_METRIC}"
+)
+DEFAULT_DERIVED_METRIC_TIME_PERIODS = {
+    "D",
+    "W",
+    "M",
+    "Q",
+    "Y",
+    "TD",
+    "MTD",
+    "QTD",
+    "YTD",
+    "7D",
+    "14D",
+    "30D",
+    "60D",
+    "90D",
+    "L7D",
+    "L30D",
+    "L1M",
+    "L3M",
+    "L1Q",
+    "L1Y",
+}
+DEFAULT_DERIVED_MODIFIER_RE = re.compile(
+    r"^(?=.{3,8}$)[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)*$")
 
 def build_metric_result(metric: dict, display_score: float | None = None) -> dict:
     raw = metric["score"]
@@ -447,6 +474,83 @@ def _check_atomic_metric_name(metric_name: str, nc) -> bool:
     )
 
 
+def _type_values(nc, type_name: str) -> set[str]:
+    type_def = nc.types.get(type_name)
+    values = getattr(type_def, "values", None)
+    if not values:
+        return set()
+    return {str(value).strip() for value in values if str(value).strip()}
+
+
+def _derived_metric_time_periods(nc) -> set[str]:
+    configured = _type_values(nc, "METRIC_TIME_PERIOD")
+    if configured:
+        return configured
+    return DEFAULT_DERIVED_METRIC_TIME_PERIODS
+
+
+def _check_derived_modifier(modifier: str, nc) -> bool:
+    type_def = nc.types.get("METRIC_MODIFIER")
+    if type_def:
+        return type_def.validate(modifier)
+    return bool(DEFAULT_DERIVED_MODIFIER_RE.fullmatch(modifier))
+
+
+def _modifier_parts_can_partition(parts: list[str], nc) -> bool:
+    if not parts:
+        return False
+
+    memo: dict[int, bool] = {}
+
+    def visit(start: int) -> bool:
+        if start == len(parts):
+            return True
+        if start in memo:
+            return memo[start]
+
+        for end in range(start + 1, len(parts) + 1):
+            modifier = "_".join(parts[start:end])
+            if len(modifier) > 8:
+                break
+            if _check_derived_modifier(modifier, nc) and visit(end):
+                memo[start] = True
+                return True
+
+        memo[start] = False
+        return False
+
+    return visit(0)
+
+
+def _check_derived_metric_name(metric_name: str, nc) -> bool:
+    """校验派生指标: 时间周期 + 至少一个修饰词 + 原子指标。"""
+    parts = metric_name.split("_")
+    if len(parts) < 4 or any(not part for part in parts):
+        return False
+
+    if parts[0] not in _derived_metric_time_periods(nc):
+        return False
+
+    for atomic_start in range(2, len(parts) - 1):
+        modifier_parts = parts[1:atomic_start]
+        atomic_metric_name = "_".join(parts[atomic_start:])
+        if (
+            _modifier_parts_can_partition(modifier_parts, nc)
+            and _check_atomic_metric_name(atomic_metric_name, nc)
+        ):
+            return True
+
+    return False
+
+
+def _has_derived_metric_rule(nc) -> bool:
+    return bool(
+        _metric_rule_templates(nc, "derived_metrics", "derived")
+        or _metric_rule_templates(nc, "atomic_metrics", "atomic")
+        or _type_values(nc, "METRIC_TIME_PERIOD")
+    )
+
+
 def _metric_names_from_raw(raw_metrics) -> list[str]:
     if not isinstance(raw_metrics, list):
         return []
@@ -473,6 +577,17 @@ def _atomic_metric_names_for_table(
     return _metric_names_from_raw(raw_metrics)
 
 
+def _derived_metric_names_for_table(
+    table: dict,
+    model_metadata: dict | None,
+) -> list[str]:
+    raw_metrics = table.get("derived_metrics")
+    if raw_metrics is None and model_metadata:
+        metadata = model_metadata.get(table["name"], {})
+        raw_metrics = metadata.get("derived_metrics")
+    return _metric_names_from_raw(raw_metrics)
+
+
 def score_naming_conventions(
     tables: list,
     nc,
@@ -481,6 +596,7 @@ def score_naming_conventions(
     middle = [t for t in tables if t["layer"] in ("DWD", "DWS", "DIM")]
     has_atomic_metric_rule = bool(
         _metric_rule_templates(nc, "atomic_metrics", "atomic"))
+    has_derived_metric_rule = _has_derived_metric_rule(nc)
 
     table_results = []
     total_checks = 0
@@ -521,15 +637,32 @@ def score_naming_conventions(
             else:
                 metric_violations.append(metric_name)
 
+        # --- 派生指标检查 ---
+        derived_metric_violations = []
+        derived_metric_passed = 0
+        derived_metric_names = (
+            _derived_metric_names_for_table(t, model_metadata)
+            if has_derived_metric_rule
+            else []
+        )
+        derived_metric_name_set = set(derived_metric_names)
+        derived_metric_total = len(derived_metric_names)
+        for metric_name in derived_metric_names:
+            if _check_derived_metric_name(metric_name, nc):
+                derived_metric_passed += 1
+            else:
+                derived_metric_violations.append(metric_name)
+
         # --- 字段检查 ---
-        # 原子指标是列的一种专项类型，已由指标规则检查，不再重复进入通用字段规则。
+        # 指标是列的一种专项类型，已由指标规则检查，不再重复进入通用字段规则。
         col_violations = []
         col_passed = 0
         col_total = 0
+        checked_metric_name_set = metric_name_set | derived_metric_name_set
 
         for col in columns:
             col_name = col["name"]
-            if col_name in metric_name_set:
+            if col_name in checked_metric_name_set:
                 continue
             col_total += 1
             ok, matched = _check_column_name(col_name, nc)
@@ -538,8 +671,18 @@ def score_naming_conventions(
             else:
                 col_violations.append(col_name)
 
-        table_pass = tbl_passed + col_passed + metric_passed
-        table_check = tbl_total + col_total + metric_total
+        table_pass = (
+            tbl_passed
+            + col_passed
+            + metric_passed
+            + derived_metric_passed
+        )
+        table_check = (
+            tbl_total
+            + col_total
+            + metric_total
+            + derived_metric_total
+        )
         table_score = round(table_pass / table_check *
                             100, 1) if table_check else 100.0
 
@@ -559,6 +702,11 @@ def score_naming_conventions(
                     passed=metric_passed,
                     total=metric_total,
                     violations=sorted(metric_violations),
+                ),
+                derived_metric_checks=dict(
+                    passed=derived_metric_passed,
+                    total=derived_metric_total,
+                    violations=sorted(derived_metric_violations),
                 ),
                 score=table_score,
             ))
@@ -594,14 +742,17 @@ def score_naming_conventions(
     col_total = 0
     col_passed = 0
     for t in middle:
-        metric_name_set = set(
+        checked_metric_name_set = set(
             _atomic_metric_names_for_table(t, model_metadata)
             if has_atomic_metric_rule
             else []
         )
+        if has_derived_metric_rule:
+            checked_metric_name_set.update(
+                _derived_metric_names_for_table(t, model_metadata))
         for col in t.get("columns", []):
             col_name = col["name"]
-            if col_name in metric_name_set:
+            if col_name in checked_metric_name_set:
                 continue
             col_total += 1
             ok, matched = _check_column_name(col_name, nc)
@@ -635,6 +786,21 @@ def score_naming_conventions(
                 if _check_atomic_metric_name(metric_name, nc):
                     metric_passed += 1
         rule_summary[ATOMIC_METRIC_RULE_NAME] = dict(
+            pass_count=metric_passed,
+            total=metric_total,
+            pct=round(metric_passed / metric_total * 100, 1)
+            if metric_total else 0,
+        )
+
+    if has_derived_metric_rule:
+        metric_total = 0
+        metric_passed = 0
+        for t in middle:
+            for metric_name in _derived_metric_names_for_table(t, model_metadata):
+                metric_total += 1
+                if _check_derived_metric_name(metric_name, nc):
+                    metric_passed += 1
+        rule_summary[DERIVED_METRIC_RULE_NAME] = dict(
             pass_count=metric_passed,
             total=metric_total,
             pct=round(metric_passed / metric_total * 100, 1)
@@ -848,6 +1014,17 @@ def generate_report(scores: dict, weights: dict, project: str) -> str:
             if len(metric_checks["violations"]) > 10:
                 issues[
                     -1] += f"... (共{len(metric_checks['violations'])}个)"
+        derived_metric_checks = r.get("derived_metric_checks", {})
+        if derived_metric_checks.get("violations"):
+            issues.append(
+                "不合规派生指标: "
+                f"{', '.join(derived_metric_checks['violations'][:10])}"
+            )
+            if len(derived_metric_checks["violations"]) > 10:
+                issues[
+                    -1] += (
+                        f"... (共{len(derived_metric_checks['violations'])}个)"
+                    )
         if issues:
             if not has_viz:
                 parts.append(f"\n  偏离详情:")
