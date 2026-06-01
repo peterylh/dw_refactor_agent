@@ -3,3 +3,6 @@ name: dwd_regulatory_reports
 layer: DWD
 config:
   materialized: full
+metrics:
+- amount_reported
+- penalty_amount

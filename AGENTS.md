@@ -14,6 +14,7 @@
 - DDL 变更推导
 - 数仓重构验证链路
 - 中间层质量评估与 LLM 辅助分层巡检
+- DWD 指标识别与模型元数据回写
 - 命名规范配置化校验
 
 
@@ -50,7 +51,8 @@ shop-dm/
 ├── assess/
 │   ├── assess_middle_layer.py      # 中间层评估入口
 │   ├── context_builder.py          # 构造 LLM 分类上下文
-│   ├── table_classifier.py         # DeepSeek 分类与缓存
+│   ├── table_inspector.py          # DeepSeek 表巡检、字段分组与缓存
+│   ├── metric_detector.py          # DWD 指标提取与 models 回写
 │   ├── assess_result_shop.json
 │   └── cache/                      # LLM 分类缓存
 ├── exec/
@@ -64,7 +66,7 @@ shop-dm/
 ├── tests/
 │   ├── __init__.py
 │   ├── conftest.py
-│   ├── assess/                     # assess/context_builder/table_classifier 测试
+│   ├── assess/                     # assess/context_builder/table_inspector 测试
 │   ├── ddl_deriver/                # DDL 推导与 git 模式测试
 │   ├── lineage/                    # 血缘提取与 JobDAG 测试
 │   ├── refact/                     # analyze_refact / verify_run / verify_check 测试
@@ -377,6 +379,40 @@ python assess/assess_middle_layer.py --llm --no-cache
 | 命名规范 | 25% | 表名/字段名是否符合配置化命名规范 |
 
 结果输出到 `assess/assess_result_{project}.json`。
+
+### 指标识别与回写
+
+`assess/table_inspector.py` 是基础表巡检能力，用于单次 DeepSeek 调用中完成表级分层、表类型判断和字段分组。
+
+`assess/metric_detector.py` 用于扫描项目 DWD 层表，复用 `table_inspector.py` 的巡检结果，对 DWD 事实表提取指标并回写模型元数据。
+
+检测逻辑：
+
+- 每张表只调用一次 DeepSeek，同时返回表级分层/表类型判断与字段分组
+- `is_violating_declared_layer` 不由 DeepSeek 返回，由系统根据配置层和推断层计算
+- DWD 事实表字段按 `atomic_metrics` / `derived_metrics` / `dimensions` / `others` 分组
+- 识别出的所有指标名称覆盖写入 `{project}/models/{table_name}.yaml` 的 `metrics`
+- 派生/衍生指标作为 DWD 违规项写入检测结果 JSON
+- LLM 返回会按 DDL 字段名校验，结果状态分为 `passed` / `warning` / `blocked`
+- 字段幻觉或重复分组会自动重试少数几次，最终仍为 `blocked` 的表不会回写 models
+
+示例：
+
+```bash
+# 只预览检测结果，不写模型 YAML
+python assess/metric_detector.py --project shop --dry-run
+
+# 检测 finance_analytics 并回写 models/*.yaml
+python assess/metric_detector.py --project finance_analytics
+
+# 忽略缓存，强制重新调用 DeepSeek
+python assess/metric_detector.py --project shop --no-cache
+
+# LLM 返回校验失败时最多重试 2 次
+python assess/metric_detector.py --project shop --max-retries 2
+```
+
+默认输出到 `assess/metric_result_{project}.json`。
 
 
 ## Git Commit 规范

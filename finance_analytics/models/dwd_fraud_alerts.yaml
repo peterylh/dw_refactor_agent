@@ -3,3 +3,7 @@ name: dwd_fraud_alerts
 layer: DWD
 config:
   materialized: full
+metrics:
+- amount_recovered
+- resolution_days
+- recovered_amount

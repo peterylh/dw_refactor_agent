@@ -3,3 +3,16 @@ name: dwd_customer_segments_history
 layer: DWD
 config:
   materialized: full
+metrics:
+- total_accounts
+- total_balance
+- avg_monthly_transactions
+- products_held
+- customer_lifetime_value
+- tenure_days
+- credit_score
+- annual_income
+- last_interaction_days
+- digital_engagement_score
+- branch_visits_last_90d
+- online_logins_last_90d

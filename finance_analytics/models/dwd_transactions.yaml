@@ -3,3 +3,10 @@ name: dwd_transactions
 layer: DWD
 config:
   materialized: full
+metrics:
+- amount
+- amount_abs
+- fraud_score
+- merchant_risk_score
+- velocity_24h
+- amount_deviation_score
