@@ -6,5 +6,5 @@ config:
   materialized: snapshot
 atomic_metrics:
 - quantity
-derived_metrics:
+calculated_metrics:
 - days_since_restock

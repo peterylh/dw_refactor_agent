@@ -3,3 +3,22 @@ name: dws_marketing_campaigns
 layer: DWS
 config:
   materialized: full
+atomic_metrics:
+- budget
+- impressions
+- clicks
+- conversions
+calculated_metrics:
+- cost_per_acquisition
+- roi
+- click_through_rate
+- conversion_rate
+- conversions_per_1k_budget
+- cost_per_1k_impressions
+- estimated_revenue
+- profitable_flag
+- highly_profitable_flag
+- high_engagement_flag
+- high_conversion_flag
+- active_campaign_flag
+- completed_campaign_flag

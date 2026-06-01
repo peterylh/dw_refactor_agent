@@ -3,3 +3,26 @@ name: dws_customer_segment_history
 layer: DWS
 config:
   materialized: full
+atomic_metrics:
+- total_accounts
+- total_balance
+- avg_monthly_transactions
+- products_held
+- customer_lifetime_value
+- tenure_days
+- credit_score
+- annual_income
+- last_interaction_days
+- digital_engagement_score
+- branch_visits_last_90d
+- online_logins_last_90d
+calculated_metrics:
+- segment_changed_flag
+- tier_changed_flag
+- risk_changed_flag
+- tier_movement
+- premium_eligible_flag
+- churn_risk_flag
+- cross_sell_opportunity_flag
+- days_in_segment
+- segment_change_count

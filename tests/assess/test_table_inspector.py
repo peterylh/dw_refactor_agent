@@ -38,6 +38,7 @@ def test_build_prompt_includes_all_info():
     assert "不要返回 is_violating_declared_layer" in prompt
     assert "atomic_metrics" in prompt
     assert "derived_metrics" in prompt
+    assert "calculated_metrics" in prompt
     assert "dimensions" in prompt
     assert "others" in prompt
 
@@ -155,6 +156,17 @@ def test_parse_grouped_column_response():
                             "confidence": 0.93,
                         }],
                         "derived_metrics": [{
+                            "name": "pay_amt_1d",
+                            "data_type": "DECIMAL(12,2)",
+                            "base_metric": "pay_amt",
+                            "modifiers": [],
+                            "time_period": "1d",
+                            "expression": "SUM(pay_amt) WHERE pay_date = @etl_date",
+                            "description": "近 1 日支付金额",
+                            "reason": "时间周期限定",
+                            "confidence": 0.86,
+                        }],
+                        "calculated_metrics": [{
                             "name": "gross_profit",
                             "data_type": "DECIMAL(12,2)",
                             "expression": "subtotal - cost_price * quantity",
@@ -191,8 +203,11 @@ def test_parse_grouped_column_response():
     assert result.is_violating_declared_layer is False
     assert result.atomic_metrics[0]["name"] == "pay_amt"
     assert result.atomic_metrics[0]["measure"] == "amt"
-    assert result.derived_metrics[0]["name"] == "gross_profit"
-    assert result.derived_metrics[0]["derived_from"] == [
+    assert result.derived_metrics[0]["name"] == "pay_amt_1d"
+    assert result.derived_metrics[0]["base_metric"] == "pay_amt"
+    assert result.derived_metrics[0]["time_period"] == "1d"
+    assert result.calculated_metrics[0]["name"] == "gross_profit"
+    assert result.calculated_metrics[0]["derived_from"] == [
         "subtotal",
         "cost_price",
         "quantity",
@@ -229,6 +244,34 @@ def test_validate_columns_flags_unknown_duplicate_and_missing_fields():
     assert validation["unknown_columns"] == ["ghost_amt"]
     assert validation["duplicate_columns"] == ["pay_amt"]
     assert validation["missing_columns"] == ["etl_time"]
+
+
+def test_validate_columns_requires_all_dws_fact_fields():
+    result = parse_response("dws_store_sales_daily", {
+        "choices": [{
+            "message": {
+                "content": json.dumps({
+                    "inferred_layer": "DWS",
+                    "table_type": "fact",
+                    "confidence": 0.9,
+                    "columns": {
+                        "atomic_metrics": [],
+                        "derived_metrics": [{"name": "sale_amount"}],
+                        "calculated_metrics": [],
+                        "dimensions": [{"name": "store_id"}],
+                        "others": [],
+                    },
+                })
+            }
+        }]
+    }, declared_layer="DWS")
+
+    validation = validate_columns(
+        result,
+        {"store_id", "stat_date", "sale_amount", "etl_time"},
+    )
+
+    assert validation["missing_columns"] == ["etl_time", "stat_date"]
 
 
 def test_result_status_from_validation():
@@ -365,6 +408,98 @@ def test_cache_miss_calls_api(tmp_path, monkeypatch):
     assert saved["t1"]["result"]["columns"]["atomic_metrics"][0]["name"] == "pay_amt"
     assert "is_violating_declared_layer" in saved["t1"]["result"]
     assert "is_violating_current_name" not in saved["t1"]["result"]
+
+
+def test_progress_callback_reports_batch_events(tmp_path, monkeypatch):
+    inspector = TableInspector(
+        api_key="test",
+        cache_file=tmp_path / "cache.json",
+        parallelism=1,
+    )
+    events = []
+    inspector.progress_callback = events.append
+
+    ctx = TableContext(
+        table_name="t1",
+        layer="DWD",
+        ddl="CREATE TABLE t1 (pay_amt DECIMAL(12,2));",
+        etl_sql="INSERT INTO t1 SELECT 1;",
+        upstream_tables=[],
+        downstream_tables=[],
+    )
+    monkeypatch.setattr(inspector, "_call_api", lambda _prompt: json.dumps({
+        "choices": [{
+            "message": {
+                "content": json.dumps({
+                    "inferred_layer": "DWD",
+                    "table_type": "fact",
+                    "confidence": 0.9,
+                    "columns": {
+                        "atomic_metrics": [{"name": "pay_amt"}],
+                        "derived_metrics": [],
+                        "calculated_metrics": [],
+                        "dimensions": [],
+                        "others": [],
+                    },
+                })
+            }
+        }]
+    }))
+
+    result = inspector.inspect_batch([ctx])[0]
+
+    assert result.status == "passed"
+    assert [event["event"] for event in events] == [
+        "start",
+        "api_call",
+        "finish",
+    ]
+    assert events[0]["index"] == 1
+    assert events[0]["total"] == 1
+    assert events[-1]["status"] == "passed"
+    assert events[-1]["atomic_metric_count"] == 1
+
+
+def test_progress_callback_reports_cache_hit(tmp_path):
+    cache_file = tmp_path / "cache.json"
+    inspector = TableInspector(api_key="test", cache_file=cache_file)
+    ctx = TableContext(
+        table_name="t1",
+        layer="DWD",
+        ddl="CREATE TABLE t1 (id BIGINT);",
+        etl_sql="",
+        upstream_tables=[],
+        downstream_tables=[],
+    )
+    cached = parse_response("t1", {
+        "choices": [{
+            "message": {
+                "content": json.dumps({
+                    "inferred_layer": "DWD",
+                    "table_type": "dimension",
+                    "confidence": 0.9,
+                })
+            }
+        }]
+    }, declared_layer="DWD")
+    cache_file.write_text(json.dumps({
+        "t1": {
+            "hash": inspector._compute_hash(ctx),
+            "result": result_to_dict(cached),
+        }
+    }))
+    inspector._load_cache()
+    events = []
+    inspector.progress_callback = events.append
+
+    result = inspector.inspect_batch([ctx])[0]
+
+    assert result.status == "passed"
+    assert [event["event"] for event in events] == [
+        "start",
+        "cache_hit",
+        "finish",
+    ]
 
 
 def test_inspect_retries_validation_errors(tmp_path, monkeypatch):

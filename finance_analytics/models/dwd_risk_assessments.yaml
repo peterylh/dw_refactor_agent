@@ -4,10 +4,9 @@ layer: DWD
 config:
   materialized: full
 atomic_metrics:
+- risk_score
 - transaction_volume_last_90d
 - num_accounts
 - years_as_customer
-derived_metrics:
-- risk_score
 - high_value_customer
 - income_verified

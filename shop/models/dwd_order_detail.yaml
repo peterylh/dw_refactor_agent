@@ -8,7 +8,7 @@ atomic_metrics:
 - quantity
 - unit_price
 - discount
-- cost_price
-derived_metrics:
 - subtotal
+- cost_price
+calculated_metrics:
 - gross_profit

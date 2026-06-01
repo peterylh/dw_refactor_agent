@@ -3,3 +3,19 @@ name: dws_customer_monthly_summary
 layer: DWS
 config:
   materialized: full
+derived_metrics:
+- transaction_count
+- total_transaction_volume
+- fraud_transaction_count
+- fraud_amount
+- unique_merchants
+- unique_categories
+- international_transaction_count
+- active_account_count
+- total_balance
+- past_due_account_count
+- customer_count
+calculated_metrics:
+- avg_transaction_amount
+- avg_balance
+- fraud_rate_pct

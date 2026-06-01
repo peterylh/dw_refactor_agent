@@ -3,3 +3,12 @@ name: dws_loan_payments
 layer: DWS
 config:
   materialized: full
+atomic_metrics:
+- scheduled_amount
+- actual_amount
+- late_fee
+- outstanding_balance
+- days_late
+- payment_count
+calculated_metrics:
+- amount_difference

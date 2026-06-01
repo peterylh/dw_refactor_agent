@@ -2,6 +2,7 @@ import yaml
 
 from assess.metric_detector import (
     build_dwd_contexts,
+    build_metric_contexts,
     metric_groups_for_model,
     metric_violations,
     metric_names_for_model,
@@ -31,6 +32,17 @@ def _sample_fact_result() -> TableInspectResult:
                 "confidence": 0.95,
             }],
             "derived_metrics": [{
+                "name": "pay_amt_1d",
+                "data_type": "DECIMAL(12,2)",
+                "base_metric": "pay_amt",
+                "modifiers": [],
+                "time_period": "1d",
+                "expression": "SUM(pay_amt) WHERE pay_date = @etl_date",
+                "description": "近 1 日支付金额",
+                "reason": "原子指标加时间周期限定",
+                "confidence": 0.86,
+            }],
+            "calculated_metrics": [{
                 "name": "gross_profit",
                 "data_type": "DECIMAL(12,2)",
                 "expression": "subtotal - cost_price * quantity",
@@ -55,6 +67,39 @@ def _sample_fact_result() -> TableInspectResult:
     )
 
 
+def _sample_dws_result() -> TableInspectResult:
+    return TableInspectResult(
+        table_name="dws_store_sales_daily",
+        declared_layer="DWS",
+        inferred_layer="DWS",
+        table_type="fact",
+        confidence=0.9,
+        reasoning_steps=["门店日销售汇总事实表"],
+        columns={
+            "atomic_metrics": [],
+            "derived_metrics": [{
+                "name": "sale_amount",
+                "data_type": "DECIMAL(14,2)",
+                "base_metric": "subtotal",
+                "modifiers": ["store"],
+                "time_period": "1d",
+                "expression": "SUM(subtotal) GROUP BY store_id, order_date",
+                "description": "门店日销售金额",
+                "reason": "原子指标按门店和日期汇总",
+                "confidence": 0.9,
+            }],
+            "calculated_metrics": [],
+            "dimensions": [{
+                "name": "store_id",
+                "dimension_type": "foreign_key",
+                "data_type": "BIGINT",
+                "confidence": 0.9,
+            }],
+            "others": [],
+        },
+    )
+
+
 def test_build_dwd_contexts_filters_out_non_dwd(sample_lineage_data):
     contexts = build_dwd_contexts("shop", sample_lineage_data)
 
@@ -64,31 +109,51 @@ def test_build_dwd_contexts_filters_out_non_dwd(sample_lineage_data):
     }
 
 
-def test_metric_names_for_model_includes_atomic_and_derived_metrics():
+def test_build_metric_contexts_includes_dwd_and_dws(sample_lineage_data):
+    contexts = build_metric_contexts("shop", sample_lineage_data)
+
+    assert {ctx.table_name for ctx in contexts} == {
+        "dwd_customer",
+        "dwd_order_detail",
+        "dws_store_sales_daily",
+    }
+
+
+def test_metric_names_for_model_includes_all_metric_types():
     metrics = metric_names_for_model(_sample_fact_result())
 
-    assert metrics == ["pay_amt", "gross_profit"]
+    assert metrics == ["pay_amt", "pay_amt_1d", "gross_profit"]
 
 
-def test_metric_groups_for_model_splits_atomic_and_derived_metrics():
+def test_metric_groups_for_model_splits_metric_types():
     metric_groups = metric_groups_for_model(_sample_fact_result())
 
     assert metric_groups == {
         "atomic_metrics": ["pay_amt"],
-        "derived_metrics": ["gross_profit"],
+        "derived_metrics": ["pay_amt_1d"],
+        "calculated_metrics": ["gross_profit"],
     }
 
 
-def test_metric_violations_uses_derived_group_only():
+def test_metric_violations_uses_non_atomic_groups():
     violations = metric_violations(_sample_fact_result())
 
-    assert violations == [{
-        "table": "dwd_order_detail",
-        "column": "gross_profit",
-        "metric_type": "derived",
-        "reason": "多字段计算得到",
-        "confidence": 0.88,
-    }]
+    assert violations == [
+        {
+            "table": "dwd_order_detail",
+            "column": "pay_amt_1d",
+            "metric_type": "derived",
+            "reason": "原子指标加时间周期限定",
+            "confidence": 0.86,
+        },
+        {
+            "table": "dwd_order_detail",
+            "column": "gross_profit",
+            "metric_type": "calculated",
+            "reason": "多字段计算得到",
+            "confidence": 0.88,
+        },
+    ]
 
 
 def test_metric_violations_skips_non_fact():
@@ -108,6 +173,10 @@ def test_metric_violations_skips_non_fact():
     )
 
     assert metric_violations(result) == []
+
+
+def test_metric_violations_allows_dws_derived_metrics():
+    assert metric_violations(_sample_dws_result()) == []
 
 
 def test_update_model_yaml_preserves_existing_metadata(tmp_path, monkeypatch):
@@ -137,13 +206,32 @@ def test_update_model_yaml_preserves_existing_metadata(tmp_path, monkeypatch):
     update = update_model_yaml("demo", _sample_fact_result())
     saved = yaml.safe_load(model_path.read_text(encoding="utf-8"))
 
-    assert update["metric_count"] == 2
-    assert update["new_metric_count"] == 2
+    assert update["metric_count"] == 3
+    assert update["new_metric_count"] == 3
     assert saved["description"] == "订单明细事实表"
     assert saved["config"]["materialized"] == "incremental"
     assert saved["atomic_metrics"] == ["pay_amt"]
-    assert saved["derived_metrics"] == ["gross_profit"]
+    assert saved["derived_metrics"] == ["pay_amt_1d"]
+    assert saved["calculated_metrics"] == ["gross_profit"]
     assert "metrics" not in saved
+
+
+def test_update_model_yaml_defaults_to_declared_layer(tmp_path, monkeypatch):
+    import assess.metric_detector as detector_module
+
+    project_root = tmp_path
+    (project_root / "demo" / "models").mkdir(parents=True)
+    monkeypatch.setattr(detector_module, "PROJECT_ROOT", project_root)
+    monkeypatch.setitem(detector_module.PROJECT_CONFIG, "demo", {"dir": "demo"})
+
+    update = update_model_yaml("demo", _sample_dws_result())
+    model_path = project_root / "demo" / "models" / "dws_store_sales_daily.yaml"
+    saved = yaml.safe_load(model_path.read_text(encoding="utf-8"))
+
+    assert update["metric_count"] == 1
+    assert saved["layer"] == "DWS"
+    assert saved["derived_metrics"] == ["sale_amount"]
+    assert "atomic_metrics" not in saved
 
 
 def test_update_model_yaml_replaces_existing_metrics(tmp_path, monkeypatch):
@@ -170,11 +258,12 @@ def test_update_model_yaml_replaces_existing_metrics(tmp_path, monkeypatch):
     update = update_model_yaml("demo", _sample_fact_result())
     saved = yaml.safe_load(model_path.read_text(encoding="utf-8"))
 
-    assert update["metric_count"] == 2
-    assert update["new_metric_count"] == 1
+    assert update["metric_count"] == 3
+    assert update["new_metric_count"] == 2
     assert update["removed_metric_count"] == 1
     assert saved["atomic_metrics"] == ["pay_amt"]
-    assert saved["derived_metrics"] == ["gross_profit"]
+    assert saved["derived_metrics"] == ["pay_amt_1d"]
+    assert saved["calculated_metrics"] == ["gross_profit"]
     assert "metrics" not in saved
 
 
@@ -202,11 +291,12 @@ def test_update_model_yaml_replaces_legacy_metric_fields(tmp_path, monkeypatch):
     update = update_model_yaml("demo", _sample_fact_result())
     saved = yaml.safe_load(model_path.read_text(encoding="utf-8"))
 
-    assert update["metric_count"] == 2
-    assert update["new_metric_count"] == 2
+    assert update["metric_count"] == 3
+    assert update["new_metric_count"] == 3
     assert update["removed_metric_count"] == 1
     assert saved["atomic_metrics"] == ["pay_amt"]
-    assert saved["derived_metrics"] == ["gross_profit"]
+    assert saved["derived_metrics"] == ["pay_amt_1d"]
+    assert saved["calculated_metrics"] == ["gross_profit"]
     assert "metrics" not in saved
 
 
@@ -249,6 +339,7 @@ def test_update_model_yaml_removes_metrics_when_none_detected(tmp_path,
     assert update["removed_metric_count"] == 1
     assert update["updated"] is True
     assert "metrics" not in saved
+    assert "calculated_metrics" not in saved
 
 
 def test_run_detection_reuses_table_inspector(monkeypatch, sample_lineage_data):
@@ -266,6 +357,7 @@ def test_run_detection_reuses_table_inspector(monkeypatch, sample_lineage_data):
         def inspect_batch(self, contexts):
             return [
                 _sample_fact_result(),
+                _sample_dws_result(),
                 TableInspectResult(
                     table_name="dwd_customer",
                     declared_layer="DWD",
@@ -282,12 +374,19 @@ def test_run_detection_reuses_table_inspector(monkeypatch, sample_lineage_data):
 
     result = run_detection("shop", api_key="test", dry_run=True)
 
+    assert result["metric_table_count"] == 3
     assert result["dwd_table_count"] == 2
-    assert result["fact_table_count"] == 1
+    assert result["dws_table_count"] == 1
+    assert result["fact_table_count"] == 2
     assert result["atomic_metric_count"] == 1
-    assert result["metric_count"] == 2
+    assert result["derived_metric_count"] == 2
+    assert result["calculated_metric_count"] == 1
+    assert result["metric_count"] == 4
     assert result["derived_metric_violation_count"] == 1
+    assert result["calculated_metric_violation_count"] == 1
+    assert result["non_atomic_metric_violation_count"] == 2
     assert result["model_updates"][0]["updated"] is False
+    assert result["model_updates"][1]["table"] == "dws_store_sales_daily"
     assert result["skipped_model_updates"] == []
 
 

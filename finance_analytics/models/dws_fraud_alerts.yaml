@@ -3,3 +3,7 @@ name: dws_fraud_alerts
 layer: DWS
 config:
   materialized: full
+atomic_metrics:
+- amount_recovered
+- resolution_days
+- alert_count

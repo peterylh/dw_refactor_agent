@@ -5,15 +5,22 @@ import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from assess.context_builder import TableContext
 
 
-PROMPT_VERSION = "table-inspector-v3"
+PROMPT_VERSION = "table-inspector-v4"
 VALID_LAYERS = {"ODS", "DWD", "DWS", "ADS", "DIM", "OTHER"}
 VALID_TABLE_TYPES = {"dimension", "fact", "other"}
-COLUMN_GROUPS = ("atomic_metrics", "derived_metrics", "dimensions", "others")
+METRIC_GROUPING_LAYERS = {"DWD", "DWS"}
+COLUMN_GROUPS = (
+    "atomic_metrics",
+    "derived_metrics",
+    "calculated_metrics",
+    "dimensions",
+    "others",
+)
 VALIDATION_ERROR_KEYS = ("unknown_columns", "duplicate_columns")
 VALIDATION_WARNING_KEYS = ("missing_columns",)
 
@@ -57,6 +64,10 @@ class TableInspectResult:
         return self.columns.get("derived_metrics", [])
 
     @property
+    def calculated_metrics(self) -> list[dict[str, Any]]:
+        return self.columns.get("calculated_metrics", [])
+
+    @property
     def dimensions(self) -> list[dict[str, Any]]:
         return self.columns.get("dimensions", [])
 
@@ -80,7 +91,7 @@ def build_prompt(ctx: TableContext) -> str:
     prompt = f"""你是一位资深数据仓库架构师和指标治理专家。你的任务是根据给定的表结构、ETL 加工逻辑和血缘关系，完成一次统一巡检:
 1. 客观推断这张表真实应该归属的数仓分层。
 2. 判断它的物理表类型（维度表/事实表/其他）。
-3. 如果原始配置层级是 DWD 且你判断它是事实表，则对字段分组识别原子指标、派生指标、维度字段和其他字段。
+3. 如果原始配置层级是 DWD 或 DWS 且你判断它是事实表，则对字段分组识别原子指标、派生指标、衍生指标、维度字段和其他字段。
 
 ## 数仓分层判定标准
 - ODS (贴源层): 直接同步业务库，通常不含复杂的转化逻辑，数据粒度与源库完全一致。
@@ -91,15 +102,17 @@ def build_prompt(ctx: TableContext) -> str:
 
 ## 表类型判定标准
 - dimension: 维度表。描述业务实体属性(如客户、商品、门店), 缓慢变化, 常常作为维表被 JOIN。
-- fact: 事实表。记录业务事件/交易，包含可聚合度量字段，通常有时间分区。
+- fact: 事实表或汇总事实表。记录业务事件/交易，或按公共维度汇总业务过程，包含可度量字段，通常有时间分区。
 - other: 其他类型。
 
-## DWD 事实表字段分组标准
+## 指标字段分组标准
 - atomic_metrics: 基于某一业务过程下不可再拆分的基础度量，通常是金额、数量、余额、单价、次数等可度量字段，不包含聚合、比率、分数或多字段计算。尽量填写 business_process/action/measure。
-- derived_metrics: 只放度量型派生指标，即由其他度量字段计算、聚合、比率、窗口函数、评分等生成的数值指标。尽量填写 expression/derived_from。
+- derived_metrics: 放度量型派生指标，通常出现在 DWS 层，即一个原子指标 + 多个修饰词(可选) + 时间周期。它本质上仍是对原子指标统计范围的限定，没有改变指标计算逻辑，例如按门店+日汇总的销售金额。尽量填写 base_metric/modifiers/time_period/expression。
+- calculated_metrics: 只放度量型衍生指标，即基于一个或多个已有指标，通过公式、规则、模型或二次计算得到的新指标，通常产生新的业务含义。包括比率、分数、差值、绝对值、风险等级、窗口函数、复杂 CASE 规则等。尽量填写 expression/derived_from。
 - dimensions: 主键、外键、日期、时间、状态、标签、枚举、布尔标志、退化维度、实体属性等分析维度字段。即使它们由 DATE_FORMAT、CASE WHEN 或其他表达式生成，只要用于切片/过滤/分组而不是作为度量，也应放入 dimensions。
 - others: 审计字段、技术字段、无法判断字段。
-- DWD 事实表只能包含 atomic_metrics；derived_metrics 属于 DWD 违规风险。
+- DWD 事实表只能包含 atomic_metrics；derived_metrics 和 calculated_metrics 都属于 DWD 违规风险。
+- DWS 事实表通常承载 derived_metrics；不要因为 DWS 表包含派生指标而判为违规。
 
 ## 表级特征信息
 - 原始表名: {ctx.table_name}
@@ -122,10 +135,10 @@ def build_prompt(ctx: TableContext) -> str:
 1. 首先分析 ETL_SQL 中是否包含 GROUP BY 等聚合操作，如果有，排除 DWD 和 ODS。
 2. 观察下游被引用次数。如果为 0，大概率是 ADS；如果 > 1，倾向于 DWS 或 DWD。
 3. 判断是否为 dimension（主键是否为实体属性）。
-4. 如果原始配置层级是 DWD 且表类型为 fact，再按字段语义、DDL 注释、ETL 表达式和业务过程分组。
+4. 如果原始配置层级是 DWD 或 DWS 且表类型为 fact，再按字段语义、DDL 注释、ETL 表达式和业务过程分组。
 
 请严格返回 JSON 格式数据，不要返回 Markdown，不要返回额外解释。不要返回 is_violating_declared_layer，这个字段由系统计算。
-如果不需要做字段分组，columns 下四个数组都返回空数组。
+如果不需要做字段分组，columns 下五个数组都返回空数组。
 
 {{
   "inferred_layer": "ODS|DWD|DWS|ADS|DIM|OTHER",
@@ -149,7 +162,20 @@ def build_prompt(ctx: TableContext) -> str:
       {{
         "name": "字段名",
         "data_type": "字段类型",
-        "expression": "派生表达式，无法判断则为空字符串",
+        "base_metric": "对应原子指标名，无法判断则为空字符串",
+        "modifiers": ["修饰词，如区域/渠道/状态，无法判断则为空数组"],
+        "time_period": "时间周期，无法判断则为空字符串",
+        "expression": "统计范围限定表达式，无法判断则为空字符串",
+        "description": "简短中文描述",
+        "reason": "分类理由",
+        "confidence": 0.0
+      }}
+    ],
+    "calculated_metrics": [
+      {{
+        "name": "字段名",
+        "data_type": "字段类型",
+        "expression": "衍生表达式，无法判断则为空字符串",
         "derived_from": ["来源字段"],
         "description": "简短中文描述",
         "reason": "分类理由",
@@ -198,8 +224,8 @@ def build_retry_prompt(ctx: TableContext,
 
 请重新返回完整 JSON，并严格修正:
 - 字段名必须来自 ddl_columns，不要编造字段。
-- 同一个字段只能出现在 atomic_metrics / derived_metrics / dimensions / others 中的一个分组。
-- 如果表是 DWD fact，DDL 中每个字段都必须进入且仅进入一个分组。
+- 同一个字段只能出现在 atomic_metrics / derived_metrics / calculated_metrics / dimensions / others 中的一个分组。
+- 如果表是 DWD/DWS fact，DDL 中每个字段都必须进入且仅进入一个分组。
 - 不要返回 Markdown，不要返回额外解释。
 """
 
@@ -251,7 +277,7 @@ def _normalize_group_item(raw: dict[str, Any], fields: tuple[str, ...]) -> dict:
             continue
         if field_name == "confidence":
             item[field_name] = _safe_float(raw.get(field_name))
-        elif field_name == "derived_from":
+        elif field_name in ("derived_from", "modifiers"):
             item[field_name] = _safe_list(raw.get(field_name))
         else:
             item[field_name] = str(raw.get(field_name) or "")
@@ -275,6 +301,17 @@ def _normalize_columns(raw_columns: Any) -> dict[str, list[dict[str, Any]]]:
             "confidence",
         ),
         "derived_metrics": (
+            "name",
+            "data_type",
+            "base_metric",
+            "modifiers",
+            "time_period",
+            "expression",
+            "description",
+            "reason",
+            "confidence",
+        ),
+        "calculated_metrics": (
             "name",
             "data_type",
             "expression",
@@ -433,7 +470,7 @@ def validate_columns(result: TableInspectResult,
         "duplicate_columns": sorted(duplicates),
         "missing_columns": [],
     }
-    if result.declared_layer == "DWD" and result.is_fact_table:
+    if result.declared_layer in METRIC_GROUPING_LAYERS and result.is_fact_table:
         validation["missing_columns"] = sorted(ddl_columns - returned)
     return validation
 
@@ -454,6 +491,7 @@ class TableInspector:
         self.parallelism = max(1, int(parallelism))
         self.cache = {}
         self._cache_lock = threading.RLock()
+        self.progress_callback: Callable[[dict[str, Any]], None] | None = None
         self._load_cache()
 
     def _load_cache(self):
@@ -483,6 +521,28 @@ class TableInspector:
         )
         return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
+    def _emit_progress(self,
+                       event: str,
+                       ctx: TableContext,
+                       *,
+                       progress_context: dict[str, Any] | None = None,
+                       **extra: Any) -> None:
+        callback = self.progress_callback
+        if not callback:
+            return
+        payload = {
+            "event": event,
+            "table": ctx.table_name,
+            "layer": ctx.layer,
+        }
+        if progress_context:
+            payload.update(progress_context)
+        payload.update(extra)
+        try:
+            callback(payload)
+        except Exception:
+            return
+
     def _call_api(self, prompt: str) -> str:
         url = "https://api.deepseek.com/chat/completions"
         headers = {
@@ -508,13 +568,20 @@ class TableInspector:
         except Exception as e:
             raise RuntimeError(f"DeepSeek API 调用失败: {e}")
 
-    def inspect(self, ctx: TableContext) -> TableInspectResult:
+    def inspect(self,
+                ctx: TableContext,
+                *,
+                progress_context: dict[str, Any] | None = None
+                ) -> TableInspectResult:
         current_hash = self._compute_hash(ctx)
 
         with self._cache_lock:
             cached_data = self.cache.get(ctx.table_name)
             if (isinstance(cached_data, dict)
                     and cached_data.get("hash") == current_hash):
+                self._emit_progress("cache_hit",
+                                    ctx,
+                                    progress_context=progress_context)
                 return dict_to_result(cached_data.get("result", {}),
                                       table_name=ctx.table_name,
                                       declared_layer=ctx.layer)
@@ -523,6 +590,11 @@ class TableInspector:
         prompt = build_prompt(ctx)
         result = None
         for attempt in range(self.max_retries + 1):
+            self._emit_progress("api_call",
+                                ctx,
+                                progress_context=progress_context,
+                                attempt=attempt + 1,
+                                max_attempts=self.max_retries + 1)
             try:
                 resp_str = self._call_api(prompt)
                 resp_json = json.loads(resp_str)
@@ -536,6 +608,12 @@ class TableInspector:
                     reasoning_steps=[f"分类异常: {str(e)}"],
                     retry_count=attempt,
                 )
+                self._emit_progress("api_error",
+                                    ctx,
+                                    progress_context=progress_context,
+                                    attempt=attempt + 1,
+                                    max_attempts=self.max_retries + 1,
+                                    error=str(e))
                 if attempt >= self.max_retries:
                     break
                 continue
@@ -545,6 +623,13 @@ class TableInspector:
             result.validation = validate_columns(result, ddl_columns)
             if result.status == "passed" or attempt >= self.max_retries:
                 break
+            self._emit_progress("validation_retry",
+                                ctx,
+                                progress_context=progress_context,
+                                attempt=attempt + 1,
+                                max_attempts=self.max_retries + 1,
+                                status=result.status,
+                                validation=result.validation)
             prompt = build_retry_prompt(ctx, result, ddl_columns)
 
         with self._cache_lock:
@@ -558,21 +643,47 @@ class TableInspector:
 
     def inspect_batch(
             self, contexts: list[TableContext]) -> list[TableInspectResult]:
-        def inspect_safely(ctx: TableContext) -> TableInspectResult:
+        total = len(contexts)
+
+        def inspect_safely(item: tuple[int, TableContext]) -> TableInspectResult:
+            index, ctx = item
+            progress_context = {"index": index, "total": total}
+            self._emit_progress("start",
+                                ctx,
+                                progress_context=progress_context)
             try:
-                return self.inspect(ctx)
+                result = self.inspect(ctx, progress_context=progress_context)
             except Exception as e:
-                return TableInspectResult(
+                result = TableInspectResult(
                     table_name=ctx.table_name,
                     declared_layer=ctx.layer,
                     inferred_layer="OTHER",
                     table_type="other",
                     confidence=0.0,
                     reasoning_steps=[f"分类异常: {str(e)}"])
+                self._emit_progress("unexpected_error",
+                                    ctx,
+                                    progress_context=progress_context,
+                                    error=str(e))
+            self._emit_progress(
+                "finish",
+                ctx,
+                progress_context=progress_context,
+                status=result.status,
+                retry_count=result.retry_count,
+                atomic_metric_count=len(result.atomic_metrics),
+                derived_metric_count=len(result.derived_metrics),
+                calculated_metric_count=len(result.calculated_metrics),
+            )
+            return result
 
         if len(contexts) <= 1 or self.parallelism == 1:
-            return [inspect_safely(ctx) for ctx in contexts]
+            return [
+                inspect_safely((index, ctx))
+                for index, ctx in enumerate(contexts, start=1)
+            ]
 
         max_workers = min(self.parallelism, len(contexts))
+        indexed_contexts = list(enumerate(contexts, start=1))
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            return list(executor.map(inspect_safely, contexts))
+            return list(executor.map(inspect_safely, indexed_contexts))

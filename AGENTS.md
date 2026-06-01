@@ -14,7 +14,7 @@
 - DDL 变更推导
 - 数仓重构验证链路
 - 中间层质量评估与 LLM 辅助分层巡检
-- DWD 指标识别与模型元数据回写
+- DWD/DWS 指标识别与模型元数据回写
 - 命名规范配置化校验
 
 
@@ -52,7 +52,7 @@ shop-dm/
 │   ├── assess_middle_layer.py      # 中间层评估入口
 │   ├── context_builder.py          # 构造 LLM 表巡检上下文
 │   ├── table_inspector.py          # DeepSeek 表巡检、字段分组与缓存
-│   ├── metric_detector.py          # DWD 指标提取与 models 回写
+│   ├── metric_detector.py          # DWD/DWS 指标提取与 models 回写
 │   ├── assess_result_shop.json
 │   └── cache/                      # LLM 表巡检缓存
 ├── exec/
@@ -384,15 +384,15 @@ python assess/assess_middle_layer.py --llm --no-cache
 
 `assess/table_inspector.py` 是基础表巡检能力，用于单次 DeepSeek 调用中完成表级分层、表类型判断和字段分组。
 
-`assess/metric_detector.py` 用于扫描项目 DWD 层表，复用 `table_inspector.py` 的巡检结果，对 DWD 事实表提取指标并回写模型元数据。
+`assess/metric_detector.py` 用于扫描项目 DWD/DWS 层表，复用 `table_inspector.py` 的巡检结果，对事实表提取指标并回写模型元数据。
 
 检测逻辑：
 
 - 每张表只调用一次 DeepSeek，同时返回表级分层/表类型判断与字段分组
 - `is_violating_declared_layer` 不由 DeepSeek 返回，由系统根据配置层和推断层计算
-- DWD 事实表字段按 `atomic_metrics` / `derived_metrics` / `dimensions` / `others` 分组
-- 识别出的所有指标名称覆盖写入 `{project}/models/{table_name}.yaml` 的 `metrics`
-- 派生/衍生指标作为 DWD 违规项写入检测结果 JSON
+- DWD/DWS 事实表字段按 `atomic_metrics` / `derived_metrics` / `calculated_metrics` / `dimensions` / `others` 分组
+- 识别出的指标名称按 `atomic_metrics` / `derived_metrics` / `calculated_metrics` 覆盖写入 `{project}/models/{table_name}.yaml`
+- 派生指标通常回写到 DWS 模型；DWD 事实表中的派生/衍生指标作为 DWD 违规项写入检测结果 JSON
 - LLM 返回会按 DDL 字段名校验，结果状态分为 `passed` / `warning` / `blocked`
 - 字段幻觉或重复分组会自动重试少数几次，最终仍为 `blocked` 的表不会回写 models
 
