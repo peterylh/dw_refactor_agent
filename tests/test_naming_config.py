@@ -433,6 +433,31 @@ class TestLoadNamingConfig:
         with pytest.raises(FileNotFoundError):
             load_naming_config("/nonexistent/path.yaml")
 
+    def test_metric_pattern_uses_explicit_separators(self, tmp_path):
+        cfg_path = tmp_path / "naming.yaml"
+        cfg_path.write_text(
+            """
+types:
+  ACTION_VERB:
+    regex: "^[A-Z][A-Z0-9]*$"
+  MEASURE_NOUN:
+    values: [AMT, CNT]
+metrics:
+  atomic_metrics:
+    pattern: "{ACTION_VERB}_{MEASURE_NOUN}"
+""",
+            encoding="utf-8",
+        )
+
+        nc = load_naming_config(cfg_path)
+        segs = nc.metric_rules["atomic_metrics"][0]
+
+        assert nc._match_segments("PAY_AMT", segs) == {
+            "ACTION_VERB": "PAY",
+            "MEASURE_NOUN": "AMT",
+        }
+        assert nc._match_segments("PAY__AMT", segs) is None
+
 
 # ============================================================
 # Enterprise V2 Naming Tests
@@ -513,6 +538,19 @@ class TestEnterpriseNaming:
 
     def test_table_name_max_length(self, nc):
         assert nc.table_name_max_length == 30
+
+    def test_atomic_metric_rule(self, nc):
+        assert nc.types["ACTION_VERB"].validate("PAY") is True
+        assert nc.types["ACTION_VERB"].validate("pay") is False
+        assert "AMT" in nc.types["MEASURE_NOUN"].values
+
+        segs = nc.metric_rules["atomic_metrics"][0]
+        assert nc._match_segments("PAY_AMT", segs) == {
+            "ACTION_VERB": "PAY",
+            "MEASURE_NOUN": "AMT",
+        }
+        assert nc._match_segments("PAY_UNKNOWN", segs) is None
+        assert nc._match_segments("pay_amt", segs) is None
 
 
 class TestGetNamingConfigByProject:

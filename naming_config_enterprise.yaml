@@ -12,11 +12,43 @@ types:
     label: 业务过程
     regex: "^[A-Z][A-Z0-9]*$"
 
+  ACTION_VERB:
+    label: 动作动词
+    desc: 原子指标动作动词，如 PAY=支付、APPLY=申请
+    regex: "^[A-Z][A-Z0-9]*$"
+
   ENTITY:
     label: 实体简写
     desc: 业务实体名称，如 CUST=客户, PROD=产品
     regex: "^[A-Z][A-Z0-9]*$"
 
+  MEASURE_NOUN:
+    label: 度量名词
+    desc: 原子指标度量名词字典
+    values:
+      - AMT
+      - CNT
+      - BAL
+      - QTY
+      - NUM
+      - PRICE
+      - COST
+      - RATE
+      - RATIO
+      - PCT
+      - IDX
+      - SCORE
+      - DAYS
+      - TIMES
+      - FEE
+      - TAX
+      - PROFIT
+      - LOSS
+      - INCOME
+      - REVENUE
+      - LIMIT
+      - POINT
+      - VALUE
 
   METRICS_DESC:
     label: 核心指标描述
@@ -77,6 +109,11 @@ columns:
     - snapshot_date
     - create_time
     - update_time
+
+metrics:
+  atomic_metrics:
+    desc: "原子指标命名格式: {动作动词}_{度量名词}"
+    segments: [$ACTION_VERB, $MEASURE_NOUN]
 
 table:
   constraints:
