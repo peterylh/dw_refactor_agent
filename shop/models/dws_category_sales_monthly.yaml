@@ -1,6 +1,7 @@
 version: 2
 name: dws_category_sales_monthly
 layer: DWS
+table_type: fact
 description: 品类月度销售汇总
 config:
   materialized: incremental

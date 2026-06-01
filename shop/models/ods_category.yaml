@@ -1,5 +1,6 @@
 version: 2
 name: ods_category
 layer: ODS
+table_type: other
 config:
   materialized: source

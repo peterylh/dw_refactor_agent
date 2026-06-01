@@ -1,5 +1,6 @@
 version: 2
 name: ads_customer_by_geography
 layer: ADS
+table_type: other
 config:
   materialized: full

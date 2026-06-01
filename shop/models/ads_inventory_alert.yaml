@@ -1,6 +1,7 @@
 version: 2
 name: ads_inventory_alert
 layer: ADS
+table_type: other
 description: 库存预警分析
 config:
   materialized: incremental

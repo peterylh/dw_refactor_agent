@@ -1,5 +1,6 @@
 version: 2
 name: ods_credit_applications
 layer: ODS
+table_type: other
 config:
   materialized: source

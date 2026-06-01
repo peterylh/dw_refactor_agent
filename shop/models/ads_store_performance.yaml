@@ -1,6 +1,7 @@
 version: 2
 name: ads_store_performance
 layer: ADS
+table_type: other
 description: 门店绩效评估
 config:
   materialized: incremental

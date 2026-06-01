@@ -1,5 +1,6 @@
 version: 2
 name: dwd_accounts
 layer: DWD
+table_type: dimension
 config:
   materialized: full

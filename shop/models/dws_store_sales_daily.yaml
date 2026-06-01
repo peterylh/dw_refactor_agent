@@ -1,6 +1,7 @@
 version: 2
 name: dws_store_sales_daily
 layer: DWS
+table_type: fact
 description: 门店日销售汇总
 config:
   materialized: incremental

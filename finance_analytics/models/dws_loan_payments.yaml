@@ -1,5 +1,6 @@
 version: 2
 name: dws_loan_payments
 layer: DWS
+table_type: fact
 config:
   materialized: full

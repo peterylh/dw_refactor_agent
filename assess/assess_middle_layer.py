@@ -24,7 +24,7 @@ if str(_root) not in sys.path:
     sys.path.insert(0, str(_root))
 
 from assess.context_builder import build_contexts
-from assess.table_inspector import TableInspector
+from assess.table_inspector import TableInspector, VALID_TABLE_TYPES
 from config import layer_rank
 
 # ============================================================
@@ -248,9 +248,18 @@ def score_lineage_depth(tables: list, edges: list,
 # ============================================================
 
 
+def _declared_table_type(model_metadata: dict | None, table_name: str) -> str:
+    if not model_metadata:
+        return ""
+    raw_type = model_metadata.get(table_name, {}).get("table_type")
+    table_type = str(raw_type or "").strip()
+    return table_type if table_type in VALID_TABLE_TYPES else ""
+
+
 def score_architecture_health(tables: list, edges: list,
                               indirect_edges: list,
-                              llm_results: list = None) -> dict:
+                              llm_results: list = None,
+                              model_metadata: dict | None = None) -> dict:
     table_layers = build_table_layer_map(tables)
     table_count = len(tables)  # 全部表数 (ODS+DWD+DWS+DIM+ADS)
 
@@ -330,6 +339,24 @@ def score_architecture_health(tables: list, edges: list,
                     severity="低",
                     weight=weight,
                     description="维度表位置不当(LLM): 维度表应置于 DIM 层",
+                    source_file="",
+                    source_type="llm",
+                    belongs_to=name,
+                ))
+                table_weight[name] += weight
+
+            declared_type = _declared_table_type(model_metadata, name)
+            if declared_type and declared_type != res.table_type:
+                weight = SEVERITY_WEIGHT["中"]
+                violations.append(dict(
+                    source=f"{name}({declared_type})",
+                    target=f"{name}({res.table_type})",
+                    severity="中",
+                    weight=weight,
+                    description=(
+                        "表类型配置疑似错误(LLM): "
+                        f"配置类型={declared_type}, 推断类型={res.table_type}"
+                    ),
                     source_file="",
                     source_type="llm",
                     belongs_to=name,
@@ -880,7 +907,7 @@ def assess(project: str, weights: dict = None) -> dict:
     depth_score = build_metric_result(
         score_lineage_depth(tables, edges, indirect_edges))
     architecture_raw = score_architecture_health(tables, edges, indirect_edges,
-                                                  llm_results)
+                                                  llm_results, model_metadata)
     architecture_score = build_metric_result(architecture_raw)
     naming_score = build_metric_result(
         score_naming_conventions(tables, nc, model_metadata))

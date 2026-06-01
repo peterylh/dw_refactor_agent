@@ -1,6 +1,7 @@
 version: 2
 name: dwd_inventory
 layer: DWD
+table_type: fact
 description: 库存每日快照
 config:
   materialized: snapshot

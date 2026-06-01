@@ -1,5 +1,6 @@
 version: 2
 name: ods_customer_interactions
 layer: ODS
+table_type: other
 config:
   materialized: source
