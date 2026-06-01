@@ -1,6 +1,7 @@
 version: 2
 name: dws_account_events
 layer: DWS
+table_type: fact
 config:
   materialized: full
 atomic_metrics:

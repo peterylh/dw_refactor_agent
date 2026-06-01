@@ -1,5 +1,6 @@
 version: 2
 name: ods_branch_locations
 layer: ODS
+table_type: other
 config:
   materialized: source

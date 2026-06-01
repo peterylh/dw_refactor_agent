@@ -1,5 +1,6 @@
 version: 2
 name: ods_customers
 layer: ODS
+table_type: other
 config:
   materialized: source

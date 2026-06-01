@@ -1,5 +1,6 @@
 version: 2
 name: dim_location
 layer: DIM
+table_type: dimension
 config:
   materialized: full

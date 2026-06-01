@@ -3,8 +3,10 @@ from assess.assess_middle_layer import (
     ATOMIC_METRIC_RULE_NAME,
     assess,
     generate_report,
+    score_architecture_health,
     score_naming_conventions,
 )
+from assess.table_inspector import TableInspectResult
 
 
 def test_assess_returns_raw_and_display_scores(monkeypatch, sample_lineage_data):
@@ -67,6 +69,45 @@ def test_assess_includes_atomic_metric_naming_summary(
         "total": 2,
         "pct": 50.0,
     }
+
+
+def test_score_architecture_health_penalizes_declared_table_type_mismatch(
+        sample_lineage_data):
+    result = score_architecture_health(
+        sample_lineage_data["tables"],
+        sample_lineage_data["edges"],
+        sample_lineage_data["indirect_edges"],
+        llm_results=[
+            TableInspectResult(
+                table_name="dws_store_sales_daily",
+                declared_layer="DWS",
+                inferred_layer="DWS",
+                table_type="dimension",
+                confidence=0.9,
+                reasoning_steps=[],
+            )
+        ],
+        model_metadata={
+            "dws_store_sales_daily": {
+                "table_type": "fact",
+            }
+        },
+    )
+
+    type_violations = [
+        v for v in result["violations"]
+        if v["description"].startswith("表类型配置疑似错误")
+    ]
+    assert type_violations == [{
+        "source": "dws_store_sales_daily(fact)",
+        "target": "dws_store_sales_daily(dimension)",
+        "severity": "中",
+        "weight": 2,
+        "description": "表类型配置疑似错误(LLM): 配置类型=fact, 推断类型=dimension",
+        "source_file": "",
+        "source_type": "llm",
+        "belongs_to": "dws_store_sales_daily",
+    }]
 
 
 def test_score_naming_conventions_checks_table_name_length():

@@ -1,5 +1,6 @@
 version: 2
 name: dwd_marketing_campaigns
 layer: DWD
+table_type: fact
 config:
   materialized: full

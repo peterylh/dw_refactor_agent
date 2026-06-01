@@ -1,6 +1,7 @@
 version: 2
 name: dwd_risk_assessments
 layer: DWD
+table_type: fact
 config:
   materialized: full
 atomic_metrics:
