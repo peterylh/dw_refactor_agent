@@ -216,6 +216,11 @@
             "total_discount"
           ]
         },
+        "atomic_metric_checks": {
+          "passed": 0,
+          "total": 0,
+          "violations": []
+        },
         "score": 40.0
       },
       {
@@ -236,6 +241,11 @@
             "quantity",
             "safety_stock"
           ]
+        },
+        "atomic_metric_checks": {
+          "passed": 0,
+          "total": 0,
+          "violations": []
         },
         "score": 60.0
       },
@@ -264,6 +274,11 @@
             "unit_price"
           ]
         },
+        "atomic_metric_checks": {
+          "passed": 0,
+          "total": 0,
+          "violations": []
+        },
         "score": 44.4
       },
       {
@@ -289,6 +304,11 @@
             "store_level"
           ]
         },
+        "atomic_metric_checks": {
+          "passed": 0,
+          "total": 0,
+          "violations": []
+        },
         "score": 46.7
       },
       {
@@ -310,6 +330,11 @@
             "sale_amount",
             "sale_quantity"
           ]
+        },
+        "atomic_metric_checks": {
+          "passed": 0,
+          "total": 0,
+          "violations": []
         },
         "score": 44.4
       },
@@ -334,6 +359,11 @@
             "sale_quantity"
           ]
         },
+        "atomic_metric_checks": {
+          "passed": 0,
+          "total": 0,
+          "violations": []
+        },
         "score": 50.0
       },
       {
@@ -348,15 +378,21 @@
         },
         "column_checks": {
           "passed": 10,
-          "total": 18,
+          "total": 14,
           "violations": [
-            "cost_price",
-            "discount",
             "gross_profit",
             "order_month",
             "payment_method",
+            "subtotal"
+          ]
+        },
+        "atomic_metric_checks": {
+          "passed": 0,
+          "total": 4,
+          "violations": [
+            "cost_price",
+            "discount",
             "quantity",
-            "subtotal",
             "unit_price"
           ]
         },
@@ -382,6 +418,11 @@
             "payment_amount",
             "total_amount"
           ]
+        },
+        "atomic_metric_checks": {
+          "passed": 0,
+          "total": 0,
+          "violations": []
         },
         "score": 40.0
       },
@@ -410,6 +451,11 @@
             "province"
           ]
         },
+        "atomic_metric_checks": {
+          "passed": 0,
+          "total": 0,
+          "violations": []
+        },
         "score": 37.5
       },
       {
@@ -424,11 +470,17 @@
         },
         "column_checks": {
           "passed": 7,
-          "total": 10,
+          "total": 9,
           "violations": [
             "days_since_restock",
-            "quantity",
             "safety_stock"
+          ]
+        },
+        "atomic_metric_checks": {
+          "passed": 0,
+          "total": 1,
+          "violations": [
+            "quantity"
           ]
         },
         "score": 66.7
@@ -445,11 +497,17 @@
         },
         "column_checks": {
           "passed": 9,
-          "total": 12,
+          "total": 11,
           "violations": [
             "duration_days",
-            "min_amount",
             "status"
+          ]
+        },
+        "atomic_metric_checks": {
+          "passed": 0,
+          "total": 1,
+          "violations": [
+            "min_amount"
           ]
         },
         "score": 71.4
@@ -473,6 +531,11 @@
             "sale_quantity",
             "stat_month"
           ]
+        },
+        "atomic_metric_checks": {
+          "passed": 0,
+          "total": 0,
+          "violations": []
         },
         "score": 44.4
       }
@@ -500,7 +563,7 @@
       },
       "无匹配模式": {
         "pass_count": 0,
-        "total": 65,
+        "total": 59,
         "pct": 0.0
       },
       "通用列名": {
@@ -535,8 +598,13 @@
       },
       "列名总计": {
         "pass_count": 66,
-        "total": 131,
-        "pct": 50.4
+        "total": 125,
+        "pct": 52.8
+      },
+      "原子指标命名 {ACTION_VERB}_{MEASURE_NOUN}": {
+        "pass_count": 0,
+        "total": 6,
+        "pct": 0.0
       }
     },
     "raw": 50.3,

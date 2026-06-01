@@ -4,7 +4,7 @@
 import re
 import yaml
 from pathlib import Path
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 
 # 项目根目录
@@ -54,6 +54,7 @@ class NamingConfig:
     column_segments: list
     common_columns: set[str]
     table_name_max_length: Optional[int] = None
+    metric_rules: dict[str, list] = field(default_factory=dict)
 
     def _match_segments(self, name: str, segments: list) -> Optional[dict]:
         def _assign(res, k, v):
@@ -351,6 +352,48 @@ def _parse_template(template, types: dict) -> list:
     return _parse_segments(raw, types)
 
 
+def _parse_explicit_pattern(template: str, types: dict) -> list:
+    """解析显式分隔符字符串，不自动补充下划线。"""
+    parsed = []
+    i = 0
+    while i < len(template):
+        if template[i] == "{":
+            j = template.find("}", i)
+            if j == -1:
+                parsed.append(template[i:])
+                break
+            name = template[i + 1:j]
+            optional = name.endswith("?")
+            if optional:
+                name = name[:-1]
+            parsed.append({
+                "name": name,
+                "kind": "type",
+                "optional": optional,
+                "sep_before": "",
+                "sep_after": "",
+                "concat_left": False,
+            })
+            i = j + 1
+            continue
+
+        j = template.find("{", i)
+        literal = template[i:] if j == -1 else template[i:j]
+        if literal:
+            parsed.append({
+                "name": literal,
+                "kind": "literal",
+                "optional": False,
+                "sep_before": "",
+                "sep_after": "",
+                "concat_left": False,
+            })
+        if j == -1:
+            break
+        i = j
+    return parsed
+
+
 def load_naming_config(path=None):
     path = Path(path) if path else NAMING_CONFIG_PATH
     with open(path, encoding="utf-8") as f:
@@ -408,6 +451,40 @@ def load_naming_config(path=None):
     column_segments = _parse_template(raw_col_seg, types) if raw_col_seg else []
     common_columns = set(col_cfg.get("common_columns", []))
 
+    metric_rules = {}
+    metric_cfg = raw.get("metrics", {}) or {}
+    for rule_name, rule_cfg in metric_cfg.items():
+        parser = _parse_template
+        if isinstance(rule_cfg, dict):
+            if (
+                "pattern" in rule_cfg
+                and "templates" not in rule_cfg
+                and "segments" not in rule_cfg
+            ):
+                parser = _parse_explicit_pattern
+            template_defs = (
+                rule_cfg.get("templates")
+                or rule_cfg.get("segments")
+                or rule_cfg.get("pattern")
+                or []
+            )
+        else:
+            template_defs = rule_cfg
+
+        if isinstance(template_defs, str):
+            template_defs = [template_defs]
+        elif (
+            isinstance(template_defs, list)
+            and template_defs
+            and isinstance(template_defs[0], str)
+        ):
+            template_defs = [template_defs]
+
+        metric_rules[rule_name] = [
+            parser(template, types)
+            for template in template_defs
+        ]
+
     table_name_cfg = raw.get("table_name", {})
     table_name_max_length = (
         table_constraints.get("max_length")
@@ -433,6 +510,7 @@ def load_naming_config(path=None):
         column_segments=column_segments,
         common_columns=common_columns,
         table_name_max_length=table_name_max_length,
+        metric_rules=metric_rules,
     )
 
 

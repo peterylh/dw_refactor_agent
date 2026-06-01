@@ -50,6 +50,7 @@ DEFAULT_WEIGHTS = {
 SEVERITY_WEIGHT = {"严重": 4, "高": 3, "中": 2, "低": 1}
 # 每表扣分上限 (cap)，防止单张高频表拖垮整体评分
 PER_TABLE_CAP = 4
+ATOMIC_METRIC_RULE_NAME = "原子指标命名 {ACTION_VERB}_{MEASURE_NOUN}"
 
 def build_metric_result(metric: dict, display_score: float | None = None) -> dict:
     raw = metric["score"]
@@ -400,8 +401,59 @@ def _check_column_name(col_name: str, nc) -> tuple[bool, list[str]]:
     return bool(matched), matched
 
 
-def score_naming_conventions(tables: list, nc) -> dict:
+def _metric_rule_templates(nc, *rule_names: str) -> list:
+    metric_rules = getattr(nc, "metric_rules", {}) or {}
+    for rule_name in rule_names:
+        templates = metric_rules.get(rule_name)
+        if templates:
+            return templates
+    return []
+
+
+def _check_atomic_metric_name(metric_name: str, nc) -> bool:
+    templates = _metric_rule_templates(nc, "atomic_metrics", "atomic")
+    if not templates:
+        return True
+    return any(
+        nc._match_segments(metric_name, template) is not None
+        for template in templates
+    )
+
+
+def _metric_names_from_raw(raw_metrics) -> list[str]:
+    if not isinstance(raw_metrics, list):
+        return []
+
+    names = []
+    for metric in raw_metrics:
+        if isinstance(metric, dict):
+            name = str(metric.get("name") or "").strip()
+        else:
+            name = str(metric or "").strip()
+        if name:
+            names.append(name)
+    return names
+
+
+def _atomic_metric_names_for_table(
+    table: dict,
+    model_metadata: dict | None,
+) -> list[str]:
+    raw_metrics = table.get("atomic_metrics")
+    if raw_metrics is None and model_metadata:
+        metadata = model_metadata.get(table["name"], {})
+        raw_metrics = metadata.get("atomic_metrics")
+    return _metric_names_from_raw(raw_metrics)
+
+
+def score_naming_conventions(
+    tables: list,
+    nc,
+    model_metadata: dict | None = None,
+) -> dict:
     middle = [t for t in tables if t["layer"] in ("DWD", "DWS", "DIM")]
+    has_atomic_metric_rule = bool(
+        _metric_rule_templates(nc, "atomic_metrics", "atomic"))
 
     table_results = []
     total_checks = 0
@@ -426,21 +478,41 @@ def score_naming_conventions(tables: list, nc) -> dict:
             else:
                 tbl_violations.append(f"违反: 表名长度 <= {nc.table_name_max_length}")
 
+        # --- 原子指标检查 ---
+        metric_violations = []
+        metric_passed = 0
+        metric_names = (
+            _atomic_metric_names_for_table(t, model_metadata)
+            if has_atomic_metric_rule
+            else []
+        )
+        metric_name_set = set(metric_names)
+        metric_total = len(metric_names)
+        for metric_name in metric_names:
+            if _check_atomic_metric_name(metric_name, nc):
+                metric_passed += 1
+            else:
+                metric_violations.append(metric_name)
+
         # --- 字段检查 ---
+        # 原子指标是列的一种专项类型，已由指标规则检查，不再重复进入通用字段规则。
         col_violations = []
         col_passed = 0
-        col_total = len(columns)
+        col_total = 0
 
         for col in columns:
             col_name = col["name"]
+            if col_name in metric_name_set:
+                continue
+            col_total += 1
             ok, matched = _check_column_name(col_name, nc)
             if ok:
                 col_passed += 1
             else:
                 col_violations.append(col_name)
 
-        table_pass = tbl_passed + col_passed
-        table_check = tbl_total + col_total
+        table_pass = tbl_passed + col_passed + metric_passed
+        table_check = tbl_total + col_total + metric_total
         table_score = round(table_pass / table_check *
                             100, 1) if table_check else 100.0
 
@@ -456,6 +528,11 @@ def score_naming_conventions(tables: list, nc) -> dict:
                     total=col_total,
                     violations=sorted(col_violations),
                 ),
+                atomic_metric_checks=dict(
+                    passed=metric_passed,
+                    total=metric_total,
+                    violations=sorted(metric_violations),
+                ),
                 score=table_score,
             ))
 
@@ -467,7 +544,10 @@ def score_naming_conventions(tables: list, nc) -> dict:
 
     # 规则汇总
     rule_summary = {}
-    passed = sum(1 for t in middle if _check_table_name_any_template(t["name"], t["layer"], nc))
+    passed = sum(
+        1 for t in middle
+        if _check_table_name_any_template(t["name"], t["layer"], nc)
+    )
     total = len(middle)
     rule_summary["表名符合规范模板"] = dict(
         pass_count=passed,
@@ -487,8 +567,15 @@ def score_naming_conventions(tables: list, nc) -> dict:
     col_total = 0
     col_passed = 0
     for t in middle:
+        metric_name_set = set(
+            _atomic_metric_names_for_table(t, model_metadata)
+            if has_atomic_metric_rule
+            else []
+        )
         for col in t.get("columns", []):
             col_name = col["name"]
+            if col_name in metric_name_set:
+                continue
             col_total += 1
             ok, matched = _check_column_name(col_name, nc)
             if ok:
@@ -511,6 +598,21 @@ def score_naming_conventions(tables: list, nc) -> dict:
         total=col_total,
         pct=pct,
     )
+
+    if has_atomic_metric_rule:
+        metric_total = 0
+        metric_passed = 0
+        for t in middle:
+            for metric_name in _atomic_metric_names_for_table(t, model_metadata):
+                metric_total += 1
+                if _check_atomic_metric_name(metric_name, nc):
+                    metric_passed += 1
+        rule_summary[ATOMIC_METRIC_RULE_NAME] = dict(
+            pass_count=metric_passed,
+            total=metric_total,
+            pct=round(metric_passed / metric_total * 100, 1)
+            if metric_total else 0,
+        )
 
     return dict(score=overall,
                 details=table_results,
@@ -710,6 +812,15 @@ def generate_report(scores: dict, weights: dict, project: str) -> str:
             if len(r["column_checks"]["violations"]) > 10:
                 issues[
                     -1] += f"... (共{len(r['column_checks']['violations'])}个)"
+        metric_checks = r.get("atomic_metric_checks", {})
+        if metric_checks.get("violations"):
+            issues.append(
+                "不合规原子指标: "
+                f"{', '.join(metric_checks['violations'][:10])}"
+            )
+            if len(metric_checks["violations"]) > 10:
+                issues[
+                    -1] += f"... (共{len(metric_checks['violations'])}个)"
         if issues:
             if not has_viz:
                 parts.append(f"\n  偏离详情:")
@@ -735,8 +846,9 @@ def assess(project: str, weights: dict = None) -> dict:
     if weights is None:
         weights = DEFAULT_WEIGHTS.copy()
 
-    from config import get_naming_config
+    from config import get_naming_config, load_model_metadata
     nc = get_naming_config(project)
+    model_metadata = load_model_metadata(project)
 
     data = load_lineage_data(project)
     edges = data.get("edges", [])
@@ -766,7 +878,8 @@ def assess(project: str, weights: dict = None) -> dict:
     architecture_raw = score_architecture_health(tables, edges, indirect_edges,
                                                   llm_results)
     architecture_score = build_metric_result(architecture_raw)
-    naming_score = build_metric_result(score_naming_conventions(tables, nc))
+    naming_score = build_metric_result(
+        score_naming_conventions(tables, nc, model_metadata))
 
     overall_raw = round(
         weights["reuse"] * reuse_score["raw"] +

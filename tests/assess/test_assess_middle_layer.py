@@ -1,5 +1,6 @@
 from config import load_naming_config, PROJECT_ROOT
 from assess.assess_middle_layer import (
+    ATOMIC_METRIC_RULE_NAME,
     assess,
     generate_report,
     score_naming_conventions,
@@ -44,6 +45,30 @@ def test_generate_report_contains_raw_and_display_scores(
     assert "Σ(每表 cap 后权重) = 1" in report
 
 
+def test_assess_includes_atomic_metric_naming_summary(
+        monkeypatch, sample_lineage_data):
+    monkeypatch.setattr(
+        "assess.assess_middle_layer.load_lineage_data",
+        lambda project: sample_lineage_data,
+    )
+    monkeypatch.setattr(
+        "config.load_model_metadata",
+        lambda project: {
+            "dwd_order_detail": {
+                "atomic_metrics": ["PAY_AMT", "PAY_UNKNOWN"]
+            }
+        },
+    )
+
+    result = assess(project="shop")
+
+    assert result["naming"]["rule_summary"][ATOMIC_METRIC_RULE_NAME] == {
+        "pass_count": 1,
+        "total": 2,
+        "pct": 50.0,
+    }
+
+
 def test_score_naming_conventions_checks_table_name_length():
     nc = load_naming_config(PROJECT_ROOT / "naming_config_enterprise.yaml")
     tables = [
@@ -59,3 +84,58 @@ def test_score_naming_conventions_checks_table_name_length():
         "pct": 50.0,
     }
     assert result["details"][1]["table_checks"]["violations"] == ["违反: 表名长度 <= 30"]
+
+
+def test_score_naming_conventions_checks_atomic_metrics_from_models():
+    nc = load_naming_config(PROJECT_ROOT / "naming_config_enterprise.yaml")
+    tables = [{
+        "name": "M_WEMG_04_CHREM_DI",
+        "layer": "DWD",
+        "columns": [],
+    }]
+    model_metadata = {
+        "M_WEMG_04_CHREM_DI": {
+            "atomic_metrics": ["PAY_AMT", "pay_amt", "PAY_UNKNOWN"]
+        }
+    }
+
+    result = score_naming_conventions(tables, nc, model_metadata)
+
+    assert result["rule_summary"][ATOMIC_METRIC_RULE_NAME] == {
+        "pass_count": 1,
+        "total": 3,
+        "pct": 33.3,
+    }
+    assert result["details"][0]["atomic_metric_checks"] == {
+        "passed": 1,
+        "total": 3,
+        "violations": ["PAY_UNKNOWN", "pay_amt"],
+    }
+
+
+def test_score_naming_conventions_does_not_double_check_atomic_metric_columns():
+    nc = load_naming_config(PROJECT_ROOT / "naming_config_enterprise.yaml")
+    tables = [{
+        "name": "M_WEMG_04_CHREM_DI",
+        "layer": "DWD",
+        "columns": [{"name": "PAY_AMT"}],
+    }]
+    model_metadata = {
+        "M_WEMG_04_CHREM_DI": {
+            "atomic_metrics": ["PAY_AMT"]
+        }
+    }
+
+    result = score_naming_conventions(tables, nc, model_metadata)
+
+    assert result["details"][0]["column_checks"] == {
+        "passed": 0,
+        "total": 0,
+        "violations": [],
+    }
+    assert result["details"][0]["atomic_metric_checks"] == {
+        "passed": 1,
+        "total": 1,
+        "violations": [],
+    }
+    assert result["details"][0]["score"] == 100.0
