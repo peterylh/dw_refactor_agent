@@ -423,7 +423,7 @@ class TestLoadNamingConfig:
     def test_load_production_config(self):
         """加载生产 YAML 无异常，关键层存在"""
         nc = load_naming_config()
-        for layer in ("ODS", "DWD", "DWS", "ADS", "DIM"):
+        for layer in ("DWD", "DWS", "ADS", "DIM"):
             assert layer in nc.layers
 
     def test_table_templates_do_not_require_layers_block(self):
@@ -437,8 +437,25 @@ class TestLoadNamingConfig:
 
     def test_common_columns(self):
         nc = load_naming_config()
-        assert "etl_time" in nc.common_columns
-        assert "snapshot_date" in nc.common_columns
+        assert "ETL_TIME" in nc.common_columns
+        assert "SNAPSHOT_DATE" in nc.common_columns
+        assert "etl_time" not in nc.common_columns
+
+    def test_removed_legacy_column_segment_types(self):
+        nc = load_naming_config()
+        assert "prefix_field" not in nc.types
+        assert "suffix_field" not in nc.types
+
+    def test_column_default_requires_uppercase_identifier_shorter_than_16(self):
+        nc = load_naming_config()
+        assert nc._match_segments("CUSTOMER_ID", nc.column_segments) == {
+            "COLUMN_IDENTIFIER": "CUSTOMER_ID",
+        }
+        assert nc._match_segments("CUSTOMER_ID_123", nc.column_segments) == {
+            "COLUMN_IDENTIFIER": "CUSTOMER_ID_123",
+        }
+        assert nc._match_segments("customer_id", nc.column_segments) is None
+        assert nc._match_segments("CUSTOMER_ID_LONG1", nc.column_segments) is None
 
     def test_yaml_file_not_found(self):
         with pytest.raises(FileNotFoundError):
@@ -524,7 +541,7 @@ class TestJoinExpressionSyntax:
 class TestEnterpriseNaming:
     @pytest.fixture
     def nc(self):
-        return load_naming_config(PROJECT_ROOT / "naming_config_enterprise.yaml")
+        return load_naming_config(PROJECT_ROOT / "naming_config.yaml")
 
     def test_match_dwd_v2(self, nc):
         segs = nc.layers["DWD"].templates[0]
@@ -586,6 +603,20 @@ class TestEnterpriseNaming:
     def test_table_name_max_length(self, nc):
         assert nc.table_name_max_length == 30
 
+    def test_removed_legacy_column_segment_types(self, nc):
+        assert "prefix_field" not in nc.types
+        assert "suffix_field" not in nc.types
+
+    def test_column_default_requires_uppercase_identifier_shorter_than_16(self, nc):
+        assert nc._match_segments("CUST_ID", nc.column_segments) == {
+            "COLUMN_IDENTIFIER": "CUST_ID",
+        }
+        assert nc._match_segments("CUSTOMER_ID_123", nc.column_segments) == {
+            "COLUMN_IDENTIFIER": "CUSTOMER_ID_123",
+        }
+        assert nc._match_segments("cust_id", nc.column_segments) is None
+        assert nc._match_segments("CUSTOMER_ID_LONG1", nc.column_segments) is None
+
     def test_atomic_metric_rule(self, nc):
         assert nc.types["ACTION_VERB"].validate("PAY") is True
         assert nc.types["ACTION_VERB"].validate("pay") is False
@@ -629,16 +660,31 @@ class TestEnterpriseNaming:
 class TestGetNamingConfigByProject:
     def test_default(self):
         nc = get_naming_config()
-        # DWD layer should exist but its template shouldn't be the enterprise one
-        # Let's just check the number of templates in DWD
         assert len(nc.layers["DWD"].templates) == 1
-        assert nc.match_metric_rule("transaction_count", "derived") == {
-            "metric_name": "transaction_count",
+        assert nc._match_segments(
+            "M_WEMG_04_CHREM_DI",
+            nc.layers["DWD"].templates[0],
+        ) == {
+            "BIZ_MODULE": "WEMG",
+            "DOMAIN_CODE": "04",
+            "BIZ_PROCESS": "CHREM",
+            "TIME_PERIOD": "D",
+            "DWD_GRANULARITY": "I",
         }
+        assert nc.match_metric_rule("PAY_AMT", "atomic") == {
+            "ACTION_VERB": "PAY",
+            "MEASURE_NOUN": "AMT",
+        }
+        assert nc.match_metric_rule("pay_amt", "atomic") is None
 
-    def test_enterprise_project(self):
-        # Temporarily mock PROJECT_CONFIG
-        import config
-        config.PROJECT_CONFIG["test_enterprise"] = {"naming_config": "naming_config_enterprise.yaml"}
-        nc = get_naming_config("test_enterprise")
-        assert "DWD" in nc.layers
+    def test_projects_use_default_naming_config(self):
+        shop_nc = get_naming_config("shop")
+        finance_nc = get_naming_config("finance_analytics")
+        assert shop_nc._match_segments(
+            "M_WEMG_04_CHREM_DI",
+            shop_nc.layers["DWD"].templates[0],
+        ) is not None
+        assert finance_nc._match_segments(
+            "M_WEMG_04_CHREM_DI",
+            finance_nc.layers["DWD"].templates[0],
+        ) is not None

@@ -112,7 +112,7 @@ def test_score_architecture_health_penalizes_declared_table_type_mismatch(
 
 
 def test_score_naming_conventions_checks_table_name_length():
-    nc = load_naming_config(PROJECT_ROOT / "naming_config_enterprise.yaml")
+    nc = load_naming_config(PROJECT_ROOT / "naming_config.yaml")
     tables = [
         {"name": "M_WEMG_04_CHREM_DI", "layer": "DWD", "columns": []},
         {"name": "M_WEMG_04_CHREMEXTRALONGNAME_DI", "layer": "DWD", "columns": []},
@@ -129,7 +129,7 @@ def test_score_naming_conventions_checks_table_name_length():
 
 
 def test_score_naming_conventions_checks_atomic_metrics_from_models():
-    nc = load_naming_config(PROJECT_ROOT / "naming_config_enterprise.yaml")
+    nc = load_naming_config(PROJECT_ROOT / "naming_config.yaml")
     tables = [{
         "name": "M_WEMG_04_CHREM_DI",
         "layer": "DWD",
@@ -156,7 +156,7 @@ def test_score_naming_conventions_checks_atomic_metrics_from_models():
 
 
 def test_score_naming_conventions_checks_derived_metrics_from_models():
-    nc = load_naming_config(PROJECT_ROOT / "naming_config_enterprise.yaml")
+    nc = load_naming_config(PROJECT_ROOT / "naming_config.yaml")
     tables = [{
         "name": "M_WEMG_04_CHREM_DI",
         "layer": "DWD",
@@ -192,28 +192,28 @@ def test_score_naming_conventions_checks_derived_metrics_from_models():
     }
 
 
-def test_score_naming_conventions_checks_default_metric_bindings():
+def test_score_naming_conventions_checks_default_enterprise_metric_bindings():
     nc = load_naming_config(PROJECT_ROOT / "naming_config.yaml")
     tables = [{
-        "name": "dwd_transactions",
+        "name": "M_WEMG_04_CHREM_DI",
         "layer": "DWD",
         "columns": [],
     }]
     model_metadata = {
-        "dwd_transactions": {
-            "atomic_metrics": ["amount", "Amount"],
-            "derived_metrics": ["transaction_count", "transaction count"],
+        "M_WEMG_04_CHREM_DI": {
+            "atomic_metrics": ["PAY_AMT", "pay_amt"],
+            "derived_metrics": ["7D_OLD_PAY_AMT", "transaction_count"],
         }
     }
 
     result = score_naming_conventions(tables, nc, model_metadata)
 
-    assert result["rule_summary"]["原子指标命名 lower_snake_case"] == {
+    assert result["rule_summary"][ATOMIC_METRIC_RULE_NAME] == {
         "pass_count": 1,
         "total": 2,
         "pct": 50.0,
     }
-    assert result["rule_summary"]["派生指标命名 lower_snake_case"] == {
+    assert result["rule_summary"][DERIVED_METRIC_RULE_NAME] == {
         "pass_count": 1,
         "total": 2,
         "pct": 50.0,
@@ -221,7 +221,7 @@ def test_score_naming_conventions_checks_default_metric_bindings():
 
 
 def test_score_naming_conventions_derived_metrics_follow_rule_config():
-    nc = load_naming_config(PROJECT_ROOT / "naming_config_enterprise.yaml")
+    nc = load_naming_config(PROJECT_ROOT / "naming_config.yaml")
     nc.metric_rules["derived"][0]["nodes"][1]["repeat"]["min"] = 2
     tables = [{
         "name": "M_WEMG_04_CHREM_DI",
@@ -252,7 +252,7 @@ def test_score_naming_conventions_derived_metrics_follow_rule_config():
 
 
 def test_score_naming_conventions_does_not_double_check_derived_metric_columns():
-    nc = load_naming_config(PROJECT_ROOT / "naming_config_enterprise.yaml")
+    nc = load_naming_config(PROJECT_ROOT / "naming_config.yaml")
     tables = [{
         "name": "M_WEMG_04_CHREM_DI",
         "layer": "DWD",
@@ -280,7 +280,7 @@ def test_score_naming_conventions_does_not_double_check_derived_metric_columns()
 
 
 def test_score_naming_conventions_does_not_double_check_atomic_metric_columns():
-    nc = load_naming_config(PROJECT_ROOT / "naming_config_enterprise.yaml")
+    nc = load_naming_config(PROJECT_ROOT / "naming_config.yaml")
     tables = [{
         "name": "M_WEMG_04_CHREM_DI",
         "layer": "DWD",
