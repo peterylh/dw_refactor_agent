@@ -1,6 +1,8 @@
 import hashlib
 import json
+import threading
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -443,29 +445,34 @@ class TableInspector:
                  *,
                  model: str = "deepseek-v4-flash",
                  cache_file: Path = None,
-                 max_retries: int = 1):
+                 max_retries: int = 1,
+                 parallelism: int = 2):
         self.api_key = api_key
         self.model = model
         self.cache_file = cache_file
         self.max_retries = max(0, int(max_retries))
+        self.parallelism = max(1, int(parallelism))
         self.cache = {}
+        self._cache_lock = threading.RLock()
         self._load_cache()
 
     def _load_cache(self):
-        if self.cache_file and self.cache_file.exists():
-            try:
-                self.cache = json.loads(
-                    self.cache_file.read_text(encoding="utf-8"))
-            except Exception:
-                self.cache = {}
+        with self._cache_lock:
+            if self.cache_file and self.cache_file.exists():
+                try:
+                    self.cache = json.loads(
+                        self.cache_file.read_text(encoding="utf-8"))
+                except Exception:
+                    self.cache = {}
 
     def _save_cache(self):
-        if self.cache_file:
-            self.cache_file.parent.mkdir(parents=True, exist_ok=True)
-            self.cache_file.write_text(json.dumps(self.cache,
-                                                  ensure_ascii=False,
-                                                  indent=2),
-                                       encoding="utf-8")
+        with self._cache_lock:
+            if self.cache_file:
+                self.cache_file.parent.mkdir(parents=True, exist_ok=True)
+                self.cache_file.write_text(json.dumps(self.cache,
+                                                      ensure_ascii=False,
+                                                      indent=2),
+                                           encoding="utf-8")
 
     def _compute_hash(self, ctx: TableContext) -> str:
         # 缓存 hash 需要包含所有影响 LLM 判断的特征与 prompt schema 版本。
@@ -504,9 +511,10 @@ class TableInspector:
     def inspect(self, ctx: TableContext) -> TableInspectResult:
         current_hash = self._compute_hash(ctx)
 
-        if ctx.table_name in self.cache:
-            cached_data = self.cache[ctx.table_name]
-            if cached_data.get("hash") == current_hash:
+        with self._cache_lock:
+            cached_data = self.cache.get(ctx.table_name)
+            if (isinstance(cached_data, dict)
+                    and cached_data.get("hash") == current_hash):
                 return dict_to_result(cached_data.get("result", {}),
                                       table_name=ctx.table_name,
                                       declared_layer=ctx.layer)
@@ -539,27 +547,32 @@ class TableInspector:
                 break
             prompt = build_retry_prompt(ctx, result, ddl_columns)
 
-        self.cache[ctx.table_name] = {
-            "hash": current_hash,
-            "result": result_to_dict(result),
-        }
-        self._save_cache()
+        with self._cache_lock:
+            self.cache[ctx.table_name] = {
+                "hash": current_hash,
+                "result": result_to_dict(result),
+            }
+            self._save_cache()
 
         return result
 
     def inspect_batch(
             self, contexts: list[TableContext]) -> list[TableInspectResult]:
-        results = []
-        for ctx in contexts:
+        def inspect_safely(ctx: TableContext) -> TableInspectResult:
             try:
-                results.append(self.inspect(ctx))
+                return self.inspect(ctx)
             except Exception as e:
-                results.append(
-                    TableInspectResult(
-                        table_name=ctx.table_name,
-                        declared_layer=ctx.layer,
-                        inferred_layer="OTHER",
-                        table_type="other",
-                        confidence=0.0,
-                        reasoning_steps=[f"分类异常: {str(e)}"]))
-        return results
+                return TableInspectResult(
+                    table_name=ctx.table_name,
+                    declared_layer=ctx.layer,
+                    inferred_layer="OTHER",
+                    table_type="other",
+                    confidence=0.0,
+                    reasoning_steps=[f"分类异常: {str(e)}"])
+
+        if len(contexts) <= 1 or self.parallelism == 1:
+            return [inspect_safely(ctx) for ctx in contexts]
+
+        max_workers = min(self.parallelism, len(contexts))
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            return list(executor.map(inspect_safely, contexts))

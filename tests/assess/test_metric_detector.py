@@ -255,11 +255,13 @@ def test_run_detection_reuses_table_inspector(monkeypatch, sample_lineage_data):
     import assess.metric_detector as detector_module
 
     class FakeInspector:
-        def __init__(self, api_key, *, model, cache_file, max_retries):
+        def __init__(self, api_key, *, model, cache_file, max_retries,
+                     parallelism):
             self.api_key = api_key
             self.model = model
             self.cache_file = cache_file
             self.max_retries = max_retries
+            self.parallelism = parallelism
 
         def inspect_batch(self, contexts):
             return [
@@ -289,6 +291,28 @@ def test_run_detection_reuses_table_inspector(monkeypatch, sample_lineage_data):
     assert result["skipped_model_updates"] == []
 
 
+def test_run_detection_passes_parallelism(monkeypatch, sample_lineage_data):
+    import assess.metric_detector as detector_module
+
+    seen = {}
+
+    class FakeInspector:
+        def __init__(self, api_key, *, model, cache_file, max_retries,
+                     parallelism):
+            seen["parallelism"] = parallelism
+
+        def inspect_batch(self, contexts):
+            return []
+
+    monkeypatch.setattr(detector_module, "load_lineage_data",
+                        lambda project: sample_lineage_data)
+    monkeypatch.setattr(detector_module, "TableInspector", FakeInspector)
+
+    run_detection("shop", api_key="test", dry_run=True, parallelism=4)
+
+    assert seen["parallelism"] == 4
+
+
 def test_run_detection_skips_blocked_model_updates(monkeypatch, sample_lineage_data):
     import assess.metric_detector as detector_module
 
@@ -300,7 +324,8 @@ def test_run_detection_skips_blocked_model_updates(monkeypatch, sample_lineage_d
     }
 
     class FakeInspector:
-        def __init__(self, api_key, *, model, cache_file, max_retries):
+        def __init__(self, api_key, *, model, cache_file, max_retries,
+                     parallelism):
             pass
 
         def inspect_batch(self, contexts):

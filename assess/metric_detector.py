@@ -192,6 +192,7 @@ def run_detection(project: str,
                   api_key: str,
                   model: str = "deepseek-v4-flash",
                   max_retries: int = 1,
+                  parallelism: int = 2,
                   no_cache: bool = False,
                   dry_run: bool = False) -> dict[str, Any]:
     """运行项目级 DWD 指标检测。"""
@@ -207,6 +208,7 @@ def run_detection(project: str,
         model=model,
         cache_file=cache_file,
         max_retries=max_retries,
+        parallelism=parallelism,
     )
     results = inspector.inspect_batch(contexts)
 
@@ -269,6 +271,10 @@ def main() -> None:
     parser.add_argument("--no-cache",
                         action="store_true",
                         help="忽略本地缓存，强制重新调用 API")
+    parser.add_argument("--parallel",
+                        type=int,
+                        default=2,
+                        help="LLM 并发调用数，默认 2")
     args = parser.parse_args()
 
     api_key = os.environ.get("DEEPSEEK_API_KEY")
@@ -280,6 +286,7 @@ def main() -> None:
         api_key=api_key,
         model=args.model,
         max_retries=args.max_retries,
+        parallelism=args.parallel,
         no_cache=args.no_cache,
         dry_run=args.dry_run,
     )

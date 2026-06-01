@@ -1,4 +1,6 @@
 import json
+import threading
+import time
 import pytest
 from unittest.mock import patch
 
@@ -438,6 +440,69 @@ def test_cache_hash_includes_declared_layer(tmp_path):
     dws_ctx = TableContext(layer="DWS", **base)
 
     assert inspector._compute_hash(dwd_ctx) != inspector._compute_hash(dws_ctx)
+
+
+def test_default_parallelism_is_two():
+    inspector = TableInspector(api_key="test", cache_file=None)
+
+    assert inspector.parallelism == 2
+
+
+def test_inspect_batch_runs_with_configured_parallelism(monkeypatch):
+    inspector = TableInspector(api_key="test", cache_file=None, parallelism=2)
+    contexts = [
+        TableContext(
+            table_name=f"t{i}",
+            layer="DWD",
+            ddl="CREATE TABLE t (id BIGINT);",
+            etl_sql="",
+            upstream_tables=[],
+            downstream_tables=[],
+        ) for i in range(4)
+    ]
+
+    active = 0
+    max_active = 0
+    calls = 0
+    lock = threading.Lock()
+
+    def fake_api(_prompt):
+        nonlocal active, max_active, calls
+        with lock:
+            active += 1
+            calls += 1
+            max_active = max(max_active, active)
+        try:
+            time.sleep(0.05)
+            return json.dumps({
+                "choices": [{
+                    "message": {
+                        "content": json.dumps({
+                            "inferred_layer": "DWD",
+                            "table_type": "dimension",
+                            "confidence": 0.9,
+                            "reasoning_steps": ["api"],
+                            "columns": {
+                                "atomic_metrics": [],
+                                "derived_metrics": [],
+                                "dimensions": [],
+                                "others": [],
+                            },
+                        })
+                    }
+                }]
+            })
+        finally:
+            with lock:
+                active -= 1
+
+    monkeypatch.setattr(inspector, "_call_api", fake_api)
+
+    results = inspector.inspect_batch(contexts)
+
+    assert [res.table_name for res in results] == ["t0", "t1", "t2", "t3"]
+    assert calls == 4
+    assert 1 < max_active <= 2
 
 
 # ============================================================

@@ -865,7 +865,11 @@ def assess(project: str, weights: dict = None) -> dict:
             ).parent / "cache" / f"inspect_{project}.json"
             if weights.get("no_cache", False) and cache_file.exists():
                 cache_file.unlink()
-            inspector = TableInspector(api_key, cache_file=cache_file)
+            inspector = TableInspector(
+                api_key,
+                cache_file=cache_file,
+                parallelism=weights.get("parallel", 2),
+            )
             llm_results = inspector.inspect_batch(contexts)
         else:
             print("警告: 未提供 DEEPSEEK_API_KEY 环境变量，跳过分类。")
@@ -929,6 +933,10 @@ def main():
     parser.add_argument("--no-cache",
                         action="store_true",
                         help="禁用 LLM 缓存，强制重新调用 API")
+    parser.add_argument("--parallel",
+                        type=int,
+                        default=2,
+                        help="LLM 并发调用数，默认 2")
     args = parser.parse_args()
 
     weights = dict(
@@ -938,6 +946,7 @@ def main():
         naming=args.naming_weight,
         enable_llm=args.llm,
         no_cache=args.no_cache,
+        parallel=args.parallel,
     )
 
     result = assess(args.project, weights)
