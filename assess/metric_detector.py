@@ -26,7 +26,7 @@ from assess.context_builder import TableContext, build_contexts
 from assess.table_inspector import (
     TableInspectResult,
     TableInspector,
-    result_to_dict as classify_result_to_dict,
+    result_to_dict as inspect_result_to_dict,
 )
 from config import PROJECT_CONFIG, PROJECT_ROOT
 
@@ -139,7 +139,7 @@ def update_model_yaml(project: str,
 
 def result_for_report(result: TableInspectResult) -> dict[str, Any]:
     """生成指标检测报告中的单表结果。"""
-    data = classify_result_to_dict(result)
+    data = inspect_result_to_dict(result)
     data["violations"] = metric_violations(result)
     return data
 
@@ -155,7 +155,7 @@ def run_detection(project: str,
     data = load_lineage_data(project)
     contexts = build_dwd_contexts(project, data)
     cache_file = Path(__file__).resolve(
-    ).parent / "cache" / f"classify_{project}.json"
+    ).parent / "cache" / f"inspect_{project}.json"
     if no_cache and cache_file.exists():
         cache_file.unlink()
 

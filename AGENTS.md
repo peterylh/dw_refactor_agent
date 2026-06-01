@@ -50,11 +50,11 @@ shop-dm/
 │   └── lineage_job.html
 ├── assess/
 │   ├── assess_middle_layer.py      # 中间层评估入口
-│   ├── context_builder.py          # 构造 LLM 分类上下文
+│   ├── context_builder.py          # 构造 LLM 表巡检上下文
 │   ├── table_inspector.py          # DeepSeek 表巡检、字段分组与缓存
 │   ├── metric_detector.py          # DWD 指标提取与 models 回写
 │   ├── assess_result_shop.json
-│   └── cache/                      # LLM 分类缓存
+│   └── cache/                      # LLM 表巡检缓存
 ├── exec/
 │   ├── reinit_project.py           # 重建 DDL + 初始化 ODS + 触发作业执行
 │   └── task_run.py                 # 按 DAG 拓扑执行 ETL 作业
@@ -367,7 +367,7 @@ python assess/assess_middle_layer.py --llm --no-cache
 参数说明：
 
 - `--llm`：调用 DeepSeek API 进行智能分层检测
-- `--no-cache`：忽略 `assess/cache/classify_{project}.json` 缓存，强制重新调用
+- `--no-cache`：忽略 `assess/cache/inspect_{project}.json` 缓存，强制重新调用
 
 ### 评估维度
 

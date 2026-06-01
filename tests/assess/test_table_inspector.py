@@ -445,7 +445,7 @@ def test_cache_hash_includes_declared_layer(tmp_path):
 # ============================================================
 
 @pytest.mark.api
-def test_classify_dimension_table():
+def test_inspect_dimension_table():
     import os
     api_key = os.environ.get("DEEPSEEK_API_KEY")
     if not api_key:
@@ -470,7 +470,7 @@ def test_classify_dimension_table():
 
 
 @pytest.mark.api
-def test_classify_fact_table():
+def test_inspect_fact_table():
     import os
     api_key = os.environ.get("DEEPSEEK_API_KEY")
     if not api_key:

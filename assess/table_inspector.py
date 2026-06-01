@@ -563,16 +563,3 @@ class TableInspector:
                         confidence=0.0,
                         reasoning_steps=[f"分类异常: {str(e)}"]))
         return results
-
-    def classify(self, ctx: TableContext) -> TableInspectResult:
-        """兼容旧调用方，等价于 inspect()."""
-        return self.inspect(ctx)
-
-    def classify_batch(
-            self, contexts: list[TableContext]) -> list[TableInspectResult]:
-        """兼容旧调用方，等价于 inspect_batch()."""
-        return self.inspect_batch(contexts)
-
-
-ClassifyResult = TableInspectResult
-TableClassifier = TableInspector

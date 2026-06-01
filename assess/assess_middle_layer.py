@@ -750,7 +750,7 @@ def assess(project: str, weights: dict = None) -> dict:
             print("正在调用 DeepSeek API 进行表分类，请稍候...")
             contexts = build_contexts(project, data)
             cache_file = Path(__file__).resolve(
-            ).parent / "cache" / f"classify_{project}.json"
+            ).parent / "cache" / f"inspect_{project}.json"
             if weights.get("no_cache", False) and cache_file.exists():
                 cache_file.unlink()
             inspector = TableInspector(api_key, cache_file=cache_file)
