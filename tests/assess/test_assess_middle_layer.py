@@ -1,6 +1,7 @@
 from config import load_naming_config, PROJECT_ROOT
 from assess.assess_middle_layer import (
     ATOMIC_METRIC_RULE_NAME,
+    DERIVED_METRIC_RULE_NAME,
     assess,
     generate_report,
     score_architecture_health,
@@ -152,6 +153,71 @@ def test_score_naming_conventions_checks_atomic_metrics_from_models():
         "total": 3,
         "violations": ["PAY_UNKNOWN", "pay_amt"],
     }
+
+
+def test_score_naming_conventions_checks_derived_metrics_from_models():
+    nc = load_naming_config(PROJECT_ROOT / "naming_config_enterprise.yaml")
+    tables = [{
+        "name": "M_WEMG_04_CHREM_DI",
+        "layer": "DWD",
+        "columns": [],
+    }]
+    model_metadata = {
+        "M_WEMG_04_CHREM_DI": {
+            "derived_metrics": [
+                "7D_OLD_CHREM_PAY_AMT",
+                "30D_HIGH_NET_PAY_CNT",
+                "OLD_7D_PAY_AMT",
+                "7D_OL_PAY_AMT",
+                "7D_OLD_PAY_UNKNOWN",
+            ]
+        }
+    }
+
+    result = score_naming_conventions(tables, nc, model_metadata)
+
+    assert result["rule_summary"][DERIVED_METRIC_RULE_NAME] == {
+        "pass_count": 2,
+        "total": 5,
+        "pct": 40.0,
+    }
+    assert result["details"][0]["derived_metric_checks"] == {
+        "passed": 2,
+        "total": 5,
+        "violations": [
+            "7D_OLD_PAY_UNKNOWN",
+            "7D_OL_PAY_AMT",
+            "OLD_7D_PAY_AMT",
+        ],
+    }
+
+
+def test_score_naming_conventions_does_not_double_check_derived_metric_columns():
+    nc = load_naming_config(PROJECT_ROOT / "naming_config_enterprise.yaml")
+    tables = [{
+        "name": "M_WEMG_04_CHREM_DI",
+        "layer": "DWD",
+        "columns": [{"name": "7D_OLD_PAY_AMT"}],
+    }]
+    model_metadata = {
+        "M_WEMG_04_CHREM_DI": {
+            "derived_metrics": ["7D_OLD_PAY_AMT"]
+        }
+    }
+
+    result = score_naming_conventions(tables, nc, model_metadata)
+
+    assert result["details"][0]["column_checks"] == {
+        "passed": 0,
+        "total": 0,
+        "violations": [],
+    }
+    assert result["details"][0]["derived_metric_checks"] == {
+        "passed": 1,
+        "total": 1,
+        "violations": [],
+    }
+    assert result["details"][0]["score"] == 100.0
 
 
 def test_score_naming_conventions_does_not_double_check_atomic_metric_columns():

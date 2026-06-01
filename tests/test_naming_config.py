@@ -552,6 +552,14 @@ class TestEnterpriseNaming:
         assert nc._match_segments("PAY_UNKNOWN", segs) is None
         assert nc._match_segments("pay_amt", segs) is None
 
+    def test_derived_metric_types(self, nc):
+        assert "7D" in nc.types["METRIC_TIME_PERIOD"].values
+        assert "L1M" in nc.types["METRIC_TIME_PERIOD"].values
+        assert nc.types["METRIC_MODIFIER"].validate("OLD") is True
+        assert nc.types["METRIC_MODIFIER"].validate("HIGH_NET") is True
+        assert nc.types["METRIC_MODIFIER"].validate("OL") is False
+        assert nc.types["METRIC_MODIFIER"].validate("high_net") is False
+
 
 class TestGetNamingConfigByProject:
     def test_default(self):
