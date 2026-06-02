@@ -111,6 +111,23 @@ def test_score_architecture_health_penalizes_declared_table_type_mismatch(
     }]
 
 
+def test_score_architecture_health_allows_ads_to_read_dim():
+    tables = [
+        {"name": "dim_customer", "layer": "DIM", "columns": []},
+        {"name": "ads_customer_by_segment", "layer": "ADS", "columns": []},
+    ]
+    edges = [{
+        "source": "dim_customer.customer_id",
+        "target": "ads_customer_by_segment.customer_id",
+        "source_file": "ads_customer_by_segment.sql",
+    }]
+
+    result = score_architecture_health(tables, edges, [])
+
+    assert result["score"] == 100.0
+    assert result["violations"] == []
+
+
 def test_score_naming_conventions_checks_table_name_length():
     nc = load_naming_config(PROJECT_ROOT / "naming_config.yaml")
     tables = [

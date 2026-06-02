@@ -69,7 +69,7 @@ def build_metric_result(metric: dict, display_score: float | None = None) -> dic
 # 正数 → 反向依赖 (高层→低层, 数据倒流)
 # 0     → 同层依赖
 # -1    → 相邻上层 (正常, ODS→DWD, DWD→DWS, DWS→ADS)
-# -2    → 跳过一层 (DWD→ADS 或 ODS→DWS)
+# -2    → 跳过一层 (DWD→ADS 或 ODS→DWS; DIM→ADS 为合理维度引用)
 # -3    → 跳过两层 (ODS→ADS)
 
 ARCH_VIOLATION_RULES = [
@@ -78,7 +78,7 @@ ARCH_VIOLATION_RULES = [
     (2, "反向依赖: 跳过两层", "严重", 30),
     (1, "反向依赖: 跳过一层", "高", 20),
     (0, "同层依赖(非必要)", "低", 2),
-    (-2, "跳过中间层(DWD/DIM→ADS 或 ODS→DWS)", "低", 5),
+    (-2, "跳过中间层(DWD→ADS 或 ODS→DWS)", "低", 5),
     (-3, "跳过两层(ODS→ADS)", "中", 10),
 ]
 
@@ -292,6 +292,10 @@ def score_architecture_health(tables: list, edges: list,
             continue
 
         rank_diff = src_rank - tgt_rank
+
+        # ADS 面向应用输出，直接引用公共维度表补充属性是合理的数据集市建模方式。
+        if src_layer == "DIM" and tgt_layer == "ADS":
+            continue
 
         # 正常相邻上层 → 跳过
         if rank_diff == -1:

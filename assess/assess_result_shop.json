@@ -1,14 +1,15 @@
 {
   "project": "shop",
-  "overall_raw": 66.5,
-  "overall_display": 66.5,
+  "overall_raw": 55.8,
+  "overall_display": 55.8,
   "weights": {
     "reuse": 0.25,
     "depth": 0.25,
     "architecture": 0.25,
     "naming": 0.25,
     "enable_llm": false,
-    "no_cache": false
+    "no_cache": false,
+    "parallel": 2
   },
   "reuse": {
     "avg_reuse_count": 1.5,
@@ -149,7 +150,7 @@
         "target": "ads_inventory_alert(ADS)",
         "severity": "低",
         "weight": 1,
-        "description": "跳过中间层(DWD/DIM→ADS 或 ODS→DWS)",
+        "description": "跳过中间层(DWD→ADS 或 ODS→DWS)",
         "source_file": "ads_inventory_alert.sql",
         "belongs_to": "ads_inventory_alert"
       },
@@ -158,7 +159,7 @@
         "target": "ads_inventory_alert(ADS)",
         "severity": "低",
         "weight": 1,
-        "description": "跳过中间层(DWD/DIM→ADS 或 ODS→DWS)",
+        "description": "跳过中间层(DWD→ADS 或 ODS→DWS)",
         "source_file": "ads_inventory_alert.sql",
         "belongs_to": "ads_inventory_alert"
       },
@@ -167,7 +168,7 @@
         "target": "ads_product_topn_daily(ADS)",
         "severity": "低",
         "weight": 1,
-        "description": "跳过中间层(DWD/DIM→ADS 或 ODS→DWS)",
+        "description": "跳过中间层(DWD→ADS 或 ODS→DWS)",
         "source_file": "ads_product_topn_daily.sql",
         "belongs_to": "ads_product_topn_daily"
       },
@@ -176,7 +177,7 @@
         "target": "ads_sales_dashboard(ADS)",
         "severity": "低",
         "weight": 1,
-        "description": "跳过中间层(DWD/DIM→ADS 或 ODS→DWS)",
+        "description": "跳过中间层(DWD→ADS 或 ODS→DWS)",
         "source_file": "ads_sales_dashboard.sql",
         "belongs_to": "ads_sales_dashboard"
       },
@@ -185,7 +186,7 @@
         "target": "ads_store_performance(ADS)",
         "severity": "低",
         "weight": 1,
-        "description": "跳过中间层(DWD/DIM→ADS 或 ODS→DWS)",
+        "description": "跳过中间层(DWD→ADS 或 ODS→DWS)",
         "source_file": "ads_store_performance.sql",
         "belongs_to": "ads_store_performance"
       }
@@ -206,14 +207,14 @@
           ]
         },
         "column_checks": {
-          "passed": 3,
-          "total": 8,
+          "passed": 0,
+          "total": 5,
           "violations": [
             "avg_order_amount",
-            "order_count",
+            "customer_id",
+            "etl_time",
             "payment_amount",
-            "total_amount",
-            "total_discount"
+            "stat_date"
           ]
         },
         "atomic_metric_checks": {
@@ -221,7 +222,16 @@
           "total": 0,
           "violations": []
         },
-        "score": 40.0
+        "derived_metric_checks": {
+          "passed": 0,
+          "total": 3,
+          "violations": [
+            "order_count",
+            "total_amount",
+            "total_discount"
+          ]
+        },
+        "score": 10.0
       },
       {
         "table": "dws_inventory_daily",
@@ -234,12 +244,14 @@
           ]
         },
         "column_checks": {
-          "passed": 5,
-          "total": 8,
+          "passed": 0,
+          "total": 5,
           "violations": [
-            "days_since_restock",
-            "quantity",
-            "safety_stock"
+            "etl_time",
+            "product_id",
+            "stat_date",
+            "stock_status",
+            "store_id"
           ]
         },
         "atomic_metric_checks": {
@@ -247,7 +259,16 @@
           "total": 0,
           "violations": []
         },
-        "score": 60.0
+        "derived_metric_checks": {
+          "passed": 0,
+          "total": 3,
+          "violations": [
+            "days_since_restock",
+            "quantity",
+            "safety_stock"
+          ]
+        },
+        "score": 10.0
       },
       {
         "table": "dwd_product",
@@ -260,14 +281,21 @@
           ]
         },
         "column_checks": {
-          "passed": 7,
+          "passed": 0,
           "total": 16,
           "violations": [
             "barcode",
             "brand",
+            "category_id",
             "category_level",
+            "category_name",
             "cost_price",
+            "etl_time",
             "gross_margin",
+            "parent_category_id",
+            "product_id",
+            "product_name",
+            "snapshot_date",
             "spec",
             "status",
             "unit",
@@ -279,7 +307,12 @@
           "total": 0,
           "violations": []
         },
-        "score": 44.4
+        "derived_metric_checks": {
+          "passed": 0,
+          "total": 0,
+          "violations": []
+        },
+        "score": 5.6
       },
       {
         "table": "dwd_store",
@@ -292,16 +325,22 @@
           ]
         },
         "column_checks": {
-          "passed": 6,
+          "passed": 0,
           "total": 13,
           "violations": [
             "address",
             "area_size",
             "city",
+            "etl_time",
+            "open_date",
             "open_years",
             "province",
+            "snapshot_date",
             "status",
-            "store_level"
+            "store_id",
+            "store_level",
+            "store_name",
+            "store_type"
           ]
         },
         "atomic_metric_checks": {
@@ -309,7 +348,12 @@
           "total": 0,
           "violations": []
         },
-        "score": 46.7
+        "derived_metric_checks": {
+          "passed": 0,
+          "total": 0,
+          "violations": []
+        },
+        "score": 6.7
       },
       {
         "table": "dws_product_sales_daily",
@@ -322,13 +366,12 @@
           ]
         },
         "column_checks": {
-          "passed": 3,
-          "total": 7,
+          "passed": 0,
+          "total": 3,
           "violations": [
-            "discount_amount",
-            "order_count",
-            "sale_amount",
-            "sale_quantity"
+            "etl_time",
+            "product_id",
+            "stat_date"
           ]
         },
         "atomic_metric_checks": {
@@ -336,7 +379,17 @@
           "total": 0,
           "violations": []
         },
-        "score": 44.4
+        "derived_metric_checks": {
+          "passed": 0,
+          "total": 4,
+          "violations": [
+            "discount_amount",
+            "order_count",
+            "sale_amount",
+            "sale_quantity"
+          ]
+        },
+        "score": 11.1
       },
       {
         "table": "dws_promotion_effect_daily",
@@ -349,8 +402,24 @@
           ]
         },
         "column_checks": {
-          "passed": 5,
-          "total": 10,
+          "passed": 0,
+          "total": 5,
+          "violations": [
+            "etl_time",
+            "promotion_id",
+            "promotion_name",
+            "promotion_type",
+            "stat_date"
+          ]
+        },
+        "atomic_metric_checks": {
+          "passed": 0,
+          "total": 0,
+          "violations": []
+        },
+        "derived_metric_checks": {
+          "passed": 0,
+          "total": 5,
           "violations": [
             "customer_count",
             "discount_amount",
@@ -359,12 +428,7 @@
             "sale_quantity"
           ]
         },
-        "atomic_metric_checks": {
-          "passed": 0,
-          "total": 0,
-          "violations": []
-        },
-        "score": 50.0
+        "score": 8.3
       },
       {
         "table": "dwd_order_detail",
@@ -377,26 +441,41 @@
           ]
         },
         "column_checks": {
-          "passed": 10,
-          "total": 14,
+          "passed": 0,
+          "total": 13,
           "violations": [
+            "category_id",
+            "customer_id",
+            "etl_time",
             "gross_profit",
+            "order_date",
+            "order_id",
+            "order_item_id",
             "order_month",
+            "order_status",
             "payment_method",
-            "subtotal"
+            "product_id",
+            "promotion_id",
+            "store_id"
           ]
         },
         "atomic_metric_checks": {
           "passed": 0,
-          "total": 4,
+          "total": 5,
           "violations": [
             "cost_price",
             "discount",
             "quantity",
+            "subtotal",
             "unit_price"
           ]
         },
-        "score": 55.0
+        "derived_metric_checks": {
+          "passed": 0,
+          "total": 0,
+          "violations": []
+        },
+        "score": 5.0
       },
       {
         "table": "dws_store_sales_daily",
@@ -409,14 +488,13 @@
           ]
         },
         "column_checks": {
-          "passed": 3,
-          "total": 8,
+          "passed": 0,
+          "total": 4,
           "violations": [
-            "customer_count",
-            "discount_amount",
-            "order_count",
+            "etl_time",
             "payment_amount",
-            "total_amount"
+            "stat_date",
+            "store_id"
           ]
         },
         "atomic_metric_checks": {
@@ -424,7 +502,17 @@
           "total": 0,
           "violations": []
         },
-        "score": 40.0
+        "derived_metric_checks": {
+          "passed": 0,
+          "total": 4,
+          "violations": [
+            "customer_count",
+            "discount_amount",
+            "order_count",
+            "total_amount"
+          ]
+        },
+        "score": 10.0
       },
       {
         "table": "dwd_customer",
@@ -437,18 +525,23 @@
           ]
         },
         "column_checks": {
-          "passed": 5,
+          "passed": 0,
           "total": 14,
           "violations": [
             "address",
             "age",
             "age_group",
             "city",
+            "customer_id",
+            "customer_name",
             "email",
+            "etl_time",
             "gender",
             "member_level",
             "phone",
-            "province"
+            "province",
+            "register_date",
+            "snapshot_date"
           ]
         },
         "atomic_metric_checks": {
@@ -456,7 +549,12 @@
           "total": 0,
           "violations": []
         },
-        "score": 37.5
+        "derived_metric_checks": {
+          "passed": 0,
+          "total": 0,
+          "violations": []
+        },
+        "score": 6.2
       },
       {
         "table": "dwd_inventory",
@@ -469,11 +567,18 @@
           ]
         },
         "column_checks": {
-          "passed": 7,
+          "passed": 0,
           "total": 9,
           "violations": [
             "days_since_restock",
-            "safety_stock"
+            "etl_time",
+            "inventory_id",
+            "last_restock_date",
+            "product_id",
+            "safety_stock",
+            "snapshot_date",
+            "stock_status",
+            "store_id"
           ]
         },
         "atomic_metric_checks": {
@@ -483,7 +588,12 @@
             "quantity"
           ]
         },
-        "score": 66.7
+        "derived_metric_checks": {
+          "passed": 0,
+          "total": 0,
+          "violations": []
+        },
+        "score": 8.3
       },
       {
         "table": "dwd_promotion",
@@ -496,21 +606,34 @@
           ]
         },
         "column_checks": {
-          "passed": 9,
-          "total": 11,
+          "passed": 0,
+          "total": 12,
           "violations": [
+            "discount_rate",
             "duration_days",
+            "end_date",
+            "etl_time",
+            "is_active",
+            "min_amount",
+            "promotion_id",
+            "promotion_name",
+            "promotion_type",
+            "snapshot_date",
+            "start_date",
             "status"
           ]
         },
         "atomic_metric_checks": {
           "passed": 0,
-          "total": 1,
-          "violations": [
-            "min_amount"
-          ]
+          "total": 0,
+          "violations": []
         },
-        "score": 71.4
+        "derived_metric_checks": {
+          "passed": 0,
+          "total": 0,
+          "violations": []
+        },
+        "score": 7.1
       },
       {
         "table": "dws_category_sales_monthly",
@@ -523,13 +646,13 @@
           ]
         },
         "column_checks": {
-          "passed": 3,
-          "total": 7,
+          "passed": 0,
+          "total": 4,
           "violations": [
-            "order_count",
-            "sale_amount",
-            "sale_quantity",
-            "stat_month"
+            "category_id",
+            "etl_time",
+            "stat_month",
+            "stat_month_date"
           ]
         },
         "atomic_metric_checks": {
@@ -537,7 +660,16 @@
           "total": 0,
           "violations": []
         },
-        "score": 44.4
+        "derived_metric_checks": {
+          "passed": 0,
+          "total": 3,
+          "violations": [
+            "order_count",
+            "sale_amount",
+            "sale_quantity"
+          ]
+        },
+        "score": 11.1
       }
     ],
     "rule_summary": {
@@ -551,63 +683,28 @@
         "total": 12,
         "pct": 100.0
       },
-      "后缀 _id": {
-        "pass_count": 23,
-        "total": 23,
-        "pct": 100.0
-      },
-      "后缀 _date": {
-        "pass_count": 12,
-        "total": 12,
-        "pct": 100.0
-      },
       "无匹配模式": {
         "pass_count": 0,
-        "total": 59,
+        "total": 103,
         "pct": 0.0
       },
-      "通用列名": {
-        "pass_count": 17,
-        "total": 17,
-        "pct": 100.0
-      },
-      "后缀 _status": {
-        "pass_count": 3,
-        "total": 3,
-        "pct": 100.0
-      },
-      "后缀 _name": {
-        "pass_count": 6,
-        "total": 6,
-        "pct": 100.0
-      },
-      "后缀 _type": {
-        "pass_count": 3,
-        "total": 3,
-        "pct": 100.0
-      },
-      "后缀 _rate": {
-        "pass_count": 1,
-        "total": 1,
-        "pct": 100.0
-      },
-      "前缀 is_": {
-        "pass_count": 1,
-        "total": 1,
-        "pct": 100.0
-      },
       "列名总计": {
-        "pass_count": 66,
-        "total": 125,
-        "pct": 52.8
+        "pass_count": 0,
+        "total": 103,
+        "pct": 0.0
       },
       "原子指标命名 {ACTION_VERB}_{MEASURE_NOUN}": {
         "pass_count": 0,
         "total": 6,
         "pct": 0.0
+      },
+      "派生指标命名 {TIME_PERIOD}_{MODIFIER...}_{ATOMIC_METRIC}": {
+        "pass_count": 0,
+        "total": 22,
+        "pct": 0.0
       }
     },
-    "raw": 50.3,
-    "display": 50.3
+    "raw": 7.7,
+    "display": 7.7
   }
 }
