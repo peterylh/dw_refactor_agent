@@ -1,12 +1,14 @@
 import yaml
 
-from assess.metric_detector import (
+from assess.model_metadata_writer import (
     build_dwd_contexts,
+    build_inspection_contexts,
     build_metric_contexts,
     metric_groups_for_model,
     metric_violations,
     metric_names_for_model,
-    run_detection,
+    result_for_report,
+    run_metadata_write,
     update_model_yaml,
 )
 from assess.table_inspector import TableInspectResult
@@ -100,6 +102,47 @@ def _sample_dws_result() -> TableInspectResult:
     )
 
 
+def _sample_dimension_result() -> TableInspectResult:
+    return TableInspectResult(
+        table_name="M_SHOP_06_STORE_DF",
+        declared_layer="DWD",
+        inferred_layer="DIM",
+        table_type="dimension",
+        confidence=0.93,
+        reasoning_steps=["门店实体属性快照，适合作为公共维度"],
+        columns={
+            "atomic_metrics": [],
+            "derived_metrics": [],
+            "calculated_metrics": [],
+            "dimensions": [{
+                "name": "STORE_ID",
+                "dimension_type": "primary_key",
+                "data_type": "BIGINT",
+                "confidence": 0.95,
+            }],
+            "others": [],
+        },
+    )
+
+
+def _sample_dimension_conflict_result() -> TableInspectResult:
+    return TableInspectResult(
+        table_name="M_SHOP_06_STORE_DF",
+        declared_layer="DWD",
+        inferred_layer="DWD",
+        table_type="dimension",
+        confidence=0.88,
+        reasoning_steps=["表类型是维度表，但分层判断仍返回 DWD"],
+        columns={
+            "atomic_metrics": [],
+            "derived_metrics": [],
+            "calculated_metrics": [],
+            "dimensions": [],
+            "others": [],
+        },
+    )
+
+
 def test_build_dwd_contexts_filters_out_non_dwd(sample_lineage_data):
     contexts = build_dwd_contexts("shop", sample_lineage_data)
 
@@ -116,6 +159,25 @@ def test_build_metric_contexts_includes_dwd_and_dws(sample_lineage_data):
         "dwd_customer",
         "dwd_order_detail",
         "dws_store_sales_daily",
+    }
+
+
+def test_build_inspection_contexts_includes_dim(sample_lineage_data):
+    data = dict(sample_lineage_data)
+    data["tables"] = sample_lineage_data["tables"] + [{
+        "name": "dim_store",
+        "full_name": "shop_dm.dim_store",
+        "layer": "DIM",
+        "columns": [{"name": "store_id", "type": "BIGINT"}],
+    }]
+
+    contexts = build_inspection_contexts("shop", data)
+
+    assert {ctx.table_name for ctx in contexts} == {
+        "dwd_customer",
+        "dwd_order_detail",
+        "dws_store_sales_daily",
+        "dim_store",
     }
 
 
@@ -180,7 +242,7 @@ def test_metric_violations_allows_dws_derived_metrics():
 
 
 def test_update_model_yaml_preserves_existing_metadata(tmp_path, monkeypatch):
-    import assess.metric_detector as detector_module
+    import assess.model_metadata_writer as writer_module
 
     project_root = tmp_path
     models_dir = project_root / "demo" / "models"
@@ -200,8 +262,8 @@ def test_update_model_yaml_preserves_existing_metadata(tmp_path, monkeypatch):
                        sort_keys=False),
         encoding="utf-8",
     )
-    monkeypatch.setattr(detector_module, "PROJECT_ROOT", project_root)
-    monkeypatch.setitem(detector_module.PROJECT_CONFIG, "demo", {"dir": "demo"})
+    monkeypatch.setattr(writer_module, "PROJECT_ROOT", project_root)
+    monkeypatch.setitem(writer_module.PROJECT_CONFIG, "demo", {"dir": "demo"})
 
     update = update_model_yaml("demo", _sample_fact_result())
     saved = yaml.safe_load(model_path.read_text(encoding="utf-8"))
@@ -217,12 +279,12 @@ def test_update_model_yaml_preserves_existing_metadata(tmp_path, monkeypatch):
 
 
 def test_update_model_yaml_defaults_to_declared_layer(tmp_path, monkeypatch):
-    import assess.metric_detector as detector_module
+    import assess.model_metadata_writer as writer_module
 
     project_root = tmp_path
     (project_root / "demo" / "models").mkdir(parents=True)
-    monkeypatch.setattr(detector_module, "PROJECT_ROOT", project_root)
-    monkeypatch.setitem(detector_module.PROJECT_CONFIG, "demo", {"dir": "demo"})
+    monkeypatch.setattr(writer_module, "PROJECT_ROOT", project_root)
+    monkeypatch.setitem(writer_module.PROJECT_CONFIG, "demo", {"dir": "demo"})
 
     update = update_model_yaml("demo", _sample_dws_result())
     model_path = project_root / "demo" / "models" / "dws_store_sales_daily.yaml"
@@ -230,12 +292,231 @@ def test_update_model_yaml_defaults_to_declared_layer(tmp_path, monkeypatch):
 
     assert update["metric_count"] == 1
     assert saved["layer"] == "DWS"
+    assert saved["table_type"] == "fact"
     assert saved["derived_metrics"] == ["sale_amount"]
     assert "atomic_metrics" not in saved
 
 
+def test_update_model_yaml_writes_llm_table_metadata(tmp_path, monkeypatch):
+    import assess.model_metadata_writer as writer_module
+
+    project_root = tmp_path
+    models_dir = project_root / "demo" / "models"
+    models_dir.mkdir(parents=True)
+    model_path = models_dir / "M_SHOP_06_STORE_DF.yaml"
+    model_path.write_text(
+        yaml.safe_dump({
+            "version": 2,
+            "name": "M_SHOP_06_STORE_DF",
+            "layer": "DWD",
+            "description": "门店每日快照",
+            "config": {
+                "materialized": "snapshot",
+            },
+        },
+                       allow_unicode=True,
+                       sort_keys=False),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(writer_module, "PROJECT_ROOT", project_root)
+    monkeypatch.setitem(writer_module.PROJECT_CONFIG, "demo", {"dir": "demo"})
+
+    update = update_model_yaml("demo", _sample_dimension_result())
+    saved = yaml.safe_load(model_path.read_text(encoding="utf-8"))
+
+    assert update["changed"] is True
+    assert update["updated"] is True
+    assert update["metadata_changed"] is True
+    assert update["previous_layer"] == "DWD"
+    assert update["layer"] == "DIM"
+    assert update["previous_table_type"] is None
+    assert update["table_type"] == "dimension"
+    assert saved["layer"] == "DIM"
+    assert saved["table_type"] == "dimension"
+    assert saved["description"] == "门店每日快照"
+    assert saved["config"]["materialized"] == "snapshot"
+    assert "atomic_metrics" not in saved
+
+
+def test_update_model_yaml_forces_dimension_layer_and_warns(tmp_path,
+                                                            monkeypatch):
+    import assess.model_metadata_writer as writer_module
+
+    project_root = tmp_path
+    models_dir = project_root / "demo" / "models"
+    models_dir.mkdir(parents=True)
+    model_path = models_dir / "M_SHOP_06_STORE_DF.yaml"
+    model_path.write_text(
+        yaml.safe_dump({
+            "version": 2,
+            "name": "M_SHOP_06_STORE_DF",
+            "layer": "DWD",
+            "table_type": "dimension",
+        },
+                       allow_unicode=True,
+                       sort_keys=False),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(writer_module, "PROJECT_ROOT", project_root)
+    monkeypatch.setitem(writer_module.PROJECT_CONFIG, "demo", {"dir": "demo"})
+
+    update = update_model_yaml("demo", _sample_dimension_conflict_result())
+    saved = yaml.safe_load(model_path.read_text(encoding="utf-8"))
+
+    assert update["layer"] == "DIM"
+    assert saved["layer"] == "DIM"
+    assert update["warnings"] == [{
+        "type": "dimension_layer_override",
+        "severity": "warning",
+        "message": (
+            "LLM 表类型为 dimension，但 inferred_layer 不是 DIM；"
+            "表信息回写时 layer 会按 dimension 规则强制写为 DIM"
+        ),
+        "inferred_layer": "DWD",
+        "applied_layer": "DIM",
+    }]
+
+
+def test_result_for_report_includes_dimension_layer_warning():
+    report = result_for_report(_sample_dimension_conflict_result())
+
+    assert report["metadata_warnings"][0]["type"] == "dimension_layer_override"
+    assert report["metadata_warnings"][0]["inferred_layer"] == "DWD"
+
+
+def test_update_model_yaml_dry_run_reports_metadata_change(tmp_path,
+                                                           monkeypatch):
+    import assess.model_metadata_writer as writer_module
+
+    project_root = tmp_path
+    models_dir = project_root / "demo" / "models"
+    models_dir.mkdir(parents=True)
+    model_path = models_dir / "M_SHOP_06_STORE_DF.yaml"
+    model_path.write_text(
+        yaml.safe_dump({
+            "version": 2,
+            "name": "M_SHOP_06_STORE_DF",
+            "layer": "DWD",
+        },
+                       allow_unicode=True,
+                       sort_keys=False),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(writer_module, "PROJECT_ROOT", project_root)
+    monkeypatch.setitem(writer_module.PROJECT_CONFIG, "demo", {"dir": "demo"})
+
+    update = update_model_yaml("demo", _sample_dimension_result(), dry_run=True)
+    saved = yaml.safe_load(model_path.read_text(encoding="utf-8"))
+
+    assert update["changed"] is True
+    assert update["updated"] is False
+    assert update["metadata_changed"] is True
+    assert saved["layer"] == "DWD"
+    assert "table_type" not in saved
+
+
+def test_update_model_yaml_table_scope_preserves_metrics(tmp_path, monkeypatch):
+    import assess.model_metadata_writer as writer_module
+
+    project_root = tmp_path
+    models_dir = project_root / "demo" / "models"
+    models_dir.mkdir(parents=True)
+    model_path = models_dir / "dwd_order_detail.yaml"
+    model_path.write_text(
+        yaml.safe_dump({
+            "version": 2,
+            "name": "dwd_order_detail",
+            "layer": "DWD",
+            "metrics": ["legacy_metric"],
+        },
+                       allow_unicode=True,
+                       sort_keys=False),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(writer_module, "PROJECT_ROOT", project_root)
+    monkeypatch.setitem(writer_module.PROJECT_CONFIG, "demo", {"dir": "demo"})
+
+    update = update_model_yaml("demo",
+                               _sample_fact_result(),
+                               write_scope="table")
+    saved = yaml.safe_load(model_path.read_text(encoding="utf-8"))
+
+    assert update["write_scope"] == "table"
+    assert update["metadata_changed"] is True
+    assert update["metric_changed"] is False
+    assert update["metric_count"] == 0
+    assert update["new_metric_count"] == 0
+    assert update["removed_metric_count"] == 0
+    assert saved["layer"] == "DWD"
+    assert saved["table_type"] == "fact"
+    assert saved["metrics"] == ["legacy_metric"]
+    assert "atomic_metrics" not in saved
+
+
+def test_update_model_yaml_metrics_scope_preserves_table_info(tmp_path,
+                                                              monkeypatch):
+    import assess.model_metadata_writer as writer_module
+
+    project_root = tmp_path
+    models_dir = project_root / "demo" / "models"
+    models_dir.mkdir(parents=True)
+    model_path = models_dir / "dwd_order_detail.yaml"
+    model_path.write_text(
+        yaml.safe_dump({
+            "version": 2,
+            "name": "dwd_order_detail",
+            "layer": "OLD_LAYER",
+            "table_type": "dimension",
+            "metrics": ["legacy_metric"],
+        },
+                       allow_unicode=True,
+                       sort_keys=False),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(writer_module, "PROJECT_ROOT", project_root)
+    monkeypatch.setitem(writer_module.PROJECT_CONFIG, "demo", {"dir": "demo"})
+
+    update = update_model_yaml("demo",
+                               _sample_fact_result(),
+                               write_scope="metrics")
+    saved = yaml.safe_load(model_path.read_text(encoding="utf-8"))
+
+    assert update["write_scope"] == "metrics"
+    assert update["metadata_changed"] is False
+    assert update["metric_changed"] is True
+    assert update["metric_count"] == 3
+    assert update["new_metric_count"] == 3
+    assert update["removed_metric_count"] == 1
+    assert saved["layer"] == "OLD_LAYER"
+    assert saved["table_type"] == "dimension"
+    assert saved["atomic_metrics"] == ["pay_amt"]
+    assert saved["derived_metrics"] == ["pay_amt_1d"]
+    assert saved["calculated_metrics"] == ["gross_profit"]
+    assert "metrics" not in saved
+
+
+def test_update_model_yaml_metrics_scope_does_not_create_empty_model(
+        tmp_path, monkeypatch):
+    import assess.model_metadata_writer as writer_module
+
+    project_root = tmp_path
+    (project_root / "demo" / "models").mkdir(parents=True)
+    monkeypatch.setattr(writer_module, "PROJECT_ROOT", project_root)
+    monkeypatch.setitem(writer_module.PROJECT_CONFIG, "demo", {"dir": "demo"})
+
+    update = update_model_yaml("demo",
+                               _sample_dimension_result(),
+                               write_scope="metrics")
+    model_path = project_root / "demo" / "models" / "M_SHOP_06_STORE_DF.yaml"
+
+    assert update["changed"] is False
+    assert update["updated"] is False
+    assert update["metric_count"] == 0
+    assert not model_path.exists()
+
+
 def test_update_model_yaml_replaces_existing_metrics(tmp_path, monkeypatch):
-    import assess.metric_detector as detector_module
+    import assess.model_metadata_writer as writer_module
 
     project_root = tmp_path
     models_dir = project_root / "demo" / "models"
@@ -252,8 +533,8 @@ def test_update_model_yaml_replaces_existing_metrics(tmp_path, monkeypatch):
                        sort_keys=False),
         encoding="utf-8",
     )
-    monkeypatch.setattr(detector_module, "PROJECT_ROOT", project_root)
-    monkeypatch.setitem(detector_module.PROJECT_CONFIG, "demo", {"dir": "demo"})
+    monkeypatch.setattr(writer_module, "PROJECT_ROOT", project_root)
+    monkeypatch.setitem(writer_module.PROJECT_CONFIG, "demo", {"dir": "demo"})
 
     update = update_model_yaml("demo", _sample_fact_result())
     saved = yaml.safe_load(model_path.read_text(encoding="utf-8"))
@@ -268,7 +549,7 @@ def test_update_model_yaml_replaces_existing_metrics(tmp_path, monkeypatch):
 
 
 def test_update_model_yaml_replaces_legacy_metric_fields(tmp_path, monkeypatch):
-    import assess.metric_detector as detector_module
+    import assess.model_metadata_writer as writer_module
 
     project_root = tmp_path
     models_dir = project_root / "demo" / "models"
@@ -285,8 +566,8 @@ def test_update_model_yaml_replaces_legacy_metric_fields(tmp_path, monkeypatch):
                        sort_keys=False),
         encoding="utf-8",
     )
-    monkeypatch.setattr(detector_module, "PROJECT_ROOT", project_root)
-    monkeypatch.setitem(detector_module.PROJECT_CONFIG, "demo", {"dir": "demo"})
+    monkeypatch.setattr(writer_module, "PROJECT_ROOT", project_root)
+    monkeypatch.setitem(writer_module.PROJECT_CONFIG, "demo", {"dir": "demo"})
 
     update = update_model_yaml("demo", _sample_fact_result())
     saved = yaml.safe_load(model_path.read_text(encoding="utf-8"))
@@ -302,7 +583,7 @@ def test_update_model_yaml_replaces_legacy_metric_fields(tmp_path, monkeypatch):
 
 def test_update_model_yaml_removes_metrics_when_none_detected(tmp_path,
                                                               monkeypatch):
-    import assess.metric_detector as detector_module
+    import assess.model_metadata_writer as writer_module
 
     project_root = tmp_path
     models_dir = project_root / "demo" / "models"
@@ -319,8 +600,8 @@ def test_update_model_yaml_removes_metrics_when_none_detected(tmp_path,
                        sort_keys=False),
         encoding="utf-8",
     )
-    monkeypatch.setattr(detector_module, "PROJECT_ROOT", project_root)
-    monkeypatch.setitem(detector_module.PROJECT_CONFIG, "demo", {"dir": "demo"})
+    monkeypatch.setattr(writer_module, "PROJECT_ROOT", project_root)
+    monkeypatch.setitem(writer_module.PROJECT_CONFIG, "demo", {"dir": "demo"})
 
     update = update_model_yaml(
         "demo",
@@ -338,12 +619,15 @@ def test_update_model_yaml_removes_metrics_when_none_detected(tmp_path,
     assert update["metric_count"] == 0
     assert update["removed_metric_count"] == 1
     assert update["updated"] is True
+    assert update["layer"] == "DIM"
+    assert update["warnings"][0]["type"] == "dimension_layer_override"
+    assert saved["layer"] == "DIM"
     assert "metrics" not in saved
     assert "calculated_metrics" not in saved
 
 
 def test_update_model_yaml_skips_blocked_results(tmp_path, monkeypatch):
-    import assess.metric_detector as detector_module
+    import assess.model_metadata_writer as writer_module
 
     project_root = tmp_path
     models_dir = project_root / "demo" / "models"
@@ -361,8 +645,8 @@ def test_update_model_yaml_skips_blocked_results(tmp_path, monkeypatch):
                        sort_keys=False),
         encoding="utf-8",
     )
-    monkeypatch.setattr(detector_module, "PROJECT_ROOT", project_root)
-    monkeypatch.setitem(detector_module.PROJECT_CONFIG, "demo", {"dir": "demo"})
+    monkeypatch.setattr(writer_module, "PROJECT_ROOT", project_root)
+    monkeypatch.setitem(writer_module.PROJECT_CONFIG, "demo", {"dir": "demo"})
 
     blocked = TableInspectResult(
         table_name="dwd_order_detail",
@@ -381,8 +665,9 @@ def test_update_model_yaml_skips_blocked_results(tmp_path, monkeypatch):
     assert saved["calculated_metrics"] == ["subtotal"]
 
 
-def test_run_detection_reuses_table_inspector(monkeypatch, sample_lineage_data):
-    import assess.metric_detector as detector_module
+def test_run_metadata_write_reuses_table_inspector(monkeypatch,
+                                                   sample_lineage_data):
+    import assess.model_metadata_writer as writer_module
 
     class FakeInspector:
         def __init__(self, api_key, *, model, cache_file, max_retries,
@@ -412,15 +697,22 @@ def test_run_detection_reuses_table_inspector(monkeypatch, sample_lineage_data):
                         ))
             return results
 
-    monkeypatch.setattr(detector_module, "load_lineage_data",
+    monkeypatch.setattr(writer_module, "load_lineage_data",
                         lambda project: sample_lineage_data)
-    monkeypatch.setattr(detector_module, "TableInspector", FakeInspector)
+    monkeypatch.setattr(writer_module, "TableInspector", FakeInspector)
 
-    result = run_detection("shop", api_key="test", dry_run=True)
+    result = run_metadata_write("shop", api_key="test", dry_run=True)
 
+    updates_by_table = {update["table"]: update for update in result[
+        "model_updates"]}
+
+    assert result["inspected_table_count"] == 3
+    assert result["write_scope"] == "all"
     assert result["metric_table_count"] == 3
+    assert result["metadata_only_table_count"] == 0
     assert result["dwd_table_count"] == 2
     assert result["dws_table_count"] == 1
+    assert result["dim_table_count"] == 0
     assert result["fact_table_count"] == 2
     assert result["atomic_metric_count"] == 1
     assert result["derived_metric_count"] == 2
@@ -429,13 +721,18 @@ def test_run_detection_reuses_table_inspector(monkeypatch, sample_lineage_data):
     assert result["derived_metric_violation_count"] == 1
     assert result["calculated_metric_violation_count"] == 1
     assert result["non_atomic_metric_violation_count"] == 2
-    assert result["model_updates"][0]["updated"] is False
-    assert result["model_updates"][1]["table"] == "dws_store_sales_daily"
+    assert result["model_update_count"] == 0
+    assert result["model_change_count"] == len(result["model_updates"])
+    assert updates_by_table["dwd_customer"]["layer"] == "DIM"
+    assert updates_by_table["dwd_customer"]["table_type"] == "dimension"
+    assert updates_by_table["dwd_customer"]["updated"] is False
+    assert updates_by_table["dws_store_sales_daily"]["table"] == (
+        "dws_store_sales_daily")
     assert result["skipped_model_updates"] == []
 
 
-def test_run_detection_passes_parallelism(monkeypatch, sample_lineage_data):
-    import assess.metric_detector as detector_module
+def test_run_metadata_write_passes_parallelism(monkeypatch, sample_lineage_data):
+    import assess.model_metadata_writer as writer_module
 
     seen = {}
 
@@ -447,18 +744,62 @@ def test_run_detection_passes_parallelism(monkeypatch, sample_lineage_data):
         def inspect_batch(self, contexts):
             return []
 
-    monkeypatch.setattr(detector_module, "load_lineage_data",
+    monkeypatch.setattr(writer_module, "load_lineage_data",
                         lambda project: sample_lineage_data)
-    monkeypatch.setattr(detector_module, "TableInspector", FakeInspector)
+    monkeypatch.setattr(writer_module, "TableInspector", FakeInspector)
 
-    run_detection("shop", api_key="test", dry_run=True, parallelism=4)
+    run_metadata_write("shop", api_key="test", dry_run=True, parallelism=4)
 
     assert seen["parallelism"] == 4
 
 
-def test_run_detection_passes_dwd_metric_groups_to_dws(monkeypatch,
-                                                       sample_lineage_data):
-    import assess.metric_detector as detector_module
+def test_run_metadata_write_counts_dimension_layer_warnings(
+        monkeypatch, sample_lineage_data):
+    import assess.model_metadata_writer as writer_module
+
+    class FakeInspector:
+        def __init__(self, api_key, *, model, cache_file, max_retries,
+                     parallelism):
+            pass
+
+        def inspect_batch(self, contexts):
+            return [
+                TableInspectResult(
+                    table_name=ctx.table_name,
+                    declared_layer=ctx.layer,
+                    inferred_layer="DWD",
+                    table_type="dimension",
+                    confidence=0.9,
+                    reasoning_steps=[],
+                )
+                if ctx.table_name == "dwd_customer" else TableInspectResult(
+                    table_name=ctx.table_name,
+                    declared_layer=ctx.layer,
+                    inferred_layer=ctx.layer,
+                    table_type="fact",
+                    confidence=0.9,
+                    reasoning_steps=[],
+                )
+                for ctx in contexts
+            ]
+
+    monkeypatch.setattr(writer_module, "load_lineage_data",
+                        lambda project: sample_lineage_data)
+    monkeypatch.setattr(writer_module, "TableInspector", FakeInspector)
+
+    result = run_metadata_write("shop", api_key="test", dry_run=True)
+    customer_report = next(
+        table for table in result["tables"]
+        if table["table_name"] == "dwd_customer")
+
+    assert result["metadata_warning_count"] == 1
+    assert result["warning_table_count"] == 1
+    assert customer_report["metadata_warnings"][0]["applied_layer"] == "DIM"
+
+
+def test_run_metadata_write_passes_dwd_metric_groups_to_dws(monkeypatch,
+                                                            sample_lineage_data):
+    import assess.model_metadata_writer as writer_module
 
     seen_dws_contexts = []
 
@@ -484,11 +825,11 @@ def test_run_detection_passes_dwd_metric_groups_to_dws(monkeypatch,
                 for ctx in contexts
             ]
 
-    monkeypatch.setattr(detector_module, "load_lineage_data",
+    monkeypatch.setattr(writer_module, "load_lineage_data",
                         lambda project: sample_lineage_data)
-    monkeypatch.setattr(detector_module, "TableInspector", FakeInspector)
+    monkeypatch.setattr(writer_module, "TableInspector", FakeInspector)
 
-    run_detection("shop", api_key="test", dry_run=True)
+    run_metadata_write("shop", api_key="test", dry_run=True)
 
     assert seen_dws_contexts[0].upstream_metric_groups["dwd_order_detail"] == {
         "atomic_metrics": ["pay_amt"],
@@ -497,8 +838,9 @@ def test_run_detection_passes_dwd_metric_groups_to_dws(monkeypatch,
     }
 
 
-def test_run_detection_skips_blocked_model_updates(monkeypatch, sample_lineage_data):
-    import assess.metric_detector as detector_module
+def test_run_metadata_write_skips_blocked_model_updates(monkeypatch,
+                                                        sample_lineage_data):
+    import assess.model_metadata_writer as writer_module
 
     blocked = _sample_fact_result()
     blocked.validation = {
@@ -527,13 +869,15 @@ def test_run_detection_skips_blocked_model_updates(monkeypatch, sample_lineage_d
                 if ctx.layer == "DWD"
             ]
 
-    monkeypatch.setattr(detector_module, "load_lineage_data",
+    monkeypatch.setattr(writer_module, "load_lineage_data",
                         lambda project: sample_lineage_data)
-    monkeypatch.setattr(detector_module, "TableInspector", FakeInspector)
+    monkeypatch.setattr(writer_module, "TableInspector", FakeInspector)
 
-    result = run_detection("shop", api_key="test", dry_run=True)
+    result = run_metadata_write("shop", api_key="test", dry_run=True)
 
     assert result["blocked_table_count"] == 1
-    assert result["model_updates"] == []
+    assert result["model_updates"][0]["table"] == "dwd_customer"
+    assert result["model_updates"][0]["layer"] == "DIM"
+    assert result["model_updates"][0]["updated"] is False
     assert result["skipped_model_updates"][0]["table"] == "dwd_order_detail"
     assert result["skipped_model_updates"][0]["reason"] == "validation_blocked"
