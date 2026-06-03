@@ -1,8 +1,12 @@
 __pycache__/
 *.pyc
+*.swp
 .ruff_cache/
 .pytest_cache/
 dbenv.md
+logs/
 refact/refact_metadata.json
 refact/verify_result.json
 assess/cache/
+assess/assess_result_*.json
+assess/metric_result_*.json

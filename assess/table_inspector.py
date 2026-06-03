@@ -157,7 +157,8 @@ def build_prompt(ctx: TableContext) -> str:
 3. 判断是否为 dimension（主键是否为实体属性）。
 4. 如果原始配置层级是 DWD 或 DWS 且表类型为 fact，再按字段语义、DDL 注释、ETL 表达式和业务过程分组。
 
-请严格返回 JSON 格式数据，不要返回 Markdown，不要返回额外解释。不要返回 is_violating_declared_layer，这个字段由系统计算。
+请严格返回 JSON 格式数据，只允许返回下方 JSON schema 中列出的顶层字段: inferred_layer、table_type、confidence、reasoning_steps、columns。
+不要返回 Markdown，不要返回额外解释，不要新增任何字段。
 如果不需要做字段分组，columns 下五个数组都返回空数组。
 
 {{
@@ -417,6 +418,21 @@ def result_to_dict(result: TableInspectResult) -> dict[str, Any]:
     }
 
 
+def result_to_cache_dict(result: TableInspectResult) -> dict[str, Any]:
+    """仅保存恢复巡检结果所需字段，派生字段由读取后重新计算。"""
+    return {
+        "table_name": result.table_name,
+        "declared_layer": result.declared_layer,
+        "inferred_layer": result.inferred_layer,
+        "table_type": result.table_type,
+        "confidence": result.confidence,
+        "reasoning_steps": result.reasoning_steps,
+        "columns": result.columns,
+        "validation": result.validation,
+        "retry_count": result.retry_count,
+    }
+
+
 def dict_to_result(data: dict[str, Any],
                    *,
                    table_name: str = "",
@@ -658,7 +674,7 @@ class TableInspector:
         with self._cache_lock:
             self.cache[ctx.table_name] = {
                 "hash": current_hash,
-                "result": result_to_dict(result),
+                "result": result_to_cache_dict(result),
             }
             self._save_cache()
 

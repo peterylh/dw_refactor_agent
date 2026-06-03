@@ -9,6 +9,7 @@ from assess.table_inspector import (
     TableContext,
     build_prompt,
     parse_response,
+    result_to_cache_dict,
     result_to_dict,
     validate_columns,
 )
@@ -34,8 +35,9 @@ def test_build_prompt_includes_all_info():
     assert "INSERT INTO" in prompt
     assert "ods_customer" in prompt
     assert "ads_rfm" in prompt
-    assert "is_violating_declared_layer" in prompt
-    assert "不要返回 is_violating_declared_layer" in prompt
+    assert "只允许返回下方 JSON schema 中列出的顶层字段" in prompt
+    assert "不要新增任何字段" in prompt
+    assert "is_violating_declared_layer" not in prompt
     assert "atomic_metrics" in prompt
     assert "derived_metrics" in prompt
     assert "calculated_metrics" in prompt
@@ -268,6 +270,47 @@ def test_parse_grouped_column_response():
     assert result.others[0]["role"] == "audit"
 
 
+def test_result_to_dict_includes_system_layer_violation():
+    resp = {
+        "choices": [{
+            "message": {
+                "content": json.dumps({
+                    "inferred_layer": "DIM",
+                    "table_type": "dimension",
+                    "confidence": 0.9,
+                    "reasoning_steps": ["dimension table"],
+                })
+            }
+        }]
+    }
+
+    result = parse_response("dwd_customer", resp, declared_layer="DWD")
+    data = result_to_dict(result)
+
+    assert data["is_violating_declared_layer"] is True
+
+
+def test_result_to_cache_dict_omits_system_layer_violation():
+    resp = {
+        "choices": [{
+            "message": {
+                "content": json.dumps({
+                    "inferred_layer": "DIM",
+                    "table_type": "dimension",
+                    "confidence": 0.9,
+                    "reasoning_steps": ["dimension table"],
+                })
+            }
+        }]
+    }
+
+    result = parse_response("dwd_customer", resp, declared_layer="DWD")
+    data = result_to_cache_dict(result)
+
+    assert "is_violating_declared_layer" not in data
+    assert "status" not in data
+
+
 def test_validate_columns_flags_unknown_duplicate_and_missing_fields():
     result = parse_response("dwd_order_detail", {
         "choices": [{
@@ -460,6 +503,7 @@ def test_cache_hit_skips_api(tmp_path):
     cache_data = {
         "t1": {
             "hash": inspector._compute_hash(ctx),
+            # 旧缓存可能包含派生字段，读取时应忽略并重新计算。
             "result": result_to_dict(cached),
         }
     }
@@ -520,7 +564,8 @@ def test_cache_miss_calls_api(tmp_path, monkeypatch):
     assert "t1" in saved
     assert saved["t1"]["result"]["table_type"] == "fact"
     assert saved["t1"]["result"]["columns"]["atomic_metrics"][0]["name"] == "pay_amt"
-    assert "is_violating_declared_layer" in saved["t1"]["result"]
+    assert "is_violating_declared_layer" not in saved["t1"]["result"]
+    assert "status" not in saved["t1"]["result"]
     assert "is_violating_current_name" not in saved["t1"]["result"]
 
 
@@ -599,7 +644,7 @@ def test_progress_callback_reports_cache_hit(tmp_path):
     cache_file.write_text(json.dumps({
         "t1": {
             "hash": inspector._compute_hash(ctx),
-            "result": result_to_dict(cached),
+            "result": result_to_cache_dict(cached),
         }
     }))
     inspector._load_cache()
