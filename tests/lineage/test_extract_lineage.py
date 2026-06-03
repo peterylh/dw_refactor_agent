@@ -288,6 +288,24 @@ class TestEdgeCases:
         assert len(entries) == 3
         assert {e["target_table"] for e in entries} == {"dwd_order"}
 
+    def test_insert_with_target_column_list_maps_by_position(self):
+        sql = """
+        INSERT INTO shop_dm.dwd_order (
+            customer_id,
+            order_id
+        )
+        SELECT order_id, customer_id
+        FROM shop_dm.ods_order
+        """
+        entries = extract_lineage_from_sql(sql, "dwd_order.sql", self.schema)
+        direct = {
+            (e["source_column"], e["target_column"])
+            for e in entries
+            if e.get("lineage_type") != "indirect"
+        }
+        assert ("order_id", "customer_id") in direct
+        assert ("customer_id", "order_id") in direct
+
     def test_ctas_with_column_definitions_uses_plain_target_table(self):
         sql = """
         CREATE TABLE shop_dm.dws_daily_sales (
@@ -342,3 +360,76 @@ class TestEdgeCases:
         entries = extract_lineage_from_sql(sql, "test.sql", self.schema)
         # order_id appears as both source for "order_id" and "oid" - should be 2 distinct entries
         assert len(entries) == 2
+
+    def test_indirect_lineage_resolves_derived_table_alias(self):
+        schema = {
+            "shop_dm": {
+                "ods_product": {
+                    "product_id": "BIGINT",
+                    "category_id": "BIGINT",
+                    "load_time": "DATETIME",
+                },
+                "ods_category": {"category_id": "BIGINT"},
+                "dwd_product": {"product_id": "BIGINT"},
+            }
+        }
+        sql = """
+        INSERT INTO shop_dm.dwd_product
+        SELECT p.product_id
+        FROM (
+            SELECT *,
+                ROW_NUMBER() OVER (
+                    PARTITION BY product_id ORDER BY load_time DESC
+                ) AS rn
+            FROM shop_dm.ods_product
+        ) p
+        LEFT JOIN shop_dm.ods_category c ON p.category_id = c.category_id
+        WHERE p.rn = 1
+        """
+        entries = extract_lineage_from_sql(sql, "dwd_product.sql", schema)
+        indirect = [e for e in entries if e.get("lineage_type") == "indirect"]
+        sources = {(e["source_table"], e["source_column"]) for e in indirect}
+        assert ("p", "rn") not in sources
+        assert ("p", "category_id") not in sources
+        assert ("ods_product", "category_id") in sources
+        assert ("ods_product", "product_id") in sources
+        assert ("ods_product", "load_time") in sources
+        assert ("ods_product", "rn") not in sources
+
+    def test_indirect_lineage_resolves_cte_alias(self):
+        schema = {
+            "shop_dm": {
+                "dws_product_sales_daily": {
+                    "product_id": "BIGINT",
+                    "sale_quantity": "BIGINT",
+                    "stat_date": "DATE",
+                },
+                "dws_inventory_daily": {"product_id": "BIGINT"},
+                "ads_inventory_alert": {
+                    "product_id": "BIGINT",
+                    "daily_sales_velocity": "DECIMAL(12,2)",
+                },
+            }
+        }
+        sql = """
+        INSERT INTO shop_dm.ads_inventory_alert
+        WITH sales_velocity AS (
+            SELECT
+                product_id,
+                AVG(sale_quantity) AS daily_sales_velocity
+            FROM shop_dm.dws_product_sales_daily
+            GROUP BY product_id
+        )
+        SELECT
+            inv.product_id,
+            sv.daily_sales_velocity
+        FROM shop_dm.dws_inventory_daily inv
+        LEFT JOIN sales_velocity sv ON inv.product_id = sv.product_id
+        GROUP BY inv.product_id, sv.daily_sales_velocity
+        """
+        entries = extract_lineage_from_sql(sql, "ads_inventory_alert.sql", schema)
+        indirect = [e for e in entries if e.get("lineage_type") == "indirect"]
+        sources = {(e["source_table"], e["source_column"]) for e in indirect}
+        assert not any(e["source_table"] == "sales_velocity" for e in indirect)
+        assert ("dws_product_sales_daily", "product_id") in sources
+        assert ("dws_product_sales_daily", "sale_quantity") in sources

@@ -68,6 +68,14 @@ def _strip_db(name, current_db):
     return name.replace(f"{current_db}.", "")
 
 
+def iter_task_sql_files(tasks_dir):
+    files = sorted(tasks_dir.glob("*.sql"))
+    full_refresh_dir = tasks_dir / "full_refresh"
+    if full_refresh_dir.exists():
+        files.extend(sorted(full_refresh_dir.glob("*.sql")))
+    return files
+
+
 def generate_jobs(data, tasks_dir, current_db, job_logic=None, project="shop"):
     file_edges = {}
     for e in data["edges"]:
@@ -76,8 +84,9 @@ def generate_jobs(data, tasks_dir, current_db, job_logic=None, project="shop"):
 
     job_logic = job_logic or {}
     jobs = []
-    for f in sorted(tasks_dir.glob("*.sql")):
-        fname = f.name
+    for f in iter_task_sql_files(tasks_dir):
+        fname = f.relative_to(tasks_dir).as_posix()
+        job_id = f.with_suffix("").relative_to(tasks_dir).as_posix()
         edges = file_edges.get(fname, [])
 
         sources = set()
@@ -106,13 +115,13 @@ def generate_jobs(data, tasks_dir, current_db, job_logic=None, project="shop"):
         jobs.append(
             OrderedDict(
                 [
-                    ("id", f.stem),
+                    ("id", job_id),
                     ("file", fname),
-                    ("name", f.stem),
+                    ("name", job_id),
                     ("source", sorted(sources)),
                     ("target", short),
                     ("layer", layer),
-                    ("logic", job_logic.get(f.stem, "-")),
+                    ("logic", job_logic.get(job_id, job_logic.get(f.stem, "-"))),
                 ]
             )
         )
