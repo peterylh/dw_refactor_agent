@@ -274,6 +274,33 @@ class TestEdgeCases:
         entries = extract_lineage_from_sql(sql, "ads_top_products.sql", self.schema)
         assert len(entries) >= 2
 
+    def test_insert_with_target_column_list_uses_plain_target_table(self):
+        sql = """
+        INSERT INTO shop_dm.dwd_order (
+            order_id,
+            customer_id,
+            total_amount
+        )
+        SELECT order_id, customer_id, total_amount
+        FROM shop_dm.ods_order
+        """
+        entries = extract_lineage_from_sql(sql, "dwd_order.sql", self.schema)
+        assert len(entries) == 3
+        assert {e["target_table"] for e in entries} == {"dwd_order"}
+
+    def test_ctas_with_column_definitions_uses_plain_target_table(self):
+        sql = """
+        CREATE TABLE shop_dm.dws_daily_sales (
+            order_date DATE,
+            total_amount DECIMAL(12,2)
+        ) AS
+        SELECT order_date, total_amount
+        FROM shop_dm.dwd_order
+        """
+        entries = extract_lineage_from_sql(sql, "dws_daily_sales.sql", self.schema)
+        assert len(entries) >= 2
+        assert {e["target_table"] for e in entries} == {"dws_daily_sales"}
+
     def test_select_into(self):
         sql = """
         SELECT order_id, total_amount

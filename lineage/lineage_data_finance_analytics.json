@@ -55,16 +55,16 @@
       "layer": "ADS"
     },
     {
-      "id": "ads_customer_by_age_group.active_count",
-      "table": "ads_customer_by_age_group",
-      "column": "active_count",
-      "layer": "ADS"
-    },
-    {
       "id": "dim_customer.is_active",
       "table": "dim_customer",
       "column": "is_active",
       "layer": "DIM"
+    },
+    {
+      "id": "ads_customer_by_age_group.active_count",
+      "table": "ads_customer_by_age_group",
+      "column": "active_count",
+      "layer": "ADS"
     },
     {
       "id": "dim_customer.state",
@@ -235,9 +235,9 @@
       "layer": "ADS"
     },
     {
-      "id": "dim_product.interest_rate",
+      "id": "dim_product.interest_rate_pct",
       "table": "dim_product",
-      "column": "interest_rate",
+      "column": "interest_rate_pct",
       "layer": "DIM"
     },
     {
@@ -247,9 +247,9 @@
       "layer": "ADS"
     },
     {
-      "id": "dim_product.interest_rate_pct",
+      "id": "dim_product.interest_rate",
       "table": "dim_product",
-      "column": "interest_rate_pct",
+      "column": "interest_rate",
       "layer": "DIM"
     },
     {
@@ -7231,280 +7231,280 @@
       "layer": "DWS"
     },
     {
-      "id": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at).transaction_id",
-      "table": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at)",
+      "id": "dws_transactions.transaction_id",
+      "table": "dws_transactions",
       "column": "transaction_id",
-      "layer": "OTHER"
+      "layer": "DWS"
     },
     {
-      "id": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at).transaction_key",
-      "table": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at)",
+      "id": "dws_transactions.transaction_key",
+      "table": "dws_transactions",
       "column": "transaction_key",
-      "layer": "OTHER"
+      "layer": "DWS"
     },
     {
-      "id": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at).customer_key",
-      "table": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at)",
+      "id": "dws_transactions.customer_key",
+      "table": "dws_transactions",
       "column": "customer_key",
-      "layer": "OTHER"
+      "layer": "DWS"
     },
     {
-      "id": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at).account_key",
-      "table": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at)",
+      "id": "dws_transactions.account_key",
+      "table": "dws_transactions",
       "column": "account_key",
-      "layer": "OTHER"
+      "layer": "DWS"
     },
     {
-      "id": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at).merchant_key",
-      "table": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at)",
+      "id": "dws_transactions.merchant_key",
+      "table": "dws_transactions",
       "column": "merchant_key",
-      "layer": "OTHER"
+      "layer": "DWS"
     },
     {
-      "id": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at).date_key",
-      "table": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at)",
+      "id": "dws_transactions.date_key",
+      "table": "dws_transactions",
       "column": "date_key",
-      "layer": "OTHER"
+      "layer": "DWS"
     },
     {
-      "id": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at).transaction_date",
-      "table": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at)",
+      "id": "dws_transactions.transaction_date",
+      "table": "dws_transactions",
       "column": "transaction_date",
-      "layer": "OTHER"
+      "layer": "DWS"
     },
     {
-      "id": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at).transaction_year",
-      "table": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at)",
+      "id": "dws_transactions.transaction_year",
+      "table": "dws_transactions",
       "column": "transaction_year",
-      "layer": "OTHER"
+      "layer": "DWS"
     },
     {
-      "id": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at).transaction_month",
-      "table": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at)",
+      "id": "dws_transactions.transaction_month",
+      "table": "dws_transactions",
       "column": "transaction_month",
-      "layer": "OTHER"
+      "layer": "DWS"
     },
     {
-      "id": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at).transaction_day",
-      "table": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at)",
+      "id": "dws_transactions.transaction_day",
+      "table": "dws_transactions",
       "column": "transaction_day",
-      "layer": "OTHER"
+      "layer": "DWS"
     },
     {
-      "id": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at).transaction_hour",
-      "table": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at)",
+      "id": "dws_transactions.transaction_hour",
+      "table": "dws_transactions",
       "column": "transaction_hour",
-      "layer": "OTHER"
+      "layer": "DWS"
     },
     {
-      "id": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at).day_of_week",
-      "table": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at)",
+      "id": "dws_transactions.day_of_week",
+      "table": "dws_transactions",
       "column": "day_of_week",
-      "layer": "OTHER"
+      "layer": "DWS"
     },
     {
-      "id": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at).is_weekend",
-      "table": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at)",
+      "id": "dws_transactions.is_weekend",
+      "table": "dws_transactions",
       "column": "is_weekend",
-      "layer": "OTHER"
+      "layer": "DWS"
     },
     {
-      "id": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at).is_late_night",
-      "table": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at)",
+      "id": "dws_transactions.is_late_night",
+      "table": "dws_transactions",
       "column": "is_late_night",
-      "layer": "OTHER"
+      "layer": "DWS"
     },
     {
-      "id": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at).transaction_type",
-      "table": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at)",
+      "id": "dws_transactions.transaction_type",
+      "table": "dws_transactions",
       "column": "transaction_type",
-      "layer": "OTHER"
+      "layer": "DWS"
     },
     {
-      "id": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at).transaction_direction",
-      "table": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at)",
+      "id": "dws_transactions.transaction_direction",
+      "table": "dws_transactions",
       "column": "transaction_direction",
-      "layer": "OTHER"
+      "layer": "DWS"
     },
     {
-      "id": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at).currency",
-      "table": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at)",
+      "id": "dws_transactions.currency",
+      "table": "dws_transactions",
       "column": "currency",
-      "layer": "OTHER"
+      "layer": "DWS"
     },
     {
-      "id": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at).channel",
-      "table": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at)",
+      "id": "dws_transactions.channel",
+      "table": "dws_transactions",
       "column": "channel",
-      "layer": "OTHER"
+      "layer": "DWS"
     },
     {
-      "id": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at).merchant_category",
-      "table": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at)",
+      "id": "dws_transactions.merchant_category",
+      "table": "dws_transactions",
       "column": "merchant_category",
-      "layer": "OTHER"
+      "layer": "DWS"
     },
     {
-      "id": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at).mcc_code",
-      "table": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at)",
+      "id": "dws_transactions.mcc_code",
+      "table": "dws_transactions",
       "column": "mcc_code",
-      "layer": "OTHER"
+      "layer": "DWS"
     },
     {
-      "id": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at).description",
-      "table": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at)",
+      "id": "dws_transactions.description",
+      "table": "dws_transactions",
       "column": "description",
-      "layer": "OTHER"
+      "layer": "DWS"
     },
     {
-      "id": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at).location_city",
-      "table": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at)",
+      "id": "dws_transactions.location_city",
+      "table": "dws_transactions",
       "column": "location_city",
-      "layer": "OTHER"
+      "layer": "DWS"
     },
     {
-      "id": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at).location_state",
-      "table": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at)",
+      "id": "dws_transactions.location_state",
+      "table": "dws_transactions",
       "column": "location_state",
-      "layer": "OTHER"
+      "layer": "DWS"
     },
     {
-      "id": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at).location_country",
-      "table": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at)",
+      "id": "dws_transactions.location_country",
+      "table": "dws_transactions",
       "column": "location_country",
-      "layer": "OTHER"
+      "layer": "DWS"
     },
     {
-      "id": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at).is_international",
-      "table": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at)",
+      "id": "dws_transactions.is_international",
+      "table": "dws_transactions",
       "column": "is_international",
-      "layer": "OTHER"
+      "layer": "DWS"
     },
     {
-      "id": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at).device_id",
-      "table": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at)",
+      "id": "dws_transactions.device_id",
+      "table": "dws_transactions",
       "column": "device_id",
-      "layer": "OTHER"
+      "layer": "DWS"
     },
     {
-      "id": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at).authorization_code",
-      "table": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at)",
+      "id": "dws_transactions.authorization_code",
+      "table": "dws_transactions",
       "column": "authorization_code",
-      "layer": "OTHER"
+      "layer": "DWS"
     },
     {
-      "id": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at).card_last_four",
-      "table": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at)",
+      "id": "dws_transactions.card_last_four",
+      "table": "dws_transactions",
       "column": "card_last_four",
-      "layer": "OTHER"
+      "layer": "DWS"
     },
     {
-      "id": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at).is_recurring",
-      "table": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at)",
+      "id": "dws_transactions.is_recurring",
+      "table": "dws_transactions",
       "column": "is_recurring",
-      "layer": "OTHER"
+      "layer": "DWS"
     },
     {
-      "id": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at).transaction_status",
-      "table": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at)",
+      "id": "dws_transactions.transaction_status",
+      "table": "dws_transactions",
       "column": "transaction_status",
-      "layer": "OTHER"
+      "layer": "DWS"
     },
     {
-      "id": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at).decline_reason",
-      "table": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at)",
+      "id": "dws_transactions.decline_reason",
+      "table": "dws_transactions",
       "column": "decline_reason",
-      "layer": "OTHER"
+      "layer": "DWS"
     },
     {
-      "id": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at).fraud_risk_category",
-      "table": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at)",
+      "id": "dws_transactions.fraud_risk_category",
+      "table": "dws_transactions",
       "column": "fraud_risk_category",
-      "layer": "OTHER"
+      "layer": "DWS"
     },
     {
-      "id": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at).transaction_amount",
-      "table": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at)",
+      "id": "dws_transactions.transaction_amount",
+      "table": "dws_transactions",
       "column": "transaction_amount",
-      "layer": "OTHER"
+      "layer": "DWS"
     },
     {
-      "id": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at).transaction_amount_abs",
-      "table": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at)",
+      "id": "dws_transactions.transaction_amount_abs",
+      "table": "dws_transactions",
       "column": "transaction_amount_abs",
-      "layer": "OTHER"
+      "layer": "DWS"
     },
     {
-      "id": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at).fraud_score",
-      "table": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at)",
+      "id": "dws_transactions.fraud_score",
+      "table": "dws_transactions",
       "column": "fraud_score",
-      "layer": "OTHER"
+      "layer": "DWS"
     },
     {
-      "id": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at).distance_from_home_km",
-      "table": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at)",
+      "id": "dws_transactions.distance_from_home_km",
+      "table": "dws_transactions",
       "column": "distance_from_home_km",
-      "layer": "OTHER"
+      "layer": "DWS"
     },
     {
-      "id": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at).merchant_risk_score",
-      "table": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at)",
+      "id": "dws_transactions.merchant_risk_score",
+      "table": "dws_transactions",
       "column": "merchant_risk_score",
-      "layer": "OTHER"
+      "layer": "DWS"
     },
     {
-      "id": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at).velocity_24h",
-      "table": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at)",
+      "id": "dws_transactions.velocity_24h",
+      "table": "dws_transactions",
       "column": "velocity_24h",
-      "layer": "OTHER"
+      "layer": "DWS"
     },
     {
-      "id": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at).amount_deviation_score",
-      "table": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at)",
+      "id": "dws_transactions.amount_deviation_score",
+      "table": "dws_transactions",
       "column": "amount_deviation_score",
-      "layer": "OTHER"
+      "layer": "DWS"
     },
     {
-      "id": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at).processing_time_ms",
-      "table": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at)",
+      "id": "dws_transactions.processing_time_ms",
+      "table": "dws_transactions",
       "column": "processing_time_ms",
-      "layer": "OTHER"
+      "layer": "DWS"
     },
     {
-      "id": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at).is_fraud_flag",
-      "table": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at)",
+      "id": "dws_transactions.is_fraud_flag",
+      "table": "dws_transactions",
       "column": "is_fraud_flag",
-      "layer": "OTHER"
+      "layer": "DWS"
     },
     {
-      "id": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at).is_high_value_flag",
-      "table": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at)",
+      "id": "dws_transactions.is_high_value_flag",
+      "table": "dws_transactions",
       "column": "is_high_value_flag",
-      "layer": "OTHER"
+      "layer": "DWS"
     },
     {
-      "id": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at).is_high_risk_flag",
-      "table": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at)",
+      "id": "dws_transactions.is_high_risk_flag",
+      "table": "dws_transactions",
       "column": "is_high_risk_flag",
-      "layer": "OTHER"
+      "layer": "DWS"
     },
     {
-      "id": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at).is_declined_flag",
-      "table": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at)",
+      "id": "dws_transactions.is_declined_flag",
+      "table": "dws_transactions",
       "column": "is_declined_flag",
-      "layer": "OTHER"
+      "layer": "DWS"
     },
     {
-      "id": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at).fraud_amount",
-      "table": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at)",
+      "id": "dws_transactions.fraud_amount",
+      "table": "dws_transactions",
       "column": "fraud_amount",
-      "layer": "OTHER"
+      "layer": "DWS"
     },
     {
-      "id": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at).declined_count",
-      "table": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at)",
+      "id": "dws_transactions.declined_count",
+      "table": "dws_transactions",
       "column": "declined_count",
-      "layer": "OTHER"
+      "layer": "DWS"
     },
     {
       "id": "dim_customer.is_current",
@@ -7731,13 +7731,13 @@
       "source_file": "ads_customer_by_age_group.sql"
     },
     {
-      "source": "dim_customer.customer_key",
+      "source": "dim_customer.is_active",
       "target": "ads_customer_by_age_group.active_count",
       "expression": "COUNT(DISTINCT CASE WHEN dim_customer.is_active THEN dim_customer.customer_key END) AS active_count",
       "source_file": "ads_customer_by_age_group.sql"
     },
     {
-      "source": "dim_customer.is_active",
+      "source": "dim_customer.customer_key",
       "target": "ads_customer_by_age_group.active_count",
       "expression": "COUNT(DISTINCT CASE WHEN dim_customer.is_active THEN dim_customer.customer_key END) AS active_count",
       "source_file": "ads_customer_by_age_group.sql"
@@ -7779,13 +7779,13 @@
       "source_file": "ads_customer_by_geography.sql"
     },
     {
-      "source": "dim_customer.customer_key",
+      "source": "dim_customer.is_active",
       "target": "ads_customer_by_geography.active_count",
       "expression": "COUNT(DISTINCT CASE WHEN dim_customer.is_active THEN dim_customer.customer_key END) AS active_count",
       "source_file": "ads_customer_by_geography.sql"
     },
     {
-      "source": "dim_customer.is_active",
+      "source": "dim_customer.customer_key",
       "target": "ads_customer_by_geography.active_count",
       "expression": "COUNT(DISTINCT CASE WHEN dim_customer.is_active THEN dim_customer.customer_key END) AS active_count",
       "source_file": "ads_customer_by_geography.sql"
@@ -7899,13 +7899,13 @@
       "source_file": "ads_product_summary.sql"
     },
     {
-      "source": "dim_product.interest_rate",
+      "source": "dim_product.interest_rate_pct",
       "target": "ads_product_summary.avg_interest_rate_pct",
       "expression": "ROUND(AVG(CASE WHEN dim_product.interest_rate > 0 THEN dim_product.interest_rate_pct END), 2) AS avg_interest_rate_pct /* Pricing */",
       "source_file": "ads_product_summary.sql"
     },
     {
-      "source": "dim_product.interest_rate_pct",
+      "source": "dim_product.interest_rate",
       "target": "ads_product_summary.avg_interest_rate_pct",
       "expression": "ROUND(AVG(CASE WHEN dim_product.interest_rate > 0 THEN dim_product.interest_rate_pct END), 2) AS avg_interest_rate_pct /* Pricing */",
       "source_file": "ads_product_summary.sql"
@@ -8229,13 +8229,13 @@
       "source_file": "dim_customer.sql"
     },
     {
-      "source": "dwd_customers.last_name",
+      "source": "dwd_customers.first_name",
       "target": "dim_customer.full_name",
       "expression": "customer_with_surrogate.full_name AS full_name",
       "source_file": "dim_customer.sql"
     },
     {
-      "source": "dwd_customers.first_name",
+      "source": "dwd_customers.last_name",
       "target": "dim_customer.full_name",
       "expression": "customer_with_surrogate.full_name AS full_name",
       "source_file": "dim_customer.sql"
@@ -9123,13 +9123,13 @@
       "source_file": "dwd_accounts.sql"
     },
     {
-      "source": "ods_accounts.open_date",
+      "source": "ods_accounts.close_date",
       "target": "dwd_accounts.account_age_months",
       "expression": "cleaned.account_age_months AS account_age_months",
       "source_file": "dwd_accounts.sql"
     },
     {
-      "source": "ods_accounts.close_date",
+      "source": "ods_accounts.open_date",
       "target": "dwd_accounts.account_age_months",
       "expression": "cleaned.account_age_months AS account_age_months",
       "source_file": "dwd_accounts.sql"
@@ -9171,13 +9171,13 @@
       "source_file": "dwd_accounts.sql"
     },
     {
-      "source": "ods_accounts.current_balance",
+      "source": "ods_accounts.credit_limit",
       "target": "dwd_accounts.credit_utilization_pct",
       "expression": "cleaned.credit_utilization_pct AS credit_utilization_pct",
       "source_file": "dwd_accounts.sql"
     },
     {
-      "source": "ods_accounts.credit_limit",
+      "source": "ods_accounts.current_balance",
       "target": "dwd_accounts.credit_utilization_pct",
       "expression": "cleaned.credit_utilization_pct AS credit_utilization_pct",
       "source_file": "dwd_accounts.sql"
@@ -9249,13 +9249,13 @@
       "source_file": "dwd_accounts.sql"
     },
     {
-      "source": "ods_accounts.current_balance",
+      "source": "ods_accounts.credit_limit",
       "target": "dwd_accounts.is_near_limit",
       "expression": "cleaned.is_near_limit AS is_near_limit",
       "source_file": "dwd_accounts.sql"
     },
     {
-      "source": "ods_accounts.credit_limit",
+      "source": "ods_accounts.current_balance",
       "target": "dwd_accounts.is_near_limit",
       "expression": "cleaned.is_near_limit AS is_near_limit",
       "source_file": "dwd_accounts.sql"
@@ -9663,13 +9663,13 @@
       "source_file": "dwd_credit_applications.sql"
     },
     {
-      "source": "ods_credit_applications.application_date",
+      "source": "ods_credit_applications.decision_date",
       "target": "dwd_credit_applications.processing_days",
       "expression": "cleaned.processing_days AS processing_days",
       "source_file": "dwd_credit_applications.sql"
     },
     {
-      "source": "ods_credit_applications.decision_date",
+      "source": "ods_credit_applications.application_date",
       "target": "dwd_credit_applications.processing_days",
       "expression": "cleaned.processing_days AS processing_days",
       "source_file": "dwd_credit_applications.sql"
@@ -9681,13 +9681,13 @@
       "source_file": "dwd_credit_applications.sql"
     },
     {
-      "source": "ods_credit_applications.approved_amount",
+      "source": "ods_credit_applications.requested_amount",
       "target": "dwd_credit_applications.amount_difference",
       "expression": "cleaned.amount_difference AS amount_difference",
       "source_file": "dwd_credit_applications.sql"
     },
     {
-      "source": "ods_credit_applications.requested_amount",
+      "source": "ods_credit_applications.approved_amount",
       "target": "dwd_credit_applications.amount_difference",
       "expression": "cleaned.amount_difference AS amount_difference",
       "source_file": "dwd_credit_applications.sql"
@@ -9789,13 +9789,13 @@
       "source_file": "dwd_customer_interactions.sql"
     },
     {
-      "source": "ods_customer_interactions.resolved",
+      "source": "ods_customer_interactions.escalated",
       "target": "dwd_customer_interactions.issue_severity",
       "expression": "cleaned.issue_severity AS issue_severity",
       "source_file": "dwd_customer_interactions.sql"
     },
     {
-      "source": "ods_customer_interactions.escalated",
+      "source": "ods_customer_interactions.resolved",
       "target": "dwd_customer_interactions.issue_severity",
       "expression": "cleaned.issue_severity AS issue_severity",
       "source_file": "dwd_customer_interactions.sql"
@@ -10503,13 +10503,13 @@
       "source_file": "dwd_loan_payments.sql"
     },
     {
-      "source": "ods_loan_payments.actual_date",
+      "source": "ods_loan_payments.is_late",
       "target": "dwd_loan_payments.payment_status",
       "expression": "cleaned.payment_status AS payment_status",
       "source_file": "dwd_loan_payments.sql"
     },
     {
-      "source": "ods_loan_payments.is_late",
+      "source": "ods_loan_payments.actual_date",
       "target": "dwd_loan_payments.payment_status",
       "expression": "cleaned.payment_status AS payment_status",
       "source_file": "dwd_loan_payments.sql"
@@ -10635,12 +10635,6 @@
       "source_file": "dwd_marketing_campaigns.sql"
     },
     {
-      "source": "ods_marketing_campaigns.clicks",
-      "target": "dwd_marketing_campaigns.click_through_rate",
-      "expression": "cleaned.click_through_rate AS click_through_rate",
-      "source_file": "dwd_marketing_campaigns.sql"
-    },
-    {
       "source": "ods_marketing_campaigns.impressions",
       "target": "dwd_marketing_campaigns.click_through_rate",
       "expression": "cleaned.click_through_rate AS click_through_rate",
@@ -10648,12 +10642,18 @@
     },
     {
       "source": "ods_marketing_campaigns.clicks",
+      "target": "dwd_marketing_campaigns.click_through_rate",
+      "expression": "cleaned.click_through_rate AS click_through_rate",
+      "source_file": "dwd_marketing_campaigns.sql"
+    },
+    {
+      "source": "ods_marketing_campaigns.conversions",
       "target": "dwd_marketing_campaigns.conversion_rate",
       "expression": "cleaned.conversion_rate AS conversion_rate",
       "source_file": "dwd_marketing_campaigns.sql"
     },
     {
-      "source": "ods_marketing_campaigns.conversions",
+      "source": "ods_marketing_campaigns.clicks",
       "target": "dwd_marketing_campaigns.conversion_rate",
       "expression": "cleaned.conversion_rate AS conversion_rate",
       "source_file": "dwd_marketing_campaigns.sql"
@@ -11529,13 +11529,13 @@
       "source_file": "dwd_transactions.sql"
     },
     {
-      "source": "ods_transactions.is_fraud",
+      "source": "ods_transactions.decline_reason",
       "target": "dwd_transactions.transaction_status",
       "expression": "cleaned.transaction_status AS transaction_status",
       "source_file": "dwd_transactions.sql"
     },
     {
-      "source": "ods_transactions.decline_reason",
+      "source": "ods_transactions.is_fraud",
       "target": "dwd_transactions.transaction_status",
       "expression": "cleaned.transaction_status AS transaction_status",
       "source_file": "dwd_transactions.sql"
@@ -12309,13 +12309,13 @@
       "source_file": "dws_customer_segment_history.sql"
     },
     {
-      "source": "dwd_customer_segments_history.customer_segment",
+      "source": "dwd_customer_segments_history.previous_segment",
       "target": "dws_customer_segment_history.segment_changed_flag",
       "expression": "segment_history_facts.segment_changed_flag AS segment_changed_flag",
       "source_file": "dws_customer_segment_history.sql"
     },
     {
-      "source": "dwd_customer_segments_history.previous_segment",
+      "source": "dwd_customer_segments_history.customer_segment",
       "target": "dws_customer_segment_history.segment_changed_flag",
       "expression": "segment_history_facts.segment_changed_flag AS segment_changed_flag",
       "source_file": "dws_customer_segment_history.sql"
@@ -12333,13 +12333,13 @@
       "source_file": "dws_customer_segment_history.sql"
     },
     {
-      "source": "dwd_customer_segments_history.risk_segment",
+      "source": "dwd_customer_segments_history.previous_risk",
       "target": "dws_customer_segment_history.risk_changed_flag",
       "expression": "segment_history_facts.risk_changed_flag AS risk_changed_flag",
       "source_file": "dws_customer_segment_history.sql"
     },
     {
-      "source": "dwd_customer_segments_history.previous_risk",
+      "source": "dwd_customer_segments_history.risk_segment",
       "target": "dws_customer_segment_history.risk_changed_flag",
       "expression": "segment_history_facts.risk_changed_flag AS risk_changed_flag",
       "source_file": "dws_customer_segment_history.sql"
@@ -12381,13 +12381,13 @@
       "source_file": "dws_customer_segment_history.sql"
     },
     {
-      "source": "dwd_customer_segments_history.is_current",
+      "source": "dwd_customer_segments_history.end_date",
       "target": "dws_customer_segment_history.days_in_segment",
       "expression": "segment_history_facts.days_in_segment AS days_in_segment",
       "source_file": "dws_customer_segment_history.sql"
     },
     {
-      "source": "dwd_customer_segments_history.end_date",
+      "source": "dwd_customer_segments_history.is_current",
       "target": "dws_customer_segment_history.days_in_segment",
       "expression": "segment_history_facts.days_in_segment AS days_in_segment",
       "source_file": "dws_customer_segment_history.sql"
@@ -12783,13 +12783,13 @@
       "source_file": "dws_marketing_campaigns.sql"
     },
     {
-      "source": "dwd_marketing_campaigns.roi",
+      "source": "dwd_marketing_campaigns.cost_per_acquisition",
       "target": "dws_marketing_campaigns.estimated_revenue",
       "expression": "campaign_facts.estimated_revenue AS estimated_revenue",
       "source_file": "dws_marketing_campaigns.sql"
     },
     {
-      "source": "dwd_marketing_campaigns.cost_per_acquisition",
+      "source": "dwd_marketing_campaigns.roi",
       "target": "dws_marketing_campaigns.estimated_revenue",
       "expression": "campaign_facts.estimated_revenue AS estimated_revenue",
       "source_file": "dws_marketing_campaigns.sql"
@@ -13275,6 +13275,12 @@
       "source_file": "dws_risk_assessments.sql"
     },
     {
+      "source": "dwd_risk_assessments.fraud_risk",
+      "target": "dws_risk_assessments.high_risk_customer_flag",
+      "expression": "risk_assessment_facts.high_risk_customer_flag AS high_risk_customer_flag",
+      "source_file": "dws_risk_assessments.sql"
+    },
+    {
       "source": "dwd_risk_assessments.sanctions_flag",
       "target": "dws_risk_assessments.high_risk_customer_flag",
       "expression": "risk_assessment_facts.high_risk_customer_flag AS high_risk_customer_flag",
@@ -13287,290 +13293,284 @@
       "source_file": "dws_risk_assessments.sql"
     },
     {
-      "source": "dwd_risk_assessments.fraud_risk",
-      "target": "dws_risk_assessments.high_risk_customer_flag",
-      "expression": "risk_assessment_facts.high_risk_customer_flag AS high_risk_customer_flag",
-      "source_file": "dws_risk_assessments.sql"
-    },
-    {
       "source": "dwd_transactions.transaction_id",
-      "target": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at).transaction_id",
+      "target": "dws_transactions.transaction_id",
       "expression": "transaction_facts.transaction_id AS transaction_id",
       "source_file": "dws_transactions.sql"
     },
     {
       "source": "dwd_transactions.transaction_id",
-      "target": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at).transaction_key",
+      "target": "dws_transactions.transaction_key",
       "expression": "transaction_facts.transaction_key AS transaction_key",
       "source_file": "dws_transactions.sql"
     },
     {
       "source": "dwd_transactions.customer_id",
-      "target": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at).customer_key",
+      "target": "dws_transactions.customer_key",
       "expression": "transaction_facts.customer_key AS customer_key",
       "source_file": "dws_transactions.sql"
     },
     {
       "source": "dwd_transactions.account_id",
-      "target": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at).account_key",
+      "target": "dws_transactions.account_key",
       "expression": "transaction_facts.account_key AS account_key",
       "source_file": "dws_transactions.sql"
     },
     {
       "source": "dwd_transactions.merchant_id",
-      "target": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at).merchant_key",
+      "target": "dws_transactions.merchant_key",
       "expression": "transaction_facts.merchant_key AS merchant_key",
       "source_file": "dws_transactions.sql"
     },
     {
       "source": "dwd_transactions.transaction_date",
-      "target": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at).date_key",
+      "target": "dws_transactions.date_key",
       "expression": "transaction_facts.date_key AS date_key",
       "source_file": "dws_transactions.sql"
     },
     {
       "source": "dwd_transactions.transaction_date",
-      "target": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at).transaction_date",
+      "target": "dws_transactions.transaction_date",
       "expression": "transaction_facts.transaction_date AS transaction_date",
       "source_file": "dws_transactions.sql"
     },
     {
       "source": "dwd_transactions.transaction_year",
-      "target": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at).transaction_year",
+      "target": "dws_transactions.transaction_year",
       "expression": "transaction_facts.transaction_year AS transaction_year",
       "source_file": "dws_transactions.sql"
     },
     {
       "source": "dwd_transactions.transaction_month",
-      "target": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at).transaction_month",
+      "target": "dws_transactions.transaction_month",
       "expression": "transaction_facts.transaction_month AS transaction_month",
       "source_file": "dws_transactions.sql"
     },
     {
       "source": "dwd_transactions.transaction_day",
-      "target": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at).transaction_day",
+      "target": "dws_transactions.transaction_day",
       "expression": "transaction_facts.transaction_day AS transaction_day",
       "source_file": "dws_transactions.sql"
     },
     {
       "source": "dwd_transactions.transaction_hour",
-      "target": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at).transaction_hour",
+      "target": "dws_transactions.transaction_hour",
       "expression": "transaction_facts.transaction_hour AS transaction_hour",
       "source_file": "dws_transactions.sql"
     },
     {
       "source": "dwd_transactions.day_of_week",
-      "target": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at).day_of_week",
+      "target": "dws_transactions.day_of_week",
       "expression": "transaction_facts.day_of_week AS day_of_week",
       "source_file": "dws_transactions.sql"
     },
     {
       "source": "dwd_transactions.is_weekend",
-      "target": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at).is_weekend",
+      "target": "dws_transactions.is_weekend",
       "expression": "transaction_facts.is_weekend AS is_weekend",
       "source_file": "dws_transactions.sql"
     },
     {
       "source": "dwd_transactions.is_late_night",
-      "target": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at).is_late_night",
+      "target": "dws_transactions.is_late_night",
       "expression": "transaction_facts.is_late_night AS is_late_night",
       "source_file": "dws_transactions.sql"
     },
     {
       "source": "dwd_transactions.transaction_type",
-      "target": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at).transaction_type",
+      "target": "dws_transactions.transaction_type",
       "expression": "transaction_facts.transaction_type AS transaction_type",
       "source_file": "dws_transactions.sql"
     },
     {
       "source": "dwd_transactions.transaction_direction",
-      "target": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at).transaction_direction",
+      "target": "dws_transactions.transaction_direction",
       "expression": "transaction_facts.transaction_direction AS transaction_direction",
       "source_file": "dws_transactions.sql"
     },
     {
       "source": "dwd_transactions.currency",
-      "target": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at).currency",
+      "target": "dws_transactions.currency",
       "expression": "transaction_facts.currency AS currency",
       "source_file": "dws_transactions.sql"
     },
     {
       "source": "dwd_transactions.channel",
-      "target": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at).channel",
+      "target": "dws_transactions.channel",
       "expression": "transaction_facts.channel AS channel",
       "source_file": "dws_transactions.sql"
     },
     {
       "source": "dwd_transactions.merchant_category",
-      "target": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at).merchant_category",
+      "target": "dws_transactions.merchant_category",
       "expression": "transaction_facts.merchant_category AS merchant_category",
       "source_file": "dws_transactions.sql"
     },
     {
       "source": "dwd_transactions.mcc_code",
-      "target": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at).mcc_code",
+      "target": "dws_transactions.mcc_code",
       "expression": "transaction_facts.mcc_code AS mcc_code",
       "source_file": "dws_transactions.sql"
     },
     {
       "source": "dwd_transactions.description",
-      "target": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at).description",
+      "target": "dws_transactions.description",
       "expression": "transaction_facts.description AS description",
       "source_file": "dws_transactions.sql"
     },
     {
       "source": "dwd_transactions.location_city",
-      "target": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at).location_city",
+      "target": "dws_transactions.location_city",
       "expression": "transaction_facts.location_city AS location_city",
       "source_file": "dws_transactions.sql"
     },
     {
       "source": "dwd_transactions.location_state",
-      "target": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at).location_state",
+      "target": "dws_transactions.location_state",
       "expression": "transaction_facts.location_state AS location_state",
       "source_file": "dws_transactions.sql"
     },
     {
       "source": "dwd_transactions.location_country",
-      "target": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at).location_country",
+      "target": "dws_transactions.location_country",
       "expression": "transaction_facts.location_country AS location_country",
       "source_file": "dws_transactions.sql"
     },
     {
       "source": "dwd_transactions.is_international",
-      "target": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at).is_international",
+      "target": "dws_transactions.is_international",
       "expression": "transaction_facts.is_international AS is_international",
       "source_file": "dws_transactions.sql"
     },
     {
       "source": "dwd_transactions.device_id",
-      "target": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at).device_id",
+      "target": "dws_transactions.device_id",
       "expression": "transaction_facts.device_id AS device_id",
       "source_file": "dws_transactions.sql"
     },
     {
       "source": "dwd_transactions.authorization_code",
-      "target": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at).authorization_code",
+      "target": "dws_transactions.authorization_code",
       "expression": "transaction_facts.authorization_code AS authorization_code",
       "source_file": "dws_transactions.sql"
     },
     {
       "source": "dwd_transactions.card_last_four",
-      "target": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at).card_last_four",
+      "target": "dws_transactions.card_last_four",
       "expression": "transaction_facts.card_last_four AS card_last_four",
       "source_file": "dws_transactions.sql"
     },
     {
       "source": "dwd_transactions.is_recurring",
-      "target": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at).is_recurring",
+      "target": "dws_transactions.is_recurring",
       "expression": "transaction_facts.is_recurring AS is_recurring",
       "source_file": "dws_transactions.sql"
     },
     {
       "source": "dwd_transactions.transaction_status",
-      "target": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at).transaction_status",
+      "target": "dws_transactions.transaction_status",
       "expression": "transaction_facts.transaction_status AS transaction_status",
       "source_file": "dws_transactions.sql"
     },
     {
       "source": "dwd_transactions.decline_reason",
-      "target": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at).decline_reason",
+      "target": "dws_transactions.decline_reason",
       "expression": "transaction_facts.decline_reason AS decline_reason",
       "source_file": "dws_transactions.sql"
     },
     {
       "source": "dwd_transactions.fraud_risk_category",
-      "target": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at).fraud_risk_category",
+      "target": "dws_transactions.fraud_risk_category",
       "expression": "transaction_facts.fraud_risk_category AS fraud_risk_category",
       "source_file": "dws_transactions.sql"
     },
     {
       "source": "dwd_transactions.amount",
-      "target": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at).transaction_amount",
+      "target": "dws_transactions.transaction_amount",
       "expression": "transaction_facts.transaction_amount AS transaction_amount",
       "source_file": "dws_transactions.sql"
     },
     {
       "source": "dwd_transactions.amount_abs",
-      "target": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at).transaction_amount_abs",
+      "target": "dws_transactions.transaction_amount_abs",
       "expression": "transaction_facts.transaction_amount_abs AS transaction_amount_abs",
       "source_file": "dws_transactions.sql"
     },
     {
       "source": "dwd_transactions.fraud_score",
-      "target": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at).fraud_score",
+      "target": "dws_transactions.fraud_score",
       "expression": "transaction_facts.fraud_score AS fraud_score",
       "source_file": "dws_transactions.sql"
     },
     {
       "source": "dwd_transactions.distance_from_home_km",
-      "target": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at).distance_from_home_km",
+      "target": "dws_transactions.distance_from_home_km",
       "expression": "transaction_facts.distance_from_home_km AS distance_from_home_km",
       "source_file": "dws_transactions.sql"
     },
     {
       "source": "dwd_transactions.merchant_risk_score",
-      "target": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at).merchant_risk_score",
+      "target": "dws_transactions.merchant_risk_score",
       "expression": "transaction_facts.merchant_risk_score AS merchant_risk_score",
       "source_file": "dws_transactions.sql"
     },
     {
       "source": "dwd_transactions.velocity_24h",
-      "target": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at).velocity_24h",
+      "target": "dws_transactions.velocity_24h",
       "expression": "transaction_facts.velocity_24h AS velocity_24h",
       "source_file": "dws_transactions.sql"
     },
     {
       "source": "dwd_transactions.amount_deviation_score",
-      "target": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at).amount_deviation_score",
+      "target": "dws_transactions.amount_deviation_score",
       "expression": "transaction_facts.amount_deviation_score AS amount_deviation_score",
       "source_file": "dws_transactions.sql"
     },
     {
       "source": "dwd_transactions.processing_time_ms",
-      "target": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at).processing_time_ms",
+      "target": "dws_transactions.processing_time_ms",
       "expression": "transaction_facts.processing_time_ms AS processing_time_ms",
       "source_file": "dws_transactions.sql"
     },
     {
       "source": "dwd_transactions.is_fraud",
-      "target": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at).is_fraud_flag",
+      "target": "dws_transactions.is_fraud_flag",
       "expression": "transaction_facts.is_fraud_flag AS is_fraud_flag",
       "source_file": "dws_transactions.sql"
     },
     {
       "source": "dwd_transactions.is_high_value",
-      "target": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at).is_high_value_flag",
+      "target": "dws_transactions.is_high_value_flag",
       "expression": "transaction_facts.is_high_value_flag AS is_high_value_flag",
       "source_file": "dws_transactions.sql"
     },
     {
       "source": "dwd_transactions.fraud_risk_category",
-      "target": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at).is_high_risk_flag",
+      "target": "dws_transactions.is_high_risk_flag",
       "expression": "transaction_facts.is_high_risk_flag AS is_high_risk_flag",
       "source_file": "dws_transactions.sql"
     },
     {
       "source": "dwd_transactions.decline_reason",
-      "target": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at).is_declined_flag",
+      "target": "dws_transactions.is_declined_flag",
       "expression": "transaction_facts.is_declined_flag AS is_declined_flag",
       "source_file": "dws_transactions.sql"
     },
     {
-      "source": "dwd_transactions.amount_abs",
-      "target": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at).fraud_amount",
+      "source": "dwd_transactions.is_fraud",
+      "target": "dws_transactions.fraud_amount",
       "expression": "transaction_facts.fraud_amount AS fraud_amount",
       "source_file": "dws_transactions.sql"
     },
     {
-      "source": "dwd_transactions.is_fraud",
-      "target": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at).fraud_amount",
+      "source": "dwd_transactions.amount_abs",
+      "target": "dws_transactions.fraud_amount",
       "expression": "transaction_facts.fraud_amount AS fraud_amount",
       "source_file": "dws_transactions.sql"
     },
     {
       "source": "dwd_transactions.decline_reason",
-      "target": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at).declined_count",
+      "target": "dws_transactions.declined_count",
       "expression": "transaction_facts.declined_count AS declined_count",
       "source_file": "dws_transactions.sql"
     }
@@ -13890,11 +13890,11 @@
           "type": "UNKNOWN"
         },
         {
-          "name": "interest_rate",
+          "name": "interest_rate_pct",
           "type": "UNKNOWN"
         },
         {
-          "name": "interest_rate_pct",
+          "name": "interest_rate",
           "type": "UNKNOWN"
         },
         {
@@ -19184,9 +19184,9 @@
       ]
     },
     {
-      "name": "dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at)",
-      "full_name": "finance_analytics_dm.dws_transactions (transaction_id, transaction_key, customer_key, account_key, merchant_key, date_key, transaction_date, transaction_year, transaction_month, transaction_day, transaction_hour, day_of_week, is_weekend, is_late_night, transaction_type, transaction_direction, currency, channel, merchant_category, mcc_code, description, location_city, location_state, location_country, is_international, device_id, authorization_code, card_last_four, is_recurring, transaction_status, decline_reason, fraud_risk_category, transaction_amount, transaction_amount_abs, fraud_score, distance_from_home_km, merchant_risk_score, velocity_24h, amount_deviation_score, processing_time_ms, is_fraud_flag, is_high_value_flag, is_high_risk_flag, is_declined_flag, fraud_amount, declined_count, transaction_count, dbt_updated_at)",
-      "layer": "OTHER",
+      "name": "dws_transactions",
+      "full_name": "finance_analytics_dm.dws_transactions",
+      "layer": "DWS",
       "columns": [
         {
           "name": "transaction_id",
@@ -19371,6 +19371,14 @@
         {
           "name": "declined_count",
           "type": "UNKNOWN"
+        },
+        {
+          "name": "transaction_count",
+          "type": "BIGINT"
+        },
+        {
+          "name": "dbt_updated_at",
+          "type": "DATETIME"
         }
       ]
     },
