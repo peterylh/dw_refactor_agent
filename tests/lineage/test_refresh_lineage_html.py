@@ -135,6 +135,62 @@ def test_generate_jobs_strips_project_db_and_defaults_logic(tmp_path, monkeypatc
     assert job["logic"] == "-"
 
 
+def test_generate_jobs_includes_full_refresh_tasks(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        refresh_html,
+        "determine_layer",
+        lambda table_name, project: "DWD",
+    )
+
+    tasks_dir = tmp_path / "tasks"
+    full_refresh_dir = tasks_dir / "full_refresh"
+    full_refresh_dir.mkdir(parents=True)
+    (tasks_dir / "dwd_product.sql").write_text(
+        """
+        INSERT INTO shop_dm.dwd_product
+        SELECT product_id
+        FROM shop_dm.ods_product;
+        """,
+        encoding="utf-8",
+    )
+    (full_refresh_dir / "dwd_product_full_refresh.sql").write_text(
+        """
+        INSERT INTO shop_dm.dwd_product
+        SELECT product_id
+        FROM shop_dm.ods_product;
+        """,
+        encoding="utf-8",
+    )
+    data = {
+        "edges": [
+            {
+                "source": "ods_product.product_id",
+                "target": "dwd_product.product_id",
+                "source_file": "dwd_product.sql",
+            },
+            {
+                "source": "ods_product.product_id",
+                "target": "dwd_product.product_id",
+                "source_file": "full_refresh/dwd_product_full_refresh.sql",
+            },
+        ]
+    }
+
+    jobs = refresh_html.generate_jobs(
+        data,
+        tasks_dir=tasks_dir,
+        current_db="shop_dm",
+        project="shop",
+    )
+
+    assert [job["id"] for job in jobs] == [
+        "dwd_product",
+        "full_refresh/dwd_product_full_refresh",
+    ]
+    assert jobs[1]["file"] == "full_refresh/dwd_product_full_refresh.sql"
+    assert jobs[1]["target"] == "dwd_product"
+
+
 def test_update_lineage_html_writes_new_output_from_template(tmp_path):
     template = tmp_path / "lineage.html"
     output = tmp_path / "lineage_finance_analytics.html"
