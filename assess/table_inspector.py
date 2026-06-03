@@ -10,7 +10,7 @@ from typing import Any, Callable
 from assess.context_builder import TableContext
 
 
-PROMPT_VERSION = "table-inspector-v4"
+PROMPT_VERSION = "table-inspector-v13"
 VALID_LAYERS = {"ODS", "DWD", "DWS", "ADS", "DIM", "OTHER"}
 VALID_TABLE_TYPES = {"dimension", "fact", "other"}
 METRIC_GROUPING_LAYERS = {"DWD", "DWS"}
@@ -106,13 +106,26 @@ def build_prompt(ctx: TableContext) -> str:
 - other: 其他类型。
 
 ## 指标字段分组标准
-- atomic_metrics: 基于某一业务过程下不可再拆分的基础度量，通常是金额、数量、余额、单价、次数等可度量字段，不包含聚合、比率、分数或多字段计算。尽量填写 business_process/action/measure。
-- derived_metrics: 放度量型派生指标，通常出现在 DWS 层，即一个原子指标 + 多个修饰词(可选) + 时间周期。它本质上仍是对原子指标统计范围的限定，没有改变指标计算逻辑，例如按门店+日汇总的销售金额。尽量填写 base_metric/modifiers/time_period/expression。
-- calculated_metrics: 只放度量型衍生指标，即基于一个或多个已有指标，通过公式、规则、模型或二次计算得到的新指标，通常产生新的业务含义。包括比率、分数、差值、绝对值、风险等级、窗口函数、复杂 CASE 规则等。尽量填写 expression/derived_from。
-- dimensions: 主键、外键、日期、时间、状态、标签、枚举、布尔标志、退化维度、实体属性等分析维度字段。即使它们由 DATE_FORMAT、CASE WHEN 或其他表达式生成，只要用于切片/过滤/分组而不是作为度量，也应放入 dimensions。
+- atomic_metrics: 基于某一业务过程下不可再拆分的基础指标口径，通常由业务过程、度量对象和标准统计方式构成。对事件标识或实体标识字段做 COUNT/COUNT DISTINCT 生成基础计数口径时，应归 atomic_metrics；不包含比率、分数、多个度量组合、同一明细行内多个基础要素的算术组合、结果性明细度量、复杂 CASE/窗口函数/模型计算等二次计算。字段是否为原子指标不能只看 ETL 是否直接透传，必须结合字段语义和业务定义判断。尽量填写 business_process/action/measure。
+- derived_metrics: 放度量型派生指标，即一个已存在的原子指标 + 多个修饰词(可选) + 时间周期/统计粒度/限定条件。它本质上仍是对原子指标统计范围的限定，没有改变指标计算逻辑。DWS 汇总表中，如果字段是对上游已存在的 atomic_metrics 做 SUM/AVG/MIN/MAX 等标准聚合，并叠加维度、周期或限定条件，通常应归 derived_metrics，而不是 atomic_metrics。尽量填写 base_metric/modifiers/time_period/expression。
+- calculated_metrics: 只放度量型衍生指标，即基于一个或多个已有指标，通过公式、规则、模型或二次计算得到的新指标，通常产生新的业务含义。包括比率、分数、差值、绝对值、风险等级、窗口函数、复杂 CASE 规则、多字段组合计算、同一明细行内多个基础要素组合后的结果度量等。即使字段从上游直接透传或上游已经预先算好，只要字段注释、字段级血缘或业务语义表明它是已物化的结果性度量，而不是独立观测到的基础计量，也应按 calculated_metrics 判断。DWS 汇总表中，如果字段是对上游 calculated_metrics 再聚合，也应归 calculated_metrics。尽量填写 expression/derived_from。
+- dimensions: 主键、外键、日期、时间、状态、标签、枚举、布尔标志、退化维度、实体属性、非加性属性等分析维度字段。价格、费率、汇率、系数等非加性属性如果主要作为切片、描述或其他指标计算输入，而不是独立统计口径，应放入 dimensions；即使它们由 DATE_FORMAT、CASE WHEN 或其他表达式生成，只要用于切片/过滤/分组而不是作为度量，也应放入 dimensions。
 - others: 审计字段、技术字段、无法判断字段。
 - DWD 事实表只能包含 atomic_metrics；derived_metrics 和 calculated_metrics 都属于 DWD 违规风险。
 - DWS 事实表通常承载 derived_metrics；不要因为 DWS 表包含派生指标而判为违规。
+
+## 度量可加性约束
+- atomic_metrics 必须是可被独立观测、可计数或可按事实粒度直接汇总形成业务总量的基础口径。
+- 非加性输入属性只用于描述、切片或参与其他公式，不能作为 atomic_metrics。
+- 已物化的明细行结果度量即使来自上游直接透传，也不能作为 atomic_metrics；如果它表示当前事实行的业务结果，应归 calculated_metrics。
+- 判断一个字段是否为 atomic_metrics 时，直接透传优先级低于可加性、字段注释、字段级血缘和业务语义。
+
+## DWS 指标分类优先级
+1. 对事件标识或实体标识字段做 COUNT/COUNT DISTINCT 生成基础计数指标时，优先归 atomic_metrics；分组维度和统计日期只表达当前汇总表粒度，不应单独导致它变成 derived_metrics。
+2. 对上游 atomic_metrics 做 SUM/AVG/MIN/MAX 等聚合，并叠加维度、周期或限定条件时，归 derived_metrics。
+3. 对上游 calculated_metrics 做聚合，或当前字段表达式包含多个度量组合时，归 calculated_metrics。
+4. 判断上游字段类型时，优先参考“上游指标分组”；如果没有上游指标分组，再结合字段角色、注释、ETL 表达式和业务语义判断，不要套用字段名示例。
+5. 对字段做分组时，优先使用字段级血缘表达式判断来源和计算关系；直接透传只能说明当前 ETL 没有再次计算，不能否定字段自身已经是结果性度量。
 
 ## 表级特征信息
 - 原始表名: {ctx.table_name}
@@ -130,6 +143,12 @@ def build_prompt(ctx: TableContext) -> str:
     prompt += f"""## 血缘关系
 上游表: {', '.join(ctx.upstream_tables) if ctx.upstream_tables else '无'}
 下游表: {', '.join(ctx.downstream_tables) if ctx.downstream_tables else '无'}
+
+## 字段级血缘
+{json.dumps(ctx.column_lineage, ensure_ascii=False, indent=2) if ctx.column_lineage else '无'}
+
+## 上游指标分组
+{json.dumps(ctx.upstream_metric_groups, ensure_ascii=False, indent=2) if ctx.upstream_metric_groups else '无'}
 
 ## 思考步骤
 1. 首先分析 ETL_SQL 中是否包含 GROUP BY 等聚合操作，如果有，排除 DWD 和 ODS。
@@ -483,12 +502,14 @@ class TableInspector:
                  model: str = "deepseek-v4-flash",
                  cache_file: Path = None,
                  max_retries: int = 1,
-                 parallelism: int = 2):
+                 parallelism: int = 2,
+                 request_timeout: int = 60):
         self.api_key = api_key
         self.model = model
         self.cache_file = cache_file
         self.max_retries = max(0, int(max_retries))
         self.parallelism = max(1, int(parallelism))
+        self.request_timeout = max(1, int(request_timeout))
         self.cache = {}
         self._cache_lock = threading.RLock()
         self.progress_callback: Callable[[dict[str, Any]], None] | None = None
@@ -517,7 +538,8 @@ class TableInspector:
         content = (
             f"{PROMPT_VERSION}|{ctx.table_name}|{ctx.layer}|{ctx.ddl}|"
             f"{ctx.etl_sql}|{ctx.upstream_tables}|{ctx.downstream_tables}|"
-            f"{ctx.depth_from_ods}"
+            f"{ctx.depth_from_ods}|{ctx.upstream_metric_groups}|"
+            f"{ctx.column_lineage}"
         )
         return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
@@ -563,7 +585,7 @@ class TableInspector:
                                      headers=headers,
                                      method="POST")
         try:
-            with urllib.request.urlopen(req, timeout=30) as response:
+            with urllib.request.urlopen(req, timeout=self.request_timeout) as response:
                 return response.read().decode("utf-8")
         except Exception as e:
             raise RuntimeError(f"DeepSeek API 调用失败: {e}")

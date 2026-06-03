@@ -6,6 +6,8 @@ description: 品类月度销售汇总
 config:
   materialized: incremental
 derived_metrics:
-- order_count
 - sale_quantity
+atomic_metrics:
+- order_count
+calculated_metrics:
 - sale_amount

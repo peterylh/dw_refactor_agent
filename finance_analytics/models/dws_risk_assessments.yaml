@@ -5,14 +5,13 @@ table_type: fact
 config:
   materialized: full
 atomic_metrics:
-- risk_score
-- transaction_volume_last_90d
-- num_accounts
-- years_as_customer
 - assessment_count
 calculated_metrics:
+- risk_score
+- transaction_volume_last_90d
 - credit_risk_score
 - fraud_risk_score
 - aml_risk_score
 - days_until_review
 - kyc_age_days
+- high_risk_customer_flag

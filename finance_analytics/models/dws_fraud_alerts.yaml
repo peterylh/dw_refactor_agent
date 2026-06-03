@@ -6,5 +6,6 @@ config:
   materialized: full
 atomic_metrics:
 - amount_recovered
-- resolution_days
 - alert_count
+calculated_metrics:
+- resolution_days

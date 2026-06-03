@@ -5,14 +5,16 @@ table_type: fact
 config:
   materialized: full
 atomic_metrics:
-- current_balance
-- available_balance
-- credit_limit
+- active_account_count
+- closed_account_count
+- dormant_account_count
+- past_due_count
+- near_limit_count
+- account_count
 derived_metrics:
 - daily_transaction_count
 - daily_transaction_amount
 - daily_debit_count
 - daily_credit_count
-- account_count
 calculated_metrics:
 - credit_utilization_pct

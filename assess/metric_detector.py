@@ -112,6 +112,46 @@ def metric_groups_for_model(result: TableInspectResult) -> dict[str, list[str]]:
     }
 
 
+def _merge_detected_upstream_metric_groups(
+        contexts: list[TableContext],
+        detected_groups: dict[str, dict[str, list[str]]]) -> None:
+    """将本轮已识别的上游指标分组注入下游上下文。"""
+    for ctx in contexts:
+        upstream_metric_groups = dict(ctx.upstream_metric_groups)
+        for upstream_table in ctx.upstream_tables:
+            groups = detected_groups.get(upstream_table)
+            if groups and any(groups.values()):
+                upstream_metric_groups[upstream_table] = groups
+        ctx.upstream_metric_groups = upstream_metric_groups
+
+
+def _update_models_for_results(project: str,
+                               results: list[TableInspectResult],
+                               *,
+                               dry_run: bool) -> tuple[list[dict[str, Any]],
+                                                       list[dict[str, Any]]]:
+    yaml_updates = []
+    skipped_updates = []
+    for result in results:
+        if result.declared_layer not in METRIC_LAYERS:
+            continue
+        if result.status == "blocked":
+            skipped_updates.append({
+                "table": result.table_name,
+                "path": str(model_path_for_table(project, result.table_name)),
+                "status": result.status,
+                "validation": result.validation,
+                "updated": False,
+                "reason": "validation_blocked",
+            })
+            continue
+        update = update_model_yaml(project, result, dry_run=dry_run)
+        if (result.is_fact_table or update["metric_count"] > 0
+                or update["removed_metric_count"] > 0):
+            yaml_updates.append(update)
+    return yaml_updates, skipped_updates
+
+
 def _violation_count(results: list[TableInspectResult],
                      metric_attr: str | None = None) -> int:
     """统计 DWD fact 中的非原子指标违规数量。"""
@@ -304,6 +344,8 @@ def run_detection(project: str,
     """运行项目级 DWD/DWS 指标检测。"""
     data = load_lineage_data(project)
     contexts = build_metric_contexts(project, data)
+    dwd_contexts = [ctx for ctx in contexts if ctx.layer == "DWD"]
+    dws_contexts = [ctx for ctx in contexts if ctx.layer == "DWS"]
     cache_file = Path(__file__).resolve(
     ).parent / "cache" / f"inspect_{project}.json"
     if no_cache and cache_file.exists():
@@ -318,27 +360,23 @@ def run_detection(project: str,
     )
     if show_progress:
         inspector.progress_callback = build_progress_callback()
-    results = inspector.inspect_batch(contexts)
+    dwd_results = inspector.inspect_batch(dwd_contexts)
+    yaml_updates, skipped_updates = _update_models_for_results(
+        project, dwd_results, dry_run=dry_run)
 
-    yaml_updates = []
-    skipped_updates = []
-    for result in results:
-        if result.declared_layer not in METRIC_LAYERS:
-            continue
-        if result.status == "blocked":
-            skipped_updates.append({
-                "table": result.table_name,
-                "path": str(model_path_for_table(project, result.table_name)),
-                "status": result.status,
-                "validation": result.validation,
-                "updated": False,
-                "reason": "validation_blocked",
-            })
-            continue
-        update = update_model_yaml(project, result, dry_run=dry_run)
-        if (result.is_fact_table or update["metric_count"] > 0
-                or update["removed_metric_count"] > 0):
-            yaml_updates.append(update)
+    detected_groups = {
+        result.table_name: metric_groups_for_model(result)
+        for result in dwd_results
+        if result.status != "blocked"
+    }
+    _merge_detected_upstream_metric_groups(dws_contexts, detected_groups)
+    dws_results = inspector.inspect_batch(dws_contexts)
+    dws_updates, dws_skipped_updates = _update_models_for_results(
+        project, dws_results, dry_run=dry_run)
+    yaml_updates.extend(dws_updates)
+    skipped_updates.extend(dws_skipped_updates)
+
+    results = dwd_results + dws_results
 
     return {
         "project": project,

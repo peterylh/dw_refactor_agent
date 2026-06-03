@@ -1,6 +1,8 @@
 from pathlib import Path
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+
+import yaml
 
 
 @dataclass
@@ -12,15 +14,70 @@ class TableContext:
     upstream_tables: list[str]
     downstream_tables: list[str]
     depth_from_ods: int = 0
+    upstream_metric_groups: dict[str, dict[str, list[str]]] = field(
+        default_factory=dict)
+    column_lineage: list[dict[str, str]] = field(default_factory=list)
+
+
+def _metric_names(value) -> list[str]:
+    names = []
+    if isinstance(value, dict):
+        iterable = value.values()
+    elif isinstance(value, list):
+        iterable = value
+    else:
+        iterable = []
+
+    for item in iterable:
+        if isinstance(item, list):
+            for nested in item:
+                name = _metric_name(nested)
+                if name and name not in names:
+                    names.append(name)
+            continue
+        name = _metric_name(item)
+        if name and name not in names:
+            names.append(name)
+    return names
+
+
+def _metric_name(item) -> str:
+    if isinstance(item, dict):
+        return str(item.get("name") or item.get("column") or "").strip()
+    return str(item or "").strip()
+
+
+def _load_model_metric_groups(models_dir: Path) -> dict[str, dict[str, list[str]]]:
+    metric_groups = {}
+    if not models_dir.exists():
+        return metric_groups
+
+    for model_path in models_dir.glob("*.yaml"):
+        try:
+            data = yaml.safe_load(model_path.read_text(encoding="utf-8")) or {}
+        except Exception:
+            continue
+        if not isinstance(data, dict):
+            continue
+        table_name = str(data.get("name") or model_path.stem)
+        groups = {
+            "atomic_metrics": _metric_names(data.get("atomic_metrics")),
+            "derived_metrics": _metric_names(data.get("derived_metrics")),
+            "calculated_metrics": _metric_names(data.get("calculated_metrics")),
+        }
+        if any(groups.values()):
+            metric_groups[table_name] = groups
+    return metric_groups
+
+
+def _table_from_node(node_id: str) -> str:
+    return node_id.rsplit(".", 1)[0]
 
 
 def extract_dependencies(lineage_data: dict) -> tuple[dict, dict]:
     """提取表级上下游关系"""
     upstream = defaultdict(set)
     downstream = defaultdict(set)
-
-    def _table_from_node(node_id: str) -> str:
-        return node_id.rsplit(".", 1)[0]
 
     for e in lineage_data.get("edges", []):
         src = _table_from_node(e["source"])
@@ -39,6 +96,23 @@ def extract_dependencies(lineage_data: dict) -> tuple[dict, dict]:
     return dict(upstream), dict(downstream)
 
 
+def extract_column_lineage(lineage_data: dict,
+                           table_name: str) -> list[dict[str, str]]:
+    """提取目标表的字段级血缘表达式。"""
+    lineage = []
+    for edge in lineage_data.get("edges", []):
+        target = str(edge.get("target") or "")
+        if _table_from_node(target) != table_name:
+            continue
+        lineage.append({
+            "source": str(edge.get("source") or ""),
+            "target": target,
+            "expression": str(edge.get("expression") or ""),
+            "source_file": str(edge.get("source_file") or ""),
+        })
+    return lineage
+
+
 def build_contexts(project: str,
                    lineage_data: dict,
                    ddl_dir: Path = None,
@@ -50,6 +124,8 @@ def build_contexts(project: str,
         tasks_dir = Path(__file__).resolve().parent.parent / project / "tasks"
 
     upstream, downstream = extract_dependencies(lineage_data)
+    models_dir = Path(__file__).resolve().parent.parent / project / "models"
+    metric_groups = _load_model_metric_groups(models_dir)
     contexts = []
 
     memo = {}
@@ -85,16 +161,24 @@ def build_contexts(project: str,
         task_path = tasks_dir / f"{name}.sql"
         etl_content = task_path.read_text(
             encoding="utf-8") if task_path.exists() else ""
+        upstream_tables = sorted(list(upstream.get(name, set())))
+        upstream_metric_groups = {
+            upstream_table: metric_groups[upstream_table]
+            for upstream_table in upstream_tables
+            if upstream_table in metric_groups
+        }
 
         contexts.append(
             TableContext(table_name=name,
                          layer=layer,
                          ddl=ddl_content,
                          etl_sql=etl_content,
-                         upstream_tables=sorted(list(upstream.get(name,
-                                                                  set()))),
+                         upstream_tables=upstream_tables,
                          downstream_tables=sorted(
                              list(downstream.get(name, set()))),
-                         depth_from_ods=get_depth_from_ods(name)))
+                         depth_from_ods=get_depth_from_ods(name),
+                         upstream_metric_groups=upstream_metric_groups,
+                         column_lineage=extract_column_lineage(
+                             lineage_data, name)))
 
     return contexts

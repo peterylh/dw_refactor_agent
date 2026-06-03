@@ -5,10 +5,11 @@ table_type: fact
 description: 门店日销售汇总
 config:
   materialized: incremental
-derived_metrics:
+calculated_metrics:
+- total_amount
+- payment_amount
+atomic_metrics:
 - order_count
 - customer_count
-- total_amount
+derived_metrics:
 - discount_amount
-calculated_metrics:
-- payment_amount

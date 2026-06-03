@@ -4,7 +4,7 @@ layer: DWD
 table_type: fact
 config:
   materialized: full
-atomic_metrics:
+calculated_metrics:
 - gdp_growth_rate
 - unemployment_rate
 - inflation_rate
@@ -15,7 +15,3 @@ atomic_metrics:
 - housing_price_index
 - 10yr_treasury_yield
 - mortgage_rate_30yr
-calculated_metrics:
-- economic_health
-- unemployment_level
-- market_volatility
