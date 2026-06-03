@@ -342,6 +342,45 @@ def test_update_model_yaml_removes_metrics_when_none_detected(tmp_path,
     assert "calculated_metrics" not in saved
 
 
+def test_update_model_yaml_skips_blocked_results(tmp_path, monkeypatch):
+    import assess.metric_detector as detector_module
+
+    project_root = tmp_path
+    models_dir = project_root / "demo" / "models"
+    models_dir.mkdir(parents=True)
+    model_path = models_dir / "dwd_order_detail.yaml"
+    model_path.write_text(
+        yaml.safe_dump({
+            "version": 2,
+            "name": "dwd_order_detail",
+            "layer": "DWD",
+            "atomic_metrics": ["quantity"],
+            "calculated_metrics": ["subtotal"],
+        },
+                       allow_unicode=True,
+                       sort_keys=False),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(detector_module, "PROJECT_ROOT", project_root)
+    monkeypatch.setitem(detector_module.PROJECT_CONFIG, "demo", {"dir": "demo"})
+
+    blocked = TableInspectResult(
+        table_name="dwd_order_detail",
+        declared_layer="DWD",
+        inferred_layer="OTHER",
+        table_type="other",
+        confidence=0.0,
+        reasoning_steps=["JSON 解析失败"],
+    )
+    update = update_model_yaml("demo", blocked)
+    saved = yaml.safe_load(model_path.read_text(encoding="utf-8"))
+
+    assert update["updated"] is False
+    assert update["reason"] == "validation_blocked"
+    assert saved["atomic_metrics"] == ["quantity"]
+    assert saved["calculated_metrics"] == ["subtotal"]
+
+
 def test_run_detection_reuses_table_inspector(monkeypatch, sample_lineage_data):
     import assess.metric_detector as detector_module
 

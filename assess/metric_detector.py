@@ -208,6 +208,18 @@ def update_model_yaml(project: str,
                       dry_run: bool = False) -> dict[str, Any]:
     """将单表指标名覆盖写入 models/{table}.yaml。"""
     path = model_path_for_table(project, result.table_name)
+    if result.status == "blocked":
+        return {
+            "table": result.table_name,
+            "path": str(path),
+            "status": result.status,
+            "metric_count": 0,
+            "new_metric_count": 0,
+            "removed_metric_count": 0,
+            "updated": False,
+            "reason": "validation_blocked",
+        }
+
     path_exists = path.exists()
     existing = {}
     if path_exists:

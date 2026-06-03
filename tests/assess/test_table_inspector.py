@@ -60,6 +60,8 @@ def test_build_prompt_clarifies_metric_group_boundaries():
     assert "对上游 calculated_metrics 再聚合" in prompt
     assert "不要套用字段名示例" in prompt
     assert "非加性属性" in prompt
+    assert "补值、回填、估算" in prompt
+    assert "不会让字段变成 calculated_metrics" in prompt
 
     hardcoded_examples = [
         "订单ID",
@@ -73,6 +75,24 @@ def test_build_prompt_clarifies_metric_group_boundaries():
     ]
     for example in hardcoded_examples:
         assert example not in prompt
+
+
+def test_build_prompt_treats_imputed_non_additive_inputs_as_dimensions():
+    ctx = TableContext(
+        table_name="dwd_fact_table",
+        layer="DWD",
+        ddl="CREATE TABLE dwd_fact_table (amount DECIMAL(12,2));",
+        etl_sql="",
+        upstream_tables=["ods_source_table"],
+        downstream_tables=["dws_summary_table"],
+    )
+
+    prompt = build_prompt(ctx)
+
+    assert "价格、成本、费率、汇率、系数、阈值" in prompt
+    assert "缺失值兜底" in prompt
+    assert "应继续归 dimensions" in prompt
+    assert "dwd_order_detail.cost_price" not in prompt
 
 
 def test_build_prompt_without_etl():
