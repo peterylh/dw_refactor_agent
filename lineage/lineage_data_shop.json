@@ -1003,16 +1003,16 @@
       "layer": "DWD"
     },
     {
-      "id": "ods_product.brand",
-      "table": "ods_product",
-      "column": "brand",
-      "layer": "ODS"
-    },
-    {
       "id": "dwd_product.brand",
       "table": "dwd_product",
       "column": "brand",
       "layer": "DWD"
+    },
+    {
+      "id": "ods_product.brand",
+      "table": "ods_product",
+      "column": "brand",
+      "layer": "ODS"
     },
     {
       "id": "ods_product.unit",
@@ -1213,15 +1213,15 @@
       "layer": "ODS"
     },
     {
-      "id": "ods_store.area_size",
-      "table": "ods_store",
-      "column": "area_size",
-      "layer": "ODS"
-    },
-    {
       "id": "ods_store.store_type",
       "table": "ods_store",
       "column": "store_type",
+      "layer": "ODS"
+    },
+    {
+      "id": "ods_store.area_size",
+      "table": "ods_store",
+      "column": "area_size",
       "layer": "ODS"
     },
     {
@@ -1623,13 +1623,13 @@
       "source_file": "ads_inventory_alert.sql"
     },
     {
-      "source": "dws_inventory_daily.quantity",
+      "source": "dws_inventory_daily.safety_stock",
       "target": "ads_inventory_alert.alert_level",
       "expression": "CASE WHEN inv.quantity <= 0 THEN '严重' WHEN inv.quantity <= inv.safety_stock * 0.5 THEN '预警' WHEN inv.quantity <= inv.safety_stock THEN '关注' ELSE '正常' END AS alert_level",
       "source_file": "ads_inventory_alert.sql"
     },
     {
-      "source": "dws_inventory_daily.safety_stock",
+      "source": "dws_inventory_daily.quantity",
       "target": "ads_inventory_alert.alert_level",
       "expression": "CASE WHEN inv.quantity <= 0 THEN '严重' WHEN inv.quantity <= inv.safety_stock * 0.5 THEN '预警' WHEN inv.quantity <= inv.safety_stock THEN '关注' ELSE '正常' END AS alert_level",
       "source_file": "ads_inventory_alert.sql"
@@ -1683,13 +1683,13 @@
       "source_file": "ads_product_topn_daily.sql"
     },
     {
-      "source": "dws_product_sales_daily.sale_amount",
+      "source": "dws_product_sales_daily.stat_date",
       "target": "ads_product_topn_daily.rank_num",
       "expression": "RANK() OVER (PARTITION BY psd.stat_date ORDER BY psd.sale_amount DESC) AS rank_num",
       "source_file": "ads_product_topn_daily.sql"
     },
     {
-      "source": "dws_product_sales_daily.stat_date",
+      "source": "dws_product_sales_daily.sale_amount",
       "target": "ads_product_topn_daily.rank_num",
       "expression": "RANK() OVER (PARTITION BY psd.stat_date ORDER BY psd.sale_amount DESC) AS rank_num",
       "source_file": "ads_product_topn_daily.sql"
@@ -1743,12 +1743,6 @@
       "source_file": "ads_promotion_roi.sql"
     },
     {
-      "source": "dws_promotion_effect_daily.discount_amount",
-      "target": "ads_promotion_roi.avg_discount_rate",
-      "expression": "CASE WHEN pe.sale_amount > 0 THEN ROUND(pe.discount_amount / pe.sale_amount * 100, 2) ELSE NULL END AS avg_discount_rate",
-      "source_file": "ads_promotion_roi.sql"
-    },
-    {
       "source": "dws_promotion_effect_daily.sale_amount",
       "target": "ads_promotion_roi.avg_discount_rate",
       "expression": "CASE WHEN pe.sale_amount > 0 THEN ROUND(pe.discount_amount / pe.sale_amount * 100, 2) ELSE NULL END AS avg_discount_rate",
@@ -1756,12 +1750,18 @@
     },
     {
       "source": "dws_promotion_effect_daily.discount_amount",
+      "target": "ads_promotion_roi.avg_discount_rate",
+      "expression": "CASE WHEN pe.sale_amount > 0 THEN ROUND(pe.discount_amount / pe.sale_amount * 100, 2) ELSE NULL END AS avg_discount_rate",
+      "source_file": "ads_promotion_roi.sql"
+    },
+    {
+      "source": "dws_promotion_effect_daily.sale_amount",
       "target": "ads_promotion_roi.roi",
       "expression": "CASE WHEN pe.discount_amount > 0 THEN ROUND(pe.sale_amount / pe.discount_amount, 2) ELSE NULL END AS roi",
       "source_file": "ads_promotion_roi.sql"
     },
     {
-      "source": "dws_promotion_effect_daily.sale_amount",
+      "source": "dws_promotion_effect_daily.discount_amount",
       "target": "ads_promotion_roi.roi",
       "expression": "CASE WHEN pe.discount_amount > 0 THEN ROUND(pe.sale_amount / pe.discount_amount, 2) ELSE NULL END AS roi",
       "source_file": "ads_promotion_roi.sql"
@@ -1803,12 +1803,6 @@
       "source_file": "ads_sales_dashboard.sql"
     },
     {
-      "source": "dwd_order_detail.order_id",
-      "target": "ads_sales_dashboard.avg_order_amount",
-      "expression": "daily_base.avg_order_amount AS avg_order_amount",
-      "source_file": "ads_sales_dashboard.sql"
-    },
-    {
       "source": "dwd_order_detail.subtotal",
       "target": "ads_sales_dashboard.avg_order_amount",
       "expression": "daily_base.avg_order_amount AS avg_order_amount",
@@ -1821,6 +1815,12 @@
       "source_file": "ads_sales_dashboard.sql"
     },
     {
+      "source": "dwd_order_detail.order_id",
+      "target": "ads_sales_dashboard.avg_order_amount",
+      "expression": "daily_base.avg_order_amount AS avg_order_amount",
+      "source_file": "ads_sales_dashboard.sql"
+    },
+    {
       "source": "dwd_order_detail.order_date",
       "target": "ads_sales_dashboard.order_growth_rate",
       "expression": "ROUND((daily_base.total_orders - LAG(daily_base.total_orders, 1, NULL) OVER (ORDER BY daily_base.stat_date)) / NULLIF(LAG(daily_base.total_orders, 1, NULL) OVER (ORDER BY daily_base.stat_date), 0) * 100, 2) AS order_growth_rate",
@@ -1833,13 +1833,13 @@
       "source_file": "ads_sales_dashboard.sql"
     },
     {
-      "source": "dwd_order_detail.subtotal",
+      "source": "dwd_order_detail.order_date",
       "target": "ads_sales_dashboard.amount_growth_rate",
       "expression": "ROUND((daily_base.total_amount - LAG(daily_base.total_amount, 1, NULL) OVER (ORDER BY daily_base.stat_date)) / NULLIF(LAG(daily_base.total_amount, 1, NULL) OVER (ORDER BY daily_base.stat_date), 0) * 100, 2) AS amount_growth_rate",
       "source_file": "ads_sales_dashboard.sql"
     },
     {
-      "source": "dwd_order_detail.order_date",
+      "source": "dwd_order_detail.subtotal",
       "target": "ads_sales_dashboard.amount_growth_rate",
       "expression": "ROUND((daily_base.total_amount - LAG(daily_base.total_amount, 1, NULL) OVER (ORDER BY daily_base.stat_date)) / NULLIF(LAG(daily_base.total_amount, 1, NULL) OVER (ORDER BY daily_base.stat_date), 0) * 100, 2) AS amount_growth_rate",
       "source_file": "ads_sales_dashboard.sql"
@@ -1911,13 +1911,13 @@
       "source_file": "ads_store_performance.sql"
     },
     {
-      "source": "dws_store_sales_daily.customer_count",
+      "source": "dws_store_sales_daily.order_count",
       "target": "ads_store_performance.performance_score",
       "expression": "ROUND(store_monthly.total_orders / NULLIF(MAX(store_monthly.total_orders) OVER (PARTITION BY store_monthly.stat_month), 0) * 30 + store_monthly.total_amount / NULLIF(MAX(store_monthly.total_amount) OVER (PARTITION BY store_monthly.stat_month), 0) * 40 + store_monthly.customer_count / NULLIF(MAX(store_monthly.customer_count) OVER (PARTITION BY store_monthly.stat_month), 0) * 30, 2) AS performance_score",
       "source_file": "ads_store_performance.sql"
     },
     {
-      "source": "dws_store_sales_daily.total_amount",
+      "source": "dws_store_sales_daily.customer_count",
       "target": "ads_store_performance.performance_score",
       "expression": "ROUND(store_monthly.total_orders / NULLIF(MAX(store_monthly.total_orders) OVER (PARTITION BY store_monthly.stat_month), 0) * 30 + store_monthly.total_amount / NULLIF(MAX(store_monthly.total_amount) OVER (PARTITION BY store_monthly.stat_month), 0) * 40 + store_monthly.customer_count / NULLIF(MAX(store_monthly.customer_count) OVER (PARTITION BY store_monthly.stat_month), 0) * 30, 2) AS performance_score",
       "source_file": "ads_store_performance.sql"
@@ -1929,7 +1929,7 @@
       "source_file": "ads_store_performance.sql"
     },
     {
-      "source": "dws_store_sales_daily.order_count",
+      "source": "dws_store_sales_daily.total_amount",
       "target": "ads_store_performance.performance_score",
       "expression": "ROUND(store_monthly.total_orders / NULLIF(MAX(store_monthly.total_orders) OVER (PARTITION BY store_monthly.stat_month), 0) * 30 + store_monthly.total_amount / NULLIF(MAX(store_monthly.total_amount) OVER (PARTITION BY store_monthly.stat_month), 0) * 40 + store_monthly.customer_count / NULLIF(MAX(store_monthly.customer_count) OVER (PARTITION BY store_monthly.stat_month), 0) * 30, 2) AS performance_score",
       "source_file": "ads_store_performance.sql"
@@ -2043,13 +2043,13 @@
       "source_file": "dwd_inventory.sql"
     },
     {
-      "source": "ods_inventory.quantity",
+      "source": "ods_inventory.safety_stock",
       "target": "dwd_inventory.stock_status",
       "expression": "CASE WHEN t.quantity <= 0 THEN '缺货' WHEN t.quantity <= t.safety_stock * 0.5 THEN '缺货预警' WHEN t.quantity <= t.safety_stock THEN '偏低' ELSE '正常' END AS stock_status",
       "source_file": "dwd_inventory.sql"
     },
     {
-      "source": "ods_inventory.safety_stock",
+      "source": "ods_inventory.quantity",
       "target": "dwd_inventory.stock_status",
       "expression": "CASE WHEN t.quantity <= 0 THEN '缺货' WHEN t.quantity <= t.safety_stock * 0.5 THEN '缺货预警' WHEN t.quantity <= t.safety_stock THEN '偏低' ELSE '正常' END AS stock_status",
       "source_file": "dwd_inventory.sql"
@@ -2151,12 +2151,6 @@
       "source_file": "dwd_order_detail.sql"
     },
     {
-      "source": "ods_order_item.quantity",
-      "target": "dwd_order_detail.gross_profit",
-      "expression": "ROUND(oi.subtotal - p.cost_price * oi.quantity, 2) AS gross_profit",
-      "source_file": "dwd_order_detail.sql"
-    },
-    {
       "source": "ods_order_item.subtotal",
       "target": "dwd_order_detail.gross_profit",
       "expression": "ROUND(oi.subtotal - p.cost_price * oi.quantity, 2) AS gross_profit",
@@ -2164,6 +2158,12 @@
     },
     {
       "source": "ods_product.cost_price",
+      "target": "dwd_order_detail.gross_profit",
+      "expression": "ROUND(oi.subtotal - p.cost_price * oi.quantity, 2) AS gross_profit",
+      "source_file": "dwd_order_detail.sql"
+    },
+    {
+      "source": "ods_order_item.quantity",
       "target": "dwd_order_detail.gross_profit",
       "expression": "ROUND(oi.subtotal - p.cost_price * oi.quantity, 2) AS gross_profit",
       "source_file": "dwd_order_detail.sql"
@@ -2187,7 +2187,7 @@
       "source_file": "dwd_order_detail.sql"
     },
     {
-      "source": "dwd_order_detail.cost_price",
+      "source": "dwd_order_detail.subtotal",
       "target": "dwd_order_detail.gross_profit",
       "expression": "ROUND(dwd_order_detail.subtotal - dwd_order_detail.cost_price * dwd_order_detail.quantity, 2) AS gross_profit",
       "source_file": "dwd_order_detail.sql"
@@ -2199,7 +2199,7 @@
       "source_file": "dwd_order_detail.sql"
     },
     {
-      "source": "dwd_order_detail.subtotal",
+      "source": "dwd_order_detail.cost_price",
       "target": "dwd_order_detail.gross_profit",
       "expression": "ROUND(dwd_order_detail.subtotal - dwd_order_detail.cost_price * dwd_order_detail.quantity, 2) AS gross_profit",
       "source_file": "dwd_order_detail.sql"
@@ -2241,13 +2241,13 @@
       "source_file": "dwd_product.sql"
     },
     {
-      "source": "ods_product.brand",
+      "source": "ods_category.category_name",
       "target": "dwd_product.brand",
       "expression": "COALESCE(NULLIF(p.brand, ''), CONCAT('通用-', COALESCE(c.category_name, '未分类'))) AS brand",
       "source_file": "dwd_product.sql"
     },
     {
-      "source": "ods_category.category_name",
+      "source": "ods_product.brand",
       "target": "dwd_product.brand",
       "expression": "COALESCE(NULLIF(p.brand, ''), CONCAT('通用-', COALESCE(c.category_name, '未分类'))) AS brand",
       "source_file": "dwd_product.sql"
@@ -2337,13 +2337,13 @@
       "source_file": "dwd_promotion.sql"
     },
     {
-      "source": "ods_promotion.start_date",
+      "source": "ods_promotion.end_date",
       "target": "dwd_promotion.duration_days",
       "expression": "DATEDIFF(t.end_date, t.start_date) + 1 AS duration_days",
       "source_file": "dwd_promotion.sql"
     },
     {
-      "source": "ods_promotion.end_date",
+      "source": "ods_promotion.start_date",
       "target": "dwd_promotion.duration_days",
       "expression": "DATEDIFF(t.end_date, t.start_date) + 1 AS duration_days",
       "source_file": "dwd_promotion.sql"
@@ -2355,13 +2355,13 @@
       "source_file": "dwd_promotion.sql"
     },
     {
-      "source": "ods_promotion.start_date",
+      "source": "ods_promotion.end_date",
       "target": "dwd_promotion.is_active",
       "expression": "CASE WHEN CAST(@etl_date AS DATE) BETWEEN t.start_date AND t.end_date THEN 1 ELSE 0 END AS is_active",
       "source_file": "dwd_promotion.sql"
     },
     {
-      "source": "ods_promotion.end_date",
+      "source": "ods_promotion.start_date",
       "target": "dwd_promotion.is_active",
       "expression": "CASE WHEN CAST(@etl_date AS DATE) BETWEEN t.start_date AND t.end_date THEN 1 ELSE 0 END AS is_active",
       "source_file": "dwd_promotion.sql"
@@ -2385,13 +2385,13 @@
       "source_file": "dwd_store.sql"
     },
     {
-      "source": "ods_store.area_size",
+      "source": "ods_store.store_type",
       "target": "dwd_store.store_type",
       "expression": "COALESCE(NULLIF(t.store_type, ''), CASE WHEN t.area_size >= 3000 THEN '旗舰店' WHEN t.area_size >= 1000 THEN '标准店' ELSE '社区店' END) AS store_type",
       "source_file": "dwd_store.sql"
     },
     {
-      "source": "ods_store.store_type",
+      "source": "ods_store.area_size",
       "target": "dwd_store.store_type",
       "expression": "COALESCE(NULLIF(t.store_type, ''), CASE WHEN t.area_size >= 3000 THEN '旗舰店' WHEN t.area_size >= 1000 THEN '标准店' ELSE '社区店' END) AS store_type",
       "source_file": "dwd_store.sql"
@@ -2529,13 +2529,13 @@
       "source_file": "dws_customer_order_summary.sql"
     },
     {
-      "source": "dwd_order_detail.order_id",
+      "source": "dwd_order_detail.subtotal",
       "target": "dws_customer_order_summary.avg_order_amount",
       "expression": "ROUND(SUM(dwd_order_detail.subtotal) / NULLIF(COUNT(DISTINCT dwd_order_detail.order_id), 0), 2) AS avg_order_amount",
       "source_file": "dws_customer_order_summary.sql"
     },
     {
-      "source": "dwd_order_detail.subtotal",
+      "source": "dwd_order_detail.order_id",
       "target": "dws_customer_order_summary.avg_order_amount",
       "expression": "ROUND(SUM(dwd_order_detail.subtotal) / NULLIF(COUNT(DISTINCT dwd_order_detail.order_id), 0), 2) AS avg_order_amount",
       "source_file": "dws_customer_order_summary.sql"
@@ -2571,13 +2571,13 @@
       "source_file": "dws_inventory_daily.sql"
     },
     {
-      "source": "dwd_inventory.quantity",
+      "source": "dwd_inventory.safety_stock",
       "target": "dws_inventory_daily.stock_status",
       "expression": "CASE WHEN SUM(dwd_inventory.quantity) <= 0 THEN '缺货' WHEN SUM(dwd_inventory.quantity) <= MAX(dwd_inventory.safety_stock) * 0.5 THEN '缺货预警' WHEN SUM(dwd_inventory.quantity) <= MAX(dwd_inventory.safety_stock) THEN '偏低' ELSE '正常' END AS stock_status",
       "source_file": "dws_inventory_daily.sql"
     },
     {
-      "source": "dwd_inventory.safety_stock",
+      "source": "dwd_inventory.quantity",
       "target": "dws_inventory_daily.stock_status",
       "expression": "CASE WHEN SUM(dwd_inventory.quantity) <= 0 THEN '缺货' WHEN SUM(dwd_inventory.quantity) <= MAX(dwd_inventory.safety_stock) * 0.5 THEN '缺货预警' WHEN SUM(dwd_inventory.quantity) <= MAX(dwd_inventory.safety_stock) THEN '偏低' ELSE '正常' END AS stock_status",
       "source_file": "dws_inventory_daily.sql"
@@ -3936,11 +3936,11 @@
           "type": "UNKNOWN"
         },
         {
-          "name": "area_size",
+          "name": "store_type",
           "type": "UNKNOWN"
         },
         {
-          "name": "store_type",
+          "name": "area_size",
           "type": "UNKNOWN"
         },
         {
@@ -4044,14 +4044,14 @@
       "source": "ads_customer_rfm.stat_date",
       "target_table": "ads_customer_rfm",
       "condition_type": "WHERE",
-      "condition_expression": "stat_date = CAST(@etl_date AS DATE)",
+      "condition_expression": "CASE WHEN @full_refresh = 1 THEN 1 = 1 ELSE stat_date = CAST(@etl_date AS DATE) END",
       "source_file": "ads_customer_rfm.sql"
     },
     {
       "source": "dws_customer_order_summary.stat_date",
       "target_table": "ads_customer_rfm",
       "condition_type": "WHERE",
-      "condition_expression": "stat_date <= CAST(@etl_date AS DATE)",
+      "condition_expression": "CASE WHEN @full_refresh = 1 THEN 1 = 1 ELSE stat_date <= CAST(@etl_date AS DATE) END",
       "source_file": "ads_customer_rfm.sql"
     },
     {
@@ -4065,21 +4065,21 @@
       "source": "ads_customer_rfm.customer_segment",
       "target_table": "ads_customer_rfm",
       "condition_type": "WHERE",
-      "condition_expression": "customer_segment IS NULL AND stat_date = CAST(@etl_date AS DATE)",
+      "condition_expression": "customer_segment IS NULL AND CASE WHEN @full_refresh = 1 THEN 1 = 1 ELSE stat_date = CAST(@etl_date AS DATE) END",
       "source_file": "ads_customer_rfm.sql"
     },
     {
       "source": "ads_inventory_alert.stat_date",
       "target_table": "ads_inventory_alert",
       "condition_type": "WHERE",
-      "condition_expression": "stat_date = CAST(@etl_date AS DATE)",
+      "condition_expression": "CASE WHEN @full_refresh = 1 THEN 1 = 1 ELSE stat_date = CAST(@etl_date AS DATE) END",
       "source_file": "ads_inventory_alert.sql"
     },
     {
       "source": "dws_product_sales_daily.stat_date",
       "target_table": "ads_inventory_alert",
       "condition_type": "WHERE",
-      "condition_expression": "stat_date BETWEEN DATE_SUB(CAST(@etl_date AS DATE), INTERVAL '7' DAY) AND CAST(@etl_date AS DATE)",
+      "condition_expression": "CASE WHEN @full_refresh = 1 THEN 1 = 1 ELSE stat_date BETWEEN DATE_SUB(CAST(@etl_date AS DATE), INTERVAL '7' DAY) AND CAST(@etl_date AS DATE) END",
       "source_file": "ads_inventory_alert.sql"
     },
     {
@@ -4093,49 +4093,56 @@
       "source": "dws_inventory_daily.stat_date",
       "target_table": "ads_inventory_alert",
       "condition_type": "WHERE",
-      "condition_expression": "inv.stat_date = CAST(@etl_date AS DATE)",
+      "condition_expression": "CASE WHEN @full_refresh = 1 THEN 1 = 1 ELSE inv.stat_date = CAST(@etl_date AS DATE) END",
       "source_file": "ads_inventory_alert.sql"
     },
     {
       "source": "dws_inventory_daily.product_id",
       "target_table": "ads_inventory_alert",
       "condition_type": "JOIN_ON",
-      "condition_expression": "inv.product_id = p.product_id AND p.snapshot_date = CAST(@etl_date AS DATE)",
+      "condition_expression": "inv.product_id = p.product_id AND p.snapshot_date = CASE WHEN @full_refresh = 1 THEN TO_DATE(inv.stat_date) ELSE CAST(@etl_date AS DATE) END",
       "source_file": "ads_inventory_alert.sql"
     },
     {
       "source": "dwd_product.product_id",
       "target_table": "ads_inventory_alert",
       "condition_type": "JOIN_ON",
-      "condition_expression": "inv.product_id = p.product_id AND p.snapshot_date = CAST(@etl_date AS DATE)",
+      "condition_expression": "inv.product_id = p.product_id AND p.snapshot_date = CASE WHEN @full_refresh = 1 THEN TO_DATE(inv.stat_date) ELSE CAST(@etl_date AS DATE) END",
       "source_file": "ads_inventory_alert.sql"
     },
     {
       "source": "dwd_product.snapshot_date",
       "target_table": "ads_inventory_alert",
       "condition_type": "JOIN_ON",
-      "condition_expression": "inv.product_id = p.product_id AND p.snapshot_date = CAST(@etl_date AS DATE)",
+      "condition_expression": "inv.product_id = p.product_id AND p.snapshot_date = CASE WHEN @full_refresh = 1 THEN TO_DATE(inv.stat_date) ELSE CAST(@etl_date AS DATE) END",
+      "source_file": "ads_inventory_alert.sql"
+    },
+    {
+      "source": "dws_inventory_daily.stat_date",
+      "target_table": "ads_inventory_alert",
+      "condition_type": "JOIN_ON",
+      "condition_expression": "inv.product_id = p.product_id AND p.snapshot_date = CASE WHEN @full_refresh = 1 THEN TO_DATE(inv.stat_date) ELSE CAST(@etl_date AS DATE) END",
       "source_file": "ads_inventory_alert.sql"
     },
     {
       "source": "dws_inventory_daily.store_id",
       "target_table": "ads_inventory_alert",
       "condition_type": "JOIN_ON",
-      "condition_expression": "inv.store_id = s.store_id AND s.snapshot_date = CAST(@etl_date AS DATE)",
+      "condition_expression": "inv.store_id = s.store_id AND s.snapshot_date = CASE WHEN @full_refresh = 1 THEN TO_DATE(inv.stat_date) ELSE CAST(@etl_date AS DATE) END",
       "source_file": "ads_inventory_alert.sql"
     },
     {
       "source": "dwd_store.store_id",
       "target_table": "ads_inventory_alert",
       "condition_type": "JOIN_ON",
-      "condition_expression": "inv.store_id = s.store_id AND s.snapshot_date = CAST(@etl_date AS DATE)",
+      "condition_expression": "inv.store_id = s.store_id AND s.snapshot_date = CASE WHEN @full_refresh = 1 THEN TO_DATE(inv.stat_date) ELSE CAST(@etl_date AS DATE) END",
       "source_file": "ads_inventory_alert.sql"
     },
     {
       "source": "dwd_store.snapshot_date",
       "target_table": "ads_inventory_alert",
       "condition_type": "JOIN_ON",
-      "condition_expression": "inv.store_id = s.store_id AND s.snapshot_date = CAST(@etl_date AS DATE)",
+      "condition_expression": "inv.store_id = s.store_id AND s.snapshot_date = CASE WHEN @full_refresh = 1 THEN TO_DATE(inv.stat_date) ELSE CAST(@etl_date AS DATE) END",
       "source_file": "ads_inventory_alert.sql"
     },
     {
@@ -4205,35 +4212,35 @@
       "source": "ads_inventory_alert.product_name",
       "target_table": "ads_inventory_alert",
       "condition_type": "WHERE",
-      "condition_expression": "(product_name IS NULL OR product_name = '') AND stat_date = CAST(@etl_date AS DATE)",
+      "condition_expression": "(product_name IS NULL OR product_name = '') AND CASE WHEN @full_refresh = 1 THEN 1 = 1 ELSE stat_date = CAST(@etl_date AS DATE) END",
       "source_file": "ads_inventory_alert.sql"
     },
     {
       "source": "ads_inventory_alert.store_name",
       "target_table": "ads_inventory_alert",
       "condition_type": "WHERE",
-      "condition_expression": "(store_name IS NULL OR store_name = '') AND stat_date = CAST(@etl_date AS DATE)",
+      "condition_expression": "(store_name IS NULL OR store_name = '') AND CASE WHEN @full_refresh = 1 THEN 1 = 1 ELSE stat_date = CAST(@etl_date AS DATE) END",
       "source_file": "ads_inventory_alert.sql"
     },
     {
       "source": "ads_product_topn_daily.stat_date",
       "target_table": "ads_product_topn_daily",
       "condition_type": "WHERE",
-      "condition_expression": "stat_date = CAST(@etl_date AS DATE)",
+      "condition_expression": "CASE WHEN @full_refresh = 1 THEN 1 = 1 ELSE stat_date = CAST(@etl_date AS DATE) END",
       "source_file": "ads_product_topn_daily.sql"
     },
     {
       "source": "dws_product_sales_daily.sale_amount",
       "target_table": "ads_product_topn_daily",
       "condition_type": "WHERE",
-      "condition_expression": "psd.sale_amount > 0 AND psd.stat_date = CAST(@etl_date AS DATE)",
+      "condition_expression": "psd.sale_amount > 0 AND CASE WHEN @full_refresh = 1 THEN 1 = 1 ELSE psd.stat_date = CAST(@etl_date AS DATE) END",
       "source_file": "ads_product_topn_daily.sql"
     },
     {
       "source": "dws_product_sales_daily.stat_date",
       "target_table": "ads_product_topn_daily",
       "condition_type": "WHERE",
-      "condition_expression": "psd.sale_amount > 0 AND psd.stat_date = CAST(@etl_date AS DATE)",
+      "condition_expression": "psd.sale_amount > 0 AND CASE WHEN @full_refresh = 1 THEN 1 = 1 ELSE psd.stat_date = CAST(@etl_date AS DATE) END",
       "source_file": "ads_product_topn_daily.sql"
     },
     {
@@ -4254,49 +4261,49 @@
       "source": "ads_product_topn_daily.category_name",
       "target_table": "ads_product_topn_daily",
       "condition_type": "WHERE",
-      "condition_expression": "category_name IS NULL AND stat_date = CAST(@etl_date AS DATE)",
+      "condition_expression": "category_name IS NULL AND CASE WHEN @full_refresh = 1 THEN 1 = 1 ELSE stat_date = CAST(@etl_date AS DATE) END",
       "source_file": "ads_product_topn_daily.sql"
     },
     {
       "source": "ads_product_topn_daily.product_name",
       "target_table": "ads_product_topn_daily",
       "condition_type": "WHERE",
-      "condition_expression": "product_name IS NULL AND stat_date = CAST(@etl_date AS DATE)",
+      "condition_expression": "product_name IS NULL AND CASE WHEN @full_refresh = 1 THEN 1 = 1 ELSE stat_date = CAST(@etl_date AS DATE) END",
       "source_file": "ads_product_topn_daily.sql"
     },
     {
       "source": "ads_product_topn_daily.rank_num",
       "target_table": "ads_product_topn_daily",
       "condition_type": "WHERE",
-      "condition_expression": "rank_num > 10 AND stat_date = CAST(@etl_date AS DATE)",
+      "condition_expression": "rank_num > 10 AND CASE WHEN @full_refresh = 1 THEN 1 = 1 ELSE stat_date = CAST(@etl_date AS DATE) END",
       "source_file": "ads_product_topn_daily.sql"
     },
     {
       "source": "ads_promotion_roi.stat_date",
       "target_table": "ads_promotion_roi",
       "condition_type": "WHERE",
-      "condition_expression": "stat_date = CAST(@etl_date AS DATE)",
+      "condition_expression": "CASE WHEN @full_refresh = 1 THEN 1 = 1 ELSE stat_date = CAST(@etl_date AS DATE) END",
       "source_file": "ads_promotion_roi.sql"
     },
     {
       "source": "dws_promotion_effect_daily.stat_date",
       "target_table": "ads_promotion_roi",
       "condition_type": "WHERE",
-      "condition_expression": "pe.stat_date = CAST(@etl_date AS DATE)",
+      "condition_expression": "CASE WHEN @full_refresh = 1 THEN 1 = 1 ELSE pe.stat_date = CAST(@etl_date AS DATE) END",
       "source_file": "ads_promotion_roi.sql"
     },
     {
       "source": "ads_promotion_roi.promotion_name",
       "target_table": "ads_promotion_roi",
       "condition_type": "WHERE",
-      "condition_expression": "(promotion_name IS NULL OR promotion_name = '') AND stat_date = CAST(@etl_date AS DATE)",
+      "condition_expression": "(promotion_name IS NULL OR promotion_name = '') AND CASE WHEN @full_refresh = 1 THEN 1 = 1 ELSE stat_date = CAST(@etl_date AS DATE) END",
       "source_file": "ads_promotion_roi.sql"
     },
     {
       "source": "ads_promotion_roi.total_discount_cost",
       "target_table": "ads_promotion_roi",
       "condition_type": "WHERE",
-      "condition_expression": "total_discount_cost IS NULL AND stat_date = CAST(@etl_date AS DATE)",
+      "condition_expression": "total_discount_cost IS NULL AND CASE WHEN @full_refresh = 1 THEN 1 = 1 ELSE stat_date = CAST(@etl_date AS DATE) END",
       "source_file": "ads_promotion_roi.sql"
     },
     {
@@ -4324,14 +4331,14 @@
       "source": "ads_store_performance.stat_month",
       "target_table": "ads_store_performance",
       "condition_type": "WHERE",
-      "condition_expression": "stat_month = DATE_FORMAT(@etl_date, '%Y-%m')",
+      "condition_expression": "CASE WHEN @full_refresh = 1 THEN 1 = 1 ELSE stat_month = DATE_FORMAT(@etl_date, '%Y-%m') END",
       "source_file": "ads_store_performance.sql"
     },
     {
       "source": "dws_store_sales_daily.stat_date",
       "target_table": "ads_store_performance",
       "condition_type": "WHERE",
-      "condition_expression": "DATE_FORMAT(ssd.stat_date, '%Y-%m') = DATE_FORMAT(@etl_date, '%Y-%m')",
+      "condition_expression": "CASE WHEN @full_refresh = 1 THEN 1 = 1 ELSE DATE_FORMAT(ssd.stat_date, '%Y-%m') = DATE_FORMAT(@etl_date, '%Y-%m') END",
       "source_file": "ads_store_performance.sql"
     },
     {
@@ -4366,21 +4373,21 @@
       "source": "ads_store_performance.performance_score",
       "target_table": "ads_store_performance",
       "condition_type": "WHERE",
-      "condition_expression": "performance_score IS NULL AND stat_month = DATE_FORMAT(@etl_date, '%Y-%m')",
+      "condition_expression": "performance_score IS NULL AND CASE WHEN @full_refresh = 1 THEN 1 = 1 ELSE stat_month = DATE_FORMAT(@etl_date, '%Y-%m') END",
       "source_file": "ads_store_performance.sql"
     },
     {
       "source": "ads_store_performance.store_type",
       "target_table": "ads_store_performance",
       "condition_type": "WHERE",
-      "condition_expression": "(store_type IS NULL OR store_type = '') AND stat_month = DATE_FORMAT(@etl_date, '%Y-%m')",
+      "condition_expression": "(store_type IS NULL OR store_type = '') AND CASE WHEN @full_refresh = 1 THEN 1 = 1 ELSE stat_month = DATE_FORMAT(@etl_date, '%Y-%m') END",
       "source_file": "ads_store_performance.sql"
     },
     {
       "source": "ads_store_performance.avg_order_amount",
       "target_table": "ads_store_performance",
       "condition_type": "WHERE",
-      "condition_expression": "avg_order_amount IS NULL AND stat_month = DATE_FORMAT(@etl_date, '%Y-%m')",
+      "condition_expression": "avg_order_amount IS NULL AND CASE WHEN @full_refresh = 1 THEN 1 = 1 ELSE stat_month = DATE_FORMAT(@etl_date, '%Y-%m') END",
       "source_file": "ads_store_performance.sql"
     },
     {
@@ -4401,21 +4408,21 @@
       "source": "dwd_order_detail.order_date",
       "target_table": "dwd_order_detail",
       "condition_type": "WHERE",
-      "condition_expression": "order_date = CAST(@etl_date AS DATE)",
+      "condition_expression": "CASE WHEN @full_refresh = 1 THEN 1 = 1 ELSE order_date = CAST(@etl_date AS DATE) END",
       "source_file": "dwd_order_detail.sql"
     },
     {
       "source": "ods_order.order_status",
       "target_table": "dwd_order_detail",
       "condition_type": "WHERE",
-      "condition_expression": "o.order_status = '已完成' AND o.order_date = CAST(@etl_date AS DATE)",
+      "condition_expression": "o.order_status = '已完成' AND CASE WHEN @full_refresh = 1 THEN 1 = 1 ELSE o.order_date = CAST(@etl_date AS DATE) END",
       "source_file": "dwd_order_detail.sql"
     },
     {
       "source": "ods_order.order_date",
       "target_table": "dwd_order_detail",
       "condition_type": "WHERE",
-      "condition_expression": "o.order_status = '已完成' AND o.order_date = CAST(@etl_date AS DATE)",
+      "condition_expression": "o.order_status = '已完成' AND CASE WHEN @full_refresh = 1 THEN 1 = 1 ELSE o.order_date = CAST(@etl_date AS DATE) END",
       "source_file": "dwd_order_detail.sql"
     },
     {
@@ -4450,14 +4457,14 @@
       "source": "dwd_order_detail.cost_price",
       "target_table": "dwd_order_detail",
       "condition_type": "WHERE",
-      "condition_expression": "cost_price IS NULL AND order_date = CAST(@etl_date AS DATE)",
+      "condition_expression": "cost_price IS NULL AND CASE WHEN @full_refresh = 1 THEN 1 = 1 ELSE order_date = CAST(@etl_date AS DATE) END",
       "source_file": "dwd_order_detail.sql"
     },
     {
       "source": "dwd_order_detail.payment_method",
       "target_table": "dwd_order_detail",
       "condition_type": "WHERE",
-      "condition_expression": "(payment_method IS NULL OR payment_method = '') AND order_date = CAST(@etl_date AS DATE)",
+      "condition_expression": "(payment_method IS NULL OR payment_method = '') AND CASE WHEN @full_refresh = 1 THEN 1 = 1 ELSE order_date = CAST(@etl_date AS DATE) END",
       "source_file": "dwd_order_detail.sql"
     },
     {
@@ -4499,21 +4506,21 @@
       "source": "dws_category_sales_monthly.stat_month",
       "target_table": "dws_category_sales_monthly",
       "condition_type": "WHERE",
-      "condition_expression": "stat_month = DATE_FORMAT(@etl_date, '%Y-%m')",
-      "source_file": "dws_category_sales_monthly.sql"
-    },
-    {
-      "source": "dwd_order_detail.order_month",
-      "target_table": "dws_category_sales_monthly",
-      "condition_type": "WHERE",
-      "condition_expression": "NOT category_id IS NULL AND order_month = DATE_FORMAT(@etl_date, '%Y-%m')",
+      "condition_expression": "CASE WHEN @full_refresh = 1 THEN 1 = 1 ELSE stat_month = DATE_FORMAT(@etl_date, '%Y-%m') END",
       "source_file": "dws_category_sales_monthly.sql"
     },
     {
       "source": "dwd_order_detail.category_id",
       "target_table": "dws_category_sales_monthly",
       "condition_type": "WHERE",
-      "condition_expression": "NOT category_id IS NULL AND order_month = DATE_FORMAT(@etl_date, '%Y-%m')",
+      "condition_expression": "NOT category_id IS NULL AND CASE WHEN @full_refresh = 1 THEN 1 = 1 ELSE order_month = DATE_FORMAT(@etl_date, '%Y-%m') END",
+      "source_file": "dws_category_sales_monthly.sql"
+    },
+    {
+      "source": "dwd_order_detail.order_month",
+      "target_table": "dws_category_sales_monthly",
+      "condition_type": "WHERE",
+      "condition_expression": "NOT category_id IS NULL AND CASE WHEN @full_refresh = 1 THEN 1 = 1 ELSE order_month = DATE_FORMAT(@etl_date, '%Y-%m') END",
       "source_file": "dws_category_sales_monthly.sql"
     },
     {
@@ -4534,28 +4541,28 @@
       "source": "dws_category_sales_monthly.sale_quantity",
       "target_table": "dws_category_sales_monthly",
       "condition_type": "WHERE",
-      "condition_expression": "sale_quantity IS NULL AND stat_month = DATE_FORMAT(@etl_date, '%Y-%m')",
+      "condition_expression": "sale_quantity IS NULL AND CASE WHEN @full_refresh = 1 THEN 1 = 1 ELSE stat_month = DATE_FORMAT(@etl_date, '%Y-%m') END",
       "source_file": "dws_category_sales_monthly.sql"
     },
     {
       "source": "dws_category_sales_monthly.sale_amount",
       "target_table": "dws_category_sales_monthly",
       "condition_type": "WHERE",
-      "condition_expression": "sale_amount = 0 AND stat_month = DATE_FORMAT(@etl_date, '%Y-%m')",
+      "condition_expression": "sale_amount = 0 AND CASE WHEN @full_refresh = 1 THEN 1 = 1 ELSE stat_month = DATE_FORMAT(@etl_date, '%Y-%m') END",
       "source_file": "dws_category_sales_monthly.sql"
     },
     {
       "source": "dws_customer_order_summary.stat_date",
       "target_table": "dws_customer_order_summary",
       "condition_type": "WHERE",
-      "condition_expression": "stat_date = CAST(@etl_date AS DATE)",
+      "condition_expression": "CASE WHEN @full_refresh = 1 THEN 1 = 1 ELSE stat_date = CAST(@etl_date AS DATE) END",
       "source_file": "dws_customer_order_summary.sql"
     },
     {
       "source": "dwd_order_detail.order_date",
       "target_table": "dws_customer_order_summary",
       "condition_type": "WHERE",
-      "condition_expression": "order_date = CAST(@etl_date AS DATE)",
+      "condition_expression": "CASE WHEN @full_refresh = 1 THEN 1 = 1 ELSE order_date = CAST(@etl_date AS DATE) END",
       "source_file": "dws_customer_order_summary.sql"
     },
     {
@@ -4576,28 +4583,28 @@
       "source": "dws_customer_order_summary.avg_order_amount",
       "target_table": "dws_customer_order_summary",
       "condition_type": "WHERE",
-      "condition_expression": "avg_order_amount IS NULL AND stat_date = CAST(@etl_date AS DATE)",
+      "condition_expression": "avg_order_amount IS NULL AND CASE WHEN @full_refresh = 1 THEN 1 = 1 ELSE stat_date = CAST(@etl_date AS DATE) END",
       "source_file": "dws_customer_order_summary.sql"
     },
     {
       "source": "dws_customer_order_summary.payment_amount",
       "target_table": "dws_customer_order_summary",
       "condition_type": "WHERE",
-      "condition_expression": "payment_amount < 0 AND stat_date = CAST(@etl_date AS DATE)",
+      "condition_expression": "payment_amount < 0 AND CASE WHEN @full_refresh = 1 THEN 1 = 1 ELSE stat_date = CAST(@etl_date AS DATE) END",
       "source_file": "dws_customer_order_summary.sql"
     },
     {
       "source": "dws_inventory_daily.stat_date",
       "target_table": "dws_inventory_daily",
       "condition_type": "WHERE",
-      "condition_expression": "stat_date = CAST(@etl_date AS DATE)",
+      "condition_expression": "CASE WHEN @full_refresh = 1 THEN 1 = 1 ELSE stat_date = CAST(@etl_date AS DATE) END",
       "source_file": "dws_inventory_daily.sql"
     },
     {
       "source": "dwd_inventory.snapshot_date",
       "target_table": "dws_inventory_daily",
       "condition_type": "WHERE",
-      "condition_expression": "snapshot_date = CAST(@etl_date AS DATE)",
+      "condition_expression": "CASE WHEN @full_refresh = 1 THEN 1 = 1 ELSE snapshot_date = CAST(@etl_date AS DATE) END",
       "source_file": "dws_inventory_daily.sql"
     },
     {
@@ -4625,14 +4632,14 @@
       "source": "dws_product_sales_daily.stat_date",
       "target_table": "dws_product_sales_daily",
       "condition_type": "WHERE",
-      "condition_expression": "stat_date = CAST(@etl_date AS DATE)",
+      "condition_expression": "CASE WHEN @full_refresh = 1 THEN 1 = 1 ELSE stat_date = CAST(@etl_date AS DATE) END",
       "source_file": "dws_product_sales_daily.sql"
     },
     {
       "source": "dwd_order_detail.order_date",
       "target_table": "dws_product_sales_daily",
       "condition_type": "WHERE",
-      "condition_expression": "order_date = CAST(@etl_date AS DATE)",
+      "condition_expression": "CASE WHEN @full_refresh = 1 THEN 1 = 1 ELSE order_date = CAST(@etl_date AS DATE) END",
       "source_file": "dws_product_sales_daily.sql"
     },
     {
@@ -4653,56 +4660,63 @@
       "source": "dws_product_sales_daily.discount_amount",
       "target_table": "dws_product_sales_daily",
       "condition_type": "WHERE",
-      "condition_expression": "discount_amount IS NULL AND stat_date = CAST(@etl_date AS DATE)",
+      "condition_expression": "discount_amount IS NULL AND CASE WHEN @full_refresh = 1 THEN 1 = 1 ELSE stat_date = CAST(@etl_date AS DATE) END",
       "source_file": "dws_product_sales_daily.sql"
     },
     {
       "source": "dws_product_sales_daily.sale_amount",
       "target_table": "dws_product_sales_daily",
       "condition_type": "WHERE",
-      "condition_expression": "sale_amount < 0 AND stat_date = CAST(@etl_date AS DATE)",
+      "condition_expression": "sale_amount < 0 AND CASE WHEN @full_refresh = 1 THEN 1 = 1 ELSE stat_date = CAST(@etl_date AS DATE) END",
       "source_file": "dws_product_sales_daily.sql"
     },
     {
       "source": "dws_promotion_effect_daily.stat_date",
       "target_table": "dws_promotion_effect_daily",
       "condition_type": "WHERE",
-      "condition_expression": "stat_date = CAST(@etl_date AS DATE)",
+      "condition_expression": "CASE WHEN @full_refresh = 1 THEN 1 = 1 ELSE stat_date = CAST(@etl_date AS DATE) END",
       "source_file": "dws_promotion_effect_daily.sql"
     },
     {
       "source": "dwd_order_detail.order_date",
       "target_table": "dws_promotion_effect_daily",
       "condition_type": "WHERE",
-      "condition_expression": "od.order_date = CAST(@etl_date AS DATE) AND NOT od.promotion_id IS NULL",
+      "condition_expression": "CASE WHEN @full_refresh = 1 THEN 1 = 1 ELSE od.order_date = CAST(@etl_date AS DATE) END AND NOT od.promotion_id IS NULL",
       "source_file": "dws_promotion_effect_daily.sql"
     },
     {
       "source": "dwd_order_detail.promotion_id",
       "target_table": "dws_promotion_effect_daily",
       "condition_type": "WHERE",
-      "condition_expression": "od.order_date = CAST(@etl_date AS DATE) AND NOT od.promotion_id IS NULL",
+      "condition_expression": "CASE WHEN @full_refresh = 1 THEN 1 = 1 ELSE od.order_date = CAST(@etl_date AS DATE) END AND NOT od.promotion_id IS NULL",
       "source_file": "dws_promotion_effect_daily.sql"
     },
     {
       "source": "dwd_order_detail.promotion_id",
       "target_table": "dws_promotion_effect_daily",
       "condition_type": "JOIN_ON",
-      "condition_expression": "od.promotion_id = p.promotion_id AND p.snapshot_date = CAST(@etl_date AS DATE)",
+      "condition_expression": "od.promotion_id = p.promotion_id AND p.snapshot_date = CASE WHEN @full_refresh = 1 THEN TO_DATE(od.order_date) ELSE CAST(@etl_date AS DATE) END",
       "source_file": "dws_promotion_effect_daily.sql"
     },
     {
       "source": "dwd_promotion.promotion_id",
       "target_table": "dws_promotion_effect_daily",
       "condition_type": "JOIN_ON",
-      "condition_expression": "od.promotion_id = p.promotion_id AND p.snapshot_date = CAST(@etl_date AS DATE)",
+      "condition_expression": "od.promotion_id = p.promotion_id AND p.snapshot_date = CASE WHEN @full_refresh = 1 THEN TO_DATE(od.order_date) ELSE CAST(@etl_date AS DATE) END",
       "source_file": "dws_promotion_effect_daily.sql"
     },
     {
       "source": "dwd_promotion.snapshot_date",
       "target_table": "dws_promotion_effect_daily",
       "condition_type": "JOIN_ON",
-      "condition_expression": "od.promotion_id = p.promotion_id AND p.snapshot_date = CAST(@etl_date AS DATE)",
+      "condition_expression": "od.promotion_id = p.promotion_id AND p.snapshot_date = CASE WHEN @full_refresh = 1 THEN TO_DATE(od.order_date) ELSE CAST(@etl_date AS DATE) END",
+      "source_file": "dws_promotion_effect_daily.sql"
+    },
+    {
+      "source": "dwd_order_detail.order_date",
+      "target_table": "dws_promotion_effect_daily",
+      "condition_type": "JOIN_ON",
+      "condition_expression": "od.promotion_id = p.promotion_id AND p.snapshot_date = CASE WHEN @full_refresh = 1 THEN TO_DATE(od.order_date) ELSE CAST(@etl_date AS DATE) END",
       "source_file": "dws_promotion_effect_daily.sql"
     },
     {
@@ -4723,35 +4737,35 @@
       "source": "dws_promotion_effect_daily.discount_amount",
       "target_table": "dws_promotion_effect_daily",
       "condition_type": "WHERE",
-      "condition_expression": "discount_amount IS NULL AND stat_date = CAST(@etl_date AS DATE)",
+      "condition_expression": "discount_amount IS NULL AND CASE WHEN @full_refresh = 1 THEN 1 = 1 ELSE stat_date = CAST(@etl_date AS DATE) END",
       "source_file": "dws_promotion_effect_daily.sql"
     },
     {
       "source": "dws_promotion_effect_daily.promotion_name",
       "target_table": "dws_promotion_effect_daily",
       "condition_type": "WHERE",
-      "condition_expression": "(promotion_name IS NULL OR promotion_name = '') AND stat_date = CAST(@etl_date AS DATE)",
+      "condition_expression": "(promotion_name IS NULL OR promotion_name = '') AND CASE WHEN @full_refresh = 1 THEN 1 = 1 ELSE stat_date = CAST(@etl_date AS DATE) END",
       "source_file": "dws_promotion_effect_daily.sql"
     },
     {
       "source": "dws_promotion_effect_daily.sale_amount",
       "target_table": "dws_promotion_effect_daily",
       "condition_type": "WHERE",
-      "condition_expression": "sale_amount < 0 AND stat_date = CAST(@etl_date AS DATE)",
+      "condition_expression": "sale_amount < 0 AND CASE WHEN @full_refresh = 1 THEN 1 = 1 ELSE stat_date = CAST(@etl_date AS DATE) END",
       "source_file": "dws_promotion_effect_daily.sql"
     },
     {
       "source": "dws_store_sales_daily.stat_date",
       "target_table": "dws_store_sales_daily",
       "condition_type": "WHERE",
-      "condition_expression": "stat_date = CAST(@etl_date AS DATE)",
+      "condition_expression": "CASE WHEN @full_refresh = 1 THEN 1 = 1 ELSE stat_date = CAST(@etl_date AS DATE) END",
       "source_file": "dws_store_sales_daily.sql"
     },
     {
       "source": "dwd_order_detail.order_date",
       "target_table": "dws_store_sales_daily",
       "condition_type": "WHERE",
-      "condition_expression": "order_date = CAST(@etl_date AS DATE)",
+      "condition_expression": "CASE WHEN @full_refresh = 1 THEN 1 = 1 ELSE order_date = CAST(@etl_date AS DATE) END",
       "source_file": "dws_store_sales_daily.sql"
     },
     {
@@ -4772,21 +4786,21 @@
       "source": "dws_store_sales_daily.discount_amount",
       "target_table": "dws_store_sales_daily",
       "condition_type": "WHERE",
-      "condition_expression": "discount_amount IS NULL AND stat_date = CAST(@etl_date AS DATE)",
+      "condition_expression": "discount_amount IS NULL AND CASE WHEN @full_refresh = 1 THEN 1 = 1 ELSE stat_date = CAST(@etl_date AS DATE) END",
       "source_file": "dws_store_sales_daily.sql"
     },
     {
       "source": "dws_store_sales_daily.order_count",
       "target_table": "dws_store_sales_daily",
       "condition_type": "WHERE",
-      "condition_expression": "order_count = 0 AND stat_date = CAST(@etl_date AS DATE)",
+      "condition_expression": "order_count = 0 AND CASE WHEN @full_refresh = 1 THEN 1 = 1 ELSE stat_date = CAST(@etl_date AS DATE) END",
       "source_file": "dws_store_sales_daily.sql"
     },
     {
       "source": "dws_store_sales_daily.payment_amount",
       "target_table": "dws_store_sales_daily",
       "condition_type": "WHERE",
-      "condition_expression": "payment_amount < 0 AND stat_date = CAST(@etl_date AS DATE)",
+      "condition_expression": "payment_amount < 0 AND CASE WHEN @full_refresh = 1 THEN 1 = 1 ELSE stat_date = CAST(@etl_date AS DATE) END",
       "source_file": "dws_store_sales_daily.sql"
     }
   ]

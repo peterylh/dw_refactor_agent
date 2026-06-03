@@ -42,6 +42,13 @@ def _strip_db(name):
     return name.replace(f"{CURRENT_DB}.", "")
 
 
+def _target_table_sql(target_expr):
+    """返回写入目标表名,不包含 INSERT/CREATE 目标列清单。"""
+    if isinstance(target_expr, exp.Schema):
+        target_expr = target_expr.this
+    return target_expr.sql(dialect="doris")
+
+
 # ============================================================
 # 1. Schema 构建: 从 DDL 解析
 # ============================================================
@@ -291,7 +298,7 @@ def _extract_indirect(inner, target_table, file_path):
 
 def _extract_indirect_from_delete(delete_stmt, file_path):
     """DELETE 语句的 WHERE 条件产生自引用间接血缘"""
-    target_table = _strip_db(delete_stmt.this.sql(dialect="doris"))
+    target_table = _strip_db(_target_table_sql(delete_stmt.this))
     entries = []
     where = delete_stmt.args.get("where")
     if where:
@@ -393,7 +400,7 @@ def _trace_lineage(target_table, select_expr, schema, file_path):
 
 
 def _handle_insert(stmt, file_path, schema):
-    target_table = stmt.this.sql(dialect="doris")
+    target_table = _target_table_sql(stmt.this)
     inner = stmt.expression
     if isinstance(inner, exp.Values):
         return _extract_values_lineage(target_table, inner, file_path)
@@ -427,13 +434,13 @@ def _handle_insert(stmt, file_path, schema):
 
 
 def _handle_update(stmt, file_path, schema):
-    target_table = stmt.this.sql(dialect="doris")
+    target_table = _target_table_sql(stmt.this)
     select = update_to_select(stmt)
     return _trace_lineage(target_table, select, schema, file_path)
 
 
 def _handle_create(stmt, file_path, schema):
-    target_table = stmt.this.sql(dialect="doris")
+    target_table = _target_table_sql(stmt.this)
     inner = stmt.args.get("expression")
     if isinstance(inner, (exp.Select, exp.SetOperation)):
         return _trace_lineage(target_table, inner, schema, file_path)
@@ -441,7 +448,7 @@ def _handle_create(stmt, file_path, schema):
 
 
 def _handle_merge(stmt, file_path, schema):
-    target_table = stmt.this.sql(dialect="doris")
+    target_table = _target_table_sql(stmt.this)
     entries = []
     whens = stmt.args.get("whens")
     if not whens:
@@ -464,7 +471,7 @@ def _handle_select_into(stmt, file_path, schema):
     into = stmt.args.get("into")
     if not into:
         return []
-    target_table = into.this.sql(dialect="doris")
+    target_table = _target_table_sql(into.this)
     return _trace_lineage(target_table, stmt, schema, file_path)
 
 
