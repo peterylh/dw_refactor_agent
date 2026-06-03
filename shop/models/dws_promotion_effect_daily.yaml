@@ -5,9 +5,11 @@ table_type: fact
 description: 促销效果日汇总
 config:
   materialized: incremental
-derived_metrics:
+atomic_metrics:
 - order_count
 - customer_count
+derived_metrics:
 - sale_quantity
-- sale_amount
 - discount_amount
+calculated_metrics:
+- sale_amount

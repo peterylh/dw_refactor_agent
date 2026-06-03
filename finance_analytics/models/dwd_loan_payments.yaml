@@ -7,8 +7,8 @@ config:
 atomic_metrics:
 - scheduled_amount
 - actual_amount
+calculated_metrics:
+- days_late
 - late_fee
 - outstanding_balance
-- days_late
-calculated_metrics:
 - amount_difference

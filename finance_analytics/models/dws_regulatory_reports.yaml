@@ -11,4 +11,3 @@ atomic_metrics:
 calculated_metrics:
 - days_from_due_date
 - processing_days
-- risk_score

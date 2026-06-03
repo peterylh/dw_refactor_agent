@@ -7,9 +7,8 @@ config:
   materialized: incremental
 atomic_metrics:
 - quantity
-- unit_price
 - discount
+calculated_metrics:
 - subtotal
 - cost_price
-calculated_metrics:
 - gross_profit

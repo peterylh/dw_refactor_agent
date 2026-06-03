@@ -5,9 +5,8 @@ table_type: fact
 description: 库存日汇总
 config:
   materialized: incremental
-derived_metrics:
-- quantity
-- safety_stock
-- days_since_restock
 calculated_metrics:
 - stock_status
+- days_since_restock
+derived_metrics:
+- quantity

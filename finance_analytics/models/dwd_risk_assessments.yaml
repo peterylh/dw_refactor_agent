@@ -4,10 +4,5 @@ layer: DWD
 table_type: fact
 config:
   materialized: full
-atomic_metrics:
+calculated_metrics:
 - risk_score
-- transaction_volume_last_90d
-- num_accounts
-- years_as_customer
-- high_value_customer
-- income_verified

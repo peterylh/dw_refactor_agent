@@ -6,12 +6,7 @@ config:
   materialized: full
 atomic_metrics:
 - requested_amount
-- credit_score_at_application
-- annual_income
-- debt_to_income_ratio
 - approved_amount
-- approved_rate
-- approval_probability_score
 calculated_metrics:
 - processing_days
 - amount_difference

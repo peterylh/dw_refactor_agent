@@ -43,6 +43,38 @@ def test_build_prompt_includes_all_info():
     assert "others" in prompt
 
 
+def test_build_prompt_clarifies_metric_group_boundaries():
+    ctx = TableContext(
+        table_name="dwd_fact_table",
+        layer="DWD",
+        ddl="CREATE TABLE dwd_fact_table (metric_a DECIMAL(12,2));",
+        etl_sql="",
+        upstream_tables=["ods_source_table"],
+        downstream_tables=["dws_summary_table"],
+    )
+
+    prompt = build_prompt(ctx)
+
+    assert "事件标识或实体标识字段做 COUNT/COUNT DISTINCT" in prompt
+    assert "对上游已存在的 atomic_metrics 做 SUM/AVG/MIN/MAX" in prompt
+    assert "对上游 calculated_metrics 再聚合" in prompt
+    assert "不要套用字段名示例" in prompt
+    assert "非加性属性" in prompt
+
+    hardcoded_examples = [
+        "订单ID",
+        "客户ID",
+        "交易ID",
+        "订单明细小计金额",
+        "行金额",
+        "含税金额",
+        "净额",
+        "毛利",
+    ]
+    for example in hardcoded_examples:
+        assert example not in prompt
+
+
 def test_build_prompt_without_etl():
     ctx = TableContext(
         table_name="dwd_customer",
@@ -304,6 +336,68 @@ def test_result_status_from_validation():
     assert result.status == "blocked"
 
     result.validation = {
+        "unknown_columns": [],
+        "duplicate_columns": [],
+        "missing_columns": [],
+    }
+    assert result.status == "passed"
+
+
+def test_inspect_preserves_llm_metric_groups(tmp_path, monkeypatch):
+    inspector = TableInspector(api_key="test",
+                               cache_file=tmp_path / "cache.json")
+    ctx = TableContext(
+        table_name="dwd_order_detail",
+        layer="DWD",
+        ddl="""CREATE TABLE shop_dm.dwd_order_detail (
+            order_id BIGINT,
+            quantity INT,
+            unit_price DECIMAL(12,2),
+            discount DECIMAL(12,2),
+            subtotal DECIMAL(12,2),
+            etl_time DATETIME
+        );""",
+        etl_sql="""INSERT INTO shop_dm.dwd_order_detail
+        SELECT order_id, quantity, unit_price, discount, subtotal, NOW()
+        FROM shop_dm.ods_order_item;""",
+        upstream_tables=["ods_order_item"],
+        downstream_tables=["dws_store_sales_daily"],
+    )
+    response = {
+        "inferred_layer": "DWD",
+        "table_type": "fact",
+        "confidence": 0.95,
+        "columns": {
+            "atomic_metrics": [
+                {"name": "quantity", "data_type": "INT"},
+                {"name": "unit_price", "data_type": "DECIMAL(12,2)"},
+                {"name": "discount", "data_type": "DECIMAL(12,2)"},
+                {"name": "subtotal", "data_type": "DECIMAL(12,2)"},
+            ],
+            "derived_metrics": [],
+            "calculated_metrics": [],
+            "dimensions": [{
+                "name": "order_id",
+                "dimension_type": "primary_key",
+            }],
+            "others": [{"name": "etl_time", "role": "audit"}],
+        },
+    }
+    monkeypatch.setattr(inspector, "_call_api", lambda _prompt: json.dumps({
+        "choices": [{"message": {"content": json.dumps(response)}}]
+    }))
+
+    result = inspector.inspect(ctx)
+
+    assert [item["name"] for item in result.atomic_metrics] == [
+        "quantity",
+        "unit_price",
+        "discount",
+        "subtotal",
+    ]
+    assert result.calculated_metrics == []
+    assert [item["name"] for item in result.dimensions] == ["order_id"]
+    assert result.validation == {
         "unknown_columns": [],
         "duplicate_columns": [],
         "missing_columns": [],

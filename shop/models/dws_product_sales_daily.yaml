@@ -5,8 +5,10 @@ table_type: fact
 description: 商品日销售汇总
 config:
   materialized: incremental
-derived_metrics:
+atomic_metrics:
 - order_count
+derived_metrics:
 - sale_quantity
-- sale_amount
 - discount_amount
+calculated_metrics:
+- sale_amount

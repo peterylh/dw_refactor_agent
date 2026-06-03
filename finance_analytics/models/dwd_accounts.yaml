@@ -4,11 +4,3 @@ layer: DWD
 table_type: dimension
 config:
   materialized: full
-atomic_metrics:
-- current_balance
-- available_balance
-- credit_limit
-- interest_rate
-calculated_metrics:
-- account_age_months
-- credit_utilization_pct
