@@ -13,9 +13,14 @@
 import json
 import argparse
 import sys
+import re
 from pathlib import Path
 from collections import defaultdict
 import os
+
+import sqlglot
+import yaml
+from sqlglot import exp
 
 # 将项目根目录加入 sys.path 以便导入 config
 _root = Path(__file__).resolve().parent.parent
@@ -24,7 +29,8 @@ if str(_root) not in sys.path:
 
 from assess.context_builder import build_contexts
 from assess.table_inspector import TableInspector, VALID_TABLE_TYPES
-from config import layer_rank
+from config import PROJECT_CONFIG, PROJECT_ROOT, layer_rank
+from ddl_deriver.ddl_deriver import parse_create_table
 
 # ============================================================
 # 评分配置
@@ -53,6 +59,12 @@ ATOMIC_METRIC_RULE_NAME = "原子指标命名 {ACTION_VERB}_{MEASURE_NOUN}"
 DERIVED_METRIC_RULE_NAME = (
     "派生指标命名 {TIME_PERIOD}_{MODIFIER...}_{ATOMIC_METRIC}"
 )
+FILE_RULE_DDL = "DDL文件名与建表表名一致"
+FILE_RULE_MODEL_TABLE = "Model文件名与表名一致"
+FILE_RULE_MODEL_NAME = "Model文件名与模型name一致"
+FILE_RULE_TASK_SQL = "Task文件名与产出表一致"
+FILE_RULE_TASK_LINEAGE = "Task血缘目标与产出表一致"
+FILE_RULE_TOTAL = "文件命名总计"
 
 def build_metric_result(metric: dict, display_score: float | None = None) -> dict:
     raw = metric["score"]
@@ -520,10 +532,297 @@ def _derived_metric_names_for_table(
     return _metric_names_from_raw(raw_metrics)
 
 
+def _short_table_name(table_name: str) -> str:
+    name = str(table_name or "").strip().rstrip(";")
+    if not name:
+        return ""
+    name = name.replace("`", "").replace('"', "")
+    return name.split(".")[-1].strip()
+
+
+def _display_file_path(project_dir: Path, file_path: Path) -> str:
+    try:
+        return file_path.relative_to(project_dir.parent).as_posix()
+    except ValueError:
+        return file_path.as_posix()
+
+
+def _ddl_declared_table_name(ddl_path: Path) -> str:
+    text = ddl_path.read_text(encoding="utf-8")
+    try:
+        table_def = parse_create_table(text)
+        if table_def:
+            return _short_table_name(table_def.short_name)
+    except Exception:
+        pass
+
+    match = re.search(
+        r"\bCREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?"
+        r"(?:`?\w+`?\.)?`?(\w+)`?",
+        text,
+        flags=re.IGNORECASE,
+    )
+    return _short_table_name(match.group(1)) if match else ""
+
+
+def _model_declared_name(model_path: Path) -> str:
+    try:
+        data = yaml.safe_load(model_path.read_text(encoding="utf-8")) or {}
+    except yaml.YAMLError:
+        return ""
+    if not isinstance(data, dict):
+        return ""
+    return str(data.get("name") or "").strip()
+
+
+def _target_table_sql(target_expr) -> str:
+    if isinstance(target_expr, exp.Schema):
+        target_expr = target_expr.this
+    return target_expr.sql(dialect="doris")
+
+
+def _extract_task_output_tables(task_path: Path) -> set[str]:
+    text = task_path.read_text(encoding="utf-8")
+    targets = set()
+    try:
+        statements = sqlglot.parse(text, dialect="doris")
+    except Exception:
+        statements = []
+
+    for stmt in statements:
+        if isinstance(stmt, exp.Insert):
+            targets.add(_short_table_name(_target_table_sql(stmt.this)))
+        elif isinstance(stmt, exp.Update):
+            targets.add(_short_table_name(_target_table_sql(stmt.this)))
+        elif isinstance(stmt, exp.Delete):
+            targets.add(_short_table_name(_target_table_sql(stmt.this)))
+        elif (
+            isinstance(stmt, exp.Create)
+            and stmt.args.get("expression") is not None
+        ):
+            targets.add(_short_table_name(_target_table_sql(stmt.this)))
+        elif isinstance(stmt, exp.Merge):
+            targets.add(_short_table_name(_target_table_sql(stmt.this)))
+        elif isinstance(stmt, exp.TruncateTable):
+            for table in stmt.expressions:
+                targets.add(_short_table_name(_target_table_sql(table)))
+
+    if targets:
+        return {target for target in targets if target}
+
+    write_patterns = [
+        r"\bINSERT\s+(?:OVERWRITE\s+TABLE|INTO)\s+"
+        r"(?:`?\w+`?\.)?`?(\w+)`?",
+        r"\bUPDATE\s+(?:`?\w+`?\.)?`?(\w+)`?",
+        r"\bDELETE\s+FROM\s+(?:`?\w+`?\.)?`?(\w+)`?",
+        r"\bTRUNCATE\s+(?:TABLE\s+)?(?:`?\w+`?\.)?`?(\w+)`?",
+        r"\bMERGE\s+INTO\s+(?:`?\w+`?\.)?`?(\w+)`?",
+        r"\bCREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?"
+        r"(?:`?\w+`?\.)?`?(\w+)`?\s+AS\b",
+    ]
+    for pattern in write_patterns:
+        for match in re.finditer(pattern, text, flags=re.IGNORECASE):
+            target = _short_table_name(match.group(1))
+            if target:
+                targets.add(target)
+    return targets
+
+
+def _expected_task_table(task_path: Path) -> str:
+    stem = task_path.stem
+    if task_path.parent.name == "full_refresh" and stem.endswith("_full_refresh"):
+        return stem[: -len("_full_refresh")]
+    return stem
+
+
+def _source_file_keys(source_file: str) -> set[str]:
+    source = str(source_file or "").replace("\\", "/").strip()
+    if not source:
+        return set()
+    return {source}
+
+
+def _lineage_targets_by_source_file(
+    edges: list | None,
+    indirect_edges: list | None,
+) -> dict[str, set[str]]:
+    targets = defaultdict(set)
+
+    for edge in edges or []:
+        target = _short_table_name(_table_from_node(str(edge.get("target") or "")))
+        if not target:
+            continue
+        for key in _source_file_keys(edge.get("source_file", "")):
+            targets[key].add(target)
+
+    for edge in indirect_edges or []:
+        target = _short_table_name(edge.get("target_table", ""))
+        if not target:
+            continue
+        for key in _source_file_keys(edge.get("source_file", "")):
+            targets[key].add(target)
+
+    return dict(targets)
+
+
+def _empty_file_score() -> dict:
+    return dict(
+        passed=0,
+        total=0,
+        rule_summary={},
+        details=[],
+    )
+
+
+def _record_file_check(
+    result: dict,
+    rule: str,
+    file_path: Path,
+    project_dir: Path,
+    expected: str,
+    actual,
+    passed: bool,
+) -> None:
+    result["total"] += 1
+    if passed:
+        result["passed"] += 1
+
+    summary = result["rule_summary"].setdefault(
+        rule,
+        {"pass_count": 0, "total": 0},
+    )
+    summary["total"] += 1
+    if passed:
+        summary["pass_count"] += 1
+        return
+
+    if isinstance(actual, (set, list, tuple)):
+        actual_display = ", ".join(sorted(str(item) for item in actual)) or "未解析"
+    else:
+        actual_display = str(actual or "未解析")
+
+    result["details"].append(
+        dict(
+            file=_display_file_path(project_dir, file_path),
+            rule=rule,
+            expected=expected,
+            actual=actual_display,
+        )
+    )
+
+
+def _finalize_file_score(result: dict) -> dict:
+    for summary in result["rule_summary"].values():
+        total = summary["total"]
+        summary["pct"] = (
+            round(summary["pass_count"] / total * 100, 1)
+            if total else 0
+        )
+
+    result["rule_summary"][FILE_RULE_TOTAL] = dict(
+        pass_count=result["passed"],
+        total=result["total"],
+        pct=round(result["passed"] / result["total"] * 100, 1)
+        if result["total"] else 0,
+    )
+    return result
+
+
+def _score_file_naming_conventions(
+    project_dir: Path | None,
+    tables: list,
+    edges: list | None,
+    indirect_edges: list | None,
+) -> dict:
+    if not project_dir:
+        return _empty_file_score()
+
+    project_dir = Path(project_dir)
+    result = _empty_file_score()
+    table_names = {str(t.get("name") or "") for t in tables}
+    ddl_table_names = set()
+
+    ddl_dir = project_dir / "ddl"
+    if ddl_dir.exists():
+        for ddl_path in sorted(ddl_dir.glob("*.sql")):
+            expected = ddl_path.stem
+            actual = _ddl_declared_table_name(ddl_path)
+            if actual:
+                ddl_table_names.add(actual)
+            _record_file_check(
+                result,
+                FILE_RULE_DDL,
+                ddl_path,
+                project_dir,
+                expected,
+                actual,
+                actual == expected,
+            )
+    table_names.update(ddl_table_names)
+
+    models_dir = project_dir / "models"
+    if models_dir.exists():
+        for model_path in sorted(models_dir.glob("*.yaml")):
+            expected = model_path.stem
+            actual_name = _model_declared_name(model_path)
+            _record_file_check(
+                result,
+                FILE_RULE_MODEL_TABLE,
+                model_path,
+                project_dir,
+                expected,
+                expected if expected in table_names else "未找到同名表",
+                expected in table_names,
+            )
+            _record_file_check(
+                result,
+                FILE_RULE_MODEL_NAME,
+                model_path,
+                project_dir,
+                expected,
+                actual_name,
+                actual_name == expected,
+            )
+
+    tasks_dir = project_dir / "tasks"
+    lineage_targets = _lineage_targets_by_source_file(edges, indirect_edges)
+    if tasks_dir.exists():
+        for task_path in sorted(tasks_dir.rglob("*.sql")):
+            expected = _expected_task_table(task_path)
+            actual_targets = _extract_task_output_tables(task_path)
+            _record_file_check(
+                result,
+                FILE_RULE_TASK_SQL,
+                task_path,
+                project_dir,
+                expected,
+                actual_targets,
+                actual_targets == {expected},
+            )
+
+            relative_key = task_path.relative_to(tasks_dir).as_posix()
+            lineage_targets_for_file = lineage_targets.get(relative_key) or set()
+            _record_file_check(
+                result,
+                FILE_RULE_TASK_LINEAGE,
+                task_path,
+                project_dir,
+                expected,
+                lineage_targets_for_file,
+                lineage_targets_for_file == {expected},
+            )
+
+    return _finalize_file_score(result)
+
+
 def score_naming_conventions(
     tables: list,
     nc,
     model_metadata: dict | None = None,
+    *,
+    project_dir: Path | None = None,
+    edges: list | None = None,
+    indirect_edges: list | None = None,
 ) -> dict:
     middle = [t for t in tables if t["layer"] in ("DWD", "DWS", "DIM")]
     atomic_rule_name = _metric_rule_name(nc, "atomic", "atomic_metrics")
@@ -652,6 +951,15 @@ def score_naming_conventions(
         total_passed += table_pass
         total_checks += table_check
 
+    file_result = _score_file_naming_conventions(
+        project_dir,
+        tables,
+        edges,
+        indirect_edges,
+    )
+    total_passed += file_result["passed"]
+    total_checks += file_result["total"]
+
     overall = round(total_passed / total_checks *
                     100, 1) if total_checks else 100.0
 
@@ -758,9 +1066,16 @@ def score_naming_conventions(
             if metric_total else 0,
         )
 
+    rule_summary.update(file_result["rule_summary"])
+
     return dict(score=overall,
                 details=table_results,
-                rule_summary=rule_summary)
+                rule_summary=rule_summary,
+                file_checks=dict(
+                    passed=file_result["passed"],
+                    total=file_result["total"],
+                ),
+                file_details=file_result["details"])
 
 
 # ============================================================
@@ -985,6 +1300,21 @@ def generate_report(scores: dict, weights: dict, project: str) -> str:
             for iss in issues:
                 parts.append(f"      {iss}")
 
+    file_details = naming.get("file_details") or []
+    if file_details:
+        if not has_viz:
+            parts.append(f"\n  偏离详情:")
+            has_viz = True
+        parts.append(f"\n    文件命名偏离:")
+        for detail in file_details[:20]:
+            parts.append(
+                "      "
+                f"{detail['file']} | {detail['rule']} | "
+                f"期望: {detail['expected']} | 实际: {detail['actual']}"
+            )
+        if len(file_details) > 20:
+            parts.append(f"      ... (共{len(file_details)}个)")
+
     if not has_viz:
         parts.append(f"\n  无违规 ✓")
 
@@ -1037,8 +1367,16 @@ def assess(project: str, weights: dict = None) -> dict:
     architecture_raw = score_architecture_health(tables, edges, indirect_edges,
                                                   llm_results, model_metadata)
     architecture_score = build_metric_result(architecture_raw)
+    project_dir = PROJECT_ROOT / PROJECT_CONFIG[project]["dir"]
     naming_score = build_metric_result(
-        score_naming_conventions(tables, nc, model_metadata))
+        score_naming_conventions(
+            tables,
+            nc,
+            model_metadata,
+            project_dir=project_dir,
+            edges=edges,
+            indirect_edges=indirect_edges,
+        ))
 
     overall_raw = round(
         weights["reuse"] * reuse_score["raw"] +
