@@ -160,7 +160,7 @@ rules:
 
   TABLE_DWS:
     desc: DWS 汇总层表命名
-    expr: ["_", I, "$BIZ_MODULE", "$ENTITY", "$ENTITY", "$METRICS_DESC", ["", "$TIME_PERIOD", "$DWS_GRANULARITY"]]
+    expr: ["_", I, "$BIZ_MODULE", "$ENTITY{1,2}", "$METRICS_DESC", ["", "$TIME_PERIOD", "$DWS_GRANULARITY"]]
     constraints:
       max_length: 30
 

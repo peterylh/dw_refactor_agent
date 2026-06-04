@@ -476,6 +476,67 @@ def _split_repeat_suffix(raw: str) -> tuple[str, dict, bool]:
     return raw, {"min": 1, "max": 1}, False
 
 
+def _expand_repeat_segment_item(item) -> list[list]:
+    raw_str, _forced_concat_left = _raw_segment_item(item)
+    raw_str = str(raw_str)
+    sigil = ""
+    name = raw_str
+    if raw_str.startswith("$"):
+        sigil = "$"
+        name = raw_str[1:]
+        if name.startswith("+"):
+            sigil = "$+"
+            name = name[1:]
+
+    match = _REPEAT_RE.match(name)
+    if not match:
+        return [[item]]
+
+    max_value = match.group("max")
+    if max_value == "":
+        raise ValueError(
+            "Segment naming rules require finite {min,max} repeat syntax")
+
+    min_repeat = int(match.group("min"))
+    max_repeat = int(max_value)
+    if min_repeat > max_repeat:
+        raise ValueError(
+            "Segment naming rule repeat min must be less than or equal to max")
+
+    base_name = match.group("name")
+    variants = []
+    for count in range(max_repeat, min_repeat - 1, -1):
+        repeated = []
+        for idx in range(count):
+            repeat_sigil = sigil if idx == 0 else ("$" if sigil else "")
+            token = repeat_sigil + base_name
+            if idx == 0 and isinstance(item, dict):
+                repeated.append({**item, "token": token})
+            else:
+                repeated.append(token)
+        variants.append(repeated)
+    return variants
+
+
+def _expand_rule_expr_repeats(expr) -> list:
+    if not isinstance(expr, list):
+        return [expr]
+
+    variants = [[]]
+    for part in expr:
+        if isinstance(part, list):
+            choices = [[variant] for variant in _expand_rule_expr_repeats(part)]
+        else:
+            choices = _expand_repeat_segment_item(part)
+
+        variants = [
+            base + choice
+            for base in variants
+            for choice in choices
+        ]
+    return variants
+
+
 def _raw_segment_item(item) -> tuple[str, bool]:
     if isinstance(item, dict) and "token" in item:
         return str(item["token"]), bool(item.get("concat_left", False))
@@ -573,19 +634,26 @@ def _parse_rule_expression(expr, types: dict) -> list:
     return _parse_segments(_expr_to_segment_items(expr), types)
 
 
-def _parse_template(template, types: dict) -> list:
-    """支持列表或字符串格式。"""
+_TEMPLATE_REPEAT_PREFIX_RE = re.compile(r"^\{\d+,\d*\}")
+
+
+def _template_to_segment_items(template) -> list:
     if isinstance(template, list):
-        return _parse_segments(template, types)
-    # 字符串格式 "ods_{source}_{entity}_{load_type}" → 添加 $ 前缀
+        return template
+
     raw = []
     i = 0
     while i < len(template):
         if template[i] == "{":
             j = template.find("}", i)
             content = template[i + 1:j]
-            raw.append("$" + content)  # {type} → $type
             i = j + 1
+            repeat_match = _TEMPLATE_REPEAT_PREFIX_RE.match(template[i:])
+            repeat_suffix = ""
+            if repeat_match:
+                repeat_suffix = repeat_match.group(0)
+                i += len(repeat_suffix)
+            raw.append("$" + content + repeat_suffix)
         else:
             j = template.find("{", i)
             if j == -1:
@@ -594,7 +662,20 @@ def _parse_template(template, types: dict) -> list:
             if j > i:
                 raw.append(template[i:j])
             i = j
-    return _parse_segments(raw, types)
+    return raw
+
+
+def _parse_template(template, types: dict) -> list:
+    """支持列表或字符串格式。"""
+    return _parse_segments(_template_to_segment_items(template), types)
+
+
+def _parse_template_variants(template, types: dict) -> list[list]:
+    return [
+        _parse_segments(template_variant, types)
+        for template_variant in _expand_rule_expr_repeats(
+            _template_to_segment_items(template))
+    ]
 
 
 def _parse_explicit_pattern(template: str, _types: dict) -> list:
@@ -790,8 +871,18 @@ def _rule_desc(rule_defs: dict, ref) -> str:
     return ""
 
 
-def _compile_rule_expr_as_segments(rule_defs: dict, ref, types: dict) -> list:
-    return _parse_rule_expression(_rule_expr(rule_defs, ref), types)
+def _compile_rule_expr_as_segment_templates(
+    rule_defs: dict,
+    ref,
+    types: dict,
+) -> list[list]:
+    expr = _rule_expr(rule_defs, ref)
+    if isinstance(expr, str):
+        return _parse_template_variants(expr, types)
+    return [
+        _parse_rule_expression(expr_variant, types)
+        for expr_variant in _expand_rule_expr_repeats(expr)
+    ]
 
 
 def _compile_rule_expr_as_metric(rule_defs: dict, ref) -> dict:
@@ -809,9 +900,14 @@ def _compile_table_bindings(
         templates = []
         constraints_list = []
         for ref in _as_list(refs):
-            templates.append(_compile_rule_expr_as_segments(rule_defs, ref, types))
+            compiled_templates = _compile_rule_expr_as_segment_templates(
+                rule_defs,
+                ref,
+                types,
+            )
+            templates.extend(compiled_templates)
             constraints = _rule_constraints(rule_defs, ref)
-            constraints_list.append(constraints)
+            constraints_list.extend([constraints] * len(compiled_templates))
             if constraints.get("max_length") is not None:
                 max_lengths.append(int(constraints["max_length"]))
         layers[layer_name] = LayerDef(
@@ -828,10 +924,15 @@ def _compile_column_bindings(
     rule_defs: dict,
     types: dict,
 ) -> tuple[list, list, set[str]]:
-    column_templates = [
-        _compile_rule_expr_as_segments(rule_defs, ref, types)
-        for ref in _as_list(column_binding.get("rules"))
-    ]
+    column_templates = []
+    for ref in _as_list(column_binding.get("rules")):
+        column_templates.extend(
+            _compile_rule_expr_as_segment_templates(
+                rule_defs,
+                ref,
+                types,
+            )
+        )
     column_segments = column_templates[0] if column_templates else []
     common_columns = set(column_binding.get("allow", []))
     return column_segments, column_templates, common_columns
@@ -909,8 +1010,7 @@ def load_naming_config(path=None):
 
             templates = []
             for template in template_defs:
-                parsed = _parse_template(template, types)
-                templates.append(parsed)
+                templates.extend(_parse_template_variants(template, types))
 
             layers[layer_name] = LayerDef(
                 templates=templates,
@@ -926,8 +1026,12 @@ def load_naming_config(path=None):
     else:
         col_cfg = raw.get("columns", {}) or {}
         raw_col_seg = col_cfg.get("segments") or col_cfg.get("pattern", "")
-        column_segments = _parse_template(raw_col_seg, types) if raw_col_seg else []
-        column_templates = [column_segments] if column_segments else []
+        column_templates = (
+            _parse_template_variants(raw_col_seg, types)
+            if raw_col_seg
+            else []
+        )
+        column_segments = column_templates[0] if column_templates else []
         common_columns = set(col_cfg.get("common_columns", []))
 
     metric_rules = {}

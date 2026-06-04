@@ -457,6 +457,66 @@ class TestLoadNamingConfig:
         assert nc._match_segments("customer_id", nc.column_segments) is None
         assert nc._match_segments("CUSTOMER_ID_LONG1", nc.column_segments) is None
 
+    def test_segment_repeat_syntax_applies_to_table_and_column_rules(self, tmp_path):
+        cfg_path = tmp_path / "naming.yaml"
+        cfg_path.write_text(
+            """
+types:
+  BIZ_MODULE:
+    allow:
+      - FRTN
+  ENTITY:
+    patterns:
+      - "^[A-Z]+$"
+  METRICS_DESC:
+    allow:
+      - BAL
+rules:
+  TABLE_DWS:
+    expr: ["_", I, "$BIZ_MODULE", "$ENTITY{1,2}", "$METRICS_DESC"]
+  COLUMN_FLEX:
+    expr: ["_", "$ENTITY{1,2}", "$METRICS_DESC"]
+bindings:
+  table:
+    DWS:
+      - "@TABLE_DWS"
+  column:
+    rules:
+      - "@COLUMN_FLEX"
+""",
+            encoding="utf-8",
+        )
+
+        nc = load_naming_config(cfg_path)
+
+        assert len(nc.layers["DWS"].templates) == 2
+        assert nc._match_segments(
+            "I_FRTN_CUST_PROD_BAL",
+            nc.layers["DWS"].templates[0],
+        ) == {
+            "BIZ_MODULE": "FRTN",
+            "ENTITY": ["CUST", "PROD"],
+            "METRICS_DESC": "BAL",
+        }
+        assert nc._match_segments(
+            "I_FRTN_CUST_BAL",
+            nc.layers["DWS"].templates[1],
+        ) == {
+            "BIZ_MODULE": "FRTN",
+            "ENTITY": "CUST",
+            "METRICS_DESC": "BAL",
+        }
+
+        assert len(nc.column_templates) == 2
+        assert nc._match_segments("CUST_PROD_BAL", nc.column_templates[0]) == {
+            "ENTITY": ["CUST", "PROD"],
+            "METRICS_DESC": "BAL",
+        }
+        assert nc._match_segments("CUST_BAL", nc.column_templates[1]) == {
+            "ENTITY": "CUST",
+            "METRICS_DESC": "BAL",
+        }
+
     def test_yaml_file_not_found(self):
         with pytest.raises(FileNotFoundError):
             load_naming_config("/nonexistent/path.yaml")
@@ -564,6 +624,28 @@ class TestEnterpriseNaming:
             "TIME_PERIOD": "D",
             "DWS_GRANULARITY": "S",
         }
+
+    def test_match_dws_v2_single_entity(self, nc):
+        assert nc._match_segments(
+            "I_FRTN_CUST_BAL_DS",
+            nc.layers["DWS"].templates[0],
+        ) is None
+
+        segs = nc.layers["DWS"].templates[1]
+        r = nc._match_segments("I_FRTN_CUST_BAL_DS", segs)
+        assert r == {
+            "BIZ_MODULE": "FRTN",
+            "ENTITY": "CUST",
+            "METRICS_DESC": "BAL",
+            "TIME_PERIOD": "D",
+            "DWS_GRANULARITY": "S",
+        }
+
+    def test_match_dws_v2_requires_entity(self, nc):
+        assert all(
+            nc._match_segments("I_FRTN_BAL_DS", segs) is None
+            for segs in nc.layers["DWS"].templates
+        )
 
     def test_match_ads_v2(self, nc):
         segs = nc.layers["ADS"].templates[0]
