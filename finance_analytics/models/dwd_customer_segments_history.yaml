@@ -4,3 +4,5 @@ layer: DWD
 table_type: fact
 config:
   materialized: full
+data_domain: '01'
+business_area: CLNT

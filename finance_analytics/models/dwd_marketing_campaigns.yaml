@@ -17,3 +17,5 @@ calculated_metrics:
 - conversion_rate
 - roi_category
 - campaign_status
+data_domain: '10'
+business_area: CLNT

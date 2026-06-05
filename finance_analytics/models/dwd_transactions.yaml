@@ -16,3 +16,5 @@ calculated_metrics:
 - amount_deviation_score
 - merchant_risk_score
 - distance_from_home_km
+data_domain: '04'
+business_area: PAYM

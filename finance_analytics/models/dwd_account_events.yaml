@@ -7,3 +7,5 @@ config:
 atomic_metrics:
 - old_value
 - new_value
+data_domain: '02'
+business_area: DPST

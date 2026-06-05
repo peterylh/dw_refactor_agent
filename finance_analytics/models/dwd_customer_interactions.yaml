@@ -7,3 +7,5 @@ config:
 atomic_metrics:
 - duration_minutes
 - sentiment_score
+data_domain: '01'
+business_area: CLNT

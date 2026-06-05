@@ -27,3 +27,4 @@ calculated_metrics:
 - high_conversion_flag
 - active_campaign_flag
 - completed_campaign_flag
+business_area: CLNT

@@ -15,3 +15,5 @@ calculated_metrics:
 - housing_price_index
 - 10yr_treasury_yield
 - mortgage_rate_30yr
+data_domain: 09
+business_area: FMAN

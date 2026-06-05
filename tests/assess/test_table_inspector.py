@@ -138,6 +138,58 @@ def test_parse_dimension_response():
     assert result.is_violating_declared_layer is True
 
 
+def test_parse_business_domain_response():
+    resp = {
+        "choices": [{
+            "message": {
+                "content": json.dumps({
+                    "inferred_layer": "DWD",
+                    "table_type": "fact",
+                    "inferred_data_domain": "04",
+                    "inferred_business_area": "PAYM",
+                    "confidence": 0.9,
+                    "reasoning_steps": ["交易事实表"],
+                })
+            }
+        }]
+    }
+
+    result = parse_response("dwd_transactions", resp, declared_layer="DWD")
+    data = result_to_dict(result)
+    cached = result_to_cache_dict(result)
+
+    assert result.inferred_data_domain == "04"
+    assert result.inferred_business_area == "PAYM"
+    assert data["inferred_data_domain"] == "04"
+    assert data["inferred_business_area"] == "PAYM"
+    assert cached["inferred_data_domain"] == "04"
+    assert cached["inferred_business_area"] == "PAYM"
+
+
+def test_build_prompt_limits_business_metadata_by_layer():
+    ctx = TableContext(
+        table_name="dim_location",
+        layer="DIM",
+        ddl="CREATE TABLE dim_location (location_key STRING);",
+        etl_sql="",
+        upstream_tables=["dwd_branch_locations"],
+        downstream_tables=[],
+        business_domain_options={
+            "domains": [{"id": "06", "code": "ORGN", "name": "机构域"}],
+            "business_areas": [{"code": "CHNL", "name": "渠道业务"}],
+        },
+    )
+
+    prompt = build_prompt(ctx)
+
+    assert "数据域只适用于 DWD 层" in prompt
+    assert "业务板块只适用于 DWD 和 DWS 层" in prompt
+    assert "当前表若不是 DWD，inferred_data_domain 必须返回空字符串" in prompt
+    assert "当前表若不是 DWD/DWS，inferred_business_area 必须返回空字符串" in prompt
+    assert "如果无法明确判断，可返回“其它”数据域编号" in prompt
+    assert "如果无法明确判断，可返回“其它”业务板块简写" in prompt
+
+
 def test_parse_fact_response():
     resp = {
         "choices": [{

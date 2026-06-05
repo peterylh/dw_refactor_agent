@@ -15,3 +15,4 @@ calculated_metrics:
 - days_until_review
 - kyc_age_days
 - high_risk_customer_flag
+business_area: LOAN

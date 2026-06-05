@@ -4,6 +4,7 @@ from assess.model_metadata_writer import (
     build_dwd_contexts,
     build_inspection_contexts,
     build_metric_contexts,
+    business_metadata_for_result,
     metric_groups_for_model,
     metric_violations,
     metric_names_for_model,
@@ -12,6 +13,7 @@ from assess.model_metadata_writer import (
     update_model_yaml,
 )
 from assess.table_inspector import TableInspectResult
+from config import get_business_domain_config
 
 
 def _sample_fact_result() -> TableInspectResult:
@@ -309,6 +311,8 @@ def test_update_model_yaml_writes_llm_table_metadata(tmp_path, monkeypatch):
             "version": 2,
             "name": "M_SHOP_06_STORE_DF",
             "layer": "DWD",
+            "data_domain": "06",
+            "business_area": "CHNL",
             "description": "门店每日快照",
             "config": {
                 "materialized": "snapshot",
@@ -320,6 +324,11 @@ def test_update_model_yaml_writes_llm_table_metadata(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(writer_module, "PROJECT_ROOT", project_root)
     monkeypatch.setitem(writer_module.PROJECT_CONFIG, "demo", {"dir": "demo"})
+    monkeypatch.setattr(
+        writer_module,
+        "get_business_domain_config",
+        lambda project: get_business_domain_config("finance_analytics"),
+    )
 
     update = update_model_yaml("demo", _sample_dimension_result())
     saved = yaml.safe_load(model_path.read_text(encoding="utf-8"))
@@ -333,9 +342,92 @@ def test_update_model_yaml_writes_llm_table_metadata(tmp_path, monkeypatch):
     assert update["table_type"] == "dimension"
     assert saved["layer"] == "DIM"
     assert saved["table_type"] == "dimension"
+    assert "data_domain" not in saved
+    assert "business_area" not in saved
     assert saved["description"] == "门店每日快照"
     assert saved["config"]["materialized"] == "snapshot"
     assert "atomic_metrics" not in saved
+
+
+def test_business_metadata_for_result_limits_fields_by_layer(monkeypatch):
+    import assess.model_metadata_writer as writer_module
+
+    monkeypatch.setattr(
+        writer_module,
+        "get_business_domain_config",
+        lambda project: get_business_domain_config("finance_analytics"),
+    )
+    dws_result = TableInspectResult(
+        table_name="dws_transactions",
+        declared_layer="DWS",
+        inferred_layer="DWS",
+        table_type="fact",
+        confidence=0.9,
+        reasoning_steps=[],
+        inferred_data_domain="04",
+        inferred_business_area="PAYM",
+    )
+    dim_result = TableInspectResult(
+        table_name="dim_location",
+        declared_layer="DIM",
+        inferred_layer="DIM",
+        table_type="dimension",
+        confidence=0.9,
+        reasoning_steps=[],
+        inferred_data_domain="06",
+        inferred_business_area="CHNL",
+    )
+
+    assert business_metadata_for_result("demo", dws_result) == {
+        "business_area": "PAYM",
+    }
+    assert business_metadata_for_result("demo", dim_result) == {}
+
+
+def test_update_model_yaml_keeps_existing_applicable_business_metadata(
+        tmp_path, monkeypatch):
+    import assess.model_metadata_writer as writer_module
+
+    project_root = tmp_path
+    models_dir = project_root / "demo" / "models"
+    models_dir.mkdir(parents=True)
+    model_path = models_dir / "dwd_order_detail.yaml"
+    model_path.write_text(
+        yaml.safe_dump({
+            "version": 2,
+            "name": "dwd_order_detail",
+            "layer": "DWD",
+            "table_type": "fact",
+            "data_domain": "04",
+            "business_area": "PAYM",
+        },
+                       allow_unicode=True,
+                       sort_keys=False),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(writer_module, "PROJECT_ROOT", project_root)
+    monkeypatch.setitem(writer_module.PROJECT_CONFIG, "demo", {"dir": "demo"})
+    monkeypatch.setattr(
+        writer_module,
+        "get_business_domain_config",
+        lambda project: get_business_domain_config("finance_analytics"),
+    )
+    result = TableInspectResult(
+        table_name="dwd_order_detail",
+        declared_layer="DWD",
+        inferred_layer="DWD",
+        table_type="fact",
+        confidence=0.9,
+        reasoning_steps=[],
+    )
+
+    update = update_model_yaml("demo", result)
+    saved = yaml.safe_load(model_path.read_text(encoding="utf-8"))
+
+    assert update["data_domain"] == "04"
+    assert update["business_area"] == "PAYM"
+    assert saved["data_domain"] == "04"
+    assert saved["business_area"] == "PAYM"
 
 
 def test_update_model_yaml_forces_dimension_layer_and_warns(tmp_path,

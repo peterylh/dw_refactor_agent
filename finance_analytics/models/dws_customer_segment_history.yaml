@@ -10,3 +10,4 @@ calculated_metrics:
 - customer_lifetime_value
 - digital_engagement_score
 - days_in_segment
+business_area: CLNT

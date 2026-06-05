@@ -2,9 +2,9 @@
 """
 LLM 表巡检与模型元数据回写工具。
 
-复用 table_inspector 的单次 DeepSeek 调用结果，将表级 layer/table_type
-以及 DWD/DWS 表中的指标字段回写到 models/{table}.yaml，并把 DWD
-事实表的非原子指标输出为违规项。
+复用 table_inspector 的单次 DeepSeek 调用结果，将表级 layer/table_type、
+DWD 数据域、DWD/DWS 业务板块以及 DWD/DWS 表中的指标字段回写到
+models/{table}.yaml，并把 DWD 事实表的非原子指标输出为违规项。
 """
 
 import argparse
@@ -29,12 +29,14 @@ from assess.table_inspector import (
     TableInspector,
     result_to_dict as inspect_result_to_dict,
 )
-from config import PROJECT_CONFIG, PROJECT_ROOT
+from config import PROJECT_CONFIG, PROJECT_ROOT, get_business_domain_config
 
 
 METRIC_LAYERS = {"DWD", "DWS"}
 WRITABLE_METADATA_LAYERS = {"DWD", "DWS", "DIM"}
 WRITE_SCOPES = {"all", "table", "metrics"}
+DATA_DOMAIN_LAYERS = {"DWD"}
+BUSINESS_AREA_LAYERS = {"DWD", "DWS"}
 
 
 def build_inspection_contexts(project: str,
@@ -271,6 +273,34 @@ def should_write_table_metadata(write_scope: str) -> bool:
     return _validate_write_scope(write_scope) in {"all", "table"}
 
 
+def business_metadata_for_result(
+    project: str,
+    result: TableInspectResult,
+    layer: str | None = None,
+) -> dict[str, str]:
+    """返回可安全写入 models 的业务域/板块元数据。"""
+    business_config = get_business_domain_config(project)
+    if not business_config:
+        return {}
+
+    applied_layer = str(layer or layer_for_model(result) or "").upper()
+    metadata = {}
+    data_domain = business_config.normalize_domain(result.inferred_data_domain)
+    business_area = business_config.normalize_business_area(
+        result.inferred_business_area)
+    if (
+        applied_layer in DATA_DOMAIN_LAYERS
+        and business_config.is_valid_domain(data_domain)
+    ):
+        metadata["data_domain"] = data_domain
+    if (
+        applied_layer in BUSINESS_AREA_LAYERS
+        and business_config.is_valid_business_area(business_area)
+    ):
+        metadata["business_area"] = business_area
+    return metadata
+
+
 def should_write_metric_groups(result: TableInspectResult,
                                write_scope: str = "all") -> bool:
     """判断是否需要按指标分组更新模型 YAML。"""
@@ -325,6 +355,8 @@ def update_model_yaml(project: str,
     updated = dict(existing)
     previous_layer = existing.get("layer")
     previous_table_type = existing.get("table_type")
+    previous_data_domain = existing.get("data_domain")
+    previous_business_area = existing.get("business_area")
     has_existing_metric_fields = any(
         key in existing for key in (
             "metrics",
@@ -342,8 +374,26 @@ def update_model_yaml(project: str,
         updated.setdefault("version", 2)
         updated.setdefault("name", result.table_name)
     if write_table_metadata:
-        updated["layer"] = layer_for_model(result)
+        applied_layer = layer_for_model(result)
+        updated["layer"] = applied_layer
         updated["table_type"] = result.table_type
+        if get_business_domain_config(project):
+            business_metadata = business_metadata_for_result(
+                project,
+                result,
+                applied_layer,
+            )
+            if applied_layer in DATA_DOMAIN_LAYERS:
+                if "data_domain" in business_metadata:
+                    updated["data_domain"] = business_metadata["data_domain"]
+            else:
+                updated.pop("data_domain", None)
+            if applied_layer in BUSINESS_AREA_LAYERS:
+                if "business_area" in business_metadata:
+                    updated["business_area"] = business_metadata[
+                        "business_area"]
+            else:
+                updated.pop("business_area", None)
 
     if write_metric_groups and detected_metrics:
         if detected_groups["atomic_metrics"]:
@@ -370,6 +420,8 @@ def update_model_yaml(project: str,
     metadata_changed = write_table_metadata and (
         updated.get("layer") != previous_layer
         or updated.get("table_type") != previous_table_type
+        or updated.get("data_domain") != previous_data_domain
+        or updated.get("business_area") != previous_business_area
     )
     metric_changed = write_metric_groups and (
         has_existing_metric_fields
@@ -403,6 +455,10 @@ def update_model_yaml(project: str,
         "layer": updated.get("layer"),
         "previous_table_type": previous_table_type,
         "table_type": updated.get("table_type"),
+        "previous_data_domain": previous_data_domain,
+        "data_domain": updated.get("data_domain"),
+        "previous_business_area": previous_business_area,
+        "business_area": updated.get("business_area"),
         "warnings": metadata_warnings_for_result(result),
         "write_scope": write_scope,
         "metric_count": len(detected_metrics),
@@ -602,7 +658,7 @@ def main() -> None:
                         default="all",
                         help=(
                             "models 回写范围: all=表信息+指标, "
-                            "table=仅 layer/table_type, metrics=仅指标分组"
+                            "table=仅表级元数据, metrics=仅指标分组"
                         ))
     parser.add_argument("--no-cache",
                         action="store_true",

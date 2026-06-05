@@ -34,6 +34,7 @@ class TypeDef:
     patterns: list[str] = field(default_factory=list)
     values: Optional[list[str]] = None
     regex: Optional[str] = None
+    dictionary: Optional[dict] = None
     _compiled: list[re.Pattern] = field(default_factory=list)
 
     def __post_init__(self):
@@ -75,6 +76,8 @@ class NamingConfig:
     table_name_max_length: Optional[int] = None
     metric_rules: dict[str, list] = field(default_factory=dict)
     metric_rule_labels: dict[str, str] = field(default_factory=dict)
+    dictionaries: dict = field(default_factory=dict)
+    business_domain_config: object = None
 
     def table_max_length_for(self, name: str, layer: str) -> Optional[int]:
         ldef = self.layers.get(layer)
@@ -452,6 +455,83 @@ class NamingConfig:
 
     def match_metric_rule(self, name: str, rule_name: str) -> Optional[dict]:
         return self._match_metric_rule_impl(name, rule_name, ())
+
+
+@dataclass
+class DomainDef:
+    id: str
+    code: str
+    name: str
+    desc: str = ""
+    keywords: list[str] = field(default_factory=list)
+
+
+@dataclass
+class BusinessAreaDef:
+    id: str
+    code: str
+    name: str
+    desc: str = ""
+    keywords: list[str] = field(default_factory=list)
+
+
+@dataclass
+class BusinessDomainConfig:
+    domains: dict[str, DomainDef]
+    business_areas: dict[str, BusinessAreaDef]
+
+    @property
+    def domain_ids(self) -> list[str]:
+        return sorted(self.domains)
+
+    @property
+    def business_area_codes(self) -> list[str]:
+        return sorted(self.business_areas)
+
+    def is_valid_domain(self, value: str) -> bool:
+        return str(value or "").strip() in self.domains
+
+    def is_valid_business_area(self, value: str) -> bool:
+        return str(value or "").strip().upper() in self.business_areas
+
+    def normalize_business_area(self, value: str) -> str:
+        return str(value or "").strip().upper()
+
+    def normalize_domain(self, value: str) -> str:
+        raw = str(value or "").strip()
+        if raw in self.domains:
+            return raw
+        if raw.isdigit():
+            padded = raw.zfill(2)
+            if padded in self.domains:
+                return padded
+        upper = raw.upper()
+        for domain in self.domains.values():
+            if upper == domain.code:
+                return domain.id
+        return raw
+
+    def prompt_options(self) -> dict:
+        return {
+            "domains": [
+                {
+                    "id": domain.id,
+                    "code": domain.code,
+                    "name": domain.name,
+                    "description": domain.desc,
+                }
+                for domain in self.domains.values()
+            ],
+            "business_areas": [
+                {
+                    "id": area.id,
+                    "code": area.code,
+                    "name": area.name,
+                    "description": area.desc,
+                }
+                for area in self.business_areas.values()
+            ],
+        }
 
 
 _REPEAT_RE = re.compile(r"^(?P<name>.+)\{(?P<min>\d+),(?P<max>\d*)\}$")
@@ -938,7 +1018,10 @@ def _compile_column_bindings(
     return column_segments, column_templates, common_columns
 
 
-def _compile_metric_bindings(metric_binding: dict, rule_defs: dict) -> tuple[dict, dict]:
+def _compile_metric_bindings(
+    metric_binding: dict,
+    rule_defs: dict,
+) -> tuple[dict, dict]:
     metric_rules = {}
     metric_rule_labels = {}
     for binding_name, ref in metric_binding.items():
@@ -953,17 +1036,78 @@ def _compile_metric_bindings(metric_binding: dict, rule_defs: dict) -> tuple[dic
     return metric_rules, metric_rule_labels
 
 
+def _dictionary_entries(raw_dictionary) -> list[dict]:
+    if not raw_dictionary:
+        return []
+    values = (
+        raw_dictionary.get("values")
+        if isinstance(raw_dictionary, dict) and "values" in raw_dictionary
+        else raw_dictionary
+    )
+    if isinstance(values, list):
+        return [item for item in values if isinstance(item, dict)]
+    if isinstance(values, dict):
+        entries = []
+        for key, cfg in values.items():
+            if not isinstance(cfg, dict):
+                continue
+            entry = dict(cfg)
+            entry.setdefault("id", str(key))
+            entry.setdefault("code", str(key))
+            entries.append(entry)
+        return entries
+    return []
+
+
+def _dictionary_allow_values(raw_dictionaries: dict, dictionary_cfg: dict) -> list[str]:
+    if not isinstance(dictionary_cfg, dict):
+        return []
+    dictionary_name = str(
+        dictionary_cfg.get("dictionary") or dictionary_cfg.get("name") or "",
+    ).strip()
+    value_field = str(dictionary_cfg.get("value_field") or "").strip()
+    if not dictionary_name or not value_field:
+        return []
+    raw_dictionary = (raw_dictionaries or {}).get(dictionary_name)
+    values = []
+    for entry in _dictionary_entries(raw_dictionary):
+        value = entry.get(value_field)
+        if value is None:
+            continue
+        text = str(value).strip()
+        if text and text not in values:
+            values.append(text)
+    return values
+
+
 def load_naming_config(path=None):
     path = Path(path) if path else NAMING_CONFIG_PATH
     with open(path, encoding="utf-8") as f:
-        raw = yaml.safe_load(f)
+        raw = yaml.safe_load(f) or {}
+    raw_dictionaries = raw.get("dictionaries", {}) or {}
     types = {}
     for name, cfg in raw.get("types", {}).items():
+        allow_cfg = cfg.get("allow", cfg.get("values"))
+        dictionary_cfg = cfg.get("dictionary")
+        if isinstance(allow_cfg, dict):
+            dictionary_cfg = allow_cfg
+            allow_values = _dictionary_allow_values(
+                raw_dictionaries,
+                dictionary_cfg,
+            )
+        elif dictionary_cfg:
+            allow_values = _dictionary_allow_values(
+                raw_dictionaries,
+                dictionary_cfg,
+            )
+        else:
+            allow_values = allow_cfg
         td = TypeDef(
             label=cfg.get("label", name),
             desc=cfg.get("desc", ""),
-            allow=cfg.get("allow", cfg.get("values")),
+            allow=allow_values,
             patterns=_as_list(cfg.get("patterns", cfg.get("regex"))),
+            dictionary=dictionary_cfg,
         )
         types[name] = td
 
@@ -1078,11 +1222,72 @@ def load_naming_config(path=None):
         table_name_max_length=table_name_max_length,
         metric_rules=metric_rules,
         metric_rule_labels=metric_rule_labels,
+        dictionaries=raw_dictionaries,
+        business_domain_config=_business_domain_config_from_dictionaries(
+            raw_dictionaries),
     )
 
 
 _naming_config_cache = {}
 _model_metadata_cache = {}
+
+
+def _as_keywords(value) -> list[str]:
+    return [str(item).strip() for item in _as_list(value) if str(item).strip()]
+
+
+def _load_domain_defs(raw_domains) -> dict[str, DomainDef]:
+    domains = {}
+    for cfg in _dictionary_entries(raw_domains):
+        domain_id = str(cfg.get("id") or "").strip()
+        if not domain_id:
+            continue
+        domain_code = str(cfg.get("code") or domain_id).strip().upper()
+        domains[domain_id] = DomainDef(
+            id=domain_id,
+            code=domain_code,
+            name=str(cfg.get("name") or domain_code),
+            desc=str(cfg.get("desc") or cfg.get("description") or ""),
+            keywords=_as_keywords(cfg.get("keywords")),
+        )
+    return domains
+
+
+def _load_business_area_defs(raw_areas) -> dict[str, BusinessAreaDef]:
+    business_areas = {}
+    for cfg in _dictionary_entries(raw_areas):
+        area_code = str(cfg.get("code") or "").strip().upper()
+        if not area_code:
+            continue
+        business_areas[area_code] = BusinessAreaDef(
+            id=str(cfg.get("id") or area_code),
+            code=area_code,
+            name=str(cfg.get("name") or area_code),
+            desc=str(cfg.get("desc") or cfg.get("description") or ""),
+            keywords=_as_keywords(cfg.get("keywords")),
+        )
+    return business_areas
+
+
+def _business_domain_config_from_dictionaries(
+    raw_dictionaries: dict,
+) -> Optional[BusinessDomainConfig]:
+    raw_domains = (raw_dictionaries or {}).get("data_domains")
+    raw_areas = (raw_dictionaries or {}).get("business_areas")
+    if not raw_domains or not raw_areas:
+        return None
+    domains = _load_domain_defs(raw_domains)
+    business_areas = _load_business_area_defs(raw_areas)
+    if not domains or not business_areas:
+        return None
+    return BusinessDomainConfig(
+        domains=domains,
+        business_areas=business_areas,
+    )
+
+
+def get_business_domain_config(project: str = None) -> Optional[BusinessDomainConfig]:
+    return get_naming_config(project).business_domain_config
 
 
 def load_model_metadata(project: str) -> dict:
@@ -1159,7 +1364,7 @@ def get_naming_config(project: str = None) -> NamingConfig:
     global _naming_config_cache
     if project and project in PROJECT_CONFIG:
         cfg_file = PROJECT_CONFIG[project].get("naming_config", "naming_config.yaml")
-        key = cfg_file
+        key = f"{project}:{cfg_file}"
     else:
         cfg_file = "naming_config.yaml"
         key = "__default__"
@@ -1186,6 +1391,7 @@ PROJECT_CONFIG = {
         "db": "finance_analytics_dm",
         "qa_db": "finance_analytics_dm_qa",
         "lineage_db": "finance_analytics_lineage",
+        "naming_config": "finance_analytics/naming_config.yaml",
     },
 }
 

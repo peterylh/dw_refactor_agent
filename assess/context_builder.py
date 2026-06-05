@@ -4,6 +4,11 @@ from dataclasses import dataclass, field
 
 import yaml
 
+from config import get_business_domain_config, load_model_metadata
+
+DATA_DOMAIN_LAYERS = {"DWD"}
+BUSINESS_AREA_LAYERS = {"DWD", "DWS"}
+
 
 @dataclass
 class TableContext:
@@ -17,6 +22,9 @@ class TableContext:
     upstream_metric_groups: dict[str, dict[str, list[str]]] = field(
         default_factory=dict)
     column_lineage: list[dict[str, str]] = field(default_factory=list)
+    declared_data_domain: str = ""
+    declared_business_area: str = ""
+    business_domain_options: dict = field(default_factory=dict)
 
 
 def _metric_names(value) -> list[str]:
@@ -117,7 +125,7 @@ def build_contexts(project: str,
                    lineage_data: dict,
                    ddl_dir: Path = None,
                    tasks_dir: Path = None) -> list[TableContext]:
-    """为 DWD/DWS 层所有表构建分类上下文"""
+    """为 DWD/DWS/DIM 层所有表构建分类上下文"""
     if not ddl_dir:
         ddl_dir = Path(__file__).resolve().parent.parent / project / "ddl"
     if not tasks_dir:
@@ -126,6 +134,13 @@ def build_contexts(project: str,
     upstream, downstream = extract_dependencies(lineage_data)
     models_dir = Path(__file__).resolve().parent.parent / project / "models"
     metric_groups = _load_model_metric_groups(models_dir)
+    model_metadata = load_model_metadata(project)
+    business_domain_config = get_business_domain_config(project)
+    business_domain_options = (
+        business_domain_config.prompt_options()
+        if business_domain_config
+        else {}
+    )
     contexts = []
 
     memo = {}
@@ -167,6 +182,7 @@ def build_contexts(project: str,
             for upstream_table in upstream_tables
             if upstream_table in metric_groups
         }
+        metadata = model_metadata.get(name, {})
 
         contexts.append(
             TableContext(table_name=name,
@@ -179,6 +195,17 @@ def build_contexts(project: str,
                          depth_from_ods=get_depth_from_ods(name),
                          upstream_metric_groups=upstream_metric_groups,
                          column_lineage=extract_column_lineage(
-                             lineage_data, name)))
+                             lineage_data, name),
+                         declared_data_domain=(
+                             str(metadata.get("data_domain") or "")
+                             if layer in DATA_DOMAIN_LAYERS
+                             else ""
+                         ),
+                         declared_business_area=(
+                             str(metadata.get("business_area") or "")
+                             if layer in BUSINESS_AREA_LAYERS
+                             else ""
+                         ),
+                         business_domain_options=business_domain_options))
 
     return contexts

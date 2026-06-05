@@ -7,3 +7,5 @@ config:
 atomic_metrics:
 - amount_reported
 - penalty_amount
+data_domain: 09
+business_area: FMAN

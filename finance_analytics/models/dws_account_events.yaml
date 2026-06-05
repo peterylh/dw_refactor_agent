@@ -10,3 +10,4 @@ atomic_metrics:
 - event_count
 calculated_metrics:
 - value_change
+business_area: DPST

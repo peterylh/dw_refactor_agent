@@ -4,3 +4,5 @@ layer: DWD
 table_type: dimension
 config:
   materialized: full
+data_domain: '04'
+business_area: ACQR

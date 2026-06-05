@@ -10,7 +10,7 @@ from typing import Any, Callable
 from assess.context_builder import TableContext
 
 
-PROMPT_VERSION = "table-inspector-v14"
+PROMPT_VERSION = "table-inspector-v15"
 VALID_LAYERS = {"ODS", "DWD", "DWS", "ADS", "DIM", "OTHER"}
 VALID_TABLE_TYPES = {"dimension", "fact", "other"}
 METRIC_GROUPING_LAYERS = {"DWD", "DWS"}
@@ -41,6 +41,8 @@ class TableInspectResult:
         default_factory=_empty_columns)
     validation: dict[str, list[str]] = field(default_factory=dict)
     retry_count: int = 0
+    inferred_data_domain: str = ""
+    inferred_business_area: str = ""
 
     @property
     def is_violating_declared_layer(self) -> bool:
@@ -131,11 +133,26 @@ def build_prompt(ctx: TableContext) -> str:
 ## 表级特征信息
 - 原始表名: {ctx.table_name}
 - 原始配置层级: {ctx.layer}
+- 原始配置数据域: {ctx.declared_data_domain or '未配置'}
+- 原始配置业务板块: {ctx.declared_business_area or '未配置'}
 - 下游被引用次数: {len(ctx.downstream_tables)}
 - 距 ODS 最小跳数: {ctx.depth_from_ods}
 
 ## DDL
 {ctx.ddl}
+
+"""
+    if ctx.business_domain_options:
+        prompt += f"""## 数据域与业务板块字典
+请根据表名、DDL、ETL 和血缘语义，判断该表最合理的数据域与业务板块。
+- 数据域只适用于 DWD 层。当前表若不是 DWD，inferred_data_domain 必须返回空字符串。
+- 业务板块只适用于 DWD 和 DWS 层。当前表若不是 DWD/DWS，inferred_business_area 必须返回空字符串。
+- 对适用层，inferred_data_domain 必须返回数据域编号，如 "04"；如果无法明确判断，可返回“其它”数据域编号。
+- 对适用层，inferred_business_area 必须返回业务板块简写，如 "PAYM"；如果无法明确判断，可返回“其它”业务板块简写。
+- 若原始配置与业务语义不一致，应返回你推断的正确值。
+
+可选字典:
+{json.dumps(ctx.business_domain_options, ensure_ascii=False, indent=2)}
 
 """
     if ctx.etl_sql:
@@ -157,13 +174,15 @@ def build_prompt(ctx: TableContext) -> str:
 3. 判断是否为 dimension（主键是否为实体属性）。
 4. 如果原始配置层级是 DWD 或 DWS 且表类型为 fact，再按字段语义、DDL 注释、ETL 表达式和业务过程分组。
 
-请严格返回 JSON 格式数据，只允许返回下方 JSON schema 中列出的顶层字段: inferred_layer、table_type、confidence、reasoning_steps、columns。
+请严格返回 JSON 格式数据，只允许返回下方 JSON schema 中列出的顶层字段: inferred_layer、table_type、inferred_data_domain、inferred_business_area、confidence、reasoning_steps、columns。
 不要返回 Markdown，不要返回额外解释，不要新增任何字段。
 如果不需要做字段分组，columns 下五个数组都返回空数组。
 
 {{
   "inferred_layer": "ODS|DWD|DWS|ADS|DIM|OTHER",
   "table_type": "dimension|fact|other",
+  "inferred_data_domain": "数据域编号，如 04；不适用层为空字符串；不确定时可返回其它数据域编号",
+  "inferred_business_area": "业务板块简写，如 PAYM；不适用层为空字符串；不确定时可返回其它业务板块简写",
   "confidence": 0.0,
   "reasoning_steps": ["分析步骤1...", "分析步骤2..."],
   "columns": {{
@@ -275,6 +294,10 @@ def _safe_list(value: Any) -> list[str]:
     if value in (None, ""):
         return []
     return [str(value)]
+
+
+def _safe_str(value: Any) -> str:
+    return str(value or "").strip()
 
 
 def _valid_layer(value: Any) -> str:
@@ -390,6 +413,9 @@ def parse_response(table_name: str,
             confidence=_safe_float(data.get("confidence")),
             reasoning_steps=list(data.get("reasoning_steps", []) or []),
             columns=_normalize_columns(data.get("columns")),
+            inferred_data_domain=_safe_str(data.get("inferred_data_domain")),
+            inferred_business_area=_safe_str(
+                data.get("inferred_business_area")).upper(),
         )
     except json.JSONDecodeError as e:
         return TableInspectResult(
@@ -408,6 +434,8 @@ def result_to_dict(result: TableInspectResult) -> dict[str, Any]:
         "declared_layer": result.declared_layer,
         "inferred_layer": result.inferred_layer,
         "table_type": result.table_type,
+        "inferred_data_domain": result.inferred_data_domain,
+        "inferred_business_area": result.inferred_business_area,
         "confidence": result.confidence,
         "reasoning_steps": result.reasoning_steps,
         "columns": result.columns,
@@ -425,6 +453,8 @@ def result_to_cache_dict(result: TableInspectResult) -> dict[str, Any]:
         "declared_layer": result.declared_layer,
         "inferred_layer": result.inferred_layer,
         "table_type": result.table_type,
+        "inferred_data_domain": result.inferred_data_domain,
+        "inferred_business_area": result.inferred_business_area,
         "confidence": result.confidence,
         "reasoning_steps": result.reasoning_steps,
         "columns": result.columns,
@@ -447,6 +477,9 @@ def dict_to_result(data: dict[str, Any],
         columns=_normalize_columns(data.get("columns")),
         validation=_normalize_validation(data.get("validation")),
         retry_count=int(data.get("retry_count", 0) or 0),
+        inferred_data_domain=_safe_str(data.get("inferred_data_domain")),
+        inferred_business_area=_safe_str(
+            data.get("inferred_business_area")).upper(),
     )
 
 
@@ -556,7 +589,8 @@ class TableInspector:
             f"{PROMPT_VERSION}|{ctx.table_name}|{ctx.layer}|{ctx.ddl}|"
             f"{ctx.etl_sql}|{ctx.upstream_tables}|{ctx.downstream_tables}|"
             f"{ctx.depth_from_ods}|{ctx.upstream_metric_groups}|"
-            f"{ctx.column_lineage}"
+            f"{ctx.column_lineage}|{ctx.declared_data_domain}|"
+            f"{ctx.declared_business_area}|{ctx.business_domain_options}"
         )
         return hashlib.sha256(content.encode("utf-8")).hexdigest()
 

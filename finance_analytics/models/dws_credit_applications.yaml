@@ -12,3 +12,4 @@ calculated_metrics:
 - processing_days
 - amount_difference
 - approval_probability_score
+business_area: LOAN

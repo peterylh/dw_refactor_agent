@@ -4,3 +4,5 @@ layer: DWD
 table_type: dimension
 config:
   materialized: full
+data_domain: '05'
+business_area: CHNL

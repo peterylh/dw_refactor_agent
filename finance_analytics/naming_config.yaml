@@ -1,0 +1,345 @@
+dictionaries:
+  data_domains:
+    label: 数据域
+    values:
+      - id: "01"
+        code: CUST
+        name: 用户域
+        description: 客户基本信息、客户关系、客户分层、客户画像等数据。
+      - id: "02"
+        code: AGRE
+        name: 协议域
+        description: 账户、合同、签约信息、产品协议、费率、期限等数据。
+      - id: "03"
+        code: PROD
+        name: 产品域
+        description: 存款、贷款、理财、信用卡、基金、保险等产品定义数据。
+      - id: "04"
+        code: TRAN
+        name: 交易域
+        description: 存取款、转账、支付、消费、还款、冲正等交易数据。
+      - id: "05"
+        code: CHNL
+        name: 渠道域
+        description: 柜面、手机银行、网银、ATM、智能机具、第三方渠道等数据。
+      - id: "06"
+        code: ORGN
+        name: 机构域
+        description: 总行、分行、支行、网点、部门、机构层级等数据。
+      - id: "07"
+        code: OPER
+        name: 员工域
+        description: 员工信息、岗位、权限、绩效、营销人员等数据。
+      - id: "08"
+        code: FINA
+        name: 财务域
+        description: 总账、明细账、收入、成本、利润、计提、税务等财务数据。
+      - id: "09"
+        code: RISK
+        name: 风险域
+        description: 信用风险、市场风险、操作风险、反欺诈、合规、审计等数据。
+      - id: "10"
+        code: MKTG
+        name: 营销域
+        description: 营销活动、策划、执行效果评估等数据。
+      - id: "99"
+        code: OTHR
+        name: 其它
+        description: 无法明确归属到上述数据域，或模型核心内容跨域且无明显主归属时使用。
+
+  business_areas:
+    label: 业务板块
+    values:
+      - id: "01"
+        code: LOAN
+        name: 贷款业务
+        description: 个人贷款、对公贷款、小微贷款、贸易融资、垫款、不良处置等全流程。
+      - id: "02"
+        code: DPST
+        name: 存款业务
+        description: 活期、定期、大额存单、结构性存款、通知存款和账户管理。
+      - id: "03"
+        code: FRTN
+        name: 财富业务
+        description: 理财、基金、保险、信托、贵金属等客户资产保值增值业务。
+      - id: "04"
+        code: PAYM
+        name: 支付结算
+        description: 转账、汇款、清算、账户结算、支付通道和手续费。
+      - id: "05"
+        code: GUAR
+        name: 担保承诺
+        description: 保函、信用证、贷款承诺、信贷证明、履约担保等信用类中间业务。
+      - id: "06"
+        code: BILL
+        name: 票据业务
+        description: 商业汇票承兑、贴现、转贴现、再贴现、票据池、票据质押融资。
+      - id: "07"
+        code: AGEN
+        name: 代理业务
+        description: 代收代付、代发工资、保管箱、代理非金融类业务。
+      - id: "08"
+        code: ACQR
+        name: 收单业务
+        description: 商户收单、POS 收单、二维码收单、线上支付网关等。
+      - id: "09"
+        code: CHNL
+        name: 渠道业务
+        description: 手机银行、网上银行、小程序、开放平台等电子渠道与线上服务。
+      - id: "10"
+        code: CRDT
+        name: 贷记业务
+        description: 信用卡发卡、账户、额度、消费、分期、还款、催收、积分和权益管理。
+      - id: "11"
+        code: FORX
+        name: 跨境业务
+        description: 国际结算、结售汇、外汇交易、跨境人民币、外汇存贷款。
+      - id: "12"
+        code: ASTM
+        name: 资管业务
+        description: 债券、证券、基金、衍生品、自营投资、同业和资产管理业务。
+      - id: "13"
+        code: CLNT
+        name: 客户经营
+        description: 客户分层、积分权益、会员体系、营销活动、新客获取、存量提升、流失挽回。
+      - id: "14"
+        code: FMAN
+        name: 财务管理
+        description: 总账、FTP、成本分摊、预算、盈利分析、ALM、资本、税务和管理会计报告。
+      - id: "99"
+        code: OTHR
+        name: 其它
+        description: 无法明确归属到上述业务板块，或模型主要服务场景不确定时使用。
+
+types:
+  BUSINESS_AREA_CODE:
+    label: 业务板块简写
+    desc: >-
+      业务板块是从业务经营和管理场景出发，对模型服务对象进行的业务分类，
+      用于支撑业务线分析、经营管理、指标归口和数据应用建设。每个适用模型
+      必须且只能归属一个业务板块。业务板块的判断依据是模型主要支撑的业务
+      流程、经营场景或分析用途。finance_analytics 中仅 DWD 和 DWS 层划分
+      业务板块；不确定时可选择“其它”。
+    allow:
+      dictionary: business_areas
+      value_field: code
+
+  DATA_DOMAIN_ID:
+    label: 数据域编号
+    desc: >-
+      数据域是从数据资产主题出发，对模型进行的主归属分类，用于明确模型的
+      数据管理边界、责任主体、标准体系和治理规则。每个适用模型必须且只能
+      归属一个数据域。数据域的判断依据是模型的核心实体、核心事实或主要数据
+      内容。finance_analytics 中仅 DWD 层划分数据域；不确定时可选择“其它”。
+    allow:
+      dictionary: data_domains
+      value_field: id
+
+  BIZ_PROCESS:
+    label: 业务过程
+    patterns:
+      - "^[A-Z][A-Z0-9]*$"
+
+  ACTION_VERB:
+    label: 动作动词
+    desc: 原子指标动作动词，如 PAY=支付、APPLY=申请
+    patterns:
+      - "^[A-Z][A-Z0-9]*$"
+
+  ENTITY:
+    label: 实体简写
+    desc: 业务实体名称，如 CUST=客户, PROD=产品，一般对应到维度
+    patterns:
+      - "^[A-Z][A-Z0-9]*$"
+
+  COLUMN_IDENTIFIER:
+    label: 字段标识符
+    desc: 大写字段标识符，长度小于16
+    patterns:
+      - "^[A-Z][A-Z0-9_]{0,14}$"
+
+  MEASURE_NOUN:
+    label: 度量名词
+    desc: 原子指标度量名词字典
+    allow:
+      - AMT
+      - CNT
+      - BAL
+      - QTY
+      - NUM
+      - PRICE
+      - COST
+      - RATE
+      - RATIO
+      - PCT
+      - IDX
+      - SCORE
+      - DAYS
+      - TIMES
+      - FEE
+      - TAX
+      - PROFIT
+      - LOSS
+      - INCOME
+      - REVENUE
+      - LIMIT
+      - POINT
+      - VALUE
+
+  METRICS_DESC:
+    label: 核心指标描述
+    desc: 核心指标描述
+    patterns:
+      - "^[A-Z][A-Z0-9_]*$"
+
+  TIME_PERIOD:
+    label: 时间周期
+    allow:
+      - D
+      - W
+      - M
+      - Q
+      - Y
+      - S
+
+  METRIC_TIME_PERIOD:
+    label: 指标时间周期
+    desc: 派生指标时间周期，如 D(日)、MTD(月初至今)、7D(近7日)、L1M(上个月)
+    allow:
+      - D
+      - W
+      - M
+      - Q
+      - Y
+      - TD
+      - MTD
+      - QTD
+      - YTD
+    patterns:
+      - "^(?:L?[1-9][0-9]*(?:D|W|M|Q|Y))$"
+
+  METRIC_MODIFIER:
+    label: 指标修饰词
+    desc: 来自维度属性的业务限定，3~8 字符英文缩写
+    patterns:
+      - "^(?=.{3,8}$)[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)*$"
+
+  DWD_GRANULARITY:
+    label: DWD 粒度后缀
+    desc: I=事务增量, F=周期快照, A=累积快照
+    allow:
+      - I
+      - F
+      - A
+
+  DWS_GRANULARITY:
+    label: DWS 粒度后缀
+    desc: S=明细汇总, F=快照, A=累积
+    allow:
+      - S
+      - F
+      - A
+
+  ADS_PREFIX:
+    label: ADS 应用前缀
+    patterns:
+      - "^A[0-9]+$"
+
+  ADS_TOPIC:
+    label: ADS 主题
+    patterns:
+      - "^[A-Z][A-Z0-9]*$"
+
+  ADS_GRANULARITY:
+    label: ADS 粒度后缀
+    allow:
+      - S
+      - F
+      - A
+
+  DIM_SCOPE:
+    label: 维度范围
+    allow:
+      - BASE
+      - ADDT
+
+  DIM_DESC:
+    label: 维度描述
+    desc: 维度描述
+    patterns:
+      - "^[A-Z][A-Z0-9_]*$"
+
+  DIM_TYPE:
+    label: 维度表类型
+    allow:
+      - TAG
+      - INFO
+      - TREE
+
+rules:
+  TABLE_DWD:
+    desc: DWD 明细层表命名
+    expr: ["_", M, "$BUSINESS_AREA_CODE", "$DATA_DOMAIN_ID", "$BIZ_PROCESS", ["", "$TIME_PERIOD", "$DWD_GRANULARITY"]]
+    constraints:
+      max_length: 30
+
+  TABLE_DWS:
+    desc: DWS 汇总层表命名， 当超过两个实体粒度时，仅选择两个主要粒度
+    expr: ["_", I, "$BUSINESS_AREA_CODE", "$ENTITY{1,2}", "$METRICS_DESC", ["", "$TIME_PERIOD", "$DWS_GRANULARITY"]]
+    constraints:
+      max_length: 30
+
+  TABLE_ADS:
+    desc: ADS 应用层表命名
+    expr: ["_", "$ADS_PREFIX", "$ADS_TOPIC", ["", "$TIME_PERIOD", "$ADS_GRANULARITY"]]
+    constraints:
+      max_length: 30
+
+  TABLE_DIM:
+    desc: 普通维度表命名
+    expr: ["_", DIM, "$DIM_SCOPE", "$ENTITY", "$DIM_DESC", "$DIM_TYPE"]
+    constraints:
+      max_length: 30
+
+  TABLE_DIM_PM:
+    desc: 参数/码表维度命名
+    expr: ["_", DIM, PM, "$DIM_DESC"]
+    constraints:
+      max_length: 30
+
+  COLUMN_DEFAULT:
+    desc: 默认字段命名大写标识符，长度小于16
+    expr: "$COLUMN_IDENTIFIER"
+
+  ATOMIC_METRIC:
+    desc: 原子指标命名 {ACTION_VERB}_{MEASURE_NOUN}
+    expr: ["_", "$ACTION_VERB", "$MEASURE_NOUN"]
+
+  DERIVED_METRIC:
+    desc: 派生指标命名 {TIME_PERIOD}_{MODIFIER...}_{ATOMIC_METRIC}
+    expr: ["_", "$METRIC_TIME_PERIOD", "$METRIC_MODIFIER{1,}", "@ATOMIC_METRIC"]
+
+bindings:
+  table:
+    DWD:
+      - "@TABLE_DWD"
+    DWS:
+      - "@TABLE_DWS"
+    ADS:
+      - "@TABLE_ADS"
+    DIM:
+      - "@TABLE_DIM"
+      - "@TABLE_DIM_PM"
+
+  column:
+    allow:
+      - ETL_TIME
+      - SNAPSHOT_DATE
+      - CREATE_TIME
+      - UPDATE_TIME
+    rules:
+      - "@COLUMN_DEFAULT"
+
+  metric:
+    atomic: "@ATOMIC_METRIC"
+    derived: "@DERIVED_METRIC"

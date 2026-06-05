@@ -8,3 +8,4 @@ atomic_metrics:
 - duration_minutes
 - sentiment_score
 - interaction_count
+business_area: CLNT

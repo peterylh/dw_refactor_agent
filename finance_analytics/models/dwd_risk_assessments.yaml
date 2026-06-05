@@ -6,3 +6,5 @@ config:
   materialized: full
 calculated_metrics:
 - risk_score
+data_domain: 09
+business_area: LOAN

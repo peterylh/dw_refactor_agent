@@ -1,4 +1,9 @@
-from config import load_naming_config, PROJECT_ROOT
+from config import (
+    get_business_domain_config,
+    get_naming_config,
+    load_naming_config,
+    PROJECT_ROOT,
+)
 from assess.assess_middle_layer import (
     ATOMIC_METRIC_RULE_NAME,
     DERIVED_METRIC_RULE_NAME,
@@ -128,6 +133,73 @@ def test_score_architecture_health_allows_ads_to_read_dim():
     assert result["violations"] == []
 
 
+def test_score_architecture_health_penalizes_llm_business_metadata_mismatch():
+    business_config = get_business_domain_config("finance_analytics")
+    tables = [{"name": "dwd_transactions", "layer": "DWD", "columns": []}]
+
+    result = score_architecture_health(
+        tables,
+        [],
+        [],
+        llm_results=[
+            TableInspectResult(
+                table_name="dwd_transactions",
+                declared_layer="DWD",
+                inferred_layer="DWD",
+                table_type="fact",
+                confidence=0.9,
+                reasoning_steps=[],
+                inferred_data_domain="04",
+                inferred_business_area="PAYM",
+            )
+        ],
+        model_metadata={
+            "dwd_transactions": {
+                "data_domain": "10",
+                "business_area": "CLNT",
+            }
+        },
+        business_domain_config=business_config,
+    )
+
+    descriptions = [v["description"] for v in result["violations"]]
+    assert any(desc.startswith("数据域配置疑似错误") for desc in descriptions)
+    assert any(desc.startswith("业务板块配置疑似错误") for desc in descriptions)
+
+
+def test_score_architecture_health_limits_business_checks_by_layer():
+    business_config = get_business_domain_config("finance_analytics")
+    tables = [{"name": "dws_transactions", "layer": "DWS", "columns": []}]
+
+    result = score_architecture_health(
+        tables,
+        [],
+        [],
+        llm_results=[
+            TableInspectResult(
+                table_name="dws_transactions",
+                declared_layer="DWS",
+                inferred_layer="DWS",
+                table_type="fact",
+                confidence=0.9,
+                reasoning_steps=[],
+                inferred_data_domain="04",
+                inferred_business_area="PAYM",
+            )
+        ],
+        model_metadata={
+            "dws_transactions": {
+                "business_area": "CLNT",
+            }
+        },
+        business_domain_config=business_config,
+    )
+
+    descriptions = [v["description"] for v in result["violations"]]
+    assert not any(desc.startswith("数据域配置疑似错误") for desc in descriptions)
+    assert any(desc.startswith("业务板块配置疑似错误") for desc in descriptions)
+
+
 def test_score_naming_conventions_checks_table_name_length():
     nc = load_naming_config(PROJECT_ROOT / "naming_config.yaml")
     tables = [
@@ -143,6 +215,98 @@ def test_score_naming_conventions_checks_table_name_length():
         "pct": 50.0,
     }
     assert result["details"][1]["table_checks"]["violations"] == ["违反: 表名长度 <= 30"]
+
+
+def test_score_naming_conventions_checks_business_dictionary_metadata():
+    nc = get_naming_config("finance_analytics")
+    business_config = get_business_domain_config("finance_analytics")
+    tables = [
+        {"name": "M_PAYM_04_CHREM_DI", "layer": "DWD", "columns": []},
+        {"name": "M_BAD_98_CHREM_DI", "layer": "DWD", "columns": []},
+    ]
+    model_metadata = {
+        "M_PAYM_04_CHREM_DI": {
+            "data_domain": "04",
+            "business_area": "PAYM",
+        },
+        "M_BAD_98_CHREM_DI": {
+            "data_domain": "98",
+            "business_area": "BAD",
+        },
+    }
+
+    result = score_naming_conventions(
+        tables,
+        nc,
+        model_metadata,
+        business_config,
+    )
+
+    assert result["rule_summary"]["数据域属于字典"] == {
+        "pass_count": 1,
+        "total": 2,
+        "pct": 50.0,
+    }
+    assert result["rule_summary"]["业务板块属于字典"] == {
+        "pass_count": 1,
+        "total": 2,
+        "pct": 50.0,
+    }
+    assert result["details"][1]["business_metadata_checks"]["violations"] == [
+        "数据域不在字典: 98",
+        "业务板块不在字典: BAD",
+    ]
+
+
+def test_score_naming_conventions_limits_business_metadata_by_layer():
+    nc = get_naming_config("finance_analytics")
+    business_config = get_business_domain_config("finance_analytics")
+    tables = [
+        {"name": "M_PAYM_04_CHREM_DI", "layer": "DWD", "columns": []},
+        {"name": "I_CLNT_CUST_SUM_DS", "layer": "DWS", "columns": []},
+        {"name": "D_CUST", "layer": "DIM", "columns": []},
+    ]
+    model_metadata = {
+        "M_PAYM_04_CHREM_DI": {
+            "data_domain": "98",
+            "business_area": "PAYM",
+        },
+        "I_CLNT_CUST_SUM_DS": {
+            "business_area": "CLNT",
+        },
+        "D_CUST": {
+            "data_domain": "99",
+            "business_area": "BAD",
+        },
+    }
+
+    result = score_naming_conventions(
+        tables,
+        nc,
+        model_metadata,
+        business_config,
+    )
+
+    assert result["rule_summary"]["数据域属于字典"] == {
+        "pass_count": 0,
+        "total": 1,
+        "pct": 0.0,
+    }
+    assert result["rule_summary"]["业务板块属于字典"] == {
+        "pass_count": 2,
+        "total": 2,
+        "pct": 100.0,
+    }
+    dws_detail = next(
+        item for item in result["details"]
+        if item["table"] == "I_CLNT_CUST_SUM_DS"
+    )
+    dim_detail = next(
+        item for item in result["details"]
+        if item["table"] == "D_CUST"
+    )
+    assert dws_detail["business_metadata_checks"]["violations"] == []
+    assert dim_detail["business_metadata_checks"]["total"] == 0
 
 
 def test_score_naming_conventions_checks_atomic_metrics_from_models():

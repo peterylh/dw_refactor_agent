@@ -4,3 +4,4 @@ layer: DWS
 table_type: fact
 config:
   materialized: full
+business_area: PAYM

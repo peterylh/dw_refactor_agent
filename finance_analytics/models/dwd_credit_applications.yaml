@@ -10,3 +10,5 @@ atomic_metrics:
 calculated_metrics:
 - processing_days
 - amount_difference
+data_domain: '02'
+business_area: LOAN

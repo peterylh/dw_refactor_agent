@@ -9,3 +9,5 @@ atomic_metrics:
 calculated_metrics:
 - resolution_days
 - recovered_amount
+data_domain: 09
+business_area: PAYM

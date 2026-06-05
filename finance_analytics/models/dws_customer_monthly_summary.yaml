@@ -21,3 +21,4 @@ atomic_metrics:
 - active_account_count
 - past_due_account_count
 - customer_count
+business_area: CLNT

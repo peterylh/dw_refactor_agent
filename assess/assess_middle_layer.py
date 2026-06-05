@@ -53,6 +53,8 @@ ATOMIC_METRIC_RULE_NAME = "原子指标命名 {ACTION_VERB}_{MEASURE_NOUN}"
 DERIVED_METRIC_RULE_NAME = (
     "派生指标命名 {TIME_PERIOD}_{MODIFIER...}_{ATOMIC_METRIC}"
 )
+DATA_DOMAIN_LAYERS = {"DWD"}
+BUSINESS_AREA_LAYERS = {"DWD", "DWS"}
 
 def build_metric_result(metric: dict, display_score: float | None = None) -> dict:
     raw = metric["score"]
@@ -258,10 +260,59 @@ def _declared_table_type(model_metadata: dict | None, table_name: str) -> str:
     return table_type if table_type in VALID_TABLE_TYPES else ""
 
 
+def _declared_data_domain(model_metadata: dict | None, table_name: str) -> str:
+    if not model_metadata:
+        return ""
+    return str(model_metadata.get(table_name, {}).get("data_domain") or "").strip()
+
+
+def _declared_business_area(model_metadata: dict | None, table_name: str) -> str:
+    if not model_metadata:
+        return ""
+    return (
+        str(model_metadata.get(table_name, {}).get("business_area") or "")
+        .strip()
+        .upper()
+    )
+
+
+def _data_domain_applies(layer: str) -> bool:
+    return str(layer or "").upper() in DATA_DOMAIN_LAYERS
+
+
+def _business_area_applies(layer: str) -> bool:
+    return str(layer or "").upper() in BUSINESS_AREA_LAYERS
+
+
+def _valid_inferred_data_domain(result, business_domain_config) -> str:
+    if not business_domain_config:
+        return str(getattr(result, "inferred_data_domain", "") or "").strip()
+    normalized = business_domain_config.normalize_domain(
+        getattr(result, "inferred_data_domain", ""))
+    return normalized if business_domain_config.is_valid_domain(normalized) else ""
+
+
+def _valid_inferred_business_area(result, business_domain_config) -> str:
+    if not business_domain_config:
+        return (
+            str(getattr(result, "inferred_business_area", "") or "")
+            .strip()
+            .upper()
+        )
+    normalized = business_domain_config.normalize_business_area(
+        getattr(result, "inferred_business_area", ""))
+    return (
+        normalized
+        if business_domain_config.is_valid_business_area(normalized)
+        else ""
+    )
+
+
 def score_architecture_health(tables: list, edges: list,
                               indirect_edges: list,
                               llm_results: list = None,
-                              model_metadata: dict | None = None) -> dict:
+                              model_metadata: dict | None = None,
+                              business_domain_config=None) -> dict:
     table_layers = build_table_layer_map(tables)
     table_count = len(tables)  # 全部表数 (ODS+DWD+DWS+DIM+ADS)
 
@@ -330,7 +381,10 @@ def score_architecture_health(tables: list, edges: list,
                     target=f"{name}({res.inferred_layer})",
                     severity="中",
                     weight=weight,
-                    description=f"分层配置疑似错误(LLM): 配置层={layer}, 推断层={res.inferred_layer}",
+                    description=(
+                        "分层配置疑似错误(LLM): "
+                        f"配置层={layer}, 推断层={res.inferred_layer}"
+                    ),
                     source_file="",
                     source_type="llm",
                     belongs_to=name,
@@ -368,6 +422,71 @@ def score_architecture_health(tables: list, edges: list,
                     belongs_to=name,
                 ))
                 table_weight[name] += weight
+
+            if _data_domain_applies(layer):
+                inferred_domain = _valid_inferred_data_domain(
+                    res,
+                    business_domain_config,
+                )
+                declared_domain = (
+                    business_domain_config.normalize_domain(
+                        _declared_data_domain(model_metadata, name))
+                    if business_domain_config
+                    else _declared_data_domain(model_metadata, name)
+                )
+                if inferred_domain and inferred_domain != declared_domain:
+                    severity = "中" if declared_domain else "低"
+                    weight = SEVERITY_WEIGHT[severity]
+                    violations.append(dict(
+                        source=(
+                            f"{name}(data_domain="
+                            f"{declared_domain or '未配置'})"
+                        ),
+                        target=f"{name}(data_domain={inferred_domain})",
+                        severity=severity,
+                        weight=weight,
+                        description=(
+                            "数据域配置疑似错误(LLM): "
+                            f"配置={declared_domain or '未配置'}, "
+                            f"推断={inferred_domain}"
+                        ),
+                        source_file="",
+                        source_type="llm",
+                        belongs_to=name,
+                    ))
+                    table_weight[name] += weight
+
+            if _business_area_applies(layer):
+                inferred_area = _valid_inferred_business_area(
+                    res,
+                    business_domain_config,
+                )
+                declared_area = (
+                    business_domain_config.normalize_business_area(
+                        _declared_business_area(model_metadata, name))
+                    if business_domain_config
+                    else _declared_business_area(model_metadata, name)
+                )
+                if inferred_area and inferred_area != declared_area:
+                    severity = "中" if declared_area else "低"
+                    weight = SEVERITY_WEIGHT[severity]
+                    violations.append(dict(
+                        source=(
+                            f"{name}(business_area="
+                            f"{declared_area or '未配置'})"
+                        ),
+                        target=f"{name}(business_area={inferred_area})",
+                        severity=severity,
+                        weight=weight,
+                        description=(
+                            "业务板块配置疑似错误(LLM): "
+                            f"配置={declared_area or '未配置'}, 推断={inferred_area}"
+                        ),
+                        source_file="",
+                        source_type="llm",
+                        belongs_to=name,
+                    ))
+                    table_weight[name] += weight
 
     # 每表扣分上限 (cap)
     capped_total = 0
@@ -483,6 +602,80 @@ def _has_derived_metric_rule(nc) -> bool:
     return _metric_rule_name(nc, "derived", "derived_metrics") is not None
 
 
+def _type_def_valid(nc, type_name: str, value: str) -> bool:
+    type_def = getattr(nc, "types", {}).get(type_name)
+    return type_def.validate(value) if type_def else True
+
+
+def _score_business_metadata_for_table(
+    table_name: str,
+    layer: str,
+    nc,
+    model_metadata: dict | None,
+    business_domain_config,
+) -> dict:
+    empty_checks = {
+        "passed": 0,
+        "total": 0,
+        "violations": [],
+        "data_domain_applicable": False,
+        "data_domain_passed": False,
+        "business_area_applicable": False,
+        "business_area_passed": False,
+    }
+    if not business_domain_config:
+        return empty_checks
+
+    metadata = model_metadata.get(table_name, {}) if model_metadata else {}
+    raw_domain = metadata.get("data_domain")
+    raw_area = metadata.get("business_area")
+    data_domain = business_domain_config.normalize_domain(raw_domain)
+    business_area = business_domain_config.normalize_business_area(raw_area)
+    checks = {
+        "passed": 0,
+        "total": 0,
+        "violations": [],
+        "data_domain_applicable": _data_domain_applies(layer),
+        "data_domain_passed": False,
+        "business_area_applicable": _business_area_applies(layer),
+        "business_area_passed": False,
+    }
+
+    if checks["data_domain_applicable"]:
+        checks["total"] += 1
+        if (
+            data_domain
+            and business_domain_config.is_valid_domain(data_domain)
+            and _type_def_valid(nc, "DATA_DOMAIN_ID", data_domain)
+        ):
+            checks["passed"] += 1
+            checks["data_domain_passed"] = True
+        else:
+            display_domain = (
+                raw_domain if raw_domain not in (None, "") else "未配置"
+            )
+            checks["violations"].append(
+                f"数据域不在字典: {display_domain}"
+            )
+
+    if checks["business_area_applicable"]:
+        checks["total"] += 1
+        if (
+            business_area
+            and business_domain_config.is_valid_business_area(business_area)
+            and _type_def_valid(nc, "BUSINESS_AREA_CODE", business_area)
+        ):
+            checks["passed"] += 1
+            checks["business_area_passed"] = True
+        else:
+            display_area = raw_area if raw_area not in (None, "") else "未配置"
+            checks["violations"].append(
+                f"业务板块不在字典: {display_area}"
+            )
+
+    return checks
+
+
 def _metric_names_from_raw(raw_metrics) -> list[str]:
     if not isinstance(raw_metrics, list):
         return []
@@ -524,6 +717,7 @@ def score_naming_conventions(
     tables: list,
     nc,
     model_metadata: dict | None = None,
+    business_domain_config=None,
 ) -> dict:
     middle = [t for t in tables if t["layer"] in ("DWD", "DWS", "DIM")]
     atomic_rule_name = _metric_rule_name(nc, "atomic", "atomic_metrics")
@@ -538,6 +732,28 @@ def score_naming_conventions(
     table_results = []
     total_checks = 0
     total_passed = 0
+    business_domain_total = 0
+    business_domain_passed = 0
+    business_area_total = 0
+    business_area_passed = 0
+    checked_business_tables = set()
+
+    def record_business_summary(checks: dict) -> None:
+        nonlocal business_domain_total
+        nonlocal business_domain_passed
+        nonlocal business_area_total
+        nonlocal business_area_passed
+        if not checks["total"]:
+            return
+        if checks.get("data_domain_applicable"):
+            business_domain_total += 1
+        if checks.get("data_domain_passed"):
+            business_domain_passed += 1
+        if checks.get("business_area_applicable"):
+            business_area_total += 1
+        if checks.get("business_area_passed"):
+            business_area_passed += 1
+
     for t in middle:
         name = t["name"]
         layer = t["layer"]
@@ -609,17 +825,31 @@ def score_naming_conventions(
             else:
                 col_violations.append(col_name)
 
+        # --- 业务域/板块字典检查 ---
+        business_checks = _score_business_metadata_for_table(
+            name,
+            layer,
+            nc,
+            model_metadata,
+            business_domain_config,
+        )
+        if business_checks["total"]:
+            checked_business_tables.add(name)
+            record_business_summary(business_checks)
+
         table_pass = (
             tbl_passed
             + col_passed
             + metric_passed
             + derived_metric_passed
+            + business_checks["passed"]
         )
         table_check = (
             tbl_total
             + col_total
             + metric_total
             + derived_metric_total
+            + business_checks["total"]
         )
         table_score = round(table_pass / table_check *
                             100, 1) if table_check else 100.0
@@ -646,11 +876,97 @@ def score_naming_conventions(
                     total=derived_metric_total,
                     violations=sorted(derived_metric_violations),
                 ),
+                business_metadata_checks=business_checks,
                 score=table_score,
             ))
 
         total_passed += table_pass
         total_checks += table_check
+
+    if business_domain_config:
+        for t in tables:
+            name = t["name"]
+            if name in checked_business_tables:
+                continue
+            if model_metadata and name not in model_metadata:
+                continue
+            business_checks = _score_business_metadata_for_table(
+                name,
+                t["layer"],
+                nc,
+                model_metadata,
+                business_domain_config,
+            )
+            if not business_checks["total"]:
+                continue
+            checked_business_tables.add(name)
+            record_business_summary(business_checks)
+            table_score = round(
+                business_checks["passed"] / business_checks["total"] * 100,
+                1,
+            )
+            table_results.append(
+                dict(
+                    table=name,
+                    layer=t["layer"],
+                    table_checks=dict(passed=0, total=0, violations=[]),
+                    column_checks=dict(passed=0, total=0, violations=[]),
+                    atomic_metric_checks=dict(
+                        passed=0,
+                        total=0,
+                        violations=[],
+                    ),
+                    derived_metric_checks=dict(
+                        passed=0,
+                        total=0,
+                        violations=[],
+                    ),
+                    business_metadata_checks=business_checks,
+                    score=table_score,
+                ))
+            total_passed += business_checks["passed"]
+            total_checks += business_checks["total"]
+
+    if business_domain_config and model_metadata:
+        for name, metadata in model_metadata.items():
+            if name in checked_business_tables:
+                continue
+            business_checks = _score_business_metadata_for_table(
+                name,
+                str(metadata.get("layer") or "OTHER").upper(),
+                nc,
+                model_metadata,
+                business_domain_config,
+            )
+            if not business_checks["total"]:
+                continue
+            checked_business_tables.add(name)
+            record_business_summary(business_checks)
+            table_score = round(
+                business_checks["passed"] / business_checks["total"] * 100,
+                1,
+            )
+            table_results.append(
+                dict(
+                    table=name,
+                    layer=str(metadata.get("layer") or "OTHER").upper(),
+                    table_checks=dict(passed=0, total=0, violations=[]),
+                    column_checks=dict(passed=0, total=0, violations=[]),
+                    atomic_metric_checks=dict(
+                        passed=0,
+                        total=0,
+                        violations=[],
+                    ),
+                    derived_metric_checks=dict(
+                        passed=0,
+                        total=0,
+                        violations=[],
+                    ),
+                    business_metadata_checks=business_checks,
+                    score=table_score,
+                ))
+            total_passed += business_checks["passed"]
+            total_checks += business_checks["total"]
 
     overall = round(total_passed / total_checks *
                     100, 1) if total_checks else 100.0
@@ -756,6 +1072,20 @@ def score_naming_conventions(
             total=metric_total,
             pct=round(metric_passed / metric_total * 100, 1)
             if metric_total else 0,
+        )
+
+    if business_domain_config:
+        rule_summary["数据域属于字典"] = dict(
+            pass_count=business_domain_passed,
+            total=business_domain_total,
+            pct=round(business_domain_passed / business_domain_total * 100, 1)
+            if business_domain_total else 0,
+        )
+        rule_summary["业务板块属于字典"] = dict(
+            pass_count=business_area_passed,
+            total=business_area_total,
+            pct=round(business_area_passed / business_area_total * 100, 1)
+            if business_area_total else 0,
         )
 
     return dict(score=overall,
@@ -976,6 +1306,9 @@ def generate_report(scores: dict, weights: dict, project: str) -> str:
                     -1] += (
                         f"... (共{len(derived_metric_checks['violations'])}个)"
                     )
+        business_checks = r.get("business_metadata_checks", {})
+        if business_checks.get("violations"):
+            issues.extend(business_checks["violations"])
         if issues:
             if not has_viz:
                 parts.append(f"\n  偏离详情:")
@@ -1001,9 +1334,14 @@ def assess(project: str, weights: dict = None) -> dict:
     if weights is None:
         weights = DEFAULT_WEIGHTS.copy()
 
-    from config import get_naming_config, load_model_metadata
+    from config import (
+        get_business_domain_config,
+        get_naming_config,
+        load_model_metadata,
+    )
     nc = get_naming_config(project)
     model_metadata = load_model_metadata(project)
+    business_domain_config = get_business_domain_config(project)
 
     data = load_lineage_data(project)
     edges = data.get("edges", [])
@@ -1034,11 +1372,22 @@ def assess(project: str, weights: dict = None) -> dict:
     reuse_score = build_metric_result(score_reusability(tables, downstream))
     depth_score = build_metric_result(
         score_lineage_depth(tables, edges, indirect_edges))
-    architecture_raw = score_architecture_health(tables, edges, indirect_edges,
-                                                  llm_results, model_metadata)
+    architecture_raw = score_architecture_health(
+        tables,
+        edges,
+        indirect_edges,
+        llm_results,
+        model_metadata,
+        business_domain_config,
+    )
     architecture_score = build_metric_result(architecture_raw)
     naming_score = build_metric_result(
-        score_naming_conventions(tables, nc, model_metadata))
+        score_naming_conventions(
+            tables,
+            nc,
+            model_metadata,
+            business_domain_config,
+        ))
 
     overall_raw = round(
         weights["reuse"] * reuse_score["raw"] +

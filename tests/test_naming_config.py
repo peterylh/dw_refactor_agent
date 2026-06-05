@@ -4,8 +4,8 @@ import pytest
 import config
 from config import (
     TypeDef, LayerDef, NamingConfig,
-    _parse_rule_expression, _parse_segments, _parse_template, load_naming_config,
-    layer_rank,
+    _parse_rule_expression, _parse_segments, _parse_template,
+    get_business_domain_config, load_naming_config, layer_rank,
 )
 
 
@@ -462,7 +462,7 @@ class TestLoadNamingConfig:
         cfg_path.write_text(
             """
 types:
-  BIZ_MODULE:
+  BUSINESS_AREA_CODE:
     allow:
       - FRTN
   ENTITY:
@@ -473,7 +473,7 @@ types:
       - BAL
 rules:
   TABLE_DWS:
-    expr: ["_", I, "$BIZ_MODULE", "$ENTITY{1,2}", "$METRICS_DESC"]
+    expr: ["_", I, "$BUSINESS_AREA_CODE", "$ENTITY{1,2}", "$METRICS_DESC"]
   COLUMN_FLEX:
     expr: ["_", "$ENTITY{1,2}", "$METRICS_DESC"]
 bindings:
@@ -494,7 +494,7 @@ bindings:
             "I_FRTN_CUST_PROD_BAL",
             nc.layers["DWS"].templates[0],
         ) == {
-            "BIZ_MODULE": "FRTN",
+            "BUSINESS_AREA_CODE": "FRTN",
             "ENTITY": ["CUST", "PROD"],
             "METRICS_DESC": "BAL",
         }
@@ -502,7 +502,7 @@ bindings:
             "I_FRTN_CUST_BAL",
             nc.layers["DWS"].templates[1],
         ) == {
-            "BIZ_MODULE": "FRTN",
+            "BUSINESS_AREA_CODE": "FRTN",
             "ENTITY": "CUST",
             "METRICS_DESC": "BAL",
         }
@@ -607,8 +607,8 @@ class TestEnterpriseNaming:
         segs = nc.layers["DWD"].templates[0]
         r = nc._match_segments("M_WEMG_04_CHREM_DI", segs)
         assert r == {
-            "BIZ_MODULE": "WEMG",
-            "DOMAIN_CODE": "04",
+            "BUSINESS_AREA_CODE": "WEMG",
+            "DATA_DOMAIN_ID": "04",
             "BIZ_PROCESS": "CHREM",
             "TIME_PERIOD": "D",
             "DWD_GRANULARITY": "I",
@@ -618,7 +618,7 @@ class TestEnterpriseNaming:
         segs = nc.layers["DWS"].templates[0]
         r = nc._match_segments("I_FRTN_CUST_PROD_BAL_DS", segs)
         assert r == {
-            "BIZ_MODULE": "FRTN",
+            "BUSINESS_AREA_CODE": "FRTN",
             "ENTITY": ["CUST", "PROD"],
             "METRICS_DESC": "BAL",
             "TIME_PERIOD": "D",
@@ -634,7 +634,7 @@ class TestEnterpriseNaming:
         segs = nc.layers["DWS"].templates[1]
         r = nc._match_segments("I_FRTN_CUST_BAL_DS", segs)
         assert r == {
-            "BIZ_MODULE": "FRTN",
+            "BUSINESS_AREA_CODE": "FRTN",
             "ENTITY": "CUST",
             "METRICS_DESC": "BAL",
             "TIME_PERIOD": "D",
@@ -747,8 +747,8 @@ class TestGetNamingConfigByProject:
             "M_WEMG_04_CHREM_DI",
             nc.layers["DWD"].templates[0],
         ) == {
-            "BIZ_MODULE": "WEMG",
-            "DOMAIN_CODE": "04",
+            "BUSINESS_AREA_CODE": "WEMG",
+            "DATA_DOMAIN_ID": "04",
             "BIZ_PROCESS": "CHREM",
             "TIME_PERIOD": "D",
             "DWD_GRANULARITY": "I",
@@ -759,7 +759,7 @@ class TestGetNamingConfigByProject:
         }
         assert nc.match_metric_rule("pay_amt", "atomic") is None
 
-    def test_projects_use_default_naming_config(self):
+    def test_project_business_dictionary_tightens_naming_types(self):
         shop_nc = get_naming_config("shop")
         finance_nc = get_naming_config("finance_analytics")
         assert shop_nc._match_segments(
@@ -769,4 +769,39 @@ class TestGetNamingConfigByProject:
         assert finance_nc._match_segments(
             "M_WEMG_04_CHREM_DI",
             finance_nc.layers["DWD"].templates[0],
+        ) is None
+        assert finance_nc._match_segments(
+            "M_LOAN_04_CHREM_DI",
+            finance_nc.layers["DWD"].templates[0],
         ) is not None
+        assert finance_nc.types["BUSINESS_AREA_CODE"].allow == [
+            "LOAN", "DPST", "FRTN", "PAYM", "GUAR", "BILL", "AGEN",
+            "ACQR", "CHNL", "CRDT", "FORX", "ASTM", "CLNT", "FMAN",
+            "OTHR",
+        ]
+        assert finance_nc.types["DATA_DOMAIN_ID"].allow == [
+            "01", "02", "03", "04", "05", "06", "07", "08", "09", "10",
+            "99",
+        ]
+        assert finance_nc.types["BUSINESS_AREA_CODE"].dictionary == {
+            "dictionary": "business_areas",
+            "value_field": "code",
+        }
+        assert finance_nc.types["DATA_DOMAIN_ID"].dictionary == {
+            "dictionary": "data_domains",
+            "value_field": "id",
+        }
+
+    def test_load_business_domain_config_for_finance_project(self):
+        business_config = get_business_domain_config("finance_analytics")
+
+        assert business_config.is_valid_domain("04") is True
+        assert business_config.normalize_domain("TRAN") == "04"
+        assert business_config.normalize_domain("4") == "04"
+        assert business_config.is_valid_domain("99") is True
+        assert business_config.is_valid_business_area("PAYM") is True
+        assert business_config.is_valid_business_area("OTHR") is True
+        assert "PAYM" in business_config.business_area_codes
+        assert "04" in business_config.domain_ids
+        assert "allowed_data_domains" not in (
+            business_config.prompt_options()["business_areas"][0])
