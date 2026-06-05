@@ -765,6 +765,10 @@ class TestGetNamingConfigByProject:
         assert shop_nc._match_segments(
             "M_WEMG_04_CHREM_DI",
             shop_nc.layers["DWD"].templates[0],
+        ) is None
+        assert shop_nc._match_segments(
+            "M_SHOP_04_ORDER_DI",
+            shop_nc.layers["DWD"].templates[0],
         ) is not None
         assert finance_nc._match_segments(
             "M_WEMG_04_CHREM_DI",
@@ -779,6 +783,18 @@ class TestGetNamingConfigByProject:
             "ACQR", "CHNL", "CRDT", "FORX", "ASTM", "CLNT", "FMAN",
             "OTHR",
         ]
+        assert shop_nc.types["BUSINESS_AREA_CODE"].allow == ["SHOP"]
+        assert shop_nc.types["DATA_DOMAIN_ID"].allow == [
+            "01", "02", "03", "04", "05", "06", "99",
+        ]
+        assert shop_nc.types["BUSINESS_AREA_CODE"].dictionary == {
+            "dictionary": "business_areas",
+            "value_field": "code",
+        }
+        assert shop_nc.types["DATA_DOMAIN_ID"].dictionary == {
+            "dictionary": "data_domains",
+            "value_field": "id",
+        }
         assert finance_nc.types["DATA_DOMAIN_ID"].allow == [
             "01", "02", "03", "04", "05", "06", "07", "08", "09", "10",
             "99",
@@ -805,3 +821,17 @@ class TestGetNamingConfigByProject:
         assert "04" in business_config.domain_ids
         assert "allowed_data_domains" not in (
             business_config.prompt_options()["business_areas"][0])
+
+    def test_load_business_domain_config_for_shop_project(self):
+        business_config = get_business_domain_config("shop")
+
+        assert business_config.is_valid_domain("04") is True
+        assert business_config.normalize_domain("ORDR") == "04"
+        assert business_config.normalize_domain("4") == "04"
+        assert business_config.is_valid_domain("99") is True
+        assert business_config.is_valid_business_area("SHOP") is True
+        assert business_config.is_valid_business_area("PAYM") is False
+        assert business_config.business_area_codes == ["SHOP"]
+        assert business_config.domain_ids == [
+            "01", "02", "03", "04", "05", "06", "99",
+        ]

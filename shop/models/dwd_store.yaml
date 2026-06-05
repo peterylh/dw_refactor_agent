@@ -2,6 +2,8 @@ version: 2
 name: dwd_store
 layer: DWD
 table_type: dimension
+data_domain: '03'
+business_area: SHOP
 description: 门店每日快照
 config:
   materialized: snapshot

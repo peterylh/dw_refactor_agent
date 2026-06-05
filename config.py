@@ -1385,6 +1385,7 @@ PROJECT_CONFIG = {
         "db": "shop_dm",
         "qa_db": "shop_dm_qa",
         "lineage_db": "shop_lineage",
+        "naming_config": "shop/naming_config.yaml",
     },
     "finance_analytics": {
         "dir": "finance_analytics",

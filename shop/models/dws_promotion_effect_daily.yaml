@@ -2,6 +2,7 @@ version: 2
 name: dws_promotion_effect_daily
 layer: DWS
 table_type: fact
+business_area: SHOP
 description: 促销效果日汇总
 config:
   materialized: incremental

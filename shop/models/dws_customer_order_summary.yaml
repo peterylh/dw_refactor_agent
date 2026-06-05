@@ -2,6 +2,7 @@ version: 2
 name: dws_customer_order_summary
 layer: DWS
 table_type: fact
+business_area: SHOP
 description: 客户订单汇总
 config:
   materialized: incremental
