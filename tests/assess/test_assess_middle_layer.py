@@ -7,6 +7,11 @@ from config import (
 from assess.assess_middle_layer import (
     ATOMIC_METRIC_RULE_NAME,
     DERIVED_METRIC_RULE_NAME,
+    FILE_RULE_DDL,
+    FILE_RULE_MODEL_NAME,
+    FILE_RULE_MODEL_TABLE,
+    FILE_RULE_TASK_LINEAGE,
+    FILE_RULE_TASK_SQL,
     assess,
     generate_report,
     score_architecture_health,
@@ -234,7 +239,6 @@ def test_score_naming_conventions_checks_business_dictionary_metadata():
             "business_area": "BAD",
         },
     }
-
     result = score_naming_conventions(
         tables,
         nc,
@@ -307,6 +311,284 @@ def test_score_naming_conventions_limits_business_metadata_by_layer():
     )
     assert dws_detail["business_metadata_checks"]["violations"] == []
     assert dim_detail["business_metadata_checks"]["total"] == 0
+
+
+def test_score_naming_conventions_checks_project_file_names(tmp_path):
+    nc = load_naming_config(PROJECT_ROOT / "naming_config.yaml")
+    project_dir = tmp_path / "demo"
+    (project_dir / "ddl").mkdir(parents=True)
+    (project_dir / "models").mkdir()
+    (project_dir / "tasks" / "full_refresh").mkdir(parents=True)
+
+    table_name = "M_WEMG_04_CHREM_DI"
+    ddl = f"""
+CREATE TABLE IF NOT EXISTS demo.{table_name} (
+    ID BIGINT
+) ENGINE=OLAP
+DUPLICATE KEY(ID)
+DISTRIBUTED BY HASH(ID) BUCKETS 1
+PROPERTIES ("replication_num" = "1");
+"""
+    (project_dir / "ddl" / f"{table_name}.sql").write_text(ddl)
+    (project_dir / "models" / f"{table_name}.yaml").write_text(
+        f"name: {table_name}\nlayer: DWD\n"
+    )
+    (project_dir / "tasks" / f"{table_name}.sql").write_text(
+        f"INSERT INTO demo.{table_name} SELECT 1 AS ID;"
+    )
+    full_refresh = project_dir / "tasks" / "full_refresh" / (
+        f"{table_name}_full_refresh.sql"
+    )
+    full_refresh.write_text(f"INSERT INTO demo.{table_name} SELECT 1 AS ID;")
+
+    tables = []
+    edges = [
+        {
+            "source": "ods_source.ID",
+            "target": f"{table_name}.ID",
+            "source_file": f"{table_name}.sql",
+        },
+        {
+            "source": "ods_source.ID",
+            "target": f"{table_name}.ID",
+            "source_file": f"full_refresh/{table_name}_full_refresh.sql",
+        },
+    ]
+
+    result = score_naming_conventions(
+        tables,
+        nc,
+        project_dir=project_dir,
+        edges=edges,
+        indirect_edges=[],
+    )
+
+    assert result["score"] == 100.0
+    assert result["file_checks"] == {"passed": 7, "total": 7}
+    assert result["file_details"] == []
+    assert result["rule_summary"][FILE_RULE_DDL] == {
+        "pass_count": 1,
+        "total": 1,
+        "pct": 100.0,
+    }
+    assert result["rule_summary"][FILE_RULE_MODEL_TABLE] == {
+        "pass_count": 1,
+        "total": 1,
+        "pct": 100.0,
+    }
+    assert result["rule_summary"][FILE_RULE_MODEL_NAME] == {
+        "pass_count": 1,
+        "total": 1,
+        "pct": 100.0,
+    }
+    assert result["rule_summary"][FILE_RULE_TASK_SQL] == {
+        "pass_count": 2,
+        "total": 2,
+        "pct": 100.0,
+    }
+    assert result["rule_summary"][FILE_RULE_TASK_LINEAGE] == {
+        "pass_count": 2,
+        "total": 2,
+        "pct": 100.0,
+    }
+
+
+def test_score_naming_conventions_flags_project_file_name_mismatches(tmp_path):
+    nc = load_naming_config(PROJECT_ROOT / "naming_config.yaml")
+    project_dir = tmp_path / "demo"
+    (project_dir / "ddl").mkdir(parents=True)
+    (project_dir / "models").mkdir()
+    (project_dir / "tasks").mkdir()
+
+    table_name = "M_WEMG_04_CHREM_DI"
+    ddl = f"""
+CREATE TABLE IF NOT EXISTS demo.{table_name} (
+    ID BIGINT
+) ENGINE=OLAP
+DUPLICATE KEY(ID)
+DISTRIBUTED BY HASH(ID) BUCKETS 1
+PROPERTIES ("replication_num" = "1");
+"""
+    (project_dir / "ddl" / "wrong_ddl.sql").write_text(ddl)
+    (project_dir / "models" / "wrong_model.yaml").write_text(
+        f"name: {table_name}\nlayer: DWD\n"
+    )
+    (project_dir / "tasks" / "wrong_task.sql").write_text(
+        f"INSERT INTO demo.{table_name} SELECT 1 AS ID;"
+    )
+
+    tables = [{"name": table_name, "layer": "DWD", "columns": []}]
+    edges = [{
+        "source": "ods_source.ID",
+        "target": f"{table_name}.ID",
+        "source_file": "wrong_task.sql",
+    }]
+
+    result = score_naming_conventions(
+        tables,
+        nc,
+        project_dir=project_dir,
+        edges=edges,
+        indirect_edges=[],
+    )
+
+    assert result["score"] == 28.6
+    assert result["file_checks"] == {"passed": 0, "total": 5}
+    assert result["rule_summary"][FILE_RULE_DDL] == {
+        "pass_count": 0,
+        "total": 1,
+        "pct": 0.0,
+    }
+    assert result["rule_summary"][FILE_RULE_MODEL_TABLE] == {
+        "pass_count": 0,
+        "total": 1,
+        "pct": 0.0,
+    }
+    assert result["rule_summary"][FILE_RULE_MODEL_NAME] == {
+        "pass_count": 0,
+        "total": 1,
+        "pct": 0.0,
+    }
+    assert result["rule_summary"][FILE_RULE_TASK_SQL] == {
+        "pass_count": 0,
+        "total": 1,
+        "pct": 0.0,
+    }
+    assert result["rule_summary"][FILE_RULE_TASK_LINEAGE] == {
+        "pass_count": 0,
+        "total": 1,
+        "pct": 0.0,
+    }
+    assert {detail["rule"] for detail in result["file_details"]} == {
+        FILE_RULE_DDL,
+        FILE_RULE_MODEL_TABLE,
+        FILE_RULE_MODEL_NAME,
+        FILE_RULE_TASK_SQL,
+        FILE_RULE_TASK_LINEAGE,
+    }
+
+
+def test_score_naming_conventions_flags_missing_task_lineage(tmp_path):
+    nc = load_naming_config(PROJECT_ROOT / "naming_config.yaml")
+    project_dir = tmp_path / "demo"
+    (project_dir / "tasks").mkdir(parents=True)
+
+    table_name = "M_WEMG_04_CHREM_DI"
+    (project_dir / "tasks" / f"{table_name}.sql").write_text(
+        f"INSERT INTO demo.{table_name} SELECT 1 AS ID;"
+    )
+
+    result = score_naming_conventions(
+        [],
+        nc,
+        project_dir=project_dir,
+        edges=[],
+        indirect_edges=[],
+    )
+
+    assert result["score"] == 50.0
+    assert result["file_checks"] == {"passed": 1, "total": 2}
+    assert result["rule_summary"][FILE_RULE_TASK_SQL] == {
+        "pass_count": 1,
+        "total": 1,
+        "pct": 100.0,
+    }
+    assert result["rule_summary"][FILE_RULE_TASK_LINEAGE] == {
+        "pass_count": 0,
+        "total": 1,
+        "pct": 0.0,
+    }
+    assert result["file_details"] == [{
+        "file": "demo/tasks/M_WEMG_04_CHREM_DI.sql",
+        "rule": FILE_RULE_TASK_LINEAGE,
+        "expected": table_name,
+        "actual": "未解析",
+    }]
+
+
+def test_score_naming_conventions_does_not_reuse_basename_lineage(tmp_path):
+    nc = load_naming_config(PROJECT_ROOT / "naming_config.yaml")
+    project_dir = tmp_path / "demo"
+    (project_dir / "tasks" / "archive").mkdir(parents=True)
+
+    table_name = "M_WEMG_04_CHREM_DI"
+    (project_dir / "tasks" / f"{table_name}.sql").write_text(
+        f"INSERT INTO demo.{table_name} SELECT 1 AS ID;"
+    )
+    archived_task = project_dir / "tasks" / "archive" / f"{table_name}.sql"
+    archived_task.write_text(f"INSERT INTO demo.{table_name} SELECT 1 AS ID;")
+
+    result = score_naming_conventions(
+        [],
+        nc,
+        project_dir=project_dir,
+        edges=[{
+            "source": "ods_source.ID",
+            "target": f"{table_name}.ID",
+            "source_file": f"{table_name}.sql",
+        }],
+        indirect_edges=[],
+    )
+
+    assert result["file_checks"] == {"passed": 3, "total": 4}
+    assert result["rule_summary"][FILE_RULE_TASK_LINEAGE] == {
+        "pass_count": 1,
+        "total": 2,
+        "pct": 50.0,
+    }
+    assert result["file_details"] == [{
+        "file": f"demo/tasks/archive/{table_name}.sql",
+        "rule": FILE_RULE_TASK_LINEAGE,
+        "expected": table_name,
+        "actual": "未解析",
+    }]
+
+
+def test_score_naming_conventions_checks_extra_write_targets(tmp_path):
+    nc = load_naming_config(PROJECT_ROOT / "naming_config.yaml")
+    project_dir = tmp_path / "demo"
+    (project_dir / "tasks").mkdir(parents=True)
+
+    table_name = "M_WEMG_04_CHREM_DI"
+    (project_dir / "tasks" / f"{table_name}.sql").write_text(
+        f"""
+TRUNCATE TABLE demo.WRONG_TARGET;
+INSERT INTO demo.{table_name} SELECT 1 AS ID;
+UPDATE demo.{table_name} SET ID = 1;
+DELETE FROM demo.{table_name} WHERE ID = 1;
+"""
+    )
+
+    result = score_naming_conventions(
+        [],
+        nc,
+        project_dir=project_dir,
+        edges=[{
+            "source": "ods_source.ID",
+            "target": f"{table_name}.ID",
+            "source_file": f"{table_name}.sql",
+        }],
+        indirect_edges=[],
+    )
+
+    assert result["score"] == 50.0
+    assert result["file_checks"] == {"passed": 1, "total": 2}
+    assert result["rule_summary"][FILE_RULE_TASK_SQL] == {
+        "pass_count": 0,
+        "total": 1,
+        "pct": 0.0,
+    }
+    assert result["rule_summary"][FILE_RULE_TASK_LINEAGE] == {
+        "pass_count": 1,
+        "total": 1,
+        "pct": 100.0,
+    }
+    assert result["file_details"] == [{
+        "file": f"demo/tasks/{table_name}.sql",
+        "rule": FILE_RULE_TASK_SQL,
+        "expected": table_name,
+        "actual": f"{table_name}, WRONG_TARGET",
+    }]
 
 
 def test_score_naming_conventions_checks_atomic_metrics_from_models():
