@@ -1,6 +1,11 @@
+import pytest
+import yaml
+
+import config
 from config import (
-    get_business_domain_config,
-    get_naming_config,
+    BusinessAreaDef,
+    BusinessDomainConfig,
+    DomainDef,
     load_naming_config,
     PROJECT_ROOT,
 )
@@ -20,13 +25,89 @@ from assess.assess_middle_layer import (
 from assess.table_inspector import TableInspectResult
 
 
-def test_assess_returns_raw_and_display_scores(monkeypatch, sample_lineage_data):
+def _business_domain_config():
+    return BusinessDomainConfig(
+        domains={
+            "04": DomainDef(id="04", code="TRAN", name="交易域"),
+            "10": DomainDef(id="10", code="MKTG", name="营销域"),
+            "99": DomainDef(id="99", code="OTHR", name="其它"),
+        },
+        business_areas={
+            "PAYM": BusinessAreaDef(id="04", code="PAYM", name="支付结算"),
+            "CLNT": BusinessAreaDef(id="13", code="CLNT", name="客户经营"),
+            "OTHR": BusinessAreaDef(id="99", code="OTHR", name="其它"),
+        },
+    )
+
+
+def _business_naming_config(tmp_path):
+    raw = yaml.safe_load(
+        (PROJECT_ROOT / "naming_config.yaml").read_text(encoding="utf-8"))
+    raw["dictionaries"] = {
+        "data_domains": {
+            "values": [
+                {"id": "04", "code": "TRAN", "name": "交易域"},
+                {"id": "10", "code": "MKTG", "name": "营销域"},
+                {"id": "99", "code": "OTHR", "name": "其它"},
+            ]
+        },
+        "business_areas": {
+            "values": [
+                {"id": "04", "code": "PAYM", "name": "支付结算"},
+                {"id": "13", "code": "CLNT", "name": "客户经营"},
+                {"id": "99", "code": "OTHR", "name": "其它"},
+            ]
+        },
+    }
+    raw["types"]["BUSINESS_AREA_CODE"]["allow"] = {
+        "dictionary": "business_areas",
+        "value_field": "code",
+    }
+    raw["types"]["BUSINESS_AREA_CODE"].pop("patterns", None)
+    raw["types"]["DATA_DOMAIN_ID"]["allow"] = {
+        "dictionary": "data_domains",
+        "value_field": "id",
+    }
+    raw["types"]["DATA_DOMAIN_ID"].pop("patterns", None)
+    cfg_path = tmp_path / "business_naming.yaml"
+    cfg_path.write_text(
+        yaml.safe_dump(raw, allow_unicode=True, sort_keys=False),
+        encoding="utf-8",
+    )
+    return load_naming_config(cfg_path)
+
+
+@pytest.fixture
+def isolated_assess_project(tmp_path, monkeypatch):
+    import assess.assess_middle_layer as assess_module
+
+    project = "unit_assess"
+    (tmp_path / project).mkdir()
+    (tmp_path / "naming_config.yaml").write_text(
+        (PROJECT_ROOT / "naming_config.yaml").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(config, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(assess_module, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setitem(config.PROJECT_CONFIG, project, {
+        "dir": project,
+        "naming_config": "naming_config.yaml",
+    })
+    config._naming_config_cache.clear()
+    config._model_metadata_cache.clear()
+    yield project
+    config._naming_config_cache.clear()
+    config._model_metadata_cache.clear()
+
+
+def test_assess_returns_raw_and_display_scores(monkeypatch, sample_lineage_data,
+                                               isolated_assess_project):
     monkeypatch.setattr(
         "assess.assess_middle_layer.load_lineage_data",
         lambda project: sample_lineage_data,
     )
 
-    result = assess(project="shop")
+    result = assess(project=isolated_assess_project)
 
     assert "architecture" in result
     assert result["weights"]["architecture"] == 0.25
@@ -43,14 +124,14 @@ def test_assess_returns_raw_and_display_scores(monkeypatch, sample_lineage_data)
 
 
 def test_generate_report_contains_raw_and_display_scores(
-        monkeypatch, sample_lineage_data):
+        monkeypatch, sample_lineage_data, isolated_assess_project):
     monkeypatch.setattr(
         "assess.assess_middle_layer.load_lineage_data",
         lambda project: sample_lineage_data,
     )
 
-    result = assess(project="shop")
-    report = generate_report(result, result["weights"], "shop")
+    result = assess(project=isolated_assess_project)
+    report = generate_report(result, result["weights"], isolated_assess_project)
 
     assert "总体评分(展示)" in report
     assert "总体评分(原始)" in report
@@ -59,7 +140,7 @@ def test_generate_report_contains_raw_and_display_scores(
 
 
 def test_assess_includes_atomic_metric_naming_summary(
-        monkeypatch, sample_lineage_data):
+        monkeypatch, sample_lineage_data, isolated_assess_project):
     monkeypatch.setattr(
         "assess.assess_middle_layer.load_lineage_data",
         lambda project: sample_lineage_data,
@@ -73,7 +154,7 @@ def test_assess_includes_atomic_metric_naming_summary(
         },
     )
 
-    result = assess(project="shop")
+    result = assess(project=isolated_assess_project)
 
     assert result["naming"]["rule_summary"][ATOMIC_METRIC_RULE_NAME] == {
         "pass_count": 1,
@@ -139,7 +220,7 @@ def test_score_architecture_health_allows_ads_to_read_dim():
 
 
 def test_score_architecture_health_penalizes_llm_business_metadata_mismatch():
-    business_config = get_business_domain_config("finance_analytics")
+    business_config = _business_domain_config()
     tables = [{"name": "dwd_transactions", "layer": "DWD", "columns": []}]
 
     result = score_architecture_health(
@@ -173,7 +254,7 @@ def test_score_architecture_health_penalizes_llm_business_metadata_mismatch():
 
 
 def test_score_architecture_health_limits_business_checks_by_layer():
-    business_config = get_business_domain_config("finance_analytics")
+    business_config = _business_domain_config()
     tables = [{"name": "dws_transactions", "layer": "DWS", "columns": []}]
 
     result = score_architecture_health(
@@ -248,9 +329,9 @@ def test_score_naming_conventions_includes_structured_diagnostics():
     ]
 
 
-def test_score_naming_conventions_checks_business_dictionary_metadata():
-    nc = get_naming_config("finance_analytics")
-    business_config = get_business_domain_config("finance_analytics")
+def test_score_naming_conventions_checks_business_dictionary_metadata(tmp_path):
+    nc = _business_naming_config(tmp_path)
+    business_config = nc.business_domain_config
     tables = [
         {"name": "M_PAYM_04_CHREM_DI", "layer": "DWD", "columns": []},
         {"name": "M_BAD_98_CHREM_DI", "layer": "DWD", "columns": []},
@@ -288,9 +369,9 @@ def test_score_naming_conventions_checks_business_dictionary_metadata():
     ]
 
 
-def test_score_naming_conventions_limits_business_metadata_by_layer():
-    nc = get_naming_config("finance_analytics")
-    business_config = get_business_domain_config("finance_analytics")
+def test_score_naming_conventions_limits_business_metadata_by_layer(tmp_path):
+    nc = _business_naming_config(tmp_path)
+    business_config = nc.business_domain_config
     tables = [
         {"name": "M_PAYM_04_CHREM_DI", "layer": "DWD", "columns": []},
         {"name": "I_CLNT_CUST_SUM_DS", "layer": "DWS", "columns": []},

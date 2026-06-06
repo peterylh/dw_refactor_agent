@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 
 import yaml
 
+import config
 from config import get_business_domain_config, load_model_metadata
 
 DATA_DOMAIN_LAYERS = {"DWD"}
@@ -121,18 +122,26 @@ def extract_column_lineage(lineage_data: dict,
     return lineage
 
 
+def _project_dir(project: str) -> Path:
+    project_cfg = config.PROJECT_CONFIG.get(project) or {}
+    if project_cfg.get("dir"):
+        return config.PROJECT_ROOT / project_cfg["dir"]
+    return Path(__file__).resolve().parent.parent / project
+
+
 def build_contexts(project: str,
                    lineage_data: dict,
                    ddl_dir: Path = None,
                    tasks_dir: Path = None) -> list[TableContext]:
     """为 DWD/DWS/DIM 层所有表构建分类上下文"""
+    project_dir = _project_dir(project)
     if not ddl_dir:
-        ddl_dir = Path(__file__).resolve().parent.parent / project / "ddl"
+        ddl_dir = project_dir / "ddl"
     if not tasks_dir:
-        tasks_dir = Path(__file__).resolve().parent.parent / project / "tasks"
+        tasks_dir = project_dir / "tasks"
 
     upstream, downstream = extract_dependencies(lineage_data)
-    models_dir = Path(__file__).resolve().parent.parent / project / "models"
+    models_dir = project_dir / "models"
     metric_groups = _load_model_metric_groups(models_dir)
     model_metadata = load_model_metadata(project)
     business_domain_config = get_business_domain_config(project)

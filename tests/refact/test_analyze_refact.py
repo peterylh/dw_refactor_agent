@@ -1,3 +1,6 @@
+import pytest
+
+import config
 import refact.analyze_refact as analyze_refact
 from refact.analyze_refact import (
     determine_layer,
@@ -5,6 +8,46 @@ from refact.analyze_refact import (
     parse_partition_col_from_ddl,
     strip_insert_data,
 )
+
+
+@pytest.fixture(autouse=True)
+def isolated_model_layers(tmp_path, monkeypatch):
+    project = "unit_refact"
+    dim_project = "unit_refact_dim"
+    layer_map = {
+        project: {
+            "ods_order": "ODS",
+            "ods_customer": "ODS",
+            "dwd_order_detail": "DWD",
+            "dwd_customer": "DWD",
+            "dws_store_sales_daily": "DWS",
+            "dws_category_sales_monthly": "DWS",
+            "ads_sales_dashboard": "ADS",
+            "ads_store_performance": "ADS",
+        },
+        dim_project: {
+            "dim_date": "DIM",
+            "dim_customer": "DIM",
+        },
+    }
+    for project_name, tables in layer_map.items():
+        models_dir = tmp_path / project_name / "models"
+        models_dir.mkdir(parents=True)
+        for table_name, layer in tables.items():
+            (models_dir / f"{table_name}.yaml").write_text(
+                f"version: 2\nname: {table_name}\nlayer: {layer}\n",
+                encoding="utf-8",
+            )
+        monkeypatch.setitem(config.PROJECT_CONFIG, project_name, {
+            "dir": project_name,
+        })
+
+    monkeypatch.setattr(config, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(analyze_refact, "CURRENT_PROJECT", project)
+    config._model_metadata_cache.clear()
+    yield
+    config._model_metadata_cache.clear()
+
 
 # ============================================================
 # 1. determine_layer
@@ -36,7 +79,7 @@ def test_determine_layer_other():
     assert determine_layer("") == "OTHER"
 
 def test_determine_layer_dim(monkeypatch):
-    monkeypatch.setattr(analyze_refact, "CURRENT_PROJECT", "finance_analytics")
+    monkeypatch.setattr(analyze_refact, "CURRENT_PROJECT", "unit_refact_dim")
     assert determine_layer("dim_date") == "DIM"
     assert determine_layer("dim_customer") == "DIM"
 

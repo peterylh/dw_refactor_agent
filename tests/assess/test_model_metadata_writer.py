@@ -1,5 +1,7 @@
+import pytest
 import yaml
 
+import config
 from assess.model_metadata_writer import (
     build_dwd_contexts,
     build_inspection_contexts,
@@ -13,7 +15,47 @@ from assess.model_metadata_writer import (
     update_model_yaml,
 )
 from assess.table_inspector import TableInspectResult
-from config import get_business_domain_config
+from config import BusinessAreaDef, BusinessDomainConfig, DomainDef
+
+
+def _business_domain_config():
+    return BusinessDomainConfig(
+        domains={
+            "04": DomainDef(id="04", code="TRAN", name="交易域"),
+            "06": DomainDef(id="06", code="ORGN", name="机构域"),
+        },
+        business_areas={
+            "CHNL": BusinessAreaDef(id="09", code="CHNL", name="渠道业务"),
+            "PAYM": BusinessAreaDef(id="04", code="PAYM", name="支付结算"),
+        },
+    )
+
+
+def _configure_project_root(monkeypatch, project_root):
+    import assess.model_metadata_writer as writer_module
+
+    monkeypatch.setattr(config, "PROJECT_ROOT", project_root)
+    monkeypatch.setattr(writer_module, "PROJECT_ROOT", project_root)
+    config._naming_config_cache.clear()
+    config._model_metadata_cache.clear()
+
+
+@pytest.fixture
+def isolated_writer_project(tmp_path, monkeypatch):
+    project = "unit_writer"
+    (tmp_path / project).mkdir()
+    (tmp_path / "naming_config.yaml").write_text(
+        "types: {}\nbindings: {}\n",
+        encoding="utf-8",
+    )
+    _configure_project_root(monkeypatch, tmp_path)
+    monkeypatch.setitem(config.PROJECT_CONFIG, project, {
+        "dir": project,
+        "naming_config": "naming_config.yaml",
+    })
+    yield project
+    config._naming_config_cache.clear()
+    config._model_metadata_cache.clear()
 
 
 def _sample_fact_result() -> TableInspectResult:
@@ -145,8 +187,9 @@ def _sample_dimension_conflict_result() -> TableInspectResult:
     )
 
 
-def test_build_dwd_contexts_filters_out_non_dwd(sample_lineage_data):
-    contexts = build_dwd_contexts("shop", sample_lineage_data)
+def test_build_dwd_contexts_filters_out_non_dwd(sample_lineage_data,
+                                                isolated_writer_project):
+    contexts = build_dwd_contexts(isolated_writer_project, sample_lineage_data)
 
     assert {ctx.table_name for ctx in contexts} == {
         "dwd_customer",
@@ -154,8 +197,9 @@ def test_build_dwd_contexts_filters_out_non_dwd(sample_lineage_data):
     }
 
 
-def test_build_metric_contexts_includes_dwd_and_dws(sample_lineage_data):
-    contexts = build_metric_contexts("shop", sample_lineage_data)
+def test_build_metric_contexts_includes_dwd_and_dws(sample_lineage_data,
+                                                    isolated_writer_project):
+    contexts = build_metric_contexts(isolated_writer_project, sample_lineage_data)
 
     assert {ctx.table_name for ctx in contexts} == {
         "dwd_customer",
@@ -164,7 +208,8 @@ def test_build_metric_contexts_includes_dwd_and_dws(sample_lineage_data):
     }
 
 
-def test_build_inspection_contexts_includes_dim(sample_lineage_data):
+def test_build_inspection_contexts_includes_dim(sample_lineage_data,
+                                                isolated_writer_project):
     data = dict(sample_lineage_data)
     data["tables"] = sample_lineage_data["tables"] + [{
         "name": "dim_store",
@@ -173,7 +218,7 @@ def test_build_inspection_contexts_includes_dim(sample_lineage_data):
         "columns": [{"name": "store_id", "type": "BIGINT"}],
     }]
 
-    contexts = build_inspection_contexts("shop", data)
+    contexts = build_inspection_contexts(isolated_writer_project, data)
 
     assert {ctx.table_name for ctx in contexts} == {
         "dwd_customer",
@@ -327,7 +372,7 @@ def test_update_model_yaml_writes_llm_table_metadata(tmp_path, monkeypatch):
     monkeypatch.setattr(
         writer_module,
         "get_business_domain_config",
-        lambda project: get_business_domain_config("finance_analytics"),
+        lambda project: _business_domain_config(),
     )
 
     update = update_model_yaml("demo", _sample_dimension_result())
@@ -355,7 +400,7 @@ def test_business_metadata_for_result_limits_fields_by_layer(monkeypatch):
     monkeypatch.setattr(
         writer_module,
         "get_business_domain_config",
-        lambda project: get_business_domain_config("finance_analytics"),
+        lambda project: _business_domain_config(),
     )
     dws_result = TableInspectResult(
         table_name="dws_transactions",
@@ -410,7 +455,7 @@ def test_update_model_yaml_keeps_existing_applicable_business_metadata(
     monkeypatch.setattr(
         writer_module,
         "get_business_domain_config",
-        lambda project: get_business_domain_config("finance_analytics"),
+        lambda project: _business_domain_config(),
     )
     result = TableInspectResult(
         table_name="dwd_order_detail",
@@ -758,7 +803,8 @@ def test_update_model_yaml_skips_blocked_results(tmp_path, monkeypatch):
 
 
 def test_run_metadata_write_reuses_table_inspector(monkeypatch,
-                                                   sample_lineage_data):
+                                                   sample_lineage_data,
+                                                   isolated_writer_project):
     import assess.model_metadata_writer as writer_module
 
     class FakeInspector:
@@ -793,7 +839,9 @@ def test_run_metadata_write_reuses_table_inspector(monkeypatch,
                         lambda project: sample_lineage_data)
     monkeypatch.setattr(writer_module, "TableInspector", FakeInspector)
 
-    result = run_metadata_write("shop", api_key="test", dry_run=True)
+    result = run_metadata_write(isolated_writer_project,
+                                api_key="test",
+                                dry_run=True)
 
     updates_by_table = {update["table"]: update for update in result[
         "model_updates"]}
@@ -823,7 +871,8 @@ def test_run_metadata_write_reuses_table_inspector(monkeypatch,
     assert result["skipped_model_updates"] == []
 
 
-def test_run_metadata_write_passes_parallelism(monkeypatch, sample_lineage_data):
+def test_run_metadata_write_passes_parallelism(monkeypatch, sample_lineage_data,
+                                               isolated_writer_project):
     import assess.model_metadata_writer as writer_module
 
     seen = {}
@@ -840,13 +889,16 @@ def test_run_metadata_write_passes_parallelism(monkeypatch, sample_lineage_data)
                         lambda project: sample_lineage_data)
     monkeypatch.setattr(writer_module, "TableInspector", FakeInspector)
 
-    run_metadata_write("shop", api_key="test", dry_run=True, parallelism=4)
+    run_metadata_write(isolated_writer_project,
+                       api_key="test",
+                       dry_run=True,
+                       parallelism=4)
 
     assert seen["parallelism"] == 4
 
 
 def test_run_metadata_write_counts_dimension_layer_warnings(
-        monkeypatch, sample_lineage_data):
+        monkeypatch, sample_lineage_data, isolated_writer_project):
     import assess.model_metadata_writer as writer_module
 
     class FakeInspector:
@@ -879,7 +931,9 @@ def test_run_metadata_write_counts_dimension_layer_warnings(
                         lambda project: sample_lineage_data)
     monkeypatch.setattr(writer_module, "TableInspector", FakeInspector)
 
-    result = run_metadata_write("shop", api_key="test", dry_run=True)
+    result = run_metadata_write(isolated_writer_project,
+                                api_key="test",
+                                dry_run=True)
     customer_report = next(
         table for table in result["tables"]
         if table["table_name"] == "dwd_customer")
@@ -890,7 +944,8 @@ def test_run_metadata_write_counts_dimension_layer_warnings(
 
 
 def test_run_metadata_write_passes_dwd_metric_groups_to_dws(monkeypatch,
-                                                            sample_lineage_data):
+                                                            sample_lineage_data,
+                                                            isolated_writer_project):
     import assess.model_metadata_writer as writer_module
 
     seen_dws_contexts = []
@@ -921,7 +976,7 @@ def test_run_metadata_write_passes_dwd_metric_groups_to_dws(monkeypatch,
                         lambda project: sample_lineage_data)
     monkeypatch.setattr(writer_module, "TableInspector", FakeInspector)
 
-    run_metadata_write("shop", api_key="test", dry_run=True)
+    run_metadata_write(isolated_writer_project, api_key="test", dry_run=True)
 
     assert seen_dws_contexts[0].upstream_metric_groups["dwd_order_detail"] == {
         "atomic_metrics": ["pay_amt"],
@@ -931,7 +986,8 @@ def test_run_metadata_write_passes_dwd_metric_groups_to_dws(monkeypatch,
 
 
 def test_run_metadata_write_skips_blocked_model_updates(monkeypatch,
-                                                        sample_lineage_data):
+                                                        sample_lineage_data,
+                                                        isolated_writer_project):
     import assess.model_metadata_writer as writer_module
 
     blocked = _sample_fact_result()
@@ -965,7 +1021,9 @@ def test_run_metadata_write_skips_blocked_model_updates(monkeypatch,
                         lambda project: sample_lineage_data)
     monkeypatch.setattr(writer_module, "TableInspector", FakeInspector)
 
-    result = run_metadata_write("shop", api_key="test", dry_run=True)
+    result = run_metadata_write(isolated_writer_project,
+                                api_key="test",
+                                dry_run=True)
 
     assert result["blocked_table_count"] == 1
     assert result["model_updates"][0]["table"] == "dwd_customer"

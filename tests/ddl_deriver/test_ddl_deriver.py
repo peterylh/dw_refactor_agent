@@ -1,9 +1,5 @@
 """DDL 自动推导功能测试: 覆盖 5 类场景。"""
 
-from pathlib import Path
-
-import pytest
-
 from ddl_deriver.ddl_deriver import (
     CreateTable,
     DropTable,
@@ -55,6 +51,49 @@ BASE_TABLES = {
         raw_ddl="",
     ),
 }
+
+
+DEMO_DDL = {
+    "ods_customer": """\
+DROP TABLE IF EXISTS shop_dm.ods_customer;
+CREATE TABLE IF NOT EXISTS shop_dm.ods_customer (
+    customer_id BIGINT NOT NULL COMMENT '客户ID',
+    customer_name VARCHAR(64) NOT NULL COMMENT '客户姓名',
+    phone VARCHAR(20) NULL COMMENT '手机号'
+) ENGINE=OLAP
+DUPLICATE KEY(customer_id)
+DISTRIBUTED BY HASH(customer_id) BUCKETS 10
+PROPERTIES ("replication_num" = "1");
+""",
+    "ods_order": """\
+DROP TABLE IF EXISTS shop_dm.ods_order;
+CREATE TABLE IF NOT EXISTS shop_dm.ods_order (
+    order_id BIGINT NOT NULL COMMENT '订单ID',
+    customer_id BIGINT NOT NULL COMMENT '客户ID',
+    total_amount DECIMAL(12,2) NOT NULL COMMENT '订单总额'
+) ENGINE=OLAP
+DUPLICATE KEY(order_id)
+DISTRIBUTED BY HASH(order_id) BUCKETS 10
+PROPERTIES ("replication_num" = "1");
+""",
+    "dwd_order_detail": """\
+DROP TABLE IF EXISTS shop_dm.dwd_order_detail;
+CREATE TABLE IF NOT EXISTS shop_dm.dwd_order_detail (
+    order_item_id BIGINT NOT NULL COMMENT '订单明细ID',
+    order_id BIGINT NOT NULL COMMENT '订单ID',
+    subtotal DECIMAL(12,2) NOT NULL COMMENT '小计金额'
+) ENGINE=OLAP
+UNIQUE KEY(order_item_id)
+DISTRIBUTED BY HASH(order_item_id) BUCKETS 10
+PROPERTIES ("replication_num" = "1");
+""",
+}
+
+
+def _write_demo_ddl_files(ddl_dir):
+    ddl_dir.mkdir()
+    for table_name, ddl in DEMO_DDL.items():
+        (ddl_dir / f"{table_name}.sql").write_text(ddl, encoding="utf-8")
 
 
 # ============================================================
@@ -792,23 +831,16 @@ def test_no_changes():
 # ============================================================
 
 
-def test_from_real_ddl_single_change(tmp_path):
-    """真实 DDL 文件: 重命名 ods_customer → ods_customer_v2."""
-    src = Path(__file__).parent.parent.parent / "shop" / "ddl"
+def test_from_fixture_ddl_single_change(tmp_path):
+    """DDL 文件: 重命名 ods_customer → ods_customer_v2."""
     old_dir = tmp_path / "old"
     new_dir = tmp_path / "new"
     old_dir.mkdir()
     new_dir.mkdir()
 
-    ods_customer_file = src / "ods_customer.sql"
-    if not ods_customer_file.exists():
-        pytest.skip("shop/ddl/ods_customer.sql not found")
-
-    # old: copy ods_customer.sql
-    content = ods_customer_file.read_text(encoding="utf-8")
+    content = DEMO_DDL["ods_customer"]
     (old_dir / "ods_customer.sql").write_text(content)
 
-    # new: rewrite as ods_customer_v2.sql
     new_content = content.replace("ods_customer", "ods_customer_v2")
     (new_dir / "ods_customer_v2.sql").write_text(new_content)
 
@@ -900,10 +932,12 @@ def test_rename_and_alter_same_table():
     assert {o.name for o, n in alters[0].modifies} == {"total_amount"}
 
 
-def test_parse_real_ddl_file():
-    """验证真实 DDL 文件能被正确解析."""
-    src = Path(__file__).parent.parent.parent / "shop" / "ddl"
-    for f in sorted(src.glob("*.sql")):
+def test_parse_fixture_ddl_files(tmp_path):
+    """验证 DDL 文件能被正确解析."""
+    ddl_dir = tmp_path / "ddl"
+    _write_demo_ddl_files(ddl_dir)
+
+    for f in sorted(ddl_dir.glob("*.sql")):
         content = f.read_text(encoding="utf-8")
         t = parse_create_table(content)
         assert t is not None, f"Failed to parse {f.name}"

@@ -1,12 +1,93 @@
 """config.py NamingConfig 的单元测试"""
 import re
 import pytest
+import yaml
 import config
 from config import (
     TypeDef, LayerDef, NamingConfig,
     _parse_rule_expression, _parse_segments, _parse_template,
     get_business_domain_config, load_naming_config, layer_rank,
 )
+
+
+def _write_dictionary_naming_config(tmp_path, filename, *, domains, areas):
+    raw = yaml.safe_load(
+        config.NAMING_CONFIG_PATH.read_text(encoding="utf-8"))
+    raw["dictionaries"] = {
+        "data_domains": {
+            "values": [
+                {"id": domain_id, "code": code, "name": code}
+                for domain_id, code in domains
+            ]
+        },
+        "business_areas": {
+            "values": [
+                {"id": f"{index:02d}", "code": code, "name": code}
+                for index, code in enumerate(areas, start=1)
+            ]
+        },
+    }
+    raw["types"]["BUSINESS_AREA_CODE"]["allow"] = {
+        "dictionary": "business_areas",
+        "value_field": "code",
+    }
+    raw["types"]["BUSINESS_AREA_CODE"].pop("patterns", None)
+    raw["types"]["DATA_DOMAIN_ID"]["allow"] = {
+        "dictionary": "data_domains",
+        "value_field": "id",
+    }
+    raw["types"]["DATA_DOMAIN_ID"].pop("patterns", None)
+
+    cfg_path = tmp_path / filename
+    cfg_path.write_text(
+        yaml.safe_dump(raw, allow_unicode=True, sort_keys=False),
+        encoding="utf-8",
+    )
+    return cfg_path
+
+
+@pytest.fixture
+def isolated_project_naming_configs(tmp_path, monkeypatch):
+    shop_cfg = _write_dictionary_naming_config(
+        tmp_path,
+        "unit_shop_naming.yaml",
+        domains=[
+            ("01", "CUST"),
+            ("02", "PROD"),
+            ("03", "STOR"),
+            ("04", "ORDR"),
+            ("05", "INVT"),
+            ("06", "PROM"),
+            ("99", "OTHR"),
+        ],
+        areas=["SHOP"],
+    )
+    finance_cfg = _write_dictionary_naming_config(
+        tmp_path,
+        "unit_finance_naming.yaml",
+        domains=[
+            ("01", "CUST"),
+            ("04", "TRAN"),
+            ("10", "MKTG"),
+            ("99", "OTHR"),
+        ],
+        areas=["LOAN", "PAYM", "CLNT", "OTHR"],
+    )
+    monkeypatch.setattr(config, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setitem(config.PROJECT_CONFIG, "unit_shop", {
+        "dir": "unit_shop",
+        "naming_config": shop_cfg.name,
+    })
+    monkeypatch.setitem(config.PROJECT_CONFIG, "unit_finance", {
+        "dir": "unit_finance",
+        "naming_config": finance_cfg.name,
+    })
+    config._naming_config_cache.clear()
+    yield {
+        "shop": "unit_shop",
+        "finance": "unit_finance",
+    }
+    config._naming_config_cache.clear()
 
 
 # ============================================================
@@ -391,7 +472,7 @@ class TestNamingDiagnostics:
         assert attempt["failure"]["code"] == "type_pattern_mismatch"
 
     def test_table_diagnostic_exposes_segment_plan(self):
-        nc = get_naming_config("shop")
+        nc = load_naming_config(config.NAMING_CONFIG_PATH)
 
         diagnostic = nc.diagnose_table_name("dwd_customer", "DWD")
 
@@ -421,9 +502,15 @@ class TestTopLevelDetermineLayer:
 
         assert config.determine_layer("legacy_name", "demo") == "ADS"
 
-    def test_no_prefix_fallback(self):
-        assert config.determine_layer("ods_", "shop") == "OTHER"
-        assert config.determine_layer("dwd_", "shop") == "OTHER"
+    def test_no_prefix_fallback(self, tmp_path, monkeypatch):
+        project = "unit_empty_layers"
+        (tmp_path / project / "models").mkdir(parents=True)
+        monkeypatch.setattr(config, "PROJECT_ROOT", tmp_path)
+        monkeypatch.setitem(config.PROJECT_CONFIG, project, {"dir": project})
+        config._model_metadata_cache.clear()
+
+        assert config.determine_layer("ods_", project) == "OTHER"
+        assert config.determine_layer("dwd_", project) == "OTHER"
 
     def test_without_project_returns_other(self):
         assert config.determine_layer("dwd_customer") == "OTHER"
@@ -792,9 +879,11 @@ class TestGetNamingConfigByProject:
         }
         assert nc.match_metric_rule("pay_amt", "atomic") is None
 
-    def test_project_business_dictionary_tightens_naming_types(self):
-        shop_nc = get_naming_config("shop")
-        finance_nc = get_naming_config("finance_analytics")
+    def test_project_business_dictionary_tightens_naming_types(
+            self, isolated_project_naming_configs):
+        shop_nc = get_naming_config(isolated_project_naming_configs["shop"])
+        finance_nc = get_naming_config(
+            isolated_project_naming_configs["finance"])
         assert shop_nc._match_segments(
             "M_WEMG_04_CHREM_DI",
             shop_nc.layers["DWD"].templates[0],
@@ -812,9 +901,7 @@ class TestGetNamingConfigByProject:
             finance_nc.layers["DWD"].templates[0],
         ) is not None
         assert finance_nc.types["BUSINESS_AREA_CODE"].allow == [
-            "LOAN", "DPST", "FRTN", "PAYM", "GUAR", "BILL", "AGEN",
-            "ACQR", "CHNL", "CRDT", "FORX", "ASTM", "CLNT", "FMAN",
-            "OTHR",
+            "LOAN", "PAYM", "CLNT", "OTHR",
         ]
         assert shop_nc.types["BUSINESS_AREA_CODE"].allow == ["SHOP"]
         assert shop_nc.types["DATA_DOMAIN_ID"].allow == [
@@ -829,8 +916,7 @@ class TestGetNamingConfigByProject:
             "value_field": "id",
         }
         assert finance_nc.types["DATA_DOMAIN_ID"].allow == [
-            "01", "02", "03", "04", "05", "06", "07", "08", "09", "10",
-            "99",
+            "01", "04", "10", "99",
         ]
         assert finance_nc.types["BUSINESS_AREA_CODE"].dictionary == {
             "dictionary": "business_areas",
@@ -841,8 +927,10 @@ class TestGetNamingConfigByProject:
             "value_field": "id",
         }
 
-    def test_load_business_domain_config_for_finance_project(self):
-        business_config = get_business_domain_config("finance_analytics")
+    def test_load_business_domain_config_for_finance_project(
+            self, isolated_project_naming_configs):
+        business_config = get_business_domain_config(
+            isolated_project_naming_configs["finance"])
 
         assert business_config.is_valid_domain("04") is True
         assert business_config.normalize_domain("TRAN") == "04"
@@ -855,8 +943,10 @@ class TestGetNamingConfigByProject:
         assert "allowed_data_domains" not in (
             business_config.prompt_options()["business_areas"][0])
 
-    def test_load_business_domain_config_for_shop_project(self):
-        business_config = get_business_domain_config("shop")
+    def test_load_business_domain_config_for_shop_project(
+            self, isolated_project_naming_configs):
+        business_config = get_business_domain_config(
+            isolated_project_naming_configs["shop"])
 
         assert business_config.is_valid_domain("04") is True
         assert business_config.normalize_domain("ORDR") == "04"
