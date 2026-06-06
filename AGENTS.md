@@ -73,6 +73,8 @@ shop-dm/
 │   ├── test_naming_config.py       # 命名规范配置测试
 │   └── test_task_run.py            # task_run 辅助逻辑测试
 ├── logs/                           # 本地日志与调试 SQL
+├── docs/
+│   └── refactor_guides/             # 数仓资产重构操作指南
 ├── AGENTS.md
 ├── commit_message.md               # Git Commit 规范
 ├── config.py
@@ -80,6 +82,14 @@ shop-dm/
 ├── python_coding_standards.md
 └── sql_dev_standards.md
 ```
+
+## 数仓资产重构指南
+
+常见数仓资产重构应优先参考 `docs/refactor_guides/` 中的操作指南。
+
+- 通用规则：参见 [docs/refactor_guides/common.md](docs/refactor_guides/common.md)
+- 表重命名：参见 [docs/refactor_guides/table_rename.md](docs/refactor_guides/table_rename.md)
+- 字段重命名：参见 [docs/refactor_guides/field_rename.md](docs/refactor_guides/field_rename.md)
 
 ## 血缘与 DAG 工具
 
