@@ -38,15 +38,56 @@ def configure_project(project_name):
     CURRENT_DB = cfg["db"]
 
 
+def _canonical_identifier(name):
+    """Return the logical identifier name without SQL quote wrappers."""
+    if name is None:
+        return ""
+    text = str(name).strip()
+    while len(text) >= 2 and (
+        (text[0] == text[-1] == "`") or (text[0] == text[-1] == '"')
+    ):
+        text = text[1:-1].strip()
+    return text
+
+
+def _canonical_qualified_identifier(name):
+    text = str(name or "").strip()
+    if not text:
+        return ""
+    return ".".join(
+        _canonical_identifier(part)
+        for part in text.split(".")
+        if str(part).strip()
+    )
+
+
 def _strip_db(name):
-    return name.replace(f"{CURRENT_DB}.", "")
+    name = _canonical_qualified_identifier(name)
+    db_name = _canonical_identifier(CURRENT_DB)
+    prefix = f"{db_name}."
+    return name[len(prefix):] if name.startswith(prefix) else name
+
+
+def _canonical_column(name):
+    return _canonical_identifier(name)
+
+
+def _canonical_lineage_entry(entry):
+    cleaned = dict(entry)
+    for key in ("source_table", "target_table"):
+        if key in cleaned:
+            cleaned[key] = _strip_db(cleaned[key])
+    for key in ("source_column", "target_column"):
+        if key in cleaned:
+            cleaned[key] = _canonical_column(cleaned[key])
+    return cleaned
 
 
 def _target_table_sql(target_expr):
     """返回写入目标表名,不包含 INSERT/CREATE 目标列清单。"""
     if isinstance(target_expr, exp.Schema):
         target_expr = target_expr.this
-    return target_expr.sql(dialect="doris")
+    return _canonical_qualified_identifier(target_expr.sql(dialect="doris"))
 
 
 def _target_columns(target_expr):
@@ -56,9 +97,9 @@ def _target_columns(target_expr):
     columns = []
     for col in target_expr.expressions:
         if isinstance(col, exp.ColumnDef):
-            columns.append(col.this.name)
+            columns.append(_canonical_column(col.this.name))
         elif hasattr(col, "name"):
-            columns.append(col.name)
+            columns.append(_canonical_column(col.name))
     return columns or None
 
 
@@ -74,11 +115,13 @@ def build_schema_from_texts(sql_texts):
             if stmt is None:
                 continue
             if isinstance(stmt, exp.Create) and isinstance(stmt.this, exp.Schema):
-                full_name = stmt.this.this.sql(dialect="doris")
+                full_name = _canonical_qualified_identifier(
+                    stmt.this.this.sql(dialect="doris")
+                )
                 col_map = {}
                 for col in stmt.this.expressions:
                     if isinstance(col, exp.ColumnDef):
-                        col_map[col.this.name] = (
+                        col_map[_canonical_column(col.this.name)] = (
                             col.args.get("kind").sql(dialect="doris")
                             if col.args.get("kind")
                             else "UNKNOWN"
@@ -138,8 +181,8 @@ def update_to_select(update_stmt):
 def _table_name(tbl_expr):
     parts = []
     if tbl_expr.args.get("db"):
-        parts.append(tbl_expr.args["db"].name)
-    parts.append(tbl_expr.name)
+        parts.append(_canonical_identifier(tbl_expr.args["db"].name))
+    parts.append(_canonical_identifier(tbl_expr.name))
     return ".".join(parts)
 
 
@@ -157,18 +200,18 @@ def _walk_leaf(node, target_table, target_col, edges):
             edges.append(
                 {
                     "source_table": _strip_db(_table_name(expr)),
-                    "source_column": node.name.split(".")[-1],
+                    "source_column": _canonical_column(node.name.split(".")[-1]),
                     "target_table": _strip_db(target_table),
-                    "target_column": target_col,
+                    "target_column": _canonical_column(target_col),
                 }
             )
         elif isinstance(expr, exp.Column):
             edges.append(
                 {
                     "source_table": _strip_db(expr.table or "UNKNOWN"),
-                    "source_column": expr.name,
+                    "source_column": _canonical_column(expr.name),
                     "target_table": _strip_db(target_table),
-                    "target_column": target_col,
+                    "target_column": _canonical_column(target_col),
                 }
             )
         return
@@ -200,12 +243,13 @@ def _collect_ctes(select_expr):
         return ctes
     for cte in with_.expressions:
         if isinstance(cte.this, (exp.Select, exp.SetOperation)):
-            ctes[cte.alias_or_name] = cte.this
+            ctes[_canonical_identifier(cte.alias_or_name)] = cte.this
     return ctes
 
 
 def _schema_has_column(schema, table_name, column_name):
     table_short = _strip_db(table_name)
+    column_name = _canonical_column(column_name)
     for db_tables in schema.values():
         cols = db_tables.get(table_short)
         if cols and column_name in cols:
@@ -262,13 +306,13 @@ def _indirect_entries_from_select(
         if isinstance(relation, exp.Subquery) and isinstance(
             relation.this, (exp.Select, exp.SetOperation)
         ):
-            alias = relation.alias_or_name
+            alias = _canonical_identifier(relation.alias_or_name)
             if alias:
                 derived_sources[alias] = relation.this
                 _remember_alias(alias)
         elif isinstance(relation, exp.Table):
             tbl = _strip_db(_table_name(relation))
-            alias = relation.alias_or_name or relation.name
+            alias = _canonical_identifier(relation.alias_or_name or relation.name)
             if tbl in ctes:
                 derived_sources[alias] = ctes[tbl]
                 derived_sources[tbl] = ctes[tbl]
@@ -276,29 +320,30 @@ def _indirect_entries_from_select(
             elif tbl and tbl != "UNKNOWN":
                 from_tables.add(tbl)
                 alias_map[alias] = tbl
-                alias_map[relation.name] = tbl
+                alias_map[_canonical_identifier(relation.name)] = tbl
                 _remember_alias(alias)
 
     def _resolve_column_sources(col):
-        tbl_or_alias = col.table
+        tbl_or_alias = _canonical_identifier(col.table)
+        col_name = _canonical_column(col.name)
         if tbl_or_alias:
             if tbl_or_alias in derived_sources:
                 return _derived_leaf_sources(
-                    derived_sources[tbl_or_alias], col.name, schema
+                    derived_sources[tbl_or_alias], col_name, schema
                 )
-            return [(_strip_db(alias_map.get(tbl_or_alias, tbl_or_alias)), col.name)]
+            return [(_strip_db(alias_map.get(tbl_or_alias, tbl_or_alias)), col_name)]
 
         derived_aliases = [a for a in relation_aliases if a in derived_sources]
         if len(derived_aliases) == 1:
             sources = _derived_leaf_sources(
-                derived_sources[derived_aliases[0]], col.name, schema
+                derived_sources[derived_aliases[0]], col_name, schema
             )
             if sources:
                 return sources
         if len(from_tables) == 1:
-            return [(next(iter(from_tables)), col.name)]
+            return [(next(iter(from_tables)), col_name)]
         if default_table:
-            return [(_strip_db(default_table), col.name)]
+            return [(_strip_db(default_table), col_name)]
         return []
 
     def _add_entries(condition_type, expression, columns):
@@ -312,7 +357,7 @@ def _indirect_entries_from_select(
                     {
                         "lineage_type": "indirect",
                         "source_table": tbl,
-                        "source_column": src_col,
+                        "source_column": _canonical_column(src_col),
                         "target_table": target_table_short,
                         "target_column": "",
                         "condition_type": condition_type,
@@ -402,12 +447,12 @@ def _extract_indirect_from_delete(delete_stmt, file_path):
     where = delete_stmt.args.get("where")
     if where:
         for col in where.this.find_all(exp.Column):
-            tbl = _strip_db(col.table or target_table)
+            tbl = _strip_db(_canonical_identifier(col.table) or target_table)
             entries.append(
                 {
                     "lineage_type": "indirect",
                     "source_table": tbl,
-                    "source_column": col.name,
+                    "source_column": _canonical_column(col.name),
                     "target_table": target_table,
                     "target_column": "",
                     "condition_type": "WHERE",
@@ -456,7 +501,7 @@ def extract_lineage_from_sql(sql_text, file_path, schema):
             entries.extend(_handle_delete(stmt, file_path))
         elif isinstance(stmt, exp.Select) and stmt.args.get("into"):
             entries.extend(_handle_select_into(stmt, file_path, schema))
-    return entries
+    return [_canonical_lineage_entry(entry) for entry in entries]
 
 
 def _trace_lineage(target_table, select_expr, schema, file_path, target_columns=None):
@@ -474,6 +519,7 @@ def _trace_lineage(target_table, select_expr, schema, file_path, target_columns=
             if target_columns is not None and idx < len(target_columns)
             else col_name
         )
+        target_col = _canonical_column(target_col)
         edges = _extract_leaf_edges(node, target_table, target_col)
         seen = set()
         for edge in edges:
@@ -562,7 +608,10 @@ def _handle_select_into(stmt, file_path, schema):
 def _extract_values_lineage(target_table, insert_or_values, file_path):
     entries = []
     if isinstance(insert_or_values, exp.Insert):
-        cols = [c.sql() for c in (insert_or_values.args.get("this").expressions or [])]
+        cols = [
+            _canonical_column(c.name if hasattr(c, "name") else c.sql())
+            for c in (insert_or_values.args.get("this").expressions or [])
+        ]
         vals = insert_or_values.args.get("expression")
         if not vals or not isinstance(vals, exp.Tuple):
             return entries
@@ -577,7 +626,7 @@ def _extract_values_lineage(target_table, insert_or_values, file_path):
             entries.append(
                 {
                     "source_table": _strip_db(col_ref.table or "UNKNOWN"),
-                    "source_column": col_ref.name,
+                    "source_column": _canonical_column(col_ref.name),
                     "target_table": _strip_db(target_table),
                     "target_column": col_name,
                     "expression": val.sql(dialect="doris")
@@ -626,6 +675,7 @@ def main():
         all_lineage.extend(entries)
         if entries:
             print(f"  {source_file}: {len(entries)} 条血缘")
+    all_lineage = [_canonical_lineage_entry(entry) for entry in all_lineage]
 
     # 3. 去重
     unique = []
@@ -678,6 +728,8 @@ def main():
     edges = []
 
     def _schema_column_type(tbl, col):
+        tbl = _strip_db(tbl)
+        col = _canonical_column(col)
         for db_tables in schema.values():
             table_cols = db_tables.get(tbl)
             if table_cols and col in table_cols:
@@ -685,6 +737,10 @@ def main():
         return "UNKNOWN"
 
     def _ensure_node(tbl, col):
+        tbl = _strip_db(tbl)
+        col = _canonical_column(col)
+        if not tbl or not col:
+            return
         if tbl not in tables:
             tables[tbl] = {
                 "name": tbl,
@@ -706,8 +762,10 @@ def main():
             )
 
     for entry in direct_entries:
-        src_tbl, src_col = entry["source_table"], entry["source_column"]
-        tgt_tbl, tgt_col = entry["target_table"], entry["target_column"]
+        src_tbl = _strip_db(entry["source_table"])
+        src_col = _canonical_column(entry["source_column"])
+        tgt_tbl = _strip_db(entry["target_table"])
+        tgt_col = _canonical_column(entry["target_column"])
         if src_tbl == "UNKNOWN":
             continue
         _ensure_node(src_tbl, src_col)
@@ -724,14 +782,15 @@ def main():
     # 6. 构建间接血缘边
     indirect_edges = []
     for entry in indirect_entries:
-        src_tbl, src_col = entry["source_table"], entry["source_column"]
+        src_tbl = _strip_db(entry["source_table"])
+        src_col = _canonical_column(entry["source_column"])
         if src_tbl == "UNKNOWN":
             continue
         _ensure_node(src_tbl, src_col)
         indirect_edges.append(
             {
                 "source": f"{src_tbl}.{src_col}",
-                "target_table": entry["target_table"],
+                "target_table": _strip_db(entry["target_table"]),
                 "condition_type": entry["condition_type"],
                 "condition_expression": entry.get("condition_expression", ""),
                 "source_file": entry.get("source_file", ""),
@@ -741,9 +800,11 @@ def main():
     # 7. 合并 DDL 中无血缘边的列到 tables 输出
     for db_name, db_tables in schema.items():
         for tbl_name, cols in db_tables.items():
+            tbl_name = _strip_db(tbl_name)
             if tbl_name in tables:
                 existing_cols = {c["name"]: c for c in tables[tbl_name]["columns"]}
                 for col_name, col_type in cols.items():
+                    col_name = _canonical_column(col_name)
                     if col_name not in existing_cols:
                         tables[tbl_name]["columns"].append(
                             {"name": col_name, "type": col_type}

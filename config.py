@@ -64,6 +64,7 @@ class TypeDef:
 class LayerDef:
     templates: list
     constraints: list[dict] = field(default_factory=list)
+    template_rules: list[dict] = field(default_factory=list)
 
 
 @dataclass
@@ -73,6 +74,7 @@ class NamingConfig:
     column_segments: list
     common_columns: set[str]
     column_templates: list = field(default_factory=list)
+    column_template_rules: list[dict] = field(default_factory=list)
     table_name_max_length: Optional[int] = None
     metric_rules: dict[str, list] = field(default_factory=dict)
     metric_rule_labels: dict[str, str] = field(default_factory=dict)
@@ -456,6 +458,274 @@ class NamingConfig:
     def match_metric_rule(self, name: str, rule_name: str) -> Optional[dict]:
         return self._match_metric_rule_impl(name, rule_name, ())
 
+    def _type_def_info(self, type_name: str) -> dict:
+        type_def = self.types.get(type_name)
+        if not type_def:
+            return {"name": type_name}
+        return {
+            "name": type_name,
+            "label": type_def.label,
+            "description": type_def.desc,
+            "allow": list(type_def.allow) if type_def.allow is not None else None,
+            "patterns": list(type_def.patterns),
+            "dictionary": type_def.dictionary,
+        }
+
+    def explain_segment(self, segment: dict, position: int | None = None) -> dict:
+        info = {
+            "position": position,
+            "kind": segment.get("kind"),
+            "name": segment.get("name"),
+            "optional": bool(segment.get("optional", False)),
+            "sep_before": segment.get("sep_before", ""),
+            "sep_after": segment.get("sep_after", ""),
+            "concat_left": bool(segment.get("concat_left", False)),
+        }
+        if segment.get("kind") == "type":
+            info["type"] = self._type_def_info(segment.get("name", ""))
+        return info
+
+    def explain_segments(self, segments: list) -> list[dict]:
+        return [
+            self.explain_segment(segment, idx + 1)
+            for idx, segment in enumerate(segments)
+        ]
+
+    def expression_text(self, segments: list) -> str:
+        parts = []
+        for segment in segments:
+            name = segment.get("name", "")
+            token = f"{{{name}}}" if segment.get("kind") == "type" else str(name)
+            if segment.get("optional"):
+                token += "?"
+            if segment.get("concat_left") and parts:
+                parts[-1] = parts[-1] + token
+            else:
+                parts.append(token)
+        return " ".join(parts)
+
+    def _candidate_for_type(
+        self,
+        rest: str,
+        segments: list,
+        index: int,
+        type_def: TypeDef,
+    ) -> str:
+        if not rest:
+            return ""
+
+        allows_underscore = any("_" in pattern for pattern in type_def.patterns)
+        if allows_underscore and index + 1 < len(segments):
+            next_seg = segments[index + 1]
+            if next_seg.get("kind") == "literal":
+                marker = str(next_seg.get("name", ""))
+                marker_idx = rest.rfind(marker) if marker else -1
+                if marker_idx > 0:
+                    return rest[:marker_idx]
+
+        if not allows_underscore:
+            sep_idx = rest.find("_")
+            if sep_idx > 0:
+                return rest[:sep_idx]
+
+        return rest
+
+    def _locate_segment_failure(self, name: str, segments: list) -> dict:
+        remaining = str(name or "")
+        consumed = 0
+
+        for idx, segment in enumerate(segments):
+            sep_before = segment.get("sep_before", "")
+            sep_after = segment.get("sep_after", "")
+            optional = bool(segment.get("optional", False))
+            info = self.explain_segment(segment, idx + 1)
+
+            if sep_before and not remaining.startswith(sep_before):
+                if optional:
+                    continue
+                return {
+                    "code": "separator_mismatch",
+                    "position": idx + 1,
+                    "segment": info,
+                    "expected": sep_before,
+                    "actual_remaining": remaining,
+                    "consumed_chars": consumed,
+                }
+
+            rest = remaining[len(sep_before):]
+            consumed += len(sep_before)
+
+            if segment.get("kind") == "literal":
+                literal = str(segment.get("name", ""))
+                if rest.startswith(literal):
+                    remaining = rest[len(literal):]
+                    consumed += len(literal)
+                    if sep_after and remaining.startswith(sep_after):
+                        remaining = remaining[len(sep_after):]
+                        consumed += len(sep_after)
+                    continue
+                if optional:
+                    consumed -= len(sep_before)
+                    continue
+                return {
+                    "code": "literal_mismatch",
+                    "position": idx + 1,
+                    "segment": info,
+                    "expected": literal,
+                    "actual_remaining": rest,
+                    "consumed_chars": consumed,
+                }
+
+            if segment.get("kind") != "type":
+                if optional:
+                    consumed -= len(sep_before)
+                    continue
+                return {
+                    "code": "unsupported_segment_kind",
+                    "position": idx + 1,
+                    "segment": info,
+                    "actual_remaining": rest,
+                    "consumed_chars": consumed,
+                }
+
+            type_name = segment.get("name", "")
+            type_def = self.types.get(type_name)
+            if not type_def:
+                return {
+                    "code": "unknown_type",
+                    "position": idx + 1,
+                    "segment": info,
+                    "actual_remaining": rest,
+                    "consumed_chars": consumed,
+                }
+
+            if type_def.allow is not None:
+                matched = None
+                for value in sorted(type_def.allow, key=len, reverse=True):
+                    value = str(value)
+                    if rest.startswith(value):
+                        matched = value
+                        break
+                if matched is not None:
+                    remaining = rest[len(matched):]
+                    consumed += len(matched)
+                    if sep_after and remaining.startswith(sep_after):
+                        remaining = remaining[len(sep_after):]
+                        consumed += len(sep_after)
+                    continue
+                if not type_def.patterns:
+                    if optional:
+                        consumed -= len(sep_before)
+                        continue
+                    return {
+                        "code": "allowed_values_mismatch",
+                        "position": idx + 1,
+                        "segment": info,
+                        "expected": list(type_def.allow),
+                        "actual_remaining": rest,
+                        "consumed_chars": consumed,
+                    }
+
+            if type_def.patterns:
+                candidate = self._candidate_for_type(rest, segments, idx, type_def)
+                if candidate and type_def.validate(candidate):
+                    remaining = rest[len(candidate):]
+                    consumed += len(candidate)
+                    if sep_after and remaining.startswith(sep_after):
+                        remaining = remaining[len(sep_after):]
+                        consumed += len(sep_after)
+                    continue
+                if optional:
+                    consumed -= len(sep_before)
+                    continue
+                return {
+                    "code": "type_pattern_mismatch",
+                    "position": idx + 1,
+                    "segment": info,
+                    "expected": list(type_def.patterns),
+                    "actual": candidate or rest,
+                    "actual_remaining": rest,
+                    "consumed_chars": consumed,
+                }
+
+            remaining = ""
+            consumed = len(str(name or ""))
+
+        if remaining:
+            return {
+                "code": "trailing_text",
+                "position": len(segments) + 1,
+                "expected": "end_of_name",
+                "actual_remaining": remaining,
+                "consumed_chars": consumed,
+            }
+
+        return {
+            "code": "match_failed",
+            "actual_remaining": remaining,
+            "consumed_chars": consumed,
+        }
+
+    def diagnose_segments(
+        self,
+        name: str,
+        segments: list,
+        rule: dict | None = None,
+    ) -> dict:
+        matched = self._match_segments(name, segments)
+        diagnostic = {
+            "actual": name,
+            "passed": matched is not None,
+            "rule": rule or {},
+            "expression": self.expression_text(segments),
+            "segments": self.explain_segments(segments),
+        }
+        if matched is not None:
+            diagnostic["matched_values"] = matched
+            return diagnostic
+
+        diagnostic["failure"] = self._locate_segment_failure(name, segments)
+        return diagnostic
+
+    def diagnose_table_name(self, name: str, layer: str) -> dict:
+        layer_def = self.layers.get(layer)
+        attempts = []
+        if layer_def:
+            rules = layer_def.template_rules or [{} for _ in layer_def.templates]
+            for segments, rule in zip(layer_def.templates, rules):
+                attempts.append(self.diagnose_segments(name, segments, rule))
+
+        return {
+            "actual": name,
+            "layer": layer,
+            "passed": any(attempt.get("passed") for attempt in attempts),
+            "attempts": attempts,
+        }
+
+    def diagnose_column_name(self, name: str) -> dict:
+        if name in self.common_columns:
+            return {
+                "actual": name,
+                "passed": True,
+                "common_column": True,
+                "attempts": [],
+            }
+
+        templates = self.column_templates or (
+            [self.column_segments] if self.column_segments else []
+        )
+        rules = self.column_template_rules or [{} for _ in templates]
+        attempts = [
+            self.diagnose_segments(name, segments, rule)
+            for segments, rule in zip(templates, rules)
+        ]
+        return {
+            "actual": name,
+            "passed": any(attempt.get("passed") for attempt in attempts),
+            "common_column": False,
+            "attempts": attempts,
+        }
+
 
 @dataclass
 class DomainDef:
@@ -564,9 +834,6 @@ def _expand_repeat_segment_item(item) -> list[list]:
     if raw_str.startswith("$"):
         sigil = "$"
         name = raw_str[1:]
-        if name.startswith("+"):
-            sigil = "$+"
-            name = name[1:]
 
     match = _REPEAT_RE.match(name)
     if not match:
@@ -641,12 +908,14 @@ def _parse_segments(raw: list, _types: dict) -> list:
         is_type = False
         concat_left = forced_concat_left
 
+        if raw_str.startswith("$+"):
+            raise ValueError(
+                "The $+TYPE syntax is not supported; use nested ['', ...] "
+                "expressions for direct concatenation")
+
         if raw_str.startswith("$"):
             is_type = True
             raw_str = raw_str[1:]
-            if raw_str.startswith("+"):
-                concat_left = True
-                raw_str = raw_str[1:]
 
         raw_str, _, optional = _split_repeat_suffix(raw_str)
 
@@ -979,6 +1248,7 @@ def _compile_table_bindings(
     for layer_name, refs in table_bindings.items():
         templates = []
         constraints_list = []
+        template_rules = []
         for ref in _as_list(refs):
             compiled_templates = _compile_rule_expr_as_segment_templates(
                 rule_defs,
@@ -988,11 +1258,19 @@ def _compile_table_bindings(
             templates.extend(compiled_templates)
             constraints = _rule_constraints(rule_defs, ref)
             constraints_list.extend([constraints] * len(compiled_templates))
+            rule_info = {
+                "name": _rule_name(ref),
+                "description": _rule_desc(rule_defs, ref),
+                "raw_expr": _rule_expr(rule_defs, ref),
+                "constraints": constraints,
+            }
+            template_rules.extend([rule_info] * len(compiled_templates))
             if constraints.get("max_length") is not None:
                 max_lengths.append(int(constraints["max_length"]))
         layers[layer_name] = LayerDef(
             templates=templates,
             constraints=constraints_list,
+            template_rules=template_rules,
         )
 
     table_name_max_length = min(max_lengths) if max_lengths else None
@@ -1003,19 +1281,26 @@ def _compile_column_bindings(
     column_binding: dict,
     rule_defs: dict,
     types: dict,
-) -> tuple[list, list, set[str]]:
+) -> tuple[list, list, list, set[str]]:
     column_templates = []
+    column_template_rules = []
     for ref in _as_list(column_binding.get("rules")):
-        column_templates.extend(
-            _compile_rule_expr_as_segment_templates(
-                rule_defs,
-                ref,
-                types,
-            )
+        compiled_templates = _compile_rule_expr_as_segment_templates(
+            rule_defs,
+            ref,
+            types,
         )
+        column_templates.extend(compiled_templates)
+        rule_info = {
+            "name": _rule_name(ref),
+            "description": _rule_desc(rule_defs, ref),
+            "raw_expr": _rule_expr(rule_defs, ref),
+            "constraints": _rule_constraints(rule_defs, ref),
+        }
+        column_template_rules.extend([rule_info] * len(compiled_templates))
     column_segments = column_templates[0] if column_templates else []
     common_columns = set(column_binding.get("allow", []))
-    return column_segments, column_templates, common_columns
+    return column_segments, column_templates, column_template_rules, common_columns
 
 
 def _compile_metric_bindings(
@@ -1159,10 +1444,25 @@ def load_naming_config(path=None):
             layers[layer_name] = LayerDef(
                 templates=templates,
                 constraints=[table_constraints] * len(templates),
+                template_rules=[
+                    {
+                        "name": layer_name,
+                        "description": "",
+                        "raw_expr": template,
+                        "constraints": table_constraints,
+                    }
+                    for template in _as_list(template_defs)
+                    for _ in _parse_template_variants(template, types)
+                ],
             )
 
     if bindings.get("column"):
-        column_segments, column_templates, common_columns = _compile_column_bindings(
+        (
+            column_segments,
+            column_templates,
+            column_template_rules,
+            common_columns,
+        ) = _compile_column_bindings(
             bindings.get("column") or {},
             rule_defs,
             types,
@@ -1176,6 +1476,15 @@ def load_naming_config(path=None):
             else []
         )
         column_segments = column_templates[0] if column_templates else []
+        column_template_rules = [
+            {
+                "name": "COLUMN",
+                "description": "",
+                "raw_expr": raw_col_seg,
+                "constraints": {},
+            }
+            for _ in column_templates
+        ]
         common_columns = set(col_cfg.get("common_columns", []))
 
     metric_rules = {}
@@ -1219,6 +1528,7 @@ def load_naming_config(path=None):
         column_segments=column_segments,
         common_columns=common_columns,
         column_templates=column_templates,
+        column_template_rules=column_template_rules,
         table_name_max_length=table_name_max_length,
         metric_rules=metric_rules,
         metric_rule_labels=metric_rule_labels,

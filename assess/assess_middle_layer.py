@@ -538,6 +538,18 @@ def _check_table_name_any_template(name: str, layer: str, nc) -> bool:
             return True
     return False
 
+
+def _table_name_diagnostic(name: str, layer: str, nc) -> dict:
+    if hasattr(nc, "diagnose_table_name"):
+        return nc.diagnose_table_name(name, layer)
+    return {
+        "actual": name,
+        "layer": layer,
+        "passed": False,
+        "message": "命名配置对象不支持结构化诊断",
+    }
+
+
 def _table_name_max_length(name: str, layer: str, nc) -> int | None:
     if hasattr(nc, "table_max_length_for"):
         return nc.table_max_length_for(name, layer)
@@ -579,6 +591,35 @@ def _check_column_name(col_name: str, nc) -> tuple[bool, list[str]]:
                     break
 
     return bool(matched), matched
+
+
+def _column_name_diagnostic(col_name: str, nc) -> dict:
+    if hasattr(nc, "diagnose_column_name"):
+        return nc.diagnose_column_name(col_name)
+    return {
+        "actual": col_name,
+        "passed": False,
+        "message": "命名配置对象不支持结构化诊断",
+    }
+
+
+def _naming_check_result(
+    passed: int,
+    total: int,
+    violations: list,
+    diagnostics: list | None = None,
+) -> dict:
+    result = {
+        "passed": passed,
+        "total": total,
+        "violations": sorted(violations),
+    }
+    if diagnostics:
+        result["diagnostics"] = sorted(
+            diagnostics,
+            key=lambda item: str(item.get("actual", "")),
+        )
+    return result
 
 
 def _metric_rule_name(nc, *rule_names: str) -> str | None:
@@ -1062,10 +1103,17 @@ def score_naming_conventions(
         tbl_passed = 0
         tbl_total = 1
         tbl_violations = []
+        tbl_diagnostics = []
         if _check_table_name_any_template(name, layer, nc):
             tbl_passed += 1
         else:
             tbl_violations.append(f"违反: 表名符合规范模板")
+            tbl_diagnostics.append(
+                {
+                    "check": "table_template",
+                    **_table_name_diagnostic(name, layer, nc),
+                }
+            )
         max_length = _table_name_max_length(name, layer, nc)
         if max_length is not None:
             tbl_total += 1
@@ -1073,6 +1121,16 @@ def score_naming_conventions(
                 tbl_passed += 1
             else:
                 tbl_violations.append(f"违反: 表名长度 <= {max_length}")
+                tbl_diagnostics.append(
+                    {
+                        "check": "table_max_length",
+                        "actual": name,
+                        "layer": layer,
+                        "passed": False,
+                        "expected": {"max_length": max_length},
+                        "actual_length": len(name),
+                    }
+                )
 
         # --- 原子指标检查 ---
         metric_violations = []
@@ -1109,6 +1167,7 @@ def score_naming_conventions(
         # --- 字段检查 ---
         # 指标是列的一种专项类型，已由指标规则检查，不再重复进入通用字段规则。
         col_violations = []
+        col_diagnostics = []
         col_passed = 0
         col_total = 0
         checked_metric_name_set = metric_name_set | derived_metric_name_set
@@ -1123,6 +1182,7 @@ def score_naming_conventions(
                 col_passed += 1
             else:
                 col_violations.append(col_name)
+                col_diagnostics.append(_column_name_diagnostic(col_name, nc))
 
         # --- 业务域/板块字典检查 ---
         business_checks = _score_business_metadata_for_table(
@@ -1157,23 +1217,27 @@ def score_naming_conventions(
             dict(
                 table=name,
                 layer=layer,
-                table_checks=dict(passed=tbl_passed,
-                                  total=tbl_total,
-                                  violations=tbl_violations),
-                column_checks=dict(
-                    passed=col_passed,
-                    total=col_total,
-                    violations=sorted(col_violations),
+                table_checks=_naming_check_result(
+                    tbl_passed,
+                    tbl_total,
+                    tbl_violations,
+                    tbl_diagnostics,
                 ),
-                atomic_metric_checks=dict(
-                    passed=metric_passed,
-                    total=metric_total,
-                    violations=sorted(metric_violations),
+                column_checks=_naming_check_result(
+                    col_passed,
+                    col_total,
+                    col_violations,
+                    col_diagnostics,
                 ),
-                derived_metric_checks=dict(
-                    passed=derived_metric_passed,
-                    total=derived_metric_total,
-                    violations=sorted(derived_metric_violations),
+                atomic_metric_checks=_naming_check_result(
+                    metric_passed,
+                    metric_total,
+                    metric_violations,
+                ),
+                derived_metric_checks=_naming_check_result(
+                    derived_metric_passed,
+                    derived_metric_total,
+                    derived_metric_violations,
                 ),
                 business_metadata_checks=business_checks,
                 score=table_score,
@@ -1208,18 +1272,10 @@ def score_naming_conventions(
                 dict(
                     table=name,
                     layer=t["layer"],
-                    table_checks=dict(passed=0, total=0, violations=[]),
-                    column_checks=dict(passed=0, total=0, violations=[]),
-                    atomic_metric_checks=dict(
-                        passed=0,
-                        total=0,
-                        violations=[],
-                    ),
-                    derived_metric_checks=dict(
-                        passed=0,
-                        total=0,
-                        violations=[],
-                    ),
+                    table_checks=_naming_check_result(0, 0, []),
+                    column_checks=_naming_check_result(0, 0, []),
+                    atomic_metric_checks=_naming_check_result(0, 0, []),
+                    derived_metric_checks=_naming_check_result(0, 0, []),
                     business_metadata_checks=business_checks,
                     score=table_score,
                 ))
@@ -1249,18 +1305,10 @@ def score_naming_conventions(
                 dict(
                     table=name,
                     layer=str(metadata.get("layer") or "OTHER").upper(),
-                    table_checks=dict(passed=0, total=0, violations=[]),
-                    column_checks=dict(passed=0, total=0, violations=[]),
-                    atomic_metric_checks=dict(
-                        passed=0,
-                        total=0,
-                        violations=[],
-                    ),
-                    derived_metric_checks=dict(
-                        passed=0,
-                        total=0,
-                        violations=[],
-                    ),
+                    table_checks=_naming_check_result(0, 0, []),
+                    column_checks=_naming_check_result(0, 0, []),
+                    atomic_metric_checks=_naming_check_result(0, 0, []),
+                    derived_metric_checks=_naming_check_result(0, 0, []),
                     business_metadata_checks=business_checks,
                     score=table_score,
                 ))
@@ -1429,6 +1477,54 @@ def _fmt_table(
             line += f" {str(val):<{w}} │"
         lines.append(line)
     return "\n".join(lines)
+
+
+def _format_naming_diagnostic(diagnostic: dict) -> str:
+    actual = diagnostic.get("actual", "")
+    if diagnostic.get("check") == "table_max_length":
+        expected = diagnostic.get("expected", {})
+        return (
+            f"{actual}: 长度 {diagnostic.get('actual_length')} "
+            f"> {expected.get('max_length')}"
+        )
+
+    attempts = diagnostic.get("attempts") or []
+    failed_attempts = [
+        attempt for attempt in attempts if not attempt.get("passed")
+    ]
+    if failed_attempts:
+        best = max(
+            failed_attempts,
+            key=lambda item: (
+                item.get("failure", {}).get("consumed_chars", -1),
+                -len(str(item.get("failure", {}).get("actual_remaining", ""))),
+            ),
+        )
+        rule = best.get("rule") or {}
+        failure = best.get("failure") or {}
+        rule_name = rule.get("name") or "未命名规则"
+        desc = rule.get("description") or ""
+        expr = best.get("expression") or ""
+        expected = failure.get("expected")
+        if expected is None:
+            expected = failure.get("segment", {}).get("type", {})
+        return (
+            f"{actual}: 规则 {rule_name}"
+            f"{'(' + desc + ')' if desc else ''}; "
+            f"表达式 {expr}; "
+            f"失败段 {failure.get('position')}, "
+            f"原因 {failure.get('code')}; "
+            f"期望 {expected}; "
+            f"实际剩余 {failure.get('actual_remaining', '')}"
+        )
+
+    rule = diagnostic.get("rule") or {}
+    if rule:
+        return (
+            f"{actual}: 规则 {rule.get('name')} "
+            f"{rule.get('description', '')}".strip()
+        )
+    return f"{actual}: {diagnostic.get('message', '未匹配命名规则')}"
 
 
 def generate_report(scores: dict, weights: dict, project: str) -> str:
@@ -1632,6 +1728,18 @@ def generate_report(scores: dict, weights: dict, project: str) -> str:
                 f"\n    {r['table']}({r['layer']}) [得分: {r['score']}]")
             for iss in issues:
                 parts.append(f"      {iss}")
+            diagnostics = []
+            diagnostics.extend(r["table_checks"].get("diagnostics", []))
+            diagnostics.extend(r["column_checks"].get("diagnostics", [])[:5])
+            diagnostics.extend(
+                r.get("atomic_metric_checks", {}).get("diagnostics", [])[:5])
+            diagnostics.extend(
+                r.get("derived_metric_checks", {}).get("diagnostics", [])[:5])
+            if diagnostics:
+                parts.append("      诊断:")
+                for diagnostic in diagnostics[:8]:
+                    parts.append(
+                        f"        - {_format_naming_diagnostic(diagnostic)}")
 
     file_details = naming.get("file_details") or []
     if file_details:

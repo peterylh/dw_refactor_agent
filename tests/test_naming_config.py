@@ -114,6 +114,10 @@ class TestParseSegments:
         assert result[0]["kind"] == "type"
         assert result[0]["name"] == "entity"
 
+    def test_plus_prefixed_type_syntax_is_rejected(self):
+        with pytest.raises(ValueError, match=r"\$\+TYPE syntax is not supported"):
+            _parse_segments(["$+entity"], {})
+
     def test_optional_marker_without_dollar(self):
         """无 $ 前缀的 ? 被识别为字面量"""
         result = _parse_segments(["time_granularity?"], {})
@@ -369,6 +373,35 @@ class TestMatchColumn:
     def test_full_prefix_entity_suffix(self, nc):
         r = nc._match_segments("max_score_num", nc.column_segments)
         assert r == {"prefix_field": "max", "entity": "score", "suffix_field": "num"}
+
+
+class TestNamingDiagnostics:
+    def test_column_diagnostic_exposes_configured_expression(self):
+        nc = load_naming_config(PROJECT_ROOT / "naming_config.yaml")
+
+        diagnostic = nc.diagnose_column_name("customer_id")
+
+        assert diagnostic["passed"] is False
+        attempt = diagnostic["attempts"][0]
+        assert attempt["rule"]["name"] == "COLUMN_DEFAULT"
+        assert attempt["rule"]["raw_expr"] == "$COLUMN_IDENTIFIER"
+        assert attempt["segments"][0]["type"]["patterns"] == [
+            "^[A-Z][A-Z0-9_]{0,14}$"
+        ]
+        assert attempt["failure"]["code"] == "type_pattern_mismatch"
+
+    def test_table_diagnostic_exposes_segment_plan(self):
+        nc = get_naming_config("shop")
+
+        diagnostic = nc.diagnose_table_name("dwd_customer", "DWD")
+
+        assert diagnostic["passed"] is False
+        attempt = diagnostic["attempts"][0]
+        assert attempt["rule"]["name"] == "TABLE_DWD"
+        assert attempt["rule"]["raw_expr"][0] == "_"
+        assert attempt["failure"]["code"] == "literal_mismatch"
+        assert attempt["segments"][0]["kind"] == "literal"
+        assert attempt["segments"][0]["name"] == "M"
 
 
 class TestTopLevelDetermineLayer:

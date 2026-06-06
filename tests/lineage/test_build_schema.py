@@ -25,6 +25,24 @@ class TestBuildSchemaFromTexts:
         assert cust["create_time"] == "DATETIME"
         assert cust["member_level"] == "VARCHAR(16)"
 
+    def test_quoted_identifiers_are_canonicalized(self):
+        ddl = """
+        CREATE TABLE IF NOT EXISTS "shop_dm"."M_SHOP_01_CUST_DF" (
+            "CUSTOMER_ID" BIGINT,
+            `CUSTOMER_NAME` VARCHAR(64)
+        ) ENGINE=OLAP
+        DUPLICATE KEY("CUSTOMER_ID")
+        DISTRIBUTED BY HASH("CUSTOMER_ID") BUCKETS 1
+        PROPERTIES ("replication_num" = "1");
+        """
+        schema = build_schema_from_texts([ddl])
+
+        assert "M_SHOP_01_CUST_DF" in schema["shop_dm"]
+        assert set(schema["shop_dm"]["M_SHOP_01_CUST_DF"]) == {
+            "CUSTOMER_ID",
+            "CUSTOMER_NAME",
+        }
+
     def test_empty_list(self):
         assert build_schema_from_texts([]) == {}
 

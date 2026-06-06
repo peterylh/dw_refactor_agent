@@ -222,6 +222,32 @@ def test_score_naming_conventions_checks_table_name_length():
     assert result["details"][1]["table_checks"]["violations"] == ["违反: 表名长度 <= 30"]
 
 
+def test_score_naming_conventions_includes_structured_diagnostics():
+    nc = load_naming_config(PROJECT_ROOT / "naming_config.yaml")
+    tables = [
+        {
+            "name": "dwd_customer",
+            "layer": "DWD",
+            "columns": [{"name": "customer_id"}],
+        },
+    ]
+
+    result = score_naming_conventions(tables, nc)
+    detail = result["details"][0]
+
+    table_diag = detail["table_checks"]["diagnostics"][0]
+    assert table_diag["check"] == "table_template"
+    assert table_diag["attempts"][0]["rule"]["name"] == "TABLE_DWD"
+    assert table_diag["attempts"][0]["failure"]["code"] == "literal_mismatch"
+
+    column_diag = detail["column_checks"]["diagnostics"][0]
+    assert column_diag["actual"] == "customer_id"
+    assert column_diag["attempts"][0]["rule"]["name"] == "COLUMN_DEFAULT"
+    assert column_diag["attempts"][0]["segments"][0]["type"]["patterns"] == [
+        "^[A-Z][A-Z0-9_]{0,14}$"
+    ]
+
+
 def test_score_naming_conventions_checks_business_dictionary_metadata():
     nc = get_naming_config("finance_analytics")
     business_config = get_business_domain_config("finance_analytics")
