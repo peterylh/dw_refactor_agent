@@ -306,6 +306,27 @@ class TestEdgeCases:
         assert ("order_id", "customer_id") in direct
         assert ("customer_id", "order_id") in direct
 
+    def test_quoted_columns_are_canonicalized_in_lineage_entries(self):
+        schema = {
+            "shop_dm": {
+                "M_SHOP_01_SRC_DF": {"CUSTOMER_ID": "BIGINT"},
+                "M_SHOP_01_CUST_DF": {"CUSTOMER_ID": "BIGINT"},
+            }
+        }
+        sql = """
+        INSERT INTO shop_dm.M_SHOP_01_CUST_DF (`CUSTOMER_ID`)
+        SELECT `CUSTOMER_ID`
+        FROM shop_dm.M_SHOP_01_SRC_DF
+        """
+        entries = extract_lineage_from_sql(sql, "quoted.sql", schema)
+        direct = [e for e in entries if e.get("lineage_type") != "indirect"]
+
+        assert direct
+        assert {e["source_column"] for e in direct} == {"CUSTOMER_ID"}
+        assert {e["target_column"] for e in direct} == {"CUSTOMER_ID"}
+        assert {e["source_table"] for e in direct} == {"M_SHOP_01_SRC_DF"}
+        assert {e["target_table"] for e in direct} == {"M_SHOP_01_CUST_DF"}
+
     def test_ctas_with_column_definitions_uses_plain_target_table(self):
         sql = """
         CREATE TABLE shop_dm.dws_daily_sales (
