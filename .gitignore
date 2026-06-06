@@ -10,3 +10,8 @@ refact/verify_result.json
 assess/cache/
 assess/assess_result_*.json
 assess/metric_result_*.json
+
+# 生成的血缘与 DAG 产物
+lineage/*.html
+lineage/lineage_data*.json
+lineage/job_dag_*.json
