@@ -141,6 +141,20 @@ def test_generate_report_contains_raw_and_display_scores(
 
 def test_assess_includes_atomic_metric_naming_summary(
         monkeypatch, sample_lineage_data, isolated_assess_project):
+    project_dir = config.PROJECT_ROOT / isolated_assess_project
+    (project_dir / "ddl").mkdir()
+    (project_dir / "ddl" / "dwd_order_detail.sql").write_text(
+        """
+CREATE TABLE IF NOT EXISTS demo.dwd_order_detail (
+    ORDER_ID BIGINT,
+    PAY_AMT DECIMAL(12,2)
+) ENGINE=OLAP
+DUPLICATE KEY(ORDER_ID)
+DISTRIBUTED BY HASH(ORDER_ID) BUCKETS 1
+PROPERTIES ("replication_num" = "1");
+""",
+        encoding="utf-8",
+    )
     monkeypatch.setattr(
         "assess.assess_middle_layer.load_lineage_data",
         lambda project: sample_lineage_data,
@@ -149,6 +163,7 @@ def test_assess_includes_atomic_metric_naming_summary(
         "config.load_model_metadata",
         lambda project: {
             "dwd_order_detail": {
+                "layer": "DWD",
                 "atomic_metrics": ["PAY_AMT", "PAY_UNKNOWN"]
             }
         },
@@ -465,6 +480,7 @@ PROPERTIES ("replication_num" = "1");
     result = score_naming_conventions(
         tables,
         nc,
+        {table_name: {"layer": "DWD"}},
         project_dir=project_dir,
         edges=edges,
         indirect_edges=[],
@@ -534,12 +550,18 @@ PROPERTIES ("replication_num" = "1");
     result = score_naming_conventions(
         tables,
         nc,
+        {table_name: {"layer": "DWD"}},
         project_dir=project_dir,
         edges=edges,
         indirect_edges=[],
     )
 
-    assert result["score"] == 28.6
+    assert result["score"] == 37.5
+    assert result["details"][0]["column_checks"] == {
+        "passed": 1,
+        "total": 1,
+        "violations": [],
+    }
     assert result["file_checks"] == {"passed": 0, "total": 5}
     assert result["rule_summary"][FILE_RULE_DDL] == {
         "pass_count": 0,
@@ -696,6 +718,97 @@ DELETE FROM demo.{table_name} WHERE ID = 1;
         "expected": table_name,
         "actual": f"{table_name}, WRONG_TARGET",
     }]
+
+
+def test_score_naming_conventions_prefers_current_ddl_columns_over_lineage_snapshot(
+        tmp_path):
+    nc = load_naming_config(PROJECT_ROOT / "naming_config.yaml")
+    project_dir = tmp_path / "demo"
+    (project_dir / "ddl").mkdir(parents=True)
+
+    table_name = "M_WEMG_04_CHREM_DI"
+    (project_dir / "ddl" / f"{table_name}.sql").write_text(
+        f"""
+CREATE TABLE IF NOT EXISTS demo.{table_name} (
+    bad_field VARCHAR(16)
+) ENGINE=OLAP
+DUPLICATE KEY(bad_field)
+DISTRIBUTED BY HASH(bad_field) BUCKETS 1
+PROPERTIES ("replication_num" = "1");
+""",
+        encoding="utf-8",
+    )
+
+    stale_lineage_tables = [{
+        "name": table_name,
+        "layer": "DWD",
+        "columns": [{"name": "GOOD_COL"}],
+    }]
+    model_metadata = {table_name: {"layer": "DWD"}}
+
+    result = score_naming_conventions(
+        stale_lineage_tables,
+        nc,
+        model_metadata,
+        project_dir=project_dir,
+    )
+
+    assert result["details"][0]["column_checks"]["passed"] == 0
+    assert result["details"][0]["column_checks"]["total"] == 1
+    assert result["details"][0]["column_checks"]["violations"] == [
+        "bad_field"
+    ]
+
+
+def test_score_naming_conventions_does_not_fall_back_to_lineage_tables_when_project_dir_exists(
+        tmp_path):
+    nc = load_naming_config(PROJECT_ROOT / "naming_config.yaml")
+    project_dir = tmp_path / "demo"
+    (project_dir / "ddl").mkdir(parents=True)
+
+    lineage_only_tables = [{
+        "name": "M_WEMG_04_CHREM_DI",
+        "layer": "DWD",
+        "columns": [{"name": "BAD_FIELD"}],
+    }]
+
+    result = score_naming_conventions(
+        lineage_only_tables,
+        nc,
+        project_dir=project_dir,
+    )
+
+    assert result["details"] == []
+    assert result["rule_summary"]["表名符合规范模板"] == {
+        "pass_count": 0,
+        "total": 0,
+        "pct": 0,
+    }
+    assert result["rule_summary"]["列名总计"] == {
+        "pass_count": 0,
+        "total": 0,
+        "pct": 0,
+    }
+
+
+def test_score_naming_conventions_prefers_model_layer_over_lineage_snapshot():
+    nc = load_naming_config(PROJECT_ROOT / "naming_config.yaml")
+    table_name = "DIM_BASE_CUST_PROFILE_INFO"
+    stale_lineage_tables = [{
+        "name": table_name,
+        "layer": "DWD",
+        "columns": [{"name": "CUST_ID"}],
+    }]
+    model_metadata = {table_name: {"layer": "DIM"}}
+
+    result = score_naming_conventions(
+        stale_lineage_tables,
+        nc,
+        model_metadata,
+    )
+
+    assert result["details"][0]["layer"] == "DIM"
+    assert result["details"][0]["table_checks"]["violations"] == []
 
 
 def test_score_naming_conventions_checks_atomic_metrics_from_models():

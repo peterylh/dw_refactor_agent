@@ -799,6 +799,69 @@ def _ddl_declared_table_name(ddl_path: Path) -> str:
     return _short_table_name(match.group(1)) if match else ""
 
 
+def _ddl_table_for_naming(ddl_path: Path,
+                          model_metadata: dict | None) -> dict | None:
+    try:
+        table_def = parse_create_table(ddl_path.read_text(encoding="utf-8"))
+    except Exception:
+        table_def = None
+    if not table_def:
+        return None
+
+    name = _short_table_name(table_def.short_name)
+    if not name:
+        return None
+
+    metadata = model_metadata.get(name, {}) if model_metadata else {}
+    layer = str(metadata.get("layer") or "OTHER").upper()
+    return dict(
+        name=name,
+        full_name=table_def.full_name,
+        layer=layer,
+        columns=[
+            {"name": column.name, "type": column.data_type}
+            for column in table_def.columns
+        ],
+    )
+
+
+def _tables_for_naming(
+    tables: list,
+    project_dir: Path | None,
+    model_metadata: dict | None,
+) -> list:
+    current_tables = []
+    for table in tables:
+        name = str(table.get("name") or "")
+        metadata = model_metadata.get(name, {}) if model_metadata else {}
+        current = dict(table)
+        if metadata.get("layer"):
+            current["layer"] = str(metadata["layer"]).upper()
+        current_tables.append(current)
+
+    if not project_dir:
+        return current_tables
+
+    ddl_dir = Path(project_dir) / "ddl"
+    if not ddl_dir.exists():
+        return []
+
+    ddl_tables = {}
+
+    for ddl_path in sorted(ddl_dir.glob("*.sql")):
+        table = _ddl_table_for_naming(
+            ddl_path,
+            model_metadata,
+        )
+        if table:
+            ddl_tables[table["name"]] = table
+
+    return sorted(
+        ddl_tables.values(),
+        key=lambda item: str(item.get("name") or ""),
+    )
+
+
 def _model_declared_name(model_path: Path) -> str:
     try:
         data = yaml.safe_load(model_path.read_text(encoding="utf-8")) or {}
@@ -1059,6 +1122,7 @@ def score_naming_conventions(
     edges: list | None = None,
     indirect_edges: list | None = None,
 ) -> dict:
+    tables = _tables_for_naming(tables, project_dir, model_metadata)
     middle = [t for t in tables if t["layer"] in ("DWD", "DWS", "DIM")]
     atomic_rule_name = _metric_rule_name(nc, "atomic", "atomic_metrics")
     derived_rule_name = _metric_rule_name(nc, "derived", "derived_metrics")
