@@ -103,6 +103,24 @@ def _target_columns(target_expr):
     return columns or None
 
 
+def _schema_columns_for_table(schema, table_name):
+    """返回目标表 DDL 字段顺序,用于 INSERT 未声明目标列时按位置对齐。"""
+    full_name = _canonical_qualified_identifier(table_name)
+    name_parts = full_name.split(".")
+    table_short = name_parts[-1] if name_parts else ""
+    requested_db = name_parts[-2] if len(name_parts) >= 2 else ""
+    if not table_short:
+        return None
+
+    for db_name, db_tables in schema.items():
+        if requested_db and _canonical_identifier(db_name) != requested_db:
+            continue
+        columns = db_tables.get(table_short)
+        if columns:
+            return [_canonical_column(col_name) for col_name in columns]
+    return None
+
+
 # ============================================================
 # 1. Schema 构建: 从 DDL 解析
 # ============================================================
@@ -552,6 +570,8 @@ def _trace_lineage(target_table, select_expr, schema, file_path, target_columns=
 def _handle_insert(stmt, file_path, schema):
     target_table = _target_table_sql(stmt.this)
     target_columns = _target_columns(stmt.this)
+    if target_columns is None:
+        target_columns = _schema_columns_for_table(schema, target_table)
     inner = stmt.expression
     if isinstance(inner, exp.Values):
         return _extract_values_lineage(target_table, inner, file_path)

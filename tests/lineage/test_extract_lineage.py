@@ -306,6 +306,37 @@ class TestEdgeCases:
         assert ("order_id", "customer_id") in direct
         assert ("customer_id", "order_id") in direct
 
+    def test_insert_without_target_column_list_maps_to_ddl_columns_by_position(self):
+        schema = build_schema_from_texts([
+            """
+            CREATE TABLE shop_dm.ods_customer (
+                customer_id BIGINT,
+                customer_name VARCHAR(64)
+            )
+            """,
+            """
+            CREATE TABLE shop_dm.M_SHOP_01_CUST_DF (
+                CUSTOMER_ID BIGINT,
+                CUSTOMER_NAME VARCHAR(64)
+            )
+            """,
+        ])
+        sql = """
+        INSERT INTO shop_dm.M_SHOP_01_CUST_DF
+        SELECT customer_id, customer_name
+        FROM shop_dm.ods_customer
+        """
+        entries = extract_lineage_from_sql(sql, "dwd_customer.sql", schema)
+        direct = {
+            (e["source_column"], e["target_column"])
+            for e in entries
+            if e.get("lineage_type") != "indirect"
+        }
+
+        assert ("customer_id", "CUSTOMER_ID") in direct
+        assert ("customer_name", "CUSTOMER_NAME") in direct
+        assert {target for _, target in direct} == {"CUSTOMER_ID", "CUSTOMER_NAME"}
+
     def test_quoted_columns_are_canonicalized_in_lineage_entries(self):
         schema = {
             "shop_dm": {
