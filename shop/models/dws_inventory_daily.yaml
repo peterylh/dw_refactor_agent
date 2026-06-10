@@ -11,3 +11,13 @@ calculated_metrics:
 - days_since_restock
 derived_metrics:
 - quantity
+grain:
+  keys:
+  - product_id
+  - store_id
+  - stat_date
+  entities:
+  - PROD
+  - STOR
+  time_column: stat_date
+  time_period: D

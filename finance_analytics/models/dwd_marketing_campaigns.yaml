@@ -19,3 +19,7 @@ calculated_metrics:
 - campaign_status
 data_domain: '10'
 business_area: CLNT
+entity:
+  code: CAMPAIGN
+  key_columns:
+  - campaign_id

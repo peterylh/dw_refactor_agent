@@ -10,7 +10,7 @@ from typing import Any, Callable
 from assess.context_builder import TableContext
 
 
-PROMPT_VERSION = "table-inspector-v15"
+PROMPT_VERSION = "table-inspector-v17"
 VALID_LAYERS = {"ODS", "DWD", "DWS", "ADS", "DIM", "OTHER"}
 VALID_TABLE_TYPES = {"dimension", "fact", "other"}
 METRIC_GROUPING_LAYERS = {"DWD", "DWS"}
@@ -43,6 +43,9 @@ class TableInspectResult:
     retry_count: int = 0
     inferred_data_domain: str = ""
     inferred_business_area: str = ""
+    entity: dict[str, Any] = field(default_factory=dict)
+    related_entities: list[dict[str, Any]] = field(default_factory=list)
+    grain: dict[str, Any] = field(default_factory=dict)
 
     @property
     def is_violating_declared_layer(self) -> bool:
@@ -93,7 +96,8 @@ def build_prompt(ctx: TableContext) -> str:
     prompt = f"""你是一位资深数据仓库架构师和指标治理专家。你的任务是根据给定的表结构、ETL 加工逻辑和血缘关系，完成一次统一巡检:
 1. 客观推断这张表真实应该归属的数仓分层。
 2. 判断它的物理表类型（维度表/事实表/其他）。
-3. 如果原始配置层级是 DWD 或 DWS 且你判断它是事实表，则对字段分组识别原子指标、派生指标、衍生指标、维度字段和其他字段。
+3. 识别 entity、related_entities、grain 元数据候选。
+4. 如果原始配置层级是 DWD 或 DWS 且你判断它是事实表，则对字段分组识别原子指标、派生指标、衍生指标、维度字段和其他字段。
 
 ## 数仓分层判定标准
 - ODS (贴源层): 直接同步业务库，通常不含复杂的转化逻辑，数据粒度与源库完全一致。
@@ -129,6 +133,14 @@ def build_prompt(ctx: TableContext) -> str:
 3. 对上游 calculated_metrics 做聚合，或当前字段表达式包含多个度量组合时，归 calculated_metrics。
 4. 判断上游字段类型时，优先参考“上游指标分组”；如果没有上游指标分组，再结合字段角色、注释、ETL 表达式和业务语义判断，不要套用字段名示例。
 5. 对字段做分组时，优先使用字段级血缘表达式判断来源和计算关系；直接透传只能说明当前 ETL 没有再次计算，不能否定字段自身已经是结果性度量。
+
+## entity、related_entities、grain 元数据识别
+- entity 只适用于维度型/实体型表，表示当前表的主实体。若 table_type=dimension，应返回实体编码 code 和实体主键 key_columns；否则 entity 返回空对象。
+- related_entities 只适用于维度型/实体型表，表示当前表承载的上级、归属或层级实体，如商品维度中的品类。每个 related_entities 元素应返回 code、name、key_columns 和 relationship；relationship.type 可取 many_to_one、one_to_many、one_to_one 或 hierarchy。若无高置信相关实体，返回空数组。
+- grain 只适用于 DWS 汇总事实表。若当前表是 DWS fact，应返回一行数据的唯一粒度 keys、粒度实体 grain.entities、时间字段 time_column 和时间周期 time_period；否则 grain 返回空对象。
+- grain.entities 应来自粒度 key 对应的主要业务实体，不要把时间字段、状态、品牌、父级属性等普通维度属性放入 entities。
+- grain.entities 应返回完整的粒度实体集合；若粒度涉及多个实体，不要为了贴合 TABLE_DWS 命名段而裁剪 entities。
+- 如果无法高置信判断 entity、related_entities 或 grain，对应对象返回空对象或空数组，不要编造字段或实体编码。
 
 ## 表级特征信息
 - 原始表名: {ctx.table_name}
@@ -174,7 +186,7 @@ def build_prompt(ctx: TableContext) -> str:
 3. 判断是否为 dimension（主键是否为实体属性）。
 4. 如果原始配置层级是 DWD 或 DWS 且表类型为 fact，再按字段语义、DDL 注释、ETL 表达式和业务过程分组。
 
-请严格返回 JSON 格式数据，只允许返回下方 JSON schema 中列出的顶层字段: inferred_layer、table_type、inferred_data_domain、inferred_business_area、confidence、reasoning_steps、columns。
+请严格返回 JSON 格式数据，只允许返回下方 JSON schema 中列出的顶层字段: inferred_layer、table_type、inferred_data_domain、inferred_business_area、entity、related_entities、grain、confidence、reasoning_steps、columns。
 不要返回 Markdown，不要返回额外解释，不要新增任何字段。
 如果不需要做字段分组，columns 下五个数组都返回空数组。
 
@@ -183,6 +195,27 @@ def build_prompt(ctx: TableContext) -> str:
   "table_type": "dimension|fact|other",
   "inferred_data_domain": "数据域编号，如 04；不适用层为空字符串；不确定时可返回其它数据域编号",
   "inferred_business_area": "业务板块简写，如 PAYM；不适用层为空字符串；不确定时可返回其它业务板块简写",
+  "entity": {{
+    "code": "实体编码，如 PROD；不适用或无法判断时返回空对象",
+    "key_columns": ["实体主键字段名"]
+  }},
+  "related_entities": [
+    {{
+      "code": "相关实体编码，如 CAT；不适用或无法判断时返回空数组",
+      "name": "相关实体中文名，如 品类；无法判断则为空字符串",
+      "key_columns": ["当前表中表示该实体的字段名"],
+      "relationship": {{
+        "type": "many_to_one|one_to_many|one_to_one|hierarchy",
+        "from_entity": "当前表主实体编码，如 PROD"
+      }}
+    }}
+  ],
+  "grain": {{
+    "keys": ["粒度字段名，如 product_id、stat_date"],
+    "entities": ["粒度实体编码，如 PROD"],
+    "time_column": "时间粒度字段名，如 stat_date；无则为空字符串",
+    "time_period": "D|W|M|Q|Y|S，无法判断则为空字符串"
+  }},
   "confidence": 0.0,
   "reasoning_steps": ["分析步骤1...", "分析步骤2..."],
   "columns": {{
@@ -298,6 +331,42 @@ def _safe_list(value: Any) -> list[str]:
 
 def _safe_str(value: Any) -> str:
     return str(value or "").strip()
+
+
+def _safe_dict(value: Any) -> dict[str, Any]:
+    return dict(value) if isinstance(value, dict) else {}
+
+
+def _safe_dict_list(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    return [dict(item) for item in value if isinstance(item, dict)]
+
+
+def _normalize_grain(value: Any) -> dict[str, Any]:
+    grain = _safe_dict(value)
+    if not grain:
+        return {}
+
+    keys = _safe_list(grain.get("keys"))
+    entities = _safe_list(grain.get("entities"))
+    time_column = _safe_str(grain.get("time_column"))
+    time_period = _safe_str(grain.get("time_period"))
+
+    # Treat placeholder payloads as empty grain metadata.
+    if not keys and not entities and not time_column and not time_period:
+        return {}
+
+    normalized = {}
+    if keys:
+        normalized["keys"] = keys
+    if entities:
+        normalized["entities"] = entities
+    if time_column:
+        normalized["time_column"] = time_column
+    if time_period:
+        normalized["time_period"] = time_period
+    return normalized
 
 
 def _valid_layer(value: Any) -> str:
@@ -416,6 +485,9 @@ def parse_response(table_name: str,
             inferred_data_domain=_safe_str(data.get("inferred_data_domain")),
             inferred_business_area=_safe_str(
                 data.get("inferred_business_area")).upper(),
+            entity=_safe_dict(data.get("entity")),
+            related_entities=_safe_dict_list(data.get("related_entities")),
+            grain=_normalize_grain(data.get("grain")),
         )
     except json.JSONDecodeError as e:
         return TableInspectResult(
@@ -439,6 +511,9 @@ def result_to_dict(result: TableInspectResult) -> dict[str, Any]:
         "confidence": result.confidence,
         "reasoning_steps": result.reasoning_steps,
         "columns": result.columns,
+        "entity": result.entity,
+        "related_entities": result.related_entities,
+        "grain": result.grain,
         "validation": result.validation,
         "status": result.status,
         "retry_count": result.retry_count,
@@ -458,6 +533,9 @@ def result_to_cache_dict(result: TableInspectResult) -> dict[str, Any]:
         "confidence": result.confidence,
         "reasoning_steps": result.reasoning_steps,
         "columns": result.columns,
+        "entity": result.entity,
+        "related_entities": result.related_entities,
+        "grain": result.grain,
         "validation": result.validation,
         "retry_count": result.retry_count,
     }
@@ -475,6 +553,9 @@ def dict_to_result(data: dict[str, Any],
         confidence=_safe_float(data.get("confidence")),
         reasoning_steps=list(data.get("reasoning_steps", []) or []),
         columns=_normalize_columns(data.get("columns")),
+        entity=_safe_dict(data.get("entity")),
+        related_entities=_safe_dict_list(data.get("related_entities")),
+        grain=_normalize_grain(data.get("grain")),
         validation=_normalize_validation(data.get("validation")),
         retry_count=int(data.get("retry_count", 0) or 0),
         inferred_data_domain=_safe_str(data.get("inferred_data_domain")),

@@ -4,3 +4,7 @@ layer: DIM
 table_type: dimension
 config:
   materialized: full
+entity:
+  code: CAMPAIGN
+  key_columns:
+  - campaign_key

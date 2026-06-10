@@ -28,3 +28,10 @@ calculated_metrics:
 - active_campaign_flag
 - completed_campaign_flag
 business_area: CLNT
+grain:
+  keys:
+  - campaign_key
+  entities:
+  - CAMP
+  time_column: start_date
+  time_period: D

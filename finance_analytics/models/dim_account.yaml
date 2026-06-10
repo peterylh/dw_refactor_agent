@@ -4,3 +4,22 @@ layer: DIM
 table_type: dimension
 config:
   materialized: full
+entity:
+  code: ACCOUNT
+  key_columns:
+  - account_key
+related_entities:
+- code: CUSTOMER
+  name: 客户
+  key_columns:
+  - customer_id
+  relationship:
+    type: many_to_one
+    from_entity: ACCOUNT
+- code: PRODUCT
+  name: 产品
+  key_columns:
+  - product_id
+  relationship:
+    type: many_to_one
+    from_entity: ACCOUNT

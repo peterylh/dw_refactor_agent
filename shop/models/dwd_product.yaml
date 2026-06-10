@@ -7,3 +7,15 @@ business_area: SHOP
 description: 商品每日快照
 config:
   materialized: snapshot
+entity:
+  code: PROD
+  key_columns:
+  - product_id
+related_entities:
+- code: CAT
+  name: 品类
+  key_columns:
+  - category_id
+  relationship:
+    type: many_to_one
+    from_entity: PROD

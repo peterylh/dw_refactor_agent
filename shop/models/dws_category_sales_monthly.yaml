@@ -12,3 +12,11 @@ atomic_metrics:
 - order_count
 calculated_metrics:
 - sale_amount
+grain:
+  keys:
+  - category_id
+  - stat_month_date
+  entities:
+  - CAT
+  time_column: stat_month_date
+  time_period: M

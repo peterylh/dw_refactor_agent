@@ -6,3 +6,7 @@ config:
   materialized: full
 data_domain: '01'
 business_area: CLNT
+entity:
+  code: CUST
+  key_columns:
+  - customer_id

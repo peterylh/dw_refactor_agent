@@ -7,3 +7,7 @@ business_area: SHOP
 description: 促销活动每日快照
 config:
   materialized: snapshot
+entity:
+  code: PROM
+  key_columns:
+  - promotion_id

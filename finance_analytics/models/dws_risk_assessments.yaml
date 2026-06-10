@@ -16,3 +16,10 @@ calculated_metrics:
 - kyc_age_days
 - high_risk_customer_flag
 business_area: LOAN
+grain:
+  keys:
+  - assessment_key
+  entities:
+  - ASSESS
+  time_column: assessment_date
+  time_period: D

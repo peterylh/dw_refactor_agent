@@ -19,3 +19,11 @@ derived_metrics:
 calculated_metrics:
 - credit_utilization_pct
 business_area: DPST
+grain:
+  keys:
+  - account_key
+  - snapshot_date
+  entities:
+  - ACCT
+  time_column: snapshot_date
+  time_period: D

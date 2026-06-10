@@ -13,3 +13,10 @@ calculated_metrics:
 - amount_difference
 - approval_probability_score
 business_area: LOAN
+grain:
+  keys:
+  - application_key
+  entities:
+  - APPL
+  time_column: application_date
+  time_period: D

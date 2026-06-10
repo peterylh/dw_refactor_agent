@@ -652,6 +652,275 @@ def test_update_model_yaml_metrics_scope_does_not_create_empty_model(
     assert not model_path.exists()
 
 
+def test_update_model_yaml_grain_scope_writes_dws_grain_only(
+        tmp_path, monkeypatch):
+    import assess.model_metadata_writer as writer_module
+
+    project_root = tmp_path
+    models_dir = project_root / "demo" / "models"
+    models_dir.mkdir(parents=True)
+    model_path = models_dir / "dws_product_sales_daily.yaml"
+    model_path.write_text(
+        yaml.safe_dump({
+            "version": 2,
+            "name": "dws_product_sales_daily",
+            "layer": "DWS",
+            "table_type": "fact",
+            "derived_metrics": ["sale_quantity"],
+        },
+                       allow_unicode=True,
+                       sort_keys=False),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(writer_module, "PROJECT_ROOT", project_root)
+    monkeypatch.setitem(writer_module.PROJECT_CONFIG, "demo", {"dir": "demo"})
+
+    result = TableInspectResult(
+        table_name="dws_product_sales_daily",
+        declared_layer="DWS",
+        inferred_layer="DWS",
+        table_type="fact",
+        confidence=0.9,
+        reasoning_steps=[],
+        grain={
+            "keys": ["product_id", "stat_date"],
+            "entities": ["PROD"],
+            "time_column": "stat_date",
+            "time_period": "D",
+        },
+    )
+
+    update = update_model_yaml("demo", result, write_scope="grain")
+    saved = yaml.safe_load(model_path.read_text(encoding="utf-8"))
+
+    assert update["write_scope"] == "grain"
+    assert update["grain_changed"] is True
+    assert update["metadata_changed"] is False
+    assert update["metric_changed"] is False
+    assert saved["grain"] == {
+        "keys": ["product_id", "stat_date"],
+        "entities": ["PROD"],
+        "time_column": "stat_date",
+        "time_period": "D",
+    }
+    assert saved["layer"] == "DWS"
+    assert saved["table_type"] == "fact"
+    assert saved["derived_metrics"] == ["sale_quantity"]
+
+
+def test_update_model_yaml_grain_scope_keeps_full_dws_grain_entities(
+        tmp_path, monkeypatch):
+    import assess.model_metadata_writer as writer_module
+
+    project_root = tmp_path
+    models_dir = project_root / "demo" / "models"
+    models_dir.mkdir(parents=True)
+    model_path = models_dir / "dws_product_store_sales_daily.yaml"
+    monkeypatch.setattr(writer_module, "PROJECT_ROOT", project_root)
+    monkeypatch.setitem(writer_module.PROJECT_CONFIG, "demo", {"dir": "demo"})
+
+    result = TableInspectResult(
+        table_name="dws_product_store_sales_daily",
+        declared_layer="DWS",
+        inferred_layer="DWS",
+        table_type="fact",
+        confidence=0.9,
+        reasoning_steps=[],
+        grain={
+            "keys": ["product_id", "store_id", "customer_id", "stat_date"],
+            "entities": ["prod", "STORE", "CUST", "STORE"],
+            "time_column": "stat_date",
+            "time_period": "D",
+        },
+    )
+
+    update = update_model_yaml("demo", result, write_scope="grain")
+    saved = yaml.safe_load(model_path.read_text(encoding="utf-8"))
+
+    assert update["grain_changed"] is True
+    assert saved["grain"] == {
+        "keys": ["product_id", "store_id", "customer_id", "stat_date"],
+        "entities": ["prod", "STORE", "CUST", "STORE"],
+        "time_column": "stat_date",
+        "time_period": "D",
+    }
+
+
+def test_update_model_yaml_grain_scope_writes_dimension_entity_only(
+        tmp_path, monkeypatch):
+    import assess.model_metadata_writer as writer_module
+
+    project_root = tmp_path
+    models_dir = project_root / "demo" / "models"
+    models_dir.mkdir(parents=True)
+    model_path = models_dir / "dwd_product.yaml"
+    model_path.write_text(
+        yaml.safe_dump({
+            "version": 2,
+            "name": "dwd_product",
+            "layer": "DWD",
+            "table_type": "dimension",
+            "data_domain": "02",
+        },
+                       allow_unicode=True,
+                       sort_keys=False),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(writer_module, "PROJECT_ROOT", project_root)
+    monkeypatch.setitem(writer_module.PROJECT_CONFIG, "demo", {"dir": "demo"})
+
+    result = TableInspectResult(
+        table_name="dwd_product",
+        declared_layer="DWD",
+        inferred_layer="DIM",
+        table_type="dimension",
+        confidence=0.9,
+        reasoning_steps=[],
+        entity={
+            "code": "PROD",
+            "key_columns": ["product_id"],
+        },
+    )
+
+    update = update_model_yaml("demo", result, write_scope="grain")
+    saved = yaml.safe_load(model_path.read_text(encoding="utf-8"))
+
+    assert update["write_scope"] == "grain"
+    assert update["grain_changed"] is True
+    assert update["metadata_changed"] is False
+    assert update["metric_changed"] is False
+    assert saved["entity"] == {
+        "code": "PROD",
+        "key_columns": ["product_id"],
+    }
+    assert saved["layer"] == "DWD"
+    assert saved["table_type"] == "dimension"
+    assert saved["data_domain"] == "02"
+
+
+def test_update_model_yaml_grain_scope_removes_placeholder_empty_grain(
+        tmp_path, monkeypatch):
+    import assess.model_metadata_writer as writer_module
+
+    project_root = tmp_path
+    models_dir = project_root / "demo" / "models"
+    models_dir.mkdir(parents=True)
+    model_path = models_dir / "dwd_customers.yaml"
+    model_path.write_text(
+        yaml.safe_dump({
+            "version": 2,
+            "name": "dwd_customers",
+            "layer": "DWD",
+            "table_type": "dimension",
+            "entity": {
+                "code": "CUST",
+                "key_columns": ["customer_id"],
+            },
+            "grain": {
+                "keys": [],
+                "entities": [],
+                "time_column": "",
+                "time_period": "",
+            },
+        },
+                       allow_unicode=True,
+                       sort_keys=False),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(writer_module, "PROJECT_ROOT", project_root)
+    monkeypatch.setitem(writer_module.PROJECT_CONFIG, "demo", {"dir": "demo"})
+
+    result = TableInspectResult(
+        table_name="dwd_customers",
+        declared_layer="DWD",
+        inferred_layer="DIM",
+        table_type="dimension",
+        confidence=0.9,
+        reasoning_steps=[],
+        entity={
+            "code": "CUST",
+            "key_columns": ["customer_id"],
+        },
+        grain={
+            "keys": [],
+            "entities": [],
+            "time_column": "",
+            "time_period": "",
+        },
+    )
+
+    update = update_model_yaml("demo", result, write_scope="grain")
+    saved = yaml.safe_load(model_path.read_text(encoding="utf-8"))
+
+    assert update["grain_changed"] is True
+    assert "grain" not in saved
+
+
+def test_update_model_yaml_grain_scope_writes_dimension_related_entities(
+        tmp_path, monkeypatch):
+    import assess.model_metadata_writer as writer_module
+
+    project_root = tmp_path
+    models_dir = project_root / "demo" / "models"
+    models_dir.mkdir(parents=True)
+    model_path = models_dir / "dwd_product.yaml"
+    model_path.write_text(
+        yaml.safe_dump({
+            "version": 2,
+            "name": "dwd_product",
+            "layer": "DWD",
+            "table_type": "dimension",
+            "entity": {
+                "code": "PROD",
+                "key_columns": ["product_id"],
+            },
+        },
+                       allow_unicode=True,
+                       sort_keys=False),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(writer_module, "PROJECT_ROOT", project_root)
+    monkeypatch.setitem(writer_module.PROJECT_CONFIG, "demo", {"dir": "demo"})
+
+    result = TableInspectResult(
+        table_name="dwd_product",
+        declared_layer="DWD",
+        inferred_layer="DIM",
+        table_type="dimension",
+        confidence=0.9,
+        reasoning_steps=[],
+        entity={
+            "code": "PROD",
+            "key_columns": ["product_id"],
+        },
+        related_entities=[{
+            "code": "CAT",
+            "name": "品类",
+            "key_columns": ["category_id"],
+            "relationship": {
+                "type": "many_to_one",
+                "from_entity": "PROD",
+            },
+        }],
+    )
+
+    update = update_model_yaml("demo", result, write_scope="grain")
+    saved = yaml.safe_load(model_path.read_text(encoding="utf-8"))
+
+    assert update["grain_changed"] is True
+    assert saved["related_entities"] == [{
+        "code": "CAT",
+        "name": "品类",
+        "key_columns": ["category_id"],
+        "relationship": {
+            "type": "many_to_one",
+            "from_entity": "PROD",
+        },
+    }]
+    assert saved["layer"] == "DWD"
+    assert saved["table_type"] == "dimension"
+
+
 def test_update_model_yaml_replaces_existing_metrics(tmp_path, monkeypatch):
     import assess.model_metadata_writer as writer_module
 
@@ -983,6 +1252,145 @@ def test_run_metadata_write_passes_dwd_metric_groups_to_dws(monkeypatch,
         "derived_metrics": ["pay_amt_1d"],
         "calculated_metrics": ["gross_profit"],
     }
+
+
+def test_run_metadata_write_discovers_related_entity_from_dws_grain(
+        monkeypatch, tmp_path, isolated_writer_project):
+    import assess.model_metadata_writer as writer_module
+
+    project_dir = tmp_path / isolated_writer_project
+    models_dir = project_dir / "models"
+    ddl_dir = project_dir / "ddl"
+    models_dir.mkdir()
+    ddl_dir.mkdir()
+    (models_dir / "dwd_product.yaml").write_text(
+        yaml.safe_dump({
+            "version": 2,
+            "name": "dwd_product",
+            "layer": "DWD",
+            "table_type": "dimension",
+        },
+                       allow_unicode=True,
+                       sort_keys=False),
+        encoding="utf-8",
+    )
+    (models_dir / "dws_category_sales_monthly.yaml").write_text(
+        yaml.safe_dump({
+            "version": 2,
+            "name": "dws_category_sales_monthly",
+            "layer": "DWS",
+            "table_type": "fact",
+        },
+                       allow_unicode=True,
+                       sort_keys=False),
+        encoding="utf-8",
+    )
+    (ddl_dir / "dwd_product.sql").write_text(
+        """
+        CREATE TABLE dwd_product (
+            product_id BIGINT COMMENT '商品ID',
+            category_id BIGINT COMMENT '品类ID'
+        );
+        """,
+        encoding="utf-8",
+    )
+    (ddl_dir / "dws_category_sales_monthly.sql").write_text(
+        """
+        CREATE TABLE dws_category_sales_monthly (
+            category_id BIGINT COMMENT '品类ID',
+            stat_month_date DATE COMMENT '统计月份'
+        );
+        """,
+        encoding="utf-8",
+    )
+    lineage_data = {
+        "tables": [
+            {
+                "name": "dwd_product",
+                "full_name": "demo.dwd_product",
+                "layer": "DWD",
+                "columns": [
+                    {"name": "product_id", "type": "BIGINT"},
+                    {"name": "category_id", "type": "BIGINT"},
+                ],
+            },
+            {
+                "name": "dws_category_sales_monthly",
+                "full_name": "demo.dws_category_sales_monthly",
+                "layer": "DWS",
+                "columns": [
+                    {"name": "category_id", "type": "BIGINT"},
+                    {"name": "stat_month_date", "type": "DATE"},
+                ],
+            },
+        ],
+        "edges": [{
+            "source": "dwd_product.category_id",
+            "target": "dws_category_sales_monthly.category_id",
+            "expression": "category_id",
+            "source_file": "dws_category_sales_monthly.sql",
+        }],
+        "indirect_edges": [],
+    }
+
+    class FakeInspector:
+        def __init__(self, api_key, *, model, cache_file, max_retries,
+                     parallelism):
+            pass
+
+        def inspect_batch(self, contexts):
+            results = []
+            for ctx in contexts:
+                if ctx.table_name == "dwd_product":
+                    results.append(TableInspectResult(
+                        table_name="dwd_product",
+                        declared_layer="DWD",
+                        inferred_layer="DIM",
+                        table_type="dimension",
+                        confidence=0.9,
+                        reasoning_steps=[],
+                        entity={
+                            "code": "PROD",
+                            "key_columns": ["product_id"],
+                        },
+                    ))
+                elif ctx.table_name == "dws_category_sales_monthly":
+                    results.append(TableInspectResult(
+                        table_name="dws_category_sales_monthly",
+                        declared_layer="DWS",
+                        inferred_layer="DWS",
+                        table_type="fact",
+                        confidence=0.9,
+                        reasoning_steps=[],
+                        grain={
+                            "keys": ["category_id", "stat_month_date"],
+                            "entities": ["CAT"],
+                            "time_column": "stat_month_date",
+                            "time_period": "M",
+                        },
+                    ))
+            return results
+
+    monkeypatch.setattr(writer_module, "load_lineage_data",
+                        lambda project: lineage_data)
+    monkeypatch.setattr(writer_module, "TableInspector", FakeInspector)
+
+    run_metadata_write(isolated_writer_project,
+                       api_key="test",
+                       write_scope="grain")
+
+    saved = yaml.safe_load(
+        (models_dir / "dwd_product.yaml").read_text(encoding="utf-8"))
+
+    assert saved["related_entities"] == [{
+        "code": "CAT",
+        "name": "品类",
+        "key_columns": ["category_id"],
+        "relationship": {
+            "type": "many_to_one",
+            "from_entity": "PROD",
+        },
+    }]
 
 
 def test_run_metadata_write_skips_blocked_model_updates(monkeypatch,

@@ -6,3 +6,7 @@ config:
   materialized: full
 data_domain: '06'
 business_area: CHNL
+entity:
+  code: BRANCH
+  key_columns:
+  - branch_id

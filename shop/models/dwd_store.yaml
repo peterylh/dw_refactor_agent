@@ -7,3 +7,7 @@ business_area: SHOP
 description: 门店每日快照
 config:
   materialized: snapshot
+entity:
+  code: STOR
+  key_columns:
+  - store_id

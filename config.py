@@ -35,6 +35,7 @@ class TypeDef:
     values: Optional[list[str]] = None
     regex: Optional[str] = None
     dictionary: Optional[dict] = None
+    values_from: Optional[dict] = None
     _compiled: list[re.Pattern] = field(default_factory=list)
 
     def __post_init__(self):
@@ -469,6 +470,7 @@ class NamingConfig:
             "allow": list(type_def.allow) if type_def.allow is not None else None,
             "patterns": list(type_def.patterns),
             "dictionary": type_def.dictionary,
+            "values_from": type_def.values_from,
         }
 
     def explain_segment(self, segment: dict, position: int | None = None) -> dict:
@@ -1393,6 +1395,7 @@ def load_naming_config(path=None):
             allow=allow_values,
             patterns=_as_list(cfg.get("patterns", cfg.get("regex"))),
             dictionary=dictionary_cfg,
+            values_from=cfg.get("values_from"),
         )
         types[name] = td
 

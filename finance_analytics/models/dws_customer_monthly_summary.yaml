@@ -22,3 +22,11 @@ atomic_metrics:
 - past_due_account_count
 - customer_count
 business_area: CLNT
+grain:
+  keys:
+  - customer_key
+  - year_month
+  entities:
+  - CUST
+  time_column: year_month
+  time_period: M

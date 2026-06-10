@@ -5,3 +5,10 @@ table_type: fact
 config:
   materialized: full
 business_area: PAYM
+grain:
+  keys:
+  - transaction_id
+  entities:
+  - TRAN
+  time_column: transaction_date
+  time_period: D

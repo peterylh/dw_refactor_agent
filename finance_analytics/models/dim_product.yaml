@@ -4,3 +4,7 @@ layer: DIM
 table_type: dimension
 config:
   materialized: full
+entity:
+  code: PROD
+  key_columns:
+  - product_key

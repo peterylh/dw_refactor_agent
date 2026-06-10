@@ -146,11 +146,25 @@ types:
     patterns:
       - "^[A-Z][A-Z0-9]*$"
 
-  ENTITY:
-    label: 实体简写
-    desc: 业务实体名称，如 CUST=客户, PROD=产品，一般对应到维度
+  MODEL_ENTITY:
+    label: 当前模型主实体简写
+    desc: DIM 表名中的实体段，必须来自当前模型 entity.code
     patterns:
       - "^[A-Z][A-Z0-9]*$"
+    values_from:
+      scope: current_model
+      paths:
+        - entity.code
+
+  GRAIN_ENTITY:
+    label: 当前模型粒度实体简写
+    desc: DWS 表名中的实体段，必须来自当前模型 grain.entities
+    patterns:
+      - "^[A-Z][A-Z0-9]*$"
+    values_from:
+      scope: current_model
+      paths:
+        - grain.entities
 
   COLUMN_IDENTIFIER:
     label: 字段标识符
@@ -285,7 +299,7 @@ rules:
 
   TABLE_DWS:
     desc: DWS 汇总层表命名， 当超过两个实体粒度时，仅选择两个主要粒度
-    expr: ["_", I, "$BUSINESS_AREA_CODE", "$ENTITY{1,2}", "$METRICS_DESC", ["", "$TIME_PERIOD", "$DWS_GRANULARITY"]]
+    expr: ["_", I, "$BUSINESS_AREA_CODE", "$GRAIN_ENTITY{1,2}", "$METRICS_DESC", ["", "$TIME_PERIOD", "$DWS_GRANULARITY"]]
     constraints:
       max_length: 30
 
@@ -297,7 +311,7 @@ rules:
 
   TABLE_DIM:
     desc: 普通维度表命名
-    expr: ["_", DIM, "$DIM_SCOPE", "$ENTITY", "$DIM_DESC", "$DIM_TYPE"]
+    expr: ["_", DIM, "$DIM_SCOPE", "$MODEL_ENTITY", "$DIM_DESC", "$DIM_TYPE"]
     constraints:
       max_length: 30
 

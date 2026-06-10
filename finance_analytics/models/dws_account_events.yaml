@@ -11,3 +11,10 @@ atomic_metrics:
 calculated_metrics:
 - value_change
 business_area: DPST
+grain:
+  keys:
+  - event_key
+  entities:
+  - ACCT
+  time_column: event_date
+  time_period: D

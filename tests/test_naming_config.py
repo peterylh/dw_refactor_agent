@@ -739,7 +739,7 @@ class TestEnterpriseNaming:
         r = nc._match_segments("I_FRTN_CUST_PROD_BAL_DS", segs)
         assert r == {
             "BUSINESS_AREA_CODE": "FRTN",
-            "ENTITY": ["CUST", "PROD"],
+            "GRAIN_ENTITY": ["CUST", "PROD"],
             "METRICS_DESC": "BAL",
             "TIME_PERIOD": "D",
             "DWS_GRANULARITY": "S",
@@ -755,7 +755,7 @@ class TestEnterpriseNaming:
         r = nc._match_segments("I_FRTN_CUST_BAL_DS", segs)
         assert r == {
             "BUSINESS_AREA_CODE": "FRTN",
-            "ENTITY": "CUST",
+            "GRAIN_ENTITY": "CUST",
             "METRICS_DESC": "BAL",
             "TIME_PERIOD": "D",
             "DWS_GRANULARITY": "S",
@@ -782,7 +782,7 @@ class TestEnterpriseNaming:
         r = nc._match_segments("DIM_BASE_CUST_INFO_INFO", segs)
         assert r == {
             "DIM_SCOPE": "BASE",
-            "ENTITY": "CUST",
+            "MODEL_ENTITY": "CUST",
             "DIM_DESC": "INFO",
             "DIM_TYPE": "INFO",
         }
@@ -792,7 +792,7 @@ class TestEnterpriseNaming:
         r = nc._match_segments("DIM_ADDT_CUST_SCTY_RELA_INFO", segs)
         assert r == {
             "DIM_SCOPE": "ADDT",
-            "ENTITY": "CUST",
+            "MODEL_ENTITY": "CUST",
             "DIM_DESC": "SCTY_RELA",
             "DIM_TYPE": "INFO",
         }
@@ -804,6 +804,16 @@ class TestEnterpriseNaming:
 
     def test_table_name_max_length(self, nc):
         assert nc.table_name_max_length == 30
+
+    def test_entity_types_declare_model_sources(self, nc):
+        assert nc.types["MODEL_ENTITY"].values_from == {
+            "scope": "current_model",
+            "paths": ["entity.code"],
+        }
+        assert nc.types["GRAIN_ENTITY"].values_from == {
+            "scope": "current_model",
+            "paths": ["grain.entities"],
+        }
 
     def test_removed_legacy_column_segment_types(self, nc):
         assert "prefix_field" not in nc.types

@@ -4,3 +4,7 @@ layer: DIM
 table_type: dimension
 config:
   materialized: full
+entity:
+  code: MERCHANT
+  key_columns:
+  - merchant_natural_key

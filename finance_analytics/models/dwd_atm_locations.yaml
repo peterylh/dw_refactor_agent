@@ -6,3 +6,15 @@ config:
   materialized: full
 data_domain: '05'
 business_area: CHNL
+entity:
+  code: ATM
+  key_columns:
+  - atm_id
+related_entities:
+- code: BRANCH
+  name: 分支机构
+  key_columns:
+  - branch_id
+  relationship:
+    type: many_to_one
+    from_entity: ATM

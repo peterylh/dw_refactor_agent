@@ -10,3 +10,10 @@ atomic_metrics:
 calculated_metrics:
 - resolution_days
 business_area: PAYM
+grain:
+  keys:
+  - alert_key
+  entities:
+  - ALERT
+  time_column: alert_date
+  time_period: D

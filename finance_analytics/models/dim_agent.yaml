@@ -4,3 +4,7 @@ layer: DIM
 table_type: dimension
 config:
   materialized: full
+entity:
+  code: AGENT
+  key_columns:
+  - agent_key

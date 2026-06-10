@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 数据集市中间层评估工具
-评估 DWD/DWS 层的复用度、链路长度(中间层)、架构合理性、命名规范。
+评估 DWD/DWS 层的复用度、链路长度(中间层)、架构合理性、模型元数据健康度、命名规范。
 
 用法:
     python assess/assess_middle_layer.py
@@ -45,10 +45,11 @@ MIDDLE_DEPTH_FALLBACK = 30  # depth ≥ 3
 REUSE_FULL_SCORE_AT = 3
 
 DEFAULT_WEIGHTS = {
-    "reuse": 0.25,
-    "depth": 0.25,
-    "architecture": 0.25,
-    "naming": 0.25,
+    "reuse": 0.2,
+    "depth": 0.2,
+    "architecture": 0.2,
+    "metadata_health": 0.2,
+    "naming": 0.2,
 }
 
 # 加权违规率配置: 严重度 → 权重
@@ -59,6 +60,8 @@ ATOMIC_METRIC_RULE_NAME = "原子指标命名 {ACTION_VERB}_{MEASURE_NOUN}"
 DERIVED_METRIC_RULE_NAME = (
     "派生指标命名 {TIME_PERIOD}_{MODIFIER...}_{ATOMIC_METRIC}"
 )
+DWS_ENTITY_RULE_NAME = "DWS表名实体包含于grain.entities"
+DIM_ENTITY_RULE_NAME = "DIM表名实体等于entity.code"
 DATA_DOMAIN_LAYERS = {"DWD"}
 BUSINESS_AREA_LAYERS = {"DWD", "DWS"}
 FILE_RULE_DDL = "DDL文件名与建表表名一致"
@@ -601,6 +604,339 @@ def _column_name_diagnostic(col_name: str, nc) -> dict:
         "passed": False,
         "message": "命名配置对象不支持结构化诊断",
     }
+
+
+def _as_string_list(value) -> list[str]:
+    if value is None:
+        return []
+    values = value if isinstance(value, list) else [value]
+    return [
+        str(item).strip()
+        for item in values
+        if str(item or "").strip()
+    ]
+
+
+def _dws_name_entities(name: str, nc) -> list[str]:
+    return _table_name_type_values(
+        name,
+        "DWS",
+        nc,
+        "GRAIN_ENTITY",
+        fallback_type_name="ENTITY",
+    )
+
+
+def _table_name_type_values(
+    name: str,
+    layer: str,
+    nc,
+    type_name: str,
+    *,
+    fallback_type_name: str | None = None,
+) -> list[str]:
+    layer_def = getattr(nc, "layers", {}).get("DWS")
+    if layer != "DWS":
+        layer_def = getattr(nc, "layers", {}).get(layer)
+    if not layer_def:
+        return []
+    for segments in layer_def.templates:
+        matched = nc._match_segments(name, segments)
+        if matched is not None:
+            values = _as_string_list(matched.get(type_name))
+            if values:
+                return values
+            if fallback_type_name:
+                return _as_string_list(matched.get(fallback_type_name))
+    return []
+
+
+def _model_grain_entities(
+    table_name: str,
+    model_metadata: dict | None,
+) -> list[str]:
+    if not model_metadata:
+        return []
+    metadata = model_metadata.get(table_name, {})
+    grain = metadata.get("grain") if isinstance(metadata, dict) else None
+    if not isinstance(grain, dict):
+        return []
+    return _as_string_list(grain.get("entities"))
+
+
+def _model_defined_entities(model_metadata: dict | None) -> set[str]:
+    if not model_metadata:
+        return set()
+    defined = set()
+    for metadata in model_metadata.values():
+        if not isinstance(metadata, dict):
+            continue
+        entity = metadata.get("entity")
+        if isinstance(entity, dict):
+            defined.update(_as_string_list(entity.get("code")))
+        related_entities = metadata.get("related_entities")
+        if isinstance(related_entities, list):
+            for related in related_entities:
+                if isinstance(related, dict):
+                    defined.update(_as_string_list(related.get("code")))
+    return defined
+
+
+def _score_dws_entity_name(
+    table_name: str,
+    layer: str,
+    nc,
+    model_metadata: dict | None,
+) -> dict:
+    result = _naming_check_result(0, 0, [])
+    if layer != "DWS":
+        return result
+    if not model_metadata or table_name not in model_metadata:
+        return result
+
+    expected = _model_grain_entities(table_name, model_metadata)
+    if not expected:
+        result["total"] = 1
+        result["violations"] = ["缺少grain.entities，无法检测DWS表名ENTITY"]
+        return result
+
+    actual = _dws_name_entities(table_name, nc)
+    result["total"] = 1
+    violations = []
+    if not actual or not set(actual).issubset(set(expected)):
+        violations.append(f"表名ENTITY={actual}，grain.entities={expected}")
+    defined_entities = _model_defined_entities(model_metadata)
+    if defined_entities:
+        missing = [
+            entity for entity in expected
+            if entity not in defined_entities
+        ]
+        if missing:
+            violations.append(f"grain.entities未定义={missing}")
+
+    if not violations:
+        result["passed"] = 1
+    else:
+        result["violations"] = violations
+    return result
+
+
+def _score_dim_entity_name(
+    table_name: str,
+    layer: str,
+    nc,
+    model_metadata: dict | None,
+) -> dict:
+    result = _naming_check_result(0, 0, [])
+    if layer != "DIM":
+        return result
+    if not model_metadata or table_name not in model_metadata:
+        return result
+
+    expected = _model_entity_codes(model_metadata.get(table_name))
+    if not expected:
+        result["total"] = 1
+        result["violations"] = ["缺少entity.code，无法检测DIM表名ENTITY"]
+        return result
+
+    actual = _table_name_type_values(
+        table_name,
+        layer,
+        nc,
+        "MODEL_ENTITY",
+        fallback_type_name="ENTITY",
+    )
+    result["total"] = 1
+    if actual == expected:
+        result["passed"] = 1
+    else:
+        result["violations"] = [
+            f"表名MODEL_ENTITY={actual}，entity.code={expected}"
+        ]
+    return result
+
+
+def _model_entity_codes(metadata: dict | None) -> list[str]:
+    if not isinstance(metadata, dict):
+        return []
+    entity = metadata.get("entity")
+    if not isinstance(entity, dict):
+        return []
+    return _as_string_list(entity.get("code"))
+
+
+def _table_column_names(table: dict) -> set[str]:
+    return {
+        str(column.get("name") or "").strip()
+        for column in table.get("columns", []) or []
+        if str(column.get("name") or "").strip()
+    }
+
+
+def _metadata_check_result(
+    passed: int,
+    total: int,
+    violations: list[dict],
+    rule_summary: dict[str, dict],
+    details: list[dict],
+) -> dict:
+    return dict(
+        score=round(passed / total * 100, 1) if total else 100.0,
+        passed=passed,
+        total=total,
+        violations=violations,
+        rule_summary=rule_summary,
+        details=details,
+    )
+
+
+def score_metadata_health(
+    tables: list,
+    _nc,
+    model_metadata: dict | None,
+) -> dict:
+    """检查 models/*.yaml 中 entity/grain/related_entities 是否自洽。"""
+    if not model_metadata:
+        return _metadata_check_result(0, 0, [], {}, [])
+
+    tables_by_name = {table["name"]: table for table in tables}
+    defined_entities = _model_defined_entities(model_metadata)
+    passed = 0
+    total = 0
+    violations = []
+    details = []
+    rule_summary = defaultdict(lambda: dict(pass_count=0, total=0, pct=0.0))
+
+    def record(
+        table_name: str,
+        rule: str,
+        ok: bool,
+        message: str = "",
+    ) -> None:
+        nonlocal passed, total
+        total += 1
+        rule_summary[rule]["total"] += 1
+        if ok:
+            passed += 1
+            rule_summary[rule]["pass_count"] += 1
+        else:
+            violation = dict(table=table_name, rule=rule, message=message)
+            violations.append(violation)
+            details.append(violation)
+
+    for table_name, metadata in model_metadata.items():
+        if not isinstance(metadata, dict):
+            continue
+        table = tables_by_name.get(table_name)
+        if not table:
+            continue
+        columns = _table_column_names(table)
+
+        entity = metadata.get("entity")
+        entity_codes = _model_entity_codes(metadata)
+        if isinstance(entity, dict):
+            key_columns = _as_string_list(entity.get("key_columns"))
+            if key_columns:
+                missing_keys = [
+                    key for key in key_columns
+                    if key not in columns
+                ]
+                record(
+                    table_name,
+                    "entity.key_columns存在于表字段",
+                    not missing_keys,
+                    f"entity.key_columns不存在={missing_keys}",
+                )
+        related_entities = metadata.get("related_entities")
+        if isinstance(related_entities, list):
+            primary_code = entity_codes[0] if entity_codes else ""
+            for related in related_entities:
+                if not isinstance(related, dict):
+                    continue
+                related_code = str(related.get("code") or "").strip()
+                related_keys = _as_string_list(related.get("key_columns"))
+                if related_keys:
+                    missing_related_keys = [
+                        key for key in related_keys
+                        if key not in columns
+                    ]
+                    record(
+                        table_name,
+                        "related_entities.key_columns存在于表字段",
+                        not missing_related_keys,
+                        (
+                            f"related_entities[{related_code}]"
+                            f".key_columns不存在={missing_related_keys}"
+                        ),
+                    )
+                relationship = related.get("relationship")
+                if primary_code and isinstance(relationship, dict):
+                    from_entity = str(
+                        relationship.get("from_entity") or "").strip()
+                    record(
+                        table_name,
+                        "related_entities.relationship.from_entity等于主实体",
+                        from_entity == primary_code,
+                        (
+                            f"related_entities[{related_code}]"
+                            f".relationship.from_entity={from_entity}，"
+                            f"entity.code={primary_code}"
+                        ),
+                    )
+                if primary_code and related_code:
+                    record(
+                        table_name,
+                        "related_entities.code不同于主实体",
+                        related_code != primary_code,
+                        f"related_entities.code={related_code} 与主实体重复",
+                    )
+
+        grain = metadata.get("grain")
+        if isinstance(grain, dict):
+            grain_keys = _as_string_list(grain.get("keys"))
+            if grain_keys:
+                missing_grain_keys = [
+                    key for key in grain_keys
+                    if key not in columns
+                ]
+                record(
+                    table_name,
+                    "grain.keys存在于表字段",
+                    not missing_grain_keys,
+                    f"grain.keys不存在={missing_grain_keys}",
+                )
+
+            grain_entities = _as_string_list(grain.get("entities"))
+            if grain_entities:
+                missing_entities = [
+                    entity for entity in grain_entities
+                    if entity not in defined_entities
+                ]
+                record(
+                    table_name,
+                    "grain.entities有实体定义",
+                    not missing_entities,
+                    f"grain.entities未定义={missing_entities}",
+                )
+            else:
+                record(
+                    table_name,
+                    "grain.entities有实体定义",
+                    False,
+                    "缺少grain.entities",
+                )
+
+    summary = {}
+    for rule, counts in rule_summary.items():
+        total_count = counts["total"]
+        pass_count = counts["pass_count"]
+        summary[rule] = dict(
+            pass_count=pass_count,
+            total=total_count,
+            pct=round(pass_count / total_count * 100, 1)
+            if total_count else 0,
+        )
+    return _metadata_check_result(passed, total, violations, summary, details)
 
 
 def _naming_check_result(
@@ -1260,12 +1596,28 @@ def score_naming_conventions(
             checked_business_tables.add(name)
             record_business_summary(business_checks)
 
+        # --- DWS 粒度实体检查 ---
+        dws_entity_checks = _score_dws_entity_name(
+            name,
+            layer,
+            nc,
+            model_metadata,
+        )
+        dim_entity_checks = _score_dim_entity_name(
+            name,
+            layer,
+            nc,
+            model_metadata,
+        )
+
         table_pass = (
             tbl_passed
             + col_passed
             + metric_passed
             + derived_metric_passed
             + business_checks["passed"]
+            + dws_entity_checks["passed"]
+            + dim_entity_checks["passed"]
         )
         table_check = (
             tbl_total
@@ -1273,6 +1625,8 @@ def score_naming_conventions(
             + metric_total
             + derived_metric_total
             + business_checks["total"]
+            + dws_entity_checks["total"]
+            + dim_entity_checks["total"]
         )
         table_score = round(table_pass / table_check *
                             100, 1) if table_check else 100.0
@@ -1303,6 +1657,8 @@ def score_naming_conventions(
                     derived_metric_total,
                     derived_metric_violations,
                 ),
+                dws_entity_checks=dws_entity_checks,
+                dim_entity_checks=dim_entity_checks,
                 business_metadata_checks=business_checks,
                 score=table_score,
             ))
@@ -1340,6 +1696,7 @@ def score_naming_conventions(
                     column_checks=_naming_check_result(0, 0, []),
                     atomic_metric_checks=_naming_check_result(0, 0, []),
                     derived_metric_checks=_naming_check_result(0, 0, []),
+                    dim_entity_checks=_naming_check_result(0, 0, []),
                     business_metadata_checks=business_checks,
                     score=table_score,
                 ))
@@ -1373,6 +1730,7 @@ def score_naming_conventions(
                     column_checks=_naming_check_result(0, 0, []),
                     atomic_metric_checks=_naming_check_result(0, 0, []),
                     derived_metric_checks=_naming_check_result(0, 0, []),
+                    dim_entity_checks=_naming_check_result(0, 0, []),
                     business_metadata_checks=business_checks,
                     score=table_score,
                 ))
@@ -1508,6 +1866,40 @@ def score_naming_conventions(
             if business_area_total else 0,
         )
 
+    dws_entity_total = 0
+    dws_entity_passed = 0
+    dim_entity_total = 0
+    dim_entity_passed = 0
+    for t in middle:
+        checks = _score_dws_entity_name(
+            t["name"],
+            t["layer"],
+            nc,
+            model_metadata,
+        )
+        dws_entity_total += checks["total"]
+        dws_entity_passed += checks["passed"]
+        dim_checks = _score_dim_entity_name(
+            t["name"],
+            t["layer"],
+            nc,
+            model_metadata,
+        )
+        dim_entity_total += dim_checks["total"]
+        dim_entity_passed += dim_checks["passed"]
+    rule_summary[DWS_ENTITY_RULE_NAME] = dict(
+        pass_count=dws_entity_passed,
+        total=dws_entity_total,
+        pct=round(dws_entity_passed / dws_entity_total * 100, 1)
+        if dws_entity_total else 0,
+    )
+    rule_summary[DIM_ENTITY_RULE_NAME] = dict(
+        pass_count=dim_entity_passed,
+        total=dim_entity_total,
+        pct=round(dim_entity_passed / dim_entity_total * 100, 1)
+        if dim_entity_total else 0,
+    )
+
     rule_summary.update(file_result["rule_summary"])
 
     return dict(score=overall,
@@ -1612,6 +2004,7 @@ def generate_report(scores: dict, weights: dict, project: str) -> str:
         ("复用度", "reuse"),
         ("链路长度(中间层)", "depth"),
         ("架构合理性", "architecture"),
+        ("模型元数据健康度", "metadata_health"),
         ("命名规范", "naming"),
     ]
     for label, key in dims:
@@ -1731,6 +2124,45 @@ def generate_report(scores: dict, weights: dict, project: str) -> str:
     parts.append(sep)
 
     # ============================================================
+    # 模型元数据健康度
+    # ============================================================
+    metadata_health = scores["metadata_health"]
+    parts.append(f"\n{'=' * 62}")
+    parts.append(
+        f"【模型元数据健康度】评分(展示/原始): {metadata_health['display']} / "
+        f"{metadata_health['raw']}"
+    )
+    parts.append(f"{'=' * 62}")
+
+    headers = ["规则", "通过", "总计", "合规率"]
+    col_w = [36, 6, 6, 8]
+    rows = []
+    for desc, cnts in sorted(metadata_health["rule_summary"].items()):
+        rows.append([
+            desc,
+            str(cnts["pass_count"]),
+            str(cnts["total"]),
+            f"{cnts['pct']}%",
+        ])
+    if not rows:
+        rows.append(["(无检查项)", "0", "0", "0%"])
+    parts.append(_fmt_table(headers, rows, col_w))
+
+    if metadata_health["violations"]:
+        parts.append(f"\n  偏离详情:")
+        for violation in metadata_health["violations"][:30]:
+            parts.append(
+                "    "
+                f"{violation['table']} | {violation['rule']} | "
+                f"{violation['message']}"
+            )
+        if len(metadata_health["violations"]) > 30:
+            parts.append(f"    ... (共{len(metadata_health['violations'])}个)")
+    else:
+        parts.append(f"\n  无违规 ✓")
+    parts.append(sep)
+
+    # ============================================================
     # 命名规范
     # ============================================================
     naming = scores["naming"]
@@ -1781,6 +2213,9 @@ def generate_report(scores: dict, weights: dict, project: str) -> str:
                     -1] += (
                         f"... (共{len(derived_metric_checks['violations'])}个)"
                     )
+        dim_entity_checks = r.get("dim_entity_checks", {})
+        if dim_entity_checks.get("violations"):
+            issues.extend(dim_entity_checks["violations"])
         business_checks = r.get("business_metadata_checks", {})
         if business_checks.get("violations"):
             issues.extend(business_checks["violations"])
@@ -1883,6 +2318,8 @@ def assess(project: str, weights: dict = None) -> dict:
         business_domain_config,
     )
     architecture_score = build_metric_result(architecture_raw)
+    metadata_health_score = build_metric_result(
+        score_metadata_health(tables, nc, model_metadata))
     project_dir = PROJECT_ROOT / PROJECT_CONFIG[project]["dir"]
     naming_score = build_metric_result(
         score_naming_conventions(
@@ -1899,6 +2336,7 @@ def assess(project: str, weights: dict = None) -> dict:
         weights["reuse"] * reuse_score["raw"] +
         weights["depth"] * depth_score["raw"] +
         weights["architecture"] * architecture_score["raw"] +
+        weights["metadata_health"] * metadata_health_score["raw"] +
         weights["naming"] * naming_score["raw"],
         1,
     )
@@ -1906,6 +2344,7 @@ def assess(project: str, weights: dict = None) -> dict:
         weights["reuse"] * reuse_score["display"] +
         weights["depth"] * depth_score["display"] +
         weights["architecture"] * architecture_score["display"] +
+        weights["metadata_health"] * metadata_health_score["display"] +
         weights["naming"] * naming_score["display"],
         1,
     )
@@ -1918,6 +2357,7 @@ def assess(project: str, weights: dict = None) -> dict:
         reuse=reuse_score,
         depth=depth_score,
         architecture=architecture_score,
+        metadata_health=metadata_health_score,
         naming=naming_score,
     )
 
@@ -1933,10 +2373,21 @@ def main():
     parser.add_argument(
         "--output",
         help="输出 JSON 文件路径 (默认 assess/assess_result_{project}.json)")
-    parser.add_argument("--reuse-weight", type=float, default=0.25)
-    parser.add_argument("--depth-weight", type=float, default=0.25)
-    parser.add_argument("--architecture-weight", type=float, default=0.25)
-    parser.add_argument("--naming-weight", type=float, default=0.25)
+    parser.add_argument("--reuse-weight",
+                        type=float,
+                        default=DEFAULT_WEIGHTS["reuse"])
+    parser.add_argument("--depth-weight",
+                        type=float,
+                        default=DEFAULT_WEIGHTS["depth"])
+    parser.add_argument("--architecture-weight",
+                        type=float,
+                        default=DEFAULT_WEIGHTS["architecture"])
+    parser.add_argument("--metadata-health-weight",
+                        type=float,
+                        default=DEFAULT_WEIGHTS["metadata_health"])
+    parser.add_argument("--naming-weight",
+                        type=float,
+                        default=DEFAULT_WEIGHTS["naming"])
     parser.add_argument("--llm",
                         action="store_true",
                         help="调用 DeepSeek API 进行 LLM 智能分层检测")
@@ -1953,6 +2404,7 @@ def main():
         reuse=args.reuse_weight,
         depth=args.depth_weight,
         architecture=args.architecture_weight,
+        metadata_health=args.metadata_health_weight,
         naming=args.naming_weight,
         enable_llm=args.llm,
         no_cache=args.no_cache,

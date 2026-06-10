@@ -11,6 +11,7 @@ from config import (
 )
 from assess.assess_middle_layer import (
     ATOMIC_METRIC_RULE_NAME,
+    DIM_ENTITY_RULE_NAME,
     DERIVED_METRIC_RULE_NAME,
     FILE_RULE_DDL,
     FILE_RULE_MODEL_NAME,
@@ -20,6 +21,7 @@ from assess.assess_middle_layer import (
     assess,
     generate_report,
     score_architecture_health,
+    score_metadata_health,
     score_naming_conventions,
 )
 from assess.table_inspector import TableInspectResult
@@ -110,17 +112,71 @@ def test_assess_returns_raw_and_display_scores(monkeypatch, sample_lineage_data,
     result = assess(project=isolated_assess_project)
 
     assert "architecture" in result
-    assert result["weights"]["architecture"] == 0.25
+    assert "metadata_health" in result
+    assert result["weights"]["architecture"] == 0.2
+    assert result["weights"]["metadata_health"] == 0.2
 
     # 展示分 = 原始分 (取消展示分映射后)
     assert result["reuse"]["raw"] == result["reuse"]["display"]
     assert result["depth"]["raw"] == result["depth"]["display"]
     assert result["architecture"]["raw"] == result["architecture"]["display"]
+    assert result["metadata_health"]["raw"] == result[
+        "metadata_health"]["display"]
     assert result["naming"]["raw"] == result["naming"]["display"]
     assert result["overall_display"] == result["overall_raw"]
 
     # sample: 4 张表, 1 条违规 (低权重=1), cap 后 = 1, 合规率 = (1 - 1/4) × 100 = 75
     assert result["architecture"]["raw"] == 75.0
+
+
+def test_score_metadata_health_validates_model_entity_and_grain_entity():
+    nc = load_naming_config(PROJECT_ROOT / "naming_config.yaml")
+    tables = [
+        {
+            "name": "DIM_BASE_PROD_INFO_INFO",
+            "layer": "DIM",
+            "columns": [{"name": "product_id", "type": "BIGINT"}],
+        },
+        {
+            "name": "I_SHOP_CAT_SALE_DS",
+            "layer": "DWS",
+            "columns": [
+                {"name": "category_id", "type": "BIGINT"},
+                {"name": "stat_date", "type": "DATE"},
+            ],
+        },
+    ]
+    model_metadata = {
+        "DIM_BASE_PROD_INFO_INFO": {
+            "layer": "DIM",
+            "table_type": "dimension",
+            "entity": {
+                "code": "CUST",
+                "key_columns": ["product_id"],
+            },
+        },
+        "I_SHOP_CAT_SALE_DS": {
+            "layer": "DWS",
+            "table_type": "fact",
+            "grain": {
+                "keys": ["category_id", "stat_date"],
+                "entities": ["CAT"],
+                "time_column": "stat_date",
+                "time_period": "D",
+            },
+        },
+    }
+
+    result = score_metadata_health(tables, nc, model_metadata)
+
+    assert result["score"] == 50.0
+    assert result["passed"] == 1
+    assert result["total"] == 2
+    assert [
+        violation["message"] for violation in result["violations"]
+    ] == [
+        "grain.entities未定义=['CAT']",
+    ]
 
 
 def test_generate_report_contains_raw_and_display_scores(
@@ -136,6 +192,7 @@ def test_generate_report_contains_raw_and_display_scores(
     assert "总体评分(展示)" in report
     assert "总体评分(原始)" in report
     assert "【架构合理性】评分: 75.0" in report
+    assert "【模型元数据健康度】评分" in report
     assert "Σ(每表 cap 后权重) = 1" in report
 
 
@@ -900,6 +957,209 @@ def test_score_naming_conventions_checks_default_enterprise_metric_bindings():
         "pass_count": 1,
         "total": 2,
         "pct": 50.0,
+    }
+
+
+def test_score_naming_conventions_checks_dws_entity_against_model_grain():
+    nc = load_naming_config(PROJECT_ROOT / "shop/naming_config.yaml")
+    tables = [{
+        "name": "I_SHOP_CAT_SALE_DS",
+        "layer": "DWS",
+        "columns": [],
+    }]
+    model_metadata = {
+        "I_SHOP_CAT_SALE_DS": {
+            "grain": {
+                "keys": ["product_id", "stat_date"],
+                "entities": ["PROD"],
+                "time_column": "stat_date",
+                "time_period": "D",
+            }
+        }
+    }
+
+    result = score_naming_conventions(tables, nc, model_metadata)
+
+    assert result["rule_summary"]["DWS表名实体包含于grain.entities"] == {
+        "pass_count": 0,
+        "total": 1,
+        "pct": 0.0,
+    }
+    assert result["details"][0]["dws_entity_checks"] == {
+        "passed": 0,
+        "total": 1,
+        "violations": ["表名ENTITY=['CAT']，grain.entities=['PROD']"],
+    }
+
+
+def test_score_naming_conventions_checks_dim_entity_against_model_entity():
+    nc = load_naming_config(PROJECT_ROOT / "shop/naming_config.yaml")
+    tables = [{
+        "name": "DIM_BASE_PROD_INFO_INFO",
+        "layer": "DIM",
+        "columns": [],
+    }]
+    model_metadata = {
+        "DIM_BASE_PROD_INFO_INFO": {
+            "entity": {
+                "code": "CUST",
+                "key_columns": ["product_id"],
+            }
+        }
+    }
+
+    result = score_naming_conventions(tables, nc, model_metadata)
+
+    assert result["rule_summary"][DIM_ENTITY_RULE_NAME] == {
+        "pass_count": 0,
+        "total": 1,
+        "pct": 0.0,
+    }
+    assert result["details"][0]["dim_entity_checks"] == {
+        "passed": 0,
+        "total": 1,
+        "violations": ["表名MODEL_ENTITY=['PROD']，entity.code=['CUST']"],
+    }
+
+
+def test_score_naming_conventions_requires_dws_grain_entities_from_models():
+    nc = load_naming_config(PROJECT_ROOT / "shop/naming_config.yaml")
+    tables = [{
+        "name": "I_SHOP_PROD_SALE_DS",
+        "layer": "DWS",
+        "columns": [],
+    }]
+    model_metadata = {
+        "I_SHOP_PROD_SALE_DS": {
+            "layer": "DWS",
+            "table_type": "fact",
+        }
+    }
+
+    result = score_naming_conventions(tables, nc, model_metadata)
+
+    assert result["rule_summary"]["DWS表名实体包含于grain.entities"] == {
+        "pass_count": 0,
+        "total": 1,
+        "pct": 0.0,
+    }
+    assert result["details"][0]["dws_entity_checks"] == {
+        "passed": 0,
+        "total": 1,
+        "violations": ["缺少grain.entities，无法检测DWS表名ENTITY"],
+    }
+
+
+def test_score_naming_conventions_requires_dws_grain_entity_definitions():
+    nc = load_naming_config(PROJECT_ROOT / "shop/naming_config.yaml")
+    tables = [{
+        "name": "I_SHOP_CAT_SALE_DS",
+        "layer": "DWS",
+        "columns": [],
+    }]
+    model_metadata = {
+        "I_SHOP_CAT_SALE_DS": {
+            "grain": {
+                "keys": ["category_id", "stat_date"],
+                "entities": ["CAT"],
+                "time_column": "stat_date",
+                "time_period": "D",
+            }
+        },
+        "M_SHOP_02_PROD_DF": {
+            "entity": {
+                "code": "PROD",
+                "key_columns": ["product_id"],
+            },
+        },
+    }
+
+    result = score_naming_conventions(tables, nc, model_metadata)
+
+    assert result["details"][0]["dws_entity_checks"] == {
+        "passed": 0,
+        "total": 1,
+        "violations": ["grain.entities未定义=['CAT']"],
+    }
+
+
+def test_score_naming_conventions_uses_full_dws_grain_entities():
+    nc = load_naming_config(PROJECT_ROOT / "shop/naming_config.yaml")
+    tables = [{
+        "name": "I_SHOP_PROD_STORE_SALE_DS",
+        "layer": "DWS",
+        "columns": [],
+    }]
+    model_metadata = {
+        "I_SHOP_PROD_STORE_SALE_DS": {
+            "grain": {
+                "keys": ["product_id", "store_id", "customer_id", "stat_date"],
+                "entities": ["PROD", "STORE", "CUST"],
+                "time_column": "stat_date",
+                "time_period": "D",
+            }
+        },
+        "DIM_BASE_PROD_INFO_INFO": {
+            "entity": {
+                "code": "PROD",
+                "key_columns": ["product_id"],
+            },
+        },
+        "DIM_BASE_STORE_INFO_INFO": {
+            "entity": {
+                "code": "STORE",
+                "key_columns": ["store_id"],
+            },
+        },
+        "DIM_BASE_CUST_INFO_INFO": {
+            "entity": {
+                "code": "CUST",
+                "key_columns": ["customer_id"],
+            },
+        },
+    }
+
+    result = score_naming_conventions(tables, nc, model_metadata)
+
+    assert result["rule_summary"]["DWS表名实体包含于grain.entities"] == {
+        "pass_count": 1,
+        "total": 1,
+        "pct": 100.0,
+    }
+    assert result["details"][0]["dws_entity_checks"] == {
+        "passed": 1,
+        "total": 1,
+        "violations": [],
+    }
+
+
+def test_score_naming_conventions_accepts_dim_entity_from_model():
+    nc = load_naming_config(PROJECT_ROOT / "shop/naming_config.yaml")
+    tables = [{
+        "name": "DIM_BASE_PROD_INFO_INFO",
+        "layer": "DIM",
+        "columns": [],
+    }]
+    model_metadata = {
+        "DIM_BASE_PROD_INFO_INFO": {
+            "entity": {
+                "code": "PROD",
+                "key_columns": ["product_id"],
+            }
+        }
+    }
+
+    result = score_naming_conventions(tables, nc, model_metadata)
+
+    assert result["rule_summary"][DIM_ENTITY_RULE_NAME] == {
+        "pass_count": 1,
+        "total": 1,
+        "pct": 100.0,
+    }
+    assert result["details"][0]["dim_entity_checks"] == {
+        "passed": 1,
+        "total": 1,
+        "violations": [],
     }
 
 

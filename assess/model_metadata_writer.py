@@ -3,13 +3,15 @@
 LLM 表巡检与模型元数据回写工具。
 
 复用 table_inspector 的单次 DeepSeek 调用结果，将表级 layer/table_type、
-DWD 数据域、DWD/DWS 业务板块以及 DWD/DWS 表中的指标字段回写到
-models/{table}.yaml，并把 DWD 事实表的非原子指标输出为违规项。
+DWD 数据域、DWD/DWS 业务板块、维度表 entity/related_entities、DWS grain 以及
+DWD/DWS 表中的指标字段回写到 models/{table}.yaml，并把 DWD 事实表的
+非原子指标输出为违规项。
 """
 
 import argparse
 import json
 import os
+import re
 import sys
 import threading
 from pathlib import Path
@@ -34,9 +36,22 @@ from config import PROJECT_CONFIG, PROJECT_ROOT, get_business_domain_config
 
 METRIC_LAYERS = {"DWD", "DWS"}
 WRITABLE_METADATA_LAYERS = {"DWD", "DWS", "DIM"}
-WRITE_SCOPES = {"all", "table", "metrics"}
+WRITE_SCOPES = {"all", "table", "metrics", "grain"}
 DATA_DOMAIN_LAYERS = {"DWD"}
 BUSINESS_AREA_LAYERS = {"DWD", "DWS"}
+DDL_NON_COLUMN_PREFIXES = {
+    "AGGREGATE",
+    "CREATE",
+    "DISTRIBUTED",
+    "DUPLICATE",
+    "ENGINE",
+    "KEY",
+    "PARTITION",
+    "PARTITIONED",
+    "PRIMARY",
+    "PROPERTIES",
+    "UNIQUE",
+}
 
 
 def build_inspection_contexts(project: str,
@@ -230,6 +245,169 @@ def _extract_existing_metric_groups(
     }
 
 
+def _as_string_list(value: Any) -> list[str]:
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    value = str(value or "").strip()
+    return [value] if value else []
+
+
+def _is_time_grain_key(key: str, time_column: str = "") -> bool:
+    key_lower = str(key or "").strip().lower()
+    if not key_lower:
+        return True
+    if time_column and key_lower == str(time_column).strip().lower():
+        return True
+    return any(token in key_lower for token in (
+        "date",
+        "day",
+        "dt",
+        "hour",
+        "month",
+        "period",
+        "quarter",
+        "time",
+        "week",
+        "year",
+    ))
+
+
+def _grain_key_entity_pairs(grain: dict[str, Any]) -> list[tuple[str, str]]:
+    if not isinstance(grain, dict):
+        return []
+    keys = _as_string_list(grain.get("keys"))
+    entities = _as_string_list(grain.get("entities"))
+    time_column = str(grain.get("time_column") or "")
+    entity_keys = [
+        key for key in keys
+        if not _is_time_grain_key(key, time_column)
+    ]
+    if not entity_keys or not entities:
+        return []
+    if len(entities) == len(entity_keys):
+        return list(zip(entity_keys, entities))
+    if len(entities) == 1:
+        return [(key, entities[0]) for key in entity_keys]
+
+    pairs = []
+    for entity in entities:
+        entity_prefix = entity.lower()
+        for key in entity_keys:
+            if key.lower().startswith(entity_prefix):
+                pairs.append((key, entity))
+                break
+    return pairs
+
+
+def _build_grain_entity_index(
+        results: list[TableInspectResult]) -> dict[str, str]:
+    index: dict[str, str] = {}
+    for result in results:
+        if result.status == "blocked":
+            continue
+        for key, entity in _grain_key_entity_pairs(result.grain):
+            index.setdefault(key, entity)
+    return index
+
+
+def _column_comments_from_ddl(ddl: str) -> dict[str, str]:
+    comments = {}
+    for line in str(ddl or "").splitlines():
+        name_match = re.match(r"\s*`?([A-Za-z_][A-Za-z0-9_]*)`?\s+", line)
+        if not name_match:
+            continue
+        name = name_match.group(1)
+        if name.upper() in DDL_NON_COLUMN_PREFIXES:
+            continue
+        comment_match = re.search(r"COMMENT\s+'([^']*)'", line,
+                                  flags=re.IGNORECASE)
+        comments[name] = comment_match.group(1).strip() if comment_match else ""
+    return comments
+
+
+def _entity_name_from_comment(comment: str) -> str:
+    name = str(comment or "").strip()
+    for suffix in ("ID", "Id", "id", "编号", "编码", "标识"):
+        if name.endswith(suffix):
+            name = name[:-len(suffix)]
+            break
+    return name.strip()
+
+
+def _related_entity_identity(item: dict[str, Any]) -> tuple[str, tuple[str, ...]]:
+    return (
+        str(item.get("code") or "").strip(),
+        tuple(_as_string_list(item.get("key_columns"))),
+    )
+
+
+def _merge_related_entities(
+        current: list[dict[str, Any]],
+        discovered: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    merged = []
+    seen = set()
+    for item in current + discovered:
+        if not isinstance(item, dict):
+            continue
+        identity = _related_entity_identity(item)
+        if not identity[0] or not identity[1] or identity in seen:
+            continue
+        merged.append(item)
+        seen.add(identity)
+    return merged
+
+
+def discover_related_entities_from_grain(
+        result: TableInspectResult,
+        context: TableContext | None,
+        grain_entity_index: dict[str, str]) -> list[dict[str, Any]]:
+    """从 DWS grain 使用情况反推维度表承载的层级实体。"""
+    if result.table_type != "dimension" or not result.entity or not context:
+        return []
+    primary_code = str(result.entity.get("code") or "").strip()
+    primary_keys = set(_as_string_list(result.entity.get("key_columns")))
+    if not primary_code or not primary_keys:
+        return []
+
+    comments_by_column = _column_comments_from_ddl(context.ddl)
+    discovered = []
+    for key_column, related_code in sorted(grain_entity_index.items()):
+        if key_column in primary_keys or related_code == primary_code:
+            continue
+        if key_column not in comments_by_column:
+            continue
+        comment = comments_by_column.get(key_column, "")
+        discovered.append({
+            "code": related_code,
+            "name": _entity_name_from_comment(comment),
+            "key_columns": [key_column],
+            "relationship": {
+                "type": "many_to_one",
+                "from_entity": primary_code,
+            },
+        })
+    return discovered
+
+
+def enrich_results_with_related_entities(
+        results: list[TableInspectResult],
+        contexts: dict[str, TableContext]) -> None:
+    grain_entity_index = _build_grain_entity_index(results)
+    if not grain_entity_index:
+        return
+    for result in results:
+        discovered = discover_related_entities_from_grain(
+            result,
+            contexts.get(result.table_name),
+            grain_entity_index,
+        )
+        if discovered:
+            result.related_entities = _merge_related_entities(
+                result.related_entities,
+                discovered,
+            )
+
+
 def layer_for_model(result: TableInspectResult) -> str:
     """返回应写入模型 YAML 的层级。维度表强制归入 DIM。"""
     if result.table_type == "dimension":
@@ -312,6 +490,36 @@ def should_write_metric_groups(result: TableInspectResult,
     )
 
 
+def should_write_grain_metadata(result: TableInspectResult,
+                                write_scope: str = "all") -> bool:
+    """判断是否需要更新 entity/grain 元数据。"""
+    if _validate_write_scope(write_scope) not in {"all", "grain"}:
+        return False
+    return bool(result.entity or result.related_entities or result.grain)
+
+
+def _effective_grain(grain: dict[str, Any] | None) -> dict[str, Any]:
+    payload = dict(grain or {})
+    keys = _as_string_list(payload.get("keys"))
+    entities = _as_string_list(payload.get("entities"))
+    time_column = str(payload.get("time_column") or "").strip()
+    time_period = str(payload.get("time_period") or "").strip()
+
+    if not keys and not entities and not time_column and not time_period:
+        return {}
+
+    normalized: dict[str, Any] = {}
+    if keys:
+        normalized["keys"] = keys
+    if entities:
+        normalized["entities"] = entities
+    if time_column:
+        normalized["time_column"] = time_column
+    if time_period:
+        normalized["time_period"] = time_period
+    return normalized
+
+
 def update_model_yaml(project: str,
                       result: TableInspectResult,
                       *,
@@ -331,6 +539,7 @@ def update_model_yaml(project: str,
             "metric_count": 0,
             "new_metric_count": 0,
             "removed_metric_count": 0,
+            "grain_changed": False,
             "updated": False,
             "reason": "validation_blocked",
             "warnings": [],
@@ -348,6 +557,7 @@ def update_model_yaml(project: str,
     detected_groups = metric_groups_for_model(result)
     write_table_metadata = should_write_table_metadata(write_scope)
     write_metric_groups = should_write_metric_groups(result, write_scope)
+    write_grain_metadata = should_write_grain_metadata(result, write_scope)
     detected_metrics = (
         metric_names_for_model(result) if write_metric_groups else []
     )
@@ -369,6 +579,7 @@ def update_model_yaml(project: str,
         write_table_metadata
         or bool(detected_metrics)
         or (write_metric_groups and has_existing_metric_fields)
+        or write_grain_metadata
     )
     if should_write_base_fields:
         updated.setdefault("version", 2)
@@ -416,6 +627,19 @@ def update_model_yaml(project: str,
         updated.pop("derived_metrics", None)
         updated.pop("calculated_metrics", None)
 
+    previous_grain = existing.get("grain")
+    previous_related_entities = existing.get("related_entities")
+    grain_metadata = _effective_grain(result.grain)
+    if write_grain_metadata:
+        if result.entity:
+            updated["entity"] = result.entity
+        if result.related_entities:
+            updated["related_entities"] = result.related_entities
+        if grain_metadata:
+            updated["grain"] = grain_metadata
+        else:
+            updated.pop("grain", None)
+
     changed = updated != existing
     metadata_changed = write_table_metadata and (
         updated.get("layer") != previous_layer
@@ -426,6 +650,11 @@ def update_model_yaml(project: str,
     metric_changed = write_metric_groups and (
         has_existing_metric_fields
         or detected_groups != existing_groups
+    )
+    grain_changed = write_grain_metadata and (
+        updated.get("grain") != previous_grain
+        or updated.get("entity") != existing.get("entity")
+        or updated.get("related_entities") != previous_related_entities
     )
     if not dry_run and changed:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -464,6 +693,7 @@ def update_model_yaml(project: str,
         "metric_count": len(detected_metrics),
         "new_metric_count": new_metric_count,
         "removed_metric_count": removed_metric_count,
+        "grain_changed": grain_changed,
         "updated": bool(changed and not dry_run),
     }
 
@@ -569,8 +799,6 @@ def run_metadata_write(project: str,
     if show_progress:
         inspector.progress_callback = build_progress_callback()
     dwd_results = inspector.inspect_batch(dwd_contexts)
-    yaml_updates, skipped_updates = _update_models_for_results(
-        project, dwd_results, dry_run=dry_run, write_scope=write_scope)
 
     detected_groups = {
         result.table_name: metric_groups_for_model(result)
@@ -579,22 +807,13 @@ def run_metadata_write(project: str,
     }
     _merge_detected_upstream_metric_groups(dws_contexts, detected_groups)
     dws_results = inspector.inspect_batch(dws_contexts)
-    dws_updates, dws_skipped_updates = _update_models_for_results(
-        project, dws_results, dry_run=dry_run, write_scope=write_scope)
-    yaml_updates.extend(dws_updates)
-    skipped_updates.extend(dws_skipped_updates)
 
     metadata_only_results = inspector.inspect_batch(metadata_only_contexts)
-    metadata_only_updates, metadata_only_skipped_updates = (
-        _update_models_for_results(project,
-                                   metadata_only_results,
-                                   dry_run=dry_run,
-                                   write_scope=write_scope)
-    )
-    yaml_updates.extend(metadata_only_updates)
-    skipped_updates.extend(metadata_only_skipped_updates)
-
     results = dwd_results + dws_results + metadata_only_results
+    contexts_by_name = {ctx.table_name: ctx for ctx in contexts}
+    enrich_results_with_related_entities(results, contexts_by_name)
+    yaml_updates, skipped_updates = _update_models_for_results(
+        project, results, dry_run=dry_run, write_scope=write_scope)
 
     return {
         "project": project,
@@ -657,8 +876,9 @@ def main() -> None:
                         choices=sorted(WRITE_SCOPES),
                         default="all",
                         help=(
-                            "models 回写范围: all=表信息+指标, "
-                            "table=仅表级元数据, metrics=仅指标分组"
+                            "models 回写范围: all=表信息+指标+entity/grain, "
+                            "table=仅表级元数据, metrics=仅指标分组, "
+                            "grain=仅entity/grain"
                         ))
     parser.add_argument("--no-cache",
                         action="store_true",

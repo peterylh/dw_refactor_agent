@@ -45,6 +45,26 @@ def test_build_prompt_includes_all_info():
     assert "others" in prompt
 
 
+def test_build_prompt_requests_entity_and_grain_metadata():
+    ctx = TableContext(
+        table_name="dws_product_sales_daily",
+        layer="DWS",
+        ddl="CREATE TABLE dws_product_sales_daily (product_id BIGINT, stat_date DATE);",
+        etl_sql="INSERT INTO dws_product_sales_daily SELECT product_id, order_date FROM dwd_order_detail GROUP BY product_id, order_date;",
+        upstream_tables=["dwd_order_detail"],
+        downstream_tables=[],
+    )
+
+    prompt = build_prompt(ctx)
+
+    assert "entity、related_entities、grain" in prompt
+    assert "grain.entities" in prompt
+    assert "返回完整的粒度实体集合" in prompt
+    assert '"entity": {' in prompt
+    assert '"related_entities": [' in prompt
+    assert '"grain": {' in prompt
+
+
 def test_build_prompt_clarifies_metric_group_boundaries():
     ctx = TableContext(
         table_name="dwd_fact_table",
@@ -164,6 +184,135 @@ def test_parse_business_domain_response():
     assert data["inferred_business_area"] == "PAYM"
     assert cached["inferred_data_domain"] == "04"
     assert cached["inferred_business_area"] == "PAYM"
+
+
+def test_parse_response_preserves_entity_and_grain_metadata():
+    resp = {
+        "choices": [{
+            "message": {
+                "content": json.dumps({
+                    "inferred_layer": "DWS",
+                    "table_type": "fact",
+                    "confidence": 0.9,
+                    "reasoning_steps": ["商品日汇总"],
+                    "entity": {},
+                    "grain": {
+                        "keys": ["product_id", "stat_date"],
+                        "entities": ["PROD"],
+                        "time_column": "stat_date",
+                        "time_period": "D",
+                    },
+                })
+            }
+        }]
+    }
+
+    result = parse_response("dws_product_sales_daily",
+                            resp,
+                            declared_layer="DWS")
+    data = result_to_dict(result)
+    cached = result_to_cache_dict(result)
+
+    assert result.grain == {
+        "keys": ["product_id", "stat_date"],
+        "entities": ["PROD"],
+        "time_column": "stat_date",
+        "time_period": "D",
+    }
+    assert data["grain"] == result.grain
+    assert cached["grain"] == result.grain
+
+
+def test_parse_response_normalizes_placeholder_empty_grain():
+    resp = {
+        "choices": [{
+            "message": {
+                "content": json.dumps({
+                    "inferred_layer": "DIM",
+                    "table_type": "dimension",
+                    "confidence": 0.9,
+                    "reasoning_steps": ["客户维度表"],
+                    "grain": {
+                        "keys": [],
+                        "entities": [],
+                        "time_column": "",
+                        "time_period": "",
+                    },
+                })
+            }
+        }]
+    }
+
+    result = parse_response("dwd_customers", resp, declared_layer="DWD")
+
+    assert result.grain == {}
+
+
+def test_dict_to_result_normalizes_placeholder_empty_grain():
+    payload = {
+        "table_name": "dwd_customers",
+        "declared_layer": "DWD",
+        "inferred_layer": "DIM",
+        "table_type": "dimension",
+        "confidence": 0.9,
+        "reasoning_steps": ["客户维度表"],
+        "grain": {
+            "keys": [],
+            "entities": [],
+            "time_column": "",
+            "time_period": "",
+        },
+    }
+
+    from assess.table_inspector import dict_to_result
+
+    result = dict_to_result(payload)
+
+    assert result.grain == {}
+
+
+def test_parse_response_preserves_related_entities_metadata():
+    resp = {
+        "choices": [{
+            "message": {
+                "content": json.dumps({
+                    "inferred_layer": "DIM",
+                    "table_type": "dimension",
+                    "confidence": 0.9,
+                    "reasoning_steps": ["商品维度包含品类层级"],
+                    "entity": {
+                        "code": "PROD",
+                        "key_columns": ["product_id"],
+                    },
+                    "related_entities": [{
+                        "code": "CAT",
+                        "name": "品类",
+                        "key_columns": ["category_id"],
+                        "relationship": {
+                            "type": "many_to_one",
+                            "from_entity": "PROD",
+                        },
+                    }],
+                })
+            }
+        }]
+    }
+
+    result = parse_response("dwd_product", resp, declared_layer="DWD")
+    data = result_to_dict(result)
+    cached = result_to_cache_dict(result)
+
+    assert result.related_entities == [{
+        "code": "CAT",
+        "name": "品类",
+        "key_columns": ["category_id"],
+        "relationship": {
+            "type": "many_to_one",
+            "from_entity": "PROD",
+        },
+    }]
+    assert data["related_entities"] == result.related_entities
+    assert cached["related_entities"] == result.related_entities
 
 
 def test_build_prompt_limits_business_metadata_by_layer():

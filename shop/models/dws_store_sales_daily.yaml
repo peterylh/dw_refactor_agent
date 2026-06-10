@@ -14,3 +14,11 @@ atomic_metrics:
 - customer_count
 derived_metrics:
 - discount_amount
+grain:
+  keys:
+  - store_id
+  - stat_date
+  entities:
+  - STOR
+  time_column: stat_date
+  time_period: D

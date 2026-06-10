@@ -12,3 +12,10 @@ calculated_metrics:
 - days_from_due_date
 - processing_days
 business_area: FMAN
+grain:
+  keys:
+  - report_key
+  entities:
+  - REPORT
+  time_column: filing_date
+  time_period: D

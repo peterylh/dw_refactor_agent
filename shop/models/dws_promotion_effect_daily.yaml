@@ -14,3 +14,11 @@ derived_metrics:
 - discount_amount
 calculated_metrics:
 - sale_amount
+grain:
+  keys:
+  - promotion_id
+  - stat_date
+  entities:
+  - PROM
+  time_column: stat_date
+  time_period: D

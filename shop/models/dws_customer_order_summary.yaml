@@ -14,3 +14,11 @@ calculated_metrics:
 - avg_order_amount
 atomic_metrics:
 - order_count
+grain:
+  keys:
+  - customer_id
+  - stat_date
+  entities:
+  - CUST
+  time_column: stat_date
+  time_period: D

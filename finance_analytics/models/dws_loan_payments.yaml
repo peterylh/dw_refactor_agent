@@ -14,3 +14,10 @@ calculated_metrics:
 - outstanding_balance
 - days_late
 business_area: LOAN
+grain:
+  keys:
+  - payment_key
+  entities:
+  - PYMT
+  time_column: scheduled_date
+  time_period: D
