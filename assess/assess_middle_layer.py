@@ -7,6 +7,7 @@
     python assess/assess_middle_layer.py
     python assess/assess_middle_layer.py --project finance_analytics
     python assess/assess_middle_layer.py --output report.json
+    python assess/assess_middle_layer.py --reuse-weight 0.3
     python assess/assess_middle_layer.py --reuse-weight 0.3 --depth-weight 0.2
 """
 
@@ -70,6 +71,37 @@ FILE_RULE_MODEL_NAME = "Model文件名与模型name一致"
 FILE_RULE_TASK_SQL = "Task文件名与产出表一致"
 FILE_RULE_TASK_LINEAGE = "Task血缘目标与产出表一致"
 FILE_RULE_TOTAL = "文件命名总计"
+
+def normalize_score_weights(weights: dict | None = None) -> dict:
+    merged = DEFAULT_WEIGHTS.copy()
+    extra = {}
+    if weights:
+        for key, value in weights.items():
+            if key in DEFAULT_WEIGHTS:
+                merged[key] = value
+            else:
+                extra[key] = value
+
+    invalid = {
+        key: value
+        for key, value in merged.items()
+        if value is None or value < 0
+    }
+    if invalid:
+        invalid_text = ", ".join(
+            f"{key}={value}" for key, value in invalid.items())
+        raise ValueError(f"权重必须为非负数: {invalid_text}")
+
+    total = sum(merged.values())
+    if total <= 0:
+        raise ValueError("评分权重之和必须大于 0")
+
+    normalized = {
+        key: round(value / total, 6)
+        for key, value in merged.items()
+    }
+    return {**normalized, **extra}
+
 
 def build_metric_result(metric: dict, display_score: float | None = None) -> dict:
     raw = metric["score"]
@@ -2268,8 +2300,7 @@ def generate_report(scores: dict, weights: dict, project: str) -> str:
 
 
 def assess(project: str, weights: dict = None) -> dict:
-    if weights is None:
-        weights = DEFAULT_WEIGHTS.copy()
+    weights = normalize_score_weights(weights)
 
     from config import (
         get_business_domain_config,
@@ -2365,7 +2396,8 @@ def assess(project: str, weights: dict = None) -> dict:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="数据集市中间层评估工具")
+    parser = argparse.ArgumentParser(
+        description="数据集市中间层评估工具 (评分权重支持单独指定，最终自动归一化)")
     parser.add_argument("--project",
                         default="shop",
                         choices=["shop", "finance_analytics"],
@@ -2375,19 +2407,24 @@ def main():
         help="输出 JSON 文件路径 (默认 assess/assess_result_{project}.json)")
     parser.add_argument("--reuse-weight",
                         type=float,
-                        default=DEFAULT_WEIGHTS["reuse"])
+                        default=DEFAULT_WEIGHTS["reuse"],
+                        help="复用度权重，可单独指定，最终会自动归一化")
     parser.add_argument("--depth-weight",
                         type=float,
-                        default=DEFAULT_WEIGHTS["depth"])
+                        default=DEFAULT_WEIGHTS["depth"],
+                        help="链路长度权重，可单独指定，最终会自动归一化")
     parser.add_argument("--architecture-weight",
                         type=float,
-                        default=DEFAULT_WEIGHTS["architecture"])
+                        default=DEFAULT_WEIGHTS["architecture"],
+                        help="架构合理性权重，可单独指定，最终会自动归一化")
     parser.add_argument("--metadata-health-weight",
                         type=float,
-                        default=DEFAULT_WEIGHTS["metadata_health"])
+                        default=DEFAULT_WEIGHTS["metadata_health"],
+                        help="元数据健康度权重，可单独指定，最终会自动归一化")
     parser.add_argument("--naming-weight",
                         type=float,
-                        default=DEFAULT_WEIGHTS["naming"])
+                        default=DEFAULT_WEIGHTS["naming"],
+                        help="命名规范权重，可单独指定，最终会自动归一化")
     parser.add_argument("--llm",
                         action="store_true",
                         help="调用 DeepSeek API 进行 LLM 智能分层检测")
@@ -2413,7 +2450,7 @@ def main():
 
     result = assess(args.project, weights)
 
-    print(generate_report(result, weights, args.project))
+    print(generate_report(result, result["weights"], args.project))
 
     output_path = args.output
     if not output_path:

@@ -20,6 +20,7 @@ from assess.assess_middle_layer import (
     FILE_RULE_TASK_SQL,
     assess,
     generate_report,
+    normalize_score_weights,
     score_architecture_health,
     score_metadata_health,
     score_naming_conventions,
@@ -127,6 +128,25 @@ def test_assess_returns_raw_and_display_scores(monkeypatch, sample_lineage_data,
 
     # sample: 4 张表, 1 条违规 (低权重=1), cap 后 = 1, 合规率 = (1 - 1/4) × 100 = 75
     assert result["architecture"]["raw"] == 75.0
+
+
+def test_normalize_score_weights_supports_partial_override():
+    weights = normalize_score_weights({"reuse": 0.3})
+
+    assert weights["reuse"] == pytest.approx(0.272727, rel=0, abs=1e-6)
+    assert weights["depth"] == pytest.approx(0.181818, rel=0, abs=1e-6)
+    assert weights["architecture"] == pytest.approx(0.181818, rel=0, abs=1e-6)
+    assert weights["metadata_health"] == pytest.approx(0.181818,
+                                                       rel=0,
+                                                       abs=1e-6)
+    assert weights["naming"] == pytest.approx(0.181818, rel=0, abs=1e-6)
+    assert sum(weights[key] for key in [
+        "reuse",
+        "depth",
+        "architecture",
+        "metadata_health",
+        "naming",
+    ]) == pytest.approx(1.0, rel=0, abs=1e-6)
 
 
 def test_score_metadata_health_validates_model_entity_and_grain_entity():
