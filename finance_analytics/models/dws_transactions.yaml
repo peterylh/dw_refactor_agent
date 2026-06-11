@@ -5,10 +5,24 @@ table_type: fact
 config:
   materialized: full
 business_area: PAYM
-grain:
-  keys:
-  - transaction_id
-  entities:
-  - TRAN
-  time_column: transaction_date
-  time_period: D
+entities:
+- code: CUST
+  type: foreign
+  name: 客户
+  key_columns:
+  - customer_key
+- code: AGRE
+  type: foreign
+  name: 账户
+  key_columns:
+  - account_key
+- code: MER
+  type: foreign
+  name: 商户
+  key_columns:
+  - merchant_key
+- code: DATE
+  type: foreign
+  name: 日期
+  key_columns:
+  - date_key

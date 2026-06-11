@@ -11,10 +11,9 @@ calculated_metrics:
 - digital_engagement_score
 - days_in_segment
 business_area: CLNT
-grain:
-  keys:
-  - segment_history_key
-  entities:
-  - CUST
-  time_column: effective_date
-  time_period: D
+entities:
+- code: CUST
+  type: foreign
+  name: 客户
+  key_columns:
+  - customer_key

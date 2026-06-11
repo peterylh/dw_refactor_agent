@@ -14,10 +14,13 @@ derived_metrics:
 calculated_metrics:
 - sale_amount
 grain:
-  keys:
-  - product_id
-  - stat_date
   entities:
   - PROD
   time_column: stat_date
   time_period: D
+entities:
+- code: PROD
+  type: foreign
+  name: 商品
+  key_columns:
+  - product_id

@@ -29,6 +29,13 @@ if str(_root) not in sys.path:
     sys.path.insert(0, str(_root))
 
 from assess.context_builder import build_contexts
+from assess.entity_metadata import (
+    defined_entity_codes,
+    grain_entity_codes,
+    grain_key_columns,
+    model_entities,
+    primary_entity_codes,
+)
 from assess.table_inspector import TableInspector, VALID_TABLE_TYPES
 from config import PROJECT_CONFIG, PROJECT_ROOT, layer_rank
 from ddl_deriver.ddl_deriver import parse_create_table
@@ -62,7 +69,7 @@ DERIVED_METRIC_RULE_NAME = (
     "派生指标命名 {TIME_PERIOD}_{MODIFIER...}_{ATOMIC_METRIC}"
 )
 DWS_ENTITY_RULE_NAME = "DWS表名实体包含于grain.entities"
-DIM_ENTITY_RULE_NAME = "DIM表名实体等于entity.code"
+DIM_ENTITY_RULE_NAME = "DIM表名实体等于entities.primary.code"
 DATA_DOMAIN_LAYERS = {"DWD"}
 BUSINESS_AREA_LAYERS = {"DWD", "DWS"}
 FILE_RULE_DDL = "DDL文件名与建表表名一致"
@@ -689,29 +696,11 @@ def _model_grain_entities(
 ) -> list[str]:
     if not model_metadata:
         return []
-    metadata = model_metadata.get(table_name, {})
-    grain = metadata.get("grain") if isinstance(metadata, dict) else None
-    if not isinstance(grain, dict):
-        return []
-    return _as_string_list(grain.get("entities"))
+    return grain_entity_codes(model_metadata.get(table_name, {}))
 
 
 def _model_defined_entities(model_metadata: dict | None) -> set[str]:
-    if not model_metadata:
-        return set()
-    defined = set()
-    for metadata in model_metadata.values():
-        if not isinstance(metadata, dict):
-            continue
-        entity = metadata.get("entity")
-        if isinstance(entity, dict):
-            defined.update(_as_string_list(entity.get("code")))
-        related_entities = metadata.get("related_entities")
-        if isinstance(related_entities, list):
-            for related in related_entities:
-                if isinstance(related, dict):
-                    defined.update(_as_string_list(related.get("code")))
-    return defined
+    return defined_entity_codes(model_metadata)
 
 
 def _score_dws_entity_name(
@@ -768,7 +757,9 @@ def _score_dim_entity_name(
     expected = _model_entity_codes(model_metadata.get(table_name))
     if not expected:
         result["total"] = 1
-        result["violations"] = ["缺少entity.code，无法检测DIM表名ENTITY"]
+        result["violations"] = [
+            "缺少entities.primary.code，无法检测DIM表名ENTITY"
+        ]
         return result
 
     actual = _table_name_type_values(
@@ -783,18 +774,13 @@ def _score_dim_entity_name(
         result["passed"] = 1
     else:
         result["violations"] = [
-            f"表名MODEL_ENTITY={actual}，entity.code={expected}"
+            f"表名MODEL_ENTITY={actual}，entities.primary.code={expected}"
         ]
     return result
 
 
 def _model_entity_codes(metadata: dict | None) -> list[str]:
-    if not isinstance(metadata, dict):
-        return []
-    entity = metadata.get("entity")
-    if not isinstance(entity, dict):
-        return []
-    return _as_string_list(entity.get("code"))
+    return primary_entity_codes(metadata)
 
 
 def _table_column_names(table: dict) -> set[str]:
@@ -864,9 +850,14 @@ def score_metadata_health(
             continue
         columns = _table_column_names(table)
 
-        entity = metadata.get("entity")
+        entities = model_entities(metadata)
         entity_codes = _model_entity_codes(metadata)
-        if isinstance(entity, dict):
+        primary_code = entity_codes[0] if entity_codes else ""
+        for entity in entities:
+            if not isinstance(entity, dict):
+                continue
+            entity_code = str(entity.get("code") or "").strip()
+            entity_type = str(entity.get("type") or "").strip().lower()
             key_columns = _as_string_list(entity.get("key_columns"))
             if key_columns:
                 missing_keys = [
@@ -875,57 +866,36 @@ def score_metadata_health(
                 ]
                 record(
                     table_name,
-                    "entity.key_columns存在于表字段",
+                    "entities.key_columns存在于表字段",
                     not missing_keys,
-                    f"entity.key_columns不存在={missing_keys}",
+                    f"entities[{entity_code}].key_columns不存在={missing_keys}",
                 )
-        related_entities = metadata.get("related_entities")
-        if isinstance(related_entities, list):
-            primary_code = entity_codes[0] if entity_codes else ""
-            for related in related_entities:
-                if not isinstance(related, dict):
-                    continue
-                related_code = str(related.get("code") or "").strip()
-                related_keys = _as_string_list(related.get("key_columns"))
-                if related_keys:
-                    missing_related_keys = [
-                        key for key in related_keys
-                        if key not in columns
-                    ]
-                    record(
-                        table_name,
-                        "related_entities.key_columns存在于表字段",
-                        not missing_related_keys,
-                        (
-                            f"related_entities[{related_code}]"
-                            f".key_columns不存在={missing_related_keys}"
-                        ),
-                    )
-                relationship = related.get("relationship")
+            if entity_type != "primary":
+                relationship = entity.get("relationship")
                 if primary_code and isinstance(relationship, dict):
                     from_entity = str(
                         relationship.get("from_entity") or "").strip()
                     record(
                         table_name,
-                        "related_entities.relationship.from_entity等于主实体",
+                        "entities.relationship.from_entity等于主实体",
                         from_entity == primary_code,
                         (
-                            f"related_entities[{related_code}]"
+                            f"entities[{entity_code}]"
                             f".relationship.from_entity={from_entity}，"
-                            f"entity.code={primary_code}"
+                            f"primary_entity={primary_code}"
                         ),
                     )
-                if primary_code and related_code:
+                if primary_code and entity_code:
                     record(
                         table_name,
-                        "related_entities.code不同于主实体",
-                        related_code != primary_code,
-                        f"related_entities.code={related_code} 与主实体重复",
+                        "entities.code不同于主实体",
+                        entity_code != primary_code,
+                        f"entities.code={entity_code} 与主实体重复",
                     )
 
         grain = metadata.get("grain")
         if isinstance(grain, dict):
-            grain_keys = _as_string_list(grain.get("keys"))
+            grain_keys = grain_key_columns(metadata)
             if grain_keys:
                 missing_grain_keys = [
                     key for key in grain_keys

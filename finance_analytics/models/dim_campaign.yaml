@@ -4,7 +4,10 @@ layer: DIM
 table_type: dimension
 config:
   materialized: full
-entity:
-  code: CAMPAIGN
+entities:
+- code: CAMPAIGN
+  type: primary
+  name: 营销活动
   key_columns:
   - campaign_key
+  - campaign_natural_key

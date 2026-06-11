@@ -6,15 +6,9 @@ config:
   materialized: full
 data_domain: '03'
 business_area: FRTN
-entity:
-  code: PROD
+entities:
+- code: PROD
+  type: primary
+  name: 产品
   key_columns:
   - product_id
-related_entities:
-- code: CAT
-  name: 品类
-  key_columns:
-  - category
-  relationship:
-    type: many_to_one
-    from_entity: PROD

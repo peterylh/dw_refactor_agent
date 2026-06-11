@@ -13,10 +13,19 @@ calculated_metrics:
 - amount_difference
 - approval_probability_score
 business_area: LOAN
-grain:
-  keys:
-  - application_key
-  entities:
-  - APPL
-  time_column: application_date
-  time_period: D
+entities:
+- code: APPLICATION
+  type: foreign
+  name: 申请
+  key_columns:
+  - application_id
+- code: CUSTOMER
+  type: foreign
+  name: 客户
+  key_columns:
+  - customer_key
+- code: PRODUCT
+  type: foreign
+  name: 产品
+  key_columns:
+  - product_key

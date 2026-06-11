@@ -29,9 +29,13 @@ calculated_metrics:
 - completed_campaign_flag
 business_area: CLNT
 grain:
-  keys:
-  - campaign_key
   entities:
-  - CAMP
+  - CAMPAIGN
   time_column: start_date
   time_period: D
+entities:
+- code: CAMPAIGN
+  type: foreign
+  name: 营销活动
+  key_columns:
+  - campaign_id

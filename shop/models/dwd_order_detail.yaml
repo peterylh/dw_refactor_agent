@@ -14,3 +14,34 @@ calculated_metrics:
 - subtotal
 - cost_price
 - gross_profit
+entities:
+- code: ORDER
+  type: foreign
+  name: 订单
+  key_columns:
+  - order_id
+- code: CUST
+  type: foreign
+  name: 客户
+  key_columns:
+  - customer_id
+- code: STOR
+  type: foreign
+  name: 门店
+  key_columns:
+  - store_id
+- code: PROD
+  type: foreign
+  name: 商品
+  key_columns:
+  - product_id
+- code: CATG
+  type: foreign
+  name: 品类
+  key_columns:
+  - category_id
+- code: PROM
+  type: foreign
+  name: 促销活动
+  key_columns:
+  - promotion_id

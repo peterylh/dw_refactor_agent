@@ -32,17 +32,18 @@ types:
 
   MODEL_ENTITY:
     label: 当前模型主实体简写
-    desc: DIM 表名中的实体段，必须来自当前模型 entity.code
+    desc: DIM 表名中的实体段，必须来自当前模型 primary entities.code
     patterns:
       - "^[A-Z][A-Z0-9]*$"
     values_from:
       scope: current_model
       paths:
+        - entities.code
         - entity.code
 
   GRAIN_ENTITY:
     label: 当前模型粒度实体简写
-    desc: DWS 表名中的实体段，必须来自当前模型 grain.entities
+    desc: DWS 表名中的实体段，必须来自当前模型 grain.entities 引用的 entities.code
     patterns:
       - "^[A-Z][A-Z0-9]*$"
     values_from:

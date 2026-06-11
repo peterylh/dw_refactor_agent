@@ -12,10 +12,24 @@ calculated_metrics:
 - days_from_due_date
 - processing_days
 business_area: FMAN
-grain:
-  keys:
-  - report_key
-  entities:
-  - REPORT
-  time_column: filing_date
-  time_period: D
+entities:
+- code: CUST
+  type: foreign
+  name: 客户
+  key_columns:
+  - customer_key
+- code: ACCT
+  type: foreign
+  name: 账户
+  key_columns:
+  - account_key
+- code: TRAN
+  type: foreign
+  name: 交易
+  key_columns:
+  - transaction_key
+- code: REPT
+  type: foreign
+  name: 监管报告
+  key_columns:
+  - report_id

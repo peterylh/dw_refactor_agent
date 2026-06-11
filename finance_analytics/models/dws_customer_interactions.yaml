@@ -9,10 +9,9 @@ atomic_metrics:
 - sentiment_score
 - interaction_count
 business_area: CLNT
-grain:
-  keys:
-  - interaction_key
-  entities:
-  - CUST
-  time_column: interaction_date
-  time_period: D
+entities:
+- code: CUST
+  type: foreign
+  name: 客户
+  key_columns:
+  - customer_key

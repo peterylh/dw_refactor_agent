@@ -8,3 +8,14 @@ calculated_metrics:
 - risk_score
 data_domain: 09
 business_area: LOAN
+entities:
+- code: RISK_ASSESSMENT
+  type: foreign
+  name: 风险评估事件
+  key_columns:
+  - assessment_id
+- code: CUSTOMER
+  type: foreign
+  name: 客户
+  key_columns:
+  - customer_id

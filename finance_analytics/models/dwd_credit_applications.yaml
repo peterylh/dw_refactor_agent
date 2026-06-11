@@ -12,3 +12,19 @@ calculated_metrics:
 - amount_difference
 data_domain: '02'
 business_area: LOAN
+entities:
+- code: application
+  type: foreign
+  name: 贷款申请
+  key_columns:
+  - application_id
+- code: customer
+  type: foreign
+  name: 客户
+  key_columns:
+  - customer_id
+- code: product
+  type: foreign
+  name: 产品
+  key_columns:
+  - product_id

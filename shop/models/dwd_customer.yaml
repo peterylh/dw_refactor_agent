@@ -7,7 +7,9 @@ business_area: SHOP
 description: 客户每日快照
 config:
   materialized: snapshot
-entity:
-  code: CUST
+entities:
+- code: CUST
+  type: primary
+  name: 客户
   key_columns:
   - customer_id

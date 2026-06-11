@@ -10,10 +10,35 @@ atomic_metrics:
 calculated_metrics:
 - resolution_days
 business_area: PAYM
-grain:
-  keys:
+entities:
+- code: alert
+  type: foreign
+  name: 预警
+  key_columns:
   - alert_key
-  entities:
-  - ALERT
-  time_column: alert_date
-  time_period: D
+  - alert_id
+- code: transaction
+  type: foreign
+  name: 交易
+  key_columns:
+  - transaction_key
+- code: customer
+  type: foreign
+  name: 客户
+  key_columns:
+  - customer_key
+- code: account
+  type: foreign
+  name: 账户
+  key_columns:
+  - account_key
+- code: alert_date
+  type: foreign
+  name: 预警日期
+  key_columns:
+  - alert_date_key
+- code: resolution_date
+  type: foreign
+  name: 解决日期
+  key_columns:
+  - resolution_date_key

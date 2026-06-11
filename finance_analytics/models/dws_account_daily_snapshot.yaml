@@ -20,10 +20,23 @@ calculated_metrics:
 - credit_utilization_pct
 business_area: DPST
 grain:
-  keys:
-  - account_key
-  - snapshot_date
   entities:
-  - ACCT
+  - account
   time_column: snapshot_date
   time_period: D
+entities:
+- code: account
+  type: foreign
+  name: 账户
+  key_columns:
+  - account_key
+- code: customer
+  type: foreign
+  name: 客户
+  key_columns:
+  - customer_key
+- code: product
+  type: foreign
+  name: 产品
+  key_columns:
+  - product_key

@@ -18,3 +18,19 @@ calculated_metrics:
 - distance_from_home_km
 data_domain: '04'
 business_area: PAYM
+entities:
+- code: ACCOUNT
+  type: foreign
+  name: 账户
+  key_columns:
+  - account_id
+- code: CUSTOMER
+  type: foreign
+  name: 客户
+  key_columns:
+  - customer_id
+- code: MERCHANT
+  type: foreign
+  name: 商户
+  key_columns:
+  - merchant_id

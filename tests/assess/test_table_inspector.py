@@ -57,11 +57,11 @@ def test_build_prompt_requests_entity_and_grain_metadata():
 
     prompt = build_prompt(ctx)
 
-    assert "entity、related_entities、grain" in prompt
+    assert "entities、grain" in prompt
     assert "grain.entities" in prompt
     assert "返回完整的粒度实体集合" in prompt
-    assert '"entity": {' in prompt
-    assert '"related_entities": [' in prompt
+    assert '"entities": [' in prompt
+    assert '"type": "primary|unique|foreign|natural"' in prompt
     assert '"grain": {' in prompt
 
 
@@ -223,6 +223,58 @@ def test_parse_response_preserves_entity_and_grain_metadata():
     assert cached["grain"] == result.grain
 
 
+def test_parse_response_preserves_entities_metadata():
+    resp = {
+        "choices": [{
+            "message": {
+                "content": json.dumps({
+                    "inferred_layer": "DWS",
+                    "table_type": "fact",
+                    "confidence": 0.9,
+                    "reasoning_steps": ["商品门店日汇总"],
+                    "entities": [{
+                        "code": "PROD",
+                        "type": "foreign",
+                        "key_columns": ["product_id"],
+                    }, {
+                        "code": "STOR",
+                        "type": "foreign",
+                        "key_columns": ["store_id"],
+                    }],
+                    "grain": {
+                        "entities": ["PROD", "STOR"],
+                        "time_column": "stat_date",
+                        "time_period": "D",
+                    },
+                })
+            }
+        }]
+    }
+
+    result = parse_response("dws_product_store_sales_daily",
+                            resp,
+                            declared_layer="DWS")
+    data = result_to_dict(result)
+    cached = result_to_cache_dict(result)
+
+    assert result.entities == [{
+        "code": "PROD",
+        "type": "foreign",
+        "key_columns": ["product_id"],
+    }, {
+        "code": "STOR",
+        "type": "foreign",
+        "key_columns": ["store_id"],
+    }]
+    assert result.grain == {
+        "entities": ["PROD", "STOR"],
+        "time_column": "stat_date",
+        "time_period": "D",
+    }
+    assert data["entities"] == result.entities
+    assert cached["entities"] == result.entities
+
+
 def test_parse_response_normalizes_placeholder_empty_grain():
     resp = {
         "choices": [{
@@ -302,6 +354,20 @@ def test_parse_response_preserves_related_entities_metadata():
     data = result_to_dict(result)
     cached = result_to_cache_dict(result)
 
+    assert result.entities == [{
+        "code": "PROD",
+        "type": "primary",
+        "key_columns": ["product_id"],
+    }, {
+        "code": "CAT",
+        "type": "foreign",
+        "name": "品类",
+        "key_columns": ["category_id"],
+        "relationship": {
+            "type": "many_to_one",
+            "from_entity": "PROD",
+        },
+    }]
     assert result.related_entities == [{
         "code": "CAT",
         "name": "品类",
