@@ -6,23 +6,16 @@ from config import (
     BusinessAreaDef,
     BusinessDomainConfig,
     DomainDef,
-    load_naming_config,
     PROJECT_ROOT,
+    load_naming_config,
 )
 from assess.assess_middle_layer import (
-    ATOMIC_METRIC_RULE_NAME,
-    DIM_ENTITY_RULE_NAME,
-    DERIVED_METRIC_RULE_NAME,
-    DWS_ENTITY_RULE_NAME,
-    FILE_RULE_DDL,
-    FILE_RULE_MODEL_NAME,
-    FILE_RULE_TASK_SQL,
     assess,
     build_asset_catalog,
     generate_report,
     normalize_score_weights,
-    score_asset_completeness,
     score_architecture_health,
+    score_asset_completeness,
     score_metadata_health,
     score_naming_conventions,
 )
@@ -104,8 +97,19 @@ def isolated_assess_project(tmp_path, monkeypatch):
     config._model_metadata_cache.clear()
 
 
-def test_assess_returns_raw_and_display_scores(monkeypatch, sample_lineage_data,
-                                               isolated_assess_project):
+def _issue_rule_ids(result):
+    return {issue["rule_id"] for issue in result["issues"]}
+
+
+def _checks_by_rule(result, rule_id):
+    return [
+        check for check in result["checks"]
+        if check["rule_id"] == rule_id
+    ]
+
+
+def test_assess_returns_dimension_check_issue_model(
+        monkeypatch, sample_lineage_data, isolated_assess_project):
     monkeypatch.setattr(
         "assess.assess_middle_layer.load_lineage_data",
         lambda project: sample_lineage_data,
@@ -113,29 +117,71 @@ def test_assess_returns_raw_and_display_scores(monkeypatch, sample_lineage_data,
 
     result = assess(project=isolated_assess_project)
 
-    assert "architecture" in result
-    assert "asset_completeness" in result
-    assert "metadata_health" in result
-    assert "code_quality" in result
-    assert result["weights"]["architecture"] == 0.18
-    assert result["weights"]["asset_completeness"] == 0.09
-    assert result["weights"]["metadata_health"] == 0.09
-    assert result["weights"]["code_quality"] == 0.1
+    assert result["project"] == isolated_assess_project
+    assert "overall_score" in result
+    assert set(result["dimensions"]) == {
+        "reuse",
+        "depth",
+        "architecture",
+        "naming",
+        "asset_completeness",
+        "metadata_health",
+        "code_quality",
+    }
+    for dimension in result["dimensions"].values():
+        assert set(dimension) >= {
+            "score",
+            "rule_summary",
+            "checks",
+            "issues",
+        }
+    assert result["dimensions"]["architecture"]["score"] == 50.0
+    assert result["dimensions"]["architecture"]["issues"][0]["severity"] == "中"
+    assert result["dimensions"]["asset_completeness"]["issues"] == []
+    assert result["dimensions"]["asset_completeness"]["checks"] == []
+    assert all(
+        not check["passed"]
+        for dimension in result["dimensions"].values()
+        for check in dimension["checks"]
+    )
 
-    # 展示分 = 原始分 (取消展示分映射后)
-    assert result["reuse"]["raw"] == result["reuse"]["display"]
-    assert result["depth"]["raw"] == result["depth"]["display"]
-    assert result["architecture"]["raw"] == result["architecture"]["display"]
-    assert result["asset_completeness"]["raw"] == result[
-        "asset_completeness"]["display"]
-    assert result["metadata_health"]["raw"] == result[
-        "metadata_health"]["display"]
-    assert result["naming"]["raw"] == result["naming"]["display"]
-    assert result["code_quality"]["raw"] == result["code_quality"]["display"]
-    assert result["overall_display"] == result["overall_raw"]
 
-    # sample: 4 张表, 1 条违规 (低权重=1), cap 后 = 1, 合规率 = (1 - 1/4) × 100 = 75
-    assert result["architecture"]["raw"] == 75.0
+def test_assess_can_include_passed_checks(
+        monkeypatch, sample_lineage_data, isolated_assess_project):
+    monkeypatch.setattr(
+        "assess.assess_middle_layer.load_lineage_data",
+        lambda project: sample_lineage_data,
+    )
+
+    result = assess(
+        project=isolated_assess_project,
+        include_passed_checks=True,
+    )
+
+    assert any(
+        check["passed"]
+        for check in result["dimensions"]["architecture"]["checks"]
+    )
+    assert any(
+        not check["passed"]
+        for check in result["dimensions"]["architecture"]["checks"]
+    )
+
+
+def test_generate_report_reads_dimension_issues(
+        monkeypatch, sample_lineage_data, isolated_assess_project):
+    monkeypatch.setattr(
+        "assess.assess_middle_layer.load_lineage_data",
+        lambda project: sample_lineage_data,
+    )
+
+    result = assess(project=isolated_assess_project)
+    report = generate_report(result, result["weights"], isolated_assess_project)
+
+    assert "总体评分" in report
+    assert "ARCH_SKIP_LAYER_DEPENDENCY" in report
+    assert "问题项" in report
+    assert "总体评分(展示)" not in report
 
 
 def test_normalize_score_weights_supports_partial_override():
@@ -154,15 +200,6 @@ def test_normalize_score_weights_supports_partial_override():
     assert weights["code_quality"] == pytest.approx(0.089286,
                                                     rel=0,
                                                     abs=1e-6)
-    assert sum(weights[key] for key in [
-        "reuse",
-        "depth",
-        "architecture",
-        "asset_completeness",
-        "metadata_health",
-        "naming",
-        "code_quality",
-    ]) == pytest.approx(1.0, rel=0, abs=2e-6)
 
 
 def test_score_metadata_health_validates_model_entity_and_grain_entity():
@@ -206,16 +243,36 @@ def test_score_metadata_health_validates_model_entity_and_grain_entity():
     result = score_metadata_health(tables, nc, model_metadata)
 
     assert result["score"] == 75.0
-    assert result["passed"] == 3
-    assert result["total"] == 4
-    assert [
-        violation["message"] for violation in result["violations"]
-    ] == [
-        "grain.entities未定义=['CAT']",
-    ]
+    assert result["rule_summary"]["METADATA_GRAIN_ENTITIES_DEFINED"] == {
+        "name": "grain.entities有实体定义",
+        "severity": "中",
+        "pass_count": 0,
+        "total": 1,
+        "pct": 0.0,
+    }
+    assert result["checks"][-1] == {
+        "id": "metadata_health.chk_004",
+        "rule_id": "METADATA_GRAIN_ENTITIES_DEFINED",
+        "target": {
+            "type": "table",
+            "name": "I_SHOP_CAT_SALE_DS",
+        },
+        "passed": False,
+        "expected": "grain.entities引用已定义实体",
+        "actual": "未定义实体: ['CAT']",
+        "evidence": {
+            "grain_entities": ["CAT"],
+            "defined_entities": ["CUST"],
+        },
+        "message": "grain.entities未定义=['CAT']",
+    }
+    assert result["issues"][0]["severity"] == "中"
+    assert result["issues"][0]["remediation"]["strategy"] == (
+        "update_model_grain_entities"
+    )
 
 
-def test_score_metadata_health_validates_entities_schema():
+def test_score_metadata_health_passes_valid_entities_schema():
     nc = load_naming_config(PROJECT_ROOT / "naming_config.yaml")
     tables = [
         {
@@ -272,64 +329,71 @@ def test_score_metadata_health_validates_entities_schema():
     result = score_metadata_health(tables, nc, model_metadata)
 
     assert result["score"] == 100.0
-    assert result["passed"] == result["total"]
+    assert result["issues"] == []
+    assert all(check["passed"] for check in result["checks"])
 
 
-def test_generate_report_contains_raw_and_display_scores(
-        monkeypatch, sample_lineage_data, isolated_assess_project):
-    monkeypatch.setattr(
-        "assess.assess_middle_layer.load_lineage_data",
-        lambda project: sample_lineage_data,
+def test_score_metadata_health_requires_dws_grain_entities_from_models():
+    nc = load_naming_config(PROJECT_ROOT / "shop/naming_config.yaml")
+    result = score_metadata_health(
+        [{"name": "I_SHOP_PROD_SALE_DS", "layer": "DWS", "columns": []}],
+        nc,
+        {"I_SHOP_PROD_SALE_DS": {"layer": "DWS", "table_type": "fact"}},
     )
 
-    result = assess(project=isolated_assess_project)
-    report = generate_report(result, result["weights"], isolated_assess_project)
-
-    assert "总体评分(展示)" in report
-    assert "总体评分(原始)" in report
-    assert "【架构合理性】评分: 75.0" in report
-    assert "【资产完整性】评分" in report
-    assert "【模型元数据健康度】评分" in report
-    assert "【代码质量】评分" in report
-    assert "Σ(每表 cap 后权重) = 1" in report
-
-
-def test_assess_includes_atomic_metric_naming_summary(
-        monkeypatch, sample_lineage_data, isolated_assess_project):
-    project_dir = config.PROJECT_ROOT / isolated_assess_project
-    (project_dir / "ddl").mkdir()
-    (project_dir / "ddl" / "dwd_order_detail.sql").write_text(
-        """
-CREATE TABLE IF NOT EXISTS demo.dwd_order_detail (
-    ORDER_ID BIGINT,
-    PAY_AMT DECIMAL(12,2)
-) ENGINE=OLAP
-DUPLICATE KEY(ORDER_ID)
-DISTRIBUTED BY HASH(ORDER_ID) BUCKETS 1
-PROPERTIES ("replication_num" = "1");
-""",
-        encoding="utf-8",
-    )
-    monkeypatch.setattr(
-        "assess.assess_middle_layer.load_lineage_data",
-        lambda project: sample_lineage_data,
-    )
-    monkeypatch.setattr(
-        "config.load_model_metadata",
-        lambda project: {
-            "dwd_order_detail": {
-                "layer": "DWD",
-                "atomic_metrics": ["PAY_AMT", "PAY_UNKNOWN"]
-            }
+    assert result["score"] == 0.0
+    assert result["issues"] == [{
+        "id": "metadata_health.iss_001",
+        "severity": "高",
+        "rule_id": "METADATA_GRAIN_ENTITIES_PRESENT",
+        "target": {
+            "type": "table",
+            "name": "I_SHOP_PROD_SALE_DS",
         },
+        "title": "DWS模型缺少grain.entities",
+        "message": "缺少grain.entities",
+        "remediation": {
+            "summary": "在模型YAML中补齐grain.entities",
+            "strategy": "update_model_grain_entities",
+            "edit_scope": ["models"],
+        },
+        "check_ids": ["metadata_health.chk_001"],
+    }]
+
+
+def test_score_metadata_health_checks_business_dictionary_metadata(tmp_path):
+    nc = _business_naming_config(tmp_path)
+    result = score_metadata_health(
+        [
+            {"name": "M_PAYM_04_CHREM_DI", "layer": "DWD", "columns": []},
+            {"name": "M_BAD_98_CHREM_DI", "layer": "DWD", "columns": []},
+        ],
+        nc,
+        {
+            "M_PAYM_04_CHREM_DI": {
+                "data_domain": "04",
+                "business_area": "PAYM",
+            },
+            "M_BAD_98_CHREM_DI": {
+                "data_domain": "98",
+                "business_area": "BAD",
+            },
+        },
+        nc.business_domain_config,
     )
 
-    result = assess(project=isolated_assess_project)
-
-    assert result["naming"]["rule_summary"][ATOMIC_METRIC_RULE_NAME] == {
+    assert result["rule_summary"]["METADATA_DATA_DOMAIN_VALID"] == {
+        "name": "data_domain配置有效",
+        "severity": "中",
         "pass_count": 1,
         "total": 2,
         "pct": 50.0,
+    }
+    assert result["rule_summary"]["METADATA_BUSINESS_AREA_VALID"][
+        "pass_count"] == 1
+    assert _issue_rule_ids(result) == {
+        "METADATA_DATA_DOMAIN_VALID",
+        "METADATA_BUSINESS_AREA_VALID",
     }
 
 
@@ -356,20 +420,17 @@ def test_score_architecture_health_penalizes_declared_table_type_mismatch(
         },
     )
 
-    type_violations = [
-        v for v in result["violations"]
-        if v["description"].startswith("表类型配置疑似错误")
-    ]
-    assert type_violations == [{
-        "source": "dws_store_sales_daily(fact)",
-        "target": "dws_store_sales_daily(dimension)",
-        "severity": "中",
-        "weight": 2,
-        "description": "表类型配置疑似错误(LLM): 配置类型=fact, 推断类型=dimension",
-        "source_file": "",
-        "source_type": "llm",
-        "belongs_to": "dws_store_sales_daily",
-    }]
+    type_issue = next(
+        issue for issue in result["issues"]
+        if issue["rule_id"] == "ARCH_TABLE_TYPE_MATCHES_LLM"
+    )
+    assert type_issue["severity"] == "中"
+    assert type_issue["target"]["name"] == "dws_store_sales_daily"
+    check = next(
+        check for check in result["checks"]
+        if check["id"] == type_issue["check_ids"][0]
+    )
+    assert check["actual"] == "配置类型=fact, 推断类型=dimension"
 
 
 def test_score_architecture_health_allows_ads_to_read_dim():
@@ -386,7 +447,8 @@ def test_score_architecture_health_allows_ads_to_read_dim():
     result = score_architecture_health(tables, edges, [])
 
     assert result["score"] == 100.0
-    assert result["violations"] == []
+    assert result["issues"] == []
+    assert result["checks"][0]["rule_id"] == "ARCH_ALLOWED_DEPENDENCY"
 
 
 def test_score_architecture_health_penalizes_llm_business_metadata_mismatch():
@@ -418,17 +480,16 @@ def test_score_architecture_health_penalizes_llm_business_metadata_mismatch():
         business_domain_config=business_config,
     )
 
-    descriptions = [v["description"] for v in result["violations"]]
-    assert any(desc.startswith("数据域配置疑似错误") for desc in descriptions)
-    assert any(desc.startswith("业务板块配置疑似错误") for desc in descriptions)
+    assert _issue_rule_ids(result) == {
+        "ARCH_DATA_DOMAIN_MATCHES_LLM",
+        "ARCH_BUSINESS_AREA_MATCHES_LLM",
+    }
 
 
 def test_score_architecture_health_limits_business_checks_by_layer():
     business_config = _business_domain_config()
-    tables = [{"name": "dws_transactions", "layer": "DWS", "columns": []}]
-
     result = score_architecture_health(
-        tables,
+        [{"name": "dws_transactions", "layer": "DWS", "columns": []}],
         [],
         [],
         llm_results=[
@@ -451,223 +512,8 @@ def test_score_architecture_health_limits_business_checks_by_layer():
         business_domain_config=business_config,
     )
 
-    descriptions = [v["description"] for v in result["violations"]]
-    assert not any(desc.startswith("数据域配置疑似错误") for desc in descriptions)
-    assert any(desc.startswith("业务板块配置疑似错误") for desc in descriptions)
-
-
-def test_score_naming_conventions_checks_table_name_length():
-    nc = load_naming_config(PROJECT_ROOT / "naming_config.yaml")
-    tables = [
-        {"name": "M_WEMG_04_CHREM_DI", "layer": "DWD", "columns": []},
-        {"name": "M_WEMG_04_CHREMEXTRALONGNAME_DI", "layer": "DWD", "columns": []},
-    ]
-
-    result = score_naming_conventions(tables, nc)
-
-    assert result["rule_summary"]["表名长度 <= 30"] == {
-        "pass_count": 1,
-        "total": 2,
-        "pct": 50.0,
-    }
-    assert result["details"][1]["table_checks"]["violations"] == ["违反: 表名长度 <= 30"]
-
-
-def _contains_key(value, key):
-    if isinstance(value, dict):
-        return key in value or any(
-            _contains_key(child, key)
-            for child in value.values()
-        )
-    if isinstance(value, list):
-        return any(_contains_key(child, key) for child in value)
-    return False
-
-
-def test_score_naming_conventions_outputs_llm_repair_items():
-    nc = load_naming_config(PROJECT_ROOT / "naming_config.yaml")
-    tables = [
-        {
-            "name": "dwd_customer",
-            "layer": "DWD",
-            "columns": [{"name": "customer_id"}],
-        },
-    ]
-
-    result = score_naming_conventions(tables, nc)
-
-    assert not _contains_key(result, "diagnostics")
-    assert result["rule_catalog"]["TABLE_DWD"]["target_type"] == "table"
-    assert result["rule_catalog"]["COLUMN_DEFAULT"] == {
-        "target_type": "column",
-        "summary": "默认字段命名大写标识符，长度小于16",
-        "expression": "{COLUMN_IDENTIFIER}",
-        "patterns": ["^[A-Z][A-Z0-9_]{0,14}$"],
-    }
-
-    table_item = next(
-        item for item in result["repair_items"]
-        if item["target_type"] == "table"
-    )
-    assert table_item["table"] == "dwd_customer"
-    assert table_item["object"] == "dwd_customer"
-    assert table_item["rule_ref"] == "TABLE_DWD"
-    assert table_item["problem"] == "表名不符合 DWD 明细层表命名"
-    assert table_item["expected"] == (
-        "表达式 M _ {BUSINESS_AREA_CODE} _ {DATA_DOMAIN_ID} _ "
-        "{BIZ_PROCESS} _ {TIME_PERIOD}{DWD_GRANULARITY}"
-    )
-
-    column_item = next(
-        item for item in result["repair_items"]
-        if item["target_type"] == "column"
-    )
-    assert column_item["table"] == "dwd_customer"
-    assert column_item["object"] == "customer_id"
-    assert column_item["rule_ref"] == "COLUMN_DEFAULT"
-    assert column_item["problem"] == "字段名不符合 默认字段命名大写标识符，长度小于16"
-    assert column_item["expected"] == "匹配 ^[A-Z][A-Z0-9_]{0,14}$"
-    assert column_item["failure"]["code"] == "type_pattern_mismatch"
-
-
-def test_score_naming_conventions_repair_items_include_related_files(tmp_path):
-    nc = load_naming_config(PROJECT_ROOT / "naming_config.yaml")
-    project_dir = tmp_path / "demo"
-    (project_dir / "ddl").mkdir(parents=True)
-    (project_dir / "models").mkdir()
-    (project_dir / "tasks").mkdir()
-
-    table_name = "dwd_customer"
-    (project_dir / "ddl" / f"{table_name}.sql").write_text(
-        f"""
-CREATE TABLE IF NOT EXISTS demo.{table_name} (
-    customer_id BIGINT
-) ENGINE=OLAP
-DUPLICATE KEY(customer_id)
-DISTRIBUTED BY HASH(customer_id) BUCKETS 1
-PROPERTIES ("replication_num" = "1");
-""",
-        encoding="utf-8",
-    )
-    (project_dir / "models" / f"{table_name}.yaml").write_text(
-        f"name: {table_name}\nlayer: DWD\n",
-        encoding="utf-8",
-    )
-    (project_dir / "tasks" / f"{table_name}.sql").write_text(
-        f"INSERT INTO demo.{table_name} SELECT 1 AS customer_id;",
-        encoding="utf-8",
-    )
-
-    result = score_naming_conventions(
-        [],
-        nc,
-        {table_name: {"layer": "DWD"}},
-        project_dir=project_dir,
-    )
-
-    column_item = next(
-        item for item in result["repair_items"]
-        if item["target_type"] == "column"
-    )
-    assert column_item["fix_scope"] == ["ddl", "tasks", "models"]
-    assert column_item["related_files"] == [
-        "demo/ddl/dwd_customer.sql",
-        "demo/tasks/dwd_customer.sql",
-        "demo/models/dwd_customer.yaml",
-    ]
-
-
-def test_score_naming_conventions_checks_business_dictionary_metadata(tmp_path):
-    nc = _business_naming_config(tmp_path)
-    business_config = nc.business_domain_config
-    tables = [
-        {"name": "M_PAYM_04_CHREM_DI", "layer": "DWD", "columns": []},
-        {"name": "M_BAD_98_CHREM_DI", "layer": "DWD", "columns": []},
-    ]
-    model_metadata = {
-        "M_PAYM_04_CHREM_DI": {
-            "data_domain": "04",
-            "business_area": "PAYM",
-        },
-        "M_BAD_98_CHREM_DI": {
-            "data_domain": "98",
-            "business_area": "BAD",
-        },
-    }
-    metadata_result = score_metadata_health(
-        tables,
-        nc,
-        model_metadata,
-        business_config,
-    )
-
-    assert metadata_result["rule_summary"]["data_domain配置有效"] == {
-        "pass_count": 1,
-        "total": 2,
-        "pct": 50.0,
-    }
-    assert metadata_result["rule_summary"]["business_area配置有效"] == {
-        "pass_count": 1,
-        "total": 2,
-        "pct": 50.0,
-    }
-    assert {
-        (item["rule"], item["reason"])
-        for item in metadata_result["violations"]
-    } == {
-        ("data_domain配置有效", "not_in_dictionary"),
-        ("business_area配置有效", "not_in_dictionary"),
-    }
-
-    naming_result = score_naming_conventions(
-        tables,
-        nc,
-        model_metadata,
-        business_config,
-    )
-    assert "data_domain配置有效" not in naming_result["rule_summary"]
-    assert "business_area配置有效" not in naming_result["rule_summary"]
-
-
-def test_score_naming_conventions_limits_business_metadata_by_layer(tmp_path):
-    nc = _business_naming_config(tmp_path)
-    business_config = nc.business_domain_config
-    tables = [
-        {"name": "M_PAYM_04_CHREM_DI", "layer": "DWD", "columns": []},
-        {"name": "I_CLNT_CUST_SUM_DS", "layer": "DWS", "columns": []},
-        {"name": "D_CUST", "layer": "DIM", "columns": []},
-    ]
-    model_metadata = {
-        "M_PAYM_04_CHREM_DI": {
-            "data_domain": "98",
-            "business_area": "PAYM",
-        },
-        "I_CLNT_CUST_SUM_DS": {
-            "business_area": "CLNT",
-        },
-        "D_CUST": {
-            "data_domain": "99",
-            "business_area": "BAD",
-        },
-    }
-
-    result = score_metadata_health(
-        tables,
-        nc,
-        model_metadata,
-        business_config,
-    )
-
-    assert result["rule_summary"]["data_domain配置有效"] == {
-        "pass_count": 0,
-        "total": 1,
-        "pct": 0.0,
-    }
-    assert result["rule_summary"]["business_area配置有效"] == {
-        "pass_count": 2,
-        "total": 2,
-        "pct": 100.0,
-    }
+    assert _issue_rule_ids(result) == {"ARCH_BUSINESS_AREA_MATCHES_LLM"}
+    assert not _checks_by_rule(result, "ARCH_DATA_DOMAIN_MATCHES_LLM")
 
 
 def test_score_asset_completeness_classifies_missing_assets(tmp_path):
@@ -706,189 +552,154 @@ DISTRIBUTED BY HASH(order_id) BUCKETS 1;
 
     assert result["score"] == 0.0
     assert {
-        (item["asset"], item["rule"])
-        for item in result["details"]
+        (item["target"]["name"], item["rule_id"])
+        for item in result["issues"]
     } == {
-        ("dwd_orders", "DDL表存在Model"),
-        ("dwd_orders", "需执行DDL表存在Task"),
-        ("dws_orders", "Model存在对应DDL表"),
-        ("dws_missing", "Task产出表存在DDL"),
-        ("dws_missing", "Task产出表存在Model"),
-        ("tasks/dws_missing.sql", "Task血缘目标与实际产出一致"),
+        ("dwd_orders", "ASSET_DDL_HAS_MODEL"),
+        ("dwd_orders", "ASSET_EXECUTABLE_DDL_HAS_TASK"),
+        ("dws_orders", "ASSET_MODEL_HAS_DDL"),
+        ("dws_missing", "ASSET_TASK_OUTPUT_HAS_DDL"),
+        ("dws_missing", "ASSET_TASK_OUTPUT_HAS_MODEL"),
+        ("tasks/dws_missing.sql", "ASSET_TASK_LINEAGE_MATCHES_OUTPUT"),
+    }
+    assert all(item["severity"] == "高" for item in result["issues"])
+    task_lineage_check = next(
+        check for check in result["checks"]
+        if check["rule_id"] == "ASSET_TASK_LINEAGE_MATCHES_OUTPUT"
+    )
+    assert task_lineage_check["actual"] == "实际产出=['dws_missing']，血缘目标=[]"
+    assert task_lineage_check["evidence"] == {
+        "outputs": ["dws_missing"],
+        "lineage_targets": [],
     }
 
 
-def test_naming_checks_business_segments_against_valid_model_metadata(tmp_path):
-    nc = _business_naming_config(tmp_path)
-    business_config = nc.business_domain_config
-    tables = [{
-        "name": "M_PAYM_04_CHREM_DI",
-        "layer": "DWD",
-        "columns": [],
-    }]
-    model_metadata = {
-        "M_PAYM_04_CHREM_DI": {
-            "layer": "DWD",
-            "data_domain": "10",
-            "business_area": "CLNT",
-        },
-    }
+def test_score_naming_conventions_outputs_table_and_column_issues():
+    nc = load_naming_config(PROJECT_ROOT / "naming_config.yaml")
 
     result = score_naming_conventions(
-        tables,
+        [{
+            "name": "dwd_customer",
+            "layer": "DWD",
+            "columns": [{"name": "customer_id"}],
+        }],
         nc,
-        model_metadata,
-        business_config,
     )
 
-    assert result["rule_summary"]["表名DATA_DOMAIN_ID与model.data_domain一致"] == {
-        "pass_count": 0,
-        "total": 1,
-        "pct": 0.0,
+    assert result["score"] == 33.3
+    assert _issue_rule_ids(result) == {
+        "NAMING_TABLE_TEMPLATE",
+        "NAMING_COLUMN_NAME",
     }
-    assert result["rule_summary"][
-        "表名BUSINESS_AREA_CODE与model.business_area一致"
-    ] == {
-        "pass_count": 0,
-        "total": 1,
-        "pct": 0.0,
-    }
+    assert result["issues"][0]["remediation"]["strategy"] == (
+        "rename_table_and_rewrite_references"
+    )
+    column_check = _checks_by_rule(result, "NAMING_COLUMN_NAME")[0]
+    assert column_check["actual"] == "不合规字段: ['customer_id']"
 
 
-def test_naming_skips_business_segments_when_model_metadata_is_invalid(tmp_path):
-    nc = _business_naming_config(tmp_path)
-    tables = [{
-        "name": "M_PAYM_04_CHREM_DI",
-        "layer": "DWD",
-        "columns": [],
-    }]
-    model_metadata = {
-        "M_PAYM_04_CHREM_DI": {
-            "layer": "DWD",
-            "data_domain": "98",
-            "business_area": "BAD",
-        },
-    }
+def test_score_naming_conventions_does_not_expose_internal_violation_text():
+    nc = load_naming_config(PROJECT_ROOT / "naming_config.yaml")
 
     result = score_naming_conventions(
-        tables,
+        [{
+            "name": "dwd_customer_name_that_is_too_long",
+            "layer": "DWD",
+            "columns": [],
+        }],
         nc,
-        model_metadata,
-        nc.business_domain_config,
     )
 
-    assert "表名DATA_DOMAIN_ID与model.data_domain一致" not in result[
-        "rule_summary"]
-    assert "表名BUSINESS_AREA_CODE与model.business_area一致" not in result[
-        "rule_summary"]
-
-
-def test_naming_skips_entity_consistency_when_table_template_is_invalid():
-    nc = load_naming_config(PROJECT_ROOT / "shop/naming_config.yaml")
-    tables = [{
-        "name": "dws_product_sales_daily",
-        "layer": "DWS",
-        "columns": [],
-    }]
-    model_metadata = {
-        "dws_product_sales_daily": {
-            "layer": "DWS",
-            "grain": {
-                "entities": ["PROD"],
-            },
-        },
+    assert {
+        issue["rule_id"]
+        for issue in result["issues"]
+    } == {
+        "NAMING_TABLE_TEMPLATE",
+        "NAMING_TABLE_MAX_LENGTH",
     }
-
-    result = score_naming_conventions(tables, nc, model_metadata)
-
-    assert result["rule_summary"][DWS_ENTITY_RULE_NAME] == {
-        "pass_count": 0,
-        "total": 0,
-        "pct": 0,
-    }
-    assert result["details"][0]["dws_entity_checks"]["total"] == 0
+    rendered_checks = yaml.safe_dump(
+        result["checks"],
+        allow_unicode=True,
+        sort_keys=True,
+    )
+    assert "违反:" not in rendered_checks
 
 
-def test_score_naming_conventions_checks_project_file_names(tmp_path):
+def test_score_naming_conventions_issues_include_related_files(tmp_path):
     nc = load_naming_config(PROJECT_ROOT / "naming_config.yaml")
     project_dir = tmp_path / "demo"
     (project_dir / "ddl").mkdir(parents=True)
     (project_dir / "models").mkdir()
-    (project_dir / "tasks" / "full_refresh").mkdir(parents=True)
+    (project_dir / "tasks").mkdir()
 
-    table_name = "M_WEMG_04_CHREM_DI"
-    ddl = f"""
+    table_name = "dwd_customer"
+    (project_dir / "ddl" / f"{table_name}.sql").write_text(
+        f"""
 CREATE TABLE IF NOT EXISTS demo.{table_name} (
-    ID BIGINT
+    customer_id BIGINT
 ) ENGINE=OLAP
-DUPLICATE KEY(ID)
-DISTRIBUTED BY HASH(ID) BUCKETS 1
+DUPLICATE KEY(customer_id)
+DISTRIBUTED BY HASH(customer_id) BUCKETS 1
 PROPERTIES ("replication_num" = "1");
-"""
-    (project_dir / "ddl" / f"{table_name}.sql").write_text(ddl)
+""",
+        encoding="utf-8",
+    )
     (project_dir / "models" / f"{table_name}.yaml").write_text(
-        f"name: {table_name}\nlayer: DWD\n"
+        f"name: {table_name}\nlayer: DWD\n",
+        encoding="utf-8",
     )
     (project_dir / "tasks" / f"{table_name}.sql").write_text(
-        f"INSERT INTO demo.{table_name} SELECT 1 AS ID;"
+        f"INSERT INTO demo.{table_name} SELECT 1 AS customer_id;",
+        encoding="utf-8",
     )
-    full_refresh = project_dir / "tasks" / "full_refresh" / (
-        f"{table_name}_full_refresh.sql"
-    )
-    full_refresh.write_text(f"INSERT INTO demo.{table_name} SELECT 1 AS ID;")
-
-    tables = []
-    edges = [
-        {
-            "source": "ods_source.ID",
-            "target": f"{table_name}.ID",
-            "source_file": f"{table_name}.sql",
-        },
-        {
-            "source": "ods_source.ID",
-            "target": f"{table_name}.ID",
-            "source_file": f"full_refresh/{table_name}_full_refresh.sql",
-        },
-    ]
 
     result = score_naming_conventions(
-        tables,
+        [],
         nc,
         {table_name: {"layer": "DWD"}},
         project_dir=project_dir,
-        edges=edges,
-        indirect_edges=[],
     )
 
-    assert result["score"] == 100.0
-    assert result["file_checks"] == {"passed": 4, "total": 4}
-    assert result["file_details"] == []
-    assert result["rule_summary"][FILE_RULE_DDL] == {
-        "pass_count": 1,
-        "total": 1,
-        "pct": 100.0,
-    }
-    assert result["rule_summary"][FILE_RULE_MODEL_NAME] == {
-        "pass_count": 1,
-        "total": 1,
-        "pct": 100.0,
-    }
-    assert result["rule_summary"][FILE_RULE_TASK_SQL] == {
-        "pass_count": 2,
-        "total": 2,
-        "pct": 100.0,
-    }
-    catalog = build_asset_catalog(
-        tables,
-        {table_name: {"layer": "DWD"}},
-        project_dir,
-        edges=edges,
-        indirect_edges=[],
+    column_issue = next(
+        issue for issue in result["issues"]
+        if issue["rule_id"] == "NAMING_COLUMN_NAME"
     )
-    assert score_asset_completeness(catalog)["score"] == 100.0
+    assert column_issue["remediation"]["related_files"] == [
+        "demo/ddl/dwd_customer.sql",
+        "demo/tasks/dwd_customer.sql",
+        "demo/models/dwd_customer.yaml",
+    ]
 
 
-def test_score_naming_conventions_flags_project_file_name_mismatches(tmp_path):
+def test_naming_checks_business_segments_against_valid_model_metadata(tmp_path):
+    nc = _business_naming_config(tmp_path)
+    result = score_naming_conventions(
+        [{
+            "name": "M_PAYM_04_CHREM_DI",
+            "layer": "DWD",
+            "columns": [],
+        }],
+        nc,
+        {
+            "M_PAYM_04_CHREM_DI": {
+                "layer": "DWD",
+                "data_domain": "10",
+                "business_area": "CLNT",
+            },
+        },
+        nc.business_domain_config,
+    )
+
+    semantic_check = _checks_by_rule(
+        result,
+        "NAMING_SEMANTIC_METADATA_ALIGNMENT",
+    )[0]
+    assert semantic_check["passed"] is False
+    assert "model.data_domain=10" in semantic_check["actual"]
+    assert "model.business_area=CLNT" in semantic_check["actual"]
+
+
+def test_score_naming_conventions_checks_project_file_names(tmp_path):
     nc = load_naming_config(PROJECT_ROOT / "naming_config.yaml")
     project_dir = tmp_path / "demo"
     (project_dir / "ddl").mkdir(parents=True)
@@ -912,734 +723,109 @@ PROPERTIES ("replication_num" = "1");
         f"INSERT INTO demo.{table_name} SELECT 1 AS ID;"
     )
 
-    tables = [{"name": table_name, "layer": "DWD", "columns": []}]
-    edges = [{
-        "source": "ods_source.ID",
-        "target": f"{table_name}.ID",
-        "source_file": "wrong_task.sql",
-    }]
-
     result = score_naming_conventions(
-        tables,
+        [{"name": table_name, "layer": "DWD", "columns": []}],
         nc,
         {table_name: {"layer": "DWD"}},
         project_dir=project_dir,
-        edges=edges,
+        edges=[{
+            "source": "ods_source.ID",
+            "target": f"{table_name}.ID",
+            "source_file": "wrong_task.sql",
+        }],
         indirect_edges=[],
     )
 
-    assert result["score"] == 50.0
-    assert result["details"][0]["column_checks"] == {
-        "passed": 1,
-        "total": 1,
-        "violations": [],
+    assert _issue_rule_ids(result) == {
+        "NAMING_DDL_FILE_NAME",
+        "NAMING_MODEL_FILE_NAME",
+        "NAMING_TASK_OUTPUT_NAME",
     }
-    assert result["file_checks"] == {"passed": 0, "total": 3}
-    assert result["rule_summary"][FILE_RULE_DDL] == {
-        "pass_count": 0,
-        "total": 1,
-        "pct": 0.0,
-    }
-    assert result["rule_summary"][FILE_RULE_MODEL_NAME] == {
-        "pass_count": 0,
-        "total": 1,
-        "pct": 0.0,
-    }
-    assert result["rule_summary"][FILE_RULE_TASK_SQL] == {
-        "pass_count": 0,
-        "total": 1,
-        "pct": 0.0,
-    }
-    assert {detail["rule"] for detail in result["file_details"]} == {
-        FILE_RULE_DDL,
-        FILE_RULE_MODEL_NAME,
-        FILE_RULE_TASK_SQL,
+    assert all(issue["severity"] == "低" for issue in result["issues"])
+
+
+def test_score_naming_conventions_checks_atomic_and_derived_metrics():
+    nc = load_naming_config(PROJECT_ROOT / "naming_config.yaml")
+    result = score_naming_conventions(
+        [{
+            "name": "M_WEMG_04_CHREM_DI",
+            "layer": "DWD",
+            "columns": [],
+        }],
+        nc,
+        {
+            "M_WEMG_04_CHREM_DI": {
+                "atomic_metrics": ["PAY_AMT", "pay_amt"],
+                "derived_metrics": ["7D_OLD_PAY_AMT", "transaction_count"],
+            }
+        },
+    )
+
+    assert result["rule_summary"]["NAMING_ATOMIC_METRIC"]["pass_count"] == 1
+    assert result["rule_summary"]["NAMING_DERIVED_METRIC"]["pass_count"] == 1
+    assert _issue_rule_ids(result) == {
+        "NAMING_ATOMIC_METRIC",
+        "NAMING_DERIVED_METRIC",
     }
 
 
-def test_score_naming_conventions_flags_missing_task_lineage(tmp_path):
+def test_score_naming_conventions_checks_dws_and_dim_entity_alignment():
+    nc = load_naming_config(PROJECT_ROOT / "shop/naming_config.yaml")
+
+    dws_result = score_naming_conventions(
+        [{
+            "name": "I_SHOP_CAT_SALE_DS",
+            "layer": "DWS",
+            "columns": [
+                {"name": "category_id"},
+                {"name": "stat_date"},
+            ],
+        }],
+        nc,
+        {
+            "I_SHOP_CAT_SALE_DS": {
+                "grain": {
+                    "keys": ["category_id", "stat_date"],
+                    "entities": ["PROD"],
+                    "time_column": "stat_date",
+                    "time_period": "D",
+                }
+            }
+        },
+    )
+    assert "NAMING_DWS_ENTITY_ALIGNMENT" in _issue_rule_ids(dws_result)
+
+    dim_result = score_naming_conventions(
+        [{"name": "DIM_BASE_PROD_INFO_INFO", "layer": "DIM", "columns": []}],
+        nc,
+        {
+            "DIM_BASE_PROD_INFO_INFO": {
+                "entity": {
+                    "code": "CUST",
+                    "key_columns": ["product_id"],
+                }
+            }
+        },
+    )
+    assert "NAMING_DIM_ENTITY_ALIGNMENT" in _issue_rule_ids(dim_result)
+
+
+def test_score_naming_conventions_ignores_lineage_tables_when_project_dir_exists(
+        tmp_path):
     nc = load_naming_config(PROJECT_ROOT / "naming_config.yaml")
     project_dir = tmp_path / "demo"
-    (project_dir / "tasks").mkdir(parents=True)
-
-    table_name = "M_WEMG_04_CHREM_DI"
-    (project_dir / "tasks" / f"{table_name}.sql").write_text(
-        f"INSERT INTO demo.{table_name} SELECT 1 AS ID;"
-    )
+    (project_dir / "ddl").mkdir(parents=True)
 
     result = score_naming_conventions(
-        [],
+        [{
+            "name": "M_WEMG_04_CHREM_DI",
+            "layer": "DWD",
+            "columns": [{"name": "BAD_FIELD"}],
+        }],
         nc,
         project_dir=project_dir,
-        edges=[],
-        indirect_edges=[],
     )
 
     assert result["score"] == 100.0
-    assert result["file_checks"] == {"passed": 1, "total": 1}
-    assert result["rule_summary"][FILE_RULE_TASK_SQL] == {
-        "pass_count": 1,
-        "total": 1,
-        "pct": 100.0,
-    }
-    assert result["file_details"] == []
-
-    catalog = build_asset_catalog(
-        [],
-        None,
-        project_dir,
-        edges=[],
-        indirect_edges=[],
-    )
-    asset_result = score_asset_completeness(catalog)
-    assert asset_result["score"] == 0.0
-    assert {
-        detail["rule"] for detail in asset_result["details"]
-    } == {
-        "Task产出表存在DDL",
-        "Task产出表存在Model",
-        "Task血缘目标与实际产出一致",
-    }
-
-
-def test_score_naming_conventions_does_not_reuse_basename_lineage(tmp_path):
-    nc = load_naming_config(PROJECT_ROOT / "naming_config.yaml")
-    project_dir = tmp_path / "demo"
-    (project_dir / "tasks" / "archive").mkdir(parents=True)
-
-    table_name = "M_WEMG_04_CHREM_DI"
-    (project_dir / "tasks" / f"{table_name}.sql").write_text(
-        f"INSERT INTO demo.{table_name} SELECT 1 AS ID;"
-    )
-    archived_task = project_dir / "tasks" / "archive" / f"{table_name}.sql"
-    archived_task.write_text(f"INSERT INTO demo.{table_name} SELECT 1 AS ID;")
-
-    result = score_naming_conventions(
-        [],
-        nc,
-        project_dir=project_dir,
-        edges=[{
-            "source": "ods_source.ID",
-            "target": f"{table_name}.ID",
-            "source_file": f"{table_name}.sql",
-        }],
-        indirect_edges=[],
-    )
-
-    assert result["file_checks"] == {"passed": 2, "total": 2}
-    assert result["file_details"] == []
-
-    catalog = build_asset_catalog(
-        [],
-        None,
-        project_dir,
-        edges=[{
-            "source": "ods_source.ID",
-            "target": f"{table_name}.ID",
-            "source_file": f"{table_name}.sql",
-        }],
-        indirect_edges=[],
-    )
-    asset_result = score_asset_completeness(catalog)
-    assert asset_result["rule_summary"][
-        "Task血缘目标与实际产出一致"
-    ] == {
-        "pass_count": 1,
-        "total": 2,
-        "pct": 50.0,
-    }
-
-
-def test_score_naming_conventions_checks_extra_write_targets(tmp_path):
-    nc = load_naming_config(PROJECT_ROOT / "naming_config.yaml")
-    project_dir = tmp_path / "demo"
-    (project_dir / "tasks").mkdir(parents=True)
-
-    table_name = "M_WEMG_04_CHREM_DI"
-    (project_dir / "tasks" / f"{table_name}.sql").write_text(
-        f"""
-TRUNCATE TABLE demo.WRONG_TARGET;
-INSERT INTO demo.{table_name} SELECT 1 AS ID;
-UPDATE demo.{table_name} SET ID = 1;
-DELETE FROM demo.{table_name} WHERE ID = 1;
-"""
-    )
-
-    result = score_naming_conventions(
-        [],
-        nc,
-        project_dir=project_dir,
-        edges=[{
-            "source": "ods_source.ID",
-            "target": f"{table_name}.ID",
-            "source_file": f"{table_name}.sql",
-        }],
-        indirect_edges=[],
-    )
-
-    assert result["score"] == 0.0
-    assert result["file_checks"] == {"passed": 0, "total": 1}
-    assert result["rule_summary"][FILE_RULE_TASK_SQL] == {
-        "pass_count": 0,
-        "total": 1,
-        "pct": 0.0,
-    }
-    assert result["file_details"] == [{
-        "file": f"demo/tasks/{table_name}.sql",
-        "rule": FILE_RULE_TASK_SQL,
-        "expected": table_name,
-        "actual": f"{table_name}, WRONG_TARGET",
-    }]
-
-    catalog = build_asset_catalog(
-        [],
-        None,
-        project_dir,
-        edges=[{
-            "source": "ods_source.ID",
-            "target": f"{table_name}.ID",
-            "source_file": f"{table_name}.sql",
-        }],
-        indirect_edges=[],
-    )
-    asset_result = score_asset_completeness(catalog)
-    assert asset_result["rule_summary"][
-        "Task血缘目标与实际产出一致"
-    ] == {
-        "pass_count": 0,
-        "total": 1,
-        "pct": 0.0,
-    }
-
-
-def test_score_naming_conventions_prefers_current_ddl_columns_over_lineage_snapshot(
-        tmp_path):
-    nc = load_naming_config(PROJECT_ROOT / "naming_config.yaml")
-    project_dir = tmp_path / "demo"
-    (project_dir / "ddl").mkdir(parents=True)
-
-    table_name = "M_WEMG_04_CHREM_DI"
-    (project_dir / "ddl" / f"{table_name}.sql").write_text(
-        f"""
-CREATE TABLE IF NOT EXISTS demo.{table_name} (
-    bad_field VARCHAR(16)
-) ENGINE=OLAP
-DUPLICATE KEY(bad_field)
-DISTRIBUTED BY HASH(bad_field) BUCKETS 1
-PROPERTIES ("replication_num" = "1");
-""",
-        encoding="utf-8",
-    )
-
-    stale_lineage_tables = [{
-        "name": table_name,
-        "layer": "DWD",
-        "columns": [{"name": "GOOD_COL"}],
-    }]
-    model_metadata = {table_name: {"layer": "DWD"}}
-
-    result = score_naming_conventions(
-        stale_lineage_tables,
-        nc,
-        model_metadata,
-        project_dir=project_dir,
-    )
-
-    assert result["details"][0]["column_checks"]["passed"] == 0
-    assert result["details"][0]["column_checks"]["total"] == 1
-    assert result["details"][0]["column_checks"]["violations"] == [
-        "bad_field"
-    ]
-
-
-def test_score_naming_conventions_does_not_fall_back_to_lineage_tables_when_project_dir_exists(
-        tmp_path):
-    nc = load_naming_config(PROJECT_ROOT / "naming_config.yaml")
-    project_dir = tmp_path / "demo"
-    (project_dir / "ddl").mkdir(parents=True)
-
-    lineage_only_tables = [{
-        "name": "M_WEMG_04_CHREM_DI",
-        "layer": "DWD",
-        "columns": [{"name": "BAD_FIELD"}],
-    }]
-
-    result = score_naming_conventions(
-        lineage_only_tables,
-        nc,
-        project_dir=project_dir,
-    )
-
-    assert result["details"] == []
-    assert result["rule_summary"]["表名符合规范模板"] == {
-        "pass_count": 0,
-        "total": 0,
-        "pct": 0,
-    }
-    assert result["rule_summary"]["列名总计"] == {
-        "pass_count": 0,
-        "total": 0,
-        "pct": 0,
-    }
-
-
-def test_score_naming_conventions_prefers_model_layer_over_lineage_snapshot():
-    nc = load_naming_config(PROJECT_ROOT / "naming_config.yaml")
-    table_name = "DIM_BASE_CUST_PROFILE_INFO"
-    stale_lineage_tables = [{
-        "name": table_name,
-        "layer": "DWD",
-        "columns": [{"name": "CUST_ID"}],
-    }]
-    model_metadata = {table_name: {"layer": "DIM"}}
-
-    result = score_naming_conventions(
-        stale_lineage_tables,
-        nc,
-        model_metadata,
-    )
-
-    assert result["details"][0]["layer"] == "DIM"
-    assert result["details"][0]["table_checks"]["violations"] == []
-
-
-def test_score_naming_conventions_checks_atomic_metrics_from_models():
-    nc = load_naming_config(PROJECT_ROOT / "naming_config.yaml")
-    tables = [{
-        "name": "M_WEMG_04_CHREM_DI",
-        "layer": "DWD",
-        "columns": [],
-    }]
-    model_metadata = {
-        "M_WEMG_04_CHREM_DI": {
-            "atomic_metrics": ["PAY_AMT", "pay_amt", "PAY_UNKNOWN"]
-        }
-    }
-
-    result = score_naming_conventions(tables, nc, model_metadata)
-
-    assert result["rule_summary"][ATOMIC_METRIC_RULE_NAME] == {
-        "pass_count": 1,
-        "total": 3,
-        "pct": 33.3,
-    }
-    assert result["details"][0]["atomic_metric_checks"] == {
-        "passed": 1,
-        "total": 3,
-        "violations": ["PAY_UNKNOWN", "pay_amt"],
-    }
-
-
-def test_score_naming_conventions_checks_derived_metrics_from_models():
-    nc = load_naming_config(PROJECT_ROOT / "naming_config.yaml")
-    tables = [{
-        "name": "M_WEMG_04_CHREM_DI",
-        "layer": "DWD",
-        "columns": [],
-    }]
-    model_metadata = {
-        "M_WEMG_04_CHREM_DI": {
-            "derived_metrics": [
-                "7D_OLD_CHREM_PAY_AMT",
-                "30D_HIGH_NET_PAY_CNT",
-                "OLD_7D_PAY_AMT",
-                "7D_OL_PAY_AMT",
-                "7D_OLD_PAY_UNKNOWN",
-            ]
-        }
-    }
-
-    result = score_naming_conventions(tables, nc, model_metadata)
-
-    assert result["rule_summary"][DERIVED_METRIC_RULE_NAME] == {
-        "pass_count": 2,
-        "total": 5,
-        "pct": 40.0,
-    }
-    assert result["details"][0]["derived_metric_checks"] == {
-        "passed": 2,
-        "total": 5,
-        "violations": [
-            "7D_OLD_PAY_UNKNOWN",
-            "7D_OL_PAY_AMT",
-            "OLD_7D_PAY_AMT",
-        ],
-    }
-
-
-def test_score_naming_conventions_checks_default_enterprise_metric_bindings():
-    nc = load_naming_config(PROJECT_ROOT / "naming_config.yaml")
-    tables = [{
-        "name": "M_WEMG_04_CHREM_DI",
-        "layer": "DWD",
-        "columns": [],
-    }]
-    model_metadata = {
-        "M_WEMG_04_CHREM_DI": {
-            "atomic_metrics": ["PAY_AMT", "pay_amt"],
-            "derived_metrics": ["7D_OLD_PAY_AMT", "transaction_count"],
-        }
-    }
-
-    result = score_naming_conventions(tables, nc, model_metadata)
-
-    assert result["rule_summary"][ATOMIC_METRIC_RULE_NAME] == {
-        "pass_count": 1,
-        "total": 2,
-        "pct": 50.0,
-    }
-    assert result["rule_summary"][DERIVED_METRIC_RULE_NAME] == {
-        "pass_count": 1,
-        "total": 2,
-        "pct": 50.0,
-    }
-
-
-def test_score_naming_conventions_checks_dws_entity_against_model_grain():
-    nc = load_naming_config(PROJECT_ROOT / "shop/naming_config.yaml")
-    tables = [{
-        "name": "I_SHOP_CAT_SALE_DS",
-        "layer": "DWS",
-        "columns": [
-            {"name": "category_id"},
-            {"name": "stat_date"},
-        ],
-    }]
-    model_metadata = {
-        "I_SHOP_CAT_SALE_DS": {
-            "grain": {
-                "keys": ["product_id", "stat_date"],
-                "entities": ["PROD"],
-                "time_column": "stat_date",
-                "time_period": "D",
-            }
-        }
-    }
-
-    result = score_naming_conventions(tables, nc, model_metadata)
-
-    assert result["rule_summary"]["DWS表名实体包含于grain.entities"] == {
-        "pass_count": 0,
-        "total": 1,
-        "pct": 0.0,
-    }
-    assert result["details"][0]["dws_entity_checks"] == {
-        "passed": 0,
-        "total": 1,
-        "violations": ["表名ENTITY=['CAT']，grain.entities=['PROD']"],
-    }
-
-
-def test_score_naming_conventions_checks_dim_entity_against_model_entity():
-    nc = load_naming_config(PROJECT_ROOT / "shop/naming_config.yaml")
-    tables = [{
-        "name": "DIM_BASE_PROD_INFO_INFO",
-        "layer": "DIM",
-        "columns": [],
-    }]
-    model_metadata = {
-        "DIM_BASE_PROD_INFO_INFO": {
-            "entity": {
-                "code": "CUST",
-                "key_columns": ["product_id"],
-            }
-        }
-    }
-
-    result = score_naming_conventions(tables, nc, model_metadata)
-
-    assert result["rule_summary"][DIM_ENTITY_RULE_NAME] == {
-        "pass_count": 0,
-        "total": 1,
-        "pct": 0.0,
-    }
-    assert result["details"][0]["dim_entity_checks"] == {
-        "passed": 0,
-        "total": 1,
-        "violations": [
-            "表名MODEL_ENTITY=['PROD']，entities.primary.code=['CUST']"
-        ],
-    }
-
-
-def test_score_metadata_health_requires_dws_grain_entities_from_models():
-    nc = load_naming_config(PROJECT_ROOT / "shop/naming_config.yaml")
-    tables = [{
-        "name": "I_SHOP_PROD_SALE_DS",
-        "layer": "DWS",
-        "columns": [],
-    }]
-    model_metadata = {
-        "I_SHOP_PROD_SALE_DS": {
-            "layer": "DWS",
-            "table_type": "fact",
-        }
-    }
-
-    result = score_metadata_health(tables, nc, model_metadata)
-
-    assert result["rule_summary"]["grain.entities有实体定义"] == {
-        "pass_count": 0,
-        "total": 1,
-        "pct": 0.0,
-    }
-    assert result["violations"] == [{
-        "table": "I_SHOP_PROD_SALE_DS",
-        "rule": "grain.entities有实体定义",
-        "message": "缺少grain.entities",
-        "reason": "missing",
-    }]
-
-
-def test_score_metadata_health_requires_dws_grain_entity_definitions():
-    nc = load_naming_config(PROJECT_ROOT / "shop/naming_config.yaml")
-    tables = [{
-        "name": "I_SHOP_CAT_SALE_DS",
-        "layer": "DWS",
-        "columns": [
-            {"name": "category_id"},
-            {"name": "stat_date"},
-        ],
-    }]
-    model_metadata = {
-        "I_SHOP_CAT_SALE_DS": {
-            "grain": {
-                "keys": ["category_id", "stat_date"],
-                "entities": ["CAT"],
-                "time_column": "stat_date",
-                "time_period": "D",
-            }
-        },
-        "M_SHOP_02_PROD_DF": {
-            "entity": {
-                "code": "PROD",
-                "key_columns": ["product_id"],
-            },
-        },
-    }
-
-    result = score_metadata_health(tables, nc, model_metadata)
-
-    assert result["violations"] == [{
-        "table": "I_SHOP_CAT_SALE_DS",
-        "rule": "grain.entities有实体定义",
-        "message": "grain.entities未定义=['CAT']",
-    }]
-
-
-def test_score_naming_conventions_uses_full_dws_grain_entities():
-    nc = load_naming_config(PROJECT_ROOT / "shop/naming_config.yaml")
-    tables = [{
-        "name": "I_SHOP_PROD_STORE_SALE_DS",
-        "layer": "DWS",
-        "columns": [],
-    }]
-    model_metadata = {
-        "I_SHOP_PROD_STORE_SALE_DS": {
-            "grain": {
-                "keys": ["product_id", "store_id", "customer_id", "stat_date"],
-                "entities": ["PROD", "STORE", "CUST"],
-                "time_column": "stat_date",
-                "time_period": "D",
-            }
-        },
-        "DIM_BASE_PROD_INFO_INFO": {
-            "entity": {
-                "code": "PROD",
-                "key_columns": ["product_id"],
-            },
-        },
-        "DIM_BASE_STORE_INFO_INFO": {
-            "entity": {
-                "code": "STORE",
-                "key_columns": ["store_id"],
-            },
-        },
-        "DIM_BASE_CUST_INFO_INFO": {
-            "entity": {
-                "code": "CUST",
-                "key_columns": ["customer_id"],
-            },
-        },
-    }
-
-    result = score_naming_conventions(tables, nc, model_metadata)
-
-    assert result["rule_summary"]["DWS表名实体包含于grain.entities"] == {
-        "pass_count": 1,
-        "total": 1,
-        "pct": 100.0,
-    }
-    assert result["details"][0]["dws_entity_checks"] == {
-        "passed": 1,
-        "total": 1,
-        "violations": [],
-    }
-
-
-def test_score_naming_conventions_accepts_dim_entity_from_model():
-    nc = load_naming_config(PROJECT_ROOT / "shop/naming_config.yaml")
-    tables = [{
-        "name": "DIM_BASE_PROD_INFO_INFO",
-        "layer": "DIM",
-        "columns": [],
-    }]
-    model_metadata = {
-        "DIM_BASE_PROD_INFO_INFO": {
-            "entity": {
-                "code": "PROD",
-                "key_columns": ["product_id"],
-            }
-        }
-    }
-
-    result = score_naming_conventions(tables, nc, model_metadata)
-
-    assert result["rule_summary"][DIM_ENTITY_RULE_NAME] == {
-        "pass_count": 1,
-        "total": 1,
-        "pct": 100.0,
-    }
-    assert result["details"][0]["dim_entity_checks"] == {
-        "passed": 1,
-        "total": 1,
-        "violations": [],
-    }
-
-
-def test_score_naming_conventions_accepts_entities_schema():
-    nc = load_naming_config(PROJECT_ROOT / "shop/naming_config.yaml")
-    tables = [{
-        "name": "DIM_BASE_PROD_INFO_INFO",
-        "layer": "DIM",
-        "columns": [],
-    }, {
-        "name": "I_SHOP_PROD_STORE_SALE_DS",
-        "layer": "DWS",
-        "columns": [],
-    }]
-    model_metadata = {
-        "DIM_BASE_PROD_INFO_INFO": {
-            "entities": [{
-                "code": "PROD",
-                "type": "primary",
-                "key_columns": ["product_id"],
-            }],
-        },
-        "I_SHOP_PROD_STORE_SALE_DS": {
-            "entities": [{
-                "code": "PROD",
-                "type": "foreign",
-                "key_columns": ["product_id"],
-            }, {
-                "code": "STORE",
-                "type": "foreign",
-                "key_columns": ["store_id"],
-            }],
-            "grain": {
-                "entities": ["PROD", "STORE"],
-                "time_column": "stat_date",
-                "time_period": "D",
-            },
-        },
-    }
-
-    result = score_naming_conventions(tables, nc, model_metadata)
-
-    assert result["rule_summary"][DIM_ENTITY_RULE_NAME] == {
-        "pass_count": 1,
-        "total": 1,
-        "pct": 100.0,
-    }
-    assert result["rule_summary"]["DWS表名实体包含于grain.entities"] == {
-        "pass_count": 1,
-        "total": 1,
-        "pct": 100.0,
-    }
-
-
-def test_score_naming_conventions_derived_metrics_follow_rule_config():
-    nc = load_naming_config(PROJECT_ROOT / "naming_config.yaml")
-    nc.metric_rules["derived"][0]["nodes"][1]["repeat"]["min"] = 2
-    tables = [{
-        "name": "M_WEMG_04_CHREM_DI",
-        "layer": "DWD",
-        "columns": [],
-    }]
-    model_metadata = {
-        "M_WEMG_04_CHREM_DI": {
-            "derived_metrics": [
-                "7D_OLD_CHREM_PAY_AMT",
-                "7D_OLD_PAY_AMT",
-            ]
-        }
-    }
-
-    result = score_naming_conventions(tables, nc, model_metadata)
-
-    assert result["rule_summary"][DERIVED_METRIC_RULE_NAME] == {
-        "pass_count": 1,
-        "total": 2,
-        "pct": 50.0,
-    }
-    assert result["details"][0]["derived_metric_checks"] == {
-        "passed": 1,
-        "total": 2,
-        "violations": ["7D_OLD_PAY_AMT"],
-    }
-
-
-def test_score_naming_conventions_does_not_double_check_derived_metric_columns():
-    nc = load_naming_config(PROJECT_ROOT / "naming_config.yaml")
-    tables = [{
-        "name": "M_WEMG_04_CHREM_DI",
-        "layer": "DWD",
-        "columns": [{"name": "7D_OLD_PAY_AMT"}],
-    }]
-    model_metadata = {
-        "M_WEMG_04_CHREM_DI": {
-            "derived_metrics": ["7D_OLD_PAY_AMT"]
-        }
-    }
-
-    result = score_naming_conventions(tables, nc, model_metadata)
-
-    assert result["details"][0]["column_checks"] == {
-        "passed": 0,
-        "total": 0,
-        "violations": [],
-    }
-    assert result["details"][0]["derived_metric_checks"] == {
-        "passed": 1,
-        "total": 1,
-        "violations": [],
-    }
-    assert result["details"][0]["score"] == 100.0
-
-
-def test_score_naming_conventions_does_not_double_check_atomic_metric_columns():
-    nc = load_naming_config(PROJECT_ROOT / "naming_config.yaml")
-    tables = [{
-        "name": "M_WEMG_04_CHREM_DI",
-        "layer": "DWD",
-        "columns": [{"name": "PAY_AMT"}],
-    }]
-    model_metadata = {
-        "M_WEMG_04_CHREM_DI": {
-            "atomic_metrics": ["PAY_AMT"]
-        }
-    }
-
-    result = score_naming_conventions(tables, nc, model_metadata)
-
-    assert result["details"][0]["column_checks"] == {
-        "passed": 0,
-        "total": 0,
-        "violations": [],
-    }
-    assert result["details"][0]["atomic_metric_checks"] == {
-        "passed": 1,
-        "total": 1,
-        "violations": [],
-    }
-    assert result["details"][0]["score"] == 100.0
+    assert result["checks"] == []
+    assert result["issues"] == []

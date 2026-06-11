@@ -9,6 +9,7 @@
     python assess/assess_middle_layer.py --output report.json
     python assess/assess_middle_layer.py --reuse-weight 0.3
     python assess/assess_middle_layer.py --reuse-weight 0.3 --depth-weight 0.2
+    python assess/assess_middle_layer.py --include-passed-checks
 """
 
 import json
@@ -37,6 +38,14 @@ from assess.entity_metadata import (
     model_entities,
     primary_entity_codes,
 )
+from assess.result_model import (
+    SEVERITY_HIGH,
+    SEVERITY_LOW,
+    SEVERITY_MEDIUM,
+    finalize_dimension,
+    make_check,
+    rule_meta,
+)
 from assess.table_inspector import TableInspector, VALID_TABLE_TYPES
 from config import PROJECT_CONFIG, PROJECT_ROOT, layer_rank
 from ddl_deriver.ddl_deriver import parse_create_table
@@ -64,9 +73,9 @@ DEFAULT_WEIGHTS = {
 }
 
 # 加权违规率配置: 严重度 → 权重
-SEVERITY_WEIGHT = {"严重": 4, "高": 3, "中": 2, "低": 1}
+SEVERITY_WEIGHT = {SEVERITY_HIGH: 3, SEVERITY_MEDIUM: 2, SEVERITY_LOW: 1}
 # 每表扣分上限 (cap)，防止单张高频表拖垮整体评分
-PER_TABLE_CAP = 4
+PER_TABLE_CAP = 3
 ATOMIC_METRIC_RULE_NAME = "原子指标命名 {ACTION_VERB}_{MEASURE_NOUN}"
 DERIVED_METRIC_RULE_NAME = (
     "派生指标命名 {TIME_PERIOD}_{MODIFIER...}_{ATOMIC_METRIC}"
@@ -85,16 +94,333 @@ ASSET_RULE_MODEL_DDL = "Model存在对应DDL表"
 ASSET_RULE_TASK_DDL = "Task产出表存在DDL"
 ASSET_RULE_TASK_MODEL = "Task产出表存在Model"
 ASSET_RULE_TASK_LINEAGE = "Task血缘目标与实际产出一致"
-REPAIR_RULE_TABLE_MAX_LENGTH = "TABLE_NAME_MAX_LENGTH"
-REPAIR_RULE_DWS_ENTITY = "DWS_ENTITY_ALIGNMENT"
-REPAIR_RULE_DIM_ENTITY = "DIM_ENTITY_ALIGNMENT"
-REPAIR_RULE_SEMANTIC_METADATA = "TABLE_SEMANTIC_METADATA_ALIGNMENT"
-REPAIR_RULE_ATOMIC_METRIC = "ATOMIC_METRIC"
-REPAIR_RULE_DERIVED_METRIC = "DERIVED_METRIC"
-REPAIR_FILE_RULE_REFS = {
-    FILE_RULE_DDL: "DDL_FILE_NAME",
-    FILE_RULE_MODEL_NAME: "MODEL_FILE_NAME",
-    FILE_RULE_TASK_SQL: "TASK_OUTPUT_NAME",
+METADATA_HEALTH_RULES = {
+    "METADATA_DIM_HAS_PRIMARY_ENTITY": rule_meta(
+        name="entities.primary.code已配置",
+        severity=SEVERITY_HIGH,
+        title="DIM模型缺少主实体",
+        remediation_summary="在模型YAML中补齐entities.primary.code或entity.code",
+        strategy="update_model_primary_entity",
+        edit_scope=["models"],
+    ),
+    "METADATA_ENTITY_KEYS_EXIST": rule_meta(
+        name="entities.key_columns存在于表字段",
+        severity=SEVERITY_HIGH,
+        title="实体键字段不存在于表结构",
+        remediation_summary="修正entities.key_columns，或补齐DDL中的实体键字段",
+        strategy="align_entity_key_columns",
+        edit_scope=["models", "ddl"],
+    ),
+    "METADATA_RELATIONSHIP_FROM_PRIMARY": rule_meta(
+        name="entities.relationship.from_entity等于主实体",
+        severity=SEVERITY_MEDIUM,
+        title="实体关系来源与主实体不一致",
+        remediation_summary="修正实体relationship.from_entity为当前模型主实体",
+        strategy="update_entity_relationship",
+        edit_scope=["models"],
+    ),
+    "METADATA_ENTITY_NOT_DUPLICATE_PRIMARY": rule_meta(
+        name="entities.code不同于主实体",
+        severity=SEVERITY_MEDIUM,
+        title="关联实体与主实体重复",
+        remediation_summary="移除重复实体，或修正关联实体code",
+        strategy="deduplicate_model_entities",
+        edit_scope=["models"],
+    ),
+    "METADATA_GRAIN_KEYS_EXIST": rule_meta(
+        name="grain.keys存在于表字段",
+        severity=SEVERITY_HIGH,
+        title="粒度键字段不存在于表结构",
+        remediation_summary="修正grain.keys，或补齐DDL中的粒度键字段",
+        strategy="align_grain_key_columns",
+        edit_scope=["models", "ddl"],
+    ),
+    "METADATA_GRAIN_ENTITIES_PRESENT": rule_meta(
+        name="grain.entities已配置",
+        severity=SEVERITY_HIGH,
+        title="DWS模型缺少grain.entities",
+        remediation_summary="在模型YAML中补齐grain.entities",
+        strategy="update_model_grain_entities",
+        edit_scope=["models"],
+    ),
+    "METADATA_GRAIN_ENTITIES_DEFINED": rule_meta(
+        name="grain.entities有实体定义",
+        severity=SEVERITY_MEDIUM,
+        title="grain.entities引用了未定义实体",
+        remediation_summary="补齐实体定义，或修正grain.entities为已定义实体",
+        strategy="update_model_grain_entities",
+        edit_scope=["models"],
+    ),
+    "METADATA_DATA_DOMAIN_VALID": rule_meta(
+        name="data_domain配置有效",
+        severity=SEVERITY_MEDIUM,
+        title="data_domain配置无效",
+        remediation_summary="按命名字典修正模型YAML中的data_domain",
+        strategy="update_model_business_metadata",
+        edit_scope=["models"],
+    ),
+    "METADATA_BUSINESS_AREA_VALID": rule_meta(
+        name="business_area配置有效",
+        severity=SEVERITY_MEDIUM,
+        title="business_area配置无效",
+        remediation_summary="按命名字典修正模型YAML中的business_area",
+        strategy="update_model_business_metadata",
+        edit_scope=["models"],
+    ),
+}
+
+ASSET_COMPLETENESS_RULES = {
+    "ASSET_DDL_HAS_MODEL": rule_meta(
+        name=ASSET_RULE_DDL_MODEL,
+        severity=SEVERITY_HIGH,
+        title="DDL表缺少Model",
+        remediation_summary="为该DDL表补齐models/*.yaml元数据文件",
+        strategy="create_missing_model",
+        edit_scope=["models"],
+    ),
+    "ASSET_EXECUTABLE_DDL_HAS_TASK": rule_meta(
+        name=ASSET_RULE_DDL_TASK,
+        severity=SEVERITY_HIGH,
+        title="需执行表缺少产出Task",
+        remediation_summary="补齐产出该表的tasks/*.sql，或调整模型物化配置",
+        strategy="create_missing_task",
+        edit_scope=["tasks", "models"],
+    ),
+    "ASSET_MODEL_HAS_DDL": rule_meta(
+        name=ASSET_RULE_MODEL_DDL,
+        severity=SEVERITY_HIGH,
+        title="Model缺少对应DDL",
+        remediation_summary="补齐对应DDL，或删除/修正无效Model",
+        strategy="create_missing_ddl",
+        edit_scope=["ddl", "models"],
+    ),
+    "ASSET_TASK_OUTPUT_HAS_DDL": rule_meta(
+        name=ASSET_RULE_TASK_DDL,
+        severity=SEVERITY_HIGH,
+        title="Task产出表缺少DDL",
+        remediation_summary="补齐对应DDL，或修正Task产出目标",
+        strategy="create_missing_ddl",
+        edit_scope=["ddl", "tasks"],
+    ),
+    "ASSET_TASK_OUTPUT_HAS_MODEL": rule_meta(
+        name=ASSET_RULE_TASK_MODEL,
+        severity=SEVERITY_HIGH,
+        title="Task产出表缺少Model",
+        remediation_summary="补齐对应Model，或修正Task产出目标",
+        strategy="create_missing_model",
+        edit_scope=["models", "tasks"],
+    ),
+    "ASSET_TASK_LINEAGE_MATCHES_OUTPUT": rule_meta(
+        name=ASSET_RULE_TASK_LINEAGE,
+        severity=SEVERITY_HIGH,
+        title="Task血缘目标与实际产出不一致",
+        remediation_summary="刷新血缘，或修正Task中的实际写入目标",
+        strategy="refresh_or_fix_task_lineage",
+        edit_scope=["tasks", "lineage"],
+    ),
+}
+
+ASSET_RULE_IDS = {
+    ASSET_RULE_DDL_MODEL: "ASSET_DDL_HAS_MODEL",
+    ASSET_RULE_DDL_TASK: "ASSET_EXECUTABLE_DDL_HAS_TASK",
+    ASSET_RULE_MODEL_DDL: "ASSET_MODEL_HAS_DDL",
+    ASSET_RULE_TASK_DDL: "ASSET_TASK_OUTPUT_HAS_DDL",
+    ASSET_RULE_TASK_MODEL: "ASSET_TASK_OUTPUT_HAS_MODEL",
+    ASSET_RULE_TASK_LINEAGE: "ASSET_TASK_LINEAGE_MATCHES_OUTPUT",
+}
+
+REUSABILITY_RULES = {
+    "REUSE_DOWNSTREAM_REACHES_TARGET": rule_meta(
+        name="中间层表达到目标复用度",
+        severity=SEVERITY_LOW,
+        title="中间层表复用不足",
+        remediation_summary="确认该中间层表是否应保留，或补充下游复用链路",
+        strategy="review_reuse_or_downstream_dependencies",
+        edit_scope=["tasks", "models"],
+    ),
+}
+
+LINEAGE_DEPTH_RULES = {
+    "DEPTH_MIDDLE_LAYER_IS_OPTIMAL": rule_meta(
+        name="ADS链路中间层深度合理",
+        severity=SEVERITY_MEDIUM,
+        title="ADS链路中间层深度不合理",
+        remediation_summary="调整ADS上游链路，使其经过合理的DWD/DWS/DIM中间层",
+        strategy="refactor_lineage_depth",
+        edit_scope=["tasks", "models"],
+    ),
+}
+
+ARCHITECTURE_RULES = {
+    "ARCH_ALLOWED_DEPENDENCY": rule_meta(
+        name="层级依赖方向合理",
+        severity=SEVERITY_LOW,
+        title="层级依赖方向合理",
+        remediation_summary="无需处理",
+        strategy="none",
+        edit_scope=[],
+    ),
+    "ARCH_REVERSE_DEPENDENCY": rule_meta(
+        name="禁止反向依赖",
+        severity=SEVERITY_HIGH,
+        title="存在反向依赖",
+        remediation_summary="调整作业依赖方向，避免高层数据反向流入低层",
+        strategy="refactor_reverse_dependency",
+        edit_scope=["tasks"],
+    ),
+    "ARCH_SAME_LAYER_DEPENDENCY": rule_meta(
+        name="避免非必要同层依赖",
+        severity=SEVERITY_LOW,
+        title="存在同层依赖",
+        remediation_summary="确认同层依赖是否必要，必要时沉淀公共上游或调整分层",
+        strategy="review_same_layer_dependency",
+        edit_scope=["tasks", "models"],
+    ),
+    "ARCH_SKIP_LAYER_DEPENDENCY": rule_meta(
+        name="避免跳层依赖",
+        severity=SEVERITY_MEDIUM,
+        title="存在跳层依赖",
+        remediation_summary="补齐或复用中间层，避免ODS/DWD直接服务高层结果",
+        strategy="insert_or_reuse_middle_layer",
+        edit_scope=["tasks", "models"],
+    ),
+    "ARCH_DECLARED_LAYER_MATCHES_LLM": rule_meta(
+        name="配置层与LLM推断层一致",
+        severity=SEVERITY_MEDIUM,
+        title="表层级配置疑似错误",
+        remediation_summary="复核模型layer配置，必要时修正models/*.yaml",
+        strategy="update_model_layer",
+        edit_scope=["models"],
+    ),
+    "ARCH_DWD_DIMENSION_POSITION": rule_meta(
+        name="维度表不应位于DWD",
+        severity=SEVERITY_LOW,
+        title="维度表位置不当",
+        remediation_summary="将维度型表迁移到DIM层，或修正表类型判断",
+        strategy="move_dimension_table_to_dim",
+        edit_scope=["ddl", "tasks", "models"],
+    ),
+    "ARCH_TABLE_TYPE_MATCHES_LLM": rule_meta(
+        name="配置表类型与LLM推断一致",
+        severity=SEVERITY_MEDIUM,
+        title="表类型配置疑似错误",
+        remediation_summary="复核table_type配置，必要时修正models/*.yaml",
+        strategy="update_model_table_type",
+        edit_scope=["models"],
+    ),
+    "ARCH_DATA_DOMAIN_MATCHES_LLM": rule_meta(
+        name="数据域配置与LLM推断一致",
+        severity=SEVERITY_MEDIUM,
+        title="数据域配置疑似错误",
+        remediation_summary="复核data_domain配置，必要时修正models/*.yaml",
+        strategy="update_model_business_metadata",
+        edit_scope=["models"],
+    ),
+    "ARCH_BUSINESS_AREA_MATCHES_LLM": rule_meta(
+        name="业务板块配置与LLM推断一致",
+        severity=SEVERITY_MEDIUM,
+        title="业务板块配置疑似错误",
+        remediation_summary="复核business_area配置，必要时修正models/*.yaml",
+        strategy="update_model_business_metadata",
+        edit_scope=["models"],
+    ),
+}
+
+NAMING_RULES = {
+    "NAMING_TABLE_TEMPLATE": rule_meta(
+        name="表名符合规范模板",
+        severity=SEVERITY_MEDIUM,
+        title="表名不符合规范模板",
+        remediation_summary="按所在层级的表名模板重命名表，并同步DDL、Task和Model引用",
+        strategy="rename_table_and_rewrite_references",
+        edit_scope=["ddl", "tasks", "models"],
+    ),
+    "NAMING_TABLE_MAX_LENGTH": rule_meta(
+        name="表名长度符合限制",
+        severity=SEVERITY_LOW,
+        title="表名超过长度限制",
+        remediation_summary="缩短表名并同步相关DDL、Task和Model引用",
+        strategy="rename_table_and_rewrite_references",
+        edit_scope=["ddl", "tasks", "models"],
+    ),
+    "NAMING_COLUMN_NAME": rule_meta(
+        name="列名符合规范",
+        severity=SEVERITY_LOW,
+        title="字段名不符合规范",
+        remediation_summary="按字段命名规则重命名字段，并同步DDL、Task和Model引用",
+        strategy="rename_columns_and_rewrite_references",
+        edit_scope=["ddl", "tasks", "models"],
+    ),
+    "NAMING_ATOMIC_METRIC": rule_meta(
+        name=ATOMIC_METRIC_RULE_NAME,
+        severity=SEVERITY_MEDIUM,
+        title="原子指标命名不合规",
+        remediation_summary="按原子指标命名规则修正指标名，并同步相关引用",
+        strategy="rename_metric_and_rewrite_references",
+        edit_scope=["models", "ddl", "tasks"],
+    ),
+    "NAMING_DERIVED_METRIC": rule_meta(
+        name=DERIVED_METRIC_RULE_NAME,
+        severity=SEVERITY_MEDIUM,
+        title="派生指标命名不合规",
+        remediation_summary="按派生指标命名规则修正指标名，并同步相关引用",
+        strategy="rename_metric_and_rewrite_references",
+        edit_scope=["models", "ddl", "tasks"],
+    ),
+    "NAMING_DWS_ENTITY_ALIGNMENT": rule_meta(
+        name=DWS_ENTITY_RULE_NAME,
+        severity=SEVERITY_MEDIUM,
+        title="DWS表名实体与grain.entities不一致",
+        remediation_summary="修正DWS表名实体段或模型grain.entities",
+        strategy="align_dws_name_with_grain_entities",
+        edit_scope=["models", "ddl", "tasks"],
+    ),
+    "NAMING_DIM_ENTITY_ALIGNMENT": rule_meta(
+        name=DIM_ENTITY_RULE_NAME,
+        severity=SEVERITY_MEDIUM,
+        title="DIM表名实体与主实体不一致",
+        remediation_summary="修正DIM表名实体段或模型主实体配置",
+        strategy="align_dim_name_with_primary_entity",
+        edit_scope=["models", "ddl", "tasks"],
+    ),
+    "NAMING_SEMANTIC_METADATA_ALIGNMENT": rule_meta(
+        name="表名语义段与模型元数据一致",
+        severity=SEVERITY_MEDIUM,
+        title="表名语义段与模型元数据不一致",
+        remediation_summary="修正表名中的业务语义段，或修正模型业务元数据",
+        strategy="align_table_name_with_model_metadata",
+        edit_scope=["models", "ddl", "tasks"],
+    ),
+    "NAMING_DDL_FILE_NAME": rule_meta(
+        name=FILE_RULE_DDL,
+        severity=SEVERITY_LOW,
+        title="DDL文件名与表名不一致",
+        remediation_summary="重命名DDL文件，使文件名与建表表名一致",
+        strategy="rename_file",
+        edit_scope=["file_path"],
+    ),
+    "NAMING_MODEL_FILE_NAME": rule_meta(
+        name=FILE_RULE_MODEL_NAME,
+        severity=SEVERITY_LOW,
+        title="Model文件名与模型name不一致",
+        remediation_summary="重命名Model文件，或修正模型name",
+        strategy="rename_file_or_model",
+        edit_scope=["file_path", "models"],
+    ),
+    "NAMING_TASK_OUTPUT_NAME": rule_meta(
+        name=FILE_RULE_TASK_SQL,
+        severity=SEVERITY_LOW,
+        title="Task文件名与产出表不一致",
+        remediation_summary="重命名Task文件，或修正Task产出表",
+        strategy="rename_file_or_task_output",
+        edit_scope=["file_path", "tasks"],
+    ),
+}
+
+NAMING_FILE_RULE_IDS = {
+    FILE_RULE_DDL: "NAMING_DDL_FILE_NAME",
+    FILE_RULE_MODEL_NAME: "NAMING_MODEL_FILE_NAME",
+    FILE_RULE_TASK_SQL: "NAMING_TASK_OUTPUT_NAME",
 }
 
 def normalize_score_weights(weights: dict | None = None) -> dict:
@@ -128,16 +454,6 @@ def normalize_score_weights(weights: dict | None = None) -> dict:
     return {**normalized, **extra}
 
 
-def build_metric_result(metric: dict, display_score: float | None = None) -> dict:
-    raw = metric["score"]
-    display = raw if display_score is None else display_score
-    result = dict(metric)
-    del result["score"]
-    result["raw"] = raw
-    result["display"] = display
-    return result
-
-
 # 依赖违规定义: 通过 src/tgt 层序号差自动判定
 # rank_diff = src_rank - tgt_rank
 # 正数 → 反向依赖 (高层→低层, 数据倒流)
@@ -148,12 +464,12 @@ def build_metric_result(metric: dict, display_score: float | None = None) -> dic
 
 ARCH_VIOLATION_RULES = [
     # (rank_diff, description, severity, penalty)
-    (3, "反向依赖: 跳过三层(ADS→ODS)", "严重", 40),
-    (2, "反向依赖: 跳过两层", "严重", 30),
-    (1, "反向依赖: 跳过一层", "高", 20),
-    (0, "同层依赖(非必要)", "低", 2),
-    (-2, "跳过中间层(DWD→ADS 或 ODS→DWS)", "低", 5),
-    (-3, "跳过两层(ODS→ADS)", "中", 10),
+    (3, "反向依赖: 跳过三层(ADS→ODS)", SEVERITY_HIGH, 40),
+    (2, "反向依赖: 跳过两层", SEVERITY_HIGH, 30),
+    (1, "反向依赖: 跳过一层", SEVERITY_HIGH, 20),
+    (0, "同层依赖(非必要)", SEVERITY_LOW, 2),
+    (-2, "跳过中间层(DWD→ADS 或 ODS→DWS)", SEVERITY_MEDIUM, 5),
+    (-3, "跳过两层(ODS→ADS)", SEVERITY_MEDIUM, 10),
 ]
 
 # ============================================================
@@ -214,36 +530,70 @@ def build_table_layer_map(tables: list) -> dict:
 def score_reusability(tables: list, downstream_map: dict) -> dict:
     middle = [t for t in tables if t["layer"] in ("DWD", "DWS", "DIM")]
 
-    rows = []
+    checks = []
+    scores = []
+    downstream_counts = []
     for t in middle:
         name = t["name"]
         cnt = len(downstream_map.get(name, set()))
         score = min(100, cnt / REUSE_FULL_SCORE_AT * 100)
-        rows.append(
-            dict(table=name,
-                 layer=t["layer"],
-                 downstream_count=cnt,
-                 score=round(score, 1)))
+        scores.append(round(score, 1))
+        downstream_counts.append(cnt)
+        issue = {}
+        if cnt == 0:
+            issue = {
+                "severity": SEVERITY_MEDIUM,
+                "title": "中间层表无下游复用",
+                "message": "中间层表无下游引用",
+            }
+        elif cnt < REUSE_FULL_SCORE_AT:
+            issue = {
+                "severity": SEVERITY_LOW,
+                "title": "中间层表复用不足",
+                "message": f"下游引用数={cnt}，低于目标{REUSE_FULL_SCORE_AT}",
+            }
+        checks.append(
+            make_check(
+                rule_id="REUSE_DOWNSTREAM_REACHES_TARGET",
+                target_type="table",
+                target=name,
+                passed=cnt >= REUSE_FULL_SCORE_AT,
+                expected=f"下游引用数 >= {REUSE_FULL_SCORE_AT}",
+                actual=f"下游引用数 = {cnt}",
+                evidence={
+                    "layer": t["layer"],
+                    "downstream_count": cnt,
+                },
+                message=issue.get("message", ""),
+                issue=issue or None,
+            )
+        )
 
-    avg_score = round(sum(r["score"]
-                          for r in rows) / len(rows), 1) if rows else 0.0
-    avg_reuse = (round(
-        sum(r["downstream_count"]
-            for r in rows) / len(rows), 2) if rows else 0.0)
-
-    dist = dict(
-        high=sum(1 for r in rows
-                 if r["downstream_count"] >= REUSE_FULL_SCORE_AT),
-        medium=sum(1 for r in rows
-                   if 1 <= r["downstream_count"] < REUSE_FULL_SCORE_AT),
-        none=sum(1 for r in rows if r["downstream_count"] == 0),
+    avg_score = round(sum(scores) / len(scores), 1) if scores else 0.0
+    avg_reuse = (
+        round(sum(downstream_counts) / len(downstream_counts), 2)
+        if downstream_counts
+        else 0.0
     )
 
-    return dict(
+    dist = dict(
+        high=sum(1 for cnt in downstream_counts
+                 if cnt >= REUSE_FULL_SCORE_AT),
+        medium=sum(1 for cnt in downstream_counts
+                   if 1 <= cnt < REUSE_FULL_SCORE_AT),
+        none=sum(1 for cnt in downstream_counts if cnt == 0),
+    )
+
+    return finalize_dimension(
+        dimension="reuse",
         score=avg_score,
-        avg_reuse_count=avg_reuse,
-        details=rows,
-        distribution=dist,
+        checks=checks,
+        rules=REUSABILITY_RULES,
+        summary={
+            "avg_reuse_count": avg_reuse,
+            "distribution": dist,
+            "target_downstream_count": REUSE_FULL_SCORE_AT,
+        },
     )
 
 
@@ -304,19 +654,61 @@ def score_lineage_depth(tables: list, edges: list,
 
     ads = [t for t in tables if t["layer"] == "ADS"]
 
-    rows = []
+    checks = []
+    scores = []
+    depths = []
     for t in ads:
         name = t["name"]
         depth = _max_middle_depth(name, upstream, table_layers)
         score = _depth_to_score(depth)
-        rows.append(dict(table=name, max_middle_depth=depth, score=score))
+        scores.append(score)
+        depths.append(depth)
+        issue = {}
+        if depth == 0:
+            issue = {
+                "severity": SEVERITY_HIGH,
+                "title": "ADS链路缺少中间层",
+                "message": "ADS到ODS链路中未发现DWD/DWS/DIM中间层",
+            }
+        elif depth == 1:
+            issue = {
+                "severity": SEVERITY_MEDIUM,
+                "title": "ADS链路中间层不足",
+                "message": "ADS链路只有一层中间层",
+            }
+        elif depth >= 3:
+            issue = {
+                "severity": SEVERITY_MEDIUM,
+                "title": "ADS链路中间层过长",
+                "message": f"ADS链路中间层深度={depth}",
+            }
+        checks.append(
+            make_check(
+                rule_id="DEPTH_MIDDLE_LAYER_IS_OPTIMAL",
+                target_type="table",
+                target=name,
+                passed=depth == 2,
+                expected="最大中间层深度 = 2",
+                actual=f"最大中间层深度 = {depth}",
+                evidence={"max_middle_depth": depth},
+                message=issue.get("message", ""),
+                issue=issue or None,
+            )
+        )
 
-    avg_score = round(sum(r["score"]
-                          for r in rows) / len(rows), 1) if rows else 100.0
-    avg_depth = round(sum(r["max_middle_depth"]
-                          for r in rows) / len(rows), 2) if rows else 0.0
+    avg_score = round(sum(scores) / len(scores), 1) if scores else 100.0
+    avg_depth = round(sum(depths) / len(depths), 2) if depths else 0.0
 
-    return dict(score=avg_score, avg_middle_depth=avg_depth, details=rows)
+    return finalize_dimension(
+        dimension="depth",
+        score=avg_score,
+        checks=checks,
+        rules=LINEAGE_DEPTH_RULES,
+        summary={
+            "avg_middle_depth": avg_depth,
+            "ideal_middle_depth": 2,
+        },
+    )
 
 
 # ============================================================
@@ -401,9 +793,48 @@ def score_architecture_health(tables: list, edges: list,
         if src != tgt:
             table_edges[(src, tgt)].add(ie.get("source_file", ""))
 
-    violations = []
+    checks = []
     # 每表累计权重 (cap 前)
     table_weight = defaultdict(int)
+
+    def record_check(
+        *,
+        rule_id: str,
+        target_table: str,
+        passed: bool,
+        expected: str,
+        actual: str,
+        evidence: dict | None = None,
+        message: str = "",
+        severity: str | None = None,
+        title: str | None = None,
+    ) -> None:
+        issue = {}
+        if severity:
+            issue["severity"] = severity
+        if title:
+            issue["title"] = title
+        if message:
+            issue["message"] = message
+        checks.append(
+            make_check(
+                rule_id=rule_id,
+                target_type="table",
+                target=target_table,
+                passed=passed,
+                expected=expected,
+                actual=actual,
+                evidence=evidence,
+                message=message,
+                issue=issue or None,
+            )
+        )
+        if not passed:
+            effective_severity = (
+                severity
+                or ARCHITECTURE_RULES[rule_id]["severity"]
+            )
+            table_weight[target_table] += SEVERITY_WEIGHT[effective_severity]
 
     # ---- 规则检测: 跨层/反向/跳层依赖 (归属 target 表) ----
     for (src, tgt), files in table_edges.items():
@@ -415,29 +846,57 @@ def score_architecture_health(tables: list, edges: list,
             continue
 
         rank_diff = src_rank - tgt_rank
+        evidence = {
+            "source": src,
+            "source_layer": src_layer,
+            "target": tgt,
+            "target_layer": tgt_layer,
+            "source_files": sorted(files),
+            "rank_diff": rank_diff,
+        }
 
         # ADS 面向应用输出，直接引用公共维度表补充属性是合理的数据集市建模方式。
         if src_layer == "DIM" and tgt_layer == "ADS":
+            record_check(
+                rule_id="ARCH_ALLOWED_DEPENDENCY",
+                target_table=tgt,
+                passed=True,
+                expected="层级依赖方向合理",
+                actual=f"{src}({src_layer}) -> {tgt}({tgt_layer})",
+                evidence=evidence,
+            )
             continue
 
         # 正常相邻上层 → 跳过
         if rank_diff == -1:
+            record_check(
+                rule_id="ARCH_ALLOWED_DEPENDENCY",
+                target_table=tgt,
+                passed=True,
+                expected="层级依赖方向合理",
+                actual=f"{src}({src_layer}) -> {tgt}({tgt_layer})",
+                evidence=evidence,
+            )
             continue
 
         for diff, desc, severity, _penalty in ARCH_VIOLATION_RULES:
             if rank_diff == diff:
-                weight = SEVERITY_WEIGHT[severity]
-                violations.append(
-                    dict(
-                        source=f"{src}({src_layer})",
-                        target=f"{tgt}({tgt_layer})",
-                        severity=severity,
-                        weight=weight,
-                        description=desc,
-                        source_file=", ".join(sorted(files)),
-                        belongs_to=tgt,
-                    ))
-                table_weight[tgt] += weight
+                if severity == SEVERITY_HIGH:
+                    rule_id = "ARCH_REVERSE_DEPENDENCY"
+                elif rank_diff == 0:
+                    rule_id = "ARCH_SAME_LAYER_DEPENDENCY"
+                else:
+                    rule_id = "ARCH_SKIP_LAYER_DEPENDENCY"
+                record_check(
+                    rule_id=rule_id,
+                    target_table=tgt,
+                    passed=False,
+                    expected="层级依赖方向合理",
+                    actual=f"{src}({src_layer}) -> {tgt}({tgt_layer})",
+                    evidence=evidence,
+                    message=desc,
+                    severity=severity,
+                )
 
     # ---- LLM 检测: 分层配置疑似错误 & 维度表位置不当 (归属被评估表本身) ----
     if llm_results:
@@ -446,54 +905,57 @@ def score_architecture_health(tables: list, edges: list,
         for name, res in cls_map.items():
             layer = table_map[name]["layer"] if name in table_map else "OTHER"
 
-            if res.is_violating_declared_layer:
-                weight = SEVERITY_WEIGHT["中"]
-                violations.append(dict(
-                    source=f"{name}({layer})",
-                    target=f"{name}({res.inferred_layer})",
-                    severity="中",
-                    weight=weight,
-                    description=(
-                        "分层配置疑似错误(LLM): "
-                        f"配置层={layer}, 推断层={res.inferred_layer}"
-                    ),
-                    source_file="",
-                    source_type="llm",
-                    belongs_to=name,
-                ))
-                table_weight[name] += weight
+            record_check(
+                rule_id="ARCH_DECLARED_LAYER_MATCHES_LLM",
+                target_table=name,
+                passed=not res.is_violating_declared_layer,
+                expected="配置层与LLM推断层一致",
+                actual=f"配置层={layer}, 推断层={res.inferred_layer}",
+                evidence={
+                    "source_type": "llm",
+                    "confidence": getattr(res, "confidence", None),
+                },
+                message=(
+                    "分层配置疑似错误(LLM): "
+                    f"配置层={layer}, 推断层={res.inferred_layer}"
+                ) if res.is_violating_declared_layer else "",
+            )
 
-            if res.table_type == "dimension" and layer == "DWD":
-                weight = SEVERITY_WEIGHT["低"]
-                violations.append(dict(
-                    source=f"{name}({layer})",
-                    target="建议: DIM",
-                    severity="低",
-                    weight=weight,
-                    description="维度表位置不当(LLM): 维度表应置于 DIM 层",
-                    source_file="",
-                    source_type="llm",
-                    belongs_to=name,
-                ))
-                table_weight[name] += weight
+            is_dwd_dimension = res.table_type == "dimension" and layer == "DWD"
+            record_check(
+                rule_id="ARCH_DWD_DIMENSION_POSITION",
+                target_table=name,
+                passed=not is_dwd_dimension,
+                expected="维度表不位于DWD层",
+                actual=f"配置层={layer}, LLM表类型={res.table_type}",
+                evidence={
+                    "source_type": "llm",
+                    "confidence": getattr(res, "confidence", None),
+                },
+                message=(
+                    "维度表位置不当(LLM): 维度表应置于 DIM 层"
+                    if is_dwd_dimension else ""
+                ),
+            )
 
             declared_type = _declared_table_type(model_metadata, name)
-            if declared_type and declared_type != res.table_type:
-                weight = SEVERITY_WEIGHT["中"]
-                violations.append(dict(
-                    source=f"{name}({declared_type})",
-                    target=f"{name}({res.table_type})",
-                    severity="中",
-                    weight=weight,
-                    description=(
+            if declared_type:
+                type_mismatch = declared_type != res.table_type
+                record_check(
+                    rule_id="ARCH_TABLE_TYPE_MATCHES_LLM",
+                    target_table=name,
+                    passed=not type_mismatch,
+                    expected="配置表类型与LLM推断一致",
+                    actual=f"配置类型={declared_type}, 推断类型={res.table_type}",
+                    evidence={
+                        "source_type": "llm",
+                        "confidence": getattr(res, "confidence", None),
+                    },
+                    message=(
                         "表类型配置疑似错误(LLM): "
                         f"配置类型={declared_type}, 推断类型={res.table_type}"
-                    ),
-                    source_file="",
-                    source_type="llm",
-                    belongs_to=name,
-                ))
-                table_weight[name] += weight
+                    ) if type_mismatch else "",
+                )
 
             if _data_domain_applies(layer):
                 inferred_domain = _valid_inferred_data_domain(
@@ -506,27 +968,32 @@ def score_architecture_health(tables: list, edges: list,
                     if business_domain_config
                     else _declared_data_domain(model_metadata, name)
                 )
-                if inferred_domain and inferred_domain != declared_domain:
-                    severity = "中" if declared_domain else "低"
-                    weight = SEVERITY_WEIGHT[severity]
-                    violations.append(dict(
-                        source=(
-                            f"{name}(data_domain="
-                            f"{declared_domain or '未配置'})"
-                        ),
-                        target=f"{name}(data_domain={inferred_domain})",
-                        severity=severity,
-                        weight=weight,
-                        description=(
-                            "数据域配置疑似错误(LLM): "
+                if inferred_domain:
+                    domain_mismatch = inferred_domain != declared_domain
+                    severity = (
+                        SEVERITY_MEDIUM
+                        if declared_domain else SEVERITY_LOW
+                    )
+                    record_check(
+                        rule_id="ARCH_DATA_DOMAIN_MATCHES_LLM",
+                        target_table=name,
+                        passed=not domain_mismatch,
+                        expected="data_domain与LLM推断一致",
+                        actual=(
                             f"配置={declared_domain or '未配置'}, "
                             f"推断={inferred_domain}"
                         ),
-                        source_file="",
-                        source_type="llm",
-                        belongs_to=name,
-                    ))
-                    table_weight[name] += weight
+                        evidence={
+                            "source_type": "llm",
+                            "confidence": getattr(res, "confidence", None),
+                        },
+                        message=(
+                            "数据域配置疑似错误(LLM): "
+                            f"配置={declared_domain or '未配置'}, "
+                            f"推断={inferred_domain}"
+                        ) if domain_mismatch else "",
+                        severity=severity if domain_mismatch else None,
+                    )
 
             if _business_area_applies(layer):
                 inferred_area = _valid_inferred_business_area(
@@ -539,26 +1006,31 @@ def score_architecture_health(tables: list, edges: list,
                     if business_domain_config
                     else _declared_business_area(model_metadata, name)
                 )
-                if inferred_area and inferred_area != declared_area:
-                    severity = "中" if declared_area else "低"
-                    weight = SEVERITY_WEIGHT[severity]
-                    violations.append(dict(
-                        source=(
-                            f"{name}(business_area="
-                            f"{declared_area or '未配置'})"
+                if inferred_area:
+                    area_mismatch = inferred_area != declared_area
+                    severity = (
+                        SEVERITY_MEDIUM
+                        if declared_area else SEVERITY_LOW
+                    )
+                    record_check(
+                        rule_id="ARCH_BUSINESS_AREA_MATCHES_LLM",
+                        target_table=name,
+                        passed=not area_mismatch,
+                        expected="business_area与LLM推断一致",
+                        actual=(
+                            f"配置={declared_area or '未配置'}, "
+                            f"推断={inferred_area}"
                         ),
-                        target=f"{name}(business_area={inferred_area})",
-                        severity=severity,
-                        weight=weight,
-                        description=(
+                        evidence={
+                            "source_type": "llm",
+                            "confidence": getattr(res, "confidence", None),
+                        },
+                        message=(
                             "业务板块配置疑似错误(LLM): "
                             f"配置={declared_area or '未配置'}, 推断={inferred_area}"
-                        ),
-                        source_file="",
-                        source_type="llm",
-                        belongs_to=name,
-                    ))
-                    table_weight[name] += weight
+                        ) if area_mismatch else "",
+                        severity=severity if area_mismatch else None,
+                    )
 
     # 每表扣分上限 (cap)
     capped_total = 0
@@ -571,17 +1043,16 @@ def score_architecture_health(tables: list, edges: list,
     # 加权违规率评分
     score = max(0, round(100 * (1 - capped_total / table_count), 1)) if table_count else 100.0
 
-    summary = defaultdict(int)
-    for v in violations:
-        summary[v["severity"]] += 1
-
-    return dict(
+    return finalize_dimension(
+        dimension="architecture",
         score=score,
-        table_count=table_count,
-        capped_total=capped_total,
-        table_capped=table_capped,
-        violation_summary=dict(summary),
-        violations=violations,
+        checks=checks,
+        rules=ARCHITECTURE_RULES,
+        summary={
+            "table_count": table_count,
+            "capped_total": capped_total,
+            "table_capped": table_capped,
+        },
     )
 
 
@@ -799,23 +1270,6 @@ def _table_column_names(table: dict) -> set[str]:
     }
 
 
-def _metadata_check_result(
-    passed: int,
-    total: int,
-    violations: list[dict],
-    rule_summary: dict[str, dict],
-    details: list[dict],
-) -> dict:
-    return dict(
-        score=round(passed / total * 100, 1) if total else 100.0,
-        passed=passed,
-        total=total,
-        violations=violations,
-        rule_summary=rule_summary,
-        details=details,
-    )
-
-
 def score_metadata_health(
     tables: list,
     nc,
@@ -826,7 +1280,12 @@ def score_metadata_health(
 ) -> dict:
     """检查 models/*.yaml 的结构自洽性与业务元数据有效性。"""
     if not model_metadata:
-        return _metadata_check_result(0, 0, [], {}, [])
+        return finalize_dimension(
+            dimension="metadata_health",
+            score=100.0,
+            checks=[],
+            rules=METADATA_HEALTH_RULES,
+        )
 
     if asset_catalog:
         tables_by_name = {
@@ -841,31 +1300,37 @@ def score_metadata_health(
     else:
         tables_by_name = {table["name"]: table for table in tables}
     defined_entities = _model_defined_entities(model_metadata)
-    passed = 0
-    total = 0
-    violations = []
-    details = []
-    rule_summary = defaultdict(lambda: dict(pass_count=0, total=0, pct=0.0))
+    checks = []
 
     def record(
         table_name: str,
-        rule: str,
+        rule_id: str,
         ok: bool,
-        message: str = "",
+        expected: str,
+        actual: str,
+        evidence: dict | None = None,
         reason: str = "",
+        message: str = "",
+        severity: str | None = None,
     ) -> None:
-        nonlocal passed, total
-        total += 1
-        rule_summary[rule]["total"] += 1
-        if ok:
-            passed += 1
-            rule_summary[rule]["pass_count"] += 1
-        else:
-            violation = dict(table=table_name, rule=rule, message=message)
-            if reason:
-                violation["reason"] = reason
-            violations.append(violation)
-            details.append(violation)
+        issue = {}
+        if reason:
+            issue["message"] = message
+        if severity:
+            issue["severity"] = severity
+        checks.append(
+            make_check(
+                rule_id=rule_id,
+                target_type="table",
+                target=table_name,
+                passed=ok,
+                expected=expected,
+                actual=actual,
+                evidence=evidence,
+                message=message,
+                issue=issue or None,
+            )
+        )
 
     for table_name, metadata in model_metadata.items():
         if not isinstance(metadata, dict):
@@ -884,10 +1349,13 @@ def score_metadata_health(
         if layer == "DIM":
             record(
                 table_name,
-                "entities.primary.code已配置",
+                "METADATA_DIM_HAS_PRIMARY_ENTITY",
                 bool(entity_codes),
-                "缺少entities.primary.code",
+                "DIM模型配置主实体编码",
+                entity_codes[0] if entity_codes else "未配置",
+                {"layer": layer},
                 "missing",
+                "缺少entities.primary.code",
             )
 
         if table:
@@ -904,8 +1372,20 @@ def score_metadata_health(
                     ]
                     record(
                         table_name,
-                        "entities.key_columns存在于表字段",
+                        "METADATA_ENTITY_KEYS_EXIST",
                         not missing_keys,
+                        f"entities[{entity_code}].key_columns存在于表字段",
+                        (
+                            "全部存在"
+                            if not missing_keys
+                            else f"缺失字段: {missing_keys}"
+                        ),
+                        {
+                            "entity": entity_code,
+                            "key_columns": key_columns,
+                            "table_columns": sorted(columns),
+                        },
+                        "",
                         (
                             f"entities[{entity_code}]"
                             f".key_columns不存在={missing_keys}"
@@ -919,8 +1399,15 @@ def score_metadata_health(
                         relationship.get("from_entity") or "").strip()
                     record(
                         table_name,
-                        "entities.relationship.from_entity等于主实体",
+                        "METADATA_RELATIONSHIP_FROM_PRIMARY",
                         from_entity == primary_code,
+                        "relationship.from_entity等于主实体",
+                        from_entity,
+                        {
+                            "entity": entity_code,
+                            "primary_entity": primary_code,
+                        },
+                        "",
                         (
                             f"entities[{entity_code}]"
                             f".relationship.from_entity={from_entity}，"
@@ -930,8 +1417,15 @@ def score_metadata_health(
                 if primary_code and entity_code:
                     record(
                         table_name,
-                        "entities.code不同于主实体",
+                        "METADATA_ENTITY_NOT_DUPLICATE_PRIMARY",
                         entity_code != primary_code,
+                        "关联实体code不同于主实体",
+                        entity_code,
+                        {
+                            "entity": entity_code,
+                            "primary_entity": primary_code,
+                        },
+                        "",
                         f"entities.code={entity_code} 与主实体重复",
                     )
 
@@ -945,8 +1439,19 @@ def score_metadata_health(
                 ]
                 record(
                     table_name,
-                    "grain.keys存在于表字段",
+                    "METADATA_GRAIN_KEYS_EXIST",
                     not missing_grain_keys,
+                    "grain.keys存在于表字段",
+                    (
+                        "全部存在"
+                        if not missing_grain_keys
+                        else f"缺失字段: {missing_grain_keys}"
+                    ),
+                    {
+                        "grain_keys": grain_keys,
+                        "table_columns": sorted(columns),
+                    },
+                    "",
                     f"grain.keys不存在={missing_grain_keys}",
                 )
 
@@ -963,17 +1468,31 @@ def score_metadata_health(
                 ]
                 record(
                     table_name,
-                    "grain.entities有实体定义",
+                    "METADATA_GRAIN_ENTITIES_DEFINED",
                     not missing_entities,
+                    "grain.entities引用已定义实体",
+                    (
+                        "全部已定义"
+                        if not missing_entities
+                        else f"未定义实体: {missing_entities}"
+                    ),
+                    {
+                        "grain_entities": grain_entities,
+                        "defined_entities": sorted(defined_entities),
+                    },
+                    "",
                     f"grain.entities未定义={missing_entities}",
                 )
             else:
                 record(
                     table_name,
-                    "grain.entities有实体定义",
+                    "METADATA_GRAIN_ENTITIES_PRESENT",
                     False,
-                    "缺少grain.entities",
+                    "DWS模型配置grain.entities",
+                    "未配置",
+                    {"layer": layer},
                     "missing",
+                    "缺少grain.entities",
                 )
 
         if business_domain_config:
@@ -1006,10 +1525,17 @@ def score_metadata_health(
                     message = ""
                 record(
                     table_name,
-                    "data_domain配置有效",
+                    "METADATA_DATA_DOMAIN_VALID",
                     ok,
-                    message,
+                    "data_domain存在且符合业务字典",
+                    normalized_domain if ok else str(raw_domain or "未配置"),
+                    {
+                        "raw_value": raw_domain,
+                        "normalized_value": normalized_domain,
+                    },
                     reason,
+                    message,
+                    SEVERITY_LOW if reason == "missing" else None,
                 )
 
             if _business_area_applies(layer):
@@ -1041,23 +1567,38 @@ def score_metadata_health(
                     message = ""
                 record(
                     table_name,
-                    "business_area配置有效",
+                    "METADATA_BUSINESS_AREA_VALID",
                     ok,
-                    message,
+                    "business_area存在且符合业务字典",
+                    normalized_area if ok else str(raw_area or "未配置"),
+                    {
+                        "raw_value": raw_area,
+                        "normalized_value": normalized_area,
+                    },
                     reason,
+                    message,
+                    SEVERITY_LOW if reason == "missing" else None,
                 )
 
-    summary = {}
-    for rule, counts in rule_summary.items():
-        total_count = counts["total"]
-        pass_count = counts["pass_count"]
-        summary[rule] = dict(
-            pass_count=pass_count,
-            total=total_count,
-            pct=round(pass_count / total_count * 100, 1)
-            if total_count else 0,
-        )
-    return _metadata_check_result(passed, total, violations, summary, details)
+    passed = sum(1 for check in checks if check["passed"])
+    total = len(checks)
+    return finalize_dimension(
+        dimension="metadata_health",
+        score=round(passed / total * 100, 1) if total else 100.0,
+        checks=checks,
+        rules=METADATA_HEALTH_RULES,
+    )
+
+
+def _sort_naming_violations(violations: list) -> list:
+    return sorted(
+        violations,
+        key=lambda item: (
+            json.dumps(item, ensure_ascii=False, sort_keys=True)
+            if isinstance(item, dict)
+            else str(item)
+        ),
+    )
 
 
 def _naming_check_result(
@@ -1069,7 +1610,7 @@ def _naming_check_result(
     result = {
         "passed": passed,
         "total": total,
-        "violations": sorted(violations),
+        "violations": _sort_naming_violations(violations),
     }
     if diagnostics:
         result["diagnostics"] = sorted(
@@ -1505,22 +2046,31 @@ def _asset_requires_task(asset: dict) -> bool:
 
 def score_asset_completeness(asset_catalog: dict) -> dict:
     """Score DDL/model/task closure and task-lineage consistency."""
-    passed = 0
-    total = 0
-    details = []
-    rule_summary = defaultdict(lambda: dict(pass_count=0, total=0, pct=0.0))
+    checks = []
 
-    def record(asset_name: str, rule: str, ok: bool, message: str) -> None:
-        nonlocal passed, total
-        total += 1
-        rule_summary[rule]["total"] += 1
-        if ok:
-            passed += 1
-            rule_summary[rule]["pass_count"] += 1
-        else:
-            details.append(
-                dict(asset=asset_name, rule=rule, message=message)
+    def record(
+        asset_name: str,
+        rule: str,
+        ok: bool,
+        message: str,
+        *,
+        target_type: str = "table",
+        expected: str | None = None,
+        actual: str | None = None,
+        evidence: dict | None = None,
+    ) -> None:
+        checks.append(
+            make_check(
+                rule_id=ASSET_RULE_IDS[rule],
+                target_type=target_type,
+                target=asset_name,
+                passed=ok,
+                expected=expected or rule,
+                actual=actual or ("满足" if ok else message),
+                evidence=evidence,
+                message="" if ok else message,
             )
+        )
 
     assets = asset_catalog.get("tables") or {}
     for name, asset in sorted(assets.items()):
@@ -1533,17 +2083,37 @@ def score_asset_completeness(asset_catalog: dict) -> dict:
         )
 
         if has_ddl:
-            record(name, ASSET_RULE_DDL_MODEL, has_model, "缺少Model")
+            record(
+                name,
+                ASSET_RULE_DDL_MODEL,
+                has_model,
+                "缺少Model",
+                expected="DDL表存在Model",
+                actual="已存在Model" if has_model else "未找到Model",
+            )
             if _asset_requires_task(asset):
                 record(
                     name,
                     ASSET_RULE_DDL_TASK,
                     has_output_task,
                     "缺少产出该表的Task",
+                    expected="非ODS且非source物化表存在产出Task",
+                    actual=(
+                        "已存在产出Task"
+                        if has_output_task
+                        else "未找到产出Task"
+                    ),
                 )
 
         if has_model:
-            record(name, ASSET_RULE_MODEL_DDL, has_ddl, "缺少DDL")
+            record(
+                name,
+                ASSET_RULE_MODEL_DDL,
+                has_ddl,
+                "缺少DDL",
+                expected="Model存在对应DDL表",
+                actual="已存在DDL" if has_ddl else "未找到DDL",
+            )
 
     task_outputs = sorted({
         output
@@ -1557,43 +2127,46 @@ def score_asset_completeness(asset_catalog: dict) -> dict:
             ASSET_RULE_TASK_DDL,
             bool(asset.get("ddl")),
             "Task产出表缺少DDL",
+            expected="Task产出表存在DDL",
+            actual="已存在DDL" if asset.get("ddl") else "未找到DDL",
         )
         record(
             output,
             ASSET_RULE_TASK_MODEL,
             bool(asset.get("model")),
             "Task产出表缺少Model",
+            expected="Task产出表存在Model",
+            actual="已存在Model" if asset.get("model") else "未找到Model",
         )
 
     for task in asset_catalog.get("tasks") or []:
         outputs = set(task.get("output_tables") or set())
         lineage_targets = set(task.get("lineage_targets") or set())
+        actual = (
+            f"实际产出={sorted(outputs)}，"
+            f"血缘目标={sorted(lineage_targets)}"
+        )
         record(
             task["file"],
             ASSET_RULE_TASK_LINEAGE,
             bool(outputs) and lineage_targets == outputs,
-            (
-                f"实际产出={sorted(outputs)}，"
-                f"血缘目标={sorted(lineage_targets)}"
-            ),
+            actual,
+            target_type="task",
+            expected="Task血缘目标与实际产出一致",
+            actual=actual,
+            evidence={
+                "outputs": sorted(outputs),
+                "lineage_targets": sorted(lineage_targets),
+            },
         )
 
-    summary = {}
-    for rule, counts in rule_summary.items():
-        rule_total = counts["total"]
-        rule_passed = counts["pass_count"]
-        summary[rule] = dict(
-            pass_count=rule_passed,
-            total=rule_total,
-            pct=round(rule_passed / rule_total * 100, 1)
-            if rule_total else 0,
-        )
-    return dict(
+    passed = sum(1 for check in checks if check["passed"])
+    total = len(checks)
+    return finalize_dimension(
+        dimension="asset_completeness",
         score=round(passed / total * 100, 1) if total else 100.0,
-        passed=passed,
-        total=total,
-        rule_summary=summary,
-        details=details,
+        checks=checks,
+        rules=ASSET_COMPLETENESS_RULES,
     )
 
 
@@ -1601,8 +2174,7 @@ def _empty_file_score() -> dict:
     return dict(
         passed=0,
         total=0,
-        rule_summary={},
-        details=[],
+        checks=[],
     )
 
 
@@ -1619,45 +2191,38 @@ def _record_file_check(
     if passed:
         result["passed"] += 1
 
-    summary = result["rule_summary"].setdefault(
-        rule,
-        {"pass_count": 0, "total": 0},
-    )
-    summary["total"] += 1
-    if passed:
-        summary["pass_count"] += 1
-        return
-
     if isinstance(actual, (set, list, tuple)):
         actual_display = ", ".join(sorted(str(item) for item in actual)) or "未解析"
     else:
         actual_display = str(actual or "未解析")
 
-    result["details"].append(
-        dict(
-            file=_display_file_path(project_dir, file_path),
-            rule=rule,
-            expected=expected,
-            actual=actual_display,
+    display_file = _display_file_path(project_dir, file_path)
+    result["checks"].append(
+        make_check(
+            rule_id=NAMING_FILE_RULE_IDS[rule],
+            target_type="file",
+            target=display_file,
+            passed=passed,
+            expected=rule,
+            actual=(
+                "一致"
+                if passed
+                else f"期望: {expected} | 实际: {actual_display}"
+            ),
+            evidence={
+                "file": display_file,
+                "expected": expected,
+                "actual": actual_display,
+            },
+            message="" if passed else f"{rule}不一致",
+            issue={
+                "remediation": {
+                    "related_files": [display_file],
+                }
+            } if not passed else None,
         )
     )
 
-
-def _finalize_file_score(result: dict) -> dict:
-    for summary in result["rule_summary"].values():
-        total = summary["total"]
-        summary["pct"] = (
-            round(summary["pass_count"] / total * 100, 1)
-            if total else 0
-        )
-
-    result["rule_summary"][FILE_RULE_TOTAL] = dict(
-        pass_count=result["passed"],
-        total=result["total"],
-        pct=round(result["passed"] / result["total"] * 100, 1)
-        if result["total"] else 0,
-    )
-    return result
 
 
 def _score_file_naming_conventions(
@@ -1704,7 +2269,7 @@ def _score_file_naming_conventions(
             task["output_tables"] == {task["expected_table"]},
         )
 
-    return _finalize_file_score(result)
+    return result
 
 
 def _prepare_naming_context(
@@ -1865,11 +2430,19 @@ def _score_middle_table(table: dict, context: dict) -> dict:
     table_violations = []
     table_diagnostics = []
     if not table_name_valid:
-        table_violations.append("违反: 表名符合规范模板")
-        table_diagnostics.append({
+        diagnostic = {
             "check": "table_template",
             **_table_name_diagnostic(name, layer, nc),
+        }
+        table_violations.append({
+            "code": "table_template",
+            "rule_id": "NAMING_TABLE_TEMPLATE",
+            "expected": "表名符合所在层级命名模板",
+            "actual": name,
+            "message": f"{name} 不符合 {layer} 层表名模板",
+            "evidence": diagnostic,
         })
+        table_diagnostics.append(diagnostic)
     summary_checks.append(("表名符合规范模板", table_passed, 1))
 
     max_length = _table_name_max_length(name, layer, nc)
@@ -1883,15 +2456,26 @@ def _score_middle_table(table: dict, context: dict) -> dict:
             1,
         ))
         if not length_ok:
-            table_violations.append(f"违反: 表名长度 <= {max_length}")
-            table_diagnostics.append({
+            diagnostic = {
                 "check": "table_max_length",
                 "actual": name,
                 "layer": layer,
                 "passed": False,
                 "expected": {"max_length": max_length},
                 "actual_length": len(name),
+            }
+            table_violations.append({
+                "code": "table_max_length",
+                "rule_id": "NAMING_TABLE_MAX_LENGTH",
+                "expected": f"表名长度 <= {max_length}",
+                "actual": {
+                    "name": name,
+                    "length": len(name),
+                },
+                "message": f"表名长度 {len(name)} 超过配置上限 {max_length}",
+                "evidence": diagnostic,
             })
+            table_diagnostics.append(diagnostic)
 
     atomic_names = (
         _atomic_metric_names_for_table(table, model_metadata)
@@ -2037,46 +2621,221 @@ def _score_middle_table(table: dict, context: dict) -> dict:
     )
 
 
-def _build_rule_summary(
-    table_results: list[dict],
-    context: dict,
-    file_result: dict,
+def _naming_issue_context(context: dict, table: str) -> dict:
+    related_files = _related_files_for_table(context["asset_catalog"], table)
+    return {
+        "remediation": {
+            "related_files": related_files,
+        }
+    } if related_files else {}
+
+
+def _naming_violation_by_code(violations: list, code: str) -> dict | None:
+    for violation in violations:
+        if isinstance(violation, dict) and violation.get("code") == code:
+            return violation
+    return None
+
+
+def _naming_violation_evidence(
+    violation: dict | None,
+    default: dict,
 ) -> dict:
-    counts = defaultdict(lambda: dict(pass_count=0, total=0))
-    required_rules = [
-        "表名符合规范模板",
-        "列名总计",
-        DWS_ENTITY_RULE_NAME,
-        DIM_ENTITY_RULE_NAME,
-    ]
-    if context["atomic_rule_name"]:
-        required_rules.append(context["atomic_rule_label"])
-    if context["derived_rule_name"]:
-        required_rules.append(context["derived_rule_label"])
-    for rule in required_rules:
-        counts[rule]
+    if not violation:
+        return default
+    evidence = dict(default)
+    evidence.update(violation.get("evidence") or {})
+    return evidence
 
+
+def _build_naming_checks(
+    table_results: list[dict],
+    file_result: dict,
+    context: dict,
+) -> list[dict]:
+    checks = []
     for result in table_results:
-        for rule, passed, total in result["_summary_checks"]:
-            counts[rule]["pass_count"] += passed
-            counts[rule]["total"] += total
+        table = result["table"]
+        layer = result["layer"]
+        issue_context = _naming_issue_context(context, table)
 
-    summary = {
-        rule: dict(
-            pass_count=value["pass_count"],
-            total=value["total"],
-            pct=round(value["pass_count"] / value["total"] * 100, 1)
-            if value["total"] else 0,
+        table_violations = result["table_checks"]["violations"]
+        template_violation = _naming_violation_by_code(
+            table_violations,
+            "table_template",
         )
-        for rule, value in counts.items()
-    }
-    summary.update(file_result["rule_summary"])
-    return summary
+        checks.append(
+            make_check(
+                rule_id="NAMING_TABLE_TEMPLATE",
+                target_type="table",
+                target=table,
+                passed=template_violation is None,
+                expected="表名符合所在层级命名模板",
+                actual=(
+                    "符合"
+                    if template_violation is None
+                    else template_violation["message"]
+                ),
+                evidence=_naming_violation_evidence(
+                    template_violation,
+                    {"layer": layer},
+                ),
+                message=(
+                    template_violation["message"]
+                    if template_violation else ""
+                ),
+                issue=issue_context if template_violation else None,
+            )
+        )
+
+        if result["table_checks"]["total"] > 1:
+            length_violation = _naming_violation_by_code(
+                table_violations,
+                "table_max_length",
+            )
+            checks.append(
+                make_check(
+                    rule_id="NAMING_TABLE_MAX_LENGTH",
+                    target_type="table",
+                    target=table,
+                    passed=length_violation is None,
+                    expected="表名长度不超过配置上限",
+                    actual=(
+                        f"长度={len(table)}"
+                        if length_violation is None
+                        else length_violation["message"]
+                    ),
+                    evidence=_naming_violation_evidence(
+                        length_violation,
+                        {"layer": layer, "actual_length": len(table)},
+                    ),
+                    message=(
+                        length_violation["message"]
+                        if length_violation else ""
+                    ),
+                    issue=issue_context if length_violation else None,
+                )
+            )
+
+        column_checks = result.get("column_checks", {})
+        if column_checks.get("total", 0) > 0:
+            violations = column_checks.get("violations") or []
+            checks.append(
+                make_check(
+                    rule_id="NAMING_COLUMN_NAME",
+                    target_type="table",
+                    target=table,
+                    passed=not violations,
+                    expected="所有非指标字段符合字段命名规则",
+                    actual=(
+                        "全部合规"
+                        if not violations
+                        else f"不合规字段: {violations}"
+                    ),
+                    evidence={
+                        "layer": layer,
+                        "violations": violations,
+                        "checked_count": column_checks.get("total", 0),
+                    },
+                    message=(
+                        f"不合规字段: {', '.join(violations)}"
+                        if violations else ""
+                    ),
+                    issue=issue_context if violations else None,
+                )
+            )
+
+        metric_specs = [
+            (
+                result.get("atomic_metric_checks", {}),
+                "NAMING_ATOMIC_METRIC",
+                "所有原子指标符合指标命名规则",
+                "不合规原子指标",
+                _atomic_metric_names_for_table(
+                    {"name": table},
+                    context["model_metadata"],
+                ),
+            ),
+            (
+                result.get("derived_metric_checks", {}),
+                "NAMING_DERIVED_METRIC",
+                "所有派生指标符合指标命名规则",
+                "不合规派生指标",
+                _derived_metric_names_for_table(
+                    {"name": table},
+                    context["model_metadata"],
+                ),
+            ),
+        ]
+        for check_result, rule_id, expected, label, metric_names in metric_specs:
+            if check_result.get("total", 0) <= 0:
+                continue
+            violations = check_result.get("violations") or []
+            for metric_name in metric_names:
+                failed = metric_name in violations
+                checks.append(
+                    make_check(
+                        rule_id=rule_id,
+                        target_type="metric",
+                        target=f"{table}.{metric_name}",
+                        passed=not failed,
+                        expected=expected,
+                        actual=(
+                            "合规"
+                            if not failed
+                            else f"{label}: {metric_name}"
+                        ),
+                        evidence={
+                            "table": table,
+                            "layer": layer,
+                            "metric": metric_name,
+                        },
+                        message=f"{label}: {metric_name}" if failed else "",
+                        issue=issue_context if failed else None,
+                    )
+                )
+
+        alignment_specs = [
+            (
+                result.get("dws_entity_checks", {}),
+                "NAMING_DWS_ENTITY_ALIGNMENT",
+                "DWS表名实体包含于grain.entities",
+            ),
+            (
+                result.get("dim_entity_checks", {}),
+                "NAMING_DIM_ENTITY_ALIGNMENT",
+                "DIM表名实体等于主实体",
+            ),
+            (
+                result.get("semantic_metadata_checks", {}),
+                "NAMING_SEMANTIC_METADATA_ALIGNMENT",
+                "表名语义段与模型元数据一致",
+            ),
+        ]
+        for check_result, rule_id, expected in alignment_specs:
+            if check_result.get("total", 0) <= 0:
+                continue
+            violations = check_result.get("violations") or []
+            checks.append(
+                make_check(
+                    rule_id=rule_id,
+                    target_type="table",
+                    target=table,
+                    passed=not violations,
+                    expected=expected,
+                    actual="一致" if not violations else "; ".join(violations),
+                    evidence={"layer": layer, "violations": violations},
+                    message="; ".join(violations) if violations else "",
+                    issue=issue_context if violations else None,
+                )
+            )
+
+    checks.extend(file_result.get("checks") or [])
+    return checks
 
 
 def _build_final_naming_result(
     table_results: list[dict],
-    rule_summary: dict,
     file_result: dict,
     context: dict,
 ) -> dict:
@@ -2084,31 +2843,19 @@ def _build_final_naming_result(
     total_checks = sum(result["_total"] for result in table_results)
     total_passed += file_result["passed"]
     total_checks += file_result["total"]
-    repair_payload = _build_naming_repair_payload(
-        table_results,
-        file_result,
-        context,
-    )
-    details = []
-    for result in table_results:
-        clean = {
-            key: value
-            for key, value in result.items()
-            if not key.startswith("_")
-        }
-        details.append(_strip_parser_diagnostics(clean))
-    return dict(
+    checks = _build_naming_checks(table_results, file_result, context)
+    return finalize_dimension(
+        dimension="naming",
         score=round(total_passed / total_checks * 100, 1)
         if total_checks else 100.0,
-        details=details,
-        rule_summary=rule_summary,
-        file_checks=dict(
-            passed=file_result["passed"],
-            total=file_result["total"],
-        ),
-        file_details=file_result["details"],
-        rule_catalog=repair_payload["rule_catalog"],
-        repair_items=repair_payload["repair_items"],
+        checks=checks,
+        rules=NAMING_RULES,
+        summary={
+            "file_checks": dict(
+                passed=file_result["passed"],
+                total=file_result["total"],
+            ),
+        },
     )
 
 
@@ -2140,14 +2887,8 @@ def score_naming_conventions(
     file_result = _score_file_naming_conventions(
         context["asset_catalog"],
     )
-    rule_summary = _build_rule_summary(
-        table_results,
-        context,
-        file_result,
-    )
     return _build_final_naming_result(
         table_results,
-        rule_summary,
         file_result,
         context,
     )
@@ -2176,117 +2917,6 @@ def _fmt_table(
     return "\n".join(lines)
 
 
-def _best_failed_attempt(attempts: list[dict]) -> dict:
-    failed_attempts = [
-        attempt for attempt in attempts if not attempt.get("passed")
-    ]
-    if not failed_attempts:
-        return {}
-    return max(
-        failed_attempts,
-        key=lambda item: (
-            item.get("failure", {}).get("consumed_chars", -1),
-            -len(str(item.get("failure", {}).get("actual_remaining", ""))),
-        ),
-    )
-
-
-def _failure_for_repair(failure: dict) -> dict:
-    keys = [
-        "code",
-        "position",
-        "expected",
-        "actual",
-        "actual_remaining",
-    ]
-    return {
-        key: failure[key]
-        for key in keys
-        if key in failure and failure[key] not in (None, "")
-    }
-
-
-def _catalog_patterns_from_failure(failure: dict) -> list[str]:
-    expected = failure.get("expected")
-    if not isinstance(expected, list):
-        return []
-    code = str(failure.get("code") or "")
-    if "pattern" not in code:
-        return []
-    return [str(item) for item in expected]
-
-
-def _catalog_allowed_values_from_failure(failure: dict) -> list[str]:
-    expected = failure.get("expected")
-    if not isinstance(expected, list):
-        return []
-    code = str(failure.get("code") or "")
-    if "allowed" not in code:
-        return []
-    return [str(item) for item in expected]
-
-
-def _add_rule_catalog_entry(
-    catalog: dict,
-    rule_ref: str,
-    *,
-    target_type: str,
-    summary: str,
-    expression: str | None = None,
-    failure: dict | None = None,
-    constraints: dict | None = None,
-) -> None:
-    entry = catalog.setdefault(
-        rule_ref,
-        {
-            "target_type": target_type,
-            "summary": summary or rule_ref,
-        },
-    )
-    if expression and "expression" not in entry:
-        entry["expression"] = expression
-    patterns = _catalog_patterns_from_failure(failure or {})
-    if patterns:
-        entry["patterns"] = patterns
-    allowed_values = _catalog_allowed_values_from_failure(failure or {})
-    if allowed_values:
-        entry["allowed_values"] = allowed_values
-    clean_constraints = {
-        key: value
-        for key, value in (constraints or {}).items()
-        if value not in (None, "")
-    }
-    if clean_constraints:
-        entry["constraints"] = clean_constraints
-
-
-def _rule_ref_from_attempt(attempt: dict, fallback: str) -> str:
-    rule = attempt.get("rule") or {}
-    return str(rule.get("name") or fallback)
-
-
-def _summary_from_attempt(attempt: dict, fallback: str) -> str:
-    rule = attempt.get("rule") or {}
-    return str(rule.get("description") or fallback)
-
-
-def _expected_from_attempt(attempt: dict, target_type: str) -> str:
-    failure = attempt.get("failure") or {}
-    expected = failure.get("expected")
-    expression = attempt.get("expression")
-    if target_type == "column" and isinstance(expected, list):
-        return "匹配 " + " 或 ".join(str(item) for item in expected)
-    if target_type == "table" and expression:
-        return f"表达式 {expression}"
-    if isinstance(expected, list):
-        return "取值为 " + ", ".join(str(item) for item in expected)
-    if expected not in (None, ""):
-        return f"期望 {expected}"
-    if expression:
-        return f"表达式 {expression}"
-    return ""
-
-
 def _related_files_for_table(asset_catalog: dict, table_name: str) -> list[str]:
     project_dir = asset_catalog.get("project_dir")
     if not project_dir:
@@ -2304,352 +2934,16 @@ def _related_files_for_table(asset_catalog: dict, table_name: str) -> list[str]:
     return files
 
 
-def _repair_item(
-    *,
-    target_type: str,
-    table: str,
-    layer: str,
-    obj: str,
-    rule_ref: str,
-    problem: str,
-    expected: str,
-    failure: dict | None,
-    fix_scope: list[str],
-    related_files: list[str],
-) -> dict:
-    item = dict(
-        target_type=target_type,
-        table=table,
-        layer=layer,
-        object=obj,
-        rule_ref=rule_ref,
-        problem=problem,
-        expected=expected,
-        fix_scope=fix_scope,
-        related_files=related_files,
-    )
-    clean_failure = _failure_for_repair(failure or {})
-    if clean_failure:
-        item["failure"] = clean_failure
-    return item
-
-
-def _repair_from_parser_diagnostic(
-    *,
-    diagnostic: dict,
-    target_type: str,
-    table: str,
-    layer: str,
-    fallback_rule: str,
-    object_name: str,
-    catalog: dict,
-    asset_catalog: dict,
-) -> dict | None:
-    attempt = _best_failed_attempt(diagnostic.get("attempts") or [])
-    if not attempt:
-        return None
-    rule_ref = _rule_ref_from_attempt(attempt, fallback_rule)
-    summary = _summary_from_attempt(attempt, rule_ref)
-    failure = attempt.get("failure") or {}
-    _add_rule_catalog_entry(
-        catalog,
-        rule_ref,
-        target_type=target_type,
-        summary=summary,
-        expression=attempt.get("expression"),
-        failure=failure,
-        constraints=(attempt.get("rule") or {}).get("constraints"),
-    )
-    object_label = {
-        "table": "表名",
-        "column": "字段名",
-    }.get(target_type, "对象")
-    return _repair_item(
-        target_type=target_type,
-        table=table,
-        layer=layer,
-        obj=object_name,
-        rule_ref=rule_ref,
-        problem=f"{object_label}不符合 {summary}",
-        expected=_expected_from_attempt(attempt, target_type),
-        failure=failure,
-        fix_scope=["ddl", "tasks", "models"],
-        related_files=_related_files_for_table(asset_catalog, table),
-    )
-
-
-def _repair_from_table_max_length(
-    *,
-    diagnostic: dict,
-    table: str,
-    layer: str,
-    catalog: dict,
-    asset_catalog: dict,
-) -> dict:
-    expected = diagnostic.get("expected") or {}
-    max_length = expected.get("max_length")
-    _add_rule_catalog_entry(
-        catalog,
-        REPAIR_RULE_TABLE_MAX_LENGTH,
-        target_type="table",
-        summary=f"表名长度 <= {max_length}",
-        constraints={"max_length": max_length},
-    )
-    return _repair_item(
-        target_type="table",
-        table=table,
-        layer=layer,
-        obj=table,
-        rule_ref=REPAIR_RULE_TABLE_MAX_LENGTH,
-        problem=f"表名长度超过 {max_length}",
-        expected=f"长度 <= {max_length}",
-        failure={
-            "code": "max_length_exceeded",
-            "actual": diagnostic.get("actual"),
-            "expected": max_length,
-        },
-        fix_scope=["ddl", "tasks", "models"],
-        related_files=_related_files_for_table(asset_catalog, table),
-    )
-
-
-def _metric_rule_ref(rule_name: str | None, fallback: str) -> str:
-    if rule_name == "atomic":
-        return REPAIR_RULE_ATOMIC_METRIC
-    if rule_name == "derived":
-        return REPAIR_RULE_DERIVED_METRIC
-    return str(rule_name or fallback)
-
-
-def _add_simple_catalog_entry(
-    catalog: dict,
-    rule_ref: str,
-    target_type: str,
-    summary: str,
-) -> None:
-    _add_rule_catalog_entry(
-        catalog,
-        rule_ref,
-        target_type=target_type,
-        summary=summary,
-    )
-
-
-def _build_naming_repair_payload(
-    table_results: list[dict],
-    file_result: dict,
-    context: dict,
-) -> dict:
-    catalog = {}
-    repair_items = []
-    asset_catalog = context["asset_catalog"]
-    for result in table_results:
-        table = result["table"]
-        layer = result["layer"]
-        related_files = _related_files_for_table(asset_catalog, table)
-
-        for diagnostic in result["table_checks"].get("diagnostics", []):
-            if diagnostic.get("check") == "table_max_length":
-                repair_items.append(
-                    _repair_from_table_max_length(
-                        diagnostic=diagnostic,
-                        table=table,
-                        layer=layer,
-                        catalog=catalog,
-                        asset_catalog=asset_catalog,
-                    )
-                )
-                continue
-            item = _repair_from_parser_diagnostic(
-                diagnostic=diagnostic,
-                target_type="table",
-                table=table,
-                layer=layer,
-                fallback_rule=f"TABLE_{layer}",
-                object_name=table,
-                catalog=catalog,
-                asset_catalog=asset_catalog,
-            )
-            if item:
-                repair_items.append(item)
-
-        for diagnostic in result["column_checks"].get("diagnostics", []):
-            item = _repair_from_parser_diagnostic(
-                diagnostic=diagnostic,
-                target_type="column",
-                table=table,
-                layer=layer,
-                fallback_rule="COLUMN_DEFAULT",
-                object_name=diagnostic.get("actual") or "",
-                catalog=catalog,
-                asset_catalog=asset_catalog,
-            )
-            if item:
-                repair_items.append(item)
-
-        atomic_rule = _metric_rule_ref(
-            context.get("atomic_rule_name"),
-            REPAIR_RULE_ATOMIC_METRIC,
-        )
-        for metric in result.get("atomic_metric_checks", {}).get(
-            "violations", []
-        ):
-            _add_simple_catalog_entry(
-                catalog,
-                atomic_rule,
-                "atomic_metric",
-                context.get("atomic_rule_label") or ATOMIC_METRIC_RULE_NAME,
-            )
-            repair_items.append(
-                _repair_item(
-                    target_type="atomic_metric",
-                    table=table,
-                    layer=layer,
-                    obj=metric,
-                    rule_ref=atomic_rule,
-                    problem="原子指标名不符合命名规则",
-                    expected=context.get("atomic_rule_label") or "",
-                    failure={"code": "metric_rule_mismatch"},
-                    fix_scope=["models", "ddl", "tasks"],
-                    related_files=related_files,
-                )
-            )
-
-        derived_rule = _metric_rule_ref(
-            context.get("derived_rule_name"),
-            REPAIR_RULE_DERIVED_METRIC,
-        )
-        for metric in result.get("derived_metric_checks", {}).get(
-            "violations", []
-        ):
-            _add_simple_catalog_entry(
-                catalog,
-                derived_rule,
-                "derived_metric",
-                context.get("derived_rule_label") or DERIVED_METRIC_RULE_NAME,
-            )
-            repair_items.append(
-                _repair_item(
-                    target_type="derived_metric",
-                    table=table,
-                    layer=layer,
-                    obj=metric,
-                    rule_ref=derived_rule,
-                    problem="派生指标名不符合命名规则",
-                    expected=context.get("derived_rule_label") or "",
-                    failure={"code": "metric_rule_mismatch"},
-                    fix_scope=["models", "ddl", "tasks"],
-                    related_files=related_files,
-                )
-            )
-
-        model_checks = [
-            (
-                result.get("dws_entity_checks", {}),
-                REPAIR_RULE_DWS_ENTITY,
-                "DWS表名实体需要包含于grain.entities",
-            ),
-            (
-                result.get("dim_entity_checks", {}),
-                REPAIR_RULE_DIM_ENTITY,
-                "DIM表名实体需要等于entities.primary.code",
-            ),
-            (
-                result.get("semantic_metadata_checks", {}),
-                REPAIR_RULE_SEMANTIC_METADATA,
-                "表名语义段需要与模型元数据一致",
-            ),
-        ]
-        for check, rule_ref, summary in model_checks:
-            violations = check.get("violations") or []
-            if not violations:
-                continue
-            _add_simple_catalog_entry(
-                catalog,
-                rule_ref,
-                "model_metadata",
-                summary,
-            )
-            for violation in violations:
-                repair_items.append(
-                    _repair_item(
-                        target_type="model_metadata",
-                        table=table,
-                        layer=layer,
-                        obj=table,
-                        rule_ref=rule_ref,
-                        problem=summary,
-                        expected=violation,
-                        failure={"code": "metadata_alignment_mismatch"},
-                        fix_scope=["models"],
-                        related_files=related_files,
-                    )
-                )
-
-    for detail in file_result.get("details") or []:
-        rule = detail["rule"]
-        rule_ref = REPAIR_FILE_RULE_REFS.get(rule, rule)
-        _add_simple_catalog_entry(catalog, rule_ref, "file", rule)
-        repair_items.append(
-            _repair_item(
-                target_type="file",
-                table=str(detail.get("expected") or ""),
-                layer="",
-                obj=detail["file"],
-                rule_ref=rule_ref,
-                problem=f"{rule}不一致",
-                expected=(
-                    f"期望 {detail.get('expected')}，"
-                    f"实际 {detail.get('actual')}"
-                ),
-                failure={"code": "file_name_mismatch"},
-                fix_scope=["file_path"],
-                related_files=[detail["file"]],
-            )
-        )
-
-    return {
-        "rule_catalog": dict(sorted(catalog.items())),
-        "repair_items": repair_items,
-    }
-
-
-def _strip_parser_diagnostics(value):
-    if isinstance(value, dict):
-        return {
-            key: _strip_parser_diagnostics(child)
-            for key, child in value.items()
-            if key != "diagnostics"
-        }
-    if isinstance(value, list):
-        return [_strip_parser_diagnostics(child) for child in value]
-    return value
-
-
-def _format_naming_repair_item(item: dict) -> str:
-    obj = item.get("object") or item.get("table") or ""
-    problem = item.get("problem") or ""
-    expected = item.get("expected") or ""
-    files = item.get("related_files") or []
-    location = f"；文件 {', '.join(files[:3])}" if files else ""
-    return f"{item.get('target_type')}: {obj} - {problem}；{expected}{location}"
-
-
 def generate_report(scores: dict, weights: dict, project: str) -> str:
     parts = []
     sep = "─" * 62
 
-    # ============================================================
-    # 头部 & 总体评分
-    # ============================================================
-    overall_raw = scores["overall_raw"]
-    overall_display = scores["overall_display"]
+    overall_score = scores["overall_score"]
     parts.append(
         f"╔{'═' * 62}╗\n"
         f"║{'数据集市中间层评估报告':^62}║\n"
         f"║{'─' * 62}║\n"
-        f"║{'项目: ' + project:<24}{'总体评分(展示):':>18}{overall_display:>6.1f} / 100{' ' * 2}║\n"
-        f"║{'':<24}{'总体评分(原始):':>18}{overall_raw:>6.1f} / 100{' ' * 2}║\n"
+        f"║{'项目: ' + project:<24}{'总体评分:':>18}{overall_score:>6.1f} / 100{' ' * 2}║\n"
         f"╠{'═' * 62}╣")
 
     dims = [
@@ -2661,337 +2955,57 @@ def generate_report(scores: dict, weights: dict, project: str) -> str:
         ("模型元数据健康度", "metadata_health"),
         ("代码质量", "code_quality"),
     ]
+    dimensions = scores["dimensions"]
     for label, key in dims:
-        metric = scores[key]
-        disp = metric["display"]
-        raw = metric["raw"]
+        metric = dimensions[key]
+        score = metric["score"]
         w = weights[key] * 100
         parts.append(
-            f"║ {label:<12} 展示:{disp:>5.1f} 原始:{raw:>5.1f}  权重:{w:>2.0f}%{' ' * 11}║")
+            f"║ {label:<12} 评分:{score:>5.1f}  权重:{w:>2.0f}%{' ' * 24}║")
 
     parts.append(f"╚{'═' * 62}╝")
 
-    # ============================================================
-    # 复用度
-    # ============================================================
-    reuse = scores["reuse"]
-    parts.append(f"\n{'=' * 62}")
-    parts.append(
-        f"【复用度】评分(展示/原始): {reuse['display']} / {reuse['raw']}  |  平均复用次数: {reuse['avg_reuse_count']}")
-    parts.append(f"{'=' * 62}")
+    headers = ["规则ID", "规则", "严重度", "通过", "总计", "合规率"]
+    col_w = [32, 28, 8, 6, 6, 8]
+    for label, key in dims:
+        dimension = dimensions[key]
+        parts.append(f"\n{'=' * 62}")
+        parts.append(f"【{label}】评分: {dimension['score']}")
+        parts.append(f"{'=' * 62}")
 
-    headers = ["表名", "层", "下游引用", "得分"]
-    col_w = [34, 6, 10, 6]
-    rows = []
-    for r in reuse["details"]:
-        rows.append([
-            r["table"], r["layer"],
-            str(r["downstream_count"]),
-            str(r["score"])
-        ])
-    parts.append(_fmt_table(headers, rows, col_w))
+        rows = []
+        for rule_id, counts in sorted(dimension["rule_summary"].items()):
+            rows.append([
+                rule_id,
+                counts["name"],
+                counts["severity"],
+                str(counts["pass_count"]),
+                str(counts["total"]),
+                f"{counts['pct']}%",
+            ])
+        if not rows:
+            rows.append(["(无检查项)", "", "", "0", "0", "0%"])
+        parts.append(_fmt_table(headers, rows, col_w))
 
-    d = reuse["distribution"]
-    parts.append(f"\n  分布: 高复用(≥{REUSE_FULL_SCORE_AT})={d['high']}, "
-                 f"一般(1-2)={d['medium']}, 无引用={d['none']}")
-    parts.append(sep)
-
-    # ============================================================
-    # 链路长度
-    # ============================================================
-    depth = scores["depth"]
-    parts.append(f"\n{'=' * 62}")
-    parts.append(
-        f"【链路长度(中间层深度)】评分(展示/原始): {depth['display']} / {depth['raw']}  |  平均深度: {depth['avg_middle_depth']}"
-    )
-    parts.append(f"{'=' * 62}")
-
-    headers = ["ADS表", "最大中间层深度", "得分", "含义"]
-    col_w = [38, 14, 6, 20]
-    rows = []
-    for r in depth["details"]:
-        d = r["max_middle_depth"]
-        meaning = {2: "DWD+DWS 完整", 1: "仅一层中间", 0: "无中间层"}.get(d)
-        if meaning is None:
-            meaning = "链路过长"
-        rows.append([r["table"], str(d), str(r["score"]), meaning])
-    parts.append(_fmt_table(headers, rows, col_w))
-
-    parts.append(f"\n  深度分对照: depth=2→100 (DWD+DWS完整), "
-                 f"depth=1→50 (仅一层), depth=0→0, depth≥3→30")
-    parts.append(sep)
-
-    # ============================================================
-    # 架构合理性
-    # ============================================================
-    architecture = scores["architecture"]
-    parts.append(f"\n{'=' * 62}")
-    parts.append(
-        f"【架构合理性】评分: {architecture['display']}  |  合规率: {architecture['raw']}")
-    parts.append(f"{'=' * 62}")
-
-    # 按规则汇总
-    rule_groups = defaultdict(lambda: dict(label="", sev="", weight=0, count=0, tables=set(), has_llm=False))
-    for v in architecture["violations"]:
-        key = v["description"]
-        if key not in rule_groups:
-            rule_groups[key] = dict(label=key,
-                                    sev=v["severity"],
-                                    weight=v["weight"],
-                                    count=0,
-                                    tables=set(),
-                                    has_llm=v.get("source_type") == "llm")
-        rule_groups[key]["count"] += 1
-        rule_groups[key]["tables"].add(v["belongs_to"])
-
-    headers = ["违规类型", "严重度", "权重", "次数", "涉及表"]
-    col_w = [36, 8, 6, 6, 30]
-    rows = []
-    for g in rule_groups.values():
-        label = f"[LLM推断] {g['label']}" if g["has_llm"] else g["label"]
-        tables_str = ", ".join(sorted(g["tables"]))
-        rows.append([label, g["sev"], str(g["weight"]), str(g["count"]), tables_str])
-    if not rows:
-        rows.append(["(无违规)", "", "", "", ""])
-    parts.append(_fmt_table(headers, rows, col_w))
-
-    tc = architecture["table_count"]
-    ct = architecture["capped_total"]
-    compliance = max(0, round(100 * (1 - ct / tc), 1)) if tc else 100.0
-    parts.append(
-        f"\n  Σ(每表 cap 后权重) = {ct}  |  总表数 = {tc}  |  合规率 = {compliance}  |  评分 = {architecture['raw']}")
-
-    if architecture["violations"]:
-        parts.append(f"\n  违规详情 (权重/cap后):")
-        for v in architecture["violations"]:
-            llm_tag = "[LLM推断] " if v.get("source_type") == "llm" else ""
-            capped = min(architecture["table_capped"].get(v["belongs_to"], 0), PER_TABLE_CAP)
-            parts.append(
-                f"    ✗ {llm_tag}{v['source']} → {v['target']}  [{v['severity']}/{v['weight']}]  "
-                f"{v['description']}  (归属: {v['belongs_to']}, 该表 cap 后: {capped})"
-            )
-    else:
-        parts.append(f"\n  无违规 ✓")
-
-    if any(v.get("source_type") == "llm" for v in architecture["violations"]):
-        parts.append(f"\n  * 分层配置合理性与维度表位置由 LLM 推断，仅供参考，不一定 100% 正确")
-    parts.append(sep)
-
-    # ============================================================
-    # 资产完整性
-    # ============================================================
-    asset_completeness = scores["asset_completeness"]
-    parts.append(f"\n{'=' * 62}")
-    parts.append(
-        "【资产完整性】评分(展示/原始): "
-        f"{asset_completeness['display']} / "
-        f"{asset_completeness['raw']}"
-    )
-    parts.append(f"{'=' * 62}")
-
-    headers = ["规则", "通过", "总计", "合规率"]
-    col_w = [36, 6, 6, 8]
-    rows = []
-    for desc, counts in sorted(
-        asset_completeness["rule_summary"].items()
-    ):
-        rows.append([
-            desc,
-            str(counts["pass_count"]),
-            str(counts["total"]),
-            f"{counts['pct']}%",
-        ])
-    if not rows:
-        rows.append(["(无检查项)", "0", "0", "0%"])
-    parts.append(_fmt_table(headers, rows, col_w))
-
-    if asset_completeness["details"]:
-        parts.append("\n  缺失或不一致详情:")
-        for detail in asset_completeness["details"][:30]:
-            parts.append(
-                f"    {detail['asset']} | {detail['rule']} | "
-                f"{detail['message']}"
-            )
-        if len(asset_completeness["details"]) > 30:
-            parts.append(
-                f"    ... (共{len(asset_completeness['details'])}个)"
-            )
-    else:
-        parts.append("\n  无违规 ✓")
-    parts.append(sep)
-
-    # ============================================================
-    # 模型元数据健康度
-    # ============================================================
-    metadata_health = scores["metadata_health"]
-    parts.append(f"\n{'=' * 62}")
-    parts.append(
-        f"【模型元数据健康度】评分(展示/原始): {metadata_health['display']} / "
-        f"{metadata_health['raw']}"
-    )
-    parts.append(f"{'=' * 62}")
-
-    headers = ["规则", "通过", "总计", "合规率"]
-    col_w = [36, 6, 6, 8]
-    rows = []
-    for desc, cnts in sorted(metadata_health["rule_summary"].items()):
-        rows.append([
-            desc,
-            str(cnts["pass_count"]),
-            str(cnts["total"]),
-            f"{cnts['pct']}%",
-        ])
-    if not rows:
-        rows.append(["(无检查项)", "0", "0", "0%"])
-    parts.append(_fmt_table(headers, rows, col_w))
-
-    if metadata_health["violations"]:
-        parts.append(f"\n  偏离详情:")
-        for violation in metadata_health["violations"][:30]:
-            parts.append(
-                "    "
-                f"{violation['table']} | {violation['rule']} | "
-                f"{violation['message']}"
-            )
-        if len(metadata_health["violations"]) > 30:
-            parts.append(f"    ... (共{len(metadata_health['violations'])}个)")
-    else:
-        parts.append(f"\n  无违规 ✓")
-    parts.append(sep)
-
-    # ============================================================
-    # 代码质量
-    # ============================================================
-    code_quality = scores["code_quality"]
-    parts.append(f"\n{'=' * 62}")
-    parts.append(
-        f"【代码质量】评分(展示/原始): {code_quality['display']} / "
-        f"{code_quality['raw']}"
-    )
-    parts.append(f"{'=' * 62}")
-
-    headers = ["规则", "通过", "总计", "合规率"]
-    col_w = [36, 6, 6, 8]
-    rows = []
-    for desc, cnts in sorted(code_quality["rule_summary"].items()):
-        rows.append([
-            desc,
-            str(cnts["pass_count"]),
-            str(cnts["total"]),
-            f"{cnts['pct']}%",
-        ])
-    if not rows:
-        rows.append(["(无检查项)", "0", "0", "0%"])
-    parts.append(_fmt_table(headers, rows, col_w))
-
-    if code_quality["details"]:
-        parts.append(f"\n  偏离详情:")
-        for detail in code_quality["details"][:30]:
-            parts.append(
-                "    "
-                f"{detail['file']} | {detail['table']} | "
-                f"{detail['rule']} | {detail['message']}"
-            )
-        if len(code_quality["details"]) > 30:
-            parts.append(f"    ... (共{len(code_quality['details'])}个)")
-    else:
-        parts.append(f"\n  无违规 ✓")
-    parts.append(sep)
-
-    # ============================================================
-    # 命名规范
-    # ============================================================
-    naming = scores["naming"]
-    parts.append(f"\n{'=' * 62}")
-    parts.append(f"【命名规范】评分(展示/原始): {naming['display']} / {naming['raw']}")
-    parts.append(f"{'=' * 62}")
-
-    # 规则汇总表
-    headers = ["规则", "通过", "总计", "合规率"]
-    col_w = [36, 6, 6, 8]
-    rows = []
-    for desc, cnts in sorted(naming["rule_summary"].items()):
-        rows.append([
-            desc,
-            str(cnts["pass_count"]),
-            str(cnts["total"]), f"{cnts['pct']}%"
-        ])
-    parts.append(_fmt_table(headers, rows, col_w))
-
-    # 表级详情 (只显示有违规的表)
-    has_viz = False
-    repair_items_by_table = defaultdict(list)
-    for item in naming.get("repair_items", []):
-        table = item.get("table")
-        if table:
-            repair_items_by_table[table].append(item)
-    for r in naming["details"]:
-        issues = []
-        issues.extend(r["table_checks"]["violations"])
-        if r["column_checks"]["violations"]:
-            issues.append(
-                f"不合规字段: {', '.join(r['column_checks']['violations'][:10])}")
-            if len(r["column_checks"]["violations"]) > 10:
-                issues[
-                    -1] += f"... (共{len(r['column_checks']['violations'])}个)"
-        metric_checks = r.get("atomic_metric_checks", {})
-        if metric_checks.get("violations"):
-            issues.append(
-                "不合规原子指标: "
-                f"{', '.join(metric_checks['violations'][:10])}"
-            )
-            if len(metric_checks["violations"]) > 10:
-                issues[
-                    -1] += f"... (共{len(metric_checks['violations'])}个)"
-        derived_metric_checks = r.get("derived_metric_checks", {})
-        if derived_metric_checks.get("violations"):
-            issues.append(
-                "不合规派生指标: "
-                f"{', '.join(derived_metric_checks['violations'][:10])}"
-            )
-            if len(derived_metric_checks["violations"]) > 10:
-                issues[
-                    -1] += (
-                        f"... (共{len(derived_metric_checks['violations'])}个)"
-                    )
-        dim_entity_checks = r.get("dim_entity_checks", {})
-        if dim_entity_checks.get("violations"):
-            issues.extend(dim_entity_checks["violations"])
-        semantic_checks = r.get("semantic_metadata_checks", {})
-        if semantic_checks.get("violations"):
-            issues.extend(semantic_checks["violations"])
+        issues = dimension["issues"]
         if issues:
-            if not has_viz:
-                parts.append(f"\n  偏离详情:")
-                has_viz = True
-            parts.append(
-                f"\n    {r['table']}({r['layer']}) [得分: {r['score']}]")
-            for iss in issues:
-                parts.append(f"      {iss}")
-            repair_items = repair_items_by_table.get(r["table"], [])
-            if repair_items:
-                parts.append("      修复任务:")
-                for item in repair_items[:8]:
-                    parts.append(
-                        f"        - {_format_naming_repair_item(item)}")
-
-    file_details = naming.get("file_details") or []
-    if file_details:
-        if not has_viz:
-            parts.append(f"\n  偏离详情:")
-            has_viz = True
-        parts.append(f"\n    文件命名偏离:")
-        for detail in file_details[:20]:
-            parts.append(
-                "      "
-                f"{detail['file']} | {detail['rule']} | "
-                f"期望: {detail['expected']} | 实际: {detail['actual']}"
-            )
-        if len(file_details) > 20:
-            parts.append(f"      ... (共{len(file_details)}个)")
-
-    if not has_viz:
-        parts.append(f"\n  无违规 ✓")
+            parts.append("\n  问题项:")
+            for issue in issues[:30]:
+                target = issue["target"]
+                remediation = issue.get("remediation") or {}
+                parts.append(
+                    "    "
+                    f"[{issue['severity']}] {issue['title']} | "
+                    f"{target['type']}:{target['name']} | "
+                    f"{issue['message']}"
+                )
+                if remediation.get("summary"):
+                    parts.append(f"      建议: {remediation['summary']}")
+            if len(issues) > 30:
+                parts.append(f"    ... (共{len(issues)}个)")
+        else:
+            parts.append("\n  无问题项")
+        parts.append(sep)
 
     parts.append(f"\n{'=' * 62}")
     return "\n".join(parts)
@@ -3002,7 +3016,36 @@ def generate_report(scores: dict, weights: dict, project: str) -> str:
 # ============================================================
 
 
-def assess(project: str, weights: dict = None) -> dict:
+def _filter_dimension_checks(
+    dimensions: dict,
+    *,
+    include_passed_checks: bool,
+) -> dict:
+    if include_passed_checks:
+        return dimensions
+
+    filtered = {}
+    for name, dimension in dimensions.items():
+        issue_check_ids = {
+            check_id
+            for issue in dimension.get("issues", [])
+            for check_id in issue.get("check_ids", [])
+        }
+        compact_dimension = dict(dimension)
+        compact_dimension["checks"] = [
+            check for check in dimension.get("checks", [])
+            if check.get("id") in issue_check_ids
+        ]
+        filtered[name] = compact_dimension
+    return filtered
+
+
+def assess(
+    project: str,
+    weights: dict = None,
+    *,
+    include_passed_checks: bool = False,
+) -> dict:
     weights = normalize_score_weights(weights)
 
     from config import (
@@ -3040,9 +3083,8 @@ def assess(project: str, weights: dict = None) -> dict:
 
     _, downstream = build_table_graph(edges, indirect_edges)
 
-    reuse_score = build_metric_result(score_reusability(tables, downstream))
-    depth_score = build_metric_result(
-        score_lineage_depth(tables, edges, indirect_edges))
+    reuse_score = score_reusability(tables, downstream)
+    depth_score = score_lineage_depth(tables, edges, indirect_edges)
     architecture_raw = score_architecture_health(
         tables,
         edges,
@@ -3051,7 +3093,7 @@ def assess(project: str, weights: dict = None) -> dict:
         model_metadata,
         business_domain_config,
     )
-    architecture_score = build_metric_result(architecture_raw)
+    architecture_score = architecture_raw
     project_dir = PROJECT_ROOT / PROJECT_CONFIG[project]["dir"]
     asset_catalog = build_asset_catalog(
         tables,
@@ -3060,61 +3102,27 @@ def assess(project: str, weights: dict = None) -> dict:
         edges=edges,
         indirect_edges=indirect_edges,
     )
-    asset_completeness_score = build_metric_result(
-        score_asset_completeness(asset_catalog)
+    asset_completeness_score = score_asset_completeness(asset_catalog)
+    code_quality_score = score_code_quality(asset_catalog)
+    metadata_health_score = score_metadata_health(
+        tables,
+        nc,
+        model_metadata,
+        business_domain_config,
+        asset_catalog=asset_catalog,
     )
-    code_quality_score = build_metric_result(
-        score_code_quality(asset_catalog)
-    )
-    metadata_health_score = build_metric_result(
-        score_metadata_health(
-            tables,
-            nc,
-            model_metadata,
-            business_domain_config,
-            asset_catalog=asset_catalog,
-        )
-    )
-    naming_score = build_metric_result(
-        score_naming_conventions(
-            tables,
-            nc,
-            model_metadata,
-            business_domain_config,
-            project_dir=project_dir,
-            edges=edges,
-            indirect_edges=indirect_edges,
-            asset_catalog=asset_catalog,
-        ))
-
-    overall_raw = round(
-        weights["reuse"] * reuse_score["raw"] +
-        weights["depth"] * depth_score["raw"] +
-        weights["architecture"] * architecture_score["raw"] +
-        weights["naming"] * naming_score["raw"] +
-        weights["asset_completeness"]
-        * asset_completeness_score["raw"] +
-        weights["metadata_health"] * metadata_health_score["raw"] +
-        weights["code_quality"] * code_quality_score["raw"],
-        1,
-    )
-    overall_display = round(
-        weights["reuse"] * reuse_score["display"] +
-        weights["depth"] * depth_score["display"] +
-        weights["architecture"] * architecture_score["display"] +
-        weights["naming"] * naming_score["display"] +
-        weights["asset_completeness"]
-        * asset_completeness_score["display"] +
-        weights["metadata_health"] * metadata_health_score["display"] +
-        weights["code_quality"] * code_quality_score["display"],
-        1,
+    naming_score = score_naming_conventions(
+        tables,
+        nc,
+        model_metadata,
+        business_domain_config,
+        project_dir=project_dir,
+        edges=edges,
+        indirect_edges=indirect_edges,
+        asset_catalog=asset_catalog,
     )
 
-    result = dict(
-        project=project,
-        overall_raw=overall_raw,
-        overall_display=overall_display,
-        weights=weights,
+    dimensions = dict(
         reuse=reuse_score,
         depth=depth_score,
         architecture=architecture_score,
@@ -3122,6 +3130,32 @@ def assess(project: str, weights: dict = None) -> dict:
         asset_completeness=asset_completeness_score,
         metadata_health=metadata_health_score,
         code_quality=code_quality_score,
+    )
+    overall_score = round(
+        sum(
+            weights[key] * dimensions[key]["score"]
+            for key in [
+                "reuse",
+                "depth",
+                "architecture",
+                "naming",
+                "asset_completeness",
+                "metadata_health",
+                "code_quality",
+            ]
+        ),
+        1,
+    )
+    output_dimensions = _filter_dimension_checks(
+        dimensions,
+        include_passed_checks=include_passed_checks,
+    )
+
+    result = dict(
+        project=project,
+        overall_score=overall_score,
+        weights=weights,
+        dimensions=output_dimensions,
     )
 
     return result
@@ -3175,6 +3209,10 @@ def main():
                         type=int,
                         default=2,
                         help="LLM 并发调用数，默认 2")
+    parser.add_argument(
+        "--include-passed-checks",
+        action="store_true",
+        help="输出通过检查项的完整 checks 证据；默认只输出 issue 关联的失败 checks")
     args = parser.parse_args()
 
     weights = dict(
@@ -3190,7 +3228,11 @@ def main():
         parallel=args.parallel,
     )
 
-    result = assess(args.project, weights)
+    result = assess(
+        args.project,
+        weights,
+        include_passed_checks=args.include_passed_checks,
+    )
 
     print(generate_report(result, result["weights"], args.project))
 

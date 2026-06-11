@@ -9,9 +9,49 @@ from pathlib import Path
 import sqlglot
 from sqlglot import exp
 
+from assess.result_model import (
+    SEVERITY_HIGH,
+    SEVERITY_LOW,
+    SEVERITY_MEDIUM,
+    finalize_dimension,
+    make_check,
+    rule_meta,
+)
+
 RULE_TEMP_TABLE_NAME_HAS_TEMP_OR_TMP = "TEMP_TABLE_NAME_HAS_TEMP_OR_TMP"
 RULE_TEMP_TABLE_DROPPED_IN_SAME_TASK = "TEMP_TABLE_DROPPED_IN_SAME_TASK"
 RULE_NO_SELECT_STAR_IN_WRITE = "NO_SELECT_STAR_IN_WRITE"
+
+CODE_RULE_TEMP_TABLE_NAME = "CODE_TEMP_TABLE_NAME_HAS_TEMP_OR_TMP"
+CODE_RULE_TEMP_TABLE_DROPPED = "CODE_TEMP_TABLE_DROPPED_IN_SAME_TASK"
+CODE_RULE_NO_SELECT_STAR = "CODE_NO_SELECT_STAR_IN_WRITE"
+
+CODE_QUALITY_RULES = {
+    CODE_RULE_TEMP_TABLE_NAME: rule_meta(
+        name="临时表名包含temp/tmp",
+        severity=SEVERITY_LOW,
+        title="临时表命名不清晰",
+        remediation_summary="将临时表名调整为包含temp或tmp的名称",
+        strategy="rename_temp_table",
+        edit_scope=["tasks"],
+    ),
+    CODE_RULE_TEMP_TABLE_DROPPED: rule_meta(
+        name="临时表在同一作业清理",
+        severity=SEVERITY_MEDIUM,
+        title="临时表未在同一作业清理",
+        remediation_summary="在创建临时表后的同一作业中补充DROP TABLE清理语句",
+        strategy="drop_temp_table_after_use",
+        edit_scope=["tasks"],
+    ),
+    CODE_RULE_NO_SELECT_STAR: rule_meta(
+        name="写入型语句不使用SELECT *",
+        severity=SEVERITY_HIGH,
+        title="写入型SQL使用SELECT *",
+        remediation_summary="将写入型SQL中的SELECT *改为显式字段列表",
+        strategy="expand_select_star",
+        edit_scope=["tasks"],
+    ),
+}
 
 
 def _short_table_name(table_name: str) -> str:
@@ -106,11 +146,7 @@ def _temp_name_is_valid(table_name: str) -> bool:
 
 def _empty_result() -> dict:
     return dict(
-        score=100.0,
-        passed=0,
-        total=0,
-        rule_summary={},
-        details=[],
+        checks=[],
     )
 
 
@@ -122,40 +158,57 @@ def _record_check(
     ok: bool,
     message: str,
 ) -> None:
-    result["total"] += 1
-    summary = result["rule_summary"].setdefault(
-        rule,
-        {"pass_count": 0, "total": 0},
-    )
-    summary["total"] += 1
+    if rule == RULE_TEMP_TABLE_NAME_HAS_TEMP_OR_TMP:
+        rule_id = CODE_RULE_TEMP_TABLE_NAME
+        expected = "临时表名包含temp或tmp"
+        actual = (
+            f"临时表名 {table_name} 符合要求"
+            if ok
+            else f"临时表名 {table_name} 未包含temp/tmp"
+        )
+        target_type = "table"
+        target = table_name
+    elif rule == RULE_TEMP_TABLE_DROPPED_IN_SAME_TASK:
+        rule_id = CODE_RULE_TEMP_TABLE_DROPPED
+        expected = "临时表在同一作业后续DROP清理"
+        actual = "已清理" if ok else "未在同一作业后续DROP清理"
+        target_type = "table"
+        target = table_name
+    else:
+        rule_id = CODE_RULE_NO_SELECT_STAR
+        expected = "写入型语句显式列出字段"
+        actual = (
+            f"写入 {table_name} 时显式列出字段"
+            if ok
+            else f"写入 {table_name} 时使用 SELECT *"
+        )
+        target_type = "task"
+        target = file_name
 
-    if ok:
-        result["passed"] += 1
-        summary["pass_count"] += 1
-        return
-
-    result["details"].append(
-        dict(
-            file=file_name,
-            table=table_name,
-            rule=rule,
-            message=message,
+    result["checks"].append(
+        make_check(
+            rule_id=rule_id,
+            target_type=target_type,
+            target=target,
+            passed=ok,
+            expected=expected,
+            actual=actual,
+            evidence={"file": file_name, "table": table_name},
+            message=message if not ok else "",
         )
     )
 
 
 def _finalize_result(result: dict) -> dict:
-    result["score"] = (
-        round(result["passed"] / result["total"] * 100, 1)
-        if result["total"] else 100.0
+    checks = result["checks"]
+    passed = sum(1 for check in checks if check["passed"])
+    total = len(checks)
+    return finalize_dimension(
+        dimension="code_quality",
+        score=round(passed / total * 100, 1) if total else 100.0,
+        checks=checks,
+        rules=CODE_QUALITY_RULES,
     )
-    for summary in result["rule_summary"].values():
-        total = summary["total"]
-        summary["pct"] = (
-            round(summary["pass_count"] / total * 100, 1)
-            if total else 0
-        )
-    return result
 
 
 def _fallback_scan(sql: str) -> tuple[list[dict], list[dict], list[dict]]:
