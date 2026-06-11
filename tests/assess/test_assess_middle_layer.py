@@ -116,9 +116,11 @@ def test_assess_returns_raw_and_display_scores(monkeypatch, sample_lineage_data,
     assert "architecture" in result
     assert "asset_completeness" in result
     assert "metadata_health" in result
-    assert result["weights"]["architecture"] == 0.2
-    assert result["weights"]["asset_completeness"] == 0.1
-    assert result["weights"]["metadata_health"] == 0.1
+    assert "code_quality" in result
+    assert result["weights"]["architecture"] == 0.18
+    assert result["weights"]["asset_completeness"] == 0.09
+    assert result["weights"]["metadata_health"] == 0.09
+    assert result["weights"]["code_quality"] == 0.1
 
     # 展示分 = 原始分 (取消展示分映射后)
     assert result["reuse"]["raw"] == result["reuse"]["display"]
@@ -129,6 +131,7 @@ def test_assess_returns_raw_and_display_scores(monkeypatch, sample_lineage_data,
     assert result["metadata_health"]["raw"] == result[
         "metadata_health"]["display"]
     assert result["naming"]["raw"] == result["naming"]["display"]
+    assert result["code_quality"]["raw"] == result["code_quality"]["display"]
     assert result["overall_display"] == result["overall_raw"]
 
     # sample: 4 张表, 1 条违规 (低权重=1), cap 后 = 1, 合规率 = (1 - 1/4) × 100 = 75
@@ -138,16 +141,19 @@ def test_assess_returns_raw_and_display_scores(monkeypatch, sample_lineage_data,
 def test_normalize_score_weights_supports_partial_override():
     weights = normalize_score_weights({"reuse": 0.3})
 
-    assert weights["reuse"] == pytest.approx(0.272727, rel=0, abs=1e-6)
-    assert weights["depth"] == pytest.approx(0.181818, rel=0, abs=1e-6)
-    assert weights["architecture"] == pytest.approx(0.181818, rel=0, abs=1e-6)
-    assert weights["asset_completeness"] == pytest.approx(0.090909,
+    assert weights["reuse"] == pytest.approx(0.267857, rel=0, abs=1e-6)
+    assert weights["depth"] == pytest.approx(0.160714, rel=0, abs=1e-6)
+    assert weights["architecture"] == pytest.approx(0.160714, rel=0, abs=1e-6)
+    assert weights["asset_completeness"] == pytest.approx(0.080357,
                                                           rel=0,
                                                           abs=1e-6)
-    assert weights["metadata_health"] == pytest.approx(0.090909,
+    assert weights["metadata_health"] == pytest.approx(0.080357,
                                                        rel=0,
                                                        abs=1e-6)
-    assert weights["naming"] == pytest.approx(0.181818, rel=0, abs=1e-6)
+    assert weights["naming"] == pytest.approx(0.160714, rel=0, abs=1e-6)
+    assert weights["code_quality"] == pytest.approx(0.089286,
+                                                    rel=0,
+                                                    abs=1e-6)
     assert sum(weights[key] for key in [
         "reuse",
         "depth",
@@ -155,7 +161,8 @@ def test_normalize_score_weights_supports_partial_override():
         "asset_completeness",
         "metadata_health",
         "naming",
-    ]) == pytest.approx(1.0, rel=0, abs=1e-6)
+        "code_quality",
+    ]) == pytest.approx(1.0, rel=0, abs=2e-6)
 
 
 def test_score_metadata_health_validates_model_entity_and_grain_entity():
@@ -283,6 +290,7 @@ def test_generate_report_contains_raw_and_display_scores(
     assert "【架构合理性】评分: 75.0" in report
     assert "【资产完整性】评分" in report
     assert "【模型元数据健康度】评分" in report
+    assert "【代码质量】评分" in report
     assert "Σ(每表 cap 后权重) = 1" in report
 
 

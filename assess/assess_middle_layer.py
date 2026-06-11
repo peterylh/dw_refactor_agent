@@ -29,6 +29,7 @@ if str(_root) not in sys.path:
     sys.path.insert(0, str(_root))
 
 from assess.context_builder import build_contexts
+from assess.code_quality import score_code_quality
 from assess.entity_metadata import (
     defined_entity_codes,
     grain_entity_codes,
@@ -53,12 +54,13 @@ MIDDLE_DEPTH_FALLBACK = 30  # depth ≥ 3
 REUSE_FULL_SCORE_AT = 3
 
 DEFAULT_WEIGHTS = {
-    "reuse": 0.2,
-    "depth": 0.2,
-    "architecture": 0.2,
-    "naming": 0.2,
-    "asset_completeness": 0.1,
-    "metadata_health": 0.1,
+    "reuse": 0.18,
+    "depth": 0.18,
+    "architecture": 0.18,
+    "naming": 0.18,
+    "asset_completeness": 0.09,
+    "metadata_health": 0.09,
+    "code_quality": 0.1,
 }
 
 # 加权违规率配置: 严重度 → 权重
@@ -2657,6 +2659,7 @@ def generate_report(scores: dict, weights: dict, project: str) -> str:
         ("命名规范", "naming"),
         ("资产完整性", "asset_completeness"),
         ("模型元数据健康度", "metadata_health"),
+        ("代码质量", "code_quality"),
     ]
     for label, key in dims:
         metric = scores[key]
@@ -2857,6 +2860,45 @@ def generate_report(scores: dict, weights: dict, project: str) -> str:
     parts.append(sep)
 
     # ============================================================
+    # 代码质量
+    # ============================================================
+    code_quality = scores["code_quality"]
+    parts.append(f"\n{'=' * 62}")
+    parts.append(
+        f"【代码质量】评分(展示/原始): {code_quality['display']} / "
+        f"{code_quality['raw']}"
+    )
+    parts.append(f"{'=' * 62}")
+
+    headers = ["规则", "通过", "总计", "合规率"]
+    col_w = [36, 6, 6, 8]
+    rows = []
+    for desc, cnts in sorted(code_quality["rule_summary"].items()):
+        rows.append([
+            desc,
+            str(cnts["pass_count"]),
+            str(cnts["total"]),
+            f"{cnts['pct']}%",
+        ])
+    if not rows:
+        rows.append(["(无检查项)", "0", "0", "0%"])
+    parts.append(_fmt_table(headers, rows, col_w))
+
+    if code_quality["details"]:
+        parts.append(f"\n  偏离详情:")
+        for detail in code_quality["details"][:30]:
+            parts.append(
+                "    "
+                f"{detail['file']} | {detail['table']} | "
+                f"{detail['rule']} | {detail['message']}"
+            )
+        if len(code_quality["details"]) > 30:
+            parts.append(f"    ... (共{len(code_quality['details'])}个)")
+    else:
+        parts.append(f"\n  无违规 ✓")
+    parts.append(sep)
+
+    # ============================================================
     # 命名规范
     # ============================================================
     naming = scores["naming"]
@@ -3021,6 +3063,9 @@ def assess(project: str, weights: dict = None) -> dict:
     asset_completeness_score = build_metric_result(
         score_asset_completeness(asset_catalog)
     )
+    code_quality_score = build_metric_result(
+        score_code_quality(asset_catalog)
+    )
     metadata_health_score = build_metric_result(
         score_metadata_health(
             tables,
@@ -3049,7 +3094,8 @@ def assess(project: str, weights: dict = None) -> dict:
         weights["naming"] * naming_score["raw"] +
         weights["asset_completeness"]
         * asset_completeness_score["raw"] +
-        weights["metadata_health"] * metadata_health_score["raw"],
+        weights["metadata_health"] * metadata_health_score["raw"] +
+        weights["code_quality"] * code_quality_score["raw"],
         1,
     )
     overall_display = round(
@@ -3059,7 +3105,8 @@ def assess(project: str, weights: dict = None) -> dict:
         weights["naming"] * naming_score["display"] +
         weights["asset_completeness"]
         * asset_completeness_score["display"] +
-        weights["metadata_health"] * metadata_health_score["display"],
+        weights["metadata_health"] * metadata_health_score["display"] +
+        weights["code_quality"] * code_quality_score["display"],
         1,
     )
 
@@ -3074,6 +3121,7 @@ def assess(project: str, weights: dict = None) -> dict:
         naming=naming_score,
         asset_completeness=asset_completeness_score,
         metadata_health=metadata_health_score,
+        code_quality=code_quality_score,
     )
 
     return result
@@ -3113,6 +3161,10 @@ def main():
                         type=float,
                         default=DEFAULT_WEIGHTS["asset_completeness"],
                         help="资产完整性权重，可单独指定，最终会自动归一化")
+    parser.add_argument("--code-quality-weight",
+                        type=float,
+                        default=DEFAULT_WEIGHTS["code_quality"],
+                        help="代码质量权重，可单独指定，最终会自动归一化")
     parser.add_argument("--llm",
                         action="store_true",
                         help="调用 DeepSeek API 进行 LLM 智能分层检测")
@@ -3132,6 +3184,7 @@ def main():
         naming=args.naming_weight,
         asset_completeness=args.asset_completeness_weight,
         metadata_health=args.metadata_health_weight,
+        code_quality=args.code_quality_weight,
         enable_llm=args.llm,
         no_cache=args.no_cache,
         parallel=args.parallel,
