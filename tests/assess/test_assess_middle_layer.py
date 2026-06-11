@@ -465,7 +465,18 @@ def test_score_naming_conventions_checks_table_name_length():
     assert result["details"][1]["table_checks"]["violations"] == ["违反: 表名长度 <= 30"]
 
 
-def test_score_naming_conventions_includes_structured_diagnostics():
+def _contains_key(value, key):
+    if isinstance(value, dict):
+        return key in value or any(
+            _contains_key(child, key)
+            for child in value.values()
+        )
+    if isinstance(value, list):
+        return any(_contains_key(child, key) for child in value)
+    return False
+
+
+def test_score_naming_conventions_outputs_llm_repair_items():
     nc = load_naming_config(PROJECT_ROOT / "naming_config.yaml")
     tables = [
         {
@@ -476,18 +487,85 @@ def test_score_naming_conventions_includes_structured_diagnostics():
     ]
 
     result = score_naming_conventions(tables, nc)
-    detail = result["details"][0]
 
-    table_diag = detail["table_checks"]["diagnostics"][0]
-    assert table_diag["check"] == "table_template"
-    assert table_diag["attempts"][0]["rule"]["name"] == "TABLE_DWD"
-    assert table_diag["attempts"][0]["failure"]["code"] == "literal_mismatch"
+    assert not _contains_key(result, "diagnostics")
+    assert result["rule_catalog"]["TABLE_DWD"]["target_type"] == "table"
+    assert result["rule_catalog"]["COLUMN_DEFAULT"] == {
+        "target_type": "column",
+        "summary": "默认字段命名大写标识符，长度小于16",
+        "expression": "{COLUMN_IDENTIFIER}",
+        "patterns": ["^[A-Z][A-Z0-9_]{0,14}$"],
+    }
 
-    column_diag = detail["column_checks"]["diagnostics"][0]
-    assert column_diag["actual"] == "customer_id"
-    assert column_diag["attempts"][0]["rule"]["name"] == "COLUMN_DEFAULT"
-    assert column_diag["attempts"][0]["segments"][0]["type"]["patterns"] == [
-        "^[A-Z][A-Z0-9_]{0,14}$"
+    table_item = next(
+        item for item in result["repair_items"]
+        if item["target_type"] == "table"
+    )
+    assert table_item["table"] == "dwd_customer"
+    assert table_item["object"] == "dwd_customer"
+    assert table_item["rule_ref"] == "TABLE_DWD"
+    assert table_item["problem"] == "表名不符合 DWD 明细层表命名"
+    assert table_item["expected"] == (
+        "表达式 M _ {BUSINESS_AREA_CODE} _ {DATA_DOMAIN_ID} _ "
+        "{BIZ_PROCESS} _ {TIME_PERIOD}{DWD_GRANULARITY}"
+    )
+
+    column_item = next(
+        item for item in result["repair_items"]
+        if item["target_type"] == "column"
+    )
+    assert column_item["table"] == "dwd_customer"
+    assert column_item["object"] == "customer_id"
+    assert column_item["rule_ref"] == "COLUMN_DEFAULT"
+    assert column_item["problem"] == "字段名不符合 默认字段命名大写标识符，长度小于16"
+    assert column_item["expected"] == "匹配 ^[A-Z][A-Z0-9_]{0,14}$"
+    assert column_item["failure"]["code"] == "type_pattern_mismatch"
+
+
+def test_score_naming_conventions_repair_items_include_related_files(tmp_path):
+    nc = load_naming_config(PROJECT_ROOT / "naming_config.yaml")
+    project_dir = tmp_path / "demo"
+    (project_dir / "ddl").mkdir(parents=True)
+    (project_dir / "models").mkdir()
+    (project_dir / "tasks").mkdir()
+
+    table_name = "dwd_customer"
+    (project_dir / "ddl" / f"{table_name}.sql").write_text(
+        f"""
+CREATE TABLE IF NOT EXISTS demo.{table_name} (
+    customer_id BIGINT
+) ENGINE=OLAP
+DUPLICATE KEY(customer_id)
+DISTRIBUTED BY HASH(customer_id) BUCKETS 1
+PROPERTIES ("replication_num" = "1");
+""",
+        encoding="utf-8",
+    )
+    (project_dir / "models" / f"{table_name}.yaml").write_text(
+        f"name: {table_name}\nlayer: DWD\n",
+        encoding="utf-8",
+    )
+    (project_dir / "tasks" / f"{table_name}.sql").write_text(
+        f"INSERT INTO demo.{table_name} SELECT 1 AS customer_id;",
+        encoding="utf-8",
+    )
+
+    result = score_naming_conventions(
+        [],
+        nc,
+        {table_name: {"layer": "DWD"}},
+        project_dir=project_dir,
+    )
+
+    column_item = next(
+        item for item in result["repair_items"]
+        if item["target_type"] == "column"
+    )
+    assert column_item["fix_scope"] == ["ddl", "tasks", "models"]
+    assert column_item["related_files"] == [
+        "demo/ddl/dwd_customer.sql",
+        "demo/tasks/dwd_customer.sql",
+        "demo/models/dwd_customer.yaml",
     ]
 
 

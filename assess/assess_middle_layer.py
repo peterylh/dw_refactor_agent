@@ -83,6 +83,17 @@ ASSET_RULE_MODEL_DDL = "Model存在对应DDL表"
 ASSET_RULE_TASK_DDL = "Task产出表存在DDL"
 ASSET_RULE_TASK_MODEL = "Task产出表存在Model"
 ASSET_RULE_TASK_LINEAGE = "Task血缘目标与实际产出一致"
+REPAIR_RULE_TABLE_MAX_LENGTH = "TABLE_NAME_MAX_LENGTH"
+REPAIR_RULE_DWS_ENTITY = "DWS_ENTITY_ALIGNMENT"
+REPAIR_RULE_DIM_ENTITY = "DIM_ENTITY_ALIGNMENT"
+REPAIR_RULE_SEMANTIC_METADATA = "TABLE_SEMANTIC_METADATA_ALIGNMENT"
+REPAIR_RULE_ATOMIC_METRIC = "ATOMIC_METRIC"
+REPAIR_RULE_DERIVED_METRIC = "DERIVED_METRIC"
+REPAIR_FILE_RULE_REFS = {
+    FILE_RULE_DDL: "DDL_FILE_NAME",
+    FILE_RULE_MODEL_NAME: "MODEL_FILE_NAME",
+    FILE_RULE_TASK_SQL: "TASK_OUTPUT_NAME",
+}
 
 def normalize_score_weights(weights: dict | None = None) -> dict:
     merged = DEFAULT_WEIGHTS.copy()
@@ -2065,11 +2076,17 @@ def _build_final_naming_result(
     table_results: list[dict],
     rule_summary: dict,
     file_result: dict,
+    context: dict,
 ) -> dict:
     total_passed = sum(result["_passed"] for result in table_results)
     total_checks = sum(result["_total"] for result in table_results)
     total_passed += file_result["passed"]
     total_checks += file_result["total"]
+    repair_payload = _build_naming_repair_payload(
+        table_results,
+        file_result,
+        context,
+    )
     details = []
     for result in table_results:
         clean = {
@@ -2077,7 +2094,7 @@ def _build_final_naming_result(
             for key, value in result.items()
             if not key.startswith("_")
         }
-        details.append(clean)
+        details.append(_strip_parser_diagnostics(clean))
     return dict(
         score=round(total_passed / total_checks * 100, 1)
         if total_checks else 100.0,
@@ -2088,6 +2105,8 @@ def _build_final_naming_result(
             total=file_result["total"],
         ),
         file_details=file_result["details"],
+        rule_catalog=repair_payload["rule_catalog"],
+        repair_items=repair_payload["repair_items"],
     )
 
 
@@ -2128,6 +2147,7 @@ def score_naming_conventions(
         table_results,
         rule_summary,
         file_result,
+        context,
     )
 
 
@@ -2154,52 +2174,463 @@ def _fmt_table(
     return "\n".join(lines)
 
 
-def _format_naming_diagnostic(diagnostic: dict) -> str:
-    actual = diagnostic.get("actual", "")
-    if diagnostic.get("check") == "table_max_length":
-        expected = diagnostic.get("expected", {})
-        return (
-            f"{actual}: 长度 {diagnostic.get('actual_length')} "
-            f"> {expected.get('max_length')}"
-        )
-
-    attempts = diagnostic.get("attempts") or []
+def _best_failed_attempt(attempts: list[dict]) -> dict:
     failed_attempts = [
         attempt for attempt in attempts if not attempt.get("passed")
     ]
-    if failed_attempts:
-        best = max(
-            failed_attempts,
-            key=lambda item: (
-                item.get("failure", {}).get("consumed_chars", -1),
-                -len(str(item.get("failure", {}).get("actual_remaining", ""))),
-            ),
+    if not failed_attempts:
+        return {}
+    return max(
+        failed_attempts,
+        key=lambda item: (
+            item.get("failure", {}).get("consumed_chars", -1),
+            -len(str(item.get("failure", {}).get("actual_remaining", ""))),
+        ),
+    )
+
+
+def _failure_for_repair(failure: dict) -> dict:
+    keys = [
+        "code",
+        "position",
+        "expected",
+        "actual",
+        "actual_remaining",
+    ]
+    return {
+        key: failure[key]
+        for key in keys
+        if key in failure and failure[key] not in (None, "")
+    }
+
+
+def _catalog_patterns_from_failure(failure: dict) -> list[str]:
+    expected = failure.get("expected")
+    if not isinstance(expected, list):
+        return []
+    code = str(failure.get("code") or "")
+    if "pattern" not in code:
+        return []
+    return [str(item) for item in expected]
+
+
+def _catalog_allowed_values_from_failure(failure: dict) -> list[str]:
+    expected = failure.get("expected")
+    if not isinstance(expected, list):
+        return []
+    code = str(failure.get("code") or "")
+    if "allowed" not in code:
+        return []
+    return [str(item) for item in expected]
+
+
+def _add_rule_catalog_entry(
+    catalog: dict,
+    rule_ref: str,
+    *,
+    target_type: str,
+    summary: str,
+    expression: str | None = None,
+    failure: dict | None = None,
+    constraints: dict | None = None,
+) -> None:
+    entry = catalog.setdefault(
+        rule_ref,
+        {
+            "target_type": target_type,
+            "summary": summary or rule_ref,
+        },
+    )
+    if expression and "expression" not in entry:
+        entry["expression"] = expression
+    patterns = _catalog_patterns_from_failure(failure or {})
+    if patterns:
+        entry["patterns"] = patterns
+    allowed_values = _catalog_allowed_values_from_failure(failure or {})
+    if allowed_values:
+        entry["allowed_values"] = allowed_values
+    clean_constraints = {
+        key: value
+        for key, value in (constraints or {}).items()
+        if value not in (None, "")
+    }
+    if clean_constraints:
+        entry["constraints"] = clean_constraints
+
+
+def _rule_ref_from_attempt(attempt: dict, fallback: str) -> str:
+    rule = attempt.get("rule") or {}
+    return str(rule.get("name") or fallback)
+
+
+def _summary_from_attempt(attempt: dict, fallback: str) -> str:
+    rule = attempt.get("rule") or {}
+    return str(rule.get("description") or fallback)
+
+
+def _expected_from_attempt(attempt: dict, target_type: str) -> str:
+    failure = attempt.get("failure") or {}
+    expected = failure.get("expected")
+    expression = attempt.get("expression")
+    if target_type == "column" and isinstance(expected, list):
+        return "匹配 " + " 或 ".join(str(item) for item in expected)
+    if target_type == "table" and expression:
+        return f"表达式 {expression}"
+    if isinstance(expected, list):
+        return "取值为 " + ", ".join(str(item) for item in expected)
+    if expected not in (None, ""):
+        return f"期望 {expected}"
+    if expression:
+        return f"表达式 {expression}"
+    return ""
+
+
+def _related_files_for_table(asset_catalog: dict, table_name: str) -> list[str]:
+    project_dir = asset_catalog.get("project_dir")
+    if not project_dir:
+        return []
+    asset = (asset_catalog.get("tables") or {}).get(table_name) or {}
+    files = []
+    ddl = asset.get("ddl") or {}
+    if ddl.get("path"):
+        files.append(_display_file_path(project_dir, ddl["path"]))
+    for task in sorted(asset.get("tasks") or [], key=lambda item: item["file"]):
+        files.append(_display_file_path(project_dir, task["path"]))
+    model = asset.get("model") or {}
+    if model.get("path"):
+        files.append(_display_file_path(project_dir, model["path"]))
+    return files
+
+
+def _repair_item(
+    *,
+    target_type: str,
+    table: str,
+    layer: str,
+    obj: str,
+    rule_ref: str,
+    problem: str,
+    expected: str,
+    failure: dict | None,
+    fix_scope: list[str],
+    related_files: list[str],
+) -> dict:
+    item = dict(
+        target_type=target_type,
+        table=table,
+        layer=layer,
+        object=obj,
+        rule_ref=rule_ref,
+        problem=problem,
+        expected=expected,
+        fix_scope=fix_scope,
+        related_files=related_files,
+    )
+    clean_failure = _failure_for_repair(failure or {})
+    if clean_failure:
+        item["failure"] = clean_failure
+    return item
+
+
+def _repair_from_parser_diagnostic(
+    *,
+    diagnostic: dict,
+    target_type: str,
+    table: str,
+    layer: str,
+    fallback_rule: str,
+    object_name: str,
+    catalog: dict,
+    asset_catalog: dict,
+) -> dict | None:
+    attempt = _best_failed_attempt(diagnostic.get("attempts") or [])
+    if not attempt:
+        return None
+    rule_ref = _rule_ref_from_attempt(attempt, fallback_rule)
+    summary = _summary_from_attempt(attempt, rule_ref)
+    failure = attempt.get("failure") or {}
+    _add_rule_catalog_entry(
+        catalog,
+        rule_ref,
+        target_type=target_type,
+        summary=summary,
+        expression=attempt.get("expression"),
+        failure=failure,
+        constraints=(attempt.get("rule") or {}).get("constraints"),
+    )
+    object_label = {
+        "table": "表名",
+        "column": "字段名",
+    }.get(target_type, "对象")
+    return _repair_item(
+        target_type=target_type,
+        table=table,
+        layer=layer,
+        obj=object_name,
+        rule_ref=rule_ref,
+        problem=f"{object_label}不符合 {summary}",
+        expected=_expected_from_attempt(attempt, target_type),
+        failure=failure,
+        fix_scope=["ddl", "tasks", "models"],
+        related_files=_related_files_for_table(asset_catalog, table),
+    )
+
+
+def _repair_from_table_max_length(
+    *,
+    diagnostic: dict,
+    table: str,
+    layer: str,
+    catalog: dict,
+    asset_catalog: dict,
+) -> dict:
+    expected = diagnostic.get("expected") or {}
+    max_length = expected.get("max_length")
+    _add_rule_catalog_entry(
+        catalog,
+        REPAIR_RULE_TABLE_MAX_LENGTH,
+        target_type="table",
+        summary=f"表名长度 <= {max_length}",
+        constraints={"max_length": max_length},
+    )
+    return _repair_item(
+        target_type="table",
+        table=table,
+        layer=layer,
+        obj=table,
+        rule_ref=REPAIR_RULE_TABLE_MAX_LENGTH,
+        problem=f"表名长度超过 {max_length}",
+        expected=f"长度 <= {max_length}",
+        failure={
+            "code": "max_length_exceeded",
+            "actual": diagnostic.get("actual"),
+            "expected": max_length,
+        },
+        fix_scope=["ddl", "tasks", "models"],
+        related_files=_related_files_for_table(asset_catalog, table),
+    )
+
+
+def _metric_rule_ref(rule_name: str | None, fallback: str) -> str:
+    if rule_name == "atomic":
+        return REPAIR_RULE_ATOMIC_METRIC
+    if rule_name == "derived":
+        return REPAIR_RULE_DERIVED_METRIC
+    return str(rule_name or fallback)
+
+
+def _add_simple_catalog_entry(
+    catalog: dict,
+    rule_ref: str,
+    target_type: str,
+    summary: str,
+) -> None:
+    _add_rule_catalog_entry(
+        catalog,
+        rule_ref,
+        target_type=target_type,
+        summary=summary,
+    )
+
+
+def _build_naming_repair_payload(
+    table_results: list[dict],
+    file_result: dict,
+    context: dict,
+) -> dict:
+    catalog = {}
+    repair_items = []
+    asset_catalog = context["asset_catalog"]
+    for result in table_results:
+        table = result["table"]
+        layer = result["layer"]
+        related_files = _related_files_for_table(asset_catalog, table)
+
+        for diagnostic in result["table_checks"].get("diagnostics", []):
+            if diagnostic.get("check") == "table_max_length":
+                repair_items.append(
+                    _repair_from_table_max_length(
+                        diagnostic=diagnostic,
+                        table=table,
+                        layer=layer,
+                        catalog=catalog,
+                        asset_catalog=asset_catalog,
+                    )
+                )
+                continue
+            item = _repair_from_parser_diagnostic(
+                diagnostic=diagnostic,
+                target_type="table",
+                table=table,
+                layer=layer,
+                fallback_rule=f"TABLE_{layer}",
+                object_name=table,
+                catalog=catalog,
+                asset_catalog=asset_catalog,
+            )
+            if item:
+                repair_items.append(item)
+
+        for diagnostic in result["column_checks"].get("diagnostics", []):
+            item = _repair_from_parser_diagnostic(
+                diagnostic=diagnostic,
+                target_type="column",
+                table=table,
+                layer=layer,
+                fallback_rule="COLUMN_DEFAULT",
+                object_name=diagnostic.get("actual") or "",
+                catalog=catalog,
+                asset_catalog=asset_catalog,
+            )
+            if item:
+                repair_items.append(item)
+
+        atomic_rule = _metric_rule_ref(
+            context.get("atomic_rule_name"),
+            REPAIR_RULE_ATOMIC_METRIC,
         )
-        rule = best.get("rule") or {}
-        failure = best.get("failure") or {}
-        rule_name = rule.get("name") or "未命名规则"
-        desc = rule.get("description") or ""
-        expr = best.get("expression") or ""
-        expected = failure.get("expected")
-        if expected is None:
-            expected = failure.get("segment", {}).get("type", {})
-        return (
-            f"{actual}: 规则 {rule_name}"
-            f"{'(' + desc + ')' if desc else ''}; "
-            f"表达式 {expr}; "
-            f"失败段 {failure.get('position')}, "
-            f"原因 {failure.get('code')}; "
-            f"期望 {expected}; "
-            f"实际剩余 {failure.get('actual_remaining', '')}"
+        for metric in result.get("atomic_metric_checks", {}).get(
+            "violations", []
+        ):
+            _add_simple_catalog_entry(
+                catalog,
+                atomic_rule,
+                "atomic_metric",
+                context.get("atomic_rule_label") or ATOMIC_METRIC_RULE_NAME,
+            )
+            repair_items.append(
+                _repair_item(
+                    target_type="atomic_metric",
+                    table=table,
+                    layer=layer,
+                    obj=metric,
+                    rule_ref=atomic_rule,
+                    problem="原子指标名不符合命名规则",
+                    expected=context.get("atomic_rule_label") or "",
+                    failure={"code": "metric_rule_mismatch"},
+                    fix_scope=["models", "ddl", "tasks"],
+                    related_files=related_files,
+                )
+            )
+
+        derived_rule = _metric_rule_ref(
+            context.get("derived_rule_name"),
+            REPAIR_RULE_DERIVED_METRIC,
+        )
+        for metric in result.get("derived_metric_checks", {}).get(
+            "violations", []
+        ):
+            _add_simple_catalog_entry(
+                catalog,
+                derived_rule,
+                "derived_metric",
+                context.get("derived_rule_label") or DERIVED_METRIC_RULE_NAME,
+            )
+            repair_items.append(
+                _repair_item(
+                    target_type="derived_metric",
+                    table=table,
+                    layer=layer,
+                    obj=metric,
+                    rule_ref=derived_rule,
+                    problem="派生指标名不符合命名规则",
+                    expected=context.get("derived_rule_label") or "",
+                    failure={"code": "metric_rule_mismatch"},
+                    fix_scope=["models", "ddl", "tasks"],
+                    related_files=related_files,
+                )
+            )
+
+        model_checks = [
+            (
+                result.get("dws_entity_checks", {}),
+                REPAIR_RULE_DWS_ENTITY,
+                "DWS表名实体需要包含于grain.entities",
+            ),
+            (
+                result.get("dim_entity_checks", {}),
+                REPAIR_RULE_DIM_ENTITY,
+                "DIM表名实体需要等于entities.primary.code",
+            ),
+            (
+                result.get("semantic_metadata_checks", {}),
+                REPAIR_RULE_SEMANTIC_METADATA,
+                "表名语义段需要与模型元数据一致",
+            ),
+        ]
+        for check, rule_ref, summary in model_checks:
+            violations = check.get("violations") or []
+            if not violations:
+                continue
+            _add_simple_catalog_entry(
+                catalog,
+                rule_ref,
+                "model_metadata",
+                summary,
+            )
+            for violation in violations:
+                repair_items.append(
+                    _repair_item(
+                        target_type="model_metadata",
+                        table=table,
+                        layer=layer,
+                        obj=table,
+                        rule_ref=rule_ref,
+                        problem=summary,
+                        expected=violation,
+                        failure={"code": "metadata_alignment_mismatch"},
+                        fix_scope=["models"],
+                        related_files=related_files,
+                    )
+                )
+
+    for detail in file_result.get("details") or []:
+        rule = detail["rule"]
+        rule_ref = REPAIR_FILE_RULE_REFS.get(rule, rule)
+        _add_simple_catalog_entry(catalog, rule_ref, "file", rule)
+        repair_items.append(
+            _repair_item(
+                target_type="file",
+                table=str(detail.get("expected") or ""),
+                layer="",
+                obj=detail["file"],
+                rule_ref=rule_ref,
+                problem=f"{rule}不一致",
+                expected=(
+                    f"期望 {detail.get('expected')}，"
+                    f"实际 {detail.get('actual')}"
+                ),
+                failure={"code": "file_name_mismatch"},
+                fix_scope=["file_path"],
+                related_files=[detail["file"]],
+            )
         )
 
-    rule = diagnostic.get("rule") or {}
-    if rule:
-        return (
-            f"{actual}: 规则 {rule.get('name')} "
-            f"{rule.get('description', '')}".strip()
-        )
-    return f"{actual}: {diagnostic.get('message', '未匹配命名规则')}"
+    return {
+        "rule_catalog": dict(sorted(catalog.items())),
+        "repair_items": repair_items,
+    }
+
+
+def _strip_parser_diagnostics(value):
+    if isinstance(value, dict):
+        return {
+            key: _strip_parser_diagnostics(child)
+            for key, child in value.items()
+            if key != "diagnostics"
+        }
+    if isinstance(value, list):
+        return [_strip_parser_diagnostics(child) for child in value]
+    return value
+
+
+def _format_naming_repair_item(item: dict) -> str:
+    obj = item.get("object") or item.get("table") or ""
+    problem = item.get("problem") or ""
+    expected = item.get("expected") or ""
+    files = item.get("related_files") or []
+    location = f"；文件 {', '.join(files[:3])}" if files else ""
+    return f"{item.get('target_type')}: {obj} - {problem}；{expected}{location}"
 
 
 def generate_report(scores: dict, weights: dict, project: str) -> str:
@@ -2447,6 +2878,11 @@ def generate_report(scores: dict, weights: dict, project: str) -> str:
 
     # 表级详情 (只显示有违规的表)
     has_viz = False
+    repair_items_by_table = defaultdict(list)
+    for item in naming.get("repair_items", []):
+        table = item.get("table")
+        if table:
+            repair_items_by_table[table].append(item)
     for r in naming["details"]:
         issues = []
         issues.extend(r["table_checks"]["violations"])
@@ -2490,18 +2926,12 @@ def generate_report(scores: dict, weights: dict, project: str) -> str:
                 f"\n    {r['table']}({r['layer']}) [得分: {r['score']}]")
             for iss in issues:
                 parts.append(f"      {iss}")
-            diagnostics = []
-            diagnostics.extend(r["table_checks"].get("diagnostics", []))
-            diagnostics.extend(r["column_checks"].get("diagnostics", [])[:5])
-            diagnostics.extend(
-                r.get("atomic_metric_checks", {}).get("diagnostics", [])[:5])
-            diagnostics.extend(
-                r.get("derived_metric_checks", {}).get("diagnostics", [])[:5])
-            if diagnostics:
-                parts.append("      诊断:")
-                for diagnostic in diagnostics[:8]:
+            repair_items = repair_items_by_table.get(r["table"], [])
+            if repair_items:
+                parts.append("      修复任务:")
+                for item in repair_items[:8]:
                     parts.append(
-                        f"        - {_format_naming_diagnostic(diagnostic)}")
+                        f"        - {_format_naming_repair_item(item)}")
 
     file_details = naming.get("file_details") or []
     if file_details:
