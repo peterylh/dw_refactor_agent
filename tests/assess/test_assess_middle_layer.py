@@ -13,14 +13,15 @@ from assess.assess_middle_layer import (
     ATOMIC_METRIC_RULE_NAME,
     DIM_ENTITY_RULE_NAME,
     DERIVED_METRIC_RULE_NAME,
+    DWS_ENTITY_RULE_NAME,
     FILE_RULE_DDL,
     FILE_RULE_MODEL_NAME,
-    FILE_RULE_MODEL_TABLE,
-    FILE_RULE_TASK_LINEAGE,
     FILE_RULE_TASK_SQL,
     assess,
+    build_asset_catalog,
     generate_report,
     normalize_score_weights,
+    score_asset_completeness,
     score_architecture_health,
     score_metadata_health,
     score_naming_conventions,
@@ -113,14 +114,18 @@ def test_assess_returns_raw_and_display_scores(monkeypatch, sample_lineage_data,
     result = assess(project=isolated_assess_project)
 
     assert "architecture" in result
+    assert "asset_completeness" in result
     assert "metadata_health" in result
     assert result["weights"]["architecture"] == 0.2
-    assert result["weights"]["metadata_health"] == 0.2
+    assert result["weights"]["asset_completeness"] == 0.1
+    assert result["weights"]["metadata_health"] == 0.1
 
     # 展示分 = 原始分 (取消展示分映射后)
     assert result["reuse"]["raw"] == result["reuse"]["display"]
     assert result["depth"]["raw"] == result["depth"]["display"]
     assert result["architecture"]["raw"] == result["architecture"]["display"]
+    assert result["asset_completeness"]["raw"] == result[
+        "asset_completeness"]["display"]
     assert result["metadata_health"]["raw"] == result[
         "metadata_health"]["display"]
     assert result["naming"]["raw"] == result["naming"]["display"]
@@ -136,7 +141,10 @@ def test_normalize_score_weights_supports_partial_override():
     assert weights["reuse"] == pytest.approx(0.272727, rel=0, abs=1e-6)
     assert weights["depth"] == pytest.approx(0.181818, rel=0, abs=1e-6)
     assert weights["architecture"] == pytest.approx(0.181818, rel=0, abs=1e-6)
-    assert weights["metadata_health"] == pytest.approx(0.181818,
+    assert weights["asset_completeness"] == pytest.approx(0.090909,
+                                                          rel=0,
+                                                          abs=1e-6)
+    assert weights["metadata_health"] == pytest.approx(0.090909,
                                                        rel=0,
                                                        abs=1e-6)
     assert weights["naming"] == pytest.approx(0.181818, rel=0, abs=1e-6)
@@ -144,6 +152,7 @@ def test_normalize_score_weights_supports_partial_override():
         "reuse",
         "depth",
         "architecture",
+        "asset_completeness",
         "metadata_health",
         "naming",
     ]) == pytest.approx(1.0, rel=0, abs=1e-6)
@@ -189,9 +198,9 @@ def test_score_metadata_health_validates_model_entity_and_grain_entity():
 
     result = score_metadata_health(tables, nc, model_metadata)
 
-    assert result["score"] == 50.0
-    assert result["passed"] == 1
-    assert result["total"] == 2
+    assert result["score"] == 75.0
+    assert result["passed"] == 3
+    assert result["total"] == 4
     assert [
         violation["message"] for violation in result["violations"]
     ] == [
@@ -212,6 +221,7 @@ def test_generate_report_contains_raw_and_display_scores(
     assert "总体评分(展示)" in report
     assert "总体评分(原始)" in report
     assert "【架构合理性】评分: 75.0" in report
+    assert "【资产完整性】评分" in report
     assert "【模型元数据健康度】评分" in report
     assert "Σ(每表 cap 后权重) = 1" in report
 
@@ -438,27 +448,39 @@ def test_score_naming_conventions_checks_business_dictionary_metadata(tmp_path):
             "business_area": "BAD",
         },
     }
-    result = score_naming_conventions(
+    metadata_result = score_metadata_health(
         tables,
         nc,
         model_metadata,
         business_config,
     )
 
-    assert result["rule_summary"]["数据域属于字典"] == {
+    assert metadata_result["rule_summary"]["data_domain配置有效"] == {
         "pass_count": 1,
         "total": 2,
         "pct": 50.0,
     }
-    assert result["rule_summary"]["业务板块属于字典"] == {
+    assert metadata_result["rule_summary"]["business_area配置有效"] == {
         "pass_count": 1,
         "total": 2,
         "pct": 50.0,
     }
-    assert result["details"][1]["business_metadata_checks"]["violations"] == [
-        "数据域不在字典: 98",
-        "业务板块不在字典: BAD",
-    ]
+    assert {
+        (item["rule"], item["reason"])
+        for item in metadata_result["violations"]
+    } == {
+        ("data_domain配置有效", "not_in_dictionary"),
+        ("business_area配置有效", "not_in_dictionary"),
+    }
+
+    naming_result = score_naming_conventions(
+        tables,
+        nc,
+        model_metadata,
+        business_config,
+    )
+    assert "data_domain配置有效" not in naming_result["rule_summary"]
+    assert "business_area配置有效" not in naming_result["rule_summary"]
 
 
 def test_score_naming_conventions_limits_business_metadata_by_layer(tmp_path):
@@ -483,6 +505,89 @@ def test_score_naming_conventions_limits_business_metadata_by_layer(tmp_path):
         },
     }
 
+    result = score_metadata_health(
+        tables,
+        nc,
+        model_metadata,
+        business_config,
+    )
+
+    assert result["rule_summary"]["data_domain配置有效"] == {
+        "pass_count": 0,
+        "total": 1,
+        "pct": 0.0,
+    }
+    assert result["rule_summary"]["business_area配置有效"] == {
+        "pass_count": 2,
+        "total": 2,
+        "pct": 100.0,
+    }
+
+
+def test_score_asset_completeness_classifies_missing_assets(tmp_path):
+    project_dir = tmp_path / "demo"
+    (project_dir / "ddl").mkdir(parents=True)
+    (project_dir / "models").mkdir()
+    (project_dir / "tasks").mkdir()
+
+    (project_dir / "ddl" / "dwd_orders.sql").write_text(
+        """
+CREATE TABLE demo.dwd_orders (
+    order_id BIGINT
+) ENGINE=OLAP
+DUPLICATE KEY(order_id)
+DISTRIBUTED BY HASH(order_id) BUCKETS 1;
+""",
+        encoding="utf-8",
+    )
+    (project_dir / "models" / "dws_orders.yaml").write_text(
+        "name: dws_orders\nlayer: DWS\n",
+        encoding="utf-8",
+    )
+    (project_dir / "tasks" / "dws_missing.sql").write_text(
+        "INSERT INTO demo.dws_missing SELECT 1 AS order_id;",
+        encoding="utf-8",
+    )
+
+    catalog = build_asset_catalog(
+        [],
+        {"dws_orders": {"name": "dws_orders", "layer": "DWS"}},
+        project_dir,
+        edges=[],
+        indirect_edges=[],
+    )
+    result = score_asset_completeness(catalog)
+
+    assert result["score"] == 0.0
+    assert {
+        (item["asset"], item["rule"])
+        for item in result["details"]
+    } == {
+        ("dwd_orders", "DDL表存在Model"),
+        ("dwd_orders", "需执行DDL表存在Task"),
+        ("dws_orders", "Model存在对应DDL表"),
+        ("dws_missing", "Task产出表存在DDL"),
+        ("dws_missing", "Task产出表存在Model"),
+        ("tasks/dws_missing.sql", "Task血缘目标与实际产出一致"),
+    }
+
+
+def test_naming_checks_business_segments_against_valid_model_metadata(tmp_path):
+    nc = _business_naming_config(tmp_path)
+    business_config = nc.business_domain_config
+    tables = [{
+        "name": "M_PAYM_04_CHREM_DI",
+        "layer": "DWD",
+        "columns": [],
+    }]
+    model_metadata = {
+        "M_PAYM_04_CHREM_DI": {
+            "layer": "DWD",
+            "data_domain": "10",
+            "business_area": "CLNT",
+        },
+    }
+
     result = score_naming_conventions(
         tables,
         nc,
@@ -490,26 +595,72 @@ def test_score_naming_conventions_limits_business_metadata_by_layer(tmp_path):
         business_config,
     )
 
-    assert result["rule_summary"]["数据域属于字典"] == {
+    assert result["rule_summary"]["表名DATA_DOMAIN_ID与model.data_domain一致"] == {
         "pass_count": 0,
         "total": 1,
         "pct": 0.0,
     }
-    assert result["rule_summary"]["业务板块属于字典"] == {
-        "pass_count": 2,
-        "total": 2,
-        "pct": 100.0,
+    assert result["rule_summary"][
+        "表名BUSINESS_AREA_CODE与model.business_area一致"
+    ] == {
+        "pass_count": 0,
+        "total": 1,
+        "pct": 0.0,
     }
-    dws_detail = next(
-        item for item in result["details"]
-        if item["table"] == "I_CLNT_CUST_SUM_DS"
+
+
+def test_naming_skips_business_segments_when_model_metadata_is_invalid(tmp_path):
+    nc = _business_naming_config(tmp_path)
+    tables = [{
+        "name": "M_PAYM_04_CHREM_DI",
+        "layer": "DWD",
+        "columns": [],
+    }]
+    model_metadata = {
+        "M_PAYM_04_CHREM_DI": {
+            "layer": "DWD",
+            "data_domain": "98",
+            "business_area": "BAD",
+        },
+    }
+
+    result = score_naming_conventions(
+        tables,
+        nc,
+        model_metadata,
+        nc.business_domain_config,
     )
-    dim_detail = next(
-        item for item in result["details"]
-        if item["table"] == "D_CUST"
-    )
-    assert dws_detail["business_metadata_checks"]["violations"] == []
-    assert dim_detail["business_metadata_checks"]["total"] == 0
+
+    assert "表名DATA_DOMAIN_ID与model.data_domain一致" not in result[
+        "rule_summary"]
+    assert "表名BUSINESS_AREA_CODE与model.business_area一致" not in result[
+        "rule_summary"]
+
+
+def test_naming_skips_entity_consistency_when_table_template_is_invalid():
+    nc = load_naming_config(PROJECT_ROOT / "shop/naming_config.yaml")
+    tables = [{
+        "name": "dws_product_sales_daily",
+        "layer": "DWS",
+        "columns": [],
+    }]
+    model_metadata = {
+        "dws_product_sales_daily": {
+            "layer": "DWS",
+            "grain": {
+                "entities": ["PROD"],
+            },
+        },
+    }
+
+    result = score_naming_conventions(tables, nc, model_metadata)
+
+    assert result["rule_summary"][DWS_ENTITY_RULE_NAME] == {
+        "pass_count": 0,
+        "total": 0,
+        "pct": 0,
+    }
+    assert result["details"][0]["dws_entity_checks"]["total"] == 0
 
 
 def test_score_naming_conventions_checks_project_file_names(tmp_path):
@@ -564,14 +715,9 @@ PROPERTIES ("replication_num" = "1");
     )
 
     assert result["score"] == 100.0
-    assert result["file_checks"] == {"passed": 7, "total": 7}
+    assert result["file_checks"] == {"passed": 4, "total": 4}
     assert result["file_details"] == []
     assert result["rule_summary"][FILE_RULE_DDL] == {
-        "pass_count": 1,
-        "total": 1,
-        "pct": 100.0,
-    }
-    assert result["rule_summary"][FILE_RULE_MODEL_TABLE] == {
         "pass_count": 1,
         "total": 1,
         "pct": 100.0,
@@ -586,11 +732,14 @@ PROPERTIES ("replication_num" = "1");
         "total": 2,
         "pct": 100.0,
     }
-    assert result["rule_summary"][FILE_RULE_TASK_LINEAGE] == {
-        "pass_count": 2,
-        "total": 2,
-        "pct": 100.0,
-    }
+    catalog = build_asset_catalog(
+        tables,
+        {table_name: {"layer": "DWD"}},
+        project_dir,
+        edges=edges,
+        indirect_edges=[],
+    )
+    assert score_asset_completeness(catalog)["score"] == 100.0
 
 
 def test_score_naming_conventions_flags_project_file_name_mismatches(tmp_path):
@@ -633,19 +782,14 @@ PROPERTIES ("replication_num" = "1");
         indirect_edges=[],
     )
 
-    assert result["score"] == 37.5
+    assert result["score"] == 50.0
     assert result["details"][0]["column_checks"] == {
         "passed": 1,
         "total": 1,
         "violations": [],
     }
-    assert result["file_checks"] == {"passed": 0, "total": 5}
+    assert result["file_checks"] == {"passed": 0, "total": 3}
     assert result["rule_summary"][FILE_RULE_DDL] == {
-        "pass_count": 0,
-        "total": 1,
-        "pct": 0.0,
-    }
-    assert result["rule_summary"][FILE_RULE_MODEL_TABLE] == {
         "pass_count": 0,
         "total": 1,
         "pct": 0.0,
@@ -660,17 +804,10 @@ PROPERTIES ("replication_num" = "1");
         "total": 1,
         "pct": 0.0,
     }
-    assert result["rule_summary"][FILE_RULE_TASK_LINEAGE] == {
-        "pass_count": 0,
-        "total": 1,
-        "pct": 0.0,
-    }
     assert {detail["rule"] for detail in result["file_details"]} == {
         FILE_RULE_DDL,
-        FILE_RULE_MODEL_TABLE,
         FILE_RULE_MODEL_NAME,
         FILE_RULE_TASK_SQL,
-        FILE_RULE_TASK_LINEAGE,
     }
 
 
@@ -692,24 +829,31 @@ def test_score_naming_conventions_flags_missing_task_lineage(tmp_path):
         indirect_edges=[],
     )
 
-    assert result["score"] == 50.0
-    assert result["file_checks"] == {"passed": 1, "total": 2}
+    assert result["score"] == 100.0
+    assert result["file_checks"] == {"passed": 1, "total": 1}
     assert result["rule_summary"][FILE_RULE_TASK_SQL] == {
         "pass_count": 1,
         "total": 1,
         "pct": 100.0,
     }
-    assert result["rule_summary"][FILE_RULE_TASK_LINEAGE] == {
-        "pass_count": 0,
-        "total": 1,
-        "pct": 0.0,
+    assert result["file_details"] == []
+
+    catalog = build_asset_catalog(
+        [],
+        None,
+        project_dir,
+        edges=[],
+        indirect_edges=[],
+    )
+    asset_result = score_asset_completeness(catalog)
+    assert asset_result["score"] == 0.0
+    assert {
+        detail["rule"] for detail in asset_result["details"]
+    } == {
+        "Task产出表存在DDL",
+        "Task产出表存在Model",
+        "Task血缘目标与实际产出一致",
     }
-    assert result["file_details"] == [{
-        "file": "demo/tasks/M_WEMG_04_CHREM_DI.sql",
-        "rule": FILE_RULE_TASK_LINEAGE,
-        "expected": table_name,
-        "actual": "未解析",
-    }]
 
 
 def test_score_naming_conventions_does_not_reuse_basename_lineage(tmp_path):
@@ -736,18 +880,28 @@ def test_score_naming_conventions_does_not_reuse_basename_lineage(tmp_path):
         indirect_edges=[],
     )
 
-    assert result["file_checks"] == {"passed": 3, "total": 4}
-    assert result["rule_summary"][FILE_RULE_TASK_LINEAGE] == {
+    assert result["file_checks"] == {"passed": 2, "total": 2}
+    assert result["file_details"] == []
+
+    catalog = build_asset_catalog(
+        [],
+        None,
+        project_dir,
+        edges=[{
+            "source": "ods_source.ID",
+            "target": f"{table_name}.ID",
+            "source_file": f"{table_name}.sql",
+        }],
+        indirect_edges=[],
+    )
+    asset_result = score_asset_completeness(catalog)
+    assert asset_result["rule_summary"][
+        "Task血缘目标与实际产出一致"
+    ] == {
         "pass_count": 1,
         "total": 2,
         "pct": 50.0,
     }
-    assert result["file_details"] == [{
-        "file": f"demo/tasks/archive/{table_name}.sql",
-        "rule": FILE_RULE_TASK_LINEAGE,
-        "expected": table_name,
-        "actual": "未解析",
-    }]
 
 
 def test_score_naming_conventions_checks_extra_write_targets(tmp_path):
@@ -777,17 +931,12 @@ DELETE FROM demo.{table_name} WHERE ID = 1;
         indirect_edges=[],
     )
 
-    assert result["score"] == 50.0
-    assert result["file_checks"] == {"passed": 1, "total": 2}
+    assert result["score"] == 0.0
+    assert result["file_checks"] == {"passed": 0, "total": 1}
     assert result["rule_summary"][FILE_RULE_TASK_SQL] == {
         "pass_count": 0,
         "total": 1,
         "pct": 0.0,
-    }
-    assert result["rule_summary"][FILE_RULE_TASK_LINEAGE] == {
-        "pass_count": 1,
-        "total": 1,
-        "pct": 100.0,
     }
     assert result["file_details"] == [{
         "file": f"demo/tasks/{table_name}.sql",
@@ -795,6 +944,26 @@ DELETE FROM demo.{table_name} WHERE ID = 1;
         "expected": table_name,
         "actual": f"{table_name}, WRONG_TARGET",
     }]
+
+    catalog = build_asset_catalog(
+        [],
+        None,
+        project_dir,
+        edges=[{
+            "source": "ods_source.ID",
+            "target": f"{table_name}.ID",
+            "source_file": f"{table_name}.sql",
+        }],
+        indirect_edges=[],
+    )
+    asset_result = score_asset_completeness(catalog)
+    assert asset_result["rule_summary"][
+        "Task血缘目标与实际产出一致"
+    ] == {
+        "pass_count": 0,
+        "total": 1,
+        "pct": 0.0,
+    }
 
 
 def test_score_naming_conventions_prefers_current_ddl_columns_over_lineage_snapshot(
@@ -985,7 +1154,10 @@ def test_score_naming_conventions_checks_dws_entity_against_model_grain():
     tables = [{
         "name": "I_SHOP_CAT_SALE_DS",
         "layer": "DWS",
-        "columns": [],
+        "columns": [
+            {"name": "category_id"},
+            {"name": "stat_date"},
+        ],
     }]
     model_metadata = {
         "I_SHOP_CAT_SALE_DS": {
@@ -1042,7 +1214,7 @@ def test_score_naming_conventions_checks_dim_entity_against_model_entity():
     }
 
 
-def test_score_naming_conventions_requires_dws_grain_entities_from_models():
+def test_score_metadata_health_requires_dws_grain_entities_from_models():
     nc = load_naming_config(PROJECT_ROOT / "shop/naming_config.yaml")
     tables = [{
         "name": "I_SHOP_PROD_SALE_DS",
@@ -1056,26 +1228,30 @@ def test_score_naming_conventions_requires_dws_grain_entities_from_models():
         }
     }
 
-    result = score_naming_conventions(tables, nc, model_metadata)
+    result = score_metadata_health(tables, nc, model_metadata)
 
-    assert result["rule_summary"]["DWS表名实体包含于grain.entities"] == {
+    assert result["rule_summary"]["grain.entities有实体定义"] == {
         "pass_count": 0,
         "total": 1,
         "pct": 0.0,
     }
-    assert result["details"][0]["dws_entity_checks"] == {
-        "passed": 0,
-        "total": 1,
-        "violations": ["缺少grain.entities，无法检测DWS表名ENTITY"],
-    }
+    assert result["violations"] == [{
+        "table": "I_SHOP_PROD_SALE_DS",
+        "rule": "grain.entities有实体定义",
+        "message": "缺少grain.entities",
+        "reason": "missing",
+    }]
 
 
-def test_score_naming_conventions_requires_dws_grain_entity_definitions():
+def test_score_metadata_health_requires_dws_grain_entity_definitions():
     nc = load_naming_config(PROJECT_ROOT / "shop/naming_config.yaml")
     tables = [{
         "name": "I_SHOP_CAT_SALE_DS",
         "layer": "DWS",
-        "columns": [],
+        "columns": [
+            {"name": "category_id"},
+            {"name": "stat_date"},
+        ],
     }]
     model_metadata = {
         "I_SHOP_CAT_SALE_DS": {
@@ -1094,13 +1270,13 @@ def test_score_naming_conventions_requires_dws_grain_entity_definitions():
         },
     }
 
-    result = score_naming_conventions(tables, nc, model_metadata)
+    result = score_metadata_health(tables, nc, model_metadata)
 
-    assert result["details"][0]["dws_entity_checks"] == {
-        "passed": 0,
-        "total": 1,
-        "violations": ["grain.entities未定义=['CAT']"],
-    }
+    assert result["violations"] == [{
+        "table": "I_SHOP_CAT_SALE_DS",
+        "rule": "grain.entities有实体定义",
+        "message": "grain.entities未定义=['CAT']",
+    }]
 
 
 def test_score_naming_conventions_uses_full_dws_grain_entities():

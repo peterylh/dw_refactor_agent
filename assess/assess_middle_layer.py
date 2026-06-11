@@ -49,8 +49,9 @@ DEFAULT_WEIGHTS = {
     "reuse": 0.2,
     "depth": 0.2,
     "architecture": 0.2,
-    "metadata_health": 0.2,
     "naming": 0.2,
+    "asset_completeness": 0.1,
+    "metadata_health": 0.1,
 }
 
 # 加权违规率配置: 严重度 → 权重
@@ -66,11 +67,15 @@ DIM_ENTITY_RULE_NAME = "DIM表名实体等于entity.code"
 DATA_DOMAIN_LAYERS = {"DWD"}
 BUSINESS_AREA_LAYERS = {"DWD", "DWS"}
 FILE_RULE_DDL = "DDL文件名与建表表名一致"
-FILE_RULE_MODEL_TABLE = "Model文件名与表名一致"
 FILE_RULE_MODEL_NAME = "Model文件名与模型name一致"
 FILE_RULE_TASK_SQL = "Task文件名与产出表一致"
-FILE_RULE_TASK_LINEAGE = "Task血缘目标与产出表一致"
 FILE_RULE_TOTAL = "文件命名总计"
+ASSET_RULE_DDL_MODEL = "DDL表存在Model"
+ASSET_RULE_DDL_TASK = "需执行DDL表存在Task"
+ASSET_RULE_MODEL_DDL = "Model存在对应DDL表"
+ASSET_RULE_TASK_DDL = "Task产出表存在DDL"
+ASSET_RULE_TASK_MODEL = "Task产出表存在Model"
+ASSET_RULE_TASK_LINEAGE = "Task血缘目标与实际产出一致"
 
 def normalize_score_weights(weights: dict | None = None) -> dict:
     merged = DEFAULT_WEIGHTS.copy()
@@ -728,8 +733,6 @@ def _score_dws_entity_name(
 
     expected = _model_grain_entities(table_name, model_metadata)
     if not expected:
-        result["total"] = 1
-        result["violations"] = ["缺少grain.entities，无法检测DWS表名ENTITY"]
         return result
 
     actual = _dws_name_entities(table_name, nc)
@@ -737,14 +740,6 @@ def _score_dws_entity_name(
     violations = []
     if not actual or not set(actual).issubset(set(expected)):
         violations.append(f"表名ENTITY={actual}，grain.entities={expected}")
-    defined_entities = _model_defined_entities(model_metadata)
-    if defined_entities:
-        missing = [
-            entity for entity in expected
-            if entity not in defined_entities
-        ]
-        if missing:
-            violations.append(f"grain.entities未定义={missing}")
 
     if not violations:
         result["passed"] = 1
@@ -767,8 +762,6 @@ def _score_dim_entity_name(
 
     expected = _model_entity_codes(model_metadata.get(table_name))
     if not expected:
-        result["total"] = 1
-        result["violations"] = ["缺少entity.code，无法检测DIM表名ENTITY"]
         return result
 
     actual = _table_name_type_values(
@@ -824,14 +817,28 @@ def _metadata_check_result(
 
 def score_metadata_health(
     tables: list,
-    _nc,
+    nc,
     model_metadata: dict | None,
+    business_domain_config=None,
+    *,
+    asset_catalog: dict | None = None,
 ) -> dict:
-    """检查 models/*.yaml 中 entity/grain/related_entities 是否自洽。"""
+    """检查 models/*.yaml 的结构自洽性与业务元数据有效性。"""
     if not model_metadata:
         return _metadata_check_result(0, 0, [], {}, [])
 
-    tables_by_name = {table["name"]: table for table in tables}
+    if asset_catalog:
+        tables_by_name = {
+            name: dict(
+                name=name,
+                layer=asset.get("layer", "OTHER"),
+                columns=asset.get("columns") or [],
+            )
+            for name, asset in asset_catalog.get("tables", {}).items()
+            if asset.get("ddl") or asset.get("lineage_table")
+        }
+    else:
+        tables_by_name = {table["name"]: table for table in tables}
     defined_entities = _model_defined_entities(model_metadata)
     passed = 0
     total = 0
@@ -844,6 +851,7 @@ def score_metadata_health(
         rule: str,
         ok: bool,
         message: str = "",
+        reason: str = "",
     ) -> None:
         nonlocal passed, total
         total += 1
@@ -853,6 +861,8 @@ def score_metadata_health(
             rule_summary[rule]["pass_count"] += 1
         else:
             violation = dict(table=table_name, rule=rule, message=message)
+            if reason:
+                violation["reason"] = reason
             violations.append(violation)
             details.append(violation)
 
@@ -860,13 +870,24 @@ def score_metadata_health(
         if not isinstance(metadata, dict):
             continue
         table = tables_by_name.get(table_name)
-        if not table:
-            continue
-        columns = _table_column_names(table)
+        columns = _table_column_names(table) if table else set()
 
         entity = metadata.get("entity")
         entity_codes = _model_entity_codes(metadata)
-        if isinstance(entity, dict):
+        layer = str(
+            metadata.get("layer")
+            or (table or {}).get("layer")
+            or "OTHER"
+        ).upper()
+        if layer == "DIM":
+            record(
+                table_name,
+                "entity.code已配置",
+                bool(entity_codes),
+                "缺少entity.code",
+                "missing",
+            )
+        if table and isinstance(entity, dict):
             key_columns = _as_string_list(entity.get("key_columns"))
             if key_columns:
                 missing_keys = [
@@ -880,7 +901,7 @@ def score_metadata_health(
                     f"entity.key_columns不存在={missing_keys}",
                 )
         related_entities = metadata.get("related_entities")
-        if isinstance(related_entities, list):
+        if table and isinstance(related_entities, list):
             primary_code = entity_codes[0] if entity_codes else ""
             for related in related_entities:
                 if not isinstance(related, dict):
@@ -924,7 +945,7 @@ def score_metadata_health(
                     )
 
         grain = metadata.get("grain")
-        if isinstance(grain, dict):
+        if table and isinstance(grain, dict):
             grain_keys = _as_string_list(grain.get("keys"))
             if grain_keys:
                 missing_grain_keys = [
@@ -938,7 +959,12 @@ def score_metadata_health(
                     f"grain.keys不存在={missing_grain_keys}",
                 )
 
-            grain_entities = _as_string_list(grain.get("entities"))
+        grain_entities = (
+            _as_string_list(grain.get("entities"))
+            if isinstance(grain, dict)
+            else []
+        )
+        if layer == "DWS" or grain_entities:
             if grain_entities:
                 missing_entities = [
                     entity for entity in grain_entities
@@ -956,6 +982,78 @@ def score_metadata_health(
                     "grain.entities有实体定义",
                     False,
                     "缺少grain.entities",
+                    "missing",
+                )
+
+        if business_domain_config:
+            if _data_domain_applies(layer):
+                raw_domain = metadata.get("data_domain")
+                normalized_domain = business_domain_config.normalize_domain(
+                    raw_domain
+                )
+                if raw_domain in (None, ""):
+                    ok = False
+                    reason = "missing"
+                    message = "data_domain未配置"
+                elif not business_domain_config.is_valid_domain(
+                    normalized_domain
+                ):
+                    ok = False
+                    reason = "not_in_dictionary"
+                    message = f"data_domain不在字典中: {raw_domain}"
+                elif not _type_def_valid(
+                    nc,
+                    "DATA_DOMAIN_ID",
+                    normalized_domain,
+                ):
+                    ok = False
+                    reason = "type_mismatch"
+                    message = f"data_domain不符合类型定义: {raw_domain}"
+                else:
+                    ok = True
+                    reason = ""
+                    message = ""
+                record(
+                    table_name,
+                    "data_domain配置有效",
+                    ok,
+                    message,
+                    reason,
+                )
+
+            if _business_area_applies(layer):
+                raw_area = metadata.get("business_area")
+                normalized_area = (
+                    business_domain_config.normalize_business_area(raw_area)
+                )
+                if raw_area in (None, ""):
+                    ok = False
+                    reason = "missing"
+                    message = "business_area未配置"
+                elif not business_domain_config.is_valid_business_area(
+                    normalized_area
+                ):
+                    ok = False
+                    reason = "not_in_dictionary"
+                    message = f"business_area不在字典中: {raw_area}"
+                elif not _type_def_valid(
+                    nc,
+                    "BUSINESS_AREA_CODE",
+                    normalized_area,
+                ):
+                    ok = False
+                    reason = "type_mismatch"
+                    message = f"business_area不符合类型定义: {raw_area}"
+                else:
+                    ok = True
+                    reason = ""
+                    message = ""
+                record(
+                    table_name,
+                    "business_area配置有效",
+                    ok,
+                    message,
+                    reason,
                 )
 
     summary = {}
@@ -1019,82 +1117,9 @@ def _check_derived_metric_name(metric_name: str, nc) -> bool:
     return nc.match_metric_rule(metric_name, rule_name) is not None
 
 
-def _has_derived_metric_rule(nc) -> bool:
-    return _metric_rule_name(nc, "derived", "derived_metrics") is not None
-
-
 def _type_def_valid(nc, type_name: str, value: str) -> bool:
     type_def = getattr(nc, "types", {}).get(type_name)
     return type_def.validate(value) if type_def else True
-
-
-def _score_business_metadata_for_table(
-    table_name: str,
-    layer: str,
-    nc,
-    model_metadata: dict | None,
-    business_domain_config,
-) -> dict:
-    empty_checks = {
-        "passed": 0,
-        "total": 0,
-        "violations": [],
-        "data_domain_applicable": False,
-        "data_domain_passed": False,
-        "business_area_applicable": False,
-        "business_area_passed": False,
-    }
-    if not business_domain_config:
-        return empty_checks
-
-    metadata = model_metadata.get(table_name, {}) if model_metadata else {}
-    raw_domain = metadata.get("data_domain")
-    raw_area = metadata.get("business_area")
-    data_domain = business_domain_config.normalize_domain(raw_domain)
-    business_area = business_domain_config.normalize_business_area(raw_area)
-    checks = {
-        "passed": 0,
-        "total": 0,
-        "violations": [],
-        "data_domain_applicable": _data_domain_applies(layer),
-        "data_domain_passed": False,
-        "business_area_applicable": _business_area_applies(layer),
-        "business_area_passed": False,
-    }
-
-    if checks["data_domain_applicable"]:
-        checks["total"] += 1
-        if (
-            data_domain
-            and business_domain_config.is_valid_domain(data_domain)
-            and _type_def_valid(nc, "DATA_DOMAIN_ID", data_domain)
-        ):
-            checks["passed"] += 1
-            checks["data_domain_passed"] = True
-        else:
-            display_domain = (
-                raw_domain if raw_domain not in (None, "") else "未配置"
-            )
-            checks["violations"].append(
-                f"数据域不在字典: {display_domain}"
-            )
-
-    if checks["business_area_applicable"]:
-        checks["total"] += 1
-        if (
-            business_area
-            and business_domain_config.is_valid_business_area(business_area)
-            and _type_def_valid(nc, "BUSINESS_AREA_CODE", business_area)
-        ):
-            checks["passed"] += 1
-            checks["business_area_passed"] = True
-        else:
-            display_area = raw_area if raw_area not in (None, "") else "未配置"
-            checks["violations"].append(
-                f"业务板块不在字典: {display_area}"
-            )
-
-    return checks
 
 
 def _metric_names_from_raw(raw_metrics) -> list[str]:
@@ -1140,6 +1165,13 @@ def _short_table_name(table_name: str) -> str:
         return ""
     name = name.replace("`", "").replace('"', "")
     return name.split(".")[-1].strip()
+
+
+def _relative_asset_path(project_dir: Path, file_path: Path) -> str:
+    try:
+        return file_path.relative_to(project_dir).as_posix()
+    except ValueError:
+        return file_path.as_posix()
 
 
 def _display_file_path(project_dir: Path, file_path: Path) -> str:
@@ -1228,16 +1260,6 @@ def _tables_for_naming(
         ddl_tables.values(),
         key=lambda item: str(item.get("name") or ""),
     )
-
-
-def _model_declared_name(model_path: Path) -> str:
-    try:
-        data = yaml.safe_load(model_path.read_text(encoding="utf-8")) or {}
-    except yaml.YAMLError:
-        return ""
-    if not isinstance(data, dict):
-        return ""
-    return str(data.get("name") or "").strip()
 
 
 def _target_table_sql(target_expr) -> str:
@@ -1330,6 +1352,260 @@ def _lineage_targets_by_source_file(
     return dict(targets)
 
 
+def build_asset_catalog(
+    tables: list,
+    model_metadata: dict | None,
+    project_dir: Path | None,
+    *,
+    edges: list | None = None,
+    indirect_edges: list | None = None,
+) -> dict:
+    """Collect project asset facts without assigning scores."""
+    project_path = Path(project_dir) if project_dir else None
+    assets = {}
+
+    def ensure_asset(name: str) -> dict:
+        short_name = _short_table_name(name)
+        if short_name not in assets:
+            assets[short_name] = dict(
+                name=short_name,
+                layer="OTHER",
+                columns=[],
+                lineage_table=None,
+                ddl=None,
+                model=None,
+                tasks=[],
+            )
+        return assets[short_name]
+
+    for table in tables or []:
+        name = _short_table_name(table.get("name", ""))
+        if not name:
+            continue
+        asset = ensure_asset(name)
+        asset["lineage_table"] = dict(table)
+        asset["layer"] = str(table.get("layer") or "OTHER").upper()
+        asset["columns"] = list(table.get("columns") or [])
+
+    for name, metadata in (model_metadata or {}).items():
+        if not isinstance(metadata, dict):
+            continue
+        declared_name = _short_table_name(metadata.get("name") or name)
+        if not declared_name:
+            continue
+        asset = ensure_asset(declared_name)
+        asset["model"] = dict(
+            exists=True,
+            path=None,
+            file_stem=None,
+            declared_name=declared_name,
+            metadata=metadata,
+        )
+        if metadata.get("layer"):
+            asset["layer"] = str(metadata["layer"]).upper()
+
+    if project_path:
+        ddl_dir = project_path / "ddl"
+        if ddl_dir.exists():
+            for ddl_path in sorted(ddl_dir.glob("*.sql")):
+                table = _ddl_table_for_naming(ddl_path, model_metadata)
+                declared_name = (
+                    table["name"] if table
+                    else _ddl_declared_table_name(ddl_path)
+                )
+                if not declared_name:
+                    continue
+                asset = ensure_asset(declared_name)
+                columns = list(table.get("columns") or []) if table else []
+                asset["ddl"] = dict(
+                    exists=True,
+                    path=ddl_path,
+                    file_stem=ddl_path.stem,
+                    declared_name=declared_name,
+                    columns=columns,
+                )
+                asset["columns"] = columns
+                if table and table.get("layer") != "OTHER":
+                    asset["layer"] = table["layer"]
+
+        models_dir = project_path / "models"
+        if models_dir.exists():
+            for model_path in sorted(models_dir.glob("*.yaml")):
+                try:
+                    raw = (
+                        yaml.safe_load(
+                            model_path.read_text(encoding="utf-8")
+                        )
+                        or {}
+                    )
+                except yaml.YAMLError:
+                    raw = {}
+                if not isinstance(raw, dict):
+                    raw = {}
+                declared_name = _short_table_name(
+                    raw.get("name") or model_path.stem
+                )
+                asset = ensure_asset(declared_name)
+                metadata = (
+                    (model_metadata or {}).get(declared_name)
+                    or raw
+                )
+                asset["model"] = dict(
+                    exists=True,
+                    path=model_path,
+                    file_stem=model_path.stem,
+                    declared_name=declared_name,
+                    metadata=metadata,
+                )
+                if metadata.get("layer"):
+                    asset["layer"] = str(metadata["layer"]).upper()
+
+        tasks_dir = project_path / "tasks"
+        lineage_targets = _lineage_targets_by_source_file(
+            edges,
+            indirect_edges,
+        )
+        task_facts = []
+        if tasks_dir.exists():
+            for task_path in sorted(tasks_dir.rglob("*.sql")):
+                expected = _expected_task_table(task_path)
+                outputs = _extract_task_output_tables(task_path)
+                relative_source = task_path.relative_to(tasks_dir).as_posix()
+                fact = dict(
+                    path=task_path,
+                    file=_relative_asset_path(project_path, task_path),
+                    expected_table=expected,
+                    output_tables=outputs,
+                    lineage_targets=lineage_targets.get(
+                        relative_source,
+                        set(),
+                    ),
+                    is_full_refresh=(
+                        task_path.parent.name == "full_refresh"
+                    ),
+                )
+                task_facts.append(fact)
+                linked_names = set(outputs)
+                if not linked_names:
+                    linked_names.add(expected)
+                for table_name in linked_names:
+                    ensure_asset(table_name)["tasks"].append(fact)
+        else:
+            task_facts = []
+    else:
+        task_facts = []
+
+    return dict(
+        project_dir=project_path,
+        tables=assets,
+        tasks=task_facts,
+    )
+
+
+def _asset_requires_task(asset: dict) -> bool:
+    model = asset.get("model") or {}
+    metadata = model.get("metadata") or {}
+    layer = str(asset.get("layer") or "OTHER").upper()
+    materialized = str(
+        (metadata.get("config") or {}).get("materialized") or ""
+    ).lower()
+    return layer != "ODS" and materialized != "source"
+
+
+def score_asset_completeness(asset_catalog: dict) -> dict:
+    """Score DDL/model/task closure and task-lineage consistency."""
+    passed = 0
+    total = 0
+    details = []
+    rule_summary = defaultdict(lambda: dict(pass_count=0, total=0, pct=0.0))
+
+    def record(asset_name: str, rule: str, ok: bool, message: str) -> None:
+        nonlocal passed, total
+        total += 1
+        rule_summary[rule]["total"] += 1
+        if ok:
+            passed += 1
+            rule_summary[rule]["pass_count"] += 1
+        else:
+            details.append(
+                dict(asset=asset_name, rule=rule, message=message)
+            )
+
+    assets = asset_catalog.get("tables") or {}
+    for name, asset in sorted(assets.items()):
+        has_ddl = bool(asset.get("ddl"))
+        has_model = bool(asset.get("model"))
+        tasks = asset.get("tasks") or []
+        has_output_task = any(
+            name in task.get("output_tables", set())
+            for task in tasks
+        )
+
+        if has_ddl:
+            record(name, ASSET_RULE_DDL_MODEL, has_model, "缺少Model")
+            if _asset_requires_task(asset):
+                record(
+                    name,
+                    ASSET_RULE_DDL_TASK,
+                    has_output_task,
+                    "缺少产出该表的Task",
+                )
+
+        if has_model:
+            record(name, ASSET_RULE_MODEL_DDL, has_ddl, "缺少DDL")
+
+    task_outputs = sorted({
+        output
+        for task in asset_catalog.get("tasks") or []
+        for output in task.get("output_tables", set())
+    })
+    for output in task_outputs:
+        asset = assets.get(output, {})
+        record(
+            output,
+            ASSET_RULE_TASK_DDL,
+            bool(asset.get("ddl")),
+            "Task产出表缺少DDL",
+        )
+        record(
+            output,
+            ASSET_RULE_TASK_MODEL,
+            bool(asset.get("model")),
+            "Task产出表缺少Model",
+        )
+
+    for task in asset_catalog.get("tasks") or []:
+        outputs = set(task.get("output_tables") or set())
+        lineage_targets = set(task.get("lineage_targets") or set())
+        record(
+            task["file"],
+            ASSET_RULE_TASK_LINEAGE,
+            bool(outputs) and lineage_targets == outputs,
+            (
+                f"实际产出={sorted(outputs)}，"
+                f"血缘目标={sorted(lineage_targets)}"
+            ),
+        )
+
+    summary = {}
+    for rule, counts in rule_summary.items():
+        rule_total = counts["total"]
+        rule_passed = counts["pass_count"]
+        summary[rule] = dict(
+            pass_count=rule_passed,
+            total=rule_total,
+            pct=round(rule_passed / rule_total * 100, 1)
+            if rule_total else 0,
+        )
+    return dict(
+        score=round(passed / total * 100, 1) if total else 100.0,
+        passed=passed,
+        total=total,
+        rule_summary=summary,
+        details=details,
+    )
+
+
 def _empty_file_score() -> dict:
     return dict(
         passed=0,
@@ -1394,90 +1670,447 @@ def _finalize_file_score(result: dict) -> dict:
 
 
 def _score_file_naming_conventions(
-    project_dir: Path | None,
-    tables: list,
-    edges: list | None,
-    indirect_edges: list | None,
+    asset_catalog: dict,
 ) -> dict:
+    project_dir = asset_catalog.get("project_dir")
     if not project_dir:
         return _empty_file_score()
 
-    project_dir = Path(project_dir)
     result = _empty_file_score()
-    table_names = {str(t.get("name") or "") for t in tables}
-    ddl_table_names = set()
-
-    ddl_dir = project_dir / "ddl"
-    if ddl_dir.exists():
-        for ddl_path in sorted(ddl_dir.glob("*.sql")):
-            expected = ddl_path.stem
-            actual = _ddl_declared_table_name(ddl_path)
-            if actual:
-                ddl_table_names.add(actual)
+    for asset in asset_catalog.get("tables", {}).values():
+        ddl = asset.get("ddl")
+        if ddl:
             _record_file_check(
                 result,
                 FILE_RULE_DDL,
-                ddl_path,
+                ddl["path"],
                 project_dir,
-                expected,
-                actual,
-                actual == expected,
+                ddl["file_stem"],
+                ddl["declared_name"],
+                ddl["file_stem"] == ddl["declared_name"],
             )
-    table_names.update(ddl_table_names)
 
-    models_dir = project_dir / "models"
-    if models_dir.exists():
-        for model_path in sorted(models_dir.glob("*.yaml")):
-            expected = model_path.stem
-            actual_name = _model_declared_name(model_path)
-            _record_file_check(
-                result,
-                FILE_RULE_MODEL_TABLE,
-                model_path,
-                project_dir,
-                expected,
-                expected if expected in table_names else "未找到同名表",
-                expected in table_names,
-            )
+        model = asset.get("model")
+        if model and model.get("path"):
             _record_file_check(
                 result,
                 FILE_RULE_MODEL_NAME,
-                model_path,
+                model["path"],
                 project_dir,
-                expected,
-                actual_name,
-                actual_name == expected,
+                model["file_stem"],
+                model["declared_name"],
+                model["file_stem"] == model["declared_name"],
             )
 
-    tasks_dir = project_dir / "tasks"
-    lineage_targets = _lineage_targets_by_source_file(edges, indirect_edges)
-    if tasks_dir.exists():
-        for task_path in sorted(tasks_dir.rglob("*.sql")):
-            expected = _expected_task_table(task_path)
-            actual_targets = _extract_task_output_tables(task_path)
-            _record_file_check(
-                result,
-                FILE_RULE_TASK_SQL,
-                task_path,
-                project_dir,
-                expected,
-                actual_targets,
-                actual_targets == {expected},
-            )
-
-            relative_key = task_path.relative_to(tasks_dir).as_posix()
-            lineage_targets_for_file = lineage_targets.get(relative_key) or set()
-            _record_file_check(
-                result,
-                FILE_RULE_TASK_LINEAGE,
-                task_path,
-                project_dir,
-                expected,
-                lineage_targets_for_file,
-                lineage_targets_for_file == {expected},
-            )
+    for task in asset_catalog.get("tasks") or []:
+        _record_file_check(
+            result,
+            FILE_RULE_TASK_SQL,
+            task["path"],
+            project_dir,
+            task["expected_table"],
+            task["output_tables"],
+            task["output_tables"] == {task["expected_table"]},
+        )
 
     return _finalize_file_score(result)
+
+
+def _prepare_naming_context(
+    tables: list,
+    nc,
+    model_metadata: dict | None,
+    business_domain_config,
+    project_dir: Path | None,
+    edges: list | None,
+    indirect_edges: list | None,
+    asset_catalog: dict | None,
+) -> dict:
+    catalog = asset_catalog or build_asset_catalog(
+        tables,
+        model_metadata,
+        project_dir,
+        edges=edges,
+        indirect_edges=indirect_edges,
+    )
+    if catalog.get("project_dir"):
+        naming_tables = [
+            dict(
+                name=name,
+                layer=asset.get("layer", "OTHER"),
+                columns=asset.get("columns") or [],
+            )
+            for name, asset in catalog.get("tables", {}).items()
+            if asset.get("ddl")
+        ]
+    else:
+        naming_tables = _tables_for_naming(tables, None, model_metadata)
+
+    atomic_rule_name = _metric_rule_name(nc, "atomic", "atomic_metrics")
+    derived_rule_name = _metric_rule_name(nc, "derived", "derived_metrics")
+    return dict(
+        nc=nc,
+        model_metadata=model_metadata or {},
+        business_domain_config=business_domain_config,
+        asset_catalog=catalog,
+        middle=[
+            table
+            for table in naming_tables
+            if table["layer"] in {"DWD", "DWS", "DIM"}
+        ],
+        atomic_rule_name=atomic_rule_name,
+        derived_rule_name=derived_rule_name,
+        atomic_rule_label=_metric_rule_label(
+            nc,
+            ATOMIC_METRIC_RULE_NAME,
+            atomic_rule_name,
+        ),
+        derived_rule_label=_metric_rule_label(
+            nc,
+            DERIVED_METRIC_RULE_NAME,
+            derived_rule_name,
+        ),
+    )
+
+
+def _valid_business_metadata_value(
+    metadata: dict,
+    field_name: str,
+    type_name: str,
+    nc,
+    business_domain_config,
+) -> str:
+    raw_value = metadata.get(field_name)
+    if raw_value in (None, "") or not business_domain_config:
+        return ""
+    if field_name == "data_domain":
+        normalized = business_domain_config.normalize_domain(raw_value)
+        in_dictionary = business_domain_config.is_valid_domain(normalized)
+    else:
+        normalized = business_domain_config.normalize_business_area(raw_value)
+        in_dictionary = business_domain_config.is_valid_business_area(
+            normalized
+        )
+    if not in_dictionary or not _type_def_valid(nc, type_name, normalized):
+        return ""
+    return normalized
+
+
+def _score_table_semantic_metadata(
+    table_name: str,
+    layer: str,
+    table_name_valid: bool,
+    context: dict,
+) -> tuple[dict, list[tuple[str, int, int]]]:
+    result = _naming_check_result(0, 0, [])
+    summary_checks = []
+    if not table_name_valid:
+        return result, summary_checks
+
+    metadata = context["model_metadata"].get(table_name)
+    business_config = context["business_domain_config"]
+    if not isinstance(metadata, dict) or not business_config:
+        return result, summary_checks
+
+    checks = [
+        (
+            _data_domain_applies(layer),
+            "data_domain",
+            "DATA_DOMAIN_ID",
+            "表名DATA_DOMAIN_ID与model.data_domain一致",
+        ),
+        (
+            _business_area_applies(layer),
+            "business_area",
+            "BUSINESS_AREA_CODE",
+            "表名BUSINESS_AREA_CODE与model.business_area一致",
+        ),
+    ]
+    violations = []
+    passed = 0
+    total = 0
+    for applies, field_name, type_name, rule_name in checks:
+        if not applies:
+            continue
+        expected = _valid_business_metadata_value(
+            metadata,
+            field_name,
+            type_name,
+            context["nc"],
+            business_config,
+        )
+        if not expected:
+            continue
+        actual = _table_name_type_values(
+            table_name,
+            layer,
+            context["nc"],
+            type_name,
+        )
+        ok = actual == [expected]
+        total += 1
+        passed += int(ok)
+        summary_checks.append((rule_name, int(ok), 1))
+        if not ok:
+            violations.append(
+                f"表名{type_name}={actual}，"
+                f"model.{field_name}={expected}"
+            )
+
+    return _naming_check_result(passed, total, violations), summary_checks
+
+
+def _score_middle_table(table: dict, context: dict) -> dict:
+    nc = context["nc"]
+    model_metadata = context["model_metadata"]
+    name = table["name"]
+    layer = table["layer"]
+    columns = table.get("columns", [])
+    summary_checks = []
+
+    table_name_valid = _check_table_name_any_template(name, layer, nc)
+    table_passed = int(table_name_valid)
+    table_total = 1
+    table_violations = []
+    table_diagnostics = []
+    if not table_name_valid:
+        table_violations.append("违反: 表名符合规范模板")
+        table_diagnostics.append({
+            "check": "table_template",
+            **_table_name_diagnostic(name, layer, nc),
+        })
+    summary_checks.append(("表名符合规范模板", table_passed, 1))
+
+    max_length = _table_name_max_length(name, layer, nc)
+    if max_length is not None:
+        length_ok = _check_table_name_length(name, layer, nc)
+        table_total += 1
+        table_passed += int(length_ok)
+        summary_checks.append((
+            f"表名长度 <= {max_length}",
+            int(length_ok),
+            1,
+        ))
+        if not length_ok:
+            table_violations.append(f"违反: 表名长度 <= {max_length}")
+            table_diagnostics.append({
+                "check": "table_max_length",
+                "actual": name,
+                "layer": layer,
+                "passed": False,
+                "expected": {"max_length": max_length},
+                "actual_length": len(name),
+            })
+
+    atomic_names = (
+        _atomic_metric_names_for_table(table, model_metadata)
+        if context["atomic_rule_name"]
+        else []
+    )
+    atomic_violations = [
+        metric for metric in atomic_names
+        if not _check_atomic_metric_name(metric, nc)
+    ]
+    atomic_passed = len(atomic_names) - len(atomic_violations)
+    if context["atomic_rule_name"]:
+        summary_checks.append((
+            context["atomic_rule_label"],
+            atomic_passed,
+            len(atomic_names),
+        ))
+
+    derived_names = (
+        _derived_metric_names_for_table(table, model_metadata)
+        if context["derived_rule_name"]
+        else []
+    )
+    derived_violations = [
+        metric for metric in derived_names
+        if not _check_derived_metric_name(metric, nc)
+    ]
+    derived_passed = len(derived_names) - len(derived_violations)
+    if context["derived_rule_name"]:
+        summary_checks.append((
+            context["derived_rule_label"],
+            derived_passed,
+            len(derived_names),
+        ))
+
+    metric_columns = set(atomic_names) | set(derived_names)
+    column_violations = []
+    column_diagnostics = []
+    column_passed = 0
+    column_total = 0
+    for column in columns:
+        column_name = column["name"]
+        if column_name in metric_columns:
+            continue
+        column_total += 1
+        ok, _matched = _check_column_name(column_name, nc)
+        column_passed += int(ok)
+        if not ok:
+            column_violations.append(column_name)
+            column_diagnostics.append(
+                _column_name_diagnostic(column_name, nc)
+            )
+    summary_checks.append(("列名总计", column_passed, column_total))
+
+    dws_entity_checks = (
+        _score_dws_entity_name(
+            name,
+            layer,
+            nc,
+            model_metadata,
+        )
+        if table_name_valid
+        else _naming_check_result(0, 0, [])
+    )
+    summary_checks.append((
+        DWS_ENTITY_RULE_NAME,
+        dws_entity_checks["passed"],
+        dws_entity_checks["total"],
+    ))
+    dim_entity_checks = (
+        _score_dim_entity_name(
+            name,
+            layer,
+            nc,
+            model_metadata,
+        )
+        if table_name_valid
+        else _naming_check_result(0, 0, [])
+    )
+    summary_checks.append((
+        DIM_ENTITY_RULE_NAME,
+        dim_entity_checks["passed"],
+        dim_entity_checks["total"],
+    ))
+    semantic_checks, semantic_summary = _score_table_semantic_metadata(
+        name,
+        layer,
+        table_name_valid,
+        context,
+    )
+    summary_checks.extend(semantic_summary)
+
+    passed = (
+        table_passed
+        + column_passed
+        + atomic_passed
+        + derived_passed
+        + dws_entity_checks["passed"]
+        + dim_entity_checks["passed"]
+        + semantic_checks["passed"]
+    )
+    total = (
+        table_total
+        + column_total
+        + len(atomic_names)
+        + len(derived_names)
+        + dws_entity_checks["total"]
+        + dim_entity_checks["total"]
+        + semantic_checks["total"]
+    )
+    return dict(
+        table=name,
+        layer=layer,
+        table_checks=_naming_check_result(
+            table_passed,
+            table_total,
+            table_violations,
+            table_diagnostics,
+        ),
+        column_checks=_naming_check_result(
+            column_passed,
+            column_total,
+            column_violations,
+            column_diagnostics,
+        ),
+        atomic_metric_checks=_naming_check_result(
+            atomic_passed,
+            len(atomic_names),
+            atomic_violations,
+        ),
+        derived_metric_checks=_naming_check_result(
+            derived_passed,
+            len(derived_names),
+            derived_violations,
+        ),
+        dws_entity_checks=dws_entity_checks,
+        dim_entity_checks=dim_entity_checks,
+        semantic_metadata_checks=semantic_checks,
+        score=round(passed / total * 100, 1) if total else 100.0,
+        _passed=passed,
+        _total=total,
+        _summary_checks=summary_checks,
+    )
+
+
+def _build_rule_summary(
+    table_results: list[dict],
+    context: dict,
+    file_result: dict,
+) -> dict:
+    counts = defaultdict(lambda: dict(pass_count=0, total=0))
+    required_rules = [
+        "表名符合规范模板",
+        "列名总计",
+        DWS_ENTITY_RULE_NAME,
+        DIM_ENTITY_RULE_NAME,
+    ]
+    if context["atomic_rule_name"]:
+        required_rules.append(context["atomic_rule_label"])
+    if context["derived_rule_name"]:
+        required_rules.append(context["derived_rule_label"])
+    for rule in required_rules:
+        counts[rule]
+
+    for result in table_results:
+        for rule, passed, total in result["_summary_checks"]:
+            counts[rule]["pass_count"] += passed
+            counts[rule]["total"] += total
+
+    summary = {
+        rule: dict(
+            pass_count=value["pass_count"],
+            total=value["total"],
+            pct=round(value["pass_count"] / value["total"] * 100, 1)
+            if value["total"] else 0,
+        )
+        for rule, value in counts.items()
+    }
+    summary.update(file_result["rule_summary"])
+    return summary
+
+
+def _build_final_naming_result(
+    table_results: list[dict],
+    rule_summary: dict,
+    file_result: dict,
+) -> dict:
+    total_passed = sum(result["_passed"] for result in table_results)
+    total_checks = sum(result["_total"] for result in table_results)
+    total_passed += file_result["passed"]
+    total_checks += file_result["total"]
+    details = []
+    for result in table_results:
+        clean = {
+            key: value
+            for key, value in result.items()
+            if not key.startswith("_")
+        }
+        details.append(clean)
+    return dict(
+        score=round(total_passed / total_checks * 100, 1)
+        if total_checks else 100.0,
+        details=details,
+        rule_summary=rule_summary,
+        file_checks=dict(
+            passed=file_result["passed"],
+            total=file_result["total"],
+        ),
+        file_details=file_result["details"],
+    )
 
 
 def score_naming_conventions(
@@ -1489,459 +2122,35 @@ def score_naming_conventions(
     project_dir: Path | None = None,
     edges: list | None = None,
     indirect_edges: list | None = None,
+    asset_catalog: dict | None = None,
 ) -> dict:
-    tables = _tables_for_naming(tables, project_dir, model_metadata)
-    middle = [t for t in tables if t["layer"] in ("DWD", "DWS", "DIM")]
-    atomic_rule_name = _metric_rule_name(nc, "atomic", "atomic_metrics")
-    derived_rule_name = _metric_rule_name(nc, "derived", "derived_metrics")
-    has_atomic_metric_rule = atomic_rule_name is not None
-    has_derived_metric_rule = derived_rule_name is not None
-    atomic_rule_label = _metric_rule_label(
-        nc, ATOMIC_METRIC_RULE_NAME, atomic_rule_name)
-    derived_rule_label = _metric_rule_label(
-        nc, DERIVED_METRIC_RULE_NAME, derived_rule_name)
-
-    table_results = []
-    total_checks = 0
-    total_passed = 0
-    business_domain_total = 0
-    business_domain_passed = 0
-    business_area_total = 0
-    business_area_passed = 0
-    checked_business_tables = set()
-
-    def record_business_summary(checks: dict) -> None:
-        nonlocal business_domain_total
-        nonlocal business_domain_passed
-        nonlocal business_area_total
-        nonlocal business_area_passed
-        if not checks["total"]:
-            return
-        if checks.get("data_domain_applicable"):
-            business_domain_total += 1
-        if checks.get("data_domain_passed"):
-            business_domain_passed += 1
-        if checks.get("business_area_applicable"):
-            business_area_total += 1
-        if checks.get("business_area_passed"):
-            business_area_passed += 1
-
-    for t in middle:
-        name = t["name"]
-        layer = t["layer"]
-        columns = t.get("columns", [])
-
-        # --- 表名检查 ---
-        tbl_passed = 0
-        tbl_total = 1
-        tbl_violations = []
-        tbl_diagnostics = []
-        if _check_table_name_any_template(name, layer, nc):
-            tbl_passed += 1
-        else:
-            tbl_violations.append(f"违反: 表名符合规范模板")
-            tbl_diagnostics.append(
-                {
-                    "check": "table_template",
-                    **_table_name_diagnostic(name, layer, nc),
-                }
-            )
-        max_length = _table_name_max_length(name, layer, nc)
-        if max_length is not None:
-            tbl_total += 1
-            if _check_table_name_length(name, layer, nc):
-                tbl_passed += 1
-            else:
-                tbl_violations.append(f"违反: 表名长度 <= {max_length}")
-                tbl_diagnostics.append(
-                    {
-                        "check": "table_max_length",
-                        "actual": name,
-                        "layer": layer,
-                        "passed": False,
-                        "expected": {"max_length": max_length},
-                        "actual_length": len(name),
-                    }
-                )
-
-        # --- 原子指标检查 ---
-        metric_violations = []
-        metric_passed = 0
-        metric_names = (
-            _atomic_metric_names_for_table(t, model_metadata)
-            if has_atomic_metric_rule
-            else []
-        )
-        metric_name_set = set(metric_names)
-        metric_total = len(metric_names)
-        for metric_name in metric_names:
-            if _check_atomic_metric_name(metric_name, nc):
-                metric_passed += 1
-            else:
-                metric_violations.append(metric_name)
-
-        # --- 派生指标检查 ---
-        derived_metric_violations = []
-        derived_metric_passed = 0
-        derived_metric_names = (
-            _derived_metric_names_for_table(t, model_metadata)
-            if has_derived_metric_rule
-            else []
-        )
-        derived_metric_name_set = set(derived_metric_names)
-        derived_metric_total = len(derived_metric_names)
-        for metric_name in derived_metric_names:
-            if _check_derived_metric_name(metric_name, nc):
-                derived_metric_passed += 1
-            else:
-                derived_metric_violations.append(metric_name)
-
-        # --- 字段检查 ---
-        # 指标是列的一种专项类型，已由指标规则检查，不再重复进入通用字段规则。
-        col_violations = []
-        col_diagnostics = []
-        col_passed = 0
-        col_total = 0
-        checked_metric_name_set = metric_name_set | derived_metric_name_set
-
-        for col in columns:
-            col_name = col["name"]
-            if col_name in checked_metric_name_set:
-                continue
-            col_total += 1
-            ok, matched = _check_column_name(col_name, nc)
-            if ok:
-                col_passed += 1
-            else:
-                col_violations.append(col_name)
-                col_diagnostics.append(_column_name_diagnostic(col_name, nc))
-
-        # --- 业务域/板块字典检查 ---
-        business_checks = _score_business_metadata_for_table(
-            name,
-            layer,
-            nc,
-            model_metadata,
-            business_domain_config,
-        )
-        if business_checks["total"]:
-            checked_business_tables.add(name)
-            record_business_summary(business_checks)
-
-        # --- DWS 粒度实体检查 ---
-        dws_entity_checks = _score_dws_entity_name(
-            name,
-            layer,
-            nc,
-            model_metadata,
-        )
-        dim_entity_checks = _score_dim_entity_name(
-            name,
-            layer,
-            nc,
-            model_metadata,
-        )
-
-        table_pass = (
-            tbl_passed
-            + col_passed
-            + metric_passed
-            + derived_metric_passed
-            + business_checks["passed"]
-            + dws_entity_checks["passed"]
-            + dim_entity_checks["passed"]
-        )
-        table_check = (
-            tbl_total
-            + col_total
-            + metric_total
-            + derived_metric_total
-            + business_checks["total"]
-            + dws_entity_checks["total"]
-            + dim_entity_checks["total"]
-        )
-        table_score = round(table_pass / table_check *
-                            100, 1) if table_check else 100.0
-
-        table_results.append(
-            dict(
-                table=name,
-                layer=layer,
-                table_checks=_naming_check_result(
-                    tbl_passed,
-                    tbl_total,
-                    tbl_violations,
-                    tbl_diagnostics,
-                ),
-                column_checks=_naming_check_result(
-                    col_passed,
-                    col_total,
-                    col_violations,
-                    col_diagnostics,
-                ),
-                atomic_metric_checks=_naming_check_result(
-                    metric_passed,
-                    metric_total,
-                    metric_violations,
-                ),
-                derived_metric_checks=_naming_check_result(
-                    derived_metric_passed,
-                    derived_metric_total,
-                    derived_metric_violations,
-                ),
-                dws_entity_checks=dws_entity_checks,
-                dim_entity_checks=dim_entity_checks,
-                business_metadata_checks=business_checks,
-                score=table_score,
-            ))
-
-        total_passed += table_pass
-        total_checks += table_check
-
-    if business_domain_config:
-        for t in tables:
-            name = t["name"]
-            if name in checked_business_tables:
-                continue
-            if model_metadata and name not in model_metadata:
-                continue
-            business_checks = _score_business_metadata_for_table(
-                name,
-                t["layer"],
-                nc,
-                model_metadata,
-                business_domain_config,
-            )
-            if not business_checks["total"]:
-                continue
-            checked_business_tables.add(name)
-            record_business_summary(business_checks)
-            table_score = round(
-                business_checks["passed"] / business_checks["total"] * 100,
-                1,
-            )
-            table_results.append(
-                dict(
-                    table=name,
-                    layer=t["layer"],
-                    table_checks=_naming_check_result(0, 0, []),
-                    column_checks=_naming_check_result(0, 0, []),
-                    atomic_metric_checks=_naming_check_result(0, 0, []),
-                    derived_metric_checks=_naming_check_result(0, 0, []),
-                    dim_entity_checks=_naming_check_result(0, 0, []),
-                    business_metadata_checks=business_checks,
-                    score=table_score,
-                ))
-            total_passed += business_checks["passed"]
-            total_checks += business_checks["total"]
-
-    if business_domain_config and model_metadata:
-        for name, metadata in model_metadata.items():
-            if name in checked_business_tables:
-                continue
-            business_checks = _score_business_metadata_for_table(
-                name,
-                str(metadata.get("layer") or "OTHER").upper(),
-                nc,
-                model_metadata,
-                business_domain_config,
-            )
-            if not business_checks["total"]:
-                continue
-            checked_business_tables.add(name)
-            record_business_summary(business_checks)
-            table_score = round(
-                business_checks["passed"] / business_checks["total"] * 100,
-                1,
-            )
-            table_results.append(
-                dict(
-                    table=name,
-                    layer=str(metadata.get("layer") or "OTHER").upper(),
-                    table_checks=_naming_check_result(0, 0, []),
-                    column_checks=_naming_check_result(0, 0, []),
-                    atomic_metric_checks=_naming_check_result(0, 0, []),
-                    derived_metric_checks=_naming_check_result(0, 0, []),
-                    dim_entity_checks=_naming_check_result(0, 0, []),
-                    business_metadata_checks=business_checks,
-                    score=table_score,
-                ))
-            total_passed += business_checks["passed"]
-            total_checks += business_checks["total"]
-
-    file_result = _score_file_naming_conventions(
-        project_dir,
+    context = _prepare_naming_context(
         tables,
+        nc,
+        model_metadata,
+        business_domain_config,
+        project_dir,
         edges,
         indirect_edges,
+        asset_catalog,
     )
-    total_passed += file_result["passed"]
-    total_checks += file_result["total"]
-
-    overall = round(total_passed / total_checks *
-                    100, 1) if total_checks else 100.0
-
-    # 规则汇总
-    rule_summary = {}
-    passed = sum(
-        1 for t in middle
-        if _check_table_name_any_template(t["name"], t["layer"], nc)
+    table_results = [
+        _score_middle_table(table, context)
+        for table in context["middle"]
+    ]
+    file_result = _score_file_naming_conventions(
+        context["asset_catalog"],
     )
-    total = len(middle)
-    rule_summary["表名符合规范模板"] = dict(
-        pass_count=passed,
-        total=total,
-        pct=round(passed / total * 100, 1) if total else 0,
+    rule_summary = _build_rule_summary(
+        table_results,
+        context,
+        file_result,
     )
-
-    table_max_lengths = sorted({
-        max_length
-        for t in middle
-        for max_length in [_table_name_max_length(t["name"], t["layer"], nc)]
-        if max_length is not None
-    })
-    for max_length in table_max_lengths:
-        relevant_tables = [
-            t for t in middle
-            if _table_name_max_length(t["name"], t["layer"], nc) == max_length
-        ]
-        passed = sum(
-            1 for t in relevant_tables
-            if _check_table_name_length(t["name"], t["layer"], nc)
-        )
-        rule_summary[f"表名长度 <= {max_length}"] = dict(
-            pass_count=passed,
-            total=len(relevant_tables),
-            pct=round(passed / len(relevant_tables) * 100, 1)
-            if relevant_tables else 0,
-        )
-
-    col_total = 0
-    col_passed = 0
-    for t in middle:
-        checked_metric_name_set = set(
-            _atomic_metric_names_for_table(t, model_metadata)
-            if has_atomic_metric_rule
-            else []
-        )
-        if has_derived_metric_rule:
-            checked_metric_name_set.update(
-                _derived_metric_names_for_table(t, model_metadata))
-        for col in t.get("columns", []):
-            col_name = col["name"]
-            if col_name in checked_metric_name_set:
-                continue
-            col_total += 1
-            ok, matched = _check_column_name(col_name, nc)
-            if ok:
-                col_passed += 1
-            for m in matched:
-                if m not in rule_summary:
-                    rule_summary[m] = {"pass_count": 0, "total": 0}
-                rule_summary[m]["pass_count"] += 1
-                rule_summary[m]["total"] += 1
-            if not ok:
-                rule_summary.setdefault("无匹配模式", {"pass_count": 0, "total": 0})
-                rule_summary["无匹配模式"]["total"] += 1
-    for _, v in rule_summary.items():
-        if v["total"]:
-            v["pct"] = round(v["pass_count"] / v["total"] * 100, 1)
-    # 确保 col 总结显示
-    pct = round(col_passed / col_total * 100, 1) if col_total else 0
-    rule_summary["列名总计"] = dict(
-        pass_count=col_passed,
-        total=col_total,
-        pct=pct,
+    return _build_final_naming_result(
+        table_results,
+        rule_summary,
+        file_result,
     )
-
-    if has_atomic_metric_rule:
-        metric_total = 0
-        metric_passed = 0
-        for t in middle:
-            for metric_name in _atomic_metric_names_for_table(t, model_metadata):
-                metric_total += 1
-                if _check_atomic_metric_name(metric_name, nc):
-                    metric_passed += 1
-        rule_summary[atomic_rule_label] = dict(
-            pass_count=metric_passed,
-            total=metric_total,
-            pct=round(metric_passed / metric_total * 100, 1)
-            if metric_total else 0,
-        )
-
-    if has_derived_metric_rule:
-        metric_total = 0
-        metric_passed = 0
-        for t in middle:
-            for metric_name in _derived_metric_names_for_table(t, model_metadata):
-                metric_total += 1
-                if _check_derived_metric_name(metric_name, nc):
-                    metric_passed += 1
-        rule_summary[derived_rule_label] = dict(
-            pass_count=metric_passed,
-            total=metric_total,
-            pct=round(metric_passed / metric_total * 100, 1)
-            if metric_total else 0,
-        )
-
-    if business_domain_config:
-        rule_summary["数据域属于字典"] = dict(
-            pass_count=business_domain_passed,
-            total=business_domain_total,
-            pct=round(business_domain_passed / business_domain_total * 100, 1)
-            if business_domain_total else 0,
-        )
-        rule_summary["业务板块属于字典"] = dict(
-            pass_count=business_area_passed,
-            total=business_area_total,
-            pct=round(business_area_passed / business_area_total * 100, 1)
-            if business_area_total else 0,
-        )
-
-    dws_entity_total = 0
-    dws_entity_passed = 0
-    dim_entity_total = 0
-    dim_entity_passed = 0
-    for t in middle:
-        checks = _score_dws_entity_name(
-            t["name"],
-            t["layer"],
-            nc,
-            model_metadata,
-        )
-        dws_entity_total += checks["total"]
-        dws_entity_passed += checks["passed"]
-        dim_checks = _score_dim_entity_name(
-            t["name"],
-            t["layer"],
-            nc,
-            model_metadata,
-        )
-        dim_entity_total += dim_checks["total"]
-        dim_entity_passed += dim_checks["passed"]
-    rule_summary[DWS_ENTITY_RULE_NAME] = dict(
-        pass_count=dws_entity_passed,
-        total=dws_entity_total,
-        pct=round(dws_entity_passed / dws_entity_total * 100, 1)
-        if dws_entity_total else 0,
-    )
-    rule_summary[DIM_ENTITY_RULE_NAME] = dict(
-        pass_count=dim_entity_passed,
-        total=dim_entity_total,
-        pct=round(dim_entity_passed / dim_entity_total * 100, 1)
-        if dim_entity_total else 0,
-    )
-
-    rule_summary.update(file_result["rule_summary"])
-
-    return dict(score=overall,
-                details=table_results,
-                rule_summary=rule_summary,
-                file_checks=dict(
-                    passed=file_result["passed"],
-                    total=file_result["total"],
-                ),
-                file_details=file_result["details"])
 
 
 # ============================================================
@@ -2036,8 +2245,9 @@ def generate_report(scores: dict, weights: dict, project: str) -> str:
         ("复用度", "reuse"),
         ("链路长度(中间层)", "depth"),
         ("架构合理性", "architecture"),
-        ("模型元数据健康度", "metadata_health"),
         ("命名规范", "naming"),
+        ("资产完整性", "asset_completeness"),
+        ("模型元数据健康度", "metadata_health"),
     ]
     for label, key in dims:
         metric = scores[key]
@@ -2156,6 +2366,49 @@ def generate_report(scores: dict, weights: dict, project: str) -> str:
     parts.append(sep)
 
     # ============================================================
+    # 资产完整性
+    # ============================================================
+    asset_completeness = scores["asset_completeness"]
+    parts.append(f"\n{'=' * 62}")
+    parts.append(
+        "【资产完整性】评分(展示/原始): "
+        f"{asset_completeness['display']} / "
+        f"{asset_completeness['raw']}"
+    )
+    parts.append(f"{'=' * 62}")
+
+    headers = ["规则", "通过", "总计", "合规率"]
+    col_w = [36, 6, 6, 8]
+    rows = []
+    for desc, counts in sorted(
+        asset_completeness["rule_summary"].items()
+    ):
+        rows.append([
+            desc,
+            str(counts["pass_count"]),
+            str(counts["total"]),
+            f"{counts['pct']}%",
+        ])
+    if not rows:
+        rows.append(["(无检查项)", "0", "0", "0%"])
+    parts.append(_fmt_table(headers, rows, col_w))
+
+    if asset_completeness["details"]:
+        parts.append("\n  缺失或不一致详情:")
+        for detail in asset_completeness["details"][:30]:
+            parts.append(
+                f"    {detail['asset']} | {detail['rule']} | "
+                f"{detail['message']}"
+            )
+        if len(asset_completeness["details"]) > 30:
+            parts.append(
+                f"    ... (共{len(asset_completeness['details'])}个)"
+            )
+    else:
+        parts.append("\n  无违规 ✓")
+    parts.append(sep)
+
+    # ============================================================
     # 模型元数据健康度
     # ============================================================
     metadata_health = scores["metadata_health"]
@@ -2248,9 +2501,9 @@ def generate_report(scores: dict, weights: dict, project: str) -> str:
         dim_entity_checks = r.get("dim_entity_checks", {})
         if dim_entity_checks.get("violations"):
             issues.extend(dim_entity_checks["violations"])
-        business_checks = r.get("business_metadata_checks", {})
-        if business_checks.get("violations"):
-            issues.extend(business_checks["violations"])
+        semantic_checks = r.get("semantic_metadata_checks", {})
+        if semantic_checks.get("violations"):
+            issues.extend(semantic_checks["violations"])
         if issues:
             if not has_viz:
                 parts.append(f"\n  偏离详情:")
@@ -2349,9 +2602,26 @@ def assess(project: str, weights: dict = None) -> dict:
         business_domain_config,
     )
     architecture_score = build_metric_result(architecture_raw)
-    metadata_health_score = build_metric_result(
-        score_metadata_health(tables, nc, model_metadata))
     project_dir = PROJECT_ROOT / PROJECT_CONFIG[project]["dir"]
+    asset_catalog = build_asset_catalog(
+        tables,
+        model_metadata,
+        project_dir,
+        edges=edges,
+        indirect_edges=indirect_edges,
+    )
+    asset_completeness_score = build_metric_result(
+        score_asset_completeness(asset_catalog)
+    )
+    metadata_health_score = build_metric_result(
+        score_metadata_health(
+            tables,
+            nc,
+            model_metadata,
+            business_domain_config,
+            asset_catalog=asset_catalog,
+        )
+    )
     naming_score = build_metric_result(
         score_naming_conventions(
             tables,
@@ -2361,22 +2631,27 @@ def assess(project: str, weights: dict = None) -> dict:
             project_dir=project_dir,
             edges=edges,
             indirect_edges=indirect_edges,
+            asset_catalog=asset_catalog,
         ))
 
     overall_raw = round(
         weights["reuse"] * reuse_score["raw"] +
         weights["depth"] * depth_score["raw"] +
         weights["architecture"] * architecture_score["raw"] +
-        weights["metadata_health"] * metadata_health_score["raw"] +
-        weights["naming"] * naming_score["raw"],
+        weights["naming"] * naming_score["raw"] +
+        weights["asset_completeness"]
+        * asset_completeness_score["raw"] +
+        weights["metadata_health"] * metadata_health_score["raw"],
         1,
     )
     overall_display = round(
         weights["reuse"] * reuse_score["display"] +
         weights["depth"] * depth_score["display"] +
         weights["architecture"] * architecture_score["display"] +
-        weights["metadata_health"] * metadata_health_score["display"] +
-        weights["naming"] * naming_score["display"],
+        weights["naming"] * naming_score["display"] +
+        weights["asset_completeness"]
+        * asset_completeness_score["display"] +
+        weights["metadata_health"] * metadata_health_score["display"],
         1,
     )
 
@@ -2388,8 +2663,9 @@ def assess(project: str, weights: dict = None) -> dict:
         reuse=reuse_score,
         depth=depth_score,
         architecture=architecture_score,
-        metadata_health=metadata_health_score,
         naming=naming_score,
+        asset_completeness=asset_completeness_score,
+        metadata_health=metadata_health_score,
     )
 
     return result
@@ -2425,6 +2701,10 @@ def main():
                         type=float,
                         default=DEFAULT_WEIGHTS["naming"],
                         help="命名规范权重，可单独指定，最终会自动归一化")
+    parser.add_argument("--asset-completeness-weight",
+                        type=float,
+                        default=DEFAULT_WEIGHTS["asset_completeness"],
+                        help="资产完整性权重，可单独指定，最终会自动归一化")
     parser.add_argument("--llm",
                         action="store_true",
                         help="调用 DeepSeek API 进行 LLM 智能分层检测")
@@ -2441,8 +2721,9 @@ def main():
         reuse=args.reuse_weight,
         depth=args.depth_weight,
         architecture=args.architecture_weight,
-        metadata_health=args.metadata_health_weight,
         naming=args.naming_weight,
+        asset_completeness=args.asset_completeness_weight,
+        metadata_health=args.metadata_health_weight,
         enable_llm=args.llm,
         no_cache=args.no_cache,
         parallel=args.parallel,
