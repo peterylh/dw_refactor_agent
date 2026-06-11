@@ -13,10 +13,13 @@ atomic_metrics:
 calculated_metrics:
 - sale_amount
 grain:
-  keys:
-  - category_id
-  - stat_month_date
   entities:
-  - CAT
+  - CATEGORY
   time_column: stat_month_date
   time_period: M
+entities:
+- code: CATEGORY
+  type: foreign
+  name: 品类
+  key_columns:
+  - category_id

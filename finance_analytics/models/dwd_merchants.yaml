@@ -6,7 +6,9 @@ config:
   materialized: full
 data_domain: '04'
 business_area: ACQR
-entity:
-  code: MERCHANT
+entities:
+- code: MERCHANT
+  type: primary
+  name: 商户
   key_columns:
   - merchant_id

@@ -808,7 +808,7 @@ class TestEnterpriseNaming:
     def test_entity_types_declare_model_sources(self, nc):
         assert nc.types["MODEL_ENTITY"].values_from == {
             "scope": "current_model",
-            "paths": ["entity.code"],
+            "paths": ["entities.code", "entity.code"],
         }
         assert nc.types["GRAIN_ENTITY"].values_from == {
             "scope": "current_model",

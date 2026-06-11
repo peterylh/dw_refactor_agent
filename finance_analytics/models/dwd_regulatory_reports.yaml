@@ -9,3 +9,24 @@ atomic_metrics:
 - penalty_amount
 data_domain: 09
 business_area: FMAN
+entities:
+- code: REPORT
+  type: foreign
+  name: 监管报告
+  key_columns:
+  - report_id
+- code: CUSTOMER
+  type: foreign
+  name: 客户
+  key_columns:
+  - customer_id
+- code: ACCOUNT
+  type: foreign
+  name: 账户
+  key_columns:
+  - account_id
+- code: TRANSACTION
+  type: foreign
+  name: 交易
+  key_columns:
+  - transaction_id

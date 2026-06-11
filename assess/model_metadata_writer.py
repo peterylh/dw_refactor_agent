@@ -26,6 +26,7 @@ if str(_root) not in sys.path:
 
 from assess.assess_middle_layer import load_lineage_data
 from assess.context_builder import TableContext, build_contexts
+from assess.entity_metadata import normalize_entities
 from assess.table_inspector import (
     TableInspectResult,
     TableInspector,
@@ -163,21 +164,25 @@ def _update_models_for_results(project: str,
     yaml_updates = []
     skipped_updates = []
     for result in results:
-        if result.status == "blocked":
-            skipped_updates.append({
-                "table": result.table_name,
-                "path": str(model_path_for_table(project, result.table_name)),
-                "status": result.status,
-                "validation": result.validation,
-                "updated": False,
-                "reason": "validation_blocked",
-                "write_scope": write_scope,
-            })
-            continue
         update = update_model_yaml(project,
                                    result,
                                    dry_run=dry_run,
                                    write_scope=write_scope)
+        if result.status == "blocked":
+            if update["changed"]:
+                yaml_updates.append(update)
+            else:
+                skipped_updates.append({
+                    "table": result.table_name,
+                    "path": str(model_path_for_table(project,
+                                                     result.table_name)),
+                    "status": result.status,
+                    "validation": result.validation,
+                    "updated": False,
+                    "reason": "validation_blocked",
+                    "write_scope": write_scope,
+                })
+            continue
         if update["changed"]:
             yaml_updates.append(update)
     return yaml_updates, skipped_updates
@@ -272,25 +277,41 @@ def _is_time_grain_key(key: str, time_column: str = "") -> bool:
     ))
 
 
-def _grain_key_entity_pairs(grain: dict[str, Any]) -> list[tuple[str, str]]:
+def _grain_key_entity_pairs(
+        grain: dict[str, Any],
+        entities: list[dict[str, Any]] | None = None) -> list[tuple[str, str]]:
     if not isinstance(grain, dict):
         return []
+    grain_entities = _as_string_list(grain.get("entities"))
+    if entities:
+        pairs = []
+        wanted = set(grain_entities)
+        for entity in entities:
+            if not isinstance(entity, dict):
+                continue
+            code = str(entity.get("code") or "").strip()
+            if wanted and code not in wanted:
+                continue
+            for key in _as_string_list(entity.get("key_columns")):
+                pairs.append((key, code))
+        if pairs:
+            return pairs
+
     keys = _as_string_list(grain.get("keys"))
-    entities = _as_string_list(grain.get("entities"))
     time_column = str(grain.get("time_column") or "")
     entity_keys = [
         key for key in keys
         if not _is_time_grain_key(key, time_column)
     ]
-    if not entity_keys or not entities:
+    if not entity_keys or not grain_entities:
         return []
-    if len(entities) == len(entity_keys):
-        return list(zip(entity_keys, entities))
-    if len(entities) == 1:
-        return [(key, entities[0]) for key in entity_keys]
+    if len(grain_entities) == len(entity_keys):
+        return list(zip(entity_keys, grain_entities))
+    if len(grain_entities) == 1:
+        return [(key, grain_entities[0]) for key in entity_keys]
 
     pairs = []
-    for entity in entities:
+    for entity in grain_entities:
         entity_prefix = entity.lower()
         for key in entity_keys:
             if key.lower().startswith(entity_prefix):
@@ -305,7 +326,8 @@ def _build_grain_entity_index(
     for result in results:
         if result.status == "blocked":
             continue
-        for key, entity in _grain_key_entity_pairs(result.grain):
+        for key, entity in _grain_key_entity_pairs(result.grain,
+                                                  result.entities):
             index.setdefault(key, entity)
     return index
 
@@ -406,6 +428,11 @@ def enrich_results_with_related_entities(
                 result.related_entities,
                 discovered,
             )
+            result.entities = normalize_entities(
+                result.entities,
+                result.entity,
+                result.related_entities,
+            )
 
 
 def layer_for_model(result: TableInspectResult) -> str:
@@ -495,29 +522,163 @@ def should_write_grain_metadata(result: TableInspectResult,
     """判断是否需要更新 entity/grain 元数据。"""
     if _validate_write_scope(write_scope) not in {"all", "grain"}:
         return False
-    return bool(result.entity or result.related_entities or result.grain)
+    return bool(
+        result.entities
+        or result.entity
+        or result.related_entities
+        or result.grain
+    )
+
+
+def _effective_entities(result: TableInspectResult) -> list[dict[str, Any]]:
+    entities = normalize_entities(
+        result.entities,
+        result.entity,
+        result.related_entities,
+    )
+    if entities:
+        return entities
+
+    inferred = []
+    for key, code in _grain_key_entity_pairs(result.grain):
+        inferred.append({
+            "code": code,
+            "type": "foreign",
+            "key_columns": [key],
+        })
+    return normalize_entities(inferred)
+
+
+def _dedupe_entities(
+        entities: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    deduped = []
+    seen: set[tuple[str, tuple[str, ...]]] = set()
+    for entity in entities:
+        code = str(entity.get("code") or "").strip()
+        keys = tuple(_as_string_list(entity.get("key_columns")))
+        identity = (code, keys)
+        if not code or identity in seen:
+            continue
+        deduped.append(entity)
+        seen.add(identity)
+    return deduped
+
+
+def _canonical_entities_for_write(
+        result: TableInspectResult,
+        entities: list[dict[str, Any]],
+        *,
+        model_layer: str = "") -> list[dict[str, Any]]:
+    if not entities:
+        return []
+
+    effective_layer = str(model_layer or result.declared_layer or "").upper()
+    is_dimension_model = (
+        effective_layer == "DIM"
+        or result.table_type == "dimension"
+    )
+
+    if result.table_type == "fact" and not is_dimension_model:
+        canonical = []
+        for entity in entities:
+            item = dict(entity)
+            item["type"] = "foreign"
+            item.pop("relationship", None)
+            canonical.append(item)
+        return _dedupe_entities(canonical)
+
+    if not is_dimension_model:
+        return _dedupe_entities(entities)
+
+    primary = next(
+        (
+            entity for entity in entities
+            if str(entity.get("type") or "").lower() == "primary"
+        ),
+        None,
+    )
+    if not primary:
+        primary = next(
+            (
+                entity for entity in entities
+                if str(entity.get("type") or "").lower() != "foreign"
+            ),
+            entities[0],
+        )
+
+    primary_code = str(primary.get("code") or "").strip()
+    canonical_primary = dict(primary)
+    canonical_primary["type"] = "primary"
+    canonical_primary.pop("relationship", None)
+
+    canonical = [canonical_primary]
+    for entity in entities:
+        code = str(entity.get("code") or "").strip()
+        if not code or code == primary_code:
+            continue
+        item = dict(entity)
+        item["type"] = "foreign"
+        relationship = item.get("relationship")
+        if isinstance(relationship, dict):
+            relationship = dict(relationship)
+        else:
+            relationship = {"type": "many_to_one"}
+        relationship["from_entity"] = primary_code
+        item["relationship"] = relationship
+        canonical.append(item)
+
+    return _dedupe_entities(canonical)
 
 
 def _effective_grain(grain: dict[str, Any] | None) -> dict[str, Any]:
     payload = dict(grain or {})
-    keys = _as_string_list(payload.get("keys"))
     entities = _as_string_list(payload.get("entities"))
+    additional_key_columns = _as_string_list(
+        payload.get("additional_key_columns"))
     time_column = str(payload.get("time_column") or "").strip()
     time_period = str(payload.get("time_period") or "").strip()
 
-    if not keys and not entities and not time_column and not time_period:
+    if (
+        not entities
+        and not additional_key_columns
+        and not time_column
+        and not time_period
+    ):
         return {}
 
     normalized: dict[str, Any] = {}
-    if keys:
-        normalized["keys"] = keys
     if entities:
         normalized["entities"] = entities
+    if additional_key_columns:
+        normalized["additional_key_columns"] = additional_key_columns
     if time_column:
         normalized["time_column"] = time_column
     if time_period:
         normalized["time_period"] = time_period
     return normalized
+
+
+def _canonical_grain_for_write(
+        grain: dict[str, Any],
+        entities: list[dict[str, Any]]) -> dict[str, Any]:
+    if not grain or not entities:
+        return grain
+
+    entity_codes = [
+        str(entity.get("code") or "").strip()
+        for entity in entities
+        if str(entity.get("code") or "").strip()
+    ]
+    grain_entities = _as_string_list(grain.get("entities"))
+    if (
+        grain_entities
+        and entity_codes
+        and len(grain_entities) == len(entity_codes)
+        and any(code not in entity_codes for code in grain_entities)
+    ):
+        grain = dict(grain)
+        grain["entities"] = entity_codes
+    return grain
 
 
 def update_model_yaml(project: str,
@@ -528,7 +689,77 @@ def update_model_yaml(project: str,
     """将单表 LLM 巡检元数据和指标名覆盖写入 models/{table}.yaml。"""
     write_scope = _validate_write_scope(write_scope)
     path = model_path_for_table(project, result.table_name)
+    existing = {}
+    if path.exists():
+        existing = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    if not isinstance(existing, dict):
+        existing = {}
+
     if result.status == "blocked":
+        can_migrate_grain = (
+            write_scope in {"all", "grain"}
+            and any(
+                key in existing for key in (
+                    "entities",
+                    "entity",
+                    "related_entities",
+                    "grain",
+                )
+            )
+        )
+        if can_migrate_grain:
+            updated = dict(existing)
+            entity_metadata = _canonical_entities_for_write(
+                result,
+                _effective_entities(result)
+                or normalize_entities(
+                    existing.get("entities"),
+                    existing.get("entity"),
+                    existing.get("related_entities"),
+                ),
+                model_layer=str(existing.get("layer") or ""),
+            )
+            grain_metadata = _effective_grain(
+                result.grain or existing.get("grain"))
+            grain_metadata = _canonical_grain_for_write(
+                grain_metadata,
+                entity_metadata,
+            )
+            if entity_metadata:
+                updated["entities"] = entity_metadata
+            else:
+                updated.pop("entities", None)
+            updated.pop("entity", None)
+            updated.pop("related_entities", None)
+            if grain_metadata:
+                updated["grain"] = grain_metadata
+            else:
+                updated.pop("grain", None)
+            changed = updated != existing
+            if not dry_run and changed:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(
+                    yaml.safe_dump(updated,
+                                   allow_unicode=True,
+                                   sort_keys=False),
+                    encoding="utf-8",
+                )
+            return {
+                "table": result.table_name,
+                "path": str(path),
+                "status": result.status,
+                "changed": changed,
+                "metadata_changed": False,
+                "metric_changed": False,
+                "metric_count": 0,
+                "new_metric_count": 0,
+                "removed_metric_count": 0,
+                "grain_changed": changed,
+                "updated": bool(changed and not dry_run),
+                "reason": "validation_blocked_schema_migration",
+                "warnings": [],
+                "write_scope": write_scope,
+            }
         return {
             "table": result.table_name,
             "path": str(path),
@@ -545,12 +776,6 @@ def update_model_yaml(project: str,
             "warnings": [],
             "write_scope": write_scope,
         }
-
-    existing = {}
-    if path.exists():
-        existing = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    if not isinstance(existing, dict):
-        existing = {}
 
     existing_metrics = _extract_existing_metric_names(existing)
     existing_groups = _extract_existing_metric_groups(existing)
@@ -628,13 +853,43 @@ def update_model_yaml(project: str,
         updated.pop("calculated_metrics", None)
 
     previous_grain = existing.get("grain")
+    previous_entities = existing.get("entities")
     previous_related_entities = existing.get("related_entities")
+    has_existing_grain_metadata = any(
+        key in existing for key in (
+            "entities",
+            "entity",
+            "related_entities",
+            "grain",
+        )
+    )
+    if not write_grain_metadata and has_existing_grain_metadata:
+        write_grain_metadata = _validate_write_scope(write_scope) in {
+            "all",
+            "grain",
+        }
     grain_metadata = _effective_grain(result.grain)
+    entity_metadata = _canonical_entities_for_write(
+        result,
+        _effective_entities(result)
+        or normalize_entities(
+            existing.get("entities"),
+            existing.get("entity"),
+            existing.get("related_entities"),
+        ),
+        model_layer=str(existing.get("layer") or ""),
+    )
+    grain_metadata = _canonical_grain_for_write(
+        grain_metadata,
+        entity_metadata,
+    )
     if write_grain_metadata:
-        if result.entity:
-            updated["entity"] = result.entity
-        if result.related_entities:
-            updated["related_entities"] = result.related_entities
+        if entity_metadata:
+            updated["entities"] = entity_metadata
+        else:
+            updated.pop("entities", None)
+        updated.pop("entity", None)
+        updated.pop("related_entities", None)
         if grain_metadata:
             updated["grain"] = grain_metadata
         else:
@@ -653,6 +908,7 @@ def update_model_yaml(project: str,
     )
     grain_changed = write_grain_metadata and (
         updated.get("grain") != previous_grain
+        or updated.get("entities") != previous_entities
         or updated.get("entity") != existing.get("entity")
         or updated.get("related_entities") != previous_related_entities
     )

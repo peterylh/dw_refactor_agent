@@ -12,12 +12,19 @@ calculated_metrics:
 derived_metrics:
 - quantity
 grain:
-  keys:
-  - product_id
-  - store_id
-  - stat_date
   entities:
   - PROD
   - STOR
   time_column: stat_date
   time_period: D
+entities:
+- code: PROD
+  type: foreign
+  name: 商品
+  key_columns:
+  - product_id
+- code: STOR
+  type: foreign
+  name: 门店
+  key_columns:
+  - store_id

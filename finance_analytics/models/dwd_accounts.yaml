@@ -6,12 +6,14 @@ config:
   materialized: full
 data_domain: '02'
 business_area: DPST
-entity:
-  code: ACCT
+entities:
+- code: ACCT
+  type: primary
+  name: 账户
   key_columns:
   - account_id
-related_entities:
 - code: CUST
+  type: foreign
   name: 客户
   key_columns:
   - customer_id
@@ -19,7 +21,22 @@ related_entities:
     type: many_to_one
     from_entity: ACCT
 - code: PROD
+  type: foreign
   name: 产品
+  key_columns:
+  - product_id
+  relationship:
+    type: many_to_one
+    from_entity: ACCT
+- code: CUSTOMER
+  type: foreign
+  key_columns:
+  - customer_id
+  relationship:
+    type: many_to_one
+    from_entity: ACCT
+- code: PRODUCT
+  type: foreign
   key_columns:
   - product_id
   relationship:

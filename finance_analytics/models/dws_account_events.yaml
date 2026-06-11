@@ -11,10 +11,24 @@ atomic_metrics:
 calculated_metrics:
 - value_change
 business_area: DPST
-grain:
-  keys:
+entities:
+- code: EVENT
+  type: foreign
+  name: 事件
+  key_columns:
   - event_key
-  entities:
-  - ACCT
-  time_column: event_date
-  time_period: D
+- code: ACCOUNT
+  type: foreign
+  name: 账户
+  key_columns:
+  - account_key
+- code: CUSTOMER
+  type: foreign
+  name: 客户
+  key_columns:
+  - customer_key
+- code: PRODUCT
+  type: foreign
+  name: 产品
+  key_columns:
+  - product_key

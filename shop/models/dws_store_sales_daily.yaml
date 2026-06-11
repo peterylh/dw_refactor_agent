@@ -15,10 +15,13 @@ atomic_metrics:
 derived_metrics:
 - discount_amount
 grain:
-  keys:
-  - store_id
-  - stat_date
   entities:
   - STOR
   time_column: stat_date
   time_period: D
+entities:
+- code: STOR
+  type: foreign
+  name: 门店
+  key_columns:
+  - store_id

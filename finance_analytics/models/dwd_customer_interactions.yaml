@@ -9,3 +9,14 @@ atomic_metrics:
 - sentiment_score
 data_domain: '01'
 business_area: CLNT
+entities:
+- code: CUST
+  type: foreign
+  name: 客户
+  key_columns:
+  - customer_id
+- code: AGEN
+  type: foreign
+  name: 员工
+  key_columns:
+  - agent_id

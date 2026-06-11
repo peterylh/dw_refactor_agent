@@ -15,10 +15,13 @@ calculated_metrics:
 atomic_metrics:
 - order_count
 grain:
-  keys:
-  - customer_id
-  - stat_date
   entities:
   - CUST
   time_column: stat_date
   time_period: D
+entities:
+- code: CUST
+  type: foreign
+  name: 客户
+  key_columns:
+  - customer_id

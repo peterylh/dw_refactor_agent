@@ -14,10 +14,19 @@ calculated_metrics:
 - outstanding_balance
 - days_late
 business_area: LOAN
-grain:
-  keys:
+entities:
+- code: PAYMENT
+  type: foreign
+  name: 还款事件
+  key_columns:
   - payment_key
-  entities:
-  - PYMT
-  time_column: scheduled_date
-  time_period: D
+- code: ACCOUNT
+  type: foreign
+  name: 账户
+  key_columns:
+  - account_key
+- code: CUSTOMER
+  type: foreign
+  name: 客户
+  key_columns:
+  - customer_key

@@ -16,10 +16,14 @@ calculated_metrics:
 - kyc_age_days
 - high_risk_customer_flag
 business_area: LOAN
-grain:
-  keys:
+entities:
+- code: ASSESS
+  type: foreign
+  name: 风险评估
+  key_columns:
   - assessment_key
-  entities:
-  - ASSESS
-  time_column: assessment_date
-  time_period: D
+- code: CUST
+  type: foreign
+  name: 客户
+  key_columns:
+  - customer_key

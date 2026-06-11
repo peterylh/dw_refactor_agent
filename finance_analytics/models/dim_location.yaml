@@ -4,7 +4,9 @@ layer: DIM
 table_type: dimension
 config:
   materialized: full
-entity:
-  code: LOC
+entities:
+- code: location
+  type: primary
+  name: 地点
   key_columns:
   - location_key

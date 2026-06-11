@@ -4,7 +4,9 @@ layer: DIM
 table_type: dimension
 config:
   materialized: full
-entity:
-  code: AGENT
+entities:
+- code: AGENT
+  type: primary
+  name: 客服
   key_columns:
-  - agent_key
+  - agent_natural_key

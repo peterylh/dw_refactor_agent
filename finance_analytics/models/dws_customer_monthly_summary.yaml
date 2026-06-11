@@ -23,10 +23,13 @@ atomic_metrics:
 - customer_count
 business_area: CLNT
 grain:
-  keys:
-  - customer_key
-  - year_month
   entities:
   - CUST
   time_column: year_month
   time_period: M
+entities:
+- code: CUST
+  type: foreign
+  name: 客户
+  key_columns:
+  - customer_key

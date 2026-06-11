@@ -4,7 +4,9 @@ layer: DIM
 table_type: dimension
 config:
   materialized: full
-entity:
-  code: CUST
+entities:
+- code: CUST
+  type: primary
+  name: 客户
   key_columns:
   - customer_key
