@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 数据集市中间层评估工具
-评估 DWD/DWS 层的复用度、链路长度(中间层)、架构合理性、模型元数据健康度、命名规范。
+评估 DWD/DWS 层的复用度、链路长度(中间层)、模型设计、模型元数据健康度、命名规范。
 
 用法:
     python assess/assess_middle_layer.py
@@ -31,6 +31,7 @@ from assess.scoring.asset_completeness import score_asset_completeness
 from assess.scoring.config import *  # re-export scoring constants/rules
 from assess.scoring.depth import score_lineage_depth
 from assess.scoring.metadata_health import score_metadata_health
+from assess.scoring.model_design import score_model_design_health
 from assess.scoring.naming import score_naming_conventions
 from assess.scoring.reuse import score_reusability
 from assess.scoring.task_sql_quality import score_code_quality
@@ -42,6 +43,37 @@ from lineage.table_graph import (
 )
 from assess.report import generate_report
 from config import PROJECT_CONFIG, PROJECT_ROOT
+
+
+DEFAULT_DIMENSION_ORDER = [
+    "reuse",
+    "depth",
+    "model_design",
+    "naming",
+    "asset_completeness",
+    "metadata_health",
+    "code_quality",
+]
+
+DIMENSION_ALIASES = {
+    "architecture": "model_design",
+}
+
+
+def normalize_selected_dimensions(
+    selected_dimensions: set[str] | list[str] | tuple[str, ...] | None,
+) -> set[str] | None:
+    if not selected_dimensions:
+        return None
+
+    selected = {
+        DIMENSION_ALIASES.get(dimension, dimension)
+        for dimension in selected_dimensions
+    }
+    unknown = sorted(set(selected) - set(DEFAULT_DIMENSION_ORDER))
+    if unknown:
+        raise ValueError(f"未知评估维度: {', '.join(unknown)}")
+    return selected
 
 
 def _filter_dimension_checks(
@@ -73,8 +105,10 @@ def assess(
     weights: dict = None,
     *,
     include_passed_checks: bool = False,
+    selected_dimensions: set[str] | list[str] | tuple[str, ...] | None = None,
 ) -> dict:
     weights = normalize_score_weights(weights)
+    selected_dimensions = normalize_selected_dimensions(selected_dimensions)
 
     from config import (
         get_business_domain_config,
@@ -111,17 +145,6 @@ def assess(
             print("警告: 未提供 DEEPSEEK_API_KEY 环境变量，跳过分类。")
 
     _, downstream = build_table_graph(edges, indirect_edges)
-
-    reuse_score = score_reusability(tables, downstream)
-    depth_score = score_lineage_depth(tables, edges, indirect_edges)
-    architecture_score = score_architecture_health(
-        tables,
-        edges,
-        indirect_edges,
-        llm_results,
-        model_metadata,
-        business_domain_config,
-    )
     project_dir = PROJECT_ROOT / PROJECT_CONFIG[project]["dir"]
     asset_catalog = build_asset_catalog(
         tables,
@@ -130,6 +153,18 @@ def assess(
         edges=edges,
         indirect_edges=indirect_edges,
         transient_tables=transient_tables,
+    )
+
+    reuse_score = score_reusability(tables, downstream)
+    depth_score = score_lineage_depth(tables, edges, indirect_edges)
+    model_design_score = score_model_design_health(
+        tables,
+        edges,
+        indirect_edges,
+        llm_results,
+        model_metadata,
+        business_domain_config,
+        asset_catalog=asset_catalog,
     )
     asset_completeness_score = score_asset_completeness(asset_catalog)
     code_quality_score = score_code_quality(asset_catalog)
@@ -154,25 +189,23 @@ def assess(
     dimensions = dict(
         reuse=reuse_score,
         depth=depth_score,
-        architecture=architecture_score,
+        model_design=model_design_score,
         naming=naming_score,
         asset_completeness=asset_completeness_score,
         metadata_health=metadata_health_score,
         code_quality=code_quality_score,
     )
+    dimension_keys = [
+        key for key in DEFAULT_DIMENSION_ORDER
+        if selected_dimensions is None or key in selected_dimensions
+    ]
+    dimensions = {key: dimensions[key] for key in dimension_keys}
+    selected_weight_total = sum(weights[key] for key in dimension_keys)
     overall_score = round(
         sum(
             weights[key] * dimensions[key]["score"]
-            for key in [
-                "reuse",
-                "depth",
-                "architecture",
-                "naming",
-                "asset_completeness",
-                "metadata_health",
-                "code_quality",
-            ]
-        ),
+            for key in dimension_keys
+        ) / selected_weight_total,
         1,
     )
     output_dimensions = _filter_dimension_checks(
@@ -206,10 +239,14 @@ def main():
                         type=float,
                         default=DEFAULT_WEIGHTS["depth"],
                         help="链路长度权重，可单独指定，最终会自动归一化")
+    parser.add_argument("--model-design-weight",
+                        type=float,
+                        default=DEFAULT_WEIGHTS["model_design"],
+                        help="模型设计权重，可单独指定，最终会自动归一化")
     parser.add_argument("--architecture-weight",
                         type=float,
-                        default=DEFAULT_WEIGHTS["architecture"],
-                        help="架构合理性权重，可单独指定，最终会自动归一化")
+                        default=None,
+                        help="兼容别名: 等同于 --model-design-weight")
     parser.add_argument("--metadata-health-weight",
                         type=float,
                         default=DEFAULT_WEIGHTS["metadata_health"],
@@ -240,12 +277,41 @@ def main():
         "--include-passed-checks",
         action="store_true",
         help="输出通过检查项的完整 checks 证据；默认只输出 issue 关联的失败 checks")
+    parser.add_argument("--reuse",
+                        action="store_true",
+                        help="只输出复用度维度")
+    parser.add_argument("--depth",
+                        action="store_true",
+                        help="只输出链路长度维度")
+    parser.add_argument("--model-design",
+                        action="store_true",
+                        help="只输出模型设计维度")
+    parser.add_argument("--architecture",
+                        action="store_true",
+                        help="兼容别名: 等同于 --model-design")
+    parser.add_argument("--naming",
+                        action="store_true",
+                        help="只输出命名规范维度")
+    parser.add_argument("--asset-completeness",
+                        action="store_true",
+                        help="只输出资产完整性维度")
+    parser.add_argument("--metadata-health",
+                        action="store_true",
+                        help="只输出模型元数据健康度维度")
+    parser.add_argument("--code-quality",
+                        action="store_true",
+                        help="只输出代码质量维度")
     args = parser.parse_args()
 
+    model_design_weight = (
+        args.architecture_weight
+        if args.architecture_weight is not None
+        else args.model_design_weight
+    )
     weights = dict(
         reuse=args.reuse_weight,
         depth=args.depth_weight,
-        architecture=args.architecture_weight,
+        model_design=model_design_weight,
         naming=args.naming_weight,
         asset_completeness=args.asset_completeness_weight,
         metadata_health=args.metadata_health_weight,
@@ -254,11 +320,24 @@ def main():
         no_cache=args.no_cache,
         parallel=args.parallel,
     )
+    selected_dimensions = set()
+    for enabled, dimension in [
+        (args.reuse, "reuse"),
+        (args.depth, "depth"),
+        (args.model_design or args.architecture, "model_design"),
+        (args.naming, "naming"),
+        (args.asset_completeness, "asset_completeness"),
+        (args.metadata_health, "metadata_health"),
+        (args.code_quality, "code_quality"),
+    ]:
+        if enabled:
+            selected_dimensions.add(dimension)
 
     result = assess(
         args.project,
         weights,
         include_passed_checks=args.include_passed_checks,
+        selected_dimensions=selected_dimensions,
     )
 
     print(generate_report(result, result["weights"], args.project))

@@ -32,17 +32,28 @@ def generate_report(scores: dict, weights: dict, project: str) -> str:
     dims = [
         ("复用度", "reuse"),
         ("链路长度(中间层)", "depth"),
-        ("架构合理性", "architecture"),
+        ("模型设计", "model_design"),
         ("命名规范", "naming"),
         ("资产完整性", "asset_completeness"),
         ("模型元数据健康度", "metadata_health"),
         ("代码质量", "code_quality"),
     ]
     dimensions = scores["dimensions"]
+    displayed_weight_total = sum(
+        weights[key]
+        for _, key in dims
+        if key in dimensions and key in weights
+    )
     for label, key in dims:
+        if key not in dimensions:
+            continue
         metric = dimensions[key]
         score = metric["score"]
-        w = weights[key] * 100
+        w = (
+            weights[key] / displayed_weight_total * 100
+            if displayed_weight_total
+            else 0
+        )
         parts.append(
             f"║ {label:<12} 评分:{score:>5.1f}  权重:{w:>2.0f}%{' ' * 24}║")
 
@@ -51,6 +62,8 @@ def generate_report(scores: dict, weights: dict, project: str) -> str:
     headers = ["规则ID", "规则", "严重度", "通过", "总计", "合规率"]
     col_w = [32, 28, 8, 6, 6, 8]
     for label, key in dims:
+        if key not in dimensions:
+            continue
         dimension = dimensions[key]
         parts.append(f"\n{'=' * 62}")
         parts.append(f"【{label}】评分: {dimension['score']}")

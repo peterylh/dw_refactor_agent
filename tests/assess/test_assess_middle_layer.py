@@ -122,7 +122,7 @@ def test_assess_returns_dimension_check_issue_model(
     assert set(result["dimensions"]) == {
         "reuse",
         "depth",
-        "architecture",
+        "model_design",
         "naming",
         "asset_completeness",
         "metadata_health",
@@ -135,8 +135,8 @@ def test_assess_returns_dimension_check_issue_model(
             "checks",
             "issues",
         }
-    assert result["dimensions"]["architecture"]["score"] == 50.0
-    assert result["dimensions"]["architecture"]["issues"][0]["severity"] == "中"
+    assert result["dimensions"]["model_design"]["score"] == 50.0
+    assert result["dimensions"]["model_design"]["issues"][0]["severity"] == "中"
     assert result["dimensions"]["asset_completeness"]["issues"] == []
     assert result["dimensions"]["asset_completeness"]["checks"] == []
     assert all(
@@ -160,12 +160,43 @@ def test_assess_can_include_passed_checks(
 
     assert any(
         check["passed"]
-        for check in result["dimensions"]["architecture"]["checks"]
+        for check in result["dimensions"]["model_design"]["checks"]
     )
     assert any(
         not check["passed"]
-        for check in result["dimensions"]["architecture"]["checks"]
+        for check in result["dimensions"]["model_design"]["checks"]
     )
+
+
+def test_assess_can_run_selected_model_design_only(
+        monkeypatch, sample_lineage_data, isolated_assess_project):
+    monkeypatch.setattr(
+        "assess.assess_middle_layer.load_lineage_data",
+        lambda project: sample_lineage_data,
+    )
+
+    result = assess(
+        project=isolated_assess_project,
+        selected_dimensions={"model_design"},
+    )
+
+    assert set(result["dimensions"]) == {"model_design"}
+    assert result["dimensions"]["model_design"]["score"] == 50.0
+
+
+def test_assess_accepts_architecture_dimension_alias(
+        monkeypatch, sample_lineage_data, isolated_assess_project):
+    monkeypatch.setattr(
+        "assess.assess_middle_layer.load_lineage_data",
+        lambda project: sample_lineage_data,
+    )
+
+    result = assess(
+        project=isolated_assess_project,
+        selected_dimensions={"architecture"},
+    )
+
+    assert set(result["dimensions"]) == {"model_design"}
 
 
 def test_generate_report_reads_dimension_issues(
@@ -189,7 +220,9 @@ def test_normalize_score_weights_supports_partial_override():
 
     assert weights["reuse"] == pytest.approx(0.267857, rel=0, abs=1e-6)
     assert weights["depth"] == pytest.approx(0.160714, rel=0, abs=1e-6)
-    assert weights["architecture"] == pytest.approx(0.160714, rel=0, abs=1e-6)
+    assert weights["model_design"] == pytest.approx(0.160714,
+                                                    rel=0,
+                                                    abs=1e-6)
     assert weights["asset_completeness"] == pytest.approx(0.080357,
                                                           rel=0,
                                                           abs=1e-6)
@@ -200,6 +233,15 @@ def test_normalize_score_weights_supports_partial_override():
     assert weights["code_quality"] == pytest.approx(0.089286,
                                                     rel=0,
                                                     abs=1e-6)
+
+
+def test_normalize_score_weights_accepts_architecture_alias():
+    weights = normalize_score_weights({"architecture": 0.3})
+
+    assert weights["model_design"] == pytest.approx(0.267857,
+                                                    rel=0,
+                                                    abs=1e-6)
+    assert "architecture" not in weights
 
 
 def test_score_metadata_health_validates_model_entity_and_grain_entity():

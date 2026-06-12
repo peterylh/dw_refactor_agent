@@ -17,7 +17,7 @@ REUSE_FULL_SCORE_AT = 3
 DEFAULT_WEIGHTS = {
     "reuse": 0.18,
     "depth": 0.18,
-    "architecture": 0.18,
+    "model_design": 0.18,
     "naming": 0.18,
     "asset_completeness": 0.09,
     "metadata_health": 0.09,
@@ -298,6 +298,42 @@ ARCHITECTURE_RULES = {
     ),
 }
 
+MODEL_DESIGN_RULES = {
+    **ARCHITECTURE_RULES,
+    "MODEL_DWD_FACT_NO_AGGREGATION": rule_meta(
+        name="DWD事实表保持明细粒度",
+        severity=SEVERITY_HIGH,
+        title="DWD事实表存在聚合逻辑",
+        remediation_summary="将聚合逻辑上移到DWS层，或修正模型分层/表类型",
+        strategy="move_aggregation_to_dws",
+        edit_scope=["tasks", "models"],
+    ),
+    "MODEL_DWS_GRAIN_PRESENT": rule_meta(
+        name="DWS事实表配置grain",
+        severity=SEVERITY_MEDIUM,
+        title="DWS事实表缺少grain元数据",
+        remediation_summary="在models YAML中补齐grain.entities和time_column",
+        strategy="update_model_grain",
+        edit_scope=["models"],
+    ),
+    "MODEL_DWS_GRAIN_MATCHES_GROUP_BY": rule_meta(
+        name="DWS grain与SQL GROUP BY一致",
+        severity=SEVERITY_MEDIUM,
+        title="DWS事实表grain与GROUP BY不一致",
+        remediation_summary="修正models grain，或调整SQL GROUP BY以匹配声明粒度",
+        strategy="align_grain_with_group_by",
+        edit_scope=["models", "tasks"],
+    ),
+    "MODEL_DWD_FACT_HAS_EVENT_KEY": rule_meta(
+        name="DWD事实表包含明细事件键",
+        severity=SEVERITY_LOW,
+        title="DWD事实表缺少明显事件键",
+        remediation_summary="补齐事件/流水/明细键，或在模型entities中声明粒度键",
+        strategy="declare_or_add_event_key",
+        edit_scope=["models", "ddl", "tasks"],
+    ),
+}
+
 NAMING_RULES = {
     "NAMING_TABLE_TEMPLATE": rule_meta(
         name="表名符合规范模板",
@@ -400,6 +436,9 @@ def normalize_score_weights(weights: dict | None = None) -> dict:
     extra = {}
     if weights:
         for key, value in weights.items():
+            if key == "architecture":
+                merged["model_design"] = value
+                continue
             if key in DEFAULT_WEIGHTS:
                 merged[key] = value
             else:
