@@ -101,12 +101,18 @@ def test_build_prompt_clarifies_metric_group_boundaries():
 
 def test_build_prompt_separates_business_process_and_semantic_subject():
     ctx = TableContext(
-        table_name="dwd_product",
+        table_name="dwd_entity_profile",
         layer="DWD",
-        ddl="CREATE TABLE dwd_product (product_id BIGINT, product_name VARCHAR(64));",
-        etl_sql="INSERT INTO dwd_product SELECT product_id, product_name FROM ods_product;",
-        upstream_tables=["ods_product"],
-        downstream_tables=["dws_product_sales_daily"],
+        ddl=(
+            "CREATE TABLE dwd_entity_profile "
+            "(entity_id BIGINT, entity_name VARCHAR(64));"
+        ),
+        etl_sql=(
+            "INSERT INTO dwd_entity_profile "
+            "SELECT entity_id, entity_name FROM ods_entity_profile;"
+        ),
+        upstream_tables=["ods_entity_profile"],
+        downstream_tables=["dws_entity_activity_daily"],
     )
 
     prompt = build_prompt(ctx)
@@ -114,8 +120,21 @@ def test_build_prompt_separates_business_process_and_semantic_subject():
     assert "business_process 只适用于事实表或汇总事实表" in prompt
     assert "dimension 表不得为了填充业务过程而生成" in prompt
     assert "semantic_subject" in prompt
-    assert "MANAGEMENT、OPERATION" in prompt
+    assert "管理/运营/主数据/资料维护" in prompt
+    assert "实体主语 + 管理/运营" in prompt
+    assert "大写下划线短语" in prompt
+    assert "不能仅由实体主语" in prompt
     assert "语义主题" in prompt
+    hardcoded_project_examples = [
+        "客户、商品、门店",
+        "CUSTOMER_OPERATION",
+        "PRODUCT_MANAGEMENT",
+        "STORE_OPERATION",
+        "CUSTOMER、PRODUCT",
+        "STORE、PROMOTION",
+    ]
+    for example in hardcoded_project_examples:
+        assert example not in prompt
 
 
 def test_build_prompt_treats_imputed_non_additive_inputs_as_dimensions():

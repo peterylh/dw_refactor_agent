@@ -15,7 +15,7 @@ from assess.project_facts.entity_metadata import (
 )
 
 
-PROMPT_VERSION = "table-inspector-v18"
+PROMPT_VERSION = "table-inspector-v19"
 VALID_LAYERS = {"ODS", "DWD", "DWS", "ADS", "DIM", "OTHER"}
 VALID_TABLE_TYPES = {"dimension", "fact", "other"}
 METRIC_GROUPING_LAYERS = {"DWD", "DWS"}
@@ -125,15 +125,16 @@ def build_prompt(ctx: TableContext) -> str:
 - DIM (公共维度表): 记录实体属性，主键通常为单一实体 ID，被其他宽表广泛 LEFT JOIN。
 
 ## 表类型判定标准
-- dimension: 维度表。描述业务实体属性(如客户、商品、门店), 缓慢变化, 常常作为维表被 JOIN。
+- dimension: 维度表。描述可被事实表引用的业务实体属性、层级、状态或主数据，缓慢变化，常常作为维表被 JOIN。
 - fact: 事实表或汇总事实表。记录业务事件/交易，或按公共维度汇总业务过程，包含可度量字段，通常有时间分区。
 - other: 其他类型。
 
 ## 业务过程与语义主题边界
-- business_process 只适用于事实表或汇总事实表，用来描述发生了什么可度量业务事件/活动，例如交易、支付、库存变动、促销效果统计。
-- dimension 表不得为了填充业务过程而生成 CUSTOMER_OPERATION、PRODUCT_MANAGEMENT、STORE_OPERATION 这类管理/经营过程；它们更可能是语义主题或实体管理域。
-- semantic_subject 表示维度/实体属性表的语义主题，通常对应维表主实体，例如 CUSTOMER、PRODUCT、STORE、PROMOTION。
-- MANAGEMENT、OPERATION、PROFILE、MASTER、INFO 等词若只描述实体资料维护、主数据、属性集合或经营主题，优先视为语义主题/业务主题，不要归为严格的业务过程。
+- business_process 只适用于事实表或汇总事实表，用来描述发生了什么可度量业务事件/活动；判断依据应是事件动作、事实行、度量字段、时间粒度和可汇总口径，而不是表名里出现的业务名词。
+- dimension 表不得为了填充业务过程而生成“实体主语 + 管理/运营”式过程名；若表只表达管理/运营/主数据/资料维护/属性集合，它们更可能是语义主题、业务主题或实体管理域。
+- semantic_subject 表示维度/实体属性表的语义主题，通常对应维表主实体编码；它不是业务过程，也不应被写入指标字段的 business_process。
+- 表名或描述中含有 MANAGEMENT、OPERATION、PROFILE、MASTER、INFO 等模式时，必须先检查是否存在可度量业务事件；没有事件事实和指标时，优先视为语义主题/业务主题，不要归为严格的业务过程。
+- 字段级 business_process 若需要填写，应是可代码化的大写下划线短语，表达“动作/事件 + 业务结果或业务对象”的过程；不能仅由实体主语、管理/运营词或表主题词组成。
 - 本次巡检 JSON 不返回 semantic_subject 顶层字段；这条规则用于避免把维表主题误填到指标字段的 business_process。catalog 初始化或 models 回写时可将 dimension 表主实体转为 semantic_subject。
 
 ## 指标字段分组标准
@@ -162,7 +163,7 @@ def build_prompt(ctx: TableContext) -> str:
 ## entities、grain 元数据识别
 - entities 表示当前模型中参与语义关联的实体键，借鉴 dbt Semantic Layer entity。每个实体返回 code、type 和 key_columns。
 - type 可取 primary、unique、foreign、natural。primary 表示当前表主实体键；unique 表示当前表内唯一但不是主实体；foreign 表示当前表引用其他实体的键；natural 表示拉链/快照表中标识业务实体但单独不唯一的自然键。
-- 维度型/实体型表应至少返回一个 type=primary 的主实体；如果当前表承载上级、归属或层级实体，如商品维度中的品类，则用 type=foreign 并带 relationship。
+- 维度型/实体型表应至少返回一个 type=primary 的主实体；如果当前表承载上级、归属或层级实体，则用 type=foreign 并带 relationship。
 - 事实表/DWS 汇总表中的实体通常为 type=foreign，key_columns 是当前表中表示该实体的字段名。
 - grain 只适用于 DWS 汇总事实表。若当前表是 DWS fact，应返回粒度实体 grain.entities、时间字段 time_column 和时间周期 time_period；否则 grain 返回空对象。
 - grain.entities 必须引用当前返回的 entities[].code；它应来自粒度 key 对应的主要业务实体，不要把时间字段、状态、品牌、父级属性等普通维度属性放入 grain.entities。
