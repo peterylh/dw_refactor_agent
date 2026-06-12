@@ -574,6 +574,128 @@ DISTRIBUTED BY HASH(order_id) BUCKETS 1;
     }
 
 
+def test_score_asset_completeness_ignores_dropped_ctas_temp_tables(tmp_path):
+    project_dir = tmp_path / "demo"
+    (project_dir / "ddl").mkdir(parents=True)
+    (project_dir / "models").mkdir()
+    (project_dir / "tasks").mkdir()
+
+    (project_dir / "ddl" / "dws_orders.sql").write_text(
+        """
+CREATE TABLE demo.dws_orders (
+    order_id BIGINT,
+    amount DECIMAL(12, 2)
+) ENGINE=OLAP
+DUPLICATE KEY(order_id)
+DISTRIBUTED BY HASH(order_id) BUCKETS 1;
+""",
+        encoding="utf-8",
+    )
+    (project_dir / "models" / "dws_orders.yaml").write_text(
+        "name: dws_orders\nlayer: DWS\n",
+        encoding="utf-8",
+    )
+    (project_dir / "tasks" / "dws_orders.sql").write_text(
+        """
+CREATE TABLE demo.tmp_orders_stage AS
+SELECT order_id, amount
+FROM demo.dwd_orders;
+
+INSERT INTO demo.dws_orders
+SELECT order_id, amount
+FROM demo.tmp_orders_stage;
+
+DROP TABLE IF EXISTS demo.tmp_orders_stage;
+""",
+        encoding="utf-8",
+    )
+
+    catalog = build_asset_catalog(
+        [
+            {"name": "dws_orders", "layer": "DWS", "columns": []},
+            {"name": "tmp_orders_stage", "layer": "OTHER", "columns": []},
+        ],
+        {"dws_orders": {"name": "dws_orders", "layer": "DWS"}},
+        project_dir,
+        edges=[
+            {
+                "source_file": "dws_orders.sql",
+                "target": "demo.tmp_orders_stage.order_id",
+            },
+            {
+                "source_file": "dws_orders.sql",
+                "target": "demo.dws_orders.order_id",
+            },
+        ],
+        indirect_edges=[],
+        transient_tables=[
+            {
+                "name": "tmp_orders_stage",
+                "source_file": "dws_orders.sql",
+                "created_statement_index": 0,
+                "dropped_statement_index": 2,
+                "is_ctas": True,
+                "is_transient": True,
+                "dropped_in_same_task": True,
+            }
+        ],
+    )
+    result = score_asset_completeness(catalog)
+
+    assert catalog["tasks"][0]["output_tables"] == {"dws_orders"}
+    assert catalog["tasks"][0]["lineage_targets"] == {"dws_orders"}
+    assert "tmp_orders_stage" not in catalog["tables"]
+    assert result["issues"] == []
+
+
+def test_asset_catalog_does_not_link_transient_only_task_as_asset(tmp_path):
+    project_dir = tmp_path / "demo"
+    (project_dir / "tasks").mkdir(parents=True)
+    (project_dir / "tasks" / "tmp_orders_stage.sql").write_text(
+        """
+CREATE TABLE demo.tmp_orders_stage AS
+SELECT order_id, amount
+FROM demo.dwd_orders;
+
+DROP TABLE IF EXISTS demo.tmp_orders_stage;
+""",
+        encoding="utf-8",
+    )
+
+    catalog = build_asset_catalog(
+        [
+            {
+                "name": "tmp_orders_stage",
+                "layer": "OTHER",
+                "columns": [],
+                "is_transient": True,
+                "transient_sources": ["tmp_orders_stage.sql"],
+            },
+        ],
+        None,
+        project_dir,
+        edges=[{
+            "source_file": "tmp_orders_stage.sql",
+            "target": "demo.tmp_orders_stage.order_id",
+        }],
+        indirect_edges=[],
+        transient_tables=[
+            {
+                "name": "tmp_orders_stage",
+                "source_file": "tmp_orders_stage.sql",
+                "created_statement_index": 0,
+                "dropped_statement_index": 1,
+                "is_ctas": True,
+                "is_transient": True,
+                "dropped_in_same_task": True,
+            }
+        ],
+    )
+
+    assert catalog["tasks"][0]["output_tables"] == set()
+    assert "tmp_orders_stage" not in catalog["tables"]
+
+
 def test_score_naming_conventions_outputs_table_and_column_issues():
     nc = load_naming_config(PROJECT_ROOT / "naming_config.yaml")
 

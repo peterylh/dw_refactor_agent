@@ -19,6 +19,7 @@ from config import PROJECT_CONFIG, determine_layer as determine_config_layer
 import sqlglot
 from sqlglot import exp
 from sqlglot.lineage import lineage
+from lineage.sql_task_facts import extract_task_table_facts
 
 
 # ============================================================
@@ -658,46 +659,38 @@ def _extract_values_lineage(target_table, insert_or_values, file_path):
     return entries
 
 
-# ============================================================
-# 6. 主流程
-# ============================================================
-
-
-def main():
-    parser = argparse.ArgumentParser(description="SQL 血缘采集器")
-    parser.add_argument("--project", default="shop", choices=list(PROJECT_CONFIG.keys()),
-                        help="项目名称, 对应 PROJECT_CONFIG 中的 key")
-    args = parser.parse_args()
-    configure_project(args.project)
-    STATS["parse_failures"] = 0
-    STATS["lineage_failures"] = 0
-    cfg = PROJECT_CONFIG[args.project]
-    project_dir = Path(__file__).parent.parent / cfg["dir"]
-    tasks_dir = project_dir / "tasks"
-    ddl_dir = project_dir / "ddl"
-
-    # 1. 构建 Schema
-    schema = build_schema_from_ddl(ddl_dir)
-    table_count = sum(len(tables) for tables in schema.values())
-    print(f"Schema: {table_count} 个表")
-
-    # 2. 提取血缘
-    all_lineage = []
-    task_files = sorted(tasks_dir.glob("*.sql"))
-    full_refresh_dir = tasks_dir / "full_refresh"
-    if full_refresh_dir.exists():
-        task_files.extend(sorted(full_refresh_dir.glob("*.sql")))
-    for f in task_files:
-        source_file = f.relative_to(tasks_dir).as_posix()
-        entries = extract_lineage_from_sql(
-            f.read_text(encoding="utf-8"), source_file, schema
+def _normalize_transient_tables(transient_tables):
+    unique = {}
+    for table in transient_tables or []:
+        name = _strip_db(table.get("name", ""))
+        source_file = table.get("source_file", "")
+        if not name:
+            continue
+        normalized = dict(table)
+        normalized["name"] = name
+        normalized["source_file"] = source_file
+        normalized["is_transient"] = bool(
+            normalized.get("is_transient", True)
         )
-        all_lineage.extend(entries)
-        if entries:
-            print(f"  {source_file}: {len(entries)} 条血缘")
-    all_lineage = [_canonical_lineage_entry(entry) for entry in all_lineage]
+        key = (
+            name,
+            source_file,
+            normalized.get("created_statement_index"),
+            normalized.get("dropped_statement_index"),
+        )
+        unique[key] = normalized
+    return sorted(
+        unique.values(),
+        key=lambda item: (
+            item.get("source_file", ""),
+            item.get("created_statement_index", -1),
+            item.get("name", ""),
+        ),
+    )
 
-    # 3. 去重
+
+def build_lineage_output(all_lineage, schema, transient_tables=None):
+    """Build serialized lineage output, preserving transient table metadata."""
     unique = []
     seen = set()
     for e in all_lineage:
@@ -738,14 +731,18 @@ def main():
         ),
     )
 
-    # 4. 分离直接 / 间接血缘
     direct_entries = [e for e in all_lineage if e.get("lineage_type") != "indirect"]
     indirect_entries = [e for e in all_lineage if e.get("lineage_type") == "indirect"]
 
-    # 5. 构建节点 + 边（直接血缘）
     nodes = {}
     tables = {}
     edges = []
+    transient_tables = _normalize_transient_tables(transient_tables)
+    transient_sources_by_table = {}
+    for table in transient_tables:
+        transient_sources_by_table.setdefault(table["name"], set()).add(
+            table.get("source_file", "")
+        )
 
     def _schema_column_type(tbl, col):
         tbl = _strip_db(tbl)
@@ -755,6 +752,10 @@ def main():
             if table_cols and col in table_cols:
                 return table_cols[col]
         return "UNKNOWN"
+
+    def _schema_has_table(tbl):
+        tbl = _strip_db(tbl)
+        return any(tbl in db_tables for db_tables in schema.values())
 
     def _ensure_node(tbl, col):
         tbl = _strip_db(tbl)
@@ -768,6 +769,11 @@ def main():
                 "layer": determine_layer(tbl),
                 "columns": [],
             }
+        if tbl in transient_sources_by_table and not _schema_has_table(tbl):
+            tables[tbl]["is_transient"] = True
+            tables[tbl]["transient_sources"] = sorted(
+                transient_sources_by_table[tbl]
+            )
         node_id = f"{tbl}.{col}"
         if node_id not in nodes:
             nodes[node_id] = {
@@ -799,7 +805,6 @@ def main():
             }
         )
 
-    # 6. 构建间接血缘边
     indirect_edges = []
     for entry in indirect_entries:
         src_tbl = _strip_db(entry["source_table"])
@@ -817,7 +822,6 @@ def main():
             }
         )
 
-    # 7. 合并 DDL 中无血缘边的列到 tables 输出
     for db_name, db_tables in schema.items():
         for tbl_name, cols in db_tables.items():
             tbl_name = _strip_db(tbl_name)
@@ -832,7 +836,7 @@ def main():
                     elif existing_cols[col_name].get("type") == "UNKNOWN":
                         existing_cols[col_name]["type"] = col_type
 
-    output = {
+    return {
         "nodes": sorted(nodes.values(), key=lambda n: n["id"]),
         "edges": sorted(
             edges,
@@ -854,7 +858,58 @@ def main():
                 e.get("condition_expression", ""),
             ),
         ),
+        "transient_tables": transient_tables,
     }
+
+
+# ============================================================
+# 6. 主流程
+# ============================================================
+
+
+def main():
+    parser = argparse.ArgumentParser(description="SQL 血缘采集器")
+    parser.add_argument("--project", default="shop", choices=list(PROJECT_CONFIG.keys()),
+                        help="项目名称, 对应 PROJECT_CONFIG 中的 key")
+    args = parser.parse_args()
+    configure_project(args.project)
+    STATS["parse_failures"] = 0
+    STATS["lineage_failures"] = 0
+    cfg = PROJECT_CONFIG[args.project]
+    project_dir = Path(__file__).parent.parent / cfg["dir"]
+    tasks_dir = project_dir / "tasks"
+    ddl_dir = project_dir / "ddl"
+
+    # 1. 构建 Schema
+    schema = build_schema_from_ddl(ddl_dir)
+    table_count = sum(len(tables) for tables in schema.values())
+    print(f"Schema: {table_count} 个表")
+
+    # 2. 提取血缘
+    all_lineage = []
+    transient_tables = []
+    task_files = sorted(tasks_dir.glob("*.sql"))
+    full_refresh_dir = tasks_dir / "full_refresh"
+    if full_refresh_dir.exists():
+        task_files.extend(sorted(full_refresh_dir.glob("*.sql")))
+    for f in task_files:
+        source_file = f.relative_to(tasks_dir).as_posix()
+        sql_text = f.read_text(encoding="utf-8")
+        task_facts = extract_task_table_facts(sql_text, source_file)
+        transient_tables.extend(task_facts["transient_tables"])
+        entries = extract_lineage_from_sql(
+            sql_text, source_file, schema
+        )
+        all_lineage.extend(entries)
+        if entries:
+            print(f"  {source_file}: {len(entries)} 条血缘")
+    all_lineage = [_canonical_lineage_entry(entry) for entry in all_lineage]
+
+    output = build_lineage_output(
+        all_lineage,
+        schema,
+        transient_tables=transient_tables,
+    )
     output_path = Path(__file__).parent / f"lineage_data_{CURRENT_PROJECT}.json"
     with open(output_path, "w", encoding="utf-8") as fp:
         json.dump(output, fp, ensure_ascii=False, indent=2)
@@ -865,10 +920,11 @@ def main():
             json.dump(output, fp, ensure_ascii=False, indent=2)
 
     print(f"\n血缘提取完成!")
-    print(f"  直接血缘: {len(edges)} 条边")
-    print(f"  间接血缘: {len(indirect_edges)} 条边")
-    print(f"  节点数: {len(nodes)}")
-    print(f"  表数: {len(tables)}")
+    print(f"  直接血缘: {len(output['edges'])} 条边")
+    print(f"  间接血缘: {len(output['indirect_edges'])} 条边")
+    print(f"  节点数: {len(output['nodes'])}")
+    print(f"  表数: {len(output['tables'])}")
+    print(f"  临时表: {len(output['transient_tables'])}")
     if STATS["parse_failures"]:
         print(f"  解析失败: {STATS['parse_failures']} 个文件")
     if STATS["lineage_failures"]:
@@ -877,8 +933,13 @@ def main():
     if legacy_output_path:
         print(f"  兼容输出: {legacy_output_path}")
 
+    table_map = {table["name"]: table for table in output["tables"]}
     for layer in ["ODS", "DWD", "DWS", "ADS"]:
-        layer_tables = [(n, i) for n, i in tables.items() if i["layer"] == layer]
+        layer_tables = [
+            (name, info)
+            for name, info in table_map.items()
+            if info["layer"] == layer
+        ]
         if layer_tables:
             print(f"\n[{layer}]")
             for name, info in sorted(layer_tables):
@@ -887,7 +948,11 @@ def main():
                     f"  {name} ({len(cols)}): {', '.join(c['name'] for c in cols[:10])}{'...' if len(cols) > 10 else ''}"
                 )
 
-    others = [(n, i) for n, i in tables.items() if i["layer"] == "OTHER"]
+    others = [
+        (name, info)
+        for name, info in table_map.items()
+        if info["layer"] == "OTHER"
+    ]
     if others:
         print(f"\n[UNRESOLVED]")
         for name, info in sorted(others):
