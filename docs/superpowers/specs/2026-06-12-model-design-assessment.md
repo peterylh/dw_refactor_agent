@@ -49,11 +49,23 @@ business_processes:
     source_table_hints: [ods_order, ods_order_item, dwd_order_detail]
 ```
 
-Recommended path:
+Default path:
 
 ```text
-assess/project_facts/business_semantics/{project}.yaml
+{project_dir}/business_semantics.yaml
 ```
+
+Examples:
+
+```text
+shop/business_semantics.yaml
+finance_analytics/business_semantics.yaml
+```
+
+The catalog belongs with the warehouse project assets so it can be maintained
+next to `ddl/`, `tasks/`, and `models/`. Shared helpers may still live under
+`assess/project_facts`, but generated project catalogs should not default to
+the `assess` package directory.
 
 The catalog is initialized by `business_semantics_discoverer` using asset cards rather than raw full-project prompt dumps. Each asset card should summarize table name, layer hints, DDL columns and comments, keys, task SQL features, lineage, upstream/downstream tables, and any existing model/LLM metadata.
 
@@ -272,4 +284,3 @@ Keep API-dependent tests marked separately and avoid requiring DeepSeek for defa
 5. Implement first-phase fact grain clarity checks.
 6. Add mixed business process detection using catalog evidence.
 7. Add CLI dimension selection and focused tests.
-
