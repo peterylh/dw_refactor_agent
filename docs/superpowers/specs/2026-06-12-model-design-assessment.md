@@ -1,0 +1,275 @@
+# Model Design Assessment
+
+## Summary
+
+Add model design assessment capabilities to `assess` while preserving the existing score/check/issue report model. The work introduces a project-level business semantics catalog, full `models/*.yaml` initialization and refresh flows, and a renamed `model_design` assessment dimension that first focuses on fact grain clarity and layer boundary problems.
+
+The implementation should remain Git-native. Tools write deterministic, reviewable file changes to the working tree, and users review with `git diff` / `git add -p`. No separate proposal or accept workflow is needed for the first version.
+
+## Goals
+
+- Initialize a business semantics catalog for a project from DDL, task SQL, lineage, comments, and optional existing metadata.
+- Initialize missing `models/*.yaml` as completely as possible, including layer, table type, business metadata, entities, grain, and metrics.
+- Refresh existing models from the accepted catalog and optional LLM classification.
+- Replace the assessment concept of `architecture` with `model_design`, with a compatibility alias for the old CLI name.
+- Implement first-phase model design checks for layer boundaries and fact table grain clarity.
+- Keep reports compatible with existing `score`, `rule_summary`, `checks`, and `issues` structures.
+
+## Non-Goals
+
+- Do not add a separate proposal/accept storage workflow.
+- Do not require users to hand-author a full business dictionary before first use.
+- Do not let LLM calls freely invent stable business codes during normal model refresh.
+- Do not rewrite DDL, task SQL, table names, or file names as part of this feature.
+
+## Business Semantics Catalog
+
+Introduce a project-level catalog as the single source of truth for business semantics:
+
+```yaml
+version: 1
+project: shop
+data_domains:
+  SALE:
+    name: 销售
+    business_areas: [ORDER]
+business_areas:
+  ORDER:
+    name: 订单
+    data_domain: SALE
+    business_processes: [order_sale]
+business_processes:
+  order_sale:
+    name: 订单销售
+    business_area: ORDER
+    data_domain: SALE
+    aliases: [order, sale, order_sale]
+    event_key_hints: [order_id, order_item_id]
+    measure_hints: [sale_amount, quantity]
+    source_table_hints: [ods_order, ods_order_item, dwd_order_detail]
+```
+
+Recommended path:
+
+```text
+assess/project_facts/business_semantics/{project}.yaml
+```
+
+The catalog is initialized by `business_semantics_discoverer` using asset cards rather than raw full-project prompt dumps. Each asset card should summarize table name, layer hints, DDL columns and comments, keys, task SQL features, lineage, upstream/downstream tables, and any existing model/LLM metadata.
+
+The discoverer may use LLM clustering to identify candidate data domains, business areas, business processes, and their mappings. If existing naming configuration or model metadata already defines business domains or areas, those codes should be treated as preferred anchors. The output is written directly to the working tree only when requested; review is done with Git.
+
+## Models Initialization
+
+Current model writing can create YAML files at the low level, but the end-to-end flow assumes table layers are already known from `models`. Add an initialization flow that can start from an empty or incomplete `models` directory.
+
+Command shape:
+
+```bash
+python assess/model_metadata_initializer.py --project shop --dry-run
+python assess/model_metadata_initializer.py --project shop --write
+```
+
+Initialization should be ambitious rather than minimal. For each persistent table, generate as much of the model metadata as can be supported by program evidence and LLM inference:
+
+```yaml
+version: 2
+name: dwd_order_detail
+layer: DWD
+table_type: fact
+data_domain: SALE
+business_area: ORDER
+description: 订单明细事实表
+config:
+  materialized: incremental
+entities:
+  - code: ORDER_ITEM
+    type: natural
+    key_columns: [order_item_id]
+  - code: ORDER
+    type: foreign
+    key_columns: [order_id]
+atomic_metrics:
+  - name: sale_amount
+    business_process: order_sale
+derived_metrics: []
+calculated_metrics: []
+```
+
+Rules for writing model YAML:
+
+- Preserve unknown existing keys.
+- Keep stable key ordering to minimize Git diff noise.
+- Respect `--write-scope`.
+- Avoid wholesale reformatting when only a subset of fields changes.
+- Emit a result JSON containing changed files, skipped tables, confidence, and validation warnings.
+
+## Models Refresh
+
+After the catalog changes, refresh table-level metadata from the catalog:
+
+```bash
+python assess/model_metadata_writer.py --project shop --from-catalog --dry-run
+python assess/model_metadata_writer.py --project shop --from-catalog --llm --write-scope all
+```
+
+`--from-catalog` means the catalog constrains valid codes. Programmatic synchronization should not require LLM calls when the mapping is deterministic, for example when a metric already references `business_process=order_sale` and the catalog maps `order_sale -> ORDER -> SALE`.
+
+LLM classification is needed when:
+
+- A table or metric lacks a business process.
+- Existing free-text process values need mapping to catalog codes.
+- Catalog changes split or merge previous processes.
+- Program evidence has multiple plausible process candidates.
+
+When `--from-catalog --llm` is used, the LLM may choose from catalog codes, return `unknown`, or return `new_candidate`; it should not silently create new stable codes in models.
+
+Suggested write scopes:
+
+```text
+table      layer/table_type/description/config
+business   data_domain/business_area/business_process
+metrics    atomic_metrics/derived_metrics/calculated_metrics
+grain      entities/grain
+all        all writable metadata
+```
+
+## Git Review Flow
+
+Use Git as the review and accept mechanism:
+
+```bash
+python assess/model_metadata_writer.py --project shop --from-catalog --llm --write-scope all
+git diff
+git add -p
+```
+
+The tools should:
+
+- Check for a dirty working tree before broad writes and warn clearly.
+- Support `--dry-run` for reports without writes.
+- Print changed file summaries after writes.
+- Avoid preview/proposal directories in the first version.
+
+## Assessment Dimension
+
+Rename the top-level assessment dimension from `architecture` to `model_design`.
+
+Compatibility:
+
+- `--model-design` is the preferred CLI flag.
+- `--architecture` remains as a temporary alias.
+- Existing report structures remain unchanged inside each dimension.
+- Existing architecture dependency rules move under `model_design` rule categories.
+
+CLI dimension selection should be generalized. If no dimension flags are provided, run the default full assessment for compatibility. If one or more dimension flags are provided, only run those dimensions:
+
+```bash
+python assess/assess_middle_layer.py --project shop --model-design
+python assess/assess_middle_layer.py --project shop --model-design --metadata-health
+python assess/assess_middle_layer.py --project shop
+```
+
+`model_design` rule categories:
+
+```text
+dependency_boundary  reverse, same-layer, skip-layer dependencies
+layer_boundary       DWD/DWS/DIM/FCT responsibility mismatches
+grain_design         fact table grain and DWS grain alignment
+metric_design        metric additivity and DWD non-atomic metric risks
+dimension_design     dimension/fact responsibility mixing
+```
+
+## First-Phase Checks
+
+### Layer Boundary
+
+Implement checks that identify:
+
+- DWD fact tables with `GROUP BY` or aggregate expressions.
+- DWS fact tables without aggregation or without clear grain metadata.
+- DIM tables with measure-like fields or metric groups.
+- DWD fact tables containing derived or calculated metrics.
+- LLM-inferred layer/table type conflicts with declared model metadata.
+
+These checks belong under `model_design.layer_boundary` or `model_design.metric_design`.
+
+### Fact Grain Clarity
+
+Implement checks that identify:
+
+- DWS `grain.entities` / `grain.time_column` inconsistent with SQL `GROUP BY`.
+- DWS select-list fields that are neither aggregated nor grouped.
+- DWS missing grain metadata.
+- DWD fact tables with aggregation.
+- DWD fact tables missing event-key or transaction-key candidates.
+- DWD fact tables carrying metrics from multiple business processes.
+
+The mixed business process check should use the catalog. Multiple dimension foreign keys do not mean mixed process. A risk is raised when multiple process codes are supported by event-key, metric, or fact-like upstream evidence.
+
+Evidence should include:
+
+```json
+{
+  "detected_processes": ["order_sale", "refund"],
+  "process_evidence": {
+    "order_sale": ["order_item_id", "sale_amount"],
+    "refund": ["refund_id", "refund_amount"]
+  },
+  "fact_like_upstreams": ["ods_order_item", "ods_refund"]
+}
+```
+
+## LLM Boundaries
+
+Program rules should provide the first pass and evidence. LLM calls should be reserved for semantic tasks:
+
+- Discovering and clustering the initial catalog.
+- Classifying a table or metric into existing catalog codes.
+- Resolving conflicts or ambiguous process candidates.
+- Explaining low-confidence model design issues.
+
+LLM results should be validated against DDL columns, catalog codes, model schema, and lineage facts before writing.
+
+## Validation
+
+Add validation for the catalog:
+
+- Each business process maps to an existing business area.
+- Each business area maps to an existing data domain.
+- Model references to process, area, and domain codes exist in the catalog.
+- Model process mappings are consistent with declared area/domain mappings.
+
+Add model write validation:
+
+- Entity key columns exist in DDL.
+- Grain entities exist in `entities`.
+- Grain time column exists in DDL.
+- Metric columns exist in DDL.
+- `business_process` values exist in the catalog unless marked `unknown` or `new_candidate`.
+
+## Testing
+
+Add unit tests for:
+
+- Catalog loading and validation.
+- Empty-model initialization from DDL/task/lineage facts.
+- Catalog-constrained model refresh with and without LLM.
+- CLI dimension selection.
+- `architecture` alias behavior.
+- Layer boundary checks.
+- DWS grain versus `GROUP BY` checks.
+- DWD mixed-business-process risk checks.
+
+Keep API-dependent tests marked separately and avoid requiring DeepSeek for default non-API test runs.
+
+## Rollout
+
+1. Add catalog data model, loader, and validator.
+2. Add model initialization and catalog-constrained refresh support.
+3. Rename assessment dimension to `model_design` with `architecture` compatibility alias.
+4. Implement first-phase layer boundary checks.
+5. Implement first-phase fact grain clarity checks.
+6. Add mixed business process detection using catalog evidence.
+7. Add CLI dimension selection and focused tests.
+
