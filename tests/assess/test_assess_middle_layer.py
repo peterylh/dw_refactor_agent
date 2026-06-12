@@ -550,7 +550,7 @@ DISTRIBUTED BY HASH(order_id) BUCKETS 1;
     )
     result = score_asset_completeness(catalog)
 
-    assert result["score"] == 0.0
+    assert result["score"] == 25.0
     assert {
         (item["target"]["name"], item["rule_id"])
         for item in result["issues"]
@@ -563,6 +563,14 @@ DISTRIBUTED BY HASH(order_id) BUCKETS 1;
         ("tasks/dws_missing.sql", "ASSET_TASK_LINEAGE_MATCHES_OUTPUT"),
     }
     assert all(item["severity"] == "高" for item in result["issues"])
+    assert all(
+        check["passed"]
+        for rule_id in [
+            "ASSET_TASK_SINGLE_OUTPUT",
+            "ASSET_TABLE_SINGLE_WRITER",
+        ]
+        for check in _checks_by_rule(result, rule_id)
+    )
     task_lineage_check = next(
         check for check in result["checks"]
         if check["rule_id"] == "ASSET_TASK_LINEAGE_MATCHES_OUTPUT"
@@ -694,6 +702,171 @@ DROP TABLE IF EXISTS demo.tmp_orders_stage;
 
     assert catalog["tasks"][0]["output_tables"] == set()
     assert "tmp_orders_stage" not in catalog["tables"]
+
+
+def _write_simple_table_assets(project_dir, table_names):
+    (project_dir / "ddl").mkdir(parents=True, exist_ok=True)
+    (project_dir / "models").mkdir(exist_ok=True)
+    for table_name in table_names:
+        (project_dir / "ddl" / f"{table_name}.sql").write_text(
+            f"""
+CREATE TABLE demo.{table_name} (
+    id BIGINT
+) ENGINE=OLAP
+DUPLICATE KEY(id)
+DISTRIBUTED BY HASH(id) BUCKETS 1;
+""",
+            encoding="utf-8",
+        )
+        (project_dir / "models" / f"{table_name}.yaml").write_text(
+            f"name: {table_name}\nlayer: DWS\n",
+            encoding="utf-8",
+        )
+
+
+def test_score_asset_completeness_flags_task_with_no_persistent_output(
+        tmp_path):
+    project_dir = tmp_path / "demo"
+    (project_dir / "tasks").mkdir(parents=True)
+    (project_dir / "tasks" / "tmp_orders_stage.sql").write_text(
+        """
+CREATE TABLE demo.tmp_orders_stage AS
+SELECT id
+FROM demo.dwd_orders;
+
+DROP TABLE IF EXISTS demo.tmp_orders_stage;
+""",
+        encoding="utf-8",
+    )
+
+    catalog = build_asset_catalog(
+        [],
+        None,
+        project_dir,
+        edges=[],
+        indirect_edges=[],
+    )
+    result = score_asset_completeness(catalog)
+
+    assert "ASSET_TASK_SINGLE_OUTPUT" in _issue_rule_ids(result)
+    task_output_check = _checks_by_rule(
+        result,
+        "ASSET_TASK_SINGLE_OUTPUT",
+    )[0]
+    assert task_output_check["target"]["name"] == "tasks/tmp_orders_stage.sql"
+    assert task_output_check["actual"] == "实际产出=[]"
+
+
+def test_score_asset_completeness_flags_task_with_multiple_outputs(tmp_path):
+    project_dir = tmp_path / "demo"
+    _write_simple_table_assets(project_dir, ["dws_orders", "dws_order_extra"])
+    (project_dir / "tasks").mkdir(exist_ok=True)
+    (project_dir / "tasks" / "dws_orders.sql").write_text(
+        """
+INSERT INTO demo.dws_orders SELECT 1 AS id;
+INSERT INTO demo.dws_order_extra SELECT 1 AS id;
+""",
+        encoding="utf-8",
+    )
+
+    catalog = build_asset_catalog(
+        [
+            {"name": "dws_orders", "layer": "DWS", "columns": []},
+            {"name": "dws_order_extra", "layer": "DWS", "columns": []},
+        ],
+        {
+            "dws_orders": {"name": "dws_orders", "layer": "DWS"},
+            "dws_order_extra": {"name": "dws_order_extra", "layer": "DWS"},
+        },
+        project_dir,
+        edges=[
+            {"source_file": "dws_orders.sql", "target": "dws_orders.id"},
+            {"source_file": "dws_orders.sql", "target": "dws_order_extra.id"},
+        ],
+        indirect_edges=[],
+    )
+    result = score_asset_completeness(catalog)
+
+    assert _issue_rule_ids(result) == {"ASSET_TASK_SINGLE_OUTPUT"}
+    task_output_check = _checks_by_rule(
+        result,
+        "ASSET_TASK_SINGLE_OUTPUT",
+    )[0]
+    assert task_output_check["target"]["name"] == "tasks/dws_orders.sql"
+    assert task_output_check["actual"] == (
+        "实际产出=['dws_order_extra', 'dws_orders']"
+    )
+
+
+def test_score_asset_completeness_flags_duplicate_table_writers(tmp_path):
+    project_dir = tmp_path / "demo"
+    _write_simple_table_assets(project_dir, ["dws_orders"])
+    (project_dir / "tasks").mkdir(exist_ok=True)
+    (project_dir / "tasks" / "dws_orders.sql").write_text(
+        "INSERT INTO demo.dws_orders SELECT 1 AS id;",
+        encoding="utf-8",
+    )
+    (project_dir / "tasks" / "dws_orders_patch.sql").write_text(
+        "INSERT INTO demo.dws_orders SELECT 2 AS id;",
+        encoding="utf-8",
+    )
+
+    catalog = build_asset_catalog(
+        [{"name": "dws_orders", "layer": "DWS", "columns": []}],
+        {"dws_orders": {"name": "dws_orders", "layer": "DWS"}},
+        project_dir,
+        edges=[
+            {"source_file": "dws_orders.sql", "target": "dws_orders.id"},
+            {"source_file": "dws_orders_patch.sql", "target": "dws_orders.id"},
+        ],
+        indirect_edges=[],
+    )
+    result = score_asset_completeness(catalog)
+
+    assert _issue_rule_ids(result) == {"ASSET_TABLE_SINGLE_WRITER"}
+    writer_check = _checks_by_rule(
+        result,
+        "ASSET_TABLE_SINGLE_WRITER",
+    )[0]
+    assert writer_check["target"]["name"] == "dws_orders"
+    assert writer_check["actual"] == (
+        "产出Task=['tasks/dws_orders.sql', 'tasks/dws_orders_patch.sql']"
+    )
+
+
+def test_score_asset_completeness_allows_full_refresh_companion_writer(
+        tmp_path):
+    project_dir = tmp_path / "demo"
+    _write_simple_table_assets(project_dir, ["dws_orders"])
+    (project_dir / "tasks" / "full_refresh").mkdir(parents=True)
+    (project_dir / "tasks" / "dws_orders.sql").write_text(
+        "INSERT INTO demo.dws_orders SELECT 1 AS id;",
+        encoding="utf-8",
+    )
+    (
+        project_dir / "tasks" / "full_refresh" /
+        "dws_orders_full_refresh.sql"
+    ).write_text(
+        "INSERT INTO demo.dws_orders SELECT 1 AS id;",
+        encoding="utf-8",
+    )
+
+    catalog = build_asset_catalog(
+        [{"name": "dws_orders", "layer": "DWS", "columns": []}],
+        {"dws_orders": {"name": "dws_orders", "layer": "DWS"}},
+        project_dir,
+        edges=[
+            {"source_file": "dws_orders.sql", "target": "dws_orders.id"},
+            {
+                "source_file": "full_refresh/dws_orders_full_refresh.sql",
+                "target": "dws_orders.id",
+            },
+        ],
+        indirect_edges=[],
+    )
+    result = score_asset_completeness(catalog)
+
+    assert result["issues"] == []
 
 
 def test_score_naming_conventions_outputs_table_and_column_issues():

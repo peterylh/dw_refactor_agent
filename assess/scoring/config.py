@@ -45,6 +45,8 @@ ASSET_RULE_DDL_TASK = "需执行DDL表存在Task"
 ASSET_RULE_MODEL_DDL = "Model存在对应DDL表"
 ASSET_RULE_TASK_DDL = "Task产出表存在DDL"
 ASSET_RULE_TASK_MODEL = "Task产出表存在Model"
+ASSET_RULE_TASK_SINGLE_OUTPUT = "Task有且只有一个产出表"
+ASSET_RULE_TABLE_SINGLE_WRITER = "目标表有且只有一个产出Task"
 ASSET_RULE_TASK_LINEAGE = "Task血缘目标与实际产出一致"
 METADATA_HEALTH_RULES = {
     "METADATA_DIM_HAS_PRIMARY_ENTITY": rule_meta(
@@ -162,6 +164,22 @@ ASSET_COMPLETENESS_RULES = {
         strategy="create_missing_model",
         edit_scope=["models", "tasks"],
     ),
+    "ASSET_TASK_SINGLE_OUTPUT": rule_meta(
+        name=ASSET_RULE_TASK_SINGLE_OUTPUT,
+        severity=SEVERITY_HIGH,
+        title="Task产出表数量不为1",
+        remediation_summary="调整Task，使其有且只有一个持久目标表",
+        strategy="split_or_fix_task_outputs",
+        edit_scope=["tasks"],
+    ),
+    "ASSET_TABLE_SINGLE_WRITER": rule_meta(
+        name=ASSET_RULE_TABLE_SINGLE_WRITER,
+        severity=SEVERITY_HIGH,
+        title="目标表存在多个产出Task",
+        remediation_summary="合并重复产出作业，或调整Task写入目标",
+        strategy="deduplicate_table_writers",
+        edit_scope=["tasks"],
+    ),
     "ASSET_TASK_LINEAGE_MATCHES_OUTPUT": rule_meta(
         name=ASSET_RULE_TASK_LINEAGE,
         severity=SEVERITY_HIGH,
@@ -178,6 +196,8 @@ ASSET_RULE_IDS = {
     ASSET_RULE_MODEL_DDL: "ASSET_MODEL_HAS_DDL",
     ASSET_RULE_TASK_DDL: "ASSET_TASK_OUTPUT_HAS_DDL",
     ASSET_RULE_TASK_MODEL: "ASSET_TASK_OUTPUT_HAS_MODEL",
+    ASSET_RULE_TASK_SINGLE_OUTPUT: "ASSET_TASK_SINGLE_OUTPUT",
+    ASSET_RULE_TABLE_SINGLE_WRITER: "ASSET_TABLE_SINGLE_WRITER",
     ASSET_RULE_TASK_LINEAGE: "ASSET_TASK_LINEAGE_MATCHES_OUTPUT",
 }
 

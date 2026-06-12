@@ -7,10 +7,13 @@ from assess.scoring.config import (
     ASSET_RULE_DDL_TASK,
     ASSET_RULE_IDS,
     ASSET_RULE_MODEL_DDL,
+    ASSET_RULE_TABLE_SINGLE_WRITER,
     ASSET_RULE_TASK_DDL,
     ASSET_RULE_TASK_LINEAGE,
     ASSET_RULE_TASK_MODEL,
+    ASSET_RULE_TASK_SINGLE_OUTPUT,
 )
+
 
 def _asset_requires_task(asset: dict) -> bool:
     model = asset.get("model") or {}
@@ -20,6 +23,10 @@ def _asset_requires_task(asset: dict) -> bool:
         (metadata.get("config") or {}).get("materialized") or ""
     ).lower()
     return layer != "ODS" and materialized != "source"
+
+
+def _logical_task_key(task: dict) -> str:
+    return str(task.get("expected_table") or task.get("file") or "")
 
 
 def score_asset_completeness(asset_catalog: dict) -> dict:
@@ -98,6 +105,20 @@ def score_asset_completeness(asset_catalog: dict) -> dict:
         for task in asset_catalog.get("tasks") or []
         for output in task.get("output_tables", set())
     })
+    for task in asset_catalog.get("tasks") or []:
+        outputs = sorted(set(task.get("output_tables") or set()))
+        actual = f"实际产出={outputs}"
+        record(
+            task["file"],
+            ASSET_RULE_TASK_SINGLE_OUTPUT,
+            len(outputs) == 1,
+            "Task必须有且只有一个持久产出表",
+            target_type="task",
+            expected="Task有且只有一个持久产出表",
+            actual=actual,
+            evidence={"outputs": outputs},
+        )
+
     for output in task_outputs:
         asset = assets.get(output, {})
         record(
@@ -115,6 +136,34 @@ def score_asset_completeness(asset_catalog: dict) -> dict:
             "Task产出表缺少Model",
             expected="Task产出表存在Model",
             actual="已存在Model" if asset.get("model") else "未找到Model",
+        )
+
+    writers_by_output = {}
+    for task in asset_catalog.get("tasks") or []:
+        for output in task.get("output_tables") or set():
+            writers_by_output.setdefault(output, {}).setdefault(
+                _logical_task_key(task),
+                set(),
+            ).add(task["file"])
+
+    for output, writers_by_key in sorted(writers_by_output.items()):
+        writer_files = sorted({
+            file_name
+            for files in writers_by_key.values()
+            for file_name in files
+        })
+        actual = f"产出Task={writer_files}"
+        record(
+            output,
+            ASSET_RULE_TABLE_SINGLE_WRITER,
+            len(writers_by_key) == 1,
+            "目标表必须有且只有一个逻辑产出Task",
+            expected="目标表有且只有一个逻辑产出Task",
+            actual=actual,
+            evidence={
+                "writers": writer_files,
+                "logical_writers": sorted(writers_by_key),
+            },
         )
 
     for task in asset_catalog.get("tasks") or []:
