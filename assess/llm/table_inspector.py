@@ -15,7 +15,7 @@ from assess.project_facts.entity_metadata import (
 )
 
 
-PROMPT_VERSION = "table-inspector-v17"
+PROMPT_VERSION = "table-inspector-v18"
 VALID_LAYERS = {"ODS", "DWD", "DWS", "ADS", "DIM", "OTHER"}
 VALID_TABLE_TYPES = {"dimension", "fact", "other"}
 METRIC_GROUPING_LAYERS = {"DWD", "DWS"}
@@ -129,8 +129,15 @@ def build_prompt(ctx: TableContext) -> str:
 - fact: 事实表或汇总事实表。记录业务事件/交易，或按公共维度汇总业务过程，包含可度量字段，通常有时间分区。
 - other: 其他类型。
 
+## 业务过程与语义主题边界
+- business_process 只适用于事实表或汇总事实表，用来描述发生了什么可度量业务事件/活动，例如交易、支付、库存变动、促销效果统计。
+- dimension 表不得为了填充业务过程而生成 CUSTOMER_OPERATION、PRODUCT_MANAGEMENT、STORE_OPERATION 这类管理/经营过程；它们更可能是语义主题或实体管理域。
+- semantic_subject 表示维度/实体属性表的语义主题，通常对应维表主实体，例如 CUSTOMER、PRODUCT、STORE、PROMOTION。
+- MANAGEMENT、OPERATION、PROFILE、MASTER、INFO 等词若只描述实体资料维护、主数据、属性集合或经营主题，优先视为语义主题/业务主题，不要归为严格的业务过程。
+- 本次巡检 JSON 不返回 semantic_subject 顶层字段；这条规则用于避免把维表主题误填到指标字段的 business_process。catalog 初始化或 models 回写时可将 dimension 表主实体转为 semantic_subject。
+
 ## 指标字段分组标准
-- atomic_metrics: 基于某一业务过程下不可再拆分的基础指标口径，通常由业务过程、度量对象和标准统计方式构成。对事件标识或实体标识字段做 COUNT/COUNT DISTINCT 生成基础计数口径时，应归 atomic_metrics；不包含比率、分数、多个度量组合、同一明细行内多个基础要素的算术组合、结果性明细度量、复杂 CASE/窗口函数/模型计算等二次计算。字段是否为原子指标不能只看 ETL 是否直接透传，必须结合字段语义和业务定义判断。尽量填写 business_process/action/measure。
+- atomic_metrics: 基于某一业务过程下不可再拆分的基础指标口径，通常由业务过程、度量对象和标准统计方式构成。对事件标识或实体标识字段做 COUNT/COUNT DISTINCT 生成基础计数口径时，应归 atomic_metrics；不包含比率、分数、多个度量组合、同一明细行内多个基础要素的算术组合、结果性明细度量、复杂 CASE/窗口函数/模型计算等二次计算。字段是否为原子指标不能只看 ETL 是否直接透传，必须结合字段语义和业务定义判断。business_process 仅当当前表是 fact/DWD fact/DWS 汇总事实且字段是指标时填写；dimension/属性字段返回空字符串。尽量填写 business_process/action/measure。
 - derived_metrics: 放度量型派生指标，即一个已存在的原子指标 + 多个修饰词(可选) + 时间周期/统计粒度/限定条件。它本质上仍是对原子指标统计范围的限定，没有改变指标计算逻辑。DWS 汇总表中，如果字段是对上游已存在的 atomic_metrics 做 SUM/AVG/MIN/MAX 等标准聚合，并叠加维度、周期或限定条件，通常应归 derived_metrics，而不是 atomic_metrics。尽量填写 base_metric/modifiers/time_period/expression。
 - calculated_metrics: 只放度量型衍生指标，即基于一个或多个已有指标，通过公式、规则、模型或二次计算得到的新指标，通常产生新的业务含义。包括比率、分数、差值、绝对值、风险等级、窗口函数、复杂 CASE 规则、多字段组合计算、同一明细行内多个基础要素组合后的结果度量等。即使字段从上游直接透传或上游已经预先算好，只要字段注释、字段级血缘或业务语义表明它是已物化的结果性度量，而不是独立观测到的基础计量，也应按 calculated_metrics 判断。DWS 汇总表中，如果字段是对上游 calculated_metrics 再聚合，也应归 calculated_metrics。尽量填写 expression/derived_from。
 - dimensions: 主键、外键、日期、时间、状态、标签、枚举、布尔标志、退化维度、实体属性、非加性属性等分析维度字段。价格、成本、费率、汇率、系数、阈值等非加性输入属性如果主要作为切片、描述或其他指标计算输入，而不是独立统计口径，应放入 dimensions；即使它们由 DATE_FORMAT、CASE WHEN 或其他表达式生成，只要用于切片/过滤/分组而不是作为度量，也应放入 dimensions。

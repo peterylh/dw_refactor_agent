@@ -1002,8 +1002,8 @@ def _catalog_model_payload(
         or _infer_table_type(table_name, layer)
     ).strip()
     materialized = str(
-        mapping.get("materialized")
-        or (existing.get("config") or {}).get("materialized")
+        (existing.get("config") or {}).get("materialized")
+        or mapping.get("materialized")
         or _materialized_for_layer(layer)
     ).strip()
 
@@ -1020,6 +1020,7 @@ def _catalog_model_payload(
     data_domain = str(mapping.get("data_domain") or "").strip()
     business_area = str(mapping.get("business_area") or "").strip().upper()
     business_process = str(mapping.get("business_process") or "").strip()
+    semantic_subject = str(mapping.get("semantic_subject") or "").strip()
     if layer in DATA_DOMAIN_LAYERS and data_domain:
         updated["data_domain"] = data_domain
     else:
@@ -1028,8 +1029,14 @@ def _catalog_model_payload(
         updated["business_area"] = business_area
     else:
         updated.pop("business_area", None)
-    if business_process:
+    if semantic_subject:
+        updated["semantic_subject"] = semantic_subject
+        updated.pop("business_process", None)
+    elif table_type == "fact" and business_process:
         updated["business_process"] = business_process
+        updated.pop("semantic_subject", None)
+    elif table_type == "dimension":
+        updated.pop("business_process", None)
     return updated
 
 
@@ -1056,7 +1063,12 @@ def update_model_yaml_from_catalog(
         mapping=mapping,
     )
     if write_scope == "table":
-        for key in ("data_domain", "business_area", "business_process"):
+        for key in (
+            "data_domain",
+            "business_area",
+            "business_process",
+            "semantic_subject",
+        ):
             if key not in previous:
                 updated.pop(key, None)
             else:
@@ -1072,7 +1084,12 @@ def update_model_yaml_from_catalog(
 
     business_changed = any(
         updated.get(key) != previous.get(key)
-        for key in ("data_domain", "business_area", "business_process")
+        for key in (
+            "data_domain",
+            "business_area",
+            "business_process",
+            "semantic_subject",
+        )
     )
     return {
         "table": table_name,
@@ -1098,6 +1115,7 @@ def update_model_yaml_from_catalog(
         "previous_business_area": previous.get("business_area"),
         "business_area": updated.get("business_area"),
         "business_process": updated.get("business_process"),
+        "semantic_subject": updated.get("semantic_subject"),
     }
 
 
@@ -1358,7 +1376,7 @@ def main() -> None:
                         help=(
                             "models 回写范围: all=表信息+指标+entity/grain, "
                             "table=仅表级元数据, metrics=仅指标分组, "
-                            "grain=仅entity/grain, business=仅业务目录映射"
+                            "grain=仅entity/grain, business=仅业务语义目录"
                         ))
     parser.add_argument("--no-cache",
                         action="store_true",
@@ -1421,11 +1439,11 @@ def main() -> None:
         catalog = result.get("catalog") or {}
         print(
             "目录初始化: {path}, "
-            "业务过程: {process_count}, 映射: {mapping_count}, 已写入: {updated}".
+            "业务过程: {process_count}, 语义主题: {subject_count}, 已写入: {updated}".
             format(
                 path=result.get("path"),
                 process_count=len(catalog.get("business_processes") or []),
-                mapping_count=len(catalog.get("mappings") or []),
+                subject_count=len(catalog.get("semantic_subjects") or []),
                 updated=result.get("updated"),
             )
         )

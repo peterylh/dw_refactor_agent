@@ -11,4 +11,4 @@ entities:
   name: 门店
   key_columns:
   - store_id
-business_process: STORE_OPERATION
+semantic_subject: STORE

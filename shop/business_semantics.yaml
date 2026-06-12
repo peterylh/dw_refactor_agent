@@ -36,13 +36,6 @@ business_areas:
   name: 门店零售
   description: 覆盖 shop 集市的门店零售经营、销售、库存、客户、商品和促销分析场景。
 business_processes:
-- code: CUSTOMER_OPERATION
-  name: 客户经营
-  data_domain: '01'
-  business_area: SHOP
-  tables:
-  - dwd_customer
-  source: llm_round2
 - code: INVENTORY_MANAGEMENT
   name: 库存管理
   data_domain: '05'
@@ -62,122 +55,39 @@ business_processes:
   - dws_product_sales_daily
   - dws_store_sales_daily
   source: llm_round2
-- code: PRODUCT_MANAGEMENT
-  name: 商品管理
-  data_domain: '02'
-  business_area: SHOP
-  tables:
-  - dwd_product
-  source: llm_round2
 - code: PROMOTION_EFFECT
   name: 促销效果
   data_domain: '06'
   business_area: SHOP
   tables:
-  - dwd_promotion
   - dws_promotion_effect_daily
   source: llm_round2
-- code: STORE_OPERATION
-  name: 门店经营
+semantic_subjects:
+- code: CUST
+  name: 客户
+  data_domain: '01'
+  business_area: SHOP
+  tables:
+  - dwd_customer
+  source: llm_round2
+- code: PROD
+  name: 商品
+  data_domain: '02'
+  business_area: SHOP
+  tables:
+  - dwd_product
+  source: llm_round2
+- code: PROMOTION
+  name: 促销活动
+  data_domain: '06'
+  business_area: SHOP
+  tables:
+  - dwd_promotion
+  source: llm_round2
+- code: STORE
+  name: 门店
   data_domain: '03'
   business_area: SHOP
   tables:
   - dwd_store
-  source: llm_round2
-mappings:
-- table: dwd_customer
-  layer: DIM
-  table_type: dimension
-  data_domain: '01'
-  business_area: SHOP
-  business_process: CUSTOMER_OPERATION
-  confidence: 0.95
-  source: llm_round2
-- table: dwd_inventory
-  layer: DWD
-  table_type: fact
-  data_domain: '05'
-  business_area: SHOP
-  business_process: INVENTORY_MANAGEMENT
-  confidence: 0.95
-  source: llm_round2
-- table: dwd_order_detail
-  layer: DWD
-  table_type: fact
-  data_domain: '04'
-  business_area: SHOP
-  business_process: ORDER_TRANSACTION
-  confidence: 0.95
-  source: llm_round2
-- table: dwd_product
-  layer: DIM
-  table_type: dimension
-  data_domain: '02'
-  business_area: SHOP
-  business_process: PRODUCT_MANAGEMENT
-  confidence: 1.0
-  source: llm_round2
-- table: dwd_promotion
-  layer: DIM
-  table_type: dimension
-  data_domain: '06'
-  business_area: SHOP
-  business_process: PROMOTION_EFFECT
-  confidence: 0.9
-  source: llm_round2
-- table: dwd_store
-  layer: DIM
-  table_type: dimension
-  data_domain: '03'
-  business_area: SHOP
-  business_process: STORE_OPERATION
-  confidence: 0.95
-  source: llm_round2
-- table: dws_category_sales_monthly
-  layer: DWS
-  table_type: fact
-  data_domain: '04'
-  business_area: SHOP
-  business_process: ORDER_TRANSACTION
-  confidence: 0.95
-  source: llm_round2
-- table: dws_customer_order_summary
-  layer: DWS
-  table_type: fact
-  data_domain: '04'
-  business_area: SHOP
-  business_process: ORDER_TRANSACTION
-  confidence: 0.95
-  source: llm_round2
-- table: dws_inventory_daily
-  layer: DWS
-  table_type: fact
-  data_domain: '05'
-  business_area: SHOP
-  business_process: INVENTORY_MANAGEMENT
-  confidence: 0.9
-  source: llm_round2
-- table: dws_product_sales_daily
-  layer: DWS
-  table_type: fact
-  data_domain: '04'
-  business_area: SHOP
-  business_process: ORDER_TRANSACTION
-  confidence: 0.95
-  source: llm_round2
-- table: dws_promotion_effect_daily
-  layer: DWS
-  table_type: fact
-  data_domain: '06'
-  business_area: SHOP
-  business_process: PROMOTION_EFFECT
-  confidence: 0.95
-  source: llm_round2
-- table: dws_store_sales_daily
-  layer: DWS
-  table_type: fact
-  data_domain: '04'
-  business_area: SHOP
-  business_process: ORDER_TRANSACTION
-  confidence: 0.95
   source: llm_round2

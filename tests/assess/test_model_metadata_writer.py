@@ -1917,13 +1917,7 @@ def test_run_catalog_metadata_write_initializes_models_without_llm(
                     "business_area": "SHOP",
                     "tables": ["dwd_order_detail"],
                 }],
-                "mappings": [{
-                    "table": "dwd_order_detail",
-                    "data_domain": "04",
-                    "business_area": "SHOP",
-                    "business_process": "ORDER_DETAIL",
-                    "table_type": "fact",
-                }],
+                "semantic_subjects": [],
             },
             allow_unicode=True,
             sort_keys=False,
@@ -2039,21 +2033,25 @@ def test_run_catalog_metadata_write_respects_business_metadata_layers(
                     "code": "SHOP",
                     "name": "零售业务",
                 }],
-                "business_processes": [],
-                "mappings": [{
-                    "table": "dws_store_sales_daily",
-                    "layer": "DWS",
-                    "table_type": "fact",
+                "business_processes": [{
+                    "code": "STORE_SALES",
+                    "name": "门店销售",
                     "data_domain": "03",
                     "business_area": "SHOP",
-                    "business_process": "STORE_SALES",
+                    "tables": ["dws_store_sales_daily"],
                 }, {
-                    "table": "dim_store",
-                    "layer": "DIM",
-                    "table_type": "dimension",
+                    "code": "IGNORED_DIM_PROCESS",
+                    "name": "错误维表过程",
                     "data_domain": "03",
                     "business_area": "SHOP",
-                    "business_process": "STORE_OPERATION",
+                    "tables": ["dim_store"],
+                }],
+                "semantic_subjects": [{
+                    "code": "STORE",
+                    "name": "门店",
+                    "data_domain": "03",
+                    "business_area": "SHOP",
+                    "tables": ["dim_store"],
                 }],
             },
             allow_unicode=True,
@@ -2080,4 +2078,5 @@ def test_run_catalog_metadata_write_respects_business_metadata_layers(
     assert dws_model["business_process"] == "STORE_SALES"
     assert "data_domain" not in dim_model
     assert "business_area" not in dim_model
-    assert dim_model["business_process"] == "STORE_OPERATION"
+    assert "business_process" not in dim_model
+    assert dim_model["semantic_subject"] == "STORE"

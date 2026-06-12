@@ -265,6 +265,7 @@ def test_score_metadata_health_validates_model_entity_and_grain_entity():
         "DIM_BASE_PROD_INFO_INFO": {
             "layer": "DIM",
             "table_type": "dimension",
+            "semantic_subject": "CUST",
             "entity": {
                 "code": "CUST",
                 "key_columns": ["product_id"],
@@ -284,7 +285,7 @@ def test_score_metadata_health_validates_model_entity_and_grain_entity():
 
     result = score_metadata_health(tables, nc, model_metadata)
 
-    assert result["score"] == 75.0
+    assert result["score"] == 80.0
     assert result["rule_summary"]["METADATA_GRAIN_ENTITIES_DEFINED"] == {
         "name": "grain.entities有实体定义",
         "severity": "中",
@@ -293,7 +294,7 @@ def test_score_metadata_health_validates_model_entity_and_grain_entity():
         "pct": 0.0,
     }
     assert result["checks"][-1] == {
-        "id": "metadata_health.chk_004",
+        "id": "metadata_health.chk_005",
         "rule_id": "METADATA_GRAIN_ENTITIES_DEFINED",
         "target": {
             "type": "table",
@@ -338,6 +339,7 @@ def test_score_metadata_health_passes_valid_entities_schema():
         "DIM_BASE_PROD_INFO_INFO": {
             "layer": "DIM",
             "table_type": "dimension",
+            "semantic_subject": "PROD",
             "entities": [{
                 "code": "PROD",
                 "type": "primary",
@@ -373,6 +375,59 @@ def test_score_metadata_health_passes_valid_entities_schema():
     assert result["score"] == 100.0
     assert result["issues"] == []
     assert all(check["passed"] for check in result["checks"])
+
+
+def test_score_metadata_health_validates_dim_semantic_subject():
+    nc = load_naming_config(PROJECT_ROOT / "naming_config.yaml")
+    tables = [{
+        "name": "dim_product",
+        "layer": "DIM",
+        "columns": [{"name": "product_id", "type": "BIGINT"}],
+    }]
+    model_metadata = {
+        "dim_product": {
+            "name": "dim_product",
+            "layer": "DIM",
+            "table_type": "dimension",
+            "semantic_subject": "STORE",
+            "entities": [{
+                "code": "PRODUCT",
+                "type": "primary",
+                "key_columns": ["product_id"],
+            }],
+        }
+    }
+
+    result = score_metadata_health(tables, nc, model_metadata)
+
+    assert "METADATA_DIM_SEMANTIC_SUBJECT_MATCHES_PRIMARY" in _issue_rule_ids(
+        result)
+
+
+def test_score_metadata_health_requires_dim_semantic_subject():
+    nc = load_naming_config(PROJECT_ROOT / "naming_config.yaml")
+    tables = [{
+        "name": "dim_customer",
+        "layer": "DIM",
+        "columns": [{"name": "customer_id", "type": "BIGINT"}],
+    }]
+    model_metadata = {
+        "dim_customer": {
+            "name": "dim_customer",
+            "layer": "DIM",
+            "table_type": "dimension",
+            "entities": [{
+                "code": "CUSTOMER",
+                "type": "primary",
+                "key_columns": ["customer_id"],
+            }],
+        }
+    }
+
+    result = score_metadata_health(tables, nc, model_metadata)
+
+    assert "METADATA_DIM_SEMANTIC_SUBJECT_MATCHES_PRIMARY" in _issue_rule_ids(
+        result)
 
 
 def test_score_metadata_health_requires_dws_grain_entities_from_models():

@@ -105,6 +105,8 @@ def score_metadata_health(
             or "OTHER"
         ).upper()
         if layer == "DIM":
+            semantic_subject = str(
+                metadata.get("semantic_subject") or "").strip()
             record(
                 table_name,
                 "METADATA_DIM_HAS_PRIMARY_ENTITY",
@@ -114,6 +116,28 @@ def score_metadata_health(
                 {"layer": layer},
                 "missing",
                 "缺少entities.primary.code",
+            )
+            record(
+                table_name,
+                "METADATA_DIM_SEMANTIC_SUBJECT_MATCHES_PRIMARY",
+                bool(semantic_subject and primary_code
+                     and semantic_subject == primary_code),
+                "semantic_subject等于DIM主实体编码",
+                semantic_subject or "未配置",
+                {
+                    "layer": layer,
+                    "semantic_subject": semantic_subject,
+                    "primary_entity": primary_code,
+                },
+                "mismatch",
+                (
+                    "DIM模型缺少semantic_subject"
+                    if not semantic_subject
+                    else (
+                        f"semantic_subject={semantic_subject}，"
+                        f"primary_entity={primary_code or '未配置'}"
+                    )
+                ),
             )
 
         if table:

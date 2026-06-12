@@ -77,8 +77,10 @@ def test_business_semantics_catalog_defaults_to_project_dir(
     assert catalog["project"] == project
     assert catalog["data_domains"][0]["id"] == "04"
     assert catalog["business_areas"][0]["code"] == "SHOP"
-    assert catalog["mappings"][0]["table"] == "dwd_order_detail"
-    assert catalog["mappings"][0]["business_process"]
+    assert "mappings" not in catalog
+    assert catalog["business_processes"][0]["tables"] == [
+        "dwd_order_detail"
+    ]
 
 
 def test_build_initial_catalog_uses_project_tables(tmp_path, monkeypatch):
@@ -86,9 +88,7 @@ def test_build_initial_catalog_uses_project_tables(tmp_path, monkeypatch):
 
     catalog = build_initial_business_semantics_catalog(project)
 
-    assert [mapping["table"] for mapping in catalog["mappings"]] == [
-        "dwd_order_detail"
-    ]
+    assert "mappings" not in catalog
     assert catalog["business_processes"][0]["tables"] == [
         "dwd_order_detail"
     ]
@@ -110,7 +110,7 @@ def test_write_initial_catalog_keeps_existing_without_overwrite(
                     "name": "人工维护",
                     "tables": [],
                 }],
-                "mappings": [],
+                "semantic_subjects": [],
             },
             allow_unicode=True,
             sort_keys=False,
@@ -144,7 +144,7 @@ def test_get_business_domain_config_prefers_project_catalog(
                     "name": "客户经营",
                 }],
                 "business_processes": [],
-                "mappings": [],
+                "semantic_subjects": [],
             },
             allow_unicode=True,
             sort_keys=False,

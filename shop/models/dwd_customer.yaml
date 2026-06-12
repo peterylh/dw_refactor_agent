@@ -11,4 +11,4 @@ entities:
   name: 客户
   key_columns:
   - customer_id
-business_process: CUSTOMER_OPERATION
+semantic_subject: CUST

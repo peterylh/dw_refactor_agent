@@ -44,14 +44,14 @@ def main() -> None:
             encoding="utf-8",
         )
     print(
-        "目录: {path}, 业务过程: {process_count}, 映射: {mapping_count}, "
+        "目录: {path}, 业务过程: {process_count}, 语义主题: {subject_count}, "
         "已写入: {updated}".format(
             path=result["path"],
             process_count=len(
                 (result.get("catalog") or {}).get("business_processes") or []
             ),
-            mapping_count=len(
-                (result.get("catalog") or {}).get("mappings") or []
+            subject_count=len(
+                (result.get("catalog") or {}).get("semantic_subjects") or []
             ),
             updated=result["updated"],
         )

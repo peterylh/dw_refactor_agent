@@ -99,6 +99,25 @@ def test_build_prompt_clarifies_metric_group_boundaries():
         assert example not in prompt
 
 
+def test_build_prompt_separates_business_process_and_semantic_subject():
+    ctx = TableContext(
+        table_name="dwd_product",
+        layer="DWD",
+        ddl="CREATE TABLE dwd_product (product_id BIGINT, product_name VARCHAR(64));",
+        etl_sql="INSERT INTO dwd_product SELECT product_id, product_name FROM ods_product;",
+        upstream_tables=["ods_product"],
+        downstream_tables=["dws_product_sales_daily"],
+    )
+
+    prompt = build_prompt(ctx)
+
+    assert "business_process 只适用于事实表或汇总事实表" in prompt
+    assert "dimension 表不得为了填充业务过程而生成" in prompt
+    assert "semantic_subject" in prompt
+    assert "MANAGEMENT、OPERATION" in prompt
+    assert "语义主题" in prompt
+
+
 def test_build_prompt_treats_imputed_non_additive_inputs_as_dimensions():
     ctx = TableContext(
         table_name="dwd_fact_table",

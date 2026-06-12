@@ -11,4 +11,4 @@ entities:
   name: 促销活动
   key_columns:
   - promotion_id
-business_process: PROMOTION_EFFECT
+semantic_subject: PROMOTION

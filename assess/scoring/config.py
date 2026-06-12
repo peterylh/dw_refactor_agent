@@ -57,6 +57,17 @@ METADATA_HEALTH_RULES = {
         strategy="update_model_primary_entity",
         edit_scope=["models"],
     ),
+    "METADATA_DIM_SEMANTIC_SUBJECT_MATCHES_PRIMARY": rule_meta(
+        name="DIM semantic_subject等于主实体",
+        severity=SEVERITY_HIGH,
+        title="DIM模型semantic_subject与主实体不一致",
+        remediation_summary=(
+            "在模型YAML中补齐semantic_subject，"
+            "并使其等于entities中type=primary的code"
+        ),
+        strategy="align_dim_semantic_subject",
+        edit_scope=["models"],
+    ),
     "METADATA_ENTITY_KEYS_EXIST": rule_meta(
         name="entities.key_columns存在于表字段",
         severity=SEVERITY_HIGH,

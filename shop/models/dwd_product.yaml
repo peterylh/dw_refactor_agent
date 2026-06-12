@@ -11,4 +11,4 @@ entities:
   name: 商品
   key_columns:
   - product_id
-business_process: PRODUCT_MANAGEMENT
+semantic_subject: PROD

@@ -30,6 +30,7 @@ FACT_TOKENS = {
     "transaction",
 }
 TIME_GRAIN_TOKENS = {"daily", "day", "df", "di", "ds", "monthly", "month"}
+DIMENSION_SUFFIX_TOKENS = {"base", "dim", "info", "snapshot"}
 
 
 def business_semantics_path(project: str) -> Path:
@@ -77,6 +78,19 @@ def _process_code_from_table(table_name: str) -> str:
         if token and token.lower() not in TIME_GRAIN_TOKENS
     ]
     return "_".join(tokens).upper() or table_name.upper()
+
+
+def _subject_code_from_table(table_name: str) -> str:
+    layer = _layer_from_table_name(table_name)
+    remainder = table_name[len(layer) + 1:] if layer != "OTHER" else table_name
+    tokens = [
+        token
+        for token in remainder.split("_")
+        if token
+        and token.lower() not in TIME_GRAIN_TOKENS
+        and token.lower() not in DIMENSION_SUFFIX_TOKENS
+    ]
+    return "_".join(tokens).upper() or _process_code_from_table(table_name)
 
 
 def _display_name_from_code(code: str) -> str:
@@ -176,15 +190,33 @@ def build_initial_business_semantics_catalog(project: str) -> dict[str, Any]:
     data_domains = _domain_entries_from_naming(project)
     business_areas = _business_area_entries_from_naming(project)
     process_by_code = {}
-    mappings = []
+    subject_by_code = {}
     for table in _project_tables_from_ddl(project):
         table_name = table["name"]
         layer = table["layer"]
+        if layer not in PROCESS_TABLE_LAYERS and layer != "DIM":
+            continue
+        table_type = _infer_table_type(table_name, layer)
+        data_domain = _infer_entry(data_domains, table_name)
+        business_area = _infer_business_area(business_areas, table_name)
+        if table_type == "dimension" or layer == "DIM":
+            subject_code = _subject_code_from_table(table_name)
+            subject = subject_by_code.setdefault(
+                subject_code,
+                {
+                    "code": subject_code,
+                    "name": _display_name_from_code(subject_code),
+                    "data_domain": data_domain,
+                    "business_area": business_area,
+                    "tables": [],
+                },
+            )
+            subject["tables"].append(table_name)
+            continue
+
         if layer not in PROCESS_TABLE_LAYERS:
             continue
         process_code = _process_code_from_table(table_name)
-        data_domain = _infer_entry(data_domains, table_name)
-        business_area = _infer_business_area(business_areas, table_name)
         process = process_by_code.setdefault(
             process_code,
             {
@@ -196,15 +228,6 @@ def build_initial_business_semantics_catalog(project: str) -> dict[str, Any]:
             },
         )
         process["tables"].append(table_name)
-        mappings.append({
-            "table": table_name,
-            "layer": layer,
-            "table_type": _infer_table_type(table_name, layer),
-            "data_domain": data_domain,
-            "business_area": business_area,
-            "business_process": process_code,
-            "materialized": _materialized_for_layer(layer),
-        })
 
     return {
         "version": CATALOG_VERSION,
@@ -215,7 +238,10 @@ def build_initial_business_semantics_catalog(project: str) -> dict[str, Any]:
             process_by_code.values(),
             key=lambda item: item["code"],
         ),
-        "mappings": sorted(mappings, key=lambda item: item["table"]),
+        "semantic_subjects": sorted(
+            subject_by_code.values(),
+            key=lambda item: item["code"],
+        ),
     }
 
 
@@ -257,6 +283,42 @@ def write_initial_business_semantics_catalog(
 def catalog_mapping_for_table(catalog: dict[str, Any],
                               table_name: str) -> dict[str, Any]:
     short_name = _short_table_name(table_name)
+    for subject in catalog.get("semantic_subjects") or []:
+        if not isinstance(subject, dict):
+            continue
+        if short_name not in {
+            _short_table_name(table) for table in subject.get("tables") or []
+        }:
+            continue
+        layer = _layer_from_table_name(short_name)
+        return {
+            "table": short_name,
+            "layer": "DIM" if layer in {"DWD", "DIM"} else layer,
+            "table_type": "dimension",
+            "data_domain": str(subject.get("data_domain") or "").strip(),
+            "business_area": str(subject.get("business_area") or "").strip(),
+            "semantic_subject": str(subject.get("code") or "").strip(),
+            "materialized": _materialized_for_layer(layer),
+        }
+
+    for process in catalog.get("business_processes") or []:
+        if not isinstance(process, dict):
+            continue
+        if short_name not in {
+            _short_table_name(table) for table in process.get("tables") or []
+        }:
+            continue
+        layer = _layer_from_table_name(short_name)
+        return {
+            "table": short_name,
+            "layer": layer,
+            "table_type": "fact",
+            "data_domain": str(process.get("data_domain") or "").strip(),
+            "business_area": str(process.get("business_area") or "").strip(),
+            "business_process": str(process.get("code") or "").strip(),
+            "materialized": _materialized_for_layer(layer),
+        }
+
     for mapping in catalog.get("mappings") or []:
         if _short_table_name(mapping.get("table")) == short_name:
             return dict(mapping)
