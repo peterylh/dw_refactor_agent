@@ -1541,8 +1541,11 @@ def load_naming_config(path=None):
     )
 
 
+BUSINESS_SEMANTICS_FILE_NAME = "business_semantics.yaml"
+
 _naming_config_cache = {}
 _model_metadata_cache = {}
+_business_semantics_cache = {}
 
 
 def _as_keywords(value) -> list[str]:
@@ -1599,7 +1602,52 @@ def _business_domain_config_from_dictionaries(
     )
 
 
+def business_semantics_path(project: str) -> Optional[Path]:
+    cfg = PROJECT_CONFIG.get(project)
+    if not cfg:
+        return None
+    return PROJECT_ROOT / cfg["dir"] / BUSINESS_SEMANTICS_FILE_NAME
+
+
+def load_business_semantics_catalog(project: str) -> dict:
+    path = business_semantics_path(project)
+    if not path:
+        return {}
+    cache_key = f"{project}:{path}"
+    if cache_key in _business_semantics_cache:
+        return _business_semantics_cache[cache_key]
+    if not path.exists():
+        _business_semantics_cache[cache_key] = {}
+        return {}
+    raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    if not isinstance(raw, dict):
+        raw = {}
+    _business_semantics_cache[cache_key] = raw
+    return raw
+
+
+def _business_domain_config_from_semantics_catalog(
+    catalog: dict,
+) -> Optional[BusinessDomainConfig]:
+    if not catalog:
+        return None
+    domains = _load_domain_defs(catalog.get("data_domains"))
+    business_areas = _load_business_area_defs(catalog.get("business_areas"))
+    if not domains or not business_areas:
+        return None
+    return BusinessDomainConfig(
+        domains=domains,
+        business_areas=business_areas,
+    )
+
+
 def get_business_domain_config(project: str = None) -> Optional[BusinessDomainConfig]:
+    if project:
+        catalog_config = _business_domain_config_from_semantics_catalog(
+            load_business_semantics_catalog(project)
+        )
+        if catalog_config:
+            return catalog_config
     return get_naming_config(project).business_domain_config
 
 

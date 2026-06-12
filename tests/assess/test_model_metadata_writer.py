@@ -10,6 +10,7 @@ from assess.model_metadata_writer import (
     metric_groups_for_model,
     metric_violations,
     metric_names_for_model,
+    run_catalog_metadata_write,
     result_for_report,
     run_metadata_write,
     update_model_yaml,
@@ -38,6 +39,7 @@ def _configure_project_root(monkeypatch, project_root):
     monkeypatch.setattr(writer_module, "PROJECT_ROOT", project_root)
     config._naming_config_cache.clear()
     config._model_metadata_cache.clear()
+    config._business_semantics_cache.clear()
 
 
 @pytest.fixture
@@ -56,6 +58,7 @@ def isolated_writer_project(tmp_path, monkeypatch):
     yield project
     config._naming_config_cache.clear()
     config._model_metadata_cache.clear()
+    config._business_semantics_cache.clear()
 
 
 def _sample_fact_result() -> TableInspectResult:
@@ -1885,3 +1888,113 @@ def test_run_metadata_write_skips_blocked_model_updates(monkeypatch,
     assert result["model_updates"][0]["updated"] is False
     assert result["skipped_model_updates"][0]["table"] == "dwd_order_detail"
     assert result["skipped_model_updates"][0]["reason"] == "validation_blocked"
+
+
+def test_run_catalog_metadata_write_initializes_models_without_llm(
+        tmp_path, monkeypatch):
+    project = "catalog_writer"
+    project_dir = tmp_path / project
+    (project_dir / "ddl").mkdir(parents=True)
+    (project_dir / "business_semantics.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "version": 1,
+                "project": project,
+                "data_domains": [{
+                    "id": "04",
+                    "code": "TRAN",
+                    "name": "交易域",
+                }],
+                "business_areas": [{
+                    "id": "SHOP",
+                    "code": "SHOP",
+                    "name": "零售业务",
+                }],
+                "business_processes": [{
+                    "code": "ORDER_DETAIL",
+                    "name": "订单明细",
+                    "data_domain": "04",
+                    "business_area": "SHOP",
+                    "tables": ["dwd_order_detail"],
+                }],
+                "mappings": [{
+                    "table": "dwd_order_detail",
+                    "data_domain": "04",
+                    "business_area": "SHOP",
+                    "business_process": "ORDER_DETAIL",
+                    "table_type": "fact",
+                }],
+            },
+            allow_unicode=True,
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    (project_dir / "ddl" / "dwd_order_detail.sql").write_text(
+        """
+        CREATE TABLE dwd_order_detail (
+            order_id BIGINT,
+            order_item_id BIGINT,
+            pay_amount DECIMAL(12,2)
+        );
+        """,
+        encoding="utf-8",
+    )
+    _configure_project_root(monkeypatch, tmp_path)
+    monkeypatch.setitem(config.PROJECT_CONFIG, project, {
+        "dir": project,
+        "naming_config": "naming_config.yaml",
+    })
+
+    result = run_catalog_metadata_write(
+        project,
+        dry_run=False,
+        write_scope="business",
+    )
+
+    model_path = project_dir / "models" / "dwd_order_detail.yaml"
+    model = yaml.safe_load(model_path.read_text(encoding="utf-8"))
+    assert result["source"] == "catalog"
+    assert result["model_update_count"] == 1
+    assert model["layer"] == "DWD"
+    assert model["table_type"] == "fact"
+    assert model["data_domain"] == "04"
+    assert model["business_area"] == "SHOP"
+    assert model["business_process"] == "ORDER_DETAIL"
+
+
+def test_run_catalog_metadata_write_can_dry_run_with_init_catalog(
+        tmp_path, monkeypatch):
+    project = "catalog_writer_dry_run"
+    project_dir = tmp_path / project
+    (project_dir / "ddl").mkdir(parents=True)
+    (project_dir / "ddl" / "dwd_order_detail.sql").write_text(
+        """
+        CREATE TABLE dwd_order_detail (
+            order_id BIGINT,
+            pay_amount DECIMAL(12,2)
+        );
+        """,
+        encoding="utf-8",
+    )
+    (tmp_path / "naming_config.yaml").write_text(
+        "types: {}\nbindings: {}\ndictionaries: {}\n",
+        encoding="utf-8",
+    )
+    _configure_project_root(monkeypatch, tmp_path)
+    monkeypatch.setitem(config.PROJECT_CONFIG, project, {
+        "dir": project,
+        "naming_config": "naming_config.yaml",
+    })
+
+    result = run_catalog_metadata_write(
+        project,
+        dry_run=True,
+        write_scope="business",
+        init_catalog=True,
+    )
+
+    assert result["source"] == "catalog"
+    assert result["model_change_count"] == 1
+    assert not (project_dir / "business_semantics.yaml").exists()
+    assert not (project_dir / "models" / "dwd_order_detail.yaml").exists()

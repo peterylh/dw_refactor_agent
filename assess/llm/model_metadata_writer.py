@@ -30,14 +30,28 @@ from assess.llm.table_inspector import (
     TableInspector,
     result_to_dict as inspect_result_to_dict,
 )
+from assess.project_facts.asset_catalog import build_asset_catalog
+from assess.project_facts.business_semantics import (
+    _infer_table_type,
+    _layer_from_table_name,
+    _materialized_for_layer,
+    catalog_mapping_for_table,
+    load_business_semantics_catalog,
+    write_initial_business_semantics_catalog,
+)
 from assess.project_facts.entity_metadata import normalize_entities
-from config import PROJECT_CONFIG, PROJECT_ROOT, get_business_domain_config
+from config import (
+    PROJECT_CONFIG,
+    PROJECT_ROOT,
+    get_business_domain_config,
+    load_model_metadata,
+)
 from lineage.table_graph import load_lineage_data
 
 
 METRIC_LAYERS = {"DWD", "DWS"}
 WRITABLE_METADATA_LAYERS = {"DWD", "DWS", "DIM"}
-WRITE_SCOPES = {"all", "table", "metrics", "grain"}
+WRITE_SCOPES = {"all", "table", "metrics", "grain", "business"}
 DATA_DOMAIN_LAYERS = {"DWD"}
 BUSINESS_AREA_LAYERS = {"DWD", "DWS"}
 DDL_NON_COLUMN_PREFIXES = {
@@ -954,6 +968,206 @@ def update_model_yaml(project: str,
     }
 
 
+def _catalog_table_assets(project: str) -> dict[str, dict[str, Any]]:
+    project_cfg = PROJECT_CONFIG[project]
+    project_dir = PROJECT_ROOT / project_cfg["dir"]
+    return build_asset_catalog(
+        [],
+        load_model_metadata(project),
+        project_dir,
+    ).get("tables") or {}
+
+
+def _existing_model_data(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    return raw if isinstance(raw, dict) else {}
+
+
+def _catalog_model_payload(
+    *,
+    table_name: str,
+    existing: dict[str, Any],
+    mapping: dict[str, Any],
+) -> dict[str, Any]:
+    layer = str(
+        mapping.get("layer")
+        or existing.get("layer")
+        or _layer_from_table_name(table_name)
+    ).upper()
+    table_type = str(
+        mapping.get("table_type")
+        or existing.get("table_type")
+        or _infer_table_type(table_name, layer)
+    ).strip()
+    materialized = str(
+        mapping.get("materialized")
+        or (existing.get("config") or {}).get("materialized")
+        or _materialized_for_layer(layer)
+    ).strip()
+
+    updated = dict(existing)
+    updated.setdefault("version", 2)
+    updated["name"] = table_name
+    updated["layer"] = layer
+    updated["table_type"] = table_type or "other"
+    if materialized:
+        config_payload = dict(updated.get("config") or {})
+        config_payload["materialized"] = materialized
+        updated["config"] = config_payload
+
+    data_domain = str(mapping.get("data_domain") or "").strip()
+    business_area = str(mapping.get("business_area") or "").strip().upper()
+    business_process = str(mapping.get("business_process") or "").strip()
+    if data_domain:
+        updated["data_domain"] = data_domain
+    if business_area:
+        updated["business_area"] = business_area
+    if business_process:
+        updated["business_process"] = business_process
+    return updated
+
+
+def update_model_yaml_from_catalog(
+    project: str,
+    table_name: str,
+    mapping: dict[str, Any],
+    *,
+    dry_run: bool = False,
+    write_scope: str = "business",
+) -> dict[str, Any]:
+    write_scope = _validate_write_scope(write_scope)
+    if write_scope not in {"all", "table", "business"}:
+        raise ValueError(
+            "from-catalog 仅支持 write_scope=all/table/business"
+        )
+
+    path = model_path_for_table(project, table_name)
+    existing = _existing_model_data(path)
+    previous = dict(existing)
+    updated = _catalog_model_payload(
+        table_name=table_name,
+        existing=existing,
+        mapping=mapping,
+    )
+    if write_scope == "table":
+        for key in ("data_domain", "business_area", "business_process"):
+            if key not in previous:
+                updated.pop(key, None)
+            else:
+                updated[key] = previous[key]
+
+    changed = updated != previous
+    if changed and not dry_run:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            yaml.safe_dump(updated, allow_unicode=True, sort_keys=False),
+            encoding="utf-8",
+        )
+
+    business_changed = any(
+        updated.get(key) != previous.get(key)
+        for key in ("data_domain", "business_area", "business_process")
+    )
+    return {
+        "table": table_name,
+        "path": str(path),
+        "status": "passed",
+        "changed": changed,
+        "metadata_changed": any(
+            updated.get(key) != previous.get(key)
+            for key in ("layer", "table_type")
+        ),
+        "business_changed": business_changed,
+        "metric_changed": False,
+        "grain_changed": False,
+        "updated": bool(changed and not dry_run),
+        "write_scope": write_scope,
+        "source": "catalog",
+        "previous_layer": previous.get("layer"),
+        "layer": updated.get("layer"),
+        "previous_table_type": previous.get("table_type"),
+        "table_type": updated.get("table_type"),
+        "previous_data_domain": previous.get("data_domain"),
+        "data_domain": updated.get("data_domain"),
+        "previous_business_area": previous.get("business_area"),
+        "business_area": updated.get("business_area"),
+        "business_process": updated.get("business_process"),
+    }
+
+
+def run_catalog_metadata_write(
+    project: str,
+    *,
+    dry_run: bool = False,
+    write_scope: str = "business",
+    init_catalog: bool = False,
+) -> dict[str, Any]:
+    write_scope = _validate_write_scope(write_scope)
+    if write_scope not in {"all", "table", "business"}:
+        raise ValueError(
+            "from-catalog 仅支持 write_scope=all/table/business"
+        )
+
+    init_result = None
+    if init_catalog:
+        init_result = write_initial_business_semantics_catalog(
+            project,
+            overwrite=False,
+            dry_run=dry_run,
+        )
+
+    catalog = (
+        (init_result or {}).get("catalog")
+        if init_result and dry_run
+        else load_business_semantics_catalog(project)
+    )
+    if not catalog:
+        raise FileNotFoundError(
+            f"未找到 {project}/business_semantics.yaml，请先初始化目录"
+        )
+
+    updates = []
+    for table_name, asset in sorted(_catalog_table_assets(project).items()):
+        ddl = asset.get("ddl") or {}
+        if not ddl.get("exists"):
+            continue
+        mapping = catalog_mapping_for_table(catalog, table_name)
+        if not mapping:
+            mapping = {"table": table_name}
+        updates.append(
+            update_model_yaml_from_catalog(
+                project,
+                table_name,
+                mapping,
+                dry_run=dry_run,
+                write_scope=write_scope,
+            )
+        )
+    if not dry_run:
+        import config as _config
+        _config._model_metadata_cache.clear()
+
+    changed_updates = [update for update in updates if update["changed"]]
+    return {
+        "project": project,
+        "source": "catalog",
+        "write_scope": write_scope,
+        "catalog_path": str(
+            PROJECT_ROOT / PROJECT_CONFIG[project]["dir"] /
+            "business_semantics.yaml"
+        ),
+        "inspected_table_count": len(updates),
+        "model_updates": changed_updates,
+        "model_update_count": len([
+            update for update in changed_updates
+            if update.get("updated")
+        ]),
+        "model_change_count": len(changed_updates),
+    }
+
+
 def result_for_report(result: TableInspectResult) -> dict[str, Any]:
     """生成模型元数据回写报告中的单表结果。"""
     data = inspect_result_to_dict(result)
@@ -1128,13 +1342,19 @@ def main() -> None:
     parser.add_argument("--dry-run",
                         action="store_true",
                         help="只输出巡检结果，不写入 models YAML")
+    parser.add_argument("--init-catalog",
+                        action="store_true",
+                        help="按项目DDL初始化 business_semantics.yaml")
+    parser.add_argument("--from-catalog",
+                        action="store_true",
+                        help="从 business_semantics.yaml 刷新/初始化 models")
     parser.add_argument("--write-scope",
                         choices=sorted(WRITE_SCOPES),
                         default="all",
                         help=(
                             "models 回写范围: all=表信息+指标+entity/grain, "
                             "table=仅表级元数据, metrics=仅指标分组, "
-                            "grain=仅entity/grain"
+                            "grain=仅entity/grain, business=仅业务目录映射"
                         ))
     parser.add_argument("--no-cache",
                         action="store_true",
@@ -1148,21 +1368,36 @@ def main() -> None:
                         help="不打印单表巡检进度")
     args = parser.parse_args()
 
-    api_key = os.environ.get("DEEPSEEK_API_KEY")
-    if not api_key:
-        raise SystemExit("未提供 DEEPSEEK_API_KEY 环境变量，无法调用 DeepSeek API")
+    if args.init_catalog and not args.from_catalog:
+        result = write_initial_business_semantics_catalog(
+            args.project,
+            dry_run=args.dry_run,
+        )
+    elif args.from_catalog:
+        result = run_catalog_metadata_write(
+            args.project,
+            dry_run=args.dry_run,
+            write_scope=args.write_scope,
+            init_catalog=args.init_catalog,
+        )
+    else:
+        if args.write_scope == "business":
+            raise SystemExit("--write-scope business 需要配合 --from-catalog")
+        api_key = os.environ.get("DEEPSEEK_API_KEY")
+        if not api_key:
+            raise SystemExit("未提供 DEEPSEEK_API_KEY 环境变量，无法调用 DeepSeek API")
 
-    result = run_metadata_write(
-        args.project,
-        api_key=api_key,
-        model=args.model,
-        max_retries=args.max_retries,
-        parallelism=args.parallel,
-        no_cache=args.no_cache,
-        dry_run=args.dry_run,
-        write_scope=args.write_scope,
-        show_progress=not args.quiet,
-    )
+        result = run_metadata_write(
+            args.project,
+            api_key=api_key,
+            model=args.model,
+            max_retries=args.max_retries,
+            parallelism=args.parallel,
+            no_cache=args.no_cache,
+            dry_run=args.dry_run,
+            write_scope=args.write_scope,
+            show_progress=not args.quiet,
+        )
 
     output_path = Path(args.output) if args.output else (
         Path(__file__).resolve().parent /
@@ -1170,6 +1405,27 @@ def main() -> None:
     output_path.write_text(json.dumps(result, ensure_ascii=False, indent=2),
                            encoding="utf-8")
     print(f"结果已写入: {output_path}")
+    if result.get("source") == "catalog":
+        print(
+            "回写来源: catalog, "
+            "巡检表: {inspected_table_count}, "
+            "模型变更: {model_change_count}, 已写入: {model_update_count}".
+            format(**result)
+        )
+        return
+    if "catalog" in result:
+        catalog = result.get("catalog") or {}
+        print(
+            "目录初始化: {path}, "
+            "业务过程: {process_count}, 映射: {mapping_count}, 已写入: {updated}".
+            format(
+                path=result.get("path"),
+                process_count=len(catalog.get("business_processes") or []),
+                mapping_count=len(catalog.get("mappings") or []),
+                updated=result.get("updated"),
+            )
+        )
+        return
     print(
         "回写范围: {write_scope}, "
         "巡检表: {inspected_table_count}, 指标表: {metric_table_count}, "
