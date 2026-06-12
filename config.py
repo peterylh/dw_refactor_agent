@@ -1367,11 +1367,111 @@ def _dictionary_allow_values(raw_dictionaries: dict, dictionary_cfg: dict) -> li
     return values
 
 
-def load_naming_config(path=None):
+def _dictionary_identity(entry: dict, fields: tuple[str, ...]) -> str:
+    for field in fields:
+        value = str(entry.get(field) or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def _merge_dictionary_entries(
+    raw_dictionary,
+    incoming_entries: list[dict],
+    *,
+    identity_fields: tuple[str, ...],
+):
+    if not incoming_entries:
+        return raw_dictionary
+
+    merged = dict(raw_dictionary) if isinstance(raw_dictionary, dict) else {}
+    values = [
+        dict(entry)
+        for entry in _dictionary_entries(raw_dictionary)
+        if isinstance(entry, dict)
+    ]
+    index = {
+        _dictionary_identity(entry, identity_fields): position
+        for position, entry in enumerate(values)
+        if _dictionary_identity(entry, identity_fields)
+    }
+    for entry in incoming_entries:
+        item = dict(entry)
+        identity = _dictionary_identity(item, identity_fields)
+        if identity and identity in index:
+            values[index[identity]].update(item)
+        else:
+            if identity:
+                index[identity] = len(values)
+            values.append(item)
+
+    merged["values"] = values
+    return merged
+
+
+def _business_semantics_dictionaries(catalog: dict) -> dict:
+    if not isinstance(catalog, dict) or not catalog:
+        return {}
+    dictionaries = {}
+    data_domains = [
+        dict(entry)
+        for entry in _dictionary_entries(catalog.get("data_domains"))
+    ]
+    business_areas = [
+        dict(entry)
+        for entry in _dictionary_entries(catalog.get("business_areas"))
+    ]
+    if data_domains:
+        dictionaries["data_domains"] = {"values": data_domains}
+    if business_areas:
+        dictionaries["business_areas"] = {"values": business_areas}
+    return dictionaries
+
+
+def _merge_naming_dictionaries(
+    raw_dictionaries: dict,
+    extra_dictionaries: dict | None = None,
+) -> dict:
+    merged = dict(raw_dictionaries or {})
+    extra = extra_dictionaries or {}
+    if extra.get("data_domains"):
+        merged["data_domains"] = _merge_dictionary_entries(
+            merged.get("data_domains"),
+            _dictionary_entries(extra.get("data_domains")),
+            identity_fields=("id", "code", "name"),
+        )
+    if extra.get("business_areas"):
+        merged["business_areas"] = _merge_dictionary_entries(
+            merged.get("business_areas"),
+            _dictionary_entries(extra.get("business_areas")),
+            identity_fields=("code", "id", "name"),
+        )
+    for name, dictionary in extra.items():
+        if name in {"data_domains", "business_areas"}:
+            continue
+        merged.setdefault(name, dictionary)
+    return merged
+
+
+def _business_semantics_dictionaries_for_naming_path(path: Path) -> dict:
+    catalog_path = path.parent / BUSINESS_SEMANTICS_FILE_NAME
+    if not catalog_path.exists():
+        return {}
+    raw = yaml.safe_load(catalog_path.read_text(encoding="utf-8")) or {}
+    return _business_semantics_dictionaries(raw if isinstance(raw, dict) else {})
+
+
+def load_naming_config(path=None, extra_dictionaries: dict | None = None):
     path = Path(path) if path else NAMING_CONFIG_PATH
     with open(path, encoding="utf-8") as f:
         raw = yaml.safe_load(f) or {}
-    raw_dictionaries = raw.get("dictionaries", {}) or {}
+    if extra_dictionaries is None:
+        extra_dictionaries = _business_semantics_dictionaries_for_naming_path(
+            path)
+    raw_dictionaries = _merge_naming_dictionaries(
+        raw.get("dictionaries", {}) or {},
+        extra_dictionaries,
+    )
     types = {}
     for name, cfg in raw.get("types", {}).items():
         allow_cfg = cfg.get("allow", cfg.get("values"))
@@ -1731,7 +1831,14 @@ def get_naming_config(project: str = None) -> NamingConfig:
         key = "__default__"
 
     if key not in _naming_config_cache:
-        _naming_config_cache[key] = load_naming_config(PROJECT_ROOT / cfg_file)
+        extra_dictionaries = None
+        if project and project in PROJECT_CONFIG:
+            extra_dictionaries = _business_semantics_dictionaries(
+                load_business_semantics_catalog(project))
+        _naming_config_cache[key] = load_naming_config(
+            PROJECT_ROOT / cfg_file,
+            extra_dictionaries=extra_dictionaries,
+        )
     return _naming_config_cache[key]
 
 

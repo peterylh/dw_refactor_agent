@@ -271,6 +271,7 @@ def write_initial_business_semantics_catalog(
             encoding="utf-8",
         )
         config._business_semantics_cache.clear()
+        config._naming_config_cache.clear()
     return {
         "project": project,
         "path": str(path),

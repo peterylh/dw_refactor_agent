@@ -937,6 +937,74 @@ class TestGetNamingConfigByProject:
             "value_field": "id",
         }
 
+    def test_project_naming_dictionary_merges_business_catalog(
+            self, tmp_path, monkeypatch):
+        project = "unit_catalog_naming"
+        project_dir = tmp_path / project
+        project_dir.mkdir()
+        raw = yaml.safe_load(
+            config.NAMING_CONFIG_PATH.read_text(encoding="utf-8"))
+        raw.pop("dictionaries", None)
+        raw["types"]["BUSINESS_AREA_CODE"]["allow"] = {
+            "dictionary": "business_areas",
+            "value_field": "code",
+        }
+        raw["types"]["BUSINESS_AREA_CODE"].pop("patterns", None)
+        raw["types"]["DATA_DOMAIN_ID"]["allow"] = {
+            "dictionary": "data_domains",
+            "value_field": "id",
+        }
+        raw["types"]["DATA_DOMAIN_ID"].pop("patterns", None)
+        (tmp_path / "naming_config.yaml").write_text(
+            yaml.safe_dump(raw, allow_unicode=True, sort_keys=False),
+            encoding="utf-8",
+        )
+        (project_dir / "business_semantics.yaml").write_text(
+            yaml.safe_dump(
+                {
+                    "version": 1,
+                    "project": project,
+                    "data_domains": [{
+                        "id": "04",
+                        "code": "ORDR",
+                        "name": "订单域",
+                    }],
+                    "business_areas": [{
+                        "id": "SHOP",
+                        "code": "SHOP",
+                        "name": "零售业务",
+                    }],
+                    "business_processes": [],
+                    "semantic_subjects": [],
+                },
+                allow_unicode=True,
+                sort_keys=False,
+            ),
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(config, "PROJECT_ROOT", tmp_path)
+        monkeypatch.setitem(config.PROJECT_CONFIG, project, {
+            "dir": project,
+            "naming_config": "naming_config.yaml",
+        })
+        config._naming_config_cache.clear()
+        config._business_semantics_cache.clear()
+
+        nc = get_naming_config(project)
+
+        assert nc.types["BUSINESS_AREA_CODE"].allow == ["SHOP"]
+        assert nc.types["DATA_DOMAIN_ID"].allow == ["04"]
+        assert nc.dictionaries["business_areas"]["values"][0]["code"] == "SHOP"
+        assert nc.dictionaries["data_domains"]["values"][0]["id"] == "04"
+        assert nc._match_segments(
+            "M_SHOP_04_ORDER_DI",
+            nc.layers["DWD"].templates[0],
+        ) is not None
+        assert nc._match_segments(
+            "M_PAYM_04_ORDER_DI",
+            nc.layers["DWD"].templates[0],
+        ) is None
+
     def test_load_business_domain_config_for_finance_project(
             self, isolated_project_naming_configs):
         business_config = get_business_domain_config(

@@ -7,8 +7,9 @@ types:
       必须且只能归属一个业务板块。业务板块的判断依据是模型主要支撑的业务
       流程、经营场景或分析用途。shop 中仅 DWD 和 DWS 层划分业务板块；
       当前只有 SHOP 一个业务板块。
-    patterns:
-      - "^[A-Z][A-Z0-9]{1,7}$"
+    allow:
+      dictionary: business_areas
+      value_field: code
 
   DATA_DOMAIN_ID:
     label: 数据域编号
@@ -17,8 +18,9 @@ types:
       数据管理边界、责任主体、标准体系和治理规则。每个适用模型必须且只能
       归属一个数据域。数据域的判断依据是模型的核心实体、核心事实或主要数据
       内容。shop 中仅 DWD 层划分数据域；不确定时可选择“其它”。
-    patterns:
-      - "^[0-9]{2}$"
+    allow:
+      dictionary: data_domains
+      value_field: id
 
   BIZ_PROCESS:
     label: 业务过程
