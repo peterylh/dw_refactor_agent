@@ -1,9 +1,7 @@
 version: 2
 name: dwd_customer
-layer: DWD
+layer: DIM
 table_type: dimension
-data_domain: '01'
-business_area: SHOP
 description: 客户每日快照
 config:
   materialized: snapshot
@@ -13,3 +11,4 @@ entities:
   name: 客户
   key_columns:
   - customer_id
+business_process: CUSTOMER_OPERATION

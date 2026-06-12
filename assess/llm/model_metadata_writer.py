@@ -1020,10 +1020,14 @@ def _catalog_model_payload(
     data_domain = str(mapping.get("data_domain") or "").strip()
     business_area = str(mapping.get("business_area") or "").strip().upper()
     business_process = str(mapping.get("business_process") or "").strip()
-    if data_domain:
+    if layer in DATA_DOMAIN_LAYERS and data_domain:
         updated["data_domain"] = data_domain
-    if business_area:
+    else:
+        updated.pop("data_domain", None)
+    if layer in BUSINESS_AREA_LAYERS and business_area:
         updated["business_area"] = business_area
+    else:
+        updated.pop("business_area", None)
     if business_process:
         updated["business_process"] = business_process
     return updated

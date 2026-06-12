@@ -2,16 +2,14 @@ version: 2
 name: dws_category_sales_monthly
 layer: DWS
 table_type: fact
-business_area: SHOP
 description: 品类月度销售汇总
 config:
   materialized: incremental
 derived_metrics:
 - sale_quantity
+- sale_amount
 atomic_metrics:
 - order_count
-calculated_metrics:
-- sale_amount
 grain:
   entities:
   - CATEGORY
@@ -23,3 +21,5 @@ entities:
   name: 品类
   key_columns:
   - category_id
+business_process: ORDER_TRANSACTION
+business_area: SHOP

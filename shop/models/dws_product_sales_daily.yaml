@@ -10,9 +10,8 @@ atomic_metrics:
 - order_count
 derived_metrics:
 - sale_quantity
-- discount_amount
-calculated_metrics:
 - sale_amount
+- discount_amount
 grain:
   entities:
   - PROD
@@ -24,3 +23,4 @@ entities:
   name: 商品
   key_columns:
   - product_id
+business_process: ORDER_TRANSACTION

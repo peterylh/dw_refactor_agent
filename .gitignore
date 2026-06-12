@@ -8,6 +8,7 @@ logs/
 refact/refact_metadata.json
 refact/verify_result.json
 assess/cache/
+assess/llm/cache/
 assess/assess_result_*.json
 assess/metric_result_*.json
 

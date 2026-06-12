@@ -1998,3 +1998,86 @@ def test_run_catalog_metadata_write_can_dry_run_with_init_catalog(
     assert result["model_change_count"] == 1
     assert not (project_dir / "business_semantics.yaml").exists()
     assert not (project_dir / "models" / "dwd_order_detail.yaml").exists()
+
+
+def test_run_catalog_metadata_write_respects_business_metadata_layers(
+        tmp_path, monkeypatch):
+    project = "catalog_writer_layers"
+    project_dir = tmp_path / project
+    (project_dir / "ddl").mkdir(parents=True)
+    (project_dir / "ddl" / "dws_store_sales_daily.sql").write_text(
+        """
+        CREATE TABLE dws_store_sales_daily (
+            store_id BIGINT,
+            stat_date DATE,
+            sale_amount DECIMAL(12,2)
+        );
+        """,
+        encoding="utf-8",
+    )
+    (project_dir / "ddl" / "dim_store.sql").write_text(
+        """
+        CREATE TABLE dim_store (
+            store_id BIGINT,
+            store_name VARCHAR(64)
+        );
+        """,
+        encoding="utf-8",
+    )
+    (project_dir / "business_semantics.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "version": 1,
+                "project": project,
+                "data_domains": [{
+                    "id": "03",
+                    "code": "STOR",
+                    "name": "门店域",
+                }],
+                "business_areas": [{
+                    "id": "SHOP",
+                    "code": "SHOP",
+                    "name": "零售业务",
+                }],
+                "business_processes": [],
+                "mappings": [{
+                    "table": "dws_store_sales_daily",
+                    "layer": "DWS",
+                    "table_type": "fact",
+                    "data_domain": "03",
+                    "business_area": "SHOP",
+                    "business_process": "STORE_SALES",
+                }, {
+                    "table": "dim_store",
+                    "layer": "DIM",
+                    "table_type": "dimension",
+                    "data_domain": "03",
+                    "business_area": "SHOP",
+                    "business_process": "STORE_OPERATION",
+                }],
+            },
+            allow_unicode=True,
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    _configure_project_root(monkeypatch, tmp_path)
+    monkeypatch.setitem(config.PROJECT_CONFIG, project, {
+        "dir": project,
+        "naming_config": "naming_config.yaml",
+    })
+
+    run_catalog_metadata_write(project, dry_run=False, write_scope="business")
+
+    dws_model = yaml.safe_load(
+        (project_dir / "models" / "dws_store_sales_daily.yaml").read_text(
+            encoding="utf-8"))
+    dim_model = yaml.safe_load(
+        (project_dir / "models" / "dim_store.yaml").read_text(
+            encoding="utf-8"))
+    assert "data_domain" not in dws_model
+    assert dws_model["business_area"] == "SHOP"
+    assert dws_model["business_process"] == "STORE_SALES"
+    assert "data_domain" not in dim_model
+    assert "business_area" not in dim_model
+    assert dim_model["business_process"] == "STORE_OPERATION"

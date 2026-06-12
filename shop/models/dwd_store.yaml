@@ -1,9 +1,7 @@
 version: 2
 name: dwd_store
-layer: DWD
+layer: DIM
 table_type: dimension
-data_domain: '03'
-business_area: SHOP
 description: 门店每日快照
 config:
   materialized: snapshot
@@ -13,3 +11,4 @@ entities:
   name: 门店
   key_columns:
   - store_id
+business_process: STORE_OPERATION

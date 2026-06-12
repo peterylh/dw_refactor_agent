@@ -7,12 +7,12 @@ description: 门店日销售汇总
 config:
   materialized: incremental
 calculated_metrics:
-- total_amount
 - payment_amount
 atomic_metrics:
 - order_count
 - customer_count
 derived_metrics:
+- total_amount
 - discount_amount
 grain:
   entities:
@@ -25,3 +25,4 @@ entities:
   name: 门店
   key_columns:
   - store_id
+business_process: ORDER_TRANSACTION

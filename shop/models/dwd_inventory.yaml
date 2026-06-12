@@ -22,3 +22,4 @@ entities:
   name: 门店
   key_columns:
   - store_id
+business_process: INVENTORY_MANAGEMENT

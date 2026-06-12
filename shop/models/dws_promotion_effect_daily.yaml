@@ -11,9 +11,8 @@ atomic_metrics:
 - customer_count
 derived_metrics:
 - sale_quantity
-- discount_amount
-calculated_metrics:
 - sale_amount
+- discount_amount
 grain:
   entities:
   - PROM
@@ -25,3 +24,4 @@ entities:
   name: 促销
   key_columns:
   - promotion_id
+business_process: PROMOTION_EFFECT

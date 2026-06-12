@@ -9,10 +9,9 @@ config:
   materialized: incremental
 atomic_metrics:
 - quantity
+- subtotal
 - discount
 calculated_metrics:
-- subtotal
-- cost_price
 - gross_profit
 entities:
 - code: ORDER
@@ -20,28 +19,29 @@ entities:
   name: 订单
   key_columns:
   - order_id
-- code: CUST
+- code: CUSTOMER
   type: foreign
   name: 客户
   key_columns:
   - customer_id
-- code: STOR
+- code: STORE
   type: foreign
   name: 门店
   key_columns:
   - store_id
-- code: PROD
+- code: PRODUCT
   type: foreign
   name: 商品
   key_columns:
   - product_id
-- code: CATG
+- code: CATEGORY
   type: foreign
   name: 品类
   key_columns:
   - category_id
-- code: PROM
+- code: PROMOTION
   type: foreign
   name: 促销活动
   key_columns:
   - promotion_id
+business_process: ORDER_TRANSACTION

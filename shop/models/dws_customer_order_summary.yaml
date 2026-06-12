@@ -7,9 +7,9 @@ description: 客户订单汇总
 config:
   materialized: incremental
 derived_metrics:
+- total_amount
 - total_discount
 calculated_metrics:
-- total_amount
 - payment_amount
 - avg_order_amount
 atomic_metrics:
@@ -25,3 +25,4 @@ entities:
   name: 客户
   key_columns:
   - customer_id
+business_process: ORDER_TRANSACTION

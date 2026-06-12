@@ -1,9 +1,7 @@
 version: 2
 name: dwd_product
-layer: DWD
+layer: DIM
 table_type: dimension
-data_domain: '02'
-business_area: SHOP
 description: 商品每日快照
 config:
   materialized: snapshot
@@ -13,11 +11,4 @@ entities:
   name: 商品
   key_columns:
   - product_id
-- code: CATEGORY
-  type: foreign
-  name: 品类
-  key_columns:
-  - category_id
-  relationship:
-    type: many_to_one
-    from_entity: PROD
+business_process: PRODUCT_MANAGEMENT

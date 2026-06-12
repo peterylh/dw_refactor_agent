@@ -1,15 +1,14 @@
 version: 2
 name: dwd_promotion
-layer: DWD
+layer: DIM
 table_type: dimension
-data_domain: '06'
-business_area: SHOP
 description: 促销活动每日快照
 config:
   materialized: snapshot
 entities:
-- code: PROM
+- code: PROMOTION
   type: primary
   name: 促销活动
   key_columns:
   - promotion_id
+business_process: PROMOTION_EFFECT
