@@ -16,7 +16,7 @@ from assess.model_metadata_writer import (
     run_metadata_write,
     update_model_yaml,
 )
-from assess.table_inspector import TableInspectResult
+from assess.llm.table_inspector import TableInspectResult
 from config import BusinessAreaDef, BusinessDomainConfig, DomainDef
 
 

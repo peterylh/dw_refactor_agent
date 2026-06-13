@@ -7,7 +7,7 @@ from assess.project_facts.business_semantics import (
     business_semantics_path,
     write_initial_business_semantics_catalog,
 )
-from assess.table_inspector import TableInspectResult
+from assess.llm.table_inspector import TableInspectResult
 
 
 def _configure_catalog_project(monkeypatch, tmp_path):

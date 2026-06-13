@@ -51,7 +51,7 @@ shop-dm/
 ├── assess/
 │   ├── assess_middle_layer.py      # 中间层评估入口
 │   ├── context_builder.py          # 构造 LLM 表巡检上下文
-│   ├── table_inspector.py          # DeepSeek 表巡检、字段分组与缓存
+│   ├── llm/                        # DeepSeek 表巡检、字段分组与缓存
 │   ├── model_metadata_writer.py    # LLM 表元数据与指标分组回写
 │   ├── assess_result_shop.json
 │   └── cache/                      # LLM 表巡检缓存
@@ -454,9 +454,9 @@ python assess/model_metadata_writer.py --project shop --from-catalog --write-sco
 
 ### 指标识别与回写
 
-`assess/table_inspector.py` 是基础表巡检能力，用于单次 DeepSeek 调用中完成表级分层、表类型判断和字段分组。
+`assess/llm/table_inspector.py` 是基础表巡检能力，用于单次 DeepSeek 调用中完成表级分层、表类型判断和字段分组。
 
-`assess/model_metadata_writer.py` 用于扫描项目 DWD/DWS/DIM 层表，复用 `table_inspector.py` 的巡检结果，将 LLM 推断的表级元数据与事实表指标分组回写到 models。
+`assess/model_metadata_writer.py` 用于扫描项目 DWD/DWS/DIM 层表，复用 `assess/llm/table_inspector.py` 的巡检结果，将 LLM 推断的表级元数据与事实表指标分组回写到 models。
 
 巡检与回写逻辑：
 

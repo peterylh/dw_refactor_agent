@@ -4,7 +4,7 @@ import time
 import pytest
 from unittest.mock import patch
 
-from assess.table_inspector import (
+from assess.llm.table_inspector import (
     TableInspector,
     TableContext,
     build_prompt,
@@ -404,7 +404,7 @@ def test_dict_to_result_normalizes_placeholder_empty_grain():
         },
     }
 
-    from assess.table_inspector import dict_to_result
+    from assess.llm.table_inspector import dict_to_result
 
     result = dict_to_result(payload)
 

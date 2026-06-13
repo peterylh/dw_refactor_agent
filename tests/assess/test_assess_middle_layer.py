@@ -19,7 +19,7 @@ from assess.assess_middle_layer import (
     score_metadata_health,
     score_naming_conventions,
 )
-from assess.table_inspector import TableInspectResult
+from assess.llm.table_inspector import TableInspectResult
 
 
 def _business_domain_config():
