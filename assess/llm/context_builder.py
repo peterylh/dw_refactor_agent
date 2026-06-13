@@ -1,5 +1,4 @@
 from pathlib import Path
-from collections import defaultdict
 from dataclasses import dataclass, field
 
 import yaml
@@ -7,6 +6,10 @@ import yaml
 import config
 from config import get_business_domain_config, load_model_metadata
 from assess.project_facts.business_semantics import load_business_semantics_catalog
+from lineage.asset_graph import (
+    build_asset_column_lineage,
+    build_asset_table_graph,
+)
 
 DATA_DOMAIN_LAYERS = {"DWD"}
 BUSINESS_AREA_LAYERS = {"DWD", "DWS"}
@@ -23,7 +26,7 @@ class TableContext:
     depth_from_ods: int = 0
     upstream_metric_groups: dict[str, dict[str, list[str]]] = field(
         default_factory=dict)
-    column_lineage: list[dict[str, str]] = field(default_factory=list)
+    column_lineage: list[dict] = field(default_factory=list)
     declared_data_domain: str = ""
     declared_business_area: str = ""
     business_domain_options: dict = field(default_factory=dict)
@@ -119,47 +122,15 @@ def _business_semantics_prompt_options(project: str) -> dict:
     return options
 
 
-def _table_from_node(node_id: str) -> str:
-    return node_id.rsplit(".", 1)[0]
-
-
 def extract_dependencies(lineage_data: dict) -> tuple[dict, dict]:
-    """提取表级上下游关系"""
-    upstream = defaultdict(set)
-    downstream = defaultdict(set)
-
-    for e in lineage_data.get("edges", []):
-        src = _table_from_node(e["source"])
-        tgt = _table_from_node(e["target"])
-        if src != tgt:
-            upstream[tgt].add(src)
-            downstream[src].add(tgt)
-
-    for ie in lineage_data.get("indirect_edges", []):
-        src = _table_from_node(ie["source"])
-        tgt = ie["target_table"]
-        if src != tgt:
-            upstream[tgt].add(src)
-            downstream[src].add(tgt)
-
-    return dict(upstream), dict(downstream)
+    """提取正式资产表级上下游关系，过滤并穿透临时表。"""
+    return build_asset_table_graph(lineage_data)
 
 
 def extract_column_lineage(lineage_data: dict,
-                           table_name: str) -> list[dict[str, str]]:
-    """提取目标表的字段级血缘表达式。"""
-    lineage = []
-    for edge in lineage_data.get("edges", []):
-        target = str(edge.get("target") or "")
-        if _table_from_node(target) != table_name:
-            continue
-        lineage.append({
-            "source": str(edge.get("source") or ""),
-            "target": target,
-            "expression": str(edge.get("expression") or ""),
-            "source_file": str(edge.get("source_file") or ""),
-        })
-    return lineage
+                           table_name: str) -> list[dict]:
+    """提取正式资产字段血缘，过滤并穿透临时字段。"""
+    return build_asset_column_lineage(lineage_data, table_name)
 
 
 def _project_dir(project: str) -> Path:

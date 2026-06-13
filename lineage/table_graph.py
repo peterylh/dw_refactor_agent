@@ -1,4 +1,4 @@
-"""Lineage data loading and table graph helpers for assess scoring."""
+"""Lineage data loading and raw table graph helpers."""
 
 import json
 from collections import defaultdict
