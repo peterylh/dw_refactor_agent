@@ -35,7 +35,8 @@ from assess.project_facts.business_semantics import (
     _infer_table_type,
     _layer_from_table_name,
     _materialized_for_layer,
-    catalog_mapping_for_table,
+    _normalize_catalog_code,
+    catalog_mapping_for_model,
     load_business_semantics_catalog,
     write_initial_business_semantics_catalog,
 )
@@ -1040,6 +1041,70 @@ def _catalog_model_payload(
     return updated
 
 
+def _business_processes_from_result(
+        result: TableInspectResult) -> list[str]:
+    codes = []
+    for metrics in (
+        result.atomic_metrics,
+        result.derived_metrics,
+        result.calculated_metrics,
+    ):
+        for metric in metrics:
+            code = _normalize_catalog_code(metric.get("business_process"))
+            if code and code not in codes:
+                codes.append(code)
+    return codes
+
+
+def _semantic_subject_from_result(result: TableInspectResult) -> str:
+    entities = normalize_entities(
+        result.entities,
+        result.entity,
+        result.related_entities,
+    )
+    primary = next(
+        (
+            entity for entity in entities
+            if str(entity.get("type") or "").lower() == "primary"
+        ),
+        None,
+    )
+    if not primary and entities:
+        primary = entities[0]
+    return _normalize_catalog_code((primary or {}).get("code"))
+
+
+def catalog_discovery_model_mapping(
+        result: TableInspectResult) -> dict[str, Any]:
+    """Return model metadata assignment discovered by table-level LLM."""
+    if result.status == "blocked":
+        return {}
+
+    layer = layer_for_model(result)
+    mapping: dict[str, Any] = {
+        "table": result.table_name,
+        "layer": layer,
+        "table_type": result.table_type,
+        "data_domain": result.inferred_data_domain,
+        "business_area": result.inferred_business_area,
+        "materialized": _materialized_for_layer(
+            result.declared_layer or layer),
+    }
+    if result.table_type == "dimension":
+        semantic_subject = _semantic_subject_from_result(result)
+        if semantic_subject:
+            mapping["semantic_subject"] = semantic_subject
+        return mapping
+
+    if result.table_type == "fact":
+        processes = _business_processes_from_result(result)
+        if len(processes) == 1:
+            mapping["business_process"] = processes[0]
+        return mapping
+
+    return mapping
+
+
 def update_model_yaml_from_catalog(
     project: str,
     table_name: str,
@@ -1155,9 +1220,11 @@ def run_catalog_metadata_write(
         ddl = asset.get("ddl") or {}
         if not ddl.get("exists"):
             continue
-        mapping = catalog_mapping_for_table(catalog, table_name)
-        if not mapping:
-            mapping = {"table": table_name}
+        mapping = catalog_mapping_for_model(
+            catalog,
+            table_name,
+            load_model_metadata(project).get(table_name, {}),
+        )
         updates.append(
             update_model_yaml_from_catalog(
                 project,
@@ -1187,6 +1254,110 @@ def run_catalog_metadata_write(
             if update.get("updated")
         ]),
         "model_change_count": len(changed_updates),
+    }
+
+
+def run_catalog_discovery(project: str,
+                          *,
+                          api_key: str,
+                          model: str = "deepseek-v4-flash",
+                          max_retries: int = 1,
+                          parallelism: int = 2,
+                          no_cache: bool = False,
+                          dry_run: bool = False,
+                          overwrite: bool = False,
+                          show_progress: bool = False) -> dict[str, Any]:
+    """Use table-level LLM inspection results to initialize/update catalog."""
+    data = load_lineage_data(project)
+    contexts = build_inspection_contexts(project, data)
+    metric_contexts = [ctx for ctx in contexts if ctx.layer in METRIC_LAYERS]
+    dwd_contexts = [ctx for ctx in metric_contexts if ctx.layer == "DWD"]
+    dws_contexts = [ctx for ctx in metric_contexts if ctx.layer == "DWS"]
+    metadata_only_contexts = [
+        ctx for ctx in contexts
+        if ctx.layer not in METRIC_LAYERS
+    ]
+    cache_file = Path(__file__).resolve(
+    ).parent / "cache" / f"inspect_{project}.json"
+    if no_cache and cache_file.exists():
+        cache_file.unlink()
+
+    inspector = TableInspector(
+        api_key=api_key,
+        model=model,
+        cache_file=cache_file,
+        max_retries=max_retries,
+        parallelism=parallelism,
+    )
+    if show_progress:
+        inspector.progress_callback = build_progress_callback()
+
+    dwd_results = inspector.inspect_batch(dwd_contexts)
+    detected_groups = {
+        result.table_name: metric_groups_for_model(result)
+        for result in dwd_results
+        if result.status != "blocked"
+    }
+    _merge_detected_upstream_metric_groups(dws_contexts, detected_groups)
+    dws_results = inspector.inspect_batch(dws_contexts)
+    metadata_only_results = inspector.inspect_batch(metadata_only_contexts)
+    results = dwd_results + dws_results + metadata_only_results
+    contexts_by_name = {ctx.table_name: ctx for ctx in contexts}
+    enrich_results_with_related_entities(results, contexts_by_name)
+
+    write_result = write_initial_business_semantics_catalog(
+        project,
+        overwrite=overwrite,
+        dry_run=dry_run,
+        inspection_results=results,
+    )
+    model_updates = []
+    for result in results:
+        mapping = catalog_discovery_model_mapping(result)
+        if not mapping:
+            continue
+        update = update_model_yaml_from_catalog(
+            project,
+            result.table_name,
+            mapping,
+            dry_run=dry_run,
+            write_scope="business",
+        )
+        if update["changed"]:
+            model_updates.append(update)
+    if not dry_run and model_updates:
+        import config as _config
+        _config._model_metadata_cache.clear()
+
+    return {
+        "project": project,
+        "source": "llm_catalog_discovery",
+        "path": write_result["path"],
+        "changed": write_result["changed"],
+        "updated": write_result["updated"],
+        "catalog": write_result["catalog"],
+        "inspected_table_count": len(contexts),
+        "dwd_table_count": len(dwd_contexts),
+        "dws_table_count": len(dws_contexts),
+        "metadata_only_table_count": len(metadata_only_contexts),
+        "fact_table_count": sum(1 for result in results if result.is_fact_table),
+        "dimension_table_count": sum(
+            1 for result in results
+            if result.table_type == "dimension"
+        ),
+        "business_process_count": len(
+            (write_result.get("catalog") or {}).get("business_processes") or []
+        ),
+        "semantic_subject_count": len(
+            (write_result.get("catalog") or {}).get("semantic_subjects") or []
+        ),
+        "model_updates": model_updates,
+        "model_update_count": len([
+            update for update in model_updates
+            if update.get("updated")
+        ]),
+        "model_change_count": len(model_updates),
+        "tables": [result_for_report(result) for result in results],
     }
 
 
@@ -1367,6 +1538,12 @@ def main() -> None:
     parser.add_argument("--init-catalog",
                         action="store_true",
                         help="按项目DDL初始化 business_semantics.yaml")
+    parser.add_argument("--catalog-from-llm",
+                        action="store_true",
+                        help="调用表级 LLM 巡检结果初始化/更新 business_semantics.yaml")
+    parser.add_argument("--overwrite-catalog",
+                        action="store_true",
+                        help="catalog-from-llm/init-catalog 时覆盖已存在目录")
     parser.add_argument("--from-catalog",
                         action="store_true",
                         help="从 business_semantics.yaml 刷新/初始化 models")
@@ -1376,7 +1553,8 @@ def main() -> None:
                         help=(
                             "models 回写范围: all=表信息+指标+entity/grain, "
                             "table=仅表级元数据, metrics=仅指标分组, "
-                            "grain=仅entity/grain, business=仅业务语义目录"
+                            "grain=仅entity/grain, "
+                            "business=按models已有业务code从catalog补齐治理信息"
                         ))
     parser.add_argument("--no-cache",
                         action="store_true",
@@ -1390,10 +1568,26 @@ def main() -> None:
                         help="不打印单表巡检进度")
     args = parser.parse_args()
 
-    if args.init_catalog and not args.from_catalog:
+    if args.catalog_from_llm:
+        api_key = os.environ.get("DEEPSEEK_API_KEY")
+        if not api_key:
+            raise SystemExit("未提供 DEEPSEEK_API_KEY 环境变量，无法调用 DeepSeek API")
+        result = run_catalog_discovery(
+            args.project,
+            api_key=api_key,
+            model=args.model,
+            max_retries=args.max_retries,
+            parallelism=args.parallel,
+            no_cache=args.no_cache,
+            dry_run=args.dry_run,
+            overwrite=args.overwrite_catalog,
+            show_progress=not args.quiet,
+        )
+    elif args.init_catalog and not args.from_catalog:
         result = write_initial_business_semantics_catalog(
             args.project,
             dry_run=args.dry_run,
+            overwrite=args.overwrite_catalog,
         )
     elif args.from_catalog:
         result = run_catalog_metadata_write(
@@ -1432,6 +1626,15 @@ def main() -> None:
             "回写来源: catalog, "
             "巡检表: {inspected_table_count}, "
             "模型变更: {model_change_count}, 已写入: {model_update_count}".
+            format(**result)
+        )
+        return
+    if result.get("source") == "llm_catalog_discovery":
+        print(
+            "目录发现: {path}, "
+            "巡检表: {inspected_table_count}, "
+            "业务过程: {business_process_count}, "
+            "语义主题: {semantic_subject_count}, 已写入: {updated}".
             format(**result)
         )
         return

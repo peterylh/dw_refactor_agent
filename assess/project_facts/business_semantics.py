@@ -1,6 +1,7 @@
 """Project-local business semantics catalog helpers."""
 
 from pathlib import Path
+import re
 from typing import Any
 
 import yaml
@@ -8,29 +9,10 @@ import yaml
 import config
 from assess.project_facts.asset_catalog import (
     _short_table_name,
-    build_asset_catalog,
 )
 
 CATALOG_VERSION = 1
-PROCESS_TABLE_LAYERS = {"DWD", "DWS"}
 MODEL_TABLE_LAYERS = {"ODS", "DWD", "DWS", "DIM", "ADS"}
-FACT_TOKENS = {
-    "alert",
-    "application",
-    "assessment",
-    "detail",
-    "event",
-    "interaction",
-    "inventory",
-    "item",
-    "order",
-    "payment",
-    "risk",
-    "summary",
-    "transaction",
-}
-TIME_GRAIN_TOKENS = {"daily", "day", "df", "di", "ds", "monthly", "month"}
-DIMENSION_SUFFIX_TOKENS = {"base", "dim", "info", "snapshot"}
 
 
 def business_semantics_path(project: str) -> Path:
@@ -69,74 +51,8 @@ def _layer_from_table_name(table_name: str) -> str:
     return first if first in MODEL_TABLE_LAYERS else "OTHER"
 
 
-def _process_code_from_table(table_name: str) -> str:
-    layer = _layer_from_table_name(table_name)
-    remainder = table_name[len(layer) + 1:] if layer != "OTHER" else table_name
-    tokens = [
-        token
-        for token in remainder.split("_")
-        if token and token.lower() not in TIME_GRAIN_TOKENS
-    ]
-    return "_".join(tokens).upper() or table_name.upper()
-
-
-def _subject_code_from_table(table_name: str) -> str:
-    layer = _layer_from_table_name(table_name)
-    remainder = table_name[len(layer) + 1:] if layer != "OTHER" else table_name
-    tokens = [
-        token
-        for token in remainder.split("_")
-        if token
-        and token.lower() not in TIME_GRAIN_TOKENS
-        and token.lower() not in DIMENSION_SUFFIX_TOKENS
-    ]
-    return "_".join(tokens).upper() or _process_code_from_table(table_name)
-
-
 def _display_name_from_code(code: str) -> str:
     return str(code or "").replace("_", " ").title()
-
-
-def _keyword_text(*parts: Any) -> str:
-    tokens = []
-    for part in parts:
-        if isinstance(part, list):
-            tokens.extend(str(item).lower() for item in part)
-        else:
-            tokens.append(str(part or "").lower())
-    return " ".join(tokens)
-
-
-def _infer_entry(entries: list[dict[str, Any]], table_name: str) -> str:
-    table_text = table_name.lower().replace("_", " ")
-    for entry in entries:
-        haystack = _keyword_text(
-            entry.get("id"),
-            entry.get("code"),
-            entry.get("name"),
-            entry.get("keywords"),
-        )
-        keywords = {
-            token
-            for token in haystack.replace("_", " ").split()
-            if token
-        }
-        if any(keyword in table_text for keyword in keywords):
-            return str(entry.get("id") or entry.get("code") or "").strip()
-    for entry in entries:
-        code = str(entry.get("code") or "").strip().upper()
-        if code in {"OTHR", "OTHER"}:
-            return str(entry.get("id") or code)
-    return str(entries[0].get("id") or entries[0].get("code") or "").strip(
-    ) if entries else ""
-
-
-def _infer_business_area(entries: list[dict[str, Any]], table_name: str) -> str:
-    value = _infer_entry(entries, table_name)
-    for entry in entries:
-        if value == str(entry.get("id") or "").strip():
-            return str(entry.get("code") or value).strip().upper()
-    return value.upper()
 
 
 def _infer_table_type(table_name: str, layer: str) -> str:
@@ -146,11 +62,6 @@ def _infer_table_type(table_name: str, layer: str) -> str:
         return "other"
     if layer == "DWS":
         return "fact"
-    if layer == "DWD":
-        lowered = table_name.lower()
-        if any(token in lowered for token in FACT_TOKENS):
-            return "fact"
-        return "dimension"
     return "other"
 
 
@@ -162,72 +73,262 @@ def _materialized_for_layer(layer: str) -> str:
     return "full"
 
 
-def _project_tables_from_ddl(project: str) -> list[dict[str, Any]]:
-    cfg = config.PROJECT_CONFIG[project]
-    project_dir = config.PROJECT_ROOT / cfg["dir"]
-    catalog = build_asset_catalog([], {}, project_dir)
-    tables = []
-    for name, asset in sorted((catalog.get("tables") or {}).items()):
-        ddl = asset.get("ddl") or {}
-        if not ddl.get("exists"):
-            continue
-        table_name = _short_table_name(name)
-        layer = _layer_from_table_name(table_name)
-        if layer not in MODEL_TABLE_LAYERS:
-            continue
-        tables.append({
-            "name": table_name,
-            "layer": layer,
-            "columns": ddl.get("columns") or [],
-        })
-    return tables
+def _normalize_catalog_code(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    normalized = re.sub(r"[\s\-/]+", "_", text)
+    normalized = re.sub(r"_+", "_", normalized).strip("_")
+    if re.fullmatch(r"[A-Za-z0-9_]+", normalized):
+        return normalized.upper()
+    return text
 
 
-def build_initial_business_semantics_catalog(project: str) -> dict[str, Any]:
+def _result_value(result: Any, key: str, default: Any = None) -> Any:
+    if isinstance(result, dict):
+        return result.get(key, default)
+    return getattr(result, key, default)
+
+
+def _result_table_name(result: Any) -> str:
+    return _short_table_name(_result_value(result, "table_name", ""))
+
+
+def _result_table_type(result: Any) -> str:
+    return str(_result_value(result, "table_type", "") or "").strip().lower()
+
+
+def _result_data_domain(result: Any) -> str:
+    return str(_result_value(result, "inferred_data_domain", "") or "").strip()
+
+
+def _result_business_area(result: Any) -> str:
+    return str(
+        _result_value(result, "inferred_business_area", "") or ""
+    ).strip().upper()
+
+
+def _result_columns(result: Any) -> dict[str, Any]:
+    columns = _result_value(result, "columns", {}) or {}
+    return columns if isinstance(columns, dict) else {}
+
+
+def _iter_metric_items(result: Any) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    columns = _result_columns(result)
+    for group in ("atomic_metrics", "derived_metrics", "calculated_metrics"):
+        raw_items = columns.get(group) or []
+        if isinstance(raw_items, list):
+            items.extend(dict(item) for item in raw_items
+                         if isinstance(item, dict))
+    return items
+
+
+def _primary_entity(result: Any) -> dict[str, Any]:
+    raw_entities = _result_value(result, "entities", []) or []
+    if not raw_entities:
+        raw_entity = _result_value(result, "entity", {}) or {}
+        if isinstance(raw_entity, dict) and raw_entity:
+            raw_entities = [raw_entity]
+    if not isinstance(raw_entities, list):
+        return {}
+
+    entities = [dict(item) for item in raw_entities if isinstance(item, dict)]
+    if not entities:
+        return {}
+    primary = next(
+        (
+            entity for entity in entities
+            if str(entity.get("type") or "").strip().lower() == "primary"
+        ),
+        None,
+    )
+    if not primary:
+        primary = next(
+            (
+                entity for entity in entities
+                if str(entity.get("type") or "").strip().lower() != "foreign"
+            ),
+            entities[0],
+        )
+    return primary
+
+
+def _entry_name_from_entity(entity: dict[str, Any], code: str) -> str:
+    name = str(entity.get("name") or "").strip()
+    return name or _display_name_from_code(code)
+
+
+def _seed_entry_index(entries: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    index: dict[str, dict[str, Any]] = {}
+    for entry in entries:
+        code = _normalize_catalog_code(entry.get("code"))
+        if not code:
+            continue
+        seeded = dict(entry)
+        seeded["code"] = code
+        seeded.pop("tables", None)
+        index[code] = seeded
+    return index
+
+
+def _touch_entry(
+    index: dict[str, dict[str, Any]],
+    *,
+    code: str,
+    name: str,
+    data_domain: str = "",
+    business_area: str = "",
+) -> None:
+    if not code:
+        return
+    entry = index.setdefault(
+        code,
+        {
+            "code": code,
+            "name": name or _display_name_from_code(code),
+            "data_domain": data_domain,
+            "business_area": business_area,
+        },
+    )
+    if not entry.get("name") and name:
+        entry["name"] = name
+    if not entry.get("data_domain") and data_domain:
+        entry["data_domain"] = data_domain
+    if not entry.get("business_area") and business_area:
+        entry["business_area"] = business_area
+    entry.pop("tables", None)
+
+
+def _catalog_dictionary_entries(
+    project: str,
+    base_catalog: dict[str, Any] | None,
+    key: str,
+    fallback_loader,
+) -> list[dict[str, Any]]:
+    if base_catalog:
+        entries = _entry_values(base_catalog.get(key))
+        if entries:
+            return entries
+    return fallback_loader(project)
+
+
+def _dictionary_contains(entries: list[dict[str, Any]], value: str) -> bool:
+    normalized = _normalize_catalog_code(value)
+    if not normalized:
+        return True
+    for entry in entries:
+        ids = {
+            _normalize_catalog_code(entry.get("id")),
+            _normalize_catalog_code(entry.get("code")),
+        }
+        if normalized in ids:
+            return True
+    return False
+
+
+def _append_dictionary_candidate(
+    entries: list[dict[str, Any]],
+    value: str,
+    *,
+    kind: str,
+) -> None:
+    code = _normalize_catalog_code(value)
+    if not code or _dictionary_contains(entries, code):
+        return
+    item = {
+        "id": code,
+        "code": code,
+        "name": _display_name_from_code(code),
+    }
+    if kind == "data_domain":
+        entries.append(item)
+    elif kind == "business_area":
+        entries.append(item)
+
+
+def build_business_semantics_catalog_from_inspection(
+    project: str,
+    results: list[Any],
+    *,
+    base_catalog: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build catalog entries from LLM table inspection results.
+
+    This intentionally does not infer process/subject names from table name
+    tokens. Business processes come from fact metric semantics; semantic
+    subjects come from dimension primary entities.
+    """
     if project not in config.PROJECT_CONFIG:
         raise ValueError(f"未知项目: {project}")
 
-    data_domains = _domain_entries_from_naming(project)
-    business_areas = _business_area_entries_from_naming(project)
-    process_by_code = {}
-    subject_by_code = {}
-    for table in _project_tables_from_ddl(project):
-        table_name = table["name"]
-        layer = table["layer"]
-        if layer not in PROCESS_TABLE_LAYERS and layer != "DIM":
+    base_catalog = base_catalog or {}
+    data_domains = _catalog_dictionary_entries(
+        project,
+        base_catalog,
+        "data_domains",
+        _domain_entries_from_naming,
+    )
+    business_areas = _catalog_dictionary_entries(
+        project,
+        base_catalog,
+        "business_areas",
+        _business_area_entries_from_naming,
+    )
+    process_by_code = _seed_entry_index(
+        _entry_values(base_catalog.get("business_processes")))
+    subject_by_code = _seed_entry_index(
+        _entry_values(base_catalog.get("semantic_subjects")))
+
+    for result in results or []:
+        table_name = _result_table_name(result)
+        if not table_name:
             continue
-        table_type = _infer_table_type(table_name, layer)
-        data_domain = _infer_entry(data_domains, table_name)
-        business_area = _infer_business_area(business_areas, table_name)
-        if table_type == "dimension" or layer == "DIM":
-            subject_code = _subject_code_from_table(table_name)
-            subject = subject_by_code.setdefault(
-                subject_code,
-                {
-                    "code": subject_code,
-                    "name": _display_name_from_code(subject_code),
-                    "data_domain": data_domain,
-                    "business_area": business_area,
-                    "tables": [],
-                },
+        table_type = _result_table_type(result)
+        data_domain = _result_data_domain(result)
+        business_area = _result_business_area(result)
+        _append_dictionary_candidate(
+            data_domains,
+            data_domain,
+            kind="data_domain",
+        )
+        _append_dictionary_candidate(
+            business_areas,
+            business_area,
+            kind="business_area",
+        )
+
+        if table_type == "dimension":
+            entity = _primary_entity(result)
+            code = _normalize_catalog_code(
+                _result_value(result, "semantic_subject", "")
+                or entity.get("code")
             )
-            subject["tables"].append(table_name)
+            if code:
+                _touch_entry(
+                    subject_by_code,
+                    code=code,
+                    name=_entry_name_from_entity(entity, code),
+                    data_domain=data_domain,
+                    business_area=business_area,
+                )
             continue
 
-        if layer not in PROCESS_TABLE_LAYERS:
+        if table_type != "fact":
             continue
-        process_code = _process_code_from_table(table_name)
-        process = process_by_code.setdefault(
-            process_code,
-            {
-                "code": process_code,
-                "name": _display_name_from_code(process_code),
-                "data_domain": data_domain,
-                "business_area": business_area,
-                "tables": [],
-            },
-        )
-        process["tables"].append(table_name)
+        process_codes = []
+        for item in _iter_metric_items(result):
+            code = _normalize_catalog_code(item.get("business_process"))
+            if code and code not in process_codes:
+                process_codes.append(code)
+        for code in process_codes:
+            _touch_entry(
+                process_by_code,
+                code=code,
+                name=_display_name_from_code(code),
+                data_domain=data_domain,
+                business_area=business_area,
+            )
 
     return {
         "version": CATALOG_VERSION,
@@ -245,11 +346,40 @@ def build_initial_business_semantics_catalog(project: str) -> dict[str, Any]:
     }
 
 
+def build_initial_business_semantics_catalog(
+    project: str,
+    *,
+    inspection_results: list[Any] | None = None,
+    base_catalog: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    if project not in config.PROJECT_CONFIG:
+        raise ValueError(f"未知项目: {project}")
+
+    if inspection_results is not None:
+        return build_business_semantics_catalog_from_inspection(
+            project,
+            inspection_results,
+            base_catalog=base_catalog,
+        )
+
+    data_domains = _domain_entries_from_naming(project)
+    business_areas = _business_area_entries_from_naming(project)
+    return {
+        "version": CATALOG_VERSION,
+        "project": project,
+        "data_domains": data_domains,
+        "business_areas": business_areas,
+        "business_processes": [],
+        "semantic_subjects": [],
+    }
+
+
 def write_initial_business_semantics_catalog(
     project: str,
     *,
     overwrite: bool = False,
     dry_run: bool = False,
+    inspection_results: list[Any] | None = None,
 ) -> dict[str, Any]:
     path = business_semantics_path(project)
     if path.exists() and not overwrite:
@@ -262,7 +392,12 @@ def write_initial_business_semantics_catalog(
             "catalog": catalog,
         }
 
-    catalog = build_initial_business_semantics_catalog(project)
+    base_catalog = load_business_semantics_catalog(project) if path.exists() else {}
+    catalog = build_initial_business_semantics_catalog(
+        project,
+        inspection_results=inspection_results,
+        base_catalog=base_catalog,
+    )
     changed = overwrite or not path.exists()
     if changed and not dry_run:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -281,46 +416,83 @@ def write_initial_business_semantics_catalog(
     }
 
 
-def catalog_mapping_for_table(catalog: dict[str, Any],
-                              table_name: str) -> dict[str, Any]:
+def _entry_by_code(entries: Any, code: str) -> dict[str, Any]:
+    wanted = _normalize_catalog_code(code)
+    if not wanted:
+        return {}
+    for entry in entries or []:
+        if not isinstance(entry, dict):
+            continue
+        if _normalize_catalog_code(entry.get("code")) == wanted:
+            return dict(entry)
+    return {}
+
+
+def catalog_mapping_for_model(
+    catalog: dict[str, Any],
+    table_name: str,
+    model_metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build catalog-backed model metadata from existing model references.
+
+    The model owns table-to-process/subject assignment. The catalog only
+    enriches those references with governed domain and area metadata.
+    """
     short_name = _short_table_name(table_name)
-    for subject in catalog.get("semantic_subjects") or []:
-        if not isinstance(subject, dict):
-            continue
-        if short_name not in {
-            _short_table_name(table) for table in subject.get("tables") or []
-        }:
-            continue
-        layer = _layer_from_table_name(short_name)
+    metadata = model_metadata or {}
+    layer = str(
+        metadata.get("layer")
+        or _layer_from_table_name(short_name)
+    ).upper()
+    table_type = str(metadata.get("table_type") or "").strip()
+
+    semantic_subject = _normalize_catalog_code(
+        metadata.get("semantic_subject"))
+    if semantic_subject:
+        subject = _entry_by_code(
+            catalog.get("semantic_subjects") or [],
+            semantic_subject,
+        )
+        if not subject:
+            return {"table": short_name}
         return {
             "table": short_name,
-            "layer": "DIM" if layer in {"DWD", "DIM"} else layer,
-            "table_type": "dimension",
+            "layer": layer,
+            "table_type": table_type or "dimension",
             "data_domain": str(subject.get("data_domain") or "").strip(),
             "business_area": str(subject.get("business_area") or "").strip(),
             "semantic_subject": str(subject.get("code") or "").strip(),
             "materialized": _materialized_for_layer(layer),
         }
 
-    for process in catalog.get("business_processes") or []:
-        if not isinstance(process, dict):
-            continue
-        if short_name not in {
-            _short_table_name(table) for table in process.get("tables") or []
-        }:
-            continue
-        layer = _layer_from_table_name(short_name)
+    business_process = _normalize_catalog_code(
+        metadata.get("business_process"))
+    if business_process:
+        process = _entry_by_code(
+            catalog.get("business_processes") or [],
+            business_process,
+        )
+        if not process:
+            return {"table": short_name}
         return {
             "table": short_name,
             "layer": layer,
-            "table_type": "fact",
+            "table_type": table_type or "fact",
             "data_domain": str(process.get("data_domain") or "").strip(),
             "business_area": str(process.get("business_area") or "").strip(),
             "business_process": str(process.get("code") or "").strip(),
             "materialized": _materialized_for_layer(layer),
         }
 
-    for mapping in catalog.get("mappings") or []:
-        if _short_table_name(mapping.get("table")) == short_name:
-            return dict(mapping)
-    return {}
+    return {"table": short_name}
+
+
+def catalog_mapping_for_table(catalog: dict[str, Any],
+                              table_name: str) -> dict[str, Any]:
+    """Compatibility wrapper.
+
+    Catalog no longer owns table assignments, so this returns only a base
+    table mapping. Use catalog_mapping_for_model when model metadata is
+    available.
+    """
+    return {"table": _short_table_name(table_name)}

@@ -137,6 +137,56 @@ def test_build_prompt_separates_business_process_and_semantic_subject():
         assert example not in prompt
 
 
+def test_build_prompt_uses_confirmed_catalog_options_without_hardcoded_domain():
+    ctx = TableContext(
+        table_name="dwd_event_detail",
+        layer="DWD",
+        ddl="CREATE TABLE dwd_event_detail (event_id BIGINT, amount DECIMAL(12,2));",
+        etl_sql="INSERT INTO dwd_event_detail SELECT event_id, amount FROM ods_event;",
+        upstream_tables=["ods_event"],
+        downstream_tables=["dws_event_daily"],
+        business_semantics_options={
+            "business_processes": [{
+                "code": "EVENT_COMPLETION",
+                "name": "事件完成",
+            }],
+            "semantic_subjects": [{
+                "code": "PARTY",
+                "name": "参与方",
+            }],
+        },
+    )
+
+    prompt = build_prompt(ctx)
+
+    assert "已确认业务语义目录" in prompt
+    assert "EVENT_COMPLETION" in prompt
+    assert "PARTY" in prompt
+    assert '"tables"' not in prompt
+    assert "优先复用目录中的 code" in prompt
+    assert "若没有合适 code" in prompt
+    assert "CUSTOMER_OPERATION" not in prompt
+    assert "PRODUCT_MANAGEMENT" not in prompt
+    assert "STORE_OPERATION" not in prompt
+
+
+def test_build_prompt_allows_domain_area_candidates_without_dictionary():
+    ctx = TableContext(
+        table_name="dwd_event_detail",
+        layer="DWD",
+        ddl="CREATE TABLE dwd_event_detail (event_id BIGINT);",
+        etl_sql="INSERT INTO dwd_event_detail SELECT event_id FROM ods_event;",
+        upstream_tables=["ods_event"],
+        downstream_tables=[],
+    )
+
+    prompt = build_prompt(ctx)
+
+    assert "未提供数据域与业务板块字典" in prompt
+    assert "可以返回新的大写下划线候选 code" in prompt
+    assert "不确定时返回空字符串" in prompt
+
+
 def test_build_prompt_treats_imputed_non_additive_inputs_as_dimensions():
     ctx = TableContext(
         table_name="dwd_fact_table",

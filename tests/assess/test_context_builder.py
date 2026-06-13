@@ -1,5 +1,8 @@
 import pytest
 from pathlib import Path
+import yaml
+
+import config
 from assess.context_builder import build_contexts, extract_dependencies
 
 
@@ -73,3 +76,64 @@ def test_build_context_without_task(sample_lineage_data, tmp_path):
     assert ctx.ddl == "CREATE dwd_order_detail;"
     assert ctx.etl_sql == ""
     assert ctx.downstream_tables == ["dws_store_sales_daily"]
+
+
+def test_build_contexts_includes_business_semantics_catalog_options(
+        sample_lineage_data, tmp_path, monkeypatch):
+    project = "context_catalog"
+    project_dir = tmp_path / project
+    ddl_dir = project_dir / "ddl"
+    tasks_dir = project_dir / "tasks"
+    ddl_dir.mkdir(parents=True)
+    tasks_dir.mkdir()
+    (ddl_dir / "dwd_order_detail.sql").write_text(
+        "CREATE TABLE dwd_order_detail (order_id BIGINT);",
+        encoding="utf-8",
+    )
+    (tmp_path / "naming_config.yaml").write_text(
+        "types: {}\nbindings: {}\ndictionaries: {}\n",
+        encoding="utf-8",
+    )
+    (project_dir / "business_semantics.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "version": 1,
+                "project": project,
+                "data_domains": [],
+                "business_areas": [],
+                "business_processes": [{
+                    "code": "ORDER_TRANSACTION",
+                    "name": "订单交易",
+                    "tables": ["dwd_order_detail"],
+                }],
+                "semantic_subjects": [{
+                    "code": "CUSTOMER",
+                    "name": "客户",
+                    "tables": ["dwd_customer"],
+                }],
+            },
+            allow_unicode=True,
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(config, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setitem(config.PROJECT_CONFIG, project, {
+        "dir": project,
+        "naming_config": "naming_config.yaml",
+    })
+    config._business_semantics_cache.clear()
+
+    contexts = build_contexts(project, sample_lineage_data)
+    ctx = next(c for c in contexts if c.table_name == "dwd_order_detail")
+
+    assert ctx.business_semantics_options == {
+        "business_processes": [{
+            "code": "ORDER_TRANSACTION",
+            "name": "订单交易",
+        }],
+        "semantic_subjects": [{
+            "code": "CUSTOMER",
+            "name": "客户",
+        }],
+    }

@@ -11,6 +11,7 @@ from assess.model_metadata_writer import (
     metric_violations,
     metric_names_for_model,
     run_catalog_metadata_write,
+    run_catalog_discovery,
     result_for_report,
     run_metadata_write,
     update_model_yaml,
@@ -1890,6 +1891,99 @@ def test_run_metadata_write_skips_blocked_model_updates(monkeypatch,
     assert result["skipped_model_updates"][0]["reason"] == "validation_blocked"
 
 
+def test_run_catalog_discovery_writes_catalog_from_llm_results(
+        tmp_path, monkeypatch, sample_lineage_data):
+    import assess.model_metadata_writer as writer_module
+
+    project = "catalog_discovery"
+    project_dir = tmp_path / project
+    (project_dir / "ddl").mkdir(parents=True)
+    (project_dir / "tasks").mkdir()
+    (tmp_path / "naming_config.yaml").write_text(
+        "types: {}\nbindings: {}\ndictionaries: {}\n",
+        encoding="utf-8",
+    )
+    _configure_project_root(monkeypatch, tmp_path)
+    monkeypatch.setitem(config.PROJECT_CONFIG, project, {
+        "dir": project,
+        "naming_config": "naming_config.yaml",
+    })
+    monkeypatch.setattr(writer_module, "load_lineage_data",
+                        lambda _project: sample_lineage_data)
+
+    class FakeInspector:
+        def __init__(self, api_key, *, model, cache_file, max_retries,
+                     parallelism):
+            self.progress_callback = None
+
+        def inspect_batch(self, contexts):
+            results = []
+            for ctx in contexts:
+                if ctx.table_name == "dwd_order_detail":
+                    results.append(TableInspectResult(
+                        table_name=ctx.table_name,
+                        declared_layer=ctx.layer,
+                        inferred_layer="DWD",
+                        table_type="fact",
+                        confidence=0.9,
+                        reasoning_steps=[],
+                        columns={
+                            "atomic_metrics": [{
+                                "name": "subtotal",
+                                "business_process": "ORDER_TRANSACTION",
+                            }],
+                            "derived_metrics": [],
+                            "calculated_metrics": [],
+                            "dimensions": [],
+                            "others": [],
+                        },
+                    ))
+                elif ctx.table_name == "dwd_customer":
+                    results.append(TableInspectResult(
+                        table_name=ctx.table_name,
+                        declared_layer=ctx.layer,
+                        inferred_layer="DIM",
+                        table_type="dimension",
+                        confidence=0.9,
+                        reasoning_steps=[],
+                        entities=[{
+                            "code": "CUSTOMER",
+                            "type": "primary",
+                            "name": "客户",
+                            "key_columns": ["customer_id"],
+                        }],
+                    ))
+            return results
+
+    monkeypatch.setattr(writer_module, "TableInspector", FakeInspector)
+
+    result = run_catalog_discovery(
+        project,
+        api_key="test",
+        dry_run=False,
+        overwrite=True,
+    )
+
+    catalog_path = project_dir / "business_semantics.yaml"
+    catalog = yaml.safe_load(catalog_path.read_text(encoding="utf-8"))
+    assert result["source"] == "llm_catalog_discovery"
+    assert result["updated"] is True
+    assert catalog["business_processes"][0]["code"] == "ORDER_TRANSACTION"
+    assert "tables" not in catalog["business_processes"][0]
+    assert catalog["semantic_subjects"][0]["code"] == "CUSTOMER"
+    assert "tables" not in catalog["semantic_subjects"][0]
+    assert result["model_update_count"] == 2
+
+    fact_model = yaml.safe_load(
+        (project_dir / "models" / "dwd_order_detail.yaml").read_text(
+            encoding="utf-8"))
+    dim_model = yaml.safe_load(
+        (project_dir / "models" / "dwd_customer.yaml").read_text(
+            encoding="utf-8"))
+    assert fact_model["business_process"] == "ORDER_TRANSACTION"
+    assert dim_model["semantic_subject"] == "CUSTOMER"
+
+
 def test_run_catalog_metadata_write_initializes_models_without_llm(
         tmp_path, monkeypatch):
     project = "catalog_writer"
@@ -1915,7 +2009,6 @@ def test_run_catalog_metadata_write_initializes_models_without_llm(
                     "name": "订单明细",
                     "data_domain": "04",
                     "business_area": "SHOP",
-                    "tables": ["dwd_order_detail"],
                 }],
                 "semantic_subjects": [],
             },
@@ -1951,10 +2044,83 @@ def test_run_catalog_metadata_write_initializes_models_without_llm(
     assert result["source"] == "catalog"
     assert result["model_update_count"] == 1
     assert model["layer"] == "DWD"
-    assert model["table_type"] == "fact"
+    assert model["table_type"] == "other"
+    assert "data_domain" not in model
+    assert "business_area" not in model
+    assert "business_process" not in model
+
+
+def test_run_catalog_metadata_write_enriches_existing_model_business_codes(
+        tmp_path, monkeypatch):
+    project = "catalog_writer_existing_refs"
+    project_dir = tmp_path / project
+    (project_dir / "ddl").mkdir(parents=True)
+    models_dir = project_dir / "models"
+    models_dir.mkdir()
+    (project_dir / "ddl" / "dwd_order_detail.sql").write_text(
+        """
+        CREATE TABLE dwd_order_detail (
+            order_id BIGINT,
+            pay_amount DECIMAL(12,2)
+        );
+        """,
+        encoding="utf-8",
+    )
+    (models_dir / "dwd_order_detail.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "version": 2,
+                "name": "dwd_order_detail",
+                "layer": "DWD",
+                "table_type": "fact",
+                "business_process": "ORDER_DETAIL",
+            },
+            allow_unicode=True,
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    (project_dir / "business_semantics.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "version": 1,
+                "project": project,
+                "data_domains": [{
+                    "id": "04",
+                    "code": "TRAN",
+                    "name": "交易域",
+                }],
+                "business_areas": [{
+                    "id": "SHOP",
+                    "code": "SHOP",
+                    "name": "零售业务",
+                }],
+                "business_processes": [{
+                    "code": "ORDER_DETAIL",
+                    "name": "订单明细",
+                    "data_domain": "04",
+                    "business_area": "SHOP",
+                }],
+                "semantic_subjects": [],
+            },
+            allow_unicode=True,
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    _configure_project_root(monkeypatch, tmp_path)
+    monkeypatch.setitem(config.PROJECT_CONFIG, project, {
+        "dir": project,
+        "naming_config": "naming_config.yaml",
+    })
+
+    run_catalog_metadata_write(project, dry_run=False, write_scope="business")
+
+    model = yaml.safe_load(
+        (models_dir / "dwd_order_detail.yaml").read_text(encoding="utf-8"))
+    assert model["business_process"] == "ORDER_DETAIL"
     assert model["data_domain"] == "04"
     assert model["business_area"] == "SHOP"
-    assert model["business_process"] == "ORDER_DETAIL"
 
 
 def test_run_catalog_metadata_write_can_dry_run_with_init_catalog(
@@ -2038,21 +2204,47 @@ def test_run_catalog_metadata_write_respects_business_metadata_layers(
                     "name": "门店销售",
                     "data_domain": "03",
                     "business_area": "SHOP",
-                    "tables": ["dws_store_sales_daily"],
                 }, {
                     "code": "IGNORED_DIM_PROCESS",
                     "name": "错误维表过程",
                     "data_domain": "03",
                     "business_area": "SHOP",
-                    "tables": ["dim_store"],
                 }],
                 "semantic_subjects": [{
                     "code": "STORE",
                     "name": "门店",
                     "data_domain": "03",
                     "business_area": "SHOP",
-                    "tables": ["dim_store"],
                 }],
+            },
+            allow_unicode=True,
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    (project_dir / "models").mkdir()
+    (project_dir / "models" / "dws_store_sales_daily.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "version": 2,
+                "name": "dws_store_sales_daily",
+                "layer": "DWS",
+                "table_type": "fact",
+                "business_process": "STORE_SALES",
+            },
+            allow_unicode=True,
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    (project_dir / "models" / "dim_store.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "version": 2,
+                "name": "dim_store",
+                "layer": "DIM",
+                "table_type": "dimension",
+                "semantic_subject": "STORE",
             },
             allow_unicode=True,
             sort_keys=False,

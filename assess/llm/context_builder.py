@@ -6,6 +6,7 @@ import yaml
 
 import config
 from config import get_business_domain_config, load_model_metadata
+from assess.project_facts.business_semantics import load_business_semantics_catalog
 
 DATA_DOMAIN_LAYERS = {"DWD"}
 BUSINESS_AREA_LAYERS = {"DWD", "DWS"}
@@ -26,6 +27,7 @@ class TableContext:
     declared_data_domain: str = ""
     declared_business_area: str = ""
     business_domain_options: dict = field(default_factory=dict)
+    business_semantics_options: dict = field(default_factory=dict)
 
 
 def _metric_names(value) -> list[str]:
@@ -77,6 +79,44 @@ def _load_model_metric_groups(models_dir: Path) -> dict[str, dict[str, list[str]
         if any(groups.values()):
             metric_groups[table_name] = groups
     return metric_groups
+
+
+def _catalog_option_entries(raw_entries) -> list[dict]:
+    entries = []
+    if not isinstance(raw_entries, list):
+        return entries
+    for entry in raw_entries:
+        if not isinstance(entry, dict):
+            continue
+        code = str(entry.get("code") or "").strip()
+        if not code:
+            continue
+        item = {
+            "code": code,
+            "name": str(entry.get("name") or "").strip(),
+        }
+        data_domain = str(entry.get("data_domain") or "").strip()
+        business_area = str(entry.get("business_area") or "").strip()
+        if data_domain:
+            item["data_domain"] = data_domain
+        if business_area:
+            item["business_area"] = business_area
+        entries.append(item)
+    return entries
+
+
+def _business_semantics_prompt_options(project: str) -> dict:
+    catalog = load_business_semantics_catalog(project)
+    if not catalog:
+        return {}
+    options = {}
+    processes = _catalog_option_entries(catalog.get("business_processes") or [])
+    subjects = _catalog_option_entries(catalog.get("semantic_subjects") or [])
+    if processes:
+        options["business_processes"] = processes
+    if subjects:
+        options["semantic_subjects"] = subjects
+    return options
 
 
 def _table_from_node(node_id: str) -> str:
@@ -150,6 +190,7 @@ def build_contexts(project: str,
         if business_domain_config
         else {}
     )
+    business_semantics_options = _business_semantics_prompt_options(project)
     contexts = []
 
     memo = {}
@@ -215,6 +256,7 @@ def build_contexts(project: str,
                              if layer in BUSINESS_AREA_LAYERS
                              else ""
                          ),
-                         business_domain_options=business_domain_options))
+                         business_domain_options=business_domain_options,
+                         business_semantics_options=business_semantics_options))
 
     return contexts

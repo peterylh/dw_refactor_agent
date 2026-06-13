@@ -15,7 +15,7 @@ from assess.project_facts.entity_metadata import (
 )
 
 
-PROMPT_VERSION = "table-inspector-v19"
+PROMPT_VERSION = "table-inspector-v20"
 VALID_LAYERS = {"ODS", "DWD", "DWS", "ADS", "DIM", "OTHER"}
 VALID_TABLE_TYPES = {"dimension", "fact", "other"}
 METRIC_GROUPING_LAYERS = {"DWD", "DWS"}
@@ -135,6 +135,7 @@ def build_prompt(ctx: TableContext) -> str:
 - semantic_subject 表示维度/实体属性表的语义主题，通常对应维表主实体编码；它不是业务过程，也不应被写入指标字段的 business_process。
 - 表名或描述中含有 MANAGEMENT、OPERATION、PROFILE、MASTER、INFO 等模式时，必须先检查是否存在可度量业务事件；没有事件事实和指标时，优先视为语义主题/业务主题，不要归为严格的业务过程。
 - 字段级 business_process 若需要填写，应是可代码化的大写下划线短语，表达“动作/事件 + 业务结果或业务对象”的过程；不能仅由实体主语、管理/运营词或表主题词组成。
+- 如果提供了已确认业务语义目录，business_process 和 entities[].code 应优先复用目录中的 code；若没有合适 code，可以返回新的大写下划线候选，但必须由当前表的事件事实、指标口径或主实体证据支撑。
 - 本次巡检 JSON 不返回 semantic_subject 顶层字段；这条规则用于避免把维表主题误填到指标字段的 business_process。catalog 初始化或 models 回写时可将 dimension 表主实体转为 semantic_subject。
 
 ## 指标字段分组标准
@@ -196,6 +197,26 @@ def build_prompt(ctx: TableContext) -> str:
 {json.dumps(ctx.business_domain_options, ensure_ascii=False, indent=2)}
 
 """
+    else:
+        prompt += """## 数据域与业务板块候选
+未提供数据域与业务板块字典，本轮允许进行轻量发现:
+- 数据域只适用于 DWD 层。当前表若不是 DWD，inferred_data_domain 必须返回空字符串。
+- 业务板块只适用于 DWD 和 DWS 层。当前表若不是 DWD/DWS，inferred_business_area 必须返回空字符串。
+- 若当前表语义明确，可以返回新的大写下划线候选 code；不确定时返回空字符串。
+- 候选 code 应表达业务域或板块语义，不要照抄表名，不要填管理/运营这类泛化词。
+
+"""
+    if ctx.business_semantics_options:
+        prompt += f"""## 已确认业务语义目录
+请把下列目录作为人工确认过的治理输入使用。
+- 事实表/汇总事实表的指标字段若能匹配某个业务过程，business_process 必须优先复用目录中的 code。
+- 维度表的 entities[].code 若能匹配某个语义主题，必须优先复用目录中的 code。
+- 若没有合适 code，可以返回新的大写下划线候选；不要为了贴合目录而把维度主题填成业务过程。
+
+可选目录:
+{json.dumps(ctx.business_semantics_options, ensure_ascii=False, indent=2)}
+
+"""
     if ctx.etl_sql:
         prompt += f"## ETL 加工逻辑\n{ctx.etl_sql}\n\n"
 
@@ -222,8 +243,8 @@ def build_prompt(ctx: TableContext) -> str:
 {{
   "inferred_layer": "ODS|DWD|DWS|ADS|DIM|OTHER",
   "table_type": "dimension|fact|other",
-  "inferred_data_domain": "数据域编号，如 04；不适用层为空字符串；不确定时可返回其它数据域编号",
-  "inferred_business_area": "业务板块简写，如 PAYM；不适用层为空字符串；不确定时可返回其它业务板块简写",
+  "inferred_data_domain": "已确认数据域编号或新的大写下划线候选 code；不适用或不确定时为空字符串",
+  "inferred_business_area": "已确认业务板块简写或新的大写下划线候选 code；不适用或不确定时为空字符串",
   "entities": [
     {{
       "code": "实体编码，如 PROD；不适用或无法判断时返回空数组",
@@ -260,6 +281,7 @@ def build_prompt(ctx: TableContext) -> str:
       {{
         "name": "字段名",
         "data_type": "字段类型",
+        "business_process": "业务过程 code，无法判断则为空字符串",
         "base_metric": "对应原子指标名，无法判断则为空字符串",
         "modifiers": ["修饰词，如区域/渠道/状态，无法判断则为空数组"],
         "time_period": "时间周期，无法判断则为空字符串",
@@ -273,6 +295,7 @@ def build_prompt(ctx: TableContext) -> str:
       {{
         "name": "字段名",
         "data_type": "字段类型",
+        "business_process": "业务过程 code，无法判断则为空字符串",
         "expression": "衍生表达式，无法判断则为空字符串",
         "derived_from": ["来源字段"],
         "description": "简短中文描述",
@@ -441,6 +464,7 @@ def _normalize_columns(raw_columns: Any) -> dict[str, list[dict[str, Any]]]:
         "derived_metrics": (
             "name",
             "data_type",
+            "business_process",
             "base_metric",
             "modifiers",
             "time_period",
@@ -452,6 +476,7 @@ def _normalize_columns(raw_columns: Any) -> dict[str, list[dict[str, Any]]]:
         "calculated_metrics": (
             "name",
             "data_type",
+            "business_process",
             "expression",
             "derived_from",
             "description",
@@ -708,7 +733,8 @@ class TableInspector:
             f"{ctx.etl_sql}|{ctx.upstream_tables}|{ctx.downstream_tables}|"
             f"{ctx.depth_from_ods}|{ctx.upstream_metric_groups}|"
             f"{ctx.column_lineage}|{ctx.declared_data_domain}|"
-            f"{ctx.declared_business_area}|{ctx.business_domain_options}"
+            f"{ctx.declared_business_area}|{ctx.business_domain_options}|"
+            f"{ctx.business_semantics_options}"
         )
         return hashlib.sha256(content.encode("utf-8")).hexdigest()
 

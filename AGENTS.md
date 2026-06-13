@@ -352,6 +352,9 @@ python refact/verify_check.py --metadata refact/refact_metadata.json --precision
 
 ## 数据集市评估工具 (assess/)
 
+元数据初始化、catalog 发现、models 刷新等完整流程参见
+[docs/assess_metadata_initialization.md](docs/assess_metadata_initialization.md)。
+
 `assess/assess_middle_layer.py` 用于评估中间层质量，当前 CLI 支持：
 
 - `shop`
@@ -390,6 +393,65 @@ python assess/assess_middle_layer.py --llm --no-cache
 
 结果输出到 `assess/assess_result_{project}.json`。
 
+### 业务语义目录与 models 初始化
+
+业务语义目录默认放在项目目录下：
+
+- `shop/business_semantics.yaml`
+- `finance_analytics/business_semantics.yaml`
+
+目录包含：
+
+- `data_domains`：数据域，通常数量较少，建议人工稳定维护
+- `business_areas`：业务板块
+- `business_processes`：事实表/汇总事实表对应的可度量业务过程
+- `semantic_subjects`：维度/实体属性表的语义主题，通常对应维表主实体
+
+无 LLM 初始化只生成目录骨架和可用字典，不再根据表名硬猜业务过程：
+
+```bash
+python assess/business_semantics_catalog.py --project shop --dry-run
+python assess/business_semantics_catalog.py --project shop
+```
+
+使用 LLM 初始化或更新目录：
+
+```bash
+python assess/business_semantics_catalog.py --project shop --llm --dry-run --overwrite
+python assess/business_semantics_catalog.py --project shop --llm --overwrite
+```
+
+等价入口：
+
+```bash
+python assess/model_metadata_writer.py --project shop --catalog-from-llm --dry-run --overwrite-catalog
+python assess/model_metadata_writer.py --project shop --catalog-from-llm --overwrite-catalog
+```
+
+LLM 目录发现会先做表级巡检，再将 fact 表指标字段中的
+`business_process` 聚类为 `business_processes`，将 dimension 表主实体聚类为
+`semantic_subjects`。未提供数据域/业务板块字典时，LLM 可以生成候选 code，
+后续由用户在 catalog 中人工修订。表级归属会写入 `models/*.yaml`，
+catalog 不长期维护 `tables`。
+
+从已确认 catalog 初始化或刷新 models：
+
+```bash
+python assess/model_metadata_writer.py --project shop --from-catalog --write-scope business --dry-run
+python assess/model_metadata_writer.py --project shop --from-catalog --write-scope business
+```
+
+`--from-catalog --write-scope business` 不调用 LLM。表到业务过程/语义主题的归属以
+`{project}/models/*.yaml` 为准；catalog 只作为 code 字典和治理目录，用于校验并补齐模型中的业务域/板块信息：
+
+- 缺失的 model 文件会被创建
+- 写入或刷新 `version`、`name`、`layer`、`table_type`、`config.materialized`
+- 对已有 `business_process` 的 DWD fact，从 catalog 补齐 `data_domain`
+- 对已有 `business_process` 的 DWD/DWS fact，从 catalog 补齐 `business_area`
+- 对已有 `semantic_subject` 的 dimension 表，保留 subject code，并移除不适用的 `business_process`
+
+这个命令不会识别指标、不会刷新 entities/grain，不会根据 catalog 反向给表分配业务过程，也不会改 DDL、任务 SQL、表名或文件名。LLM 目录发现阶段识别出的表归属会直接写入 models，而不是长期写在 catalog 中。
+
 ### 指标识别与回写
 
 `assess/table_inspector.py` 是基础表巡检能力，用于单次 DeepSeek 调用中完成表级分层、表类型判断和字段分组。
@@ -403,12 +465,13 @@ python assess/assess_middle_layer.py --llm --no-cache
 - LLM 推断的 `inferred_layer` / `table_type` 会回写为 models 中的 `layer` / `table_type`
 - 只要 LLM 判断 `table_type=dimension`，models 中的 `layer` 强制写为 `DIM`
 - 当 `table_type=dimension` 但 `inferred_layer != DIM` 时，结果 JSON 会输出元数据 warning
-- `--write-scope all|table|metrics` 控制回写范围，默认 `all`
+- `--write-scope all|table|metrics|grain|business` 控制回写范围，默认 `all`
 - DWD/DWS 事实表字段按 `atomic_metrics` / `derived_metrics` / `calculated_metrics` / `dimensions` / `others` 分组
 - 识别出的指标名称按 `atomic_metrics` / `derived_metrics` / `calculated_metrics` 覆盖写入 `{project}/models/{table_name}.yaml`
 - 派生指标通常回写到 DWS 模型；DWD 事实表中的派生/衍生指标作为 DWD 违规项写入巡检结果 JSON
 - LLM 返回会按 DDL 字段名校验，结果状态分为 `passed` / `warning` / `blocked`
 - 字段幻觉或重复分组会自动重试少数几次，最终仍为 `blocked` 的表不会回写 models
+- `--write-scope business` 仅配合 `--from-catalog` 使用，用于从业务语义目录同步 models
 
 示例：
 
@@ -424,6 +487,12 @@ python assess/model_metadata_writer.py --project shop --write-scope table
 
 # 只回写指标分组
 python assess/model_metadata_writer.py --project shop --write-scope metrics
+
+# 只回写 entities/grain
+python assess/model_metadata_writer.py --project shop --write-scope grain
+
+# 从已确认 catalog 同步业务语义和基础模型元数据，不调用 LLM
+python assess/model_metadata_writer.py --project shop --from-catalog --write-scope business
 
 # 忽略缓存，强制重新调用 DeepSeek
 python assess/model_metadata_writer.py --project shop --no-cache

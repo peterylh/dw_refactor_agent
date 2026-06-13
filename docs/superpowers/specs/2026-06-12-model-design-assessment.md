@@ -67,22 +67,31 @@ next to `ddl/`, `tasks/`, and `models/`. Shared helpers may still live under
 `assess/project_facts`, but generated project catalogs should not default to
 the `assess` package directory.
 
-The catalog is initialized by `business_semantics_discoverer` using asset cards rather than raw full-project prompt dumps. Each asset card should summarize table name, layer hints, DDL columns and comments, keys, task SQL features, lineage, upstream/downstream tables, and any existing model/LLM metadata.
+The catalog is initialized by `assess/business_semantics_catalog.py --llm` or
+`assess/model_metadata_writer.py --catalog-from-llm` using table-level
+inspection contexts rather than raw full-project prompt dumps. Each context
+summarizes table name, layer hints, DDL columns and comments, keys, task SQL
+features, lineage, upstream/downstream tables, and any existing model/LLM
+metadata.
 
 The discoverer may use LLM clustering to identify candidate data domains, business areas, business processes, and their mappings. If existing naming configuration or model metadata already defines business domains or areas, those codes should be treated as preferred anchors. The output is written directly to the working tree only when requested; review is done with Git.
 
 ## Models Initialization
 
-Current model writing can create YAML files at the low level, but the end-to-end flow assumes table layers are already known from `models`. Add an initialization flow that can start from an empty or incomplete `models` directory.
+Current model writing can create YAML files from the accepted catalog, so an
+empty or incomplete `models` directory can be bootstrapped without a separate
+proposal/accept workflow.
 
 Command shape:
 
 ```bash
-python assess/model_metadata_initializer.py --project shop --dry-run
-python assess/model_metadata_initializer.py --project shop --write
+python assess/model_metadata_writer.py --project shop --from-catalog --write-scope business --dry-run
+python assess/model_metadata_writer.py --project shop --from-catalog --write-scope business
 ```
 
-Initialization should be ambitious rather than minimal. For each persistent table, generate as much of the model metadata as can be supported by program evidence and LLM inference:
+Initialization writes stable base metadata and catalog-backed business
+semantics. Further LLM model inspection can then add entities, grain and metric
+groups:
 
 ```yaml
 version: 2
@@ -121,20 +130,24 @@ Rules for writing model YAML:
 After the catalog changes, refresh table-level metadata from the catalog:
 
 ```bash
-python assess/model_metadata_writer.py --project shop --from-catalog --dry-run
-python assess/model_metadata_writer.py --project shop --from-catalog --llm --write-scope all
+python assess/model_metadata_writer.py --project shop --from-catalog --write-scope business --dry-run
+python assess/model_metadata_writer.py --project shop --from-catalog --write-scope business
 ```
 
-`--from-catalog` means the catalog constrains valid codes. Programmatic synchronization should not require LLM calls when the mapping is deterministic, for example when a metric already references `business_process=order_sale` and the catalog maps `order_sale -> ORDER -> SALE`.
+`--from-catalog` means the accepted catalog is the governed code dictionary.
+This path does not call LLM; table assignment is owned by `models/*.yaml`, and
+the catalog enriches existing `business_process` / `semantic_subject`
+references with domain and area metadata.
 
-LLM classification is needed when:
+LLM classification is needed before or after this deterministic refresh when:
 
 - A table or metric lacks a business process.
 - Existing free-text process values need mapping to catalog codes.
 - Catalog changes split or merge previous processes.
 - Program evidence has multiple plausible process candidates.
 
-When `--from-catalog --llm` is used, the LLM may choose from catalog codes, return `unknown`, or return `new_candidate`; it should not silently create new stable codes in models.
+Use `--catalog-from-llm` or `business_semantics_catalog.py --llm` for that
+discovery step, then review the catalog with Git before refreshing models.
 
 Suggested write scopes:
 
@@ -151,7 +164,8 @@ all        all writable metadata
 Use Git as the review and accept mechanism:
 
 ```bash
-python assess/model_metadata_writer.py --project shop --from-catalog --llm --write-scope all
+python assess/business_semantics_catalog.py --project shop --llm --overwrite
+python assess/model_metadata_writer.py --project shop --from-catalog --write-scope business
 git diff
 git add -p
 ```

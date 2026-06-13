@@ -40,54 +40,35 @@ business_processes:
   name: 库存管理
   data_domain: '05'
   business_area: SHOP
-  tables:
-  - dwd_inventory
-  - dws_inventory_daily
   source: llm_round2
 - code: ORDER_TRANSACTION
   name: 订单交易
   data_domain: '04'
   business_area: SHOP
-  tables:
-  - dwd_order_detail
-  - dws_category_sales_monthly
-  - dws_customer_order_summary
-  - dws_product_sales_daily
-  - dws_store_sales_daily
   source: llm_round2
 - code: PROMOTION_EFFECT
   name: 促销效果
   data_domain: '06'
   business_area: SHOP
-  tables:
-  - dws_promotion_effect_daily
   source: llm_round2
 semantic_subjects:
 - code: CUST
   name: 客户
   data_domain: '01'
   business_area: SHOP
-  tables:
-  - dwd_customer
   source: llm_round2
 - code: PROD
   name: 商品
   data_domain: '02'
   business_area: SHOP
-  tables:
-  - dwd_product
   source: llm_round2
 - code: PROMOTION
   name: 促销活动
   data_domain: '06'
   business_area: SHOP
-  tables:
-  - dwd_promotion
   source: llm_round2
 - code: STORE
   name: 门店
   data_domain: '03'
   business_area: SHOP
-  tables:
-  - dwd_store
   source: llm_round2
