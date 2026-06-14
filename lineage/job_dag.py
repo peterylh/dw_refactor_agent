@@ -33,13 +33,23 @@ class JobDAG:
         deps = defaultdict(set)
         rev = defaultdict(set)
         for e in self._edges:
-            src = e["source"].rsplit(".", 1)[0]
-            tgt = e["target"].rsplit(".", 1)[0]
-            if src != tgt:
+            src = self._edge_table(e.get("source"))
+            tgt = self._edge_table(e.get("target"))
+            if src and tgt and src != tgt:
                 deps[src].add(tgt)
                 rev[tgt].add(src)
         self._deps = dict(deps)
         self._rev = dict(rev)
+
+    @staticmethod
+    def _edge_table(ref) -> str:
+        if isinstance(ref, dict):
+            if ref.get("type") == "column":
+                return str(ref.get("id") or "").rsplit(".", 1)[0]
+            if ref.get("type") == "table":
+                return str(ref.get("id") or "")
+            return ""
+        return str(ref or "").rsplit(".", 1)[0]
 
     def add_edge(self, source: str, target: str):
         if source != target:

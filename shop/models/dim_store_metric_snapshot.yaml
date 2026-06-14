@@ -1,0 +1,16 @@
+version: 2
+name: dim_store_metric_snapshot
+layer: DIM
+table_type: dimension
+description: DIM anti-pattern fixture with metric group metadata
+config:
+  materialized: snapshot
+atomic_metrics:
+- store_order_count
+entities:
+- code: STOR
+  type: primary
+  name: Store
+  key_columns:
+  - store_id
+semantic_subject: STOR

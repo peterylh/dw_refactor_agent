@@ -1,0 +1,17 @@
+version: 2
+name: dws_order_passthrough_daily
+layer: DWS
+table_type: fact
+business_area: SHOP
+description: DWS anti-pattern fixture without aggregation or grain
+config:
+  materialized: incremental
+atomic_metrics:
+- subtotal
+entities:
+- code: ORDER_ITEM
+  type: foreign
+  name: Order item
+  key_columns:
+  - order_item_id
+business_process: ORDER_TRANSACTION

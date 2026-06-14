@@ -184,6 +184,12 @@ def extract_model_design_sql_facts(sql_text: str) -> dict:
     return _extract_sql_facts_with_regex(sql_text)
 
 
+def _transformation_type_for_expression(expression: str) -> str:
+    if AGGREGATE_PATTERN.search(str(expression or "")):
+        return "aggregation"
+    return "passthrough"
+
+
 def _table_metadata(model_metadata: dict | None, table_name: str) -> dict:
     if not model_metadata:
         return {}
@@ -262,6 +268,147 @@ def _table_sql_facts(asset_catalog: dict | None, table_name: str) -> dict:
     }
 
 
+def _edge_ref_type(ref) -> str:
+    return str(ref.get("type") or "") if isinstance(ref, dict) else "column"
+
+
+def _edge_ref_id(ref) -> str:
+    if isinstance(ref, dict):
+        return str(ref.get("id") or "")
+    return str(ref or "")
+
+
+def _edge_source_table(edge: dict) -> str:
+    if _edge_ref_type(edge.get("source")) != "column":
+        return ""
+    source_id = _edge_ref_id(edge.get("source"))
+    return _table_from_node(source_id) if source_id else ""
+
+
+def _edge_target_table(edge: dict) -> str:
+    target_id = _edge_ref_id(edge.get("target"))
+    return _table_from_node(target_id) if target_id else ""
+
+
+def _edge_target_column(edge: dict) -> str:
+    if _edge_ref_type(edge.get("target")) != "column":
+        return ""
+    target_id = _edge_ref_id(edge.get("target"))
+    return _short_column_name(target_id) if target_id else ""
+
+
+def _lineage_facts_from_edges(edges: list | None, table_name: str) -> dict:
+    aggregate_columns = set()
+    constant_columns = set()
+    plain_columns = {}
+    group_by_sources = set()
+    direct_edges = []
+    source_files = set()
+
+    for edge in edges or []:
+        target_table = _edge_target_table(edge)
+        if target_table != table_name:
+            continue
+
+        relation_type = str(edge.get("relation_type") or "direct").lower()
+        transformation = str(
+            edge.get("transformation_type")
+            or _transformation_type_for_expression(edge.get("expression", ""))
+        ).lower()
+        source_type = _edge_ref_type(edge.get("source"))
+        source_id = _edge_ref_id(edge.get("source"))
+        target_column = _edge_target_column(edge)
+        source_file = str(edge.get("source_file") or "")
+        if source_file:
+            source_files.add(source_file)
+
+        if relation_type == "group_by" and source_type == "column":
+            if source_id:
+                group_by_sources.add(source_id)
+            continue
+
+        if relation_type != "direct" or not target_column:
+            continue
+
+        direct_edges.append(edge)
+        if transformation == "aggregation":
+            aggregate_columns.add(target_column)
+        elif transformation == "constant" or source_type in {"literal", "expression"}:
+            constant_columns.add(target_column)
+        elif source_type == "column":
+            plain_columns[target_column] = source_id
+
+    return {
+        "has_lineage": bool(direct_edges or group_by_sources),
+        "has_group_by": bool(group_by_sources),
+        "has_aggregate": bool(aggregate_columns),
+        "aggregate_columns": sorted(aggregate_columns),
+        "constant_columns": sorted(constant_columns),
+        "plain_columns": sorted(plain_columns),
+        "plain_column_sources": dict(sorted(plain_columns.items())),
+        "group_by_sources": sorted(group_by_sources),
+        "source_files": sorted(source_files),
+    }
+
+
+def _combined_design_facts(
+    asset_catalog: dict | None,
+    edges: list | None,
+    table_name: str,
+) -> dict:
+    sql_facts = _table_sql_facts(asset_catalog, table_name)
+    edge_facts = _lineage_facts_from_edges(edges, table_name)
+    return {
+        **sql_facts,
+        "has_group_by": sql_facts["has_group_by"] or edge_facts["has_group_by"],
+        "has_aggregate": (
+            sql_facts["has_aggregate"] or edge_facts["has_aggregate"]
+        ),
+        "source_files": sorted(
+            set(sql_facts.get("source_files") or [])
+            | set(edge_facts.get("source_files") or [])
+        ),
+        "lineage": edge_facts,
+    }
+
+
+def _metric_group_names(metadata: dict) -> dict[str, list[str]]:
+    groups = {}
+    for key in ("atomic_metrics", "derived_metrics", "calculated_metrics"):
+        names = []
+        for item in metadata.get(key) or []:
+            if isinstance(item, dict):
+                name = str(item.get("name") or "").strip()
+            else:
+                name = str(item or "").strip()
+            if name:
+                names.append(name)
+        if names:
+            groups[key] = names
+    return groups
+
+
+def _dws_plain_field_leakage(metadata: dict, design_facts: dict) -> dict:
+    lineage = design_facts.get("lineage") or {}
+    plain_sources = lineage.get("plain_column_sources") or {}
+    group_sources = set(lineage.get("group_by_sources") or [])
+    grain_keys = set(grain_key_columns(metadata))
+    leaked = []
+    for target_column, source_id in plain_sources.items():
+        if target_column in grain_keys:
+            continue
+        if source_id in group_sources:
+            continue
+        leaked.append(target_column)
+    return {
+        "leaked_columns": sorted(leaked),
+        "plain_column_sources": plain_sources,
+        "group_by_sources": sorted(group_sources),
+        "grain_keys": sorted(grain_keys),
+        "constant_columns": lineage.get("constant_columns") or [],
+    }
+
+
 def _table_column_names(table: dict) -> list[str]:
     names = []
     for column in table.get("columns") or []:
@@ -325,14 +472,14 @@ def score_model_design_health(
 
     table_edges = defaultdict(set)
     for edge in edges:
-        src = _table_from_node(edge["source"])
-        tgt = _table_from_node(edge["target"])
-        if src != tgt:
+        src = _edge_source_table(edge)
+        tgt = _edge_target_table(edge)
+        if src and tgt and src != tgt:
             table_edges[(src, tgt)].add(edge.get("source_file", ""))
     for edge in indirect_edges:
         src = _table_from_node(edge["source"])
         tgt = edge["target_table"]
-        if src != tgt:
+        if src and tgt and src != tgt:
             table_edges[(src, tgt)].add(edge.get("source_file", ""))
 
     checks = []
@@ -578,13 +725,30 @@ def score_model_design_health(
         table_name = str(table.get("name") or "").strip()
         layer = str(table.get("layer") or "OTHER").upper()
         metadata = _table_metadata(model_metadata, table_name)
-        if not table_name or not _is_fact_table(model_metadata, table_name):
+        if not table_name:
             continue
 
-        sql_facts = _table_sql_facts(asset_catalog, table_name)
+        metric_groups = _metric_group_names(metadata)
+        if (
+            layer == "DIM" or _table_type(model_metadata, table_name) == "dimension"
+        ) and metric_groups:
+            record_check(
+                rule_id="MODEL_DIM_NO_METRIC_GROUPS",
+                target_table=table_name,
+                passed=False,
+                expected="DIM模型不配置指标分组",
+                actual="存在指标分组",
+                evidence={"metric_groups": metric_groups},
+                message="DIM模型包含指标分组，应移除或调整表类型",
+            )
+
+        if not _is_fact_table(model_metadata, table_name):
+            continue
+
+        design_facts = _combined_design_facts(asset_catalog, edges, table_name)
         if layer == "DWD":
             has_aggregation = (
-                sql_facts["has_group_by"] or sql_facts["has_aggregate"]
+                design_facts["has_group_by"] or design_facts["has_aggregate"]
             )
             record_check(
                 rule_id="MODEL_DWD_FACT_NO_AGGREGATION",
@@ -596,10 +760,31 @@ def score_model_design_health(
                     if has_aggregation
                     else "未发现聚合"
                 ),
-                evidence=sql_facts,
+                evidence=design_facts,
                 message=(
                     "DWD事实表疑似承载汇总逻辑，应保持明细粒度"
                     if has_aggregation else ""
+                ),
+            )
+            non_atomic_metric_groups = {
+                key: value
+                for key, value in metric_groups.items()
+                if key in {"derived_metrics", "calculated_metrics"}
+            }
+            record_check(
+                rule_id="MODEL_DWD_FACT_NO_DERIVED_METRICS",
+                target_table=table_name,
+                passed=not non_atomic_metric_groups,
+                expected="DWD事实表只配置原子指标",
+                actual=(
+                    "存在派生/计算指标"
+                    if non_atomic_metric_groups
+                    else "未发现派生/计算指标"
+                ),
+                evidence={"metric_groups": non_atomic_metric_groups},
+                message=(
+                    "DWD事实表包含派生或计算指标，应上移到DWS或修正指标分组"
+                    if non_atomic_metric_groups else ""
                 ),
             )
             has_event_key = _has_event_key(table, metadata)
@@ -631,8 +816,29 @@ def score_model_design_health(
                 evidence={"grain": grain or {}},
                 message="DWS事实表缺少grain元数据" if not has_grain else "",
             )
-            if has_grain and sql_facts["has_group_by"]:
-                mismatch = _grain_group_by_mismatch(metadata, sql_facts)
+            has_design_evidence = bool(
+                design_facts.get("source_files")
+                or (design_facts.get("lineage") or {}).get("has_lineage")
+            )
+            if has_design_evidence:
+                record_check(
+                    rule_id="MODEL_DWS_FACT_HAS_AGGREGATION",
+                    target_table=table_name,
+                    passed=design_facts["has_aggregate"],
+                    expected="DWS事实表包含聚合逻辑",
+                    actual=(
+                        "存在聚合"
+                        if design_facts["has_aggregate"]
+                        else "未发现聚合"
+                    ),
+                    evidence=design_facts,
+                    message=(
+                        "DWS事实表疑似只是明细透传，缺少汇总逻辑"
+                        if not design_facts["has_aggregate"] else ""
+                    ),
+                )
+            if has_grain and design_facts["has_group_by"]:
+                mismatch = _grain_group_by_mismatch(metadata, design_facts)
                 record_check(
                     rule_id="MODEL_DWS_GRAIN_MATCHES_GROUP_BY",
                     target_table=table_name,
@@ -647,10 +853,27 @@ def score_model_design_health(
                             f"GROUP BY额外字段={mismatch['extra_group_by']}"
                         )
                     ),
-                    evidence={**sql_facts, **mismatch},
+                    evidence={**design_facts, **mismatch},
                     message=(
                         "DWS事实表声明粒度与SQL GROUP BY不一致"
                         if not mismatch["matched"] else ""
+                    ),
+                )
+                leakage = _dws_plain_field_leakage(metadata, design_facts)
+                record_check(
+                    rule_id="MODEL_DWS_SELECT_FIELDS_MATCH_GRAIN",
+                    target_table=table_name,
+                    passed=not leakage["leaked_columns"],
+                    expected="DWS SELECT普通字段属于声明粒度或GROUP BY来源",
+                    actual=(
+                        "存在明细字段泄漏"
+                        if leakage["leaked_columns"]
+                        else "未发现明细字段泄漏"
+                    ),
+                    evidence=leakage,
+                    message=(
+                        "DWS输出字段包含非聚合且不属于粒度的明细字段"
+                        if leakage["leaked_columns"] else ""
                     ),
                 )
 

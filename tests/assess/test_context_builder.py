@@ -31,7 +31,7 @@ def test_extract_dependencies_collapses_transient_tables():
             {"source": "tmp_orders_stage.order_id", "target": "dws_orders.order_id"},
         ],
         "indirect_edges": [],
-        "transient_tables": [{"name": "tmp_orders_stage", "is_transient": True}],
+        "tables": [{"name": "tmp_orders_stage", "is_transient": True}],
     }
 
     upstream, downstream = extract_dependencies(lineage_data)
@@ -56,7 +56,7 @@ def test_extract_column_lineage_collapses_transient_fields():
                 "source_file": "dws_promotion_effect_daily.sql",
             },
         ],
-        "transient_tables": [{
+        "tables": [{
             "name": "tmp_promotion_stage",
             "is_transient": True,
         }],

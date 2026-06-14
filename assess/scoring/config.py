@@ -343,6 +343,38 @@ MODEL_DESIGN_RULES = {
         strategy="declare_or_add_event_key",
         edit_scope=["models", "ddl", "tasks"],
     ),
+    "MODEL_DWS_FACT_HAS_AGGREGATION": rule_meta(
+        name="DWS事实表包含聚合逻辑",
+        severity=SEVERITY_MEDIUM,
+        title="DWS事实表缺少聚合逻辑",
+        remediation_summary="将该表调整为明细层，或在DWS作业中补齐汇总逻辑",
+        strategy="align_dws_aggregation",
+        edit_scope=["tasks", "models"],
+    ),
+    "MODEL_DWS_SELECT_FIELDS_MATCH_GRAIN": rule_meta(
+        name="DWS SELECT普通字段符合声明粒度",
+        severity=SEVERITY_HIGH,
+        title="DWS输出字段存在明细粒度泄漏",
+        remediation_summary="移除明细字段，或将字段纳入grain/GROUP BY以调整汇总粒度",
+        strategy="align_dws_select_fields_with_grain",
+        edit_scope=["tasks", "models"],
+    ),
+    "MODEL_DIM_NO_METRIC_GROUPS": rule_meta(
+        name="DIM模型不配置指标分组",
+        severity=SEVERITY_HIGH,
+        title="DIM模型包含指标分组",
+        remediation_summary="移除DIM模型中的指标分组，或修正表类型/层级",
+        strategy="remove_dim_metric_groups",
+        edit_scope=["models"],
+    ),
+    "MODEL_DWD_FACT_NO_DERIVED_METRICS": rule_meta(
+        name="DWD事实表不配置派生或计算指标",
+        severity=SEVERITY_MEDIUM,
+        title="DWD事实表包含派生或计算指标",
+        remediation_summary="将派生/计算指标上移到DWS，或修正指标分组",
+        strategy="move_non_atomic_metrics_to_dws",
+        edit_scope=["models", "tasks"],
+    ),
 }
 
 NAMING_RULES = {

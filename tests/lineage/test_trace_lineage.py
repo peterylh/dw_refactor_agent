@@ -76,10 +76,50 @@ class TestTraceLineage:
             schema_ods_order,
             "test.sql",
         )
-        # constants should produce no source column lineage
-        for e in entries:
-            assert e["source_table"] != "UNKNOWN"
-            assert e["source_column"] != "UNKNOWN"
+        # constants should produce source-free lineage, not UNKNOWN columns.
+        assert entries == [
+            {
+                "lineage_type": "direct",
+                "source_type": "literal",
+                "source_value": "1",
+                "target_table": "target_tbl",
+                "target_column": "col",
+                "expression": "1 AS col",
+                "transformation_type": "constant",
+                "source_file": "test.sql",
+            },
+            {
+                "lineage_type": "direct",
+                "source_type": "literal",
+                "source_value": "abc",
+                "target_table": "target_tbl",
+                "target_column": "col2",
+                "expression": "'abc' AS col2",
+                "transformation_type": "constant",
+                "source_file": "test.sql",
+            },
+        ]
+
+    def test_select_constant_emits_typed_literal_lineage(self, schema_ods_order):
+        sql = "SELECT 'ALL' AS channel_type"
+        entries = _trace_lineage(
+            "target_tbl",
+            sqlglot.parse_one(sql, dialect="doris"),
+            schema_ods_order,
+            "test.sql",
+            ["channel_type"],
+        )
+
+        assert entries == [{
+            "lineage_type": "direct",
+            "source_type": "literal",
+            "source_value": "ALL",
+            "target_table": "target_tbl",
+            "target_column": "channel_type",
+            "expression": "'ALL' AS channel_type",
+            "transformation_type": "constant",
+            "source_file": "test.sql",
+        }]
 
     def test_nonexistent_table(self, schema_ods_order):
         sql = "SELECT x FROM nonexistent_table"

@@ -123,7 +123,6 @@ def assess(
     edges = data.get("edges", [])
     indirect_edges = data.get("indirect_edges", [])
     tables = data.get("tables", [])
-    transient_tables = data.get("transient_tables", [])
 
     llm_results = []
     if weights.get("enable_llm", False):
@@ -152,7 +151,6 @@ def assess(
         project_dir,
         edges=edges,
         indirect_edges=indirect_edges,
-        transient_tables=transient_tables,
     )
 
     reuse_score = score_reusability(tables, downstream)

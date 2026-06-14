@@ -84,6 +84,16 @@ def generate_jobs(data, tasks_dir, current_db, job_logic=None, project="shop"):
 
     job_logic = job_logic or {}
     jobs = []
+
+    def _edge_ref_table(ref):
+        if isinstance(ref, dict):
+            if ref.get("type") == "column":
+                return str(ref.get("id") or "").rsplit(".", 1)[0]
+            if ref.get("type") == "table":
+                return str(ref.get("id") or "")
+            return ""
+        return str(ref or "").rsplit(".", 1)[0]
+
     for f in iter_task_sql_files(tasks_dir):
         fname = f.relative_to(tasks_dir).as_posix()
         job_id = f.with_suffix("").relative_to(tasks_dir).as_posix()
@@ -92,8 +102,12 @@ def generate_jobs(data, tasks_dir, current_db, job_logic=None, project="shop"):
         sources = set()
         targets = set()
         for e in edges:
-            sources.add(_strip_db(e["source"].rsplit(".", 1)[0], current_db))
-            targets.add(_strip_db(e["target"].rsplit(".", 1)[0], current_db))
+            source_table = _edge_ref_table(e.get("source"))
+            target_table = _edge_ref_table(e.get("target"))
+            if source_table:
+                sources.add(_strip_db(source_table, current_db))
+            if target_table:
+                targets.add(_strip_db(target_table, current_db))
 
         for stmt in sqlglot.parse(f.read_text(encoding="utf-8"), dialect="doris"):
             if stmt is None:
@@ -196,6 +210,13 @@ def update_lineage_html(lineage_json, template_path, output_path):
     print("  已更新:", output_path)
 
 
+def count_column_nodes(data):
+    return sum(
+        len(table.get("columns") or [])
+        for table in data.get("tables", [])
+    )
+
+
 def main():
     parser = argparse.ArgumentParser(description="血缘 HTML 刷新工具")
     parser.add_argument(
@@ -233,7 +254,7 @@ def main():
 
     print("HTML 已刷新:", ctx["job_output"])
     print(
-        f"  表: {len(data['tables'])}, 边: {len(data['edges'])}, 节点: {len(data['nodes'])}"
+        f"  表: {len(data['tables'])}, 边: {len(data['edges'])}, 节点: {count_column_nodes(data)}"
     )
     print(f"  作业: {len(jobs)}")
 

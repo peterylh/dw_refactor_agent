@@ -69,8 +69,57 @@ with open(JSON_PATH, encoding="utf-8") as f:
     data = json.load(f)
 
 tables_list = data["tables"]
-edges = data["edges"]
-indirect_edges = data.get("indirect_edges", [])
+raw_edges = data["edges"]
+
+
+def _edge_ref_type(ref):
+    return str(ref.get("type") or "") if isinstance(ref, dict) else "column"
+
+
+def _edge_ref_id(ref):
+    if isinstance(ref, dict):
+        return str(ref.get("id") or "")
+    return str(ref or "")
+
+
+def _typed_direct_column_edges(edges):
+    direct = []
+    for edge in edges:
+        if edge.get("relation_type", "direct") != "direct":
+            continue
+        if _edge_ref_type(edge.get("source")) != "column":
+            continue
+        if _edge_ref_type(edge.get("target")) != "column":
+            continue
+        current = dict(edge)
+        current["source"] = _edge_ref_id(edge.get("source"))
+        current["target"] = _edge_ref_id(edge.get("target"))
+        direct.append(current)
+    return direct
+
+
+def _typed_indirect_edges(edges):
+    indirect = []
+    for edge in edges:
+        relation_type = str(edge.get("relation_type") or "direct")
+        if relation_type == "direct":
+            continue
+        if _edge_ref_type(edge.get("source")) != "column":
+            continue
+        if _edge_ref_type(edge.get("target")) != "table":
+            continue
+        indirect.append({
+            "source": _edge_ref_id(edge.get("source")),
+            "target_table": _edge_ref_id(edge.get("target")),
+            "condition_type": relation_type.upper(),
+            "condition_expression": edge.get("expression", ""),
+            "source_file": edge.get("source_file", ""),
+        })
+    return indirect
+
+
+edges = _typed_direct_column_edges(raw_edges)
+indirect_edges = data.get("indirect_edges") or _typed_indirect_edges(raw_edges)
 
 # ==================== 2. 插入表元数据 ====================
 print(f"2. 插入 {len(tables_list)} 张表...")

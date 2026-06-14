@@ -84,10 +84,14 @@ score = max(0, 100 * (1 - sum(table_capped) / table_count))
 | DWD 维度表位置 | LLM 判断为 `dimension` 且配置层为 `DWD` 时记低风险问题。 |
 | 配置表类型与 LLM 推断一致 | model 中已有合法 `table_type` 时检查。 |
 | `data_domain` / `business_area` 与 LLM 推断一致 | 仅在对应层适用且 LLM 推断值可通过业务字典校验时检查；未配置时按低风险，不一致时按中风险。 |
-| DWD fact 保持明细粒度 | DWD fact 的 Task SQL 不应出现 `GROUP BY` 或聚合函数。 |
+| DWD fact 保持明细粒度 | DWD fact 的 Task SQL 或 typed edge 血缘不应出现 `GROUP BY` 或聚合函数。 |
+| DWD fact 不配置派生/计算指标 | DWD fact 的 model 元数据不应配置 `derived_metrics` 或 `calculated_metrics`。 |
 | DWD fact 包含事件键 | 列名或实体键中应存在明显事件、流水、明细类 `_id`、`_no`、`_key` 字段。 |
 | DWS fact 配置 grain | DWS fact 必须配置 `grain`。 |
 | DWS grain 与 SQL `GROUP BY` 一致 | 已配置 `grain` 且 SQL 有 `GROUP BY` 时，检查 grain key 与 GROUP BY 输出粒度一致。 |
+| DWS fact 包含聚合逻辑 | 有作业或 typed edge 证据时，DWS fact 应出现聚合血缘。 |
+| DWS SELECT 字段符合粒度 | typed edge 中的普通透传字段必须属于 `grain` 或 `GROUP BY` 来源；常量字段不参与明细泄漏判断。 |
+| DIM 不配置指标分组 | DIM 或 `table_type=dimension` 的模型不应配置 `atomic_metrics`、`derived_metrics`、`calculated_metrics`。字段是否语义上像度量保留给 LLM 巡检判断，不用字段名词表硬判。 |
 
 ## 命名规范 `naming`
 

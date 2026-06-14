@@ -132,21 +132,6 @@ def _source_file_keys(source_file: str) -> set[str]:
     return {source}
 
 
-def _transient_targets_by_source_file(
-    transient_tables: list | None,
-) -> dict[str, set[str]]:
-    targets = defaultdict(set)
-    for table in transient_tables or []:
-        if not table.get("is_transient", True):
-            continue
-        name = _short_table_name(table.get("name", ""))
-        if not name:
-            continue
-        for source_file in _source_file_keys(table.get("source_file", "")):
-            targets[source_file].add(name)
-    return dict(targets)
-
-
 def _transient_targets_from_lineage_tables(
     tables: list | None,
 ) -> dict[str, set[str]]:
@@ -199,7 +184,6 @@ def build_asset_catalog(
     *,
     edges: list | None = None,
     indirect_edges: list | None = None,
-    transient_tables: list | None = None,
 ) -> dict:
     """Collect project asset facts without assigning scores."""
     project_path = Path(project_dir) if project_dir else None
@@ -222,10 +206,6 @@ def build_asset_catalog(
     tasks_dir = project_path / "tasks" if project_path else None
     task_table_facts_by_path = {}
     transient_targets_by_source_file = defaultdict(set)
-    for source_file, names in _transient_targets_by_source_file(
-        transient_tables,
-    ).items():
-        transient_targets_by_source_file[source_file].update(names)
     for source_file, names in _transient_targets_from_lineage_tables(
         tables,
     ).items():

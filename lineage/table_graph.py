@@ -26,7 +26,26 @@ def load_lineage_data(project: str) -> dict:
 
 
 def _table_from_node(node_id: str) -> str:
-    return node_id.rsplit(".", 1)[0]
+    if isinstance(node_id, dict):
+        if node_id.get("type") == "column":
+            node_id = node_id.get("id", "")
+        elif node_id.get("type") == "table":
+            return str(node_id.get("id") or "")
+        else:
+            return ""
+    return str(node_id or "").rsplit(".", 1)[0]
+
+
+def _edge_source_table(edge: dict) -> str:
+    source = edge.get("source")
+    if isinstance(source, dict) and source.get("type") != "column":
+        return ""
+    return _table_from_node(source)
+
+
+def _edge_target_table(edge: dict) -> str:
+    target = edge.get("target")
+    return _table_from_node(target)
 
 
 def build_table_graph(edges: list, indirect_edges: list) -> tuple[dict, dict]:
@@ -34,16 +53,16 @@ def build_table_graph(edges: list, indirect_edges: list) -> tuple[dict, dict]:
     downstream = defaultdict(set)
 
     for e in edges:
-        src = _table_from_node(e["source"])
-        tgt = _table_from_node(e["target"])
-        if src != tgt:
+        src = _edge_source_table(e)
+        tgt = _edge_target_table(e)
+        if src and tgt and src != tgt:
             upstream[tgt].add(src)
             downstream[src].add(tgt)
 
     for ie in indirect_edges:
         src = _table_from_node(ie["source"])
         tgt = ie["target_table"]
-        if src != tgt:
+        if src and tgt and src != tgt:
             upstream[tgt].add(src)
             downstream[src].add(tgt)
 

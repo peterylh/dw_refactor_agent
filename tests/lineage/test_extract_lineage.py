@@ -116,7 +116,18 @@ class TestIntegrationEtlToDwd:
         assert "order_id" in targets
         assert "customer_id" in targets
         assert "total_amount" in targets
-        assert "etl_time" not in targets  # NOW() constant has no source column
+        assert "etl_time" in targets  # NOW() is recorded as a source-free edge
+        etl_entries = [e for e in entries if e["target_column"] == "etl_time"]
+        assert etl_entries == [{
+            "lineage_type": "direct",
+            "source_type": "expression",
+            "source_expression": "NOW() AS etl_time",
+            "target_table": "dwd_order",
+            "target_column": "etl_time",
+            "expression": "NOW() AS etl_time",
+            "transformation_type": "constant",
+            "source_file": "dwd_order.sql",
+        }]
 
     def test_ods_to_dwd_with_customer(self):
         """INSERT SELECT with JOIN from ods_order + ods_customer to dwd_order"""

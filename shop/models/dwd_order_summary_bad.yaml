@@ -1,0 +1,18 @@
+version: 2
+name: dwd_order_summary_bad
+layer: DWD
+table_type: fact
+business_area: SHOP
+description: DWD anti-pattern fixture with aggregation
+config:
+  materialized: incremental
+atomic_metrics:
+- item_count
+- total_amount
+entities:
+- code: ORDER
+  type: foreign
+  name: Order
+  key_columns:
+  - order_id
+business_process: ORDER_TRANSACTION

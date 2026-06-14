@@ -9,12 +9,6 @@ from lineage.table_graph import _table_from_node, build_table_graph
 def transient_table_names(lineage_data: dict) -> set[str]:
     """Return transient table names recorded in lineage metadata."""
     names = set()
-    for table in lineage_data.get("transient_tables") or []:
-        if table.get("is_transient", True):
-            name = str(table.get("name") or "").strip()
-            if name:
-                names.add(name)
-
     for table in lineage_data.get("tables") or []:
         if table.get("is_transient"):
             name = str(table.get("name") or "").strip()
@@ -34,9 +28,25 @@ def _all_graph_tables(upstream: dict, downstream: dict) -> set[str]:
 
 
 def _edge_record(edge: dict) -> dict[str, str]:
+    source = edge.get("source")
+    target = edge.get("target")
+    if isinstance(source, dict) or isinstance(target, dict):
+        if (
+            not isinstance(source, dict)
+            or not isinstance(target, dict)
+            or source.get("type") != "column"
+            or target.get("type") != "column"
+            or edge.get("relation_type", "direct") != "direct"
+        ):
+            return {}
+        source_id = str(source.get("id") or "")
+        target_id = str(target.get("id") or "")
+    else:
+        source_id = str(source or "")
+        target_id = str(target or "")
     return {
-        "source": str(edge.get("source") or ""),
-        "target": str(edge.get("target") or ""),
+        "source": source_id,
+        "target": target_id,
         "expression": str(edge.get("expression") or ""),
         "source_file": str(edge.get("source_file") or ""),
     }
@@ -52,10 +62,18 @@ def _edge_sort_key(edge: dict) -> tuple[str, str, str, str]:
 
 
 def _condition_record(edge: dict) -> dict[str, str]:
+    if isinstance(edge.get("source"), dict):
+        source = str((edge.get("source") or {}).get("id") or "")
+        condition_type = str(edge.get("relation_type") or "").upper()
+        condition_expression = str(edge.get("expression") or "")
+    else:
+        source = str(edge.get("source") or "")
+        condition_type = str(edge.get("condition_type") or "")
+        condition_expression = str(edge.get("condition_expression") or "")
     return {
-        "source": str(edge.get("source") or ""),
-        "condition_type": str(edge.get("condition_type") or ""),
-        "condition_expression": str(edge.get("condition_expression") or ""),
+        "source": source,
+        "condition_type": condition_type,
+        "condition_expression": condition_expression,
         "source_file": str(edge.get("source_file") or ""),
     }
 
@@ -205,15 +223,29 @@ def _asset_condition_lineage(
 ) -> list[dict]:
     conditions = []
     seen = set()
+    typed_condition_edges = [
+        edge for edge in lineage_data.get("edges") or []
+        if isinstance(edge.get("target"), dict)
+        and (edge.get("target") or {}).get("type") == "table"
+        and edge.get("relation_type") != "direct"
+    ]
+    legacy_condition_edges = lineage_data.get("indirect_edges") or []
     indirect_edges = sorted(
-        lineage_data.get("indirect_edges") or [],
+        typed_condition_edges + legacy_condition_edges,
         key=_condition_sort_key,
     )
 
     for edge in indirect_edges:
-        if str(edge.get("target_table") or "") != table_name:
+        if isinstance(edge.get("target"), dict):
+            edge_target = str((edge.get("target") or {}).get("id") or "")
+        else:
+            edge_target = str(edge.get("target_table") or "")
+        if edge_target != table_name:
             continue
-        source = str(edge.get("source") or "")
+        if isinstance(edge.get("source"), dict):
+            source = str((edge.get("source") or {}).get("id") or "")
+        else:
+            source = str(edge.get("source") or "")
         if not source:
             continue
 
@@ -255,9 +287,10 @@ def build_asset_column_lineage(
     """Return column lineage for an asset table with transient fields bypassed."""
     transient_tables = transient_table_names(lineage_data)
     edges = [
-        _edge_record(edge)
+        record
         for edge in lineage_data.get("edges") or []
-        if edge.get("source") and edge.get("target")
+        for record in [_edge_record(edge)]
+        if record.get("source") and record.get("target")
     ]
     incoming = _column_incoming_edges(edges)
     condition_lineage = _asset_condition_lineage(

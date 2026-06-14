@@ -12,7 +12,6 @@ def test_build_table_graph_keeps_transient_tables_raw():
             {"source": "tmp_orders_stage.order_id", "target": "dws_orders.order_id"},
         ],
         "indirect_edges": [],
-        "transient_tables": [{"name": "tmp_orders_stage", "is_transient": True}],
     }
 
     upstream, downstream = build_table_graph(
@@ -32,7 +31,7 @@ def test_build_asset_table_graph_collapses_transient_tables():
             {"source": "tmp_orders_stage.order_id", "target": "dws_orders.order_id"},
         ],
         "indirect_edges": [],
-        "transient_tables": [{"name": "tmp_orders_stage", "is_transient": True}],
+        "tables": [{"name": "tmp_orders_stage", "is_transient": True}],
     }
 
     upstream, downstream = build_asset_table_graph(lineage_data)
@@ -73,7 +72,6 @@ def test_build_asset_column_lineage_keeps_direct_asset_edges():
             "expression": "SUM(dwd_orders.amount) AS total_amount",
             "source_file": "dws_orders.sql",
         }],
-        "transient_tables": [],
     }
 
     assert build_asset_column_lineage(lineage_data, "dws_orders") == [{
@@ -100,7 +98,7 @@ def test_build_asset_column_lineage_collapses_transient_field_path():
                 "source_file": "dws_promotion_effect_daily.sql",
             },
         ],
-        "transient_tables": [{
+        "tables": [{
             "name": "tmp_promotion_stage",
             "is_transient": True,
         }],
@@ -160,7 +158,7 @@ def test_build_asset_column_lineage_preserves_multi_source_calculation_chain():
                 "source_file": "dws_orders.sql",
             },
         ],
-        "transient_tables": [{"name": "tmp_orders", "is_transient": True}],
+        "tables": [{"name": "tmp_orders", "is_transient": True}],
     }
 
     result = build_asset_column_lineage(lineage_data, "dws_orders")
@@ -277,7 +275,7 @@ def test_build_asset_column_lineage_collapses_transient_condition_source():
             "condition_expression": "tmp_orders.order_status = 'PAID'",
             "source_file": "dws_orders.sql",
         }],
-        "transient_tables": [{"name": "tmp_orders", "is_transient": True}],
+        "tables": [{"name": "tmp_orders", "is_transient": True}],
     }
 
     result = build_asset_column_lineage(lineage_data, "dws_orders")

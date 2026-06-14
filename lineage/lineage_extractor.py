@@ -6,6 +6,7 @@
 """
 
 import json, argparse
+import re
 import sys
 from pathlib import Path
 
@@ -20,6 +21,12 @@ import sqlglot
 from sqlglot import exp
 from sqlglot.lineage import lineage
 from lineage.sql_task_facts import extract_task_table_facts
+
+
+AGGREGATE_PATTERN = re.compile(
+    r"\b(SUM|COUNT|AVG|MIN|MAX)\s*\(",
+    flags=re.IGNORECASE,
+)
 
 
 # ============================================================
@@ -82,6 +89,110 @@ def _canonical_lineage_entry(entry):
         if key in cleaned:
             cleaned[key] = _canonical_column(cleaned[key])
     return cleaned
+
+
+def _node_id(table_name, column_name):
+    return f"{_strip_db(table_name)}.{_canonical_column(column_name)}"
+
+
+def _column_source(table_name, column_name):
+    return {"type": "column", "id": _node_id(table_name, column_name)}
+
+
+def _column_target(table_name, column_name):
+    return {"type": "column", "id": _node_id(table_name, column_name)}
+
+
+def _table_target(table_name):
+    return {"type": "table", "id": _strip_db(table_name)}
+
+
+def _literal_source(value):
+    return {"type": "literal", "value": value}
+
+
+def _expression_source(expression):
+    return {"type": "expression", "expression": expression}
+
+
+def _source_sort_key(source):
+    if not isinstance(source, dict):
+        return str(source or "")
+    return "|".join(
+        str(source.get(key) or "")
+        for key in ("type", "id", "value", "expression")
+    )
+
+
+def _target_sort_key(target):
+    if not isinstance(target, dict):
+        return str(target or "")
+    return "|".join(
+        str(target.get(key) or "")
+        for key in ("type", "id")
+    )
+
+
+def _relation_type_for_condition(condition_type):
+    normalized = str(condition_type or "").strip().lower()
+    return {
+        "join_on": "join",
+        "where": "filter",
+        "having": "having",
+        "group_by": "group_by",
+    }.get(normalized, normalized or "indirect")
+
+
+def _transformation_type_for_expression(expression):
+    if AGGREGATE_PATTERN.search(str(expression or "")):
+        return "aggregation"
+    return "passthrough"
+
+
+def _is_literal_expression(expression):
+    node = expression.this if isinstance(expression, exp.Alias) else expression
+    return isinstance(node, exp.Literal)
+
+
+def _literal_value(expression):
+    node = expression.this if isinstance(expression, exp.Alias) else expression
+    if isinstance(node, exp.Literal):
+        return str(node.this)
+    return ""
+
+
+def _constant_lineage_entry(
+    target_table,
+    target_column,
+    expression,
+    file_path,
+):
+    expression_sql = (
+        expression.sql(dialect="doris")
+        if hasattr(expression, "sql")
+        else str(expression)
+    )
+    if _is_literal_expression(expression):
+        return {
+            "lineage_type": "direct",
+            "source_type": "literal",
+            "source_value": _literal_value(expression),
+            "target_table": _strip_db(target_table),
+            "target_column": _canonical_column(target_column),
+            "expression": expression_sql,
+            "transformation_type": "constant",
+            "source_file": file_path,
+        }
+    return {
+        "lineage_type": "direct",
+        "source_type": "expression",
+        "source_expression": expression_sql,
+        "target_table": _strip_db(target_table),
+        "target_column": _canonical_column(target_column),
+        "expression": expression_sql,
+        "transformation_type": "constant",
+        "source_file": file_path,
+    }
 
 
 def _target_table_sql(target_expr):
@@ -561,6 +672,46 @@ def _trace_lineage(target_table, select_expr, schema, file_path, target_columns=
                     }
                 )
 
+    if isinstance(select_expr, exp.Select):
+        for idx, projection in enumerate(select_expr.expressions):
+            if list(projection.find_all(exp.Column)):
+                continue
+            if isinstance(projection, exp.Star) or list(projection.find_all(exp.Star)):
+                continue
+            target_col = (
+                target_columns[idx]
+                if target_columns is not None and idx < len(target_columns)
+                else projection.alias_or_name
+            )
+            target_col = _canonical_column(target_col)
+            if not target_col:
+                continue
+            key = (
+                "constant",
+                _strip_db(target_table),
+                target_col,
+                projection.sql(dialect="doris"),
+            )
+            existing = {
+                (
+                    entry.get("transformation_type"),
+                    entry.get("target_table"),
+                    entry.get("target_column"),
+                    entry.get("expression"),
+                )
+                for entry in entries
+            }
+            if key in existing:
+                continue
+            entries.append(
+                _constant_lineage_entry(
+                    target_table,
+                    target_col,
+                    projection,
+                    file_path,
+                )
+            )
+
     # 间接血缘: WHERE / JOIN ON / GROUP BY / HAVING
     indirect_entries = _extract_indirect(select_expr, target_table, file_path, schema)
     entries.extend(indirect_entries)
@@ -689,6 +840,16 @@ def _normalize_transient_tables(transient_tables):
     )
 
 
+def _transient_table_occurrence(table):
+    return {
+        "source_file": table.get("source_file", ""),
+        "created_statement_index": table.get("created_statement_index"),
+        "dropped_statement_index": table.get("dropped_statement_index"),
+        "is_ctas": bool(table.get("is_ctas", False)),
+        "dropped_in_same_task": bool(table.get("dropped_in_same_task", False)),
+    }
+
+
 def build_lineage_output(all_lineage, schema, transient_tables=None):
     """Build serialized lineage output, preserving transient table metadata."""
     unique = []
@@ -697,19 +858,29 @@ def build_lineage_output(all_lineage, schema, transient_tables=None):
         is_indirect = e.get("lineage_type") == "indirect"
         if is_indirect:
             key = (
-                e["source_table"],
-                e["source_column"],
-                e["target_table"],
-                e["condition_type"],
+                e.get("source_table", ""),
+                e.get("source_column", ""),
+                e.get("target_table", ""),
+                e.get("condition_type", ""),
                 e.get("condition_expression", ""),
+                e.get("source_file", ""),
+            )
+        elif e.get("source_type"):
+            key = (
+                e.get("source_type", ""),
+                e.get("source_value", ""),
+                e.get("source_expression", ""),
+                e.get("target_table", ""),
+                e.get("target_column", ""),
+                e.get("expression", ""),
                 e.get("source_file", ""),
             )
         else:
             key = (
-                e["source_table"],
-                e["source_column"],
-                e["target_table"],
-                e["target_column"],
+                e.get("source_table", ""),
+                e.get("source_column", ""),
+                e.get("target_table", ""),
+                e.get("target_column", ""),
                 e.get("expression", ""),
                 e.get("source_file", ""),
             )
@@ -721,8 +892,11 @@ def build_lineage_output(all_lineage, schema, transient_tables=None):
         key=lambda e: (
             e.get("source_file", ""),
             e.get("lineage_type", "direct"),
+            e.get("source_type", ""),
             e.get("source_table", ""),
             e.get("source_column", ""),
+            e.get("source_value", ""),
+            e.get("source_expression", ""),
             e.get("target_table", ""),
             e.get("target_column", ""),
             e.get("condition_type", ""),
@@ -734,14 +908,17 @@ def build_lineage_output(all_lineage, schema, transient_tables=None):
     direct_entries = [e for e in all_lineage if e.get("lineage_type") != "indirect"]
     indirect_entries = [e for e in all_lineage if e.get("lineage_type") == "indirect"]
 
-    nodes = {}
     tables = {}
     edges = []
     transient_tables = _normalize_transient_tables(transient_tables)
     transient_sources_by_table = {}
+    transient_occurrences_by_table = {}
     for table in transient_tables:
         transient_sources_by_table.setdefault(table["name"], set()).add(
             table.get("source_file", "")
+        )
+        transient_occurrences_by_table.setdefault(table["name"], []).append(
+            _transient_table_occurrence(table)
         )
 
     def _schema_column_type(tbl, col):
@@ -757,10 +934,9 @@ def build_lineage_output(all_lineage, schema, transient_tables=None):
         tbl = _strip_db(tbl)
         return any(tbl in db_tables for db_tables in schema.values())
 
-    def _ensure_node(tbl, col):
+    def _ensure_table(tbl):
         tbl = _strip_db(tbl)
-        col = _canonical_column(col)
-        if not tbl or not col:
+        if not tbl:
             return
         if tbl not in tables:
             tables[tbl] = {
@@ -774,53 +950,86 @@ def build_lineage_output(all_lineage, schema, transient_tables=None):
             tables[tbl]["transient_sources"] = sorted(
                 transient_sources_by_table[tbl]
             )
-        node_id = f"{tbl}.{col}"
-        if node_id not in nodes:
-            nodes[node_id] = {
-                "id": node_id,
-                "table": tbl,
-                "column": col,
-                "layer": determine_layer(tbl),
-            }
+            tables[tbl]["transient_occurrences"] = sorted(
+                transient_occurrences_by_table.get(tbl, []),
+                key=lambda item: (
+                    item.get("source_file", ""),
+                    item.get("created_statement_index") or -1,
+                    item.get("dropped_statement_index") or -1,
+                ),
+            )
+
+    def _ensure_column(tbl, col):
+        tbl = _strip_db(tbl)
+        col = _canonical_column(col)
+        if not tbl or not col:
+            return
+        _ensure_table(tbl)
         if col not in {c["name"] for c in tables[tbl]["columns"]}:
             tables[tbl]["columns"].append(
                 {"name": col, "type": _schema_column_type(tbl, col)}
             )
 
+    def _direct_source(entry):
+        source_type = str(entry.get("source_type") or "").strip()
+        if source_type == "literal":
+            return _literal_source(entry.get("source_value", ""))
+        if source_type == "expression":
+            return _expression_source(entry.get("source_expression", ""))
+        return _column_source(entry.get("source_table", ""),
+                              entry.get("source_column", ""))
+
+    def _direct_transformation(entry):
+        if entry.get("transformation_type"):
+            return str(entry["transformation_type"])
+        return _transformation_type_for_expression(entry.get("expression", ""))
+
     for entry in direct_entries:
-        src_tbl = _strip_db(entry["source_table"])
-        src_col = _canonical_column(entry["source_column"])
-        tgt_tbl = _strip_db(entry["target_table"])
-        tgt_col = _canonical_column(entry["target_column"])
-        if src_tbl == "UNKNOWN":
+        tgt_tbl = _strip_db(entry.get("target_table", ""))
+        tgt_col = _canonical_column(entry.get("target_column", ""))
+        source_type = str(entry.get("source_type") or "column")
+        if source_type == "column":
+            src_tbl = _strip_db(entry.get("source_table", ""))
+            src_col = _canonical_column(entry.get("source_column", ""))
+            if src_tbl == "UNKNOWN":
+                continue
+            _ensure_column(src_tbl, src_col)
+        if not tgt_tbl or not tgt_col:
             continue
-        _ensure_node(src_tbl, src_col)
-        _ensure_node(tgt_tbl, tgt_col)
+        _ensure_column(tgt_tbl, tgt_col)
         edges.append(
             {
-                "source": f"{src_tbl}.{src_col}",
-                "target": f"{tgt_tbl}.{tgt_col}",
+                "source": _direct_source(entry),
+                "target": _column_target(tgt_tbl, tgt_col),
+                "relation_type": "direct",
+                "transformation_type": _direct_transformation(entry),
                 "expression": entry.get("expression", ""),
                 "source_file": entry.get("source_file", ""),
             }
         )
 
-    indirect_edges = []
     for entry in indirect_entries:
-        src_tbl = _strip_db(entry["source_table"])
-        src_col = _canonical_column(entry["source_column"])
+        src_tbl = _strip_db(entry.get("source_table", ""))
+        src_col = _canonical_column(entry.get("source_column", ""))
+        tgt_tbl = _strip_db(entry.get("target_table", ""))
         if src_tbl == "UNKNOWN":
             continue
-        _ensure_node(src_tbl, src_col)
-        indirect_edges.append(
+        _ensure_column(src_tbl, src_col)
+        _ensure_table(tgt_tbl)
+        relation_type = _relation_type_for_condition(entry.get("condition_type", ""))
+        edges.append(
             {
-                "source": f"{src_tbl}.{src_col}",
-                "target_table": _strip_db(entry["target_table"]),
-                "condition_type": entry["condition_type"],
-                "condition_expression": entry.get("condition_expression", ""),
+                "source": _column_source(src_tbl, src_col),
+                "target": _table_target(tgt_tbl),
+                "relation_type": relation_type,
+                "transformation_type": relation_type,
+                "expression": entry.get("condition_expression", ""),
                 "source_file": entry.get("source_file", ""),
             }
         )
+
+    for table in transient_tables:
+        _ensure_table(table.get("name", ""))
 
     for db_name, db_tables in schema.items():
         for tbl_name, cols in db_tables.items():
@@ -837,28 +1046,17 @@ def build_lineage_output(all_lineage, schema, transient_tables=None):
                         existing_cols[col_name]["type"] = col_type
 
     return {
-        "nodes": sorted(nodes.values(), key=lambda n: n["id"]),
         "edges": sorted(
             edges,
             key=lambda e: (
                 e["source_file"],
-                e["source"],
-                e["target"],
+                e.get("relation_type", ""),
+                _target_sort_key(e.get("target")),
+                _source_sort_key(e.get("source")),
                 e.get("expression", ""),
             ),
         ),
         "tables": sorted(tables.values(), key=lambda t: t["name"]),
-        "indirect_edges": sorted(
-            indirect_edges,
-            key=lambda e: (
-                e["source_file"],
-                e["source"],
-                e["target_table"],
-                e["condition_type"],
-                e.get("condition_expression", ""),
-            ),
-        ),
-        "transient_tables": transient_tables,
     }
 
 
@@ -920,11 +1118,21 @@ def main():
             json.dump(output, fp, ensure_ascii=False, indent=2)
 
     print(f"\n血缘提取完成!")
-    print(f"  直接血缘: {len(output['edges'])} 条边")
-    print(f"  间接血缘: {len(output['indirect_edges'])} 条边")
-    print(f"  节点数: {len(output['nodes'])}")
+    direct_count = sum(
+        1 for edge in output["edges"]
+        if edge.get("relation_type") == "direct"
+    )
+    indirect_count = len(output["edges"]) - direct_count
+    node_count = sum(len(table.get("columns", [])) for table in output["tables"])
+    transient_count = sum(
+        1 for table in output["tables"]
+        if table.get("is_transient")
+    )
+    print(f"  直接血缘: {direct_count} 条边")
+    print(f"  间接血缘: {indirect_count} 条边")
+    print(f"  节点数: {node_count}")
     print(f"  表数: {len(output['tables'])}")
-    print(f"  临时表: {len(output['transient_tables'])}")
+    print(f"  临时表: {transient_count}")
     if STATS["parse_failures"]:
         print(f"  解析失败: {STATS['parse_failures']} 个文件")
     if STATS["lineage_failures"]:

@@ -718,7 +718,13 @@ DROP TABLE IF EXISTS demo.tmp_orders_stage;
     catalog = build_asset_catalog(
         [
             {"name": "dws_orders", "layer": "DWS", "columns": []},
-            {"name": "tmp_orders_stage", "layer": "OTHER", "columns": []},
+            {
+                "name": "tmp_orders_stage",
+                "layer": "OTHER",
+                "columns": [],
+                "is_transient": True,
+                "transient_sources": ["dws_orders.sql"],
+            },
         ],
         {"dws_orders": {"name": "dws_orders", "layer": "DWS"}},
         project_dir,
@@ -733,17 +739,6 @@ DROP TABLE IF EXISTS demo.tmp_orders_stage;
             },
         ],
         indirect_edges=[],
-        transient_tables=[
-            {
-                "name": "tmp_orders_stage",
-                "source_file": "dws_orders.sql",
-                "created_statement_index": 0,
-                "dropped_statement_index": 2,
-                "is_ctas": True,
-                "is_transient": True,
-                "dropped_in_same_task": True,
-            }
-        ],
     )
     result = score_asset_completeness(catalog)
 
@@ -784,17 +779,6 @@ DROP TABLE IF EXISTS demo.tmp_orders_stage;
             "target": "demo.tmp_orders_stage.order_id",
         }],
         indirect_edges=[],
-        transient_tables=[
-            {
-                "name": "tmp_orders_stage",
-                "source_file": "tmp_orders_stage.sql",
-                "created_statement_index": 0,
-                "dropped_statement_index": 1,
-                "is_ctas": True,
-                "is_transient": True,
-                "dropped_in_same_task": True,
-            }
-        ],
     )
 
     assert catalog["tasks"][0]["output_tables"] == set()
