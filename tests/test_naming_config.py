@@ -781,20 +781,20 @@ class TestEnterpriseNaming:
         segs = nc.layers["DIM"].templates[0]
         r = nc._match_segments("DIM_BASE_CUST_INFO_INFO", segs)
         assert r == {
-            "DIM_SCOPE": "BASE",
+            "DIM_ROLE": "BASE",
             "MODEL_ENTITY": "CUST",
             "DIM_DESC": "INFO",
-            "DIM_TYPE": "INFO",
+            "DIM_CONTENT_TYPE": "INFO",
         }
 
     def test_match_dim_v2_addt(self, nc):
         segs = nc.layers["DIM"].templates[0]
         r = nc._match_segments("DIM_ADDT_CUST_SCTY_RELA_INFO", segs)
         assert r == {
-            "DIM_SCOPE": "ADDT",
+            "DIM_ROLE": "ADDT",
             "MODEL_ENTITY": "CUST",
             "DIM_DESC": "SCTY_RELA",
-            "DIM_TYPE": "INFO",
+            "DIM_CONTENT_TYPE": "INFO",
         }
 
     def test_match_dim_pm(self, nc):

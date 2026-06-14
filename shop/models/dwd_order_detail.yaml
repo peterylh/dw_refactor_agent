@@ -9,8 +9,8 @@ config:
   materialized: incremental
 atomic_metrics:
 - quantity
-- subtotal
 - discount
+- subtotal
 calculated_metrics:
 - gross_profit
 entities:
@@ -19,7 +19,7 @@ entities:
   name: 订单
   key_columns:
   - order_id
-- code: CUSTOMER
+- code: CUST
   type: foreign
   name: 客户
   key_columns:
@@ -29,7 +29,7 @@ entities:
   name: 门店
   key_columns:
   - store_id
-- code: PRODUCT
+- code: PROD
   type: foreign
   name: 商品
   key_columns:

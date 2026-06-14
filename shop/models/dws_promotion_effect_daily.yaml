@@ -15,13 +15,13 @@ derived_metrics:
 - discount_amount
 grain:
   entities:
-  - PROM
+  - PROMOTION
   time_column: stat_date
   time_period: D
 entities:
-- code: PROM
+- code: PROMOTION
   type: foreign
-  name: 促销
+  name: 促销活动
   key_columns:
   - promotion_id
 business_process: PROMOTION_EFFECT

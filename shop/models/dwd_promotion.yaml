@@ -12,3 +12,5 @@ entities:
   key_columns:
   - promotion_id
 semantic_subject: PROMOTION
+dimension_role: BASE
+dimension_content_type: INFO

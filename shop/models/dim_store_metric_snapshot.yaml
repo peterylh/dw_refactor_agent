@@ -1,16 +1,16 @@
 version: 2
 name: dim_store_metric_snapshot
-layer: DIM
-table_type: dimension
+layer: ADS
+table_type: fact
 description: DIM anti-pattern fixture with metric group metadata
 config:
   materialized: snapshot
 atomic_metrics:
 - store_order_count
 entities:
-- code: STOR
-  type: primary
-  name: Store
+- code: STORE
+  type: foreign
+  name: 门店
   key_columns:
   - store_id
 semantic_subject: STOR

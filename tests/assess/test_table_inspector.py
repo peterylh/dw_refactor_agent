@@ -65,6 +65,26 @@ def test_build_prompt_requests_entity_and_grain_metadata():
     assert '"grain": {' in prompt
 
 
+def test_build_prompt_requests_dimension_classification_metadata():
+    ctx = TableContext(
+        table_name="DIM_BASE_CUST_INFO",
+        layer="DIM",
+        ddl="CREATE TABLE DIM_BASE_CUST_INFO (CUST_ID BIGINT);",
+        etl_sql="",
+        upstream_tables=["dwd_customer"],
+        downstream_tables=["dwd_order_detail"],
+    )
+
+    prompt = build_prompt(ctx)
+
+    assert "维表内容形态" in prompt
+    assert "维表建设角色" in prompt
+    assert "dimension_role" in prompt
+    assert "dimension_content_type" in prompt
+    assert '"dimension_role": "BASE|ADDT"' in prompt
+    assert '"dimension_content_type": "INFO|TAG|TREE"' in prompt
+
+
 def test_build_prompt_clarifies_metric_group_boundaries():
     ctx = TableContext(
         table_name="dwd_fact_table",
@@ -244,6 +264,34 @@ def test_parse_dimension_response():
     assert result.confidence == 0.9
     assert result.reasoning_steps == ["test"]
     assert result.is_violating_declared_layer is True
+
+
+def test_parse_response_preserves_dimension_classification_metadata():
+    resp = {
+        "choices": [{
+            "message": {
+                "content": json.dumps({
+                    "inferred_layer": "DIM",
+                    "table_type": "dimension",
+                    "dimension_role": "base",
+                    "dimension_content_type": "tag",
+                    "confidence": 0.9,
+                    "reasoning_steps": ["客户标签维表"],
+                })
+            }
+        }]
+    }
+
+    result = parse_response("DIM_BASE_CUST_TAG", resp, declared_layer="DIM")
+    data = result_to_dict(result)
+    cached = result_to_cache_dict(result)
+
+    assert result.dimension_role == "BASE"
+    assert result.dimension_content_type == "TAG"
+    assert data["dimension_role"] == "BASE"
+    assert data["dimension_content_type"] == "TAG"
+    assert cached["dimension_role"] == "BASE"
+    assert cached["dimension_content_type"] == "TAG"
 
 
 def test_parse_business_domain_response():

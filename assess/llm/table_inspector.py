@@ -15,9 +15,11 @@ from assess.project_facts.entity_metadata import (
 )
 
 
-PROMPT_VERSION = "table-inspector-v20"
+PROMPT_VERSION = "table-inspector-v21"
 VALID_LAYERS = {"ODS", "DWD", "DWS", "ADS", "DIM", "OTHER"}
 VALID_TABLE_TYPES = {"dimension", "fact", "other"}
+VALID_DIMENSION_ROLES = {"BASE", "ADDT"}
+VALID_DIMENSION_CONTENT_TYPES = {"INFO", "TAG", "TREE"}
 METRIC_GROUPING_LAYERS = {"DWD", "DWS"}
 COLUMN_GROUPS = (
     "atomic_metrics",
@@ -48,6 +50,8 @@ class TableInspectResult:
     retry_count: int = 0
     inferred_data_domain: str = ""
     inferred_business_area: str = ""
+    dimension_role: str = ""
+    dimension_content_type: str = ""
     entities: list[dict[str, Any]] = field(default_factory=list)
     entity: dict[str, Any] = field(default_factory=dict)
     related_entities: list[dict[str, Any]] = field(default_factory=list)
@@ -128,6 +132,15 @@ def build_prompt(ctx: TableContext) -> str:
 - dimension: 维度表。描述可被事实表引用的业务实体属性、层级、状态或主数据，缓慢变化，常常作为维表被 JOIN。
 - fact: 事实表或汇总事实表。记录业务事件/交易，或按公共维度汇总业务过程，包含可度量字段，通常有时间分区。
 - other: 其他类型。
+
+## 维表分类标准
+当 table_type=dimension 或 inferred_layer=DIM 时，必须额外判断维表内容形态和维表建设角色。
+- dimension_content_type=INFO: 属性信息维表。描述实体基础属性、业务属性、状态、日期、名称、说明等。
+- dimension_content_type=TAG: 标签维表。描述规则、指标、模型或统计加工形成的标签、分层、评分、画像、偏好、风险等级等。
+- dimension_content_type=TREE: 树形维表。描述父子节点、层级、路径、上下级归属、祖先节点、叶子节点，支持上卷和下钻。
+- dimension_role=BASE: 主维度。描述实体最核心、最标准、公共复用的身份和基础信息。
+- dimension_role=ADDT: 辅维度。描述实体补充信息、扩展属性、关系信息、场景化属性或低频属性。
+若当前表不是维度表，dimension_role 和 dimension_content_type 都返回空字符串。
 
 ## 业务过程与语义主题边界
 - business_process 只适用于事实表或汇总事实表，用来描述发生了什么可度量业务事件/活动；判断依据应是事件动作、事实行、度量字段、时间粒度和可汇总口径，而不是表名里出现的业务名词。
@@ -236,7 +249,7 @@ def build_prompt(ctx: TableContext) -> str:
 3. 判断是否为 dimension（主键是否为实体属性）。
 4. 如果原始配置层级是 DWD 或 DWS 且表类型为 fact，再按字段语义、DDL 注释、ETL 表达式和业务过程分组。
 
-请严格返回 JSON 格式数据，只允许返回下方 JSON schema 中列出的顶层字段: inferred_layer、table_type、inferred_data_domain、inferred_business_area、entities、grain、confidence、reasoning_steps、columns。
+请严格返回 JSON 格式数据，只允许返回下方 JSON schema 中列出的顶层字段: inferred_layer、table_type、inferred_data_domain、inferred_business_area、dimension_role、dimension_content_type、entities、grain、confidence、reasoning_steps、columns。
 不要返回 Markdown，不要返回额外解释，不要新增任何字段。
 如果不需要做字段分组，columns 下五个数组都返回空数组。
 
@@ -245,6 +258,8 @@ def build_prompt(ctx: TableContext) -> str:
   "table_type": "dimension|fact|other",
   "inferred_data_domain": "已确认数据域编号或新的大写下划线候选 code；不适用或不确定时为空字符串",
   "inferred_business_area": "已确认业务板块简写或新的大写下划线候选 code；不适用或不确定时为空字符串",
+  "dimension_role": "BASE|ADDT",
+  "dimension_content_type": "INFO|TAG|TREE",
   "entities": [
     {{
       "code": "实体编码，如 PROD；不适用或无法判断时返回空数组",
@@ -427,6 +442,20 @@ def _valid_table_type(value: Any) -> str:
     return table_type if table_type in VALID_TABLE_TYPES else "other"
 
 
+def _valid_dimension_role(value: Any) -> str:
+    role = str(value or "").strip().upper()
+    return role if role in VALID_DIMENSION_ROLES else ""
+
+
+def _valid_dimension_content_type(value: Any) -> str:
+    content_type = str(value or "").strip().upper()
+    return (
+        content_type
+        if content_type in VALID_DIMENSION_CONTENT_TYPES
+        else ""
+    )
+
+
 def _normalize_group_item(raw: dict[str, Any], fields: tuple[str, ...]) -> dict:
     name = str(raw.get("name") or raw.get("column_name") or "").strip()
     if not name:
@@ -535,6 +564,10 @@ def parse_response(table_name: str,
             inferred_data_domain=_safe_str(data.get("inferred_data_domain")),
             inferred_business_area=_safe_str(
                 data.get("inferred_business_area")).upper(),
+            dimension_role=_valid_dimension_role(
+                data.get("dimension_role")),
+            dimension_content_type=_valid_dimension_content_type(
+                data.get("dimension_content_type")),
             entities=normalize_entities(
                 data.get("entities"),
                 data.get("entity"),
@@ -563,6 +596,8 @@ def result_to_dict(result: TableInspectResult) -> dict[str, Any]:
         "table_type": result.table_type,
         "inferred_data_domain": result.inferred_data_domain,
         "inferred_business_area": result.inferred_business_area,
+        "dimension_role": result.dimension_role,
+        "dimension_content_type": result.dimension_content_type,
         "confidence": result.confidence,
         "reasoning_steps": result.reasoning_steps,
         "columns": result.columns,
@@ -586,6 +621,8 @@ def result_to_cache_dict(result: TableInspectResult) -> dict[str, Any]:
         "table_type": result.table_type,
         "inferred_data_domain": result.inferred_data_domain,
         "inferred_business_area": result.inferred_business_area,
+        "dimension_role": result.dimension_role,
+        "dimension_content_type": result.dimension_content_type,
         "confidence": result.confidence,
         "reasoning_steps": result.reasoning_steps,
         "columns": result.columns,
@@ -623,6 +660,9 @@ def dict_to_result(data: dict[str, Any],
         inferred_data_domain=_safe_str(data.get("inferred_data_domain")),
         inferred_business_area=_safe_str(
             data.get("inferred_business_area")).upper(),
+        dimension_role=_valid_dimension_role(data.get("dimension_role")),
+        dimension_content_type=_valid_dimension_content_type(
+            data.get("dimension_content_type")),
     )
 
 

@@ -24,6 +24,7 @@ from assess.scoring.config import (
     BUSINESS_AREA_LAYERS,
     DATA_DOMAIN_LAYERS,
     DERIVED_METRIC_RULE_NAME,
+    DIM_CLASSIFICATION_RULE_NAME,
     DIM_ENTITY_RULE_NAME,
     DWS_ENTITY_RULE_NAME,
     FILE_RULE_DDL,
@@ -230,6 +231,60 @@ def _score_dim_entity_name(
         result["violations"] = [
             f"表名MODEL_ENTITY={actual}，entities.primary.code={expected}"
         ]
+    return result
+
+
+def _score_dim_classification_name(
+    table_name: str,
+    layer: str,
+    nc,
+    model_metadata: dict | None,
+) -> dict:
+    result = _naming_check_result(0, 0, [])
+    if layer != "DIM":
+        return result
+    if not model_metadata or table_name not in model_metadata:
+        return result
+
+    actual_role = _table_name_type_values(table_name, layer, nc, "DIM_ROLE")
+    actual_content_type = _table_name_type_values(
+        table_name,
+        layer,
+        nc,
+        "DIM_CONTENT_TYPE",
+    )
+    if not actual_role and not actual_content_type:
+        return result
+
+    metadata = model_metadata.get(table_name) or {}
+    expected_role = str(metadata.get("dimension_role") or "").strip().upper()
+    expected_content_type = str(
+        metadata.get("dimension_content_type") or "").strip().upper()
+
+    result["total"] = 1
+    violations = []
+    if not expected_role:
+        violations.append("缺少model.dimension_role，无法检测DIM表名角色")
+    elif actual_role != [expected_role]:
+        violations.append(
+            f"表名DIM_ROLE={actual_role}，"
+            f"model.dimension_role={expected_role}"
+        )
+
+    if not expected_content_type:
+        violations.append(
+            "缺少model.dimension_content_type，无法检测DIM表名内容形态"
+        )
+    elif actual_content_type != [expected_content_type]:
+        violations.append(
+            f"表名DIM_CONTENT_TYPE={actual_content_type}，"
+            f"model.dimension_content_type={expected_content_type}"
+        )
+
+    if not violations:
+        result["passed"] = 1
+    else:
+        result["violations"] = violations
     return result
 
 
@@ -734,6 +789,21 @@ def _score_middle_table(table: dict, context: dict) -> dict:
         dim_entity_checks["passed"],
         dim_entity_checks["total"],
     ))
+    dim_classification_checks = (
+        _score_dim_classification_name(
+            name,
+            layer,
+            nc,
+            model_metadata,
+        )
+        if table_name_valid
+        else _naming_check_result(0, 0, [])
+    )
+    summary_checks.append((
+        DIM_CLASSIFICATION_RULE_NAME,
+        dim_classification_checks["passed"],
+        dim_classification_checks["total"],
+    ))
     semantic_checks, semantic_summary = _score_table_semantic_metadata(
         name,
         layer,
@@ -749,6 +819,7 @@ def _score_middle_table(table: dict, context: dict) -> dict:
         + derived_passed
         + dws_entity_checks["passed"]
         + dim_entity_checks["passed"]
+        + dim_classification_checks["passed"]
         + semantic_checks["passed"]
     )
     total = (
@@ -758,6 +829,7 @@ def _score_middle_table(table: dict, context: dict) -> dict:
         + len(derived_names)
         + dws_entity_checks["total"]
         + dim_entity_checks["total"]
+        + dim_classification_checks["total"]
         + semantic_checks["total"]
     )
     return dict(
@@ -787,6 +859,7 @@ def _score_middle_table(table: dict, context: dict) -> dict:
         ),
         dws_entity_checks=dws_entity_checks,
         dim_entity_checks=dim_entity_checks,
+        dim_classification_checks=dim_classification_checks,
         semantic_metadata_checks=semantic_checks,
         score=round(passed / total * 100, 1) if total else 100.0,
         _passed=passed,
@@ -979,6 +1052,11 @@ def _build_naming_checks(
                 result.get("dim_entity_checks", {}),
                 "NAMING_DIM_ENTITY_ALIGNMENT",
                 "DIM表名实体等于主实体",
+            ),
+            (
+                result.get("dim_classification_checks", {}),
+                "NAMING_DIM_CLASSIFICATION_ALIGNMENT",
+                "DIM表名分类段与模型元数据一致",
             ),
             (
                 result.get("semantic_metadata_checks", {}),

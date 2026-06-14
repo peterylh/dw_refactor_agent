@@ -11,4 +11,14 @@ entities:
   name: 商品
   key_columns:
   - product_id
+- code: CATEGORY
+  type: foreign
+  name: 品类
+  key_columns:
+  - category_id
+  relationship:
+    type: many_to_one
+    from_entity: PROD
 semantic_subject: PROD
+dimension_role: BASE
+dimension_content_type: INFO

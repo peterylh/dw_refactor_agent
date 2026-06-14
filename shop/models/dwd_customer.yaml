@@ -12,3 +12,5 @@ entities:
   key_columns:
   - customer_id
 semantic_subject: CUST
+dimension_role: BASE
+dimension_content_type: INFO

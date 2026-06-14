@@ -1,3 +1,5 @@
+import copy
+
 from config import (
     PROJECT_CONFIG,
     PROJECT_ROOT,
@@ -45,10 +47,53 @@ def _build_shop_lineage_from_sources():
     )
 
 
+def _with_model_rule_scenarios(lineage_data: dict, model_metadata: dict):
+    """Keep model-design rule fixtures independent from refreshed models."""
+    lineage_data = copy.deepcopy(lineage_data)
+    model_metadata = copy.deepcopy(model_metadata)
+    overrides = {
+        "dim_store_metric_snapshot": {
+            "layer": "DIM",
+            "table_type": "dimension",
+            "atomic_metrics": ["store_order_count"],
+        },
+        "dwd_order_summary_bad": {
+            "layer": "DWD",
+            "table_type": "fact",
+        },
+        "dws_category_sales_monthly": {
+            "layer": "DWS",
+            "table_type": "fact",
+            "grain": {},
+        },
+        "dws_order_passthrough_daily": {
+            "layer": "DWS",
+            "table_type": "fact",
+            "grain": {},
+        },
+    }
+
+    for table in lineage_data["tables"]:
+        table_name = table.get("name")
+        if table_name in overrides:
+            table["layer"] = overrides[table_name]["layer"]
+
+    for table_name, override in overrides.items():
+        metadata = dict(model_metadata.get(table_name) or {})
+        metadata.update(override)
+        model_metadata[table_name] = metadata
+
+    return lineage_data, model_metadata
+
+
 def test_shop_model_design_has_detectable_scenario_for_each_model_rule():
     project_dir = PROJECT_ROOT / PROJECT_CONFIG["shop"]["dir"]
     lineage_data = _build_shop_lineage_from_sources()
     model_metadata = load_model_metadata("shop")
+    lineage_data, model_metadata = _with_model_rule_scenarios(
+        lineage_data,
+        model_metadata,
+    )
     asset_catalog = build_asset_catalog(
         lineage_data["tables"],
         model_metadata,

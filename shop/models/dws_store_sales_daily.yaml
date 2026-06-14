@@ -16,11 +16,11 @@ derived_metrics:
 - discount_amount
 grain:
   entities:
-  - STOR
+  - STORE
   time_column: stat_date
   time_period: D
 entities:
-- code: STOR
+- code: STORE
   type: foreign
   name: 门店
   key_columns:

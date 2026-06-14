@@ -398,6 +398,92 @@ def test_update_model_yaml_writes_llm_table_metadata(tmp_path, monkeypatch):
     assert "atomic_metrics" not in saved
 
 
+def test_update_model_yaml_writes_dimension_classification_metadata(
+        tmp_path, monkeypatch):
+    import assess.model_metadata_writer as writer_module
+
+    project_root = tmp_path
+    models_dir = project_root / "demo" / "models"
+    models_dir.mkdir(parents=True)
+    model_path = models_dir / "DIM_BASE_STORE_INFO.yaml"
+    model_path.write_text(
+        yaml.safe_dump({
+            "version": 2,
+            "name": "DIM_BASE_STORE_INFO",
+            "layer": "DIM",
+            "table_type": "dimension",
+        },
+                       allow_unicode=True,
+                       sort_keys=False),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(writer_module, "PROJECT_ROOT", project_root)
+    monkeypatch.setitem(writer_module.PROJECT_CONFIG, "demo", {"dir": "demo"})
+
+    result = TableInspectResult(
+        table_name="DIM_BASE_STORE_INFO",
+        declared_layer="DIM",
+        inferred_layer="DIM",
+        table_type="dimension",
+        dimension_role="BASE",
+        dimension_content_type="INFO",
+        confidence=0.92,
+        reasoning_steps=["门店主维度属性信息"],
+    )
+
+    update = update_model_yaml("demo", result)
+    saved = yaml.safe_load(model_path.read_text(encoding="utf-8"))
+
+    assert update["dimension_role"] == "BASE"
+    assert update["dimension_content_type"] == "INFO"
+    assert update["metadata_changed"] is True
+    assert saved["dimension_role"] == "BASE"
+    assert saved["dimension_content_type"] == "INFO"
+
+
+def test_update_model_yaml_removes_stale_dimension_classification_for_fact(
+        tmp_path, monkeypatch):
+    import assess.model_metadata_writer as writer_module
+
+    project_root = tmp_path
+    models_dir = project_root / "demo" / "models"
+    models_dir.mkdir(parents=True)
+    model_path = models_dir / "M_SHOP_04_ORDER_DI.yaml"
+    model_path.write_text(
+        yaml.safe_dump({
+            "version": 2,
+            "name": "M_SHOP_04_ORDER_DI",
+            "layer": "DIM",
+            "table_type": "dimension",
+            "dimension_role": "BASE",
+            "dimension_content_type": "INFO",
+        },
+                       allow_unicode=True,
+                       sort_keys=False),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(writer_module, "PROJECT_ROOT", project_root)
+    monkeypatch.setitem(writer_module.PROJECT_CONFIG, "demo", {"dir": "demo"})
+
+    result = TableInspectResult(
+        table_name="M_SHOP_04_ORDER_DI",
+        declared_layer="DWD",
+        inferred_layer="DWD",
+        table_type="fact",
+        confidence=0.91,
+        reasoning_steps=["订单明细事实表"],
+    )
+
+    update = update_model_yaml("demo", result)
+    saved = yaml.safe_load(model_path.read_text(encoding="utf-8"))
+
+    assert update["layer"] == "DWD"
+    assert update["dimension_role"] is None
+    assert update["dimension_content_type"] is None
+    assert "dimension_role" not in saved
+    assert "dimension_content_type" not in saved
+
+
 def test_business_metadata_for_result_limits_fields_by_layer(monkeypatch):
     import assess.model_metadata_writer as writer_module
 

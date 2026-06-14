@@ -1186,6 +1186,32 @@ def test_score_naming_conventions_checks_dws_and_dim_entity_alignment():
     assert "NAMING_DIM_ENTITY_ALIGNMENT" in _issue_rule_ids(dim_result)
 
 
+def test_score_naming_conventions_checks_dim_classification_alignment():
+    nc = load_naming_config(PROJECT_ROOT / "shop/naming_config.yaml")
+
+    result = score_naming_conventions(
+        [{"name": "DIM_BASE_PROD_INFO_INFO", "layer": "DIM", "columns": []}],
+        nc,
+        {
+            "DIM_BASE_PROD_INFO_INFO": {
+                "dimension_role": "ADDT",
+                "dimension_content_type": "TAG",
+                "entities": [{
+                    "code": "PROD",
+                    "type": "primary",
+                    "key_columns": ["product_id"],
+                }],
+            }
+        },
+    )
+
+    assert "NAMING_DIM_CLASSIFICATION_ALIGNMENT" in _issue_rule_ids(result)
+    checks = _checks_by_rule(result, "NAMING_DIM_CLASSIFICATION_ALIGNMENT")
+    assert checks[0]["passed"] is False
+    assert "dimension_role=ADDT" in checks[0]["message"]
+    assert "dimension_content_type=TAG" in checks[0]["message"]
+
+
 def test_score_naming_conventions_ignores_lineage_tables_when_project_dir_exists(
         tmp_path):
     nc = load_naming_config(PROJECT_ROOT / "naming_config.yaml")

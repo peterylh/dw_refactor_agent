@@ -34,6 +34,7 @@ DERIVED_METRIC_RULE_NAME = (
 )
 DWS_ENTITY_RULE_NAME = "DWS表名实体包含于grain.entities"
 DIM_ENTITY_RULE_NAME = "DIM表名实体等于entities.primary.code"
+DIM_CLASSIFICATION_RULE_NAME = "DIM表名分类段与模型元数据一致"
 DATA_DOMAIN_LAYERS = {"DWD"}
 BUSINESS_AREA_LAYERS = {"DWD", "DWS"}
 FILE_RULE_DDL = "DDL文件名与建表表名一致"
@@ -432,6 +433,17 @@ NAMING_RULES = {
         title="DIM表名实体与主实体不一致",
         remediation_summary="修正DIM表名实体段或模型主实体配置",
         strategy="align_dim_name_with_primary_entity",
+        edit_scope=["models", "ddl", "tasks"],
+    ),
+    "NAMING_DIM_CLASSIFICATION_ALIGNMENT": rule_meta(
+        name=DIM_CLASSIFICATION_RULE_NAME,
+        severity=SEVERITY_MEDIUM,
+        title="DIM表名分类段与模型元数据不一致",
+        remediation_summary=(
+            "修正DIM表名中的角色/内容形态段，"
+            "或修正模型dimension_role/dimension_content_type"
+        ),
+        strategy="align_dim_name_with_classification_metadata",
         edit_scope=["models", "ddl", "tasks"],
     ),
     "NAMING_SEMANTIC_METADATA_ALIGNMENT": rule_meta(

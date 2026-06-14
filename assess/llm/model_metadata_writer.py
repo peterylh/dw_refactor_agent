@@ -807,6 +807,8 @@ def update_model_yaml(project: str,
     previous_table_type = existing.get("table_type")
     previous_data_domain = existing.get("data_domain")
     previous_business_area = existing.get("business_area")
+    previous_dimension_role = existing.get("dimension_role")
+    previous_dimension_content_type = existing.get("dimension_content_type")
     has_existing_metric_fields = any(
         key in existing for key in (
             "metrics",
@@ -845,6 +847,16 @@ def update_model_yaml(project: str,
                         "business_area"]
             else:
                 updated.pop("business_area", None)
+        if applied_layer == "DIM":
+            if result.dimension_role:
+                updated["dimension_role"] = result.dimension_role
+            if result.dimension_content_type:
+                updated["dimension_content_type"] = (
+                    result.dimension_content_type
+                )
+        else:
+            updated.pop("dimension_role", None)
+            updated.pop("dimension_content_type", None)
 
     if write_metric_groups and detected_metrics:
         if detected_groups["atomic_metrics"]:
@@ -916,6 +928,11 @@ def update_model_yaml(project: str,
         or updated.get("table_type") != previous_table_type
         or updated.get("data_domain") != previous_data_domain
         or updated.get("business_area") != previous_business_area
+        or updated.get("dimension_role") != previous_dimension_role
+        or (
+            updated.get("dimension_content_type")
+            != previous_dimension_content_type
+        )
     )
     metric_changed = write_metric_groups and (
         has_existing_metric_fields
@@ -959,6 +976,10 @@ def update_model_yaml(project: str,
         "data_domain": updated.get("data_domain"),
         "previous_business_area": previous_business_area,
         "business_area": updated.get("business_area"),
+        "previous_dimension_role": previous_dimension_role,
+        "dimension_role": updated.get("dimension_role"),
+        "previous_dimension_content_type": previous_dimension_content_type,
+        "dimension_content_type": updated.get("dimension_content_type"),
         "warnings": metadata_warnings_for_result(result),
         "write_scope": write_scope,
         "metric_count": len(detected_metrics),
@@ -1038,6 +1059,18 @@ def _catalog_model_payload(
         updated.pop("semantic_subject", None)
     elif table_type == "dimension":
         updated.pop("business_process", None)
+
+    if layer == "DIM":
+        dimension_role = str(mapping.get("dimension_role") or "").strip().upper()
+        dimension_content_type = str(
+            mapping.get("dimension_content_type") or "").strip().upper()
+        if dimension_role:
+            updated["dimension_role"] = dimension_role
+        if dimension_content_type:
+            updated["dimension_content_type"] = dimension_content_type
+    else:
+        updated.pop("dimension_role", None)
+        updated.pop("dimension_content_type", None)
     return updated
 
 
@@ -1094,6 +1127,10 @@ def catalog_discovery_model_mapping(
         semantic_subject = _semantic_subject_from_result(result)
         if semantic_subject:
             mapping["semantic_subject"] = semantic_subject
+        if result.dimension_role:
+            mapping["dimension_role"] = result.dimension_role
+        if result.dimension_content_type:
+            mapping["dimension_content_type"] = result.dimension_content_type
         return mapping
 
     if result.table_type == "fact":
@@ -1133,6 +1170,8 @@ def update_model_yaml_from_catalog(
             "business_area",
             "business_process",
             "semantic_subject",
+            "dimension_role",
+            "dimension_content_type",
         ):
             if key not in previous:
                 updated.pop(key, None)
@@ -1154,6 +1193,8 @@ def update_model_yaml_from_catalog(
             "business_area",
             "business_process",
             "semantic_subject",
+            "dimension_role",
+            "dimension_content_type",
         )
     )
     return {
@@ -1181,6 +1222,8 @@ def update_model_yaml_from_catalog(
         "business_area": updated.get("business_area"),
         "business_process": updated.get("business_process"),
         "semantic_subject": updated.get("semantic_subject"),
+        "dimension_role": updated.get("dimension_role"),
+        "dimension_content_type": updated.get("dimension_content_type"),
     }
 
 

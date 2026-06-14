@@ -10,11 +10,6 @@ derived_metrics:
 - sale_amount
 atomic_metrics:
 - order_count
-grain:
-  entities:
-  - CATEGORY
-  time_column: stat_month_date
-  time_period: M
 entities:
 - code: CATEGORY
   type: foreign
@@ -23,3 +18,8 @@ entities:
   - category_id
 business_process: ORDER_TRANSACTION
 business_area: SHOP
+grain:
+  entities:
+  - CATEGORY
+  time_column: stat_month_date
+  time_period: M

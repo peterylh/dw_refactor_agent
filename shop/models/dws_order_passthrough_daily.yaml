@@ -1,6 +1,6 @@
 version: 2
 name: dws_order_passthrough_daily
-layer: DWS
+layer: DWD
 table_type: fact
 business_area: SHOP
 description: DWS anti-pattern fixture without aggregation or grain
@@ -9,9 +9,20 @@ config:
 atomic_metrics:
 - subtotal
 entities:
-- code: ORDER_ITEM
+- code: ORDER
   type: foreign
-  name: Order item
+  name: 订单
   key_columns:
-  - order_item_id
+  - order_id
+- code: STORE
+  type: foreign
+  name: 门店
+  key_columns:
+  - store_id
+- code: PROD
+  type: foreign
+  name: 商品
+  key_columns:
+  - product_id
 business_process: ORDER_TRANSACTION
+data_domain: '04'

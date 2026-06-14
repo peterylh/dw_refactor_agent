@@ -156,8 +156,8 @@ types:
       - F
       - A
 
-  DIM_SCOPE:
-    label: 维度范围
+  DIM_ROLE:
+    label: 维度建设角色
     allow:
       - BASE
       - ADDT
@@ -168,8 +168,8 @@ types:
     patterns:
       - "^[A-Z][A-Z0-9_]*$"
 
-  DIM_TYPE:
-    label: 维度表类型
+  DIM_CONTENT_TYPE:
+    label: 维表内容形态
     allow:
       - TAG
       - INFO
@@ -196,7 +196,7 @@ rules:
 
   TABLE_DIM:
     desc: 普通维度表命名
-    expr: ["_", DIM, "$DIM_SCOPE", "$MODEL_ENTITY", "$DIM_DESC", "$DIM_TYPE"]
+    expr: ["_", DIM, "$DIM_ROLE", "$MODEL_ENTITY", "$DIM_DESC", "$DIM_CONTENT_TYPE"]
     constraints:
       max_length: 30
 

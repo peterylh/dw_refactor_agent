@@ -14,7 +14,7 @@ derived_metrics:
 grain:
   entities:
   - PROD
-  - STOR
+  - STORE
   time_column: stat_date
   time_period: D
 entities:
@@ -23,7 +23,7 @@ entities:
   name: 商品
   key_columns:
   - product_id
-- code: STOR
+- code: STORE
   type: foreign
   name: 门店
   key_columns:

@@ -12,3 +12,5 @@ entities:
   key_columns:
   - store_id
 semantic_subject: STORE
+dimension_role: BASE
+dimension_content_type: INFO
