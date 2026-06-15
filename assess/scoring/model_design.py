@@ -388,6 +388,104 @@ def _metric_group_names(metadata: dict) -> dict[str, list[str]]:
     return groups
 
 
+def _metric_items(raw_metrics) -> list[dict]:
+    if not isinstance(raw_metrics, list):
+        return []
+    items = []
+    for metric in raw_metrics:
+        if isinstance(metric, dict):
+            item = dict(metric)
+            item["name"] = str(item.get("name") or "").strip()
+        else:
+            item = {"name": str(metric or "").strip()}
+        if item["name"]:
+            items.append(item)
+    return items
+
+
+def _upstream_tables_for(table_name: str, table_edges: dict) -> list[str]:
+    upstream = [
+        src for (src, tgt) in table_edges
+        if tgt == table_name
+    ]
+    return sorted(set(upstream))
+
+
+def _atomic_metric_names_by_table(
+        model_metadata: dict,
+        table_names: list[str]) -> dict[str, set[str]]:
+    metrics_by_table = {}
+    for table_name in table_names:
+        metadata = (model_metadata or {}).get(table_name) or {}
+        names = set(_metric_group_names(metadata).get("atomic_metrics") or [])
+        if names:
+            metrics_by_table[table_name] = names
+    return metrics_by_table
+
+
+def _candidate_base_metric_tables(
+        base_metric: str,
+        upstream_atomic_metrics: dict[str, set[str]]) -> list[str]:
+    return sorted(
+        table_name
+        for table_name, metric_names in upstream_atomic_metrics.items()
+        if base_metric in metric_names
+    )
+
+
+def _derived_metric_base_issues(
+        metadata: dict,
+        upstream_atomic_metrics: dict[str, set[str]]) -> dict[str, list[str]]:
+    missing_base_metrics = []
+    missing_base_metric_tables = []
+    invalid_base_metrics = []
+    invalid_base_metric_tables = []
+    ambiguous_base_metrics = []
+    missing_aggregations = []
+    for metric in _metric_items(metadata.get("derived_metrics")):
+        metric_name = str(metric.get("name") or "").strip()
+        base_metric = str(metric.get("base_metric") or "").strip()
+        base_metric_table = str(metric.get("base_metric_table") or "").strip()
+        aggregation = str(metric.get("aggregation") or "").strip()
+        if not base_metric:
+            missing_base_metrics.append(metric_name)
+        elif base_metric_table:
+            table_metrics = upstream_atomic_metrics.get(base_metric_table)
+            if table_metrics is None:
+                invalid_base_metric_tables.append(
+                    f"{metric_name}:{base_metric_table}"
+                )
+            elif base_metric not in table_metrics:
+                invalid_base_metrics.append(
+                    f"{metric_name}:{base_metric_table}.{base_metric}"
+                )
+        else:
+            candidates = _candidate_base_metric_tables(
+                base_metric,
+                upstream_atomic_metrics,
+            )
+            if len(candidates) > 1:
+                ambiguous_base_metrics.append(f"{metric_name}:{base_metric}")
+            elif not candidates:
+                invalid_base_metrics.append(f"{metric_name}:{base_metric}")
+            else:
+                missing_base_metric_tables.append(metric_name)
+        if not aggregation:
+            missing_aggregations.append(metric_name)
+    return {
+        "missing_base_metrics": sorted(missing_base_metrics),
+        "missing_base_metric_tables": sorted(missing_base_metric_tables),
+        "invalid_base_metrics": sorted(invalid_base_metrics),
+        "invalid_base_metric_tables": sorted(invalid_base_metric_tables),
+        "ambiguous_base_metrics": sorted(ambiguous_base_metrics),
+        "missing_aggregations": sorted(missing_aggregations),
+        "upstream_atomic_metrics": {
+            table_name: sorted(metric_names)
+            for table_name, metric_names in sorted(upstream_atomic_metrics.items())
+        },
+    }
+
+
 def _dws_plain_field_leakage(metadata: dict, design_facts: dict) -> dict:
     lineage = design_facts.get("lineage") or {}
     plain_sources = lineage.get("plain_column_sources") or {}
@@ -835,6 +933,42 @@ def score_model_design_health(
                     message=(
                         "DWS事实表疑似只是明细透传，缺少汇总逻辑"
                         if not design_facts["has_aggregate"] else ""
+                    ),
+                )
+            if metadata.get("derived_metrics"):
+                upstream_tables = _upstream_tables_for(table_name, table_edges)
+                relationship_issues = _derived_metric_base_issues(
+                    metadata,
+                    _atomic_metric_names_by_table(
+                        model_metadata or {},
+                        upstream_tables,
+                    ),
+                )
+                invalid_relationships = (
+                    relationship_issues["missing_base_metrics"]
+                    or relationship_issues["missing_base_metric_tables"]
+                    or relationship_issues["invalid_base_metrics"]
+                    or relationship_issues["invalid_base_metric_tables"]
+                    or relationship_issues["ambiguous_base_metrics"]
+                    or relationship_issues["missing_aggregations"]
+                )
+                record_check(
+                    rule_id="MODEL_DERIVED_METRIC_BASE_ATOMIC",
+                    target_table=table_name,
+                    passed=not invalid_relationships,
+                    expected="DWS派生指标配置base_metric、aggregation，并引用上游atomic_metrics",
+                    actual=(
+                        "派生指标关系不完整"
+                        if invalid_relationships
+                        else "派生指标关系完整"
+                    ),
+                    evidence={
+                        **relationship_issues,
+                        "upstream_tables": upstream_tables,
+                    },
+                    message=(
+                        "DWS派生指标应显式关联上游原子指标，并配置聚合方式"
+                        if invalid_relationships else ""
                     ),
                 )
             if has_grain and design_facts["has_group_by"]:

@@ -28,7 +28,15 @@ COLUMN_GROUPS = (
     "dimensions",
     "others",
 )
-VALIDATION_ERROR_KEYS = ("unknown_columns", "duplicate_columns")
+VALIDATION_ERROR_KEYS = (
+    "unknown_columns",
+    "duplicate_columns",
+    "missing_base_metrics",
+    "missing_base_metric_tables",
+    "invalid_base_metrics",
+    "invalid_base_metric_tables",
+    "ambiguous_base_metrics",
+)
 VALIDATION_WARNING_KEYS = ("missing_columns",)
 
 
@@ -304,6 +312,7 @@ def build_prompt(ctx: TableContext) -> str:
         "data_type": "字段类型",
         "business_process": "业务过程 code，无法判断则为空字符串",
         "base_metric": "对应原子指标名，无法判断则为空字符串",
+        "base_metric_table": "对应原子指标所在上游表名，无法判断则为空字符串",
         "modifiers": ["修饰词，如区域/渠道/状态，无法判断则为空数组"],
         "time_period": "时间周期，无法判断则为空字符串",
         "expression": "统计范围限定表达式，无法判断则为空字符串",
@@ -368,6 +377,7 @@ def build_retry_prompt(ctx: TableContext,
 - 字段名必须来自 ddl_columns，不要编造字段。
 - 同一个字段只能出现在 atomic_metrics / derived_metrics / calculated_metrics / dimensions / others 中的一个分组。
 - 如果表是 DWD/DWS fact，DDL 中每个字段都必须进入且仅进入一个分组。
+- derived_metrics 中每个指标必须填写 base_metric；能判断来源表时填写 base_metric_table，且 base_metric 必须来自该表 atomic_metrics。
 - 不要返回 Markdown，不要返回额外解释。
 """
 
@@ -501,6 +511,7 @@ def _normalize_columns(raw_columns: Any) -> dict[str, list[dict[str, Any]]]:
             "data_type",
             "business_process",
             "base_metric",
+            "base_metric_table",
             "modifiers",
             "time_period",
             "expression",
@@ -676,7 +687,16 @@ def _normalize_validation(value: Any) -> dict[str, list[str]]:
     if not isinstance(value, dict):
         return {}
     normalized = {}
-    for key in ("unknown_columns", "duplicate_columns", "missing_columns"):
+    for key in (
+        "unknown_columns",
+        "duplicate_columns",
+        "missing_columns",
+        "missing_base_metrics",
+        "missing_base_metric_tables",
+        "invalid_base_metrics",
+        "invalid_base_metric_tables",
+        "ambiguous_base_metrics",
+    ):
         raw_items = value.get(key, []) or []
         if isinstance(raw_items, list):
             normalized[key] = [str(item) for item in raw_items]
@@ -731,6 +751,146 @@ def validate_columns(result: TableInspectResult,
     if result.declared_layer in METRIC_GROUPING_LAYERS and result.is_fact_table:
         validation["missing_columns"] = sorted(ddl_columns - returned)
     return validation
+
+
+def _metric_names_from_items(raw_metrics: Any) -> list[str]:
+    if isinstance(raw_metrics, dict):
+        iterable = []
+        for group_metrics in raw_metrics.values():
+            if isinstance(group_metrics, list):
+                iterable.extend(group_metrics)
+    elif isinstance(raw_metrics, list):
+        iterable = raw_metrics
+    else:
+        iterable = []
+
+    names = []
+    for item in iterable:
+        if isinstance(item, dict):
+            name = str(item.get("name") or item.get("column") or "").strip()
+        else:
+            name = str(item or "").strip()
+        if name and name not in names:
+            names.append(name)
+    return names
+
+
+def _atomic_metric_tables_for_validation(
+        result: TableInspectResult,
+        ctx: TableContext) -> dict[str, set[str]]:
+    tables: dict[str, set[str]] = {}
+    same_table_metrics = set(_metric_names_from_items(result.atomic_metrics))
+    if same_table_metrics:
+        tables[result.table_name] = same_table_metrics
+    for table_name, groups in (ctx.upstream_metric_groups or {}).items():
+        if not isinstance(groups, dict):
+            continue
+        names = set(_metric_names_from_items(groups.get("atomic_metrics")))
+        if names:
+            tables[str(table_name)] = names
+    return tables
+
+
+def _base_metric_candidate_tables(
+        base_metric: str,
+        atomic_metric_tables: dict[str, set[str]]) -> list[str]:
+    return sorted(
+        table_name
+        for table_name, metric_names in atomic_metric_tables.items()
+        if base_metric in metric_names
+    )
+
+
+def enrich_metric_relationships(
+        result: TableInspectResult,
+        ctx: TableContext) -> None:
+    """补齐可唯一判断的派生指标 base_metric_table。"""
+    atomic_metric_tables = _atomic_metric_tables_for_validation(result, ctx)
+    for metric in result.derived_metrics:
+        if str(metric.get("base_metric_table") or "").strip():
+            continue
+        base_metric = str(metric.get("base_metric") or "").strip()
+        if not base_metric:
+            continue
+        candidates = _base_metric_candidate_tables(
+            base_metric,
+            atomic_metric_tables,
+        )
+        if len(candidates) == 1:
+            metric["base_metric_table"] = candidates[0]
+
+
+def validate_metric_relationships(
+        result: TableInspectResult,
+        ctx: TableContext) -> dict[str, list[str]]:
+    """校验派生指标是否显式指向已知原子指标。"""
+    issues = {
+        "missing_base_metrics": [],
+        "missing_base_metric_tables": [],
+        "invalid_base_metrics": [],
+        "invalid_base_metric_tables": [],
+        "ambiguous_base_metrics": [],
+    }
+    if not result.is_fact_table or not result.derived_metrics:
+        return {}
+
+    atomic_metric_tables = _atomic_metric_tables_for_validation(result, ctx)
+    for metric in result.derived_metrics:
+        metric_name = str(metric.get("name") or "").strip()
+        base_metric = str(metric.get("base_metric") or "").strip()
+        base_metric_table = str(metric.get("base_metric_table") or "").strip()
+        if not metric_name:
+            continue
+        if not base_metric:
+            issues["missing_base_metrics"].append(metric_name)
+            continue
+
+        if base_metric_table:
+            table_metrics = atomic_metric_tables.get(base_metric_table)
+            if table_metrics is None:
+                issues["invalid_base_metric_tables"].append(
+                    f"{metric_name}:{base_metric_table}"
+                )
+                continue
+            if base_metric not in table_metrics:
+                issues["invalid_base_metrics"].append(
+                    f"{metric_name}:{base_metric_table}.{base_metric}"
+                )
+            continue
+
+        candidates = _base_metric_candidate_tables(
+            base_metric,
+            atomic_metric_tables,
+        )
+        if len(candidates) > 1:
+            issues["ambiguous_base_metrics"].append(
+                f"{metric_name}:{base_metric}"
+            )
+        elif not candidates:
+            issues["invalid_base_metrics"].append(
+                f"{metric_name}:{base_metric}"
+            )
+        else:
+            issues["missing_base_metric_tables"].append(metric_name)
+
+    return {
+        key: sorted(values)
+        for key, values in issues.items()
+        if values
+    }
+
+
+def _merge_validation(
+        *validation_parts: dict[str, list[str]]) -> dict[str, list[str]]:
+    merged: dict[str, list[str]] = {}
+    for validation in validation_parts:
+        for key, values in (validation or {}).items():
+            current = merged.setdefault(key, [])
+            for value in values or []:
+                text = str(value)
+                if text not in current:
+                    current.append(text)
+    return {key: sorted(values) for key, values in merged.items()}
 
 
 class TableInspector:
@@ -883,7 +1043,11 @@ class TableInspector:
 
             result = parse_response(ctx.table_name, resp_json, ctx.layer)
             result.retry_count = attempt
-            result.validation = validate_columns(result, ddl_columns)
+            enrich_metric_relationships(result, ctx)
+            result.validation = _merge_validation(
+                validate_columns(result, ddl_columns),
+                validate_metric_relationships(result, ctx),
+            )
             if result.status == "passed" or attempt >= self.max_retries:
                 break
             self._emit_progress("validation_retry",

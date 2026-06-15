@@ -85,6 +85,7 @@ def _sample_fact_result() -> TableInspectResult:
                 "name": "pay_amt_1d",
                 "data_type": "DECIMAL(12,2)",
                 "base_metric": "pay_amt",
+                "base_metric_table": "dwd_order_detail",
                 "modifiers": [],
                 "time_period": "1d",
                 "expression": "SUM(pay_amt) WHERE pay_date = @etl_date",
@@ -131,6 +132,7 @@ def _sample_dws_result() -> TableInspectResult:
                 "name": "sale_amount",
                 "data_type": "DECIMAL(14,2)",
                 "base_metric": "subtotal",
+                "base_metric_table": "dwd_order_detail",
                 "modifiers": ["store"],
                 "time_period": "1d",
                 "expression": "SUM(subtotal) GROUP BY store_id, order_date",
@@ -191,6 +193,17 @@ def _sample_dimension_conflict_result() -> TableInspectResult:
     )
 
 
+def _expected_pay_amt_1d_metric() -> dict:
+    return {
+        "name": "pay_amt_1d",
+        "base_metric": "pay_amt",
+        "base_metric_table": "dwd_order_detail",
+        "aggregation": "SUM",
+        "time_period": "1d",
+        "expression": "SUM(pay_amt) WHERE pay_date = @etl_date",
+    }
+
+
 def test_build_dwd_contexts_filters_out_non_dwd(sample_lineage_data,
                                                 isolated_writer_project):
     contexts = build_dwd_contexts(isolated_writer_project, sample_lineage_data)
@@ -243,7 +256,7 @@ def test_metric_groups_for_model_splits_metric_types():
 
     assert metric_groups == {
         "atomic_metrics": ["pay_amt"],
-        "derived_metrics": ["pay_amt_1d"],
+        "derived_metrics": [_expected_pay_amt_1d_metric()],
         "calculated_metrics": ["gross_profit"],
     }
 
@@ -324,7 +337,7 @@ def test_update_model_yaml_preserves_existing_metadata(tmp_path, monkeypatch):
     assert saved["description"] == "订单明细事实表"
     assert saved["config"]["materialized"] == "incremental"
     assert saved["atomic_metrics"] == ["pay_amt"]
-    assert saved["derived_metrics"] == ["pay_amt_1d"]
+    assert saved["derived_metrics"] == [_expected_pay_amt_1d_metric()]
     assert saved["calculated_metrics"] == ["gross_profit"]
     assert "metrics" not in saved
 
@@ -344,7 +357,14 @@ def test_update_model_yaml_defaults_to_declared_layer(tmp_path, monkeypatch):
     assert update["metric_count"] == 1
     assert saved["layer"] == "DWS"
     assert saved["table_type"] == "fact"
-    assert saved["derived_metrics"] == ["sale_amount"]
+    assert saved["derived_metrics"] == [{
+        "name": "sale_amount",
+        "base_metric": "subtotal",
+        "base_metric_table": "dwd_order_detail",
+        "aggregation": "SUM",
+        "time_period": "1d",
+        "expression": "SUM(subtotal) GROUP BY store_id, order_date",
+    }]
     assert "atomic_metrics" not in saved
 
 
@@ -717,7 +737,7 @@ def test_update_model_yaml_metrics_scope_preserves_table_info(tmp_path,
     assert saved["layer"] == "OLD_LAYER"
     assert saved["table_type"] == "dimension"
     assert saved["atomic_metrics"] == ["pay_amt"]
-    assert saved["derived_metrics"] == ["pay_amt_1d"]
+    assert saved["derived_metrics"] == [_expected_pay_amt_1d_metric()]
     assert saved["calculated_metrics"] == ["gross_profit"]
     assert "metrics" not in saved
 
@@ -1480,7 +1500,7 @@ def test_update_model_yaml_replaces_existing_metrics(tmp_path, monkeypatch):
     assert update["new_metric_count"] == 2
     assert update["removed_metric_count"] == 1
     assert saved["atomic_metrics"] == ["pay_amt"]
-    assert saved["derived_metrics"] == ["pay_amt_1d"]
+    assert saved["derived_metrics"] == [_expected_pay_amt_1d_metric()]
     assert saved["calculated_metrics"] == ["gross_profit"]
     assert "metrics" not in saved
 
@@ -1513,7 +1533,7 @@ def test_update_model_yaml_replaces_legacy_metric_fields(tmp_path, monkeypatch):
     assert update["new_metric_count"] == 3
     assert update["removed_metric_count"] == 1
     assert saved["atomic_metrics"] == ["pay_amt"]
-    assert saved["derived_metrics"] == ["pay_amt_1d"]
+    assert saved["derived_metrics"] == [_expected_pay_amt_1d_metric()]
     assert saved["calculated_metrics"] == ["gross_profit"]
     assert "metrics" not in saved
 
@@ -1780,7 +1800,7 @@ def test_run_metadata_write_passes_dwd_metric_groups_to_dws(monkeypatch,
 
     assert seen_dws_contexts[0].upstream_metric_groups["dwd_order_detail"] == {
         "atomic_metrics": ["pay_amt"],
-        "derived_metrics": ["pay_amt_1d"],
+        "derived_metrics": [_expected_pay_amt_1d_metric()],
         "calculated_metrics": ["gross_profit"],
     }
 

@@ -7,8 +7,18 @@ description: 客户订单汇总
 config:
   materialized: incremental
 derived_metrics:
-- total_amount
-- total_discount
+- name: total_amount
+  base_metric: subtotal
+  base_metric_table: dwd_order_detail
+  time_period: D
+  expression: SUM(subtotal) GROUP BY customer_id, order_date
+  aggregation: SUM
+- name: total_discount
+  base_metric: discount
+  base_metric_table: dwd_order_detail
+  time_period: D
+  expression: SUM(discount) GROUP BY customer_id, order_date
+  aggregation: SUM
 calculated_metrics:
 - payment_amount
 - avg_order_amount

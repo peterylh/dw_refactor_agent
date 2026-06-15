@@ -90,6 +90,7 @@ score = max(0, 100 * (1 - sum(table_capped) / table_count))
 | DWS fact 配置 grain | DWS fact 必须配置 `grain`。 |
 | DWS grain 与 SQL `GROUP BY` 一致 | 已配置 `grain` 且 SQL 有 `GROUP BY` 时，检查 grain key 与 GROUP BY 输出粒度一致。 |
 | DWS fact 包含聚合逻辑 | 有作业或 typed edge 证据时，DWS fact 应出现聚合血缘。 |
+| DWS 派生指标关联上游原子指标 | DWS fact 的 `derived_metrics` 应使用对象列表，配置 `base_metric_table`、`base_metric` 与 `aggregation`，且 `base_metric_table.base_metric` 必须指向上游表的 `atomic_metrics`；未指定来源表且多个上游存在同名原子指标时判为歧义。 |
 | DWS SELECT 字段符合粒度 | typed edge 中的普通透传字段必须属于 `grain` 或 `GROUP BY` 来源；常量字段不参与明细泄漏判断。 |
 | DIM 不配置指标分组 | DIM 或 `table_type=dimension` 的模型不应配置 `atomic_metrics`、`derived_metrics`、`calculated_metrics`。字段是否语义上像度量保留给 LLM 巡检判断，不用字段名词表硬判。 |
 

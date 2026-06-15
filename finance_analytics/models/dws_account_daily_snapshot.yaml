@@ -15,10 +15,30 @@ atomic_metrics:
 - near_limit_count
 - account_count
 derived_metrics:
-- daily_transaction_count
-- daily_transaction_amount
-- daily_debit_count
-- daily_credit_count
+- name: daily_transaction_count
+  base_metric: transaction_count
+  base_metric_table: dwd_transactions
+  time_period: D
+  expression: COUNT(*) GROUP BY account_id
+  aggregation: COUNT
+- name: daily_transaction_amount
+  base_metric: amount
+  base_metric_table: dwd_transactions
+  time_period: D
+  expression: SUM(amount) GROUP BY account_id
+  aggregation: SUM
+- name: daily_debit_count
+  base_metric: debit_count
+  base_metric_table: dwd_transactions
+  time_period: D
+  expression: SUM(CASE WHEN amount<0 THEN 1 ELSE 0 END) GROUP BY account_id
+  aggregation: SUM
+- name: daily_credit_count
+  base_metric: credit_count
+  base_metric_table: dwd_transactions
+  time_period: D
+  expression: SUM(CASE WHEN amount>0 THEN 1 ELSE 0 END) GROUP BY account_id
+  aggregation: SUM
 calculated_metrics:
 - credit_utilization_pct
 business_area: DPST

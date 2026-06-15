@@ -325,3 +325,100 @@ def test_model_design_flags_dwd_fact_with_non_atomic_metrics():
     )
 
     assert "MODEL_DWD_FACT_NO_DERIVED_METRICS" in _rule_ids(result)
+
+
+def test_model_design_flags_derived_metric_without_upstream_atomic_base():
+    tables = [
+        {"name": "dwd_order_detail", "layer": "DWD", "columns": []},
+        {"name": "dws_store_sales_daily", "layer": "DWS", "columns": []},
+    ]
+    edges = [{
+        "source": "dwd_order_detail.subtotal",
+        "target": "dws_store_sales_daily.sale_amount",
+        "source_file": "dws_store_sales_daily.sql",
+    }]
+    model_metadata = {
+        "dwd_order_detail": {
+            "table_type": "fact",
+            "atomic_metrics": ["quantity"],
+        },
+        "dws_store_sales_daily": {
+            "table_type": "fact",
+            "derived_metrics": [{
+                "name": "sale_amount",
+                "base_metric": "subtotal",
+                "base_metric_table": "dwd_order_detail",
+                "aggregation": "SUM",
+            }, {
+                "name": "unknown_amount",
+                "aggregation": "SUM",
+            }],
+        },
+    }
+
+    result = score_model_design_health(
+        tables,
+        edges,
+        [],
+        model_metadata=model_metadata,
+    )
+
+    assert "MODEL_DERIVED_METRIC_BASE_ATOMIC" in _rule_ids(result)
+    check = next(
+        check for check in result["checks"]
+        if check["rule_id"] == "MODEL_DERIVED_METRIC_BASE_ATOMIC"
+    )
+    assert check["evidence"]["missing_base_metrics"] == ["unknown_amount"]
+    assert check["evidence"]["invalid_base_metrics"] == [
+        "sale_amount:dwd_order_detail.subtotal"
+    ]
+
+
+def test_model_design_flags_ambiguous_derived_metric_base_table():
+    tables = [
+        {"name": "dwd_order_detail", "layer": "DWD", "columns": []},
+        {"name": "dwd_refund_detail", "layer": "DWD", "columns": []},
+        {"name": "dws_sales_daily", "layer": "DWS", "columns": []},
+    ]
+    edges = [{
+        "source": "dwd_order_detail.subtotal",
+        "target": "dws_sales_daily.sale_amount",
+        "source_file": "dws_sales_daily.sql",
+    }, {
+        "source": "dwd_refund_detail.subtotal",
+        "target": "dws_sales_daily.refund_amount",
+        "source_file": "dws_sales_daily.sql",
+    }]
+    model_metadata = {
+        "dwd_order_detail": {
+            "table_type": "fact",
+            "atomic_metrics": ["subtotal"],
+        },
+        "dwd_refund_detail": {
+            "table_type": "fact",
+            "atomic_metrics": ["subtotal"],
+        },
+        "dws_sales_daily": {
+            "table_type": "fact",
+            "derived_metrics": [{
+                "name": "sale_amount",
+                "base_metric": "subtotal",
+                "aggregation": "SUM",
+            }],
+        },
+    }
+
+    result = score_model_design_health(
+        tables,
+        edges,
+        [],
+        model_metadata=model_metadata,
+    )
+
+    check = next(
+        check for check in result["checks"]
+        if check["rule_id"] == "MODEL_DERIVED_METRIC_BASE_ATOMIC"
+    )
+    assert check["evidence"]["ambiguous_base_metrics"] == [
+        "sale_amount:subtotal"
+    ]

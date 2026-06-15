@@ -376,6 +376,14 @@ MODEL_DESIGN_RULES = {
         strategy="move_non_atomic_metrics_to_dws",
         edit_scope=["models", "tasks"],
     ),
+    "MODEL_DERIVED_METRIC_BASE_ATOMIC": rule_meta(
+        name="派生指标引用上游原子指标",
+        severity=SEVERITY_HIGH,
+        title="派生指标未正确关联原子指标",
+        remediation_summary="为派生指标补充 base_metric_table 和 base_metric，并确保其指向上游 atomic_metrics",
+        strategy="link_derived_metric_to_atomic_metric",
+        edit_scope=["models", "tasks"],
+    ),
 }
 
 NAMING_RULES = {

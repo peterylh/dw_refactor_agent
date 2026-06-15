@@ -6,8 +6,18 @@ description: 品类月度销售汇总
 config:
   materialized: incremental
 derived_metrics:
-- sale_quantity
-- sale_amount
+- name: sale_quantity
+  base_metric: quantity
+  base_metric_table: dwd_order_detail
+  time_period: M
+  expression: SUM(dwd_order_detail.quantity)
+  aggregation: SUM
+- name: sale_amount
+  base_metric: subtotal
+  base_metric_table: dwd_order_detail
+  time_period: M
+  expression: SUM(dwd_order_detail.subtotal)
+  aggregation: SUM
 atomic_metrics:
 - order_count
 entities:

@@ -65,6 +65,11 @@ def _with_model_rule_scenarios(lineage_data: dict, model_metadata: dict):
             "layer": "DWS",
             "table_type": "fact",
             "grain": {},
+            "derived_metrics": [{
+                "name": "sale_amount",
+                "base_metric": "ghost_amount",
+                "aggregation": "SUM",
+            }],
         },
         "dws_order_passthrough_daily": {
             "layer": "DWS",

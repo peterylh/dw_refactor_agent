@@ -12,8 +12,18 @@ atomic_metrics:
 - order_count
 - customer_count
 derived_metrics:
-- total_amount
-- discount_amount
+- name: total_amount
+  base_metric: subtotal
+  base_metric_table: dwd_order_detail
+  time_period: D
+  expression: SUM(subtotal)
+  aggregation: SUM
+- name: discount_amount
+  base_metric: discount
+  base_metric_table: dwd_order_detail
+  time_period: D
+  expression: SUM(discount)
+  aggregation: SUM
 grain:
   entities:
   - STORE

@@ -126,12 +126,11 @@ def metric_violations(result: TableInspectResult) -> list[dict[str, Any]]:
 
 def metric_names_for_model(result: TableInspectResult) -> list[str]:
     """生成写入 models YAML 的指标名列表。"""
-    groups = metric_groups_for_model(result)
     names = []
     for metric in (
-        groups["atomic_metrics"]
-        + groups["derived_metrics"]
-        + groups["calculated_metrics"]
+        _metric_names(result.atomic_metrics)
+        + _metric_names(result.derived_metrics)
+        + _metric_names(result.calculated_metrics)
     ):
         if metric not in names:
             names.append(metric)
@@ -147,11 +146,48 @@ def _metric_names(metrics: list[dict[str, Any]]) -> list[str]:
     return names
 
 
-def metric_groups_for_model(result: TableInspectResult) -> dict[str, list[str]]:
+def _aggregation_from_expression(expression: str) -> str:
+    text = str(expression or "")
+    if re.search(r"\bCOUNT\s*\(\s*DISTINCT\b", text, re.IGNORECASE):
+        return "COUNT_DISTINCT"
+    matched = re.search(r"\b(SUM|AVG|MIN|MAX|COUNT)\s*\(", text, re.IGNORECASE)
+    return matched.group(1).upper() if matched else ""
+
+
+def _derived_metric_for_model(metric: dict[str, Any]) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "name": str(metric.get("name") or "").strip(),
+    }
+    for key in ("base_metric", "base_metric_table", "time_period", "expression"):
+        value = str(metric.get(key) or "").strip()
+        if value:
+            payload[key] = value
+    aggregation = str(metric.get("aggregation") or "").strip().upper()
+    if not aggregation:
+        aggregation = _aggregation_from_expression(payload.get("expression", ""))
+    if aggregation:
+        payload["aggregation"] = aggregation
+    return payload
+
+
+def _derived_metrics_for_model(
+        metrics: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    items = []
+    seen = set()
+    for metric in metrics:
+        payload = _derived_metric_for_model(metric)
+        name = payload.get("name")
+        if name and name not in seen:
+            seen.add(name)
+            items.append(payload)
+    return items
+
+
+def metric_groups_for_model(result: TableInspectResult) -> dict[str, list[Any]]:
     """生成写入 models YAML 的分类指标名列表。"""
     return {
         "atomic_metrics": _metric_names(result.atomic_metrics),
-        "derived_metrics": _metric_names(result.derived_metrics),
+        "derived_metrics": _derived_metrics_for_model(result.derived_metrics),
         "calculated_metrics": _metric_names(result.calculated_metrics),
     }
 

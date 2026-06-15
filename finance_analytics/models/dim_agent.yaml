@@ -14,9 +14,21 @@ business_area: CLNT
 atomic_metrics:
 - total_interactions
 derived_metrics:
-- avg_interaction_duration
-- avg_satisfaction_rating
-- avg_sentiment_score
+- name: avg_interaction_duration
+  base_metric: duration_minutes
+  base_metric_table: dwd_customer_interactions
+  expression: AVG(duration_minutes)
+  aggregation: AVG
+- name: avg_satisfaction_rating
+  base_metric: satisfaction_rating
+  base_metric_table: dwd_customer_interactions
+  expression: AVG(satisfaction_rating)
+  aggregation: AVG
+- name: avg_sentiment_score
+  base_metric: sentiment_score
+  base_metric_table: dwd_customer_interactions
+  expression: AVG(sentiment_score)
+  aggregation: AVG
 calculated_metrics:
 - resolution_rate
 - escalation_rate

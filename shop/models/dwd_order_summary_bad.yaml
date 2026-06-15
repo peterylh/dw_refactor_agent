@@ -15,4 +15,9 @@ entities:
   - order_id
 business_process: ORDER_TRANSACTION
 derived_metrics:
-- total_amount
+- name: total_amount
+  base_metric: subtotal
+  base_metric_table: ods_order_item
+  time_period: D
+  expression: SUM(oi.subtotal)
+  aggregation: SUM

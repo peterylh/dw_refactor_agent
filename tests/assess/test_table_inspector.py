@@ -12,6 +12,7 @@ from assess.llm.table_inspector import (
     result_to_cache_dict,
     result_to_dict,
     validate_columns,
+    validate_metric_relationships,
 )
 
 
@@ -793,6 +794,120 @@ def test_validate_columns_requires_all_dws_fact_fields():
     )
 
     assert validation["missing_columns"] == ["etl_time", "stat_date"]
+
+
+def test_validate_metric_relationships_requires_derived_base_metric_in_upstream_atomic():
+    result = parse_response("dws_store_sales_daily", {
+        "choices": [{
+            "message": {
+                "content": json.dumps({
+                    "inferred_layer": "DWS",
+                    "table_type": "fact",
+                    "confidence": 0.9,
+                    "columns": {
+                        "atomic_metrics": [],
+                        "derived_metrics": [{
+                            "name": "sale_amount",
+                            "base_metric": "subtotal",
+                            "base_metric_table": "dwd_order_detail",
+                            "expression": "SUM(subtotal)",
+                        }, {
+                            "name": "sale_quantity",
+                            "base_metric": "quantity",
+                            "base_metric_table": "dwd_order_detail",
+                            "expression": "SUM(quantity)",
+                        }, {
+                            "name": "mystery_amount",
+                            "base_metric": "ghost_amount",
+                            "base_metric_table": "dwd_order_detail",
+                            "expression": "SUM(ghost_amount)",
+                        }, {
+                            "name": "unknown_amount",
+                            "base_metric": "",
+                            "base_metric_table": "",
+                            "expression": "SUM(amount)",
+                        }, {
+                            "name": "bad_table_amount",
+                            "base_metric": "subtotal",
+                            "base_metric_table": "dwd_refund_detail",
+                            "expression": "SUM(subtotal)",
+                        }],
+                        "calculated_metrics": [],
+                        "dimensions": [{"name": "store_id"}],
+                        "others": [],
+                    },
+                })
+            }
+        }]
+    }, declared_layer="DWS")
+    ctx = TableContext(
+        table_name="dws_store_sales_daily",
+        layer="DWS",
+        ddl="",
+        etl_sql="",
+        upstream_tables=["dwd_order_detail"],
+        downstream_tables=[],
+        upstream_metric_groups={
+            "dwd_order_detail": {
+                "atomic_metrics": ["subtotal", "quantity"],
+                "derived_metrics": [],
+                "calculated_metrics": [],
+            },
+        },
+    )
+
+    validation = validate_metric_relationships(result, ctx)
+
+    assert validation.get("missing_base_metrics") == ["unknown_amount"]
+    assert validation.get("invalid_base_metrics") == [
+        "mystery_amount:dwd_order_detail.ghost_amount"
+    ]
+    assert validation.get("invalid_base_metric_tables") == [
+        "bad_table_amount:dwd_refund_detail"
+    ]
+
+
+def test_validate_metric_relationships_flags_ambiguous_unqualified_base_metric():
+    result = parse_response("dws_sales_daily", {
+        "choices": [{
+            "message": {
+                "content": json.dumps({
+                    "inferred_layer": "DWS",
+                    "table_type": "fact",
+                    "confidence": 0.9,
+                    "columns": {
+                        "atomic_metrics": [],
+                        "derived_metrics": [{
+                            "name": "sale_amount",
+                            "base_metric": "subtotal",
+                            "expression": "SUM(subtotal)",
+                        }],
+                        "calculated_metrics": [],
+                        "dimensions": [],
+                        "others": [],
+                    },
+                })
+            }
+        }]
+    }, declared_layer="DWS")
+    ctx = TableContext(
+        table_name="dws_sales_daily",
+        layer="DWS",
+        ddl="",
+        etl_sql="",
+        upstream_tables=["dwd_order_detail", "dwd_refund_detail"],
+        downstream_tables=[],
+        upstream_metric_groups={
+            "dwd_order_detail": {"atomic_metrics": ["subtotal"]},
+            "dwd_refund_detail": {"atomic_metrics": ["subtotal"]},
+        },
+    )
+
+    validation = validate_metric_relationships(result, ctx)
+
+    assert validation.get("ambiguous_base_metrics") == [
+        "sale_amount:subtotal"
+    ]
 
 
 def test_result_status_from_validation():

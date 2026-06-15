@@ -9,7 +9,12 @@ config:
 calculated_metrics:
 - stock_status
 derived_metrics:
-- quantity
+- name: quantity
+  base_metric: quantity
+  base_metric_table: dwd_inventory
+  time_period: D
+  expression: SUM(quantity)
+  aggregation: SUM
 grain:
   entities:
   - PROD
