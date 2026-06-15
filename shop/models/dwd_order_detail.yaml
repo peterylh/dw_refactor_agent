@@ -14,11 +14,6 @@ atomic_metrics:
 calculated_metrics:
 - gross_profit
 entities:
-- code: ORDER
-  type: foreign
-  name: 订单
-  key_columns:
-  - order_id
 - code: CUST
   type: foreign
   name: 客户
@@ -34,11 +29,6 @@ entities:
   name: 商品
   key_columns:
   - product_id
-- code: CATEGORY
-  type: foreign
-  name: 品类
-  key_columns:
-  - category_id
 - code: PROMOTION
   type: foreign
   name: 促销活动

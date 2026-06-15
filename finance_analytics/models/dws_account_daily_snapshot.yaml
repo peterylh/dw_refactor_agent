@@ -5,6 +5,9 @@ table_type: fact
 config:
   materialized: full
 atomic_metrics:
+- current_balance
+- available_balance
+- credit_limit
 - active_account_count
 - closed_account_count
 - dormant_account_count
@@ -21,21 +24,21 @@ calculated_metrics:
 business_area: DPST
 grain:
   entities:
-  - account
+  - ACCT
   time_column: snapshot_date
   time_period: D
 entities:
-- code: account
+- code: ACCT
   type: foreign
   name: 账户
   key_columns:
   - account_key
-- code: customer
+- code: CUST
   type: foreign
   name: 客户
   key_columns:
   - customer_key
-- code: product
+- code: PROD
   type: foreign
   name: 产品
   key_columns:

@@ -29,6 +29,7 @@ class TableContext:
     column_lineage: list[dict] = field(default_factory=list)
     declared_data_domain: str = ""
     declared_business_area: str = ""
+    project_context: str = ""
     business_domain_options: dict = field(default_factory=dict)
     business_semantics_options: dict = field(default_factory=dict)
 
@@ -122,6 +123,13 @@ def _business_semantics_prompt_options(project: str) -> dict:
     return options
 
 
+def _project_context(project: str) -> str:
+    catalog = load_business_semantics_catalog(project)
+    if not catalog:
+        return ""
+    return str(catalog.get("project_context") or "").strip()
+
+
 def extract_dependencies(lineage_data: dict) -> tuple[dict, dict]:
     """提取正式资产表级上下游关系，过滤并穿透临时表。"""
     return build_asset_table_graph(lineage_data)
@@ -162,6 +170,7 @@ def build_contexts(project: str,
         else {}
     )
     business_semantics_options = _business_semantics_prompt_options(project)
+    project_context = _project_context(project)
     contexts = []
 
     memo = {}
@@ -227,6 +236,7 @@ def build_contexts(project: str,
                              if layer in BUSINESS_AREA_LAYERS
                              else ""
                          ),
+                         project_context=project_context,
                          business_domain_options=business_domain_options,
                          business_semantics_options=business_semantics_options))
 

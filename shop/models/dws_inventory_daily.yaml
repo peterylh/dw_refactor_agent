@@ -8,7 +8,6 @@ config:
   materialized: incremental
 calculated_metrics:
 - stock_status
-- days_since_restock
 derived_metrics:
 - quantity
 grain:

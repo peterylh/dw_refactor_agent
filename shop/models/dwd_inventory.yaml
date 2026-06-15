@@ -9,8 +9,6 @@ config:
   materialized: snapshot
 atomic_metrics:
 - quantity
-calculated_metrics:
-- days_since_restock
 entities:
 - code: PROD
   type: foreign

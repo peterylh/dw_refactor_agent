@@ -1,12 +1,25 @@
 version: 2
 name: dim_agent
-layer: DIM
-table_type: dimension
+layer: DWS
+table_type: fact
 config:
   materialized: full
 entities:
 - code: AGENT
   type: primary
-  name: 客服
+  name: 代理商
   key_columns:
-  - agent_natural_key
+  - agent_key
+business_area: CLNT
+atomic_metrics:
+- total_interactions
+derived_metrics:
+- avg_interaction_duration
+- avg_satisfaction_rating
+- avg_sentiment_score
+calculated_metrics:
+- resolution_rate
+- escalation_rate
+grain:
+  entities:
+  - AGENT

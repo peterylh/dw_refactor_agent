@@ -190,3 +190,52 @@ def test_build_contexts_includes_business_semantics_catalog_options(
             "name": "客户",
         }],
     }
+
+
+def test_build_contexts_includes_project_context_from_business_semantics(
+        sample_lineage_data, tmp_path, monkeypatch):
+    project = "context_project_context"
+    project_dir = tmp_path / project
+    ddl_dir = project_dir / "ddl"
+    tasks_dir = project_dir / "tasks"
+    ddl_dir.mkdir(parents=True)
+    tasks_dir.mkdir()
+    (ddl_dir / "dwd_order_detail.sql").write_text(
+        "CREATE TABLE dwd_order_detail (order_id BIGINT);",
+        encoding="utf-8",
+    )
+    (tmp_path / "naming_config.yaml").write_text(
+        "types: {}\nbindings: {}\ndictionaries: {}\n",
+        encoding="utf-8",
+    )
+    (project_dir / "business_semantics.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "version": 1,
+                "project": project,
+                "project_context": (
+                    "这是一个门店零售数据集市，订单交易是核心业务过程，"
+                    "客户、商品和门店是核心分析实体。"
+                ),
+                "data_domains": [],
+                "business_areas": [],
+            },
+            allow_unicode=True,
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(config, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setitem(config.PROJECT_CONFIG, project, {
+        "dir": project,
+        "naming_config": "naming_config.yaml",
+    })
+    config._business_semantics_cache.clear()
+
+    contexts = build_contexts(project, sample_lineage_data)
+    ctx = next(c for c in contexts if c.table_name == "dwd_order_detail")
+
+    assert ctx.project_context == (
+        "这是一个门店零售数据集市，订单交易是核心业务过程，"
+        "客户、商品和门店是核心分析实体。"
+    )

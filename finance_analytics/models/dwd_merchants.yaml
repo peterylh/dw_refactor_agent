@@ -1,14 +1,14 @@
 version: 2
 name: dwd_merchants
-layer: DWD
+layer: DIM
 table_type: dimension
 config:
   materialized: full
-data_domain: '04'
-business_area: ACQR
 entities:
 - code: MERCHANT
   type: primary
   name: 商户
   key_columns:
   - merchant_id
+dimension_role: BASE
+dimension_content_type: INFO

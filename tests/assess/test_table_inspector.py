@@ -190,6 +190,29 @@ def test_build_prompt_uses_confirmed_catalog_options_without_hardcoded_domain():
     assert "STORE_OPERATION" not in prompt
 
 
+def test_build_prompt_includes_project_context_as_auxiliary_evidence():
+    ctx = TableContext(
+        table_name="dwd_order_detail",
+        layer="DWD",
+        ddl="CREATE TABLE dwd_order_detail (order_id BIGINT, sale_amt DECIMAL(12,2));",
+        etl_sql="INSERT INTO dwd_order_detail SELECT order_id, sale_amt FROM ods_order;",
+        upstream_tables=["ods_order"],
+        downstream_tables=["dws_order_daily"],
+        project_context=(
+            "这是一个门店零售数据集市，订单交易是核心业务过程，"
+            "销售额和订单数是基础指标。"
+        ),
+    )
+
+    prompt = build_prompt(ctx)
+
+    assert "项目背景说明" in prompt
+    assert "门店零售数据集市" in prompt
+    assert "销售额和订单数是基础指标" in prompt
+    assert "辅助语义" in prompt
+    assert "不能覆盖 DDL、ETL、血缘" in prompt
+
+
 def test_build_prompt_allows_domain_area_candidates_without_dictionary():
     ctx = TableContext(
         table_name="dwd_event_detail",
@@ -1137,6 +1160,24 @@ def test_cache_hash_includes_declared_layer(tmp_path):
     dws_ctx = TableContext(layer="DWS", **base)
 
     assert inspector._compute_hash(dwd_ctx) != inspector._compute_hash(dws_ctx)
+
+
+def test_cache_hash_includes_project_context(tmp_path):
+    inspector = TableInspector(api_key="test", cache_file=tmp_path / "cache.json")
+
+    base = dict(
+        table_name="t1",
+        layer="DWD",
+        ddl="ddl1",
+        etl_sql="etl1",
+        upstream_tables=[],
+        downstream_tables=[],
+    )
+    retail_ctx = TableContext(project_context="零售订单交易背景", **base)
+    finance_ctx = TableContext(project_context="金融账户交易背景", **base)
+
+    assert inspector._compute_hash(retail_ctx) != inspector._compute_hash(
+        finance_ctx)
 
 
 def test_default_parallelism_is_two():

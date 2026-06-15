@@ -1,8 +1,14 @@
 version: 2
 name: dwd_customer_segments_history
-layer: DWD
-table_type: fact
+layer: DIM
+table_type: dimension
 config:
   materialized: full
-data_domain: '01'
-business_area: CLNT
+dimension_role: BASE
+dimension_content_type: INFO
+entities:
+- code: CUST
+  type: primary
+  name: 客户
+  key_columns:
+  - customer_id

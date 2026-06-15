@@ -1,6 +1,6 @@
 version: 2
 name: dws_credit_applications
-layer: DWS
+layer: DWD
 table_type: fact
 config:
   materialized: full
@@ -14,18 +14,24 @@ calculated_metrics:
 - approval_probability_score
 business_area: LOAN
 entities:
-- code: APPLICATION
-  type: foreign
-  name: 申请
-  key_columns:
-  - application_id
-- code: CUSTOMER
+- code: CUST
   type: foreign
   name: 客户
   key_columns:
   - customer_key
-- code: PRODUCT
+- code: PROD
   type: foreign
   name: 产品
   key_columns:
   - product_key
+- code: DATE_APPL
+  type: foreign
+  name: 申请日期
+  key_columns:
+  - application_date_key
+- code: DATE_DEC
+  type: foreign
+  name: 决策日期
+  key_columns:
+  - decision_date_key
+data_domain: '04'

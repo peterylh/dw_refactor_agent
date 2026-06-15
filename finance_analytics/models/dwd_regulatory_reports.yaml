@@ -15,17 +15,17 @@ entities:
   name: 监管报告
   key_columns:
   - report_id
-- code: CUSTOMER
+- code: CUST
   type: foreign
   name: 客户
   key_columns:
   - customer_id
-- code: ACCOUNT
+- code: ACCT
   type: foreign
   name: 账户
   key_columns:
   - account_id
-- code: TRANSACTION
+- code: TRAN
   type: foreign
   name: 交易
   key_columns:

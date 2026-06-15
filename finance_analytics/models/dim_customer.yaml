@@ -10,3 +10,5 @@ entities:
   name: 客户
   key_columns:
   - customer_key
+dimension_role: BASE
+dimension_content_type: INFO

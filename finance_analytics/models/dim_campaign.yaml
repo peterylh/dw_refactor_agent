@@ -10,4 +10,5 @@ entities:
   name: 营销活动
   key_columns:
   - campaign_key
-  - campaign_natural_key
+dimension_role: BASE
+dimension_content_type: INFO

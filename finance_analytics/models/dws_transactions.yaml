@@ -1,22 +1,27 @@
 version: 2
 name: dws_transactions
-layer: DWS
+layer: DWD
 table_type: fact
 config:
   materialized: full
 business_area: PAYM
 entities:
-- code: CUST
+- code: TRANSACTION
+  type: foreign
+  name: 交易
+  key_columns:
+  - transaction_id
+- code: CUSTOMER
   type: foreign
   name: 客户
   key_columns:
   - customer_key
-- code: AGRE
+- code: ACCOUNT
   type: foreign
   name: 账户
   key_columns:
   - account_key
-- code: MER
+- code: MERCHANT
   type: foreign
   name: 商户
   key_columns:
@@ -26,3 +31,16 @@ entities:
   name: 日期
   key_columns:
   - date_key
+data_domain: '04'
+atomic_metrics:
+- transaction_amount
+- transaction_count
+calculated_metrics:
+- transaction_amount_abs
+- fraud_score
+- merchant_risk_score
+- velocity_24h
+- amount_deviation_score
+- processing_time_ms
+- distance_from_home_km
+- fraud_amount

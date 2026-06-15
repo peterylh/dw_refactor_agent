@@ -1,17 +1,29 @@
 version: 2
 name: dws_customer_interactions
-layer: DWS
+layer: DWD
 table_type: fact
 config:
   materialized: full
 atomic_metrics:
 - duration_minutes
-- sentiment_score
 - interaction_count
 business_area: CLNT
 entities:
-- code: CUST
+- code: INTERACTION
+  type: foreign
+  name: 客户互动
+  key_columns:
+  - interaction_id
+- code: CUSTOMER
   type: foreign
   name: 客户
   key_columns:
   - customer_key
+- code: AGENT
+  type: foreign
+  name: 坐席
+  key_columns:
+  - agent_id
+data_domain: '04'
+calculated_metrics:
+- sentiment_score

@@ -1,22 +1,17 @@
 version: 2
 name: dws_account_events
-layer: DWS
+layer: DWD
 table_type: fact
 config:
   materialized: full
 atomic_metrics:
+- event_count
 - old_value
 - new_value
-- event_count
 calculated_metrics:
 - value_change
 business_area: DPST
 entities:
-- code: EVENT
-  type: foreign
-  name: 事件
-  key_columns:
-  - event_key
 - code: ACCOUNT
   type: foreign
   name: 账户
@@ -32,3 +27,9 @@ entities:
   name: 产品
   key_columns:
   - product_key
+- code: EVENT_DATE
+  type: foreign
+  name: 事件日期
+  key_columns:
+  - event_date_key
+data_domain: '02'

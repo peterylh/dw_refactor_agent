@@ -1,21 +1,21 @@
 version: 2
 name: dwd_atm_locations
-layer: DWD
+layer: DIM
 table_type: dimension
 config:
   materialized: full
-data_domain: '05'
-business_area: CHNL
 entities:
 - code: ATM
   type: primary
-  name: ATM实体
+  name: ATM机
   key_columns:
   - atm_id
-- code: BRCH
+- code: BRANCH
   type: foreign
   key_columns:
   - branch_id
   relationship:
     type: many_to_one
     from_entity: ATM
+dimension_role: BASE
+dimension_content_type: INFO

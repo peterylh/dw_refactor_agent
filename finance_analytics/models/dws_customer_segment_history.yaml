@@ -1,15 +1,16 @@
 version: 2
 name: dws_customer_segment_history
-layer: DWS
+layer: DWD
 table_type: fact
 config:
   materialized: full
 atomic_metrics:
+- total_accounts
+- total_balance
+- products_held
+- branch_visits_last_90d
+- online_logins_last_90d
 - segment_change_count
-calculated_metrics:
-- customer_lifetime_value
-- digital_engagement_score
-- days_in_segment
 business_area: CLNT
 entities:
 - code: CUST
@@ -17,3 +18,10 @@ entities:
   name: 客户
   key_columns:
   - customer_key
+- code: DATE
+  type: foreign
+  name: 日期
+  key_columns:
+  - effective_date_key
+  - end_date_key
+data_domain: '01'

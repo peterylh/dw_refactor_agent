@@ -1,14 +1,14 @@
 version: 2
 name: dwd_branch_locations
-layer: DWD
+layer: DIM
 table_type: dimension
 config:
   materialized: full
-data_domain: '06'
-business_area: CHNL
 entities:
-- code: BRCH
+- code: BRANCH
   type: primary
   name: 分支机构
   key_columns:
   - branch_id
+dimension_role: BASE
+dimension_content_type: INFO

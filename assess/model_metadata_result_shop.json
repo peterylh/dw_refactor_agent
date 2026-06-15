@@ -1,23 +1,23 @@
 {
   "project": "shop",
   "write_scope": "all",
-  "inspected_table_count": 15,
-  "metric_table_count": 10,
-  "metadata_only_table_count": 5,
+  "inspected_table_count": 13,
+  "metric_table_count": 9,
+  "metadata_only_table_count": 4,
   "dwd_table_count": 3,
-  "dws_table_count": 7,
-  "dim_table_count": 5,
-  "fact_table_count": 11,
-  "passed_table_count": 15,
+  "dws_table_count": 6,
+  "dim_table_count": 4,
+  "fact_table_count": 9,
+  "passed_table_count": 13,
   "warning_table_count": 0,
   "blocked_table_count": 0,
-  "atomic_metric_count": 13,
-  "derived_metric_count": 14,
-  "calculated_metric_count": 7,
-  "metric_count": 34,
-  "derived_metric_violation_count": 1,
-  "calculated_metric_violation_count": 2,
-  "non_atomic_metric_violation_count": 3,
+  "atomic_metric_count": 12,
+  "derived_metric_count": 13,
+  "calculated_metric_count": 5,
+  "metric_count": 30,
+  "derived_metric_violation_count": 0,
+  "calculated_metric_violation_count": 1,
+  "non_atomic_metric_violation_count": 1,
   "metadata_warning_count": 0,
   "tables": [
     {
@@ -31,10 +31,12 @@
       "dimension_content_type": "",
       "confidence": 0.95,
       "reasoning_steps": [
-        "ETL 无 GROUP BY 等聚合，仅做去重和字段计算，保持每日快照明细粒度，符合 DWD 定义。",
-        "表包含可度量字段 quantity 和业务外键 product_id/store_id，记录库存快照事件，属于周期性快照事实表。",
-        "数据域根据库存语义归为 INVT(05)，业务板块为门店零售 SHOP。",
-        "字段分组依据：quantity 为基础可加性度量，归 atomic_metrics；days_since_restock 为基于 DATEDIFF 的结果性度量，归 calculated_metrics；其余非可加性属性或维度字段归 dimensions；etl_time 为技术字段归 others。"
+        "ETL逻辑无GROUP BY聚合，保持明细行粒度（每条记录一个库存记录一天的快照），判定为DWD层。",
+        "表包含可加性度量字段quantity，且引用商品、门店外键，属于事务事实（快照事实），判定为事实表。",
+        "原始配置数据域05（库存域）和业务板块SHOP与业务语义一致，保留。",
+        "主键inventory_id+snapshot_date；product_id和store_id作为外键实体引用，返回PROD和STORE。",
+        "DWD事实表只应含原子指标；quantity为可独立汇总的库存数量，归atomic_metrics；其余字段均为维度属性或技术字段。",
+        "days_since_restock虽由计算得出，但作为描述性天数属性用于切片分析，不表达新的业务结果口径，归dimensions。"
       ],
       "columns": {
         "atomic_metrics": [
@@ -42,85 +44,79 @@
             "name": "quantity",
             "data_type": "INT",
             "business_process": "INVENTORY_MANAGEMENT",
-            "action": "store",
-            "measure": "quantity",
+            "action": "STOCK",
+            "measure": "QUANTITY",
             "description": "库存数量",
-            "reason": "基础可加性度量，直接透传且可独立观测汇总，属于原子指标",
-            "confidence": 0.95
+            "reason": "直接从上游透传的可加性基础度量，可独立观测和按粒度汇总",
+            "confidence": 0.99
           }
         ],
         "derived_metrics": [],
-        "calculated_metrics": [
-          {
-            "name": "days_since_restock",
-            "data_type": "INT",
-            "business_process": "INVENTORY_MANAGEMENT",
-            "expression": "DATEDIFF(snapshot_date, last_restock_date)",
-            "derived_from": [
-              "snapshot_date",
-              "last_restock_date"
-            ],
-            "description": "距上次补货天数",
-            "reason": "通过 DATEDIFF 计算的明细行结果度量，非基础原子指标，归 calculated_metrics",
-            "confidence": 0.95
-          }
-        ],
+        "calculated_metrics": [],
         "dimensions": [
           {
             "name": "inventory_id",
             "dimension_type": "primary_key",
             "data_type": "BIGINT",
             "description": "库存记录ID",
-            "reason": "表物理主键，用于唯一标识每日快照行",
-            "confidence": 0.95
+            "reason": "联合主键之一，唯一标识库存记录",
+            "confidence": 0.99
           },
           {
             "name": "snapshot_date",
             "dimension_type": "date",
             "data_type": "DATE",
             "description": "快照日期",
-            "reason": "日期维度，用于分区和切片",
-            "confidence": 0.95
+            "reason": "时间维度字段，用于分区和按日期分析",
+            "confidence": 0.99
           },
           {
             "name": "product_id",
             "dimension_type": "foreign_key",
             "data_type": "BIGINT",
             "description": "商品ID",
-            "reason": "引用商品维度的外键",
-            "confidence": 0.95
+            "reason": "引用商品实体的外键",
+            "confidence": 0.99
           },
           {
             "name": "store_id",
             "dimension_type": "foreign_key",
             "data_type": "BIGINT",
             "description": "门店ID",
-            "reason": "引用门店维度的外键",
-            "confidence": 0.95
+            "reason": "引用门店实体的外键",
+            "confidence": 0.99
           },
           {
             "name": "safety_stock",
             "dimension_type": "attribute",
             "data_type": "INT",
             "description": "安全库存",
-            "reason": "非可加性输入属性，用于描述和参与状态计算，不作为独立统计口径",
+            "reason": "非加性配置属性，用于描述库存策略和参与状态计算",
             "confidence": 0.95
           },
           {
             "name": "stock_status",
-            "dimension_type": "status",
+            "dimension_type": "attribute",
             "data_type": "VARCHAR(16)",
             "description": "库存状态:正常/偏低/缺货预警/缺货",
-            "reason": "枚举状态字段，用于切片过滤",
+            "reason": "由CASE WHEN计算得到的状态枚举值，用于切片过滤",
             "confidence": 0.95
           },
           {
             "name": "last_restock_date",
-            "dimension_type": "date",
+            "dimension_type": "attribute",
             "data_type": "DATE",
             "description": "最近补货日期",
-            "reason": "日期属性，用于描述和参与计算",
+            "reason": "补货属性，用于计算天数差或作为分析切片",
             "confidence": 0.95
+          },
+          {
+            "name": "days_since_restock",
+            "dimension_type": "attribute",
+            "data_type": "INT",
+            "description": "距上次补货天数",
+            "reason": "基于last_restock_date和snapshot_date计算出的描述性天数，用于分组分析，非独立可汇总基础度量",
+            "confidence": 0.9
           }
         ],
         "others": [
@@ -129,8 +125,8 @@
             "role": "technical",
             "data_type": "DATETIME",
             "description": "ETL处理时间",
-            "reason": "技术审计字段，无业务含义",
-            "confidence": 0.95
+            "reason": "技术审计字段，记录ETL执行时间",
+            "confidence": 0.99
           }
         ]
       },
@@ -194,15 +190,7 @@
       "status": "passed",
       "retry_count": 0,
       "is_violating_declared_layer": false,
-      "violations": [
-        {
-          "table": "dwd_inventory",
-          "column": "days_since_restock",
-          "metric_type": "calculated",
-          "reason": "通过 DATEDIFF 计算的明细行结果度量，非基础原子指标，归 calculated_metrics",
-          "confidence": 0.95
-        }
-      ],
+      "violations": [],
       "metadata_warnings": []
     },
     {
@@ -216,11 +204,16 @@
       "dimension_content_type": "",
       "confidence": 0.95,
       "reasoning_steps": [
-        "1. ETL不含GROUP BY，保持事务明细粒度，符合DWD定义。",
-        "2. 下游被引用7次，排除ADS。",
-        "3. 表记录订单明细业务事件，包含可加性度量字段，属事实表。",
-        "4. 根据表名、字段注释和ETL逻辑，数据域为订单交易域(04)，业务板块为门店零售(SHOP)。",
-        "5. 字段分组识别：quantity、discount、subtotal为原子指标；gross_profit为衍生指标（计算毛利）；其余为维度字段或技术字段。"
+        "ETL逻辑无GROUP BY聚合，保持订单明细行粒度，符合DWD特征。",
+        "DDL字段包含order_id、order_item_id、order_date等，记录每笔订单每个商品的销售事件事实。",
+        "下游被7个DWS/ADS引用，典型DWD复用。",
+        "原始配置层级DWD，数据域04（订单交易域）和业务板块SHOP正确。",
+        "主键为复合键(order_id, order_item_id, order_date)，无法单列作为实体主键，因此entities为外键实体。",
+        "gross_profit由subtotal - cost_price*quantity计算得出，属同一行内组合结果，归为calculated_metrics。",
+        "quantity、discount、subtotal为基础可加性度量，归atomic_metrics。",
+        "cost_price虽经回填估算仍为非加性输入属性，归dimensions。",
+        "order_month由order_date派生，为退化维度。",
+        "注意：DWD表出现calculated_metrics(gross_profit)存在违规风险，但按标准分类。"
       ],
       "columns": {
         "atomic_metrics": [
@@ -228,10 +221,10 @@
             "name": "quantity",
             "data_type": "INT",
             "business_process": "ORDER_TRANSACTION",
-            "action": "SELL",
+            "action": "ORDER",
             "measure": "QUANTITY",
-            "description": "订单明细行销售数量",
-            "reason": "可加性基础指标，直接透传，可独立观测汇总",
+            "description": "销售数量",
+            "reason": "可独立观测、可汇总的明细行基础计量。",
             "confidence": 0.95
           },
           {
@@ -241,17 +234,17 @@
             "action": "DISCOUNT",
             "measure": "AMOUNT",
             "description": "折扣金额",
-            "reason": "可加性基础指标，每行折扣金额可汇总为总折扣",
-            "confidence": 0.95
+            "reason": "可汇总的基础折扣金额指标。",
+            "confidence": 0.9
           },
           {
             "name": "subtotal",
             "data_type": "DECIMAL(12,2)",
             "business_process": "ORDER_TRANSACTION",
-            "action": "SELL",
+            "action": "ORDER",
             "measure": "SUBTOTAL",
-            "description": "订单明细行小计金额",
-            "reason": "可加性基础指标，直接透传，可汇总为销售总额",
+            "description": "小计金额",
+            "reason": "可汇总的基础销售额指标。",
             "confidence": 0.95
           }
         ],
@@ -261,32 +254,32 @@
             "name": "gross_profit",
             "data_type": "DECIMAL(12,2)",
             "business_process": "ORDER_TRANSACTION",
-            "expression": "ROUND(subtotal - cost_price * quantity, 2)",
+            "expression": "subtotal - cost_price * quantity",
             "derived_from": [
               "subtotal",
               "cost_price",
               "quantity"
             ],
-            "description": "订单明细行毛利",
-            "reason": "基于多个基础字段计算的结果性度量，已物化，属于衍生指标",
-            "confidence": 0.95
+            "description": "毛利",
+            "reason": "由多个基础度量组合计算的结果性度量，属于calculated_metrics。",
+            "confidence": 0.85
           }
         ],
         "dimensions": [
           {
             "name": "order_id",
-            "dimension_type": "degenerate",
+            "dimension_type": "foreign_key",
             "data_type": "BIGINT",
             "description": "订单ID",
-            "reason": "业务主键一部分，退化维度",
+            "reason": "订单实体的外键。",
             "confidence": 0.95
           },
           {
             "name": "order_item_id",
-            "dimension_type": "degenerate",
+            "dimension_type": "foreign_key",
             "data_type": "BIGINT",
             "description": "订单明细ID",
-            "reason": "业务主键一部分，退化维度",
+            "reason": "订单明细实体的外键，也是复合主键之一。",
             "confidence": 0.95
           },
           {
@@ -294,7 +287,7 @@
             "dimension_type": "date",
             "data_type": "DATE",
             "description": "订单日期",
-            "reason": "时间维度，用于切片和分区",
+            "reason": "日期维度，用于时间分析。",
             "confidence": 0.95
           },
           {
@@ -302,7 +295,7 @@
             "dimension_type": "foreign_key",
             "data_type": "BIGINT",
             "description": "客户ID",
-            "reason": "外键引用客户维度",
+            "reason": "客户实体的外键。",
             "confidence": 0.95
           },
           {
@@ -310,7 +303,7 @@
             "dimension_type": "foreign_key",
             "data_type": "BIGINT",
             "description": "门店ID",
-            "reason": "外键引用门店维度",
+            "reason": "门店实体的外键。",
             "confidence": 0.95
           },
           {
@@ -318,7 +311,7 @@
             "dimension_type": "foreign_key",
             "data_type": "BIGINT",
             "description": "商品ID",
-            "reason": "外键引用商品维度",
+            "reason": "商品实体的外键。",
             "confidence": 0.95
           },
           {
@@ -326,23 +319,23 @@
             "dimension_type": "foreign_key",
             "data_type": "BIGINT",
             "description": "品类ID",
-            "reason": "外键引用品类维度",
-            "confidence": 0.95
+            "reason": "品类维度的外键。",
+            "confidence": 0.85
           },
           {
             "name": "promotion_id",
             "dimension_type": "foreign_key",
             "data_type": "BIGINT",
             "description": "促销活动ID",
-            "reason": "外键引用促销维度",
-            "confidence": 0.95
+            "reason": "促销活动实体的外键。",
+            "confidence": 0.9
           },
           {
             "name": "order_month",
             "dimension_type": "attribute",
             "data_type": "VARCHAR(7)",
-            "description": "订单月份:YYYY-MM",
-            "reason": "由订单日期转换的月份属性，用于月粒度切片",
+            "description": "订单月份",
+            "reason": "由order_date派生的退化维度，用于月度分析。",
             "confidence": 0.95
           },
           {
@@ -350,58 +343,46 @@
             "dimension_type": "attribute",
             "data_type": "DECIMAL(12,2)",
             "description": "单价",
-            "reason": "非加性输入属性，用于描述和参与计算，不作为独立口径",
-            "confidence": 0.95
+            "reason": "非加性输入属性，用于描述和计算。",
+            "confidence": 0.9
           },
           {
             "name": "cost_price",
             "dimension_type": "attribute",
             "data_type": "DECIMAL(12,2)",
             "description": "成本价",
-            "reason": "非加性输入属性，用于计算毛利，不作为独立口径",
-            "confidence": 0.95
+            "reason": "非加性输入属性，虽有估算修正仍为属性维度。",
+            "confidence": 0.85
           },
           {
             "name": "payment_method",
-            "dimension_type": "attribute",
+            "dimension_type": "status",
             "data_type": "VARCHAR(16)",
             "description": "支付方式",
-            "reason": "描述性属性，用于分组过滤",
-            "confidence": 0.95
+            "reason": "枚举维度，用于分组过滤。",
+            "confidence": 0.9
           },
           {
             "name": "order_status",
             "dimension_type": "status",
             "data_type": "VARCHAR(16)",
             "description": "订单状态",
-            "reason": "状态维度，用于切片，ETL已过滤为已完成",
-            "confidence": 0.95
+            "reason": "状态维度，当前过滤为已完成，仍保留作为维度分析。",
+            "confidence": 0.85
           }
         ],
         "others": [
           {
             "name": "etl_time",
-            "role": "technical",
+            "role": "audit",
             "data_type": "DATETIME",
             "description": "ETL处理时间",
-            "reason": "ETL审计技术字段",
+            "reason": "技术审计字段。",
             "confidence": 0.95
           }
         ]
       },
       "entities": [
-        {
-          "code": "ORDER",
-          "type": "foreign",
-          "name": "订单",
-          "key_columns": [
-            "order_id"
-          ],
-          "relationship": {
-            "type": "many_to_one",
-            "from_entity": ""
-          }
-        },
         {
           "code": "CUST",
           "type": "foreign",
@@ -432,18 +413,6 @@
           "name": "商品",
           "key_columns": [
             "product_id"
-          ],
-          "relationship": {
-            "type": "many_to_one",
-            "from_entity": ""
-          }
-        },
-        {
-          "code": "CATEGORY",
-          "type": "foreign",
-          "name": "品类",
-          "key_columns": [
-            "category_id"
           ],
           "relationship": {
             "type": "many_to_one",
@@ -466,17 +435,6 @@
       "entity": {},
       "related_entities": [
         {
-          "code": "ORDER",
-          "name": "订单",
-          "key_columns": [
-            "order_id"
-          ],
-          "relationship": {
-            "type": "many_to_one",
-            "from_entity": ""
-          }
-        },
-        {
           "code": "CUST",
           "name": "客户",
           "key_columns": [
@@ -503,17 +461,6 @@
           "name": "商品",
           "key_columns": [
             "product_id"
-          ],
-          "relationship": {
-            "type": "many_to_one",
-            "from_entity": ""
-          }
-        },
-        {
-          "code": "CATEGORY",
-          "name": "品类",
-          "key_columns": [
-            "category_id"
           ],
           "relationship": {
             "type": "many_to_one",
@@ -546,83 +493,94 @@
           "table": "dwd_order_detail",
           "column": "gross_profit",
           "metric_type": "calculated",
-          "reason": "基于多个基础字段计算的结果性度量，已物化，属于衍生指标",
-          "confidence": 0.95
+          "reason": "由多个基础度量组合计算的结果性度量，属于calculated_metrics。",
+          "confidence": 0.85
         }
       ],
       "metadata_warnings": []
     },
     {
-      "table_name": "dwd_order_summary_bad",
+      "table_name": "dws_order_passthrough_daily",
       "declared_layer": "DWD",
-      "inferred_layer": "ADS",
+      "inferred_layer": "DWD",
       "table_type": "fact",
-      "inferred_data_domain": "",
-      "inferred_business_area": "",
+      "inferred_data_domain": "04",
+      "inferred_business_area": "SHOP",
       "dimension_role": "",
       "dimension_content_type": "",
       "confidence": 0.95,
       "reasoning_steps": [
-        "ETL SQL 包含 GROUP BY 和聚合函数（COUNT、SUM、MAX），违反 DWD 层禁止聚合规则，排除 DWD。",
-        "下游引用次数为 0，距 ODS 最小跳数 1，符合 ADS 层特征（面向最终应用、出度为 0）。",
-        "表内包含可度量字段（item_count、total_amount），且按订单分组汇总，属于事实汇总表。",
-        "原始配置层级为 DWD 但实际为 ADS，按规则仍对字段分组并标记违规。",
-        "order_id 和 order_date 为维度字段；item_count 为 COUNT(*) 生成原子指标，total_amount 为 SUM 生成派生指标；etl_time 为技术审计字段。"
+        "ETL SQL 直接从 dwd_order_detail 按日期过滤后透传字段，无聚合、无 JOIN 拉宽操作，明细粒度保持不变。",
+        "表名含 dws 但实际无聚合，原始配置 DWD 更符合分层定义。",
+        "下游被引用次数为0，但并非 ADS（ADS 通常为报表定制），此表作为 DWD 明细中间层，未被引用合理。",
+        "字段中 subtotal 是上游原子指标的直接透传，其他字段均为维度外键、日期或审计字段。",
+        "数据域根据 store_id/product_id/order_id 等判定为订单交易域 (04)，业务板块为 SHOP。"
       ],
       "columns": {
         "atomic_metrics": [
           {
-            "name": "item_count",
-            "data_type": "INT",
+            "name": "subtotal",
+            "data_type": "DECIMAL(12,2)",
             "business_process": "ORDER_TRANSACTION",
-            "action": "COUNT",
-            "measure": "order_item",
-            "description": "订单包含的商品明细行数",
-            "reason": "基于订单明细行做 COUNT，是基础计数口径，属于原子指标。但 DWD 层不应出现聚合操作，此处为违规。",
+            "action": "sale",
+            "measure": "subtotal_amount",
+            "description": "订单明细行小计金额",
+            "reason": "上游 dwd_order_detail 中 subtotal 被标注为原子指标，当前表直接透传，为可独立观测的可加性度量。",
             "confidence": 0.95
           }
         ],
-        "derived_metrics": [
-          {
-            "name": "total_amount",
-            "data_type": "DECIMAL(14,2)",
-            "business_process": "ORDER_TRANSACTION",
-            "base_metric": "order_item_subtotal",
-            "modifiers": [],
-            "time_period": "",
-            "expression": "SUM(oi.subtotal) GROUP BY order_id",
-            "description": "订单的总金额（所有明细金额之和）",
-            "reason": "对上游原子指标（明细金额）求和得到，属于派生指标。DWD 层不应包含派生指标，此处为违规。",
-            "confidence": 0.95
-          }
-        ],
+        "derived_metrics": [],
         "calculated_metrics": [],
         "dimensions": [
           {
-            "name": "order_id",
+            "name": "order_item_id",
             "dimension_type": "degenerate",
             "data_type": "BIGINT",
-            "description": "订单标识，退化维度",
-            "reason": "从明细表透传的订单ID，作为分组键，是维度字段",
+            "description": "订单明细行ID，事实表行标识",
+            "reason": "唯一标识订单明细行，退化维度，用于分组或关联，非度量。",
             "confidence": 0.95
           },
           {
-            "name": "order_date",
+            "name": "order_id",
+            "dimension_type": "foreign_key",
+            "data_type": "BIGINT",
+            "description": "订单ID",
+            "reason": "引用订单实体的外键维度字段。",
+            "confidence": 0.95
+          },
+          {
+            "name": "stat_date",
             "dimension_type": "date",
             "data_type": "DATE",
-            "description": "订单日期（取订单主表的最大日期）",
-            "reason": "维度日期字段，用于时间切片",
-            "confidence": 0.9
+            "description": "统计日期（订单日期）",
+            "reason": "分区字段和时间维度，用于过滤和分组。",
+            "confidence": 0.95
+          },
+          {
+            "name": "store_id",
+            "dimension_type": "foreign_key",
+            "data_type": "BIGINT",
+            "description": "门店ID",
+            "reason": "引用门店实体的外键维度字段。",
+            "confidence": 0.95
+          },
+          {
+            "name": "product_id",
+            "dimension_type": "foreign_key",
+            "data_type": "BIGINT",
+            "description": "商品ID",
+            "reason": "引用商品实体的外键维度字段。",
+            "confidence": 0.95
           }
         ],
         "others": [
           {
             "name": "etl_time",
-            "role": "audit",
+            "role": "technical",
             "data_type": "DATETIME",
-            "description": "ETL 处理时间",
-            "reason": "技术审计字段",
-            "confidence": 1.0
+            "description": "ETL 加载时间",
+            "reason": "技术审计字段，记录数据写入时间，不用于分析。",
+            "confidence": 0.95
           }
         ]
       },
@@ -633,27 +591,27 @@
           "name": "订单",
           "key_columns": [
             "order_id"
-          ],
-          "relationship": {
-            "type": "many_to_one",
-            "from_entity": ""
-          }
+          ]
+        },
+        {
+          "code": "PROD",
+          "type": "foreign",
+          "name": "商品",
+          "key_columns": [
+            "product_id"
+          ]
+        },
+        {
+          "code": "STORE",
+          "type": "foreign",
+          "name": "门店",
+          "key_columns": [
+            "store_id"
+          ]
         }
       ],
       "entity": {},
-      "related_entities": [
-        {
-          "code": "ORDER",
-          "name": "订单",
-          "key_columns": [
-            "order_id"
-          ],
-          "relationship": {
-            "type": "many_to_one",
-            "from_entity": ""
-          }
-        }
-      ],
+      "related_entities": [],
       "grain": {},
       "validation": {
         "unknown_columns": [],
@@ -662,16 +620,8 @@
       },
       "status": "passed",
       "retry_count": 0,
-      "is_violating_declared_layer": true,
-      "violations": [
-        {
-          "table": "dwd_order_summary_bad",
-          "column": "total_amount",
-          "metric_type": "derived",
-          "reason": "对上游原子指标（明细金额）求和得到，属于派生指标。DWD 层不应包含派生指标，此处为违规。",
-          "confidence": 0.95
-        }
-      ],
+      "is_violating_declared_layer": false,
+      "violations": [],
       "metadata_warnings": []
     },
     {
@@ -679,18 +629,21 @@
       "declared_layer": "DWS",
       "inferred_layer": "DWS",
       "table_type": "fact",
-      "inferred_data_domain": "04",
+      "inferred_data_domain": "",
       "inferred_business_area": "SHOP",
       "dimension_role": "",
       "dimension_content_type": "",
-      "confidence": 0.9,
+      "confidence": 0.95,
       "reasoning_steps": [
-        "ETL 包含 GROUP BY category_id, order_month 聚合操作，排除 ODS/DWD，符合 DWS 汇总特征。",
-        "下游引用次数为 0，但表名和加工逻辑符合公共维度下月度汇总，暂作为 DWS 而非 ADS。",
-        "包含可加性度量字段 (order_count, sale_quantity, sale_amount)，属于汇总事实表。",
-        "主键 (category_id, stat_month, stat_month_date) 为复合键，主实体为品类外键，粒度是品类-月。",
-        "数据域属于订单交易域 (ORDR)，业务板块为门店零售 (SHOP)。",
-        "字段分组: order_count 为 COUNT(DISTINCT order_id) 生成的基础计数指标，归 atomic_metrics; sale_quantity 和 sale_amount 是对上游原子指标 quantity/subtotal 的 SUM 聚合，归 derived_metrics; 其余字段为维度或审计字段。"
+        "ETL SQL包含GROUP BY category_id, order_month，符合DWS汇总特征，排除ODS/DWD。",
+        "下游引用次数为0，但表名和加工逻辑明确为汇总层，且无复杂衍生指标，按设计归属DWS。",
+        "表结构包含可度量字段(order_count, sale_quantity, sale_amount)，属于事实表。",
+        "数据域不适用于DWS层，返回空字符串；业务板块为SHOP，与原始配置一致。",
+        "实体为品类(category_id)，是外键引用，类型为foreign。",
+        "粒度按品类+月份，时间字段stat_month_date，周期M。",
+        "order_count为对order_id的COUNT DISTINCT，是基础计数指标，归atomic_metrics。",
+        "sale_quantity和sale_amount分别对上游原子指标quantity/subtotal做SUM聚合，且叠加品类维度，归derived_metrics。",
+        "category_id、stat_month、stat_month_date为维度字段，etl_time为技术字段。"
       ],
       "columns": {
         "atomic_metrics": [
@@ -701,7 +654,7 @@
             "action": "COUNT_DISTINCT",
             "measure": "order_id",
             "description": "订单笔数",
-            "reason": "对上游 order_id 做 COUNT DISTINCT，生成基础计数指标，无二次计算。",
+            "reason": "对订单标识做COUNT DISTINCT，是基础计数原子指标",
             "confidence": 0.95
           }
         ],
@@ -711,11 +664,13 @@
             "data_type": "INT",
             "business_process": "ORDER_TRANSACTION",
             "base_metric": "quantity",
-            "modifiers": [],
+            "modifiers": [
+              "品类"
+            ],
             "time_period": "M",
-            "expression": "SUM(quantity) GROUP BY category_id, order_month",
+            "expression": "SUM(dwd_order_detail.quantity)",
             "description": "销售数量",
-            "reason": "对上游原子指标 quantity 做 SUM 聚合，叠加时间周期 (月) 和品类维度，符合派生指标定义。",
+            "reason": "对上游原子指标quantity按品类+月份做SUM聚合，属于派生指标",
             "confidence": 0.95
           },
           {
@@ -723,11 +678,13 @@
             "data_type": "DECIMAL(14,2)",
             "business_process": "ORDER_TRANSACTION",
             "base_metric": "subtotal",
-            "modifiers": [],
+            "modifiers": [
+              "品类"
+            ],
             "time_period": "M",
-            "expression": "SUM(subtotal) GROUP BY category_id, order_month",
+            "expression": "SUM(dwd_order_detail.subtotal)",
             "description": "销售金额",
-            "reason": "对上游原子指标 subtotal 做 SUM 聚合，叠加时间周期和品类维度，为派生指标。",
+            "reason": "对上游原子指标subtotal按品类+月份做SUM聚合，属于派生指标",
             "confidence": 0.95
           }
         ],
@@ -738,7 +695,7 @@
             "dimension_type": "foreign_key",
             "data_type": "BIGINT",
             "description": "品类ID",
-            "reason": "外键，引用品类维度表，用于分组和分析切片。",
+            "reason": "外键，引用品类维度表，用于分组和过滤",
             "confidence": 1.0
           },
           {
@@ -746,7 +703,7 @@
             "dimension_type": "date",
             "data_type": "VARCHAR(7)",
             "description": "统计月份:YYYY-MM",
-            "reason": "时间维度字段，表示统计月份，用于过滤和分组。",
+            "reason": "时间维度属性，用于切片和分组",
             "confidence": 1.0
           },
           {
@@ -754,7 +711,7 @@
             "dimension_type": "date",
             "data_type": "DATE",
             "description": "统计月份(月初日期)",
-            "reason": "时间维度字段，作为分区和粒度时间列。",
+            "reason": "时间维度属性，作为时间点用于分区和过滤",
             "confidence": 1.0
           }
         ],
@@ -764,7 +721,7 @@
             "role": "audit",
             "data_type": "DATETIME",
             "description": "ETL处理时间",
-            "reason": "ETL 技术审计字段，不参与业务分析。",
+            "reason": "技术审计字段，记录ETL执行时间",
             "confidence": 1.0
           }
         ]
@@ -779,7 +736,7 @@
           ],
           "relationship": {
             "type": "many_to_one",
-            "from_entity": "CATEGORY"
+            "from_entity": ""
           }
         }
       ],
@@ -793,7 +750,7 @@
           ],
           "relationship": {
             "type": "many_to_one",
-            "from_entity": "CATEGORY"
+            "from_entity": ""
           }
         }
       ],
@@ -820,18 +777,20 @@
       "declared_layer": "DWS",
       "inferred_layer": "DWS",
       "table_type": "fact",
-      "inferred_data_domain": "04",
+      "inferred_data_domain": "",
       "inferred_business_area": "SHOP",
       "dimension_role": "",
       "dimension_content_type": "",
       "confidence": 0.95,
       "reasoning_steps": [
-        "ETL 中包含 GROUP BY 和聚合函数（COUNT DISTINCT, SUM），排除 ODS 和 DWD。",
-        "下游被引用次数为 1，不是 0，且表名含 _summary，符合 DWS 特征。",
-        "主键为 (customer_id, stat_date) 复合键，非单一实体 ID，不是维度表，属于事实表（汇总事实表）。",
-        "数据域按业务语义应属订单交易域（ORDR），业务板块为 SHOP。",
-        "实体仅客户作为外键，粒度为客户+天。",
-        "字段分组：order_count 是源头 order_id 的 COUNT DISTINCT，属于基础计数原子指标；total_amount 和 total_discount 是对上游 atomic_metrics 的 SUM 聚合，属于派生指标；payment_amount 和 avg_order_amount 包含多字段组合计算，属于衍生指标；customer_id 为外键维度，stat_date 为日期维度，etl_time 为审计字段。"
+        "ETL 包含 GROUP BY customer_id, order_date，存在聚合操作，排除 ODS 和 DWD。",
+        "下游被引用 1 次（ads_customer_rfm），出度不为 0，排除 ADS。原始配置 DWS 与推断一致。",
+        "表包含订单数、金额等可度量字段，按客户+日期汇总，属于汇总事实表。",
+        "主键 (customer_id, stat_date) 不是单一实体 ID，表类型为 fact。",
+        "customer_id 引用客户实体，entities 返回外键 CUST。",
+        "grain 实体为 CUST，时间字段 stat_date，周期 D。",
+        "字段分组依据 ETL 表达式和上游指标分组：order_count 是 COUNT(DISTINCT order_id) 基础计数，归 atomic_metrics；total_amount 和 total_discount 是对上游原子指标 SUM 聚合，归 derived_metrics；payment_amount 和 avg_order_amount 涉及多字段组合计算，归 calculated_metrics；customer_id 和 stat_date 为维度；etl_time 为技术字段。",
+        "业务过程统一为 ORDER_TRANSACTION，匹配已确认目录。"
       ],
       "columns": {
         "atomic_metrics": [
@@ -842,7 +801,7 @@
             "action": "COUNT",
             "measure": "order_id",
             "description": "订单数",
-            "reason": "对上游 order_id 做 COUNT DISTINCT 生成基础计数指标，无修饰词或二次计算，归 atomic_metrics。",
+            "reason": "对订单标识做 COUNT(DISTINCT)，为基础计数指标。",
             "confidence": 0.95
           }
         ],
@@ -852,14 +811,11 @@
             "data_type": "DECIMAL(14,2)",
             "business_process": "ORDER_TRANSACTION",
             "base_metric": "subtotal",
-            "modifiers": [
-              "客户",
-              "日期"
-            ],
+            "modifiers": [],
             "time_period": "D",
             "expression": "SUM(subtotal) GROUP BY customer_id, order_date",
             "description": "订单总额",
-            "reason": "对上游 atomic_metric subtotal 做 SUM 聚合，并叠加客户+日期维度，归 derived_metrics。",
+            "reason": "对上游原子指标 subtotal 做 SUM 聚合，叠加客户日期维度。",
             "confidence": 0.95
           },
           {
@@ -867,14 +823,11 @@
             "data_type": "DECIMAL(14,2)",
             "business_process": "ORDER_TRANSACTION",
             "base_metric": "discount",
-            "modifiers": [
-              "客户",
-              "日期"
-            ],
+            "modifiers": [],
             "time_period": "D",
             "expression": "SUM(discount) GROUP BY customer_id, order_date",
             "description": "折扣总额",
-            "reason": "对上游 atomic_metric discount 做 SUM 聚合，并叠加客户+日期维度，归 derived_metrics。",
+            "reason": "对上游原子指标 discount 做 SUM 聚合，叠加客户日期维度。",
             "confidence": 0.95
           }
         ],
@@ -889,7 +842,7 @@
               "discount"
             ],
             "description": "实付总额",
-            "reason": "由两个基础度量（subtotal 和 discount）组合相减得到，属于衍生指标。",
+            "reason": "多个原子指标（subtotal 和 discount）做减法组合后聚合。",
             "confidence": 0.95
           },
           {
@@ -902,7 +855,7 @@
               "order_id"
             ],
             "description": "平均客单价",
-            "reason": "由 subtotal 汇总和 order_id 计数相除得到的比率型衍生指标。",
+            "reason": "基于 SUM(subtotal) 和 COUNT(DISTINCT order_id) 的除法组合计算，属于衍生指标。",
             "confidence": 0.95
           }
         ],
@@ -912,7 +865,7 @@
             "dimension_type": "foreign_key",
             "data_type": "BIGINT",
             "description": "客户ID",
-            "reason": "外键，引用客户实体，用于分组和分析维度。",
+            "reason": "外键，引用客户维度实体，用于分组和关联。",
             "confidence": 1.0
           },
           {
@@ -920,7 +873,7 @@
             "dimension_type": "date",
             "data_type": "DATE",
             "description": "统计日期",
-            "reason": "时间维度，表示汇总的日期粒度。",
+            "reason": "日期维度，用于时间切片和分区。",
             "confidence": 1.0
           }
         ],
@@ -930,7 +883,7 @@
             "role": "technical",
             "data_type": "DATETIME",
             "description": "ETL处理时间",
-            "reason": "审计/技术字段，记录处理时间，不参与业务分析。",
+            "reason": "审计技术字段，记录数据加载时间。",
             "confidence": 1.0
           }
         ]
@@ -945,7 +898,7 @@
           ],
           "relationship": {
             "type": "many_to_one",
-            "from_entity": "CUST"
+            "from_entity": ""
           }
         }
       ],
@@ -959,7 +912,7 @@
           ],
           "relationship": {
             "type": "many_to_one",
-            "from_entity": "CUST"
+            "from_entity": ""
           }
         }
       ],
@@ -992,14 +945,12 @@
       "dimension_content_type": "",
       "confidence": 0.95,
       "reasoning_steps": [
-        "ETL 包含 GROUP BY 聚合操作，排除 ODS 和 DWD。",
-        "下游被引用 1 次（>0），排除 ADS，因此推断为 DWS。",
-        "表包含可度量字段（quantity）且按商品+门店+日期聚合，结构符合汇总事实表。",
-        "数据域从库存相关语义判定为库存域 INVT (05)。",
-        "业务板块与原始配置一致为 SHOP。",
-        "实体识别：product_id 和 store_id 为外键引用商品和门店维度。",
-        "粒度为商品+门店+日，时间维度为 stat_date，周期为日。",
-        "字段分组依据上游指标分组和 ETL 表达式：quantity 为上游原子指标聚合（派生），stock_status 和 days_since_restock 为计算指标，safety_stock 和 stat_date 等为维度字段。"
+        "1. ETL中包含GROUP BY和SUM/MAX聚合，排除ODS和DWD，符合DWS定义。",
+        "2. 下游被引用1次，非0，排除ADS；表名以dws_开头，原始配置DWS，推断层DWS。",
+        "3. 主键为product_id+store_id+stat_date，非实体ID，且包含可度量字段quantity，判断为事实表。",
+        "4. 数据域根据语义为库存域(05)，业务板块为SHOP。",
+        "5. 基于ETL和字段血缘，quantity为SUM聚合上游原子指标，归类派生指标；stock_status为CASE规则结果，归类计算指标；safety_stock和days_since_restock为非加性属性，归维度字段；etl_time为技术字段。",
+        "6. 实体识别商品和门店作为外键，grain粒度包含两者及时间日。"
       ],
       "columns": {
         "atomic_metrics": [],
@@ -1008,15 +959,12 @@
             "name": "quantity",
             "data_type": "INT",
             "business_process": "INVENTORY_MANAGEMENT",
-            "base_metric": "quantity",
-            "modifiers": [
-              "product_id",
-              "store_id"
-            ],
-            "time_period": "D",
-            "expression": "SUM(dwd_inventory.quantity) GROUP BY product_id, store_id, snapshot_date",
-            "description": "日库存数量汇总",
-            "reason": "上游原子指标 quantity 按商品+门店+日期做 SUM 聚合，叠加了维度粒度和日周期，属于派生指标。",
+            "base_metric": "",
+            "modifiers": [],
+            "time_period": "",
+            "expression": "",
+            "description": "库存数量（日汇总）",
+            "reason": "对上游原子指标quantity做SUM聚合，叠加商品、门店、日期维度，属于派生指标。",
             "confidence": 0.95
           }
         ],
@@ -1025,26 +973,14 @@
             "name": "stock_status",
             "data_type": "VARCHAR(16)",
             "business_process": "INVENTORY_MANAGEMENT",
-            "expression": "CASE WHEN SUM(quantity) <= 0 THEN '缺货' WHEN SUM(quantity) <= MAX(safety_stock)*0.5 THEN '缺货预警' WHEN SUM(quantity) <= MAX(safety_stock) THEN '偏低' ELSE '正常' END",
+            "expression": "CASE WHEN SUM(quantity)<=0 THEN '缺货' WHEN SUM(quantity)<=MAX(safety_stock)*0.5 THEN '缺货预警' ... END",
             "derived_from": [
               "quantity",
               "safety_stock"
             ],
-            "description": "库存状态，基于库存数量与安全库存组合计算",
-            "reason": "多字段组合 CASE WHEN 规则生成新业务结果度量，属于计算指标。",
+            "description": "库存状态：正常/偏低/缺货预警/缺货",
+            "reason": "基于聚合后的quantity和safety_stock通过规则计算得出，属于结果性衍生指标。",
             "confidence": 0.95
-          },
-          {
-            "name": "days_since_restock",
-            "data_type": "INT",
-            "business_process": "INVENTORY_MANAGEMENT",
-            "expression": "MAX(dwd_inventory.days_since_restock)",
-            "derived_from": [
-              "dwd_inventory.days_since_restock"
-            ],
-            "description": "距上次补货天数（取最大值）",
-            "reason": "上游计算出结果性度量 days_since_restock 再聚合 MAX，仍为计算指标。",
-            "confidence": 0.9
           }
         ],
         "dimensions": [
@@ -1053,7 +989,7 @@
             "dimension_type": "foreign_key",
             "data_type": "BIGINT",
             "description": "商品ID",
-            "reason": "外键引用商品维度，作为分组和切片字段。",
+            "reason": "外键，引用商品维度表。",
             "confidence": 1.0
           },
           {
@@ -1061,7 +997,7 @@
             "dimension_type": "foreign_key",
             "data_type": "BIGINT",
             "description": "门店ID",
-            "reason": "外键引用门店维度，作为分组和切片字段。",
+            "reason": "外键，引用门店维度表。",
             "confidence": 1.0
           },
           {
@@ -1069,7 +1005,7 @@
             "dimension_type": "date",
             "data_type": "DATE",
             "description": "统计日期",
-            "reason": "时间维度，用于分区和粒度定义。",
+            "reason": "日期维度，用于分组和切片。",
             "confidence": 1.0
           },
           {
@@ -1077,7 +1013,15 @@
             "dimension_type": "attribute",
             "data_type": "INT",
             "description": "安全库存",
-            "reason": "非加性输入属性，用于描述和作为其他指标计算输入，不作为独立度量。",
+            "reason": "非加性输入属性，用于描述库存阈值，非独立统计口径。",
+            "confidence": 0.9
+          },
+          {
+            "name": "days_since_restock",
+            "dimension_type": "attribute",
+            "data_type": "INT",
+            "description": "距上次补货天数",
+            "reason": "非加性输入属性，用于描述补货时效，非独立统计口径。",
             "confidence": 0.9
           }
         ],
@@ -1087,7 +1031,7 @@
             "role": "technical",
             "data_type": "DATETIME",
             "description": "ETL处理时间",
-            "reason": "审计/技术字段，ETL写入时间戳。",
+            "reason": "技术审计字段，不参与业务分析。",
             "confidence": 1.0
           }
         ]
@@ -1099,11 +1043,7 @@
           "name": "商品",
           "key_columns": [
             "product_id"
-          ],
-          "relationship": {
-            "type": "many_to_one",
-            "from_entity": ""
-          }
+          ]
         },
         {
           "code": "STORE",
@@ -1111,38 +1051,11 @@
           "name": "门店",
           "key_columns": [
             "store_id"
-          ],
-          "relationship": {
-            "type": "many_to_one",
-            "from_entity": ""
-          }
+          ]
         }
       ],
       "entity": {},
-      "related_entities": [
-        {
-          "code": "PROD",
-          "name": "商品",
-          "key_columns": [
-            "product_id"
-          ],
-          "relationship": {
-            "type": "many_to_one",
-            "from_entity": ""
-          }
-        },
-        {
-          "code": "STORE",
-          "name": "门店",
-          "key_columns": [
-            "store_id"
-          ],
-          "relationship": {
-            "type": "many_to_one",
-            "from_entity": ""
-          }
-        }
-      ],
+      "related_entities": [],
       "grain": {
         "entities": [
           "PROD",
@@ -1163,194 +1076,22 @@
       "metadata_warnings": []
     },
     {
-      "table_name": "dws_order_passthrough_daily",
+      "table_name": "dws_product_sales_daily",
       "declared_layer": "DWS",
-      "inferred_layer": "DWD",
+      "inferred_layer": "DWS",
       "table_type": "fact",
       "inferred_data_domain": "04",
       "inferred_business_area": "SHOP",
       "dimension_role": "",
       "dimension_content_type": "",
-      "confidence": 0.95,
+      "confidence": 0.98,
       "reasoning_steps": [
-        "ETL SQL 中无 GROUP BY、聚合函数或窗口函数，仅为 SELECT 透传，未进行任何汇总，不符合 DWS 定义",
-        "下游引用次数为 0，但明细层常因未复用而引用少，不能直接判定为 ADS；且表结构保持事务明细粒度（order_item_id 为唯一键）",
-        "表名含 daily 但实际仅按 stat_date 分区，并非按天聚合，仍是明细数据",
-        "上游为 DWD 层表 dwd_order_detail，当前表对其做过滤后直接透传，未拉宽或聚合，应属于 DWD 层",
-        "包含可度量字段 subtotal，且记录订单项事件，为事实表",
-        "数据域根据业务过程为订单交易，归属 ORDR(04)；业务板块为 SHOP"
-      ],
-      "columns": {
-        "atomic_metrics": [
-          {
-            "name": "subtotal",
-            "data_type": "DECIMAL(12,2)",
-            "business_process": "ORDER_TRANSACTION",
-            "action": "sale",
-            "measure": "subtotal",
-            "description": "行项目小计金额",
-            "reason": "上游 dwd_order_detail 中定义为原子指标，且当前字段为直接透传，为可加性基础度量",
-            "confidence": 0.95
-          }
-        ],
-        "derived_metrics": [],
-        "calculated_metrics": [],
-        "dimensions": [
-          {
-            "name": "order_item_id",
-            "dimension_type": "degenerate",
-            "data_type": "BIGINT",
-            "description": "订单项ID，退化维度",
-            "reason": "订单项标识，为事务明细行的自然键，用于关联明细，不参与度量计算",
-            "confidence": 0.95
-          },
-          {
-            "name": "order_id",
-            "dimension_type": "foreign_key",
-            "data_type": "BIGINT",
-            "description": "订单ID，关联订单维度表",
-            "reason": "外键，引用订单实体的主键",
-            "confidence": 0.95
-          },
-          {
-            "name": "stat_date",
-            "dimension_type": "date",
-            "data_type": "DATE",
-            "description": "统计日期，即订单日期",
-            "reason": "时间维度，用于分区和筛选",
-            "confidence": 0.95
-          },
-          {
-            "name": "store_id",
-            "dimension_type": "foreign_key",
-            "data_type": "BIGINT",
-            "description": "门店ID，关联门店维度表",
-            "reason": "外键，引用门店实体的主键",
-            "confidence": 0.95
-          },
-          {
-            "name": "product_id",
-            "dimension_type": "foreign_key",
-            "data_type": "BIGINT",
-            "description": "商品ID，关联商品维度表",
-            "reason": "外键，引用商品实体的主键",
-            "confidence": 0.95
-          }
-        ],
-        "others": [
-          {
-            "name": "etl_time",
-            "role": "audit",
-            "data_type": "DATETIME",
-            "description": "ETL处理时间",
-            "reason": "技术审计字段，记录数据加载时间",
-            "confidence": 0.95
-          }
-        ]
-      },
-      "entities": [
-        {
-          "code": "ORDER",
-          "type": "foreign",
-          "name": "订单",
-          "key_columns": [
-            "order_id"
-          ],
-          "relationship": {
-            "type": "many_to_one",
-            "from_entity": ""
-          }
-        },
-        {
-          "code": "STORE",
-          "type": "foreign",
-          "name": "门店",
-          "key_columns": [
-            "store_id"
-          ],
-          "relationship": {
-            "type": "many_to_one",
-            "from_entity": ""
-          }
-        },
-        {
-          "code": "PROD",
-          "type": "foreign",
-          "name": "商品",
-          "key_columns": [
-            "product_id"
-          ],
-          "relationship": {
-            "type": "many_to_one",
-            "from_entity": ""
-          }
-        }
-      ],
-      "entity": {},
-      "related_entities": [
-        {
-          "code": "ORDER",
-          "name": "订单",
-          "key_columns": [
-            "order_id"
-          ],
-          "relationship": {
-            "type": "many_to_one",
-            "from_entity": ""
-          }
-        },
-        {
-          "code": "STORE",
-          "name": "门店",
-          "key_columns": [
-            "store_id"
-          ],
-          "relationship": {
-            "type": "many_to_one",
-            "from_entity": ""
-          }
-        },
-        {
-          "code": "PROD",
-          "name": "商品",
-          "key_columns": [
-            "product_id"
-          ],
-          "relationship": {
-            "type": "many_to_one",
-            "from_entity": ""
-          }
-        }
-      ],
-      "grain": {},
-      "validation": {
-        "unknown_columns": [],
-        "duplicate_columns": [],
-        "missing_columns": []
-      },
-      "status": "passed",
-      "retry_count": 0,
-      "is_violating_declared_layer": true,
-      "violations": [],
-      "metadata_warnings": []
-    },
-    {
-      "table_name": "dws_product_sales_daily",
-      "declared_layer": "DWS",
-      "inferred_layer": "DWS",
-      "table_type": "fact",
-      "inferred_data_domain": "",
-      "inferred_business_area": "SHOP",
-      "dimension_role": "",
-      "dimension_content_type": "",
-      "confidence": 0.95,
-      "reasoning_steps": [
-        "ETL_SQL包含GROUP BY product_id, order_date以及SUM/COUNT等聚合操作，排除ODS和DWD。",
-        "下游被引用2次，非ADS出度为0特征，且原始配置DWS，推断为DWS汇总事实表。",
-        "主键(product_id, stat_date)为聚合粒度，包含可度量字段，无维度属性描述，表类型为事实表。",
-        "业务板块与原始配置一致为SHOP；数据域仅适用于DWD，当前不填写。",
-        "实体为商品，引用已确认语义主题PROD；粒度实体为商品，时间周期为日。",
-        "字段分组：order_count为对order_id的COUNT DISTINCT，属原子指标；sale_quantity、sale_amount、discount_amount为对上游原子指标的SUM聚合，归属派生指标；product_id/stat_date为维度；etl_time为审计字段。"
+        "1. ETL逻辑包含GROUP BY聚合操作，排除ODS和DWD。",
+        "2. 下游被引用2次（>0），排除ADS；距ODS最小跳数为2，符合DWS中间层特征。",
+        "3. 主键为商品ID+统计日期，度量字段可汇总，属于汇总事实表（fact）。",
+        "4. 业务过程为订单交易，属于订单交易域（04），业务板块为门店零售（SHOP）。",
+        "5. entities: 商品为外键实体；grain: 商品+日，时间粒度日。",
+        "6. 字段分组：order_count为对订单ID的计数，归原子指标；sale_quantity/sale_amount/discount_amount为对上游原子指标的SUM聚合，归派生指标；product_id和stat_date为维度字段；etl_time为技术字段。"
       ],
       "columns": {
         "atomic_metrics": [
@@ -1358,11 +1099,11 @@
             "name": "order_count",
             "data_type": "INT",
             "business_process": "ORDER_TRANSACTION",
-            "action": "COUNT",
-            "measure": "order",
+            "action": "COUNT_DISTINCT",
+            "measure": "order_id",
             "description": "订单笔数",
-            "reason": "对订单标识order_id做COUNT DISTINCT生成基础计数，不可再拆分，属原子指标。",
-            "confidence": 0.95
+            "reason": "对上游订单ID做COUNT DISTINCT，属于基础计数指标，归atomic_metrics",
+            "confidence": 0.98
           }
         ],
         "derived_metrics": [
@@ -1372,13 +1113,14 @@
             "business_process": "ORDER_TRANSACTION",
             "base_metric": "quantity",
             "modifiers": [
-              "product"
+              "商品维度",
+              "日周期"
             ],
             "time_period": "D",
-            "expression": "SUM(dwd_order_detail.quantity) GROUP BY product_id, order_date",
+            "expression": "SUM(quantity) GROUP BY product_id, order_date",
             "description": "销售数量",
-            "reason": "对上游原子指标quantity做SUM聚合，叠加商品和日期维度，属派生指标。",
-            "confidence": 0.95
+            "reason": "对上游原子指标quantity做SUM聚合，叠加商品和日期粒度，归derived_metrics",
+            "confidence": 0.98
           },
           {
             "name": "sale_amount",
@@ -1386,13 +1128,14 @@
             "business_process": "ORDER_TRANSACTION",
             "base_metric": "subtotal",
             "modifiers": [
-              "product"
+              "商品维度",
+              "日周期"
             ],
             "time_period": "D",
-            "expression": "SUM(dwd_order_detail.subtotal) GROUP BY product_id, order_date",
+            "expression": "SUM(subtotal) GROUP BY product_id, order_date",
             "description": "销售金额",
-            "reason": "对上游原子指标subtotal做SUM聚合，叠加商品和日期维度，属派生指标。",
-            "confidence": 0.95
+            "reason": "对上游原子指标subtotal做SUM聚合，归derived_metrics",
+            "confidence": 0.98
           },
           {
             "name": "discount_amount",
@@ -1400,13 +1143,14 @@
             "business_process": "ORDER_TRANSACTION",
             "base_metric": "discount",
             "modifiers": [
-              "product"
+              "商品维度",
+              "日周期"
             ],
             "time_period": "D",
-            "expression": "SUM(dwd_order_detail.discount) GROUP BY product_id, order_date",
+            "expression": "SUM(discount) GROUP BY product_id, order_date",
             "description": "折扣金额",
-            "reason": "对上游原子指标discount做SUM聚合，叠加商品和日期维度，属派生指标。",
-            "confidence": 0.95
+            "reason": "对上游原子指标discount做SUM聚合，归derived_metrics",
+            "confidence": 0.98
           }
         ],
         "calculated_metrics": [],
@@ -1416,16 +1160,16 @@
             "dimension_type": "foreign_key",
             "data_type": "BIGINT",
             "description": "商品ID",
-            "reason": "外键，引用商品实体，作为分组和切片维度。",
-            "confidence": 1.0
+            "reason": "外键，关联商品维度实体",
+            "confidence": 0.99
           },
           {
             "name": "stat_date",
             "dimension_type": "date",
             "data_type": "DATE",
             "description": "统计日期",
-            "reason": "日期维度，定义汇总时间粒度。",
-            "confidence": 1.0
+            "reason": "日期维度，用于时间切片和分组",
+            "confidence": 0.99
           }
         ],
         "others": [
@@ -1434,8 +1178,8 @@
             "role": "audit",
             "data_type": "DATETIME",
             "description": "ETL处理时间",
-            "reason": "记录数据处理时间的技术审计字段，非业务含义。",
-            "confidence": 1.0
+            "reason": "技术审计字段，记录ETL执行时间",
+            "confidence": 0.99
           }
         ]
       },
@@ -1446,11 +1190,27 @@
           "name": "商品",
           "key_columns": [
             "product_id"
-          ]
+          ],
+          "relationship": {
+            "type": "many_to_one",
+            "from_entity": "PROD"
+          }
         }
       ],
       "entity": {},
-      "related_entities": [],
+      "related_entities": [
+        {
+          "code": "PROD",
+          "name": "商品",
+          "key_columns": [
+            "product_id"
+          ],
+          "relationship": {
+            "type": "many_to_one",
+            "from_entity": "PROD"
+          }
+        }
+      ],
       "grain": {
         "entities": [
           "PROD"
@@ -1474,19 +1234,17 @@
       "declared_layer": "DWS",
       "inferred_layer": "DWS",
       "table_type": "fact",
-      "inferred_data_domain": "",
+      "inferred_data_domain": "06",
       "inferred_business_area": "SHOP",
       "dimension_role": "",
       "dimension_content_type": "",
       "confidence": 0.95,
       "reasoning_steps": [
-        "ETL中包含GROUP BY聚合操作，排除ODS和DWD",
-        "下游引用次数为1（ads_promotion_roi），出度不为0，排除ADS",
-        "表名和加工逻辑明确为促销效果日汇总，属于DWS层",
-        "包含可加性度量字段，属于汇总事实表",
-        "粒度：促销+日期，时间周期为日",
-        "业务板块根据原始配置和业务场景确认为SHOP，数据域因非DWD不适用",
-        "字段分组：order_count和customer_count为对实体标识的COUNT DISTINCT，归atomic；sale_quantity、sale_amount、discount_amount为对上游atomic的SUM聚合，归derived；其余为维度或技术字段"
+        "ETL 包含 GROUP BY 聚合操作，排除 ODS 和 DWD；下游被引用 1 次，非 ADS；表名前缀 dws 且逻辑为按促销+日期汇总，确认分层为 DWS。",
+        "主键为 (promotion_id, stat_date) 组合，非单一实体 ID，且包含可度量字段(订单数、销售金额等)，故为事实表。",
+        "数据域归属促销域 (06)，业务板块为门店零售 (SHOP)。",
+        "实体仅包含促销活动 (PROMOTION)，为 foreign 类型；粒度实体为 PROMOTION，时间粒度为日。",
+        "字段分组：order_count (COUNT DISTINCT order_id) 和 customer_count (COUNT DISTINCT customer_id) 为对事件/实体标识的基础计数，归 atomic_metrics；sale_quantity、sale_amount、discount_amount 是对上游原子指标 quantity/subtotal/discount 的 SUM 聚合，叠加促销+日期维度，归 derived_metrics；promotion_id/stat_date/promotion_name/promotion_type 为维度字段；etl_time 为技术字段。"
       ],
       "columns": {
         "atomic_metrics": [
@@ -1494,21 +1252,21 @@
             "name": "order_count",
             "data_type": "INT",
             "business_process": "PROMOTION_EFFECT",
-            "action": "COUNT_DISTINCT",
-            "measure": "order_id",
-            "description": "订单数",
-            "reason": "对订单标识做COUNT DISTINCT，基础计数指标",
-            "confidence": 0.95
+            "action": "COUNT",
+            "measure": "order_count",
+            "description": "订单数（去重订单ID）",
+            "reason": "对订单标识 COUNT(DISTINCT) 生成基础计数指标，无二次计算。",
+            "confidence": 0.9
           },
           {
             "name": "customer_count",
             "data_type": "INT",
             "business_process": "PROMOTION_EFFECT",
-            "action": "COUNT_DISTINCT",
-            "measure": "customer_id",
-            "description": "客户数(去重)",
-            "reason": "对客户标识做COUNT DISTINCT，基础计数指标",
-            "confidence": 0.95
+            "action": "COUNT",
+            "measure": "customer_count",
+            "description": "客户数（去重客户ID）",
+            "reason": "对客户标识 COUNT(DISTINCT) 生成基础计数指标，无二次计算。",
+            "confidence": 0.9
           }
         ],
         "derived_metrics": [
@@ -1519,13 +1277,13 @@
             "base_metric": "quantity",
             "modifiers": [
               "promotion_id",
-              "promotion_type"
+              "stat_date"
             ],
             "time_period": "D",
-            "expression": "SUM(quantity) GROUP BY promotion_id, stat_date",
-            "description": "销售数量",
-            "reason": "对上游原子指标quantity做SUM聚合，叠加促销和日期维度",
-            "confidence": 0.95
+            "expression": "SUM(od.quantity) GROUP BY promotion_id, order_date",
+            "description": "销售数量（按促销和日汇总）",
+            "reason": "对上游原子指标 quantity 做 SUM 聚合，叠加促销和日期维度。",
+            "confidence": 0.9
           },
           {
             "name": "sale_amount",
@@ -1534,13 +1292,13 @@
             "base_metric": "subtotal",
             "modifiers": [
               "promotion_id",
-              "promotion_type"
+              "stat_date"
             ],
             "time_period": "D",
-            "expression": "SUM(subtotal) GROUP BY promotion_id, stat_date",
-            "description": "销售金额",
-            "reason": "对上游原子指标subtotal做SUM聚合，叠加促销和日期维度",
-            "confidence": 0.95
+            "expression": "SUM(od.subtotal) GROUP BY promotion_id, order_date",
+            "description": "销售金额（按促销和日汇总）",
+            "reason": "对上游原子指标 subtotal 做 SUM 聚合，叠加促销和日期维度。",
+            "confidence": 0.9
           },
           {
             "name": "discount_amount",
@@ -1549,13 +1307,13 @@
             "base_metric": "discount",
             "modifiers": [
               "promotion_id",
-              "promotion_type"
+              "stat_date"
             ],
             "time_period": "D",
-            "expression": "SUM(discount) GROUP BY promotion_id, stat_date",
-            "description": "折扣金额",
-            "reason": "对上游原子指标discount做SUM聚合，叠加促销和日期维度",
-            "confidence": 0.95
+            "expression": "SUM(od.discount) GROUP BY promotion_id, order_date",
+            "description": "折扣金额（按促销和日汇总）",
+            "reason": "对上游原子指标 discount 做 SUM 聚合，叠加促销和日期维度。",
+            "confidence": 0.9
           }
         ],
         "calculated_metrics": [],
@@ -1565,42 +1323,42 @@
             "dimension_type": "foreign_key",
             "data_type": "BIGINT",
             "description": "促销ID",
-            "reason": "外键，关联促销维度表",
-            "confidence": 0.99
+            "reason": "事实表外键，引用促销实体，用于分组和筛选。",
+            "confidence": 1.0
           },
           {
             "name": "stat_date",
             "dimension_type": "date",
             "data_type": "DATE",
             "description": "统计日期",
-            "reason": "汇总表的时间粒度字段，用于切片",
-            "confidence": 0.99
+            "reason": "时间维度字段，用于按日期分析。",
+            "confidence": 1.0
           },
           {
             "name": "promotion_name",
             "dimension_type": "attribute",
             "data_type": "VARCHAR(128)",
             "description": "促销名称",
-            "reason": "促销属性字段，用于描述和切片",
-            "confidence": 0.95
+            "reason": "从维度表退化的属性字段，用于描述和筛选。",
+            "confidence": 1.0
           },
           {
             "name": "promotion_type",
             "dimension_type": "attribute",
             "data_type": "VARCHAR(32)",
             "description": "促销类型",
-            "reason": "促销属性字段，用于分组和过滤",
-            "confidence": 0.95
+            "reason": "从维度表退化的属性字段，用于分组和筛选。",
+            "confidence": 1.0
           }
         ],
         "others": [
           {
             "name": "etl_time",
-            "role": "audit",
+            "role": "technical",
             "data_type": "DATETIME",
             "description": "ETL处理时间",
-            "reason": "审计技术字段，不参与业务分析",
-            "confidence": 0.99
+            "reason": "系统生成的技术时间戳，不用于业务分析。",
+            "confidence": 1.0
           }
         ]
       },
@@ -1661,12 +1419,14 @@
       "dimension_content_type": "",
       "confidence": 0.95,
       "reasoning_steps": [
-        "ETL包含GROUP BY和SUM/COUNT等聚合操作，排除DWD和ODS",
-        "下游被引用2次（>0），且表名含dws，原始配置为DWS，符合DWS汇总事实表特征",
-        "主键为(store_id, stat_date)，存储按门店+日期的销售指标，属于事实表",
-        "数据域属于订单交易域（ORDR），业务板块为门店零售（SHOP）",
-        "store_id为外键引用门店实体，stat_date为时间维度，grain为门店+天",
-        "字段分组：order_count/customer_count对上游标识做COUNT DISTINCT，属原子指标；total_amount/discount_amount对上游原子指标SUM聚合，属派生指标；payment_amount包含表达式SUM(subtotal-discount)，属衍生指标；store_id/stat_date为维度；etl_time为技术字段"
+        "ETL中包含GROUP BY和聚合操作（SUM, COUNT DISTINCT），原始配置DWS与事实一致，排除ODS/DWD/ADS",
+        "下游被引用2次，非0，且距ODS最小跳数2，符合DWS复用特征",
+        "主键为(store_id, stat_date)，是门店+日粒度，记录可度量汇总指标，属于汇总事实表",
+        "数据域归属订单交易域(ORDR 04)，业务板块为门店零售(SHOP)",
+        "字段order_count和customer_count为计数型指标，对上游事件标识做COUNT DISTINCT，归atomic_metrics",
+        "total_amount和discount_amount对上游原子指标subtotal/discount进行SUM聚合，归derived_metrics",
+        "payment_amount为subtotal - discount的组合计算后SUM，是衍生指标，归calculated_metrics",
+        "store_id和stat_date为维度主键，归dimensions；etl_time为技术字段归others"
       ],
       "columns": {
         "atomic_metrics": [
@@ -1675,9 +1435,9 @@
             "data_type": "INT",
             "business_process": "ORDER_TRANSACTION",
             "action": "COUNT",
-            "measure": "order_id",
-            "description": "订单数",
-            "reason": "对上游order_id做COUNT DISTINCT，独立可加的基础计数指标",
+            "measure": "ORDER",
+            "description": "订单数（去重订单ID）",
+            "reason": "对上游order_id做COUNT DISTINCT，基础计数指标，不可拆分",
             "confidence": 0.95
           },
           {
@@ -1685,8 +1445,8 @@
             "data_type": "INT",
             "business_process": "ORDER_TRANSACTION",
             "action": "COUNT",
-            "measure": "customer_id",
-            "description": "客户数(去重)",
+            "measure": "CUSTOMER",
+            "description": "客户数（去重客户ID）",
             "reason": "对上游customer_id做COUNT DISTINCT，基础计数指标",
             "confidence": 0.95
           }
@@ -1699,12 +1459,12 @@
             "base_metric": "subtotal",
             "modifiers": [
               "门店",
-              "统计日期"
+              "日"
             ],
             "time_period": "D",
-            "expression": "SUM(subtotal) GROUP BY store_id, order_date",
-            "description": "订单总额",
-            "reason": "对上游原子指标subtotal按门店+日期SUM聚合，叠加维度限定",
+            "expression": "SUM(subtotal)",
+            "description": "订单总额（门店日汇总）",
+            "reason": "对上游原子指标subtotal按门店+日期做SUM聚合",
             "confidence": 0.95
           },
           {
@@ -1714,12 +1474,12 @@
             "base_metric": "discount",
             "modifiers": [
               "门店",
-              "统计日期"
+              "日"
             ],
             "time_period": "D",
-            "expression": "SUM(discount) GROUP BY store_id, order_date",
-            "description": "折扣金额",
-            "reason": "对上游原子指标discount按门店+日期SUM聚合",
+            "expression": "SUM(discount)",
+            "description": "折扣金额（门店日汇总）",
+            "reason": "对上游原子指标discount按门店+日期做SUM聚合",
             "confidence": 0.95
           }
         ],
@@ -1733,8 +1493,8 @@
               "subtotal",
               "discount"
             ],
-            "description": "实付金额",
-            "reason": "基于subtotal和discount的差值计算，属于多字段组合衍生指标",
+            "description": "实付金额（订单总额减折扣后汇总）",
+            "reason": "基于subtotal和discount两个原子指标组合计算后聚合，是衍生指标",
             "confidence": 0.95
           }
         ],
@@ -1744,57 +1504,46 @@
             "dimension_type": "foreign_key",
             "data_type": "BIGINT",
             "description": "门店ID",
-            "reason": "表示外键，用于分组和过滤",
-            "confidence": 1.0
+            "reason": "粒度维度键，引用门店维度表",
+            "confidence": 0.95
           },
           {
             "name": "stat_date",
             "dimension_type": "date",
             "data_type": "DATE",
             "description": "统计日期",
-            "reason": "时间维度，用于切片和分组",
-            "confidence": 1.0
+            "reason": "时间维度字段，用于分组和过滤",
+            "confidence": 0.95
           }
         ],
         "others": [
           {
             "name": "etl_time",
-            "role": "audit",
+            "role": "technical",
             "data_type": "DATETIME",
             "description": "ETL处理时间",
-            "reason": "审计字段，记录加载时间",
-            "confidence": 1.0
+            "reason": "审计技术字段，非业务数据",
+            "confidence": 0.95
           }
         ]
       },
       "entities": [
         {
           "code": "STORE",
-          "type": "foreign",
+          "type": "primary",
           "name": "门店",
           "key_columns": [
             "store_id"
-          ],
-          "relationship": {
-            "type": "many_to_one",
-            "from_entity": "STORE"
-          }
+          ]
         }
       ],
-      "entity": {},
-      "related_entities": [
-        {
-          "code": "STORE",
-          "name": "门店",
-          "key_columns": [
-            "store_id"
-          ],
-          "relationship": {
-            "type": "many_to_one",
-            "from_entity": "STORE"
-          }
-        }
-      ],
+      "entity": {
+        "code": "STORE",
+        "key_columns": [
+          "store_id"
+        ]
+      },
+      "related_entities": [],
       "grain": {
         "entities": [
           "STORE"
@@ -1814,86 +1563,24 @@
       "metadata_warnings": []
     },
     {
-      "table_name": "dim_store_metric_snapshot",
-      "declared_layer": "DIM",
-      "inferred_layer": "ADS",
-      "table_type": "fact",
-      "inferred_data_domain": "",
-      "inferred_business_area": "",
-      "dimension_role": "",
-      "dimension_content_type": "",
-      "confidence": 0.9,
-      "reasoning_steps": [
-        "表名 dim_store_metric_snapshot 暗示维度表，但 DDL 主键为 (store_id, snapshot_date)，包含日期和度量字段 store_order_count，实际上是周期快照表，记录每日门店订单量，属于事实表。",
-        "ETL 从 dwd_store（门店维度快照）和 dws_store_sales_daily（每日汇总）左连接，未执行 GROUP BY，但数据源已聚合，属于将汇总指标拉宽到快照，没有事务明细，排除 ODS/DWD。",
-        "下游引用次数为 0，距 ODS 跳数 2，符合 ADS 层特征（出度为 0，直接面向应用）。",
-        "因此推断层为 ADS，表类型为 fact。",
-        "原始配置为 DIM，不符合 DWD/DWS 条件，不进行指标字段分组，columns 返回空数组。",
-        "数据域/业务板块仅适用于 DWD/DWS，当前表为 ADS，返回空字符串。"
-      ],
-      "columns": {
-        "atomic_metrics": [],
-        "derived_metrics": [],
-        "calculated_metrics": [],
-        "dimensions": [],
-        "others": []
-      },
-      "entities": [
-        {
-          "code": "STORE",
-          "type": "foreign",
-          "name": "门店",
-          "key_columns": [
-            "store_id"
-          ],
-          "relationship": {
-            "type": "many_to_one",
-            "from_entity": ""
-          }
-        }
-      ],
-      "entity": {},
-      "related_entities": [
-        {
-          "code": "STORE",
-          "name": "门店",
-          "key_columns": [
-            "store_id"
-          ],
-          "relationship": {
-            "type": "many_to_one",
-            "from_entity": ""
-          }
-        }
-      ],
-      "grain": {},
-      "validation": {
-        "unknown_columns": [],
-        "duplicate_columns": [],
-        "missing_columns": []
-      },
-      "status": "passed",
-      "retry_count": 0,
-      "is_violating_declared_layer": true,
-      "violations": [],
-      "metadata_warnings": []
-    },
-    {
       "table_name": "dwd_customer",
       "declared_layer": "DIM",
       "inferred_layer": "DIM",
       "table_type": "dimension",
-      "inferred_data_domain": "01",
-      "inferred_business_area": "SHOP",
+      "inferred_data_domain": "",
+      "inferred_business_area": "",
       "dimension_role": "BASE",
       "dimension_content_type": "INFO",
       "confidence": 0.95,
       "reasoning_steps": [
-        "ETL 逻辑无 GROUP BY 等聚合操作，仅做数据清洗、去重、年龄段派生和缺失值回填，属于维度属性加工。",
-        "表结构为客户属性（姓名、性别、年龄、地址等），主键为 (customer_id, snapshot_date)，是每日快照的客户维表，无度量字段，无可加性指标。",
-        "下游引用次数为 0，但 DIM 层维度表可能被其他表引用但尚未记录，结合内容判断为公共维度。",
-        "根据字段语义，所有字段均为客户属性或派生属性，符合 DIM 层属性维表特征。",
-        "原始配置层级 DIM 正确，推断数据域为客户域 (01)，业务板块为门店零售 (SHOP)。"
+        "ETL 无 GROUP BY 聚合，保持明细粒度，但非业务事件事实，而是客户属性每日快照。",
+        "主键 customer_id+snapshot_date 描述实体每日状态，属于缓慢变化维的物理实现。",
+        "所有字段均为客户属性描述，无度量字段，因此表类型为 dimension。",
+        "原始配置 DIM 正确，表名虽含 dwd 但实际是维表，推断层为 DIM。",
+        "下游引用次数为 0 但维度表常被下游引用，此处可能未被注册，不影响判定。",
+        "数据域和业务板块不适用于维度表，返回空字符串。",
+        "客户是主实体，属性信息维，故 dimension_role=BASE, dimension_content_type=INFO。",
+        "无需字段分组，所有字段归为维度属性，但 schema 要求 empty arrays。"
       ],
       "columns": {
         "atomic_metrics": [],
@@ -1909,11 +1596,7 @@
           "name": "客户",
           "key_columns": [
             "customer_id"
-          ],
-          "relationship": {
-            "type": "one_to_one",
-            "from_entity": ""
-          }
+          ]
         }
       ],
       "entity": {
@@ -1940,18 +1623,18 @@
       "declared_layer": "DIM",
       "inferred_layer": "DIM",
       "table_type": "dimension",
-      "inferred_data_domain": "",
+      "inferred_data_domain": "02",
       "inferred_business_area": "",
       "dimension_role": "BASE",
       "dimension_content_type": "INFO",
       "confidence": 0.95,
       "reasoning_steps": [
-        "ETL 仅包含 LEFT JOIN 和简单计算（毛利率），无聚合操作，排除 DWS/ADS/ODS。",
-        "主键 (product_id, snapshot_date) 以商品ID为核心，描述商品属性，属于维度表特征。",
-        "下游引用2次，符合维表被复用的特点，但DIM层维表也可能被引用多次，不冲突。",
-        "表内容和注释明确为商品维度宽表，应归属DIM层，且原始配置层级DIM正确。",
-        "数据域为商品域，但DIM层不要求数据域字段，故返回空字符串。",
-        "维表内容为商品基础属性（名称、品类、品牌、价格等），属于INFO类型；角色为BASE主维度。"
+        "1. ETL SQL 中无 GROUP BY 聚合操作，排除 DWS/ADS；同时表为每日快照，保留商品属性明细。",
+        "2. 主键 (product_id, snapshot_date) 以 product_id 为业务实体，snapshot_date 为时间分区，典型维度快照表。",
+        "3. 下游被引用 2 次（ads_inventory_alert, ads_product_topn_daily），作为维表被 JOIN，符合 DIM 特征。",
+        "4. 表名和注释虽含 'DWD'，但实际是商品属性宽表，无事务度量，应归属于 DIM 层。",
+        "5. 字段描述商品基本信息、品类、价格、成本等，属于 INFO 类型，且是核心商品维度，角色为 BASE。",
+        "6. 数据域为商品域（02），业务板块不适用（DIM 层）。"
       ],
       "columns": {
         "atomic_metrics": [],
@@ -1967,11 +1650,7 @@
           "name": "商品",
           "key_columns": [
             "product_id"
-          ],
-          "relationship": {
-            "type": "one_to_many",
-            "from_entity": "PROD"
-          }
+          ]
         },
         {
           "code": "CATEGORY",
@@ -2022,19 +1701,17 @@
       "declared_layer": "DIM",
       "inferred_layer": "DIM",
       "table_type": "dimension",
-      "inferred_data_domain": "",
+      "inferred_data_domain": "06",
       "inferred_business_area": "",
       "dimension_role": "BASE",
       "dimension_content_type": "INFO",
       "confidence": 0.95,
       "reasoning_steps": [
-        "表名 dwd_promotion 包含 'dwd_'，但原始配置为 DIM。",
-        "ETL 逻辑无 GROUP BY，仅做去重、计算持续天数和是否进行中，属于数据清洗和字段计算，保持事务粒度（promotion_id + snapshot_date）。",
-        "表记录促销活动的属性（名称、类型、折扣率、开始结束日期、状态等），不包含可度量事件，因此是维度表。",
-        "该表被下游 dws_promotion_effect_daily 引用一次，出度不为0，不符合 ADS 特征；且离 ODS 跳数1，故推断为 DIM 层。",
-        "维度类型为基本信息属性，无标签或层级结构，故 dimension_content_type=INFO，dimension_role=BASE。",
-        "主实体为促销活动，实体编码复用已确认语义目录中的 PROMOTION。",
-        "由于 table_type 为 dimension 且非事实表，不进行字段指标分组。"
+        "表名以 dwd_ 开头但实际无聚合操作，ETL 仅做去重、计算持续天数和是否进行中，属于维度属性加工而非事实粒度数据。",
+        "表描述为'DWD 促销活动维度宽表'，原始配置为 DIM，符合维度表特征。主键为 promotion_id + snapshot_date，记录促销活动每日快照，是实体属性+时间快照。",
+        "下游被引用 1 次，距 ODS 1 跳，无 GROUP BY，排除 ODS/DWS/ADS，推断为 DIM 层。",
+        "字段均为促销活动描述性属性（名称、类型、折扣率、日期、状态等），属于属性信息维表，内容类型 INFO，角色为主维度 BASE。",
+        "数据域归属促销域（06），业务板块不适用于 DIM 层。"
       ],
       "columns": {
         "atomic_metrics": [],
@@ -2052,8 +1729,8 @@
             "promotion_id"
           ],
           "relationship": {
-            "type": "",
-            "from_entity": ""
+            "type": "one_to_many",
+            "from_entity": "PROMOTION"
           }
         }
       ],
@@ -2081,19 +1758,17 @@
       "declared_layer": "DIM",
       "inferred_layer": "DIM",
       "table_type": "dimension",
-      "inferred_data_domain": "03",
+      "inferred_data_domain": "",
       "inferred_business_area": "",
       "dimension_role": "BASE",
       "dimension_content_type": "INFO",
       "confidence": 0.95,
       "reasoning_steps": [
-        "表名 dwd_store 包含 'dwd' 前缀，原始配置为 DIM，DDL 注释为 '门店维度宽表'。",
-        "ETL 逻辑从 ods_store 加载数据，无 GROUP BY 聚合操作，仅做数据清洗、属性补全、规则计算（store_type、store_level、open_years、province），保持原始明细粒度。",
-        "主键为 (store_id, snapshot_date)，是每日快照维表，描述门店属性（名称、类型、级别、地址、面积、状态等），不记录可度量业务事件。",
-        "下游被 3 张表引用（ads_inventory_alert、ads_store_performance、dim_store_metric_snapshot），符合维度表被广泛 JOIN 的特征。",
-        "因此推断归属 DIM 层，表类型为 dimension。内容为门店基础属性信息，属于主维度（BASE）。",
-        "数据域根据语义主题应为门店域（03），业务板块不适用（非 DWD/DWS）。",
-        "不需字段分组，columns 返回空数组。"
+        "表名 dwd_store 和 DDL 注释 'DWD 门店维度宽表' 表示原始意图为 DWD，但 ETL 逻辑不含聚合、不含事实度量，只从 ods_store 做属性转换（门店类型回填、级别计算、开业年限、省份补全），每日按 snapshot_date 分区快照，属于描述门店实体的属性变化，应归为维度表。",
+        "原始配置分层为 DIM，与业务语义一致：门店基础属性、枚举、状态等均属于维度属性，且下游被 3 个表引用（ads_inventory_alert, ads_store_performance, dim_store_metric_snapshot），符合公共维度复用特征。",
+        "主键 (store_id, snapshot_date) 表示每日快照维度，store_id 是门店自然键，因此实体 code 采用已确认语义主题 STORE，类型为 primary。",
+        "维表内容为门店基本信息、属性、标签（级别）和地理信息，属于属性信息维表（INFO），且是门店主维度（BASE）。",
+        "非事实表或汇总事实表，不适用数据域和业务板块规则，因此 inferred_data_domain 和 inferred_business_area 返回空字符串。"
       ],
       "columns": {
         "atomic_metrics": [],
@@ -2109,11 +1784,7 @@
           "name": "门店",
           "key_columns": [
             "store_id"
-          ],
-          "relationship": {
-            "type": "many_to_one",
-            "from_entity": ""
-          }
+          ]
         }
       ],
       "entity": {
@@ -2138,19 +1809,19 @@
   ],
   "model_updates": [
     {
-      "table": "dws_category_sales_monthly",
-      "path": "/Users/yulihua/.codex/worktrees/b81b/dw_refactor_agent/shop/models/dws_category_sales_monthly.yaml",
+      "table": "dwd_inventory",
+      "path": "/Users/yulihua/.codex/worktrees/ebff/dw_refactor_agent/shop/models/dwd_inventory.yaml",
       "status": "passed",
       "changed": true,
-      "metadata_changed": true,
+      "metadata_changed": false,
       "metric_changed": true,
-      "previous_layer": "ADS",
-      "layer": "DWS",
+      "previous_layer": "DWD",
+      "layer": "DWD",
       "previous_table_type": "fact",
       "table_type": "fact",
-      "previous_data_domain": null,
-      "data_domain": null,
-      "previous_business_area": null,
+      "previous_data_domain": "05",
+      "data_domain": "05",
+      "previous_business_area": "SHOP",
       "business_area": "SHOP",
       "previous_dimension_role": null,
       "dimension_role": null,
@@ -2158,41 +1829,95 @@
       "dimension_content_type": null,
       "warnings": [],
       "write_scope": "all",
-      "metric_count": 3,
+      "metric_count": 1,
       "new_metric_count": 0,
-      "removed_metric_count": 0,
-      "grain_changed": true,
+      "removed_metric_count": 1,
+      "grain_changed": false,
       "updated": true
     },
     {
-      "table": "dim_store_metric_snapshot",
-      "path": "/Users/yulihua/.codex/worktrees/b81b/dw_refactor_agent/shop/models/dim_store_metric_snapshot.yaml",
+      "table": "dwd_order_detail",
+      "path": "/Users/yulihua/.codex/worktrees/ebff/dw_refactor_agent/shop/models/dwd_order_detail.yaml",
       "status": "passed",
       "changed": true,
       "metadata_changed": false,
-      "metric_changed": false,
-      "previous_layer": "ADS",
-      "layer": "ADS",
+      "metric_changed": true,
+      "previous_layer": "DWD",
+      "layer": "DWD",
       "previous_table_type": "fact",
       "table_type": "fact",
-      "previous_data_domain": null,
-      "data_domain": null,
-      "previous_business_area": null,
-      "business_area": null,
+      "previous_data_domain": "04",
+      "data_domain": "04",
+      "previous_business_area": "SHOP",
+      "business_area": "SHOP",
       "previous_dimension_role": null,
       "dimension_role": null,
       "previous_dimension_content_type": null,
       "dimension_content_type": null,
       "warnings": [],
       "write_scope": "all",
-      "metric_count": 0,
+      "metric_count": 4,
       "new_metric_count": 0,
       "removed_metric_count": 0,
       "grain_changed": true,
       "updated": true
+    },
+    {
+      "table": "dws_order_passthrough_daily",
+      "path": "/Users/yulihua/.codex/worktrees/ebff/dw_refactor_agent/shop/models/dws_order_passthrough_daily.yaml",
+      "status": "passed",
+      "changed": true,
+      "metadata_changed": false,
+      "metric_changed": true,
+      "previous_layer": "DWD",
+      "layer": "DWD",
+      "previous_table_type": "fact",
+      "table_type": "fact",
+      "previous_data_domain": "04",
+      "data_domain": "04",
+      "previous_business_area": "SHOP",
+      "business_area": "SHOP",
+      "previous_dimension_role": null,
+      "dimension_role": null,
+      "previous_dimension_content_type": null,
+      "dimension_content_type": null,
+      "warnings": [],
+      "write_scope": "all",
+      "metric_count": 1,
+      "new_metric_count": 0,
+      "removed_metric_count": 0,
+      "grain_changed": true,
+      "updated": true
+    },
+    {
+      "table": "dws_inventory_daily",
+      "path": "/Users/yulihua/.codex/worktrees/ebff/dw_refactor_agent/shop/models/dws_inventory_daily.yaml",
+      "status": "passed",
+      "changed": true,
+      "metadata_changed": false,
+      "metric_changed": true,
+      "previous_layer": "DWS",
+      "layer": "DWS",
+      "previous_table_type": "fact",
+      "table_type": "fact",
+      "previous_data_domain": null,
+      "data_domain": null,
+      "previous_business_area": "SHOP",
+      "business_area": "SHOP",
+      "previous_dimension_role": null,
+      "dimension_role": null,
+      "previous_dimension_content_type": null,
+      "dimension_content_type": null,
+      "warnings": [],
+      "write_scope": "all",
+      "metric_count": 2,
+      "new_metric_count": 0,
+      "removed_metric_count": 1,
+      "grain_changed": false,
+      "updated": true
     }
   ],
-  "model_update_count": 2,
-  "model_change_count": 2,
+  "model_update_count": 4,
+  "model_change_count": 4,
   "skipped_model_updates": []
 }

@@ -6,17 +6,23 @@ config:
   materialized: full
 atomic_metrics:
 - duration_minutes
-- sentiment_score
 data_domain: '01'
 business_area: CLNT
 entities:
+- code: ICTN
+  type: foreign
+  name: 交互事件
+  key_columns:
+  - interaction_id
 - code: CUST
   type: foreign
   name: 客户
   key_columns:
   - customer_id
-- code: AGEN
+- code: AGNT
   type: foreign
-  name: 员工
+  name: 坐席
   key_columns:
   - agent_id
+calculated_metrics:
+- sentiment_score

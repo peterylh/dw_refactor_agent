@@ -7,26 +7,21 @@ config:
 atomic_metrics:
 - scheduled_amount
 - actual_amount
-calculated_metrics:
-- days_late
 - late_fee
+- days_late
+calculated_metrics:
 - outstanding_balance
 - amount_difference
 data_domain: '04'
 business_area: LOAN
 entities:
-- code: PAYM
-  type: foreign
-  name: 支付
-  key_columns:
-  - payment_id
-- code: ACCT
-  type: foreign
-  name: 账户
-  key_columns:
-  - account_id
-- code: CUST
+- code: CUSTOMER
   type: foreign
   name: 客户
   key_columns:
   - customer_id
+- code: ACCOUNT
+  type: foreign
+  name: 账户
+  key_columns:
+  - account_id

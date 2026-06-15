@@ -1,6 +1,6 @@
 version: 2
 name: dws_regulatory_reports
-layer: DWS
+layer: DWD
 table_type: fact
 config:
   materialized: full
@@ -11,8 +11,14 @@ atomic_metrics:
 calculated_metrics:
 - days_from_due_date
 - processing_days
+- risk_score
 business_area: FMAN
 entities:
+- code: REPORT
+  type: foreign
+  name: 监管报告
+  key_columns:
+  - report_key
 - code: CUST
   type: foreign
   name: 客户
@@ -28,8 +34,14 @@ entities:
   name: 交易
   key_columns:
   - transaction_key
-- code: REPT
+- code: DATE
   type: foreign
-  name: 监管报告
+  name: 日期（申报日期）
   key_columns:
-  - report_id
+  - filing_date_key
+- code: DATE
+  type: foreign
+  name: 日期（到期日期）
+  key_columns:
+  - due_date_key
+data_domain: 09

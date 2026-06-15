@@ -4,17 +4,9 @@ layer: DWD
 table_type: fact
 config:
   materialized: full
-atomic_metrics:
-- old_value
-- new_value
 data_domain: '02'
 business_area: DPST
 entities:
-- code: EVENT
-  type: foreign
-  name: 事件
-  key_columns:
-  - event_id
 - code: ACCOUNT
   type: foreign
   name: 账户

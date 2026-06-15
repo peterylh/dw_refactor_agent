@@ -6,12 +6,15 @@ config:
   materialized: full
 calculated_metrics:
 - risk_score
+- credit_risk
+- fraud_risk
+- aml_risk
 data_domain: 09
 business_area: LOAN
 entities:
-- code: RISK_ASSESSMENT
+- code: ASSESSMENT
   type: foreign
-  name: 风险评估事件
+  name: 风险评估
   key_columns:
   - assessment_id
 - code: CUSTOMER
@@ -19,3 +22,8 @@ entities:
   name: 客户
   key_columns:
   - customer_id
+- code: ASSESSOR
+  type: foreign
+  name: 评估人
+  key_columns:
+  - assessor_id

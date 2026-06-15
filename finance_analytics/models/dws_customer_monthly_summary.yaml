@@ -5,6 +5,9 @@ table_type: fact
 config:
   materialized: full
 derived_metrics:
+- fraud_transaction_count
+- international_transaction_count
+- past_due_account_count
 - total_balance
 - avg_balance
 calculated_metrics:
@@ -14,12 +17,9 @@ calculated_metrics:
 - fraud_rate_pct
 atomic_metrics:
 - transaction_count
-- fraud_transaction_count
 - unique_merchants
 - unique_categories
-- international_transaction_count
 - active_account_count
-- past_due_account_count
 - customer_count
 business_area: CLNT
 grain:

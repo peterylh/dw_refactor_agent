@@ -1,19 +1,14 @@
 version: 2
 name: dwd_economic_indicators
-layer: DWD
-table_type: fact
+layer: DIM
+table_type: dimension
 config:
   materialized: full
-calculated_metrics:
-- gdp_growth_rate
-- unemployment_rate
-- inflation_rate
-- federal_funds_rate
-- sp500_index
-- vix_index
-- consumer_confidence_index
-- housing_price_index
-- 10yr_treasury_yield
-- mortgage_rate_30yr
-data_domain: 09
-business_area: FMAN
+dimension_role: BASE
+dimension_content_type: INFO
+entities:
+- code: DATE
+  type: primary
+  name: 日期
+  key_columns:
+  - date

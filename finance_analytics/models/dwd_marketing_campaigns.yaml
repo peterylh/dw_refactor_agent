@@ -1,27 +1,14 @@
 version: 2
 name: dwd_marketing_campaigns
-layer: DWD
-table_type: fact
+layer: DIM
+table_type: dimension
 config:
   materialized: full
-atomic_metrics:
-- budget
-- impressions
-- clicks
-- conversions
-calculated_metrics:
-- cost_per_acquisition
-- roi
-- campaign_duration_days
-- click_through_rate
-- conversion_rate
-- roi_category
-- campaign_status
-data_domain: '10'
-business_area: CLNT
 entities:
 - code: CAMPAIGN
   type: primary
   name: 营销活动
   key_columns:
   - campaign_id
+dimension_role: BASE
+dimension_content_type: INFO

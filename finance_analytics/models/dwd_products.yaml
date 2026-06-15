@@ -1,14 +1,14 @@
 version: 2
 name: dwd_products
-layer: DWD
+layer: DIM
 table_type: dimension
 config:
   materialized: full
-data_domain: '03'
-business_area: FRTN
 entities:
 - code: PROD
   type: primary
   name: 产品
   key_columns:
   - product_id
+dimension_role: BASE
+dimension_content_type: INFO

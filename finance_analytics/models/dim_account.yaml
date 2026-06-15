@@ -26,3 +26,5 @@ entities:
   relationship:
     type: many_to_one
     from_entity: ACCOUNT
+dimension_role: BASE
+dimension_content_type: INFO

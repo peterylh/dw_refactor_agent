@@ -10,4 +10,13 @@ entities:
   name: 产品
   key_columns:
   - product_key
+- code: PROD_NATURAL
+  type: foreign
+  name: 产品自然键
+  key_columns:
   - product_natural_key
+  relationship:
+    type: one_to_one
+    from_entity: PROD
+dimension_role: BASE
+dimension_content_type: INFO

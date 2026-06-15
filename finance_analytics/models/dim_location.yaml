@@ -5,8 +5,10 @@ table_type: dimension
 config:
   materialized: full
 entities:
-- code: location
+- code: LOC
   type: primary
-  name: 地点
+  name: 位置
   key_columns:
   - location_key
+dimension_role: BASE
+dimension_content_type: INFO

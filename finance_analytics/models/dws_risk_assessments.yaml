@@ -1,6 +1,6 @@
 version: 2
 name: dws_risk_assessments
-layer: DWS
+layer: DWD
 table_type: fact
 config:
   materialized: full
@@ -8,7 +8,6 @@ atomic_metrics:
 - assessment_count
 calculated_metrics:
 - risk_score
-- transaction_volume_last_90d
 - credit_risk_score
 - fraud_risk_score
 - aml_risk_score
@@ -17,13 +16,14 @@ calculated_metrics:
 - high_risk_customer_flag
 business_area: LOAN
 entities:
-- code: ASSESS
+- code: RISK_ASSESSMENT
   type: foreign
   name: 风险评估
   key_columns:
   - assessment_key
-- code: CUST
+- code: CUSTOMER
   type: foreign
   name: 客户
   key_columns:
   - customer_key
+data_domain: 09

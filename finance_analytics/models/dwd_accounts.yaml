@@ -1,44 +1,30 @@
 version: 2
 name: dwd_accounts
-layer: DWD
+layer: DIM
 table_type: dimension
 config:
   materialized: full
-data_domain: '02'
-business_area: DPST
 entities:
-- code: ACCT
+- code: ACCOUNT
   type: primary
   name: 账户
   key_columns:
   - account_id
-- code: CUST
+- code: CUSTOMER
   type: foreign
   name: 客户
   key_columns:
   - customer_id
   relationship:
     type: many_to_one
-    from_entity: ACCT
-- code: PROD
+    from_entity: ACCOUNT
+- code: PRODUCT
   type: foreign
   name: 产品
   key_columns:
   - product_id
   relationship:
     type: many_to_one
-    from_entity: ACCT
-- code: CUSTOMER
-  type: foreign
-  key_columns:
-  - customer_id
-  relationship:
-    type: many_to_one
-    from_entity: ACCT
-- code: PRODUCT
-  type: foreign
-  key_columns:
-  - product_id
-  relationship:
-    type: many_to_one
-    from_entity: ACCT
+    from_entity: ACCOUNT
+dimension_role: BASE
+dimension_content_type: INFO

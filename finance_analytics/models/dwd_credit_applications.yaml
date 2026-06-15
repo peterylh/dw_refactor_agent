@@ -10,21 +10,21 @@ atomic_metrics:
 calculated_metrics:
 - processing_days
 - amount_difference
-data_domain: '02'
+data_domain: 09
 business_area: LOAN
 entities:
-- code: application
+- code: APPL
   type: foreign
   name: 贷款申请
   key_columns:
   - application_id
-- code: customer
+- code: CUST
   type: foreign
   name: 客户
   key_columns:
   - customer_id
-- code: product
+- code: PROD
   type: foreign
-  name: 产品
+  name: 金融产品
   key_columns:
   - product_id

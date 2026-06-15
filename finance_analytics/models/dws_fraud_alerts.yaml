@@ -1,6 +1,6 @@
 version: 2
 name: dws_fraud_alerts
-layer: DWS
+layer: DWD
 table_type: fact
 config:
   materialized: full
@@ -9,36 +9,32 @@ atomic_metrics:
 - alert_count
 calculated_metrics:
 - resolution_days
-business_area: PAYM
+business_area: OTHR
 entities:
-- code: alert
+- code: ALERT
   type: foreign
-  name: 预警
+  name: 告警
   key_columns:
-  - alert_key
   - alert_id
-- code: transaction
-  type: foreign
-  name: 交易
-  key_columns:
-  - transaction_key
-- code: customer
+- code: CUSTOMER
   type: foreign
   name: 客户
   key_columns:
   - customer_key
-- code: account
+- code: ACCOUNT
   type: foreign
   name: 账户
   key_columns:
   - account_key
-- code: alert_date
+- code: TRANSACTION
   type: foreign
-  name: 预警日期
+  name: 交易
+  key_columns:
+  - transaction_key
+- code: DATE
+  type: foreign
+  name: 日期
   key_columns:
   - alert_date_key
-- code: resolution_date
-  type: foreign
-  name: 解决日期
-  key_columns:
   - resolution_date_key
+data_domain: 09

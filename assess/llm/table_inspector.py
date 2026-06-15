@@ -15,7 +15,7 @@ from assess.project_facts.entity_metadata import (
 )
 
 
-PROMPT_VERSION = "table-inspector-v21"
+PROMPT_VERSION = "table-inspector-v22"
 VALID_LAYERS = {"ODS", "DWD", "DWS", "ADS", "DIM", "OTHER"}
 VALID_TABLE_TYPES = {"dimension", "fact", "other"}
 VALID_DIMENSION_ROLES = {"BASE", "ADDT"}
@@ -195,6 +195,12 @@ def build_prompt(ctx: TableContext) -> str:
 
 ## DDL
 {ctx.ddl}
+
+"""
+    if ctx.project_context:
+        prompt += f"""## 项目背景说明
+以下背景仅作为辅助语义，用于理解业务名词、核心实体和指标口径；不能覆盖 DDL、ETL、血缘和字段级血缘等结构化证据。
+{ctx.project_context}
 
 """
     if ctx.business_domain_options:
@@ -774,7 +780,7 @@ class TableInspector:
             f"{ctx.depth_from_ods}|{ctx.upstream_metric_groups}|"
             f"{ctx.column_lineage}|{ctx.declared_data_domain}|"
             f"{ctx.declared_business_area}|{ctx.business_domain_options}|"
-            f"{ctx.business_semantics_options}"
+            f"{ctx.business_semantics_options}|{ctx.project_context}"
         )
         return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
