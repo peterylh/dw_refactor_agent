@@ -35,7 +35,7 @@ from ddl_deriver.ddl_deriver import (
     load_tables_from_dir,
 )
 from doris_sql import extract_doris_partition_column
-from lineage.job_dag import JobDAG
+from lineage.job_dag import asset_job_dag_from_lineage
 
 # ============================================================
 # 环境配置
@@ -227,7 +227,7 @@ def main():
         sys.exit(1)
     with open(lineage_path, encoding="utf-8") as f:
         lineage = json.load(f)
-    dag = JobDAG(lineage.get("edges", []))
+    dag = asset_job_dag_from_lineage(lineage)
     n = len(lineage.get("tables", []))
     e = len(lineage.get("edges", []))
     print(f"  血缘: {n} 表, {e} 边")

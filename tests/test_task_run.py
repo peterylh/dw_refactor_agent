@@ -245,6 +245,40 @@ def test_build_job_dag_accepts_structured_lineage_edges(monkeypatch, tmp_path):
     }
 
 
+def test_build_job_dag_collapses_transient_tables(monkeypatch, tmp_path):
+    lineage_dir = tmp_path / "lineage"
+    lineage_dir.mkdir()
+    (lineage_dir / "lineage_data_demo.json").write_text(
+        """
+        {
+          "tables": [
+            {"name": "dwd_orders", "layer": "DWD", "columns": []},
+            {"name": "tmp_orders_stage", "layer": "OTHER", "columns": [], "is_transient": true},
+            {"name": "dws_orders", "layer": "DWS", "columns": []}
+          ],
+          "edges": [
+            {
+              "source": {"type": "column", "id": "dwd_orders.order_id"},
+              "target": {"type": "column", "id": "tmp_orders_stage.order_id"}
+            },
+            {
+              "source": {"type": "column", "id": "tmp_orders_stage.order_id"},
+              "target": {"type": "column", "id": "dws_orders.order_id"}
+            }
+          ]
+        }
+        """,
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(task_run, "_root", tmp_path)
+
+    dag = task_run._build_job_dag("demo")
+
+    assert dag._deps == {"dwd_orders": {"dws_orders"}}
+    assert "tmp_orders_stage" not in dag._deps
+    assert "tmp_orders_stage" not in dag._rev
+
+
 def test_dag_needs_refresh_when_loaded_targets_do_not_match_tasks():
     dag = task_run.JobDAG(
         [

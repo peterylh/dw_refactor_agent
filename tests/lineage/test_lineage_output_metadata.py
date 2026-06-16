@@ -119,6 +119,7 @@ def test_build_lineage_output_marks_transient_tables():
             "created_statement_index": 0,
             "dropped_statement_index": 2,
             "is_ctas": True,
+            "is_temporary": False,
             "dropped_in_same_task": True,
         }
     ]
@@ -160,6 +161,7 @@ def test_build_lineage_output_keeps_transient_table_without_edges_in_tables():
                     "created_statement_index": 0,
                     "dropped_statement_index": 1,
                     "is_ctas": True,
+                    "is_temporary": False,
                     "dropped_in_same_task": True,
                 }
             ],

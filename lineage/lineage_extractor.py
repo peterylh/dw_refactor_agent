@@ -234,6 +234,49 @@ def _schema_columns_for_table(schema, table_name):
     return None
 
 
+def _copy_schema(schema):
+    return {
+        db_name: {
+            table_name: dict(columns or {})
+            for table_name, columns in (db_tables or {}).items()
+        }
+        for db_name, db_tables in (schema or {}).items()
+    }
+
+
+def _schema_db_for_table(table_name):
+    full_name = _canonical_qualified_identifier(table_name)
+    parts = full_name.split(".")
+    if len(parts) >= 2:
+        return _canonical_identifier(parts[-2])
+    return _canonical_identifier(CURRENT_DB)
+
+
+def _register_task_table_schema(schema, table_name, columns):
+    table_short = _strip_db(table_name)
+    clean_columns = [
+        _canonical_column(column_name)
+        for column_name in (columns or [])
+        if _canonical_column(column_name)
+    ]
+    if not table_short or not clean_columns:
+        return
+    db_name = _schema_db_for_table(table_name)
+    schema.setdefault(db_name, {})[table_short] = {
+        column_name: "UNKNOWN" for column_name in clean_columns
+    }
+
+
+def _created_table_columns(stmt):
+    target_columns = _target_columns(stmt.this)
+    if target_columns:
+        return target_columns
+    inner = stmt.args.get("expression")
+    if isinstance(inner, (exp.Select, exp.SetOperation)):
+        return _projection_output_names(inner)
+    return []
+
+
 def _infer_table_for_column(schema, preferred_table, column_name):
     column_name = _canonical_column(column_name)
     preferred = _strip_db(preferred_table)
@@ -728,21 +771,27 @@ def extract_lineage_from_sql(sql_text, file_path, schema):
         STATS["parse_failures"] += 1
         return entries
 
+    task_schema = _copy_schema(schema)
     for stmt in statements:
         if stmt is None:
             continue
         if isinstance(stmt, exp.Insert):
-            entries.extend(_handle_insert(stmt, file_path, schema))
+            entries.extend(_handle_insert(stmt, file_path, task_schema))
         elif isinstance(stmt, exp.Update):
-            entries.extend(_handle_update(stmt, file_path, schema))
+            entries.extend(_handle_update(stmt, file_path, task_schema))
         elif isinstance(stmt, exp.Create):
-            entries.extend(_handle_create(stmt, file_path, schema))
+            entries.extend(_handle_create(stmt, file_path, task_schema))
+            _register_task_table_schema(
+                task_schema,
+                _target_table_sql(stmt.this),
+                _created_table_columns(stmt),
+            )
         elif isinstance(stmt, exp.Merge):
-            entries.extend(_handle_merge(stmt, file_path, schema))
+            entries.extend(_handle_merge(stmt, file_path, task_schema))
         elif isinstance(stmt, exp.Delete):
             entries.extend(_handle_delete(stmt, file_path))
         elif isinstance(stmt, exp.Select) and stmt.args.get("into"):
-            entries.extend(_handle_select_into(stmt, file_path, schema))
+            entries.extend(_handle_select_into(stmt, file_path, task_schema))
     return [_canonical_lineage_entry(entry) for entry in entries]
 
 
@@ -975,6 +1024,7 @@ def _transient_table_occurrence(table):
         "created_statement_index": table.get("created_statement_index"),
         "dropped_statement_index": table.get("dropped_statement_index"),
         "is_ctas": bool(table.get("is_ctas", False)),
+        "is_temporary": bool(table.get("is_temporary", False)),
         "dropped_in_same_task": bool(table.get("dropped_in_same_task", False)),
     }
 

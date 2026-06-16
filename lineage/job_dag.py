@@ -19,6 +19,8 @@ from __future__ import annotations
 import json
 from collections import defaultdict, deque
 
+from lineage.asset_graph import build_asset_table_graph
+
 
 class JobDAG:
     """基于血缘边构建的作业 DAG, 支持序列化持久化."""
@@ -152,3 +154,20 @@ class JobDAG:
     def load(cls, path):
         with open(path, encoding="utf-8") as f:
             return cls.from_dict(json.load(f))
+
+
+def asset_job_dag_from_lineage(lineage_data: dict) -> JobDAG:
+    """Build a table DAG from formal asset dependencies, bypassing transient tables."""
+    _upstream, downstream = build_asset_table_graph(lineage_data or {})
+    table_edges = []
+    seen = set()
+    for source, targets in sorted(downstream.items()):
+        for target in sorted(targets):
+            if not source or not target or source == target:
+                continue
+            key = (source, target)
+            if key in seen:
+                continue
+            seen.add(key)
+            table_edges.append({"source": source, "target": target})
+    return JobDAG(table_edges)

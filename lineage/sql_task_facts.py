@@ -36,6 +36,16 @@ def _is_table_create(stmt) -> bool:
     )
 
 
+def _is_temporary_create(stmt) -> bool:
+    properties = stmt.args.get("properties")
+    if not properties:
+        return False
+    return any(
+        isinstance(prop, exp.TemporaryProperty)
+        for prop in properties.expressions or []
+    )
+
+
 def _is_table_drop(stmt) -> bool:
     return (
         isinstance(stmt, exp.Drop)
@@ -57,19 +67,23 @@ def _transient_table_facts(
                 for drop_index in drop_indexes
                 if drop_index > create["index"]
             ]
-            if not later_drops:
+            is_temporary = bool(create.get("is_temporary"))
+            if not later_drops and not is_temporary:
                 continue
-            transient_tables.append(
-                {
-                    "name": create["table"],
-                    "source_file": source_file,
-                    "created_statement_index": create["index"],
-                    "dropped_statement_index": min(later_drops),
-                    "is_ctas": create["is_ctas"],
-                    "is_transient": True,
-                    "dropped_in_same_task": True,
-                }
-            )
+            fact = {
+                "name": create["table"],
+                "source_file": source_file,
+                "created_statement_index": create["index"],
+                "dropped_statement_index": min(later_drops)
+                if later_drops
+                else None,
+                "is_ctas": create["is_ctas"],
+                "is_transient": True,
+                "dropped_in_same_task": bool(later_drops),
+            }
+            if is_temporary:
+                fact["is_temporary"] = True
+            transient_tables.append(fact)
             break
     return sorted(
         transient_tables,
@@ -123,7 +137,12 @@ def _parse_with_sqlglot(sql_text: str, source_file: str) -> dict | None:
             if target:
                 is_ctas = stmt.args.get("expression") is not None
                 creates_by_table[target.lower()].append(
-                    {"table": target, "index": index, "is_ctas": is_ctas}
+                    {
+                        "table": target,
+                        "index": index,
+                        "is_ctas": is_ctas,
+                        "is_temporary": _is_temporary_create(stmt),
+                    }
                 )
                 if is_ctas:
                     outputs.add(target)
@@ -158,13 +177,13 @@ def _parse_with_regex(sql_text: str, source_file: str) -> dict:
 
     for index, statement in enumerate(statements):
         create_match = re.search(
-            r"\bCREATE\s+(?:TEMPORARY\s+)?TABLE\s+"
+            r"\bCREATE\s+(TEMPORARY\s+)?TABLE\s+"
             r"(?:IF\s+NOT\s+EXISTS\s+)?(?:`?\w+`?\.)?`?(\w+)`?",
             statement,
             flags=re.IGNORECASE,
         )
         if create_match:
-            target = _short_table_name(create_match.group(1))
+            target = _short_table_name(create_match.group(2))
             if target:
                 is_ctas = bool(
                     re.search(
@@ -174,7 +193,12 @@ def _parse_with_regex(sql_text: str, source_file: str) -> dict:
                     )
                 )
                 creates_by_table[target.lower()].append(
-                    {"table": target, "index": index, "is_ctas": is_ctas}
+                    {
+                        "table": target,
+                        "index": index,
+                        "is_ctas": is_ctas,
+                        "is_temporary": bool(create_match.group(1)),
+                    }
                 )
                 if is_ctas:
                     outputs.add(target)

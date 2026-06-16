@@ -628,3 +628,58 @@ class TestEdgeCases:
         assert not any(e["source_table"] == "sales_velocity" for e in indirect)
         assert ("dws_product_sales_daily", "product_id") in sources
         assert ("dws_product_sales_daily", "sale_quantity") in sources
+
+    def test_task_ctas_transient_table_keeps_raw_segment_edges(self):
+        schema = build_schema_from_texts(
+            [
+                """
+                CREATE TABLE shop_dm.dwd_orders (
+                    order_id BIGINT,
+                    amount DECIMAL(12,2)
+                )
+                """,
+                """
+                CREATE TABLE shop_dm.dws_orders (
+                    order_id BIGINT,
+                    amount DECIMAL(12,2)
+                )
+                """,
+            ]
+        )
+        sql = """
+        CREATE TABLE shop_dm.tmp_orders_stage AS
+        SELECT
+            order_id,
+            amount
+        FROM shop_dm.dwd_orders;
+
+        INSERT INTO shop_dm.dws_orders
+        SELECT
+            order_id,
+            amount
+        FROM shop_dm.tmp_orders_stage;
+
+        DROP TABLE IF EXISTS shop_dm.tmp_orders_stage;
+        """
+
+        entries = extract_lineage_from_sql(sql, "dws_orders.sql", schema)
+        direct = _direct_edges(entries)
+
+        assert direct >= {
+            ("dwd_orders", "order_id", "tmp_orders_stage", "order_id"),
+            ("dwd_orders", "amount", "tmp_orders_stage", "amount"),
+            ("tmp_orders_stage", "order_id", "dws_orders", "order_id"),
+            ("tmp_orders_stage", "amount", "dws_orders", "amount"),
+        }
+        assert (
+            "dws_orders",
+            "order_id",
+            "dws_orders",
+            "order_id",
+        ) not in direct
+        assert (
+            "dwd_orders",
+            "order_id",
+            "dws_orders",
+            "order_id",
+        ) not in direct

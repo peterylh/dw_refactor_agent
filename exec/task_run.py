@@ -33,7 +33,7 @@ from config import (
     get_model_names_by_layer,
     get_mysql_cmd,
 )
-from lineage.job_dag import JobDAG
+from lineage.job_dag import JobDAG, asset_job_dag_from_lineage
 
 _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _TIME_UNIT_RE = re.compile(
@@ -70,18 +70,7 @@ def _build_job_dag(project: str) -> JobDAG:
             cwd=_root,
         )
     data = json.loads(lineage_path.read_text(encoding="utf-8"))
-    table_edges = []
-    seen = set()
-    for e in data.get("edges", []):
-        src = JobDAG._edge_table(e.get("source"))
-        tgt = JobDAG._edge_table(e.get("target"))
-        if not src or not tgt or src == tgt:
-            continue
-        key = (src, tgt)
-        if key not in seen:
-            seen.add(key)
-            table_edges.append({"source": src, "target": tgt})
-    return JobDAG(table_edges)
+    return asset_job_dag_from_lineage(data)
 
 
 def _dag_needs_refresh_for_tasks(dag: JobDAG, task_names: set[str]) -> bool:
