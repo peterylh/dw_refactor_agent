@@ -13,6 +13,7 @@
     dag2 = JobDAG.load("lineage/job_dag.json")
     downstream = dag2.bfs_downstream({"dwd_order_detail"})
 """
+from __future__ import annotations
 
 import json
 from collections import defaultdict, deque

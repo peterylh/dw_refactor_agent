@@ -6,6 +6,10 @@ from dataclasses import dataclass, field
 from typing import Any
 
 
+def _strip_sql_suffix(value: str) -> str:
+    return value[:-4] if value.endswith(".sql") else value
+
+
 @dataclass(frozen=True)
 class LineageColumn:
     name: str
@@ -156,7 +160,7 @@ class LineageSnapshot:
             indirect_edges=tuple(dict(edge) for edge in raw_indirect_edges),
             jobs=tuple(
                 LineageJob(
-                    name=source_file.rsplit("/", 1)[-1].removesuffix(".sql"),
+                    name=_strip_sql_suffix(source_file.rsplit("/", 1)[-1]),
                     source_file=source_file,
                 )
                 for source_file in source_files

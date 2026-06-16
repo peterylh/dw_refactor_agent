@@ -1,0 +1,13 @@
+name: dw-refactor-py37
+channels:
+  - conda-forge
+dependencies:
+  - python=3.7
+  - pip
+  - pytest=7
+  - pyyaml=6
+  - requests
+  - pymysql
+  - typing_extensions
+  - pip:
+      - sqlglot==26.9.0

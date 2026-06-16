@@ -1,4 +1,5 @@
 """Small shared helpers for assess scoring modules."""
+from __future__ import annotations
 
 def _as_string_list(value) -> list[str]:
     if value is None:

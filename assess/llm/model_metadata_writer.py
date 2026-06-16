@@ -7,6 +7,7 @@ DWD 数据域、DWD/DWS 业务板块、维度表 entity/related_entities、DWS g
 DWD/DWS 表中的指标字段回写到 models/{table}.yaml，并把 DWD 事实表的
 非原子指标输出为违规项。
 """
+from __future__ import annotations
 
 import argparse
 import json

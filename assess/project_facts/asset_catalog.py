@@ -1,4 +1,5 @@
 """Project asset catalog collection for assess scoring."""
+from __future__ import annotations
 
 import re
 from collections import defaultdict

@@ -1,4 +1,5 @@
 """Model design health scoring dimension."""
+from __future__ import annotations
 
 import re
 from collections import defaultdict

@@ -1,4 +1,5 @@
 """Console report formatting for assess results."""
+from __future__ import annotations
 
 def _fmt_table(
     headers: list[str],

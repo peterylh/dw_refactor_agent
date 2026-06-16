@@ -1,4 +1,5 @@
 """Lineage data loading and raw table graph helpers."""
+from __future__ import annotations
 
 import json
 from collections import defaultdict

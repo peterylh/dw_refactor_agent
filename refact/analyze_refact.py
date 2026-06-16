@@ -3,6 +3,7 @@
 重构分析: 检测 DDL / 作业变更, 血缘追踪下游, 锚点发现, 分区选择
 输出 refact_metadata.json → 供 verify_run.py / verify_check.py 使用
 """
+from __future__ import annotations
 
 import json, argparse, subprocess, sys
 from pathlib import Path
@@ -13,6 +14,7 @@ import sqlglot
 from sqlglot import exp
 from sqlglot.errors import ErrorLevel
 
+from doris_sql import extract_doris_partition_column
 from lineage.job_dag import JobDAG
 
 from ddl_deriver.ddl_deriver import (
@@ -54,15 +56,7 @@ def parse_partition_col_from_ddl(ddl_text: str) -> str:
     """从 CREATE TABLE DDL 文本中解析 PARTITION BY RANGE 列名。"""
     if not ddl_text:
         return ""
-    for stmt in sqlglot.parse(ddl_text, dialect="doris",
-                               error_level=ErrorLevel.IGNORE):
-        if stmt is None:
-            continue
-        if isinstance(stmt, exp.Create):
-            for prop in stmt.find_all(exp.PartitionByRangeProperty):
-                for c in prop.find_all(exp.Column):
-                    return c.name
-    return ""
+    return extract_doris_partition_column(ddl_text)
 
 
 def get_partition_col(table_name: str, layer: str,

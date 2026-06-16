@@ -1,4 +1,5 @@
 """Model metadata health scoring dimension."""
+from __future__ import annotations
 
 from assess.project_facts.business_metadata import (
     _business_area_applies,

@@ -1,4 +1,5 @@
 """Shared scoring constants and rule metadata for assess dimensions."""
+from __future__ import annotations
 
 from assess.result_model import SEVERITY_HIGH, SEVERITY_LOW, SEVERITY_MEDIUM, rule_meta
 

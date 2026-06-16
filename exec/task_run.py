@@ -9,6 +9,7 @@
     python exec/task_run.py --project finance_analytics --etl-dates 2025-01-15 --db-env prod
     python exec/task_run.py --project shop --etl-dates 2025-01-01 --refresh-dag
 """
+from __future__ import annotations
 
 import argparse
 import json

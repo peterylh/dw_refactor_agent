@@ -4,7 +4,11 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Protocol
+
+try:
+    from typing import Protocol
+except ImportError:  # Python 3.7
+    from typing_extensions import Protocol
 
 from lineage.model import LineageSnapshot
 
