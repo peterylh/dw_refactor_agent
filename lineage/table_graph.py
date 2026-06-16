@@ -1,4 +1,5 @@
 """Lineage data loading and raw table graph helpers."""
+
 from __future__ import annotations
 
 import json
@@ -23,7 +24,8 @@ def load_lineage_data(project: str) -> dict:
             return json.load(f)
 
     raise FileNotFoundError(
-        f"未找到 {project} 的血缘数据文件 (lineage_data_{project}.json)")
+        f"未找到 {project} 的血缘数据文件 (lineage_data_{project}.json)"
+    )
 
 
 def _table_from_node(node_id: str) -> str:

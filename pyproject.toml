@@ -1,0 +1,30 @@
+[tool.ruff]
+target-version = "py37"
+line-length = 79
+extend-exclude = [
+    ".conda-py37",
+    ".git",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".ruff_cache",
+    "__pycache__",
+]
+
+[tool.ruff.lint]
+select = [
+    "B",
+    "E",
+    "F",
+    "I",
+    "RET",
+    "SIM",
+]
+ignore = [
+    "E402",
+    "E501",
+]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "auto"

@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
+import re
 from collections import Counter, deque
 from dataclasses import dataclass
-import re
 
 from lineage.view import LineageView
-
 
 VALID_DIRECTIONS = {"upstream", "downstream", "both"}
 AGGREGATE_PATTERN = re.compile(
@@ -93,11 +92,7 @@ class ColumnLineage:
 
     @property
     def source_columns(self) -> set[str]:
-        return {
-            path.nodes[0]
-            for path in self.paths
-            if path.nodes
-        }
+        return {path.nodes[0] for path in self.paths if path.nodes}
 
     @property
     def source_files(self) -> set[str]:
@@ -181,7 +176,11 @@ def _table_from_column(node: str) -> str:
 
 
 def _transformation_type(expression: str) -> str:
-    return "aggregation" if AGGREGATE_PATTERN.search(expression or "") else "passthrough"
+    return (
+        "aggregation"
+        if AGGREGATE_PATTERN.search(expression or "")
+        else "passthrough"
+    )
 
 
 def _conditions_from_record(record: dict) -> tuple[ColumnCondition, ...]:
@@ -508,11 +507,12 @@ def build_table_subgraph(
 
     selected_tables = set(distances)
     selected_layers = {
-        table: layers.get(table, "OTHER")
-        for table in selected_tables
+        table: layers.get(table, "OTHER") for table in selected_tables
     }
     table_columns = {
-        table.name: tuple(column.name for column in table.columns if column.name)
+        table.name: tuple(
+            column.name for column in table.columns if column.name
+        )
         for table in view.tables()
         if table.name in selected_tables
     }

@@ -44,33 +44,37 @@ def test_lineage_view_reuses_indexed_column_lineage():
         {"dws_orders": {"dwd_orders"}},
         {"dwd_orders": {"dws_orders"}},
     )
-    assert view.column_lineage_for_table("dws_orders") == [{
-        "source": "dwd_orders.amount",
-        "target": "dws_orders.total_amount",
-        "expression": "tmp_orders.amount AS total_amount",
-        "source_file": "dws_orders.sql",
-        "transient_path": ["tmp_orders.amount"],
-        "expression_chain": [
-            {
-                "source": "dwd_orders.amount",
-                "target": "tmp_orders.amount",
-                "expression": "SUM(dwd_orders.amount) AS amount",
-                "source_file": "dws_orders.sql",
-            },
-            {
-                "source": "tmp_orders.amount",
-                "target": "dws_orders.total_amount",
-                "expression": "tmp_orders.amount AS total_amount",
-                "source_file": "dws_orders.sql",
-            },
-        ],
-        "condition_lineage": [{
-            "source": "dwd_orders.store_id",
-            "condition_type": "GROUP_BY",
-            "condition_expression": "store_id",
+    assert view.column_lineage_for_table("dws_orders") == [
+        {
+            "source": "dwd_orders.amount",
+            "target": "dws_orders.total_amount",
+            "expression": "tmp_orders.amount AS total_amount",
             "source_file": "dws_orders.sql",
-        }],
-    }]
+            "transient_path": ["tmp_orders.amount"],
+            "expression_chain": [
+                {
+                    "source": "dwd_orders.amount",
+                    "target": "tmp_orders.amount",
+                    "expression": "SUM(dwd_orders.amount) AS amount",
+                    "source_file": "dws_orders.sql",
+                },
+                {
+                    "source": "tmp_orders.amount",
+                    "target": "dws_orders.total_amount",
+                    "expression": "tmp_orders.amount AS total_amount",
+                    "source_file": "dws_orders.sql",
+                },
+            ],
+            "condition_lineage": [
+                {
+                    "source": "dwd_orders.store_id",
+                    "condition_type": "GROUP_BY",
+                    "condition_expression": "store_id",
+                    "source_file": "dws_orders.sql",
+                }
+            ],
+        }
+    ]
 
 
 def test_lineage_view_indexes_design_facts_by_table():
@@ -112,9 +116,9 @@ def test_lineage_view_indexes_design_facts_by_table():
         ],
     }
 
-    facts = LineageView.from_data("demo", lineage_data).lineage_facts_for_table(
-        "dws_orders"
-    )
+    facts = LineageView.from_data(
+        "demo", lineage_data
+    ).lineage_facts_for_table("dws_orders")
 
     assert facts == {
         "has_lineage": True,
@@ -144,11 +148,13 @@ def test_lineage_view_indexes_targets_by_source_file():
                 "source_file": "dws_orders.sql",
             },
         ],
-        "indirect_edges": [{
-            "source": "dwd_payments.id",
-            "target_table": "dws_payments",
-            "source_file": "dws_payments.sql",
-        }],
+        "indirect_edges": [
+            {
+                "source": "dwd_payments.id",
+                "target_table": "dws_payments",
+                "source_file": "dws_payments.sql",
+            }
+        ],
     }
 
     view = LineageView.from_data("demo", lineage_data)
@@ -172,11 +178,13 @@ def test_lineage_view_indexes_table_edge_source_files():
                 "source_file": "dws_orders.sql",
             },
         ],
-        "indirect_edges": [{
-            "source": "dwd_payments.id",
-            "target_table": "dws_payments",
-            "source_file": "dws_payments.sql",
-        }],
+        "indirect_edges": [
+            {
+                "source": "dwd_payments.id",
+                "target_table": "dws_payments",
+                "source_file": "dws_payments.sql",
+            }
+        ],
     }
 
     view = LineageView.from_data("demo", lineage_data)

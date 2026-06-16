@@ -1,8 +1,8 @@
 """Entity/grain metadata normalization helpers."""
+
 from __future__ import annotations
 
 from typing import Any
-
 
 VALID_ENTITY_TYPES = {"primary", "unique", "foreign", "natural"}
 
@@ -31,9 +31,7 @@ def normalize_entity(
         entity_type = default_type
 
     key_columns = as_string_list(
-        raw.get("key_columns")
-        or raw.get("keys")
-        or raw.get("expr")
+        raw.get("key_columns") or raw.get("keys") or raw.get("expr")
     )
 
     entity: dict[str, Any] = {
@@ -170,7 +168,8 @@ def entity_key_columns_by_code(
         code = str(entity.get("code") or "").strip()
         if code:
             index.setdefault(code, []).extend(
-                as_string_list(entity.get("key_columns")))
+                as_string_list(entity.get("key_columns"))
+            )
     return index
 
 

@@ -1,4 +1,5 @@
 """Model metadata health scoring dimension."""
+
 from __future__ import annotations
 
 from assess.project_facts.business_metadata import (
@@ -15,8 +16,10 @@ from assess.result_model import finalize_dimension, make_check
 from assess.scoring.config import METADATA_HEALTH_RULES, SEVERITY_LOW
 from assess.scoring.utils import _as_string_list, _type_def_valid
 
+
 def _model_defined_entities(model_metadata: dict | None) -> set[str]:
     return defined_entity_codes(model_metadata)
+
 
 def _model_entity_codes(metadata: dict | None) -> list[str]:
     return primary_entity_codes(metadata)
@@ -28,6 +31,7 @@ def _table_column_names(table: dict) -> set[str]:
         for column in table.get("columns", []) or []
         if str(column.get("name") or "").strip()
     }
+
 
 def score_metadata_health(
     tables: list,
@@ -101,13 +105,12 @@ def score_metadata_health(
         entity_codes = _model_entity_codes(metadata)
         primary_code = entity_codes[0] if entity_codes else ""
         layer = str(
-            metadata.get("layer")
-            or (table or {}).get("layer")
-            or "OTHER"
+            metadata.get("layer") or (table or {}).get("layer") or "OTHER"
         ).upper()
         if layer == "DIM":
             semantic_subject = str(
-                metadata.get("semantic_subject") or "").strip()
+                metadata.get("semantic_subject") or ""
+            ).strip()
             record(
                 table_name,
                 "METADATA_DIM_HAS_PRIMARY_ENTITY",
@@ -121,8 +124,11 @@ def score_metadata_health(
             record(
                 table_name,
                 "METADATA_DIM_SEMANTIC_SUBJECT_MATCHES_PRIMARY",
-                bool(semantic_subject and primary_code
-                     and semantic_subject == primary_code),
+                bool(
+                    semantic_subject
+                    and primary_code
+                    and semantic_subject == primary_code
+                ),
                 "semantic_subject等于DIM主实体编码",
                 semantic_subject or "未配置",
                 {
@@ -150,8 +156,7 @@ def score_metadata_health(
                 key_columns = _as_string_list(entity.get("key_columns"))
                 if key_columns:
                     missing_keys = [
-                        key for key in key_columns
-                        if key not in columns
+                        key for key in key_columns if key not in columns
                     ]
                     record(
                         table_name,
@@ -179,7 +184,8 @@ def score_metadata_health(
                 relationship = entity.get("relationship")
                 if primary_code and isinstance(relationship, dict):
                     from_entity = str(
-                        relationship.get("from_entity") or "").strip()
+                        relationship.get("from_entity") or ""
+                    ).strip()
                     record(
                         table_name,
                         "METADATA_RELATIONSHIP_FROM_PRIMARY",
@@ -217,8 +223,7 @@ def score_metadata_health(
             grain_keys = grain_key_columns(metadata)
             if grain_keys:
                 missing_grain_keys = [
-                    key for key in grain_keys
-                    if key not in columns
+                    key for key in grain_keys if key not in columns
                 ]
                 record(
                     table_name,
@@ -246,7 +251,8 @@ def score_metadata_health(
         if layer == "DWS" or grain_entities:
             if grain_entities:
                 missing_entities = [
-                    entity for entity in grain_entities
+                    entity
+                    for entity in grain_entities
                     if entity not in defined_entities
                 ]
                 record(

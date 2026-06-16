@@ -12,18 +12,20 @@ class CountingSchema(dict):
 
 
 def test_build_lineage_output_indexes_schema_column_types_once():
-    schema = CountingSchema({
-        "shop_dm": {
-            "dwd_orders": {
-                "order_id": "BIGINT",
-                "amount": "DECIMAL(12,2)",
+    schema = CountingSchema(
+        {
+            "shop_dm": {
+                "dwd_orders": {
+                    "order_id": "BIGINT",
+                    "amount": "DECIMAL(12,2)",
+                },
+                "dws_orders": {
+                    "order_id": "BIGINT",
+                    "total_amount": "DECIMAL(12,2)",
+                },
             },
-            "dws_orders": {
-                "order_id": "BIGINT",
-                "total_amount": "DECIMAL(12,2)",
-            },
-        },
-    })
+        }
+    )
 
     output = build_lineage_output(
         [
@@ -51,12 +53,10 @@ def test_build_lineage_output_indexes_schema_column_types_once():
 
     assert schema.values_calls <= 1
     dws_orders = next(
-        table for table in output["tables"]
-        if table["name"] == "dws_orders"
+        table for table in output["tables"] if table["name"] == "dws_orders"
     )
     assert {
-        column["name"]: column["type"]
-        for column in dws_orders["columns"]
+        column["name"]: column["type"] for column in dws_orders["columns"]
     } == {
         "order_id": "BIGINT",
         "total_amount": "DECIMAL(12,2)",
@@ -85,10 +85,12 @@ def test_build_lineage_output_marks_transient_tables():
                 "source_file": "dws_orders.sql",
             },
         ],
-        {"shop_dm": {
-            "dwd_orders": {"order_id": "BIGINT"},
-            "dws_orders": {"order_id": "BIGINT"},
-        }},
+        {
+            "shop_dm": {
+                "dwd_orders": {"order_id": "BIGINT"},
+                "dws_orders": {"order_id": "BIGINT"},
+            }
+        },
         transient_tables=[
             {
                 "name": "tmp_orders_stage",
@@ -103,7 +105,8 @@ def test_build_lineage_output_marks_transient_tables():
     )
 
     tmp_table = next(
-        table for table in output["tables"]
+        table
+        for table in output["tables"]
         if table["name"] == "tmp_orders_stage"
     )
     assert "nodes" not in output
@@ -124,9 +127,11 @@ def test_build_lineage_output_marks_transient_tables():
 def test_build_lineage_output_keeps_transient_table_without_edges_in_tables():
     output = build_lineage_output(
         [],
-        {"shop_dm": {
-            "dws_orders": {"order_id": "BIGINT"},
-        }},
+        {
+            "shop_dm": {
+                "dws_orders": {"order_id": "BIGINT"},
+            }
+        },
         transient_tables=[
             {
                 "name": "tmp_orders_stage",
@@ -185,13 +190,15 @@ def test_build_lineage_output_uses_typed_edges_for_direct_and_group_by():
                 "source_file": "dws_orders.sql",
             },
         ],
-        {"shop_dm": {
-            "dwd_orders": {
-                "amount": "DECIMAL(12,2)",
-                "order_date": "DATE",
-            },
-            "dws_orders": {"total_amount": "DECIMAL(12,2)"},
-        }},
+        {
+            "shop_dm": {
+                "dwd_orders": {
+                    "amount": "DECIMAL(12,2)",
+                    "order_date": "DATE",
+                },
+                "dws_orders": {"total_amount": "DECIMAL(12,2)"},
+            }
+        },
     )
 
     assert "nodes" not in output

@@ -1,4 +1,5 @@
 """Asset graph projections built from complete lineage data."""
+
 from __future__ import annotations
 
 import json
@@ -89,10 +90,10 @@ def _condition_sort_key(edge: dict) -> tuple[str, str, str, str]:
 
 
 def _collapse_upstream(
-        table: str,
-        upstream: dict,
-        transient_tables: set[str],
-        visiting: set[str],
+    table: str,
+    upstream: dict,
+    transient_tables: set[str],
+    visiting: set[str],
 ) -> set[str]:
     result = set()
     for parent in upstream.get(table, set()):
@@ -113,10 +114,10 @@ def _collapse_upstream(
 
 
 def _collapse_downstream(
-        table: str,
-        downstream: dict,
-        transient_tables: set[str],
-        visiting: set[str],
+    table: str,
+    downstream: dict,
+    transient_tables: set[str],
+    visiting: set[str],
 ) -> set[str]:
     result = set()
     for child in downstream.get(table, set()):
@@ -181,7 +182,7 @@ def build_asset_table_graph(lineage_data: dict) -> tuple[dict, dict]:
 
 
 def _column_incoming_edges(
-        edges: list[dict[str, str]],
+    edges: list[dict[str, str]],
 ) -> dict[str, list[dict[str, str]]]:
     incoming = defaultdict(list)
     for edge in edges:
@@ -193,10 +194,10 @@ def _column_incoming_edges(
 
 
 def _trace_asset_column_sources(
-        node: str,
-        incoming: dict[str, list[dict[str, str]]],
-        transient_tables: set[str],
-        visiting: set[str],
+    node: str,
+    incoming: dict[str, list[dict[str, str]]],
+    transient_tables: set[str],
+    visiting: set[str],
 ) -> list[tuple[str, list[dict[str, str]], list[str]]]:
     table = _table_from_node(node)
     if table not in transient_tables:
@@ -217,15 +218,16 @@ def _trace_asset_column_sources(
 
 
 def _asset_condition_lineage(
-        lineage_data: dict,
-        table_name: str,
-        incoming: dict[str, list[dict[str, str]]],
-        transient_tables: set[str],
+    lineage_data: dict,
+    table_name: str,
+    incoming: dict[str, list[dict[str, str]]],
+    transient_tables: set[str],
 ) -> list[dict]:
     conditions = []
     seen = set()
     typed_condition_edges = [
-        edge for edge in lineage_data.get("edges") or []
+        edge
+        for edge in lineage_data.get("edges") or []
         if isinstance(edge.get("target"), dict)
         and (edge.get("target") or {}).get("type") == "table"
         and edge.get("relation_type") != "direct"
@@ -282,8 +284,8 @@ def _asset_condition_lineage(
 
 
 def build_asset_column_lineage(
-        lineage_data: dict,
-        table_name: str,
+    lineage_data: dict,
+    table_name: str,
 ) -> list[dict]:
     """Return column lineage for an asset table with transient fields bypassed."""
     transient_tables = transient_table_names(lineage_data)

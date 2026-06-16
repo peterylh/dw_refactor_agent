@@ -32,7 +32,10 @@ def test_format_table_text_includes_summary_graph_and_edges():
     assert "Boundary: reached depth limit, 1 upstream tables hidden" in output
     assert "Graph" in output
     assert "ads_sales_dashboard [ADS]" in output
-    assert "<- dws_product_sales_daily [DWS]  job=ads_sales_dashboard.sql" in output
+    assert (
+        "<- dws_product_sales_daily [DWS]  job=ads_sales_dashboard.sql"
+        in output
+    )
     assert "Edges" in output
     assert "dwd_order_detail" in output
     assert "dws_product_sales_daily.sql" in output
@@ -93,7 +96,8 @@ def test_format_table_json_includes_local_columns_and_column_lineage():
     payload = json.loads(format_table_json(_table_subgraph()))
 
     dws_table = next(
-        table for table in payload["tables"]
+        table
+        for table in payload["tables"]
         if table["name"] == "dws_product_sales_daily"
     )
     assert dws_table["columns"] == ["product_id", "sales_amount"]
@@ -154,12 +158,17 @@ def test_format_column_text_includes_paths_expressions_and_jobs():
 
     output = format_column_text(lineage)
 
-    assert "Column Lineage: demo / dws_product_sales_daily.sales_amount" in output
+    assert (
+        "Column Lineage: demo / dws_product_sales_daily.sales_amount" in output
+    )
     assert "Direction: upstream   Depth: 2" in output
     assert "Summary" in output
     assert "Paths: 1   Source Columns: 1" in output
     assert "Transformations: aggregation=1, passthrough=1" in output
-    assert "Source Files: dwd_order_detail.sql, dws_product_sales_daily.sql" in output
+    assert (
+        "Source Files: dwd_order_detail.sql, dws_product_sales_daily.sql"
+        in output
+    )
     assert "Paths" in output
     assert "ods_order.sale_amount" in output
     assert "-> dwd_order_detail.sale_amount" in output
@@ -182,7 +191,9 @@ def test_format_column_text_verbose_includes_conditions():
     output = format_column_text(lineage, verbose=True)
 
     assert "conditions:" in output
-    assert "FILTER dwd_order_detail.order_date: order_date = @etl_date" in output
+    assert (
+        "FILTER dwd_order_detail.order_date: order_date = @etl_date" in output
+    )
     assert "GROUP_BY dwd_order_detail.product_id: product_id" in output
 
 

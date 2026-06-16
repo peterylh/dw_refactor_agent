@@ -3,38 +3,39 @@
 重构分析: 检测 DDL / 作业变更, 血缘追踪下游, 锚点发现, 分区选择
 输出 refact_metadata.json → 供 verify_run.py / verify_check.py 使用
 """
+
 from __future__ import annotations
 
-import json, argparse, subprocess, sys
+import argparse
+import json
+import subprocess
+import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-import sqlglot
-from sqlglot import exp
-from sqlglot.errors import ErrorLevel
 
-from doris_sql import extract_doris_partition_column
-from lineage.job_dag import JobDAG
-
+from config import (
+    DORIS_HOST,
+    DORIS_PORT,
+    DORIS_USER,
+    PROJECT_CONFIG,
+    layer_rank,
+)
+from config import (
+    determine_layer as determine_config_layer,
+)
 from ddl_deriver.ddl_deriver import (
     _find_git_root,
     _get_merge_base,
     _git_cmd,
-    derive_ddl_changes,
-    load_tables_from_dir,
     _load_git_tables,
     changes_to_json,
+    derive_ddl_changes,
+    load_tables_from_dir,
 )
-
-from config import (
-    PROJECT_CONFIG,
-    DORIS_HOST,
-    DORIS_PORT,
-    DORIS_USER,
-    determine_layer as determine_config_layer,
-    layer_rank,
-)
+from doris_sql import extract_doris_partition_column
+from lineage.job_dag import JobDAG
 
 # ============================================================
 # 环境配置
@@ -59,8 +60,9 @@ def parse_partition_col_from_ddl(ddl_text: str) -> str:
     return extract_doris_partition_column(ddl_text)
 
 
-def get_partition_col(table_name: str, layer: str,
-                      baseline_ddl: dict = None) -> str:
+def get_partition_col(
+    table_name: str, layer: str, baseline_ddl: dict = None
+) -> str:
     """获取表的分区列。从基线 DDL 解析。"""
     if baseline_ddl:
         ddl_text = baseline_ddl.get(table_name)
@@ -82,9 +84,20 @@ def strip_insert_data(ddl_text: str) -> str:
 
 def run_doris(sql: str, db: str = "") -> str:
     r = subprocess.run(
-        ["mysql", f"-h{DORIS_HOST}", f"-P{DORIS_PORT}", f"-u{DORIS_USER}",
-         db, "-N", "-B", "-e", sql],
-        capture_output=True, text=True, timeout=30,
+        [
+            "mysql",
+            f"-h{DORIS_HOST}",
+            f"-P{DORIS_PORT}",
+            f"-u{DORIS_USER}",
+            db,
+            "-N",
+            "-B",
+            "-e",
+            sql,
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
     )
     if r.returncode != 0:
         raise RuntimeError(f"Doris 错误: {r.stderr.strip()}")
@@ -95,16 +108,24 @@ def run_doris(sql: str, db: str = "") -> str:
 # 主流程
 # ============================================================
 
+
 def main():
     parser = argparse.ArgumentParser(
         description="重构分析: 检测变更 + 血缘追踪 + 锚点发现 + 分区选择"
     )
-    parser.add_argument("--project", default="shop", choices=list(PROJECT_CONFIG.keys()))
-    parser.add_argument("--output", default=None,
-                        help="元数据路径 (默认 refact/refact_metadata.json)")
+    parser.add_argument(
+        "--project", default="shop", choices=list(PROJECT_CONFIG.keys())
+    )
+    parser.add_argument(
+        "--output",
+        default=None,
+        help="元数据路径 (默认 refact/refact_metadata.json)",
+    )
     parser.add_argument("--partition", default=None, help="手工指定分区")
     parser.add_argument("--etl-date", default=None, help="手工指定 @etl_date")
-    parser.add_argument("--anchor", nargs="*", default=None, help="手工指定锚点表")
+    parser.add_argument(
+        "--anchor", nargs="*", default=None, help="手工指定锚点表"
+    )
     parser.add_argument("--base-branch", default="main", help="Git 基线分支")
     args = parser.parse_args()
 
@@ -118,7 +139,11 @@ def main():
     ddl_rel = f"{cfg['dir']}/ddl"
     tasks_dir = root / cfg["dir"] / "tasks"
     lineage_path = root / "lineage" / f"lineage_data_{args.project}.json"
-    out_path = Path(args.output) if args.output else root / "refact" / "refact_metadata.json"
+    out_path = (
+        Path(args.output)
+        if args.output
+        else root / "refact" / "refact_metadata.json"
+    )
 
     # ── Git 信息 ──
     print("=== Git 变更检测 ===")
@@ -137,13 +162,25 @@ def main():
     lineage_search_names = set()
     for ch in ddl_changes:
         if ch.change_type == "RENAME":
-            old_short = ch.old_name.split(".")[-1] if "." in ch.old_name else ch.old_name
-            new_short = ch.new_name.split(".")[-1] if "." in ch.new_name else ch.new_name
+            old_short = (
+                ch.old_name.split(".")[-1]
+                if "." in ch.old_name
+                else ch.old_name
+            )
+            new_short = (
+                ch.new_name.split(".")[-1]
+                if "." in ch.new_name
+                else ch.new_name
+            )
             ddl_table_names.add(new_short)
             lineage_search_names.add(old_short)
             lineage_search_names.add(new_short)
         else:
-            name = getattr(ch, "table_name", None) or getattr(ch, "old_name", None) or ""
+            name = (
+                getattr(ch, "table_name", None)
+                or getattr(ch, "old_name", None)
+                or ""
+            )
             short = name.split(".")[-1] if "." in name else name
             ddl_table_names.add(short)
             lineage_search_names.add(short)
@@ -153,13 +190,24 @@ def main():
         if ch.change_type == "RENAME":
             print(f"    [{ch.change_type}] {ch.old_name} → {ch.new_name}")
         else:
-            name = getattr(ch, "table_name", None) or getattr(ch, "old_name", None) or ""
+            name = (
+                getattr(ch, "table_name", None)
+                or getattr(ch, "old_name", None)
+                or ""
+            )
             print(f"    [{ch.change_type}] {name}")
 
     # ── 作业变更 ──
     print("\n--- 作业变更 ---")
-    diff_raw = _git_cmd(repo, "diff", "--no-renames", "--name-only", f"{base_ref}...HEAD", "--",
-                        f"{cfg['dir']}/tasks/*.sql")
+    diff_raw = _git_cmd(
+        repo,
+        "diff",
+        "--no-renames",
+        "--name-only",
+        f"{base_ref}...HEAD",
+        "--",
+        f"{cfg['dir']}/tasks/*.sql",
+    )
     modified_jobs = set()
     for p in diff_raw.splitlines():
         p = p.strip()
@@ -173,7 +221,9 @@ def main():
     print("\n=== 血缘追踪 ===")
     if not lineage_path.exists():
         print(f"  [WARN] 血缘文件不存在: {lineage_path}")
-        print("  请先运行 python lineage/lineage_extractor.py --project {args.project}")
+        print(
+            "  请先运行 python lineage/lineage_extractor.py --project {args.project}"
+        )
         sys.exit(1)
     with open(lineage_path, encoding="utf-8") as f:
         lineage = json.load(f)
@@ -210,8 +260,9 @@ def main():
     # ── 基线 DDL (先加载, 分区选择需要它解析列名) ──
     print("\n=== 基线 DDL ===")
     baseline_ddl = {}
-    ls_raw = _git_cmd(repo, "ls-tree", "-r", "--name-only", base_ref, "--",
-                      ddl_rel)
+    ls_raw = _git_cmd(
+        repo, "ls-tree", "-r", "--name-only", base_ref, "--", ddl_rel
+    )
     for rel_path in ls_raw.splitlines():
         rel_path = rel_path.strip()
         if not rel_path.endswith(".sql"):
@@ -231,9 +282,7 @@ def main():
         for a in anchors:
             pc = get_partition_col(a, determine_layer(a), baseline_ddl)
             try:
-                val = run_doris(
-                    f"SELECT MAX({pc}) FROM {project_db}.{a}"
-                )
+                val = run_doris(f"SELECT MAX({pc}) FROM {project_db}.{a}")
                 if val and val != "NULL":
                     per_table[a] = {"partition_col": pc, "value": val}
                     print(f"  {a}: MAX({pc}) = {val}")
@@ -269,6 +318,7 @@ def main():
     try:
         jobs_sorted = dag.topological_sort(jobs_set)
     except ValueError:
+
         def _job_layer_sort_key(job_name: str) -> int:
             rank = layer_rank(determine_layer(job_name))
             return rank if rank >= 0 else 4
@@ -284,13 +334,15 @@ def main():
         if not fpath.exists():
             continue
         sql_text = fpath.read_text(encoding="utf-8")
-        jobs_to_run.append({
-            "job": jn,
-            "file": str(fpath.relative_to(root)),
-            "layer": determine_layer(jn),
-            "target": jn,
-            "needs_etl_date": "@etl_date" in sql_text,
-        })
+        jobs_to_run.append(
+            {
+                "job": jn,
+                "file": str(fpath.relative_to(root)),
+                "layer": determine_layer(jn),
+                "target": jn,
+                "needs_etl_date": "@etl_date" in sql_text,
+            }
+        )
     print(f"  需执行: {len(jobs_to_run)} 个作业")
     for j in jobs_to_run:
         ed = " [@etl_date]" if j["needs_etl_date"] else ""
@@ -317,7 +369,9 @@ def main():
         if j["target"] not in phase2_creates:
             needed_baseline.add(j["target"])
     needed_baseline.update(anchors)
-    baseline_ddl = {k: v for k, v in baseline_ddl.items() if k in needed_baseline}
+    baseline_ddl = {
+        k: v for k, v in baseline_ddl.items() if k in needed_baseline
+    }
     print(f"\n=== 基线 DDL (过滤后: {len(baseline_ddl)} 张) ===")
 
     # ── 校验配置 ──
@@ -325,16 +379,22 @@ def main():
     for a in anchors:
         if a in pinfo.get("per_table", {}):
             pi = pinfo["per_table"][a]
-            checks.append({
-                "table": a, "method": "count",
-                "partition_col": pi["partition_col"],
-                "partition_value": pi["value"],
-            })
-            checks.append({
-                "table": a, "method": "row_compare",
-                "partition_col": pi["partition_col"],
-                "partition_value": pi["value"],
-            })
+            checks.append(
+                {
+                    "table": a,
+                    "method": "count",
+                    "partition_col": pi["partition_col"],
+                    "partition_value": pi["value"],
+                }
+            )
+            checks.append(
+                {
+                    "table": a,
+                    "method": "row_compare",
+                    "partition_col": pi["partition_col"],
+                    "partition_value": pi["value"],
+                }
+            )
 
     # ── 输出 ──
     meta = {
@@ -360,8 +420,9 @@ def main():
     }
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2),
-                        encoding="utf-8")
+    out_path.write_text(
+        json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
     print(f"\n=== 元数据已写入: {out_path} ===")
     print(f"  DDL 变更: {len(ddl_changes)}")
     print(f"  改动作业: {len(modified_jobs)}")
@@ -372,7 +433,9 @@ def main():
     if not anchors:
         print()
         print("  ⚠ 警告: 无锚点表 (没有下游作业直接依赖变更结果)")
-        print("    后续 verify_run.py 虽能执行作业，但 verify_check.py 将无表可对比校验")
+        print(
+            "    后续 verify_run.py 虽能执行作业，但 verify_check.py 将无表可对比校验"
+        )
         print("    数据一致性无法自动验证，请确认变更是否符合预期")
 
 

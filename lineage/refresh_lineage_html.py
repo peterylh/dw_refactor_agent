@@ -111,13 +111,15 @@ def build_frontend_lineage_data(data):
             if node_id in seen:
                 continue
             seen.add(node_id)
-            nodes.append({
-                "id": node_id,
-                "table": table_name,
-                "column": column_name,
-                "layer": layer,
-                "type": str(column.get("type") or ""),
-            })
+            nodes.append(
+                {
+                    "id": node_id,
+                    "table": table_name,
+                    "column": column_name,
+                    "layer": layer,
+                    "type": str(column.get("type") or ""),
+                }
+            )
 
     if nodes:
         frontend_data["nodes"] = nodes
@@ -160,17 +162,20 @@ def generate_jobs(data, tasks_dir, current_db, job_logic=None, project="shop"):
             if target_table:
                 targets.add(_strip_db(target_table, current_db))
 
-        for stmt in sqlglot.parse(f.read_text(encoding="utf-8"), dialect="doris"):
+        for stmt in sqlglot.parse(
+            f.read_text(encoding="utf-8"), dialect="doris"
+        ):
             if stmt is None:
                 continue
-            if isinstance(stmt, (exp.Insert, exp.Create)):
-                targets.add(_strip_db(stmt.this.sql(dialect="doris"), current_db))
-            elif isinstance(stmt, exp.Update):
-                targets.add(_strip_db(stmt.this.sql(dialect="doris"), current_db))
+            if isinstance(stmt, (exp.Insert, exp.Create, exp.Update)):
+                targets.add(
+                    _strip_db(stmt.this.sql(dialect="doris"), current_db)
+                )
 
         main_target = (
             max(targets, key=lambda t: _layer_priority(t, project))
-            if targets else f.stem
+            if targets
+            else f.stem
         )
         sources.discard(main_target)
 
@@ -186,7 +191,10 @@ def generate_jobs(data, tasks_dir, current_db, job_logic=None, project="shop"):
                     ("source", sorted(sources)),
                     ("target", short),
                     ("layer", layer),
-                    ("logic", job_logic.get(job_id, job_logic.get(f.stem, "-"))),
+                    (
+                        "logic",
+                        job_logic.get(job_id, job_logic.get(f.stem, "-")),
+                    ),
                 ]
             )
         )
@@ -263,8 +271,7 @@ def update_lineage_html(lineage_json, template_path, output_path):
 
 def count_column_nodes(data):
     return sum(
-        len(table.get("columns") or [])
-        for table in data.get("tables", [])
+        len(table.get("columns") or []) for table in data.get("tables", [])
     )
 
 

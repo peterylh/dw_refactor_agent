@@ -1,8 +1,6 @@
 """共享 fixture: DDL/ETL 样本、mock API 响应"""
 
 import pytest
-from dataclasses import dataclass
-
 
 # ============================================================
 # 样本 DDL — 维度表
@@ -187,12 +185,24 @@ def sample_lineage_data():
             },
         ],
         "edges": [
-            {"source": "ods_customer.customer_id", "target": "dwd_customer.customer_id",
-             "expression": "customer_id", "source_file": "dwd_customer.sql"},
-            {"source": "dwd_order_detail.order_id", "target": "dws_store_sales_daily.order_count",
-             "expression": "COUNT(DISTINCT order_id)", "source_file": "dws_store_sales_daily.sql"},
-            {"source": "dwd_customer.customer_id", "target": "ads_sales_dashboard.total_orders",
-             "expression": "customer_id", "source_file": "ads_sales_dashboard.sql"},
+            {
+                "source": "ods_customer.customer_id",
+                "target": "dwd_customer.customer_id",
+                "expression": "customer_id",
+                "source_file": "dwd_customer.sql",
+            },
+            {
+                "source": "dwd_order_detail.order_id",
+                "target": "dws_store_sales_daily.order_count",
+                "expression": "COUNT(DISTINCT order_id)",
+                "source_file": "dws_store_sales_daily.sql",
+            },
+            {
+                "source": "dwd_customer.customer_id",
+                "target": "ads_sales_dashboard.total_orders",
+                "expression": "customer_id",
+                "source_file": "ads_sales_dashboard.sql",
+            },
         ],
         "indirect_edges": [],
     }
@@ -203,41 +213,47 @@ def sample_lineage_data():
 # ============================================================
 
 MOCK_DIMENSION_RESPONSE = {
-    "choices": [{
-        "message": {
-            "content": '{"table_type": "dimension", "confidence": 0.95, "reason": "描述客户实体属性,无可聚合度量字段"}'
+    "choices": [
+        {
+            "message": {
+                "content": '{"table_type": "dimension", "confidence": 0.95, "reason": "描述客户实体属性,无可聚合度量字段"}'
+            }
         }
-    }]
+    ]
 }
 
 MOCK_FACT_RESPONSE = {
-    "choices": [{
-        "message": {
-            "content": '{"table_type": "fact", "confidence": 0.92, "reason": "包含订单交易明细,有subtotal/quantity等可聚合度量"}'
+    "choices": [
+        {
+            "message": {
+                "content": '{"table_type": "fact", "confidence": 0.92, "reason": "包含订单交易明细,有subtotal/quantity等可聚合度量"}'
+            }
         }
-    }]
+    ]
 }
 
 MOCK_OTHER_RESPONSE = {
-    "choices": [{
-        "message": {
-            "content": '{"table_type": "other", "confidence": 0.6, "reason": "桥接表,处理多对多关系"}'
+    "choices": [
+        {
+            "message": {
+                "content": '{"table_type": "other", "confidence": 0.6, "reason": "桥接表,处理多对多关系"}'
+            }
         }
-    }]
+    ]
 }
 
 MOCK_MARKDOWN_WRAPPED_RESPONSE = {
-    "choices": [{
-        "message": {
-            "content": '```json\n{"table_type": "dimension", "confidence": 0.9, "reason": "维度表"}\n```'
+    "choices": [
+        {
+            "message": {
+                "content": '```json\n{"table_type": "dimension", "confidence": 0.9, "reason": "维度表"}\n```'
+            }
         }
-    }]
+    ]
 }
 
 MOCK_MALFORMED_RESPONSE = {
-    "choices": [{
-        "message": {
-            "content": "这是一个维度表，因为它描述了客户属性"
-        }
-    }]
+    "choices": [
+        {"message": {"content": "这是一个维度表，因为它描述了客户属性"}}
+    ]
 }

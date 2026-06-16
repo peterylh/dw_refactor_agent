@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
 """DDL \u81ea\u52a8\u63a8\u5bfc\u529f\u80fd\u9a8c\u8bc1: Doris A \u73af\u5883\u7aef\u5230\u7aef\u6d4b\u8bd5"""
 
-import json, shutil, subprocess, sys
+import json
+import subprocess
+import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from config import get_mysql_cmd
 from ddl_deriver.ddl_deriver import (
-    load_tables_from_dir,
-    derive_ddl_changes,
     changes_to_json,
+    derive_ddl_changes,
+    load_tables_from_dir,
 )
 
 DB_A, DB_PROD = "shop_dm_a", "shop_dm"
@@ -20,9 +22,7 @@ def run_doris(sql, db=None):
         db = DB_A
     cmd = get_mysql_cmd("prod")
     cmd.extend([db, "-e", sql])
-    r = subprocess.run(
-        cmd, capture_output=True, text=True, timeout=30
-    )
+    r = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
     if r.returncode != 0:
         print(f"DORIS ERROR (db={db}): {r.stderr.strip()}")
         r.check_returncode()
@@ -98,7 +98,9 @@ print("  Done!")
 print(f"\n[Step 4] Verifying {DB_A}...")
 tables_raw = run_doris("SHOW TABLES;")
 tables = {
-    t.strip() for t in tables_raw.split("\n") if t.strip() and "Tables_in" not in t
+    t.strip()
+    for t in tables_raw.split("\n")
+    if t.strip() and "Tables_in" not in t
 }
 print(f"  Tables ({len(tables)}): {sorted(tables)}")
 
@@ -128,7 +130,10 @@ for line in desc_order.split("\n"):
         total_amount_line = line.strip()
         break
 checks.append(
-    ("total_amount DECIMAL(12,2)->DECIMAL(14,2)", "14" in total_amount_line[:50])
+    (
+        "total_amount DECIMAL(12,2)->DECIMAL(14,2)",
+        "14" in total_amount_line[:50],
+    )
 )
 
 # 4g. ods_feedback structure
@@ -148,14 +153,14 @@ for name, ok in checks:
 print(f"\n{'=' * 60}")
 if all_pass:
     print("  \u2705 ALL VERIFICATIONS PASSED!")
-    print(f"  \u251c\u2500 ods_product \u2716 DROP TABLE")
+    print("  \u251c\u2500 ods_product \u2716 DROP TABLE")
     print(
-        f"  \u251c\u2500 ods_customer -> ods_customer_v2 \u2714 RENAME TABLE + ADD COLUMN email"
+        "  \u251c\u2500 ods_customer -> ods_customer_v2 \u2714 RENAME TABLE + ADD COLUMN email"
     )
     print(
-        f"  \u251c\u2500 ods_order.total_amount DECIMAL(12,2)->DECIMAL(14,2) \u2714 ALTER TABLE"
+        "  \u251c\u2500 ods_order.total_amount DECIMAL(12,2)->DECIMAL(14,2) \u2714 ALTER TABLE"
     )
-    print(f"  \u2514\u2500 ods_feedback (new) \u2714 CREATE TABLE")
+    print("  \u2514\u2500 ods_feedback (new) \u2714 CREATE TABLE")
 else:
     print("  \u2716 SOME VERIFICATIONS FAILED!")
 
@@ -170,5 +175,5 @@ result["verification"] = {
 Path("/tmp/ddl_derive_verify_result.json").write_text(
     json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8"
 )
-print(f"\nResult saved to /tmp/ddl_derive_verify_result.json")
+print("\nResult saved to /tmp/ddl_derive_verify_result.json")
 sys.exit(0 if all_pass else 1)

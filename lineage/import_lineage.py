@@ -20,7 +20,6 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from config import DB_ENV_CONFIG, PROJECT_CONFIG
 
-
 DEFAULT_BATCH_SIZE = 5000
 LINEAGE_DIR = Path(__file__).resolve().parent
 SNAPSHOT_DELETE_TABLES = (
@@ -140,7 +139,9 @@ def _split_column_ref(ref: str) -> tuple[str, str] | None:
     return table_name, column_name
 
 
-def _typed_direct_column_edges(edges: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+def _typed_direct_column_edges(
+    edges: Iterable[dict[str, Any]],
+) -> list[dict[str, Any]]:
     direct_edges = []
     for edge in edges:
         if _normalize_relation_type(edge.get("relation_type")) != "DIRECT":
@@ -156,7 +157,9 @@ def _typed_direct_column_edges(edges: Iterable[dict[str, Any]]) -> list[dict[str
     return direct_edges
 
 
-def _typed_indirect_edges(edges: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+def _typed_indirect_edges(
+    edges: Iterable[dict[str, Any]],
+) -> list[dict[str, Any]]:
     indirect_edges = []
     for edge in edges:
         relation_type = _normalize_relation_type(edge.get("relation_type"))
@@ -166,13 +169,15 @@ def _typed_indirect_edges(edges: Iterable[dict[str, Any]]) -> list[dict[str, Any
             continue
         if _edge_ref_type(edge.get("target")) != "table":
             continue
-        indirect_edges.append({
-            "source": _edge_ref_id(edge.get("source")),
-            "target_table": _edge_ref_id(edge.get("target")),
-            "condition_type": relation_type,
-            "condition_expression": edge.get("expression", ""),
-            "source_file": edge.get("source_file", ""),
-        })
+        indirect_edges.append(
+            {
+                "source": _edge_ref_id(edge.get("source")),
+                "target_table": _edge_ref_id(edge.get("target")),
+                "condition_type": relation_type,
+                "condition_expression": edge.get("expression", ""),
+                "source_file": edge.get("source_file", ""),
+            }
+        )
     return indirect_edges
 
 
@@ -197,19 +202,21 @@ def _build_table_rows(
         table_name = str(table.get("name") or "").strip()
         if not table_name:
             continue
-        table_rows.append((
-            table_id,
-            context.snapshot_id,
-            context.datasource_id,
-            table_name,
-            str(table.get("full_name") or table_name),
-            str(table.get("layer") or "OTHER").upper(),
-            1 if table.get("is_transient") else 0,
-            json.dumps(
-                table.get("transient_sources") or [],
-                ensure_ascii=False,
-            ),
-        ))
+        table_rows.append(
+            (
+                table_id,
+                context.snapshot_id,
+                context.datasource_id,
+                table_name,
+                str(table.get("full_name") or table_name),
+                str(table.get("layer") or "OTHER").upper(),
+                1 if table.get("is_transient") else 0,
+                json.dumps(
+                    table.get("transient_sources") or [],
+                    ensure_ascii=False,
+                ),
+            )
+        )
         table_id_map[table_name] = table_id
     return table_rows, table_id_map
 
@@ -233,15 +240,17 @@ def _build_column_rows(
             if not column_name:
                 continue
             column_ref = f"{table_name}.{column_name}"
-            column_rows.append((
-                column_id,
-                snapshot_id,
-                table_id,
-                column_name,
-                str(column.get("type") or column.get("data_type") or ""),
-                str(column.get("comment") or ""),
-                ordinal,
-            ))
+            column_rows.append(
+                (
+                    column_id,
+                    snapshot_id,
+                    table_id,
+                    column_name,
+                    str(column.get("type") or column.get("data_type") or ""),
+                    str(column.get("comment") or ""),
+                    ordinal,
+                )
+            )
             column_id_map[column_ref] = column_id
             column_id += 1
     return column_rows, column_id_map
@@ -256,14 +265,16 @@ def _build_job_rows(
     job_rows = []
     job_id_map = {}
     for job_id, source_file in enumerate(source_files, start=1):
-        job_rows.append((
-            job_id,
-            snapshot_id,
-            _job_name(source_file),
-            source_file,
-            "SQL",
-            _read_task_sql(tasks_dir, source_file),
-        ))
+        job_rows.append(
+            (
+                job_id,
+                snapshot_id,
+                _job_name(source_file),
+                source_file,
+                "SQL",
+                _read_task_sql(tasks_dir, source_file),
+            )
+        )
         job_id_map[source_file] = job_id
     return job_rows, job_id_map
 
@@ -317,12 +328,14 @@ def _build_column_lineage_rows(
         target_table_id = table_id_map.get(target_table)
         source_column_id = column_id_map.get(source)
         target_column_id = column_id_map.get(target)
-        if not all([
-            source_table_id,
-            target_table_id,
-            source_column_id,
-            target_column_id,
-        ]):
+        if not all(
+            [
+                source_table_id,
+                target_table_id,
+                source_column_id,
+                target_column_id,
+            ]
+        ):
             _skip(
                 rows,
                 kind="direct",
@@ -334,24 +347,28 @@ def _build_column_lineage_rows(
 
         job_id = job_id_map.get(str(edge.get("source_file") or ""))
         relation_type = _normalize_relation_type(edge.get("relation_type"))
-        rows.column_lineage_rows.append((
-            lineage_id,
-            rows.datasource_rows[0][1],
-            source_table_id,
-            source_column_id,
-            target_table_id,
-            target_column_id,
-            job_id,
-            relation_type,
-            str(edge.get("transformation_type") or ""),
-            str(edge.get("expression") or ""),
-        ))
-        table_lineage_set.add((
-            source_table_id,
-            target_table_id,
-            job_id,
-            relation_type,
-        ))
+        rows.column_lineage_rows.append(
+            (
+                lineage_id,
+                rows.datasource_rows[0][1],
+                source_table_id,
+                source_column_id,
+                target_table_id,
+                target_column_id,
+                job_id,
+                relation_type,
+                str(edge.get("transformation_type") or ""),
+                str(edge.get("expression") or ""),
+            )
+        )
+        table_lineage_set.add(
+            (
+                source_table_id,
+                target_table_id,
+                job_id,
+                relation_type,
+            )
+        )
         lineage_id += 1
     return table_lineage_set
 
@@ -385,7 +402,9 @@ def _build_indirect_lineage_rows(
         source_column_id = column_id_map.get(source)
         target_table_id = table_id_map.get(target_table)
         job_id = job_id_map.get(str(edge.get("source_file") or ""))
-        if not all([source_table_id, source_column_id, target_table_id, job_id]):
+        if not all(
+            [source_table_id, source_column_id, target_table_id, job_id]
+        ):
             _skip(
                 rows,
                 kind="indirect",
@@ -396,22 +415,26 @@ def _build_indirect_lineage_rows(
             continue
 
         condition_type = str(edge.get("condition_type") or "").upper()
-        rows.indirect_lineage_rows.append((
-            lineage_id,
-            rows.datasource_rows[0][1],
-            source_table_id,
-            source_column_id,
-            target_table_id,
-            job_id,
-            condition_type,
-            str(edge.get("condition_expression") or ""),
-        ))
-        table_lineage_set.add((
-            source_table_id,
-            target_table_id,
-            job_id,
-            condition_type,
-        ))
+        rows.indirect_lineage_rows.append(
+            (
+                lineage_id,
+                rows.datasource_rows[0][1],
+                source_table_id,
+                source_column_id,
+                target_table_id,
+                job_id,
+                condition_type,
+                str(edge.get("condition_expression") or ""),
+            )
+        )
+        table_lineage_set.add(
+            (
+                source_table_id,
+                target_table_id,
+                job_id,
+                condition_type,
+            )
+        )
         lineage_id += 1
 
 
@@ -457,30 +480,28 @@ def build_import_rows(
 ) -> LineageImportRows:
     """Convert one lineage JSON snapshot into database row tuples."""
     rows = LineageImportRows()
-    rows.datasource_rows.append((
-        context.datasource_id,
-        context.snapshot_id,
-        context.project,
-        context.datasource_name,
-        context.db_type,
-        context.host,
-    ))
+    rows.datasource_rows.append(
+        (
+            context.datasource_id,
+            context.snapshot_id,
+            context.project,
+            context.datasource_name,
+            context.db_type,
+            context.host,
+        )
+    )
     tables = [
-        table
-        for table in data.get("tables") or []
-        if isinstance(table, dict)
+        table for table in data.get("tables") or [] if isinstance(table, dict)
     ]
     raw_edges = [
-        edge
-        for edge in data.get("edges") or []
-        if isinstance(edge, dict)
+        edge for edge in data.get("edges") or [] if isinstance(edge, dict)
     ]
     direct_edges = _typed_direct_column_edges(raw_edges)
-    indirect_edges = data.get("indirect_edges") or _typed_indirect_edges(raw_edges)
+    indirect_edges = data.get("indirect_edges") or _typed_indirect_edges(
+        raw_edges
+    )
     indirect_edges = [
-        edge
-        for edge in indirect_edges
-        if isinstance(edge, dict)
+        edge for edge in indirect_edges if isinstance(edge, dict)
     ]
 
     rows.table_rows, table_id_map = _build_table_rows(tables, context)
@@ -490,11 +511,13 @@ def build_import_rows(
         snapshot_id=context.snapshot_id,
     )
 
-    source_files = sorted({
-        str(edge.get("source_file") or "")
-        for edge in [*direct_edges, *indirect_edges]
-        if str(edge.get("source_file") or "")
-    })
+    source_files = sorted(
+        {
+            str(edge.get("source_file") or "")
+            for edge in [*direct_edges, *indirect_edges]
+            if str(edge.get("source_file") or "")
+        }
+    )
     rows.job_rows, job_id_map = _build_job_rows(
         source_files,
         Path(tasks_dir),
@@ -523,11 +546,13 @@ def build_import_rows(
     return rows
 
 
-def _chunks(rows: Sequence[tuple], batch_size: int) -> Iterable[Sequence[tuple]]:
+def _chunks(
+    rows: Sequence[tuple], batch_size: int
+) -> Iterable[Sequence[tuple]]:
     if batch_size <= 0:
         raise ValueError(f"batch_size must be positive, got {batch_size}")
     for start in range(0, len(rows), batch_size):
-        yield rows[start:start + batch_size]
+        yield rows[start : start + batch_size]
 
 
 def bulk_insert(
@@ -784,7 +809,9 @@ def import_lineage(
             connection.commit()
 
             if rows.skipped_edges:
-                LOGGER.warning("跳过 %s 条无法映射的血缘边", len(rows.skipped_edges))
+                LOGGER.warning(
+                    "跳过 %s 条无法映射的血缘边", len(rows.skipped_edges)
+                )
                 for edge in rows.skipped_edges[:20]:
                     LOGGER.warning(
                         "跳过 %s: %s -> %s (%s)",

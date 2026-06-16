@@ -4,7 +4,11 @@ from sqlglot import exp
 
 import config
 import lineage.lineage_extractor as lineage_extractor
-from lineage.lineage_extractor import configure_project, determine_layer, _table_name
+from lineage.lineage_extractor import (
+    _table_name,
+    configure_project,
+    determine_layer,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -37,10 +41,14 @@ def isolated_lineage_projects(tmp_path, monkeypatch):
                 f"version: 2\nname: {table_name}\nlayer: {layer}\n",
                 encoding="utf-8",
             )
-        monkeypatch.setitem(config.PROJECT_CONFIG, project_name, {
-            "dir": project_name,
-            "db": f"{project_name}_dm",
-        })
+        monkeypatch.setitem(
+            config.PROJECT_CONFIG,
+            project_name,
+            {
+                "dir": project_name,
+                "db": f"{project_name}_dm",
+            },
+        )
 
     monkeypatch.setattr(config, "PROJECT_ROOT", tmp_path)
     config._model_metadata_cache.clear()
@@ -89,7 +97,8 @@ class TestTableName:
 
     def test_table_with_db(self):
         t = exp.Table(
-            this=exp.Identifier(this="ods_order"), db=exp.Identifier(this="shop_dm")
+            this=exp.Identifier(this="ods_order"),
+            db=exp.Identifier(this="shop_dm"),
         )
         assert _table_name(t) == "shop_dm.ods_order"
 
@@ -105,7 +114,9 @@ class TestTableName:
         assert _table_name(t) == "shop_dm.order"
 
     def test_from_parse(self):
-        stmt = sqlglot.parse_one("SELECT * FROM shop_dm.ods_customer", dialect="doris")
+        stmt = sqlglot.parse_one(
+            "SELECT * FROM shop_dm.ods_customer", dialect="doris"
+        )
         t = self._from_table(stmt)
         assert isinstance(t, exp.Table)
         assert _table_name(t) == "shop_dm.ods_customer"

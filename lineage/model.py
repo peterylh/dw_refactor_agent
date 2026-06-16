@@ -14,7 +14,9 @@ def _strip_sql_suffix(value: str) -> str:
 class LineageColumn:
     name: str
     data_type: str = ""
-    raw: dict[str, Any] = field(default_factory=dict, repr=False, compare=False)
+    raw: dict[str, Any] = field(
+        default_factory=dict, repr=False, compare=False
+    )
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "LineageColumn":
@@ -33,7 +35,9 @@ class LineageTable:
     columns: tuple[LineageColumn, ...] = ()
     is_transient: bool = False
     transient_sources: tuple[str, ...] = ()
-    raw: dict[str, Any] = field(default_factory=dict, repr=False, compare=False)
+    raw: dict[str, Any] = field(
+        default_factory=dict, repr=False, compare=False
+    )
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "LineageTable":
@@ -63,9 +67,13 @@ class LineageRef:
     raw: Any = field(default=None, repr=False, compare=False)
 
     @classmethod
-    def from_raw(cls, value: Any, *, default_type: str = "column") -> "LineageRef":
+    def from_raw(
+        cls, value: Any, *, default_type: str = "column"
+    ) -> "LineageRef":
         if isinstance(value, dict):
-            ref_type = str(value.get("type") or default_type).strip() or default_type
+            ref_type = (
+                str(value.get("type") or default_type).strip() or default_type
+            )
             ref_id = str(
                 value.get("id")
                 or value.get("value")
@@ -96,7 +104,9 @@ class LineageEdge:
     transformation_type: str = ""
     expression: str = ""
     source_file: str = ""
-    raw: dict[str, Any] = field(default_factory=dict, repr=False, compare=False)
+    raw: dict[str, Any] = field(
+        default_factory=dict, repr=False, compare=False
+    )
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "LineageEdge":
@@ -104,7 +114,9 @@ class LineageEdge:
             source=LineageRef.from_raw(data.get("source")),
             target=LineageRef.from_raw(data.get("target")),
             relation_type=str(data.get("relation_type") or "direct").lower(),
-            transformation_type=str(data.get("transformation_type") or "").lower(),
+            transformation_type=str(
+                data.get("transformation_type") or ""
+            ).lower(),
             expression=str(data.get("expression") or ""),
             source_file=str(data.get("source_file") or ""),
             raw=dict(data),
@@ -125,7 +137,9 @@ class LineageSnapshot:
     edges: tuple[LineageEdge, ...] = ()
     indirect_edges: tuple[dict[str, Any], ...] = ()
     jobs: tuple[LineageJob, ...] = ()
-    raw: dict[str, Any] = field(default_factory=dict, repr=False, compare=False)
+    raw: dict[str, Any] = field(
+        default_factory=dict, repr=False, compare=False
+    )
 
     @classmethod
     def from_dict(
@@ -136,18 +150,20 @@ class LineageSnapshot:
         snapshot_id: str = "",
     ) -> "LineageSnapshot":
         raw_edges = [
-            edge for edge in data.get("edges") or []
-            if isinstance(edge, dict)
+            edge for edge in data.get("edges") or [] if isinstance(edge, dict)
         ]
         raw_indirect_edges = [
-            edge for edge in data.get("indirect_edges") or []
+            edge
+            for edge in data.get("indirect_edges") or []
             if isinstance(edge, dict)
         ]
-        source_files = sorted({
-            str(edge.get("source_file") or "")
-            for edge in raw_edges + raw_indirect_edges
-            if str(edge.get("source_file") or "")
-        })
+        source_files = sorted(
+            {
+                str(edge.get("source_file") or "")
+                for edge in raw_edges + raw_indirect_edges
+                if str(edge.get("source_file") or "")
+            }
+        )
         return cls(
             project=project,
             snapshot_id=snapshot_id,

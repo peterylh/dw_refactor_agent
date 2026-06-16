@@ -112,9 +112,8 @@ def _select_has_star_projection(select_expr) -> bool:
         )
         if isinstance(current, exp.Star):
             return True
-        if (
-            isinstance(current, exp.Column)
-            and isinstance(current.this, exp.Star)
+        if isinstance(current, exp.Column) and isinstance(
+            current.this, exp.Star
         ):
             return True
     return False
@@ -216,9 +215,7 @@ def _fallback_scan(sql: str) -> tuple[list[dict], list[dict], list[dict]]:
     drops = []
     write_statements = []
     statements = [
-        statement.strip()
-        for statement in sql.split(";")
-        if statement.strip()
+        statement.strip() for statement in sql.split(";") if statement.strip()
     ]
     for index, statement in enumerate(statements):
         create_match = re.search(
@@ -256,10 +253,12 @@ def _fallback_scan(sql: str) -> tuple[list[dict], list[dict], list[dict]]:
             flags=re.IGNORECASE,
         )
         if drop_match:
-            drops.append({
-                "table": _short_table_name(drop_match.group(1)),
-                "index": index,
-            })
+            drops.append(
+                {
+                    "table": _short_table_name(drop_match.group(1)),
+                    "index": index,
+                }
+            )
 
         insert_match = re.search(
             r"\bINSERT\s+(?:OVERWRITE\s+TABLE|INTO)\s+"
@@ -294,15 +293,19 @@ def _scan_task_sql(sql: str) -> tuple[list[dict], list[dict], list[dict]]:
     write_statements = []
     for index, stmt in enumerate(statements):
         if _is_table_create(stmt):
-            creates.append({
-                "table": _target_table_name(stmt.this),
-                "index": index,
-            })
+            creates.append(
+                {
+                    "table": _target_table_name(stmt.this),
+                    "index": index,
+                }
+            )
         elif _is_table_drop(stmt):
-            drops.append({
-                "table": _target_table_name(stmt.this),
-                "index": index,
-            })
+            drops.append(
+                {
+                    "table": _target_table_name(stmt.this),
+                    "index": index,
+                }
+            )
 
         write_target = _write_statement_target_and_expression(stmt)
         if write_target:

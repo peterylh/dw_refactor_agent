@@ -1,13 +1,15 @@
 """
 全局配置文件
 """
+
 from __future__ import annotations
 
 import re
-import yaml
-from pathlib import Path
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Optional
+
+import yaml
 
 # 项目根目录
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -59,7 +61,9 @@ class TypeDef:
             matched = value in self.allow
         if self._compiled:
             has_validator = True
-            matched = matched or any(pattern.match(value) for pattern in self._compiled)
+            matched = matched or any(
+                pattern.match(value) for pattern in self._compiled
+            )
         return matched if has_validator else True
 
 
@@ -89,7 +93,10 @@ class NamingConfig:
         if ldef:
             for segs, constraints in zip(ldef.templates, ldef.constraints):
                 max_length = constraints.get("max_length")
-                if max_length is not None and self._match_segments(name, segs) is not None:
+                if (
+                    max_length is not None
+                    and self._match_segments(name, segs) is not None
+                ):
                     return int(max_length)
         return self.table_name_max_length
 
@@ -113,7 +120,6 @@ class NamingConfig:
         remaining = name
         left = 0
         right = len(segments) - 1
-        skip_right = 0  # 从右侧跳过已匹配的段
 
         # Phase 1: match literals and fixed-value types from left
         while left <= right:
@@ -138,7 +144,7 @@ class NamingConfig:
                     left += 1
                     continue
                 return None
-            rest = remaining[len(sep_before):]
+            rest = remaining[len(sep_before) :]
 
             if seg["kind"] == "literal":
                 if not rest.startswith(sname):
@@ -146,14 +152,14 @@ class NamingConfig:
                         left += 1
                         continue
                     return None
-                remaining = rest[len(sname):]
+                remaining = rest[len(sname) :]
                 if sep_after:
                     if not remaining.startswith(sep_after):
                         if seg.get("optional", False):
                             left += 1
                             continue
                         return None
-                    remaining = remaining[len(sep_after):]
+                    remaining = remaining[len(sep_after) :]
                 left += 1
 
             elif seg["kind"] == "type":
@@ -163,11 +169,11 @@ class NamingConfig:
                     for v in sorted(td.allow, key=len, reverse=True):
                         core = str(v)
                         if rest.startswith(core):
-                            after = rest[len(core):]
+                            after = rest[len(core) :]
                             if sep_after:
                                 if not after.startswith(sep_after):
                                     continue
-                                after = after[len(sep_after):]
+                                after = after[len(sep_after) :]
                             matched = v
                             remaining = after
                             break
@@ -196,21 +202,22 @@ class NamingConfig:
                 break  # 只有 values type 能从右侧匹配
 
             sep_before = seg.get("sep_before", "")
-            if seg.get("concat_left"):
-                check_prefix = ""
-            else:
-                check_prefix = sep_before or "_"
+            check_prefix = "" if seg.get("concat_left") else sep_before or "_"
             matched = None
             for v in sorted(td.allow, key=len, reverse=True):
                 suffix = check_prefix + str(v)
                 if remaining.endswith(suffix):
                     # 如果是独立 _，前一段应该是 _ 字面量，一并跳过
-                    if not sep_before and not seg.get("concat_left") and right > left:
+                    if (
+                        not sep_before
+                        and not seg.get("concat_left")
+                        and right > left
+                    ):
                         prev = segments[right - 1]
                         if prev["kind"] == "literal" and prev["name"] == "_":
                             right -= 1  # skip the _ literal
                     matched = v
-                    remaining = remaining[:-len(suffix)]
+                    remaining = remaining[: -len(suffix)]
                     break
             if matched is not None:
                 result[sname] = matched
@@ -233,7 +240,7 @@ class NamingConfig:
                     left += 1
                     continue
                 return None
-            rest = remaining[len(sep_before):]
+            rest = remaining[len(sep_before) :]
 
             if seg["kind"] == "literal":
                 if not rest.startswith(sname):
@@ -241,7 +248,7 @@ class NamingConfig:
                         left += 1
                         continue
                     return None
-                remaining = rest[len(sname):]
+                remaining = rest[len(sname) :]
                 left += 1
 
             elif seg["kind"] == "type":
@@ -251,7 +258,7 @@ class NamingConfig:
                     for v in sorted(td.allow, key=len, reverse=True):
                         if rest.startswith(v):
                             matched = v
-                            remaining = rest[len(v):]
+                            remaining = rest[len(v) :]
                             break
                     if matched is not None:
                         _assign(result, sname, matched)
@@ -265,13 +272,14 @@ class NamingConfig:
 
                 if td and td.patterns:
                     # 判断 regex 是否允许下划线
-                    allows_underscore = any("_" in pattern for pattern in td.patterns)
+                    allows_underscore = any(
+                        "_" in pattern for pattern in td.patterns
+                    )
                     if allows_underscore:
                         # 变长 type：消耗到下一个段之前
                         if left + 1 <= right and not optional:
                             # 后面还有段，找下一个段需要的前缀
                             next_seg = segments[left + 1]
-                            next_prefix = next_seg.get("sep_before", "") or next_seg["name"]
                             if next_seg["kind"] == "literal":
                                 idx = rest.rfind(next_seg["name"])
                                 if idx >= 0:
@@ -469,13 +477,17 @@ class NamingConfig:
             "name": type_name,
             "label": type_def.label,
             "description": type_def.desc,
-            "allow": list(type_def.allow) if type_def.allow is not None else None,
+            "allow": list(type_def.allow)
+            if type_def.allow is not None
+            else None,
             "patterns": list(type_def.patterns),
             "dictionary": type_def.dictionary,
             "values_from": type_def.values_from,
         }
 
-    def explain_segment(self, segment: dict, position: int | None = None) -> dict:
+    def explain_segment(
+        self, segment: dict, position: int | None = None
+    ) -> dict:
         info = {
             "position": position,
             "kind": segment.get("kind"),
@@ -499,7 +511,9 @@ class NamingConfig:
         parts = []
         for segment in segments:
             name = segment.get("name", "")
-            token = f"{{{name}}}" if segment.get("kind") == "type" else str(name)
+            token = (
+                f"{{{name}}}" if segment.get("kind") == "type" else str(name)
+            )
             if segment.get("optional"):
                 token += "?"
             if segment.get("concat_left") and parts:
@@ -518,7 +532,9 @@ class NamingConfig:
         if not rest:
             return ""
 
-        allows_underscore = any("_" in pattern for pattern in type_def.patterns)
+        allows_underscore = any(
+            "_" in pattern for pattern in type_def.patterns
+        )
         if allows_underscore and index + 1 < len(segments):
             next_seg = segments[index + 1]
             if next_seg.get("kind") == "literal":
@@ -556,16 +572,16 @@ class NamingConfig:
                     "consumed_chars": consumed,
                 }
 
-            rest = remaining[len(sep_before):]
+            rest = remaining[len(sep_before) :]
             consumed += len(sep_before)
 
             if segment.get("kind") == "literal":
                 literal = str(segment.get("name", ""))
                 if rest.startswith(literal):
-                    remaining = rest[len(literal):]
+                    remaining = rest[len(literal) :]
                     consumed += len(literal)
                     if sep_after and remaining.startswith(sep_after):
-                        remaining = remaining[len(sep_after):]
+                        remaining = remaining[len(sep_after) :]
                         consumed += len(sep_after)
                     continue
                 if optional:
@@ -611,10 +627,10 @@ class NamingConfig:
                         matched = value
                         break
                 if matched is not None:
-                    remaining = rest[len(matched):]
+                    remaining = rest[len(matched) :]
                     consumed += len(matched)
                     if sep_after and remaining.startswith(sep_after):
-                        remaining = remaining[len(sep_after):]
+                        remaining = remaining[len(sep_after) :]
                         consumed += len(sep_after)
                     continue
                 if not type_def.patterns:
@@ -631,12 +647,14 @@ class NamingConfig:
                     }
 
             if type_def.patterns:
-                candidate = self._candidate_for_type(rest, segments, idx, type_def)
+                candidate = self._candidate_for_type(
+                    rest, segments, idx, type_def
+                )
                 if candidate and type_def.validate(candidate):
-                    remaining = rest[len(candidate):]
+                    remaining = rest[len(candidate) :]
                     consumed += len(candidate)
                     if sep_after and remaining.startswith(sep_after):
-                        remaining = remaining[len(sep_after):]
+                        remaining = remaining[len(sep_after) :]
                         consumed += len(sep_after)
                     continue
                 if optional:
@@ -695,7 +713,9 @@ class NamingConfig:
         layer_def = self.layers.get(layer)
         attempts = []
         if layer_def:
-            rules = layer_def.template_rules or [{} for _ in layer_def.templates]
+            rules = layer_def.template_rules or [
+                {} for _ in layer_def.templates
+            ]
             for segments, rule in zip(layer_def.templates, rules):
                 attempts.append(self.diagnose_segments(name, segments, rule))
 
@@ -846,13 +866,15 @@ def _expand_repeat_segment_item(item) -> list[list]:
     max_value = match.group("max")
     if max_value == "":
         raise ValueError(
-            "Segment naming rules require finite {min,max} repeat syntax")
+            "Segment naming rules require finite {min,max} repeat syntax"
+        )
 
     min_repeat = int(match.group("min"))
     max_repeat = int(max_value)
     if min_repeat > max_repeat:
         raise ValueError(
-            "Segment naming rule repeat min must be less than or equal to max")
+            "Segment naming rule repeat min must be less than or equal to max"
+        )
 
     base_name = match.group("name")
     variants = []
@@ -876,15 +898,13 @@ def _expand_rule_expr_repeats(expr) -> list:
     variants = [[]]
     for part in expr:
         if isinstance(part, list):
-            choices = [[variant] for variant in _expand_rule_expr_repeats(part)]
+            choices = [
+                [variant] for variant in _expand_rule_expr_repeats(part)
+            ]
         else:
             choices = _expand_repeat_segment_item(part)
 
-        variants = [
-            base + choice
-            for base in variants
-            for choice in choices
-        ]
+        variants = [base + choice for base in variants for choice in choices]
     return variants
 
 
@@ -915,7 +935,8 @@ def _parse_segments(raw: list, _types: dict) -> list:
         if raw_str.startswith("$+"):
             raise ValueError(
                 "The $+TYPE syntax is not supported; use nested ['', ...] "
-                "expressions for direct concatenation")
+                "expressions for direct concatenation"
+            )
 
         if raw_str.startswith("$"):
             is_type = True
@@ -924,11 +945,27 @@ def _parse_segments(raw: list, _types: dict) -> list:
         raw_str, _, optional = _split_repeat_suffix(raw_str)
 
         if is_type:
-            parsed.append({"name": raw_str, "kind": "type", "optional": optional,
-                           "sep_before": "", "sep_after": "", "concat_left": concat_left})
+            parsed.append(
+                {
+                    "name": raw_str,
+                    "kind": "type",
+                    "optional": optional,
+                    "sep_before": "",
+                    "sep_after": "",
+                    "concat_left": concat_left,
+                }
+            )
         else:
-            parsed.append({"name": raw_str, "kind": "literal", "optional": optional,
-                           "sep_before": "", "sep_after": "", "concat_left": concat_left})
+            parsed.append(
+                {
+                    "name": raw_str,
+                    "kind": "literal",
+                    "optional": optional,
+                    "sep_before": "",
+                    "sep_after": "",
+                    "concat_left": concat_left,
+                }
+            )
 
     i = 0
     while i < len(parsed) - 1:
@@ -941,8 +978,14 @@ def _parse_segments(raw: list, _types: dict) -> list:
         elif left["optional"]:
             left["sep_after"] = left["sep_after"] + "_"
         else:
-            literal = {"name": "_", "kind": "literal", "optional": False,
-                       "sep_before": "", "sep_after": "", "concat_left": False}
+            literal = {
+                "name": "_",
+                "kind": "literal",
+                "optional": False,
+                "sep_before": "",
+                "sep_after": "",
+                "concat_left": False,
+            }
             parsed.insert(i + 1, literal)
             i += 1
         i += 1
@@ -973,9 +1016,7 @@ def _expr_to_segment_items(expr) -> list:
     items = []
     for part in parts:
         part_items = (
-            _expr_to_segment_items(part)
-            if isinstance(part, list)
-            else [part]
+            _expr_to_segment_items(part) if isinstance(part, list) else [part]
         )
         if items and separator == "":
             part_items = _mark_concat_left(part_items)
@@ -999,7 +1040,7 @@ def _template_to_segment_items(template) -> list:
     while i < len(template):
         if template[i] == "{":
             j = template.find("}", i)
-            content = template[i + 1:j]
+            content = template[i + 1 : j]
             i = j + 1
             repeat_match = _TEMPLATE_REPEAT_PREFIX_RE.match(template[i:])
             repeat_suffix = ""
@@ -1027,7 +1068,8 @@ def _parse_template_variants(template, types: dict) -> list[list]:
     return [
         _parse_segments(template_variant, types)
         for template_variant in _expand_rule_expr_repeats(
-            _template_to_segment_items(template))
+            _template_to_segment_items(template)
+        )
     ]
 
 
@@ -1041,32 +1083,36 @@ def _parse_explicit_pattern(template: str, _types: dict) -> list:
             if j == -1:
                 parsed.append(template[i:])
                 break
-            name = template[i + 1:j]
+            name = template[i + 1 : j]
             optional = name.endswith("?")
             if optional:
                 name = name[:-1]
-            parsed.append({
-                "name": name,
-                "kind": "type",
-                "optional": optional,
-                "sep_before": "",
-                "sep_after": "",
-                "concat_left": False,
-            })
+            parsed.append(
+                {
+                    "name": name,
+                    "kind": "type",
+                    "optional": optional,
+                    "sep_before": "",
+                    "sep_after": "",
+                    "concat_left": False,
+                }
+            )
             i = j + 1
             continue
 
         j = template.find("{", i)
         literal = template[i:] if j == -1 else template[i:j]
         if literal:
-            parsed.append({
-                "name": literal,
-                "kind": "literal",
-                "optional": False,
-                "sep_before": "",
-                "sep_after": "",
-                "concat_left": False,
-            })
+            parsed.append(
+                {
+                    "name": literal,
+                    "kind": "literal",
+                    "optional": False,
+                    "sep_before": "",
+                    "sep_after": "",
+                    "concat_left": False,
+                }
+            )
         if j == -1:
             break
         i = j
@@ -1086,9 +1132,7 @@ def _normalize_metric_repeat(repeat) -> dict:
         return {
             "min": int(repeat.get("min", 1)),
             "max": (
-                int(repeat["max"])
-                if repeat.get("max") is not None
-                else None
+                int(repeat["max"]) if repeat.get("max") is not None else None
             ),
         }
     raise ValueError(f"Unsupported metric repeat config: {repeat!r}")
@@ -1098,7 +1142,8 @@ def _parse_metric_sequence_item(item: dict | str) -> dict:
     if isinstance(item, str):
         if item.endswith(("+", "*")):
             raise ValueError(
-                "Use {min,max} repeat syntax instead of '+' or '*' in metric rules")
+                "Use {min,max} repeat syntax instead of '+' or '*' in metric rules"
+            )
         raw, repeat, _ = _split_repeat_suffix(item)
 
         if raw.startswith("$"):
@@ -1129,7 +1174,9 @@ def _parse_metric_sequence_item(item: dict | str) -> dict:
         kind = "literal"
         name = str(item["literal"])
     else:
-        raise ValueError(f"Metric sequence item must define type/rule/literal: {item!r}")
+        raise ValueError(
+            f"Metric sequence item must define type/rule/literal: {item!r}"
+        )
 
     return {
         "kind": kind,
@@ -1141,7 +1188,9 @@ def _parse_metric_sequence_item(item: dict | str) -> dict:
 def _parse_metric_sequence(sequence: list) -> dict:
     separator, sequence = _split_join_expression(sequence)
     if separator != "_":
-        raise ValueError("Metric rules currently require '_' as the join separator")
+        raise ValueError(
+            "Metric rules currently require '_' as the join separator"
+        )
     return {
         "kind": "sequence",
         "nodes": [_parse_metric_sequence_item(item) for item in sequence],
@@ -1163,16 +1212,12 @@ def _parse_metric_rule_defs(rule_cfg, types: dict) -> list[dict]:
             template_defs = rule_cfg.get("pattern") or []
         else:
             template_defs = (
-                rule_cfg.get("templates")
-                or rule_cfg.get("segments")
-                or []
+                rule_cfg.get("templates") or rule_cfg.get("segments") or []
             )
     else:
         template_defs = rule_cfg
 
-    if isinstance(template_defs, str):
-        template_defs = [template_defs]
-    elif (
+    if isinstance(template_defs, str) or (
         isinstance(template_defs, list)
         and template_defs
         and isinstance(template_defs[0], str)
@@ -1304,7 +1349,12 @@ def _compile_column_bindings(
         column_template_rules.extend([rule_info] * len(compiled_templates))
     column_segments = column_templates[0] if column_templates else []
     common_columns = set(column_binding.get("allow", []))
-    return column_segments, column_templates, column_template_rules, common_columns
+    return (
+        column_segments,
+        column_templates,
+        column_template_rules,
+        common_columns,
+    )
 
 
 def _compile_metric_bindings(
@@ -1348,7 +1398,9 @@ def _dictionary_entries(raw_dictionary) -> list[dict]:
     return []
 
 
-def _dictionary_allow_values(raw_dictionaries: dict, dictionary_cfg: dict) -> list[str]:
+def _dictionary_allow_values(
+    raw_dictionaries: dict, dictionary_cfg: dict
+) -> list[str]:
     if not isinstance(dictionary_cfg, dict):
         return []
     dictionary_name = str(
@@ -1370,8 +1422,8 @@ def _dictionary_allow_values(raw_dictionaries: dict, dictionary_cfg: dict) -> li
 
 
 def _dictionary_identity(entry: dict, fields: tuple[str, ...]) -> str:
-    for field in fields:
-        value = str(entry.get(field) or "").strip()
+    for field_name in fields:
+        value = str(entry.get(field_name) or "").strip()
         if value:
             return value
     return ""
@@ -1460,7 +1512,9 @@ def _business_semantics_dictionaries_for_naming_path(path: Path) -> dict:
     if not catalog_path.exists():
         return {}
     raw = yaml.safe_load(catalog_path.read_text(encoding="utf-8")) or {}
-    return _business_semantics_dictionaries(raw if isinstance(raw, dict) else {})
+    return _business_semantics_dictionaries(
+        raw if isinstance(raw, dict) else {}
+    )
 
 
 def load_naming_config(path=None, extra_dictionaries: dict | None = None):
@@ -1469,7 +1523,8 @@ def load_naming_config(path=None, extra_dictionaries: dict | None = None):
         raw = yaml.safe_load(f) or {}
     if extra_dictionaries is None:
         extra_dictionaries = _business_semantics_dictionaries_for_naming_path(
-            path)
+            path
+        )
     raw_dictionaries = _merge_naming_dictionaries(
         raw.get("dictionaries", {}) or {},
         extra_dictionaries,
@@ -1518,9 +1573,7 @@ def load_naming_config(path=None, extra_dictionaries: dict | None = None):
         table_templates_cfg = table_cfg
         if isinstance(table_cfg, dict):
             table_constraints = (
-                table_cfg.get("constraints")
-                or table_cfg.get("rules")
-                or {}
+                table_cfg.get("constraints") or table_cfg.get("rules") or {}
             )
             if "templates" in table_cfg:
                 table_templates_cfg = table_cfg.get("templates") or {}
@@ -1533,9 +1586,7 @@ def load_naming_config(path=None, extra_dictionaries: dict | None = None):
 
         layers = {}
         for layer_name, template_defs in table_templates_cfg.items():
-            if isinstance(template_defs, str):
-                template_defs = [template_defs]
-            elif (
+            if isinstance(template_defs, str) or (
                 isinstance(template_defs, list)
                 and template_defs
                 and isinstance(template_defs[0], str)
@@ -1576,9 +1627,7 @@ def load_naming_config(path=None, extra_dictionaries: dict | None = None):
         col_cfg = raw.get("columns", {}) or {}
         raw_col_seg = col_cfg.get("segments") or col_cfg.get("pattern", "")
         column_templates = (
-            _parse_template_variants(raw_col_seg, types)
-            if raw_col_seg
-            else []
+            _parse_template_variants(raw_col_seg, types) if raw_col_seg else []
         )
         column_segments = column_templates[0] if column_templates else []
         column_template_rules = [
@@ -1626,7 +1675,7 @@ def load_naming_config(path=None, extra_dictionaries: dict | None = None):
         if table_name_max_length is not None
         else None
     )
-    
+
     return NamingConfig(
         types=types,
         layers=layers,
@@ -1639,7 +1688,8 @@ def load_naming_config(path=None, extra_dictionaries: dict | None = None):
         metric_rule_labels=metric_rule_labels,
         dictionaries=raw_dictionaries,
         business_domain_config=_business_domain_config_from_dictionaries(
-            raw_dictionaries),
+            raw_dictionaries
+        ),
     )
 
 
@@ -1743,7 +1793,9 @@ def _business_domain_config_from_semantics_catalog(
     )
 
 
-def get_business_domain_config(project: str = None) -> Optional[BusinessDomainConfig]:
+def get_business_domain_config(
+    project: str = None,
+) -> Optional[BusinessDomainConfig]:
     if project:
         catalog_config = _business_domain_config_from_semantics_catalog(
             load_business_semantics_catalog(project)
@@ -1826,7 +1878,9 @@ def layer_rank(layer_name: str) -> int:
 def get_naming_config(project: str = None) -> NamingConfig:
     global _naming_config_cache
     if project and project in PROJECT_CONFIG:
-        cfg_file = PROJECT_CONFIG[project].get("naming_config", "naming_config.yaml")
+        cfg_file = PROJECT_CONFIG[project].get(
+            "naming_config", "naming_config.yaml"
+        )
         key = f"{project}:{cfg_file}"
     else:
         cfg_file = "naming_config.yaml"
@@ -1836,13 +1890,13 @@ def get_naming_config(project: str = None) -> NamingConfig:
         extra_dictionaries = None
         if project and project in PROJECT_CONFIG:
             extra_dictionaries = _business_semantics_dictionaries(
-                load_business_semantics_catalog(project))
+                load_business_semantics_catalog(project)
+            )
         _naming_config_cache[key] = load_naming_config(
             PROJECT_ROOT / cfg_file,
             extra_dictionaries=extra_dictionaries,
         )
     return _naming_config_cache[key]
-
 
 
 # 项目配置映射
@@ -1873,8 +1927,18 @@ PROJECT_MAP = PROJECT_CONFIG
 # 环境 = 物理集群, 不同的 host/port 组合
 # qa_user = 操作验证库 (qa_db) 的专用用户, 权限仅限 qa_db
 DB_ENV_CONFIG = {
-    "prod": {"host": "172.16.0.90", "port": 19030, "user": "root", "qa_user": "qa"},
-    "test": {"host": "172.16.0.90", "port": 9034, "user": "root", "qa_user": "qa"},
+    "prod": {
+        "host": "172.16.0.90",
+        "port": 19030,
+        "user": "root",
+        "qa_user": "qa",
+    },
+    "test": {
+        "host": "172.16.0.90",
+        "port": 9034,
+        "user": "root",
+        "qa_user": "qa",
+    },
 }
 
 # Doris HTTP 协议配置 (Stream Load 使用)
@@ -1885,6 +1949,7 @@ DORIS_HOST = DB_ENV_CONFIG["prod"]["host"]
 DORIS_PORT = DB_ENV_CONFIG["prod"]["port"]
 DORIS_USER = DB_ENV_CONFIG["prod"]["user"]
 DORIS_QA_USER = DB_ENV_CONFIG["prod"]["qa_user"]
+
 
 def get_mysql_cmd(env: str = "prod", qa: bool = False) -> list[str]:
     """获取 mysql 命令行参数数组.

@@ -1,4 +1,5 @@
 """Asset completeness scoring dimension."""
+
 from __future__ import annotations
 
 from assess.result_model import finalize_dimension, make_check
@@ -64,8 +65,7 @@ def score_asset_completeness(asset_catalog: dict) -> dict:
         has_model = bool(asset.get("model"))
         tasks = asset.get("tasks") or []
         has_output_task = any(
-            name in task.get("output_tables", set())
-            for task in tasks
+            name in task.get("output_tables", set()) for task in tasks
         )
 
         if has_ddl:
@@ -101,11 +101,13 @@ def score_asset_completeness(asset_catalog: dict) -> dict:
                 actual="已存在DDL" if has_ddl else "未找到DDL",
             )
 
-    task_outputs = sorted({
-        output
-        for task in asset_catalog.get("tasks") or []
-        for output in task.get("output_tables", set())
-    })
+    task_outputs = sorted(
+        {
+            output
+            for task in asset_catalog.get("tasks") or []
+            for output in task.get("output_tables", set())
+        }
+    )
     for task in asset_catalog.get("tasks") or []:
         outputs = sorted(set(task.get("output_tables") or set()))
         actual = f"实际产出={outputs}"
@@ -148,11 +150,13 @@ def score_asset_completeness(asset_catalog: dict) -> dict:
             ).add(task["file"])
 
     for output, writers_by_key in sorted(writers_by_output.items()):
-        writer_files = sorted({
-            file_name
-            for files in writers_by_key.values()
-            for file_name in files
-        })
+        writer_files = sorted(
+            {
+                file_name
+                for files in writers_by_key.values()
+                for file_name in files
+            }
+        )
         actual = f"产出Task={writer_files}"
         record(
             output,
@@ -171,8 +175,7 @@ def score_asset_completeness(asset_catalog: dict) -> dict:
         outputs = set(task.get("output_tables") or set())
         lineage_targets = set(task.get("lineage_targets") or set())
         actual = (
-            f"实际产出={sorted(outputs)}，"
-            f"血缘目标={sorted(lineage_targets)}"
+            f"实际产出={sorted(outputs)}，血缘目标={sorted(lineage_targets)}"
         )
         record(
             task["file"],

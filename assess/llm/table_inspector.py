@@ -16,7 +16,6 @@ from assess.project_facts.entity_metadata import (
     normalize_entities,
 )
 
-
 PROMPT_VERSION = "table-inspector-v22"
 VALID_LAYERS = {"ODS", "DWD", "DWS", "ADS", "DIM", "OTHER"}
 VALID_TABLE_TYPES = {"dimension", "fact", "other"}
@@ -51,11 +50,12 @@ class TableInspectResult:
     table_name: str
     declared_layer: str
     inferred_layer: str  # "ODS" | "DWD" | "DWS" | "ADS" | "DIM" | "OTHER"
-    table_type: str      # "dimension" | "fact" | "other"
+    table_type: str  # "dimension" | "fact" | "other"
     confidence: float
     reasoning_steps: list[str]
     columns: dict[str, list[dict[str, Any]]] = field(
-        default_factory=_empty_columns)
+        default_factory=_empty_columns
+    )
     validation: dict[str, list[str]] = field(default_factory=dict)
     retry_count: int = 0
     inferred_data_domain: str = ""
@@ -77,7 +77,8 @@ class TableInspectResult:
             self.entity = legacy_entity_from_entities(self.entities)
         if not self.related_entities:
             self.related_entities = legacy_related_entities_from_entities(
-                self.entities)
+                self.entities
+            )
 
     @property
     def is_violating_declared_layer(self) -> bool:
@@ -198,8 +199,8 @@ def build_prompt(ctx: TableContext) -> str:
 ## 表级特征信息
 - 原始表名: {ctx.table_name}
 - 原始配置层级: {ctx.layer}
-- 原始配置数据域: {ctx.declared_data_domain or '未配置'}
-- 原始配置业务板块: {ctx.declared_business_area or '未配置'}
+- 原始配置数据域: {ctx.declared_data_domain or "未配置"}
+- 原始配置业务板块: {ctx.declared_business_area or "未配置"}
 - 下游被引用次数: {len(ctx.downstream_tables)}
 - 距 ODS 最小跳数: {ctx.depth_from_ods}
 
@@ -250,14 +251,14 @@ def build_prompt(ctx: TableContext) -> str:
         prompt += f"## ETL 加工逻辑\n{ctx.etl_sql}\n\n"
 
     prompt += f"""## 血缘关系
-上游表: {', '.join(ctx.upstream_tables) if ctx.upstream_tables else '无'}
-下游表: {', '.join(ctx.downstream_tables) if ctx.downstream_tables else '无'}
+上游表: {", ".join(ctx.upstream_tables) if ctx.upstream_tables else "无"}
+下游表: {", ".join(ctx.downstream_tables) if ctx.downstream_tables else "无"}
 
 ## 字段级血缘
-{json.dumps(ctx.column_lineage, ensure_ascii=False, indent=2) if ctx.column_lineage else '无'}
+{json.dumps(ctx.column_lineage, ensure_ascii=False, indent=2) if ctx.column_lineage else "无"}
 
 ## 上游指标分组
-{json.dumps(ctx.upstream_metric_groups, ensure_ascii=False, indent=2) if ctx.upstream_metric_groups else '无'}
+{json.dumps(ctx.upstream_metric_groups, ensure_ascii=False, indent=2) if ctx.upstream_metric_groups else "无"}
 
 ## 思考步骤
 1. 首先分析 ETL_SQL 中是否包含 GROUP BY 等聚合操作，如果有，排除 DWD 和 ODS。
@@ -361,16 +362,18 @@ def build_prompt(ctx: TableContext) -> str:
     return prompt
 
 
-def build_retry_prompt(ctx: TableContext,
-                       result: TableInspectResult,
-                       ddl_columns: set[str]) -> str:
+def build_retry_prompt(
+    ctx: TableContext, result: TableInspectResult, ddl_columns: set[str]
+) -> str:
     """基于校验失败结果构造重试 prompt。"""
     retry_context = {
         "validation": result.validation,
         "status": result.status,
         "ddl_columns": sorted(ddl_columns),
     }
-    return build_prompt(ctx) + f"""
+    return (
+        build_prompt(ctx)
+        + f"""
 
 ## 上次返回结果校验未通过
 {json.dumps(retry_context, ensure_ascii=False, indent=2)}
@@ -382,6 +385,7 @@ def build_retry_prompt(ctx: TableContext,
 - derived_metrics 中每个指标必须填写 base_metric；能判断来源表时填写 base_metric_table，且 base_metric 必须来自该表 atomic_metrics。
 - 不要返回 Markdown，不要返回额外解释。
 """
+    )
 
 
 def _strip_markdown_json(content: str) -> str:
@@ -389,7 +393,7 @@ def _strip_markdown_json(content: str) -> str:
     if text.startswith("```"):
         first_newline = text.find("\n")
         if first_newline >= 0:
-            text = text[first_newline + 1:]
+            text = text[first_newline + 1 :]
         if text.endswith("```"):
             text = text[:-3]
     return text.strip()
@@ -468,13 +472,13 @@ def _valid_dimension_role(value: Any) -> str:
 def _valid_dimension_content_type(value: Any) -> str:
     content_type = str(value or "").strip().upper()
     return (
-        content_type
-        if content_type in VALID_DIMENSION_CONTENT_TYPES
-        else ""
+        content_type if content_type in VALID_DIMENSION_CONTENT_TYPES else ""
     )
 
 
-def _normalize_group_item(raw: dict[str, Any], fields: tuple[str, ...]) -> dict:
+def _normalize_group_item(
+    raw: dict[str, Any], fields: tuple[str, ...]
+) -> dict:
     name = str(raw.get("name") or raw.get("column_name") or "").strip()
     if not name:
         return {}
@@ -562,12 +566,15 @@ def _normalize_columns(raw_columns: Any) -> dict[str, list[dict[str, Any]]]:
     return columns
 
 
-def parse_response(table_name: str,
-                   response: dict,
-                   declared_layer: str = "") -> TableInspectResult:
-    content = response.get("choices", [{}])[0].get("message",
-                                                   {}).get("content",
-                                                           "").strip()
+def parse_response(
+    table_name: str, response: dict, declared_layer: str = ""
+) -> TableInspectResult:
+    content = (
+        response.get("choices", [{}])[0]
+        .get("message", {})
+        .get("content", "")
+        .strip()
+    )
     content = _strip_markdown_json(content)
 
     try:
@@ -582,11 +589,12 @@ def parse_response(table_name: str,
             columns=_normalize_columns(data.get("columns")),
             inferred_data_domain=_safe_str(data.get("inferred_data_domain")),
             inferred_business_area=_safe_str(
-                data.get("inferred_business_area")).upper(),
-            dimension_role=_valid_dimension_role(
-                data.get("dimension_role")),
+                data.get("inferred_business_area")
+            ).upper(),
+            dimension_role=_valid_dimension_role(data.get("dimension_role")),
             dimension_content_type=_valid_dimension_content_type(
-                data.get("dimension_content_type")),
+                data.get("dimension_content_type")
+            ),
             entities=normalize_entities(
                 data.get("entities"),
                 data.get("entity"),
@@ -654,10 +662,9 @@ def result_to_cache_dict(result: TableInspectResult) -> dict[str, Any]:
     }
 
 
-def dict_to_result(data: dict[str, Any],
-                   *,
-                   table_name: str = "",
-                   declared_layer: str = "") -> TableInspectResult:
+def dict_to_result(
+    data: dict[str, Any], *, table_name: str = "", declared_layer: str = ""
+) -> TableInspectResult:
     return TableInspectResult(
         table_name=str(data.get("table_name") or table_name),
         declared_layer=str(data.get("declared_layer") or declared_layer),
@@ -678,10 +685,12 @@ def dict_to_result(data: dict[str, Any],
         retry_count=int(data.get("retry_count", 0) or 0),
         inferred_data_domain=_safe_str(data.get("inferred_data_domain")),
         inferred_business_area=_safe_str(
-            data.get("inferred_business_area")).upper(),
+            data.get("inferred_business_area")
+        ).upper(),
         dimension_role=_valid_dimension_role(data.get("dimension_role")),
         dimension_content_type=_valid_dimension_content_type(
-            data.get("dimension_content_type")),
+            data.get("dimension_content_type")
+        ),
     )
 
 
@@ -715,7 +724,9 @@ def _extract_ddl_column_names(ddl: str) -> set[str]:
 
         columns = set()
         for stmt in sqlglot.parse(ddl, dialect="doris"):
-            if isinstance(stmt, exp.Create) and isinstance(stmt.this, exp.Schema):
+            if isinstance(stmt, exp.Create) and isinstance(
+                stmt.this, exp.Schema
+            ):
                 for col in stmt.this.expressions:
                     if isinstance(col, exp.ColumnDef):
                         columns.add(col.this.name)
@@ -724,8 +735,9 @@ def _extract_ddl_column_names(ddl: str) -> set[str]:
         return set()
 
 
-def validate_columns(result: TableInspectResult,
-                     ddl_columns: set[str]) -> dict[str, list[str]]:
+def validate_columns(
+    result: TableInspectResult, ddl_columns: set[str]
+) -> dict[str, list[str]]:
     """校验 LLM 返回字段是否存在、是否重复、事实表字段是否遗漏。"""
     if not ddl_columns:
         return {}
@@ -750,7 +762,10 @@ def validate_columns(result: TableInspectResult,
         "duplicate_columns": sorted(duplicates),
         "missing_columns": [],
     }
-    if result.declared_layer in METRIC_GROUPING_LAYERS and result.is_fact_table:
+    if (
+        result.declared_layer in METRIC_GROUPING_LAYERS
+        and result.is_fact_table
+    ):
         validation["missing_columns"] = sorted(ddl_columns - returned)
     return validation
 
@@ -778,8 +793,8 @@ def _metric_names_from_items(raw_metrics: Any) -> list[str]:
 
 
 def _atomic_metric_tables_for_validation(
-        result: TableInspectResult,
-        ctx: TableContext) -> dict[str, set[str]]:
+    result: TableInspectResult, ctx: TableContext
+) -> dict[str, set[str]]:
     tables: dict[str, set[str]] = {}
     same_table_metrics = set(_metric_names_from_items(result.atomic_metrics))
     if same_table_metrics:
@@ -794,8 +809,8 @@ def _atomic_metric_tables_for_validation(
 
 
 def _base_metric_candidate_tables(
-        base_metric: str,
-        atomic_metric_tables: dict[str, set[str]]) -> list[str]:
+    base_metric: str, atomic_metric_tables: dict[str, set[str]]
+) -> list[str]:
     return sorted(
         table_name
         for table_name, metric_names in atomic_metric_tables.items()
@@ -804,8 +819,8 @@ def _base_metric_candidate_tables(
 
 
 def enrich_metric_relationships(
-        result: TableInspectResult,
-        ctx: TableContext) -> None:
+    result: TableInspectResult, ctx: TableContext
+) -> None:
     """补齐可唯一判断的派生指标 base_metric_table。"""
     atomic_metric_tables = _atomic_metric_tables_for_validation(result, ctx)
     for metric in result.derived_metrics:
@@ -823,8 +838,8 @@ def enrich_metric_relationships(
 
 
 def validate_metric_relationships(
-        result: TableInspectResult,
-        ctx: TableContext) -> dict[str, list[str]]:
+    result: TableInspectResult, ctx: TableContext
+) -> dict[str, list[str]]:
     """校验派生指标是否显式指向已知原子指标。"""
     issues = {
         "missing_base_metrics": [],
@@ -875,15 +890,12 @@ def validate_metric_relationships(
         else:
             issues["missing_base_metric_tables"].append(metric_name)
 
-    return {
-        key: sorted(values)
-        for key, values in issues.items()
-        if values
-    }
+    return {key: sorted(values) for key, values in issues.items() if values}
 
 
 def _merge_validation(
-        *validation_parts: dict[str, list[str]]) -> dict[str, list[str]]:
+    *validation_parts: dict[str, list[str]],
+) -> dict[str, list[str]]:
     merged: dict[str, list[str]] = {}
     for validation in validation_parts:
         for key, values in (validation or {}).items():
@@ -896,15 +908,16 @@ def _merge_validation(
 
 
 class TableInspector:
-
-    def __init__(self,
-                 api_key: str,
-                 *,
-                 model: str = "deepseek-v4-flash",
-                 cache_file: Path = None,
-                 max_retries: int = 1,
-                 parallelism: int = 2,
-                 request_timeout: int = 60):
+    def __init__(
+        self,
+        api_key: str,
+        *,
+        model: str = "deepseek-v4-flash",
+        cache_file: Path = None,
+        max_retries: int = 1,
+        parallelism: int = 2,
+        request_timeout: int = 60,
+    ):
         self.api_key = api_key
         self.model = model
         self.cache_file = cache_file
@@ -921,7 +934,8 @@ class TableInspector:
             if self.cache_file and self.cache_file.exists():
                 try:
                     self.cache = json.loads(
-                        self.cache_file.read_text(encoding="utf-8"))
+                        self.cache_file.read_text(encoding="utf-8")
+                    )
                 except Exception:
                     self.cache = {}
 
@@ -929,10 +943,10 @@ class TableInspector:
         with self._cache_lock:
             if self.cache_file:
                 self.cache_file.parent.mkdir(parents=True, exist_ok=True)
-                self.cache_file.write_text(json.dumps(self.cache,
-                                                      ensure_ascii=False,
-                                                      indent=2),
-                                           encoding="utf-8")
+                self.cache_file.write_text(
+                    json.dumps(self.cache, ensure_ascii=False, indent=2),
+                    encoding="utf-8",
+                )
 
     def _compute_hash(self, ctx: TableContext) -> str:
         # 缓存 hash 需要包含所有影响 LLM 判断的特征与 prompt schema 版本。
@@ -946,12 +960,14 @@ class TableInspector:
         )
         return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
-    def _emit_progress(self,
-                       event: str,
-                       ctx: TableContext,
-                       *,
-                       progress_context: dict[str, Any] | None = None,
-                       **extra: Any) -> None:
+    def _emit_progress(
+        self,
+        event: str,
+        ctx: TableContext,
+        *,
+        progress_context: dict[str, Any] | None = None,
+        **extra: Any,
+    ) -> None:
         callback = self.progress_callback
         if not callback:
             return
@@ -972,54 +988,62 @@ class TableInspector:
         url = "https://api.deepseek.com/chat/completions"
         headers = {
             "Content-Type": "application/json",
-            "Authorization": f"Bearer {self.api_key}"
+            "Authorization": f"Bearer {self.api_key}",
         }
         data = {
             "model": self.model,
-            "messages": [{
-                "role": "user",
-                "content": prompt
-            }],
-            "temperature": 0.0
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0.0,
         }
 
-        req = urllib.request.Request(url,
-                                     data=json.dumps(data).encode("utf-8"),
-                                     headers=headers,
-                                     method="POST")
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(data).encode("utf-8"),
+            headers=headers,
+            method="POST",
+        )
         try:
-            with urllib.request.urlopen(req, timeout=self.request_timeout) as response:
+            with urllib.request.urlopen(
+                req, timeout=self.request_timeout
+            ) as response:
                 return response.read().decode("utf-8")
         except Exception as e:
-            raise RuntimeError(f"DeepSeek API 调用失败: {e}")
+            raise RuntimeError(f"DeepSeek API 调用失败: {e}") from e
 
-    def inspect(self,
-                ctx: TableContext,
-                *,
-                progress_context: dict[str, Any] | None = None
-                ) -> TableInspectResult:
+    def inspect(
+        self,
+        ctx: TableContext,
+        *,
+        progress_context: dict[str, Any] | None = None,
+    ) -> TableInspectResult:
         current_hash = self._compute_hash(ctx)
 
         with self._cache_lock:
             cached_data = self.cache.get(ctx.table_name)
-            if (isinstance(cached_data, dict)
-                    and cached_data.get("hash") == current_hash):
-                self._emit_progress("cache_hit",
-                                    ctx,
-                                    progress_context=progress_context)
-                return dict_to_result(cached_data.get("result", {}),
-                                      table_name=ctx.table_name,
-                                      declared_layer=ctx.layer)
+            if (
+                isinstance(cached_data, dict)
+                and cached_data.get("hash") == current_hash
+            ):
+                self._emit_progress(
+                    "cache_hit", ctx, progress_context=progress_context
+                )
+                return dict_to_result(
+                    cached_data.get("result", {}),
+                    table_name=ctx.table_name,
+                    declared_layer=ctx.layer,
+                )
 
         ddl_columns = _extract_ddl_column_names(ctx.ddl)
         prompt = build_prompt(ctx)
         result = None
         for attempt in range(self.max_retries + 1):
-            self._emit_progress("api_call",
-                                ctx,
-                                progress_context=progress_context,
-                                attempt=attempt + 1,
-                                max_attempts=self.max_retries + 1)
+            self._emit_progress(
+                "api_call",
+                ctx,
+                progress_context=progress_context,
+                attempt=attempt + 1,
+                max_attempts=self.max_retries + 1,
+            )
             try:
                 resp_str = self._call_api(prompt)
                 resp_json = json.loads(resp_str)
@@ -1033,12 +1057,14 @@ class TableInspector:
                     reasoning_steps=[f"分类异常: {str(e)}"],
                     retry_count=attempt,
                 )
-                self._emit_progress("api_error",
-                                    ctx,
-                                    progress_context=progress_context,
-                                    attempt=attempt + 1,
-                                    max_attempts=self.max_retries + 1,
-                                    error=str(e))
+                self._emit_progress(
+                    "api_error",
+                    ctx,
+                    progress_context=progress_context,
+                    attempt=attempt + 1,
+                    max_attempts=self.max_retries + 1,
+                    error=str(e),
+                )
                 if attempt >= self.max_retries:
                     break
                 continue
@@ -1052,13 +1078,15 @@ class TableInspector:
             )
             if result.status == "passed" or attempt >= self.max_retries:
                 break
-            self._emit_progress("validation_retry",
-                                ctx,
-                                progress_context=progress_context,
-                                attempt=attempt + 1,
-                                max_attempts=self.max_retries + 1,
-                                status=result.status,
-                                validation=result.validation)
+            self._emit_progress(
+                "validation_retry",
+                ctx,
+                progress_context=progress_context,
+                attempt=attempt + 1,
+                max_attempts=self.max_retries + 1,
+                status=result.status,
+                validation=result.validation,
+            )
             prompt = build_retry_prompt(ctx, result, ddl_columns)
 
         with self._cache_lock:
@@ -1071,15 +1099,18 @@ class TableInspector:
         return result
 
     def inspect_batch(
-            self, contexts: list[TableContext]) -> list[TableInspectResult]:
+        self, contexts: list[TableContext]
+    ) -> list[TableInspectResult]:
         total = len(contexts)
 
-        def inspect_safely(item: tuple[int, TableContext]) -> TableInspectResult:
+        def inspect_safely(
+            item: tuple[int, TableContext],
+        ) -> TableInspectResult:
             index, ctx = item
             progress_context = {"index": index, "total": total}
-            self._emit_progress("start",
-                                ctx,
-                                progress_context=progress_context)
+            self._emit_progress(
+                "start", ctx, progress_context=progress_context
+            )
             try:
                 result = self.inspect(ctx, progress_context=progress_context)
             except Exception as e:
@@ -1089,11 +1120,14 @@ class TableInspector:
                     inferred_layer="OTHER",
                     table_type="other",
                     confidence=0.0,
-                    reasoning_steps=[f"分类异常: {str(e)}"])
-                self._emit_progress("unexpected_error",
-                                    ctx,
-                                    progress_context=progress_context,
-                                    error=str(e))
+                    reasoning_steps=[f"分类异常: {str(e)}"],
+                )
+                self._emit_progress(
+                    "unexpected_error",
+                    ctx,
+                    progress_context=progress_context,
+                    error=str(e),
+                )
             self._emit_progress(
                 "finish",
                 ctx,

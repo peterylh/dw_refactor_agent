@@ -6,8 +6,10 @@ from lineage.job_dag import JobDAG
 
 
 def _edges(*pairs):
-    return [{"source": f"{source}.x", "target": f"{target}.x"}
-            for source, target in pairs]
+    return [
+        {"source": f"{source}.x", "target": f"{target}.x"}
+        for source, target in pairs
+    ]
 
 
 def _positions(order):
@@ -21,14 +23,16 @@ def _assert_before(order, *pairs):
 
 
 def test_downstream_traversal_handles_branches_cycles_and_missing_seeds():
-    dag = JobDAG(_edges(
-        ("a", "b"),
-        ("a", "c"),
-        ("b", "d"),
-        ("c", "d"),
-        ("d", "a"),
-        ("x", "y"),
-    ))
+    dag = JobDAG(
+        _edges(
+            ("a", "b"),
+            ("a", "c"),
+            ("b", "d"),
+            ("c", "d"),
+            ("d", "a"),
+            ("x", "y"),
+        )
+    )
 
     assert dag.bfs_downstream({"a"}) == {"b", "c", "d"}
     assert dag.bfs_downstream({"b", "c"}) == {"a", "d"}
@@ -37,22 +41,26 @@ def test_downstream_traversal_handles_branches_cycles_and_missing_seeds():
 
 
 def test_topological_sort_keeps_dependencies_before_dependents():
-    dag = JobDAG(_edges(
-        ("ods_order", "dwd_order_detail"),
-        ("dwd_order_detail", "dws_store_sales_daily"),
-        ("dwd_order_detail", "dws_product_sales_daily"),
-        ("dws_store_sales_daily", "ads_sales_dashboard"),
-        ("dws_product_sales_daily", "ads_sales_dashboard"),
-    ))
+    dag = JobDAG(
+        _edges(
+            ("ods_order", "dwd_order_detail"),
+            ("dwd_order_detail", "dws_store_sales_daily"),
+            ("dwd_order_detail", "dws_product_sales_daily"),
+            ("dws_store_sales_daily", "ads_sales_dashboard"),
+            ("dws_product_sales_daily", "ads_sales_dashboard"),
+        )
+    )
 
-    order = dag.topological_sort({
-        "ods_order",
-        "dwd_order_detail",
-        "dws_store_sales_daily",
-        "dws_product_sales_daily",
-        "ads_sales_dashboard",
-        "unrelated_task",
-    })
+    order = dag.topological_sort(
+        {
+            "ods_order",
+            "dwd_order_detail",
+            "dws_store_sales_daily",
+            "dws_product_sales_daily",
+            "ads_sales_dashboard",
+            "unrelated_task",
+        }
+    )
 
     assert set(order) == {
         "ods_order",
@@ -110,13 +118,24 @@ def test_topological_layers_group_parallel_jobs():
 
 
 def test_structured_lineage_edges_are_accepted():
-    dag = JobDAG([{
-        "source": {"type": "column", "id": "shop_dm.dwd_order.order_id"},
-        "target": {"type": "column", "id": "shop_dm.dws_order.order_id"},
-    }, {
-        "source": {"type": "table", "id": "shop_dm.dws_order"},
-        "target": {"type": "table", "id": "shop_dm.ads_order"},
-    }])
+    dag = JobDAG(
+        [
+            {
+                "source": {
+                    "type": "column",
+                    "id": "shop_dm.dwd_order.order_id",
+                },
+                "target": {
+                    "type": "column",
+                    "id": "shop_dm.dws_order.order_id",
+                },
+            },
+            {
+                "source": {"type": "table", "id": "shop_dm.dws_order"},
+                "target": {"type": "table", "id": "shop_dm.ads_order"},
+            },
+        ]
+    )
 
     assert dag.bfs_downstream({"shop_dm.dwd_order"}) == {
         "shop_dm.dws_order",

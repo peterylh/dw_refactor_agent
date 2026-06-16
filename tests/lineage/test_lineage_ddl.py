@@ -23,10 +23,7 @@ def _key_columns(sql: str) -> list[str]:
         sql,
         flags=re.IGNORECASE | re.DOTALL,
     )
-    return [
-        column.strip().strip("`")
-        for column in match.group(1).split(",")
-    ]
+    return [column.strip().strip("`") for column in match.group(1).split(",")]
 
 
 def test_lineage_ddl_key_columns_are_schema_prefixes():
@@ -36,4 +33,4 @@ def test_lineage_ddl_key_columns_are_schema_prefixes():
         sql = ddl_file.read_text(encoding="utf-8")
         key_columns = _key_columns(sql)
 
-        assert _column_names(sql)[:len(key_columns)] == key_columns, ddl_file
+        assert _column_names(sql)[: len(key_columns)] == key_columns, ddl_file

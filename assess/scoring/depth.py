@@ -1,8 +1,18 @@
 """Lineage depth scoring dimension."""
+
 from __future__ import annotations
 
-from assess.result_model import SEVERITY_HIGH, SEVERITY_MEDIUM, finalize_dimension, make_check
-from assess.scoring.config import LINEAGE_DEPTH_RULES, MIDDLE_DEPTH_FALLBACK, MIDDLE_DEPTH_SCORE
+from assess.result_model import (
+    SEVERITY_HIGH,
+    SEVERITY_MEDIUM,
+    finalize_dimension,
+    make_check,
+)
+from assess.scoring.config import (
+    LINEAGE_DEPTH_RULES,
+    MIDDLE_DEPTH_FALLBACK,
+    MIDDLE_DEPTH_SCORE,
+)
 from lineage.table_graph import build_table_graph, build_table_layer_map
 
 # ============================================================
@@ -40,8 +50,10 @@ def _max_middle_depth(
         for p in parents:
             max_sub = max(
                 max_sub,
-                _max_middle_depth(p, upstream_map, table_layers, memo,
-                                  visiting))
+                _max_middle_depth(
+                    p, upstream_map, table_layers, memo, visiting
+                ),
+            )
         result = contribution + max_sub
 
     visiting.remove(table)
@@ -62,11 +74,13 @@ def score_lineage_depth(
     table_layers: dict | None = None,
 ) -> dict:
     table_layers = (
-        table_layers if table_layers is not None
+        table_layers
+        if table_layers is not None
         else build_table_layer_map(tables)
     )
     upstream = (
-        upstream_map if upstream_map is not None
+        upstream_map
+        if upstream_map is not None
         else build_table_graph(edges, indirect_edges)[0]
     )
 

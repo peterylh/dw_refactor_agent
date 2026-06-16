@@ -12,7 +12,6 @@ from typing import Any
 
 import yaml
 
-
 PROJECT_DIR = Path(__file__).resolve().parent
 DBT_ROOT = Path(__file__).resolve().parents[2] / "finance_analytics_dbt"
 DB_NAME = "finance_analytics_dm"
@@ -34,11 +33,17 @@ GEO = [
 
 
 def load_source_columns() -> dict[str, list[str]]:
-    data = yaml.safe_load((DBT_ROOT / "models" / "ingestion" / "sources.yml").read_text(encoding="utf-8"))
+    data = yaml.safe_load(
+        (DBT_ROOT / "models" / "ingestion" / "sources.yml").read_text(
+            encoding="utf-8"
+        )
+    )
     tables: dict[str, list[str]] = {}
     for source in data.get("sources", []):
         for table in source.get("tables", []):
-            tables[table["name"]] = [col["name"] for col in table.get("columns", [])] + ["load_time"]
+            tables[table["name"]] = [
+                col["name"] for col in table.get("columns", [])
+            ] + ["load_time"]
     return tables
 
 
@@ -56,12 +61,16 @@ def sql_literal(value: Any) -> str:
     return str(value)
 
 
-def render_insert(table: str, columns: list[str], rows: list[dict[str, Any]]) -> str:
+def render_insert(
+    table: str, columns: list[str], rows: list[dict[str, Any]]
+) -> str:
     values_sql = []
     for row in rows:
         ordered = [sql_literal(row.get(col)) for col in columns]
         values_sql.append("(" + ", ".join(ordered) + ")")
-    cols_sql = ", ".join(f"`{col}`" if col[0].isdigit() else col for col in columns)
+    cols_sql = ", ".join(
+        f"`{col}`" if col[0].isdigit() else col for col in columns
+    )
     return (
         f"INSERT INTO {DB_NAME}.ods_{table} ({cols_sql})\nVALUES\n"
         + ",\n".join(values_sql)
@@ -80,7 +89,17 @@ def build_products() -> list[dict[str, Any]]:
         (3, "Rewards Credit Card", "Credit", 0.18, 0, 0, 0, "Premium", True),
         (4, "Personal Loan", "Loan", 0.08, 0, 0, 0, "Standard", False),
         (5, "Mortgage", "Loan", 0.05, 0, 0, 0, "Premium", True),
-        (6, "Investment Account", "Investment", 0.00, 1000, 25, 0, "Premium", True),
+        (
+            6,
+            "Investment Account",
+            "Investment",
+            0.00,
+            1000,
+            25,
+            0,
+            "Premium",
+            True,
+        ),
     ]
     rows = []
     for idx, item in enumerate(products):
@@ -130,7 +149,9 @@ def build_merchants() -> list[dict[str, Any]]:
                 "risk_rating": random.choice(["Low", "Medium", "High"]),
                 "avg_transaction_amount": round(random.uniform(25, 600), 2),
                 "is_online": item[3],
-                "established_date": date(2005 + idx, (idx % 12) + 1, min(20, idx + 5)),
+                "established_date": date(
+                    2005 + idx, (idx % 12) + 1, min(20, idx + 5)
+                ),
                 "created_at": dt(idx),
                 "load_time": LOAD_TIME,
             }
@@ -139,8 +160,34 @@ def build_merchants() -> list[dict[str, Any]]:
 
 
 def build_customers() -> list[dict[str, Any]]:
-    first_names = ["Ava", "Liam", "Noah", "Emma", "Olivia", "Mia", "Ethan", "Sophia", "Lucas", "Amelia", "James", "Harper"]
-    last_names = ["Smith", "Johnson", "Brown", "Taylor", "Miller", "Wilson", "Moore", "Jackson", "White", "Harris", "Martin", "Clark"]
+    first_names = [
+        "Ava",
+        "Liam",
+        "Noah",
+        "Emma",
+        "Olivia",
+        "Mia",
+        "Ethan",
+        "Sophia",
+        "Lucas",
+        "Amelia",
+        "James",
+        "Harper",
+    ]
+    last_names = [
+        "Smith",
+        "Johnson",
+        "Brown",
+        "Taylor",
+        "Miller",
+        "Wilson",
+        "Moore",
+        "Jackson",
+        "White",
+        "Harris",
+        "Martin",
+        "Clark",
+    ]
     segments = ["Mass Market", "Affluent", "Premium", "Business"]
     rows = []
     for idx in range(1, 13):
@@ -155,7 +202,9 @@ def build_customers() -> list[dict[str, Any]]:
                 "last_name": last_names[idx - 1],
                 "email": f"customer{idx}@example.com",
                 "phone": f"555000{idx:04d}",
-                "date_of_birth": date(birth_year, (idx % 12) + 1, min(15, idx + 1)),
+                "date_of_birth": date(
+                    birth_year, (idx % 12) + 1, min(15, idx + 1)
+                ),
                 "age": age,
                 "ssn": f"900-10-{idx:04d}",
                 "address": f"{100 + idx} Main Street",
@@ -166,24 +215,40 @@ def build_customers() -> list[dict[str, Any]]:
                 "signup_date": signup,
                 "credit_score": 580 + idx * 18,
                 "annual_income": 45000 + idx * 8500,
-                "employment_status": random.choice(["Employed", "Self-Employed", "Retired", "Student"]),
+                "employment_status": random.choice(
+                    ["Employed", "Self-Employed", "Retired", "Student"]
+                ),
                 "employer": f"Employer {idx}",
-                "job_title": random.choice(["Analyst", "Manager", "Engineer", "Consultant"]),
-                "education_level": random.choice(["High School", "Bachelor", "Master"]),
+                "job_title": random.choice(
+                    ["Analyst", "Manager", "Engineer", "Consultant"]
+                ),
+                "education_level": random.choice(
+                    ["High School", "Bachelor", "Master"]
+                ),
                 "marital_status": random.choice(["Single", "Married"]),
                 "number_of_dependents": idx % 3,
                 "home_ownership": random.choice(["Own", "Rent", "Mortgage"]),
                 "customer_segment": segments[idx % len(segments)],
-                "life_stage": random.choice(["Young Professional", "Family", "Retiree"]),
+                "life_stage": random.choice(
+                    ["Young Professional", "Family", "Retiree"]
+                ),
                 "risk_segment": random.choice(["Low", "Medium", "High"]),
                 "is_active": idx % 5 != 0,
-                "preferred_channel": random.choice(["Online", "Mobile", "Branch", "Phone"]),
+                "preferred_channel": random.choice(
+                    ["Online", "Mobile", "Branch", "Phone"]
+                ),
                 "marketing_opt_in": idx % 2 == 0,
-                "loyalty_tier": random.choice(["Bronze", "Silver", "Gold", "Platinum"]),
+                "loyalty_tier": random.choice(
+                    ["Bronze", "Silver", "Gold", "Platinum"]
+                ),
                 "customer_lifetime_value": round(5000 + idx * 2200.5, 2),
-                "churn_risk_score": round(min(0.95, 0.08 * (idx % 6) + 0.12), 2),
+                "churn_risk_score": round(
+                    min(0.95, 0.08 * (idx % 6) + 0.12), 2
+                ),
                 "last_login_date": date(2025, 1, min(20, idx + 5)),
-                "acquisition_channel": random.choice(["Online", "Branch", "Referral", "Partner"]),
+                "acquisition_channel": random.choice(
+                    ["Online", "Branch", "Referral", "Partner"]
+                ),
                 "created_at": dt(idx),
                 "load_time": LOAD_TIME,
             }
@@ -191,13 +256,17 @@ def build_customers() -> list[dict[str, Any]]:
     return rows
 
 
-def build_accounts(customers: list[dict[str, Any]], products: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def build_accounts(
+    customers: list[dict[str, Any]], products: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
     rows = []
     account_id = 1
     for customer in customers:
         choices = [products[(customer["customer_id"] - 1) % len(products)]]
         if customer["customer_id"] % 2 == 0:
-            choices.append(products[(customer["customer_id"] + 1) % len(products)])
+            choices.append(
+                products[(customer["customer_id"] + 1) % len(products)]
+            )
         for prod in choices:
             is_credit = prod["category"] == "Credit"
             is_loan = prod["category"] == "Loan"
@@ -210,17 +279,29 @@ def build_accounts(customers: list[dict[str, Any]], products: list[dict[str, Any
                     "customer_id": customer["customer_id"],
                     "product_id": prod["product_id"],
                     "account_number": f"000000{account_id:06d}",
-                    "account_status": "Active" if customer["is_active"] else random.choice(["Dormant", "Closed"]),
+                    "account_status": "Active"
+                    if customer["is_active"]
+                    else random.choice(["Dormant", "Closed"]),
                     "open_date": customer["signup_date"] + timedelta(days=15),
-                    "close_date": None if customer["is_active"] else date(2024, 12, min(20, customer["customer_id"] + 5)),
+                    "close_date": None
+                    if customer["is_active"]
+                    else date(2024, 12, min(20, customer["customer_id"] + 5)),
                     "current_balance": balance,
                     "available_balance": max(balance, 0),
                     "credit_limit": 12000 if is_credit else None,
                     "currency": "USD",
                     "interest_rate": prod["interest_rate"],
-                    "minimum_payment": round(abs(balance) * 0.03, 2) if is_credit or is_loan else None,
-                    "payment_due_date": date(2025, 1, min(28, customer["customer_id"] + 10)) if is_credit or is_loan else None,
-                    "last_statement_date": date(2024, 12, min(28, customer["customer_id"] + 8)),
+                    "minimum_payment": round(abs(balance) * 0.03, 2)
+                    if is_credit or is_loan
+                    else None,
+                    "payment_due_date": date(
+                        2025, 1, min(28, customer["customer_id"] + 10)
+                    )
+                    if is_credit or is_loan
+                    else None,
+                    "last_statement_date": date(
+                        2024, 12, min(28, customer["customer_id"] + 8)
+                    ),
                     "autopay_enabled": customer["customer_id"] % 2 == 0,
                     "overdraft_protection": prod["category"] == "Deposit",
                     "primary_account": prod["product_id"] in {1, 2},
@@ -232,10 +313,14 @@ def build_accounts(customers: list[dict[str, Any]], products: list[dict[str, Any
     return rows
 
 
-def build_transactions(accounts: list[dict[str, Any]], merchants: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def build_transactions(
+    accounts: list[dict[str, Any]], merchants: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
     rows = []
     tx_id = 1
-    active_accounts = [row for row in accounts if row["account_status"] == "Active"]
+    active_accounts = [
+        row for row in accounts if row["account_status"] == "Active"
+    ]
     for idx, account in enumerate(active_accounts):
         for step in range(4):
             merchant = merchants[(idx + step) % len(merchants)]
@@ -251,15 +336,21 @@ def build_transactions(accounts: list[dict[str, Any]], merchants: list[dict[str,
                     "customer_id": account["customer_id"],
                     "merchant_id": merchant["merchant_id"],
                     "transaction_date": tx_time,
-                    "transaction_type": random.choice(["Purchase", "Payment", "Deposit", "Transfer", "Fee"]),
+                    "transaction_type": random.choice(
+                        ["Purchase", "Payment", "Deposit", "Transfer", "Fee"]
+                    ),
                     "amount": amount,
                     "currency": "USD",
-                    "channel": random.choice(["Online", "Mobile", "ATM", "Branch", "POS"]),
+                    "channel": random.choice(
+                        ["Online", "Mobile", "ATM", "Branch", "POS"]
+                    ),
                     "merchant_category": merchant["category"],
                     "mcc_code": merchant["mcc_code"],
                     "description": f"Txn {tx_id} at {merchant['merchant_name']}",
                     "is_fraud": is_fraud,
-                    "fraud_score": 0.91 if is_fraud else round(random.uniform(0.05, 0.35), 2),
+                    "fraud_score": 0.91
+                    if is_fraud
+                    else round(random.uniform(0.05, 0.35), 2),
                     "location_city": merchant["city"],
                     "location_state": merchant["state"],
                     "location_country": "USA",
@@ -277,9 +368,13 @@ def build_transactions(accounts: list[dict[str, Any]], merchants: list[dict[str,
                     "distance_from_home_km": round(random.uniform(1, 120), 2),
                     "merchant_risk_score": round(random.uniform(0.1, 0.9), 2),
                     "velocity_24h": random.randint(1, 7),
-                    "amount_deviation_score": round(random.uniform(0.1, 0.95), 2),
+                    "amount_deviation_score": round(
+                        random.uniform(0.1, 0.95), 2
+                    ),
                     "processing_time_ms": random.randint(120, 2400),
-                    "decline_reason": "Fraud Suspected" if is_fraud else (None if tx_id % 9 else "Insufficient Funds"),
+                    "decline_reason": "Fraud Suspected"
+                    if is_fraud
+                    else (None if tx_id % 9 else "Insufficient Funds"),
                     "created_at": tx_time,
                     "load_time": LOAD_TIME,
                 }
@@ -288,10 +383,16 @@ def build_transactions(accounts: list[dict[str, Any]], merchants: list[dict[str,
     return rows
 
 
-def build_credit_applications(customers: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def build_credit_applications(
+    customers: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
     rows = []
     for idx, customer in enumerate(customers, start=1):
-        decision = "Approved" if customer["credit_score"] >= 680 else random.choice(["Declined", "Pending"])
+        decision = (
+            "Approved"
+            if customer["credit_score"] >= 680
+            else random.choice(["Declined", "Pending"])
+        )
         rows.append(
             {
                 "application_id": idx,
@@ -306,10 +407,16 @@ def build_credit_applications(customers: list[dict[str, Any]]) -> list[dict[str,
                 "employment_length_years": random.randint(1, 18),
                 "decision": decision,
                 "decision_date": dt((idx % 7) + 1),
-                "approved_amount": 4000 + idx * 900 if decision == "Approved" else None,
+                "approved_amount": 4000 + idx * 900
+                if decision == "Approved"
+                else None,
                 "approved_rate": 0.07 if decision == "Approved" else None,
-                "application_channel": random.choice(["Online", "Branch", "Phone", "Mobile"]),
-                "approval_probability_score": round(random.uniform(0.2, 0.95), 2),
+                "application_channel": random.choice(
+                    ["Online", "Branch", "Phone", "Mobile"]
+                ),
+                "approval_probability_score": round(
+                    random.uniform(0.2, 0.95), 2
+                ),
                 "risk_grade": random.choice(["A", "B", "C", "D"]),
                 "created_at": dt(idx % 7),
                 "load_time": LOAD_TIME,
@@ -318,7 +425,9 @@ def build_credit_applications(customers: list[dict[str, Any]]) -> list[dict[str,
     return rows
 
 
-def build_fraud_alerts(transactions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def build_fraud_alerts(
+    transactions: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
     rows = []
     alerts = [tx for tx in transactions if tx["is_fraud"]][:3]
     for idx, tx in enumerate(alerts, start=1):
@@ -329,9 +438,17 @@ def build_fraud_alerts(transactions: list[dict[str, Any]]) -> list[dict[str, Any
                 "customer_id": tx["customer_id"],
                 "account_id": tx["account_id"],
                 "alert_date": tx["transaction_date"] + timedelta(minutes=10),
-                "alert_type": random.choice(["Unusual Spending", "Velocity Check", "High Risk Merchant"]),
+                "alert_type": random.choice(
+                    [
+                        "Unusual Spending",
+                        "Velocity Check",
+                        "High Risk Merchant",
+                    ]
+                ),
                 "alert_severity": random.choice(["High", "Critical"]),
-                "investigation_status": random.choice(["Open", "Under Review", "Resolved - Fraud"]),
+                "investigation_status": random.choice(
+                    ["Open", "Under Review", "Resolved - Fraud"]
+                ),
                 "resolution_date": tx["transaction_date"] + timedelta(days=2),
                 "amount_recovered": round(abs(tx["amount"]) * 0.6, 2),
                 "assigned_to": f"INV{idx:03d}",
@@ -343,7 +460,9 @@ def build_fraud_alerts(transactions: list[dict[str, Any]]) -> list[dict[str, Any
     return rows
 
 
-def build_customer_interactions(customers: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def build_customer_interactions(
+    customers: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
     rows = []
     for idx, customer in enumerate(customers, start=1):
         rows.append(
@@ -351,8 +470,17 @@ def build_customer_interactions(customers: list[dict[str, Any]]) -> list[dict[st
                 "interaction_id": idx,
                 "customer_id": customer["customer_id"],
                 "interaction_date": dt(idx % 10, 14),
-                "interaction_type": random.choice(["Phone Call", "Email", "Chat", "Branch Visit"]),
-                "reason": random.choice(["Account Inquiry", "Transaction Dispute", "Complaint", "Technical Support"]),
+                "interaction_type": random.choice(
+                    ["Phone Call", "Email", "Chat", "Branch Visit"]
+                ),
+                "reason": random.choice(
+                    [
+                        "Account Inquiry",
+                        "Transaction Dispute",
+                        "Complaint",
+                        "Technical Support",
+                    ]
+                ),
                 "duration_minutes": random.randint(5, 45),
                 "sentiment_score": round(random.uniform(-0.6, 0.8), 2),
                 "satisfaction_rating": random.randint(2, 5),
@@ -398,10 +526,14 @@ def build_marketing_campaigns() -> list[dict[str, Any]]:
             {
                 "campaign_id": idx,
                 "campaign_name": f"Campaign {idx}",
-                "campaign_type": random.choice(["Email", "Social Media", "Direct Mail", "Online Display"]),
+                "campaign_type": random.choice(
+                    ["Email", "Social Media", "Direct Mail", "Online Display"]
+                ),
                 "start_date": start,
                 "end_date": start + timedelta(days=21),
-                "target_segment": random.choice(["Mass Market", "Affluent", "Premium", "Business"]),
+                "target_segment": random.choice(
+                    ["Mass Market", "Affluent", "Premium", "Business"]
+                ),
                 "budget": 25000 + idx * 5000,
                 "impressions": 50000 + idx * 8000,
                 "clicks": 2000 + idx * 300,
@@ -416,7 +548,9 @@ def build_marketing_campaigns() -> list[dict[str, Any]]:
     return rows
 
 
-def build_loan_payments(accounts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def build_loan_payments(
+    accounts: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
     rows = []
     payment_id = 1
     for account in accounts:
@@ -437,8 +571,11 @@ def build_loan_payments(accounts: list[dict[str, Any]]) -> list[dict[str, Any]]:
                     "is_late": month_offset % 2 == 1,
                     "days_late": month_offset % 2,
                     "late_fee": 25.00 if month_offset % 2 == 1 else 0.00,
-                    "payment_method": random.choice(["ACH", "Check", "Online"]),
-                    "outstanding_balance": abs(account["current_balance"]) - payment_id * 100,
+                    "payment_method": random.choice(
+                        ["ACH", "Check", "Online"]
+                    ),
+                    "outstanding_balance": abs(account["current_balance"])
+                    - payment_id * 100,
                     "created_at": dt(month_offset),
                     "load_time": LOAD_TIME,
                 }
@@ -455,7 +592,9 @@ def build_branch_locations() -> list[dict[str, Any]]:
                 "branch_id": idx,
                 "branch_name": f"{city} Branch",
                 "branch_code": f"BR{idx:05d}",
-                "branch_type": random.choice(["Full Service", "Limited Service", "Commercial"]),
+                "branch_type": random.choice(
+                    ["Full Service", "Limited Service", "Commercial"]
+                ),
                 "address": f"{200 + idx} Finance Ave",
                 "city": city,
                 "state": state,
@@ -483,7 +622,9 @@ def build_branch_locations() -> list[dict[str, Any]]:
     return rows
 
 
-def build_atm_locations(branches: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def build_atm_locations(
+    branches: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
     rows = []
     for idx in range(1, 9):
         city, state, _, lat, lng = GEO[idx % len(GEO)]
@@ -493,7 +634,9 @@ def build_atm_locations(branches: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "atm_id": idx,
                 "atm_code": f"ATM{idx:06d}",
                 "location_name": f"{city} ATM {idx}",
-                "location_type": random.choice(["Branch", "Off-Site", "Third-Party"]),
+                "location_type": random.choice(
+                    ["Branch", "Off-Site", "Third-Party"]
+                ),
                 "address": f"{300 + idx} Cash Rd",
                 "city": city,
                 "state": state,
@@ -522,7 +665,9 @@ def build_atm_locations(branches: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return rows
 
 
-def build_risk_assessments(customers: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def build_risk_assessments(
+    customers: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
     rows = []
     for idx, customer in enumerate(customers, start=1):
         rows.append(
@@ -530,18 +675,29 @@ def build_risk_assessments(customers: list[dict[str, Any]]) -> list[dict[str, An
                 "assessment_id": idx,
                 "customer_id": customer["customer_id"],
                 "assessment_date": date(2025, 1, min(20, idx + 1)),
-                "assessment_type": random.choice(["Periodic Review", "Annual Review", "Transaction Triggered"]),
+                "assessment_type": random.choice(
+                    [
+                        "Periodic Review",
+                        "Annual Review",
+                        "Transaction Triggered",
+                    ]
+                ),
                 "risk_rating": customer["risk_segment"],
                 "risk_score": round(random.uniform(0.15, 0.88), 3),
                 "credit_risk": random.choice(["Low", "Medium", "High"]),
                 "fraud_risk": random.choice(["Low", "Medium", "High"]),
-                "aml_risk": random.choice(["Low", "Medium", "High", "Critical"]),
-                "kyc_status": random.choice(["Verified", "Pending", "Expired"]),
+                "aml_risk": random.choice(
+                    ["Low", "Medium", "High", "Critical"]
+                ),
+                "kyc_status": random.choice(
+                    ["Verified", "Pending", "Expired"]
+                ),
                 "kyc_last_updated": date(2024, 12, min(25, idx + 3)),
                 "pep_flag": idx % 10 == 0,
                 "sanctions_flag": False,
                 "adverse_media_flag": idx % 7 == 0,
-                "high_value_customer": customer["customer_lifetime_value"] > 20000,
+                "high_value_customer": customer["customer_lifetime_value"]
+                > 20000,
                 "transaction_volume_last_90d": round(5000 + idx * 750, 2),
                 "num_accounts": 2 if customer["customer_id"] % 2 == 0 else 1,
                 "years_as_customer": round(1.5 + idx * 0.2, 2),
@@ -560,7 +716,9 @@ def build_risk_assessments(customers: list[dict[str, Any]]) -> list[dict[str, An
     return rows
 
 
-def build_account_events(accounts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def build_account_events(
+    accounts: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
     rows = []
     for idx, account in enumerate(accounts, start=1):
         rows.append(
@@ -570,24 +728,50 @@ def build_account_events(accounts: list[dict[str, Any]]) -> list[dict[str, Any]]
                 "customer_id": account["customer_id"],
                 "product_id": account["product_id"],
                 "event_date": dt(idx % 10, 11),
-                "event_type": random.choice(["Account Opened", "Credit Limit Increased", "Fees Waived", "Dormancy Warning"]),
-                "event_category": random.choice(["Account Setup", "Terms Change", "Fee Related", "Activity Status"]),
+                "event_type": random.choice(
+                    [
+                        "Account Opened",
+                        "Credit Limit Increased",
+                        "Fees Waived",
+                        "Dormancy Warning",
+                    ]
+                ),
+                "event_category": random.choice(
+                    [
+                        "Account Setup",
+                        "Terms Change",
+                        "Fee Related",
+                        "Activity Status",
+                    ]
+                ),
                 "old_value": "1000",
                 "new_value": "1500",
-                "triggered_by": random.choice(["Customer Request", "System Automated", "Risk Management"]),
-                "channel": random.choice(["Online", "Mobile", "Branch", "System"]),
+                "triggered_by": random.choice(
+                    ["Customer Request", "System Automated", "Risk Management"]
+                ),
+                "channel": random.choice(
+                    ["Online", "Mobile", "Branch", "System"]
+                ),
                 "processed_by": f"EMP{idx:04d}",
                 "notes": f"Event for account {account['account_id']}",
                 "is_reversible": idx % 2 == 0,
                 "requires_approval": idx % 3 == 0,
-                "approval_status": random.choice(["Approved", "Pending", "Rejected"]) if idx % 3 == 0 else None,
+                "approval_status": random.choice(
+                    ["Approved", "Pending", "Rejected"]
+                )
+                if idx % 3 == 0
+                else None,
                 "load_time": LOAD_TIME,
             }
         )
     return rows
 
 
-def build_regulatory_reports(customers: list[dict[str, Any]], accounts: list[dict[str, Any]], transactions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def build_regulatory_reports(
+    customers: list[dict[str, Any]],
+    accounts: list[dict[str, Any]],
+    transactions: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
     rows = []
     report_types = [
         ("SAR", "Suspicious Activity Report", "As Needed", "FinCEN"),
@@ -611,14 +795,18 @@ def build_regulatory_reports(customers: list[dict[str, Any]], accounts: list[dic
                 "filing_date": filing_date,
                 "due_date": filing_date + timedelta(days=20),
                 "actual_filing_date": filing_date + timedelta(days=idx % 3),
-                "filing_status": random.choice(["Filed", "Pending", "Late Filed", "In Review"]),
+                "filing_status": random.choice(
+                    ["Filed", "Pending", "Late Filed", "In Review"]
+                ),
                 "report_frequency": rt[2],
                 "regulator": rt[3],
                 "customer_id": customer["customer_id"],
                 "account_id": account["account_id"],
                 "transaction_id": tx["transaction_id"],
                 "amount_reported": round(10000 + idx * 2500, 2),
-                "risk_level": random.choice(["Low", "Medium", "High", "Critical"]),
+                "risk_level": random.choice(
+                    ["Low", "Medium", "High", "Critical"]
+                ),
                 "requires_follow_up": idx % 3 == 0,
                 "follow_up_date": filing_date + timedelta(days=45),
                 "assigned_to": f"COMP{idx:03d}",
@@ -626,7 +814,13 @@ def build_regulatory_reports(customers: list[dict[str, Any]], accounts: list[dic
                 "approval_date": filing_date + timedelta(days=2),
                 "filing_method": random.choice(["Electronic", "Paper"]),
                 "confirmation_number": f"CONF{idx:06d}",
-                "findings": random.choice(["No Issues Found", "Requires Additional Review", "Discrepancy Noted"]),
+                "findings": random.choice(
+                    [
+                        "No Issues Found",
+                        "Requires Additional Review",
+                        "Discrepancy Noted",
+                    ]
+                ),
                 "internal_notes": f"Compliance review {idx}",
                 "is_amended": idx == 7,
                 "original_report_id": 2 if idx == 7 else None,
@@ -637,7 +831,9 @@ def build_regulatory_reports(customers: list[dict[str, Any]], accounts: list[dic
     return rows
 
 
-def build_customer_segments_history(customers: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def build_customer_segments_history(
+    customers: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
     rows = []
     row_id = 1
     for customer in customers:
@@ -660,10 +856,13 @@ def build_customer_segments_history(customers: list[dict[str, Any]]) -> list[dic
                 "change_reason": "Initial Classification",
                 "triggered_by": "Automated Rule",
                 "total_accounts": 1,
-                "total_balance": round(5000 + customer["customer_id"] * 300, 2),
+                "total_balance": round(
+                    5000 + customer["customer_id"] * 300, 2
+                ),
                 "avg_monthly_transactions": 12 + customer["customer_id"],
                 "products_held": 1,
-                "customer_lifetime_value": customer["customer_lifetime_value"] * 0.7,
+                "customer_lifetime_value": customer["customer_lifetime_value"]
+                * 0.7,
                 "tenure_days": 180,
                 "credit_score": customer["credit_score"] - 20,
                 "annual_income": customer["annual_income"],
@@ -697,7 +896,9 @@ def build_customer_segments_history(customers: list[dict[str, Any]]) -> list[dic
                 "change_reason": "Periodic Review",
                 "triggered_by": "Risk Assessment",
                 "total_accounts": 2 if customer["customer_id"] % 2 == 0 else 1,
-                "total_balance": round(9000 + customer["customer_id"] * 450, 2),
+                "total_balance": round(
+                    9000 + customer["customer_id"] * 450, 2
+                ),
                 "avg_monthly_transactions": 20 + customer["customer_id"],
                 "products_held": 2 if customer["customer_id"] % 2 == 0 else 1,
                 "customer_lifetime_value": customer["customer_lifetime_value"],
@@ -708,7 +909,8 @@ def build_customer_segments_history(customers: list[dict[str, Any]]) -> list[dic
                 "digital_engagement_score": 0.72,
                 "branch_visits_last_90d": 1,
                 "online_logins_last_90d": 24,
-                "eligible_for_premium": customer["customer_segment"] in {"Affluent", "Premium", "Business"},
+                "eligible_for_premium": customer["customer_segment"]
+                in {"Affluent", "Premium", "Business"},
                 "churn_risk": random.choice(["Low", "Medium", "High"]),
                 "cross_sell_opportunity": customer["customer_id"] % 3 == 0,
                 "notes": "Updated segment assignment",
@@ -738,7 +940,9 @@ def main() -> None:
     atm_locations = build_atm_locations(branch_locations)
     risk_assessments = build_risk_assessments(customers)
     account_events = build_account_events(accounts)
-    regulatory_reports = build_regulatory_reports(customers, accounts, transactions)
+    regulatory_reports = build_regulatory_reports(
+        customers, accounts, transactions
+    )
     customer_segments_history = build_customer_segments_history(customers)
 
     datasets = {

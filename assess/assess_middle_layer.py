@@ -11,6 +11,7 @@
     python assess/assess_middle_layer.py --reuse-weight 0.3 --depth-weight 0.2
     python assess/assess_middle_layer.py --include-passed-checks
 """
+
 from __future__ import annotations
 
 import argparse
@@ -24,23 +25,31 @@ _root = Path(__file__).resolve().parent.parent
 if str(_root) not in sys.path:
     sys.path.insert(0, str(_root))
 
+from assess.lineage_index import AssessmentLineageIndex
 from assess.llm.context_builder import build_contexts
 from assess.llm.table_inspector import TableInspector
-from assess.lineage_index import AssessmentLineageIndex
-from assess.project_facts.asset_catalog import build_asset_catalog
-from assess.scoring.architecture import score_architecture_health
+from assess.project_facts.asset_catalog import (
+    build_asset_catalog as build_asset_catalog,
+)
+from assess.report import generate_report
+from assess.scoring.architecture import (
+    score_architecture_health as score_architecture_health,
+)
 from assess.scoring.asset_completeness import score_asset_completeness
-from assess.scoring.config import *  # re-export scoring constants/rules
+from assess.scoring.config import (
+    DEFAULT_WEIGHTS,
+)
+from assess.scoring.config import (
+    normalize_score_weights as normalize_score_weights,
+)
 from assess.scoring.depth import score_lineage_depth
 from assess.scoring.metadata_health import score_metadata_health
 from assess.scoring.model_design import score_model_design_health
 from assess.scoring.naming import score_naming_conventions
 from assess.scoring.reuse import score_reusability
 from assess.scoring.task_sql_quality import score_code_quality
-from lineage.table_graph import load_lineage_data
-from assess.report import generate_report
 from config import PROJECT_CONFIG, PROJECT_ROOT
-
+from lineage.table_graph import load_lineage_data
 
 DEFAULT_DIMENSION_ORDER = [
     "reuse",
@@ -90,7 +99,8 @@ def _filter_dimension_checks(
         }
         compact_dimension = dict(dimension)
         compact_dimension["checks"] = [
-            check for check in dimension.get("checks", [])
+            check
+            for check in dimension.get("checks", [])
             if check.get("id") in issue_check_ids
         ]
         filtered[name] = compact_dimension
@@ -112,6 +122,7 @@ def assess(
         get_naming_config,
         load_model_metadata,
     )
+
     nc = get_naming_config(project)
     model_metadata = load_model_metadata(project)
     business_domain_config = get_business_domain_config(project)
@@ -127,8 +138,11 @@ def assess(
         if api_key:
             print("正在调用 DeepSeek API 进行表分类，请稍候...")
             contexts = build_contexts(project, data)
-            cache_file = Path(__file__).resolve(
-            ).parent / "cache" / f"inspect_{project}.json"
+            cache_file = (
+                Path(__file__).resolve().parent
+                / "cache"
+                / f"inspect_{project}.json"
+            )
             if weights.get("no_cache", False) and cache_file.exists():
                 cache_file.unlink()
             inspector = TableInspector(
@@ -200,16 +214,15 @@ def assess(
         code_quality=code_quality_score,
     )
     dimension_keys = [
-        key for key in DEFAULT_DIMENSION_ORDER
+        key
+        for key in DEFAULT_DIMENSION_ORDER
         if selected_dimensions is None or key in selected_dimensions
     ]
     dimensions = {key: dimensions[key] for key in dimension_keys}
     selected_weight_total = sum(weights[key] for key in dimension_keys)
     overall_score = round(
-        sum(
-            weights[key] * dimensions[key]["score"]
-            for key in dimension_keys
-        ) / selected_weight_total,
+        sum(weights[key] * dimensions[key]["score"] for key in dimension_keys)
+        / selected_weight_total,
         1,
     )
     output_dimensions = _filter_dimension_checks(
@@ -227,84 +240,114 @@ def assess(
 
 def main():
     parser = argparse.ArgumentParser(
-        description="数据集市中间层评估工具 (评分权重支持单独指定，最终自动归一化)")
-    parser.add_argument("--project",
-                        default="shop",
-                        choices=["shop", "finance_analytics"],
-                        help="项目名称 (shop / finance_analytics)")
+        description="数据集市中间层评估工具 (评分权重支持单独指定，最终自动归一化)"
+    )
+    parser.add_argument(
+        "--project",
+        default="shop",
+        choices=["shop", "finance_analytics"],
+        help="项目名称 (shop / finance_analytics)",
+    )
     parser.add_argument(
         "--output",
-        help="输出 JSON 文件路径 (默认 assess/assess_result_{project}.json)")
-    parser.add_argument("--reuse-weight",
-                        type=float,
-                        default=DEFAULT_WEIGHTS["reuse"],
-                        help="复用度权重，可单独指定，最终会自动归一化")
-    parser.add_argument("--depth-weight",
-                        type=float,
-                        default=DEFAULT_WEIGHTS["depth"],
-                        help="链路长度权重，可单独指定，最终会自动归一化")
-    parser.add_argument("--model-design-weight",
-                        type=float,
-                        default=DEFAULT_WEIGHTS["model_design"],
-                        help="模型设计权重，可单独指定，最终会自动归一化")
-    parser.add_argument("--architecture-weight",
-                        type=float,
-                        default=None,
-                        help="兼容别名: 等同于 --model-design-weight")
-    parser.add_argument("--metadata-health-weight",
-                        type=float,
-                        default=DEFAULT_WEIGHTS["metadata_health"],
-                        help="元数据健康度权重，可单独指定，最终会自动归一化")
-    parser.add_argument("--naming-weight",
-                        type=float,
-                        default=DEFAULT_WEIGHTS["naming"],
-                        help="命名规范权重，可单独指定，最终会自动归一化")
-    parser.add_argument("--asset-completeness-weight",
-                        type=float,
-                        default=DEFAULT_WEIGHTS["asset_completeness"],
-                        help="资产完整性权重，可单独指定，最终会自动归一化")
-    parser.add_argument("--code-quality-weight",
-                        type=float,
-                        default=DEFAULT_WEIGHTS["code_quality"],
-                        help="代码质量权重，可单独指定，最终会自动归一化")
-    parser.add_argument("--llm",
-                        action="store_true",
-                        help="调用 DeepSeek API 进行 LLM 智能分层检测")
-    parser.add_argument("--no-cache",
-                        action="store_true",
-                        help="禁用 LLM 缓存，强制重新调用 API")
-    parser.add_argument("--parallel",
-                        type=int,
-                        default=2,
-                        help="LLM 并发调用数，默认 2")
+        help="输出 JSON 文件路径 (默认 assess/assess_result_{project}.json)",
+    )
+    parser.add_argument(
+        "--reuse-weight",
+        type=float,
+        default=DEFAULT_WEIGHTS["reuse"],
+        help="复用度权重，可单独指定，最终会自动归一化",
+    )
+    parser.add_argument(
+        "--depth-weight",
+        type=float,
+        default=DEFAULT_WEIGHTS["depth"],
+        help="链路长度权重，可单独指定，最终会自动归一化",
+    )
+    parser.add_argument(
+        "--model-design-weight",
+        type=float,
+        default=DEFAULT_WEIGHTS["model_design"],
+        help="模型设计权重，可单独指定，最终会自动归一化",
+    )
+    parser.add_argument(
+        "--architecture-weight",
+        type=float,
+        default=None,
+        help="兼容别名: 等同于 --model-design-weight",
+    )
+    parser.add_argument(
+        "--metadata-health-weight",
+        type=float,
+        default=DEFAULT_WEIGHTS["metadata_health"],
+        help="元数据健康度权重，可单独指定，最终会自动归一化",
+    )
+    parser.add_argument(
+        "--naming-weight",
+        type=float,
+        default=DEFAULT_WEIGHTS["naming"],
+        help="命名规范权重，可单独指定，最终会自动归一化",
+    )
+    parser.add_argument(
+        "--asset-completeness-weight",
+        type=float,
+        default=DEFAULT_WEIGHTS["asset_completeness"],
+        help="资产完整性权重，可单独指定，最终会自动归一化",
+    )
+    parser.add_argument(
+        "--code-quality-weight",
+        type=float,
+        default=DEFAULT_WEIGHTS["code_quality"],
+        help="代码质量权重，可单独指定，最终会自动归一化",
+    )
+    parser.add_argument(
+        "--llm",
+        action="store_true",
+        help="调用 DeepSeek API 进行 LLM 智能分层检测",
+    )
+    parser.add_argument(
+        "--no-cache",
+        action="store_true",
+        help="禁用 LLM 缓存，强制重新调用 API",
+    )
+    parser.add_argument(
+        "--parallel", type=int, default=2, help="LLM 并发调用数，默认 2"
+    )
     parser.add_argument(
         "--include-passed-checks",
         action="store_true",
-        help="输出通过检查项的完整 checks 证据；默认只输出 issue 关联的失败 checks")
-    parser.add_argument("--reuse",
-                        action="store_true",
-                        help="只输出复用度维度")
-    parser.add_argument("--depth",
-                        action="store_true",
-                        help="只输出链路长度维度")
-    parser.add_argument("--model-design",
-                        action="store_true",
-                        help="只输出模型设计维度")
-    parser.add_argument("--architecture",
-                        action="store_true",
-                        help="兼容别名: 等同于 --model-design")
-    parser.add_argument("--naming",
-                        action="store_true",
-                        help="只输出命名规范维度")
-    parser.add_argument("--asset-completeness",
-                        action="store_true",
-                        help="只输出资产完整性维度")
-    parser.add_argument("--metadata-health",
-                        action="store_true",
-                        help="只输出模型元数据健康度维度")
-    parser.add_argument("--code-quality",
-                        action="store_true",
-                        help="只输出代码质量维度")
+        help="输出通过检查项的完整 checks 证据；默认只输出 issue 关联的失败 checks",
+    )
+    parser.add_argument(
+        "--reuse", action="store_true", help="只输出复用度维度"
+    )
+    parser.add_argument(
+        "--depth", action="store_true", help="只输出链路长度维度"
+    )
+    parser.add_argument(
+        "--model-design", action="store_true", help="只输出模型设计维度"
+    )
+    parser.add_argument(
+        "--architecture",
+        action="store_true",
+        help="兼容别名: 等同于 --model-design",
+    )
+    parser.add_argument(
+        "--naming", action="store_true", help="只输出命名规范维度"
+    )
+    parser.add_argument(
+        "--asset-completeness",
+        action="store_true",
+        help="只输出资产完整性维度",
+    )
+    parser.add_argument(
+        "--metadata-health",
+        action="store_true",
+        help="只输出模型元数据健康度维度",
+    )
+    parser.add_argument(
+        "--code-quality", action="store_true", help="只输出代码质量维度"
+    )
     args = parser.parse_args()
 
     model_design_weight = (
@@ -349,8 +392,9 @@ def main():
     output_path = args.output
     if not output_path:
         output_path = str(
-            Path(__file__).resolve().parent /
-            f"assess_result_{args.project}.json")
+            Path(__file__).resolve().parent
+            / f"assess_result_{args.project}.json"
+        )
 
     with open(output_path, "w") as f:
         json.dump(result, f, ensure_ascii=False, indent=2)

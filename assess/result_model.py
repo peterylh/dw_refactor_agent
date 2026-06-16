@@ -5,7 +5,6 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any
 
-
 SEVERITY_HIGH = "高"
 SEVERITY_MEDIUM = "中"
 SEVERITY_LOW = "低"
@@ -81,9 +80,7 @@ def _merge_remediation(
 
 def _clean_check(check: dict[str, Any]) -> dict[str, Any]:
     return {
-        key: value
-        for key, value in check.items()
-        if not key.startswith("_")
+        key: value for key, value in check.items() if not key.startswith("_")
     }
 
 

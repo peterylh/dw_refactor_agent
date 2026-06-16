@@ -1,5 +1,7 @@
 """Console report formatting for assess results."""
+
 from __future__ import annotations
+
 
 def _fmt_table(
     headers: list[str],
@@ -18,6 +20,7 @@ def _fmt_table(
         lines.append(line)
     return "\n".join(lines)
 
+
 def generate_report(scores: dict, weights: dict, project: str) -> str:
     parts = []
     sep = "─" * 62
@@ -28,7 +31,8 @@ def generate_report(scores: dict, weights: dict, project: str) -> str:
         f"║{'数据集市中间层评估报告':^62}║\n"
         f"║{'─' * 62}║\n"
         f"║{'项目: ' + project:<24}{'总体评分:':>18}{overall_score:>6.1f} / 100{' ' * 2}║\n"
-        f"╠{'═' * 62}╣")
+        f"╠{'═' * 62}╣"
+    )
 
     dims = [
         ("复用度", "reuse"),
@@ -41,9 +45,7 @@ def generate_report(scores: dict, weights: dict, project: str) -> str:
     ]
     dimensions = scores["dimensions"]
     displayed_weight_total = sum(
-        weights[key]
-        for _, key in dims
-        if key in dimensions and key in weights
+        weights[key] for _, key in dims if key in dimensions and key in weights
     )
     for label, key in dims:
         if key not in dimensions:
@@ -56,7 +58,8 @@ def generate_report(scores: dict, weights: dict, project: str) -> str:
             else 0
         )
         parts.append(
-            f"║ {label:<12} 评分:{score:>5.1f}  权重:{w:>2.0f}%{' ' * 24}║")
+            f"║ {label:<12} 评分:{score:>5.1f}  权重:{w:>2.0f}%{' ' * 24}║"
+        )
 
     parts.append(f"╚{'═' * 62}╝")
 
@@ -72,14 +75,16 @@ def generate_report(scores: dict, weights: dict, project: str) -> str:
 
         rows = []
         for rule_id, counts in sorted(dimension["rule_summary"].items()):
-            rows.append([
-                rule_id,
-                counts["name"],
-                counts["severity"],
-                str(counts["pass_count"]),
-                str(counts["total"]),
-                f"{counts['pct']}%",
-            ])
+            rows.append(
+                [
+                    rule_id,
+                    counts["name"],
+                    counts["severity"],
+                    str(counts["pass_count"]),
+                    str(counts["total"]),
+                    f"{counts['pct']}%",
+                ]
+            )
         if not rows:
             rows.append(["(无检查项)", "", "", "0", "0", "0%"])
         parts.append(_fmt_table(headers, rows, col_w))

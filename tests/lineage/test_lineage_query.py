@@ -45,7 +45,10 @@ def _demo_view():
             ],
             "edges": [
                 {
-                    "source": {"type": "column", "id": "ods_order.sale_amount"},
+                    "source": {
+                        "type": "column",
+                        "id": "ods_order.sale_amount",
+                    },
                     "target": {
                         "type": "column",
                         "id": "dwd_order_detail.sale_amount",
@@ -68,7 +71,10 @@ def _demo_view():
                     "source_file": "dws_product_sales_daily.sql",
                 },
                 {
-                    "source": {"type": "column", "id": "dwd_product.product_id"},
+                    "source": {
+                        "type": "column",
+                        "id": "dwd_product.product_id",
+                    },
                     "target": {
                         "type": "column",
                         "id": "dws_product_sales_daily.product_id",

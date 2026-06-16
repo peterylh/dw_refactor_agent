@@ -2,13 +2,6 @@ import pytest
 import yaml
 
 import config
-from config import (
-    BusinessAreaDef,
-    BusinessDomainConfig,
-    DomainDef,
-    PROJECT_ROOT,
-    load_naming_config,
-)
 from assess.assess_middle_layer import (
     assess,
     build_asset_catalog,
@@ -20,6 +13,13 @@ from assess.assess_middle_layer import (
     score_naming_conventions,
 )
 from assess.llm.table_inspector import TableInspectResult
+from config import (
+    PROJECT_ROOT,
+    BusinessAreaDef,
+    BusinessDomainConfig,
+    DomainDef,
+    load_naming_config,
+)
 
 
 def _business_domain_config():
@@ -39,7 +39,8 @@ def _business_domain_config():
 
 def _business_naming_config(tmp_path):
     raw = yaml.safe_load(
-        (PROJECT_ROOT / "naming_config.yaml").read_text(encoding="utf-8"))
+        (PROJECT_ROOT / "naming_config.yaml").read_text(encoding="utf-8")
+    )
     raw["dictionaries"] = {
         "data_domains": {
             "values": [
@@ -86,10 +87,14 @@ def isolated_assess_project(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(config, "PROJECT_ROOT", tmp_path)
     monkeypatch.setattr(assess_module, "PROJECT_ROOT", tmp_path)
-    monkeypatch.setitem(config.PROJECT_CONFIG, project, {
-        "dir": project,
-        "naming_config": "naming_config.yaml",
-    })
+    monkeypatch.setitem(
+        config.PROJECT_CONFIG,
+        project,
+        {
+            "dir": project,
+            "naming_config": "naming_config.yaml",
+        },
+    )
     config._naming_config_cache.clear()
     config._model_metadata_cache.clear()
     yield project
@@ -102,14 +107,12 @@ def _issue_rule_ids(result):
 
 
 def _checks_by_rule(result, rule_id):
-    return [
-        check for check in result["checks"]
-        if check["rule_id"] == rule_id
-    ]
+    return [check for check in result["checks"] if check["rule_id"] == rule_id]
 
 
 def test_assess_returns_dimension_check_issue_model(
-        monkeypatch, sample_lineage_data, isolated_assess_project):
+    monkeypatch, sample_lineage_data, isolated_assess_project
+):
     monkeypatch.setattr(
         "assess.assess_middle_layer.load_lineage_data",
         lambda project: sample_lineage_data,
@@ -136,7 +139,9 @@ def test_assess_returns_dimension_check_issue_model(
             "issues",
         }
     assert result["dimensions"]["model_design"]["score"] == 50.0
-    assert result["dimensions"]["model_design"]["issues"][0]["severity"] == "中"
+    assert (
+        result["dimensions"]["model_design"]["issues"][0]["severity"] == "中"
+    )
     assert result["dimensions"]["asset_completeness"]["issues"] == []
     assert result["dimensions"]["asset_completeness"]["checks"] == []
     assert all(
@@ -147,7 +152,8 @@ def test_assess_returns_dimension_check_issue_model(
 
 
 def test_assess_can_include_passed_checks(
-        monkeypatch, sample_lineage_data, isolated_assess_project):
+    monkeypatch, sample_lineage_data, isolated_assess_project
+):
     monkeypatch.setattr(
         "assess.assess_middle_layer.load_lineage_data",
         lambda project: sample_lineage_data,
@@ -169,7 +175,8 @@ def test_assess_can_include_passed_checks(
 
 
 def test_assess_can_run_selected_model_design_only(
-        monkeypatch, sample_lineage_data, isolated_assess_project):
+    monkeypatch, sample_lineage_data, isolated_assess_project
+):
     monkeypatch.setattr(
         "assess.assess_middle_layer.load_lineage_data",
         lambda project: sample_lineage_data,
@@ -185,7 +192,8 @@ def test_assess_can_run_selected_model_design_only(
 
 
 def test_assess_accepts_architecture_dimension_alias(
-        monkeypatch, sample_lineage_data, isolated_assess_project):
+    monkeypatch, sample_lineage_data, isolated_assess_project
+):
     monkeypatch.setattr(
         "assess.assess_middle_layer.load_lineage_data",
         lambda project: sample_lineage_data,
@@ -200,7 +208,8 @@ def test_assess_accepts_architecture_dimension_alias(
 
 
 def test_assess_passes_reusable_lineage_index_to_scoring_modules(
-        monkeypatch, sample_lineage_data, isolated_assess_project):
+    monkeypatch, sample_lineage_data, isolated_assess_project
+):
     monkeypatch.setattr(
         "assess.assess_middle_layer.load_lineage_data",
         lambda project: sample_lineage_data,
@@ -275,14 +284,17 @@ def test_assess_passes_reusable_lineage_index_to_scoring_modules(
 
 
 def test_generate_report_reads_dimension_issues(
-        monkeypatch, sample_lineage_data, isolated_assess_project):
+    monkeypatch, sample_lineage_data, isolated_assess_project
+):
     monkeypatch.setattr(
         "assess.assess_middle_layer.load_lineage_data",
         lambda project: sample_lineage_data,
     )
 
     result = assess(project=isolated_assess_project)
-    report = generate_report(result, result["weights"], isolated_assess_project)
+    report = generate_report(
+        result, result["weights"], isolated_assess_project
+    )
 
     assert "总体评分" in report
     assert "ARCH_SKIP_LAYER_DEPENDENCY" in report
@@ -295,27 +307,21 @@ def test_normalize_score_weights_supports_partial_override():
 
     assert weights["reuse"] == pytest.approx(0.267857, rel=0, abs=1e-6)
     assert weights["depth"] == pytest.approx(0.160714, rel=0, abs=1e-6)
-    assert weights["model_design"] == pytest.approx(0.160714,
-                                                    rel=0,
-                                                    abs=1e-6)
-    assert weights["asset_completeness"] == pytest.approx(0.080357,
-                                                          rel=0,
-                                                          abs=1e-6)
-    assert weights["metadata_health"] == pytest.approx(0.080357,
-                                                       rel=0,
-                                                       abs=1e-6)
+    assert weights["model_design"] == pytest.approx(0.160714, rel=0, abs=1e-6)
+    assert weights["asset_completeness"] == pytest.approx(
+        0.080357, rel=0, abs=1e-6
+    )
+    assert weights["metadata_health"] == pytest.approx(
+        0.080357, rel=0, abs=1e-6
+    )
     assert weights["naming"] == pytest.approx(0.160714, rel=0, abs=1e-6)
-    assert weights["code_quality"] == pytest.approx(0.089286,
-                                                    rel=0,
-                                                    abs=1e-6)
+    assert weights["code_quality"] == pytest.approx(0.089286, rel=0, abs=1e-6)
 
 
 def test_normalize_score_weights_accepts_architecture_alias():
     weights = normalize_score_weights({"architecture": 0.3})
 
-    assert weights["model_design"] == pytest.approx(0.267857,
-                                                    rel=0,
-                                                    abs=1e-6)
+    assert weights["model_design"] == pytest.approx(0.267857, rel=0, abs=1e-6)
     assert "architecture" not in weights
 
 
@@ -415,28 +421,33 @@ def test_score_metadata_health_passes_valid_entities_schema():
             "layer": "DIM",
             "table_type": "dimension",
             "semantic_subject": "PROD",
-            "entities": [{
-                "code": "PROD",
-                "type": "primary",
-                "key_columns": ["product_id"],
-            }, {
-                "code": "CAT",
-                "type": "foreign",
-                "key_columns": ["category_id"],
-                "relationship": {
-                    "type": "many_to_one",
-                    "from_entity": "PROD",
+            "entities": [
+                {
+                    "code": "PROD",
+                    "type": "primary",
+                    "key_columns": ["product_id"],
                 },
-            }],
+                {
+                    "code": "CAT",
+                    "type": "foreign",
+                    "key_columns": ["category_id"],
+                    "relationship": {
+                        "type": "many_to_one",
+                        "from_entity": "PROD",
+                    },
+                },
+            ],
         },
         "I_SHOP_PROD_SALE_DS": {
             "layer": "DWS",
             "table_type": "fact",
-            "entities": [{
-                "code": "PROD",
-                "type": "foreign",
-                "key_columns": ["product_id"],
-            }],
+            "entities": [
+                {
+                    "code": "PROD",
+                    "type": "foreign",
+                    "key_columns": ["product_id"],
+                }
+            ],
             "grain": {
                 "entities": ["PROD"],
                 "time_column": "stat_date",
@@ -454,55 +465,65 @@ def test_score_metadata_health_passes_valid_entities_schema():
 
 def test_score_metadata_health_validates_dim_semantic_subject():
     nc = load_naming_config(PROJECT_ROOT / "naming_config.yaml")
-    tables = [{
-        "name": "dim_product",
-        "layer": "DIM",
-        "columns": [{"name": "product_id", "type": "BIGINT"}],
-    }]
+    tables = [
+        {
+            "name": "dim_product",
+            "layer": "DIM",
+            "columns": [{"name": "product_id", "type": "BIGINT"}],
+        }
+    ]
     model_metadata = {
         "dim_product": {
             "name": "dim_product",
             "layer": "DIM",
             "table_type": "dimension",
             "semantic_subject": "STORE",
-            "entities": [{
-                "code": "PRODUCT",
-                "type": "primary",
-                "key_columns": ["product_id"],
-            }],
+            "entities": [
+                {
+                    "code": "PRODUCT",
+                    "type": "primary",
+                    "key_columns": ["product_id"],
+                }
+            ],
         }
     }
 
     result = score_metadata_health(tables, nc, model_metadata)
 
     assert "METADATA_DIM_SEMANTIC_SUBJECT_MATCHES_PRIMARY" in _issue_rule_ids(
-        result)
+        result
+    )
 
 
 def test_score_metadata_health_requires_dim_semantic_subject():
     nc = load_naming_config(PROJECT_ROOT / "naming_config.yaml")
-    tables = [{
-        "name": "dim_customer",
-        "layer": "DIM",
-        "columns": [{"name": "customer_id", "type": "BIGINT"}],
-    }]
+    tables = [
+        {
+            "name": "dim_customer",
+            "layer": "DIM",
+            "columns": [{"name": "customer_id", "type": "BIGINT"}],
+        }
+    ]
     model_metadata = {
         "dim_customer": {
             "name": "dim_customer",
             "layer": "DIM",
             "table_type": "dimension",
-            "entities": [{
-                "code": "CUSTOMER",
-                "type": "primary",
-                "key_columns": ["customer_id"],
-            }],
+            "entities": [
+                {
+                    "code": "CUSTOMER",
+                    "type": "primary",
+                    "key_columns": ["customer_id"],
+                }
+            ],
         }
     }
 
     result = score_metadata_health(tables, nc, model_metadata)
 
     assert "METADATA_DIM_SEMANTIC_SUBJECT_MATCHES_PRIMARY" in _issue_rule_ids(
-        result)
+        result
+    )
 
 
 def test_score_metadata_health_requires_dws_grain_entities_from_models():
@@ -514,23 +535,25 @@ def test_score_metadata_health_requires_dws_grain_entities_from_models():
     )
 
     assert result["score"] == 0.0
-    assert result["issues"] == [{
-        "id": "metadata_health.iss_001",
-        "severity": "高",
-        "rule_id": "METADATA_GRAIN_ENTITIES_PRESENT",
-        "target": {
-            "type": "table",
-            "name": "I_SHOP_PROD_SALE_DS",
-        },
-        "title": "DWS模型缺少grain.entities",
-        "message": "缺少grain.entities",
-        "remediation": {
-            "summary": "在模型YAML中补齐grain.entities",
-            "strategy": "update_model_grain_entities",
-            "edit_scope": ["models"],
-        },
-        "check_ids": ["metadata_health.chk_001"],
-    }]
+    assert result["issues"] == [
+        {
+            "id": "metadata_health.iss_001",
+            "severity": "高",
+            "rule_id": "METADATA_GRAIN_ENTITIES_PRESENT",
+            "target": {
+                "type": "table",
+                "name": "I_SHOP_PROD_SALE_DS",
+            },
+            "title": "DWS模型缺少grain.entities",
+            "message": "缺少grain.entities",
+            "remediation": {
+                "summary": "在模型YAML中补齐grain.entities",
+                "strategy": "update_model_grain_entities",
+                "edit_scope": ["models"],
+            },
+            "check_ids": ["metadata_health.chk_001"],
+        }
+    ]
 
 
 def test_score_metadata_health_checks_business_dictionary_metadata(tmp_path):
@@ -561,8 +584,10 @@ def test_score_metadata_health_checks_business_dictionary_metadata(tmp_path):
         "total": 2,
         "pct": 50.0,
     }
-    assert result["rule_summary"]["METADATA_BUSINESS_AREA_VALID"][
-        "pass_count"] == 1
+    assert (
+        result["rule_summary"]["METADATA_BUSINESS_AREA_VALID"]["pass_count"]
+        == 1
+    )
     assert _issue_rule_ids(result) == {
         "METADATA_DATA_DOMAIN_VALID",
         "METADATA_BUSINESS_AREA_VALID",
@@ -570,7 +595,8 @@ def test_score_metadata_health_checks_business_dictionary_metadata(tmp_path):
 
 
 def test_score_architecture_health_penalizes_declared_table_type_mismatch(
-        sample_lineage_data):
+    sample_lineage_data,
+):
     result = score_architecture_health(
         sample_lineage_data["tables"],
         sample_lineage_data["edges"],
@@ -593,13 +619,15 @@ def test_score_architecture_health_penalizes_declared_table_type_mismatch(
     )
 
     type_issue = next(
-        issue for issue in result["issues"]
+        issue
+        for issue in result["issues"]
         if issue["rule_id"] == "ARCH_TABLE_TYPE_MATCHES_LLM"
     )
     assert type_issue["severity"] == "中"
     assert type_issue["target"]["name"] == "dws_store_sales_daily"
     check = next(
-        check for check in result["checks"]
+        check
+        for check in result["checks"]
         if check["id"] == type_issue["check_ids"][0]
     )
     assert check["actual"] == "配置类型=fact, 推断类型=dimension"
@@ -610,11 +638,13 @@ def test_score_architecture_health_allows_ads_to_read_dim():
         {"name": "dim_customer", "layer": "DIM", "columns": []},
         {"name": "ads_customer_by_segment", "layer": "ADS", "columns": []},
     ]
-    edges = [{
-        "source": "dim_customer.customer_id",
-        "target": "ads_customer_by_segment.customer_id",
-        "source_file": "ads_customer_by_segment.sql",
-    }]
+    edges = [
+        {
+            "source": "dim_customer.customer_id",
+            "target": "ads_customer_by_segment.customer_id",
+            "source_file": "ads_customer_by_segment.sql",
+        }
+    ]
 
     result = score_architecture_health(tables, edges, [])
 
@@ -724,8 +754,7 @@ DISTRIBUTED BY HASH(order_id) BUCKETS 1;
 
     assert result["score"] == 25.0
     assert {
-        (item["target"]["name"], item["rule_id"])
-        for item in result["issues"]
+        (item["target"]["name"], item["rule_id"]) for item in result["issues"]
     } == {
         ("dwd_orders", "ASSET_DDL_HAS_MODEL"),
         ("dwd_orders", "ASSET_EXECUTABLE_DDL_HAS_TASK"),
@@ -744,10 +773,13 @@ DISTRIBUTED BY HASH(order_id) BUCKETS 1;
         for check in _checks_by_rule(result, rule_id)
     )
     task_lineage_check = next(
-        check for check in result["checks"]
+        check
+        for check in result["checks"]
         if check["rule_id"] == "ASSET_TASK_LINEAGE_MATCHES_OUTPUT"
     )
-    assert task_lineage_check["actual"] == "实际产出=['dws_missing']，血缘目标=[]"
+    assert (
+        task_lineage_check["actual"] == "实际产出=['dws_missing']，血缘目标=[]"
+    )
     assert task_lineage_check["evidence"] == {
         "outputs": ["dws_missing"],
         "lineage_targets": [],
@@ -849,10 +881,12 @@ DROP TABLE IF EXISTS demo.tmp_orders_stage;
         ],
         None,
         project_dir,
-        edges=[{
-            "source_file": "tmp_orders_stage.sql",
-            "target": "demo.tmp_orders_stage.order_id",
-        }],
+        edges=[
+            {
+                "source_file": "tmp_orders_stage.sql",
+                "target": "demo.tmp_orders_stage.order_id",
+            }
+        ],
         indirect_edges=[],
     )
 
@@ -872,12 +906,14 @@ def test_asset_catalog_links_structured_edge_target_to_task(tmp_path):
         [{"name": "dws_orders", "layer": "DWS", "columns": []}],
         {"dws_orders": {"name": "dws_orders", "layer": "DWS"}},
         project_dir,
-        edges=[{
-            "source": {"type": "column", "id": "dwd_orders.id"},
-            "target": {"type": "column", "id": "demo.dws_orders.id"},
-            "relation_type": "direct",
-            "source_file": "dws_orders.sql",
-        }],
+        edges=[
+            {
+                "source": {"type": "column", "id": "dwd_orders.id"},
+                "target": {"type": "column", "id": "demo.dws_orders.id"},
+                "relation_type": "direct",
+                "source_file": "dws_orders.sql",
+            }
+        ],
         indirect_edges=[],
     )
 
@@ -905,7 +941,8 @@ DISTRIBUTED BY HASH(id) BUCKETS 1;
 
 
 def test_score_asset_completeness_flags_task_with_no_persistent_output(
-        tmp_path):
+    tmp_path,
+):
     project_dir = tmp_path / "demo"
     (project_dir / "tasks").mkdir(parents=True)
     (project_dir / "tasks" / "tmp_orders_stage.sql").write_text(
@@ -1015,7 +1052,8 @@ def test_score_asset_completeness_flags_duplicate_table_writers(tmp_path):
 
 
 def test_score_asset_completeness_allows_full_refresh_companion_writer(
-        tmp_path):
+    tmp_path,
+):
     project_dir = tmp_path / "demo"
     _write_simple_table_assets(project_dir, ["dws_orders"])
     (project_dir / "tasks" / "full_refresh").mkdir(parents=True)
@@ -1024,8 +1062,7 @@ def test_score_asset_completeness_allows_full_refresh_companion_writer(
         encoding="utf-8",
     )
     (
-        project_dir / "tasks" / "full_refresh" /
-        "dws_orders_full_refresh.sql"
+        project_dir / "tasks" / "full_refresh" / "dws_orders_full_refresh.sql"
     ).write_text(
         "INSERT INTO demo.dws_orders SELECT 1 AS id;",
         encoding="utf-8",
@@ -1053,11 +1090,13 @@ def test_score_naming_conventions_outputs_table_and_column_issues():
     nc = load_naming_config(PROJECT_ROOT / "naming_config.yaml")
 
     result = score_naming_conventions(
-        [{
-            "name": "dwd_customer",
-            "layer": "DWD",
-            "columns": [{"name": "customer_id"}],
-        }],
+        [
+            {
+                "name": "dwd_customer",
+                "layer": "DWD",
+                "columns": [{"name": "customer_id"}],
+            }
+        ],
         nc,
     )
 
@@ -1077,18 +1116,17 @@ def test_score_naming_conventions_does_not_expose_internal_violation_text():
     nc = load_naming_config(PROJECT_ROOT / "naming_config.yaml")
 
     result = score_naming_conventions(
-        [{
-            "name": "dwd_customer_name_that_is_too_long",
-            "layer": "DWD",
-            "columns": [],
-        }],
+        [
+            {
+                "name": "dwd_customer_name_that_is_too_long",
+                "layer": "DWD",
+                "columns": [],
+            }
+        ],
         nc,
     )
 
-    assert {
-        issue["rule_id"]
-        for issue in result["issues"]
-    } == {
+    assert {issue["rule_id"] for issue in result["issues"]} == {
         "NAMING_TABLE_TEMPLATE",
         "NAMING_TABLE_MAX_LENGTH",
     }
@@ -1136,7 +1174,8 @@ PROPERTIES ("replication_num" = "1");
     )
 
     column_issue = next(
-        issue for issue in result["issues"]
+        issue
+        for issue in result["issues"]
         if issue["rule_id"] == "NAMING_COLUMN_NAME"
     )
     assert column_issue["remediation"]["related_files"] == [
@@ -1146,14 +1185,18 @@ PROPERTIES ("replication_num" = "1");
     ]
 
 
-def test_naming_checks_business_segments_against_valid_model_metadata(tmp_path):
+def test_naming_checks_business_segments_against_valid_model_metadata(
+    tmp_path,
+):
     nc = _business_naming_config(tmp_path)
     result = score_naming_conventions(
-        [{
-            "name": "M_PAYM_04_CHREM_DI",
-            "layer": "DWD",
-            "columns": [],
-        }],
+        [
+            {
+                "name": "M_PAYM_04_CHREM_DI",
+                "layer": "DWD",
+                "columns": [],
+            }
+        ],
         nc,
         {
             "M_PAYM_04_CHREM_DI": {
@@ -1203,11 +1246,13 @@ PROPERTIES ("replication_num" = "1");
         nc,
         {table_name: {"layer": "DWD"}},
         project_dir=project_dir,
-        edges=[{
-            "source": "ods_source.ID",
-            "target": f"{table_name}.ID",
-            "source_file": "wrong_task.sql",
-        }],
+        edges=[
+            {
+                "source": "ods_source.ID",
+                "target": f"{table_name}.ID",
+                "source_file": "wrong_task.sql",
+            }
+        ],
         indirect_edges=[],
     )
 
@@ -1222,11 +1267,13 @@ PROPERTIES ("replication_num" = "1");
 def test_score_naming_conventions_checks_atomic_and_derived_metrics():
     nc = load_naming_config(PROJECT_ROOT / "naming_config.yaml")
     result = score_naming_conventions(
-        [{
-            "name": "M_WEMG_04_CHREM_DI",
-            "layer": "DWD",
-            "columns": [],
-        }],
+        [
+            {
+                "name": "M_WEMG_04_CHREM_DI",
+                "layer": "DWD",
+                "columns": [],
+            }
+        ],
         nc,
         {
             "M_WEMG_04_CHREM_DI": {
@@ -1248,14 +1295,16 @@ def test_score_naming_conventions_checks_dws_and_dim_entity_alignment():
     nc = load_naming_config(PROJECT_ROOT / "shop/naming_config.yaml")
 
     dws_result = score_naming_conventions(
-        [{
-            "name": "I_SHOP_CAT_SALE_DS",
-            "layer": "DWS",
-            "columns": [
-                {"name": "category_id"},
-                {"name": "stat_date"},
-            ],
-        }],
+        [
+            {
+                "name": "I_SHOP_CAT_SALE_DS",
+                "layer": "DWS",
+                "columns": [
+                    {"name": "category_id"},
+                    {"name": "stat_date"},
+                ],
+            }
+        ],
         nc,
         {
             "I_SHOP_CAT_SALE_DS": {
@@ -1295,11 +1344,13 @@ def test_score_naming_conventions_checks_dim_classification_alignment():
             "DIM_BASE_PROD_INFO_INFO": {
                 "dimension_role": "ADDT",
                 "dimension_content_type": "TAG",
-                "entities": [{
-                    "code": "PROD",
-                    "type": "primary",
-                    "key_columns": ["product_id"],
-                }],
+                "entities": [
+                    {
+                        "code": "PROD",
+                        "type": "primary",
+                        "key_columns": ["product_id"],
+                    }
+                ],
             }
         },
     )
@@ -1312,17 +1363,20 @@ def test_score_naming_conventions_checks_dim_classification_alignment():
 
 
 def test_score_naming_conventions_ignores_lineage_tables_when_project_dir_exists(
-        tmp_path):
+    tmp_path,
+):
     nc = load_naming_config(PROJECT_ROOT / "naming_config.yaml")
     project_dir = tmp_path / "demo"
     (project_dir / "ddl").mkdir(parents=True)
 
     result = score_naming_conventions(
-        [{
-            "name": "M_WEMG_04_CHREM_DI",
-            "layer": "DWD",
-            "columns": [{"name": "BAD_FIELD"}],
-        }],
+        [
+            {
+                "name": "M_WEMG_04_CHREM_DI",
+                "layer": "DWD",
+                "columns": [{"name": "BAD_FIELD"}],
+            }
+        ],
         nc,
         project_dir=project_dir,
     )

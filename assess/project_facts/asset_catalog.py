@@ -1,4 +1,5 @@
 """Project asset catalog collection for assess scoring."""
+
 from __future__ import annotations
 
 import re
@@ -10,6 +11,7 @@ import yaml
 from ddl_deriver.ddl_deriver import parse_create_table
 from lineage.sql_task_facts import extract_task_table_facts
 from lineage.table_graph import _table_from_node
+
 
 def _short_table_name(table_name: str) -> str:
     name = str(table_name or "").strip().rstrip(";")
@@ -51,8 +53,9 @@ def _ddl_declared_table_name(ddl_path: Path) -> str:
     return _short_table_name(match.group(1)) if match else ""
 
 
-def _ddl_table_for_naming(ddl_path: Path,
-                          model_metadata: dict | None) -> dict | None:
+def _ddl_table_for_naming(
+    ddl_path: Path, model_metadata: dict | None
+) -> dict | None:
     try:
         table_def = parse_create_table(ddl_path.read_text(encoding="utf-8"))
     except Exception:
@@ -121,7 +124,9 @@ def _extract_task_table_facts(task_path: Path, source_file: str) -> dict:
 
 def _expected_task_table(task_path: Path) -> str:
     stem = task_path.stem
-    if task_path.parent.name == "full_refresh" and stem.endswith("_full_refresh"):
+    if task_path.parent.name == "full_refresh" and stem.endswith(
+        "_full_refresh"
+    ):
         return stem[: -len("_full_refresh")]
     return stem
 
@@ -243,9 +248,7 @@ def build_asset_catalog(
             for table in task_facts["transient_tables"]:
                 name = _short_table_name(table.get("name", ""))
                 if name:
-                    transient_targets_by_source_file[relative_source].add(
-                        name
-                    )
+                    transient_targets_by_source_file[relative_source].add(name)
     transient_targets_by_source_file = dict(transient_targets_by_source_file)
     transient_task_tables = {
         name
@@ -259,9 +262,7 @@ def build_asset_catalog(
         transient_targets_by_source_file,
     )
     persistent_lineage_tables = {
-        target
-        for targets in lineage_targets.values()
-        for target in targets
+        target for targets in lineage_targets.values() for target in targets
     }
 
     for table in tables or []:
@@ -269,9 +270,8 @@ def build_asset_catalog(
         if not name:
             continue
         if (
-            (name in transient_task_tables or table.get("is_transient"))
-            and name not in persistent_lineage_tables
-        ):
+            name in transient_task_tables or table.get("is_transient")
+        ) and name not in persistent_lineage_tables:
             continue
         asset = ensure_asset(name)
         asset["lineage_table"] = dict(table)
@@ -301,7 +301,8 @@ def build_asset_catalog(
             for ddl_path in sorted(ddl_dir.glob("*.sql")):
                 table = _ddl_table_for_naming(ddl_path, model_metadata)
                 declared_name = (
-                    table["name"] if table
+                    table["name"]
+                    if table
                     else _ddl_declared_table_name(ddl_path)
                 )
                 if not declared_name:
@@ -324,9 +325,7 @@ def build_asset_catalog(
             for model_path in sorted(models_dir.glob("*.yaml")):
                 try:
                     raw = (
-                        yaml.safe_load(
-                            model_path.read_text(encoding="utf-8")
-                        )
+                        yaml.safe_load(model_path.read_text(encoding="utf-8"))
                         or {}
                     )
                 except yaml.YAMLError:
@@ -337,10 +336,7 @@ def build_asset_catalog(
                     raw.get("name") or model_path.stem
                 )
                 asset = ensure_asset(declared_name)
-                metadata = (
-                    (model_metadata or {}).get(declared_name)
-                    or raw
-                )
+                metadata = (model_metadata or {}).get(declared_name) or raw
                 asset["model"] = dict(
                     exists=True,
                     path=model_path,
@@ -366,14 +362,15 @@ def build_asset_catalog(
                         relative_source,
                         set(),
                     ),
-                    is_full_refresh=(
-                        task_path.parent.name == "full_refresh"
-                    ),
+                    is_full_refresh=(task_path.parent.name == "full_refresh"),
                 )
                 task_facts.append(fact)
                 linked_names = set(outputs)
-                if not linked_names and not (
-                    task_table_facts_by_path[task_path]["transient_tables"]
+                if (
+                    not linked_names
+                    and not (
+                        task_table_facts_by_path[task_path]["transient_tables"]
+                    )
                 ):
                     linked_names.add(expected)
                 for table_name in linked_names:
@@ -389,7 +386,10 @@ def build_asset_catalog(
         tasks=task_facts,
     )
 
-def _related_files_for_table(asset_catalog: dict, table_name: str) -> list[str]:
+
+def _related_files_for_table(
+    asset_catalog: dict, table_name: str
+) -> list[str]:
     project_dir = asset_catalog.get("project_dir")
     if not project_dir:
         return []
@@ -398,7 +398,9 @@ def _related_files_for_table(asset_catalog: dict, table_name: str) -> list[str]:
     ddl = asset.get("ddl") or {}
     if ddl.get("path"):
         files.append(_display_file_path(project_dir, ddl["path"]))
-    for task in sorted(asset.get("tasks") or [], key=lambda item: item["file"]):
+    for task in sorted(
+        asset.get("tasks") or [], key=lambda item: item["file"]
+    ):
         files.append(_display_file_path(project_dir, task["path"]))
     model = asset.get("model") or {}
     if model.get("path"):

@@ -1,4 +1,5 @@
 """Model design health scoring dimension."""
+
 from __future__ import annotations
 
 import re
@@ -11,9 +12,9 @@ from sqlglot import exp
 from assess.llm.table_inspector import VALID_TABLE_TYPES
 from assess.project_facts.business_metadata import (
     _business_area_applies,
+    _data_domain_applies,
     _declared_business_area,
     _declared_data_domain,
-    _data_domain_applies,
     _valid_inferred_business_area,
     _valid_inferred_data_domain,
 )
@@ -92,8 +93,9 @@ def _select_aggregate_aliases(select: exp.Select) -> list[str]:
     return sorted({alias for alias in aliases if alias})
 
 
-def _select_group_output_columns(select: exp.Select,
-                                 group_by_columns: list[str]) -> list[str]:
+def _select_group_output_columns(
+    select: exp.Select, group_by_columns: list[str]
+) -> list[str]:
     group_set = set(group_by_columns)
     outputs = set(group_by_columns)
     for expression in select.expressions:
@@ -228,10 +230,7 @@ def _task_sql_text(task: dict) -> str:
 
 def _task_source_file(task: dict) -> str:
     return str(
-        task.get("source_file")
-        or task.get("file")
-        or task.get("path")
-        or ""
+        task.get("source_file") or task.get("file") or task.get("path") or ""
     )
 
 
@@ -290,7 +289,8 @@ def _combined_design_facts(
     edge_facts = lineage_view.lineage_facts_for_table(table_name)
     return {
         **sql_facts,
-        "has_group_by": sql_facts["has_group_by"] or edge_facts["has_group_by"],
+        "has_group_by": sql_facts["has_group_by"]
+        or edge_facts["has_group_by"],
         "has_aggregate": (
             sql_facts["has_aggregate"] or edge_facts["has_aggregate"]
         ),
@@ -334,16 +334,13 @@ def _metric_items(raw_metrics) -> list[dict]:
 
 
 def _upstream_tables_for(table_name: str, table_edges: dict) -> list[str]:
-    upstream = [
-        src for (src, tgt) in table_edges
-        if tgt == table_name
-    ]
+    upstream = [src for (src, tgt) in table_edges if tgt == table_name]
     return sorted(set(upstream))
 
 
 def _atomic_metric_names_by_table(
-        model_metadata: dict,
-        table_names: list[str]) -> dict[str, set[str]]:
+    model_metadata: dict, table_names: list[str]
+) -> dict[str, set[str]]:
     metrics_by_table = {}
     for table_name in table_names:
         metadata = (model_metadata or {}).get(table_name) or {}
@@ -354,8 +351,8 @@ def _atomic_metric_names_by_table(
 
 
 def _candidate_base_metric_tables(
-        base_metric: str,
-        upstream_atomic_metrics: dict[str, set[str]]) -> list[str]:
+    base_metric: str, upstream_atomic_metrics: dict[str, set[str]]
+) -> list[str]:
     return sorted(
         table_name
         for table_name, metric_names in upstream_atomic_metrics.items()
@@ -364,8 +361,8 @@ def _candidate_base_metric_tables(
 
 
 def _derived_metric_base_issues(
-        metadata: dict,
-        upstream_atomic_metrics: dict[str, set[str]]) -> dict[str, list[str]]:
+    metadata: dict, upstream_atomic_metrics: dict[str, set[str]]
+) -> dict[str, list[str]]:
     missing_base_metrics = []
     missing_base_metric_tables = []
     invalid_base_metrics = []
@@ -411,7 +408,9 @@ def _derived_metric_base_issues(
         "missing_aggregations": sorted(missing_aggregations),
         "upstream_atomic_metrics": {
             table_name: sorted(metric_names)
-            for table_name, metric_names in sorted(upstream_atomic_metrics.items())
+            for table_name, metric_names in sorted(
+                upstream_atomic_metrics.items()
+            )
         },
     }
 
@@ -454,8 +453,7 @@ def _has_event_key(table: dict, metadata: dict) -> bool:
         if not isinstance(entity, dict):
             continue
         candidates.extend(
-            str(key or "").strip()
-            for key in entity.get("key_columns") or []
+            str(key or "").strip() for key in entity.get("key_columns") or []
         )
     for candidate in candidates:
         name = candidate.lower()
@@ -500,7 +498,8 @@ def score_model_design_health(
     checks for layer boundaries and grain clarity.
     """
     table_layers = (
-        table_layers if table_layers is not None
+        table_layers
+        if table_layers is not None
         else build_table_layer_map(tables)
     )
     table_count = len(tables)
@@ -511,7 +510,8 @@ def score_model_design_health(
         indirect_edges,
     )
     table_edges = (
-        table_edges if table_edges is not None
+        table_edges
+        if table_edges is not None
         else build_table_edge_source_files(edges, indirect_edges)
     )
 
@@ -552,8 +552,7 @@ def score_model_design_health(
         )
         if not passed:
             effective_severity = (
-                severity
-                or MODEL_DESIGN_RULES[rule_id]["severity"]
+                severity or MODEL_DESIGN_RULES[rule_id]["severity"]
             )
             table_weight[target_table] += SEVERITY_WEIGHT[effective_severity]
 
@@ -635,7 +634,9 @@ def score_model_design_health(
                 message=(
                     "分层配置疑似错误(LLM): "
                     f"配置层={layer}, 推断层={result.inferred_layer}"
-                ) if result.is_violating_declared_layer else "",
+                )
+                if result.is_violating_declared_layer
+                else "",
             )
 
             is_dwd_dimension = (
@@ -653,7 +654,8 @@ def score_model_design_health(
                 },
                 message=(
                     "维度表位置不当(LLM): 维度表应置于 DIM 层"
-                    if is_dwd_dimension else ""
+                    if is_dwd_dimension
+                    else ""
                 ),
             )
 
@@ -676,7 +678,9 @@ def score_model_design_health(
                     message=(
                         "表类型配置疑似错误(LLM): "
                         f"配置类型={declared_type}, 推断类型={result.table_type}"
-                    ) if type_mismatch else "",
+                    )
+                    if type_mismatch
+                    else "",
                 )
 
             if _data_domain_applies(layer):
@@ -686,15 +690,15 @@ def score_model_design_health(
                 )
                 declared_domain = (
                     business_domain_config.normalize_domain(
-                        _declared_data_domain(model_metadata, name))
+                        _declared_data_domain(model_metadata, name)
+                    )
                     if business_domain_config
                     else _declared_data_domain(model_metadata, name)
                 )
                 if inferred_domain:
                     domain_mismatch = inferred_domain != declared_domain
                     severity = (
-                        SEVERITY_MEDIUM
-                        if declared_domain else SEVERITY_LOW
+                        SEVERITY_MEDIUM if declared_domain else SEVERITY_LOW
                     )
                     record_check(
                         rule_id="ARCH_DATA_DOMAIN_MATCHES_LLM",
@@ -713,7 +717,9 @@ def score_model_design_health(
                             "数据域配置疑似错误(LLM): "
                             f"配置={declared_domain or '未配置'}, "
                             f"推断={inferred_domain}"
-                        ) if domain_mismatch else "",
+                        )
+                        if domain_mismatch
+                        else "",
                         severity=severity if domain_mismatch else None,
                     )
 
@@ -724,15 +730,15 @@ def score_model_design_health(
                 )
                 declared_area = (
                     business_domain_config.normalize_business_area(
-                        _declared_business_area(model_metadata, name))
+                        _declared_business_area(model_metadata, name)
+                    )
                     if business_domain_config
                     else _declared_business_area(model_metadata, name)
                 )
                 if inferred_area:
                     area_mismatch = inferred_area != declared_area
                     severity = (
-                        SEVERITY_MEDIUM
-                        if declared_area else SEVERITY_LOW
+                        SEVERITY_MEDIUM if declared_area else SEVERITY_LOW
                     )
                     record_check(
                         rule_id="ARCH_BUSINESS_AREA_MATCHES_LLM",
@@ -750,7 +756,9 @@ def score_model_design_health(
                         message=(
                             "业务板块配置疑似错误(LLM): "
                             f"配置={declared_area or '未配置'}, 推断={inferred_area}"
-                        ) if area_mismatch else "",
+                        )
+                        if area_mismatch
+                        else "",
                         severity=severity if area_mismatch else None,
                     )
 
@@ -763,7 +771,8 @@ def score_model_design_health(
 
         metric_groups = _metric_group_names(metadata)
         if (
-            layer == "DIM" or _table_type(model_metadata, table_name) == "dimension"
+            layer == "DIM"
+            or _table_type(model_metadata, table_name) == "dimension"
         ) and metric_groups:
             record_check(
                 rule_id="MODEL_DIM_NO_METRIC_GROUPS",
@@ -792,15 +801,12 @@ def score_model_design_health(
                 target_table=table_name,
                 passed=not has_aggregation,
                 expected="DWD事实表不包含GROUP BY或聚合函数",
-                actual=(
-                    "存在聚合"
-                    if has_aggregation
-                    else "未发现聚合"
-                ),
+                actual=("存在聚合" if has_aggregation else "未发现聚合"),
                 evidence=design_facts,
                 message=(
                     "DWD事实表疑似承载汇总逻辑，应保持明细粒度"
-                    if has_aggregation else ""
+                    if has_aggregation
+                    else ""
                 ),
             )
             non_atomic_metric_groups = {
@@ -821,7 +827,8 @@ def score_model_design_health(
                 evidence={"metric_groups": non_atomic_metric_groups},
                 message=(
                     "DWD事实表包含派生或计算指标，应上移到DWS或修正指标分组"
-                    if non_atomic_metric_groups else ""
+                    if non_atomic_metric_groups
+                    else ""
                 ),
             )
             has_event_key = _has_event_key(table, metadata)
@@ -830,14 +837,17 @@ def score_model_design_health(
                 target_table=table_name,
                 passed=has_event_key,
                 expected="DWD事实表包含事件/流水/明细键",
-                actual="存在事件键候选" if has_event_key else "未发现事件键候选",
+                actual="存在事件键候选"
+                if has_event_key
+                else "未发现事件键候选",
                 evidence={
                     "columns": _table_column_names(table),
                     "entities": metadata.get("entities") or [],
                 },
                 message=(
                     "DWD事实表缺少明显事件键，粒度可能不清晰"
-                    if not has_event_key else ""
+                    if not has_event_key
+                    else ""
                 ),
             )
 
@@ -871,7 +881,8 @@ def score_model_design_health(
                     evidence=design_facts,
                     message=(
                         "DWS事实表疑似只是明细透传，缺少汇总逻辑"
-                        if not design_facts["has_aggregate"] else ""
+                        if not design_facts["has_aggregate"]
+                        else ""
                     ),
                 )
             if metadata.get("derived_metrics"):
@@ -907,7 +918,8 @@ def score_model_design_health(
                     },
                     message=(
                         "DWS派生指标应显式关联上游原子指标，并配置聚合方式"
-                        if invalid_relationships else ""
+                        if invalid_relationships
+                        else ""
                     ),
                 )
             if has_grain and design_facts["has_group_by"]:
@@ -929,7 +941,8 @@ def score_model_design_health(
                     evidence={**design_facts, **mismatch},
                     message=(
                         "DWS事实表声明粒度与SQL GROUP BY不一致"
-                        if not mismatch["matched"] else ""
+                        if not mismatch["matched"]
+                        else ""
                     ),
                 )
                 leakage = _dws_plain_field_leakage(metadata, design_facts)
@@ -946,7 +959,8 @@ def score_model_design_health(
                     evidence=leakage,
                     message=(
                         "DWS输出字段包含非聚合且不属于粒度的明细字段"
-                        if leakage["leaked_columns"] else ""
+                        if leakage["leaked_columns"]
+                        else ""
                     ),
                 )
 

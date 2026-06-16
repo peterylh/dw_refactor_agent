@@ -1,13 +1,15 @@
 from __future__ import annotations
 
-from pathlib import Path
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import yaml
 
 import config
+from assess.project_facts.business_semantics import (
+    load_business_semantics_catalog,
+)
 from config import get_business_domain_config, load_model_metadata
-from assess.project_facts.business_semantics import load_business_semantics_catalog
 from lineage.view import LineageView
 
 DATA_DOMAIN_LAYERS = {"DWD"}
@@ -24,7 +26,8 @@ class TableContext:
     downstream_tables: list[str]
     depth_from_ods: int = 0
     upstream_metric_groups: dict[str, dict[str, list[str]]] = field(
-        default_factory=dict)
+        default_factory=dict
+    )
     column_lineage: list[dict] = field(default_factory=list)
     declared_data_domain: str = ""
     declared_business_area: str = ""
@@ -61,7 +64,9 @@ def _metric_name(item) -> str:
     return str(item or "").strip()
 
 
-def _load_model_metric_groups(models_dir: Path) -> dict[str, dict[str, list[str]]]:
+def _load_model_metric_groups(
+    models_dir: Path,
+) -> dict[str, dict[str, list[str]]]:
     metric_groups = {}
     if not models_dir.exists():
         return metric_groups
@@ -77,7 +82,9 @@ def _load_model_metric_groups(models_dir: Path) -> dict[str, dict[str, list[str]
         groups = {
             "atomic_metrics": _metric_names(data.get("atomic_metrics")),
             "derived_metrics": _metric_names(data.get("derived_metrics")),
-            "calculated_metrics": _metric_names(data.get("calculated_metrics")),
+            "calculated_metrics": _metric_names(
+                data.get("calculated_metrics")
+            ),
         }
         if any(groups.values()):
             metric_groups[table_name] = groups
@@ -113,7 +120,9 @@ def _business_semantics_prompt_options(project: str) -> dict:
     if not catalog:
         return {}
     options = {}
-    processes = _catalog_option_entries(catalog.get("business_processes") or [])
+    processes = _catalog_option_entries(
+        catalog.get("business_processes") or []
+    )
     subjects = _catalog_option_entries(catalog.get("semantic_subjects") or [])
     if processes:
         options["business_processes"] = processes
@@ -134,8 +143,7 @@ def extract_dependencies(lineage_data: dict) -> tuple[dict, dict]:
     return LineageView.from_data("", lineage_data).asset_table_graph()
 
 
-def extract_column_lineage(lineage_data: dict,
-                           table_name: str) -> list[dict]:
+def extract_column_lineage(lineage_data: dict, table_name: str) -> list[dict]:
     """提取正式资产字段血缘，过滤并穿透临时字段。"""
     return LineageView.from_data("", lineage_data).column_lineage_for_table(
         table_name
@@ -149,11 +157,13 @@ def _project_dir(project: str) -> Path:
     return Path(__file__).resolve().parent.parent / project
 
 
-def build_contexts(project: str,
-                   lineage_data: dict,
-                   ddl_dir: Path = None,
-                   tasks_dir: Path = None,
-                   layers: set[str] | None = None) -> list[TableContext]:
+def build_contexts(
+    project: str,
+    lineage_data: dict,
+    ddl_dir: Path = None,
+    tasks_dir: Path = None,
+    layers: set[str] | None = None,
+) -> list[TableContext]:
     """为 DWD/DWS/DIM 层所有表构建分类上下文"""
     project_dir = _project_dir(project)
     if not ddl_dir:
@@ -178,18 +188,22 @@ def build_contexts(project: str,
     contexts = []
 
     memo = {}
+
     def get_depth_from_ods(table_name: str, visiting: set = None) -> int:
-        if visiting is None: visiting = set()
-        if table_name in memo: return memo[table_name]
-        if table_name in visiting: return 0
+        if visiting is None:
+            visiting = set()
+        if table_name in memo:
+            return memo[table_name]
+        if table_name in visiting:
+            return 0
         visiting.add(table_name)
-        
+
         parents = upstream.get(table_name, set())
         if not parents:
             result = 0 if table_name.startswith("ods_") else 1
         else:
             result = min(get_depth_from_ods(p, visiting) for p in parents) + 1
-            
+
         visiting.remove(table_name)
         memo[table_name] = result
         return result
@@ -203,13 +217,15 @@ def build_contexts(project: str,
 
         # Read DDL
         ddl_path = ddl_dir / f"{name}.sql"
-        ddl_content = ddl_path.read_text(
-            encoding="utf-8") if ddl_path.exists() else ""
+        ddl_content = (
+            ddl_path.read_text(encoding="utf-8") if ddl_path.exists() else ""
+        )
 
         # Read ETL
         task_path = tasks_dir / f"{name}.sql"
-        etl_content = task_path.read_text(
-            encoding="utf-8") if task_path.exists() else ""
+        etl_content = (
+            task_path.read_text(encoding="utf-8") if task_path.exists() else ""
+        )
         upstream_tables = sorted(list(upstream.get(name, set())))
         upstream_metric_groups = {
             upstream_table: metric_groups[upstream_table]
@@ -219,30 +235,30 @@ def build_contexts(project: str,
         metadata = model_metadata.get(name, {})
 
         contexts.append(
-            TableContext(table_name=name,
-                         layer=layer,
-                         ddl=ddl_content,
-                         etl_sql=etl_content,
-                         upstream_tables=upstream_tables,
-                         downstream_tables=sorted(
-                             list(downstream.get(name, set()))),
-                         depth_from_ods=get_depth_from_ods(name),
-                         upstream_metric_groups=upstream_metric_groups,
-                         column_lineage=(
-                             lineage_view.column_lineage_for_table(name)
-                         ),
-                         declared_data_domain=(
-                             str(metadata.get("data_domain") or "")
-                             if layer in DATA_DOMAIN_LAYERS
-                             else ""
-                         ),
-                         declared_business_area=(
-                             str(metadata.get("business_area") or "")
-                             if layer in BUSINESS_AREA_LAYERS
-                             else ""
-                         ),
-                         project_context=project_context,
-                         business_domain_options=business_domain_options,
-                         business_semantics_options=business_semantics_options))
+            TableContext(
+                table_name=name,
+                layer=layer,
+                ddl=ddl_content,
+                etl_sql=etl_content,
+                upstream_tables=upstream_tables,
+                downstream_tables=sorted(list(downstream.get(name, set()))),
+                depth_from_ods=get_depth_from_ods(name),
+                upstream_metric_groups=upstream_metric_groups,
+                column_lineage=(lineage_view.column_lineage_for_table(name)),
+                declared_data_domain=(
+                    str(metadata.get("data_domain") or "")
+                    if layer in DATA_DOMAIN_LAYERS
+                    else ""
+                ),
+                declared_business_area=(
+                    str(metadata.get("business_area") or "")
+                    if layer in BUSINESS_AREA_LAYERS
+                    else ""
+                ),
+                project_context=project_context,
+                business_domain_options=business_domain_options,
+                business_semantics_options=business_semantics_options,
+            )
+        )
 
     return contexts

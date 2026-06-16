@@ -1,8 +1,9 @@
 """Project-local business semantics catalog helpers."""
+
 from __future__ import annotations
 
-from pathlib import Path
 import re
+from pathlib import Path
 from typing import Any
 
 import yaml
@@ -104,9 +105,11 @@ def _result_data_domain(result: Any) -> str:
 
 
 def _result_business_area(result: Any) -> str:
-    return str(
-        _result_value(result, "inferred_business_area", "") or ""
-    ).strip().upper()
+    return (
+        str(_result_value(result, "inferred_business_area", "") or "")
+        .strip()
+        .upper()
+    )
 
 
 def _result_columns(result: Any) -> dict[str, Any]:
@@ -120,8 +123,9 @@ def _iter_metric_items(result: Any) -> list[dict[str, Any]]:
     for group in ("atomic_metrics", "derived_metrics", "calculated_metrics"):
         raw_items = columns.get(group) or []
         if isinstance(raw_items, list):
-            items.extend(dict(item) for item in raw_items
-                         if isinstance(item, dict))
+            items.extend(
+                dict(item) for item in raw_items if isinstance(item, dict)
+            )
     return items
 
 
@@ -139,7 +143,8 @@ def _primary_entity(result: Any) -> dict[str, Any]:
         return {}
     primary = next(
         (
-            entity for entity in entities
+            entity
+            for entity in entities
             if str(entity.get("type") or "").strip().lower() == "primary"
         ),
         None,
@@ -147,7 +152,8 @@ def _primary_entity(result: Any) -> dict[str, Any]:
     if not primary:
         primary = next(
             (
-                entity for entity in entities
+                entity
+                for entity in entities
                 if str(entity.get("type") or "").strip().lower() != "foreign"
             ),
             entities[0],
@@ -160,7 +166,9 @@ def _entry_name_from_entity(entity: dict[str, Any], code: str) -> str:
     return name or _display_name_from_code(code)
 
 
-def _seed_entry_index(entries: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+def _seed_entry_index(
+    entries: list[dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
     index: dict[str, dict[str, Any]] = {}
     for entry in entries:
         code = _normalize_catalog_code(entry.get("code"))
@@ -242,9 +250,7 @@ def _append_dictionary_candidate(
         "code": code,
         "name": _display_name_from_code(code),
     }
-    if kind == "data_domain":
-        entries.append(item)
-    elif kind == "business_area":
+    if kind == "data_domain" or kind == "business_area":
         entries.append(item)
 
 
@@ -277,9 +283,11 @@ def build_business_semantics_catalog_from_inspection(
         _business_area_entries_from_naming,
     )
     process_by_code = _seed_entry_index(
-        _entry_values(base_catalog.get("business_processes")))
+        _entry_values(base_catalog.get("business_processes"))
+    )
     subject_by_code = _seed_entry_index(
-        _entry_values(base_catalog.get("semantic_subjects")))
+        _entry_values(base_catalog.get("semantic_subjects"))
+    )
 
     for result in results or []:
         table_name = _result_table_name(result)
@@ -393,7 +401,9 @@ def write_initial_business_semantics_catalog(
             "catalog": catalog,
         }
 
-    base_catalog = load_business_semantics_catalog(project) if path.exists() else {}
+    base_catalog = (
+        load_business_semantics_catalog(project) if path.exists() else {}
+    )
     catalog = build_initial_business_semantics_catalog(
         project,
         inspection_results=inspection_results,
@@ -442,13 +452,13 @@ def catalog_mapping_for_model(
     short_name = _short_table_name(table_name)
     metadata = model_metadata or {}
     layer = str(
-        metadata.get("layer")
-        or _layer_from_table_name(short_name)
+        metadata.get("layer") or _layer_from_table_name(short_name)
     ).upper()
     table_type = str(metadata.get("table_type") or "").strip()
 
     semantic_subject = _normalize_catalog_code(
-        metadata.get("semantic_subject"))
+        metadata.get("semantic_subject")
+    )
     if semantic_subject:
         subject = _entry_by_code(
             catalog.get("semantic_subjects") or [],
@@ -467,7 +477,8 @@ def catalog_mapping_for_model(
         }
 
     business_process = _normalize_catalog_code(
-        metadata.get("business_process"))
+        metadata.get("business_process")
+    )
     if business_process:
         process = _entry_by_code(
             catalog.get("business_processes") or [],
@@ -488,8 +499,9 @@ def catalog_mapping_for_model(
     return {"table": short_name}
 
 
-def catalog_mapping_for_table(catalog: dict[str, Any],
-                              table_name: str) -> dict[str, Any]:
+def catalog_mapping_for_table(
+    catalog: dict[str, Any], table_name: str
+) -> dict[str, Any]:
     """Compatibility wrapper.
 
     Catalog no longer owns table assignments, so this returns only a base

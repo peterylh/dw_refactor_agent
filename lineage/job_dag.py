@@ -13,6 +13,7 @@
     dag2 = JobDAG.load("lineage/job_dag.json")
     downstream = dag2.bfs_downstream({"dwd_order_detail"})
 """
+
 from __future__ import annotations
 
 import json
@@ -74,8 +75,10 @@ class JobDAG:
     def get_downstream(self, job: str) -> set[str]:
         return self._deps.get(job, set())
 
-    def compute_in_degree(self, jobs_set: set) -> tuple[dict[str, int], dict[str, list[str]]]:
-        in_degree = {j: 0 for j in jobs_set}
+    def compute_in_degree(
+        self, jobs_set: set
+    ) -> tuple[dict[str, int], dict[str, list[str]]]:
+        in_degree = dict.fromkeys(jobs_set, 0)
         adj: dict[str, list[str]] = {j: [] for j in jobs_set}
         for src, targets in self._deps.items():
             if src not in jobs_set:

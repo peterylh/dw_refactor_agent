@@ -1,5 +1,4 @@
 import pytest
-from pathlib import Path
 
 DDL_CUSTOMER = """
 DROP TABLE IF EXISTS shop_dm.ods_customer;

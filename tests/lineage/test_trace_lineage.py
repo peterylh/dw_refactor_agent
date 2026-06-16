@@ -1,11 +1,11 @@
 import sqlglot
-from sqlglot import exp
+
 from lineage.lineage_extractor import (
-    extract_lineage_from_sql,
-    _trace_lineage,
     _extract_leaf_edges,
     _handle_insert,
     _lineage_nodes_for_select,
+    _trace_lineage,
+    extract_lineage_from_sql,
 )
 
 
@@ -88,9 +88,7 @@ class TestTraceLineage:
         }
 
     def test_select_with_where(self, schema_ods_order):
-        sql = (
-            "SELECT order_id, total_amount FROM shop_dm.ods_order WHERE store_id = 100"
-        )
+        sql = "SELECT order_id, total_amount FROM shop_dm.ods_order WHERE store_id = 100"
         entries = _trace_lineage(
             "target_tbl",
             sqlglot.parse_one(sql, dialect="doris"),
@@ -137,7 +135,9 @@ class TestTraceLineage:
             },
         ]
 
-    def test_select_constant_emits_typed_literal_lineage(self, schema_ods_order):
+    def test_select_constant_emits_typed_literal_lineage(
+        self, schema_ods_order
+    ):
         sql = "SELECT 'ALL' AS channel_type"
         entries = _trace_lineage(
             "target_tbl",
@@ -147,16 +147,18 @@ class TestTraceLineage:
             ["channel_type"],
         )
 
-        assert entries == [{
-            "lineage_type": "direct",
-            "source_type": "literal",
-            "source_value": "ALL",
-            "target_table": "target_tbl",
-            "target_column": "channel_type",
-            "expression": "'ALL' AS channel_type",
-            "transformation_type": "constant",
-            "source_file": "test.sql",
-        }]
+        assert entries == [
+            {
+                "lineage_type": "direct",
+                "source_type": "literal",
+                "source_value": "ALL",
+                "target_table": "target_tbl",
+                "target_column": "channel_type",
+                "expression": "'ALL' AS channel_type",
+                "transformation_type": "constant",
+                "source_file": "test.sql",
+            }
+        ]
 
     def test_nonexistent_table(self, schema_ods_order):
         sql = "SELECT x FROM nonexistent_table"
@@ -207,13 +209,17 @@ class TestExtractLineageFromSql:
             ("ods_order", "order_id", "dwd_order", "order_id"),
             (None, None, "dwd_order", "etl_time"),
         }
-        etl_entry = next(e for e in entries if e["target_column"] == "etl_time")
+        etl_entry = next(
+            e for e in entries if e["target_column"] == "etl_time"
+        )
         assert etl_entry["source_type"] == "expression"
         assert etl_entry["source_expression"] == "NOW() AS etl_time"
 
     def test_update(self, schema_dwd_customer):
         sql = "UPDATE shop_dm.dwd_customer SET member_level = '金卡' WHERE customer_id = 100"
-        entries = extract_lineage_from_sql(sql, "test.sql", schema_dwd_customer)
+        entries = extract_lineage_from_sql(
+            sql, "test.sql", schema_dwd_customer
+        )
         assert _direct_edges(entries) == {
             (None, None, "dwd_customer", "member_level"),
         }
@@ -258,7 +264,9 @@ class TestExtractLineageFromSql:
 
     def test_source_file_in_entries(self, schema_ods_order):
         sql = "INSERT INTO t SELECT order_id FROM shop_dm.ods_order"
-        entries = extract_lineage_from_sql(sql, "my_task.sql", schema_ods_order)
+        entries = extract_lineage_from_sql(
+            sql, "my_task.sql", schema_ods_order
+        )
         for e in entries:
             assert e["source_file"] == "my_task.sql"
 

@@ -30,13 +30,19 @@ except ModuleNotFoundError:
 
     def _fake_parse(sql_text, dialect="doris", **_kwargs):
         statements = []
-        insert_match = re.search(r"INSERT\s+INTO\s+([^\s(]+)", sql_text, re.IGNORECASE)
+        insert_match = re.search(
+            r"INSERT\s+INTO\s+([^\s(]+)", sql_text, re.IGNORECASE
+        )
         if insert_match:
             statements.append(_FakeInsert(insert_match.group(1)))
-        create_match = re.search(r"CREATE\s+TABLE\s+([^\s(]+)", sql_text, re.IGNORECASE)
+        create_match = re.search(
+            r"CREATE\s+TABLE\s+([^\s(]+)", sql_text, re.IGNORECASE
+        )
         if create_match:
             statements.append(_FakeCreate(create_match.group(1)))
-        update_match = re.search(r"UPDATE\s+([^\s(]+)", sql_text, re.IGNORECASE)
+        update_match = re.search(
+            r"UPDATE\s+([^\s(]+)", sql_text, re.IGNORECASE
+        )
         if update_match:
             statements.append(_FakeUpdate(update_match.group(1)))
         return statements
@@ -61,7 +67,9 @@ except ModuleNotFoundError:
 import lineage.refresh_lineage_html as refresh_html
 
 
-def test_resolve_lineage_data_path_prefers_project_specific(monkeypatch, tmp_path):
+def test_resolve_lineage_data_path_prefers_project_specific(
+    monkeypatch, tmp_path
+):
     monkeypatch.setattr(refresh_html, "LINEAGE_DIR", tmp_path)
     project_file = tmp_path / "lineage_data_shop.json"
     legacy_file = tmp_path / "lineage_data.json"
@@ -71,7 +79,9 @@ def test_resolve_lineage_data_path_prefers_project_specific(monkeypatch, tmp_pat
     assert refresh_html.resolve_lineage_data_path("shop") == project_file
 
 
-def test_resolve_lineage_data_path_shop_falls_back_to_legacy(monkeypatch, tmp_path):
+def test_resolve_lineage_data_path_shop_falls_back_to_legacy(
+    monkeypatch, tmp_path
+):
     monkeypatch.setattr(refresh_html, "LINEAGE_DIR", tmp_path)
     legacy_file = tmp_path / "lineage_data.json"
     legacy_file.write_text('{"source": "legacy"}', encoding="utf-8")
@@ -79,18 +89,26 @@ def test_resolve_lineage_data_path_shop_falls_back_to_legacy(monkeypatch, tmp_pa
     assert refresh_html.resolve_lineage_data_path("shop") == legacy_file
 
 
-def test_resolve_output_paths_uses_project_isolation_for_non_shop(monkeypatch, tmp_path):
+def test_resolve_output_paths_uses_project_isolation_for_non_shop(
+    monkeypatch, tmp_path
+):
     monkeypatch.setattr(refresh_html, "LINEAGE_DIR", tmp_path)
 
     paths = refresh_html.resolve_output_paths("finance_analytics")
 
     assert paths["job_template"] == tmp_path / "lineage_job.html"
     assert paths["lineage_template"] == tmp_path / "lineage.html"
-    assert paths["job_output"] == tmp_path / "lineage_job_finance_analytics.html"
-    assert paths["lineage_output"] == tmp_path / "lineage_finance_analytics.html"
+    assert (
+        paths["job_output"] == tmp_path / "lineage_job_finance_analytics.html"
+    )
+    assert (
+        paths["lineage_output"] == tmp_path / "lineage_finance_analytics.html"
+    )
 
 
-def test_generate_jobs_strips_project_db_and_defaults_logic(tmp_path, monkeypatch):
+def test_generate_jobs_strips_project_db_and_defaults_logic(
+    tmp_path, monkeypatch
+):
     monkeypatch.setattr(
         refresh_html,
         "determine_layer",
@@ -200,7 +218,9 @@ def test_update_lineage_html_writes_new_output_from_template(tmp_path):
     )
     payload = json.dumps({"nodes": [{"id": 1}]}, ensure_ascii=False)
 
-    refresh_html.update_lineage_html(payload, template_path=template, output_path=output)
+    refresh_html.update_lineage_html(
+        payload, template_path=template, output_path=output
+    )
 
     assert '{"nodes": [{"id": 1}]}' in output.read_text(encoding="utf-8")
     assert '{"old": true}' in template.read_text(encoding="utf-8")
@@ -223,7 +243,10 @@ def test_build_frontend_lineage_data_normalizes_structured_edges():
         "edges": [
             {
                 "source": {"type": "column", "id": "ods_order.order_id"},
-                "target": {"type": "column", "id": "dwd_order_detail.order_id"},
+                "target": {
+                    "type": "column",
+                    "id": "dwd_order_detail.order_id",
+                },
                 "relation_type": "direct",
             },
             {

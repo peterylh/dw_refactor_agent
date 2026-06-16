@@ -28,7 +28,9 @@ class JsonLineageStore:
     """Load lineage snapshots from the repository's JSON files."""
 
     def __init__(self, lineage_dir: Path | None = None):
-        self.lineage_dir = Path(lineage_dir) if lineage_dir else Path(__file__).parent
+        self.lineage_dir = (
+            Path(lineage_dir) if lineage_dir else Path(__file__).parent
+        )
 
     def load_snapshot(
         self,
@@ -46,7 +48,9 @@ class JsonLineageStore:
 
     def _snapshot_path(self, project: str, snapshot_id: str | None) -> Path:
         if snapshot_id:
-            return self.lineage_dir / f"lineage_data_{project}_{snapshot_id}.json"
+            return (
+                self.lineage_dir / f"lineage_data_{project}_{snapshot_id}.json"
+            )
 
         project_path = self.lineage_dir / f"lineage_data_{project}.json"
         if project_path.exists():

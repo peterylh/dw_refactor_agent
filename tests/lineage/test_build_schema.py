@@ -1,4 +1,7 @@
-from lineage.lineage_extractor import build_schema_from_texts, build_schema_from_ddl
+from lineage.lineage_extractor import (
+    build_schema_from_ddl,
+    build_schema_from_texts,
+)
 
 
 class TestBuildSchemaFromTexts:

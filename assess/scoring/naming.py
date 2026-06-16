@@ -1,4 +1,5 @@
 """Naming convention scoring dimension."""
+
 from __future__ import annotations
 
 import json
@@ -22,8 +23,6 @@ from assess.project_facts.entity_metadata import (
 from assess.result_model import finalize_dimension, make_check
 from assess.scoring.config import (
     ATOMIC_METRIC_RULE_NAME,
-    BUSINESS_AREA_LAYERS,
-    DATA_DOMAIN_LAYERS,
     DERIVED_METRIC_RULE_NAME,
     DIM_CLASSIFICATION_RULE_NAME,
     DIM_ENTITY_RULE_NAME,
@@ -115,11 +114,7 @@ def _as_string_list(value) -> list[str]:
     if value is None:
         return []
     values = value if isinstance(value, list) else [value]
-    return [
-        str(item).strip()
-        for item in values
-        if str(item or "").strip()
-    ]
+    return [str(item).strip() for item in values if str(item or "").strip()]
 
 
 def _dws_name_entities(name: str, nc) -> list[str]:
@@ -259,8 +254,9 @@ def _score_dim_classification_name(
 
     metadata = model_metadata.get(table_name) or {}
     expected_role = str(metadata.get("dimension_role") or "").strip().upper()
-    expected_content_type = str(
-        metadata.get("dimension_content_type") or "").strip().upper()
+    expected_content_type = (
+        str(metadata.get("dimension_content_type") or "").strip().upper()
+    )
 
     result["total"] = 1
     violations = []
@@ -268,8 +264,7 @@ def _score_dim_classification_name(
         violations.append("缺少model.dimension_role，无法检测DIM表名角色")
     elif actual_role != [expected_role]:
         violations.append(
-            f"表名DIM_ROLE={actual_role}，"
-            f"model.dimension_role={expected_role}"
+            f"表名DIM_ROLE={actual_role}，model.dimension_role={expected_role}"
         )
 
     if not expected_content_type:
@@ -299,6 +294,7 @@ def _table_column_names(table: dict) -> set[str]:
         for column in table.get("columns", []) or []
         if str(column.get("name") or "").strip()
     }
+
 
 def _sort_naming_violations(violations: list) -> list:
     return sorted(
@@ -400,6 +396,7 @@ def _derived_metric_names_for_table(
         raw_metrics = metadata.get("derived_metrics")
     return _metric_names_from_raw(raw_metrics)
 
+
 def _empty_file_score() -> dict:
     return dict(
         passed=0,
@@ -422,7 +419,9 @@ def _record_file_check(
         result["passed"] += 1
 
     if isinstance(actual, (set, list, tuple)):
-        actual_display = ", ".join(sorted(str(item) for item in actual)) or "未解析"
+        actual_display = (
+            ", ".join(sorted(str(item) for item in actual)) or "未解析"
+        )
     else:
         actual_display = str(actual or "未解析")
 
@@ -449,10 +448,11 @@ def _record_file_check(
                 "remediation": {
                     "related_files": [display_file],
                 }
-            } if not passed else None,
+            }
+            if not passed
+            else None,
         )
     )
-
 
 
 def _score_file_naming_conventions(
@@ -639,8 +639,7 @@ def _score_table_semantic_metadata(
         summary_checks.append((rule_name, int(ok), 1))
         if not ok:
             violations.append(
-                f"表名{type_name}={actual}，"
-                f"model.{field_name}={expected}"
+                f"表名{type_name}={actual}，model.{field_name}={expected}"
             )
 
     return _naming_check_result(passed, total, violations), summary_checks
@@ -664,14 +663,16 @@ def _score_middle_table(table: dict, context: dict) -> dict:
             "check": "table_template",
             **_table_name_diagnostic(name, layer, nc),
         }
-        table_violations.append({
-            "code": "table_template",
-            "rule_id": "NAMING_TABLE_TEMPLATE",
-            "expected": "表名符合所在层级命名模板",
-            "actual": name,
-            "message": f"{name} 不符合 {layer} 层表名模板",
-            "evidence": diagnostic,
-        })
+        table_violations.append(
+            {
+                "code": "table_template",
+                "rule_id": "NAMING_TABLE_TEMPLATE",
+                "expected": "表名符合所在层级命名模板",
+                "actual": name,
+                "message": f"{name} 不符合 {layer} 层表名模板",
+                "evidence": diagnostic,
+            }
+        )
         table_diagnostics.append(diagnostic)
     summary_checks.append(("表名符合规范模板", table_passed, 1))
 
@@ -680,11 +681,13 @@ def _score_middle_table(table: dict, context: dict) -> dict:
         length_ok = _check_table_name_length(name, layer, nc)
         table_total += 1
         table_passed += int(length_ok)
-        summary_checks.append((
-            f"表名长度 <= {max_length}",
-            int(length_ok),
-            1,
-        ))
+        summary_checks.append(
+            (
+                f"表名长度 <= {max_length}",
+                int(length_ok),
+                1,
+            )
+        )
         if not length_ok:
             diagnostic = {
                 "check": "table_max_length",
@@ -694,17 +697,19 @@ def _score_middle_table(table: dict, context: dict) -> dict:
                 "expected": {"max_length": max_length},
                 "actual_length": len(name),
             }
-            table_violations.append({
-                "code": "table_max_length",
-                "rule_id": "NAMING_TABLE_MAX_LENGTH",
-                "expected": f"表名长度 <= {max_length}",
-                "actual": {
-                    "name": name,
-                    "length": len(name),
-                },
-                "message": f"表名长度 {len(name)} 超过配置上限 {max_length}",
-                "evidence": diagnostic,
-            })
+            table_violations.append(
+                {
+                    "code": "table_max_length",
+                    "rule_id": "NAMING_TABLE_MAX_LENGTH",
+                    "expected": f"表名长度 <= {max_length}",
+                    "actual": {
+                        "name": name,
+                        "length": len(name),
+                    },
+                    "message": f"表名长度 {len(name)} 超过配置上限 {max_length}",
+                    "evidence": diagnostic,
+                }
+            )
             table_diagnostics.append(diagnostic)
 
     atomic_names = (
@@ -713,16 +718,19 @@ def _score_middle_table(table: dict, context: dict) -> dict:
         else []
     )
     atomic_violations = [
-        metric for metric in atomic_names
+        metric
+        for metric in atomic_names
         if not _check_atomic_metric_name(metric, nc)
     ]
     atomic_passed = len(atomic_names) - len(atomic_violations)
     if context["atomic_rule_name"]:
-        summary_checks.append((
-            context["atomic_rule_label"],
-            atomic_passed,
-            len(atomic_names),
-        ))
+        summary_checks.append(
+            (
+                context["atomic_rule_label"],
+                atomic_passed,
+                len(atomic_names),
+            )
+        )
 
     derived_names = (
         _derived_metric_names_for_table(table, model_metadata)
@@ -730,16 +738,19 @@ def _score_middle_table(table: dict, context: dict) -> dict:
         else []
     )
     derived_violations = [
-        metric for metric in derived_names
+        metric
+        for metric in derived_names
         if not _check_derived_metric_name(metric, nc)
     ]
     derived_passed = len(derived_names) - len(derived_violations)
     if context["derived_rule_name"]:
-        summary_checks.append((
-            context["derived_rule_label"],
-            derived_passed,
-            len(derived_names),
-        ))
+        summary_checks.append(
+            (
+                context["derived_rule_label"],
+                derived_passed,
+                len(derived_names),
+            )
+        )
 
     metric_columns = set(atomic_names) | set(derived_names)
     column_violations = []
@@ -755,9 +766,7 @@ def _score_middle_table(table: dict, context: dict) -> dict:
         column_passed += int(ok)
         if not ok:
             column_violations.append(column_name)
-            column_diagnostics.append(
-                _column_name_diagnostic(column_name, nc)
-            )
+            column_diagnostics.append(_column_name_diagnostic(column_name, nc))
     summary_checks.append(("列名总计", column_passed, column_total))
 
     dws_entity_checks = (
@@ -770,11 +779,13 @@ def _score_middle_table(table: dict, context: dict) -> dict:
         if table_name_valid
         else _naming_check_result(0, 0, [])
     )
-    summary_checks.append((
-        DWS_ENTITY_RULE_NAME,
-        dws_entity_checks["passed"],
-        dws_entity_checks["total"],
-    ))
+    summary_checks.append(
+        (
+            DWS_ENTITY_RULE_NAME,
+            dws_entity_checks["passed"],
+            dws_entity_checks["total"],
+        )
+    )
     dim_entity_checks = (
         _score_dim_entity_name(
             name,
@@ -785,11 +796,13 @@ def _score_middle_table(table: dict, context: dict) -> dict:
         if table_name_valid
         else _naming_check_result(0, 0, [])
     )
-    summary_checks.append((
-        DIM_ENTITY_RULE_NAME,
-        dim_entity_checks["passed"],
-        dim_entity_checks["total"],
-    ))
+    summary_checks.append(
+        (
+            DIM_ENTITY_RULE_NAME,
+            dim_entity_checks["passed"],
+            dim_entity_checks["total"],
+        )
+    )
     dim_classification_checks = (
         _score_dim_classification_name(
             name,
@@ -800,11 +813,13 @@ def _score_middle_table(table: dict, context: dict) -> dict:
         if table_name_valid
         else _naming_check_result(0, 0, [])
     )
-    summary_checks.append((
-        DIM_CLASSIFICATION_RULE_NAME,
-        dim_classification_checks["passed"],
-        dim_classification_checks["total"],
-    ))
+    summary_checks.append(
+        (
+            DIM_CLASSIFICATION_RULE_NAME,
+            dim_classification_checks["passed"],
+            dim_classification_checks["total"],
+        )
+    )
     semantic_checks, semantic_summary = _score_table_semantic_metadata(
         name,
         layer,
@@ -871,11 +886,15 @@ def _score_middle_table(table: dict, context: dict) -> dict:
 
 def _naming_issue_context(context: dict, table: str) -> dict:
     related_files = _related_files_for_table(context["asset_catalog"], table)
-    return {
-        "remediation": {
-            "related_files": related_files,
+    return (
+        {
+            "remediation": {
+                "related_files": related_files,
+            }
         }
-    } if related_files else {}
+        if related_files
+        else {}
+    )
 
 
 def _naming_violation_by_code(violations: list, code: str) -> dict | None:
@@ -929,8 +948,7 @@ def _build_naming_checks(
                     {"layer": layer},
                 ),
                 message=(
-                    template_violation["message"]
-                    if template_violation else ""
+                    template_violation["message"] if template_violation else ""
                 ),
                 issue=issue_context if template_violation else None,
             )
@@ -958,8 +976,7 @@ def _build_naming_checks(
                         {"layer": layer, "actual_length": len(table)},
                     ),
                     message=(
-                        length_violation["message"]
-                        if length_violation else ""
+                        length_violation["message"] if length_violation else ""
                     ),
                     issue=issue_context if length_violation else None,
                 )
@@ -987,7 +1004,8 @@ def _build_naming_checks(
                     },
                     message=(
                         f"不合规字段: {', '.join(violations)}"
-                        if violations else ""
+                        if violations
+                        else ""
                     ),
                     issue=issue_context if violations else None,
                 )
@@ -1015,7 +1033,13 @@ def _build_naming_checks(
                 ),
             ),
         ]
-        for check_result, rule_id, expected, label, metric_names in metric_specs:
+        for (
+            check_result,
+            rule_id,
+            expected,
+            label,
+            metric_names,
+        ) in metric_specs:
             if check_result.get("total", 0) <= 0:
                 continue
             violations = check_result.get("violations") or []
@@ -1029,9 +1053,7 @@ def _build_naming_checks(
                         passed=not failed,
                         expected=expected,
                         actual=(
-                            "合规"
-                            if not failed
-                            else f"{label}: {metric_name}"
+                            "合规" if not failed else f"{label}: {metric_name}"
                         ),
                         evidence={
                             "table": table,
@@ -1100,7 +1122,8 @@ def _build_final_naming_result(
     return finalize_dimension(
         dimension="naming",
         score=round(total_passed / total_checks * 100, 1)
-        if total_checks else 100.0,
+        if total_checks
+        else 100.0,
         checks=checks,
         rules=NAMING_RULES,
         summary={
@@ -1134,8 +1157,7 @@ def score_naming_conventions(
         asset_catalog,
     )
     table_results = [
-        _score_middle_table(table, context)
-        for table in context["middle"]
+        _score_middle_table(table, context) for table in context["middle"]
     ]
     file_result = _score_file_naming_conventions(
         context["asset_catalog"],

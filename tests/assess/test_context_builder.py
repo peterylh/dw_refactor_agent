@@ -1,9 +1,7 @@
-import pytest
-from pathlib import Path
 import yaml
 
-import config
 import assess.context_builder as context_builder_module
+import config
 from assess.context_builder import (
     build_contexts,
     extract_column_lineage,
@@ -13,14 +11,14 @@ from assess.context_builder import (
 
 def test_extract_dependencies(sample_lineage_data):
     upstream, downstream = extract_dependencies(sample_lineage_data)
-    
+
     assert "dwd_customer" in downstream["ods_customer"]
     assert "dwd_customer" in upstream
     assert upstream["dwd_customer"] == {"ods_customer"}
-    
+
     assert "dws_store_sales_daily" in downstream["dwd_order_detail"]
     assert upstream["dws_store_sales_daily"] == {"dwd_order_detail"}
-    
+
     assert "ads_sales_dashboard" in downstream["dwd_customer"]
     assert "ods_customer" not in downstream["dwd_customer"]
 
@@ -28,8 +26,14 @@ def test_extract_dependencies(sample_lineage_data):
 def test_extract_dependencies_collapses_transient_tables():
     lineage_data = {
         "edges": [
-            {"source": "dwd_orders.order_id", "target": "tmp_orders_stage.order_id"},
-            {"source": "tmp_orders_stage.order_id", "target": "dws_orders.order_id"},
+            {
+                "source": "dwd_orders.order_id",
+                "target": "tmp_orders_stage.order_id",
+            },
+            {
+                "source": "tmp_orders_stage.order_id",
+                "target": "dws_orders.order_id",
+            },
         ],
         "indirect_edges": [],
         "tables": [{"name": "tmp_orders_stage", "is_transient": True}],
@@ -57,10 +61,12 @@ def test_extract_column_lineage_collapses_transient_fields():
                 "source_file": "dws_promotion_effect_daily.sql",
             },
         ],
-        "tables": [{
-            "name": "tmp_promotion_stage",
-            "is_transient": True,
-        }],
+        "tables": [
+            {
+                "name": "tmp_promotion_stage",
+                "is_transient": True,
+            }
+        ],
     }
 
     lineage = extract_column_lineage(
@@ -80,13 +86,15 @@ def test_build_contexts_filters_middle_layer(sample_lineage_data, tmp_path):
     tasks_dir = tmp_path / "tasks"
     ddl_dir.mkdir()
     tasks_dir.mkdir()
-    
+
     (ddl_dir / "dwd_customer.sql").write_text("DDL dwd_customer")
     (tasks_dir / "dwd_customer.sql").write_text("ETL dwd_customer")
     (ddl_dir / "dwd_order_detail.sql").write_text("DDL dwd_order_detail")
-    
-    contexts = build_contexts("test_proj", sample_lineage_data, ddl_dir, tasks_dir)
-    
+
+    contexts = build_contexts(
+        "test_proj", sample_lineage_data, ddl_dir, tasks_dir
+    )
+
     # 验证只有 DWD/DWS 层的表被返回
     assert len(contexts) == 3
     table_names = [ctx.table_name for ctx in contexts]
@@ -98,7 +106,8 @@ def test_build_contexts_filters_middle_layer(sample_lineage_data, tmp_path):
 
 
 def test_build_contexts_reuses_one_lineage_view(
-        sample_lineage_data, tmp_path, monkeypatch):
+    sample_lineage_data, tmp_path, monkeypatch
+):
     ddl_dir = tmp_path / "ddl"
     tasks_dir = tmp_path / "tasks"
     ddl_dir.mkdir()
@@ -133,7 +142,9 @@ def test_build_contexts_reuses_one_lineage_view(
 
     monkeypatch.setattr(context_builder_module, "LineageView", FakeLineageView)
 
-    contexts = build_contexts("test_proj", sample_lineage_data, ddl_dir, tasks_dir)
+    contexts = build_contexts(
+        "test_proj", sample_lineage_data, ddl_dir, tasks_dir
+    )
 
     assert calls["builds"] == 1
     assert calls["column_tables"] == [ctx.table_name for ctx in contexts]
@@ -144,13 +155,15 @@ def test_build_context_with_ddl_and_task(sample_lineage_data, tmp_path):
     tasks_dir = tmp_path / "tasks"
     ddl_dir.mkdir()
     tasks_dir.mkdir()
-    
+
     (ddl_dir / "dwd_customer.sql").write_text("CREATE dwd_customer;")
     (tasks_dir / "dwd_customer.sql").write_text("INSERT dwd_customer;")
-    
-    contexts = build_contexts("test_proj", sample_lineage_data, ddl_dir, tasks_dir)
+
+    contexts = build_contexts(
+        "test_proj", sample_lineage_data, ddl_dir, tasks_dir
+    )
     ctx = next(c for c in contexts if c.table_name == "dwd_customer")
-    
+
     assert ctx.ddl == "CREATE dwd_customer;"
     assert ctx.etl_sql == "INSERT dwd_customer;"
     assert ctx.upstream_tables == ["ods_customer"]
@@ -162,20 +175,23 @@ def test_build_context_without_task(sample_lineage_data, tmp_path):
     tasks_dir = tmp_path / "tasks"
     ddl_dir.mkdir()
     tasks_dir.mkdir()
-    
+
     (ddl_dir / "dwd_order_detail.sql").write_text("CREATE dwd_order_detail;")
     # No task file
-    
-    contexts = build_contexts("test_proj", sample_lineage_data, ddl_dir, tasks_dir)
+
+    contexts = build_contexts(
+        "test_proj", sample_lineage_data, ddl_dir, tasks_dir
+    )
     ctx = next(c for c in contexts if c.table_name == "dwd_order_detail")
-    
+
     assert ctx.ddl == "CREATE dwd_order_detail;"
     assert ctx.etl_sql == ""
     assert ctx.downstream_tables == ["dws_store_sales_daily"]
 
 
 def test_build_contexts_includes_business_semantics_catalog_options(
-        sample_lineage_data, tmp_path, monkeypatch):
+    sample_lineage_data, tmp_path, monkeypatch
+):
     project = "context_catalog"
     project_dir = tmp_path / project
     ddl_dir = project_dir / "ddl"
@@ -197,16 +213,20 @@ def test_build_contexts_includes_business_semantics_catalog_options(
                 "project": project,
                 "data_domains": [],
                 "business_areas": [],
-                "business_processes": [{
-                    "code": "ORDER_TRANSACTION",
-                    "name": "订单交易",
-                    "tables": ["dwd_order_detail"],
-                }],
-                "semantic_subjects": [{
-                    "code": "CUSTOMER",
-                    "name": "客户",
-                    "tables": ["dwd_customer"],
-                }],
+                "business_processes": [
+                    {
+                        "code": "ORDER_TRANSACTION",
+                        "name": "订单交易",
+                        "tables": ["dwd_order_detail"],
+                    }
+                ],
+                "semantic_subjects": [
+                    {
+                        "code": "CUSTOMER",
+                        "name": "客户",
+                        "tables": ["dwd_customer"],
+                    }
+                ],
             },
             allow_unicode=True,
             sort_keys=False,
@@ -214,29 +234,38 @@ def test_build_contexts_includes_business_semantics_catalog_options(
         encoding="utf-8",
     )
     monkeypatch.setattr(config, "PROJECT_ROOT", tmp_path)
-    monkeypatch.setitem(config.PROJECT_CONFIG, project, {
-        "dir": project,
-        "naming_config": "naming_config.yaml",
-    })
+    monkeypatch.setitem(
+        config.PROJECT_CONFIG,
+        project,
+        {
+            "dir": project,
+            "naming_config": "naming_config.yaml",
+        },
+    )
     config._business_semantics_cache.clear()
 
     contexts = build_contexts(project, sample_lineage_data)
     ctx = next(c for c in contexts if c.table_name == "dwd_order_detail")
 
     assert ctx.business_semantics_options == {
-        "business_processes": [{
-            "code": "ORDER_TRANSACTION",
-            "name": "订单交易",
-        }],
-        "semantic_subjects": [{
-            "code": "CUSTOMER",
-            "name": "客户",
-        }],
+        "business_processes": [
+            {
+                "code": "ORDER_TRANSACTION",
+                "name": "订单交易",
+            }
+        ],
+        "semantic_subjects": [
+            {
+                "code": "CUSTOMER",
+                "name": "客户",
+            }
+        ],
     }
 
 
 def test_build_contexts_includes_project_context_from_business_semantics(
-        sample_lineage_data, tmp_path, monkeypatch):
+    sample_lineage_data, tmp_path, monkeypatch
+):
     project = "context_project_context"
     project_dir = tmp_path / project
     ddl_dir = project_dir / "ddl"
@@ -269,10 +298,14 @@ def test_build_contexts_includes_project_context_from_business_semantics(
         encoding="utf-8",
     )
     monkeypatch.setattr(config, "PROJECT_ROOT", tmp_path)
-    monkeypatch.setitem(config.PROJECT_CONFIG, project, {
-        "dir": project,
-        "naming_config": "naming_config.yaml",
-    })
+    monkeypatch.setitem(
+        config.PROJECT_CONFIG,
+        project,
+        {
+            "dir": project,
+            "naming_config": "naming_config.yaml",
+        },
+    )
     config._business_semantics_cache.clear()
 
     contexts = build_contexts(project, sample_lineage_data)

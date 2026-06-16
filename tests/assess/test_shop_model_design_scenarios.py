@@ -1,14 +1,14 @@
 import copy
 
+from assess.project_facts.asset_catalog import build_asset_catalog
+from assess.scoring.config import MODEL_DESIGN_RULES
+from assess.scoring.model_design import score_model_design_health
 from config import (
     PROJECT_CONFIG,
     PROJECT_ROOT,
     get_business_domain_config,
     load_model_metadata,
 )
-from assess.project_facts.asset_catalog import build_asset_catalog
-from assess.scoring.config import MODEL_DESIGN_RULES
-from assess.scoring.model_design import score_model_design_health
 from lineage.lineage_extractor import (
     build_lineage_output,
     build_schema_from_ddl,
@@ -65,11 +65,13 @@ def _with_model_rule_scenarios(lineage_data: dict, model_metadata: dict):
             "layer": "DWS",
             "table_type": "fact",
             "grain": {},
-            "derived_metrics": [{
-                "name": "sale_amount",
-                "base_metric": "ghost_amount",
-                "aggregation": "SUM",
-            }],
+            "derived_metrics": [
+                {
+                    "name": "sale_amount",
+                    "base_metric": "ghost_amount",
+                    "aggregation": "SUM",
+                }
+            ],
         },
         "dws_order_passthrough_daily": {
             "layer": "DWS",
@@ -118,7 +120,8 @@ def test_shop_model_design_has_detectable_scenario_for_each_model_rule():
 
     rule_ids = {issue["rule_id"] for issue in result["issues"]}
     expected_rule_ids = {
-        rule_id for rule_id in MODEL_DESIGN_RULES
+        rule_id
+        for rule_id in MODEL_DESIGN_RULES
         if rule_id.startswith("MODEL_")
     }
     assert expected_rule_ids <= rule_ids

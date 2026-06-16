@@ -11,54 +11,67 @@ _root = Path(__file__).resolve().parent.parent
 if str(_root) not in sys.path:
     sys.path.insert(0, str(_root))
 
+from assess.llm.model_metadata_writer import (
+    run_catalog_discovery,  # noqa: E402
+)
 from assess.project_facts.business_semantics import (  # noqa: E402
     write_initial_business_semantics_catalog,
 )
-from assess.llm.model_metadata_writer import run_catalog_discovery  # noqa: E402
 from config import PROJECT_CONFIG  # noqa: E402
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="初始化项目 business_semantics.yaml 业务语义目录")
-    parser.add_argument("--project",
-                        default="shop",
-                        choices=list(PROJECT_CONFIG.keys()),
-                        help="项目名称")
-    parser.add_argument("--overwrite",
-                        action="store_true",
-                        help="覆盖已存在的 business_semantics.yaml")
-    parser.add_argument("--llm",
-                        action="store_true",
-                        help="调用表级 LLM 巡检结果初始化/更新目录")
-    parser.add_argument("--model",
-                        default="deepseek-v4-flash",
-                        help="DeepSeek 模型名称")
-    parser.add_argument("--max-retries",
-                        type=int,
-                        default=1,
-                        help="LLM 返回校验失败时的最大重试次数")
-    parser.add_argument("--no-cache",
-                        action="store_true",
-                        help="忽略本地缓存，强制重新调用 API")
-    parser.add_argument("--parallel",
-                        type=int,
-                        default=2,
-                        help="LLM 并发调用数，默认 2")
-    parser.add_argument("--quiet",
-                        action="store_true",
-                        help="不打印单表巡检进度")
-    parser.add_argument("--dry-run",
-                        action="store_true",
-                        help="只生成结果，不写文件")
-    parser.add_argument("--output",
-                        help="输出 JSON 文件路径")
+        description="初始化项目 business_semantics.yaml 业务语义目录"
+    )
+    parser.add_argument(
+        "--project",
+        default="shop",
+        choices=list(PROJECT_CONFIG.keys()),
+        help="项目名称",
+    )
+    parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="覆盖已存在的 business_semantics.yaml",
+    )
+    parser.add_argument(
+        "--llm",
+        action="store_true",
+        help="调用表级 LLM 巡检结果初始化/更新目录",
+    )
+    parser.add_argument(
+        "--model", default="deepseek-v4-flash", help="DeepSeek 模型名称"
+    )
+    parser.add_argument(
+        "--max-retries",
+        type=int,
+        default=1,
+        help="LLM 返回校验失败时的最大重试次数",
+    )
+    parser.add_argument(
+        "--no-cache",
+        action="store_true",
+        help="忽略本地缓存，强制重新调用 API",
+    )
+    parser.add_argument(
+        "--parallel", type=int, default=2, help="LLM 并发调用数，默认 2"
+    )
+    parser.add_argument(
+        "--quiet", action="store_true", help="不打印单表巡检进度"
+    )
+    parser.add_argument(
+        "--dry-run", action="store_true", help="只生成结果，不写文件"
+    )
+    parser.add_argument("--output", help="输出 JSON 文件路径")
     args = parser.parse_args()
 
     if args.llm:
         api_key = os.environ.get("DEEPSEEK_API_KEY")
         if not api_key:
-            raise SystemExit("未提供 DEEPSEEK_API_KEY 环境变量，无法调用 DeepSeek API")
+            raise SystemExit(
+                "未提供 DEEPSEEK_API_KEY 环境变量，无法调用 DeepSeek API"
+            )
         result = run_catalog_discovery(
             args.project,
             api_key=api_key,

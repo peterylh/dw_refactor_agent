@@ -38,9 +38,13 @@ def isolated_model_layers(tmp_path, monkeypatch):
                 f"version: 2\nname: {table_name}\nlayer: {layer}\n",
                 encoding="utf-8",
             )
-        monkeypatch.setitem(config.PROJECT_CONFIG, project_name, {
-            "dir": project_name,
-        })
+        monkeypatch.setitem(
+            config.PROJECT_CONFIG,
+            project_name,
+            {
+                "dir": project_name,
+            },
+        )
 
     monkeypatch.setattr(config, "PROJECT_ROOT", tmp_path)
     monkeypatch.setattr(analyze_refact, "CURRENT_PROJECT", project)
@@ -78,6 +82,7 @@ def test_determine_layer_other():
     assert determine_layer("unknown_table") == "OTHER"
     assert determine_layer("") == "OTHER"
 
+
 def test_determine_layer_dim(monkeypatch):
     monkeypatch.setattr(analyze_refact, "CURRENT_PROJECT", "unit_refact_dim")
     assert determine_layer("dim_date") == "DIM"
@@ -106,8 +111,10 @@ def test_get_partition_col_with_baseline():
     )
     DISTRIBUTED BY HASH(customer_id) BUCKETS 10
     PROPERTIES ("replication_num" = "1");"""
-    assert get_partition_col("dwd_customer", "DWD",
-                             {"dwd_customer": ddl}) == "snapshot_date"
+    assert (
+        get_partition_col("dwd_customer", "DWD", {"dwd_customer": ddl})
+        == "snapshot_date"
+    )
 
 
 def test_get_partition_col_with_baseline_no_partition():
@@ -118,8 +125,7 @@ def test_get_partition_col_with_baseline_no_partition():
     DUPLICATE KEY(id)
     DISTRIBUTED BY HASH(id) BUCKETS 10
     PROPERTIES ("replication_num" = "1");"""
-    assert get_partition_col("some_table", "ADS",
-                             {"some_table": ddl}) == ""
+    assert get_partition_col("some_table", "ADS", {"some_table": ddl}) == ""
 
 
 def test_get_partition_col_with_baseline_missing():
@@ -204,7 +210,7 @@ INSERT INTO shop_dm.ods_order VALUES (2, 'bar');
     assert "INSERT INTO shop_dm" not in result
     # Should keep all non-INSERT lines
     lines = result.strip().split("\n")
-    assert all("INSERT" not in l.upper() for l in lines)
+    assert all("INSERT" not in line.upper() for line in lines)
 
 
 def test_strip_insert_data_no_insert():

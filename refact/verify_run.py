@@ -13,17 +13,19 @@
   python refact/verify_run.py --metadata refact/refact_metadata.json --dry-run
 """
 
-import json, argparse, subprocess, sys
+import argparse
+import json
+import subprocess
+import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
-from config import get_mysql_cmd
 
 import sqlglot
 from sqlglot import exp
 from sqlglot.errors import ErrorLevel
 
+from config import get_mysql_cmd
 from doris_sql import extract_create_table_name
 
 # ============================================================
@@ -39,7 +41,9 @@ def run_sql(sql: str, db: str = "", qa: bool = False) -> str:
     cmd.extend(["-e", sql])
     r = subprocess.run(
         cmd,
-        capture_output=True, text=True, timeout=300,
+        capture_output=True,
+        text=True,
+        timeout=300,
     )
     if r.returncode != 0:
         print(f"  ERROR: {r.stderr.strip()}")
@@ -54,7 +58,10 @@ def run_sql_text(sql_text: str, db: str = "", qa: bool = False) -> str:
         cmd.append(db)
     r = subprocess.run(
         cmd,
-        input=sql_text, capture_output=True, text=True, timeout=300,
+        input=sql_text,
+        capture_output=True,
+        text=True,
+        timeout=300,
     )
     if r.returncode != 0:
         print(f"  ERROR: {r.stderr.strip()}")
@@ -73,12 +80,11 @@ def _get_dml_target(stmt):
         target = stmt.this
         if isinstance(target, exp.Table):
             return target.name
-        if isinstance(target, exp.Schema) and isinstance(target.this, exp.Table):
+        if isinstance(target, exp.Schema) and isinstance(
+            target.this, exp.Table
+        ):
             return target.this.name
-    elif isinstance(stmt, exp.Update):
-        if isinstance(stmt.this, exp.Table):
-            return stmt.this.name
-    elif isinstance(stmt, exp.Delete):
+    elif isinstance(stmt, (exp.Update, exp.Delete)):
         if isinstance(stmt.this, exp.Table):
             return stmt.this.name
     elif isinstance(stmt, exp.TruncateTable):
@@ -89,7 +95,9 @@ def _get_dml_target(stmt):
                 return tbl.name
     elif isinstance(stmt, exp.Create):
         # CTAS: CREATE TABLE ... AS SELECT
-        if isinstance(stmt.this, exp.Schema) and isinstance(stmt.this.this, exp.Table):
+        if isinstance(stmt.this, exp.Schema) and isinstance(
+            stmt.this.this, exp.Table
+        ):
             return stmt.this.this.name
     elif isinstance(stmt, exp.Command) and str(stmt.this).upper() == "CREATE":
         table_name = extract_create_table_name(stmt.sql(dialect="doris"))
@@ -97,16 +105,18 @@ def _get_dml_target(stmt):
     return None
 
 
-def rewrite_sql(sql_text: str, prod_db: str, qa_db: str,
-                recalculated: set) -> str:
+def rewrite_sql(
+    sql_text: str, prod_db: str, qa_db: str, recalculated: set
+) -> str:
     """
     表映射重写规则:
       表是 DML 目标                  → qa_db  (写入验证库)
       表在前序已执行作业的 target 中   → qa_db  (读刚算好的 QA 数据)
       其他 (ODS / 未修改中间表)       → prod_db (读生产)
     """
-    statements = sqlglot.parse(sql_text, dialect="doris",
-                               error_level=ErrorLevel.IGNORE)
+    statements = sqlglot.parse(
+        sql_text, dialect="doris", error_level=ErrorLevel.IGNORE
+    )
     rewritten = []
     for stmt in statements:
         if stmt is None:
@@ -122,10 +132,7 @@ def rewrite_sql(sql_text: str, prod_db: str, qa_db: str,
                 continue
             tname = table.name
             # DML 目标 → QA
-            if tname == dml_target:
-                todo.append((table, qa_db))
-            # 前序已算表 → QA
-            elif tname in recalculated:
+            if tname == dml_target or tname in recalculated:
                 todo.append((table, qa_db))
             # 其余保持生产
             else:
@@ -151,8 +158,9 @@ def main():
         description="验证执行: 重建验证库 + SQL Glot 表映射执行"
     )
     parser.add_argument("--metadata", required=True, help="元数据 JSON 路径")
-    parser.add_argument("--dry-run", action="store_true",
-                        help="只输出执行计划, 不连接数据库")
+    parser.add_argument(
+        "--dry-run", action="store_true", help="只输出执行计划, 不连接数据库"
+    )
     args = parser.parse_args()
 
     meta = json.loads(Path(args.metadata).read_text(encoding="utf-8"))
@@ -167,7 +175,9 @@ def main():
     checks = meta.get("verification", {}).get("checks", [])
     if not anchors and not checks:
         print("  ⚠ 警告: 无锚点表且无校验配置")
-        print("    作业会正常执行，但无法通过 verify_check.py 对比校验数据一致性")
+        print(
+            "    作业会正常执行，但无法通过 verify_check.py 对比校验数据一致性"
+        )
         print("    如果只是想确认作业不报错，可继续执行\n")
 
     if args.dry_run:
@@ -208,7 +218,9 @@ def main():
             sql_qa = sql.replace(f"{prod_db}.", f"{qa_db}.")
             try:
                 run_sql(sql_qa, qa_db, qa=True)
-                print(f"  [{ch.get('change_type')}] {ch.get('table_name', '?')}")
+                print(
+                    f"  [{ch.get('change_type')}] {ch.get('table_name', '?')}"
+                )
             except Exception as e:
                 print(f"  [SKIP] {ch.get('change_type')}: {e}")
 
@@ -267,7 +279,7 @@ def _dry_run(meta):
     root = Path(__file__).resolve().parent.parent
 
     print(f"{'=' * 60}")
-    print(f"=== DRY RUN ===")
+    print("=== DRY RUN ===")
     print(f"  项目: {meta['project']}")
     print(f"  分支: {meta['git']['branch']}")
     print(f"  基线: {meta['git']['merge_base'][:12]}...")
@@ -277,9 +289,11 @@ def _dry_run(meta):
     checks = meta.get("verification", {}).get("checks", [])
     if not meta.get("anchors") and not checks:
         print()
-        print("  ⚠ 警告: 无锚点表且无校验配置，verify_check.py 将无表可对比校验")
+        print(
+            "  ⚠ 警告: 无锚点表且无校验配置，verify_check.py 将无表可对比校验"
+        )
 
-    print(f"\n--- Phase 0: 重置验证库 ---")
+    print("\n--- Phase 0: 重置验证库 ---")
     print(f"  DROP DATABASE IF EXISTS {qa_db}")
     print(f"  CREATE DATABASE {qa_db}")
 
@@ -302,7 +316,7 @@ def _dry_run(meta):
 
         print(f"\n  {idx}/{len(jobs_to_run)}: [{layer}] {jname}")
         if not fpath.exists():
-            print(f"    [SKIP] 文件不存在")
+            print("    [SKIP] 文件不存在")
             continue
 
         sql_text = fpath.read_text(encoding="utf-8")
@@ -324,8 +338,10 @@ def _dry_run(meta):
     if checks:
         print(f"\n--- 校验检查 ({len(checks)} 项) ---")
         for ck in checks:
-            print(f"  [{ck['method']}] {qa_db}.{ck['table']} "
-                  f"WHERE {ck['partition_col']} = '{ck['partition_value']}'")
+            print(
+                f"  [{ck['method']}] {qa_db}.{ck['table']} "
+                f"WHERE {ck['partition_col']} = '{ck['partition_value']}'"
+            )
 
 
 if __name__ == "__main__":

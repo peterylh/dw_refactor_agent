@@ -14,8 +14,7 @@ def _layer(subgraph: TableSubgraph, table: str) -> str:
 
 def _format_layers(layer_counts: dict[str, int]) -> str:
     return ", ".join(
-        f"{layer}={count}"
-        for layer, count in sorted(layer_counts.items())
+        f"{layer}={count}" for layer, count in sorted(layer_counts.items())
     )
 
 
@@ -212,7 +211,9 @@ def _format_transformations(transformation_counts: dict[str, int]) -> str:
     )
 
 
-def format_column_text(lineage: ColumnLineage, *, verbose: bool = False) -> str:
+def format_column_text(
+    lineage: ColumnLineage, *, verbose: bool = False
+) -> str:
     lines = [
         f"Column Lineage: {lineage.project} / {lineage.table}.{lineage.column}",
         f"Direction: {lineage.direction}   Depth: {lineage.depth}",

@@ -1,14 +1,11 @@
-import importlib.util
 import json
 import os
-from pathlib import Path
-import re
 import subprocess
 import sys
 import textwrap
+from pathlib import Path
 
 import pytest
-
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 PROJECT_CODE_DIRS = (
@@ -27,7 +24,8 @@ def _project_python_files():
     for dirname in PROJECT_CODE_DIRS:
         files.extend(sorted((PROJECT_ROOT / dirname).rglob("*.py")))
     return [
-        path for path in files
+        path
+        for path in files
         if path.exists() and ".conda-py37" not in path.parts
     ]
 
@@ -77,7 +75,12 @@ def test_project_modules_import_under_python37_with_released_sqlglot():
     env = os.environ.copy()
     env.pop("PYTHONPATH", None)
     result = subprocess.run(
-        [sys.executable, "-c", script, json.dumps([str(p) for p in _project_python_files()])],
+        [
+            sys.executable,
+            "-c",
+            script,
+            json.dumps([str(p) for p in _project_python_files()]),
+        ],
         cwd=str(PROJECT_ROOT),
         env=env,
         stdout=subprocess.PIPE,

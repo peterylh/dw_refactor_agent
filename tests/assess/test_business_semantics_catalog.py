@@ -1,13 +1,13 @@
 import yaml
 
 import config
+from assess.llm.table_inspector import TableInspectResult
 from assess.project_facts.business_semantics import (
     build_business_semantics_catalog_from_inspection,
     build_initial_business_semantics_catalog,
     business_semantics_path,
     write_initial_business_semantics_catalog,
 )
-from assess.llm.table_inspector import TableInspectResult
 
 
 def _configure_catalog_project(monkeypatch, tmp_path):
@@ -21,20 +21,24 @@ def _configure_catalog_project(monkeypatch, tmp_path):
                 "bindings": {},
                 "dictionaries": {
                     "data_domains": {
-                        "values": [{
-                            "id": "04",
-                            "code": "TRAN",
-                            "name": "交易域",
-                            "keywords": ["order"],
-                        }]
+                        "values": [
+                            {
+                                "id": "04",
+                                "code": "TRAN",
+                                "name": "交易域",
+                                "keywords": ["order"],
+                            }
+                        ]
                     },
                     "business_areas": {
-                        "values": [{
-                            "id": "SHOP",
-                            "code": "SHOP",
-                            "name": "零售业务",
-                            "keywords": ["order"],
-                        }]
+                        "values": [
+                            {
+                                "id": "SHOP",
+                                "code": "SHOP",
+                                "name": "零售业务",
+                                "keywords": ["order"],
+                            }
+                        ]
                     },
                 },
             },
@@ -54,10 +58,14 @@ def _configure_catalog_project(monkeypatch, tmp_path):
         encoding="utf-8",
     )
     monkeypatch.setattr(config, "PROJECT_ROOT", tmp_path)
-    monkeypatch.setitem(config.PROJECT_CONFIG, project, {
-        "dir": project,
-        "naming_config": "naming_config.yaml",
-    })
+    monkeypatch.setitem(
+        config.PROJECT_CONFIG,
+        project,
+        {
+            "dir": project,
+            "naming_config": "naming_config.yaml",
+        },
+    )
     config._naming_config_cache.clear()
     config._model_metadata_cache.clear()
     config._business_semantics_cache.clear()
@@ -65,7 +73,8 @@ def _configure_catalog_project(monkeypatch, tmp_path):
 
 
 def test_business_semantics_catalog_defaults_to_project_dir(
-        tmp_path, monkeypatch):
+    tmp_path, monkeypatch
+):
     project = _configure_catalog_project(monkeypatch, tmp_path)
 
     result = write_initial_business_semantics_catalog(project)
@@ -95,7 +104,8 @@ def test_build_initial_catalog_uses_project_tables(tmp_path, monkeypatch):
 
 
 def test_build_catalog_from_inspection_clusters_llm_processes_and_subjects(
-        tmp_path, monkeypatch):
+    tmp_path, monkeypatch
+):
     project = _configure_catalog_project(monkeypatch, tmp_path)
     fact = TableInspectResult(
         table_name="dwd_transaction_detail",
@@ -107,10 +117,12 @@ def test_build_catalog_from_inspection_clusters_llm_processes_and_subjects(
         inferred_data_domain="04",
         inferred_business_area="SHOP",
         columns={
-            "atomic_metrics": [{
-                "name": "pay_amount",
-                "business_process": "TRANSACTION_EVENT",
-            }],
+            "atomic_metrics": [
+                {
+                    "name": "pay_amount",
+                    "business_process": "TRANSACTION_EVENT",
+                }
+            ],
             "derived_metrics": [],
             "calculated_metrics": [],
             "dimensions": [],
@@ -126,12 +138,14 @@ def test_build_catalog_from_inspection_clusters_llm_processes_and_subjects(
         reasoning_steps=["客户实体属性"],
         inferred_data_domain="04",
         inferred_business_area="SHOP",
-        entities=[{
-            "code": "CUSTOMER",
-            "type": "primary",
-            "name": "客户",
-            "key_columns": ["customer_id"],
-        }],
+        entities=[
+            {
+                "code": "CUSTOMER",
+                "type": "primary",
+                "name": "客户",
+                "key_columns": ["customer_id"],
+            }
+        ],
     )
 
     catalog = build_business_semantics_catalog_from_inspection(
@@ -139,22 +153,27 @@ def test_build_catalog_from_inspection_clusters_llm_processes_and_subjects(
         [fact, dimension],
     )
 
-    assert catalog["business_processes"] == [{
-        "code": "TRANSACTION_EVENT",
-        "name": "Transaction Event",
-        "data_domain": "04",
-        "business_area": "SHOP",
-    }]
-    assert catalog["semantic_subjects"] == [{
-        "code": "CUSTOMER",
-        "name": "客户",
-        "data_domain": "04",
-        "business_area": "SHOP",
-    }]
+    assert catalog["business_processes"] == [
+        {
+            "code": "TRANSACTION_EVENT",
+            "name": "Transaction Event",
+            "data_domain": "04",
+            "business_area": "SHOP",
+        }
+    ]
+    assert catalog["semantic_subjects"] == [
+        {
+            "code": "CUSTOMER",
+            "name": "客户",
+            "data_domain": "04",
+            "business_area": "SHOP",
+        }
+    ]
 
 
 def test_catalog_builder_does_not_turn_dimension_process_into_business_process(
-        tmp_path, monkeypatch):
+    tmp_path, monkeypatch
+):
     project = _configure_catalog_project(monkeypatch, tmp_path)
     dimension = TableInspectResult(
         table_name="dwd_entity_profile",
@@ -164,20 +183,24 @@ def test_catalog_builder_does_not_turn_dimension_process_into_business_process(
         confidence=0.9,
         reasoning_steps=[],
         columns={
-            "atomic_metrics": [{
-                "name": "entity_id",
-                "business_process": "ENTITY_OPERATION",
-            }],
+            "atomic_metrics": [
+                {
+                    "name": "entity_id",
+                    "business_process": "ENTITY_OPERATION",
+                }
+            ],
             "derived_metrics": [],
             "calculated_metrics": [],
             "dimensions": [],
             "others": [],
         },
-        entities=[{
-            "code": "ENTITY",
-            "type": "primary",
-            "key_columns": ["entity_id"],
-        }],
+        entities=[
+            {
+                "code": "ENTITY",
+                "type": "primary",
+                "key_columns": ["entity_id"],
+            }
+        ],
     )
 
     catalog = build_business_semantics_catalog_from_inspection(
@@ -190,7 +213,8 @@ def test_catalog_builder_does_not_turn_dimension_process_into_business_process(
 
 
 def test_catalog_builder_adds_llm_domain_and_area_candidates_without_dictionary(
-        tmp_path, monkeypatch):
+    tmp_path, monkeypatch
+):
     project = "unit_catalog_empty_dict"
     project_dir = tmp_path / project
     (project_dir / "ddl").mkdir(parents=True)
@@ -199,10 +223,14 @@ def test_catalog_builder_adds_llm_domain_and_area_candidates_without_dictionary(
         encoding="utf-8",
     )
     monkeypatch.setattr(config, "PROJECT_ROOT", tmp_path)
-    monkeypatch.setitem(config.PROJECT_CONFIG, project, {
-        "dir": project,
-        "naming_config": "naming_config.yaml",
-    })
+    monkeypatch.setitem(
+        config.PROJECT_CONFIG,
+        project,
+        {
+            "dir": project,
+            "naming_config": "naming_config.yaml",
+        },
+    )
     config._naming_config_cache.clear()
     config._business_semantics_cache.clear()
     result = TableInspectResult(
@@ -215,10 +243,12 @@ def test_catalog_builder_adds_llm_domain_and_area_candidates_without_dictionary(
         inferred_data_domain="EVENT_DOMAIN",
         inferred_business_area="EVENT_ANALYTICS",
         columns={
-            "atomic_metrics": [{
-                "name": "event_amount",
-                "business_process": "EVENT_COMPLETION",
-            }],
+            "atomic_metrics": [
+                {
+                    "name": "event_amount",
+                    "business_process": "EVENT_COMPLETION",
+                }
+            ],
             "derived_metrics": [],
             "calculated_metrics": [],
             "dimensions": [],
@@ -231,22 +261,29 @@ def test_catalog_builder_adds_llm_domain_and_area_candidates_without_dictionary(
         [result],
     )
 
-    assert catalog["data_domains"] == [{
-        "id": "EVENT_DOMAIN",
-        "code": "EVENT_DOMAIN",
-        "name": "Event Domain",
-    }]
-    assert catalog["business_areas"] == [{
-        "id": "EVENT_ANALYTICS",
-        "code": "EVENT_ANALYTICS",
-        "name": "Event Analytics",
-    }]
+    assert catalog["data_domains"] == [
+        {
+            "id": "EVENT_DOMAIN",
+            "code": "EVENT_DOMAIN",
+            "name": "Event Domain",
+        }
+    ]
+    assert catalog["business_areas"] == [
+        {
+            "id": "EVENT_ANALYTICS",
+            "code": "EVENT_ANALYTICS",
+            "name": "Event Analytics",
+        }
+    ]
     assert catalog["business_processes"][0]["data_domain"] == "EVENT_DOMAIN"
-    assert catalog["business_processes"][0]["business_area"] == "EVENT_ANALYTICS"
+    assert (
+        catalog["business_processes"][0]["business_area"] == "EVENT_ANALYTICS"
+    )
 
 
 def test_write_initial_catalog_keeps_existing_without_overwrite(
-        tmp_path, monkeypatch):
+    tmp_path, monkeypatch
+):
     project = _configure_catalog_project(monkeypatch, tmp_path)
     catalog_path = tmp_path / project / "business_semantics.yaml"
     catalog_path.write_text(
@@ -256,10 +293,12 @@ def test_write_initial_catalog_keeps_existing_without_overwrite(
                 "project": project,
                 "data_domains": [],
                 "business_areas": [],
-                "business_processes": [{
-                    "code": "MANUAL",
-                    "name": "人工维护",
-                }],
+                "business_processes": [
+                    {
+                        "code": "MANUAL",
+                        "name": "人工维护",
+                    }
+                ],
                 "semantic_subjects": [],
             },
             allow_unicode=True,
@@ -275,7 +314,8 @@ def test_write_initial_catalog_keeps_existing_without_overwrite(
 
 
 def test_get_business_domain_config_prefers_project_catalog(
-        tmp_path, monkeypatch):
+    tmp_path, monkeypatch
+):
     project = _configure_catalog_project(monkeypatch, tmp_path)
     catalog_path = tmp_path / project / "business_semantics.yaml"
     catalog_path.write_text(
@@ -283,16 +323,20 @@ def test_get_business_domain_config_prefers_project_catalog(
             {
                 "version": 1,
                 "project": project,
-                "data_domains": [{
-                    "id": "88",
-                    "code": "CUST",
-                    "name": "客户域",
-                }],
-                "business_areas": [{
-                    "id": "CRM",
-                    "code": "CRM",
-                    "name": "客户经营",
-                }],
+                "data_domains": [
+                    {
+                        "id": "88",
+                        "code": "CUST",
+                        "name": "客户域",
+                    }
+                ],
+                "business_areas": [
+                    {
+                        "id": "CRM",
+                        "code": "CRM",
+                        "name": "客户经营",
+                    }
+                ],
                 "business_processes": [],
                 "semantic_subjects": [],
             },

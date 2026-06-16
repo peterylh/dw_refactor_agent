@@ -17,6 +17,7 @@ DDL 变更自动推导工具。
     - 读取工作区文件为当前版本
     - 推导结果同上
 """
+
 from __future__ import annotations
 
 import json
@@ -24,7 +25,7 @@ import re
 import subprocess
 import sys
 import uuid
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import List, Optional, Tuple
 
@@ -37,7 +38,6 @@ from doris_sql import (
     extract_doris_key,
     normalize_create_table_for_sqlglot,
 )
-
 
 # ============================================================
 # 数据模型
@@ -129,7 +129,9 @@ class RenameTable(DDLChange):
         db_prefix = ""
         if "." in self.old_name:
             db_prefix = self.old_name.split(".")[0] + "."
-        return f"ALTER TABLE {db_prefix}{self.old_short} RENAME {self.new_short};"
+        return (
+            f"ALTER TABLE {db_prefix}{self.old_short} RENAME {self.new_short};"
+        )
 
 
 @dataclass
@@ -178,7 +180,7 @@ class AlterTable(DDLChange):
             parts.append(
                 f"ADD COLUMN {col.name} {col.data_type} {nullable} {default} {comment}".strip()
             )
-        for old, new in self.modifies:
+        for _old, new in self.modifies:
             nullable = "NULL" if new.nullable else "NOT NULL"
             default = f"DEFAULT {new.default}" if new.default else ""
             comment = f"COMMENT '{new.comment}'" if new.comment else ""
@@ -186,7 +188,9 @@ class AlterTable(DDLChange):
                 f"MODIFY COLUMN {new.name} {new.data_type} {nullable} {default} {comment}".strip()
             )
         if not parts:
-            return f"-- ALTER TABLE {self.table_name}: 无结构化变更(仅注释变更)"
+            return (
+                f"-- ALTER TABLE {self.table_name}: 无结构化变更(仅注释变更)"
+            )
         alter_body = ",\n    ".join(parts)
         return f"ALTER TABLE {self.table_name}\n    {alter_body};"
 
@@ -196,7 +200,7 @@ class AlterTable(DDLChange):
 # ============================================================
 
 # 正则: 匹配 -- table_id: <uuid>
-TABLE_ID_RE = re.compile(r'--\s*table_id:\s*([0-9a-fA-F\-]{36})\s*')
+TABLE_ID_RE = re.compile(r"--\s*table_id:\s*([0-9a-fA-F\-]{36})\s*")
 
 
 def extract_table_id(sql_text: str) -> str:
@@ -233,14 +237,15 @@ def parse_column_def(col_node: exp.ColumnDef) -> Optional[ColumnDef]:
     for c in constraints:
         kind = c.args.get("kind") if isinstance(c, exp.ColumnConstraint) else c
         if isinstance(kind, exp.NotNullColumnConstraint):
-            if kind.args.get("allow_null"):
-                nullable = True
-            else:
-                nullable = False
+            nullable = bool(kind.args.get("allow_null"))
         elif isinstance(kind, exp.DefaultColumnConstraint):
             default = kind.this.sql(dialect="doris") if kind.this else None
         elif isinstance(kind, exp.CommentColumnConstraint):
-            comment = kind.this.sql(dialect="doris").strip("'\"") if kind.this else None
+            comment = (
+                kind.this.sql(dialect="doris").strip("'\"")
+                if kind.this
+                else None
+            )
 
     return ColumnDef(
         name=col_node.this.name,
@@ -271,7 +276,9 @@ def parse_create_table(sql_text: str) -> Optional[TableDef]:
             continue
 
         full_name = schema.this.sql(dialect="doris")
-        short_name = full_name.split(".")[-1] if "." in full_name else full_name
+        short_name = (
+            full_name.split(".")[-1] if "." in full_name else full_name
+        )
 
         columns = []
         key_columns = []
@@ -285,7 +292,11 @@ def parse_create_table(sql_text: str) -> Optional[TableDef]:
         distribution_col = extract_doris_distribution_column(sql_text)
 
         # 用原始文本作为 raw_ddl,避免 sqlglot 再生 bug(如 UNIQUE KEY)
-        raw_ddl = sql_text if isinstance(sql_text, str) else stmt.sql(dialect="doris")
+        raw_ddl = (
+            sql_text
+            if isinstance(sql_text, str)
+            else stmt.sql(dialect="doris")
+        )
         table_id = extract_table_id(raw_ddl)
 
         return TableDef(
@@ -294,7 +305,8 @@ def parse_create_table(sql_text: str) -> Optional[TableDef]:
             columns=columns,
             key_type=key_type,
             key_columns=key_columns or ([columns[0].name] if columns else []),
-            distribution_col=distribution_col or (columns[0].name if columns else ""),
+            distribution_col=distribution_col
+            or (columns[0].name if columns else ""),
             raw_ddl=raw_ddl,
             table_id=table_id,
         )
@@ -346,7 +358,9 @@ def _get_merge_base(repo: Path, branch: str = "main") -> str:
 
 def _load_git_tables(repo: Path, ddl_dir_rel: str, ref: str) -> dict:
     """从 git ref 加载 DDL 文件并解析为 {short_name: TableDef}."""
-    raw = _git_cmd(repo, "ls-tree", "-r", "--name-only", ref, "--", ddl_dir_rel)
+    raw = _git_cmd(
+        repo, "ls-tree", "-r", "--name-only", ref, "--", ddl_dir_rel
+    )
     tables = {}
     for rel_path in raw.split("\n"):
         if not rel_path.endswith(".sql"):
@@ -387,7 +401,9 @@ def derive_from_git(
 # ============================================================
 
 
-def _jaccard_similarity(cols_a: List[ColumnDef], cols_b: List[ColumnDef]) -> float:
+def _jaccard_similarity(
+    cols_a: List[ColumnDef], cols_b: List[ColumnDef]
+) -> float:
     sigs_a = {c.signature() for c in cols_a}
     sigs_b = {c.signature() for c in cols_b}
     if not sigs_a and not sigs_b:
@@ -427,7 +443,9 @@ def derive_ddl_changes(old_tables: dict, new_tables: dict) -> List[DDLChange]:
         tid = old_tables[name].table_id
         if tid:
             if tid in old_by_uuid:
-                print(f"警告: 旧表 {old_by_uuid[tid]} 与 {name} 的 table_id 重复({tid}),跳过")
+                print(
+                    f"警告: 旧表 {old_by_uuid[tid]} 与 {name} 的 table_id 重复({tid}),跳过"
+                )
                 continue
             old_by_uuid[tid] = name
 
@@ -519,7 +537,10 @@ def _derive_alter_columns(old: TableDef, new: TableDef) -> dict:
         for ai, add_col in enumerate(added):
             if ai in matched_adds:
                 continue
-            if drop_col.data_type == add_col.data_type and drop_col.nullable == add_col.nullable:
+            if (
+                drop_col.data_type == add_col.data_type
+                and drop_col.nullable == add_col.nullable
+            ):
                 renames.append((drop_col.name, add_col.name))
                 matched_drops.add(di)
                 matched_adds.add(ai)
@@ -541,7 +562,12 @@ def _derive_alter_columns(old: TableDef, new: TableDef) -> dict:
         ):
             modified.append((old_c, new_c))
 
-    return {"adds": added, "drops": dropped, "modifies": modified, "renames": renames}
+    return {
+        "adds": added,
+        "drops": dropped,
+        "modifies": modified,
+        "renames": renames,
+    }
 
 
 def alter_to_change(
@@ -576,13 +602,21 @@ def format_changes(changes: List[DDLChange]) -> str:
         elif isinstance(ch, AlterTable):
             lines.append(f"-- 修改表: {ch.table_name}")
             if ch.renames:
-                lines.append(f"--   重命名列: {', '.join(f'{o}→{n}' for o, n in ch.renames)}")
+                lines.append(
+                    f"--   重命名列: {', '.join(f'{o}→{n}' for o, n in ch.renames)}"
+                )
             if ch.drops:
-                lines.append(f"--   删列: {', '.join(c.name for c in ch.drops)}")
+                lines.append(
+                    f"--   删列: {', '.join(c.name for c in ch.drops)}"
+                )
             if ch.adds:
-                lines.append(f"--   增列: {', '.join(c.name for c in ch.adds)}")
+                lines.append(
+                    f"--   增列: {', '.join(c.name for c in ch.adds)}"
+                )
             if ch.modifies:
-                lines.append(f"--   改列: {', '.join(o.name for o, _ in ch.modifies)}")
+                lines.append(
+                    f"--   改列: {', '.join(o.name for o, _ in ch.modifies)}"
+                )
         lines.append(ch.to_sql())
         lines.append("")
     return "\n".join(lines)
@@ -618,14 +652,20 @@ def changes_to_json(changes: List[DDLChange]) -> dict:
 # ============================================================
 
 
-def _emit_output(changes: List[DDLChange], fmt: str, output_path: Optional[Path]):
+def _emit_output(
+    changes: List[DDLChange], fmt: str, output_path: Optional[Path]
+):
     """统一输出逻辑."""
     stats = {
-        c.change_type: sum(1 for cc in changes if cc.change_type == c.change_type)
+        c.change_type: sum(
+            1 for cc in changes if cc.change_type == c.change_type
+        )
         for c in changes
     }
     if fmt == "json":
-        output = json.dumps(changes_to_json(changes), ensure_ascii=False, indent=2)
+        output = json.dumps(
+            changes_to_json(changes), ensure_ascii=False, indent=2
+        )
     else:
         header = f"-- DDL 自动推导结果: {dict(stats)}\n--\n\n"
         output = header + format_changes(changes)
@@ -679,7 +719,9 @@ def main():
         default="shop/ddl",
         help="DDL 目录相对路径 (默认 shop/ddl)",
     )
-    git_p.add_argument("--base", type=str, default="main", help="基线分支 (默认 main)")
+    git_p.add_argument(
+        "--base", type=str, default="main", help="基线分支 (默认 main)"
+    )
 
     # ---- inject-uuid 模式 (批量注入 UUID) ----
     inject_p = sub.add_parser(
@@ -701,7 +743,11 @@ def main():
             help="输出格式 (默认 sql)",
         )
         p.add_argument(
-            "--output", "-o", type=str, default=None, help="输出文件路径 (默认 stdout)"
+            "--output",
+            "-o",
+            type=str,
+            default=None,
+            help="输出文件路径 (默认 stdout)",
         )
 
     # 向后兼容: 无子命令且首参数是目录时,自动插入"dir"

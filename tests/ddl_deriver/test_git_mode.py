@@ -2,16 +2,16 @@
 
 import subprocess
 from pathlib import Path
+
 from ddl_deriver.ddl_deriver import (
-    _find_git_root,
-    _git_cmd,
-    _get_merge_base,
-    _load_git_tables,
-    derive_from_git,
-    RenameTable,
     AlterTable,
     CreateTable,
     DropTable,
+    RenameTable,
+    _find_git_root,
+    _get_merge_base,
+    _load_git_tables,
+    derive_from_git,
 )
 
 # ============================================================

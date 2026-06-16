@@ -1,6 +1,11 @@
 """Reusability scoring dimension."""
 
-from assess.result_model import SEVERITY_LOW, SEVERITY_MEDIUM, finalize_dimension, make_check
+from assess.result_model import (
+    SEVERITY_LOW,
+    SEVERITY_MEDIUM,
+    finalize_dimension,
+    make_check,
+)
 from assess.scoring.config import REUSABILITY_RULES, REUSE_FULL_SCORE_AT
 
 # ============================================================
@@ -58,10 +63,10 @@ def score_reusability(tables: list, downstream_map: dict) -> dict:
     )
 
     dist = dict(
-        high=sum(1 for cnt in downstream_counts
-                 if cnt >= REUSE_FULL_SCORE_AT),
-        medium=sum(1 for cnt in downstream_counts
-                   if 1 <= cnt < REUSE_FULL_SCORE_AT),
+        high=sum(1 for cnt in downstream_counts if cnt >= REUSE_FULL_SCORE_AT),
+        medium=sum(
+            1 for cnt in downstream_counts if 1 <= cnt < REUSE_FULL_SCORE_AT
+        ),
         none=sum(1 for cnt in downstream_counts if cnt == 0),
     )
 

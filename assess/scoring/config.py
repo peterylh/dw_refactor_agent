@@ -1,7 +1,13 @@
 """Shared scoring constants and rule metadata for assess dimensions."""
+
 from __future__ import annotations
 
-from assess.result_model import SEVERITY_HIGH, SEVERITY_LOW, SEVERITY_MEDIUM, rule_meta
+from assess.result_model import (
+    SEVERITY_HIGH,
+    SEVERITY_LOW,
+    SEVERITY_MEDIUM,
+    rule_meta,
+)
 
 # ============================================================
 # 评分配置
@@ -495,6 +501,7 @@ NAMING_FILE_RULE_IDS = {
     FILE_RULE_TASK_SQL: "NAMING_TASK_OUTPUT_NAME",
 }
 
+
 def normalize_score_weights(weights: dict | None = None) -> dict:
     merged = DEFAULT_WEIGHTS.copy()
     extra = {}
@@ -515,7 +522,8 @@ def normalize_score_weights(weights: dict | None = None) -> dict:
     }
     if invalid:
         invalid_text = ", ".join(
-            f"{key}={value}" for key, value in invalid.items())
+            f"{key}={value}" for key, value in invalid.items()
+        )
         raise ValueError(f"权重必须为非负数: {invalid_text}")
 
     total = sum(merged.values())
@@ -523,8 +531,7 @@ def normalize_score_weights(weights: dict | None = None) -> dict:
         raise ValueError("评分权重之和必须大于 0")
 
     normalized = {
-        key: round(value / total, 6)
-        for key, value in merged.items()
+        key: round(value / total, 6) for key, value in merged.items()
     }
     return {**normalized, **extra}
 

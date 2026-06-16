@@ -8,8 +8,14 @@ from lineage.table_graph import build_table_graph
 def test_build_table_graph_keeps_transient_tables_raw():
     lineage_data = {
         "edges": [
-            {"source": "dwd_orders.order_id", "target": "tmp_orders_stage.order_id"},
-            {"source": "tmp_orders_stage.order_id", "target": "dws_orders.order_id"},
+            {
+                "source": "dwd_orders.order_id",
+                "target": "tmp_orders_stage.order_id",
+            },
+            {
+                "source": "tmp_orders_stage.order_id",
+                "target": "dws_orders.order_id",
+            },
         ],
         "indirect_edges": [],
     }
@@ -27,8 +33,14 @@ def test_build_table_graph_keeps_transient_tables_raw():
 def test_build_asset_table_graph_collapses_transient_tables():
     lineage_data = {
         "edges": [
-            {"source": "dwd_orders.order_id", "target": "tmp_orders_stage.order_id"},
-            {"source": "tmp_orders_stage.order_id", "target": "dws_orders.order_id"},
+            {
+                "source": "dwd_orders.order_id",
+                "target": "tmp_orders_stage.order_id",
+            },
+            {
+                "source": "tmp_orders_stage.order_id",
+                "target": "dws_orders.order_id",
+            },
         ],
         "indirect_edges": [],
         "tables": [{"name": "tmp_orders_stage", "is_transient": True}],
@@ -47,10 +59,12 @@ def test_build_asset_table_graph_uses_table_transient_flags():
             {"source": "tmp_events.event_id", "target": "dwd_events.event_id"},
             {"source": "dwd_events.event_id", "target": "dws_events.event_id"},
         ],
-        "indirect_edges": [{
-            "source": "tmp_events.event_date",
-            "target_table": "dwd_events",
-        }],
+        "indirect_edges": [
+            {
+                "source": "tmp_events.event_date",
+                "target_table": "dwd_events",
+            }
+        ],
         "tables": [{"name": "tmp_events", "is_transient": True}],
     }
 
@@ -66,20 +80,24 @@ def test_build_asset_table_graph_uses_table_transient_flags():
 
 def test_build_asset_column_lineage_keeps_direct_asset_edges():
     lineage_data = {
-        "edges": [{
+        "edges": [
+            {
+                "source": "dwd_orders.amount",
+                "target": "dws_orders.total_amount",
+                "expression": "SUM(dwd_orders.amount) AS total_amount",
+                "source_file": "dws_orders.sql",
+            }
+        ],
+    }
+
+    assert build_asset_column_lineage(lineage_data, "dws_orders") == [
+        {
             "source": "dwd_orders.amount",
             "target": "dws_orders.total_amount",
             "expression": "SUM(dwd_orders.amount) AS total_amount",
             "source_file": "dws_orders.sql",
-        }],
-    }
-
-    assert build_asset_column_lineage(lineage_data, "dws_orders") == [{
-        "source": "dwd_orders.amount",
-        "target": "dws_orders.total_amount",
-        "expression": "SUM(dwd_orders.amount) AS total_amount",
-        "source_file": "dws_orders.sql",
-    }]
+        }
+    ]
 
 
 def test_build_asset_column_lineage_collapses_transient_field_path():
@@ -98,36 +116,40 @@ def test_build_asset_column_lineage_collapses_transient_field_path():
                 "source_file": "dws_promotion_effect_daily.sql",
             },
         ],
-        "tables": [{
-            "name": "tmp_promotion_stage",
-            "is_transient": True,
-        }],
+        "tables": [
+            {
+                "name": "tmp_promotion_stage",
+                "is_transient": True,
+            }
+        ],
     }
 
     assert build_asset_column_lineage(
         lineage_data,
         "dws_promotion_effect_daily",
-    ) == [{
-        "source": "dwd_order_detail.sale_amount",
-        "target": "dws_promotion_effect_daily.sale_amount",
-        "expression": "tmp_promotion_stage.sale_amount AS sale_amount",
-        "source_file": "dws_promotion_effect_daily.sql",
-        "transient_path": ["tmp_promotion_stage.sale_amount"],
-        "expression_chain": [
-            {
-                "source": "dwd_order_detail.sale_amount",
-                "target": "tmp_promotion_stage.sale_amount",
-                "expression": "SUM(dwd_order_detail.sale_amount) AS sale_amount",
-                "source_file": "dws_promotion_effect_daily.sql",
-            },
-            {
-                "source": "tmp_promotion_stage.sale_amount",
-                "target": "dws_promotion_effect_daily.sale_amount",
-                "expression": "tmp_promotion_stage.sale_amount AS sale_amount",
-                "source_file": "dws_promotion_effect_daily.sql",
-            },
-        ],
-    }]
+    ) == [
+        {
+            "source": "dwd_order_detail.sale_amount",
+            "target": "dws_promotion_effect_daily.sale_amount",
+            "expression": "tmp_promotion_stage.sale_amount AS sale_amount",
+            "source_file": "dws_promotion_effect_daily.sql",
+            "transient_path": ["tmp_promotion_stage.sale_amount"],
+            "expression_chain": [
+                {
+                    "source": "dwd_order_detail.sale_amount",
+                    "target": "tmp_promotion_stage.sale_amount",
+                    "expression": "SUM(dwd_order_detail.sale_amount) AS sale_amount",
+                    "source_file": "dws_promotion_effect_daily.sql",
+                },
+                {
+                    "source": "tmp_promotion_stage.sale_amount",
+                    "target": "dws_promotion_effect_daily.sale_amount",
+                    "expression": "tmp_promotion_stage.sale_amount AS sale_amount",
+                    "source_file": "dws_promotion_effect_daily.sql",
+                },
+            ],
+        }
+    ]
 
 
 def test_build_asset_column_lineage_preserves_multi_source_calculation_chain():
@@ -217,33 +239,41 @@ def test_build_asset_column_lineage_preserves_multi_source_calculation_chain():
 
 def test_build_asset_column_lineage_attaches_direct_condition_lineage():
     lineage_data = {
-        "edges": [{
+        "edges": [
+            {
+                "source": "dwd_orders.amount",
+                "target": "dws_orders.total_amount",
+                "expression": "SUM(dwd_orders.amount) AS total_amount",
+                "source_file": "dws_orders.sql",
+            }
+        ],
+        "indirect_edges": [
+            {
+                "source": "dwd_orders.order_status",
+                "target_table": "dws_orders",
+                "condition_type": "WHERE",
+                "condition_expression": "dwd_orders.order_status = 'PAID'",
+                "source_file": "dws_orders.sql",
+            }
+        ],
+    }
+
+    assert build_asset_column_lineage(lineage_data, "dws_orders") == [
+        {
             "source": "dwd_orders.amount",
             "target": "dws_orders.total_amount",
             "expression": "SUM(dwd_orders.amount) AS total_amount",
             "source_file": "dws_orders.sql",
-        }],
-        "indirect_edges": [{
-            "source": "dwd_orders.order_status",
-            "target_table": "dws_orders",
-            "condition_type": "WHERE",
-            "condition_expression": "dwd_orders.order_status = 'PAID'",
-            "source_file": "dws_orders.sql",
-        }],
-    }
-
-    assert build_asset_column_lineage(lineage_data, "dws_orders") == [{
-        "source": "dwd_orders.amount",
-        "target": "dws_orders.total_amount",
-        "expression": "SUM(dwd_orders.amount) AS total_amount",
-        "source_file": "dws_orders.sql",
-        "condition_lineage": [{
-            "source": "dwd_orders.order_status",
-            "condition_type": "WHERE",
-            "condition_expression": "dwd_orders.order_status = 'PAID'",
-            "source_file": "dws_orders.sql",
-        }],
-    }]
+            "condition_lineage": [
+                {
+                    "source": "dwd_orders.order_status",
+                    "condition_type": "WHERE",
+                    "condition_expression": "dwd_orders.order_status = 'PAID'",
+                    "source_file": "dws_orders.sql",
+                }
+            ],
+        }
+    ]
 
 
 def test_build_asset_column_lineage_collapses_transient_condition_source():
@@ -268,49 +298,57 @@ def test_build_asset_column_lineage_collapses_transient_condition_source():
                 "source_file": "dws_orders.sql",
             },
         ],
-        "indirect_edges": [{
-            "source": "tmp_orders.order_status",
-            "target_table": "dws_orders",
-            "condition_type": "HAVING",
-            "condition_expression": "tmp_orders.order_status = 'PAID'",
-            "source_file": "dws_orders.sql",
-        }],
+        "indirect_edges": [
+            {
+                "source": "tmp_orders.order_status",
+                "target_table": "dws_orders",
+                "condition_type": "HAVING",
+                "condition_expression": "tmp_orders.order_status = 'PAID'",
+                "source_file": "dws_orders.sql",
+            }
+        ],
         "tables": [{"name": "tmp_orders", "is_transient": True}],
     }
 
     result = build_asset_column_lineage(lineage_data, "dws_orders")
 
-    assert result == [{
-        "source": "dwd_orders.amount",
-        "target": "dws_orders.total_amount",
-        "expression": "tmp_orders.amount AS total_amount",
-        "source_file": "dws_orders.sql",
-        "transient_path": ["tmp_orders.amount"],
-        "expression_chain": [
-            {
-                "source": "dwd_orders.amount",
-                "target": "tmp_orders.amount",
-                "expression": "SUM(dwd_orders.amount) AS amount",
-                "source_file": "dws_orders.sql",
-            },
-            {
-                "source": "tmp_orders.amount",
-                "target": "dws_orders.total_amount",
-                "expression": "tmp_orders.amount AS total_amount",
-                "source_file": "dws_orders.sql",
-            },
-        ],
-        "condition_lineage": [{
-            "source": "dwd_orders.order_status",
-            "condition_type": "HAVING",
-            "condition_expression": "tmp_orders.order_status = 'PAID'",
+    assert result == [
+        {
+            "source": "dwd_orders.amount",
+            "target": "dws_orders.total_amount",
+            "expression": "tmp_orders.amount AS total_amount",
             "source_file": "dws_orders.sql",
-            "transient_path": ["tmp_orders.order_status"],
-            "expression_chain": [{
-                "source": "dwd_orders.order_status",
-                "target": "tmp_orders.order_status",
-                "expression": "dwd_orders.order_status AS order_status",
-                "source_file": "dws_orders.sql",
-            }],
-        }],
-    }]
+            "transient_path": ["tmp_orders.amount"],
+            "expression_chain": [
+                {
+                    "source": "dwd_orders.amount",
+                    "target": "tmp_orders.amount",
+                    "expression": "SUM(dwd_orders.amount) AS amount",
+                    "source_file": "dws_orders.sql",
+                },
+                {
+                    "source": "tmp_orders.amount",
+                    "target": "dws_orders.total_amount",
+                    "expression": "tmp_orders.amount AS total_amount",
+                    "source_file": "dws_orders.sql",
+                },
+            ],
+            "condition_lineage": [
+                {
+                    "source": "dwd_orders.order_status",
+                    "condition_type": "HAVING",
+                    "condition_expression": "tmp_orders.order_status = 'PAID'",
+                    "source_file": "dws_orders.sql",
+                    "transient_path": ["tmp_orders.order_status"],
+                    "expression_chain": [
+                        {
+                            "source": "dwd_orders.order_status",
+                            "target": "tmp_orders.order_status",
+                            "expression": "dwd_orders.order_status AS order_status",
+                            "source_file": "dws_orders.sql",
+                        }
+                    ],
+                }
+            ],
+        }
+    ]

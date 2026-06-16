@@ -13,12 +13,20 @@
   python refact/verify_check.py --metadata refact/refact_metadata.json --precision 0.001
 """
 
-import json, argparse, subprocess, sys
+import argparse
+import json
+import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from config import DORIS_HOST, DORIS_PORT, DORIS_USER, DORIS_QA_USER, get_mysql_cmd
 import pymysql
+
+from config import (
+    DORIS_HOST,
+    DORIS_PORT,
+    DORIS_QA_USER,
+    DORIS_USER,
+)
 
 # ============================================================
 # 连接配置
@@ -84,8 +92,9 @@ def check_count(prod_conn, qa_conn, ck: dict, precision: float) -> dict:
     }
 
 
-def check_row_compare(prod_conn, qa_conn, ck: dict,
-                      sample: int, precision: float) -> dict:
+def check_row_compare(
+    prod_conn, qa_conn, ck: dict, sample: int, precision: float
+) -> dict:
     """逐行逐列对比."""
     table = ck["table"]
     pc = ck["partition_col"]
@@ -139,14 +148,19 @@ def check_row_compare(prod_conn, qa_conn, ck: dict,
             if pv_col == qv_col:
                 continue
             # DECIMAL / 浮点容差
-            if isinstance(pv_col, (int, float)) and isinstance(qv_col, (int, float)):
-                if abs(float(pv_col) - float(qv_col)) <= precision:
-                    continue
-            row_diffs.append({
-                "col": col,
-                "prod": fmt_val(pv_col),
-                "qa": fmt_val(qv_col),
-            })
+            if (
+                isinstance(pv_col, (int, float))
+                and isinstance(qv_col, (int, float))
+                and abs(float(pv_col) - float(qv_col)) <= precision
+            ):
+                continue
+            row_diffs.append(
+                {
+                    "col": col,
+                    "prod": fmt_val(pv_col),
+                    "qa": fmt_val(qv_col),
+                }
+            )
         if row_diffs:
             mismatches.append({"row": i, "diffs": row_diffs})
 
@@ -154,14 +168,18 @@ def check_row_compare(prod_conn, qa_conn, ck: dict,
     status = "\u2714" if match else "\u2716"
     sampled = sample and len(prod_rows) == sample
     sample_note = f" (抽样 {sample})" if sampled else ""
-    print(f"  ROW:  PROD={len(prod_rows)}  QA={len(qa_rows)}  "
-          f"差异={len(mismatches)}{sample_note}  {status}")
+    print(
+        f"  ROW:  PROD={len(prod_rows)}  QA={len(qa_rows)}  "
+        f"差异={len(mismatches)}{sample_note}  {status}"
+    )
 
     if mismatches:
         for m in mismatches[:5]:
             for d in m["diffs"]:
-                print(f"    row {m['row']}  {d['col']}: "
-                      f"PROD={d['prod']}  QA={d['qa']}")
+                print(
+                    f"    row {m['row']}  {d['col']}: "
+                    f"PROD={d['prod']}  QA={d['qa']}"
+                )
 
     return {
         "table": table,
@@ -184,14 +202,20 @@ def check_row_compare(prod_conn, qa_conn, ck: dict,
 def main():
     parser = argparse.ArgumentParser(description="验证校验")
     parser.add_argument("--metadata", required=True, help="元数据 JSON 路径")
-    parser.add_argument("--method", default="all",
-                        choices=["count", "row_compare", "all"])
-    parser.add_argument("--sample", type=int, default=0,
-                        help="row_compare 抽样行数 (0=全量)")
-    parser.add_argument("--precision", type=float, default=0.01,
-                        help="DECIMAL 比较容差")
-    parser.add_argument("--output", default=None,
-                        help="结果 JSON 路径 (默认 refact/verify_result.json)")
+    parser.add_argument(
+        "--method", default="all", choices=["count", "row_compare", "all"]
+    )
+    parser.add_argument(
+        "--sample", type=int, default=0, help="row_compare 抽样行数 (0=全量)"
+    )
+    parser.add_argument(
+        "--precision", type=float, default=0.01, help="DECIMAL 比较容差"
+    )
+    parser.add_argument(
+        "--output",
+        default=None,
+        help="结果 JSON 路径 (默认 refact/verify_result.json)",
+    )
     args = parser.parse_args()
 
     meta = json.loads(Path(args.metadata).read_text(encoding="utf-8"))
@@ -200,10 +224,7 @@ def main():
     checks = meta.get("verification", {}).get("checks", [])
 
     # 过滤
-    filtered = [
-        c for c in checks
-        if args.method in ("all", c["method"])
-    ]
+    filtered = [c for c in checks if args.method in ("all", c["method"])]
     if not filtered:
         print(f"没有匹配的校验项 (method={args.method})")
         return
@@ -232,8 +253,9 @@ def main():
         if method == "count":
             r = check_count(prod_conn, qa_conn, ck, args.precision)
         elif method == "row_compare":
-            r = check_row_compare(prod_conn, qa_conn, ck,
-                                  args.sample, args.precision)
+            r = check_row_compare(
+                prod_conn, qa_conn, ck, args.sample, args.precision
+            )
         else:
             continue
 
@@ -252,12 +274,18 @@ def main():
     print(f"{'全部通过!' if all_pass else '存在差异!'}")
     print(f"  校验项: {total}  通过: {passed}  失败: {failed}")
 
-    out_path = Path(args.output) if args.output else (
-        Path(args.metadata).parent / "verify_result.json")
+    out_path = (
+        Path(args.output)
+        if args.output
+        else (Path(args.metadata).parent / "verify_result.json")
+    )
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(
-        json.dumps({"all_pass": all_pass, "results": results},
-                   ensure_ascii=False, indent=2),
+        json.dumps(
+            {"all_pass": all_pass, "results": results},
+            ensure_ascii=False,
+            indent=2,
+        ),
         encoding="utf-8",
     )
     print(f"结果已写入: {out_path}")

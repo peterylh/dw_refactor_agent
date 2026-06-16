@@ -1,18 +1,24 @@
 """config.py NamingConfig 的单元测试"""
-import re
+
 import pytest
 import yaml
+
 import config
 from config import (
-    TypeDef, LayerDef, NamingConfig,
-    _parse_rule_expression, _parse_segments, _parse_template,
-    get_business_domain_config, load_naming_config, layer_rank,
+    LayerDef,
+    NamingConfig,
+    TypeDef,
+    _parse_rule_expression,
+    _parse_segments,
+    _parse_template,
+    get_business_domain_config,
+    layer_rank,
+    load_naming_config,
 )
 
 
 def _write_dictionary_naming_config(tmp_path, filename, *, domains, areas):
-    raw = yaml.safe_load(
-        config.NAMING_CONFIG_PATH.read_text(encoding="utf-8"))
+    raw = yaml.safe_load(config.NAMING_CONFIG_PATH.read_text(encoding="utf-8"))
     raw["dictionaries"] = {
         "data_domains": {
             "values": [
@@ -74,14 +80,22 @@ def isolated_project_naming_configs(tmp_path, monkeypatch):
         areas=["LOAN", "PAYM", "CLNT", "OTHR"],
     )
     monkeypatch.setattr(config, "PROJECT_ROOT", tmp_path)
-    monkeypatch.setitem(config.PROJECT_CONFIG, "unit_shop", {
-        "dir": "unit_shop",
-        "naming_config": shop_cfg.name,
-    })
-    monkeypatch.setitem(config.PROJECT_CONFIG, "unit_finance", {
-        "dir": "unit_finance",
-        "naming_config": finance_cfg.name,
-    })
+    monkeypatch.setitem(
+        config.PROJECT_CONFIG,
+        "unit_shop",
+        {
+            "dir": "unit_shop",
+            "naming_config": shop_cfg.name,
+        },
+    )
+    monkeypatch.setitem(
+        config.PROJECT_CONFIG,
+        "unit_finance",
+        {
+            "dir": "unit_finance",
+            "naming_config": finance_cfg.name,
+        },
+    )
     config._naming_config_cache.clear()
     yield {
         "shop": "unit_shop",
@@ -93,6 +107,7 @@ def isolated_project_naming_configs(tmp_path, monkeypatch):
 # ============================================================
 # TypeDef.validate
 # ============================================================
+
 
 class TestTypeDef:
     @pytest.mark.parametrize(
@@ -109,15 +124,17 @@ class TestTypeDef:
                 ["MySql", ""],
             ),
             (
-                TypeDef(label="period", patterns=["^[0-9]+D$"],
-                        allow=["D", "MTD"]),
+                TypeDef(
+                    label="period", patterns=["^[0-9]+D$"], allow=["D", "MTD"]
+                ),
                 ["D", "MTD", "7D"],
                 ["0M"],
             ),
         ],
     )
     def test_validate_uses_allow_and_patterns(
-            self, typedef, valid_values, invalid_values):
+        self, typedef, valid_values, invalid_values
+    ):
         for value in valid_values:
             assert typedef.validate(value) is True
         for value in invalid_values:
@@ -131,50 +148,113 @@ class TestTypeDef:
 # _parse_segments
 # ============================================================
 
+
 class TestParseSegments:
     def test_basic_list(self):
         """[ods, $source, $entity] → 3 段 + 2 个 _"""
         result = _parse_segments(["ods", "$source", "$entity"], {})
         assert len(result) == 5
-        assert result[0] == {"name": "ods", "kind": "literal", "optional": False,
-                             "sep_before": "", "sep_after": "", "concat_left": False}
-        assert result[1] == {"name": "_", "kind": "literal", "optional": False,
-                             "sep_before": "", "sep_after": "", "concat_left": False}
-        assert result[2] == {"name": "source", "kind": "type", "optional": False,
-                             "sep_before": "", "sep_after": "", "concat_left": False}
-        assert result[3] == {"name": "_", "kind": "literal", "optional": False,
-                             "sep_before": "", "sep_after": "", "concat_left": False}
-        assert result[4] == {"name": "entity", "kind": "type", "optional": False,
-                             "sep_before": "", "sep_after": "", "concat_left": False}
+        assert result[0] == {
+            "name": "ods",
+            "kind": "literal",
+            "optional": False,
+            "sep_before": "",
+            "sep_after": "",
+            "concat_left": False,
+        }
+        assert result[1] == {
+            "name": "_",
+            "kind": "literal",
+            "optional": False,
+            "sep_before": "",
+            "sep_after": "",
+            "concat_left": False,
+        }
+        assert result[2] == {
+            "name": "source",
+            "kind": "type",
+            "optional": False,
+            "sep_before": "",
+            "sep_after": "",
+            "concat_left": False,
+        }
+        assert result[3] == {
+            "name": "_",
+            "kind": "literal",
+            "optional": False,
+            "sep_before": "",
+            "sep_after": "",
+            "concat_left": False,
+        }
+        assert result[4] == {
+            "name": "entity",
+            "kind": "type",
+            "optional": False,
+            "sep_before": "",
+            "sep_after": "",
+            "concat_left": False,
+        }
 
     def test_optional_right_gets_sep_before(self):
         """[$entity, "$time_granularity?"] → 右侧可选段获得 sep_before，不插入独立 _"""
         result = _parse_segments(["$entity", "$time_granularity?"], {})
         assert len(result) == 2
-        assert result[0] == {"name": "entity", "kind": "type", "optional": False,
-                             "sep_before": "", "sep_after": "", "concat_left": False}
-        assert result[1] == {"name": "time_granularity", "kind": "type", "optional": True,
-                             "sep_before": "_", "sep_after": "", "concat_left": False}
+        assert result[0] == {
+            "name": "entity",
+            "kind": "type",
+            "optional": False,
+            "sep_before": "",
+            "sep_after": "",
+            "concat_left": False,
+        }
+        assert result[1] == {
+            "name": "time_granularity",
+            "kind": "type",
+            "optional": True,
+            "sep_before": "_",
+            "sep_after": "",
+            "concat_left": False,
+        }
 
     def test_optional_left_gets_sep_after(self):
         """["$prefix_field?", $entity] → 左侧可选段获得 sep_after"""
         result = _parse_segments(["$prefix_field?", "$entity"], {})
         assert len(result) == 2
-        assert result[0] == {"name": "prefix_field", "kind": "type", "optional": True,
-                             "sep_before": "", "sep_after": "_", "concat_left": False}
-        assert result[1] == {"name": "entity", "kind": "type", "optional": False,
-                             "sep_before": "", "sep_after": "", "concat_left": False}
+        assert result[0] == {
+            "name": "prefix_field",
+            "kind": "type",
+            "optional": True,
+            "sep_before": "",
+            "sep_after": "_",
+            "concat_left": False,
+        }
+        assert result[1] == {
+            "name": "entity",
+            "kind": "type",
+            "optional": False,
+            "sep_before": "",
+            "sep_after": "",
+            "concat_left": False,
+        }
 
     def test_double_optional(self):
         """["$prefix_field?", "$entity", "$suffix_field?"] → 混合可选绑定"""
-        result = _parse_segments(["$prefix_field?", "$entity", "$suffix_field?"], {})
+        result = _parse_segments(
+            ["$prefix_field?", "$entity", "$suffix_field?"], {}
+        )
         assert len(result) == 3
-        assert result[0]["name"] == "prefix_field" and result[0]["optional"] is True
+        assert (
+            result[0]["name"] == "prefix_field"
+            and result[0]["optional"] is True
+        )
         assert result[0]["sep_after"] == "_"
         assert result[1]["name"] == "entity" and result[1]["optional"] is False
         assert result[1]["sep_before"] == ""
         assert result[1]["sep_after"] == ""
-        assert result[2]["name"] == "suffix_field" and result[2]["optional"] is True
+        assert (
+            result[2]["name"] == "suffix_field"
+            and result[2]["optional"] is True
+        )
         assert result[2]["sep_before"] == "_"
 
     def test_empty_list(self):
@@ -193,14 +273,19 @@ class TestParseSegments:
         assert result[0]["name"] == "entity"
 
     def test_plus_prefixed_type_syntax_is_rejected(self):
-        with pytest.raises(ValueError, match=r"\$\+TYPE syntax is not supported"):
+        with pytest.raises(
+            ValueError, match=r"\$\+TYPE syntax is not supported"
+        ):
             _parse_segments(["$+entity"], {})
 
     def test_optional_marker_without_dollar(self):
         """无 $ 前缀的 ? 被识别为字面量"""
         result = _parse_segments(["time_granularity?"], {})
         # '?' 在名称中是字面量的一部分
-        assert result[0]["name"] == "time_granularity" and result[0]["optional"] is True
+        assert (
+            result[0]["name"] == "time_granularity"
+            and result[0]["optional"] is True
+        )
         assert result[0]["kind"] == "literal"
 
     def test_all_required_separator(self):
@@ -214,6 +299,7 @@ class TestParseSegments:
 # _parse_template
 # ============================================================
 
+
 class TestParseTemplate:
     def test_list_format_passthrough(self):
         """列表格式直接委托给 _parse_segments"""
@@ -222,7 +308,7 @@ class TestParseTemplate:
         assert result[0]["name"] == "entity"
 
     def test_string_format_conversion(self):
-        """"ods_{source}_{entity}_{load_type}" → 添加 $ 前缀"""
+        """ "ods_{source}_{entity}_{load_type}" → 添加 $ 前缀"""
         result = _parse_template("ods_{source}_{entity}_{load_type}", {})
         type_names = [s["name"] for s in result if s["kind"] == "type"]
         assert "source" in type_names
@@ -231,7 +317,7 @@ class TestParseTemplate:
         assert result[0]["kind"] == "literal" and result[0]["name"] == "ods_"
 
     def test_string_format_with_optional(self):
-        """"_{type?}" 转换"""
+        """ "_{type?}" 转换"""
         result = _parse_template("_{type?}", {})
         types = [s for s in result if s["kind"] == "type"]
         assert types[0]["name"] == "type"
@@ -245,6 +331,7 @@ class TestParseTemplate:
 # ============================================================
 # NamingConfig 辅助构建
 # ============================================================
+
 
 def _make_types():
     return {
@@ -265,10 +352,30 @@ def _make_types():
         ),
         "suffix_field": TypeDef(
             label="suffix_field",
-            allow=["id", "name", "code", "date", "time", "amount",
-                   "price", "cost", "count", "quantity", "status",
-                   "type", "level", "score", "segment", "method",
-                   "num", "rate", "ratio", "flag", "desc", "note"],
+            allow=[
+                "id",
+                "name",
+                "code",
+                "date",
+                "time",
+                "amount",
+                "price",
+                "cost",
+                "count",
+                "quantity",
+                "status",
+                "type",
+                "level",
+                "score",
+                "segment",
+                "method",
+                "num",
+                "rate",
+                "ratio",
+                "flag",
+                "desc",
+                "note",
+            ],
         ),
     }
 
@@ -291,6 +398,7 @@ def _build_nc(table_cfg=None, col_segments=None, common_cols=None):
 # _match_segments — ODS 模式
 # ============================================================
 
+
 class TestMatchOds:
     @pytest.fixture
     def nc(self):
@@ -299,7 +407,11 @@ class TestMatchOds:
     def test_full_match(self, nc):
         segs = nc.layers["ODS"].templates[0]
         r = nc._match_segments("ods_mysql_orders_full", segs)
-        assert r == {"source": "mysql", "entity": "orders", "load_type": "full"}
+        assert r == {
+            "source": "mysql",
+            "entity": "orders",
+            "load_type": "full",
+        }
 
     def test_inc_variant(self, nc):
         segs = nc.layers["ODS"].templates[0]
@@ -323,12 +435,15 @@ class TestMatchOds:
     def test_db_prefixed_name(self, nc):
         """_match_segments 不会自动剥离 db 前缀"""
         segs = nc.layers["ODS"].templates[0]
-        assert nc._match_segments("shop_dm.ods_mysql_orders_full", segs) is None
+        assert (
+            nc._match_segments("shop_dm.ods_mysql_orders_full", segs) is None
+        )
 
 
 # ============================================================
 # _match_segments — DWD 模式
 # ============================================================
+
 
 class TestMatchDwd:
     @pytest.fixture
@@ -353,6 +468,7 @@ class TestMatchDwd:
 # ============================================================
 # _match_segments — DWS 模式（含可选时间粒度）
 # ============================================================
+
 
 class TestMatchDws:
     @pytest.fixture
@@ -380,6 +496,7 @@ class TestMatchDws:
 # _match_segments — ADS 模式
 # ============================================================
 
+
 class TestMatchAds:
     @pytest.fixture
     def nc(self):
@@ -400,6 +517,7 @@ class TestMatchAds:
 # _match_segments — DIM 模式
 # ============================================================
 
+
 class TestMatchDim:
     @pytest.fixture
     def nc(self):
@@ -414,6 +532,7 @@ class TestMatchDim:
 # ============================================================
 # _match_segments — 列模式
 # ============================================================
+
 
 class TestMatchColumn:
     @pytest.fixture
@@ -487,14 +606,14 @@ class TestTopLevelDetermineLayer:
         models_dir = tmp_path / "demo_project" / "models"
         models_dir.mkdir(parents=True)
         (models_dir / "legacy_name.yaml").write_text(
-            "version: 2\n"
-            "name: legacy_name\n"
-            "layer: ADS\n",
+            "version: 2\nname: legacy_name\nlayer: ADS\n",
             encoding="utf-8",
         )
 
         monkeypatch.setattr(config, "PROJECT_ROOT", tmp_path)
-        monkeypatch.setitem(config.PROJECT_CONFIG, "demo", {"dir": "demo_project"})
+        monkeypatch.setitem(
+            config.PROJECT_CONFIG, "demo", {"dir": "demo_project"}
+        )
         config._model_metadata_cache.clear()
 
         assert config.determine_layer("legacy_name", "demo") == "ADS"
@@ -517,6 +636,7 @@ class TestTopLevelDetermineLayer:
 # 独立层级排序
 # ============================================================
 
+
 class TestLayerRank:
     def test_ordered(self):
         assert layer_rank("ODS") == 0
@@ -535,6 +655,7 @@ class TestLayerRank:
 # ============================================================
 # load_naming_config — 集成测试
 # ============================================================
+
 
 class TestLoadNamingConfig:
     def test_load_production_config(self):
@@ -563,7 +684,9 @@ class TestLoadNamingConfig:
         assert "prefix_field" not in nc.types
         assert "suffix_field" not in nc.types
 
-    def test_column_default_requires_uppercase_identifier_shorter_than_16(self):
+    def test_column_default_requires_uppercase_identifier_shorter_than_16(
+        self,
+    ):
         nc = load_naming_config()
         assert nc._match_segments("CUSTOMER_ID", nc.column_segments) == {
             "COLUMN_IDENTIFIER": "CUSTOMER_ID",
@@ -572,9 +695,13 @@ class TestLoadNamingConfig:
             "COLUMN_IDENTIFIER": "CUSTOMER_ID_123",
         }
         assert nc._match_segments("customer_id", nc.column_segments) is None
-        assert nc._match_segments("CUSTOMER_ID_LONG1", nc.column_segments) is None
+        assert (
+            nc._match_segments("CUSTOMER_ID_LONG1", nc.column_segments) is None
+        )
 
-    def test_segment_repeat_syntax_applies_to_table_and_column_rules(self, tmp_path):
+    def test_segment_repeat_syntax_applies_to_table_and_column_rules(
+        self, tmp_path
+    ):
         cfg_path = tmp_path / "naming.yaml"
         cfg_path.write_text(
             """
@@ -690,7 +817,8 @@ bindings:
 # Enterprise V2 Naming Tests
 # ============================================================
 
-from config import get_naming_config, PROJECT_ROOT
+from config import PROJECT_ROOT, get_naming_config
+
 
 class TestJoinExpressionSyntax:
     def test_parse_nested_empty_join(self):
@@ -703,7 +831,11 @@ class TestJoinExpressionSyntax:
         types = {"period": td}
         nc = NamingConfig(
             types=types,
-            layers={"X": LayerDef(templates=[_parse_template(["x", "$period"], types)])},
+            layers={
+                "X": LayerDef(
+                    templates=[_parse_template(["x", "$period"], types)]
+                )
+            },
             column_segments=[],
             common_columns=set(),
         )
@@ -743,10 +875,13 @@ class TestEnterpriseNaming:
         }
 
     def test_match_dws_v2_single_entity(self, nc):
-        assert nc._match_segments(
-            "I_FRTN_CUST_BAL_DS",
-            nc.layers["DWS"].templates[0],
-        ) is None
+        assert (
+            nc._match_segments(
+                "I_FRTN_CUST_BAL_DS",
+                nc.layers["DWS"].templates[0],
+            )
+            is None
+        )
 
         segs = nc.layers["DWS"].templates[1]
         r = nc._match_segments("I_FRTN_CUST_BAL_DS", segs)
@@ -816,7 +951,9 @@ class TestEnterpriseNaming:
         assert "prefix_field" not in nc.types
         assert "suffix_field" not in nc.types
 
-    def test_column_default_requires_uppercase_identifier_shorter_than_16(self, nc):
+    def test_column_default_requires_uppercase_identifier_shorter_than_16(
+        self, nc
+    ):
         assert nc._match_segments("CUST_ID", nc.column_segments) == {
             "COLUMN_IDENTIFIER": "CUST_ID",
         }
@@ -824,7 +961,9 @@ class TestEnterpriseNaming:
             "COLUMN_IDENTIFIER": "CUSTOMER_ID_123",
         }
         assert nc._match_segments("cust_id", nc.column_segments) is None
-        assert nc._match_segments("CUSTOMER_ID_LONG1", nc.column_segments) is None
+        assert (
+            nc._match_segments("CUSTOMER_ID_LONG1", nc.column_segments) is None
+        )
 
     def test_atomic_metric_rule(self, nc):
         assert nc.types["ACTION_VERB"].validate("PAY") is True
@@ -849,9 +988,21 @@ class TestEnterpriseNaming:
         assert nc.types["METRIC_MODIFIER"].validate("OL") is False
         assert nc.types["METRIC_MODIFIER"].validate("high_net") is False
         assert nc.metric_rules["derived"][0]["nodes"] == [
-            {"kind": "type", "name": "METRIC_TIME_PERIOD", "repeat": {"min": 1, "max": 1}},
-            {"kind": "type", "name": "METRIC_MODIFIER", "repeat": {"min": 1, "max": None}},
-            {"kind": "rule", "name": "ATOMIC_METRIC", "repeat": {"min": 1, "max": 1}},
+            {
+                "kind": "type",
+                "name": "METRIC_TIME_PERIOD",
+                "repeat": {"min": 1, "max": 1},
+            },
+            {
+                "kind": "type",
+                "name": "METRIC_MODIFIER",
+                "repeat": {"min": 1, "max": None},
+            },
+            {
+                "kind": "rule",
+                "name": "ATOMIC_METRIC",
+                "repeat": {"min": 1, "max": 1},
+            },
         ]
         assert nc.match_metric_rule(
             "7D_OLD_CHREM_PAY_AMT",
@@ -887,32 +1038,55 @@ class TestGetNamingConfigByProject:
         assert nc.match_metric_rule("pay_amt", "atomic") is None
 
     def test_project_business_dictionary_tightens_naming_types(
-            self, isolated_project_naming_configs):
+        self, isolated_project_naming_configs
+    ):
         shop_nc = get_naming_config(isolated_project_naming_configs["shop"])
         finance_nc = get_naming_config(
-            isolated_project_naming_configs["finance"])
-        assert shop_nc._match_segments(
-            "M_WEMG_04_CHREM_DI",
-            shop_nc.layers["DWD"].templates[0],
-        ) is None
-        assert shop_nc._match_segments(
-            "M_SHOP_04_ORDER_DI",
-            shop_nc.layers["DWD"].templates[0],
-        ) is not None
-        assert finance_nc._match_segments(
-            "M_WEMG_04_CHREM_DI",
-            finance_nc.layers["DWD"].templates[0],
-        ) is None
-        assert finance_nc._match_segments(
-            "M_LOAN_04_CHREM_DI",
-            finance_nc.layers["DWD"].templates[0],
-        ) is not None
+            isolated_project_naming_configs["finance"]
+        )
+        assert (
+            shop_nc._match_segments(
+                "M_WEMG_04_CHREM_DI",
+                shop_nc.layers["DWD"].templates[0],
+            )
+            is None
+        )
+        assert (
+            shop_nc._match_segments(
+                "M_SHOP_04_ORDER_DI",
+                shop_nc.layers["DWD"].templates[0],
+            )
+            is not None
+        )
+        assert (
+            finance_nc._match_segments(
+                "M_WEMG_04_CHREM_DI",
+                finance_nc.layers["DWD"].templates[0],
+            )
+            is None
+        )
+        assert (
+            finance_nc._match_segments(
+                "M_LOAN_04_CHREM_DI",
+                finance_nc.layers["DWD"].templates[0],
+            )
+            is not None
+        )
         assert finance_nc.types["BUSINESS_AREA_CODE"].allow == [
-            "LOAN", "PAYM", "CLNT", "OTHR",
+            "LOAN",
+            "PAYM",
+            "CLNT",
+            "OTHR",
         ]
         assert shop_nc.types["BUSINESS_AREA_CODE"].allow == ["SHOP"]
         assert shop_nc.types["DATA_DOMAIN_ID"].allow == [
-            "01", "02", "03", "04", "05", "06", "99",
+            "01",
+            "02",
+            "03",
+            "04",
+            "05",
+            "06",
+            "99",
         ]
         assert shop_nc.types["BUSINESS_AREA_CODE"].dictionary == {
             "dictionary": "business_areas",
@@ -923,7 +1097,10 @@ class TestGetNamingConfigByProject:
             "value_field": "id",
         }
         assert finance_nc.types["DATA_DOMAIN_ID"].allow == [
-            "01", "04", "10", "99",
+            "01",
+            "04",
+            "10",
+            "99",
         ]
         assert finance_nc.types["BUSINESS_AREA_CODE"].dictionary == {
             "dictionary": "business_areas",
@@ -935,12 +1112,14 @@ class TestGetNamingConfigByProject:
         }
 
     def test_project_naming_dictionary_merges_business_catalog(
-            self, tmp_path, monkeypatch):
+        self, tmp_path, monkeypatch
+    ):
         project = "unit_catalog_naming"
         project_dir = tmp_path / project
         project_dir.mkdir()
         raw = yaml.safe_load(
-            config.NAMING_CONFIG_PATH.read_text(encoding="utf-8"))
+            config.NAMING_CONFIG_PATH.read_text(encoding="utf-8")
+        )
         raw.pop("dictionaries", None)
         raw["types"]["BUSINESS_AREA_CODE"]["allow"] = {
             "dictionary": "business_areas",
@@ -961,16 +1140,20 @@ class TestGetNamingConfigByProject:
                 {
                     "version": 1,
                     "project": project,
-                    "data_domains": [{
-                        "id": "04",
-                        "code": "ORDR",
-                        "name": "订单域",
-                    }],
-                    "business_areas": [{
-                        "id": "SHOP",
-                        "code": "SHOP",
-                        "name": "零售业务",
-                    }],
+                    "data_domains": [
+                        {
+                            "id": "04",
+                            "code": "ORDR",
+                            "name": "订单域",
+                        }
+                    ],
+                    "business_areas": [
+                        {
+                            "id": "SHOP",
+                            "code": "SHOP",
+                            "name": "零售业务",
+                        }
+                    ],
                     "business_processes": [],
                     "semantic_subjects": [],
                 },
@@ -980,10 +1163,14 @@ class TestGetNamingConfigByProject:
             encoding="utf-8",
         )
         monkeypatch.setattr(config, "PROJECT_ROOT", tmp_path)
-        monkeypatch.setitem(config.PROJECT_CONFIG, project, {
-            "dir": project,
-            "naming_config": "naming_config.yaml",
-        })
+        monkeypatch.setitem(
+            config.PROJECT_CONFIG,
+            project,
+            {
+                "dir": project,
+                "naming_config": "naming_config.yaml",
+            },
+        )
         config._naming_config_cache.clear()
         config._business_semantics_cache.clear()
 
@@ -993,19 +1180,27 @@ class TestGetNamingConfigByProject:
         assert nc.types["DATA_DOMAIN_ID"].allow == ["04"]
         assert nc.dictionaries["business_areas"]["values"][0]["code"] == "SHOP"
         assert nc.dictionaries["data_domains"]["values"][0]["id"] == "04"
-        assert nc._match_segments(
-            "M_SHOP_04_ORDER_DI",
-            nc.layers["DWD"].templates[0],
-        ) is not None
-        assert nc._match_segments(
-            "M_PAYM_04_ORDER_DI",
-            nc.layers["DWD"].templates[0],
-        ) is None
+        assert (
+            nc._match_segments(
+                "M_SHOP_04_ORDER_DI",
+                nc.layers["DWD"].templates[0],
+            )
+            is not None
+        )
+        assert (
+            nc._match_segments(
+                "M_PAYM_04_ORDER_DI",
+                nc.layers["DWD"].templates[0],
+            )
+            is None
+        )
 
     def test_load_business_domain_config_for_finance_project(
-            self, isolated_project_naming_configs):
+        self, isolated_project_naming_configs
+    ):
         business_config = get_business_domain_config(
-            isolated_project_naming_configs["finance"])
+            isolated_project_naming_configs["finance"]
+        )
 
         assert business_config.is_valid_domain("04") is True
         assert business_config.normalize_domain("TRAN") == "04"
@@ -1015,13 +1210,17 @@ class TestGetNamingConfigByProject:
         assert business_config.is_valid_business_area("OTHR") is True
         assert "PAYM" in business_config.business_area_codes
         assert "04" in business_config.domain_ids
-        assert "allowed_data_domains" not in (
-            business_config.prompt_options()["business_areas"][0])
+        assert (
+            "allowed_data_domains"
+            not in (business_config.prompt_options()["business_areas"][0])
+        )
 
     def test_load_business_domain_config_for_shop_project(
-            self, isolated_project_naming_configs):
+        self, isolated_project_naming_configs
+    ):
         business_config = get_business_domain_config(
-            isolated_project_naming_configs["shop"])
+            isolated_project_naming_configs["shop"]
+        )
 
         assert business_config.is_valid_domain("04") is True
         assert business_config.normalize_domain("ORDR") == "04"
@@ -1031,5 +1230,11 @@ class TestGetNamingConfigByProject:
         assert business_config.is_valid_business_area("PAYM") is False
         assert business_config.business_area_codes == ["SHOP"]
         assert business_config.domain_ids == [
-            "01", "02", "03", "04", "05", "06", "99",
+            "01",
+            "02",
+            "03",
+            "04",
+            "05",
+            "06",
+            "99",
         ]

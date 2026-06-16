@@ -67,8 +67,7 @@ FROM demo.stage_sales;
         "CODE_TEMP_TABLE_DROPPED_IN_SAME_TASK",
     }
     assert {
-        (item["target"]["name"], item["severity"])
-        for item in result["issues"]
+        (item["target"]["name"], item["severity"]) for item in result["issues"]
     } == {
         ("stage_sales", "低"),
         ("stage_sales", "中"),
@@ -105,7 +104,8 @@ FROM demo.tmp_sales_stage;
 
 
 def test_score_code_quality_flags_select_star_only_in_write_statements(
-        tmp_path):
+    tmp_path,
+):
     catalog = _catalog_for_task(
         tmp_path,
         "dws_sales.sql",
@@ -122,39 +122,43 @@ FROM demo.dwd_sales;
     result = score_code_quality(catalog)
 
     assert result["score"] == 0.0
-    assert result["checks"] == [{
-        "id": "code_quality.chk_001",
-        "rule_id": "CODE_NO_SELECT_STAR_IN_WRITE",
-        "target": {
-            "type": "task",
-            "name": "demo/tasks/dws_sales.sql",
-        },
-        "passed": False,
-        "expected": "写入型语句显式列出字段",
-        "actual": "写入 dws_sales 时使用 SELECT *",
-        "evidence": {
-            "file": "demo/tasks/dws_sales.sql",
-            "table": "dws_sales",
-        },
-        "message": "写入型语句使用SELECT *，请显式列出字段",
-    }]
-    assert result["issues"] == [{
-        "id": "code_quality.iss_001",
-        "severity": "高",
-        "rule_id": "CODE_NO_SELECT_STAR_IN_WRITE",
-        "target": {
-            "type": "task",
-            "name": "demo/tasks/dws_sales.sql",
-        },
-        "title": "写入型SQL使用SELECT *",
-        "message": "写入型语句使用SELECT *，请显式列出字段",
-        "remediation": {
-            "summary": "将写入型SQL中的SELECT *改为显式字段列表",
-            "strategy": "expand_select_star",
-            "edit_scope": ["tasks"],
-        },
-        "check_ids": ["code_quality.chk_001"],
-    }]
+    assert result["checks"] == [
+        {
+            "id": "code_quality.chk_001",
+            "rule_id": "CODE_NO_SELECT_STAR_IN_WRITE",
+            "target": {
+                "type": "task",
+                "name": "demo/tasks/dws_sales.sql",
+            },
+            "passed": False,
+            "expected": "写入型语句显式列出字段",
+            "actual": "写入 dws_sales 时使用 SELECT *",
+            "evidence": {
+                "file": "demo/tasks/dws_sales.sql",
+                "table": "dws_sales",
+            },
+            "message": "写入型语句使用SELECT *，请显式列出字段",
+        }
+    ]
+    assert result["issues"] == [
+        {
+            "id": "code_quality.iss_001",
+            "severity": "高",
+            "rule_id": "CODE_NO_SELECT_STAR_IN_WRITE",
+            "target": {
+                "type": "task",
+                "name": "demo/tasks/dws_sales.sql",
+            },
+            "title": "写入型SQL使用SELECT *",
+            "message": "写入型语句使用SELECT *，请显式列出字段",
+            "remediation": {
+                "summary": "将写入型SQL中的SELECT *改为显式字段列表",
+                "strategy": "expand_select_star",
+                "edit_scope": ["tasks"],
+            },
+            "check_ids": ["code_quality.chk_001"],
+        }
+    ]
 
 
 def test_score_code_quality_ignores_task_target_create_table(tmp_path):

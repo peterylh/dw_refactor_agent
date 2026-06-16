@@ -1,5 +1,5 @@
-from assess.scoring.architecture import score_architecture_health
 import assess.scoring.model_design as model_design_module
+from assess.scoring.architecture import score_architecture_health
 from assess.scoring.model_design import (
     extract_model_design_sql_facts,
     score_model_design_health,
@@ -15,11 +15,13 @@ def test_architecture_wrapper_uses_model_design_dimension():
         {"name": "ods_order", "layer": "ODS", "columns": []},
         {"name": "ads_sales", "layer": "ADS", "columns": []},
     ]
-    edges = [{
-        "source": "ods_order.order_id",
-        "target": "ads_sales.order_id",
-        "source_file": "ads_sales.sql",
-    }]
+    edges = [
+        {
+            "source": "ods_order.order_id",
+            "target": "ads_sales.order_id",
+            "source_file": "ads_sales.sql",
+        }
+    ]
 
     wrapped = score_architecture_health(tables, edges, [])
     direct = score_model_design_health(tables, edges, [])
@@ -64,26 +66,30 @@ def test_model_design_flags_dwd_fact_with_group_by():
     asset_catalog = {
         "tables": {
             "dwd_order_summary": {
-                "tasks": [{
-                    "source_file": "dwd_order_summary.sql",
-                    "sql": """
+                "tasks": [
+                    {
+                        "source_file": "dwd_order_summary.sql",
+                        "sql": """
                     INSERT INTO shop_dm.dwd_order_summary
                     SELECT order_id, SUM(subtotal) AS subtotal
                     FROM shop_dm.ods_order_item
                     GROUP BY order_id;
                     """,
-                }],
+                    }
+                ],
             },
         },
     }
-    tables = [{
-        "name": "dwd_order_summary",
-        "layer": "DWD",
-        "columns": [
-            {"name": "order_id", "type": "BIGINT"},
-            {"name": "subtotal", "type": "DECIMAL(12,2)"},
-        ],
-    }]
+    tables = [
+        {
+            "name": "dwd_order_summary",
+            "layer": "DWD",
+            "columns": [
+                {"name": "order_id", "type": "BIGINT"},
+                {"name": "subtotal", "type": "DECIMAL(12,2)"},
+            ],
+        }
+    ]
     model_metadata = {"dwd_order_summary": {"table_type": "fact"}}
 
     result = score_model_design_health(
@@ -101,16 +107,18 @@ def test_model_design_flags_dws_grain_mismatch_with_group_by():
     asset_catalog = {
         "tables": {
             "dws_store_sales_daily": {
-                "tasks": [{
-                    "source_file": "dws_store_sales_daily.sql",
-                    "sql": """
+                "tasks": [
+                    {
+                        "source_file": "dws_store_sales_daily.sql",
+                        "sql": """
                     INSERT INTO shop_dm.dws_store_sales_daily
                     SELECT store_id, order_date AS stat_date,
                            SUM(subtotal) AS total_amount
                     FROM shop_dm.dwd_order_detail
                     GROUP BY store_id, order_date;
                     """,
-                }],
+                    }
+                ],
             },
         },
     }
@@ -122,11 +130,13 @@ def test_model_design_flags_dws_grain_mismatch_with_group_by():
                 "entities": ["CUSTOMER"],
                 "time_column": "stat_date",
             },
-            "entities": [{
-                "code": "CUSTOMER",
-                "type": "foreign",
-                "key_columns": ["customer_id"],
-            }],
+            "entities": [
+                {
+                    "code": "CUSTOMER",
+                    "type": "foreign",
+                    "key_columns": ["customer_id"],
+                }
+            ],
         }
     }
 
@@ -142,19 +152,24 @@ def test_model_design_flags_dws_grain_mismatch_with_group_by():
 
 
 def test_model_design_flags_dws_fact_without_aggregation_from_typed_edges():
-    tables = [{
-        "name": "dws_store_sales_daily",
-        "layer": "DWS",
-        "columns": [
-            {"name": "store_id", "type": "BIGINT"},
-            {"name": "stat_date", "type": "DATE"},
-            {"name": "sale_amount", "type": "DECIMAL(12,2)"},
-        ],
-    }]
+    tables = [
+        {
+            "name": "dws_store_sales_daily",
+            "layer": "DWS",
+            "columns": [
+                {"name": "store_id", "type": "BIGINT"},
+                {"name": "stat_date", "type": "DATE"},
+                {"name": "sale_amount", "type": "DECIMAL(12,2)"},
+            ],
+        }
+    ]
     edges = [
         {
             "source": {"type": "column", "id": "dwd_order_detail.store_id"},
-            "target": {"type": "column", "id": "dws_store_sales_daily.store_id"},
+            "target": {
+                "type": "column",
+                "id": "dws_store_sales_daily.store_id",
+            },
             "relation_type": "direct",
             "transformation_type": "passthrough",
             "expression": "store_id",
@@ -162,7 +177,10 @@ def test_model_design_flags_dws_fact_without_aggregation_from_typed_edges():
         },
         {
             "source": {"type": "column", "id": "dwd_order_detail.order_date"},
-            "target": {"type": "column", "id": "dws_store_sales_daily.stat_date"},
+            "target": {
+                "type": "column",
+                "id": "dws_store_sales_daily.stat_date",
+            },
             "relation_type": "direct",
             "transformation_type": "passthrough",
             "expression": "order_date AS stat_date",
@@ -202,7 +220,10 @@ def test_model_design_flags_dws_plain_field_not_in_group_by_from_typed_edges():
     edges = [
         {
             "source": {"type": "column", "id": "dwd_order_detail.store_id"},
-            "target": {"type": "column", "id": "dws_store_sales_daily.store_id"},
+            "target": {
+                "type": "column",
+                "id": "dws_store_sales_daily.store_id",
+            },
             "relation_type": "direct",
             "transformation_type": "passthrough",
             "expression": "store_id",
@@ -210,7 +231,10 @@ def test_model_design_flags_dws_plain_field_not_in_group_by_from_typed_edges():
         },
         {
             "source": {"type": "column", "id": "dwd_order_detail.order_date"},
-            "target": {"type": "column", "id": "dws_store_sales_daily.stat_date"},
+            "target": {
+                "type": "column",
+                "id": "dws_store_sales_daily.stat_date",
+            },
             "relation_type": "direct",
             "transformation_type": "passthrough",
             "expression": "order_date AS stat_date",
@@ -282,7 +306,8 @@ def test_model_design_flags_dws_plain_field_not_in_group_by_from_typed_edges():
 
     assert "MODEL_DWS_SELECT_FIELDS_MATCH_GRAIN" in _rule_ids(result)
     check = next(
-        check for check in result["checks"]
+        check
+        for check in result["checks"]
         if check["rule_id"] == "MODEL_DWS_SELECT_FIELDS_MATCH_GRAIN"
         and not check["passed"]
     )
@@ -395,11 +420,13 @@ def test_model_design_flags_derived_metric_without_upstream_atomic_base():
         {"name": "dwd_order_detail", "layer": "DWD", "columns": []},
         {"name": "dws_store_sales_daily", "layer": "DWS", "columns": []},
     ]
-    edges = [{
-        "source": "dwd_order_detail.subtotal",
-        "target": "dws_store_sales_daily.sale_amount",
-        "source_file": "dws_store_sales_daily.sql",
-    }]
+    edges = [
+        {
+            "source": "dwd_order_detail.subtotal",
+            "target": "dws_store_sales_daily.sale_amount",
+            "source_file": "dws_store_sales_daily.sql",
+        }
+    ]
     model_metadata = {
         "dwd_order_detail": {
             "table_type": "fact",
@@ -407,15 +434,18 @@ def test_model_design_flags_derived_metric_without_upstream_atomic_base():
         },
         "dws_store_sales_daily": {
             "table_type": "fact",
-            "derived_metrics": [{
-                "name": "sale_amount",
-                "base_metric": "subtotal",
-                "base_metric_table": "dwd_order_detail",
-                "aggregation": "SUM",
-            }, {
-                "name": "unknown_amount",
-                "aggregation": "SUM",
-            }],
+            "derived_metrics": [
+                {
+                    "name": "sale_amount",
+                    "base_metric": "subtotal",
+                    "base_metric_table": "dwd_order_detail",
+                    "aggregation": "SUM",
+                },
+                {
+                    "name": "unknown_amount",
+                    "aggregation": "SUM",
+                },
+            ],
         },
     }
 
@@ -428,7 +458,8 @@ def test_model_design_flags_derived_metric_without_upstream_atomic_base():
 
     assert "MODEL_DERIVED_METRIC_BASE_ATOMIC" in _rule_ids(result)
     check = next(
-        check for check in result["checks"]
+        check
+        for check in result["checks"]
         if check["rule_id"] == "MODEL_DERIVED_METRIC_BASE_ATOMIC"
     )
     assert check["evidence"]["missing_base_metrics"] == ["unknown_amount"]
@@ -443,15 +474,18 @@ def test_model_design_flags_ambiguous_derived_metric_base_table():
         {"name": "dwd_refund_detail", "layer": "DWD", "columns": []},
         {"name": "dws_sales_daily", "layer": "DWS", "columns": []},
     ]
-    edges = [{
-        "source": "dwd_order_detail.subtotal",
-        "target": "dws_sales_daily.sale_amount",
-        "source_file": "dws_sales_daily.sql",
-    }, {
-        "source": "dwd_refund_detail.subtotal",
-        "target": "dws_sales_daily.refund_amount",
-        "source_file": "dws_sales_daily.sql",
-    }]
+    edges = [
+        {
+            "source": "dwd_order_detail.subtotal",
+            "target": "dws_sales_daily.sale_amount",
+            "source_file": "dws_sales_daily.sql",
+        },
+        {
+            "source": "dwd_refund_detail.subtotal",
+            "target": "dws_sales_daily.refund_amount",
+            "source_file": "dws_sales_daily.sql",
+        },
+    ]
     model_metadata = {
         "dwd_order_detail": {
             "table_type": "fact",
@@ -463,11 +497,13 @@ def test_model_design_flags_ambiguous_derived_metric_base_table():
         },
         "dws_sales_daily": {
             "table_type": "fact",
-            "derived_metrics": [{
-                "name": "sale_amount",
-                "base_metric": "subtotal",
-                "aggregation": "SUM",
-            }],
+            "derived_metrics": [
+                {
+                    "name": "sale_amount",
+                    "base_metric": "subtotal",
+                    "aggregation": "SUM",
+                }
+            ],
         },
     }
 
@@ -479,7 +515,8 @@ def test_model_design_flags_ambiguous_derived_metric_base_table():
     )
 
     check = next(
-        check for check in result["checks"]
+        check
+        for check in result["checks"]
         if check["rule_id"] == "MODEL_DERIVED_METRIC_BASE_ATOMIC"
     )
     assert check["evidence"]["ambiguous_base_metrics"] == [

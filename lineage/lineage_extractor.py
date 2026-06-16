@@ -5,7 +5,8 @@
 支持: INSERT, UPDATE, CTAS, CREATE VIEW, SELECT INTO, MERGE
 """
 
-import json, argparse
+import argparse
+import json
 import re
 import sys
 from pathlib import Path
@@ -15,14 +16,14 @@ _root = Path(__file__).resolve().parent.parent
 if str(_root) not in sys.path:
     sys.path.insert(0, str(_root))
 
-from config import PROJECT_CONFIG, determine_layer as determine_config_layer
-
 import sqlglot
 from sqlglot import exp
 from sqlglot.lineage import lineage
+
+from config import PROJECT_CONFIG
+from config import determine_layer as determine_config_layer
 from doris_sql import normalize_create_table_for_sqlglot
 from lineage.sql_task_facts import extract_task_table_facts
-
 
 AGGREGATE_PATTERN = re.compile(
     r"\b(SUM|COUNT|AVG|MIN|MAX)\s*\(",
@@ -42,7 +43,9 @@ def configure_project(project_name):
     global CURRENT_PROJECT, CURRENT_DB
     cfg = PROJECT_CONFIG.get(project_name)
     if not cfg:
-        raise ValueError(f"未知项目: {project_name}, 可选: {list(PROJECT_CONFIG.keys())}")
+        raise ValueError(
+            f"未知项目: {project_name}, 可选: {list(PROJECT_CONFIG.keys())}"
+        )
     CURRENT_PROJECT = project_name
     CURRENT_DB = cfg["db"]
 
@@ -74,7 +77,7 @@ def _strip_db(name):
     name = _canonical_qualified_identifier(name)
     db_name = _canonical_identifier(CURRENT_DB)
     prefix = f"{db_name}."
-    return name[len(prefix):] if name.startswith(prefix) else name
+    return name[len(prefix) :] if name.startswith(prefix) else name
 
 
 def _canonical_column(name):
@@ -128,10 +131,7 @@ def _source_sort_key(source):
 def _target_sort_key(target):
     if not isinstance(target, dict):
         return str(target or "")
-    return "|".join(
-        str(target.get(key) or "")
-        for key in ("type", "id")
-    )
+    return "|".join(str(target.get(key) or "") for key in ("type", "id"))
 
 
 def _relation_type_for_condition(condition_type):
@@ -249,13 +249,17 @@ def _infer_table_for_column(schema, preferred_table, column_name):
     return unique[0] if len(unique) == 1 else ""
 
 
-def _fallback_direct_edges_from_expression(expression, target_table, target_col, schema):
+def _fallback_direct_edges_from_expression(
+    expression, target_table, target_col, schema
+):
     edges = []
     seen = set()
     for col in expression.find_all(exp.Column):
         source_table = _strip_db(_canonical_identifier(col.table))
         if not source_table:
-            source_table = _infer_table_for_column(schema, target_table, col.name)
+            source_table = _infer_table_for_column(
+                schema, target_table, col.name
+            )
         if not source_table:
             continue
         source_col = _canonical_column(col.name)
@@ -263,12 +267,14 @@ def _fallback_direct_edges_from_expression(expression, target_table, target_col,
         if key in seen:
             continue
         seen.add(key)
-        edges.append({
-            "source_table": source_table,
-            "source_column": source_col,
-            "target_table": _strip_db(target_table),
-            "target_column": _canonical_column(target_col),
-        })
+        edges.append(
+            {
+                "source_table": source_table,
+                "source_column": source_col,
+                "target_table": _strip_db(target_table),
+                "target_column": _canonical_column(target_col),
+            }
+        )
     return edges
 
 
@@ -286,7 +292,9 @@ def build_schema_from_texts(sql_texts):
         ):
             if stmt is None:
                 continue
-            if isinstance(stmt, exp.Create) and isinstance(stmt.this, exp.Schema):
+            if isinstance(stmt, exp.Create) and isinstance(
+                stmt.this, exp.Schema
+            ):
                 full_name = _canonical_qualified_identifier(
                     stmt.this.this.sql(dialect="doris")
                 )
@@ -319,7 +327,9 @@ def _projection_output_name(projection):
 
 def _projection_output_names(query_expr):
     if isinstance(query_expr, exp.Select):
-        return [_projection_output_name(item) for item in query_expr.expressions]
+        return [
+            _projection_output_name(item) for item in query_expr.expressions
+        ]
     if isinstance(query_expr, exp.SetOperation):
         left = query_expr.args.get("this")
         return _projection_output_names(left) if left is not None else []
@@ -328,11 +338,15 @@ def _projection_output_names(query_expr):
 
 def _lineage_nodes_for_select(select_expr, schema):
     nodes = {}
-    projections = select_expr.expressions if isinstance(select_expr, exp.Select) else []
+    projections = (
+        select_expr.expressions if isinstance(select_expr, exp.Select) else []
+    )
     for idx, col_name in enumerate(_projection_output_names(select_expr)):
         if not col_name:
             continue
-        if idx < len(projections) and not list(projections[idx].find_all(exp.Column)):
+        if idx < len(projections) and not list(
+            projections[idx].find_all(exp.Column)
+        ):
             continue
         try:
             nodes[col_name] = lineage(
@@ -347,13 +361,16 @@ def _lineage_nodes_for_select(select_expr, schema):
 
 
 def build_schema_from_ddl(ddl_dir):
-    texts = [f.read_text(encoding="utf-8") for f in Path(ddl_dir).glob("*.sql")]
+    texts = [
+        f.read_text(encoding="utf-8") for f in Path(ddl_dir).glob("*.sql")
+    ]
     return build_schema_from_texts(texts)
 
 
 # ============================================================
 # 2. Layer 推断
 # ============================================================
+
 
 def determine_layer(table_name):
     short = _strip_db(table_name)
@@ -411,7 +428,9 @@ def _walk_leaf(node, target_table, target_col, edges):
             edges.append(
                 {
                     "source_table": _strip_db(_table_name(expr)),
-                    "source_column": _canonical_column(node.name.split(".")[-1]),
+                    "source_column": _canonical_column(
+                        node.name.split(".")[-1]
+                    ),
                     "target_table": _strip_db(target_table),
                     "target_column": _canonical_column(target_col),
                 }
@@ -495,7 +514,12 @@ def _derived_leaf_sources(select_expr, column_name, schema):
 
 
 def _indirect_entries_from_select(
-    select_expr, target_table, file_path, schema, default_table=None, _visited=None
+    select_expr,
+    target_table,
+    file_path,
+    schema,
+    default_table=None,
+    _visited=None,
 ):
     """从 SELECT 的 WHERE / JOIN ON / GROUP BY / HAVING 中提取间接血缘条目"""
     entries = []
@@ -523,7 +547,9 @@ def _indirect_entries_from_select(
                 _remember_alias(alias)
         elif isinstance(relation, exp.Table):
             tbl = _strip_db(_table_name(relation))
-            alias = _canonical_identifier(relation.alias_or_name or relation.name)
+            alias = _canonical_identifier(
+                relation.alias_or_name or relation.name
+            )
             if tbl in ctes:
                 derived_sources[alias] = ctes[tbl]
                 derived_sources[tbl] = ctes[tbl]
@@ -542,7 +568,12 @@ def _indirect_entries_from_select(
                 return _derived_leaf_sources(
                     derived_sources[tbl_or_alias], col_name, schema
                 )
-            return [(_strip_db(alias_map.get(tbl_or_alias, tbl_or_alias)), col_name)]
+            return [
+                (
+                    _strip_db(alias_map.get(tbl_or_alias, tbl_or_alias)),
+                    col_name,
+                )
+            ]
 
         derived_aliases = [a for a in relation_aliases if a in derived_sources]
         if len(derived_aliases) == 1:
@@ -715,7 +746,9 @@ def extract_lineage_from_sql(sql_text, file_path, schema):
     return [_canonical_lineage_entry(entry) for entry in entries]
 
 
-def _trace_lineage(target_table, select_expr, schema, file_path, target_columns=None):
+def _trace_lineage(
+    target_table, select_expr, schema, file_path, target_columns=None
+):
     entries = []
     nodes = _lineage_nodes_for_select(select_expr, schema)
     if not nodes and not _projection_output_names(select_expr):
@@ -762,7 +795,9 @@ def _trace_lineage(target_table, select_expr, schema, file_path, target_columns=
         for idx, projection in enumerate(select_expr.expressions):
             if list(projection.find_all(exp.Column)):
                 continue
-            if isinstance(projection, exp.Star) or list(projection.find_all(exp.Star)):
+            if isinstance(projection, exp.Star) or list(
+                projection.find_all(exp.Star)
+            ):
                 continue
             target_col = (
                 target_columns[idx]
@@ -799,7 +834,9 @@ def _trace_lineage(target_table, select_expr, schema, file_path, target_columns=
             )
 
     # 间接血缘: WHERE / JOIN ON / GROUP BY / HAVING
-    indirect_entries = _extract_indirect(select_expr, target_table, file_path, schema)
+    indirect_entries = _extract_indirect(
+        select_expr, target_table, file_path, schema
+    )
     entries.extend(indirect_entries)
 
     return entries
@@ -831,7 +868,9 @@ def _handle_create(stmt, file_path, schema):
     target_columns = _target_columns(stmt.this)
     inner = stmt.args.get("expression")
     if isinstance(inner, (exp.Select, exp.SetOperation)):
-        return _trace_lineage(target_table, inner, schema, file_path, target_columns)
+        return _trace_lineage(
+            target_table, inner, schema, file_path, target_columns
+        )
     return []
 
 
@@ -845,13 +884,19 @@ def _handle_merge(stmt, file_path, schema):
         action = when.args.get("then")
         if isinstance(action, exp.Update):
             select = update_to_select(action)
-            entries.extend(_trace_lineage(target_table, select, schema, file_path))
+            entries.extend(
+                _trace_lineage(target_table, select, schema, file_path)
+            )
         elif isinstance(action, exp.Insert):
             inner = action.expression
             if isinstance(inner, exp.Select):
-                entries.extend(_trace_lineage(target_table, inner, schema, file_path))
+                entries.extend(
+                    _trace_lineage(target_table, inner, schema, file_path)
+                )
             elif isinstance(inner, exp.Tuple):
-                entries.extend(_extract_values_lineage(target_table, action, file_path))
+                entries.extend(
+                    _extract_values_lineage(target_table, action, file_path)
+                )
     return entries
 
 
@@ -906,9 +951,7 @@ def _normalize_transient_tables(transient_tables):
         normalized = dict(table)
         normalized["name"] = name
         normalized["source_file"] = source_file
-        normalized["is_transient"] = bool(
-            normalized.get("is_transient", True)
-        )
+        normalized["is_transient"] = bool(normalized.get("is_transient", True))
         key = (
             name,
             source_file,
@@ -991,8 +1034,12 @@ def build_lineage_output(all_lineage, schema, transient_tables=None):
         ),
     )
 
-    direct_entries = [e for e in all_lineage if e.get("lineage_type") != "indirect"]
-    indirect_entries = [e for e in all_lineage if e.get("lineage_type") == "indirect"]
+    direct_entries = [
+        e for e in all_lineage if e.get("lineage_type") != "indirect"
+    ]
+    indirect_entries = [
+        e for e in all_lineage if e.get("lineage_type") == "indirect"
+    ]
 
     tables = {}
     edges = []
@@ -1091,8 +1138,9 @@ def build_lineage_output(all_lineage, schema, transient_tables=None):
             return _literal_source(entry.get("source_value", ""))
         if source_type == "expression":
             return _expression_source(entry.get("source_expression", ""))
-        return _column_source(entry.get("source_table", ""),
-                              entry.get("source_column", ""))
+        return _column_source(
+            entry.get("source_table", ""), entry.get("source_column", "")
+        )
 
     def _direct_transformation(entry):
         if entry.get("transformation_type"):
@@ -1131,7 +1179,9 @@ def build_lineage_output(all_lineage, schema, transient_tables=None):
             continue
         _ensure_column(src_tbl, src_col)
         _ensure_table(tgt_tbl)
-        relation_type = _relation_type_for_condition(entry.get("condition_type", ""))
+        relation_type = _relation_type_for_condition(
+            entry.get("condition_type", "")
+        )
         edges.append(
             {
                 "source": _column_source(src_tbl, src_col),
@@ -1180,8 +1230,12 @@ def build_lineage_output(all_lineage, schema, transient_tables=None):
 
 def main():
     parser = argparse.ArgumentParser(description="SQL 血缘采集器")
-    parser.add_argument("--project", default="shop", choices=list(PROJECT_CONFIG.keys()),
-                        help="项目名称, 对应 PROJECT_CONFIG 中的 key")
+    parser.add_argument(
+        "--project",
+        default="shop",
+        choices=list(PROJECT_CONFIG.keys()),
+        help="项目名称, 对应 PROJECT_CONFIG 中的 key",
+    )
     args = parser.parse_args()
     configure_project(args.project)
     STATS["parse_failures"] = 0
@@ -1208,9 +1262,7 @@ def main():
         sql_text = f.read_text(encoding="utf-8")
         task_facts = extract_task_table_facts(sql_text, source_file)
         transient_tables.extend(task_facts["transient_tables"])
-        entries = extract_lineage_from_sql(
-            sql_text, source_file, schema
-        )
+        entries = extract_lineage_from_sql(sql_text, source_file, schema)
         all_lineage.extend(entries)
         if entries:
             print(f"  {source_file}: {len(entries)} 条血缘")
@@ -1221,7 +1273,9 @@ def main():
         schema,
         transient_tables=transient_tables,
     )
-    output_path = Path(__file__).parent / f"lineage_data_{CURRENT_PROJECT}.json"
+    output_path = (
+        Path(__file__).parent / f"lineage_data_{CURRENT_PROJECT}.json"
+    )
     with open(output_path, "w", encoding="utf-8") as fp:
         json.dump(output, fp, ensure_ascii=False, indent=2)
     legacy_output_path = None
@@ -1230,16 +1284,16 @@ def main():
         with open(legacy_output_path, "w", encoding="utf-8") as fp:
             json.dump(output, fp, ensure_ascii=False, indent=2)
 
-    print(f"\n血缘提取完成!")
+    print("\n血缘提取完成!")
     direct_count = sum(
-        1 for edge in output["edges"]
-        if edge.get("relation_type") == "direct"
+        1 for edge in output["edges"] if edge.get("relation_type") == "direct"
     )
     indirect_count = len(output["edges"]) - direct_count
-    node_count = sum(len(table.get("columns", [])) for table in output["tables"])
+    node_count = sum(
+        len(table.get("columns", [])) for table in output["tables"]
+    )
     transient_count = sum(
-        1 for table in output["tables"]
-        if table.get("is_transient")
+        1 for table in output["tables"] if table.get("is_transient")
     )
     print(f"  直接血缘: {direct_count} 条边")
     print(f"  间接血缘: {indirect_count} 条边")
@@ -1275,7 +1329,7 @@ def main():
         if info["layer"] == "OTHER"
     ]
     if others:
-        print(f"\n[UNRESOLVED]")
+        print("\n[UNRESOLVED]")
         for name, info in sorted(others):
             print(f"  {name} ({len(info['columns'])} cols)")
 

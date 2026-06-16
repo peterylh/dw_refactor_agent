@@ -7,6 +7,7 @@ DWD 数据域、DWD/DWS 业务板块、维度表 entity/related_entities、DWS g
 DWD/DWS 表中的指标字段回写到 models/{table}.yaml，并把 DWD 事实表的
 非原子指标输出为违规项。
 """
+
 from __future__ import annotations
 
 import argparse
@@ -27,8 +28,10 @@ if str(_root) not in sys.path:
 
 from assess.llm.context_builder import TableContext, build_contexts
 from assess.llm.table_inspector import (
-    TableInspectResult,
     TableInspector,
+    TableInspectResult,
+)
+from assess.llm.table_inspector import (
     result_to_dict as inspect_result_to_dict,
 )
 from assess.project_facts.asset_catalog import build_asset_catalog
@@ -50,7 +53,6 @@ from config import (
 )
 from lineage.table_graph import load_lineage_data
 
-
 METRIC_LAYERS = {"DWD", "DWS"}
 WRITABLE_METADATA_LAYERS = {"DWD", "DWS", "DIM"}
 WRITE_SCOPES = {"all", "table", "metrics", "grain", "business"}
@@ -71,8 +73,9 @@ DDL_NON_COLUMN_PREFIXES = {
 }
 
 
-def build_inspection_contexts(project: str,
-                              lineage_data: dict[str, Any]) -> list[TableContext]:
+def build_inspection_contexts(
+    project: str, lineage_data: dict[str, Any]
+) -> list[TableContext]:
     """构建需要 LLM 巡检并回写模型元数据的表上下文。"""
     return build_contexts(
         project,
@@ -81,14 +84,16 @@ def build_inspection_contexts(project: str,
     )
 
 
-def build_dwd_contexts(project: str,
-                       lineage_data: dict[str, Any]) -> list[TableContext]:
+def build_dwd_contexts(
+    project: str, lineage_data: dict[str, Any]
+) -> list[TableContext]:
     """构建项目 DWD 层表的识别上下文。"""
     return build_contexts(project, lineage_data, layers={"DWD"})
 
 
-def build_metric_contexts(project: str,
-                          lineage_data: dict[str, Any]) -> list[TableContext]:
+def build_metric_contexts(
+    project: str, lineage_data: dict[str, Any]
+) -> list[TableContext]:
     """构建项目指标识别上下文，覆盖 DWD 与 DWS。"""
     return build_contexts(project, lineage_data, layers=METRIC_LAYERS)
 
@@ -110,13 +115,15 @@ def metric_violations(result: TableInspectResult) -> list[dict[str, Any]]:
         ("calculated", result.calculated_metrics),
     ):
         for metric in metrics:
-            violations.append({
-                "table": result.table_name,
-                "column": metric["name"],
-                "metric_type": metric_type,
-                "reason": metric.get("reason", ""),
-                "confidence": metric.get("confidence", 0.0),
-            })
+            violations.append(
+                {
+                    "table": result.table_name,
+                    "column": metric["name"],
+                    "metric_type": metric_type,
+                    "reason": metric.get("reason", ""),
+                    "confidence": metric.get("confidence", 0.0),
+                }
+            )
     return violations
 
 
@@ -154,20 +161,28 @@ def _derived_metric_for_model(metric: dict[str, Any]) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "name": str(metric.get("name") or "").strip(),
     }
-    for key in ("base_metric", "base_metric_table", "time_period", "expression"):
+    for key in (
+        "base_metric",
+        "base_metric_table",
+        "time_period",
+        "expression",
+    ):
         value = str(metric.get(key) or "").strip()
         if value:
             payload[key] = value
     aggregation = str(metric.get("aggregation") or "").strip().upper()
     if not aggregation:
-        aggregation = _aggregation_from_expression(payload.get("expression", ""))
+        aggregation = _aggregation_from_expression(
+            payload.get("expression", "")
+        )
     if aggregation:
         payload["aggregation"] = aggregation
     return payload
 
 
 def _derived_metrics_for_model(
-        metrics: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    metrics: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
     items = []
     seen = set()
     for metric in metrics:
@@ -179,7 +194,9 @@ def _derived_metrics_for_model(
     return items
 
 
-def metric_groups_for_model(result: TableInspectResult) -> dict[str, list[Any]]:
+def metric_groups_for_model(
+    result: TableInspectResult,
+) -> dict[str, list[Any]]:
     """生成写入 models YAML 的分类指标名列表。"""
     return {
         "atomic_metrics": _metric_names(result.atomic_metrics),
@@ -189,8 +206,9 @@ def metric_groups_for_model(result: TableInspectResult) -> dict[str, list[Any]]:
 
 
 def _merge_detected_upstream_metric_groups(
-        contexts: list[TableContext],
-        detected_groups: dict[str, dict[str, list[str]]]) -> None:
+    contexts: list[TableContext],
+    detected_groups: dict[str, dict[str, list[str]]],
+) -> None:
     """将本轮已识别的上游指标分组注入下游上下文。"""
     for ctx in contexts:
         upstream_metric_groups = dict(ctx.upstream_metric_groups)
@@ -201,42 +219,46 @@ def _merge_detected_upstream_metric_groups(
         ctx.upstream_metric_groups = upstream_metric_groups
 
 
-def _update_models_for_results(project: str,
-                               results: list[TableInspectResult],
-                               *,
-                               dry_run: bool,
-                               write_scope: str) -> tuple[list[dict[str, Any]],
-                                                          list[dict[str, Any]]]:
+def _update_models_for_results(
+    project: str,
+    results: list[TableInspectResult],
+    *,
+    dry_run: bool,
+    write_scope: str,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     write_scope = _validate_write_scope(write_scope)
     yaml_updates = []
     skipped_updates = []
     for result in results:
-        update = update_model_yaml(project,
-                                   result,
-                                   dry_run=dry_run,
-                                   write_scope=write_scope)
+        update = update_model_yaml(
+            project, result, dry_run=dry_run, write_scope=write_scope
+        )
         if result.status == "blocked":
             if update["changed"]:
                 yaml_updates.append(update)
             else:
-                skipped_updates.append({
-                    "table": result.table_name,
-                    "path": str(model_path_for_table(project,
-                                                     result.table_name)),
-                    "status": result.status,
-                    "validation": result.validation,
-                    "updated": False,
-                    "reason": "validation_blocked",
-                    "write_scope": write_scope,
-                })
+                skipped_updates.append(
+                    {
+                        "table": result.table_name,
+                        "path": str(
+                            model_path_for_table(project, result.table_name)
+                        ),
+                        "status": result.status,
+                        "validation": result.validation,
+                        "updated": False,
+                        "reason": "validation_blocked",
+                        "write_scope": write_scope,
+                    }
+                )
             continue
         if update["changed"]:
             yaml_updates.append(update)
     return yaml_updates, skipped_updates
 
 
-def _violation_count(results: list[TableInspectResult],
-                     metric_attr: str | None = None) -> int:
+def _violation_count(
+    results: list[TableInspectResult], metric_attr: str | None = None
+) -> int:
     """统计 DWD fact 中的非原子指标违规数量。"""
     count = 0
     for result in results:
@@ -245,7 +267,9 @@ def _violation_count(results: list[TableInspectResult],
         if metric_attr:
             count += len(getattr(result, metric_attr))
         else:
-            count += len(result.derived_metrics) + len(result.calculated_metrics)
+            count += len(result.derived_metrics) + len(
+                result.calculated_metrics
+            )
     return count
 
 
@@ -286,14 +310,18 @@ def _extract_existing_metric_names(model_data: dict[str, Any]) -> list[str]:
 
 
 def _extract_existing_metric_groups(
-        model_data: dict[str, Any]) -> dict[str, list[str]]:
+    model_data: dict[str, Any],
+) -> dict[str, list[str]]:
     return {
         "atomic_metrics": _metric_names_from_raw(
-            model_data.get("atomic_metrics")),
+            model_data.get("atomic_metrics")
+        ),
         "derived_metrics": _metric_names_from_raw(
-            model_data.get("derived_metrics")),
+            model_data.get("derived_metrics")
+        ),
         "calculated_metrics": _metric_names_from_raw(
-            model_data.get("calculated_metrics")),
+            model_data.get("calculated_metrics")
+        ),
     }
 
 
@@ -310,23 +338,26 @@ def _is_time_grain_key(key: str, time_column: str = "") -> bool:
         return True
     if time_column and key_lower == str(time_column).strip().lower():
         return True
-    return any(token in key_lower for token in (
-        "date",
-        "day",
-        "dt",
-        "hour",
-        "month",
-        "period",
-        "quarter",
-        "time",
-        "week",
-        "year",
-    ))
+    return any(
+        token in key_lower
+        for token in (
+            "date",
+            "day",
+            "dt",
+            "hour",
+            "month",
+            "period",
+            "quarter",
+            "time",
+            "week",
+            "year",
+        )
+    )
 
 
 def _grain_key_entity_pairs(
-        grain: dict[str, Any],
-        entities: list[dict[str, Any]] | None = None) -> list[tuple[str, str]]:
+    grain: dict[str, Any], entities: list[dict[str, Any]] | None = None
+) -> list[tuple[str, str]]:
     if not isinstance(grain, dict):
         return []
     grain_entities = _as_string_list(grain.get("entities"))
@@ -347,8 +378,7 @@ def _grain_key_entity_pairs(
     keys = _as_string_list(grain.get("keys"))
     time_column = str(grain.get("time_column") or "")
     entity_keys = [
-        key for key in keys
-        if not _is_time_grain_key(key, time_column)
+        key for key in keys if not _is_time_grain_key(key, time_column)
     ]
     if not entity_keys or not grain_entities:
         return []
@@ -368,13 +398,15 @@ def _grain_key_entity_pairs(
 
 
 def _build_grain_entity_index(
-        results: list[TableInspectResult]) -> dict[str, str]:
+    results: list[TableInspectResult],
+) -> dict[str, str]:
     index: dict[str, str] = {}
     for result in results:
         if result.status == "blocked":
             continue
-        for key, entity in _grain_key_entity_pairs(result.grain,
-                                                  result.entities):
+        for key, entity in _grain_key_entity_pairs(
+            result.grain, result.entities
+        ):
             index.setdefault(key, entity)
     return index
 
@@ -388,9 +420,12 @@ def _column_comments_from_ddl(ddl: str) -> dict[str, str]:
         name = name_match.group(1)
         if name.upper() in DDL_NON_COLUMN_PREFIXES:
             continue
-        comment_match = re.search(r"COMMENT\s+'([^']*)'", line,
-                                  flags=re.IGNORECASE)
-        comments[name] = comment_match.group(1).strip() if comment_match else ""
+        comment_match = re.search(
+            r"COMMENT\s+'([^']*)'", line, flags=re.IGNORECASE
+        )
+        comments[name] = (
+            comment_match.group(1).strip() if comment_match else ""
+        )
     return comments
 
 
@@ -398,12 +433,14 @@ def _entity_name_from_comment(comment: str) -> str:
     name = str(comment or "").strip()
     for suffix in ("ID", "Id", "id", "编号", "编码", "标识"):
         if name.endswith(suffix):
-            name = name[:-len(suffix)]
+            name = name[: -len(suffix)]
             break
     return name.strip()
 
 
-def _related_entity_identity(item: dict[str, Any]) -> tuple[str, tuple[str, ...]]:
+def _related_entity_identity(
+    item: dict[str, Any],
+) -> tuple[str, tuple[str, ...]]:
     return (
         str(item.get("code") or "").strip(),
         tuple(_as_string_list(item.get("key_columns"))),
@@ -411,8 +448,8 @@ def _related_entity_identity(item: dict[str, Any]) -> tuple[str, tuple[str, ...]
 
 
 def _merge_related_entities(
-        current: list[dict[str, Any]],
-        discovered: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    current: list[dict[str, Any]], discovered: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
     merged = []
     seen = set()
     for item in current + discovered:
@@ -427,9 +464,10 @@ def _merge_related_entities(
 
 
 def discover_related_entities_from_grain(
-        result: TableInspectResult,
-        context: TableContext | None,
-        grain_entity_index: dict[str, str]) -> list[dict[str, Any]]:
+    result: TableInspectResult,
+    context: TableContext | None,
+    grain_entity_index: dict[str, str],
+) -> list[dict[str, Any]]:
     """从 DWS grain 使用情况反推维度表承载的层级实体。"""
     if result.table_type != "dimension" or not result.entity or not context:
         return []
@@ -446,21 +484,23 @@ def discover_related_entities_from_grain(
         if key_column not in comments_by_column:
             continue
         comment = comments_by_column.get(key_column, "")
-        discovered.append({
-            "code": related_code,
-            "name": _entity_name_from_comment(comment),
-            "key_columns": [key_column],
-            "relationship": {
-                "type": "many_to_one",
-                "from_entity": primary_code,
-            },
-        })
+        discovered.append(
+            {
+                "code": related_code,
+                "name": _entity_name_from_comment(comment),
+                "key_columns": [key_column],
+                "relationship": {
+                    "type": "many_to_one",
+                    "from_entity": primary_code,
+                },
+            }
+        )
     return discovered
 
 
 def enrich_results_with_related_entities(
-        results: list[TableInspectResult],
-        contexts: dict[str, TableContext]) -> None:
+    results: list[TableInspectResult], contexts: dict[str, TableContext]
+) -> None:
     grain_entity_index = _build_grain_entity_index(results)
     if not grain_entity_index:
         return
@@ -494,23 +534,26 @@ def layer_for_model(result: TableInspectResult) -> str:
 
 
 def metadata_warnings_for_result(
-        result: TableInspectResult) -> list[dict[str, Any]]:
+    result: TableInspectResult,
+) -> list[dict[str, Any]]:
     """返回模型元数据回写层面的警告。"""
     if result.table_type != "dimension":
         return []
     inferred = str(result.inferred_layer or "").strip().upper()
     if inferred in ("", "DIM"):
         return []
-    return [{
-        "type": "dimension_layer_override",
-        "severity": "warning",
-        "message": (
-            "LLM 表类型为 dimension，但 inferred_layer 不是 DIM；"
-            "表信息回写时 layer 会按 dimension 规则强制写为 DIM"
-        ),
-        "inferred_layer": inferred,
-        "applied_layer": "DIM",
-    }]
+    return [
+        {
+            "type": "dimension_layer_override",
+            "severity": "warning",
+            "message": (
+                "LLM 表类型为 dimension，但 inferred_layer 不是 DIM；"
+                "表信息回写时 layer 会按 dimension 规则强制写为 DIM"
+            ),
+            "inferred_layer": inferred,
+            "applied_layer": "DIM",
+        }
+    ]
 
 
 def _validate_write_scope(write_scope: str) -> str:
@@ -539,10 +582,10 @@ def business_metadata_for_result(
     metadata = {}
     data_domain = business_config.normalize_domain(result.inferred_data_domain)
     business_area = business_config.normalize_business_area(
-        result.inferred_business_area)
-    if (
-        applied_layer in DATA_DOMAIN_LAYERS
-        and business_config.is_valid_domain(data_domain)
+        result.inferred_business_area
+    )
+    if applied_layer in DATA_DOMAIN_LAYERS and business_config.is_valid_domain(
+        data_domain
     ):
         metadata["data_domain"] = data_domain
     if (
@@ -553,8 +596,9 @@ def business_metadata_for_result(
     return metadata
 
 
-def should_write_metric_groups(result: TableInspectResult,
-                               write_scope: str = "all") -> bool:
+def should_write_metric_groups(
+    result: TableInspectResult, write_scope: str = "all"
+) -> bool:
     """判断是否需要按指标分组更新模型 YAML。"""
     if _validate_write_scope(write_scope) not in {"all", "metrics"}:
         return False
@@ -564,8 +608,9 @@ def should_write_metric_groups(result: TableInspectResult,
     )
 
 
-def should_write_grain_metadata(result: TableInspectResult,
-                                write_scope: str = "all") -> bool:
+def should_write_grain_metadata(
+    result: TableInspectResult, write_scope: str = "all"
+) -> bool:
     """判断是否需要更新 entity/grain 元数据。"""
     if _validate_write_scope(write_scope) not in {"all", "grain"}:
         return False
@@ -588,16 +633,17 @@ def _effective_entities(result: TableInspectResult) -> list[dict[str, Any]]:
 
     inferred = []
     for key, code in _grain_key_entity_pairs(result.grain):
-        inferred.append({
-            "code": code,
-            "type": "foreign",
-            "key_columns": [key],
-        })
+        inferred.append(
+            {
+                "code": code,
+                "type": "foreign",
+                "key_columns": [key],
+            }
+        )
     return normalize_entities(inferred)
 
 
-def _dedupe_entities(
-        entities: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _dedupe_entities(entities: list[dict[str, Any]]) -> list[dict[str, Any]]:
     deduped = []
     seen: set[tuple[str, tuple[str, ...]]] = set()
     for entity in entities:
@@ -612,17 +658,17 @@ def _dedupe_entities(
 
 
 def _canonical_entities_for_write(
-        result: TableInspectResult,
-        entities: list[dict[str, Any]],
-        *,
-        model_layer: str = "") -> list[dict[str, Any]]:
+    result: TableInspectResult,
+    entities: list[dict[str, Any]],
+    *,
+    model_layer: str = "",
+) -> list[dict[str, Any]]:
     if not entities:
         return []
 
     effective_layer = str(model_layer or result.declared_layer or "").upper()
     is_dimension_model = (
-        effective_layer == "DIM"
-        or result.table_type == "dimension"
+        effective_layer == "DIM" or result.table_type == "dimension"
     )
 
     if result.table_type == "fact" and not is_dimension_model:
@@ -639,7 +685,8 @@ def _canonical_entities_for_write(
 
     primary = next(
         (
-            entity for entity in entities
+            entity
+            for entity in entities
             if str(entity.get("type") or "").lower() == "primary"
         ),
         None,
@@ -647,7 +694,8 @@ def _canonical_entities_for_write(
     if not primary:
         primary = next(
             (
-                entity for entity in entities
+                entity
+                for entity in entities
                 if str(entity.get("type") or "").lower() != "foreign"
             ),
             entities[0],
@@ -681,7 +729,8 @@ def _effective_grain(grain: dict[str, Any] | None) -> dict[str, Any]:
     payload = dict(grain or {})
     entities = _as_string_list(payload.get("entities"))
     additional_key_columns = _as_string_list(
-        payload.get("additional_key_columns"))
+        payload.get("additional_key_columns")
+    )
     time_column = str(payload.get("time_column") or "").strip()
     time_period = str(payload.get("time_period") or "").strip()
 
@@ -706,8 +755,8 @@ def _effective_grain(grain: dict[str, Any] | None) -> dict[str, Any]:
 
 
 def _canonical_grain_for_write(
-        grain: dict[str, Any],
-        entities: list[dict[str, Any]]) -> dict[str, Any]:
+    grain: dict[str, Any], entities: list[dict[str, Any]]
+) -> dict[str, Any]:
     if not grain or not entities:
         return grain
 
@@ -728,11 +777,13 @@ def _canonical_grain_for_write(
     return grain
 
 
-def update_model_yaml(project: str,
-                      result: TableInspectResult,
-                      *,
-                      dry_run: bool = False,
-                      write_scope: str = "all") -> dict[str, Any]:
+def update_model_yaml(
+    project: str,
+    result: TableInspectResult,
+    *,
+    dry_run: bool = False,
+    write_scope: str = "all",
+) -> dict[str, Any]:
     """将单表 LLM 巡检元数据和指标名覆盖写入 models/{table}.yaml。"""
     write_scope = _validate_write_scope(write_scope)
     path = model_path_for_table(project, result.table_name)
@@ -743,15 +794,13 @@ def update_model_yaml(project: str,
         existing = {}
 
     if result.status == "blocked":
-        can_migrate_grain = (
-            write_scope in {"all", "grain"}
-            and any(
-                key in existing for key in (
-                    "entities",
-                    "entity",
-                    "related_entities",
-                    "grain",
-                )
+        can_migrate_grain = write_scope in {"all", "grain"} and any(
+            key in existing
+            for key in (
+                "entities",
+                "entity",
+                "related_entities",
+                "grain",
             )
         )
         if can_migrate_grain:
@@ -767,7 +816,8 @@ def update_model_yaml(project: str,
                 model_layer=str(existing.get("layer") or ""),
             )
             grain_metadata = _effective_grain(
-                result.grain or existing.get("grain"))
+                result.grain or existing.get("grain")
+            )
             grain_metadata = _canonical_grain_for_write(
                 grain_metadata,
                 entity_metadata,
@@ -786,9 +836,9 @@ def update_model_yaml(project: str,
             if not dry_run and changed:
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text(
-                    yaml.safe_dump(updated,
-                                   allow_unicode=True,
-                                   sort_keys=False),
+                    yaml.safe_dump(
+                        updated, allow_unicode=True, sort_keys=False
+                    ),
                     encoding="utf-8",
                 )
             return {
@@ -842,7 +892,8 @@ def update_model_yaml(project: str,
     previous_dimension_role = existing.get("dimension_role")
     previous_dimension_content_type = existing.get("dimension_content_type")
     has_existing_metric_fields = any(
-        key in existing for key in (
+        key in existing
+        for key in (
             "metrics",
             "atomic_metrics",
             "derived_metrics",
@@ -876,7 +927,8 @@ def update_model_yaml(project: str,
             if applied_layer in BUSINESS_AREA_LAYERS:
                 if "business_area" in business_metadata:
                     updated["business_area"] = business_metadata[
-                        "business_area"]
+                        "business_area"
+                    ]
             else:
                 updated.pop("business_area", None)
         if applied_layer == "DIM":
@@ -901,7 +953,8 @@ def update_model_yaml(project: str,
             updated.pop("derived_metrics", None)
         if detected_groups["calculated_metrics"]:
             updated["calculated_metrics"] = detected_groups[
-                "calculated_metrics"]
+                "calculated_metrics"
+            ]
         else:
             updated.pop("calculated_metrics", None)
         updated.pop("metrics", None)
@@ -915,7 +968,8 @@ def update_model_yaml(project: str,
     previous_entities = existing.get("entities")
     previous_related_entities = existing.get("related_entities")
     has_existing_grain_metadata = any(
-        key in existing for key in (
+        key in existing
+        for key in (
             "entities",
             "entity",
             "related_entities",
@@ -967,8 +1021,7 @@ def update_model_yaml(project: str,
         )
     )
     metric_changed = write_metric_groups and (
-        has_existing_metric_fields
-        or detected_groups != existing_groups
+        has_existing_metric_fields or detected_groups != existing_groups
     )
     grain_changed = write_grain_metadata and (
         updated.get("grain") != previous_grain
@@ -979,9 +1032,7 @@ def update_model_yaml(project: str,
     if not dry_run and changed:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(
-            yaml.safe_dump(updated,
-                           allow_unicode=True,
-                           sort_keys=False),
+            yaml.safe_dump(updated, allow_unicode=True, sort_keys=False),
             encoding="utf-8",
         )
 
@@ -989,9 +1040,11 @@ def update_model_yaml(project: str,
     removed_metric_count = 0
     if write_metric_groups:
         new_metric_count = len(
-            [name for name in detected_metrics if name not in existing_metrics])
+            [name for name in detected_metrics if name not in existing_metrics]
+        )
         removed_metric_count = len(
-            [name for name in existing_metrics if name not in detected_metrics])
+            [name for name in existing_metrics if name not in detected_metrics]
+        )
 
     return {
         "table": result.table_name,
@@ -1025,11 +1078,14 @@ def update_model_yaml(project: str,
 def _catalog_table_assets(project: str) -> dict[str, dict[str, Any]]:
     project_cfg = PROJECT_CONFIG[project]
     project_dir = PROJECT_ROOT / project_cfg["dir"]
-    return build_asset_catalog(
-        [],
-        load_model_metadata(project),
-        project_dir,
-    ).get("tables") or {}
+    return (
+        build_asset_catalog(
+            [],
+            load_model_metadata(project),
+            project_dir,
+        ).get("tables")
+        or {}
+    )
 
 
 def _existing_model_data(path: Path) -> dict[str, Any]:
@@ -1093,9 +1149,12 @@ def _catalog_model_payload(
         updated.pop("business_process", None)
 
     if layer == "DIM":
-        dimension_role = str(mapping.get("dimension_role") or "").strip().upper()
-        dimension_content_type = str(
-            mapping.get("dimension_content_type") or "").strip().upper()
+        dimension_role = (
+            str(mapping.get("dimension_role") or "").strip().upper()
+        )
+        dimension_content_type = (
+            str(mapping.get("dimension_content_type") or "").strip().upper()
+        )
         if dimension_role:
             updated["dimension_role"] = dimension_role
         if dimension_content_type:
@@ -1106,8 +1165,7 @@ def _catalog_model_payload(
     return updated
 
 
-def _business_processes_from_result(
-        result: TableInspectResult) -> list[str]:
+def _business_processes_from_result(result: TableInspectResult) -> list[str]:
     codes = []
     for metrics in (
         result.atomic_metrics,
@@ -1129,7 +1187,8 @@ def _semantic_subject_from_result(result: TableInspectResult) -> str:
     )
     primary = next(
         (
-            entity for entity in entities
+            entity
+            for entity in entities
             if str(entity.get("type") or "").lower() == "primary"
         ),
         None,
@@ -1140,7 +1199,8 @@ def _semantic_subject_from_result(result: TableInspectResult) -> str:
 
 
 def catalog_discovery_model_mapping(
-        result: TableInspectResult) -> dict[str, Any]:
+    result: TableInspectResult,
+) -> dict[str, Any]:
     """Return model metadata assignment discovered by table-level LLM."""
     if result.status == "blocked":
         return {}
@@ -1153,7 +1213,8 @@ def catalog_discovery_model_mapping(
         "data_domain": result.inferred_data_domain,
         "business_area": result.inferred_business_area,
         "materialized": _materialized_for_layer(
-            result.declared_layer or layer),
+            result.declared_layer or layer
+        ),
     }
     if result.table_type == "dimension":
         semantic_subject = _semantic_subject_from_result(result)
@@ -1184,9 +1245,7 @@ def update_model_yaml_from_catalog(
 ) -> dict[str, Any]:
     write_scope = _validate_write_scope(write_scope)
     if write_scope not in {"all", "table", "business"}:
-        raise ValueError(
-            "from-catalog 仅支持 write_scope=all/table/business"
-        )
+        raise ValueError("from-catalog 仅支持 write_scope=all/table/business")
 
     path = model_path_for_table(project, table_name)
     existing = _existing_model_data(path)
@@ -1268,9 +1327,7 @@ def run_catalog_metadata_write(
 ) -> dict[str, Any]:
     write_scope = _validate_write_scope(write_scope)
     if write_scope not in {"all", "table", "business"}:
-        raise ValueError(
-            "from-catalog 仅支持 write_scope=all/table/business"
-        )
+        raise ValueError("from-catalog 仅支持 write_scope=all/table/business")
 
     init_result = None
     if init_catalog:
@@ -1311,6 +1368,7 @@ def run_catalog_metadata_write(
         )
     if not dry_run:
         import config as _config
+
         _config._model_metadata_cache.clear()
 
     changed_updates = [update for update in updates if update["changed"]]
@@ -1319,29 +1377,31 @@ def run_catalog_metadata_write(
         "source": "catalog",
         "write_scope": write_scope,
         "catalog_path": str(
-            PROJECT_ROOT / PROJECT_CONFIG[project]["dir"] /
-            "business_semantics.yaml"
+            PROJECT_ROOT
+            / PROJECT_CONFIG[project]["dir"]
+            / "business_semantics.yaml"
         ),
         "inspected_table_count": len(updates),
         "model_updates": changed_updates,
-        "model_update_count": len([
-            update for update in changed_updates
-            if update.get("updated")
-        ]),
+        "model_update_count": len(
+            [update for update in changed_updates if update.get("updated")]
+        ),
         "model_change_count": len(changed_updates),
     }
 
 
-def run_catalog_discovery(project: str,
-                          *,
-                          api_key: str,
-                          model: str = "deepseek-v4-flash",
-                          max_retries: int = 1,
-                          parallelism: int = 2,
-                          no_cache: bool = False,
-                          dry_run: bool = False,
-                          overwrite: bool = False,
-                          show_progress: bool = False) -> dict[str, Any]:
+def run_catalog_discovery(
+    project: str,
+    *,
+    api_key: str,
+    model: str = "deepseek-v4-flash",
+    max_retries: int = 1,
+    parallelism: int = 2,
+    no_cache: bool = False,
+    dry_run: bool = False,
+    overwrite: bool = False,
+    show_progress: bool = False,
+) -> dict[str, Any]:
     """Use table-level LLM inspection results to initialize/update catalog."""
     data = load_lineage_data(project)
     contexts = build_inspection_contexts(project, data)
@@ -1349,11 +1409,11 @@ def run_catalog_discovery(project: str,
     dwd_contexts = [ctx for ctx in metric_contexts if ctx.layer == "DWD"]
     dws_contexts = [ctx for ctx in metric_contexts if ctx.layer == "DWS"]
     metadata_only_contexts = [
-        ctx for ctx in contexts
-        if ctx.layer not in METRIC_LAYERS
+        ctx for ctx in contexts if ctx.layer not in METRIC_LAYERS
     ]
-    cache_file = Path(__file__).resolve(
-    ).parent / "cache" / f"inspect_{project}.json"
+    cache_file = (
+        Path(__file__).resolve().parent / "cache" / f"inspect_{project}.json"
+    )
     if no_cache and cache_file.exists():
         cache_file.unlink()
 
@@ -1402,6 +1462,7 @@ def run_catalog_discovery(project: str,
             model_updates.append(update)
     if not dry_run and model_updates:
         import config as _config
+
         _config._model_metadata_cache.clear()
 
     return {
@@ -1415,10 +1476,11 @@ def run_catalog_discovery(project: str,
         "dwd_table_count": len(dwd_contexts),
         "dws_table_count": len(dws_contexts),
         "metadata_only_table_count": len(metadata_only_contexts),
-        "fact_table_count": sum(1 for result in results if result.is_fact_table),
+        "fact_table_count": sum(
+            1 for result in results if result.is_fact_table
+        ),
         "dimension_table_count": sum(
-            1 for result in results
-            if result.table_type == "dimension"
+            1 for result in results if result.table_type == "dimension"
         ),
         "business_process_count": len(
             (write_result.get("catalog") or {}).get("business_processes") or []
@@ -1427,10 +1489,9 @@ def run_catalog_discovery(project: str,
             (write_result.get("catalog") or {}).get("semantic_subjects") or []
         ),
         "model_updates": model_updates,
-        "model_update_count": len([
-            update for update in model_updates
-            if update.get("updated")
-        ]),
+        "model_update_count": len(
+            [update for update in model_updates if update.get("updated")]
+        ),
         "model_change_count": len(model_updates),
         "tables": [result_for_report(result) for result in results],
     }
@@ -1501,16 +1562,18 @@ def build_progress_callback() -> Callable[[dict[str, Any]], None]:
     return callback
 
 
-def run_metadata_write(project: str,
-                       *,
-                       api_key: str,
-                       model: str = "deepseek-v4-flash",
-                       max_retries: int = 1,
-                       parallelism: int = 2,
-                       no_cache: bool = False,
-                       dry_run: bool = False,
-                       write_scope: str = "all",
-                       show_progress: bool = False) -> dict[str, Any]:
+def run_metadata_write(
+    project: str,
+    *,
+    api_key: str,
+    model: str = "deepseek-v4-flash",
+    max_retries: int = 1,
+    parallelism: int = 2,
+    no_cache: bool = False,
+    dry_run: bool = False,
+    write_scope: str = "all",
+    show_progress: bool = False,
+) -> dict[str, Any]:
     """运行项目级 LLM 巡检与模型元数据回写。"""
     write_scope = _validate_write_scope(write_scope)
     data = load_lineage_data(project)
@@ -1519,11 +1582,11 @@ def run_metadata_write(project: str,
     dwd_contexts = [ctx for ctx in metric_contexts if ctx.layer == "DWD"]
     dws_contexts = [ctx for ctx in metric_contexts if ctx.layer == "DWS"]
     metadata_only_contexts = [
-        ctx for ctx in contexts
-        if ctx.layer not in METRIC_LAYERS
+        ctx for ctx in contexts if ctx.layer not in METRIC_LAYERS
     ]
-    cache_file = Path(__file__).resolve(
-    ).parent / "cache" / f"inspect_{project}.json"
+    cache_file = (
+        Path(__file__).resolve().parent / "cache" / f"inspect_{project}.json"
+    )
     if no_cache and cache_file.exists():
         cache_file.unlink()
 
@@ -1551,7 +1614,8 @@ def run_metadata_write(project: str,
     contexts_by_name = {ctx.table_name: ctx for ctx in contexts}
     enrich_results_with_related_entities(results, contexts_by_name)
     yaml_updates, skipped_updates = _update_models_for_results(
-        project, results, dry_run=dry_run, write_scope=write_scope)
+        project, results, dry_run=dry_run, write_scope=write_scope
+    )
 
     return {
         "project": project,
@@ -1565,88 +1629,117 @@ def run_metadata_write(project: str,
         "fact_table_count": sum(1 for r in results if r.is_fact_table),
         "passed_table_count": sum(1 for r in results if r.status == "passed"),
         "warning_table_count": sum(
-            1 for r in results
-            if r.status == "warning" or metadata_warnings_for_result(r)),
-        "blocked_table_count": sum(1 for r in results if r.status == "blocked"),
+            1
+            for r in results
+            if r.status == "warning" or metadata_warnings_for_result(r)
+        ),
+        "blocked_table_count": sum(
+            1 for r in results if r.status == "blocked"
+        ),
         "atomic_metric_count": sum(len(r.atomic_metrics) for r in results),
         "derived_metric_count": sum(len(r.derived_metrics) for r in results),
         "calculated_metric_count": sum(
-            len(r.calculated_metrics) for r in results),
+            len(r.calculated_metrics) for r in results
+        ),
         "metric_count": sum(len(metric_names_for_model(r)) for r in results),
         "derived_metric_violation_count": _violation_count(
-            results, "derived_metrics"),
+            results, "derived_metrics"
+        ),
         "calculated_metric_violation_count": _violation_count(
-            results, "calculated_metrics"),
+            results, "calculated_metrics"
+        ),
         "non_atomic_metric_violation_count": _violation_count(results),
         "metadata_warning_count": sum(
-            len(metadata_warnings_for_result(r)) for r in results),
+            len(metadata_warnings_for_result(r)) for r in results
+        ),
         "tables": [result_for_report(r) for r in results],
         "model_updates": yaml_updates,
-        "model_update_count": len([
-            update for update in yaml_updates
-            if update.get("updated")
-        ]),
+        "model_update_count": len(
+            [update for update in yaml_updates if update.get("updated")]
+        ),
         "model_change_count": len(yaml_updates),
         "skipped_model_updates": skipped_updates,
     }
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="LLM 表巡检与模型元数据回写工具")
-    parser.add_argument("--project",
-                        default="shop",
-                        choices=list(PROJECT_CONFIG.keys()),
-                        help="项目名称")
+    parser = argparse.ArgumentParser(
+        description="LLM 表巡检与模型元数据回写工具"
+    )
+    parser.add_argument(
+        "--project",
+        default="shop",
+        choices=list(PROJECT_CONFIG.keys()),
+        help="项目名称",
+    )
     parser.add_argument(
         "--output",
-        help="输出 JSON 文件路径 (默认 assess/model_metadata_result_{project}.json)")
-    parser.add_argument("--model",
-                        default="deepseek-v4-flash",
-                        help="DeepSeek 模型名称")
-    parser.add_argument("--max-retries",
-                        type=int,
-                        default=1,
-                        help="LLM 返回校验失败时的最大重试次数")
-    parser.add_argument("--dry-run",
-                        action="store_true",
-                        help="只输出巡检结果，不写入 models YAML")
-    parser.add_argument("--init-catalog",
-                        action="store_true",
-                        help="按项目DDL初始化 business_semantics.yaml")
-    parser.add_argument("--catalog-from-llm",
-                        action="store_true",
-                        help="调用表级 LLM 巡检结果初始化/更新 business_semantics.yaml")
-    parser.add_argument("--overwrite-catalog",
-                        action="store_true",
-                        help="catalog-from-llm/init-catalog 时覆盖已存在目录")
-    parser.add_argument("--from-catalog",
-                        action="store_true",
-                        help="从 business_semantics.yaml 刷新/初始化 models")
-    parser.add_argument("--write-scope",
-                        choices=sorted(WRITE_SCOPES),
-                        default="all",
-                        help=(
-                            "models 回写范围: all=表信息+指标+entity/grain, "
-                            "table=仅表级元数据, metrics=仅指标分组, "
-                            "grain=仅entity/grain, "
-                            "business=按models已有业务code从catalog补齐治理信息"
-                        ))
-    parser.add_argument("--no-cache",
-                        action="store_true",
-                        help="忽略本地缓存，强制重新调用 API")
-    parser.add_argument("--parallel",
-                        type=int,
-                        default=2,
-                        help="LLM 并发调用数，默认 2")
-    parser.add_argument("--quiet",
-                        action="store_true",
-                        help="不打印单表巡检进度")
+        help="输出 JSON 文件路径 (默认 assess/model_metadata_result_{project}.json)",
+    )
+    parser.add_argument(
+        "--model", default="deepseek-v4-flash", help="DeepSeek 模型名称"
+    )
+    parser.add_argument(
+        "--max-retries",
+        type=int,
+        default=1,
+        help="LLM 返回校验失败时的最大重试次数",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="只输出巡检结果，不写入 models YAML",
+    )
+    parser.add_argument(
+        "--init-catalog",
+        action="store_true",
+        help="按项目DDL初始化 business_semantics.yaml",
+    )
+    parser.add_argument(
+        "--catalog-from-llm",
+        action="store_true",
+        help="调用表级 LLM 巡检结果初始化/更新 business_semantics.yaml",
+    )
+    parser.add_argument(
+        "--overwrite-catalog",
+        action="store_true",
+        help="catalog-from-llm/init-catalog 时覆盖已存在目录",
+    )
+    parser.add_argument(
+        "--from-catalog",
+        action="store_true",
+        help="从 business_semantics.yaml 刷新/初始化 models",
+    )
+    parser.add_argument(
+        "--write-scope",
+        choices=sorted(WRITE_SCOPES),
+        default="all",
+        help=(
+            "models 回写范围: all=表信息+指标+entity/grain, "
+            "table=仅表级元数据, metrics=仅指标分组, "
+            "grain=仅entity/grain, "
+            "business=按models已有业务code从catalog补齐治理信息"
+        ),
+    )
+    parser.add_argument(
+        "--no-cache",
+        action="store_true",
+        help="忽略本地缓存，强制重新调用 API",
+    )
+    parser.add_argument(
+        "--parallel", type=int, default=2, help="LLM 并发调用数，默认 2"
+    )
+    parser.add_argument(
+        "--quiet", action="store_true", help="不打印单表巡检进度"
+    )
     args = parser.parse_args()
 
     if args.catalog_from_llm:
         api_key = os.environ.get("DEEPSEEK_API_KEY")
         if not api_key:
-            raise SystemExit("未提供 DEEPSEEK_API_KEY 环境变量，无法调用 DeepSeek API")
+            raise SystemExit(
+                "未提供 DEEPSEEK_API_KEY 环境变量，无法调用 DeepSeek API"
+            )
         result = run_catalog_discovery(
             args.project,
             api_key=api_key,
@@ -1676,7 +1769,9 @@ def main() -> None:
             raise SystemExit("--write-scope business 需要配合 --from-catalog")
         api_key = os.environ.get("DEEPSEEK_API_KEY")
         if not api_key:
-            raise SystemExit("未提供 DEEPSEEK_API_KEY 环境变量，无法调用 DeepSeek API")
+            raise SystemExit(
+                "未提供 DEEPSEEK_API_KEY 环境变量，无法调用 DeepSeek API"
+            )
 
         result = run_metadata_write(
             args.project,
@@ -1690,18 +1785,25 @@ def main() -> None:
             show_progress=not args.quiet,
         )
 
-    output_path = Path(args.output) if args.output else (
-        Path(__file__).resolve().parent /
-        f"model_metadata_result_{args.project}.json")
-    output_path.write_text(json.dumps(result, ensure_ascii=False, indent=2),
-                           encoding="utf-8")
+    output_path = (
+        Path(args.output)
+        if args.output
+        else (
+            Path(__file__).resolve().parent
+            / f"model_metadata_result_{args.project}.json"
+        )
+    )
+    output_path.write_text(
+        json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
     print(f"结果已写入: {output_path}")
     if result.get("source") == "catalog":
         print(
             "回写来源: catalog, "
             "巡检表: {inspected_table_count}, "
-            "模型变更: {model_change_count}, 已写入: {model_update_count}".
-            format(**result)
+            "模型变更: {model_change_count}, 已写入: {model_update_count}".format(
+                **result
+            )
         )
         return
     if result.get("source") == "llm_catalog_discovery":
@@ -1709,16 +1811,16 @@ def main() -> None:
             "目录发现: {path}, "
             "巡检表: {inspected_table_count}, "
             "业务过程: {business_process_count}, "
-            "语义主题: {semantic_subject_count}, 已写入: {updated}".
-            format(**result)
+            "语义主题: {semantic_subject_count}, 已写入: {updated}".format(
+                **result
+            )
         )
         return
     if "catalog" in result:
         catalog = result.get("catalog") or {}
         print(
             "目录初始化: {path}, "
-            "业务过程: {process_count}, 语义主题: {subject_count}, 已写入: {updated}".
-            format(
+            "业务过程: {process_count}, 语义主题: {subject_count}, 已写入: {updated}".format(
                 path=result.get("path"),
                 process_count=len(catalog.get("business_processes") or []),
                 subject_count=len(catalog.get("semantic_subjects") or []),
@@ -1737,7 +1839,9 @@ def main() -> None:
         "非原子指标违规: {non_atomic_metric_violation_count}, "
         "元数据警告: {metadata_warning_count}, "
         "模型变更: {model_change_count}, 已写入: {model_update_count}".format(
-            **result))
+            **result
+        )
+    )
 
 
 if __name__ == "__main__":

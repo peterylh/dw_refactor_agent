@@ -12,6 +12,7 @@
     python exec/reinit_project.py --project shop
     python exec/reinit_project.py --project shop --full-refresh
 """
+
 from __future__ import annotations
 
 import argparse
@@ -24,8 +25,8 @@ _root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_root))
 
 from config import (
-    PROJECT_CONFIG,
     DB_ENV_CONFIG,
+    PROJECT_CONFIG,
     get_model_names_by_layer,
     get_mysql_cmd,
 )
@@ -33,40 +34,64 @@ from config import (
 
 def run_sql(sql_text: str, db: str, env_cmd: list[str]) -> str:
     r = subprocess.run(
-        env_cmd + [db], input=sql_text, capture_output=True, text=True, timeout=300,
+        env_cmd + [db],
+        input=sql_text,
+        capture_output=True,
+        text=True,
+        timeout=300,
     )
     if r.returncode != 0:
         raise RuntimeError(r.stderr.strip())
     return r.stdout
 
 
-def get_etl_date_partitions(project: str, db: str,
-                            env_cmd: list[str]) -> list[str]:
+def get_etl_date_partitions(
+    project: str, db: str, env_cmd: list[str]
+) -> list[str]:
     result = run_sql("SHOW TABLES", db, env_cmd)
-    tables = [line.strip() for line in result.strip().split("\n")[1:] if line.strip()]
+    tables = [
+        line.strip() for line in result.strip().split("\n")[1:] if line.strip()
+    ]
     ods_model_tables = set(get_model_names_by_layer(project, "ODS"))
     ods_tables = [t for t in tables if t in ods_model_tables]
     all_dates = set()
     for tbl in ods_tables:
         result = run_sql(
             f"SELECT DISTINCT DATE(load_time) AS d FROM {db}.{tbl} ORDER BY d",
-            db, env_cmd,
+            db,
+            env_cmd,
         )
-        dates = [line.strip() for line in result.strip().split("\n")[1:] if line.strip()]
+        dates = [
+            line.strip()
+            for line in result.strip().split("\n")[1:]
+            if line.strip()
+        ]
         all_dates.update(dates)
     return sorted(all_dates)
 
 
 def main():
     parser = argparse.ArgumentParser(description="数据重新初始化")
-    parser.add_argument("--project", required=True, choices=list(PROJECT_CONFIG.keys()))
-    parser.add_argument("--db-env", default="prod", choices=list(DB_ENV_CONFIG.keys()))
-    parser.add_argument("--etl-dates", nargs="*", default=None,
-                        help="ETL 日期列表 (YYYY-MM-DD), 不传则自动从 ODS 发现")
-    parser.add_argument("--full-refresh", action="store_true",
-                        help="全量刷新模式 (启用 batch SQL 加速)")
-    parser.add_argument("--parallel", type=int, default=1,
-                        help="并行度, 默认 1 (串行)")
+    parser.add_argument(
+        "--project", required=True, choices=list(PROJECT_CONFIG.keys())
+    )
+    parser.add_argument(
+        "--db-env", default="prod", choices=list(DB_ENV_CONFIG.keys())
+    )
+    parser.add_argument(
+        "--etl-dates",
+        nargs="*",
+        default=None,
+        help="ETL 日期列表 (YYYY-MM-DD), 不传则自动从 ODS 发现",
+    )
+    parser.add_argument(
+        "--full-refresh",
+        action="store_true",
+        help="全量刷新模式 (启用 batch SQL 加速)",
+    )
+    parser.add_argument(
+        "--parallel", type=int, default=1, help="并行度, 默认 1 (串行)"
+    )
     args = parser.parse_args()
 
     project = args.project
@@ -122,6 +147,7 @@ def main():
                     print(f"  [FAIL] {f.name}: {e}")
                     sys.exit(1)
         else:
+
             def load_ods(f: Path) -> Path:
                 run_sql(f.read_text(encoding="utf-8"), db_name, env_cmd)
                 return f
@@ -129,7 +155,9 @@ def main():
             ods_error: str | None = None
             executor = ThreadPoolExecutor(max_workers=parallel)
             try:
-                fut_to_file = {executor.submit(load_ods, f): f for f in ods_files}
+                fut_to_file = {
+                    executor.submit(load_ods, f): f for f in ods_files
+                }
                 for future in as_completed(fut_to_file):
                     f = fut_to_file[future]
                     exc = future.exception()
@@ -148,18 +176,22 @@ def main():
     # ── Step 3: 确定 ETL 日期 ──
     task_run = _root / "exec" / "task_run.py"
     cmd = [
-        sys.executable, str(task_run),
-        "--project", project,
-        "--db-env", args.db_env,
+        sys.executable,
+        str(task_run),
+        "--project",
+        project,
+        "--db-env",
+        args.db_env,
         "--refresh-dag",
-        "--parallel", str(parallel),
+        "--parallel",
+        str(parallel),
     ]
 
     if args.full_refresh:
         print(f"\n{'=' * 60}")
         print("Step 3: 全量刷新模式 (启用 batch SQL 加速)")
         cmd += ["--full-refresh"]
-        print(f"  跳过逐日迭代, 按 batch SQL 执行")
+        print("  跳过逐日迭代, 按 batch SQL 执行")
     else:
         print(f"\n{'=' * 60}")
         if args.etl_dates:
@@ -180,11 +212,11 @@ def main():
     print(f"  执行: {' '.join(cmd)}")
     result = subprocess.run(cmd, cwd=_root)
     if result.returncode != 0:
-        print(f"\n[FAIL] 初始化失败")
+        print("\n[FAIL] 初始化失败")
         sys.exit(1)
 
     print(f"\n{'=' * 60}")
-    print(f"初始化完成!")
+    print("初始化完成!")
     return 0
 
 

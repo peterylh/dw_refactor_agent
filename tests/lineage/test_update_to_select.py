@@ -18,9 +18,7 @@ def _projection_aliases(select: exp.Select) -> list[str]:
 
 
 def test_update_to_select_maps_set_items_to_projection_aliases():
-    select = _convert(
-        "UPDATE t SET a = 1, b = 2, c = a + b WHERE flag = 1"
-    )
+    select = _convert("UPDATE t SET a = 1, b = 2, c = a + b WHERE flag = 1")
 
     assert _projection_aliases(select) == ["a", "b", "c"]
     assert select.args["from_"].this.name == "t"

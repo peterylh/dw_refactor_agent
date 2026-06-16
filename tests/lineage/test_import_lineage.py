@@ -57,7 +57,9 @@ def test_import_lineage_module_is_safe_to_import():
 def test_parser_accepts_test_db_env():
     module = importlib.import_module("lineage.import_lineage")
 
-    args = module.build_parser().parse_args(["--project", "shop", "--db-env", "test"])
+    args = module.build_parser().parse_args(
+        ["--project", "shop", "--db-env", "test"]
+    )
 
     assert args.db_env == "test"
 
@@ -75,13 +77,15 @@ def test_open_connection_uses_selected_db_env(monkeypatch):
     conn = module._open_connection("shop_lineage", db_env="test")
 
     assert conn is calls[0] or conn is not None
-    assert calls == [{
-        "host": "172.16.0.90",
-        "port": 9034,
-        "user": "root",
-        "database": "shop_lineage",
-        "charset": "utf8mb4",
-    }]
+    assert calls == [
+        {
+            "host": "172.16.0.90",
+            "port": 9034,
+            "user": "root",
+            "database": "shop_lineage",
+            "charset": "utf8mb4",
+        }
+    ]
 
 
 def test_build_import_rows_normalizes_snapshot_for_database(tmp_path):
@@ -111,32 +115,45 @@ def test_build_import_rows_normalizes_snapshot_for_database(tmp_path):
     ]
     assert rows.table_rows == [
         (1, 42, 1, "ods_order", "shop_dm.ods_order", "ODS", 0, "[]"),
-        (2, 42, 1, "dwd_order_detail", "shop_dm.dwd_order_detail", "DWD", 0, "[]"),
+        (
+            2,
+            42,
+            1,
+            "dwd_order_detail",
+            "shop_dm.dwd_order_detail",
+            "DWD",
+            0,
+            "[]",
+        ),
     ]
     assert rows.column_rows == [
         (1, 42, 1, "amount", "DECIMAL(12,2)", "订单金额", 0),
         (2, 42, 2, "amount", "DECIMAL(12,2)", "订单金额", 0),
     ]
-    assert rows.job_rows == [(
-        1,
-        42,
-        "dwd_order_detail",
-        "dwd_order_detail.sql",
-        "SQL",
-        "INSERT INTO dwd_order_detail SELECT amount FROM ods_order;",
-    )]
-    assert rows.column_lineage_rows == [(
-        1,
-        42,
-        1,
-        1,
-        2,
-        2,
-        1,
-        "DIRECT",
-        "",
-        "amount",
-    )]
+    assert rows.job_rows == [
+        (
+            1,
+            42,
+            "dwd_order_detail",
+            "dwd_order_detail.sql",
+            "SQL",
+            "INSERT INTO dwd_order_detail SELECT amount FROM ods_order;",
+        )
+    ]
+    assert rows.column_lineage_rows == [
+        (
+            1,
+            42,
+            1,
+            1,
+            2,
+            2,
+            1,
+            "DIRECT",
+            "",
+            "amount",
+        )
+    ]
     assert rows.indirect_lineage_rows == [
         (1, 42, 1, 1, 2, 1, "FILTER", "amount > 0"),
     ]

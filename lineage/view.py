@@ -24,7 +24,6 @@ from lineage.table_graph import (
     build_table_graph,
 )
 
-
 AGGREGATE_PATTERN = re.compile(
     r"\b(SUM|COUNT|AVG|MIN|MAX)\s*\(",
     flags=re.IGNORECASE,
@@ -77,7 +76,9 @@ class LineageView:
         self.snapshot = snapshot
         self._data = snapshot.to_dict()
         self._raw_edges = [edge.raw for edge in snapshot.edges]
-        self._raw_indirect_edges = [dict(edge) for edge in snapshot.indirect_edges]
+        self._raw_indirect_edges = [
+            dict(edge) for edge in snapshot.indirect_edges
+        ]
         self._transient_tables = transient_table_names(self._data)
         self._raw_table_graph = build_table_graph(
             self._raw_edges,
@@ -116,14 +117,18 @@ class LineageView:
     def tables(self) -> list:
         return list(self.snapshot.tables)
 
-    def raw_table_graph(self) -> tuple[dict[str, set[str]], dict[str, set[str]]]:
+    def raw_table_graph(
+        self,
+    ) -> tuple[dict[str, set[str]], dict[str, set[str]]]:
         upstream, downstream = self._raw_table_graph
         return (
             {table: set(parents) for table, parents in upstream.items()},
             {table: set(children) for table, children in downstream.items()},
         )
 
-    def asset_table_graph(self) -> tuple[dict[str, set[str]], dict[str, set[str]]]:
+    def asset_table_graph(
+        self,
+    ) -> tuple[dict[str, set[str]], dict[str, set[str]]]:
         upstream, downstream = self._asset_table_graph
         return (
             {table: set(parents) for table, parents in upstream.items()},
@@ -155,7 +160,11 @@ class LineageView:
                     lineage.append(item)
                 continue
 
-            for asset_source, chain, transient_path in _trace_asset_column_sources(
+            for (
+                asset_source,
+                chain,
+                transient_path,
+            ) in _trace_asset_column_sources(
                 edge["source"],
                 self._incoming,
                 self._transient_tables,
@@ -202,7 +211,9 @@ class LineageView:
         if self._targets_by_source_file is None:
             self._targets_by_source_file = self._index_targets_by_source_file()
         return set(
-            self._targets_by_source_file.get(_source_file_key(source_file), set())
+            self._targets_by_source_file.get(
+                _source_file_key(source_file), set()
+            )
         )
 
     def table_edge_source_files(self) -> dict[tuple[str, str], set[str]]:
@@ -229,7 +240,9 @@ class LineageView:
             key=_edge_sort_key,
         )
         self._incoming = _column_incoming_edges(self._column_edges)
-        self._column_edges_by_target_table = self._index_column_edges_by_target()
+        self._column_edges_by_target_table = (
+            self._index_column_edges_by_target()
+        )
         self._condition_edges_by_target_table = self._index_condition_edges()
 
     def _index_column_edges_by_target(self) -> dict[str, list[dict]]:
@@ -243,7 +256,8 @@ class LineageView:
     def _index_condition_edges(self) -> dict[str, list[dict]]:
         grouped = defaultdict(list)
         typed_condition_edges = [
-            edge for edge in self._raw_edges
+            edge
+            for edge in self._raw_edges
             if isinstance(edge.get("target"), dict)
             and (edge.get("target") or {}).get("type") == "table"
             and edge.get("relation_type") != "direct"
@@ -277,7 +291,11 @@ class LineageView:
                     conditions.append(item)
                 continue
 
-            for asset_source, chain, transient_path in _trace_asset_column_sources(
+            for (
+                asset_source,
+                chain,
+                transient_path,
+            ) in _trace_asset_column_sources(
                 source,
                 self._incoming,
                 self._transient_tables,
@@ -319,7 +337,10 @@ class LineageView:
             if edge.source_file:
                 facts["source_files"].add(edge.source_file)
 
-            if edge.relation_type == "group_by" and edge.source.type == "column":
+            if (
+                edge.relation_type == "group_by"
+                and edge.source.type == "column"
+            ):
                 if edge.source.id:
                     facts["group_by_sources"].add(edge.source.id)
                 continue
@@ -353,7 +374,9 @@ class LineageView:
                 "aggregate_columns": sorted(facts["aggregate_columns"]),
                 "constant_columns": sorted(facts["constant_columns"]),
                 "plain_columns": sorted(facts["plain_columns"]),
-                "plain_column_sources": dict(sorted(facts["plain_columns"].items())),
+                "plain_column_sources": dict(
+                    sorted(facts["plain_columns"].items())
+                ),
                 "group_by_sources": sorted(facts["group_by_sources"]),
                 "source_files": sorted(facts["source_files"]),
             }

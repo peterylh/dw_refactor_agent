@@ -92,10 +92,7 @@ def _finalize_task_facts(
         drops_by_table,
         source_file,
     )
-    transient_names = {
-        table["name"]
-        for table in transient_tables
-    }
+    transient_names = {table["name"] for table in transient_tables}
     return {
         "source_file": source_file,
         "output_tables": {
@@ -135,13 +132,7 @@ def _parse_with_sqlglot(sql_text: str, source_file: str) -> dict | None:
             if target:
                 drops_by_table[target.lower()].append(index)
 
-        if isinstance(stmt, exp.Insert):
-            outputs.add(_target_short_name(stmt.this))
-        elif isinstance(stmt, exp.Update):
-            outputs.add(_target_short_name(stmt.this))
-        elif isinstance(stmt, exp.Delete):
-            outputs.add(_target_short_name(stmt.this))
-        elif isinstance(stmt, exp.Merge):
+        if isinstance(stmt, (exp.Insert, exp.Update, exp.Delete, exp.Merge)):
             outputs.add(_target_short_name(stmt.this))
         elif isinstance(stmt, exp.TruncateTable):
             for table in stmt.expressions:

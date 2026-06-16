@@ -3,7 +3,6 @@ from __future__ import annotations
 import re
 from typing import List, Tuple
 
-
 _CREATE_TABLE_RE = re.compile(
     r"\bCREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?"
     r"(?P<name>(?:`?[\w]+`?\.)?`?[\w]+`?)",
@@ -37,7 +36,11 @@ def _matching_paren_index(sql_text: str, open_index: int) -> int:
         char = sql_text[i]
         if quote:
             if char == quote:
-                if quote == "'" and i + 1 < len(sql_text) and sql_text[i + 1] == "'":
+                if (
+                    quote == "'"
+                    and i + 1 < len(sql_text)
+                    and sql_text[i + 1] == "'"
+                ):
                     i += 2
                     continue
                 quote = ""
@@ -70,10 +73,11 @@ def normalize_create_table_for_sqlglot(sql_text: str) -> str:
     if close_index < 0:
         return text
 
-    normalized = text[match.start():close_index + 1].strip()
-    suffix = text[close_index + 1:]
-    engine_match = re.search(r"\bENGINE\s*=\s*([A-Za-z_][\w]*)", suffix,
-                             flags=re.IGNORECASE)
+    normalized = text[match.start() : close_index + 1].strip()
+    suffix = text[close_index + 1 :]
+    engine_match = re.search(
+        r"\bENGINE\s*=\s*([A-Za-z_][\w]*)", suffix, flags=re.IGNORECASE
+    )
     if engine_match:
         normalized = f"{normalized} ENGINE={engine_match.group(1)}"
     return normalized.rstrip(";") + ";"
@@ -83,7 +87,9 @@ def extract_create_table_name(sql_text: str) -> str:
     match = _CREATE_TABLE_RE.search(str(sql_text or ""))
     if not match:
         return ""
-    return ".".join(_strip_identifier(part) for part in match.group("name").split("."))
+    return ".".join(
+        _strip_identifier(part) for part in match.group("name").split(".")
+    )
 
 
 def extract_doris_key(sql_text: str) -> Tuple[str, List[str]]:
@@ -94,7 +100,9 @@ def extract_doris_key(sql_text: str) -> Tuple[str, List[str]]:
     )
     if not match:
         return "DUPLICATE", []
-    return match.group(1).upper(), _split_identifier_list(match.group("columns"))
+    return match.group(1).upper(), _split_identifier_list(
+        match.group("columns")
+    )
 
 
 def extract_doris_distribution_column(sql_text: str) -> str:

@@ -123,7 +123,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Local lineage viewer")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    stats_parser = subparsers.add_parser("stats", help="Show project lineage stats")
+    stats_parser = subparsers.add_parser(
+        "stats", help="Show project lineage stats"
+    )
     _add_common_options(stats_parser)
     stats_parser.add_argument(
         "--format",
@@ -158,8 +160,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     column_parser = subparsers.add_parser("column", help="Show column lineage")
     _add_common_options(column_parser)
-    column_parser.add_argument("--table", required=True, help="Root table name")
-    column_parser.add_argument("--column", required=True, help="Required column name")
+    column_parser.add_argument(
+        "--table", required=True, help="Root table name"
+    )
+    column_parser.add_argument(
+        "--column", required=True, help="Required column name"
+    )
     column_parser.add_argument(
         "--direction",
         choices=["upstream", "downstream", "both"],

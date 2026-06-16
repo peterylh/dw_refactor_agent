@@ -9,12 +9,15 @@ from refact.verify_run import _get_dml_target, rewrite_sql
 
 
 def _parse_one(sql: str):
-    return sqlglot.parse_one(sql, dialect="doris", error_level=ErrorLevel.IGNORE)
+    return sqlglot.parse_one(
+        sql, dialect="doris", error_level=ErrorLevel.IGNORE
+    )
 
 
 def _table_refs(sql: str) -> list[tuple[str, str]]:
-    statements = sqlglot.parse(sql, dialect="doris",
-                              error_level=ErrorLevel.IGNORE)
+    statements = sqlglot.parse(
+        sql, dialect="doris", error_level=ErrorLevel.IGNORE
+    )
     refs = []
     for stmt in statements:
         if stmt is None:
@@ -85,8 +88,7 @@ def test_rewrite_sql_maps_recalculated_sources_to_qa():
     """
 
     refs = _table_refs(
-        rewrite_sql(sql, "shop_dm", "shop_dm_qa",
-                    {"dws_store_sales_daily"})
+        rewrite_sql(sql, "shop_dm", "shop_dm_qa", {"dws_store_sales_daily"})
     )
 
     assert ("ads_store_performance", "shop_dm_qa") in refs

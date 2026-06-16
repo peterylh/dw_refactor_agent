@@ -1,12 +1,13 @@
 import json
 import threading
 import time
-import pytest
 from unittest.mock import patch
 
+import pytest
+
 from assess.llm.table_inspector import (
-    TableInspector,
     TableContext,
+    TableInspector,
     build_prompt,
     parse_response,
     result_to_cache_dict,
@@ -15,10 +16,10 @@ from assess.llm.table_inspector import (
     validate_metric_relationships,
 )
 
-
 # ============================================================
 # 1. Prompt 组装测试
 # ============================================================
+
 
 def test_build_prompt_exposes_context_and_json_contract():
     ctx = TableContext(
@@ -109,14 +110,18 @@ def test_build_prompt_includes_catalog_and_project_context_as_inputs():
         downstream_tables=["dws_event_daily"],
         project_context="事件完成是核心业务过程。",
         business_semantics_options={
-            "business_processes": [{
-                "code": "EVENT_COMPLETION",
-                "name": "事件完成",
-            }],
-            "semantic_subjects": [{
-                "code": "PARTY",
-                "name": "参与方",
-            }],
+            "business_processes": [
+                {
+                    "code": "EVENT_COMPLETION",
+                    "name": "事件完成",
+                }
+            ],
+            "semantic_subjects": [
+                {
+                    "code": "PARTY",
+                    "name": "参与方",
+                }
+            ],
         },
     )
 
@@ -137,7 +142,9 @@ def test_build_prompt_includes_catalog_and_project_context_as_inputs():
         ("DIM", "数据域与业务板块字典"),
     ],
 )
-def test_build_prompt_documents_business_metadata_scope(layer, expected_section):
+def test_build_prompt_documents_business_metadata_scope(
+    layer, expected_section
+):
     options = None
     if layer == "DIM":
         options = {
@@ -165,18 +172,23 @@ def test_build_prompt_documents_business_metadata_scope(layer, expected_section)
 # 2. 响应解析测试
 # ============================================================
 
+
 def test_parse_dimension_response():
     resp = {
-        "choices": [{
-            "message": {
-                "content": json.dumps({
-                    "inferred_layer": "DIM",
-                    "table_type": "dimension",
-                    "confidence": 0.9,
-                    "reasoning_steps": ["test"],
-                })
+        "choices": [
+            {
+                "message": {
+                    "content": json.dumps(
+                        {
+                            "inferred_layer": "DIM",
+                            "table_type": "dimension",
+                            "confidence": 0.9,
+                            "reasoning_steps": ["test"],
+                        }
+                    )
+                }
             }
-        }]
+        ]
     }
     result = parse_response("dwd_customer", resp, declared_layer="DWD")
     assert result.table_name == "dwd_customer"
@@ -190,18 +202,22 @@ def test_parse_dimension_response():
 
 def test_parse_response_preserves_dimension_classification_metadata():
     resp = {
-        "choices": [{
-            "message": {
-                "content": json.dumps({
-                    "inferred_layer": "DIM",
-                    "table_type": "dimension",
-                    "dimension_role": "base",
-                    "dimension_content_type": "tag",
-                    "confidence": 0.9,
-                    "reasoning_steps": ["客户标签维表"],
-                })
+        "choices": [
+            {
+                "message": {
+                    "content": json.dumps(
+                        {
+                            "inferred_layer": "DIM",
+                            "table_type": "dimension",
+                            "dimension_role": "base",
+                            "dimension_content_type": "tag",
+                            "confidence": 0.9,
+                            "reasoning_steps": ["客户标签维表"],
+                        }
+                    )
+                }
             }
-        }]
+        ]
     }
 
     result = parse_response("DIM_BASE_CUST_TAG", resp, declared_layer="DIM")
@@ -218,18 +234,22 @@ def test_parse_response_preserves_dimension_classification_metadata():
 
 def test_parse_business_domain_response():
     resp = {
-        "choices": [{
-            "message": {
-                "content": json.dumps({
-                    "inferred_layer": "DWD",
-                    "table_type": "fact",
-                    "inferred_data_domain": "04",
-                    "inferred_business_area": "PAYM",
-                    "confidence": 0.9,
-                    "reasoning_steps": ["交易事实表"],
-                })
+        "choices": [
+            {
+                "message": {
+                    "content": json.dumps(
+                        {
+                            "inferred_layer": "DWD",
+                            "table_type": "fact",
+                            "inferred_data_domain": "04",
+                            "inferred_business_area": "PAYM",
+                            "confidence": 0.9,
+                            "reasoning_steps": ["交易事实表"],
+                        }
+                    )
+                }
             }
-        }]
+        ]
     }
 
     result = parse_response("dwd_transactions", resp, declared_layer="DWD")
@@ -246,28 +266,32 @@ def test_parse_business_domain_response():
 
 def test_parse_response_preserves_entity_and_grain_metadata():
     resp = {
-        "choices": [{
-            "message": {
-                "content": json.dumps({
-                    "inferred_layer": "DWS",
-                    "table_type": "fact",
-                    "confidence": 0.9,
-                    "reasoning_steps": ["商品日汇总"],
-                    "entity": {},
-                    "grain": {
-                        "keys": ["product_id", "stat_date"],
-                        "entities": ["PROD"],
-                        "time_column": "stat_date",
-                        "time_period": "D",
-                    },
-                })
+        "choices": [
+            {
+                "message": {
+                    "content": json.dumps(
+                        {
+                            "inferred_layer": "DWS",
+                            "table_type": "fact",
+                            "confidence": 0.9,
+                            "reasoning_steps": ["商品日汇总"],
+                            "entity": {},
+                            "grain": {
+                                "keys": ["product_id", "stat_date"],
+                                "entities": ["PROD"],
+                                "time_column": "stat_date",
+                                "time_period": "D",
+                            },
+                        }
+                    )
+                }
             }
-        }]
+        ]
     }
 
-    result = parse_response("dws_product_sales_daily",
-                            resp,
-                            declared_layer="DWS")
+    result = parse_response(
+        "dws_product_sales_daily", resp, declared_layer="DWS"
+    )
     data = result_to_dict(result)
     cached = result_to_cache_dict(result)
 
@@ -283,47 +307,57 @@ def test_parse_response_preserves_entity_and_grain_metadata():
 
 def test_parse_response_preserves_entities_metadata():
     resp = {
-        "choices": [{
-            "message": {
-                "content": json.dumps({
-                    "inferred_layer": "DWS",
-                    "table_type": "fact",
-                    "confidence": 0.9,
-                    "reasoning_steps": ["商品门店日汇总"],
-                    "entities": [{
-                        "code": "PROD",
-                        "type": "foreign",
-                        "key_columns": ["product_id"],
-                    }, {
-                        "code": "STOR",
-                        "type": "foreign",
-                        "key_columns": ["store_id"],
-                    }],
-                    "grain": {
-                        "entities": ["PROD", "STOR"],
-                        "time_column": "stat_date",
-                        "time_period": "D",
-                    },
-                })
+        "choices": [
+            {
+                "message": {
+                    "content": json.dumps(
+                        {
+                            "inferred_layer": "DWS",
+                            "table_type": "fact",
+                            "confidence": 0.9,
+                            "reasoning_steps": ["商品门店日汇总"],
+                            "entities": [
+                                {
+                                    "code": "PROD",
+                                    "type": "foreign",
+                                    "key_columns": ["product_id"],
+                                },
+                                {
+                                    "code": "STOR",
+                                    "type": "foreign",
+                                    "key_columns": ["store_id"],
+                                },
+                            ],
+                            "grain": {
+                                "entities": ["PROD", "STOR"],
+                                "time_column": "stat_date",
+                                "time_period": "D",
+                            },
+                        }
+                    )
+                }
             }
-        }]
+        ]
     }
 
-    result = parse_response("dws_product_store_sales_daily",
-                            resp,
-                            declared_layer="DWS")
+    result = parse_response(
+        "dws_product_store_sales_daily", resp, declared_layer="DWS"
+    )
     data = result_to_dict(result)
     cached = result_to_cache_dict(result)
 
-    assert result.entities == [{
-        "code": "PROD",
-        "type": "foreign",
-        "key_columns": ["product_id"],
-    }, {
-        "code": "STOR",
-        "type": "foreign",
-        "key_columns": ["store_id"],
-    }]
+    assert result.entities == [
+        {
+            "code": "PROD",
+            "type": "foreign",
+            "key_columns": ["product_id"],
+        },
+        {
+            "code": "STOR",
+            "type": "foreign",
+            "key_columns": ["store_id"],
+        },
+    ]
     assert result.grain == {
         "entities": ["PROD", "STOR"],
         "time_column": "stat_date",
@@ -335,22 +369,26 @@ def test_parse_response_preserves_entities_metadata():
 
 def test_parse_response_normalizes_placeholder_empty_grain():
     resp = {
-        "choices": [{
-            "message": {
-                "content": json.dumps({
-                    "inferred_layer": "DIM",
-                    "table_type": "dimension",
-                    "confidence": 0.9,
-                    "reasoning_steps": ["客户维度表"],
-                    "grain": {
-                        "keys": [],
-                        "entities": [],
-                        "time_column": "",
-                        "time_period": "",
-                    },
-                })
+        "choices": [
+            {
+                "message": {
+                    "content": json.dumps(
+                        {
+                            "inferred_layer": "DIM",
+                            "table_type": "dimension",
+                            "confidence": 0.9,
+                            "reasoning_steps": ["客户维度表"],
+                            "grain": {
+                                "keys": [],
+                                "entities": [],
+                                "time_column": "",
+                                "time_period": "",
+                            },
+                        }
+                    )
+                }
             }
-        }]
+        ]
     }
 
     result = parse_response("dwd_customers", resp, declared_layer="DWD")
@@ -383,69 +421,82 @@ def test_dict_to_result_normalizes_placeholder_empty_grain():
 
 def test_parse_response_preserves_related_entities_metadata():
     resp = {
-        "choices": [{
-            "message": {
-                "content": json.dumps({
-                    "inferred_layer": "DIM",
-                    "table_type": "dimension",
-                    "confidence": 0.9,
-                    "reasoning_steps": ["商品维度包含品类层级"],
-                    "entity": {
-                        "code": "PROD",
-                        "key_columns": ["product_id"],
-                    },
-                    "related_entities": [{
-                        "code": "CAT",
-                        "name": "品类",
-                        "key_columns": ["category_id"],
-                        "relationship": {
-                            "type": "many_to_one",
-                            "from_entity": "PROD",
-                        },
-                    }],
-                })
+        "choices": [
+            {
+                "message": {
+                    "content": json.dumps(
+                        {
+                            "inferred_layer": "DIM",
+                            "table_type": "dimension",
+                            "confidence": 0.9,
+                            "reasoning_steps": ["商品维度包含品类层级"],
+                            "entity": {
+                                "code": "PROD",
+                                "key_columns": ["product_id"],
+                            },
+                            "related_entities": [
+                                {
+                                    "code": "CAT",
+                                    "name": "品类",
+                                    "key_columns": ["category_id"],
+                                    "relationship": {
+                                        "type": "many_to_one",
+                                        "from_entity": "PROD",
+                                    },
+                                }
+                            ],
+                        }
+                    )
+                }
             }
-        }]
+        ]
     }
 
     result = parse_response("dwd_product", resp, declared_layer="DWD")
     data = result_to_dict(result)
     cached = result_to_cache_dict(result)
 
-    assert result.entities == [{
-        "code": "PROD",
-        "type": "primary",
-        "key_columns": ["product_id"],
-    }, {
-        "code": "CAT",
-        "type": "foreign",
-        "name": "品类",
-        "key_columns": ["category_id"],
-        "relationship": {
-            "type": "many_to_one",
-            "from_entity": "PROD",
+    assert result.entities == [
+        {
+            "code": "PROD",
+            "type": "primary",
+            "key_columns": ["product_id"],
         },
-    }]
-    assert result.related_entities == [{
-        "code": "CAT",
-        "name": "品类",
-        "key_columns": ["category_id"],
-        "relationship": {
-            "type": "many_to_one",
-            "from_entity": "PROD",
+        {
+            "code": "CAT",
+            "type": "foreign",
+            "name": "品类",
+            "key_columns": ["category_id"],
+            "relationship": {
+                "type": "many_to_one",
+                "from_entity": "PROD",
+            },
         },
-    }]
+    ]
+    assert result.related_entities == [
+        {
+            "code": "CAT",
+            "name": "品类",
+            "key_columns": ["category_id"],
+            "relationship": {
+                "type": "many_to_one",
+                "from_entity": "PROD",
+            },
+        }
+    ]
     assert data["related_entities"] == result.related_entities
     assert cached["related_entities"] == result.related_entities
 
 
 def test_parse_fact_response():
     resp = {
-        "choices": [{
-            "message": {
-                "content": '{"table_type": "fact", "confidence": 0.8, "reason": "test fact"}'
+        "choices": [
+            {
+                "message": {
+                    "content": '{"table_type": "fact", "confidence": 0.8, "reason": "test fact"}'
+                }
             }
-        }]
+        ]
     }
     result = parse_response("dwd_order", resp)
     assert result.table_type == "fact"
@@ -454,11 +505,13 @@ def test_parse_fact_response():
 
 def test_parse_other_response():
     resp = {
-        "choices": [{
-            "message": {
-                "content": '{"table_type": "other", "confidence": 0.5, "reason": "test other"}'
+        "choices": [
+            {
+                "message": {
+                    "content": '{"table_type": "other", "confidence": 0.5, "reason": "test other"}'
+                }
             }
-        }]
+        ]
     }
     result = parse_response("dwd_mapping", resp)
     assert result.table_type == "other"
@@ -466,24 +519,20 @@ def test_parse_other_response():
 
 def test_parse_markdown_wrapped_response():
     resp = {
-        "choices": [{
-            "message": {
-                "content": '```json\n{"table_type": "dimension", "confidence": 0.9, "reason": "test"}\n```'
+        "choices": [
+            {
+                "message": {
+                    "content": '```json\n{"table_type": "dimension", "confidence": 0.9, "reason": "test"}\n```'
+                }
             }
-        }]
+        ]
     }
     result = parse_response("t1", resp)
     assert result.table_type == "dimension"
 
 
 def test_parse_malformed_response():
-    resp = {
-        "choices": [{
-            "message": {
-                "content": "This is a dimension table"
-            }
-        }]
-    }
+    resp = {"choices": [{"message": {"content": "This is a dimension table"}}]}
     result = parse_response("t1", resp)
     assert result.table_type == "other"
     assert result.confidence == 0.0
@@ -492,64 +541,78 @@ def test_parse_malformed_response():
 
 def test_parse_grouped_column_response():
     resp = {
-        "choices": [{
-            "message": {
-                "content": json.dumps({
-                    "inferred_layer": "DWD",
-                    "table_type": "fact",
-                    "confidence": 0.92,
-                    "reasoning_steps": ["订单明细事实表"],
-                    "columns": {
-                        "atomic_metrics": [{
-                            "name": "pay_amt",
-                            "data_type": "DECIMAL(12,2)",
-                            "business_process": "订单支付",
-                            "action": "pay",
-                            "measure": "amt",
-                            "description": "支付金额",
-                            "reason": "基础支付金额",
-                            "confidence": 0.93,
-                        }],
-                        "derived_metrics": [{
-                            "name": "pay_amt_1d",
-                            "data_type": "DECIMAL(12,2)",
-                            "base_metric": "pay_amt",
-                            "modifiers": [],
-                            "time_period": "1d",
-                            "expression": "SUM(pay_amt) WHERE pay_date = @etl_date",
-                            "description": "近 1 日支付金额",
-                            "reason": "时间周期限定",
-                            "confidence": 0.86,
-                        }],
-                        "calculated_metrics": [{
-                            "name": "gross_profit",
-                            "data_type": "DECIMAL(12,2)",
-                            "expression": "subtotal - cost_price * quantity",
-                            "derived_from": [
-                                "subtotal",
-                                "cost_price",
-                                "quantity",
-                            ],
-                            "description": "毛利",
-                            "reason": "多字段计算得到",
-                            "confidence": 0.88,
-                        }],
-                        "dimensions": [{
-                            "name": "order_id",
-                            "dimension_type": "primary_key",
-                            "data_type": "BIGINT",
-                            "confidence": 0.9,
-                        }],
-                        "others": [{
-                            "name": "etl_time",
-                            "role": "audit",
-                            "data_type": "DATETIME",
-                            "confidence": 0.9,
-                        }],
-                    },
-                })
+        "choices": [
+            {
+                "message": {
+                    "content": json.dumps(
+                        {
+                            "inferred_layer": "DWD",
+                            "table_type": "fact",
+                            "confidence": 0.92,
+                            "reasoning_steps": ["订单明细事实表"],
+                            "columns": {
+                                "atomic_metrics": [
+                                    {
+                                        "name": "pay_amt",
+                                        "data_type": "DECIMAL(12,2)",
+                                        "business_process": "订单支付",
+                                        "action": "pay",
+                                        "measure": "amt",
+                                        "description": "支付金额",
+                                        "reason": "基础支付金额",
+                                        "confidence": 0.93,
+                                    }
+                                ],
+                                "derived_metrics": [
+                                    {
+                                        "name": "pay_amt_1d",
+                                        "data_type": "DECIMAL(12,2)",
+                                        "base_metric": "pay_amt",
+                                        "modifiers": [],
+                                        "time_period": "1d",
+                                        "expression": "SUM(pay_amt) WHERE pay_date = @etl_date",
+                                        "description": "近 1 日支付金额",
+                                        "reason": "时间周期限定",
+                                        "confidence": 0.86,
+                                    }
+                                ],
+                                "calculated_metrics": [
+                                    {
+                                        "name": "gross_profit",
+                                        "data_type": "DECIMAL(12,2)",
+                                        "expression": "subtotal - cost_price * quantity",
+                                        "derived_from": [
+                                            "subtotal",
+                                            "cost_price",
+                                            "quantity",
+                                        ],
+                                        "description": "毛利",
+                                        "reason": "多字段计算得到",
+                                        "confidence": 0.88,
+                                    }
+                                ],
+                                "dimensions": [
+                                    {
+                                        "name": "order_id",
+                                        "dimension_type": "primary_key",
+                                        "data_type": "BIGINT",
+                                        "confidence": 0.9,
+                                    }
+                                ],
+                                "others": [
+                                    {
+                                        "name": "etl_time",
+                                        "role": "audit",
+                                        "data_type": "DATETIME",
+                                        "confidence": 0.9,
+                                    }
+                                ],
+                            },
+                        }
+                    )
+                }
             }
-        }]
+        ]
     }
 
     result = parse_response("dwd_order_detail", resp, declared_layer="DWD")
@@ -573,16 +636,20 @@ def test_parse_grouped_column_response():
 
 def test_result_to_dict_includes_system_layer_violation():
     resp = {
-        "choices": [{
-            "message": {
-                "content": json.dumps({
-                    "inferred_layer": "DIM",
-                    "table_type": "dimension",
-                    "confidence": 0.9,
-                    "reasoning_steps": ["dimension table"],
-                })
+        "choices": [
+            {
+                "message": {
+                    "content": json.dumps(
+                        {
+                            "inferred_layer": "DIM",
+                            "table_type": "dimension",
+                            "confidence": 0.9,
+                            "reasoning_steps": ["dimension table"],
+                        }
+                    )
+                }
             }
-        }]
+        ]
     }
 
     result = parse_response("dwd_customer", resp, declared_layer="DWD")
@@ -593,16 +660,20 @@ def test_result_to_dict_includes_system_layer_violation():
 
 def test_result_to_cache_dict_omits_system_layer_violation():
     resp = {
-        "choices": [{
-            "message": {
-                "content": json.dumps({
-                    "inferred_layer": "DIM",
-                    "table_type": "dimension",
-                    "confidence": 0.9,
-                    "reasoning_steps": ["dimension table"],
-                })
+        "choices": [
+            {
+                "message": {
+                    "content": json.dumps(
+                        {
+                            "inferred_layer": "DIM",
+                            "table_type": "dimension",
+                            "confidence": 0.9,
+                            "reasoning_steps": ["dimension table"],
+                        }
+                    )
+                }
             }
-        }]
+        ]
     }
 
     result = parse_response("dwd_customer", resp, declared_layer="DWD")
@@ -613,27 +684,35 @@ def test_result_to_cache_dict_omits_system_layer_violation():
 
 
 def test_validate_columns_flags_unknown_duplicate_and_missing_fields():
-    result = parse_response("dwd_order_detail", {
-        "choices": [{
-            "message": {
-                "content": json.dumps({
-                    "inferred_layer": "DWD",
-                    "table_type": "fact",
-                    "confidence": 0.9,
-                    "columns": {
-                        "atomic_metrics": [
-                            {"name": "pay_amt"},
-                            {"name": "pay_amt"},
-                            {"name": "ghost_amt"},
-                        ],
-                        "derived_metrics": [],
-                        "dimensions": [{"name": "order_id"}],
-                        "others": [],
-                    },
-                })
-            }
-        }]
-    }, declared_layer="DWD")
+    result = parse_response(
+        "dwd_order_detail",
+        {
+            "choices": [
+                {
+                    "message": {
+                        "content": json.dumps(
+                            {
+                                "inferred_layer": "DWD",
+                                "table_type": "fact",
+                                "confidence": 0.9,
+                                "columns": {
+                                    "atomic_metrics": [
+                                        {"name": "pay_amt"},
+                                        {"name": "pay_amt"},
+                                        {"name": "ghost_amt"},
+                                    ],
+                                    "derived_metrics": [],
+                                    "dimensions": [{"name": "order_id"}],
+                                    "others": [],
+                                },
+                            }
+                        )
+                    }
+                }
+            ]
+        },
+        declared_layer="DWD",
+    )
 
     validation = validate_columns(result, {"order_id", "pay_amt", "etl_time"})
 
@@ -643,24 +722,34 @@ def test_validate_columns_flags_unknown_duplicate_and_missing_fields():
 
 
 def test_validate_columns_requires_all_dws_fact_fields():
-    result = parse_response("dws_store_sales_daily", {
-        "choices": [{
-            "message": {
-                "content": json.dumps({
-                    "inferred_layer": "DWS",
-                    "table_type": "fact",
-                    "confidence": 0.9,
-                    "columns": {
-                        "atomic_metrics": [],
-                        "derived_metrics": [{"name": "sale_amount"}],
-                        "calculated_metrics": [],
-                        "dimensions": [{"name": "store_id"}],
-                        "others": [],
-                    },
-                })
-            }
-        }]
-    }, declared_layer="DWS")
+    result = parse_response(
+        "dws_store_sales_daily",
+        {
+            "choices": [
+                {
+                    "message": {
+                        "content": json.dumps(
+                            {
+                                "inferred_layer": "DWS",
+                                "table_type": "fact",
+                                "confidence": 0.9,
+                                "columns": {
+                                    "atomic_metrics": [],
+                                    "derived_metrics": [
+                                        {"name": "sale_amount"}
+                                    ],
+                                    "calculated_metrics": [],
+                                    "dimensions": [{"name": "store_id"}],
+                                    "others": [],
+                                },
+                            }
+                        )
+                    }
+                }
+            ]
+        },
+        declared_layer="DWS",
+    )
 
     validation = validate_columns(
         result,
@@ -671,49 +760,63 @@ def test_validate_columns_requires_all_dws_fact_fields():
 
 
 def test_validate_metric_relationships_requires_derived_base_metric_in_upstream_atomic():
-    result = parse_response("dws_store_sales_daily", {
-        "choices": [{
-            "message": {
-                "content": json.dumps({
-                    "inferred_layer": "DWS",
-                    "table_type": "fact",
-                    "confidence": 0.9,
-                    "columns": {
-                        "atomic_metrics": [],
-                        "derived_metrics": [{
-                            "name": "sale_amount",
-                            "base_metric": "subtotal",
-                            "base_metric_table": "dwd_order_detail",
-                            "expression": "SUM(subtotal)",
-                        }, {
-                            "name": "sale_quantity",
-                            "base_metric": "quantity",
-                            "base_metric_table": "dwd_order_detail",
-                            "expression": "SUM(quantity)",
-                        }, {
-                            "name": "mystery_amount",
-                            "base_metric": "ghost_amount",
-                            "base_metric_table": "dwd_order_detail",
-                            "expression": "SUM(ghost_amount)",
-                        }, {
-                            "name": "unknown_amount",
-                            "base_metric": "",
-                            "base_metric_table": "",
-                            "expression": "SUM(amount)",
-                        }, {
-                            "name": "bad_table_amount",
-                            "base_metric": "subtotal",
-                            "base_metric_table": "dwd_refund_detail",
-                            "expression": "SUM(subtotal)",
-                        }],
-                        "calculated_metrics": [],
-                        "dimensions": [{"name": "store_id"}],
-                        "others": [],
-                    },
-                })
-            }
-        }]
-    }, declared_layer="DWS")
+    result = parse_response(
+        "dws_store_sales_daily",
+        {
+            "choices": [
+                {
+                    "message": {
+                        "content": json.dumps(
+                            {
+                                "inferred_layer": "DWS",
+                                "table_type": "fact",
+                                "confidence": 0.9,
+                                "columns": {
+                                    "atomic_metrics": [],
+                                    "derived_metrics": [
+                                        {
+                                            "name": "sale_amount",
+                                            "base_metric": "subtotal",
+                                            "base_metric_table": "dwd_order_detail",
+                                            "expression": "SUM(subtotal)",
+                                        },
+                                        {
+                                            "name": "sale_quantity",
+                                            "base_metric": "quantity",
+                                            "base_metric_table": "dwd_order_detail",
+                                            "expression": "SUM(quantity)",
+                                        },
+                                        {
+                                            "name": "mystery_amount",
+                                            "base_metric": "ghost_amount",
+                                            "base_metric_table": "dwd_order_detail",
+                                            "expression": "SUM(ghost_amount)",
+                                        },
+                                        {
+                                            "name": "unknown_amount",
+                                            "base_metric": "",
+                                            "base_metric_table": "",
+                                            "expression": "SUM(amount)",
+                                        },
+                                        {
+                                            "name": "bad_table_amount",
+                                            "base_metric": "subtotal",
+                                            "base_metric_table": "dwd_refund_detail",
+                                            "expression": "SUM(subtotal)",
+                                        },
+                                    ],
+                                    "calculated_metrics": [],
+                                    "dimensions": [{"name": "store_id"}],
+                                    "others": [],
+                                },
+                            }
+                        )
+                    }
+                }
+            ]
+        },
+        declared_layer="DWS",
+    )
     ctx = TableContext(
         table_name="dws_store_sales_daily",
         layer="DWS",
@@ -742,28 +845,38 @@ def test_validate_metric_relationships_requires_derived_base_metric_in_upstream_
 
 
 def test_validate_metric_relationships_flags_ambiguous_unqualified_base_metric():
-    result = parse_response("dws_sales_daily", {
-        "choices": [{
-            "message": {
-                "content": json.dumps({
-                    "inferred_layer": "DWS",
-                    "table_type": "fact",
-                    "confidence": 0.9,
-                    "columns": {
-                        "atomic_metrics": [],
-                        "derived_metrics": [{
-                            "name": "sale_amount",
-                            "base_metric": "subtotal",
-                            "expression": "SUM(subtotal)",
-                        }],
-                        "calculated_metrics": [],
-                        "dimensions": [],
-                        "others": [],
-                    },
-                })
-            }
-        }]
-    }, declared_layer="DWS")
+    result = parse_response(
+        "dws_sales_daily",
+        {
+            "choices": [
+                {
+                    "message": {
+                        "content": json.dumps(
+                            {
+                                "inferred_layer": "DWS",
+                                "table_type": "fact",
+                                "confidence": 0.9,
+                                "columns": {
+                                    "atomic_metrics": [],
+                                    "derived_metrics": [
+                                        {
+                                            "name": "sale_amount",
+                                            "base_metric": "subtotal",
+                                            "expression": "SUM(subtotal)",
+                                        }
+                                    ],
+                                    "calculated_metrics": [],
+                                    "dimensions": [],
+                                    "others": [],
+                                },
+                            }
+                        )
+                    }
+                }
+            ]
+        },
+        declared_layer="DWS",
+    )
     ctx = TableContext(
         table_name="dws_sales_daily",
         layer="DWS",
@@ -779,29 +892,35 @@ def test_validate_metric_relationships_flags_ambiguous_unqualified_base_metric()
 
     validation = validate_metric_relationships(result, ctx)
 
-    assert validation.get("ambiguous_base_metrics") == [
-        "sale_amount:subtotal"
-    ]
+    assert validation.get("ambiguous_base_metrics") == ["sale_amount:subtotal"]
 
 
 def test_result_status_from_validation():
-    result = parse_response("dwd_order_detail", {
-        "choices": [{
-            "message": {
-                "content": json.dumps({
-                    "inferred_layer": "DWD",
-                    "table_type": "fact",
-                    "confidence": 0.9,
-                    "columns": {
-                        "atomic_metrics": [{"name": "pay_amt"}],
-                        "derived_metrics": [],
-                        "dimensions": [],
-                        "others": [],
-                    },
-                })
-            }
-        }]
-    }, declared_layer="DWD")
+    result = parse_response(
+        "dwd_order_detail",
+        {
+            "choices": [
+                {
+                    "message": {
+                        "content": json.dumps(
+                            {
+                                "inferred_layer": "DWD",
+                                "table_type": "fact",
+                                "confidence": 0.9,
+                                "columns": {
+                                    "atomic_metrics": [{"name": "pay_amt"}],
+                                    "derived_metrics": [],
+                                    "dimensions": [],
+                                    "others": [],
+                                },
+                            }
+                        )
+                    }
+                }
+            ]
+        },
+        declared_layer="DWD",
+    )
 
     result.validation = {
         "unknown_columns": [],
@@ -822,8 +941,9 @@ def test_result_status_from_validation():
 
 
 def test_inspect_preserves_llm_metric_groups(tmp_path, monkeypatch):
-    inspector = TableInspector(api_key="test",
-                               cache_file=tmp_path / "cache.json")
+    inspector = TableInspector(
+        api_key="test", cache_file=tmp_path / "cache.json"
+    )
     ctx = TableContext(
         table_name="dwd_order_detail",
         layer="DWD",
@@ -854,16 +974,22 @@ def test_inspect_preserves_llm_metric_groups(tmp_path, monkeypatch):
             ],
             "derived_metrics": [],
             "calculated_metrics": [],
-            "dimensions": [{
-                "name": "order_id",
-                "dimension_type": "primary_key",
-            }],
+            "dimensions": [
+                {
+                    "name": "order_id",
+                    "dimension_type": "primary_key",
+                }
+            ],
             "others": [{"name": "etl_time", "role": "audit"}],
         },
     }
-    monkeypatch.setattr(inspector, "_call_api", lambda _prompt: json.dumps({
-        "choices": [{"message": {"content": json.dumps(response)}}]
-    }))
+    monkeypatch.setattr(
+        inspector,
+        "_call_api",
+        lambda _prompt: json.dumps(
+            {"choices": [{"message": {"content": json.dumps(response)}}]}
+        ),
+    )
 
     result = inspector.inspect(ctx)
 
@@ -887,34 +1013,47 @@ def test_inspect_preserves_llm_metric_groups(tmp_path, monkeypatch):
 # 3. 缓存测试
 # ============================================================
 
+
 def test_cache_hit_skips_api(tmp_path):
     cache_file = tmp_path / "cache.json"
     inspector = TableInspector(api_key="test", cache_file=cache_file)
-    
+
     ctx = TableContext(
-        table_name="t1", layer="DWD",
-        ddl="ddl1", etl_sql="etl1", upstream_tables=[], downstream_tables=[]
+        table_name="t1",
+        layer="DWD",
+        ddl="ddl1",
+        etl_sql="etl1",
+        upstream_tables=[],
+        downstream_tables=[],
     )
-    
+
     # 模拟缓存文件已存在
-    cached = parse_response("t1", {
-        "choices": [{
-            "message": {
-                "content": json.dumps({
-                    "inferred_layer": "DWD",
-                    "table_type": "dimension",
-                    "confidence": 0.9,
-                    "reasoning_steps": ["cached"],
-                    "columns": {
-                        "atomic_metrics": [],
-                        "derived_metrics": [],
-                        "dimensions": [],
-                        "others": [],
-                    },
-                })
-            }
-        }]
-    }, declared_layer="DWD")
+    cached = parse_response(
+        "t1",
+        {
+            "choices": [
+                {
+                    "message": {
+                        "content": json.dumps(
+                            {
+                                "inferred_layer": "DWD",
+                                "table_type": "dimension",
+                                "confidence": 0.9,
+                                "reasoning_steps": ["cached"],
+                                "columns": {
+                                    "atomic_metrics": [],
+                                    "derived_metrics": [],
+                                    "dimensions": [],
+                                    "others": [],
+                                },
+                            }
+                        )
+                    }
+                }
+            ]
+        },
+        declared_layer="DWD",
+    )
     cache_data = {
         "t1": {
             "hash": inspector._compute_hash(ctx),
@@ -923,11 +1062,11 @@ def test_cache_hit_skips_api(tmp_path):
         }
     }
     cache_file.write_text(json.dumps(cache_data))
-    
+
     # 重新加载缓存
     inspector._load_cache()
-    
-    with patch.object(inspector, '_call_api') as mock_api:
+
+    with patch.object(inspector, "_call_api") as mock_api:
         res = inspector.inspect(ctx)
         mock_api.assert_not_called()
         assert res.table_type == "dimension"
@@ -937,48 +1076,67 @@ def test_cache_hit_skips_api(tmp_path):
 def test_cache_miss_calls_api(tmp_path, monkeypatch):
     cache_file = tmp_path / "cache.json"
     inspector = TableInspector(api_key="test", cache_file=cache_file)
-    
+
     ctx = TableContext(
-        table_name="t1", layer="DWD",
-        ddl="ddl_new", etl_sql="etl1", upstream_tables=[], downstream_tables=[]
+        table_name="t1",
+        layer="DWD",
+        ddl="ddl_new",
+        etl_sql="etl1",
+        upstream_tables=[],
+        downstream_tables=[],
     )
-    
+
     # mock _call_api
-    monkeypatch.setattr(inspector, '_call_api', lambda p: json.dumps({
-        "choices": [{
-            "message": {
-                "content": json.dumps({
-                    "inferred_layer": "DWD",
-                    "table_type": "fact",
-                    "confidence": 0.8,
-                    "reasoning_steps": ["api"],
-                    "columns": {
-                        "atomic_metrics": [{
-                            "name": "pay_amt",
-                            "data_type": "DECIMAL(12,2)",
-                            "business_process": "订单支付",
-                            "action": "pay",
-                            "measure": "amt",
-                            "confidence": 0.9,
-                        }],
-                        "derived_metrics": [],
-                        "dimensions": [],
-                        "others": [],
-                    },
-                })
+    monkeypatch.setattr(
+        inspector,
+        "_call_api",
+        lambda p: json.dumps(
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": json.dumps(
+                                {
+                                    "inferred_layer": "DWD",
+                                    "table_type": "fact",
+                                    "confidence": 0.8,
+                                    "reasoning_steps": ["api"],
+                                    "columns": {
+                                        "atomic_metrics": [
+                                            {
+                                                "name": "pay_amt",
+                                                "data_type": "DECIMAL(12,2)",
+                                                "business_process": "订单支付",
+                                                "action": "pay",
+                                                "measure": "amt",
+                                                "confidence": 0.9,
+                                            }
+                                        ],
+                                        "derived_metrics": [],
+                                        "dimensions": [],
+                                        "others": [],
+                                    },
+                                }
+                            )
+                        }
+                    }
+                ]
             }
-        }]
-    }))
-    
+        ),
+    )
+
     res = inspector.inspect(ctx)
     assert res.table_type == "fact"
     assert res.atomic_metrics[0]["name"] == "pay_amt"
-    
+
     # 验证缓存被更新
     saved = json.loads(cache_file.read_text())
     assert "t1" in saved
     assert saved["t1"]["result"]["table_type"] == "fact"
-    assert saved["t1"]["result"]["columns"]["atomic_metrics"][0]["name"] == "pay_amt"
+    assert (
+        saved["t1"]["result"]["columns"]["atomic_metrics"][0]["name"]
+        == "pay_amt"
+    )
     assert "is_violating_declared_layer" not in saved["t1"]["result"]
     assert "status" not in saved["t1"]["result"]
     assert "is_violating_current_name" not in saved["t1"]["result"]
@@ -1001,24 +1159,36 @@ def test_progress_callback_reports_batch_events(tmp_path, monkeypatch):
         upstream_tables=[],
         downstream_tables=[],
     )
-    monkeypatch.setattr(inspector, "_call_api", lambda _prompt: json.dumps({
-        "choices": [{
-            "message": {
-                "content": json.dumps({
-                    "inferred_layer": "DWD",
-                    "table_type": "fact",
-                    "confidence": 0.9,
-                    "columns": {
-                        "atomic_metrics": [{"name": "pay_amt"}],
-                        "derived_metrics": [],
-                        "calculated_metrics": [],
-                        "dimensions": [],
-                        "others": [],
-                    },
-                })
+    monkeypatch.setattr(
+        inspector,
+        "_call_api",
+        lambda _prompt: json.dumps(
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": json.dumps(
+                                {
+                                    "inferred_layer": "DWD",
+                                    "table_type": "fact",
+                                    "confidence": 0.9,
+                                    "columns": {
+                                        "atomic_metrics": [
+                                            {"name": "pay_amt"}
+                                        ],
+                                        "derived_metrics": [],
+                                        "calculated_metrics": [],
+                                        "dimensions": [],
+                                        "others": [],
+                                    },
+                                }
+                            )
+                        }
+                    }
+                ]
             }
-        }]
-    }))
+        ),
+    )
 
     result = inspector.inspect_batch([ctx])[0]
 
@@ -1045,23 +1215,35 @@ def test_progress_callback_reports_cache_hit(tmp_path):
         upstream_tables=[],
         downstream_tables=[],
     )
-    cached = parse_response("t1", {
-        "choices": [{
-            "message": {
-                "content": json.dumps({
-                    "inferred_layer": "DWD",
-                    "table_type": "dimension",
-                    "confidence": 0.9,
-                })
+    cached = parse_response(
+        "t1",
+        {
+            "choices": [
+                {
+                    "message": {
+                        "content": json.dumps(
+                            {
+                                "inferred_layer": "DWD",
+                                "table_type": "dimension",
+                                "confidence": 0.9,
+                            }
+                        )
+                    }
+                }
+            ]
+        },
+        declared_layer="DWD",
+    )
+    cache_file.write_text(
+        json.dumps(
+            {
+                "t1": {
+                    "hash": inspector._compute_hash(ctx),
+                    "result": result_to_cache_dict(cached),
+                }
             }
-        }]
-    }, declared_layer="DWD")
-    cache_file.write_text(json.dumps({
-        "t1": {
-            "hash": inspector._compute_hash(ctx),
-            "result": result_to_cache_dict(cached),
-        }
-    }))
+        )
+    )
     inspector._load_cache()
     events = []
     inspector.progress_callback = events.append
@@ -1078,7 +1260,9 @@ def test_progress_callback_reports_cache_hit(tmp_path):
 
 def test_inspect_retries_validation_errors(tmp_path, monkeypatch):
     cache_file = tmp_path / "cache.json"
-    inspector = TableInspector(api_key="test", cache_file=cache_file, max_retries=1)
+    inspector = TableInspector(
+        api_key="test", cache_file=cache_file, max_retries=1
+    )
     ctx = TableContext(
         table_name="t1",
         layer="DWD",
@@ -1122,7 +1306,9 @@ def test_inspect_retries_validation_errors(tmp_path, monkeypatch):
     def fake_api(prompt):
         calls.append(prompt)
         data = responses[len(calls) - 1]
-        return json.dumps({"choices": [{"message": {"content": json.dumps(data)}}]})
+        return json.dumps(
+            {"choices": [{"message": {"content": json.dumps(data)}}]}
+        )
 
     monkeypatch.setattr(inspector, "_call_api", fake_api)
 
@@ -1136,7 +1322,9 @@ def test_inspect_retries_validation_errors(tmp_path, monkeypatch):
 
 
 def test_cache_hash_includes_declared_layer(tmp_path):
-    inspector = TableInspector(api_key="test", cache_file=tmp_path / "cache.json")
+    inspector = TableInspector(
+        api_key="test", cache_file=tmp_path / "cache.json"
+    )
 
     base = dict(
         table_name="t1",
@@ -1152,7 +1340,9 @@ def test_cache_hash_includes_declared_layer(tmp_path):
 
 
 def test_cache_hash_includes_project_context(tmp_path):
-    inspector = TableInspector(api_key="test", cache_file=tmp_path / "cache.json")
+    inspector = TableInspector(
+        api_key="test", cache_file=tmp_path / "cache.json"
+    )
 
     base = dict(
         table_name="t1",
@@ -1166,7 +1356,8 @@ def test_cache_hash_includes_project_context(tmp_path):
     finance_ctx = TableContext(project_context="金融账户交易背景", **base)
 
     assert inspector._compute_hash(retail_ctx) != inspector._compute_hash(
-        finance_ctx)
+        finance_ctx
+    )
 
 
 def test_default_parallelism_is_two():
@@ -1185,7 +1376,8 @@ def test_inspect_batch_runs_with_configured_parallelism(monkeypatch):
             etl_sql="",
             upstream_tables=[],
             downstream_tables=[],
-        ) for i in range(4)
+        )
+        for i in range(4)
     ]
 
     active = 0
@@ -1201,24 +1393,30 @@ def test_inspect_batch_runs_with_configured_parallelism(monkeypatch):
             max_active = max(max_active, active)
         try:
             time.sleep(0.05)
-            return json.dumps({
-                "choices": [{
-                    "message": {
-                        "content": json.dumps({
-                            "inferred_layer": "DWD",
-                            "table_type": "dimension",
-                            "confidence": 0.9,
-                            "reasoning_steps": ["api"],
-                            "columns": {
-                                "atomic_metrics": [],
-                                "derived_metrics": [],
-                                "dimensions": [],
-                                "others": [],
-                            },
-                        })
-                    }
-                }]
-            })
+            return json.dumps(
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "content": json.dumps(
+                                    {
+                                        "inferred_layer": "DWD",
+                                        "table_type": "dimension",
+                                        "confidence": 0.9,
+                                        "reasoning_steps": ["api"],
+                                        "columns": {
+                                            "atomic_metrics": [],
+                                            "derived_metrics": [],
+                                            "dimensions": [],
+                                            "others": [],
+                                        },
+                                    }
+                                )
+                            }
+                        }
+                    ]
+                }
+            )
         finally:
             with lock:
                 active -= 1
@@ -1236,15 +1434,17 @@ def test_inspect_batch_runs_with_configured_parallelism(monkeypatch):
 # 4. 集成测试 (标记 api)
 # ============================================================
 
+
 @pytest.mark.api
 def test_inspect_dimension_table():
     import os
+
     api_key = os.environ.get("DEEPSEEK_API_KEY")
     if not api_key:
         pytest.skip("DEEPSEEK_API_KEY not set")
-        
+
     from tests.assess.conftest import DDL_DWD_CUSTOMER, ETL_DWD_CUSTOMER
-    
+
     inspector = TableInspector(api_key=api_key, cache_file=None)
     ctx = TableContext(
         table_name="dwd_customer",
@@ -1252,9 +1452,9 @@ def test_inspect_dimension_table():
         ddl=DDL_DWD_CUSTOMER,
         etl_sql=ETL_DWD_CUSTOMER,
         upstream_tables=["ods_customer"],
-        downstream_tables=["ads_rfm"]
+        downstream_tables=["ads_rfm"],
     )
-    
+
     res = inspector.inspect(ctx)
     assert res.table_name == "dwd_customer"
     assert res.table_type in {"dimension", "other"}
@@ -1264,12 +1464,16 @@ def test_inspect_dimension_table():
 @pytest.mark.api
 def test_inspect_fact_table():
     import os
+
     api_key = os.environ.get("DEEPSEEK_API_KEY")
     if not api_key:
         pytest.skip("DEEPSEEK_API_KEY not set")
-        
-    from tests.assess.conftest import DDL_DWD_ORDER_DETAIL, ETL_DWD_ORDER_DETAIL
-    
+
+    from tests.assess.conftest import (
+        DDL_DWD_ORDER_DETAIL,
+        ETL_DWD_ORDER_DETAIL,
+    )
+
     inspector = TableInspector(api_key=api_key, cache_file=None)
     ctx = TableContext(
         table_name="dwd_order_detail",
@@ -1277,9 +1481,9 @@ def test_inspect_fact_table():
         ddl=DDL_DWD_ORDER_DETAIL,
         etl_sql=ETL_DWD_ORDER_DETAIL,
         upstream_tables=["ods_order", "ods_order_item", "ods_product"],
-        downstream_tables=["dws_store_sales_daily"]
+        downstream_tables=["dws_store_sales_daily"],
     )
-    
+
     res = inspector.inspect(ctx)
     assert res.table_name == "dwd_order_detail"
     assert res.table_type == "fact"
