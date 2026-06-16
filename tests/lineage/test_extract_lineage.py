@@ -94,6 +94,32 @@ ALL_DDLS = [
 ]
 
 
+def _direct_edges(entries):
+    return {
+        (
+            e.get("source_table"),
+            e.get("source_column"),
+            e.get("target_table"),
+            e.get("target_column"),
+        )
+        for e in entries
+        if e.get("lineage_type") != "indirect"
+    }
+
+
+def _indirect_edges(entries):
+    return {
+        (
+            e.get("source_table"),
+            e.get("source_column"),
+            e.get("target_table"),
+            e.get("condition_type"),
+        )
+        for e in entries
+        if e.get("lineage_type") == "indirect"
+    }
+
+
 class TestIntegrationEtlToDwd:
     """Test the standard ODS → DWD ETL pattern"""
 
@@ -111,12 +137,12 @@ class TestIntegrationEtlToDwd:
         FROM shop_dm.ods_order
         """
         entries = extract_lineage_from_sql(sql, "dwd_order.sql", self.schema)
-        assert len(entries) >= 7
-        targets = {e["target_column"] for e in entries}
-        assert "order_id" in targets
-        assert "customer_id" in targets
-        assert "total_amount" in targets
-        assert "etl_time" in targets  # NOW() is recorded as a source-free edge
+        assert _direct_edges(entries) >= {
+            ("ods_order", "order_id", "dwd_order", "order_id"),
+            ("ods_order", "customer_id", "dwd_order", "customer_id"),
+            ("ods_order", "total_amount", "dwd_order", "total_amount"),
+            (None, None, "dwd_order", "etl_time"),
+        }
         etl_entries = [e for e in entries if e["target_column"] == "etl_time"]
         assert etl_entries == [{
             "lineage_type": "direct",
@@ -140,7 +166,15 @@ class TestIntegrationEtlToDwd:
         LEFT JOIN shop_dm.ods_customer c ON o.customer_id = c.customer_id
         """
         entries = extract_lineage_from_sql(sql, "dwd_order.sql", self.schema)
-        assert len(entries) >= 7
+        assert _direct_edges(entries) >= {
+            ("ods_order", "order_id", "dwd_order", "order_id"),
+            ("ods_order", "customer_id", "dwd_order", "customer_id"),
+            ("ods_order", "payment_amount", "dwd_order", "payment_amount"),
+        }
+        assert _indirect_edges(entries) == {
+            ("ods_order", "customer_id", "dwd_order", "JOIN_ON"),
+            ("ods_customer", "customer_id", "dwd_order", "JOIN_ON"),
+        }
 
     def test_ods_to_dwd_with_filter(self):
         sql = """
@@ -152,7 +186,13 @@ class TestIntegrationEtlToDwd:
         WHERE order_status = '已完成'
         """
         entries = extract_lineage_from_sql(sql, "dwd_order.sql", self.schema)
-        assert len(entries) >= 7
+        assert _direct_edges(entries) >= {
+            ("ods_order", "order_id", "dwd_order", "order_id"),
+            ("ods_order", "payment_amount", "dwd_order", "payment_amount"),
+        }
+        assert _indirect_edges(entries) == {
+            ("ods_order", "order_status", "dwd_order", "WHERE"),
+        }
 
     def test_dwd_to_dws_aggregation(self):
         """DWD → DWS aggregation pattern"""
@@ -167,7 +207,14 @@ class TestIntegrationEtlToDwd:
         GROUP BY order_date
         """
         entries = extract_lineage_from_sql(sql, "dws_daily_sales.sql", self.schema)
-        assert len(entries) >= 2
+        assert _direct_edges(entries) >= {
+            ("dwd_order", "order_date", "dws_daily_sales", "order_date"),
+            ("dwd_order", "total_amount", "dws_daily_sales", "total_amount"),
+            ("dwd_order", "order_id", "dws_daily_sales", "order_count"),
+        }
+        assert _indirect_edges(entries) == {
+            ("dwd_order", "order_date", "dws_daily_sales", "GROUP_BY"),
+        }
 
     def test_dwd_to_dws_with_filter(self):
         sql = """
@@ -179,7 +226,14 @@ class TestIntegrationEtlToDwd:
         GROUP BY order_date
         """
         entries = extract_lineage_from_sql(sql, "dws_daily_sales.sql", self.schema)
-        assert len(entries) >= 2
+        assert _direct_edges(entries) >= {
+            ("dwd_order", "total_amount", "dws_daily_sales", "total_amount"),
+            ("dwd_order", "order_id", "dws_daily_sales", "order_count"),
+        }
+        assert _indirect_edges(entries) == {
+            ("dwd_order", "total_amount", "dws_daily_sales", "WHERE"),
+            ("dwd_order", "order_date", "dws_daily_sales", "GROUP_BY"),
+        }
 
     def test_complex_expression_propagation(self):
         """Test that expressions like SUM() propagate to source columns"""
@@ -191,10 +245,12 @@ class TestIntegrationEtlToDwd:
         GROUP BY order_date
         """
         entries = extract_lineage_from_sql(sql, "dws_daily_sales.sql", self.schema)
-        amount_entries = [e for e in entries if e["target_column"] == "total_amount"]
-        assert len(amount_entries) >= 1
-        assert amount_entries[0]["source_column"] == "total_amount"
-        assert amount_entries[0]["source_table"] == "dwd_order"
+        assert (
+            "dwd_order",
+            "total_amount",
+            "dws_daily_sales",
+            "total_amount",
+        ) in _direct_edges(entries)
 
 
 class TestIntegrationUpdatePattern:
@@ -211,7 +267,12 @@ class TestIntegrationUpdatePattern:
         WHERE member_level IS NULL
         """
         entries = extract_lineage_from_sql(sql, "dwd_customer.sql", self.schema)
-        assert isinstance(entries, list)
+        assert _direct_edges(entries) == {
+            (None, None, "dwd_customer", "member_level"),
+        }
+        assert _indirect_edges(entries) == {
+            ("dwd_customer", "member_level", "dwd_customer", "WHERE"),
+        }
 
     def test_update_case_when(self):
         sql = """
@@ -224,7 +285,13 @@ class TestIntegrationUpdatePattern:
         WHERE member_level IS NULL
         """
         entries = extract_lineage_from_sql(sql, "dwd_customer.sql", self.schema)
-        assert isinstance(entries, list)
+        assert _direct_edges(entries) == {
+            ("dwd_customer", "age", "dwd_customer", "member_level"),
+            ("dwd_customer", "member_level", "dwd_customer", "member_level"),
+        }
+        assert _indirect_edges(entries) == {
+            ("dwd_customer", "member_level", "dwd_customer", "WHERE"),
+        }
 
 
 class TestIntegrationMultiTable:
@@ -250,7 +317,14 @@ class TestIntegrationMultiTable:
         LEFT JOIN shop_dm.ods_store s ON o.store_id = s.store_id
         """
         entries = extract_lineage_from_sql(sql, "dwd_order.sql", self.schema)
-        assert len(entries) >= 7
+        assert _direct_edges(entries) >= {
+            ("ods_order", "order_id", "dwd_order", "order_id"),
+            ("ods_order", "store_id", "dwd_order", "store_id"),
+        }
+        assert _indirect_edges(entries) == {
+            ("ods_order", "store_id", "dwd_order", "JOIN_ON"),
+            ("ods_store", "store_id", "dwd_order", "JOIN_ON"),
+        }
 
     def test_union_all(self):
         sql = """
@@ -265,7 +339,14 @@ class TestIntegrationMultiTable:
         GROUP BY order_date
         """
         entries = extract_lineage_from_sql(sql, "dws_daily_sales.sql", self.schema)
-        assert len(entries) >= 2
+        assert _direct_edges(entries) >= {
+            ("dwd_order", "order_date", "dws_daily_sales", "order_date"),
+            ("dwd_order", "total_amount", "dws_daily_sales", "total_amount"),
+            ("dwd_order", "order_id", "dws_daily_sales", "order_count"),
+        }
+        assert _indirect_edges(entries) == {
+            ("dwd_order", "order_date", "dws_daily_sales", "GROUP_BY"),
+        }
 
 
 class TestEdgeCases:
@@ -283,7 +364,13 @@ class TestEdgeCases:
         WHERE total_amount > 100
         """
         entries = extract_lineage_from_sql(sql, "ads_top_products.sql", self.schema)
-        assert len(entries) >= 2
+        assert _direct_edges(entries) == {
+            ("dwd_order", "order_id", "ads_top_products", "order_id"),
+            ("dwd_order", "total_amount", "ads_top_products", "total_amount"),
+        }
+        assert _indirect_edges(entries) == {
+            ("dwd_order", "total_amount", "ads_top_products", "WHERE"),
+        }
 
     def test_insert_with_target_column_list_uses_plain_target_table(self):
         sql = """
@@ -296,8 +383,11 @@ class TestEdgeCases:
         FROM shop_dm.ods_order
         """
         entries = extract_lineage_from_sql(sql, "dwd_order.sql", self.schema)
-        assert len(entries) == 3
-        assert {e["target_table"] for e in entries} == {"dwd_order"}
+        assert _direct_edges(entries) == {
+            ("ods_order", "order_id", "dwd_order", "order_id"),
+            ("ods_order", "customer_id", "dwd_order", "customer_id"),
+            ("ods_order", "total_amount", "dwd_order", "total_amount"),
+        }
 
     def test_insert_with_target_column_list_maps_by_position(self):
         sql = """
@@ -379,8 +469,10 @@ class TestEdgeCases:
         FROM shop_dm.dwd_order
         """
         entries = extract_lineage_from_sql(sql, "dws_daily_sales.sql", self.schema)
-        assert len(entries) >= 2
-        assert {e["target_table"] for e in entries} == {"dws_daily_sales"}
+        assert _direct_edges(entries) == {
+            ("dwd_order", "order_date", "dws_daily_sales", "order_date"),
+            ("dwd_order", "total_amount", "dws_daily_sales", "total_amount"),
+        }
 
     def test_select_into(self):
         sql = """
@@ -389,7 +481,10 @@ class TestEdgeCases:
         FROM shop_dm.dwd_order
         """
         entries = extract_lineage_from_sql(sql, "backup.sql", self.schema)
-        assert len(entries) >= 2
+        assert _direct_edges(entries) == {
+            ("dwd_order", "order_id", "ads_backup", "order_id"),
+            ("dwd_order", "total_amount", "ads_backup", "total_amount"),
+        }
 
     def test_multiple_inserts_in_one_file(self):
         sql = """
@@ -406,7 +501,14 @@ class TestEdgeCases:
         WHERE payment_amount IS NULL;
         """
         entries = extract_lineage_from_sql(sql, "dwd_order.sql", self.schema)
-        assert len(entries) >= 7
+        assert _direct_edges(entries) >= {
+            ("ods_order", "order_id", "dwd_order", "order_id"),
+            ("ods_order", "payment_amount", "dwd_order", "payment_amount"),
+            (None, None, "dwd_order", "payment_amount"),
+        }
+        assert _indirect_edges(entries) == {
+            ("dwd_order", "payment_amount", "dwd_order", "WHERE"),
+        }
 
     def test_all_source_files_have_name(self):
         sql = """
@@ -421,8 +523,10 @@ class TestEdgeCases:
         INSERT INTO shop_dm.dwd_order SELECT order_id, order_id AS oid FROM shop_dm.ods_order;
         """
         entries = extract_lineage_from_sql(sql, "test.sql", self.schema)
-        # order_id appears as both source for "order_id" and "oid" - should be 2 distinct entries
-        assert len(entries) == 2
+        assert _direct_edges(entries) == {
+            ("ods_order", "order_id", "dwd_order", "order_id"),
+            ("ods_order", "order_id", "dwd_order", "customer_id"),
+        }
 
     def test_indirect_lineage_resolves_derived_table_alias(self):
         schema = {

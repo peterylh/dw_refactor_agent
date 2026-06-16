@@ -20,53 +20,56 @@ from assess.llm.table_inspector import (
 # 1. Prompt 组装测试
 # ============================================================
 
-def test_build_prompt_includes_all_info():
+def test_build_prompt_exposes_context_and_json_contract():
     ctx = TableContext(
         table_name="dwd_customer",
         layer="DWD",
         ddl="CREATE TABLE dwd_customer (id BIGINT);",
         etl_sql="INSERT INTO dwd_customer SELECT id FROM ods_customer;",
         upstream_tables=["ods_customer"],
-        downstream_tables=["ads_rfm"]
+        downstream_tables=["ads_rfm"],
     )
+
     prompt = build_prompt(ctx)
+
     assert "dwd_customer" in prompt
-    assert "DWD" in prompt
     assert "CREATE TABLE dwd_customer" in prompt
-    assert "INSERT INTO" in prompt
+    assert "INSERT INTO dwd_customer" in prompt
     assert "ods_customer" in prompt
     assert "ads_rfm" in prompt
     assert "只允许返回下方 JSON schema 中列出的顶层字段" in prompt
-    assert "不要新增任何字段" in prompt
+    for field in [
+        "inferred_layer",
+        "table_type",
+        "entities",
+        "grain",
+        "atomic_metrics",
+        "derived_metrics",
+        "calculated_metrics",
+        "dimensions",
+        "others",
+    ]:
+        assert field in prompt
     assert "is_violating_declared_layer" not in prompt
-    assert "atomic_metrics" in prompt
-    assert "derived_metrics" in prompt
-    assert "calculated_metrics" in prompt
-    assert "dimensions" in prompt
-    assert "others" in prompt
 
 
-def test_build_prompt_requests_entity_and_grain_metadata():
+def test_build_prompt_omits_empty_etl_section():
     ctx = TableContext(
-        table_name="dws_product_sales_daily",
-        layer="DWS",
-        ddl="CREATE TABLE dws_product_sales_daily (product_id BIGINT, stat_date DATE);",
-        etl_sql="INSERT INTO dws_product_sales_daily SELECT product_id, order_date FROM dwd_order_detail GROUP BY product_id, order_date;",
-        upstream_tables=["dwd_order_detail"],
+        table_name="dwd_customer",
+        layer="DWD",
+        ddl="CREATE TABLE dwd_customer;",
+        etl_sql="",
+        upstream_tables=[],
         downstream_tables=[],
     )
 
     prompt = build_prompt(ctx)
 
-    assert "entities、grain" in prompt
-    assert "grain.entities" in prompt
-    assert "返回完整的粒度实体集合" in prompt
-    assert '"entities": [' in prompt
-    assert '"type": "primary|unique|foreign|natural"' in prompt
-    assert '"grain": {' in prompt
+    assert "dwd_customer" in prompt
+    assert "## ETL 加工逻辑" not in prompt
 
 
-def test_build_prompt_requests_dimension_classification_metadata():
+def test_build_prompt_keeps_metadata_contracts_without_project_examples():
     ctx = TableContext(
         table_name="DIM_BASE_CUST_INFO",
         layer="DIM",
@@ -78,94 +81,33 @@ def test_build_prompt_requests_dimension_classification_metadata():
 
     prompt = build_prompt(ctx)
 
-    assert "维表内容形态" in prompt
-    assert "维表建设角色" in prompt
-    assert "dimension_role" in prompt
-    assert "dimension_content_type" in prompt
-    assert '"dimension_role": "BASE|ADDT"' in prompt
-    assert '"dimension_content_type": "INFO|TAG|TREE"' in prompt
-
-
-def test_build_prompt_clarifies_metric_group_boundaries():
-    ctx = TableContext(
-        table_name="dwd_fact_table",
-        layer="DWD",
-        ddl="CREATE TABLE dwd_fact_table (metric_a DECIMAL(12,2));",
-        etl_sql="",
-        upstream_tables=["ods_source_table"],
-        downstream_tables=["dws_summary_table"],
-    )
-
-    prompt = build_prompt(ctx)
-
-    assert "事件标识或实体标识字段做 COUNT/COUNT DISTINCT" in prompt
-    assert "对上游已存在的 atomic_metrics 做 SUM/AVG/MIN/MAX" in prompt
-    assert "对上游 calculated_metrics 再聚合" in prompt
-    assert "不要套用字段名示例" in prompt
-    assert "非加性属性" in prompt
-    assert "补值、回填、估算" in prompt
-    assert "不会让字段变成 calculated_metrics" in prompt
-
-    hardcoded_examples = [
-        "订单ID",
-        "客户ID",
-        "交易ID",
-        "订单明细小计金额",
-        "行金额",
-        "含税金额",
-        "净额",
-        "毛利",
-    ]
-    for example in hardcoded_examples:
-        assert example not in prompt
-
-
-def test_build_prompt_separates_business_process_and_semantic_subject():
-    ctx = TableContext(
-        table_name="dwd_entity_profile",
-        layer="DWD",
-        ddl=(
-            "CREATE TABLE dwd_entity_profile "
-            "(entity_id BIGINT, entity_name VARCHAR(64));"
-        ),
-        etl_sql=(
-            "INSERT INTO dwd_entity_profile "
-            "SELECT entity_id, entity_name FROM ods_entity_profile;"
-        ),
-        upstream_tables=["ods_entity_profile"],
-        downstream_tables=["dws_entity_activity_daily"],
-    )
-
-    prompt = build_prompt(ctx)
-
-    assert "business_process 只适用于事实表或汇总事实表" in prompt
-    assert "dimension 表不得为了填充业务过程而生成" in prompt
-    assert "semantic_subject" in prompt
-    assert "管理/运营/主数据/资料维护" in prompt
-    assert "实体主语 + 管理/运营" in prompt
-    assert "大写下划线短语" in prompt
-    assert "不能仅由实体主语" in prompt
-    assert "语义主题" in prompt
-    hardcoded_project_examples = [
-        "客户、商品、门店",
+    for contract in [
+        '"type": "primary|unique|foreign|natural"',
+        '"dimension_role": "BASE|ADDT"',
+        '"dimension_content_type": "INFO|TAG|TREE"',
+        "grain.entities",
+        "business_process",
+        "semantic_subject",
+    ]:
+        assert contract in prompt
+    for hardcoded_example in [
         "CUSTOMER_OPERATION",
         "PRODUCT_MANAGEMENT",
         "STORE_OPERATION",
-        "CUSTOMER、PRODUCT",
-        "STORE、PROMOTION",
-    ]
-    for example in hardcoded_project_examples:
-        assert example not in prompt
+        "dwd_order_detail.cost_price",
+    ]:
+        assert hardcoded_example not in prompt
 
 
-def test_build_prompt_uses_confirmed_catalog_options_without_hardcoded_domain():
+def test_build_prompt_includes_catalog_and_project_context_as_inputs():
     ctx = TableContext(
         table_name="dwd_event_detail",
         layer="DWD",
-        ddl="CREATE TABLE dwd_event_detail (event_id BIGINT, amount DECIMAL(12,2));",
-        etl_sql="INSERT INTO dwd_event_detail SELECT event_id, amount FROM ods_event;",
+        ddl="CREATE TABLE dwd_event_detail (event_id BIGINT);",
+        etl_sql="INSERT INTO dwd_event_detail SELECT event_id FROM ods_event;",
         upstream_tables=["ods_event"],
         downstream_tables=["dws_event_daily"],
+        project_context="事件完成是核心业务过程。",
         business_semantics_options={
             "business_processes": [{
                 "code": "EVENT_COMPLETION",
@@ -180,87 +122,43 @@ def test_build_prompt_uses_confirmed_catalog_options_without_hardcoded_domain():
 
     prompt = build_prompt(ctx)
 
+    assert "项目背景说明" in prompt
+    assert "事件完成是核心业务过程" in prompt
     assert "已确认业务语义目录" in prompt
     assert "EVENT_COMPLETION" in prompt
     assert "PARTY" in prompt
     assert '"tables"' not in prompt
-    assert "优先复用目录中的 code" in prompt
-    assert "若没有合适 code" in prompt
-    assert "CUSTOMER_OPERATION" not in prompt
-    assert "PRODUCT_MANAGEMENT" not in prompt
-    assert "STORE_OPERATION" not in prompt
 
 
-def test_build_prompt_includes_project_context_as_auxiliary_evidence():
+@pytest.mark.parametrize(
+    ("layer", "expected_section"),
+    [
+        ("DWD", "数据域与业务板块候选"),
+        ("DIM", "数据域与业务板块字典"),
+    ],
+)
+def test_build_prompt_documents_business_metadata_scope(layer, expected_section):
+    options = None
+    if layer == "DIM":
+        options = {
+            "domains": [{"id": "06", "code": "ORGN", "name": "机构域"}],
+            "business_areas": [{"code": "CHNL", "name": "渠道业务"}],
+        }
     ctx = TableContext(
-        table_name="dwd_order_detail",
-        layer="DWD",
-        ddl="CREATE TABLE dwd_order_detail (order_id BIGINT, sale_amt DECIMAL(12,2));",
-        etl_sql="INSERT INTO dwd_order_detail SELECT order_id, sale_amt FROM ods_order;",
-        upstream_tables=["ods_order"],
-        downstream_tables=["dws_order_daily"],
-        project_context=(
-            "这是一个门店零售数据集市，订单交易是核心业务过程，"
-            "销售额和订单数是基础指标。"
-        ),
-    )
-
-    prompt = build_prompt(ctx)
-
-    assert "项目背景说明" in prompt
-    assert "门店零售数据集市" in prompt
-    assert "销售额和订单数是基础指标" in prompt
-    assert "辅助语义" in prompt
-    assert "不能覆盖 DDL、ETL、血缘" in prompt
-
-
-def test_build_prompt_allows_domain_area_candidates_without_dictionary():
-    ctx = TableContext(
-        table_name="dwd_event_detail",
-        layer="DWD",
-        ddl="CREATE TABLE dwd_event_detail (event_id BIGINT);",
-        etl_sql="INSERT INTO dwd_event_detail SELECT event_id FROM ods_event;",
-        upstream_tables=["ods_event"],
-        downstream_tables=[],
-    )
-
-    prompt = build_prompt(ctx)
-
-    assert "未提供数据域与业务板块字典" in prompt
-    assert "可以返回新的大写下划线候选 code" in prompt
-    assert "不确定时返回空字符串" in prompt
-
-
-def test_build_prompt_treats_imputed_non_additive_inputs_as_dimensions():
-    ctx = TableContext(
-        table_name="dwd_fact_table",
-        layer="DWD",
-        ddl="CREATE TABLE dwd_fact_table (amount DECIMAL(12,2));",
-        etl_sql="",
-        upstream_tables=["ods_source_table"],
-        downstream_tables=["dws_summary_table"],
-    )
-
-    prompt = build_prompt(ctx)
-
-    assert "价格、成本、费率、汇率、系数、阈值" in prompt
-    assert "缺失值兜底" in prompt
-    assert "应继续归 dimensions" in prompt
-    assert "dwd_order_detail.cost_price" not in prompt
-
-
-def test_build_prompt_without_etl():
-    ctx = TableContext(
-        table_name="dwd_customer",
-        layer="DWD",
-        ddl="CREATE TABLE dwd_customer;",
+        table_name="dim_location" if layer == "DIM" else "dwd_event_detail",
+        layer=layer,
+        ddl="CREATE TABLE t (id BIGINT);",
         etl_sql="",
         upstream_tables=[],
-        downstream_tables=[]
+        downstream_tables=[],
+        business_domain_options=options,
     )
+
     prompt = build_prompt(ctx)
-    assert "dwd_customer" in prompt
-    assert "## ETL 加工逻辑" not in prompt
+
+    assert expected_section in prompt
+    assert "inferred_data_domain" in prompt
+    assert "inferred_business_area" in prompt
 
 
 # ============================================================
@@ -539,30 +437,6 @@ def test_parse_response_preserves_related_entities_metadata():
     }]
     assert data["related_entities"] == result.related_entities
     assert cached["related_entities"] == result.related_entities
-
-
-def test_build_prompt_limits_business_metadata_by_layer():
-    ctx = TableContext(
-        table_name="dim_location",
-        layer="DIM",
-        ddl="CREATE TABLE dim_location (location_key STRING);",
-        etl_sql="",
-        upstream_tables=["dwd_branch_locations"],
-        downstream_tables=[],
-        business_domain_options={
-            "domains": [{"id": "06", "code": "ORGN", "name": "机构域"}],
-            "business_areas": [{"code": "CHNL", "name": "渠道业务"}],
-        },
-    )
-
-    prompt = build_prompt(ctx)
-
-    assert "数据域只适用于 DWD 层" in prompt
-    assert "业务板块只适用于 DWD 和 DWS 层" in prompt
-    assert "当前表若不是 DWD，inferred_data_domain 必须返回空字符串" in prompt
-    assert "当前表若不是 DWD/DWS，inferred_business_area 必须返回空字符串" in prompt
-    assert "如果无法明确判断，可返回“其它”数据域编号" in prompt
-    assert "如果无法明确判断，可返回“其它”业务板块简写" in prompt
 
 
 def test_parse_fact_response():

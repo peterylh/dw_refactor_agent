@@ -95,39 +95,36 @@ def isolated_project_naming_configs(tmp_path, monkeypatch):
 # ============================================================
 
 class TestTypeDef:
-    def test_allow_match(self):
-        td = TypeDef(label="load_type", allow=["full", "inc"])
-        assert td.validate("full") is True
-        assert td.validate("inc") is True
+    @pytest.mark.parametrize(
+        ("typedef", "valid_values", "invalid_values"),
+        [
+            (
+                TypeDef(label="load_type", allow=["full", "inc"]),
+                ["full", "inc"],
+                ["daily", ""],
+            ),
+            (
+                TypeDef(label="source", patterns=["^[a-z0-9]+$"]),
+                ["mysql", "erp01"],
+                ["MySql", ""],
+            ),
+            (
+                TypeDef(label="period", patterns=["^[0-9]+D$"],
+                        allow=["D", "MTD"]),
+                ["D", "MTD", "7D"],
+                ["0M"],
+            ),
+        ],
+    )
+    def test_validate_uses_allow_and_patterns(
+            self, typedef, valid_values, invalid_values):
+        for value in valid_values:
+            assert typedef.validate(value) is True
+        for value in invalid_values:
+            assert typedef.validate(value) is False
 
-    def test_allow_no_match(self):
-        td = TypeDef(label="load_type", allow=["full", "inc"])
-        assert td.validate("daily") is False
-        assert td.validate("") is False
-
-    def test_patterns_match(self):
-        td = TypeDef(label="source", patterns=["^[a-z0-9]+$"])
-        assert td.validate("mysql") is True
-        assert td.validate("erp01") is True
-
-    def test_patterns_no_match(self):
-        td = TypeDef(label="source", patterns=["^[a-z0-9]+$"])
-        assert td.validate("MySql") is False
-        assert td.validate("") is False
-
-    def test_neither_allow_nor_patterns(self):
-        td = TypeDef(label="freeform")
-        assert td.validate("anything") is True
-
-    def test_allow_and_patterns_are_or_validators(self):
-        td = TypeDef(
-            label="period",
-            patterns=["^[0-9]+D$"],
-            allow=["D", "MTD"],
-        )
-        assert td.validate("D") is True
-        assert td.validate("7D") is True
-        assert td.validate("0M") is False
+    def test_without_validator_accepts_freeform_values(self):
+        assert TypeDef(label="freeform").validate("anything") is True
 
 
 # ============================================================
@@ -426,34 +423,34 @@ class TestMatchColumn:
             col_segments=["$prefix_field?", "$entity", "$suffix_field?"],
         )
 
-    def test_entity_suffix(self, nc):
-        r = nc._match_segments("customer_id", nc.column_segments)
-        assert r == {"entity": "customer", "suffix_field": "id"}
-
-    def test_entity_suffix_date(self, nc):
-        r = nc._match_segments("order_date", nc.column_segments)
-        assert r == {"entity": "order", "suffix_field": "date"}
-
-    def test_entity_only(self, nc):
-        r = nc._match_segments("quantity", nc.column_segments)
-        assert r == {"entity": "quantity"}
-
-    def test_prefix_entity(self, nc):
-        r = nc._match_segments("avg_price", nc.column_segments)
-        assert r == {"prefix_field": "avg", "entity": "price"}
-
-    def test_prefix_entity_suffix(self, nc):
-        r = nc._match_segments("avg_order_amount", nc.column_segments)
-        assert r == {"prefix_field": "avg", "entity": "order",
-                     "suffix_field": "amount"}
-
-    def test_is_prefix(self, nc):
-        r = nc._match_segments("is_active", nc.column_segments)
-        assert r == {"prefix_field": "is", "entity": "active"}
-
-    def test_full_prefix_entity_suffix(self, nc):
-        r = nc._match_segments("max_score_num", nc.column_segments)
-        assert r == {"prefix_field": "max", "entity": "score", "suffix_field": "num"}
+    @pytest.mark.parametrize(
+        ("name", "expected"),
+        [
+            ("customer_id", {"entity": "customer", "suffix_field": "id"}),
+            ("order_date", {"entity": "order", "suffix_field": "date"}),
+            ("quantity", {"entity": "quantity"}),
+            ("avg_price", {"prefix_field": "avg", "entity": "price"}),
+            (
+                "avg_order_amount",
+                {
+                    "prefix_field": "avg",
+                    "entity": "order",
+                    "suffix_field": "amount",
+                },
+            ),
+            ("is_active", {"prefix_field": "is", "entity": "active"}),
+            (
+                "max_score_num",
+                {
+                    "prefix_field": "max",
+                    "entity": "score",
+                    "suffix_field": "num",
+                },
+            ),
+        ],
+    )
+    def test_column_segments_match_expected_parts(self, nc, name, expected):
+        assert nc._match_segments(name, nc.column_segments) == expected
 
 
 class TestNamingDiagnostics:

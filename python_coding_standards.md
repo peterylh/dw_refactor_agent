@@ -120,7 +120,35 @@ except (ConnectionError, TimeoutError) as e:
 
 ---
 
-## 10. 数据结构优先
+## 10. 测试用例质量
+
+- 测试必须验证**业务行为或稳定契约**，不要只验证“函数能跑完”。
+- 禁止把下面这类断言作为主要断言：`len(result) > 0`、`len(result) >= N`、`isinstance(result, list)`、`result is not None`、`"xxx" in sql`、`"xxx" in prompt`。
+- 如果确实需要检查数量、类型或字符串片段，必须同时断言关键结构或语义结果，例如具体血缘边、目标表、字段映射、错误码、状态流转。
+- SQL 测试优先使用解析后的 AST 或结构化结果断言，不要依赖格式化后的字符串空格、大小写或渲染顺序。
+- LLM prompt 测试只守稳定契约：输入上下文是否进入 prompt、JSON schema 字段是否存在、系统字段是否不暴露。不要逐句锁定中文文案。
+- 不要测试私有状态（如 `_deps`、`_cache`）作为首选；优先通过公开方法验证行为。只有没有公开观察点时，才允许少量白盒断言。
+- 相同逻辑的正反例用 `pytest.mark.parametrize` 或表驱动测试合并，避免为每个标量值、每个微小分支写一个独立用例。
+- 每个测试都应能回答：如果这条测试失败，说明哪个用户可见行为或工程契约坏了？
+
+```python
+# ✗ 表面测试：错误映射也可能通过
+entries = extract_lineage(sql)
+assert len(entries) >= 2
+
+# ✓ 行为测试：验证关键血缘契约
+assert {
+    (e["source_table"], e["source_column"], e["target_table"], e["target_column"])
+    for e in entries
+} >= {
+    ("ods_order", "order_id", "dwd_order", "order_id"),
+    ("ods_order", "customer_id", "dwd_order", "customer_id"),
+}
+```
+
+---
+
+## 11. 数据结构优先
 
 - 优先使用内置数据结构（`dict`、`list`、`set`、`tuple`）。
 - 结构化数据用 `dataclass` 或 `NamedTuple`，而非裸字典。
@@ -128,7 +156,7 @@ except (ConnectionError, TimeoutError) as e:
 
 ---
 
-## 11. 简洁但不炫技
+## 12. 简洁但不炫技
 
 - 列表推导式适用于简单转换；嵌套超过两层时改用循环。
 - 不要为了"Pythonic"牺牲可读性。
@@ -147,7 +175,7 @@ for key, values in data.items():
 
 ---
 
-## 12. 错误信息要有用
+## 13. 错误信息要有用
 
 - 报错信息应包含：**什么出错了 + 实际值是什么 + 期望什么**。
 - 自定义异常用于业务错误，标准异常用于编程错误。
@@ -162,7 +190,7 @@ raise ValueError(f"表名不能为空，收到: {table_name!r}")
 
 ---
 
-## 13. 幂等与安全
+## 14. 幂等与安全
 
 - 脚本和任务函数应设计为可重复执行（幂等性）。
 - 危险操作（DELETE、DROP、覆盖文件）需要确认机制或 `--dry-run` 模式。
@@ -170,7 +198,7 @@ raise ValueError(f"表名不能为空，收到: {table_name!r}")
 
 ---
 
-## 14. 注释的使用原则
+## 15. 注释的使用原则
 
 - 注释解释 **why**（为什么），不解释 **what**（代码在做什么）。
 - 代码无法自解释时才写注释。

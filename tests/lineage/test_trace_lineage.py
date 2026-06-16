@@ -9,6 +9,32 @@ from lineage.lineage_extractor import (
 )
 
 
+def _direct_edges(entries):
+    return {
+        (
+            e.get("source_table"),
+            e.get("source_column"),
+            e.get("target_table"),
+            e.get("target_column"),
+        )
+        for e in entries
+        if e.get("lineage_type") != "indirect"
+    }
+
+
+def _indirect_edges(entries):
+    return {
+        (
+            e.get("source_table"),
+            e.get("source_column"),
+            e.get("target_table"),
+            e.get("condition_type"),
+        )
+        for e in entries
+        if e.get("lineage_type") == "indirect"
+    }
+
+
 class TestExtractLeafEdges:
     """_extract_leaf_edges 依赖 sqlglot lineage() 输出的 Node 对象"""
 
@@ -19,11 +45,9 @@ class TestExtractLeafEdges:
         for col_name, node in nodes.items():
             e = _extract_leaf_edges(node, "target_tbl", col_name)
             edges.extend(e)
-        for e in edges:
-            assert e["source_table"] is not None
-            assert e["source_column"] is not None
-            assert e["target_table"] == "target_tbl"
-            assert e["target_column"] is not None
+        assert _direct_edges(edges) == {
+            ("ods_order", "customer_id", "target_tbl", "customer_id"),
+        }
 
     def test_lineage_with_alias(self, schema_ods_order):
         sql = "SELECT o.customer_id AS cid FROM shop_dm.ods_order o"
@@ -40,10 +64,10 @@ class TestTraceLineage:
             schema_ods_order,
             "test.sql",
         )
-        assert len(entries) >= 2
-        tables = {e["source_table"] for e in entries}
-        assert "ods_order" in tables
-        assert all(e["target_table"] == "target_tbl" for e in entries)
+        assert _direct_edges(entries) == {
+            ("ods_order", "order_id", "target_tbl", "order_id"),
+            ("ods_order", "customer_id", "target_tbl", "customer_id"),
+        }
 
     def test_select_with_expression(self, schema_ods_order):
         sql = "SELECT total_amount * 0.1 AS tax FROM shop_dm.ods_order"
@@ -53,8 +77,9 @@ class TestTraceLineage:
             schema_ods_order,
             "test.sql",
         )
-        assert len(entries) >= 1
-        assert entries[0]["source_column"] == "total_amount"
+        assert _direct_edges(entries) == {
+            ("ods_order", "total_amount", "target_tbl", "tax"),
+        }
 
     def test_select_with_where(self, schema_ods_order):
         sql = (
@@ -66,7 +91,13 @@ class TestTraceLineage:
             schema_ods_order,
             "test.sql",
         )
-        assert len(entries) >= 2
+        assert _direct_edges(entries) == {
+            ("ods_order", "order_id", "target_tbl", "order_id"),
+            ("ods_order", "total_amount", "target_tbl", "total_amount"),
+        }
+        assert _indirect_edges(entries) == {
+            ("ods_order", "store_id", "target_tbl", "WHERE"),
+        }
 
     def test_select_constant_no_lineage(self, schema_ods_order):
         sql = "SELECT 1 AS col, 'abc' AS col2"
@@ -139,7 +170,10 @@ class TestHandleInsert:
             dialect="doris",
         )
         entries = _handle_insert(stmt, "test.sql", schema_ods_order)
-        assert len(entries) >= 2
+        assert _direct_edges(entries) == {
+            ("ods_order", "order_id", "dwd_order", "order_id"),
+            ("ods_order", "customer_id", "dwd_order", "customer_id"),
+        }
 
     def test_insert_values(self, schema_ods_order):
         stmt = sqlglot.parse_one(
@@ -154,22 +188,40 @@ class TestExtractLineageFromSql:
     def test_insert_select(self, schema_ods_order):
         sql = "INSERT INTO shop_dm.dwd_order SELECT order_id, customer_id, total_amount FROM shop_dm.ods_order"
         entries = extract_lineage_from_sql(sql, "test.sql", schema_ods_order)
-        assert len(entries) == 3
+        assert _direct_edges(entries) == {
+            ("ods_order", "order_id", "dwd_order", "order_id"),
+            ("ods_order", "customer_id", "dwd_order", "customer_id"),
+            ("ods_order", "total_amount", "dwd_order", "total_amount"),
+        }
 
     def test_insert_select_with_func(self, schema_ods_order):
         sql = "INSERT INTO shop_dm.dwd_order SELECT order_id, NOW() AS etl_time FROM shop_dm.ods_order"
         entries = extract_lineage_from_sql(sql, "test.sql", schema_ods_order)
-        assert len(entries) >= 1
+        assert _direct_edges(entries) == {
+            ("ods_order", "order_id", "dwd_order", "order_id"),
+            (None, None, "dwd_order", "etl_time"),
+        }
+        etl_entry = next(e for e in entries if e["target_column"] == "etl_time")
+        assert etl_entry["source_type"] == "expression"
+        assert etl_entry["source_expression"] == "NOW() AS etl_time"
 
     def test_update(self, schema_dwd_customer):
         sql = "UPDATE shop_dm.dwd_customer SET member_level = '金卡' WHERE customer_id = 100"
         entries = extract_lineage_from_sql(sql, "test.sql", schema_dwd_customer)
-        assert isinstance(entries, list)
+        assert _direct_edges(entries) == {
+            (None, None, "dwd_customer", "member_level"),
+        }
+        assert _indirect_edges(entries) == {
+            ("dwd_customer", "customer_id", "dwd_customer", "WHERE"),
+        }
 
     def test_ctas(self, schema_ods_order):
         sql = "CREATE TABLE shop_dm.ads_test AS SELECT order_id, total_amount FROM shop_dm.ods_order"
         entries = extract_lineage_from_sql(sql, "test.sql", schema_ods_order)
-        assert len(entries) >= 2
+        assert _direct_edges(entries) == {
+            ("ods_order", "order_id", "ads_test", "order_id"),
+            ("ods_order", "total_amount", "ads_test", "total_amount"),
+        }
 
     def test_multiple_statements(self, schema_ods_order):
         sql = """
@@ -177,7 +229,10 @@ class TestExtractLineageFromSql:
         INSERT INTO t2 SELECT customer_id FROM shop_dm.ods_order;
         """
         entries = extract_lineage_from_sql(sql, "test.sql", schema_ods_order)
-        assert len(entries) >= 2
+        assert _direct_edges(entries) == {
+            ("ods_order", "order_id", "t1", "order_id"),
+            ("ods_order", "customer_id", "t2", "customer_id"),
+        }
 
     def test_malformed_sql(self, schema_ods_order):
         entries = extract_lineage_from_sql(
