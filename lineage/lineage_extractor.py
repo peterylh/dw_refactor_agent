@@ -36,17 +36,19 @@ AGGREGATE_PATTERN = re.compile(
 # ============================================================
 
 CURRENT_PROJECT = "shop"
+CURRENT_CATALOG = "internal"
 CURRENT_DB = "shop_dm"
 
 
 def configure_project(project_name):
-    global CURRENT_PROJECT, CURRENT_DB
+    global CURRENT_PROJECT, CURRENT_CATALOG, CURRENT_DB
     cfg = PROJECT_CONFIG.get(project_name)
     if not cfg:
         raise ValueError(
             f"未知项目: {project_name}, 可选: {list(PROJECT_CONFIG.keys())}"
         )
     CURRENT_PROJECT = project_name
+    CURRENT_CATALOG = cfg.get("catalog", "internal")
     CURRENT_DB = cfg["db"]
 
 
@@ -73,11 +75,53 @@ def _canonical_qualified_identifier(name):
     )
 
 
+def _default_catalog():
+    return _canonical_identifier(CURRENT_CATALOG) or "internal"
+
+
+def _default_db():
+    return _canonical_identifier(CURRENT_DB)
+
+
+def _table_identity(name, default_catalog=None, default_db=None):
+    """Return (catalog, database, table), filling project defaults as needed."""
+    full_name = _canonical_qualified_identifier(name)
+    parts = [part for part in full_name.split(".") if part]
+    if not parts:
+        return "", "", ""
+
+    catalog = _canonical_identifier(default_catalog or _default_catalog())
+    database = _canonical_identifier(default_db or _default_db())
+    if len(parts) == 1:
+        return catalog, database, parts[0]
+    if len(parts) == 2:
+        return catalog, parts[0], parts[1]
+    return parts[-3], parts[-2], parts[-1]
+
+
+def _qualified_table_name(catalog, database, table):
+    catalog = _canonical_identifier(catalog)
+    database = _canonical_identifier(database)
+    table = _canonical_identifier(table)
+    return ".".join(part for part in (catalog, database, table) if part)
+
+
+def _display_table_name(name, strip_current_db=False):
+    """Format a table name for output, hiding the default internal catalog."""
+    catalog, database, table = _table_identity(name)
+    if not table:
+        return ""
+    if catalog != _default_catalog():
+        return _qualified_table_name(catalog, database, table)
+    if strip_current_db and database == _default_db():
+        return table
+    if database:
+        return f"{database}.{table}"
+    return table
+
+
 def _strip_db(name):
-    name = _canonical_qualified_identifier(name)
-    db_name = _canonical_identifier(CURRENT_DB)
-    prefix = f"{db_name}."
-    return name[len(prefix) :] if name.startswith(prefix) else name
+    return _display_table_name(name, strip_current_db=True)
 
 
 def _canonical_column(name):
@@ -218,42 +262,87 @@ def _target_columns(target_expr):
 
 def _schema_columns_for_table(schema, table_name):
     """返回目标表 DDL 字段顺序,用于 INSERT 未声明目标列时按位置对齐。"""
-    full_name = _canonical_qualified_identifier(table_name)
-    name_parts = full_name.split(".")
-    table_short = name_parts[-1] if name_parts else ""
-    requested_db = name_parts[-2] if len(name_parts) >= 2 else ""
-    if not table_short:
+    requested_catalog, requested_db, requested_table = _table_identity(
+        table_name
+    )
+    if not requested_table:
         return None
 
-    for db_name, db_tables in schema.items():
-        if requested_db and _canonical_identifier(db_name) != requested_db:
-            continue
-        columns = db_tables.get(table_short)
-        if columns:
+    for catalog, database, table, columns in _iter_schema_tables(schema):
+        if (
+            catalog == requested_catalog
+            and database == requested_db
+            and table == requested_table
+            and columns
+        ):
             return [_canonical_column(col_name) for col_name in columns]
     return None
 
 
+def _is_column_map(value):
+    return isinstance(value, dict) and all(
+        not isinstance(col_type, dict) for col_type in value.values()
+    )
+
+
+def _is_table_map(value):
+    return isinstance(value, dict) and all(
+        isinstance(columns, dict) and _is_column_map(columns)
+        for columns in value.values()
+    )
+
+
+def _iter_schema_tables(schema):
+    """Yield normalized (catalog, database, table, columns) entries."""
+    for first_name, first_value in (schema or {}).items():
+        if not isinstance(first_value, dict):
+            continue
+        first_name = _canonical_identifier(first_name)
+
+        # Legacy malformed one-level shape: {table: {column: type}}.
+        if _is_column_map(first_value):
+            yield _default_catalog(), _default_db(), first_name, first_value
+            continue
+
+        # Legacy two-level shape: {database: {table: {column: type}}}.
+        if _is_table_map(first_value):
+            database = first_name
+            for table_name, columns in first_value.items():
+                yield (
+                    _default_catalog(),
+                    database,
+                    _canonical_identifier(table_name),
+                    columns,
+                )
+            continue
+
+        # Catalog-aware shape: {catalog: {database: {table: {column: type}}}}.
+        catalog = first_name
+        for db_name, db_tables in first_value.items():
+            if not isinstance(db_tables, dict):
+                continue
+            database = _canonical_identifier(db_name)
+            for table_name, columns in db_tables.items():
+                if isinstance(columns, dict):
+                    yield (
+                        catalog,
+                        database,
+                        _canonical_identifier(table_name),
+                        columns,
+                    )
+
+
 def _copy_schema(schema):
-    return {
-        db_name: {
-            table_name: dict(columns or {})
-            for table_name, columns in (db_tables or {}).items()
-        }
-        for db_name, db_tables in (schema or {}).items()
-    }
-
-
-def _schema_db_for_table(table_name):
-    full_name = _canonical_qualified_identifier(table_name)
-    parts = full_name.split(".")
-    if len(parts) >= 2:
-        return _canonical_identifier(parts[-2])
-    return _canonical_identifier(CURRENT_DB)
+    copied = {}
+    for catalog, database, table, columns in _iter_schema_tables(schema):
+        copied.setdefault(catalog, {}).setdefault(database, {})[table] = dict(
+            columns or {}
+        )
+    return copied
 
 
 def _register_task_table_schema(schema, table_name, columns):
-    table_short = _strip_db(table_name)
+    catalog, database, table_short = _table_identity(table_name)
     clean_columns = [
         _canonical_column(column_name)
         for column_name in (columns or [])
@@ -261,8 +350,7 @@ def _register_task_table_schema(schema, table_name, columns):
     ]
     if not table_short or not clean_columns:
         return
-    db_name = _schema_db_for_table(table_name)
-    schema.setdefault(db_name, {})[table_short] = {
+    schema.setdefault(catalog, {}).setdefault(database, {})[table_short] = {
         column_name: "UNKNOWN" for column_name in clean_columns
     }
 
@@ -284,10 +372,14 @@ def _infer_table_for_column(schema, preferred_table, column_name):
         return preferred
 
     matches = []
-    for db_tables in schema.values():
-        for table_name, columns in db_tables.items():
-            if column_name in columns:
-                matches.append(table_name)
+    for catalog, database, table_name, columns in _iter_schema_tables(schema):
+        if column_name in columns:
+            matches.append(
+                _display_table_name(
+                    _qualified_table_name(catalog, database, table_name),
+                    strip_current_db=True,
+                )
+            )
     unique = sorted(set(matches))
     return unique[0] if len(unique) == 1 else ""
 
@@ -350,11 +442,10 @@ def build_schema_from_texts(sql_texts):
                             else "UNKNOWN"
                         )
                 if col_map:
-                    parts = full_name.split(".")
-                    if len(parts) == 2:
-                        schema.setdefault(parts[0], {})[parts[1]] = col_map
-                    else:
-                        schema[full_name] = col_map
+                    catalog, database, table = _table_identity(full_name)
+                    schema.setdefault(catalog, {}).setdefault(database, {})[
+                        table
+                    ] = col_map
     return schema
 
 
@@ -451,6 +542,8 @@ def update_to_select(update_stmt):
 
 def _table_name(tbl_expr):
     parts = []
+    if tbl_expr.args.get("catalog"):
+        parts.append(_canonical_identifier(tbl_expr.args["catalog"].name))
     if tbl_expr.args.get("db"):
         parts.append(_canonical_identifier(tbl_expr.args["db"].name))
     parts.append(_canonical_identifier(tbl_expr.name))
@@ -521,11 +614,17 @@ def _collect_ctes(select_expr):
 
 
 def _schema_has_column(schema, table_name, column_name):
-    table_short = _strip_db(table_name)
+    requested_catalog, requested_db, requested_table = _table_identity(
+        table_name
+    )
     column_name = _canonical_column(column_name)
-    for db_tables in schema.values():
-        cols = db_tables.get(table_short)
-        if cols and column_name in cols:
+    for catalog, database, table, columns in _iter_schema_tables(schema):
+        if (
+            catalog == requested_catalog
+            and database == requested_db
+            and table == requested_table
+            and column_name in columns
+        ):
             return True
     return False
 
@@ -1106,21 +1205,21 @@ def build_lineage_output(all_lineage, schema, transient_tables=None):
 
     schema_columns_by_table = {}
     schema_type_by_table_col = {}
-    for _db_name, db_tables in (schema or {}).items():
-        for raw_tbl, cols in (db_tables or {}).items():
-            tbl = _strip_db(raw_tbl)
-            if not tbl:
+    for catalog, database, raw_tbl, cols in _iter_schema_tables(schema):
+        full_table_name = _qualified_table_name(catalog, database, raw_tbl)
+        tbl = _strip_db(full_table_name)
+        if not tbl:
+            continue
+        table_columns = schema_columns_by_table.setdefault(tbl, [])
+        for raw_col, col_type in (cols or {}).items():
+            col = _canonical_column(raw_col)
+            if not col:
                 continue
-            table_columns = schema_columns_by_table.setdefault(tbl, [])
-            for raw_col, col_type in (cols or {}).items():
-                col = _canonical_column(raw_col)
-                if not col:
-                    continue
-                key = (tbl, col)
-                if key in schema_type_by_table_col:
-                    continue
-                schema_type_by_table_col[key] = col_type
-                table_columns.append((col, col_type))
+            key = (tbl, col)
+            if key in schema_type_by_table_col:
+                continue
+            schema_type_by_table_col[key] = col_type
+            table_columns.append((col, col_type))
 
     column_names_by_table = {}
     column_objects_by_table = {}
@@ -1149,7 +1248,7 @@ def build_lineage_output(all_lineage, schema, transient_tables=None):
         if tbl not in tables:
             tables[tbl] = {
                 "name": tbl,
-                "full_name": f"{CURRENT_DB}.{tbl}",
+                "full_name": _display_table_name(tbl),
                 "layer": determine_layer(tbl),
                 "columns": [],
             }

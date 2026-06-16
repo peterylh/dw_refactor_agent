@@ -1900,12 +1900,14 @@ def get_naming_config(project: str = None) -> NamingConfig:
 
 
 # 项目配置映射
-# 每个数据集市项目拥有两个库:
-#   db     - 生产库 (ETL 读写, verify 时作为源)
-#   qa_db  - 验证库 (verify 时写入, 用于重构对比)
+# 每个数据集市项目拥有一个默认 catalog 和两个库:
+#   catalog - 默认 catalog, 未显式声明时使用 internal
+#   db      - 生产库 (ETL 读写, verify 时作为源)
+#   qa_db   - 验证库 (verify 时写入, 用于重构对比)
 PROJECT_CONFIG = {
     "shop": {
         "dir": "shop",
+        "catalog": "internal",
         "db": "shop_dm",
         "qa_db": "shop_dm_qa",
         "lineage_db": "shop_lineage",
@@ -1913,6 +1915,7 @@ PROJECT_CONFIG = {
     },
     "finance_analytics": {
         "dir": "finance_analytics",
+        "catalog": "internal",
         "db": "finance_analytics_dm",
         "qa_db": "finance_analytics_dm_qa",
         "lineage_db": "finance_analytics_lineage",

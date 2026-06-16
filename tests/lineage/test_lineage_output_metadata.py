@@ -224,3 +224,45 @@ def test_build_lineage_output_uses_typed_edges_for_direct_and_group_by():
         },
     ]
     assert "indirect_edges" not in output
+
+
+def test_build_lineage_output_hides_internal_catalog_but_keeps_external():
+    output = build_lineage_output(
+        [
+            {
+                "source_table": "hive.shop_dm.dwd_orders",
+                "source_column": "order_id",
+                "target_table": "internal.shop_dm.dws_orders",
+                "target_column": "order_id",
+                "lineage_type": "direct",
+                "expression": "order_id",
+                "source_file": "dws_orders.sql",
+            }
+        ],
+        {
+            "hive": {
+                "shop_dm": {
+                    "dwd_orders": {
+                        "order_id": "BIGINT",
+                    }
+                }
+            },
+            "internal": {
+                "shop_dm": {
+                    "dws_orders": {
+                        "order_id": "BIGINT",
+                    }
+                }
+            },
+        },
+    )
+
+    tables_by_name = {table["name"]: table for table in output["tables"]}
+    assert tables_by_name["hive.shop_dm.dwd_orders"]["full_name"] == (
+        "hive.shop_dm.dwd_orders"
+    )
+    assert tables_by_name["dws_orders"]["full_name"] == "shop_dm.dws_orders"
+    assert output["edges"][0]["source"]["id"] == (
+        "hive.shop_dm.dwd_orders.order_id"
+    )
+    assert output["edges"][0]["target"]["id"] == "dws_orders.order_id"

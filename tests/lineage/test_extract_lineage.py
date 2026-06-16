@@ -314,7 +314,7 @@ class TestIntegrationMultiTable:
     def setup_class(cls):
         cls.schema = build_schema_from_texts(ALL_DDLS)
         # Add extra table for join tests
-        cls.schema["shop_dm"]["ods_store"] = {
+        cls.schema["internal"]["shop_dm"]["ods_store"] = {
             "store_id": "BIGINT",
             "store_name": "VARCHAR(64)",
             "city": "VARCHAR(32)",
@@ -460,6 +460,82 @@ class TestEdgeCases:
         assert {target for _, target in direct} == {
             "CUSTOMER_ID",
             "CUSTOMER_NAME",
+        }
+
+    def test_insert_without_target_column_list_with_bare_table_ddl(self):
+        schema = build_schema_from_texts(
+            [
+                """
+            CREATE TABLE ods_customer (
+                customer_id BIGINT,
+                customer_name VARCHAR(64)
+            )
+            """,
+                """
+            CREATE TABLE M_SHOP_01_CUST_DF (
+                CUSTOMER_ID BIGINT,
+                CUSTOMER_NAME VARCHAR(64)
+            )
+            """,
+            ]
+        )
+        sql = """
+        INSERT INTO M_SHOP_01_CUST_DF
+        SELECT customer_id, customer_name
+        FROM ods_customer
+        """
+        entries = extract_lineage_from_sql(sql, "dwd_customer.sql", schema)
+        direct = {
+            (e["source_column"], e["target_column"])
+            for e in entries
+            if e.get("lineage_type") != "indirect"
+        }
+
+        assert ("customer_id", "CUSTOMER_ID") in direct
+        assert ("customer_name", "CUSTOMER_NAME") in direct
+        assert {target for _, target in direct} == {
+            "CUSTOMER_ID",
+            "CUSTOMER_NAME",
+        }
+
+    def test_insert_lineage_preserves_three_part_table_names(self):
+        schema = build_schema_from_texts(
+            [
+                """
+            CREATE TABLE hive.shop_dm.ods_customer (
+                customer_id BIGINT,
+                customer_name VARCHAR(64)
+            )
+            """,
+                """
+            CREATE TABLE hive.shop_dm.M_SHOP_01_CUST_DF (
+                CUSTOMER_ID BIGINT,
+                CUSTOMER_NAME VARCHAR(64)
+            )
+            """,
+            ]
+        )
+        sql = """
+        INSERT INTO hive.shop_dm.M_SHOP_01_CUST_DF
+        SELECT customer_id, customer_name
+        FROM hive.shop_dm.ods_customer
+        """
+
+        entries = extract_lineage_from_sql(sql, "dwd_customer.sql", schema)
+
+        assert _direct_edges(entries) == {
+            (
+                "hive.shop_dm.ods_customer",
+                "customer_id",
+                "hive.shop_dm.M_SHOP_01_CUST_DF",
+                "CUSTOMER_ID",
+            ),
+            (
+                "hive.shop_dm.ods_customer",
+                "customer_name",
+                "hive.shop_dm.M_SHOP_01_CUST_DF",
+                "CUSTOMER_NAME",
+            ),
         }
 
     def test_quoted_columns_are_canonicalized_in_lineage_entries(self):
