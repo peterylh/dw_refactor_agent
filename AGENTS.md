@@ -39,9 +39,10 @@ shop-dm/
 │   └── generate_ods_data.py        # 生成 ODS 模拟数据 SQL
 ├── lineage/
 │   ├── __init__.py
-│   ├── ddl/                        # lineage 库 7 张元数据表
+│   ├── ddl/                        # lineage 库快照表与核心元数据表
 │   ├── lineage_extractor.py        # 字段级血缘抽取
-│   ├── import_lineage.py           # 导入 lineage 库
+│   ├── import_lineage.py           # 快照化批量导入 lineage 库
+│   ├── lineage_cli.py              # 本地血缘查询 CLI
 │   ├── refresh_lineage_html.py     # 刷新可视化 HTML
 │   ├── job_dag.py                  # 基于血缘边生成作业 DAG
 │   ├── lineage_data_{project}.json # 各项目血缘结果
@@ -117,7 +118,57 @@ python lineage/lineage_extractor.py --project finance_analytics
 - `shop` → `shop_lineage`
 - `finance_analytics` → `finance_analytics_lineage`
 
-支持 `--project shop|finance_analytics`。
+导入采用快照化模型：
+
+- 每次导入写入一个 `snapshot_id`
+- 默认按当前时间毫秒生成快照 ID，也可用 `--snapshot-id` 指定
+- 重跑同一个 `snapshot_id` 时只删除该快照的数据，不再 `TRUNCATE` 整个 lineage 库
+- 导入完成后默认将当前快照标记为 active，可用 `--no-activate` 禁用
+- 表、字段、作业、直接字段血缘、间接血缘、表级血缘均使用分批 `executemany`
+
+常用参数：
+
+- `--project shop|finance_analytics`
+- `--lineage-file <path>`：指定血缘 JSON，默认 `lineage/lineage_data_{project}.json`
+- `--db-env prod|test`：选择 Doris 物理环境，默认 `prod`
+- `--snapshot-id <id>`：指定快照 ID，便于可重复导入或比对
+- `--batch-size <n>`：控制每批 `executemany` 行数，默认 `5000`
+- `--no-activate`：只导入快照，不切换 active 指针
+
+示例：
+
+```bash
+# shop 项目，默认快照 ID，导入后设为 active
+python lineage/import_lineage.py --project shop
+
+# finance_analytics 大批量导入，放大 executemany 批次
+python lineage/import_lineage.py --project finance_analytics --db-env test --batch-size 10000
+
+# 指定快照 ID 重复导入，不切换 active
+python lineage/import_lineage.py --project shop --snapshot-id 202606160001 --no-activate
+```
+
+首次部署或 DDL 变更后，需要先在对应 lineage 库中执行 `lineage/ddl/*.sql`。
+
+### lineage_cli.py
+
+读取本地 `lineage_data_{project}.json` 进行命令行查询，不依赖 Doris：
+
+```bash
+# 项目统计
+python lineage/lineage_cli.py stats --project shop
+
+# 表级上游/下游血缘
+python lineage/lineage_cli.py show --project shop --table ads_sales_dashboard --direction upstream --depth 2
+
+# 字段级血缘，--verbose 会展示 WHERE/GROUP BY/JOIN 等间接依赖
+python lineage/lineage_cli.py column --project shop --table dws_product_sales_daily --column sales_amount --depth 2 --verbose
+
+# 导出某张表附近的本地 HTML 子图
+python lineage/lineage_cli.py export-html --project shop --table ads_sales_dashboard --depth 2 --output lineage/local_ads_sales_dashboard.html
+```
+
+`show` 支持 `--format text|json|dot`，`column` 支持 `--format text|json`。
 
 ### refresh_lineage_html.py
 
@@ -163,8 +214,9 @@ python lineage/refresh_lineage_html.py --project finance_analytics
 
 ### lineage DDL
 
-`lineage/ddl/` 中维护 lineage 库的 7 张表：
+`lineage/ddl/` 中维护 lineage 库的快照表与 7 张核心表：
 
+- `lineage_snapshot`
 - `datasource`
 - `table_info`
 - `column_info`
