@@ -69,5 +69,25 @@ def build_table_graph(edges: list, indirect_edges: list) -> tuple[dict, dict]:
     return dict(upstream), dict(downstream)
 
 
+def build_table_edge_source_files(edges: list, indirect_edges: list) -> dict:
+    table_edges = defaultdict(set)
+
+    for edge in edges:
+        src = _edge_source_table(edge)
+        tgt = _edge_target_table(edge)
+        if src and tgt and src != tgt:
+            table_edges[(src, tgt)].add(edge.get("source_file", ""))
+
+    for edge in indirect_edges:
+        src = _table_from_node(edge.get("source"))
+        tgt = edge.get("target_table")
+        if not tgt and edge.get("target"):
+            tgt = _edge_target_table(edge)
+        if src and tgt and src != tgt:
+            table_edges[(src, tgt)].add(edge.get("source_file", ""))
+
+    return dict(table_edges)
+
+
 def build_table_layer_map(tables: list) -> dict:
     return {t["name"]: t["layer"] for t in tables}

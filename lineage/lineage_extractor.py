@@ -921,18 +921,43 @@ def build_lineage_output(all_lineage, schema, transient_tables=None):
             _transient_table_occurrence(table)
         )
 
+    schema_columns_by_table = {}
+    schema_type_by_table_col = {}
+    for _db_name, db_tables in (schema or {}).items():
+        for raw_tbl, cols in (db_tables or {}).items():
+            tbl = _strip_db(raw_tbl)
+            if not tbl:
+                continue
+            table_columns = schema_columns_by_table.setdefault(tbl, [])
+            for raw_col, col_type in (cols or {}).items():
+                col = _canonical_column(raw_col)
+                if not col:
+                    continue
+                key = (tbl, col)
+                if key in schema_type_by_table_col:
+                    continue
+                schema_type_by_table_col[key] = col_type
+                table_columns.append((col, col_type))
+
+    column_names_by_table = {}
+    column_objects_by_table = {}
+
     def _schema_column_type(tbl, col):
         tbl = _strip_db(tbl)
         col = _canonical_column(col)
-        for db_tables in schema.values():
-            table_cols = db_tables.get(tbl)
-            if table_cols and col in table_cols:
-                return table_cols[col]
-        return "UNKNOWN"
+        return schema_type_by_table_col.get((tbl, col), "UNKNOWN")
 
     def _schema_has_table(tbl):
         tbl = _strip_db(tbl)
-        return any(tbl in db_tables for db_tables in schema.values())
+        return tbl in schema_columns_by_table
+
+    def _ensure_column_index(tbl):
+        if tbl not in column_objects_by_table:
+            column_objects_by_table[tbl] = {
+                c["name"]: c for c in tables[tbl]["columns"]
+            }
+            column_names_by_table[tbl] = set(column_objects_by_table[tbl])
+        return column_names_by_table[tbl], column_objects_by_table[tbl]
 
     def _ensure_table(tbl):
         tbl = _strip_db(tbl)
@@ -945,6 +970,8 @@ def build_lineage_output(all_lineage, schema, transient_tables=None):
                 "layer": determine_layer(tbl),
                 "columns": [],
             }
+            column_names_by_table[tbl] = set()
+            column_objects_by_table[tbl] = {}
         if tbl in transient_sources_by_table and not _schema_has_table(tbl):
             tables[tbl]["is_transient"] = True
             tables[tbl]["transient_sources"] = sorted(
@@ -965,10 +992,12 @@ def build_lineage_output(all_lineage, schema, transient_tables=None):
         if not tbl or not col:
             return
         _ensure_table(tbl)
-        if col not in {c["name"] for c in tables[tbl]["columns"]}:
-            tables[tbl]["columns"].append(
-                {"name": col, "type": _schema_column_type(tbl, col)}
-            )
+        column_names, column_objects = _ensure_column_index(tbl)
+        if col not in column_names:
+            column = {"name": col, "type": _schema_column_type(tbl, col)}
+            tables[tbl]["columns"].append(column)
+            column_names.add(col)
+            column_objects[col] = column
 
     def _direct_source(entry):
         source_type = str(entry.get("source_type") or "").strip()
@@ -1031,19 +1060,17 @@ def build_lineage_output(all_lineage, schema, transient_tables=None):
     for table in transient_tables:
         _ensure_table(table.get("name", ""))
 
-    for db_name, db_tables in schema.items():
-        for tbl_name, cols in db_tables.items():
-            tbl_name = _strip_db(tbl_name)
-            if tbl_name in tables:
-                existing_cols = {c["name"]: c for c in tables[tbl_name]["columns"]}
-                for col_name, col_type in cols.items():
-                    col_name = _canonical_column(col_name)
-                    if col_name not in existing_cols:
-                        tables[tbl_name]["columns"].append(
-                            {"name": col_name, "type": col_type}
-                        )
-                    elif existing_cols[col_name].get("type") == "UNKNOWN":
-                        existing_cols[col_name]["type"] = col_type
+    for tbl_name, cols in schema_columns_by_table.items():
+        if tbl_name in tables:
+            column_names, column_objects = _ensure_column_index(tbl_name)
+            for col_name, col_type in cols:
+                if col_name not in column_names:
+                    column = {"name": col_name, "type": col_type}
+                    tables[tbl_name]["columns"].append(column)
+                    column_names.add(col_name)
+                    column_objects[col_name] = column
+                elif column_objects[col_name].get("type") == "UNKNOWN":
+                    column_objects[col_name]["type"] = col_type
 
     return {
         "edges": sorted(

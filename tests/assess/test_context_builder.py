@@ -113,7 +113,7 @@ def test_build_contexts_reuses_one_lineage_view(
             assert lineage_data is sample_lineage_data
             return cls()
 
-        def table_graph(self):
+        def asset_table_graph(self):
             return (
                 {
                     "dwd_customer": {"ods_customer"},

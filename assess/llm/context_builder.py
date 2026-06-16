@@ -129,7 +129,7 @@ def _project_context(project: str) -> str:
 
 def extract_dependencies(lineage_data: dict) -> tuple[dict, dict]:
     """提取正式资产表级上下游关系，过滤并穿透临时表。"""
-    return LineageView.from_data("", lineage_data).table_graph()
+    return LineageView.from_data("", lineage_data).asset_table_graph()
 
 
 def extract_column_lineage(lineage_data: dict,
@@ -160,7 +160,7 @@ def build_contexts(project: str,
         tasks_dir = project_dir / "tasks"
 
     lineage_view = LineageView.from_data(project, lineage_data)
-    upstream, downstream = lineage_view.table_graph()
+    upstream, downstream = lineage_view.asset_table_graph()
     target_layers = set(layers or ("DWD", "DWS", "DIM"))
     models_dir = project_dir / "models"
     metric_groups = _load_model_metric_groups(models_dir)

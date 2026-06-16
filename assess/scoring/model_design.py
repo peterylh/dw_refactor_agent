@@ -28,7 +28,10 @@ from assess.scoring.config import (
     SEVERITY_WEIGHT,
 )
 from config import layer_rank
-from lineage.table_graph import _table_from_node, build_table_layer_map
+from lineage.table_graph import (
+    build_table_edge_source_files,
+    build_table_layer_map,
+)
 from lineage.view import LineageView
 
 AGGREGATE_PATTERN = re.compile(
@@ -269,35 +272,6 @@ def _table_sql_facts(asset_catalog: dict | None, table_name: str) -> dict:
     }
 
 
-def _edge_ref_type(ref) -> str:
-    return str(ref.get("type") or "") if isinstance(ref, dict) else "column"
-
-
-def _edge_ref_id(ref) -> str:
-    if isinstance(ref, dict):
-        return str(ref.get("id") or "")
-    return str(ref or "")
-
-
-def _edge_source_table(edge: dict) -> str:
-    if _edge_ref_type(edge.get("source")) != "column":
-        return ""
-    source_id = _edge_ref_id(edge.get("source"))
-    return _table_from_node(source_id) if source_id else ""
-
-
-def _edge_target_table(edge: dict) -> str:
-    target_id = _edge_ref_id(edge.get("target"))
-    return _table_from_node(target_id) if target_id else ""
-
-
-def _edge_target_column(edge: dict) -> str:
-    if _edge_ref_type(edge.get("target")) != "column":
-        return ""
-    target_id = _edge_ref_id(edge.get("target"))
-    return _short_column_name(target_id) if target_id else ""
-
-
 def _lineage_facts_from_edges(edges: list | None, table_name: str) -> dict:
     return LineageView.from_parts(
         "",
@@ -514,32 +488,31 @@ def score_model_design_health(
     model_metadata: dict | None = None,
     business_domain_config=None,
     asset_catalog: dict | None = None,
+    *,
+    lineage_view: LineageView | None = None,
+    table_edges: dict | None = None,
+    table_layers: dict | None = None,
 ) -> dict:
     """Score model design health.
 
     This starts as the architecture ruleset and will grow model-specific
     checks for layer boundaries and grain clarity.
     """
-    table_layers = build_table_layer_map(tables)
+    table_layers = (
+        table_layers if table_layers is not None
+        else build_table_layer_map(tables)
+    )
     table_count = len(tables)
-    lineage_view = LineageView.from_parts(
+    lineage_view = lineage_view or LineageView.from_parts(
         "assessment",
         tables,
         edges,
         indirect_edges,
     )
-
-    table_edges = defaultdict(set)
-    for edge in edges:
-        src = _edge_source_table(edge)
-        tgt = _edge_target_table(edge)
-        if src and tgt and src != tgt:
-            table_edges[(src, tgt)].add(edge.get("source_file", ""))
-    for edge in indirect_edges:
-        src = _table_from_node(edge["source"])
-        tgt = edge["target_table"]
-        if src and tgt and src != tgt:
-            table_edges[(src, tgt)].add(edge.get("source_file", ""))
+    table_edges = (
+        table_edges if table_edges is not None
+        else build_table_edge_source_files(edges, indirect_edges)
+    )
 
     checks = []
     table_weight = defaultdict(int)

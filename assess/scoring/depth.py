@@ -52,10 +52,22 @@ def _depth_to_score(depth: int) -> int:
     return MIDDLE_DEPTH_SCORE.get(depth, MIDDLE_DEPTH_FALLBACK)
 
 
-def score_lineage_depth(tables: list, edges: list,
-                        indirect_edges: list) -> dict:
-    table_layers = build_table_layer_map(tables)
-    upstream, _ = build_table_graph(edges, indirect_edges)
+def score_lineage_depth(
+    tables: list,
+    edges: list,
+    indirect_edges: list,
+    *,
+    upstream_map: dict | None = None,
+    table_layers: dict | None = None,
+) -> dict:
+    table_layers = (
+        table_layers if table_layers is not None
+        else build_table_layer_map(tables)
+    )
+    upstream = (
+        upstream_map if upstream_map is not None
+        else build_table_graph(edges, indirect_edges)[0]
+    )
 
     # 不按表名推断缺失层级；models/lineage 中没有声明的表按 OTHER 处理。
 

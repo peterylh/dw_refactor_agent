@@ -18,7 +18,11 @@ from lineage.asset_graph import (
     transient_table_names,
 )
 from lineage.model import LineageSnapshot
-from lineage.table_graph import _table_from_node
+from lineage.table_graph import (
+    _table_from_node,
+    build_table_edge_source_files,
+    build_table_graph,
+)
 
 
 AGGREGATE_PATTERN = re.compile(
@@ -75,13 +79,18 @@ class LineageView:
         self._raw_edges = [edge.raw for edge in snapshot.edges]
         self._raw_indirect_edges = [dict(edge) for edge in snapshot.indirect_edges]
         self._transient_tables = transient_table_names(self._data)
-        self._table_graph = build_asset_table_graph(self._data)
+        self._raw_table_graph = build_table_graph(
+            self._raw_edges,
+            self._raw_indirect_edges,
+        )
+        self._asset_table_graph = build_asset_table_graph(self._data)
         self._column_edges = None
         self._incoming = None
         self._column_edges_by_target_table = None
         self._condition_edges_by_target_table = None
         self._lineage_facts_by_table = None
         self._targets_by_source_file = None
+        self._table_edge_source_files = None
 
     @classmethod
     def from_data(cls, project: str, data: dict[str, Any]) -> "LineageView":
@@ -107,19 +116,26 @@ class LineageView:
     def tables(self) -> list:
         return list(self.snapshot.tables)
 
-    def table_graph(self) -> tuple[dict[str, set[str]], dict[str, set[str]]]:
-        upstream, downstream = self._table_graph
+    def raw_table_graph(self) -> tuple[dict[str, set[str]], dict[str, set[str]]]:
+        upstream, downstream = self._raw_table_graph
+        return (
+            {table: set(parents) for table, parents in upstream.items()},
+            {table: set(children) for table, children in downstream.items()},
+        )
+
+    def asset_table_graph(self) -> tuple[dict[str, set[str]], dict[str, set[str]]]:
+        upstream, downstream = self._asset_table_graph
         return (
             {table: set(parents) for table, parents in upstream.items()},
             {table: set(children) for table, children in downstream.items()},
         )
 
     def upstream_tables(self, table_name: str) -> set[str]:
-        upstream, _downstream = self._table_graph
+        upstream, _downstream = self._asset_table_graph
         return set(upstream.get(table_name, set()))
 
     def downstream_tables(self, table_name: str) -> set[str]:
-        _upstream, downstream = self._table_graph
+        _upstream, downstream = self._asset_table_graph
         return set(downstream.get(table_name, set()))
 
     def column_lineage_for_table(self, table_name: str) -> list[dict]:
@@ -188,6 +204,17 @@ class LineageView:
         return set(
             self._targets_by_source_file.get(_source_file_key(source_file), set())
         )
+
+    def table_edge_source_files(self) -> dict[tuple[str, str], set[str]]:
+        if self._table_edge_source_files is None:
+            self._table_edge_source_files = build_table_edge_source_files(
+                self._raw_edges,
+                self._raw_indirect_edges,
+            )
+        return {
+            edge: set(source_files)
+            for edge, source_files in self._table_edge_source_files.items()
+        }
 
     def _ensure_column_indexes(self) -> None:
         if self._column_edges is not None:

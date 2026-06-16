@@ -29,7 +29,18 @@ def test_lineage_view_reuses_indexed_column_lineage():
 
     view = LineageView.from_data("demo", lineage_data)
 
-    assert view.table_graph() == (
+    assert not hasattr(view, "table_graph")
+    assert view.raw_table_graph() == (
+        {
+            "tmp_orders": {"dwd_orders"},
+            "dws_orders": {"tmp_orders", "dwd_orders"},
+        },
+        {
+            "dwd_orders": {"tmp_orders", "dws_orders"},
+            "tmp_orders": {"dws_orders"},
+        },
+    )
+    assert view.asset_table_graph() == (
         {"dws_orders": {"dwd_orders"}},
         {"dwd_orders": {"dws_orders"}},
     )
@@ -144,3 +155,33 @@ def test_lineage_view_indexes_targets_by_source_file():
 
     assert view.targets_by_source_file("dws_orders.sql") == {"dws_orders"}
     assert view.targets_by_source_file("dws_payments.sql") == {"dws_payments"}
+
+
+def test_lineage_view_indexes_table_edge_source_files():
+    lineage_data = {
+        "edges": [
+            {
+                "source": {"type": "column", "id": "dwd_orders.id"},
+                "target": {"type": "column", "id": "dws_orders.id"},
+                "source_file": "dws_orders.sql",
+            },
+            {
+                "source": {"type": "column", "id": "dwd_orders.status"},
+                "target": {"type": "table", "id": "dws_orders"},
+                "relation_type": "where",
+                "source_file": "dws_orders.sql",
+            },
+        ],
+        "indirect_edges": [{
+            "source": "dwd_payments.id",
+            "target_table": "dws_payments",
+            "source_file": "dws_payments.sql",
+        }],
+    }
+
+    view = LineageView.from_data("demo", lineage_data)
+
+    assert view.table_edge_source_files() == {
+        ("dwd_orders", "dws_orders"): {"dws_orders.sql"},
+        ("dwd_payments", "dws_payments"): {"dws_payments.sql"},
+    }

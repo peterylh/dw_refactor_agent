@@ -199,6 +199,81 @@ def test_assess_accepts_architecture_dimension_alias(
     assert set(result["dimensions"]) == {"model_design"}
 
 
+def test_assess_passes_reusable_lineage_index_to_scoring_modules(
+        monkeypatch, sample_lineage_data, isolated_assess_project):
+    monkeypatch.setattr(
+        "assess.assess_middle_layer.load_lineage_data",
+        lambda project: sample_lineage_data,
+    )
+    captured = {}
+
+    def dimension(name):
+        return {
+            "score": 100.0,
+            "rule_summary": {},
+            "checks": [],
+            "issues": [],
+            "summary": {},
+        }
+
+    def fake_depth_score(tables, edges, indirect_edges, **kwargs):
+        captured["depth_upstream_map"] = kwargs.get("upstream_map")
+        captured["depth_table_layers"] = kwargs.get("table_layers")
+        return dimension("depth")
+
+    def fake_model_design_score(
+        tables,
+        edges,
+        indirect_edges,
+        llm_results=None,
+        model_metadata=None,
+        business_domain_config=None,
+        asset_catalog=None,
+        **kwargs,
+    ):
+        captured["model_lineage_view"] = kwargs.get("lineage_view")
+        captured["model_table_edges"] = kwargs.get("table_edges")
+        captured["model_table_layers"] = kwargs.get("table_layers")
+        return dimension("model_design")
+
+    monkeypatch.setattr(
+        "assess.assess_middle_layer.score_reusability",
+        lambda tables, downstream: dimension("reuse"),
+    )
+    monkeypatch.setattr(
+        "assess.assess_middle_layer.score_lineage_depth",
+        fake_depth_score,
+    )
+    monkeypatch.setattr(
+        "assess.assess_middle_layer.score_model_design_health",
+        fake_model_design_score,
+    )
+    monkeypatch.setattr(
+        "assess.assess_middle_layer.score_asset_completeness",
+        lambda asset_catalog: dimension("asset_completeness"),
+    )
+    monkeypatch.setattr(
+        "assess.assess_middle_layer.score_code_quality",
+        lambda asset_catalog: dimension("code_quality"),
+    )
+    monkeypatch.setattr(
+        "assess.assess_middle_layer.score_metadata_health",
+        lambda *args, **kwargs: dimension("metadata_health"),
+    )
+    monkeypatch.setattr(
+        "assess.assess_middle_layer.score_naming_conventions",
+        lambda *args, **kwargs: dimension("naming"),
+    )
+
+    assess(project=isolated_assess_project)
+
+    assert captured["depth_upstream_map"] is not None
+    assert captured["depth_table_layers"] is not None
+    assert captured["model_lineage_view"] is not None
+    assert captured["model_table_edges"] is not None
+    assert captured["model_table_layers"] is captured["depth_table_layers"]
+
+
 def test_generate_report_reads_dimension_issues(
         monkeypatch, sample_lineage_data, isolated_assess_project):
     monkeypatch.setattr(

@@ -1,6 +1,68 @@
 from lineage.lineage_extractor import build_lineage_output
 
 
+class CountingSchema(dict):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.values_calls = 0
+
+    def values(self):
+        self.values_calls += 1
+        return super().values()
+
+
+def test_build_lineage_output_indexes_schema_column_types_once():
+    schema = CountingSchema({
+        "shop_dm": {
+            "dwd_orders": {
+                "order_id": "BIGINT",
+                "amount": "DECIMAL(12,2)",
+            },
+            "dws_orders": {
+                "order_id": "BIGINT",
+                "total_amount": "DECIMAL(12,2)",
+            },
+        },
+    })
+
+    output = build_lineage_output(
+        [
+            {
+                "source_table": "dwd_orders",
+                "source_column": "order_id",
+                "target_table": "dws_orders",
+                "target_column": "order_id",
+                "lineage_type": "direct",
+                "expression": "order_id",
+                "source_file": "dws_orders.sql",
+            },
+            {
+                "source_table": "dwd_orders",
+                "source_column": "amount",
+                "target_table": "dws_orders",
+                "target_column": "total_amount",
+                "lineage_type": "direct",
+                "expression": "SUM(amount) AS total_amount",
+                "source_file": "dws_orders.sql",
+            },
+        ],
+        schema,
+    )
+
+    assert schema.values_calls <= 1
+    dws_orders = next(
+        table for table in output["tables"]
+        if table["name"] == "dws_orders"
+    )
+    assert {
+        column["name"]: column["type"]
+        for column in dws_orders["columns"]
+    } == {
+        "order_id": "BIGINT",
+        "total_amount": "DECIMAL(12,2)",
+    }
+
+
 def test_build_lineage_output_marks_transient_tables():
     output = build_lineage_output(
         [

@@ -25,6 +25,7 @@ if str(_root) not in sys.path:
 
 from assess.llm.context_builder import build_contexts
 from assess.llm.table_inspector import TableInspector
+from assess.lineage_index import AssessmentLineageIndex
 from assess.project_facts.asset_catalog import build_asset_catalog
 from assess.scoring.architecture import score_architecture_health
 from assess.scoring.asset_completeness import score_asset_completeness
@@ -35,12 +36,7 @@ from assess.scoring.model_design import score_model_design_health
 from assess.scoring.naming import score_naming_conventions
 from assess.scoring.reuse import score_reusability
 from assess.scoring.task_sql_quality import score_code_quality
-from lineage.table_graph import (
-    _table_from_node,
-    build_table_graph,
-    build_table_layer_map,
-    load_lineage_data,
-)
+from lineage.table_graph import load_lineage_data
 from assess.report import generate_report
 from config import PROJECT_CONFIG, PROJECT_ROOT
 
@@ -143,18 +139,22 @@ def assess(
         else:
             print("警告: 未提供 DEEPSEEK_API_KEY 环境变量，跳过分类。")
 
-    _, downstream = build_table_graph(edges, indirect_edges)
     project_dir = PROJECT_ROOT / PROJECT_CONFIG[project]["dir"]
-    asset_catalog = build_asset_catalog(
-        tables,
-        model_metadata,
-        project_dir,
-        edges=edges,
-        indirect_edges=indirect_edges,
+    lineage_index = AssessmentLineageIndex.build(
+        project=project,
+        lineage_data=data,
+        model_metadata=model_metadata,
+        project_dir=project_dir,
     )
 
-    reuse_score = score_reusability(tables, downstream)
-    depth_score = score_lineage_depth(tables, edges, indirect_edges)
+    reuse_score = score_reusability(tables, lineage_index.downstream)
+    depth_score = score_lineage_depth(
+        tables,
+        edges,
+        indirect_edges,
+        upstream_map=lineage_index.upstream,
+        table_layers=lineage_index.table_layers,
+    )
     model_design_score = score_model_design_health(
         tables,
         edges,
@@ -162,16 +162,21 @@ def assess(
         llm_results,
         model_metadata,
         business_domain_config,
-        asset_catalog=asset_catalog,
+        asset_catalog=lineage_index.asset_catalog,
+        lineage_view=lineage_index.lineage_view,
+        table_edges=lineage_index.table_edges,
+        table_layers=lineage_index.table_layers,
     )
-    asset_completeness_score = score_asset_completeness(asset_catalog)
-    code_quality_score = score_code_quality(asset_catalog)
+    asset_completeness_score = score_asset_completeness(
+        lineage_index.asset_catalog
+    )
+    code_quality_score = score_code_quality(lineage_index.asset_catalog)
     metadata_health_score = score_metadata_health(
         tables,
         nc,
         model_metadata,
         business_domain_config,
-        asset_catalog=asset_catalog,
+        asset_catalog=lineage_index.asset_catalog,
     )
     naming_score = score_naming_conventions(
         tables,
@@ -181,7 +186,7 @@ def assess(
         project_dir=project_dir,
         edges=edges,
         indirect_edges=indirect_edges,
-        asset_catalog=asset_catalog,
+        asset_catalog=lineage_index.asset_catalog,
     )
 
     dimensions = dict(
