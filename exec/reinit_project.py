@@ -12,6 +12,7 @@
     python exec/reinit_project.py --project shop
     python exec/reinit_project.py --project shop --full-refresh
 """
+from __future__ import annotations
 
 import argparse
 import subprocess

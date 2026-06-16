@@ -1,6 +1,8 @@
 """
 全局配置文件
 """
+from __future__ import annotations
+
 import re
 import yaml
 from pathlib import Path

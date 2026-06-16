@@ -84,6 +84,9 @@ class TestDetermineLayer:
 
 
 class TestTableName:
+    def _from_table(self, stmt):
+        return (stmt.args.get("from_") or stmt.args.get("from")).this
+
     def test_table_with_db(self):
         t = exp.Table(
             this=exp.Identifier(this="ods_order"), db=exp.Identifier(this="shop_dm")
@@ -103,12 +106,12 @@ class TestTableName:
 
     def test_from_parse(self):
         stmt = sqlglot.parse_one("SELECT * FROM shop_dm.ods_customer", dialect="doris")
-        t = stmt.args["from_"].this
+        t = self._from_table(stmt)
         assert isinstance(t, exp.Table)
         assert _table_name(t) == "shop_dm.ods_customer"
 
     def test_from_parse_no_db(self):
         stmt = sqlglot.parse_one("SELECT * FROM ods_customer", dialect="doris")
-        t = stmt.args["from_"].this
+        t = self._from_table(stmt)
         assert isinstance(t, exp.Table)
         assert _table_name(t) == "ods_customer"

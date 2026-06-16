@@ -20,6 +20,7 @@ from config import PROJECT_CONFIG, determine_layer as determine_config_layer
 import sqlglot
 from sqlglot import exp
 from sqlglot.lineage import lineage
+from doris_sql import normalize_create_table_for_sqlglot
 from lineage.sql_task_facts import extract_task_table_facts
 
 
@@ -233,6 +234,44 @@ def _schema_columns_for_table(schema, table_name):
     return None
 
 
+def _infer_table_for_column(schema, preferred_table, column_name):
+    column_name = _canonical_column(column_name)
+    preferred = _strip_db(preferred_table)
+    if preferred and _schema_has_column(schema, preferred, column_name):
+        return preferred
+
+    matches = []
+    for db_tables in schema.values():
+        for table_name, columns in db_tables.items():
+            if column_name in columns:
+                matches.append(table_name)
+    unique = sorted(set(matches))
+    return unique[0] if len(unique) == 1 else ""
+
+
+def _fallback_direct_edges_from_expression(expression, target_table, target_col, schema):
+    edges = []
+    seen = set()
+    for col in expression.find_all(exp.Column):
+        source_table = _strip_db(_canonical_identifier(col.table))
+        if not source_table:
+            source_table = _infer_table_for_column(schema, target_table, col.name)
+        if not source_table:
+            continue
+        source_col = _canonical_column(col.name)
+        key = (source_table, source_col)
+        if key in seen:
+            continue
+        seen.add(key)
+        edges.append({
+            "source_table": source_table,
+            "source_column": source_col,
+            "target_table": _strip_db(target_table),
+            "target_column": _canonical_column(target_col),
+        })
+    return edges
+
+
 # ============================================================
 # 1. Schema 构建: 从 DDL 解析
 # ============================================================
@@ -241,7 +280,10 @@ def _schema_columns_for_table(schema, table_name):
 def build_schema_from_texts(sql_texts):
     schema = {}
     for text in sql_texts:
-        for stmt in sqlglot.parse(text, dialect="doris"):
+        for stmt in sqlglot.parse(
+            normalize_create_table_for_sqlglot(text),
+            dialect="doris",
+        ):
             if stmt is None:
                 continue
             if isinstance(stmt, exp.Create) and isinstance(stmt.this, exp.Schema):
@@ -263,6 +305,45 @@ def build_schema_from_texts(sql_texts):
                     else:
                         schema[full_name] = col_map
     return schema
+
+
+def _projection_output_name(projection):
+    if isinstance(projection, exp.Alias):
+        return _canonical_column(projection.alias)
+    if isinstance(projection, exp.Column):
+        return _canonical_column(projection.name)
+    if getattr(projection, "alias_or_name", None):
+        return _canonical_column(projection.alias_or_name)
+    return ""
+
+
+def _projection_output_names(query_expr):
+    if isinstance(query_expr, exp.Select):
+        return [_projection_output_name(item) for item in query_expr.expressions]
+    if isinstance(query_expr, exp.SetOperation):
+        left = query_expr.args.get("this")
+        return _projection_output_names(left) if left is not None else []
+    return []
+
+
+def _lineage_nodes_for_select(select_expr, schema):
+    nodes = {}
+    projections = select_expr.expressions if isinstance(select_expr, exp.Select) else []
+    for idx, col_name in enumerate(_projection_output_names(select_expr)):
+        if not col_name:
+            continue
+        if idx < len(projections) and not list(projections[idx].find_all(exp.Column)):
+            continue
+        try:
+            nodes[col_name] = lineage(
+                column=col_name,
+                sql=select_expr.copy(),
+                schema=schema,
+                dialect="doris",
+            )
+        except Exception:
+            continue
+    return nodes
 
 
 def build_schema_from_ddl(ddl_dir):
@@ -355,7 +436,7 @@ def _walk_leaf(node, target_table, target_col, edges):
 
 
 def _iter_relation_sources(select_expr):
-    from_ = select_expr.args.get("from_")
+    from_ = select_expr.args.get("from_") or select_expr.args.get("from")
     if from_:
         if from_.this:
             yield from_.this
@@ -368,7 +449,7 @@ def _iter_relation_sources(select_expr):
 
 def _collect_ctes(select_expr):
     ctes = {}
-    with_ = select_expr.args.get("with_")
+    with_ = select_expr.args.get("with_") or select_expr.args.get("with")
     if not with_:
         return ctes
     for cte in with_.expressions:
@@ -392,7 +473,7 @@ def _derived_leaf_sources(select_expr, column_name, schema):
     try:
         node = lineage(
             column=column_name,
-            sql=select_expr,
+            sql=select_expr.copy(),
             schema=schema,
             dialect="doris",
         )
@@ -636,10 +717,8 @@ def extract_lineage_from_sql(sql_text, file_path, schema):
 
 def _trace_lineage(target_table, select_expr, schema, file_path, target_columns=None):
     entries = []
-    try:
-        nodes = lineage(column=None, sql=select_expr, schema=schema, dialect="doris")
-    except Exception as e:
-        print(f"    lineage 失败 {target_table}: {e}")
+    nodes = _lineage_nodes_for_select(select_expr, schema)
+    if not nodes and not _projection_output_names(select_expr):
         STATS["lineage_failures"] += 1
         return entries
 
@@ -651,6 +730,13 @@ def _trace_lineage(target_table, select_expr, schema, file_path, target_columns=
         )
         target_col = _canonical_column(target_col)
         edges = _extract_leaf_edges(node, target_table, target_col)
+        if not edges:
+            edges = _fallback_direct_edges_from_expression(
+                node.expression,
+                target_table,
+                target_col,
+                schema,
+            )
         seen = set()
         for edge in edges:
             key = (

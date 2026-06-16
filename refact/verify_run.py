@@ -24,6 +24,8 @@ import sqlglot
 from sqlglot import exp
 from sqlglot.errors import ErrorLevel
 
+from doris_sql import extract_create_table_name
+
 # ============================================================
 # SQL 执行
 # ============================================================
@@ -89,6 +91,9 @@ def _get_dml_target(stmt):
         # CTAS: CREATE TABLE ... AS SELECT
         if isinstance(stmt.this, exp.Schema) and isinstance(stmt.this.this, exp.Table):
             return stmt.this.this.name
+    elif isinstance(stmt, exp.Command) and str(stmt.this).upper() == "CREATE":
+        table_name = extract_create_table_name(stmt.sql(dialect="doris"))
+        return table_name.split(".")[-1] if table_name else None
     return None
 
 

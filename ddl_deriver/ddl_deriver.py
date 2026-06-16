@@ -17,6 +17,7 @@ DDL 变更自动推导工具。
     - 读取工作区文件为当前版本
     - 推导结果同上
 """
+from __future__ import annotations
 
 import json
 import re
@@ -30,11 +31,11 @@ from typing import List, Optional, Tuple
 import sqlglot
 from sqlglot import exp
 from sqlglot.errors import ErrorLevel
-from sqlglot.expressions.properties import (
-    DuplicateKeyProperty,
-    UniqueKeyProperty,
-    DistributedByProperty,
-    EngineProperty,
+
+from doris_sql import (
+    extract_doris_distribution_column,
+    extract_doris_key,
+    normalize_create_table_for_sqlglot,
 )
 
 
@@ -252,8 +253,11 @@ def parse_column_def(col_node: exp.ColumnDef) -> Optional[ColumnDef]:
 
 def parse_create_table(sql_text: str) -> Optional[TableDef]:
     try:
-        statements = sqlglot.parse(sql_text, dialect="doris",
-                                   error_level=ErrorLevel.IGNORE)
+        statements = sqlglot.parse(
+            normalize_create_table_for_sqlglot(sql_text),
+            dialect="doris",
+            error_level=ErrorLevel.IGNORE,
+        )
     except Exception:
         return None
 
@@ -277,21 +281,8 @@ def parse_create_table(sql_text: str) -> Optional[TableDef]:
                 if col_def:
                     columns.append(col_def)
 
-        # 提取 key type (DUPLICATE KEY / UNIQUE KEY)
-        key_type = "DUPLICATE"
-        for prop in stmt.find_all(DuplicateKeyProperty):
-            key_type = "DUPLICATE"
-            key_columns = [e.name for e in prop.find_all(exp.Identifier)]
-        for prop in stmt.find_all(UniqueKeyProperty):
-            key_type = "UNIQUE"
-            key_columns = [e.name for e in prop.find_all(exp.Identifier)]
-
-        # distribution col
-        distribution_col = ""
-        for prop in stmt.find_all(DistributedByProperty):
-            identifiers = list(prop.find_all(exp.Identifier))
-            if identifiers:
-                distribution_col = identifiers[0].name
+        key_type, key_columns = extract_doris_key(sql_text)
+        distribution_col = extract_doris_distribution_column(sql_text)
 
         # 用原始文本作为 raw_ddl,避免 sqlglot 再生 bug(如 UNIQUE KEY)
         raw_ddl = sql_text if isinstance(sql_text, str) else stmt.sql(dialect="doris")

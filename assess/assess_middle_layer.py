@@ -11,6 +11,7 @@
     python assess/assess_middle_layer.py --reuse-weight 0.3 --depth-weight 0.2
     python assess/assess_middle_layer.py --include-passed-checks
 """
+from __future__ import annotations
 
 import argparse
 import json

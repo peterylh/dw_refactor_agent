@@ -3,6 +3,9 @@ __pycache__/
 *.swp
 .ruff_cache/
 .pytest_cache/
+.cache/
+.conda-pkgs/
+.conda-py37/
 dbenv.md
 logs/
 refact/refact_metadata.json

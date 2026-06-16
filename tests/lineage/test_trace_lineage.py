@@ -1,11 +1,11 @@
 import sqlglot
 from sqlglot import exp
-from sqlglot.lineage import lineage
 from lineage.lineage_extractor import (
     extract_lineage_from_sql,
     _trace_lineage,
     _extract_leaf_edges,
     _handle_insert,
+    _lineage_nodes_for_select,
 )
 
 
@@ -40,7 +40,10 @@ class TestExtractLeafEdges:
 
     def test_lineage_simple_select(self, schema_ods_order):
         sql = "SELECT customer_id FROM shop_dm.ods_order"
-        nodes = lineage(column=None, sql=sql, schema=schema_ods_order, dialect="doris")
+        nodes = _lineage_nodes_for_select(
+            sqlglot.parse_one(sql, dialect="doris"),
+            schema_ods_order,
+        )
         edges = []
         for col_name, node in nodes.items():
             e = _extract_leaf_edges(node, "target_tbl", col_name)
@@ -51,7 +54,10 @@ class TestExtractLeafEdges:
 
     def test_lineage_with_alias(self, schema_ods_order):
         sql = "SELECT o.customer_id AS cid FROM shop_dm.ods_order o"
-        nodes = lineage(column=None, sql=sql, schema=schema_ods_order, dialect="doris")
+        nodes = _lineage_nodes_for_select(
+            sqlglot.parse_one(sql, dialect="doris"),
+            schema_ods_order,
+        )
         assert "cid" in nodes
 
 

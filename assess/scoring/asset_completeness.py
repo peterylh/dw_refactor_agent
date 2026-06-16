@@ -1,4 +1,5 @@
 """Asset completeness scoring dimension."""
+from __future__ import annotations
 
 from assess.result_model import finalize_dimension, make_check
 from assess.scoring.config import (

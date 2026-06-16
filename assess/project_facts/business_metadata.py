@@ -1,4 +1,5 @@
 """Shared business metadata helpers for assess scoring."""
+from __future__ import annotations
 
 from assess.scoring.config import BUSINESS_AREA_LAYERS, DATA_DOMAIN_LAYERS
 
