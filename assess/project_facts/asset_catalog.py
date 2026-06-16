@@ -73,6 +73,8 @@ def _ddl_table_for_naming(
         name=name,
         full_name=table_def.full_name,
         layer=layer,
+        key_type=table_def.key_type,
+        key_columns=list(table_def.key_columns or []),
         columns=[
             {"name": column.name, "type": column.data_type}
             for column in table_def.columns
@@ -315,6 +317,8 @@ def build_asset_catalog(
                     file_stem=ddl_path.stem,
                     declared_name=declared_name,
                     columns=columns,
+                    key_type=(table or {}).get("key_type", ""),
+                    key_columns=list((table or {}).get("key_columns") or []),
                 )
                 asset["columns"] = columns
                 if table and table.get("layer") != "OTHER":
