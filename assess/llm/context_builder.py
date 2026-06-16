@@ -6,10 +6,7 @@ import yaml
 import config
 from config import get_business_domain_config, load_model_metadata
 from assess.project_facts.business_semantics import load_business_semantics_catalog
-from lineage.asset_graph import (
-    build_asset_column_lineage,
-    build_asset_table_graph,
-)
+from lineage.view import LineageView
 
 DATA_DOMAIN_LAYERS = {"DWD"}
 BUSINESS_AREA_LAYERS = {"DWD", "DWS"}
@@ -132,13 +129,15 @@ def _project_context(project: str) -> str:
 
 def extract_dependencies(lineage_data: dict) -> tuple[dict, dict]:
     """提取正式资产表级上下游关系，过滤并穿透临时表。"""
-    return build_asset_table_graph(lineage_data)
+    return LineageView.from_data("", lineage_data).table_graph()
 
 
 def extract_column_lineage(lineage_data: dict,
                            table_name: str) -> list[dict]:
     """提取正式资产字段血缘，过滤并穿透临时字段。"""
-    return build_asset_column_lineage(lineage_data, table_name)
+    return LineageView.from_data("", lineage_data).column_lineage_for_table(
+        table_name
+    )
 
 
 def _project_dir(project: str) -> Path:
@@ -151,7 +150,8 @@ def _project_dir(project: str) -> Path:
 def build_contexts(project: str,
                    lineage_data: dict,
                    ddl_dir: Path = None,
-                   tasks_dir: Path = None) -> list[TableContext]:
+                   tasks_dir: Path = None,
+                   layers: set[str] | None = None) -> list[TableContext]:
     """为 DWD/DWS/DIM 层所有表构建分类上下文"""
     project_dir = _project_dir(project)
     if not ddl_dir:
@@ -159,7 +159,9 @@ def build_contexts(project: str,
     if not tasks_dir:
         tasks_dir = project_dir / "tasks"
 
-    upstream, downstream = extract_dependencies(lineage_data)
+    lineage_view = LineageView.from_data(project, lineage_data)
+    upstream, downstream = lineage_view.table_graph()
+    target_layers = set(layers or ("DWD", "DWS", "DIM"))
     models_dir = project_dir / "models"
     metric_groups = _load_model_metric_groups(models_dir)
     model_metadata = load_model_metadata(project)
@@ -192,7 +194,7 @@ def build_contexts(project: str,
 
     for table in lineage_data.get("tables", []):
         layer = table.get("layer", "")
-        if layer not in ("DWD", "DWS", "DIM"):
+        if layer not in target_layers:
             continue
 
         name = table["name"]
@@ -224,8 +226,9 @@ def build_contexts(project: str,
                              list(downstream.get(name, set()))),
                          depth_from_ods=get_depth_from_ods(name),
                          upstream_metric_groups=upstream_metric_groups,
-                         column_lineage=extract_column_lineage(
-                             lineage_data, name),
+                         column_lineage=(
+                             lineage_view.column_lineage_for_table(name)
+                         ),
                          declared_data_domain=(
                              str(metadata.get("data_domain") or "")
                              if layer in DATA_DOMAIN_LAYERS

@@ -1,4 +1,5 @@
 from assess.scoring.architecture import score_architecture_health
+import assess.scoring.model_design as model_design_module
 from assess.scoring.model_design import (
     extract_model_design_sql_facts,
     score_model_design_health,
@@ -306,6 +307,68 @@ def test_model_design_flags_dim_metric_groups_without_llm():
     )
 
     assert _rule_ids(result) == {"MODEL_DIM_NO_METRIC_GROUPS"}
+
+
+def test_score_model_design_reuses_one_lineage_view(monkeypatch):
+    calls = {"builds": 0, "fact_tables": []}
+
+    class FakeLineageView:
+        @classmethod
+        def from_parts(cls, project, tables, edges, indirect_edges=None):
+            calls["builds"] += 1
+            assert project == "assessment"
+            assert [table["name"] for table in tables] == [
+                "dws_orders",
+                "dws_payments",
+            ]
+            assert edges == []
+            assert indirect_edges == []
+            return cls()
+
+        def lineage_facts_for_table(self, table_name):
+            calls["fact_tables"].append(table_name)
+            return {
+                "has_lineage": False,
+                "has_group_by": False,
+                "has_aggregate": False,
+                "aggregate_columns": [],
+                "constant_columns": [],
+                "plain_columns": [],
+                "plain_column_sources": {},
+                "group_by_sources": [],
+                "source_files": [],
+            }
+
+    monkeypatch.setattr(
+        model_design_module,
+        "LineageView",
+        FakeLineageView,
+        raising=False,
+    )
+
+    score_model_design_health(
+        [
+            {"name": "dws_orders", "layer": "DWS", "columns": []},
+            {"name": "dws_payments", "layer": "DWS", "columns": []},
+        ],
+        [],
+        [],
+        model_metadata={
+            "dws_orders": {
+                "table_type": "fact",
+                "grain": {"keys": ["id"]},
+            },
+            "dws_payments": {
+                "table_type": "fact",
+                "grain": {"keys": ["id"]},
+            },
+        },
+    )
+
+    assert calls == {
+        "builds": 1,
+        "fact_tables": ["dws_orders", "dws_payments"],
+    }
 
 
 def test_model_design_flags_dwd_fact_with_non_atomic_metrics():

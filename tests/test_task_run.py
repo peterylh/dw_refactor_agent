@@ -194,3 +194,66 @@ def test_discover_ods_dates_uses_model_layer(monkeypatch, tmp_path):
         "SELECT DISTINCT DATE(load_time) AS d FROM demo_db.source_events ORDER BY d",
     ]
     config._model_metadata_cache.clear()
+
+
+def test_build_job_dag_accepts_structured_lineage_edges(monkeypatch, tmp_path):
+    lineage_dir = tmp_path / "lineage"
+    lineage_dir.mkdir()
+    (lineage_dir / "lineage_data_demo.json").write_text(
+        """
+        {
+          "edges": [
+            {
+              "source": {"type": "column", "id": "ods_order.order_id"},
+              "target": {"type": "column", "id": "dwd_order_detail.order_id"}
+            },
+            {
+              "source": {"type": "column", "id": "dwd_order_detail.order_id"},
+              "target": {"type": "table", "id": "dws_order_summary"},
+              "relation_type": "filter"
+            },
+            {
+              "source": {"type": "literal", "value": "1"},
+              "target": {"type": "column", "id": "dwd_order_detail.flag"}
+            },
+            {
+              "source": {"type": "column", "id": "dwd_order_detail.order_id"},
+              "target": {"type": "column", "id": "dwd_order_detail.order_id"}
+            }
+          ]
+        }
+        """,
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(task_run, "_root", tmp_path)
+
+    dag = task_run._build_job_dag("demo")
+
+    assert dag._deps == {
+        "ods_order": {"dwd_order_detail"},
+        "dwd_order_detail": {"dws_order_summary"},
+    }
+
+
+def test_dag_needs_refresh_when_loaded_targets_do_not_match_tasks():
+    dag = task_run.JobDAG([
+        {"source": "M_SHOP_04_ORDER_DI", "target": "I_SHOP_CATG_SALE_MS"},
+        {"source": "M_SHOP_04_ORDER_DI", "target": "I_SHOP_STORE_SALE_DS"},
+    ])
+
+    assert task_run._dag_needs_refresh_for_tasks(
+        dag,
+        {"dwd_order_detail", "dws_store_sales_daily"},
+    ) is True
+
+
+def test_dag_needs_refresh_keeps_current_dag_with_matching_targets():
+    dag = task_run.JobDAG([
+        {"source": "ods_order", "target": "dwd_order_detail"},
+        {"source": "dwd_order_detail", "target": "dws_store_sales_daily"},
+    ])
+
+    assert task_run._dag_needs_refresh_for_tasks(
+        dag,
+        {"dwd_order_detail", "dws_store_sales_daily"},
+    ) is False

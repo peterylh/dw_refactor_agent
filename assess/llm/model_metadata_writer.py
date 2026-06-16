@@ -73,28 +73,23 @@ DDL_NON_COLUMN_PREFIXES = {
 def build_inspection_contexts(project: str,
                               lineage_data: dict[str, Any]) -> list[TableContext]:
     """构建需要 LLM 巡检并回写模型元数据的表上下文。"""
-    return [
-        ctx for ctx in build_contexts(project, lineage_data)
-        if ctx.layer in WRITABLE_METADATA_LAYERS
-    ]
+    return build_contexts(
+        project,
+        lineage_data,
+        layers=WRITABLE_METADATA_LAYERS,
+    )
 
 
 def build_dwd_contexts(project: str,
                        lineage_data: dict[str, Any]) -> list[TableContext]:
     """构建项目 DWD 层表的识别上下文。"""
-    return [
-        ctx for ctx in build_contexts(project, lineage_data)
-        if ctx.layer == "DWD"
-    ]
+    return build_contexts(project, lineage_data, layers={"DWD"})
 
 
 def build_metric_contexts(project: str,
                           lineage_data: dict[str, Any]) -> list[TableContext]:
     """构建项目指标识别上下文，覆盖 DWD 与 DWS。"""
-    return [
-        ctx for ctx in build_contexts(project, lineage_data)
-        if ctx.layer in METRIC_LAYERS
-    ]
+    return build_contexts(project, lineage_data, layers=METRIC_LAYERS)
 
 
 def model_path_for_table(project: str, table_name: str) -> Path:

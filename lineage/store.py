@@ -1,0 +1,57 @@
+"""Lineage storage interfaces."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import Protocol
+
+from lineage.model import LineageSnapshot
+
+
+class LineageStore(Protocol):
+    """Storage abstraction for loading lineage snapshots."""
+
+    def load_snapshot(
+        self,
+        project: str,
+        snapshot_id: str | None = None,
+    ) -> LineageSnapshot:
+        """Load a lineage snapshot for one project."""
+
+
+class JsonLineageStore:
+    """Load lineage snapshots from the repository's JSON files."""
+
+    def __init__(self, lineage_dir: Path | None = None):
+        self.lineage_dir = Path(lineage_dir) if lineage_dir else Path(__file__).parent
+
+    def load_snapshot(
+        self,
+        project: str,
+        snapshot_id: str | None = None,
+    ) -> LineageSnapshot:
+        path = self._snapshot_path(project, snapshot_id)
+        with path.open(encoding="utf-8") as file:
+            data = json.load(file)
+        return LineageSnapshot.from_dict(
+            project,
+            data,
+            snapshot_id=snapshot_id or "",
+        )
+
+    def _snapshot_path(self, project: str, snapshot_id: str | None) -> Path:
+        if snapshot_id:
+            return self.lineage_dir / f"lineage_data_{project}_{snapshot_id}.json"
+
+        project_path = self.lineage_dir / f"lineage_data_{project}.json"
+        if project_path.exists():
+            return project_path
+
+        legacy_path = self.lineage_dir / "lineage_data.json"
+        if project == "shop" and legacy_path.exists():
+            return legacy_path
+
+        raise FileNotFoundError(
+            f"未找到 {project} 的血缘数据文件 (lineage_data_{project}.json)"
+        )

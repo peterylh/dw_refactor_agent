@@ -3,6 +3,7 @@ from pathlib import Path
 import yaml
 
 import config
+import assess.context_builder as context_builder_module
 from assess.context_builder import (
     build_contexts,
     extract_column_lineage,
@@ -94,6 +95,48 @@ def test_build_contexts_filters_middle_layer(sample_lineage_data, tmp_path):
     assert "dws_store_sales_daily" in table_names
     assert "ods_customer" not in table_names
     assert "ads_sales_dashboard" not in table_names
+
+
+def test_build_contexts_reuses_one_lineage_view(
+        sample_lineage_data, tmp_path, monkeypatch):
+    ddl_dir = tmp_path / "ddl"
+    tasks_dir = tmp_path / "tasks"
+    ddl_dir.mkdir()
+    tasks_dir.mkdir()
+    calls = {"builds": 0, "column_tables": []}
+
+    class FakeLineageView:
+        @classmethod
+        def from_data(cls, project, lineage_data):
+            calls["builds"] += 1
+            assert project == "test_proj"
+            assert lineage_data is sample_lineage_data
+            return cls()
+
+        def table_graph(self):
+            return (
+                {
+                    "dwd_customer": {"ods_customer"},
+                    "dws_store_sales_daily": {"dwd_order_detail"},
+                    "ads_sales_dashboard": {"dwd_customer"},
+                },
+                {
+                    "ods_customer": {"dwd_customer"},
+                    "dwd_order_detail": {"dws_store_sales_daily"},
+                    "dwd_customer": {"ads_sales_dashboard"},
+                },
+            )
+
+        def column_lineage_for_table(self, table_name):
+            calls["column_tables"].append(table_name)
+            return [{"target": f"{table_name}.id"}]
+
+    monkeypatch.setattr(context_builder_module, "LineageView", FakeLineageView)
+
+    contexts = build_contexts("test_proj", sample_lineage_data, ddl_dir, tasks_dir)
+
+    assert calls["builds"] == 1
+    assert calls["column_tables"] == [ctx.table_name for ctx in contexts]
 
 
 def test_build_context_with_ddl_and_task(sample_lineage_data, tmp_path):

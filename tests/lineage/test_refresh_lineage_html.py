@@ -204,3 +204,46 @@ def test_update_lineage_html_writes_new_output_from_template(tmp_path):
 
     assert '{"nodes": [{"id": 1}]}' in output.read_text(encoding="utf-8")
     assert '{"old": true}' in template.read_text(encoding="utf-8")
+
+
+def test_build_frontend_lineage_data_normalizes_structured_edges():
+    data = {
+        "tables": [
+            {
+                "name": "ods_order",
+                "layer": "ODS",
+                "columns": [{"name": "order_id", "type": "BIGINT"}],
+            },
+            {
+                "name": "dwd_order_detail",
+                "layer": "DWD",
+                "columns": [{"name": "order_id", "type": "BIGINT"}],
+            },
+        ],
+        "edges": [
+            {
+                "source": {"type": "column", "id": "ods_order.order_id"},
+                "target": {"type": "column", "id": "dwd_order_detail.order_id"},
+                "relation_type": "direct",
+            },
+            {
+                "source": {"type": "literal", "value": "1"},
+                "target": {"type": "column", "id": "dwd_order_detail.flag"},
+                "relation_type": "direct",
+            },
+        ],
+    }
+
+    frontend_data = refresh_html.build_frontend_lineage_data(data)
+
+    assert frontend_data["edges"][0]["source"] == "ods_order.order_id"
+    assert frontend_data["edges"][0]["target"] == "dwd_order_detail.order_id"
+    assert frontend_data["edges"][1]["source"] == ""
+    assert frontend_data["edges"][1]["target"] == "dwd_order_detail.flag"
+    assert {
+        "id": "ods_order.order_id",
+        "table": "ods_order",
+        "column": "order_id",
+        "layer": "ODS",
+        "type": "BIGINT",
+    } in frontend_data["nodes"]

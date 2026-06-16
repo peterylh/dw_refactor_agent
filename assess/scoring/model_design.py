@@ -29,6 +29,7 @@ from assess.scoring.config import (
 )
 from config import layer_rank
 from lineage.table_graph import _table_from_node, build_table_layer_map
+from lineage.view import LineageView
 
 AGGREGATE_PATTERN = re.compile(
     r"\b(SUM|COUNT|AVG|MIN|MAX)\s*\(",
@@ -298,66 +299,20 @@ def _edge_target_column(edge: dict) -> str:
 
 
 def _lineage_facts_from_edges(edges: list | None, table_name: str) -> dict:
-    aggregate_columns = set()
-    constant_columns = set()
-    plain_columns = {}
-    group_by_sources = set()
-    direct_edges = []
-    source_files = set()
-
-    for edge in edges or []:
-        target_table = _edge_target_table(edge)
-        if target_table != table_name:
-            continue
-
-        relation_type = str(edge.get("relation_type") or "direct").lower()
-        transformation = str(
-            edge.get("transformation_type")
-            or _transformation_type_for_expression(edge.get("expression", ""))
-        ).lower()
-        source_type = _edge_ref_type(edge.get("source"))
-        source_id = _edge_ref_id(edge.get("source"))
-        target_column = _edge_target_column(edge)
-        source_file = str(edge.get("source_file") or "")
-        if source_file:
-            source_files.add(source_file)
-
-        if relation_type == "group_by" and source_type == "column":
-            if source_id:
-                group_by_sources.add(source_id)
-            continue
-
-        if relation_type != "direct" or not target_column:
-            continue
-
-        direct_edges.append(edge)
-        if transformation == "aggregation":
-            aggregate_columns.add(target_column)
-        elif transformation == "constant" or source_type in {"literal", "expression"}:
-            constant_columns.add(target_column)
-        elif source_type == "column":
-            plain_columns[target_column] = source_id
-
-    return {
-        "has_lineage": bool(direct_edges or group_by_sources),
-        "has_group_by": bool(group_by_sources),
-        "has_aggregate": bool(aggregate_columns),
-        "aggregate_columns": sorted(aggregate_columns),
-        "constant_columns": sorted(constant_columns),
-        "plain_columns": sorted(plain_columns),
-        "plain_column_sources": dict(sorted(plain_columns.items())),
-        "group_by_sources": sorted(group_by_sources),
-        "source_files": sorted(source_files),
-    }
+    return LineageView.from_parts(
+        "",
+        [],
+        edges or [],
+    ).lineage_facts_for_table(table_name)
 
 
 def _combined_design_facts(
     asset_catalog: dict | None,
-    edges: list | None,
+    lineage_view: LineageView,
     table_name: str,
 ) -> dict:
     sql_facts = _table_sql_facts(asset_catalog, table_name)
-    edge_facts = _lineage_facts_from_edges(edges, table_name)
+    edge_facts = lineage_view.lineage_facts_for_table(table_name)
     return {
         **sql_facts,
         "has_group_by": sql_facts["has_group_by"] or edge_facts["has_group_by"],
@@ -567,6 +522,12 @@ def score_model_design_health(
     """
     table_layers = build_table_layer_map(tables)
     table_count = len(tables)
+    lineage_view = LineageView.from_parts(
+        "assessment",
+        tables,
+        edges,
+        indirect_edges,
+    )
 
     table_edges = defaultdict(set)
     for edge in edges:
@@ -843,7 +804,11 @@ def score_model_design_health(
         if not _is_fact_table(model_metadata, table_name):
             continue
 
-        design_facts = _combined_design_facts(asset_catalog, edges, table_name)
+        design_facts = _combined_design_facts(
+            asset_catalog,
+            lineage_view,
+            table_name,
+        )
         if layer == "DWD":
             has_aggregation = (
                 design_facts["has_group_by"] or design_facts["has_aggregate"]

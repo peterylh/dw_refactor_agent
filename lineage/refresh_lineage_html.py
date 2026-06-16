@@ -76,6 +76,57 @@ def iter_task_sql_files(tasks_dir):
     return files
 
 
+def _edge_ref_id(ref):
+    if isinstance(ref, dict):
+        ref_type = str(ref.get("type") or "")
+        if ref_type in ("column", "table"):
+            return str(ref.get("id") or "")
+        return ""
+    return str(ref or "")
+
+
+def build_frontend_lineage_data(data):
+    """Build lineage payload compatible with the HTML field graph."""
+    frontend_data = dict(data)
+    frontend_edges = []
+    for edge in data.get("edges") or []:
+        normalized = dict(edge)
+        normalized["source"] = _edge_ref_id(edge.get("source"))
+        normalized["target"] = _edge_ref_id(edge.get("target"))
+        frontend_edges.append(normalized)
+    frontend_data["edges"] = frontend_edges
+
+    nodes = []
+    seen = set()
+    for table in data.get("tables") or []:
+        table_name = str(table.get("name") or "")
+        if not table_name:
+            continue
+        layer = str(table.get("layer") or "")
+        for column in table.get("columns") or []:
+            column_name = str(column.get("name") or "")
+            if not column_name:
+                continue
+            node_id = f"{table_name}.{column_name}"
+            if node_id in seen:
+                continue
+            seen.add(node_id)
+            nodes.append({
+                "id": node_id,
+                "table": table_name,
+                "column": column_name,
+                "layer": layer,
+                "type": str(column.get("type") or ""),
+            })
+
+    if nodes:
+        frontend_data["nodes"] = nodes
+    elif "nodes" in data:
+        frontend_data["nodes"] = list(data["nodes"])
+
+    return frontend_data
+
+
 def generate_jobs(data, tasks_dir, current_db, job_logic=None, project="shop"):
     file_edges = {}
     for e in data["edges"]:
@@ -237,7 +288,8 @@ def main():
         project=args.project,
     )
 
-    lineage_json = json.dumps(data, ensure_ascii=False, indent=2)
+    frontend_data = build_frontend_lineage_data(data)
+    lineage_json = json.dumps(frontend_data, ensure_ascii=False, indent=2)
     jobs_json = json.dumps(jobs, ensure_ascii=False, indent=2)
 
     template = ctx["job_template"]

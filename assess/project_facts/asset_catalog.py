@@ -132,6 +132,26 @@ def _source_file_keys(source_file: str) -> set[str]:
     return {source}
 
 
+def _edge_ref_type(ref) -> str:
+    return str(ref.get("type") or "") if isinstance(ref, dict) else "column"
+
+
+def _edge_ref_id(ref) -> str:
+    if isinstance(ref, dict):
+        return str(ref.get("id") or "")
+    return str(ref or "")
+
+
+def _edge_target_table(edge: dict) -> str:
+    target = edge.get("target")
+    target_id = _edge_ref_id(target)
+    if not target_id:
+        return ""
+    if _edge_ref_type(target) == "table":
+        return _short_table_name(target_id)
+    return _short_table_name(_table_from_node(target_id))
+
+
 def _transient_targets_from_lineage_tables(
     tables: list | None,
 ) -> dict[str, set[str]]:
@@ -157,7 +177,7 @@ def _lineage_targets_by_source_file(
     ignored_targets_by_source_file = ignored_targets_by_source_file or {}
 
     for edge in edges or []:
-        target = _short_table_name(_table_from_node(str(edge.get("target") or "")))
+        target = _edge_target_table(edge)
         if not target:
             continue
         for key in _source_file_keys(edge.get("source_file", "")):

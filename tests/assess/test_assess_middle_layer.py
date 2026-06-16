@@ -785,6 +785,30 @@ DROP TABLE IF EXISTS demo.tmp_orders_stage;
     assert "tmp_orders_stage" not in catalog["tables"]
 
 
+def test_asset_catalog_links_structured_edge_target_to_task(tmp_path):
+    project_dir = tmp_path / "demo"
+    (project_dir / "tasks").mkdir(parents=True)
+    (project_dir / "tasks" / "dws_orders.sql").write_text(
+        "INSERT INTO demo.dws_orders SELECT 1 AS id;",
+        encoding="utf-8",
+    )
+
+    catalog = build_asset_catalog(
+        [{"name": "dws_orders", "layer": "DWS", "columns": []}],
+        {"dws_orders": {"name": "dws_orders", "layer": "DWS"}},
+        project_dir,
+        edges=[{
+            "source": {"type": "column", "id": "dwd_orders.id"},
+            "target": {"type": "column", "id": "demo.dws_orders.id"},
+            "relation_type": "direct",
+            "source_file": "dws_orders.sql",
+        }],
+        indirect_edges=[],
+    )
+
+    assert catalog["tasks"][0]["lineage_targets"] == {"dws_orders"}
+
+
 def _write_simple_table_assets(project_dir, table_names):
     (project_dir / "ddl").mkdir(parents=True, exist_ok=True)
     (project_dir / "models").mkdir(exist_ok=True)

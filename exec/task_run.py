@@ -64,15 +64,34 @@ def _build_job_dag(project: str) -> JobDAG:
     table_edges = []
     seen = set()
     for e in data.get("edges", []):
-        src = e["source"].rsplit(".", 1)[0]
-        tgt = e["target"].rsplit(".", 1)[0]
-        if src == tgt:
+        src = JobDAG._edge_table(e.get("source"))
+        tgt = JobDAG._edge_table(e.get("target"))
+        if not src or not tgt or src == tgt:
             continue
         key = (src, tgt)
         if key not in seen:
             seen.add(key)
             table_edges.append({"source": src, "target": tgt})
     return JobDAG(table_edges)
+
+
+def _dag_needs_refresh_for_tasks(dag: JobDAG, task_names: set[str]) -> bool:
+    """Return True when a loaded DAG looks unrelated to current task names."""
+    if not task_names:
+        return False
+
+    target_tables = set(dag._rev)
+    if not target_tables:
+        for edge in dag._edges:
+            target = JobDAG._edge_table(edge.get("target"))
+            if target:
+                target_tables.add(target)
+
+    if not target_tables:
+        return False
+
+    matched_targets = target_tables & task_names
+    return len(matched_targets) / len(target_tables) < 0.5
 
 
 def _get_task_files(project: str) -> dict[str, Path]:
@@ -423,6 +442,9 @@ def main():
         if args.etl_dates:
             print("提示: --full-refresh 模式下忽略 --etl-dates")
 
+    task_files = _get_task_files(project)
+    task_names = set(task_files.keys())
+
     dag_path = _root / "lineage" / f"job_dag_{project}.json"
     if args.refresh_dag or not dag_path.exists():
         print(f"生成 DAG: {dag_path}")
@@ -432,8 +454,12 @@ def main():
     else:
         print(f"加载 DAG: {dag_path}")
         dag = JobDAG.load(dag_path)
+        if _dag_needs_refresh_for_tasks(dag, task_names):
+            print("  DAG 与当前作业不匹配, 重新生成...")
+            dag = _build_job_dag(project)
+            dag.save(dag_path)
+            print(f"  DAG 已保存: {len(dag._edges)} 条边")
 
-    task_files = _get_task_files(project)
     if args.job_list is not None:
         job_set = set(args.job_list)
         missing = job_set - set(task_files.keys())
