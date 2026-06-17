@@ -245,3 +245,130 @@ def test_extract_lineage_from_task_files_reports_task_progress(
         (1, 2, "a.sql", 1),
         (2, 2, "b.sql", 1),
     ]
+
+
+def test_extract_lineage_from_task_files_reports_parse_errors(
+    tmp_path,
+    monkeypatch,
+    schema_ods_order,
+):
+    tasks_dir = tmp_path / "tasks"
+    tasks_dir.mkdir()
+    task_file = tasks_dir / "broken.sql"
+    task_file.write_text("SELECT (", encoding="utf-8")
+
+    def fail_parse(_sql_text, dialect):
+        raise ValueError("bad sql")
+
+    monkeypatch.setattr(lineage_extractor.sqlglot, "parse", fail_parse)
+
+    result = lineage_extractor.extract_lineage_from_task_files(
+        [task_file],
+        tasks_dir,
+        schema_ods_order,
+        parallel=1,
+    )
+
+    assert result["lineage"] == []
+    assert result["errors"] == [
+        {
+            "source_file": "broken.sql",
+            "stage": "parse",
+            "error": "ValueError: bad sql",
+        }
+    ]
+    assert result["task_results"][0]["errors"] == result["errors"]
+
+
+def test_extract_lineage_reports_failed_task_and_column(
+    tmp_path,
+    monkeypatch,
+):
+    schema = build_schema_from_texts(
+        [
+            """
+            CREATE TABLE shop_dm.ods_order (
+                order_id BIGINT,
+                amount DECIMAL(12,2)
+            )
+            """,
+            """
+            CREATE TABLE shop_dm.dwd_order (
+                order_id BIGINT,
+                amount DECIMAL(12,2)
+            )
+            """,
+        ]
+    )
+    tasks_dir = tmp_path / "tasks"
+    tasks_dir.mkdir()
+    task_file = tasks_dir / "dwd_order.sql"
+    task_file.write_text(
+        """
+        INSERT INTO shop_dm.dwd_order
+        SELECT order_id, amount FROM shop_dm.ods_order
+        """,
+        encoding="utf-8",
+    )
+
+    def flaky_lineage(column, sql, schema, dialect, **kwargs):
+        if column == "amount":
+            raise RuntimeError("lineage boom")
+        projection = next(
+            item for item in sql.expressions if item.alias_or_name == column
+        )
+        return types.SimpleNamespace(expression=projection, downstream=[])
+
+    monkeypatch.setattr(lineage_extractor, "lineage", flaky_lineage)
+
+    result = lineage_extractor.extract_lineage_from_task_files(
+        [task_file],
+        tasks_dir,
+        schema,
+        parallel=1,
+    )
+
+    assert result["errors"] == [
+        {
+            "source_file": "dwd_order.sql",
+            "stage": "lineage_column",
+            "error": "RuntimeError: lineage boom",
+            "target_table": "dwd_order",
+            "target_column": "amount",
+            "expression": "amount",
+        }
+    ]
+
+
+def test_extract_lineage_from_task_files_reports_unhandled_task_errors(
+    tmp_path,
+    monkeypatch,
+    schema_ods_order,
+):
+    tasks_dir = tmp_path / "tasks"
+    tasks_dir.mkdir()
+    task_file = tasks_dir / "bad_worker.sql"
+    task_file.write_text(
+        "INSERT INTO t1 SELECT order_id FROM shop_dm.ods_order",
+        encoding="utf-8",
+    )
+
+    def fail_task(_work_item, _schema):
+        raise RuntimeError("unexpected boom")
+
+    monkeypatch.setattr(lineage_extractor, "_extract_task_work_item", fail_task)
+
+    result = lineage_extractor.extract_lineage_from_task_files(
+        [task_file],
+        tasks_dir,
+        schema_ods_order,
+        parallel=1,
+    )
+
+    assert result["errors"] == [
+        {
+            "source_file": "bad_worker.sql",
+            "stage": "worker",
+            "error": "RuntimeError: unexpected boom",
+        }
+    ]
