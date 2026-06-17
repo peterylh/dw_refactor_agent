@@ -1628,6 +1628,37 @@ def build_lineage_output(all_lineage, schema, transient_tables=None):
     }
 
 
+def format_layer_statistics(tables):
+    """Return compact layer-level table and column counts for CLI output."""
+    ordered_layers = ("ODS", "DWD", "DWS", "DIM", "ADS")
+    stats = {
+        layer: {"tables": 0, "columns": 0}
+        for layer in (*ordered_layers, "OTHER")
+    }
+
+    for table in tables or []:
+        layer = str(table.get("layer") or "OTHER").upper()
+        if layer not in stats:
+            layer = "OTHER"
+        stats[layer]["tables"] += 1
+        stats[layer]["columns"] += len(table.get("columns") or [])
+
+    lines = ["分层统计:"]
+    for layer in ordered_layers:
+        layer_stats = stats[layer]
+        lines.append(
+            f"  {layer}: {layer_stats['tables']} 个表, "
+            f"{layer_stats['columns']} 个字段"
+        )
+    if stats["OTHER"]["tables"]:
+        other_stats = stats["OTHER"]
+        lines.append(
+            f"  OTHER: {other_stats['tables']} 个表, "
+            f"{other_stats['columns']} 个字段"
+        )
+    return lines
+
+
 # ============================================================
 # 6. 主流程
 # ============================================================
@@ -1729,30 +1760,9 @@ def main():
     if legacy_output_path:
         print(f"  兼容输出: {legacy_output_path}")
 
-    table_map = {table["name"]: table for table in output["tables"]}
-    for layer in ["ODS", "DWD", "DWS", "ADS"]:
-        layer_tables = [
-            (name, info)
-            for name, info in table_map.items()
-            if info["layer"] == layer
-        ]
-        if layer_tables:
-            print(f"\n[{layer}]")
-            for name, info in sorted(layer_tables):
-                cols = info["columns"]
-                print(
-                    f"  {name} ({len(cols)}): {', '.join(c['name'] for c in cols[:10])}{'...' if len(cols) > 10 else ''}"
-                )
-
-    others = [
-        (name, info)
-        for name, info in table_map.items()
-        if info["layer"] == "OTHER"
-    ]
-    if others:
-        print("\n[UNRESOLVED]")
-        for name, info in sorted(others):
-            print(f"  {name} ({len(info['columns'])} cols)")
+    print()
+    for line in format_layer_statistics(output["tables"]):
+        print(line)
 
     return output
 

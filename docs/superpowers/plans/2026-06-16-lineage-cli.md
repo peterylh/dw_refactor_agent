@@ -100,7 +100,7 @@ Expected: PASS.
 - [ ] **Step 1: Write failing CLI tests**
 
 Use a temp `lineage_data_demo.json` and invoke `main(argv)`. Assert:
-- `show` prints table lineage;
+- `table` prints table lineage;
 - `column` requires `--column` and prints column lineage;
 - `stats` prints project counts;
 - `export-html` writes a standalone HTML file containing only the selected local subgraph.
@@ -114,7 +114,7 @@ Expected: FAIL because `lineage.lineage_cli` does not exist.
 
 Add subcommands:
 - `stats --project PROJECT [--lineage-dir DIR] [--format text|json]`
-- `show --project PROJECT --table TABLE [--direction upstream|downstream|both] [--depth N] [--format text|json|dot] [--lineage-dir DIR]`
+- `table --project PROJECT --table TABLE [--direction upstream|downstream|both] [--depth N] [--format text|json|dot] [--lineage-dir DIR]`
 - `column --project PROJECT --table TABLE --column COLUMN [--direction upstream|downstream|both] [--depth N] [--format text|json] [--lineage-dir DIR]`
 - `export-html --project PROJECT --table TABLE [--direction upstream|downstream|both] [--depth N] --output PATH [--lineage-dir DIR]`
 

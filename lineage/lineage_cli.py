@@ -56,7 +56,7 @@ def _handle_stats(args: argparse.Namespace) -> int:
     return 0
 
 
-def _handle_show(args: argparse.Namespace) -> int:
+def _handle_table(args: argparse.Namespace) -> int:
     subgraph = build_table_subgraph(
         _open_view(args),
         args.table,
@@ -135,28 +135,28 @@ def build_parser() -> argparse.ArgumentParser:
     )
     stats_parser.set_defaults(handler=_handle_stats)
 
-    show_parser = subparsers.add_parser("show", help="Show table lineage")
-    _add_common_options(show_parser)
-    show_parser.add_argument("--table", required=True, help="Root table name")
-    show_parser.add_argument(
+    table_parser = subparsers.add_parser("table", help="Show table lineage")
+    _add_common_options(table_parser)
+    table_parser.add_argument("--table", required=True, help="Root table name")
+    table_parser.add_argument(
         "--direction",
         choices=["upstream", "downstream", "both"],
         default="upstream",
         help="Lineage traversal direction",
     )
-    show_parser.add_argument(
+    table_parser.add_argument(
         "--depth",
         type=int,
         default=1,
         help="Maximum lineage hops",
     )
-    show_parser.add_argument(
+    table_parser.add_argument(
         "--format",
         choices=["text", "json", "dot"],
         default="text",
         help="Output format",
     )
-    show_parser.set_defaults(handler=_handle_show)
+    table_parser.set_defaults(handler=_handle_table)
 
     column_parser = subparsers.add_parser("column", help="Show column lineage")
     _add_common_options(column_parser)
