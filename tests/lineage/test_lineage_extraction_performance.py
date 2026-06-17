@@ -95,6 +95,86 @@ def test_lineage_nodes_for_select_reuses_scope_across_output_columns(
     assert scopes[0] is scopes[1]
 
 
+def test_lineage_scope_failure_is_reported_as_warning(
+    monkeypatch,
+    schema_ods_order,
+):
+    diagnostics = []
+
+    def fail_scope(_select_expr, _schema):
+        raise RuntimeError("scope boom")
+
+    def fake_lineage(column, sql, schema, dialect, scope=None):
+        projection = next(
+            item for item in sql.expressions if item.alias_or_name == column
+        )
+        return types.SimpleNamespace(expression=projection, downstream=[])
+
+    monkeypatch.setattr(lineage_extractor, "_lineage_scope", fail_scope)
+    monkeypatch.setattr(lineage_extractor, "lineage", fake_lineage)
+
+    lineage_extractor._lineage_nodes_for_select(
+        sqlglot.parse_one(
+            """
+            SELECT order_id
+            FROM shop_dm.ods_order
+            """,
+            dialect="doris",
+        ),
+        schema_ods_order,
+        file_path="dwd_order.sql",
+        target_table="dwd_order",
+        diagnostics=diagnostics,
+    )
+
+    assert diagnostics == [
+        {
+            "source_file": "dwd_order.sql",
+            "stage": "lineage_scope",
+            "severity": "warning",
+            "error": "RuntimeError: scope boom",
+            "target_table": "dwd_order",
+        }
+    ]
+    assert lineage_extractor._fatal_diagnostics(diagnostics) == []
+
+
+def test_should_write_lineage_output_blocks_existing_file_on_fatal_error(
+    tmp_path,
+):
+    output_path = tmp_path / "lineage_data_shop.json"
+    output_path.write_text("old lineage", encoding="utf-8")
+
+    assert not lineage_extractor._should_write_lineage_output(
+        fatal_diagnostics=[{"severity": "error"}],
+        output_paths=[output_path],
+        force_overwrite_on_error=False,
+    )
+
+
+def test_should_write_lineage_output_allows_new_file_on_fatal_error(tmp_path):
+    output_path = tmp_path / "lineage_data_shop.json"
+
+    assert lineage_extractor._should_write_lineage_output(
+        fatal_diagnostics=[{"severity": "error"}],
+        output_paths=[output_path],
+        force_overwrite_on_error=False,
+    )
+
+
+def test_should_write_lineage_output_allows_forced_overwrite_on_fatal_error(
+    tmp_path,
+):
+    output_path = tmp_path / "lineage_data_shop.json"
+    output_path.write_text("old lineage", encoding="utf-8")
+
+    assert lineage_extractor._should_write_lineage_output(
+        fatal_diagnostics=[{"severity": "error"}],
+        output_paths=[output_path],
+        force_overwrite_on_error=True,
+    )
+
+
 def test_collect_statement_table_names_includes_targets_sources_and_cte_sources():
     statements = sqlglot.parse(
         """
@@ -244,4 +324,136 @@ def test_extract_lineage_from_task_files_reports_task_progress(
     assert events == [
         (1, 2, "a.sql", 1),
         (2, 2, "b.sql", 1),
+    ]
+
+
+def test_extract_lineage_from_task_files_reports_parse_errors(
+    tmp_path,
+    monkeypatch,
+    schema_ods_order,
+):
+    tasks_dir = tmp_path / "tasks"
+    tasks_dir.mkdir()
+    task_file = tasks_dir / "broken.sql"
+    task_file.write_text("SELECT (", encoding="utf-8")
+
+    def fail_parse(_sql_text, dialect):
+        raise ValueError("bad sql")
+
+    monkeypatch.setattr(lineage_extractor.sqlglot, "parse", fail_parse)
+
+    result = lineage_extractor.extract_lineage_from_task_files(
+        [task_file],
+        tasks_dir,
+        schema_ods_order,
+        parallel=1,
+    )
+
+    assert result["lineage"] == []
+    assert result["errors"] == [
+        {
+            "source_file": "broken.sql",
+            "stage": "parse",
+            "severity": "error",
+            "error": "ValueError: bad sql",
+        }
+    ]
+    assert result["task_results"][0]["errors"] == result["errors"]
+
+
+def test_extract_lineage_reports_failed_task_and_column(
+    tmp_path,
+    monkeypatch,
+):
+    schema = build_schema_from_texts(
+        [
+            """
+            CREATE TABLE shop_dm.ods_order (
+                order_id BIGINT,
+                amount DECIMAL(12,2)
+            )
+            """,
+            """
+            CREATE TABLE shop_dm.dwd_order (
+                order_id BIGINT,
+                amount DECIMAL(12,2)
+            )
+            """,
+        ]
+    )
+    tasks_dir = tmp_path / "tasks"
+    tasks_dir.mkdir()
+    task_file = tasks_dir / "dwd_order.sql"
+    task_file.write_text(
+        """
+        INSERT INTO shop_dm.dwd_order
+        SELECT order_id, amount FROM shop_dm.ods_order
+        """,
+        encoding="utf-8",
+    )
+
+    def flaky_lineage(column, sql, schema, dialect, **kwargs):
+        if column == "amount":
+            raise RuntimeError("lineage boom")
+        projection = next(
+            item for item in sql.expressions if item.alias_or_name == column
+        )
+        return types.SimpleNamespace(expression=projection, downstream=[])
+
+    monkeypatch.setattr(lineage_extractor, "lineage", flaky_lineage)
+
+    result = lineage_extractor.extract_lineage_from_task_files(
+        [task_file],
+        tasks_dir,
+        schema,
+        parallel=1,
+    )
+
+    assert result["errors"] == [
+        {
+            "source_file": "dwd_order.sql",
+            "stage": "lineage_column",
+            "severity": "error",
+            "error": "RuntimeError: lineage boom",
+            "target_table": "dwd_order",
+            "target_column": "amount",
+            "expression": "amount",
+        }
+    ]
+
+
+def test_extract_lineage_from_task_files_reports_unhandled_task_errors(
+    tmp_path,
+    monkeypatch,
+    schema_ods_order,
+):
+    tasks_dir = tmp_path / "tasks"
+    tasks_dir.mkdir()
+    task_file = tasks_dir / "bad_worker.sql"
+    task_file.write_text(
+        "INSERT INTO t1 SELECT order_id FROM shop_dm.ods_order",
+        encoding="utf-8",
+    )
+
+    def fail_task(_work_item, _schema):
+        raise RuntimeError("unexpected boom")
+
+    monkeypatch.setattr(
+        lineage_extractor, "_extract_task_work_item", fail_task
+    )
+
+    result = lineage_extractor.extract_lineage_from_task_files(
+        [task_file],
+        tasks_dir,
+        schema_ods_order,
+        parallel=1,
+    )
+
+    assert result["errors"] == [
+        {
+            "source_file": "bad_worker.sql",
+            "stage": "worker",
+            "severity": "error",
+            "error": "RuntimeError: unexpected boom",
+        }
     ]

@@ -621,7 +621,67 @@ def _projection_output_names(query_expr):
     return []
 
 
-def _lineage_nodes_for_select(select_expr, schema):
+def _diagnostic_error(error):
+    return f"{type(error).__name__}: {error}"
+
+
+_DIAGNOSTIC_SEVERITY_BY_STAGE = {
+    "lineage_scope": "warning",
+    "derived_lineage_column": "warning",
+    "parse": "error",
+    "lineage_column": "error",
+    "worker": "error",
+}
+
+
+def _diagnostic_severity(stage):
+    return _DIAGNOSTIC_SEVERITY_BY_STAGE.get(str(stage or ""), "error")
+
+
+def _record_diagnostic(
+    diagnostics,
+    source_file,
+    stage,
+    error,
+    severity=None,
+    **context,
+):
+    if diagnostics is None:
+        return
+    diagnostics.append(
+        {
+            "source_file": source_file,
+            "stage": stage,
+            "severity": severity or _diagnostic_severity(stage),
+            "error": _diagnostic_error(error),
+            **{
+                key: value
+                for key, value in context.items()
+                if value is not None and value != ""
+            },
+        }
+    )
+
+
+def _fatal_diagnostics(diagnostics):
+    return [
+        diagnostic
+        for diagnostic in (diagnostics or [])
+        if (
+            diagnostic.get("severity")
+            or _diagnostic_severity(diagnostic.get("stage"))
+        )
+        == "error"
+    ]
+
+
+def _lineage_nodes_for_select(
+    select_expr,
+    schema,
+    file_path="",
+    target_table="",
+    diagnostics=None,
+):
     nodes = {}
     projections = (
         select_expr.expressions if isinstance(select_expr, exp.Select) else []
@@ -629,7 +689,14 @@ def _lineage_nodes_for_select(select_expr, schema):
     sqlglot_schema = _lineage_schema(schema)
     try:
         scope = _lineage_scope(select_expr, sqlglot_schema)
-    except Exception:
+    except Exception as exc:
+        _record_diagnostic(
+            diagnostics,
+            file_path,
+            "lineage_scope",
+            exc,
+            target_table=_strip_db(target_table),
+        )
         scope = None
     for idx, col_name in enumerate(_projection_output_names(select_expr)):
         if not col_name:
@@ -646,7 +713,19 @@ def _lineage_nodes_for_select(select_expr, schema):
                 dialect="doris",
                 scope=scope,
             )
-        except Exception:
+        except Exception as exc:
+            expression = ""
+            if idx < len(projections) and hasattr(projections[idx], "sql"):
+                expression = projections[idx].sql(dialect="doris")
+            _record_diagnostic(
+                diagnostics,
+                file_path,
+                "lineage_column",
+                exc,
+                target_table=_strip_db(target_table),
+                target_column=col_name,
+                expression=expression,
+            )
             continue
     return nodes
 
@@ -795,7 +874,13 @@ def _schema_has_column(schema, table_name, column_name):
     return False
 
 
-def _derived_leaf_sources(select_expr, column_name, schema):
+def _derived_leaf_sources(
+    select_expr,
+    column_name,
+    schema,
+    file_path="",
+    diagnostics=None,
+):
     """将派生表/CTE 输出列追溯到物理源表列。"""
     try:
         node = lineage(
@@ -804,7 +889,14 @@ def _derived_leaf_sources(select_expr, column_name, schema):
             schema=_lineage_schema(schema),
             dialect="doris",
         )
-    except Exception:
+    except Exception as exc:
+        _record_diagnostic(
+            diagnostics,
+            file_path,
+            "derived_lineage_column",
+            exc,
+            target_column=column_name,
+        )
         return []
 
     sources = []
@@ -828,6 +920,7 @@ def _indirect_entries_from_select(
     schema,
     default_table=None,
     _visited=None,
+    diagnostics=None,
 ):
     """从 SELECT 的 WHERE / JOIN ON / GROUP BY / HAVING 中提取间接血缘条目"""
     entries = []
@@ -874,7 +967,11 @@ def _indirect_entries_from_select(
         if tbl_or_alias:
             if tbl_or_alias in derived_sources:
                 return _derived_leaf_sources(
-                    derived_sources[tbl_or_alias], col_name, schema
+                    derived_sources[tbl_or_alias],
+                    col_name,
+                    schema,
+                    file_path=file_path,
+                    diagnostics=diagnostics,
                 )
             return [
                 (
@@ -886,7 +983,11 @@ def _indirect_entries_from_select(
         derived_aliases = [a for a in relation_aliases if a in derived_sources]
         if len(derived_aliases) == 1:
             sources = _derived_leaf_sources(
-                derived_sources[derived_aliases[0]], col_name, schema
+                derived_sources[derived_aliases[0]],
+                col_name,
+                schema,
+                file_path=file_path,
+                diagnostics=diagnostics,
             )
             if sources:
                 return sources
@@ -941,6 +1042,7 @@ def _indirect_entries_from_select(
                 schema,
                 default_table,
                 _visited,
+                diagnostics,
             )
         )
 
@@ -974,7 +1076,13 @@ def _indirect_entries_from_select(
     return entries
 
 
-def _extract_indirect(inner, target_table, file_path, schema):
+def _extract_indirect(
+    inner,
+    target_table,
+    file_path,
+    schema,
+    diagnostics=None,
+):
     """从可能包含 CTE 的 SELECT 中提取间接血缘"""
     entries = []
     default_table = _strip_db(target_table)
@@ -984,7 +1092,12 @@ def _extract_indirect(inner, target_table, file_path, schema):
     if isinstance(inner, (exp.Select, exp.SetOperation)):
         entries.extend(
             _indirect_entries_from_select(
-                inner, target_table, file_path, schema, default_table
+                inner,
+                target_table,
+                file_path,
+                schema,
+                default_table,
+                diagnostics=diagnostics,
             )
         )
     return entries
@@ -1037,12 +1150,13 @@ def _add_stats(stats):
         STATS[key] += int((stats or {}).get(key, 0))
 
 
-def extract_lineage_from_sql(sql_text, file_path, schema):
+def extract_lineage_from_sql(sql_text, file_path, schema, diagnostics=None):
     entries = []
     try:
         statements = sqlglot.parse(sql_text, dialect="doris")
     except Exception as e:
         print(f"  解析失败 {file_path}: {e}")
+        _record_diagnostic(diagnostics, file_path, "parse", e)
         STATS["parse_failures"] += 1
         return entries
 
@@ -1051,22 +1165,32 @@ def extract_lineage_from_sql(sql_text, file_path, schema):
         if stmt is None:
             continue
         if isinstance(stmt, exp.Insert):
-            entries.extend(_handle_insert(stmt, file_path, task_schema))
+            entries.extend(
+                _handle_insert(stmt, file_path, task_schema, diagnostics)
+            )
         elif isinstance(stmt, exp.Update):
-            entries.extend(_handle_update(stmt, file_path, task_schema))
+            entries.extend(
+                _handle_update(stmt, file_path, task_schema, diagnostics)
+            )
         elif isinstance(stmt, exp.Create):
-            entries.extend(_handle_create(stmt, file_path, task_schema))
+            entries.extend(
+                _handle_create(stmt, file_path, task_schema, diagnostics)
+            )
             _register_task_table_schema(
                 task_schema,
                 _target_table_sql(stmt.this),
                 _created_table_columns(stmt),
             )
         elif isinstance(stmt, exp.Merge):
-            entries.extend(_handle_merge(stmt, file_path, task_schema))
+            entries.extend(
+                _handle_merge(stmt, file_path, task_schema, diagnostics)
+            )
         elif isinstance(stmt, exp.Delete):
             entries.extend(_handle_delete(stmt, file_path))
         elif isinstance(stmt, exp.Select) and stmt.args.get("into"):
-            entries.extend(_handle_select_into(stmt, file_path, task_schema))
+            entries.extend(
+                _handle_select_into(stmt, file_path, task_schema, diagnostics)
+            )
     return [_canonical_lineage_entry(entry) for entry in entries]
 
 
@@ -1076,13 +1200,19 @@ def _extract_task_work_item(work_item, schema):
     try:
         source_file = work_item["source_file"]
         sql_text = work_item["sql_text"]
+        diagnostics = []
         task_facts = extract_task_table_facts(sql_text, source_file)
         missing_ddl_tables = missing_schema_tables_from_sql(
             sql_text,
             schema,
             transient_tables=task_facts["transient_tables"],
         )
-        entries = extract_lineage_from_sql(sql_text, source_file, schema)
+        entries = extract_lineage_from_sql(
+            sql_text,
+            source_file,
+            schema,
+            diagnostics=diagnostics,
+        )
         return {
             "index": work_item["index"],
             "source_file": source_file,
@@ -1090,6 +1220,7 @@ def _extract_task_work_item(work_item, schema):
             "transient_tables": task_facts["transient_tables"],
             "missing_ddl_tables": missing_ddl_tables,
             "stats": dict(STATS),
+            "errors": diagnostics,
         }
     finally:
         STATS.update(previous_stats)
@@ -1108,6 +1239,25 @@ def _extract_task_work_item_parallel(work_item):
     if _PARALLEL_SCHEMA is None:
         raise RuntimeError("parallel lineage worker schema is not initialized")
     return _extract_task_work_item(work_item, _PARALLEL_SCHEMA)
+
+
+def _task_failure_result(work_item, error, stage="worker"):
+    return {
+        "index": work_item["index"],
+        "source_file": work_item["source_file"],
+        "entries": [],
+        "transient_tables": [],
+        "missing_ddl_tables": [],
+        "stats": {},
+        "errors": [
+            {
+                "source_file": work_item["source_file"],
+                "stage": stage,
+                "severity": _diagnostic_severity(stage),
+                "error": _diagnostic_error(error),
+            }
+        ],
+    }
 
 
 def _read_task_work_items(task_files, tasks_dir):
@@ -1134,7 +1284,10 @@ def _extract_task_work_items_serial(work_items, schema, progress_callback):
     task_results = []
     total = len(work_items)
     for completed, work_item in enumerate(work_items, start=1):
-        result = _extract_task_work_item(work_item, schema)
+        try:
+            result = _extract_task_work_item(work_item, schema)
+        except Exception as exc:
+            result = _task_failure_result(work_item, exc)
         task_results.append(result)
         _notify_progress(progress_callback, completed, total, result)
     return task_results
@@ -1165,7 +1318,11 @@ def _extract_task_work_items_parallel(
                 as_completed(future_to_item),
                 start=1,
             ):
-                result = future.result()
+                work_item = future_to_item[future]
+                try:
+                    result = future.result()
+                except Exception as exc:
+                    result = _task_failure_result(work_item, exc)
                 task_results.append(result)
                 _notify_progress(
                     progress_callback,
@@ -1212,17 +1369,20 @@ def extract_lineage_from_task_files(
     all_lineage = []
     transient_tables = []
     missing_ddl_tables = set()
+    errors = []
     for result in task_results:
         all_lineage.extend(result["entries"])
         transient_tables.extend(result["transient_tables"])
         missing_ddl_tables.update(result.get("missing_ddl_tables") or [])
         _add_stats(result["stats"])
+        errors.extend(result.get("errors") or [])
 
     return {
         "lineage": all_lineage,
         "transient_tables": transient_tables,
         "missing_ddl_tables": sorted(missing_ddl_tables),
         "task_results": task_results,
+        "errors": errors,
     }
 
 
@@ -1247,11 +1407,66 @@ def format_missing_ddl_warnings(task_results, missing_ddl_tables):
     return lines
 
 
+def _truncate_diagnostic_text(text, limit=300):
+    text = str(text or "")
+    if len(text) <= limit:
+        return text
+    return f"{text[:limit]}..."
+
+
+def _format_diagnostic(diagnostic):
+    severity = diagnostic.get("severity") or _diagnostic_severity(
+        diagnostic.get("stage")
+    )
+    parts = [severity, str(diagnostic.get("stage") or "unknown")]
+    target_table = diagnostic.get("target_table")
+    target_column = diagnostic.get("target_column")
+    if target_table or target_column:
+        target = ".".join(
+            part for part in (target_table, target_column) if part
+        )
+        parts.append(f"target={target}")
+    expression = diagnostic.get("expression")
+    if expression:
+        parts.append(f"expr={_truncate_diagnostic_text(expression)}")
+    parts.append(str(diagnostic.get("error") or ""))
+    return " | ".join(part for part in parts if part)
+
+
+def _diagnostics_by_source_file(diagnostics):
+    grouped = {}
+    for diagnostic in diagnostics or []:
+        source_file = diagnostic.get("source_file") or "<unknown>"
+        grouped.setdefault(source_file, []).append(diagnostic)
+    return grouped
+
+
+def _should_write_lineage_output(
+    fatal_diagnostics,
+    output_paths,
+    force_overwrite_on_error=False,
+):
+    if not fatal_diagnostics or force_overwrite_on_error:
+        return True
+    return not any(Path(path).exists() for path in output_paths if path)
+
+
 def _trace_lineage(
-    target_table, select_expr, schema, file_path, target_columns=None
+    target_table,
+    select_expr,
+    schema,
+    file_path,
+    target_columns=None,
+    diagnostics=None,
 ):
     entries = []
-    nodes = _lineage_nodes_for_select(select_expr, schema)
+    nodes = _lineage_nodes_for_select(
+        select_expr,
+        schema,
+        file_path=file_path,
+        target_table=target_table,
+        diagnostics=diagnostics,
+    )
     if not nodes and not _projection_output_names(select_expr):
         STATS["lineage_failures"] += 1
         return entries
@@ -1336,14 +1551,18 @@ def _trace_lineage(
 
     # 间接血缘: WHERE / JOIN ON / GROUP BY / HAVING
     indirect_entries = _extract_indirect(
-        select_expr, target_table, file_path, schema
+        select_expr,
+        target_table,
+        file_path,
+        schema,
+        diagnostics=diagnostics,
     )
     entries.extend(indirect_entries)
 
     return entries
 
 
-def _handle_insert(stmt, file_path, schema):
+def _handle_insert(stmt, file_path, schema, diagnostics=None):
     target_table = _target_table_sql(stmt.this)
     target_columns = _target_columns(stmt.this)
     if target_columns is None:
@@ -1353,29 +1572,45 @@ def _handle_insert(stmt, file_path, schema):
         return _extract_values_lineage(target_table, inner, file_path)
     if isinstance(inner, (exp.Select, exp.SetOperation)):
         return _trace_lineage(
-            target_table, inner, schema, file_path, target_columns
+            target_table,
+            inner,
+            schema,
+            file_path,
+            target_columns,
+            diagnostics,
         )
     return []
 
 
-def _handle_update(stmt, file_path, schema):
+def _handle_update(stmt, file_path, schema, diagnostics=None):
     target_table = _target_table_sql(stmt.this)
     select = update_to_select(stmt)
-    return _trace_lineage(target_table, select, schema, file_path)
+    return _trace_lineage(
+        target_table,
+        select,
+        schema,
+        file_path,
+        diagnostics=diagnostics,
+    )
 
 
-def _handle_create(stmt, file_path, schema):
+def _handle_create(stmt, file_path, schema, diagnostics=None):
     target_table = _target_table_sql(stmt.this)
     target_columns = _target_columns(stmt.this)
     inner = stmt.args.get("expression")
     if isinstance(inner, (exp.Select, exp.SetOperation)):
         return _trace_lineage(
-            target_table, inner, schema, file_path, target_columns
+            target_table,
+            inner,
+            schema,
+            file_path,
+            target_columns,
+            diagnostics,
         )
     return []
 
 
-def _handle_merge(stmt, file_path, schema):
+def _handle_merge(stmt, file_path, schema, diagnostics=None):
     target_table = _target_table_sql(stmt.this)
     entries = []
     whens = stmt.args.get("whens")
@@ -1386,13 +1621,25 @@ def _handle_merge(stmt, file_path, schema):
         if isinstance(action, exp.Update):
             select = update_to_select(action)
             entries.extend(
-                _trace_lineage(target_table, select, schema, file_path)
+                _trace_lineage(
+                    target_table,
+                    select,
+                    schema,
+                    file_path,
+                    diagnostics=diagnostics,
+                )
             )
         elif isinstance(action, exp.Insert):
             inner = action.expression
             if isinstance(inner, exp.Select):
                 entries.extend(
-                    _trace_lineage(target_table, inner, schema, file_path)
+                    _trace_lineage(
+                        target_table,
+                        inner,
+                        schema,
+                        file_path,
+                        diagnostics=diagnostics,
+                    )
                 )
             elif isinstance(inner, exp.Tuple):
                 entries.extend(
@@ -1401,12 +1648,18 @@ def _handle_merge(stmt, file_path, schema):
     return entries
 
 
-def _handle_select_into(stmt, file_path, schema):
+def _handle_select_into(stmt, file_path, schema, diagnostics=None):
     into = stmt.args.get("into")
     if not into:
         return []
     target_table = _target_table_sql(into.this)
-    return _trace_lineage(target_table, stmt, schema, file_path)
+    return _trace_lineage(
+        target_table,
+        stmt,
+        schema,
+        file_path,
+        diagnostics=diagnostics,
+    )
 
 
 def _extract_values_lineage(target_table, insert_or_values, file_path):
@@ -1775,6 +2028,11 @@ def main():
         default=1,
         help="task 文件级并行度, 默认 1",
     )
+    parser.add_argument(
+        "--force-overwrite-on-error",
+        action="store_true",
+        help="存在严重错误时仍覆盖写出 lineage_data 文件",
+    )
     args = parser.parse_args()
     configure_project(args.project)
     _reset_stats()
@@ -1801,9 +2059,20 @@ def main():
 
     def print_task_progress(completed, total, task_result):
         entries = task_result["entries"]
+        diagnostics = task_result.get("errors") or []
+        fatal_count = len(_fatal_diagnostics(diagnostics))
+        warning_count = len(diagnostics) - fatal_count
+        diagnostic_parts = []
+        if fatal_count:
+            diagnostic_parts.append(f"{fatal_count} 个错误")
+        if warning_count:
+            diagnostic_parts.append(f"{warning_count} 个警告")
+        diagnostic_text = (
+            f", {', '.join(diagnostic_parts)}" if diagnostic_parts else ""
+        )
         print(
             f"  [{completed}/{total}] {task_result['source_file']}: "
-            f"{len(entries)} 条血缘"
+            f"{len(entries)} 条血缘{diagnostic_text}"
         )
 
     extraction_result = extract_lineage_from_task_files(
@@ -1825,23 +2094,60 @@ def main():
         for line in warning_lines:
             print(line)
 
+    output_path = (
+        Path(__file__).parent / f"lineage_data_{CURRENT_PROJECT}.json"
+    )
+    legacy_output_path = None
+    output_paths = [output_path]
+    if CURRENT_PROJECT == "shop":
+        legacy_output_path = Path(__file__).parent / "lineage_data.json"
+        output_paths.append(legacy_output_path)
+
+    diagnostics = extraction_result["errors"]
+    fatal_diagnostics = _fatal_diagnostics(diagnostics)
+    if diagnostics:
+        print()
+        print("诊断明细:")
+        for source_file, source_diagnostics in sorted(
+            _diagnostics_by_source_file(diagnostics).items()
+        ):
+            source_fatal_count = len(_fatal_diagnostics(source_diagnostics))
+            source_warning_count = len(source_diagnostics) - source_fatal_count
+            print(
+                f"  {source_file}: "
+                f"{source_fatal_count} 个错误, "
+                f"{source_warning_count} 个警告"
+            )
+            for diagnostic in source_diagnostics[:5]:
+                print(f"    - {_format_diagnostic(diagnostic)}")
+            if len(source_diagnostics) > 5:
+                print(f"    - ... 还有 {len(source_diagnostics) - 5} 个诊断")
+    should_write_output = _should_write_lineage_output(
+        fatal_diagnostics,
+        output_paths,
+        force_overwrite_on_error=args.force_overwrite_on_error,
+    )
+    if fatal_diagnostics and not should_write_output:
+        print(
+            "\n血缘提取失败: "
+            f"存在 {len(fatal_diagnostics)} 个错误, "
+            "未覆盖已有输出文件; 如需覆盖请使用 --force-overwrite-on-error"
+        )
+        sys.exit(1)
+
     output = build_lineage_output(
         all_lineage,
         schema,
         transient_tables=transient_tables,
     )
-    output_path = (
-        Path(__file__).parent / f"lineage_data_{CURRENT_PROJECT}.json"
-    )
-    with open(output_path, "w", encoding="utf-8") as fp:
-        json.dump(output, fp, ensure_ascii=False, indent=2)
-    legacy_output_path = None
-    if CURRENT_PROJECT == "shop":
-        legacy_output_path = Path(__file__).parent / "lineage_data.json"
-        with open(legacy_output_path, "w", encoding="utf-8") as fp:
+    for path in output_paths:
+        with open(path, "w", encoding="utf-8") as fp:
             json.dump(output, fp, ensure_ascii=False, indent=2)
 
-    print("\n血缘提取完成!")
+    if fatal_diagnostics:
+        print("\n血缘提取完成, 但存在严重错误!")
+    else:
+        print("\n血缘提取完成!")
     direct_count = sum(
         1 for edge in output["edges"] if edge.get("relation_type") == "direct"
     )
@@ -1864,6 +2170,11 @@ def main():
     print(f"  输出: {output_path}")
     if legacy_output_path:
         print(f"  兼容输出: {legacy_output_path}")
+    if fatal_diagnostics and not args.force_overwrite_on_error:
+        print("  存在严重错误, 已写出新输出文件但进程返回失败")
+        sys.exit(1)
+    if fatal_diagnostics and args.force_overwrite_on_error:
+        print("  已按 --force-overwrite-on-error 覆盖写出")
 
     print()
     for line in format_layer_statistics(output["tables"]):
