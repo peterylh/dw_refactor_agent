@@ -57,3 +57,35 @@ def test_get_etl_date_partitions_uses_model_layer(monkeypatch, tmp_path):
         ),
     ]
     config._model_metadata_cache.clear()
+
+
+def test_project_sql_files_include_catalog_database_ods_assets(
+    monkeypatch,
+    tmp_path,
+):
+    project_dir = tmp_path / "demo_project"
+    ddl_dir = project_dir / "ddl"
+    ods_ddl_dir = project_dir / "ods" / "ddl" / "internal" / "demo_db"
+    ddl_dir.mkdir(parents=True)
+    ods_ddl_dir.mkdir(parents=True)
+    (ddl_dir / "dwd_customer.sql").write_text("", encoding="utf-8")
+    (ods_ddl_dir / "ods_customer.sql").write_text("", encoding="utf-8")
+
+    monkeypatch.setattr(reinit_project, "_root", tmp_path)
+    monkeypatch.setattr(config, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setitem(
+        reinit_project.PROJECT_CONFIG,
+        "demo",
+        {
+            "dir": "demo_project",
+            "catalog": "internal",
+            "db": "demo_db",
+        },
+    )
+
+    files = reinit_project._project_sql_files("demo", "ddl")
+
+    assert [path.name for path in files] == [
+        "dwd_customer.sql",
+        "ods_customer.sql",
+    ]

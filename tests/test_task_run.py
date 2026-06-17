@@ -131,15 +131,65 @@ def test_load_schema_reads_table_model_files(monkeypatch, tmp_path):
     )
 
     monkeypatch.setattr(task_run, "_root", tmp_path)
+    monkeypatch.setattr(config, "PROJECT_ROOT", tmp_path)
     monkeypatch.setitem(
         task_run.PROJECT_CONFIG, "demo", {"dir": "demo_project"}
     )
     task_run._SCHEMA_CONFIG_CACHE.clear()
+    config._model_metadata_cache.clear()
 
     assert task_run._load_schema("demo") == {
         "dwd_customer": "snapshot",
         "ads_sales_dashboard": "full",
     }
+    config._model_metadata_cache.clear()
+
+
+def test_load_schema_reads_catalog_database_ods_models(
+    monkeypatch,
+    tmp_path,
+):
+    project_dir = tmp_path / "demo_project"
+    models_dir = project_dir / "models"
+    ods_models_dir = project_dir / "ods" / "models" / "internal" / "demo_db"
+    models_dir.mkdir(parents=True)
+    ods_models_dir.mkdir(parents=True)
+    (models_dir / "dwd_customer.yaml").write_text(
+        "version: 2\n"
+        "name: dwd_customer\n"
+        "layer: DWD\n"
+        "config:\n"
+        "  materialized: snapshot\n",
+        encoding="utf-8",
+    )
+    (ods_models_dir / "ods_customer.yaml").write_text(
+        "version: 2\n"
+        "name: ods_customer\n"
+        "layer: ODS\n"
+        "config:\n"
+        "  materialized: source\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(task_run, "_root", tmp_path)
+    monkeypatch.setattr(config, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setitem(
+        task_run.PROJECT_CONFIG,
+        "demo",
+        {
+            "dir": "demo_project",
+            "catalog": "internal",
+            "db": "demo_db",
+        },
+    )
+    task_run._SCHEMA_CONFIG_CACHE.clear()
+    config._model_metadata_cache.clear()
+
+    assert task_run._load_schema("demo") == {
+        "dwd_customer": "snapshot",
+        "ods_customer": "source",
+    }
+    config._model_metadata_cache.clear()
 
 
 def test_load_schema_cache_is_scoped_by_project(monkeypatch, tmp_path):
@@ -159,10 +209,51 @@ def test_load_schema_cache_is_scoped_by_project(monkeypatch, tmp_path):
         monkeypatch.setitem(task_run.PROJECT_CONFIG, project, {"dir": project})
 
     monkeypatch.setattr(task_run, "_root", tmp_path)
+    monkeypatch.setattr(config, "PROJECT_ROOT", tmp_path)
     task_run._SCHEMA_CONFIG_CACHE.clear()
+    config._model_metadata_cache.clear()
 
     assert task_run._load_schema("shop_like") == {"same_name": "snapshot"}
     assert task_run._load_schema("finance_like") == {"same_name": "full"}
+    config._model_metadata_cache.clear()
+
+
+def test_load_partition_units_reads_catalog_database_ods_ddl(
+    monkeypatch,
+    tmp_path,
+):
+    project_dir = tmp_path / "demo_project"
+    ddl_dir = project_dir / "ddl"
+    ods_ddl_dir = project_dir / "ods" / "ddl" / "internal" / "demo_db"
+    ddl_dir.mkdir(parents=True)
+    ods_ddl_dir.mkdir(parents=True)
+    (ddl_dir / "dwd_customer.sql").write_text(
+        "CREATE TABLE demo_db.dwd_customer (id BIGINT)\n"
+        'PROPERTIES ("dynamic_partition.time_unit" = "MONTH");',
+        encoding="utf-8",
+    )
+    (ods_ddl_dir / "ods_customer.sql").write_text(
+        "CREATE TABLE demo_db.ods_customer (id BIGINT)\n"
+        'PROPERTIES ("dynamic_partition.time_unit" = "DAY");',
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(task_run, "_root", tmp_path)
+    monkeypatch.setattr(config, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setitem(
+        task_run.PROJECT_CONFIG,
+        "demo",
+        {
+            "dir": "demo_project",
+            "catalog": "internal",
+            "db": "demo_db",
+        },
+    )
+
+    assert task_run._load_partition_units("demo") == {
+        "dwd_customer": "MONTH",
+        "ods_customer": "DAY",
+    }
 
 
 def test_discover_ods_dates_uses_model_layer(monkeypatch, tmp_path):

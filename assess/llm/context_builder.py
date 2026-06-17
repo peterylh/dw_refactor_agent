@@ -9,7 +9,11 @@ import config
 from assess.project_facts.business_semantics import (
     load_business_semantics_catalog,
 )
-from config import get_business_domain_config, load_model_metadata
+from config import (
+    get_business_domain_config,
+    iter_project_asset_files,
+    load_model_metadata,
+)
 from lineage.view import LineageView
 
 DATA_DOMAIN_LAYERS = {"DWD"}
@@ -65,13 +69,11 @@ def _metric_name(item) -> str:
 
 
 def _load_model_metric_groups(
-    models_dir: Path,
+    project: str,
 ) -> dict[str, dict[str, list[str]]]:
     metric_groups = {}
-    if not models_dir.exists():
-        return metric_groups
 
-    for model_path in models_dir.glob("*.yaml"):
+    for model_path in iter_project_asset_files(project, "models", "*.yaml"):
         try:
             data = yaml.safe_load(model_path.read_text(encoding="utf-8")) or {}
         except Exception:
@@ -174,8 +176,7 @@ def build_contexts(
     lineage_view = LineageView.from_data(project, lineage_data)
     upstream, downstream = lineage_view.asset_table_graph()
     target_layers = set(layers or ("DWD", "DWS", "DIM"))
-    models_dir = project_dir / "models"
-    metric_groups = _load_model_metric_groups(models_dir)
+    metric_groups = _load_model_metric_groups(project)
     model_metadata = load_model_metadata(project)
     business_domain_config = get_business_domain_config(project)
     business_domain_options = (

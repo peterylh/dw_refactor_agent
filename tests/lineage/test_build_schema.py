@@ -1,6 +1,7 @@
 from lineage.lineage_extractor import (
     _schema_columns_for_table,
     _schema_has_column,
+    _schema_table_count,
     build_schema_from_ddl,
     build_schema_from_texts,
 )
@@ -111,6 +112,26 @@ class TestBuildSchemaFromTexts:
     def test_comment_only(self):
         assert build_schema_from_texts(["-- just a comment"]) == {}
 
+    def test_schema_table_count_counts_nested_catalog_database_tables(self):
+        schema = {
+            "internal": {
+                "shop_dm": {
+                    "ods_customer": {},
+                    "dwd_customer": {},
+                },
+                "other_db": {
+                    "ods_order": {},
+                },
+            },
+            "hive": {
+                "source_db": {
+                    "source_order": {},
+                },
+            },
+        }
+
+        assert _schema_table_count(schema) == 4
+
 
 class TestBuildSchemaFromDdl:
     def test_from_directory(self, ddl_dir):
@@ -125,3 +146,24 @@ class TestBuildSchemaFromDdl:
         d = tmp_path / "empty_ddl"
         d.mkdir()
         assert build_schema_from_ddl(str(d)) == {}
+
+    def test_from_multiple_directories(self, tmp_path):
+        root_ddl = tmp_path / "ddl"
+        ods_ddl = tmp_path / "ods" / "ddl" / "internal" / "shop_dm"
+        root_ddl.mkdir(parents=True)
+        ods_ddl.mkdir(parents=True)
+        (root_ddl / "dwd_customer.sql").write_text(
+            "CREATE TABLE shop_dm.dwd_customer (customer_id BIGINT);",
+            encoding="utf-8",
+        )
+        (ods_ddl / "ods_customer.sql").write_text(
+            "CREATE TABLE shop_dm.ods_customer (customer_id BIGINT);",
+            encoding="utf-8",
+        )
+
+        schema = build_schema_from_ddl([root_ddl, ods_ddl])
+
+        assert set(schema["internal"]["shop_dm"]) == {
+            "dwd_customer",
+            "ods_customer",
+        }

@@ -20,7 +20,7 @@ import sqlglot
 from sqlglot import exp
 from sqlglot.lineage import lineage
 
-from config import PROJECT_CONFIG
+from config import PROJECT_CONFIG, project_asset_dirs
 from config import determine_layer as determine_config_layer
 from doris_sql import normalize_create_table_for_sqlglot
 from lineage.sql_task_facts import extract_task_table_facts
@@ -495,10 +495,27 @@ def _lineage_nodes_for_select(select_expr, schema):
 
 
 def build_schema_from_ddl(ddl_dir):
-    texts = [
-        f.read_text(encoding="utf-8") for f in Path(ddl_dir).glob("*.sql")
-    ]
+    if isinstance(ddl_dir, (str, Path)):
+        ddl_dirs = [Path(ddl_dir)]
+    else:
+        ddl_dirs = [Path(path) for path in ddl_dir]
+    texts = []
+    for directory in ddl_dirs:
+        if not directory.exists():
+            continue
+        texts.extend(
+            f.read_text(encoding="utf-8")
+            for f in sorted(directory.glob("*.sql"))
+        )
     return build_schema_from_texts(texts)
+
+
+def _schema_table_count(schema):
+    return sum(
+        len(tables)
+        for databases in schema.values()
+        for tables in databases.values()
+    )
 
 
 # ============================================================
@@ -1392,11 +1409,11 @@ def main():
     cfg = PROJECT_CONFIG[args.project]
     project_dir = Path(__file__).parent.parent / cfg["dir"]
     tasks_dir = project_dir / "tasks"
-    ddl_dir = project_dir / "ddl"
+    ddl_dirs = project_asset_dirs(args.project, "ddl")
 
     # 1. 构建 Schema
-    schema = build_schema_from_ddl(ddl_dir)
-    table_count = sum(len(tables) for tables in schema.values())
+    schema = build_schema_from_ddl(ddl_dirs)
+    table_count = _schema_table_count(schema)
     print(f"Schema: {table_count} 个表")
 
     # 2. 提取血缘

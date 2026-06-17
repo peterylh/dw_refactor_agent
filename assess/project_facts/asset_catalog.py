@@ -99,19 +99,20 @@ def _tables_for_naming(
     if not project_dir:
         return current_tables
 
-    ddl_dir = Path(project_dir) / "ddl"
-    if not ddl_dir.exists():
+    ddl_dirs = _asset_dirs(Path(project_dir), "ddl")
+    if not ddl_dirs:
         return []
 
     ddl_tables = {}
 
-    for ddl_path in sorted(ddl_dir.glob("*.sql")):
-        table = _ddl_table_for_naming(
-            ddl_path,
-            model_metadata,
-        )
-        if table:
-            ddl_tables[table["name"]] = table
+    for ddl_dir in ddl_dirs:
+        for ddl_path in sorted(ddl_dir.glob("*.sql")):
+            table = _ddl_table_for_naming(
+                ddl_path,
+                model_metadata,
+            )
+            if table:
+                ddl_tables[table["name"]] = table
 
     return sorted(
         ddl_tables.values(),
@@ -131,6 +132,20 @@ def _expected_task_table(task_path: Path) -> str:
     ):
         return stem[: -len("_full_refresh")]
     return stem
+
+
+def _asset_dirs(project_path: Path, asset_kind: str) -> list[Path]:
+    dirs = []
+    root_dir = project_path / asset_kind
+    if root_dir.exists():
+        dirs.append(root_dir)
+
+    ods_root = project_path / "ods" / asset_kind
+    if ods_root.exists():
+        dirs.extend(
+            path for path in sorted(ods_root.glob("*/*")) if path.is_dir()
+        )
+    return dirs
 
 
 def _source_file_keys(source_file: str) -> set[str]:
@@ -298,58 +313,64 @@ def build_asset_catalog(
             asset["layer"] = str(metadata["layer"]).upper()
 
     if project_path:
-        ddl_dir = project_path / "ddl"
-        if ddl_dir.exists():
-            for ddl_path in sorted(ddl_dir.glob("*.sql")):
-                table = _ddl_table_for_naming(ddl_path, model_metadata)
-                declared_name = (
-                    table["name"]
-                    if table
-                    else _ddl_declared_table_name(ddl_path)
-                )
-                if not declared_name:
-                    continue
-                asset = ensure_asset(declared_name)
-                columns = list(table.get("columns") or []) if table else []
-                asset["ddl"] = dict(
-                    exists=True,
-                    path=ddl_path,
-                    file_stem=ddl_path.stem,
-                    declared_name=declared_name,
-                    columns=columns,
-                    key_type=(table or {}).get("key_type", ""),
-                    key_columns=list((table or {}).get("key_columns") or []),
-                )
-                asset["columns"] = columns
-                if table and table.get("layer") != "OTHER":
-                    asset["layer"] = table["layer"]
-
-        models_dir = project_path / "models"
-        if models_dir.exists():
-            for model_path in sorted(models_dir.glob("*.yaml")):
-                try:
-                    raw = (
-                        yaml.safe_load(model_path.read_text(encoding="utf-8"))
-                        or {}
+        ddl_dirs = _asset_dirs(project_path, "ddl")
+        if ddl_dirs:
+            for ddl_dir in ddl_dirs:
+                for ddl_path in sorted(ddl_dir.glob("*.sql")):
+                    table = _ddl_table_for_naming(ddl_path, model_metadata)
+                    declared_name = (
+                        table["name"]
+                        if table
+                        else _ddl_declared_table_name(ddl_path)
                     )
-                except yaml.YAMLError:
-                    raw = {}
-                if not isinstance(raw, dict):
-                    raw = {}
-                declared_name = _short_table_name(
-                    raw.get("name") or model_path.stem
-                )
-                asset = ensure_asset(declared_name)
-                metadata = (model_metadata or {}).get(declared_name) or raw
-                asset["model"] = dict(
-                    exists=True,
-                    path=model_path,
-                    file_stem=model_path.stem,
-                    declared_name=declared_name,
-                    metadata=metadata,
-                )
-                if metadata.get("layer"):
-                    asset["layer"] = str(metadata["layer"]).upper()
+                    if not declared_name:
+                        continue
+                    asset = ensure_asset(declared_name)
+                    columns = list(table.get("columns") or []) if table else []
+                    asset["ddl"] = dict(
+                        exists=True,
+                        path=ddl_path,
+                        file_stem=ddl_path.stem,
+                        declared_name=declared_name,
+                        columns=columns,
+                        key_type=(table or {}).get("key_type", ""),
+                        key_columns=list(
+                            (table or {}).get("key_columns") or []
+                        ),
+                    )
+                    asset["columns"] = columns
+                    if table and table.get("layer") != "OTHER":
+                        asset["layer"] = table["layer"]
+
+        models_dirs = _asset_dirs(project_path, "models")
+        if models_dirs:
+            for models_dir in models_dirs:
+                for model_path in sorted(models_dir.glob("*.yaml")):
+                    try:
+                        raw = (
+                            yaml.safe_load(
+                                model_path.read_text(encoding="utf-8")
+                            )
+                            or {}
+                        )
+                    except yaml.YAMLError:
+                        raw = {}
+                    if not isinstance(raw, dict):
+                        raw = {}
+                    declared_name = _short_table_name(
+                        raw.get("name") or model_path.stem
+                    )
+                    asset = ensure_asset(declared_name)
+                    metadata = (model_metadata or {}).get(declared_name) or raw
+                    asset["model"] = dict(
+                        exists=True,
+                        path=model_path,
+                        file_stem=model_path.stem,
+                        declared_name=declared_name,
+                        metadata=metadata,
+                    )
+                    if metadata.get("layer"):
+                        asset["layer"] = str(metadata["layer"]).upper()
 
         task_facts = []
         if tasks_dir.exists():

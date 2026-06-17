@@ -32,6 +32,8 @@ from config import (
     PROJECT_CONFIG,
     get_model_names_by_layer,
     get_mysql_cmd,
+    iter_project_asset_files,
+    load_model_metadata,
 )
 from lineage.job_dag import JobDAG, asset_job_dag_from_lineage
 
@@ -46,9 +48,8 @@ _SCHEMA_CONFIG_CACHE: dict[str, dict[str, str]] = {}
 
 def _load_partition_units(project: str) -> dict[str, str]:
     """从 DDL 文件中读取每张表的 dynamic_partition.time_unit."""
-    ddl_dir = _root / PROJECT_CONFIG[project]["dir"] / "ddl"
     units: dict[str, str] = {}
-    for f in sorted(ddl_dir.glob("*.sql")):
+    for f in iter_project_asset_files(project, "ddl", "*.sql"):
         m = _TIME_UNIT_RE.search(f.read_text(encoding="utf-8"))
         if m:
             units[f.stem] = m.group(1).upper()
@@ -213,14 +214,12 @@ def _load_schema(project: str) -> dict:
         return _SCHEMA_CONFIG_CACHE[project]
 
     project_dir = _root / PROJECT_CONFIG[project]["dir"]
-    models_dir = project_dir / "models"
-    if models_dir.exists():
+    model_metadata = load_model_metadata(project)
+    if model_metadata:
         config = {}
-        for model_path in sorted(models_dir.glob("*.yaml")):
-            raw = yaml.safe_load(model_path.read_text(encoding="utf-8")) or {}
+        for name, raw in sorted(model_metadata.items()):
             if not isinstance(raw, dict):
                 continue
-            name = raw.get("name") or model_path.stem
             mat = raw.get("config", {}).get("materialized", "incremental")
             config[name] = mat
         _SCHEMA_CONFIG_CACHE[project] = config

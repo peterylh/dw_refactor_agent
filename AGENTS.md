@@ -26,8 +26,11 @@ shop-dm/
 │   ├── __init__.py
 │   └── ddl_deriver.py
 ├── shop/                           # 零售门店数仓
-│   ├── ddl/                        # ODS/DWD/DWS/ADS 建表 SQL
-│   ├── data/                       # ODS 初始化数据 SQL
+│   ├── ddl/                        # DWD/DWS/ADS/DIM 建表 SQL
+│   ├── ods/                        # ODS 层资产，按 ddl/models/data/{catalog}/{database}/ 组织
+│   │   ├── ddl/internal/shop_dm/    # ODS 建表 SQL
+│   │   ├── models/internal/shop_dm/ # ODS 表级元数据配置
+│   │   └── data/internal/shop_dm/   # ODS 初始化数据 SQL
 │   ├── tasks/                      # ETL 作业 SQL
 │   │   └── full_refresh/           # shop 专用批量全刷 SQL
 │   └── models/                     # 表级元数据配置 (tablename.yaml)
@@ -96,7 +99,7 @@ shop-dm/
 
 ### lineage_extractor.py
 
-字段级血缘解析引擎。读取 `{project}/ddl/` 建表 SQL 与 `{project}/tasks/` ETL SQL，输出：
+字段级血缘解析引擎。读取 `{project}/ddl/`、`{project}/ods/ddl/{catalog}/{database}/` 建表 SQL 与 `{project}/tasks/` ETL SQL，输出：
 
 - `lineage/lineage_data_{project}.json`
 - 默认兼容文件 `lineage/lineage_data.json`（历史用途）
@@ -229,7 +232,7 @@ python lineage/refresh_lineage_html.py --project finance_analytics
 
 ### 表级模型元数据
 
-项目表元数据按表拆分存放在 `{project}/models/{table_name}.yaml`，用于记录表所属层级、描述与物化方式等信息。
+项目表元数据按表拆分存放在 `{project}/models/{table_name}.yaml`；ODS 表元数据可独立存放在 `{project}/ods/models/{catalog}/{database}/{table_name}.yaml`。元数据用于记录表所属层级、描述与物化方式等信息。
 
 示例：
 
@@ -242,9 +245,9 @@ config:
   materialized: snapshot
 ```
 
-`task_run.py --full-refresh` 会优先读取 `models/*.yaml` 中的 `config.materialized`，用于判断 `snapshot` / `full` / `incremental` 等执行策略。
+`task_run.py --full-refresh` 会优先读取 `models/*.yaml` 与 `ods/models/{catalog}/{database}/*.yaml` 中的 `config.materialized`，用于判断 `snapshot` / `full` / `incremental` 等执行策略。
 
-表层级以 `models/{table_name}.yaml` 中的 `layer` 为唯一权威来源；血缘与重构验证工具会读取该配置，不再通过表名前缀兜底推断层级。
+表层级以模型 YAML 中的 `layer` 为唯一权威来源；血缘与重构验证工具会读取该配置，不再通过表名前缀兜底推断层级。
 
 ### 直接执行单个 SQL
 
@@ -293,8 +296,8 @@ python exec/task_run.py --project finance_analytics --etl-dates 2025-01-15 --ref
 
 一键完成：
 
-1. 执行 `{project}/ddl/*.sql` 重建表
-2. 并行加载 `{project}/data/*.sql` ODS 初始化数据
+1. 执行 `{project}/ddl/*.sql` 与 `{project}/ods/ddl/{catalog}/{database}/*.sql` 重建表
+2. 并行加载 `{project}/data/*.sql` 与 `{project}/ods/data/{catalog}/{database}/*.sql` ODS 初始化数据
 3. 调用 `task_run.py` 按 DAG 执行作业
 
 支持参数：
@@ -483,7 +486,7 @@ python assess/model_metadata_writer.py --project shop --catalog-from-llm --overw
 LLM 目录发现会先做表级巡检，再将 fact 表指标字段中的
 `business_process` 聚类为 `business_processes`，将 dimension 表主实体聚类为
 `semantic_subjects`。未提供数据域/业务板块字典时，LLM 可以生成候选 code，
-后续由用户在 catalog 中人工修订。表级归属会写入 `models/*.yaml`，
+后续由用户在 catalog 中人工修订。表级归属会写入模型 YAML，
 catalog 不长期维护 `tables`。
 
 从已确认 catalog 初始化或刷新 models：
@@ -494,7 +497,7 @@ python assess/model_metadata_writer.py --project shop --from-catalog --write-sco
 ```
 
 `--from-catalog --write-scope business` 不调用 LLM。表到业务过程/语义主题的归属以
-`{project}/models/*.yaml` 为准；catalog 只作为 code 字典和治理目录，用于校验并补齐模型中的业务域/板块信息：
+项目模型 YAML 为准；catalog 只作为 code 字典和治理目录，用于校验并补齐模型中的业务域/板块信息：
 
 - 缺失的 model 文件会被创建
 - 写入或刷新 `version`、`name`、`layer`、`table_type`、`config.materialized`
@@ -519,7 +522,7 @@ python assess/model_metadata_writer.py --project shop --from-catalog --write-sco
 - 当 `table_type=dimension` 但 `inferred_layer != DIM` 时，结果 JSON 会输出元数据 warning
 - `--write-scope all|table|metrics|grain|business` 控制回写范围，默认 `all`
 - DWD/DWS 事实表字段按 `atomic_metrics` / `derived_metrics` / `calculated_metrics` / `dimensions` / `others` 分组
-- 识别出的指标名称按 `atomic_metrics` / `derived_metrics` / `calculated_metrics` 覆盖写入 `{project}/models/{table_name}.yaml`
+- 识别出的指标名称按 `atomic_metrics` / `derived_metrics` / `calculated_metrics` 覆盖写入对应的模型 YAML
 - 派生指标通常回写到 DWS 模型；DWD 事实表中的派生/衍生指标作为 DWD 违规项写入巡检结果 JSON
 - LLM 返回会按 DDL 字段名校验，结果状态分为 `passed` / `warning` / `blocked`
 - 字段幻觉或重复分组会自动重试少数几次，最终仍为 `blocked` 的表不会回写 models

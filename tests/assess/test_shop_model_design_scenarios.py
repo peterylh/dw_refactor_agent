@@ -8,6 +8,7 @@ from config import (
     PROJECT_ROOT,
     get_business_domain_config,
     load_model_metadata,
+    project_asset_dirs,
 )
 from lineage.lineage_extractor import (
     build_lineage_output,
@@ -22,7 +23,7 @@ def _build_shop_lineage_from_sources():
     configure_project("shop")
     project_dir = PROJECT_ROOT / PROJECT_CONFIG["shop"]["dir"]
     tasks_dir = project_dir / "tasks"
-    schema = build_schema_from_ddl(project_dir / "ddl")
+    schema = build_schema_from_ddl(project_asset_dirs("shop", "ddl"))
 
     all_lineage = []
     transient_tables = []

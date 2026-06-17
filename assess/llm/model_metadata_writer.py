@@ -98,10 +98,28 @@ def build_metric_contexts(
     return build_contexts(project, lineage_data, layers=METRIC_LAYERS)
 
 
-def model_path_for_table(project: str, table_name: str) -> Path:
+def model_path_for_table(
+    project: str,
+    table_name: str,
+    *,
+    layer: str | None = None,
+) -> Path:
     """返回模型 YAML 路径。"""
     project_cfg = PROJECT_CONFIG[project]
-    return PROJECT_ROOT / project_cfg["dir"] / "models" / f"{table_name}.yaml"
+    project_dir = PROJECT_ROOT / project_cfg["dir"]
+    filename = f"{table_name}.yaml"
+    catalog = str(project_cfg.get("catalog") or "internal")
+    database = str(project_cfg.get("db") or "")
+    ods_model_dir = project_dir / "ods" / "models" / catalog / database
+
+    if str(layer or "").upper() == "ODS":
+        return ods_model_dir / filename
+
+    ods_model_path = ods_model_dir / filename
+    if ods_model_path.exists():
+        return ods_model_path
+
+    return project_dir / "models" / filename
 
 
 def metric_violations(result: TableInspectResult) -> list[dict[str, Any]]:
@@ -1247,7 +1265,11 @@ def update_model_yaml_from_catalog(
     if write_scope not in {"all", "table", "business"}:
         raise ValueError("from-catalog 仅支持 write_scope=all/table/business")
 
-    path = model_path_for_table(project, table_name)
+    path = model_path_for_table(
+        project,
+        table_name,
+        layer=mapping.get("layer"),
+    )
     existing = _existing_model_data(path)
     previous = dict(existing)
     updated = _catalog_model_payload(

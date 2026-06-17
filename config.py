@@ -1805,6 +1805,78 @@ def get_business_domain_config(
     return get_naming_config(project).business_domain_config
 
 
+def project_dir(project: str) -> Optional[Path]:
+    """返回项目根目录."""
+    cfg = PROJECT_CONFIG.get(project)
+    if not cfg:
+        return None
+    return PROJECT_ROOT / cfg["dir"]
+
+
+def project_ods_asset_dir(project: str, asset_kind: str) -> Optional[Path]:
+    """返回 ODS 资产按 catalog/database 组织后的目录."""
+    cfg = PROJECT_CONFIG.get(project)
+    base_dir = project_dir(project)
+    if not cfg or not base_dir:
+        return None
+    catalog = str(cfg.get("catalog") or "internal")
+    database = str(cfg.get("db") or "")
+    return base_dir / "ods" / asset_kind / catalog / database
+
+
+def project_asset_dirs(project: str, asset_kind: str) -> list[Path]:
+    """返回项目资产目录，包含通用目录和 ODS 专用目录."""
+    base_dir = project_dir(project)
+    if not base_dir:
+        return []
+    dirs = [base_dir / asset_kind]
+    ods_dir = project_ods_asset_dir(project, asset_kind)
+    if ods_dir:
+        dirs.append(ods_dir)
+    return dirs
+
+
+def iter_project_asset_files(
+    project: str,
+    asset_kind: str,
+    pattern: str,
+) -> list[Path]:
+    """按稳定顺序返回项目资产文件."""
+    files: list[Path] = []
+    seen: set[Path] = set()
+    for asset_dir in project_asset_dirs(project, asset_kind):
+        if not asset_dir.exists():
+            continue
+        for asset_path in sorted(asset_dir.glob(pattern)):
+            if asset_path in seen:
+                continue
+            seen.add(asset_path)
+            files.append(asset_path)
+    return files
+
+
+def model_path_for_table(
+    project: str,
+    table_name: str,
+    *,
+    layer: str | None = None,
+) -> Path:
+    """返回表级模型元数据写入路径."""
+    cfg = PROJECT_CONFIG[project]
+    filename = f"{table_name}.yaml"
+    normalized_layer = str(layer or "").upper()
+    if normalized_layer == "ODS":
+        ods_dir = project_ods_asset_dir(project, "models")
+        if ods_dir:
+            return ods_dir / filename
+
+    existing_ods_dir = project_ods_asset_dir(project, "models")
+    if existing_ods_dir and (existing_ods_dir / filename).exists():
+        return existing_ods_dir / filename
+
+    return PROJECT_ROOT / cfg["dir"] / "models" / filename
+
+
 def load_model_metadata(project: str) -> dict:
     """加载项目 models/{table}.yaml 表级元数据."""
     if project in _model_metadata_cache:
@@ -1815,13 +1887,13 @@ def load_model_metadata(project: str) -> dict:
         _model_metadata_cache[project] = {}
         return {}
 
-    models_dir = PROJECT_ROOT / cfg["dir"] / "models"
-    if not models_dir.exists():
+    model_paths = iter_project_asset_files(project, "models", "*.yaml")
+    if not model_paths:
         _model_metadata_cache[project] = {}
         return {}
 
     metadata = {}
-    for model_path in sorted(models_dir.glob("*.yaml")):
+    for model_path in model_paths:
         raw = yaml.safe_load(model_path.read_text(encoding="utf-8")) or {}
         if not isinstance(raw, dict):
             continue

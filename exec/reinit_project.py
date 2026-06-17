@@ -29,6 +29,7 @@ from config import (
     PROJECT_CONFIG,
     get_model_names_by_layer,
     get_mysql_cmd,
+    iter_project_asset_files,
 )
 
 
@@ -70,6 +71,10 @@ def get_etl_date_partitions(
     return sorted(all_dates)
 
 
+def _project_sql_files(project: str, asset_kind: str) -> list[Path]:
+    return iter_project_asset_files(project, asset_kind, "*.sql")
+
+
 def main():
     parser = argparse.ArgumentParser(description="数据重新初始化")
     parser.add_argument(
@@ -98,13 +103,10 @@ def main():
     env_cmd = get_mysql_cmd(args.db_env)
     cfg = PROJECT_CONFIG[project]
     db_name = cfg["db"]
-    data_dir = _root / cfg["dir"] / "data"
     parallel = args.parallel
     if parallel < 1:
         print("错误: --parallel 必须 >= 1")
         sys.exit(1)
-
-    ddl_dir = _root / cfg["dir"] / "ddl"
 
     print(f"项目: {project}")
     print(f"数据库: {db_name}")
@@ -115,11 +117,7 @@ def main():
     print(f"\n{'=' * 60}")
     print("Step 1: 重建所有表 (执行 ddl/*.sql)")
 
-    if not ddl_dir.exists():
-        print(f"  [FAIL] DDL 目录不存在: {ddl_dir}")
-        sys.exit(1)
-
-    ddl_files = sorted(ddl_dir.glob("*.sql"))
+    ddl_files = _project_sql_files(project, "ddl")
     if not ddl_files:
         print("  DDL 目录中无 SQL 文件")
         sys.exit(1)
@@ -136,8 +134,8 @@ def main():
     print(f"\n{'=' * 60}")
     print(f"Step 2: 初始化 ODS 层  (并行度: {parallel})")
 
-    if data_dir.exists():
-        ods_files = sorted(data_dir.glob("*.sql"))
+    ods_files = _project_sql_files(project, "data")
+    if ods_files:
         if parallel == 1:
             for f in ods_files:
                 print(f"  [ODS INIT] {f.name}")
@@ -171,7 +169,7 @@ def main():
                 print(f"  {ods_error}")
                 sys.exit(1)
     else:
-        print(f"  {project} 项目无 data/ 目录, 请手动导入 ODS 数据")
+        print(f"  {project} 项目无 ODS 初始化 SQL, 请手动导入 ODS 数据")
 
     # ── Step 3: 确定 ETL 日期 ──
     task_run = _root / "exec" / "task_run.py"

@@ -3,7 +3,7 @@
 本文说明 `assess` 相关元数据的初始化顺序、工具职责和常用命令。项目级元数据主要分两类：
 
 - `{project}/business_semantics.yaml`: 业务语义目录，维护数据域、业务板块、业务过程、语义主题。
-- `{project}/models/{table_name}.yaml`: 表级模型元数据，维护 layer、table_type、业务语义引用、entities、grain、metrics 和执行策略。
+- `{project}/models/{table_name}.yaml`: 表级模型元数据，维护 layer、table_type、业务语义引用、entities、grain、metrics 和执行策略。ODS 表可独立存放在 `{project}/ods/models/{catalog}/{database}/{table_name}.yaml`。
 
 推荐把这些文件作为项目资产放在 Git 中维护。工具直接写工作区，使用 `git diff` / `git add -p` 审查和接受变更。
 
@@ -41,7 +41,7 @@ LLM 发现的原则：
 - dimension 表从 primary entity 归并到 `semantic_subjects`。
 - 未提供数据域/业务板块字典时，可生成候选 code，后续由人工修订。
 - 不把维度主题、实体管理、运营管理类表强行写成业务过程。
-- 表级归属会写入 `models/*.yaml`；catalog 不长期维护 `tables`。
+- 表级归属会写入模型 YAML；catalog 不长期维护 `tables`。
 
 等价入口也可以使用：
 
@@ -60,7 +60,7 @@ python assess/model_metadata_writer.py --project shop --catalog-from-llm --overw
 - `semantic_subjects`: 维度/实体属性表的语义主题，通常对应维表主实体。
 
 不要在 catalog 中长期维护 `tables`。表到业务过程/语义主题的归属以
-`models/*.yaml` 为准；catalog 只维护 code、名称、归属域、别名、说明等治理信息。
+模型 YAML 为准；catalog 只维护 code、名称、归属域、别名、说明等治理信息。
 
 ### 4. 从 catalog 初始化或刷新 models
 
@@ -69,7 +69,7 @@ python assess/model_metadata_writer.py --project shop --from-catalog --write-sco
 python assess/model_metadata_writer.py --project shop --from-catalog --write-scope business
 ```
 
-这个命令不调用 LLM。它读取 `{project}/business_semantics.yaml` 和 `{project}/models/*.yaml`，以 models 中已有的 `business_process` / `semantic_subject` 为表级归属事实，再从 catalog 补齐这些 code 对应的数据域和业务板块。
+这个命令不调用 LLM。它读取 `{project}/business_semantics.yaml`、`{project}/models/*.yaml` 和 `{project}/ods/models/{catalog}/{database}/*.yaml`，以 models 中已有的 `business_process` / `semantic_subject` 为表级归属事实，再从 catalog 补齐这些 code 对应的数据域和业务板块。
 
 写入内容包括：
 
@@ -119,7 +119,7 @@ python assess/model_metadata_writer.py --project shop --write-scope all
 典型用途：
 
 - catalog 已经修订完，需要根据 models 里的 `business_process` / `semantic_subject` 补齐 `data_domain` / `business_area`。
-- 新项目还没有 `models/*.yaml`，需要先按 DDL 和 catalog 创建基础 model 文件。
+- 新项目还没有模型 YAML，需要先按 DDL 和 catalog 创建基础 model 文件。
 - catalog 的 process/subject 所属域或板块调整后，需要刷新 models 中的业务语义字段。
 
 ### 已存在 `business_semantics.yaml` 时会怎样？
