@@ -94,12 +94,12 @@ class TestBuildSchemaFromTexts:
                 }
             }
         }
-        assert _schema_columns_for_table(
-            schema, "hive.shop_dm.dwd_order"
-        ) == ["id"]
-        assert _schema_has_column(
-            schema, "hive.shop_dm.dwd_order", "id"
-        ) is True
+        assert _schema_columns_for_table(schema, "hive.shop_dm.dwd_order") == [
+            "id"
+        ]
+        assert (
+            _schema_has_column(schema, "hive.shop_dm.dwd_order", "id") is True
+        )
 
     def test_empty_list(self):
         assert build_schema_from_texts([]) == {}

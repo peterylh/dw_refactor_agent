@@ -363,10 +363,7 @@ FROM daily_snapshots;
 
     result = score_code_quality(catalog)
 
-    assert (
-        "CODE_DWS_JOIN_BEFORE_AGGREGATION"
-        not in _issue_rule_ids(result)
-    )
+    assert "CODE_DWS_JOIN_BEFORE_AGGREGATION" not in _issue_rule_ids(result)
 
 
 def test_score_code_quality_accepts_dws_join_covering_right_unique_key(
@@ -404,10 +401,7 @@ PROPERTIES ("replication_num" = "1");
 
     result = score_code_quality(catalog)
 
-    assert (
-        "CODE_DWS_JOIN_BEFORE_AGGREGATION"
-        not in _issue_rule_ids(result)
-    )
+    assert "CODE_DWS_JOIN_BEFORE_AGGREGATION" not in _issue_rule_ids(result)
 
 
 def test_score_code_quality_flags_dws_join_partially_covering_unique_key(
@@ -491,9 +485,8 @@ GROUP BY customer_id;
 
     result = score_code_quality(catalog)
 
-    assert (
-        "CODE_FILTER_COLUMN_WRAPPED_IN_FUNCTION"
-        not in _issue_rule_ids(result)
+    assert "CODE_FILTER_COLUMN_WRAPPED_IN_FUNCTION" not in _issue_rule_ids(
+        result
     )
 
 
@@ -517,9 +510,8 @@ FROM date_spine;
 
     result = score_code_quality(catalog)
 
-    assert (
-        "CODE_FILTER_COLUMN_WRAPPED_IN_FUNCTION"
-        not in _issue_rule_ids(result)
+    assert "CODE_FILTER_COLUMN_WRAPPED_IN_FUNCTION" not in _issue_rule_ids(
+        result
     )
 
 
@@ -539,7 +531,6 @@ WHERE pay_time >= @etl_date
 
     result = score_code_quality(catalog)
 
-    assert (
-        "CODE_FILTER_COLUMN_WRAPPED_IN_FUNCTION"
-        not in _issue_rule_ids(result)
+    assert "CODE_FILTER_COLUMN_WRAPPED_IN_FUNCTION" not in _issue_rule_ids(
+        result
     )

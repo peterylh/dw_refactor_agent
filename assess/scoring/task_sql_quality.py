@@ -26,12 +26,8 @@ CODE_RULE_TEMP_TABLE_NAME = "CODE_TEMP_TABLE_NAME_HAS_TEMP_OR_TMP"
 CODE_RULE_TEMP_TABLE_DROPPED = "CODE_TEMP_TABLE_DROPPED_IN_SAME_TASK"
 CODE_RULE_NO_SELECT_STAR = "CODE_NO_SELECT_STAR_IN_WRITE"
 CODE_RULE_CARTESIAN_JOIN_RISK = "CODE_CARTESIAN_JOIN_RISK"
-CODE_RULE_DWS_JOIN_BEFORE_AGGREGATION = (
-    "CODE_DWS_JOIN_BEFORE_AGGREGATION"
-)
-CODE_RULE_FILTER_COLUMN_WRAPPED = (
-    "CODE_FILTER_COLUMN_WRAPPED_IN_FUNCTION"
-)
+CODE_RULE_DWS_JOIN_BEFORE_AGGREGATION = "CODE_DWS_JOIN_BEFORE_AGGREGATION"
+CODE_RULE_FILTER_COLUMN_WRAPPED = "CODE_FILTER_COLUMN_WRAPPED_IN_FUNCTION"
 
 CODE_QUALITY_RULES = {
     CODE_RULE_TEMP_TABLE_NAME: rule_meta(
@@ -119,7 +115,8 @@ def _parse_statements(sql: str) -> list:
 
 def _split_statements(sql: str) -> list[str]:
     return [
-        statement.strip() for statement in str(sql or "").split(";")
+        statement.strip()
+        for statement in str(sql or "").split(";")
         if statement.strip()
     ]
 
@@ -438,12 +435,10 @@ def _is_filter_column_wrapper(expression: exp.Expression) -> bool:
         return False
     if isinstance(expression, (exp.DateAdd, exp.DateSub)):
         return isinstance(expression.args.get("this"), exp.Column)
-    if not any(
+    return any(
         isinstance(child, exp.Column)
         for child in expression.iter_expressions()
-    ):
-        return False
-    return True
+    )
 
 
 def _column_names(expression: exp.Expression) -> list[str]:
