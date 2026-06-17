@@ -9,20 +9,25 @@ config:
 atomic_metrics:
 - subtotal
 entities:
+- code: ORDER_DETAIL
+  type: primary
+  name: 订单明细
+  key_columns:
+  - order_item_id
 - code: ORDER
   type: foreign
   name: 订单
   key_columns:
   - order_id
-- code: PROD
-  type: foreign
-  name: 商品
-  key_columns:
-  - product_id
 - code: STORE
   type: foreign
   name: 门店
   key_columns:
   - store_id
+- code: PROD
+  type: foreign
+  name: 商品
+  key_columns:
+  - product_id
 business_process: ORDER_TRANSACTION
 data_domain: '04'

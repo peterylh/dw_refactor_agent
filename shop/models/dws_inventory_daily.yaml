@@ -8,12 +8,13 @@ config:
   materialized: incremental
 calculated_metrics:
 - stock_status
+- days_since_restock
 derived_metrics:
 - name: quantity
   base_metric: quantity
   base_metric_table: dwd_inventory
   time_period: D
-  expression: SUM(quantity)
+  expression: SUM(dwd_inventory.quantity)
   aggregation: SUM
 grain:
   entities:

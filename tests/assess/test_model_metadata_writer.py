@@ -219,7 +219,7 @@ def _expected_pay_amt_1d_metric() -> dict:
         "base_metric": "pay_amt",
         "base_metric_table": "dwd_order_detail",
         "aggregation": "SUM",
-        "time_period": "1d",
+        "time_period": "D",
         "expression": "SUM(pay_amt) WHERE pay_date = @etl_date",
     }
 
@@ -394,7 +394,7 @@ def test_update_model_yaml_defaults_to_declared_layer(tmp_path, monkeypatch):
             "base_metric": "subtotal",
             "base_metric_table": "dwd_order_detail",
             "aggregation": "SUM",
-            "time_period": "1d",
+            "time_period": "D",
             "expression": "SUM(subtotal) GROUP BY store_id, order_date",
         }
     ]
@@ -895,6 +895,61 @@ def test_update_model_yaml_grain_scope_writes_dws_grain_only(
     assert saved["derived_metrics"] == ["sale_quantity"]
 
 
+def test_update_model_yaml_normalizes_time_period_aliases(
+    tmp_path, monkeypatch
+):
+    import assess.model_metadata_writer as writer_module
+
+    project_root = tmp_path
+    models_dir = project_root / "demo" / "models"
+    models_dir.mkdir(parents=True)
+    model_path = models_dir / "dws_category_sales_monthly.yaml"
+    monkeypatch.setattr(writer_module, "PROJECT_ROOT", project_root)
+    monkeypatch.setitem(writer_module.PROJECT_CONFIG, "demo", {"dir": "demo"})
+
+    result = TableInspectResult(
+        table_name="dws_category_sales_monthly",
+        declared_layer="DWS",
+        inferred_layer="DWS",
+        table_type="fact",
+        confidence=0.9,
+        reasoning_steps=[],
+        columns={
+            "atomic_metrics": [],
+            "derived_metrics": [
+                {
+                    "name": "sale_amount",
+                    "base_metric": "subtotal",
+                    "base_metric_table": "dwd_order_detail",
+                    "time_period": "月",
+                    "expression": "SUM(subtotal)",
+                }
+            ],
+            "calculated_metrics": [],
+            "dimensions": [],
+            "others": [],
+        },
+        entities=[
+            {
+                "code": "PROD",
+                "type": "foreign",
+                "key_columns": ["category_id"],
+            }
+        ],
+        grain={
+            "entities": ["PROD"],
+            "time_column": "stat_month_date",
+            "time_period": "月",
+        },
+    )
+
+    update_model_yaml("demo", result, write_scope="all")
+    saved = yaml.safe_load(model_path.read_text(encoding="utf-8"))
+
+    assert saved["derived_metrics"][0]["time_period"] == "M"
+    assert saved["grain"]["time_period"] == "M"
+
+
 def test_update_model_yaml_grain_scope_keeps_full_dws_grain_entities(
     tmp_path, monkeypatch
 ):
@@ -1357,6 +1412,73 @@ def test_update_model_yaml_grain_scope_canonicalizes_llm_entities(
             "name": "商品",
             "key_columns": ["product_id"],
         }
+    ]
+
+
+def test_update_model_yaml_preserves_dwd_fact_primary_entity(
+    tmp_path, monkeypatch
+):
+    import assess.model_metadata_writer as writer_module
+
+    project_root = tmp_path
+    models_dir = project_root / "demo" / "models"
+    models_dir.mkdir(parents=True)
+    model_path = models_dir / "dwd_order_detail.yaml"
+    model_path.write_text(
+        yaml.safe_dump(
+            {
+                "version": 2,
+                "name": "dwd_order_detail",
+                "layer": "DWD",
+                "table_type": "fact",
+            },
+            allow_unicode=True,
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(writer_module, "PROJECT_ROOT", project_root)
+    monkeypatch.setitem(writer_module.PROJECT_CONFIG, "demo", {"dir": "demo"})
+
+    result = TableInspectResult(
+        table_name="dwd_order_detail",
+        declared_layer="DWD",
+        inferred_layer="DWD",
+        table_type="fact",
+        confidence=0.9,
+        reasoning_steps=[],
+        entities=[
+            {
+                "code": "ORDER_ITEM",
+                "type": "primary",
+                "name": "订单明细",
+                "key_columns": ["order_id", "order_item_id", "order_date"],
+            },
+            {
+                "code": "CUST",
+                "type": "foreign",
+                "name": "客户",
+                "key_columns": ["customer_id"],
+            },
+        ],
+    )
+
+    update_model_yaml("demo", result, write_scope="grain")
+    saved = yaml.safe_load(model_path.read_text(encoding="utf-8"))
+
+    assert saved["entities"] == [
+        {
+            "code": "ORDER_ITEM",
+            "type": "primary",
+            "name": "订单明细",
+            "key_columns": ["order_id", "order_item_id", "order_date"],
+        },
+        {
+            "code": "CUST",
+            "type": "foreign",
+            "name": "客户",
+            "key_columns": ["customer_id"],
+        },
     ]
 
 

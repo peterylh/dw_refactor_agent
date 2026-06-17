@@ -7,7 +7,6 @@ from assess.project_facts.business_metadata import (
     _data_domain_applies,
 )
 from assess.project_facts.entity_metadata import (
-    defined_entity_codes,
     grain_key_columns,
     model_entities,
     primary_entity_codes,
@@ -15,10 +14,6 @@ from assess.project_facts.entity_metadata import (
 from assess.result_model import finalize_dimension, make_check
 from assess.scoring.config import METADATA_HEALTH_RULES, SEVERITY_LOW
 from assess.scoring.utils import _as_string_list, _type_def_valid
-
-
-def _model_defined_entities(model_metadata: dict | None) -> set[str]:
-    return defined_entity_codes(model_metadata)
 
 
 def _model_entity_codes(metadata: dict | None) -> list[str]:
@@ -62,7 +57,6 @@ def score_metadata_health(
         }
     else:
         tables_by_name = {table["name"]: table for table in tables}
-    defined_entities = _model_defined_entities(model_metadata)
     checks = []
 
     def record(
@@ -250,27 +244,34 @@ def score_metadata_health(
         )
         if layer == "DWS" or grain_entities:
             if grain_entities:
+                table_entity_codes = sorted(
+                    {
+                        str(entity.get("code") or "").strip()
+                        for entity in entities
+                        if str(entity.get("code") or "").strip()
+                    }
+                )
                 missing_entities = [
                     entity
                     for entity in grain_entities
-                    if entity not in defined_entities
+                    if entity not in table_entity_codes
                 ]
                 record(
                     table_name,
                     "METADATA_GRAIN_ENTITIES_DEFINED",
                     not missing_entities,
-                    "grain.entities引用已定义实体",
+                    "grain.entities引用当前表entities.code",
                     (
-                        "全部已定义"
+                        "全部在当前表entities中"
                         if not missing_entities
-                        else f"未定义实体: {missing_entities}"
+                        else f"当前表未声明实体: {missing_entities}"
                     ),
                     {
                         "grain_entities": grain_entities,
-                        "defined_entities": sorted(defined_entities),
+                        "table_entities": table_entity_codes,
                     },
                     "",
-                    f"grain.entities未定义={missing_entities}",
+                    f"grain.entities不在当前表entities中={missing_entities}",
                 )
             else:
                 record(

@@ -117,10 +117,10 @@ METADATA_HEALTH_RULES = {
         edit_scope=["models"],
     ),
     "METADATA_GRAIN_ENTITIES_DEFINED": rule_meta(
-        name="grain.entities有实体定义",
+        name="grain.entities属于当前表entities",
         severity=SEVERITY_MEDIUM,
-        title="grain.entities引用了未定义实体",
-        remediation_summary="补齐实体定义，或修正grain.entities为已定义实体",
+        title="grain.entities引用了当前表未声明实体",
+        remediation_summary="在当前模型entities中补齐实体，或修正grain.entities",
         strategy="update_model_grain_entities",
         edit_scope=["models"],
     ),

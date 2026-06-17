@@ -11,13 +11,13 @@ derived_metrics:
   base_metric: subtotal
   base_metric_table: dwd_order_detail
   time_period: D
-  expression: SUM(subtotal) GROUP BY customer_id, order_date
+  expression: SUM(subtotal)
   aggregation: SUM
 - name: total_discount
   base_metric: discount
   base_metric_table: dwd_order_detail
   time_period: D
-  expression: SUM(discount) GROUP BY customer_id, order_date
+  expression: SUM(discount)
   aggregation: SUM
 calculated_metrics:
 - payment_amount

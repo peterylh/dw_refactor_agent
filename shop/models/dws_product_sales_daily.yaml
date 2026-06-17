@@ -13,19 +13,19 @@ derived_metrics:
   base_metric: quantity
   base_metric_table: dwd_order_detail
   time_period: D
-  expression: SUM(quantity) GROUP BY product_id, order_date
+  expression: SUM(quantity)
   aggregation: SUM
 - name: sale_amount
   base_metric: subtotal
   base_metric_table: dwd_order_detail
   time_period: D
-  expression: SUM(subtotal) GROUP BY product_id, order_date
+  expression: SUM(subtotal)
   aggregation: SUM
 - name: discount_amount
   base_metric: discount
   base_metric_table: dwd_order_detail
   time_period: D
-  expression: SUM(discount) GROUP BY product_id, order_date
+  expression: SUM(discount)
   aggregation: SUM
 grain:
   entities:

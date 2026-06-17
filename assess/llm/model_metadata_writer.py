@@ -45,6 +45,7 @@ from assess.project_facts.business_semantics import (
     write_initial_business_semantics_catalog,
 )
 from assess.project_facts.entity_metadata import normalize_entities
+from assess.project_facts.time_period import normalize_time_period
 from config import (
     PROJECT_CONFIG,
     PROJECT_ROOT,
@@ -185,7 +186,10 @@ def _derived_metric_for_model(metric: dict[str, Any]) -> dict[str, Any]:
         "time_period",
         "expression",
     ):
-        value = str(metric.get(key) or "").strip()
+        if key == "time_period":
+            value = normalize_time_period(metric.get(key))
+        else:
+            value = str(metric.get(key) or "").strip()
         if value:
             payload[key] = value
     aggregation = str(metric.get("aggregation") or "").strip().upper()
@@ -690,6 +694,18 @@ def _canonical_entities_for_write(
     )
 
     if result.table_type == "fact" and not is_dimension_model:
+        if effective_layer == "DWD":
+            canonical = []
+            for entity in entities:
+                item = dict(entity)
+                if str(item.get("type") or "").lower() == "primary":
+                    item["type"] = "primary"
+                else:
+                    item["type"] = "foreign"
+                item.pop("relationship", None)
+                canonical.append(item)
+            return _dedupe_entities(canonical)
+
         canonical = []
         for entity in entities:
             item = dict(entity)
@@ -750,7 +766,7 @@ def _effective_grain(grain: dict[str, Any] | None) -> dict[str, Any]:
         payload.get("additional_key_columns")
     )
     time_column = str(payload.get("time_column") or "").strip()
-    time_period = str(payload.get("time_period") or "").strip()
+    time_period = normalize_time_period(payload.get("time_period"))
 
     if (
         not entities

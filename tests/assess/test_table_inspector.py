@@ -13,7 +13,10 @@ from assess.llm.table_inspector import (
     result_to_cache_dict,
     result_to_dict,
     validate_columns,
+    validate_metric_expressions,
     validate_metric_relationships,
+    validate_primary_entities,
+    validate_time_periods,
 )
 
 # ============================================================
@@ -168,6 +171,34 @@ def test_build_prompt_documents_business_metadata_scope(
     assert "inferred_business_area" in prompt
 
 
+def test_build_prompt_keeps_metric_expression_separate_from_grain():
+    ctx = TableContext(
+        table_name="dws_store_sales_daily",
+        layer="DWS",
+        ddl="CREATE TABLE dws_store_sales_daily (store_id BIGINT);",
+        etl_sql=(
+            "INSERT INTO dws_store_sales_daily "
+            "SELECT store_id, order_date, SUM(subtotal) AS total_amount "
+            "FROM dwd_order_detail GROUP BY store_id, order_date;"
+        ),
+        upstream_tables=["dwd_order_detail"],
+        downstream_tables=[],
+    )
+
+    prompt = build_prompt(ctx)
+
+    assert "metric.expression 只填写指标计算公式" in prompt
+    assert "不要在 metric.expression 中写 GROUP BY" in prompt
+    assert "不要在 metric.expression 中写“按...分组”" in prompt
+    assert "聚合粒度由表级 grain 表达" in prompt
+    assert "如果 SQL 存在 GROUP BY" in prompt
+    assert "输出前逐项检查所有 metric.expression" in prompt
+    assert "不得包含 GROUP BY" in prompt
+    assert "time_period 只允许 D/W/M/Q/Y/S" in prompt
+    assert "不得返回中文" in prompt
+    assert "SUM(discount) GROUP BY store_id, order_date" not in prompt
+
+
 # ============================================================
 # 2. 响应解析测试
 # ============================================================
@@ -303,6 +334,215 @@ def test_parse_response_preserves_entity_and_grain_metadata():
     }
     assert data["grain"] == result.grain
     assert cached["grain"] == result.grain
+
+
+def test_parse_response_normalizes_convertible_time_periods():
+    resp = {
+        "choices": [
+            {
+                "message": {
+                    "content": json.dumps(
+                        {
+                            "inferred_layer": "DWS",
+                            "table_type": "fact",
+                            "confidence": 0.9,
+                            "reasoning_steps": ["商品月汇总"],
+                            "grain": {
+                                "entities": ["PROD"],
+                                "time_column": "stat_month_date",
+                                "time_period": "月",
+                            },
+                            "columns": {
+                                "atomic_metrics": [],
+                                "derived_metrics": [
+                                    {
+                                        "name": "sale_amount",
+                                        "base_metric": "subtotal",
+                                        "time_period": "月",
+                                        "expression": "SUM(subtotal)",
+                                        "confidence": 0.9,
+                                    }
+                                ],
+                                "calculated_metrics": [],
+                                "dimensions": [],
+                                "others": [],
+                            },
+                        }
+                    )
+                }
+            }
+        ]
+    }
+
+    result = parse_response(
+        "dws_category_sales_monthly", resp, declared_layer="DWS"
+    )
+    validation = validate_time_periods(result)
+
+    assert result.grain["time_period"] == "M"
+    assert result.derived_metrics[0]["time_period"] == "M"
+    assert validation == {}
+
+
+def test_validate_time_periods_flags_unrecognized_values():
+    result = parse_response(
+        "dws_category_sales_monthly",
+        {
+            "choices": [
+                {
+                    "message": {
+                        "content": json.dumps(
+                            {
+                                "inferred_layer": "DWS",
+                                "table_type": "fact",
+                                "confidence": 0.9,
+                                "grain": {
+                                    "entities": ["PROD"],
+                                    "time_column": "stat_month_date",
+                                    "time_period": "月累计",
+                                },
+                                "columns": {
+                                    "atomic_metrics": [],
+                                    "derived_metrics": [
+                                        {
+                                            "name": "sale_amount",
+                                            "base_metric": "subtotal",
+                                            "time_period": "月累计",
+                                            "expression": "SUM(subtotal)",
+                                        }
+                                    ],
+                                    "calculated_metrics": [],
+                                    "dimensions": [],
+                                    "others": [],
+                                },
+                            }
+                        )
+                    }
+                }
+            ]
+        },
+        declared_layer="DWS",
+    )
+
+    validation = validate_time_periods(result)
+
+    assert validation == {
+        "invalid_time_periods": [
+            "grain.time_period=月累计",
+            "derived_metrics[0].time_period=月累计",
+        ]
+    }
+
+
+def test_validate_metric_expressions_flags_grain_text():
+    result = parse_response(
+        "dws_store_sales_daily",
+        {
+            "choices": [
+                {
+                    "message": {
+                        "content": json.dumps(
+                            {
+                                "inferred_layer": "DWS",
+                                "table_type": "fact",
+                                "confidence": 0.9,
+                                "columns": {
+                                    "atomic_metrics": [],
+                                    "derived_metrics": [
+                                        {
+                                            "name": "sale_amount",
+                                            "base_metric": "subtotal",
+                                            "expression": (
+                                                "SUM(subtotal) GROUP BY "
+                                                "store_id, order_date"
+                                            ),
+                                        },
+                                        {
+                                            "name": "discount_amount",
+                                            "base_metric": "discount",
+                                            "expression": (
+                                                "SUM(discount) 按门店+日期分组"
+                                            ),
+                                        },
+                                    ],
+                                    "calculated_metrics": [],
+                                    "dimensions": [],
+                                    "others": [],
+                                },
+                            }
+                        )
+                    }
+                }
+            ]
+        },
+        declared_layer="DWS",
+    )
+
+    validation = validate_metric_expressions(result)
+
+    assert validation == {
+        "invalid_metric_expressions": [
+            (
+                "derived_metrics[0].expression="
+                "SUM(subtotal) GROUP BY store_id, order_date"
+            ),
+            "derived_metrics[1].expression=SUM(discount) 按门店+日期分组",
+        ]
+    }
+
+
+def test_validate_primary_entities_requires_dwd_fact_primary():
+    result = parse_response(
+        "dwd_order_detail",
+        {
+            "choices": [
+                {
+                    "message": {
+                        "content": json.dumps(
+                            {
+                                "inferred_layer": "DWD",
+                                "table_type": "fact",
+                                "confidence": 0.9,
+                                "entities": [
+                                    {
+                                        "code": "ORDER",
+                                        "type": "foreign",
+                                        "key_columns": ["order_id"],
+                                    },
+                                    {
+                                        "code": "CUST",
+                                        "type": "foreign",
+                                        "key_columns": ["customer_id"],
+                                    },
+                                ],
+                                "columns": {
+                                    "atomic_metrics": [],
+                                    "derived_metrics": [],
+                                    "calculated_metrics": [],
+                                    "dimensions": [
+                                        {
+                                            "name": "order_item_id",
+                                            "dimension_type": "primary_key",
+                                        }
+                                    ],
+                                    "others": [],
+                                },
+                            }
+                        )
+                    }
+                }
+            ]
+        },
+        declared_layer="DWD",
+    )
+
+    validation = validate_primary_entities(result)
+
+    assert validation == {
+        "missing_primary_entities": [
+            "DWD fact必须返回至少一个type=primary的entities项"
+        ]
+    }
 
 
 def test_parse_response_preserves_entities_metadata():
@@ -623,7 +863,7 @@ def test_parse_grouped_column_response():
     assert result.atomic_metrics[0]["measure"] == "amt"
     assert result.derived_metrics[0]["name"] == "pay_amt_1d"
     assert result.derived_metrics[0]["base_metric"] == "pay_amt"
-    assert result.derived_metrics[0]["time_period"] == "1d"
+    assert result.derived_metrics[0]["time_period"] == "D"
     assert result.calculated_metrics[0]["name"] == "gross_profit"
     assert result.calculated_metrics[0]["derived_from"] == [
         "subtotal",
@@ -965,6 +1205,13 @@ def test_inspect_preserves_llm_metric_groups(tmp_path, monkeypatch):
         "inferred_layer": "DWD",
         "table_type": "fact",
         "confidence": 0.95,
+        "entities": [
+            {
+                "code": "ORDER",
+                "type": "primary",
+                "key_columns": ["order_id"],
+            }
+        ],
         "columns": {
             "atomic_metrics": [
                 {"name": "quantity", "data_type": "INT"},
@@ -1172,6 +1419,13 @@ def test_progress_callback_reports_batch_events(tmp_path, monkeypatch):
                                     "inferred_layer": "DWD",
                                     "table_type": "fact",
                                     "confidence": 0.9,
+                                    "entities": [
+                                        {
+                                            "code": "PAY",
+                                            "type": "primary",
+                                            "key_columns": ["pay_amt"],
+                                        }
+                                    ],
                                     "columns": {
                                         "atomic_metrics": [
                                             {"name": "pay_amt"}
@@ -1292,6 +1546,13 @@ def test_inspect_retries_validation_errors(tmp_path, monkeypatch):
             "inferred_layer": "DWD",
             "table_type": "fact",
             "confidence": 0.9,
+            "entities": [
+                {
+                    "code": "ORDER",
+                    "type": "primary",
+                    "key_columns": ["order_id"],
+                }
+            ],
             "columns": {
                 "atomic_metrics": [{"name": "pay_amt"}],
                 "derived_metrics": [],
@@ -1319,6 +1580,390 @@ def test_inspect_retries_validation_errors(tmp_path, monkeypatch):
     assert result.status == "passed"
     assert result.retry_count == 1
     assert result.validation["unknown_columns"] == []
+
+
+def test_inspect_normalizes_convertible_time_periods_without_retry(
+    tmp_path, monkeypatch
+):
+    cache_file = tmp_path / "cache.json"
+    inspector = TableInspector(
+        api_key="test", cache_file=cache_file, max_retries=1
+    )
+    ctx = TableContext(
+        table_name="dws_category_sales_monthly",
+        layer="DWS",
+        ddl="""CREATE TABLE shop_dm.dws_category_sales_monthly (
+            category_id BIGINT,
+            stat_month_date DATE,
+            sale_amount DECIMAL(18,2)
+        );""",
+        etl_sql=(
+            "INSERT INTO shop_dm.dws_category_sales_monthly "
+            "SELECT category_id, stat_month_date, SUM(subtotal) "
+            "FROM dwd_order_detail GROUP BY category_id, stat_month_date;"
+        ),
+        upstream_tables=["dwd_order_detail"],
+        downstream_tables=[],
+        upstream_metric_groups={
+            "dwd_order_detail": {"atomic_metrics": ["subtotal"]}
+        },
+    )
+
+    responses = [
+        {
+            "inferred_layer": "DWS",
+            "table_type": "fact",
+            "confidence": 0.9,
+            "grain": {
+                "entities": ["PROD"],
+                "time_column": "stat_month_date",
+                "time_period": "月",
+            },
+            "columns": {
+                "atomic_metrics": [],
+                "derived_metrics": [
+                    {
+                        "name": "sale_amount",
+                        "base_metric": "subtotal",
+                        "base_metric_table": "dwd_order_detail",
+                        "time_period": "月",
+                        "expression": "SUM(subtotal)",
+                    }
+                ],
+                "calculated_metrics": [],
+                "dimensions": [
+                    {"name": "category_id"},
+                    {"name": "stat_month_date"},
+                ],
+                "others": [],
+            },
+        },
+    ]
+    calls = []
+
+    def fake_api(prompt):
+        calls.append(prompt)
+        data = responses[len(calls) - 1]
+        return json.dumps(
+            {"choices": [{"message": {"content": json.dumps(data)}}]}
+        )
+
+    monkeypatch.setattr(inspector, "_call_api", fake_api)
+
+    result = inspector.inspect(ctx)
+
+    assert len(calls) == 1
+    assert result.status == "passed"
+    assert result.retry_count == 0
+    assert result.grain["time_period"] == "M"
+    assert result.derived_metrics[0]["time_period"] == "M"
+
+
+def test_inspect_retries_unrecognized_time_periods(tmp_path, monkeypatch):
+    cache_file = tmp_path / "cache.json"
+    inspector = TableInspector(
+        api_key="test", cache_file=cache_file, max_retries=1
+    )
+    ctx = TableContext(
+        table_name="dws_category_sales_monthly",
+        layer="DWS",
+        ddl="""CREATE TABLE shop_dm.dws_category_sales_monthly (
+            category_id BIGINT,
+            stat_month_date DATE,
+            sale_amount DECIMAL(18,2)
+        );""",
+        etl_sql=(
+            "INSERT INTO shop_dm.dws_category_sales_monthly "
+            "SELECT category_id, stat_month_date, SUM(subtotal) "
+            "FROM dwd_order_detail GROUP BY category_id, stat_month_date;"
+        ),
+        upstream_tables=["dwd_order_detail"],
+        downstream_tables=[],
+        upstream_metric_groups={
+            "dwd_order_detail": {"atomic_metrics": ["subtotal"]}
+        },
+    )
+    responses = [
+        {
+            "inferred_layer": "DWS",
+            "table_type": "fact",
+            "confidence": 0.9,
+            "grain": {
+                "entities": ["PROD"],
+                "time_column": "stat_month_date",
+                "time_period": "月累计",
+            },
+            "columns": {
+                "atomic_metrics": [],
+                "derived_metrics": [
+                    {
+                        "name": "sale_amount",
+                        "base_metric": "subtotal",
+                        "base_metric_table": "dwd_order_detail",
+                        "time_period": "月累计",
+                        "expression": "SUM(subtotal)",
+                    }
+                ],
+                "calculated_metrics": [],
+                "dimensions": [
+                    {"name": "category_id"},
+                    {"name": "stat_month_date"},
+                ],
+                "others": [],
+            },
+        },
+        {
+            "inferred_layer": "DWS",
+            "table_type": "fact",
+            "confidence": 0.9,
+            "grain": {
+                "entities": ["PROD"],
+                "time_column": "stat_month_date",
+                "time_period": "M",
+            },
+            "columns": {
+                "atomic_metrics": [],
+                "derived_metrics": [
+                    {
+                        "name": "sale_amount",
+                        "base_metric": "subtotal",
+                        "base_metric_table": "dwd_order_detail",
+                        "time_period": "M",
+                        "expression": "SUM(subtotal)",
+                    }
+                ],
+                "calculated_metrics": [],
+                "dimensions": [
+                    {"name": "category_id"},
+                    {"name": "stat_month_date"},
+                ],
+                "others": [],
+            },
+        },
+    ]
+    calls = []
+
+    def fake_api(prompt):
+        calls.append(prompt)
+        data = responses[len(calls) - 1]
+        return json.dumps(
+            {"choices": [{"message": {"content": json.dumps(data)}}]}
+        )
+
+    monkeypatch.setattr(inspector, "_call_api", fake_api)
+
+    result = inspector.inspect(ctx)
+
+    assert len(calls) == 2
+    assert "invalid_time_periods" in calls[1]
+    assert "grain.time_period=月累计" in calls[1]
+    assert "derived_metrics[0].time_period=月累计" in calls[1]
+    assert result.status == "passed"
+    assert result.retry_count == 1
+    assert result.grain["time_period"] == "M"
+    assert result.derived_metrics[0]["time_period"] == "M"
+
+
+def test_inspect_retries_invalid_metric_expressions(tmp_path, monkeypatch):
+    cache_file = tmp_path / "cache.json"
+    inspector = TableInspector(
+        api_key="test", cache_file=cache_file, max_retries=1
+    )
+    ctx = TableContext(
+        table_name="dws_store_sales_daily",
+        layer="DWS",
+        ddl="""CREATE TABLE shop_dm.dws_store_sales_daily (
+            store_id BIGINT,
+            stat_date DATE,
+            sale_amount DECIMAL(18,2)
+        );""",
+        etl_sql=(
+            "INSERT INTO shop_dm.dws_store_sales_daily "
+            "SELECT store_id, order_date, SUM(subtotal) "
+            "FROM dwd_order_detail GROUP BY store_id, order_date;"
+        ),
+        upstream_tables=["dwd_order_detail"],
+        downstream_tables=[],
+        upstream_metric_groups={
+            "dwd_order_detail": {"atomic_metrics": ["subtotal"]}
+        },
+    )
+    responses = [
+        {
+            "inferred_layer": "DWS",
+            "table_type": "fact",
+            "confidence": 0.9,
+            "grain": {
+                "entities": ["STORE"],
+                "time_column": "stat_date",
+                "time_period": "D",
+            },
+            "columns": {
+                "atomic_metrics": [],
+                "derived_metrics": [
+                    {
+                        "name": "sale_amount",
+                        "base_metric": "subtotal",
+                        "base_metric_table": "dwd_order_detail",
+                        "time_period": "D",
+                        "expression": (
+                            "SUM(subtotal) GROUP BY store_id, order_date"
+                        ),
+                    }
+                ],
+                "calculated_metrics": [],
+                "dimensions": [{"name": "store_id"}, {"name": "stat_date"}],
+                "others": [],
+            },
+        },
+        {
+            "inferred_layer": "DWS",
+            "table_type": "fact",
+            "confidence": 0.9,
+            "grain": {
+                "entities": ["STORE"],
+                "time_column": "stat_date",
+                "time_period": "D",
+            },
+            "columns": {
+                "atomic_metrics": [],
+                "derived_metrics": [
+                    {
+                        "name": "sale_amount",
+                        "base_metric": "subtotal",
+                        "base_metric_table": "dwd_order_detail",
+                        "time_period": "D",
+                        "expression": "SUM(subtotal)",
+                    }
+                ],
+                "calculated_metrics": [],
+                "dimensions": [{"name": "store_id"}, {"name": "stat_date"}],
+                "others": [],
+            },
+        },
+    ]
+    calls = []
+
+    def fake_api(prompt):
+        calls.append(prompt)
+        data = responses[len(calls) - 1]
+        return json.dumps(
+            {"choices": [{"message": {"content": json.dumps(data)}}]}
+        )
+
+    monkeypatch.setattr(inspector, "_call_api", fake_api)
+
+    result = inspector.inspect(ctx)
+
+    assert len(calls) == 2
+    assert "invalid_metric_expressions" in calls[1]
+    assert (
+        "derived_metrics[0].expression="
+        "SUM(subtotal) GROUP BY store_id, order_date"
+    ) in calls[1]
+    assert result.status == "passed"
+    assert result.retry_count == 1
+    assert result.derived_metrics[0]["expression"] == "SUM(subtotal)"
+
+
+def test_inspect_retries_missing_dwd_fact_primary_entity(
+    tmp_path, monkeypatch
+):
+    cache_file = tmp_path / "cache.json"
+    inspector = TableInspector(
+        api_key="test", cache_file=cache_file, max_retries=1
+    )
+    ctx = TableContext(
+        table_name="dwd_order_detail",
+        layer="DWD",
+        ddl="""CREATE TABLE shop_dm.dwd_order_detail (
+            order_id BIGINT,
+            order_item_id BIGINT,
+            customer_id BIGINT,
+            quantity INT
+        );""",
+        etl_sql="INSERT INTO shop_dm.dwd_order_detail SELECT * FROM ods;",
+        upstream_tables=["ods_order_item"],
+        downstream_tables=["dws_product_sales_daily"],
+    )
+    responses = [
+        {
+            "inferred_layer": "DWD",
+            "table_type": "fact",
+            "confidence": 0.9,
+            "entities": [
+                {
+                    "code": "ORDER",
+                    "type": "foreign",
+                    "key_columns": ["order_id"],
+                },
+                {
+                    "code": "CUST",
+                    "type": "foreign",
+                    "key_columns": ["customer_id"],
+                },
+            ],
+            "columns": {
+                "atomic_metrics": [{"name": "quantity"}],
+                "derived_metrics": [],
+                "calculated_metrics": [],
+                "dimensions": [
+                    {"name": "order_id"},
+                    {"name": "order_item_id"},
+                    {"name": "customer_id"},
+                ],
+                "others": [],
+            },
+        },
+        {
+            "inferred_layer": "DWD",
+            "table_type": "fact",
+            "confidence": 0.9,
+            "entities": [
+                {
+                    "code": "ORDER_ITEM",
+                    "type": "primary",
+                    "key_columns": ["order_id", "order_item_id"],
+                },
+                {
+                    "code": "CUST",
+                    "type": "foreign",
+                    "key_columns": ["customer_id"],
+                },
+            ],
+            "columns": {
+                "atomic_metrics": [{"name": "quantity"}],
+                "derived_metrics": [],
+                "calculated_metrics": [],
+                "dimensions": [
+                    {"name": "order_id"},
+                    {"name": "order_item_id"},
+                    {"name": "customer_id"},
+                ],
+                "others": [],
+            },
+        },
+    ]
+    calls = []
+
+    def fake_api(prompt):
+        calls.append(prompt)
+        data = responses[len(calls) - 1]
+        return json.dumps(
+            {"choices": [{"message": {"content": json.dumps(data)}}]}
+        )
+
+    monkeypatch.setattr(inspector, "_call_api", fake_api)
+
+    result = inspector.inspect(ctx)
+
+    assert len(calls) == 2
+    assert "missing_primary_entities" in calls[1]
+    assert "DWD fact必须返回至少一个type=primary" in calls[1]
+    assert result.status == "passed"
+    assert result.retry_count == 1
+    assert result.entities[0]["code"] == "ORDER_ITEM"
+    assert result.entities[0]["type"] == "primary"
 
 
 def test_cache_hash_includes_declared_layer(tmp_path):

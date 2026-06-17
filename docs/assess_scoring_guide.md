@@ -171,7 +171,7 @@ score = 通过检查数 / 总检查数 * 100
 | 实体关系来源 | 非主实体且配置 relationship | `relationship.from_entity` 必须等于当前模型主实体。 |
 | 关联实体不重复主实体 | 非主实体 | 关联实体 code 不应等于主实体 code。 |
 | grain 键字段存在 | 有表字段信息且配置 `grain.keys` | `grain.keys` 必须存在于表字段中。 |
-| DWS grain.entities | DWS 或已配置 grain.entities | DWS 必须配置 `grain.entities`；已配置时引用的实体必须已定义。 |
+| DWS grain.entities | DWS 或已配置 grain.entities | DWS 必须配置 `grain.entities`；已配置时引用的实体必须存在于当前模型的 `entities.code` 中。 |
 | data_domain 有效 | 适用层级 | 必须存在于业务字典，且符合命名配置类型定义。缺失按低风险 issue。 |
 | business_area 有效 | 适用层级 | 必须存在于业务字典，且符合命名配置类型定义。缺失按低风险 issue。 |
 

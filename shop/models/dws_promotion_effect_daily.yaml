@@ -14,19 +14,19 @@ derived_metrics:
   base_metric: quantity
   base_metric_table: dwd_order_detail
   time_period: D
-  expression: SUM(od.quantity) GROUP BY promotion_id, order_date
+  expression: SUM(quantity)
   aggregation: SUM
 - name: sale_amount
   base_metric: subtotal
   base_metric_table: dwd_order_detail
   time_period: D
-  expression: SUM(od.subtotal) GROUP BY promotion_id, order_date
+  expression: SUM(subtotal)
   aggregation: SUM
 - name: discount_amount
   base_metric: discount
   base_metric_table: dwd_order_detail
   time_period: D
-  expression: SUM(od.discount) GROUP BY promotion_id, order_date
+  expression: SUM(discount)
   aggregation: SUM
 grain:
   entities:

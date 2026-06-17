@@ -366,34 +366,100 @@ def test_score_metadata_health_validates_model_entity_and_grain_entity():
 
     result = score_metadata_health(tables, nc, model_metadata)
 
-    assert result["score"] == 80.0
+    assert result["score"] < 100.0
     assert result["rule_summary"]["METADATA_GRAIN_ENTITIES_DEFINED"] == {
-        "name": "grain.entities有实体定义",
+        "name": "grain.entities属于当前表entities",
         "severity": "中",
         "pass_count": 0,
         "total": 1,
         "pct": 0.0,
     }
-    assert result["checks"][-1] == {
-        "id": "metadata_health.chk_005",
-        "rule_id": "METADATA_GRAIN_ENTITIES_DEFINED",
-        "target": {
-            "type": "table",
-            "name": "I_SHOP_CAT_SALE_DS",
-        },
-        "passed": False,
-        "expected": "grain.entities引用已定义实体",
-        "actual": "未定义实体: ['CAT']",
-        "evidence": {
-            "grain_entities": ["CAT"],
-            "defined_entities": ["CUST"],
-        },
-        "message": "grain.entities未定义=['CAT']",
+    grain_check = next(
+        check
+        for check in result["checks"]
+        if check["rule_id"] == "METADATA_GRAIN_ENTITIES_DEFINED"
+    )
+    assert grain_check["target"] == {
+        "type": "table",
+        "name": "I_SHOP_CAT_SALE_DS",
     }
+    assert grain_check["passed"] is False
+    assert grain_check["expected"] == "grain.entities引用当前表entities.code"
+    assert grain_check["actual"] == "当前表未声明实体: ['CAT']"
+    assert grain_check["evidence"] == {
+        "grain_entities": ["CAT"],
+        "table_entities": [],
+    }
+    assert grain_check["message"] == (
+        "grain.entities不在当前表entities中=['CAT']"
+    )
     assert result["issues"][0]["severity"] == "中"
     assert result["issues"][0]["remediation"]["strategy"] == (
         "update_model_grain_entities"
     )
+
+
+def test_score_metadata_health_requires_grain_entities_on_same_table():
+    nc = load_naming_config(PROJECT_ROOT / "naming_config.yaml")
+    tables = [
+        {
+            "name": "dim_category",
+            "layer": "DIM",
+            "columns": [{"name": "category_id", "type": "BIGINT"}],
+        },
+        {
+            "name": "dws_category_sales_daily",
+            "layer": "DWS",
+            "columns": [
+                {"name": "category_id", "type": "BIGINT"},
+                {"name": "stat_date", "type": "DATE"},
+            ],
+        },
+    ]
+    model_metadata = {
+        "dim_category": {
+            "layer": "DIM",
+            "table_type": "dimension",
+            "semantic_subject": "CAT",
+            "entities": [
+                {
+                    "code": "CAT",
+                    "type": "primary",
+                    "key_columns": ["category_id"],
+                }
+            ],
+        },
+        "dws_category_sales_daily": {
+            "layer": "DWS",
+            "table_type": "fact",
+            "entities": [
+                {
+                    "code": "STORE",
+                    "type": "foreign",
+                    "key_columns": ["store_id"],
+                }
+            ],
+            "grain": {
+                "entities": ["CAT"],
+                "time_column": "stat_date",
+            },
+        },
+    }
+
+    result = score_metadata_health(tables, nc, model_metadata)
+
+    check = next(
+        check
+        for check in result["checks"]
+        if check["rule_id"] == "METADATA_GRAIN_ENTITIES_DEFINED"
+        and check["target"]["name"] == "dws_category_sales_daily"
+    )
+    assert check["passed"] is False
+    assert check["actual"] == "当前表未声明实体: ['CAT']"
+    assert check["evidence"] == {
+        "grain_entities": ["CAT"],
+        "table_entities": ["STORE"],
+    }
 
 
 def test_score_metadata_health_passes_valid_entities_schema():

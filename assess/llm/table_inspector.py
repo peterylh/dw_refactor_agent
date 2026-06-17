@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import threading
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
@@ -15,8 +16,12 @@ from assess.project_facts.entity_metadata import (
     legacy_related_entities_from_entities,
     normalize_entities,
 )
+from assess.project_facts.time_period import (
+    is_canonical_time_period,
+    normalize_time_period,
+)
 
-PROMPT_VERSION = "table-inspector-v22"
+PROMPT_VERSION = "table-inspector-v24"
 VALID_LAYERS = {"ODS", "DWD", "DWS", "ADS", "DIM", "OTHER"}
 VALID_TABLE_TYPES = {"dimension", "fact", "other"}
 VALID_DIMENSION_ROLES = {"BASE", "ADDT"}
@@ -37,6 +42,9 @@ VALIDATION_ERROR_KEYS = (
     "invalid_base_metrics",
     "invalid_base_metric_tables",
     "ambiguous_base_metrics",
+    "invalid_time_periods",
+    "invalid_metric_expressions",
+    "missing_primary_entities",
 )
 VALIDATION_WARNING_KEYS = ("missing_columns",)
 
@@ -185,14 +193,24 @@ def build_prompt(ctx: TableContext) -> str:
 4. 判断上游字段类型时，优先参考“上游指标分组”；如果没有上游指标分组，再结合字段角色、注释、ETL 表达式和业务语义判断，不要套用字段名示例。
 5. 对字段做分组时，优先使用字段级血缘表达式判断来源和计算关系；直接透传只能说明当前 ETL 没有再次计算，不能否定字段自身已经是结果性度量。
 
+## 指标 expression 与 grain 边界
+- metric.expression 只填写指标计算公式，例如 SUM(subtotal)、COUNT(DISTINCT order_id)、SUM(subtotal - discount)。
+- 不要在 metric.expression 中写 GROUP BY；不要在 metric.expression 中写“按...分组”、"by ..." 等粒度说明。
+- 聚合粒度由表级 grain 表达；grain.entities 和 grain.time_column 应与 SQL GROUP BY 的业务粒度对齐。
+- 如果 SQL 存在 GROUP BY，只从目标指标字段自身的 SELECT 表达式提取 metric.expression；GROUP BY 字段、时间字段、实体字段和中文粒度说明都不要写入 metric.expression。
+- 输出前逐项检查所有 metric.expression：不得包含 GROUP BY、分组字段列表、时间粒度字段、实体粒度字段或中文粒度描述；若包含，应删除这些粒度片段，只保留指标计算公式。
+
 ## entities、grain 元数据识别
 - entities 表示当前模型中参与语义关联的实体键，借鉴 dbt Semantic Layer entity。每个实体返回 code、type 和 key_columns。
 - type 可取 primary、unique、foreign、natural。primary 表示当前表主实体键；unique 表示当前表内唯一但不是主实体；foreign 表示当前表引用其他实体的键；natural 表示拉链/快照表中标识业务实体但单独不唯一的自然键。
 - 维度型/实体型表应至少返回一个 type=primary 的主实体；如果当前表承载上级、归属或层级实体，则用 type=foreign 并带 relationship。
-- 事实表/DWS 汇总表中的实体通常为 type=foreign，key_columns 是当前表中表示该实体的字段名。
-- grain 只适用于 DWS 汇总事实表。若当前表是 DWS fact，应返回粒度实体 grain.entities、时间字段 time_column 和时间周期 time_period；否则 grain 返回空对象。
+- DWD fact 应优先识别当前事实行的主实体并返回 type=primary，例如订单明细、交易流水、支付事件、库存快照行等；复合业务键可以完整写入 key_columns，不要因为主键不是单列就放弃 primary。
+- DWD fact 中被引用的客户、商品、门店、活动等上下文对象应返回 type=foreign。
+- DWS 汇总事实表中的实体通常为 type=foreign，key_columns 是当前表中表示该实体的字段名；DWS 的行粒度由 grain 描述。
+- grain 主要适用于 DWS 汇总事实表。若当前表是 DWS fact，应返回粒度实体 grain.entities、时间字段 time_column 和时间周期 time_period；DWD fact 只有在没有清晰 primary entity 但能由业务键/日期明确行粒度时才返回 grain；其他表 grain 返回空对象。
 - grain.entities 必须引用当前返回的 entities[].code；它应来自粒度 key 对应的主要业务实体，不要把时间字段、状态、品牌、父级属性等普通维度属性放入 grain.entities。
 - grain.entities 应返回完整的粒度实体集合；若粒度涉及多个实体，不要为了贴合 TABLE_DWS 命名段而裁剪 entities。
+- time_period 只允许 D/W/M/Q/Y/S，含义分别为日/周/月/季/年/快照；不得返回中文、英文单词或 1d/1m 等窗口写法，无法判断时返回空字符串。
 - 不要返回 grain.keys；粒度字段由 grain.entities 引用的 entities[].key_columns 加上 time_column 推导。
 - 如果无法高置信判断 entities 或 grain，对应数组或对象返回空数组/空对象，不要编造字段或实体编码。
 
@@ -317,7 +335,7 @@ def build_prompt(ctx: TableContext) -> str:
         "base_metric": "对应原子指标名，无法判断则为空字符串",
         "base_metric_table": "对应原子指标所在上游表名，无法判断则为空字符串",
         "modifiers": ["修饰词，如区域/渠道/状态，无法判断则为空数组"],
-        "time_period": "时间周期，无法判断则为空字符串",
+        "time_period": "D|W|M|Q|Y|S，无法判断则为空字符串",
         "expression": "统计范围限定表达式，无法判断则为空字符串",
         "description": "简短中文描述",
         "reason": "分类理由",
@@ -383,6 +401,9 @@ def build_retry_prompt(
 - 同一个字段只能出现在 atomic_metrics / derived_metrics / calculated_metrics / dimensions / others 中的一个分组。
 - 如果表是 DWD/DWS fact，DDL 中每个字段都必须进入且仅进入一个分组。
 - derived_metrics 中每个指标必须填写 base_metric；能判断来源表时填写 base_metric_table，且 base_metric 必须来自该表 atomic_metrics。
+- invalid_time_periods 中列出的 time_period 必须改为 D/W/M/Q/Y/S 之一；不要返回中文、英文单词或 1d/1m 等写法。
+- invalid_metric_expressions 中列出的 expression 必须删除 GROUP BY、按...分组、by ... 等粒度说明，只保留指标计算公式。
+- missing_primary_entities 表示 DWD fact 缺少主实体；必须为当前事实行/事件/明细行补充至少一个 type=primary 的 entities 项。
 - 不要返回 Markdown，不要返回额外解释。
 """
     )
@@ -418,6 +439,11 @@ def _safe_str(value: Any) -> str:
     return str(value or "").strip()
 
 
+def _normalize_time_period_or_raw(value: Any) -> str:
+    text = _safe_str(value)
+    return normalize_time_period(text) or text
+
+
 def _safe_dict(value: Any) -> dict[str, Any]:
     return dict(value) if isinstance(value, dict) else {}
 
@@ -436,7 +462,7 @@ def _normalize_grain(value: Any) -> dict[str, Any]:
     keys = _safe_list(grain.get("keys"))
     entities = _safe_list(grain.get("entities"))
     time_column = _safe_str(grain.get("time_column"))
-    time_period = _safe_str(grain.get("time_period"))
+    time_period = _normalize_time_period_or_raw(grain.get("time_period"))
 
     # Treat placeholder payloads as empty grain metadata.
     if not keys and not entities and not time_column and not time_period:
@@ -491,6 +517,10 @@ def _normalize_group_item(
             item[field_name] = _safe_float(raw.get(field_name))
         elif field_name in ("derived_from", "modifiers"):
             item[field_name] = _safe_list(raw.get(field_name))
+        elif field_name == "time_period":
+            item[field_name] = _normalize_time_period_or_raw(
+                raw.get(field_name)
+            )
         else:
             item[field_name] = str(raw.get(field_name) or "")
     return item
@@ -707,6 +737,9 @@ def _normalize_validation(value: Any) -> dict[str, list[str]]:
         "invalid_base_metrics",
         "invalid_base_metric_tables",
         "ambiguous_base_metrics",
+        "invalid_time_periods",
+        "invalid_metric_expressions",
+        "missing_primary_entities",
     ):
         raw_items = value.get(key, []) or []
         if isinstance(raw_items, list):
@@ -768,6 +801,71 @@ def validate_columns(
     ):
         validation["missing_columns"] = sorted(ddl_columns - returned)
     return validation
+
+
+def validate_time_periods(
+    result: TableInspectResult,
+) -> dict[str, list[str]]:
+    """校验 LLM 返回的 time_period 是否已使用规范枚举值。"""
+    invalid = []
+    grain_period = str(result.grain.get("time_period") or "").strip()
+    if (
+        grain_period
+        and not is_canonical_time_period(grain_period)
+        and not normalize_time_period(grain_period)
+    ):
+        invalid.append(f"grain.time_period={grain_period}")
+
+    for index, metric in enumerate(result.derived_metrics):
+        period = str(metric.get("time_period") or "").strip()
+        if (
+            period
+            and not is_canonical_time_period(period)
+            and not normalize_time_period(period)
+        ):
+            invalid.append(f"derived_metrics[{index}].time_period={period}")
+
+    return {"invalid_time_periods": invalid} if invalid else {}
+
+
+def validate_metric_expressions(
+    result: TableInspectResult,
+) -> dict[str, list[str]]:
+    """校验指标表达式没有混入表粒度或分组描述。"""
+    invalid = []
+    pattern = re.compile(
+        r"\bGROUP\s+BY\b|按.+分组|\bby\s+[^()]+$",
+        re.IGNORECASE,
+    )
+    for group_name in ("derived_metrics", "calculated_metrics"):
+        metrics = result.columns.get(group_name, []) or []
+        for index, metric in enumerate(metrics):
+            expression = str(metric.get("expression") or "").strip()
+            if expression and pattern.search(expression):
+                invalid.append(
+                    f"{group_name}[{index}].expression={expression}"
+                )
+    return {"invalid_metric_expressions": invalid} if invalid else {}
+
+
+def validate_primary_entities(
+    result: TableInspectResult,
+) -> dict[str, list[str]]:
+    """校验事实明细表必须返回当前事实行主实体。"""
+    if result.declared_layer != "DWD" or not result.is_fact_table:
+        return {}
+    has_primary = any(
+        str(entity.get("type") or "").strip().lower() == "primary"
+        for entity in result.entities
+        if isinstance(entity, dict)
+    )
+    if has_primary:
+        return {}
+    return {
+        "missing_primary_entities": [
+            "DWD fact必须返回至少一个type=primary的entities项"
+        ]
+    }
 
 
 def _metric_names_from_items(raw_metrics: Any) -> list[str]:
@@ -1074,6 +1172,9 @@ class TableInspector:
             enrich_metric_relationships(result, ctx)
             result.validation = _merge_validation(
                 validate_columns(result, ddl_columns),
+                validate_time_periods(result),
+                validate_metric_expressions(result),
+                validate_primary_entities(result),
                 validate_metric_relationships(result, ctx),
             )
             if result.status == "passed" or attempt >= self.max_retries:

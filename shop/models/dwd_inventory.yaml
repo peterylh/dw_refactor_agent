@@ -10,6 +10,11 @@ config:
 atomic_metrics:
 - quantity
 entities:
+- code: INVENTORY
+  type: primary
+  name: 库存记录
+  key_columns:
+  - inventory_id
 - code: PROD
   type: foreign
   name: 商品
@@ -21,3 +26,5 @@ entities:
   key_columns:
   - store_id
 business_process: INVENTORY_MANAGEMENT
+calculated_metrics:
+- days_since_restock
