@@ -15,12 +15,12 @@ def _write_demo_lineage(tmp_path):
     return path
 
 
-def test_show_prints_table_lineage(tmp_path, capsys):
+def test_table_prints_table_lineage(tmp_path, capsys):
     _write_demo_lineage(tmp_path)
 
     exit_code = main(
         [
-            "show",
+            "table",
             "--project",
             "demo",
             "--lineage-dir",
@@ -38,6 +38,25 @@ def test_show_prints_table_lineage(tmp_path, capsys):
     assert exit_code == 0
     assert "Lineage: demo / ads_sales_dashboard" in captured.out
     assert "Tables: 4   Edges: 3   Jobs: 2" in captured.out
+
+
+def test_show_is_not_a_supported_command(tmp_path):
+    _write_demo_lineage(tmp_path)
+
+    with pytest.raises(SystemExit) as exc:
+        main(
+            [
+                "show",
+                "--project",
+                "demo",
+                "--lineage-dir",
+                str(tmp_path),
+                "--table",
+                "ads_sales_dashboard",
+            ]
+        )
+
+    assert exc.value.code == 2
 
 
 def test_column_requires_column_argument(tmp_path):

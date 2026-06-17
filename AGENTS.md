@@ -162,7 +162,7 @@ python lineage/import_lineage.py --project shop --snapshot-id 202606160001 --no-
 python lineage/lineage_cli.py stats --project shop
 
 # 表级上游/下游血缘
-python lineage/lineage_cli.py show --project shop --table ads_sales_dashboard --direction upstream --depth 2
+python lineage/lineage_cli.py table --project shop --table ads_sales_dashboard --direction upstream --depth 2
 
 # 字段级血缘，--verbose 会展示 WHERE/GROUP BY/JOIN 等间接依赖
 python lineage/lineage_cli.py column --project shop --table dws_product_sales_daily --column sales_amount --depth 2 --verbose
@@ -171,7 +171,7 @@ python lineage/lineage_cli.py column --project shop --table dws_product_sales_da
 python lineage/lineage_cli.py export-html --project shop --table ads_sales_dashboard --depth 2 --output lineage/local_ads_sales_dashboard.html
 ```
 
-`show` 支持 `--format text|json|dot`，`column` 支持 `--format text|json`。
+`table` 支持 `--format text|json|dot`，`column` 支持 `--format text|json`。
 
 ### refresh_lineage_html.py
 
