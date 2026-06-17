@@ -109,3 +109,33 @@ def test_model_path_for_table_routes_ods_layer_to_catalog_database_dir(
         "demo_dm",
         "ods_customer.yaml",
     )
+
+
+def test_finance_analytics_ods_assets_are_under_catalog_database_dir():
+    project_dir = config.PROJECT_ROOT / "finance_analytics"
+    ods_root = project_dir / "ods"
+    ods_dirs = {
+        "ddl": ods_root / "ddl" / "internal" / "finance_analytics_dm",
+        "models": ods_root / "models" / "internal" / "finance_analytics_dm",
+        "data": ods_root / "data" / "internal" / "finance_analytics_dm",
+    }
+
+    for asset_kind, ods_dir in ods_dirs.items():
+        pattern = "ods_*.yaml" if asset_kind == "models" else "ods_*.sql"
+        assert ods_dir.exists()
+        assert list(ods_dir.glob(pattern))
+        assert not list((project_dir / asset_kind).glob(pattern))
+
+    ddl_files = config.iter_project_asset_files(
+        "finance_analytics", "ddl", "*.sql"
+    )
+    model_files = config.iter_project_asset_files(
+        "finance_analytics", "models", "*.yaml"
+    )
+    data_files = config.iter_project_asset_files(
+        "finance_analytics", "data", "*.sql"
+    )
+
+    assert any(path.name == "ods_customers.sql" for path in ddl_files)
+    assert any(path.name == "ods_customers.yaml" for path in model_files)
+    assert any(path.name == "ods_customers.sql" for path in data_files)

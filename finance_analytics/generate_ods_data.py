@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-生成 finance_analytics/data 下的 ODS 初始化 SQL。
+生成 finance_analytics/ods/data/internal/finance_analytics_dm 下的 ODS 初始化 SQL。
 """
 
 from __future__ import annotations
@@ -15,6 +15,7 @@ import yaml
 PROJECT_DIR = Path(__file__).resolve().parent
 DBT_ROOT = Path(__file__).resolve().parents[2] / "finance_analytics_dbt"
 DB_NAME = "finance_analytics_dm"
+ODS_DATA_DIR = PROJECT_DIR / "ods" / "data" / "internal" / DB_NAME
 LOAD_TIME = datetime(2025, 1, 15, 9, 0, 0)
 
 random.seed(42)
@@ -965,11 +966,12 @@ def main() -> None:
         "customer_segments_history": customer_segments_history,
     }
 
-    data_dir = PROJECT_DIR / "data"
-    data_dir.mkdir(parents=True, exist_ok=True)
+    ODS_DATA_DIR.mkdir(parents=True, exist_ok=True)
     for table_name, rows in datasets.items():
         sql = render_insert(table_name, columns[table_name], rows)
-        (data_dir / f"ods_{table_name}.sql").write_text(sql, encoding="utf-8")
+        (ODS_DATA_DIR / f"ods_{table_name}.sql").write_text(
+            sql, encoding="utf-8"
+        )
 
 
 if __name__ == "__main__":

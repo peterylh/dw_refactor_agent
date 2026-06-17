@@ -35,8 +35,11 @@ shop-dm/
 │   │   └── full_refresh/           # shop 专用批量全刷 SQL
 │   └── models/                     # 表级元数据配置 (tablename.yaml)
 ├── finance_analytics/              # 金融分析数仓
-│   ├── ddl/                        # 17 ODS / 17 DWD / 12 DWS / 9 DIM / 4 ADS
-│   ├── data/                       # ODS 初始化数据 SQL
+│   ├── ddl/                        # DWD/DWS/ADS/DIM 建表 SQL
+│   ├── ods/                        # ODS 层资产，按 ddl/models/data/{catalog}/{database}/ 组织
+│   │   ├── ddl/internal/finance_analytics_dm/    # ODS 建表 SQL
+│   │   ├── models/internal/finance_analytics_dm/ # ODS 表级元数据配置
+│   │   └── data/internal/finance_analytics_dm/   # ODS 初始化数据 SQL
 │   ├── tasks/                      # 可执行 ETL SQL
 │   ├── models/                     # 表级元数据配置 (tablename.yaml)
 │   └── generate_ods_data.py        # 生成 ODS 模拟数据 SQL
@@ -325,7 +328,8 @@ python exec/reinit_project.py --project shop --full-refresh --parallel 4
 
 ### generate_ods_data.py
 
-生成 `finance_analytics/data/*.sql` 的 ODS 初始化数据，内置固定随机种子，便于复现。
+生成 `finance_analytics/ods/data/internal/finance_analytics_dm/*.sql`
+的 ODS 初始化数据，内置固定随机种子，便于复现。
 
 直接运行：
 
