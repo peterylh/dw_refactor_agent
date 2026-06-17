@@ -9,6 +9,7 @@ import argparse
 import json
 import re
 import sys
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
 # 将项目根目录加入 sys.path 以便导入 config
@@ -18,7 +19,10 @@ if str(_root) not in sys.path:
 
 import sqlglot
 from sqlglot import exp
+from sqlglot.lineage import build_scope as build_lineage_scope
 from sqlglot.lineage import lineage
+from sqlglot.lineage import qualify as lineage_qualify
+from sqlglot.schema import MappingSchema, Schema
 
 from config import PROJECT_CONFIG, project_asset_dirs
 from config import determine_layer as determine_config_layer
@@ -341,6 +345,86 @@ def _copy_schema(schema):
     return copied
 
 
+def schema_table_count(schema):
+    return sum(1 for _ in _iter_schema_tables(schema))
+
+
+def collect_statement_table_names(statements):
+    """Collect table names referenced by a parsed task."""
+    table_names = set()
+    for stmt in statements or []:
+        if stmt is None:
+            continue
+        for table_expr in stmt.find_all(exp.Table):
+            table_name = _canonical_qualified_identifier(
+                _table_name(table_expr)
+            )
+            if table_name:
+                table_names.add(table_name)
+    return table_names
+
+
+def slice_schema(schema, table_names):
+    """Return a schema containing only tables referenced by a task."""
+    requested_identities = set()
+    requested_short_names = set()
+    for table_name in table_names or []:
+        catalog, database, table = _table_identity(table_name)
+        if not table:
+            continue
+        requested_short_names.add(table)
+        requested_identities.add(
+            _qualified_table_name(catalog, database, table)
+        )
+        if database:
+            requested_identities.add(f"{database}.{table}")
+
+    sliced = {}
+    for catalog, database, table, columns in _iter_schema_tables(schema):
+        full_name = _qualified_table_name(catalog, database, table)
+        db_table_name = f"{database}.{table}" if database else table
+        if (
+            full_name in requested_identities
+            or db_table_name in requested_identities
+            or table in requested_short_names
+        ):
+            sliced.setdefault(catalog, {}).setdefault(database, {})[table] = (
+                dict(columns or {})
+            )
+    return sliced
+
+
+def _task_schema_for_statements(schema, statements):
+    try:
+        table_names = collect_statement_table_names(statements)
+    except Exception:
+        return _copy_schema(schema)
+    if not table_names:
+        return _copy_schema(schema)
+
+    task_schema = slice_schema(schema, table_names)
+    if schema_table_count(task_schema) == 0:
+        return _copy_schema(schema)
+    return task_schema
+
+
+def _lineage_schema(schema):
+    if isinstance(schema, Schema):
+        return schema
+    return MappingSchema(schema, dialect="doris")
+
+
+def _lineage_scope(select_expr, schema):
+    qualified = lineage_qualify.qualify(
+        select_expr.copy(),
+        dialect="doris",
+        schema=_lineage_schema(schema),
+        validate_qualify_columns=False,
+        identify=False,
+    )
+    return build_lineage_scope(qualified)
+
+
 def _register_task_table_schema(schema, table_name, columns):
     catalog, database, table_short = _table_identity(table_name)
     clean_columns = [
@@ -475,6 +559,11 @@ def _lineage_nodes_for_select(select_expr, schema):
     projections = (
         select_expr.expressions if isinstance(select_expr, exp.Select) else []
     )
+    sqlglot_schema = _lineage_schema(schema)
+    try:
+        scope = _lineage_scope(select_expr, sqlglot_schema)
+    except Exception:
+        scope = None
     for idx, col_name in enumerate(_projection_output_names(select_expr)):
         if not col_name:
             continue
@@ -486,8 +575,9 @@ def _lineage_nodes_for_select(select_expr, schema):
             nodes[col_name] = lineage(
                 column=col_name,
                 sql=select_expr.copy(),
-                schema=schema,
+                schema=sqlglot_schema,
                 dialect="doris",
+                scope=scope,
             )
         except Exception:
             continue
@@ -508,14 +598,6 @@ def build_schema_from_ddl(ddl_dir):
             for f in sorted(directory.glob("*.sql"))
         )
     return build_schema_from_texts(texts)
-
-
-def _schema_table_count(schema):
-    return sum(
-        len(tables)
-        for databases in schema.values()
-        for tables in databases.values()
-    )
 
 
 # ============================================================
@@ -652,7 +734,7 @@ def _derived_leaf_sources(select_expr, column_name, schema):
         node = lineage(
             column=column_name,
             sql=select_expr.copy(),
-            schema=schema,
+            schema=_lineage_schema(schema),
             dialect="doris",
         )
     except Exception:
@@ -878,6 +960,16 @@ STATS = {"parse_failures": 0, "lineage_failures": 0}
 """模块级统计,在 main() 结束后输出"""
 
 
+def _reset_stats():
+    STATS["parse_failures"] = 0
+    STATS["lineage_failures"] = 0
+
+
+def _add_stats(stats):
+    for key in STATS:
+        STATS[key] += int((stats or {}).get(key, 0))
+
+
 def extract_lineage_from_sql(sql_text, file_path, schema):
     entries = []
     try:
@@ -887,7 +979,7 @@ def extract_lineage_from_sql(sql_text, file_path, schema):
         STATS["parse_failures"] += 1
         return entries
 
-    task_schema = _copy_schema(schema)
+    task_schema = _task_schema_for_statements(schema, statements)
     for stmt in statements:
         if stmt is None:
             continue
@@ -909,6 +1001,153 @@ def extract_lineage_from_sql(sql_text, file_path, schema):
         elif isinstance(stmt, exp.Select) and stmt.args.get("into"):
             entries.extend(_handle_select_into(stmt, file_path, task_schema))
     return [_canonical_lineage_entry(entry) for entry in entries]
+
+
+def _extract_task_work_item(work_item, schema):
+    previous_stats = dict(STATS)
+    _reset_stats()
+    try:
+        source_file = work_item["source_file"]
+        sql_text = work_item["sql_text"]
+        task_facts = extract_task_table_facts(sql_text, source_file)
+        entries = extract_lineage_from_sql(sql_text, source_file, schema)
+        return {
+            "index": work_item["index"],
+            "source_file": source_file,
+            "entries": entries,
+            "transient_tables": task_facts["transient_tables"],
+            "stats": dict(STATS),
+        }
+    finally:
+        STATS.update(previous_stats)
+
+
+_PARALLEL_SCHEMA = None
+
+
+def _init_parallel_worker(project_name, schema):
+    global _PARALLEL_SCHEMA
+    configure_project(project_name)
+    _PARALLEL_SCHEMA = schema
+
+
+def _extract_task_work_item_parallel(work_item):
+    if _PARALLEL_SCHEMA is None:
+        raise RuntimeError("parallel lineage worker schema is not initialized")
+    return _extract_task_work_item(work_item, _PARALLEL_SCHEMA)
+
+
+def _read_task_work_items(task_files, tasks_dir):
+    work_items = []
+    for index, task_file in enumerate(task_files):
+        task_path = Path(task_file)
+        source_file = task_path.relative_to(tasks_dir).as_posix()
+        work_items.append(
+            {
+                "index": index,
+                "source_file": source_file,
+                "sql_text": task_path.read_text(encoding="utf-8"),
+            }
+        )
+    return work_items
+
+
+def _notify_progress(progress_callback, completed, total, result):
+    if progress_callback is not None:
+        progress_callback(completed, total, result)
+
+
+def _extract_task_work_items_serial(work_items, schema, progress_callback):
+    task_results = []
+    total = len(work_items)
+    for completed, work_item in enumerate(work_items, start=1):
+        result = _extract_task_work_item(work_item, schema)
+        task_results.append(result)
+        _notify_progress(progress_callback, completed, total, result)
+    return task_results
+
+
+def _extract_task_work_items_parallel(
+    work_items,
+    schema,
+    parallel,
+    progress_callback,
+):
+    max_workers = min(parallel, len(work_items))
+    try:
+        with ProcessPoolExecutor(
+            max_workers=max_workers,
+            initializer=_init_parallel_worker,
+            initargs=(CURRENT_PROJECT, schema),
+        ) as executor:
+            future_to_item = {
+                executor.submit(_extract_task_work_item_parallel, work_item): (
+                    work_item
+                )
+                for work_item in work_items
+            }
+            task_results = []
+            total = len(work_items)
+            for completed, future in enumerate(
+                as_completed(future_to_item),
+                start=1,
+            ):
+                result = future.result()
+                task_results.append(result)
+                _notify_progress(
+                    progress_callback,
+                    completed,
+                    total,
+                    result,
+                )
+            return sorted(
+                task_results,
+                key=lambda result: result["index"],
+            )
+    except (NotImplementedError, OSError, PermissionError):
+        return _extract_task_work_items_serial(
+            work_items,
+            schema,
+            progress_callback,
+        )
+
+
+def extract_lineage_from_task_files(
+    task_files,
+    tasks_dir,
+    schema,
+    parallel=1,
+    progress_callback=None,
+):
+    work_items = _read_task_work_items(task_files, tasks_dir)
+    parallel = max(1, int(parallel or 1))
+
+    if len(work_items) <= 1 or parallel == 1:
+        task_results = _extract_task_work_items_serial(
+            work_items,
+            schema,
+            progress_callback,
+        )
+    else:
+        task_results = _extract_task_work_items_parallel(
+            work_items,
+            schema,
+            parallel,
+            progress_callback,
+        )
+
+    all_lineage = []
+    transient_tables = []
+    for result in task_results:
+        all_lineage.extend(result["entries"])
+        transient_tables.extend(result["transient_tables"])
+        _add_stats(result["stats"])
+
+    return {
+        "lineage": all_lineage,
+        "transient_tables": transient_tables,
+        "task_results": task_results,
+    }
 
 
 def _trace_lineage(
@@ -1402,10 +1641,15 @@ def main():
         choices=list(PROJECT_CONFIG.keys()),
         help="项目名称, 对应 PROJECT_CONFIG 中的 key",
     )
+    parser.add_argument(
+        "--parallel",
+        type=int,
+        default=1,
+        help="task 文件级并行度, 默认 1",
+    )
     args = parser.parse_args()
     configure_project(args.project)
-    STATS["parse_failures"] = 0
-    STATS["lineage_failures"] = 0
+    _reset_stats()
     cfg = PROJECT_CONFIG[args.project]
     project_dir = Path(__file__).parent.parent / cfg["dir"]
     tasks_dir = project_dir / "tasks"
@@ -1413,7 +1657,7 @@ def main():
 
     # 1. 构建 Schema
     schema = build_schema_from_ddl(ddl_dirs)
-    table_count = _schema_table_count(schema)
+    table_count = schema_table_count(schema)
     print(f"Schema: {table_count} 个表")
 
     # 2. 提取血缘
@@ -1423,15 +1667,26 @@ def main():
     full_refresh_dir = tasks_dir / "full_refresh"
     if full_refresh_dir.exists():
         task_files.extend(sorted(full_refresh_dir.glob("*.sql")))
-    for f in task_files:
-        source_file = f.relative_to(tasks_dir).as_posix()
-        sql_text = f.read_text(encoding="utf-8")
-        task_facts = extract_task_table_facts(sql_text, source_file)
-        transient_tables.extend(task_facts["transient_tables"])
-        entries = extract_lineage_from_sql(sql_text, source_file, schema)
-        all_lineage.extend(entries)
-        if entries:
-            print(f"  {source_file}: {len(entries)} 条血缘")
+
+    parallel = max(1, int(args.parallel or 1))
+    print(f"Tasks: {len(task_files)} 个文件, 并行度: {parallel}")
+
+    def print_task_progress(completed, total, task_result):
+        entries = task_result["entries"]
+        print(
+            f"  [{completed}/{total}] {task_result['source_file']}: "
+            f"{len(entries)} 条血缘"
+        )
+
+    extraction_result = extract_lineage_from_task_files(
+        task_files,
+        tasks_dir,
+        schema,
+        parallel=parallel,
+        progress_callback=print_task_progress,
+    )
+    all_lineage = extraction_result["lineage"]
+    transient_tables = extraction_result["transient_tables"]
     all_lineage = [_canonical_lineage_entry(entry) for entry in all_lineage]
 
     output = build_lineage_output(

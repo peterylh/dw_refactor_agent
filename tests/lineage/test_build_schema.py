@@ -1,9 +1,9 @@
 from lineage.lineage_extractor import (
     _schema_columns_for_table,
     _schema_has_column,
-    _schema_table_count,
     build_schema_from_ddl,
     build_schema_from_texts,
+    schema_table_count,
 )
 
 
@@ -130,7 +130,7 @@ class TestBuildSchemaFromTexts:
             },
         }
 
-        assert _schema_table_count(schema) == 4
+        assert schema_table_count(schema) == 4
 
 
 class TestBuildSchemaFromDdl:
