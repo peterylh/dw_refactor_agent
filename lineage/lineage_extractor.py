@@ -349,6 +349,22 @@ def schema_table_count(schema):
     return sum(1 for _ in _iter_schema_tables(schema))
 
 
+def _schema_has_table(schema, table_name):
+    requested_catalog, requested_db, requested_table = _table_identity(
+        table_name
+    )
+    if not requested_table:
+        return False
+    for catalog, database, table, _columns in _iter_schema_tables(schema):
+        if (
+            catalog == requested_catalog
+            and database == requested_db
+            and table == requested_table
+        ):
+            return True
+    return False
+
+
 def collect_statement_table_names(statements):
     """Collect table names referenced by a parsed task."""
     table_names = set()
@@ -362,6 +378,57 @@ def collect_statement_table_names(statements):
             if table_name:
                 table_names.add(table_name)
     return table_names
+
+
+def collect_statement_cte_names(statements):
+    """Collect CTE names so they are not treated as physical tables."""
+    cte_names = set()
+    for stmt in statements or []:
+        if stmt is None:
+            continue
+        for cte in stmt.find_all(exp.CTE):
+            cte_name = _canonical_identifier(cte.alias_or_name)
+            if cte_name:
+                cte_names.add(cte_name)
+    return cte_names
+
+
+def _normalized_skip_table_names(table_names):
+    return {_strip_db(table_name) for table_name in table_names if table_name}
+
+
+def missing_schema_tables_for_statements(
+    schema, statements, transient_tables=None
+):
+    """Return referenced physical tables missing from parsed DDL schema."""
+    transient_names = _normalized_skip_table_names(
+        table.get("name", "") for table in (transient_tables or [])
+    )
+    cte_names = _normalized_skip_table_names(
+        collect_statement_cte_names(statements)
+    )
+    skip_names = transient_names | cte_names
+
+    missing_tables = set()
+    for table_name in collect_statement_table_names(statements):
+        display_name = _strip_db(table_name)
+        if not display_name or display_name in skip_names:
+            continue
+        if not _schema_has_table(schema, table_name):
+            missing_tables.add(display_name)
+    return sorted(missing_tables)
+
+
+def missing_schema_tables_from_sql(sql_text, schema, transient_tables=None):
+    try:
+        statements = sqlglot.parse(sql_text, dialect="doris")
+    except Exception:
+        return []
+    return missing_schema_tables_for_statements(
+        schema,
+        statements,
+        transient_tables=transient_tables,
+    )
 
 
 def slice_schema(schema, table_names):
@@ -1010,12 +1077,18 @@ def _extract_task_work_item(work_item, schema):
         source_file = work_item["source_file"]
         sql_text = work_item["sql_text"]
         task_facts = extract_task_table_facts(sql_text, source_file)
+        missing_ddl_tables = missing_schema_tables_from_sql(
+            sql_text,
+            schema,
+            transient_tables=task_facts["transient_tables"],
+        )
         entries = extract_lineage_from_sql(sql_text, source_file, schema)
         return {
             "index": work_item["index"],
             "source_file": source_file,
             "entries": entries,
             "transient_tables": task_facts["transient_tables"],
+            "missing_ddl_tables": missing_ddl_tables,
             "stats": dict(STATS),
         }
     finally:
@@ -1138,16 +1211,40 @@ def extract_lineage_from_task_files(
 
     all_lineage = []
     transient_tables = []
+    missing_ddl_tables = set()
     for result in task_results:
         all_lineage.extend(result["entries"])
         transient_tables.extend(result["transient_tables"])
+        missing_ddl_tables.update(result.get("missing_ddl_tables") or [])
         _add_stats(result["stats"])
 
     return {
         "lineage": all_lineage,
         "transient_tables": transient_tables,
+        "missing_ddl_tables": sorted(missing_ddl_tables),
         "task_results": task_results,
     }
+
+
+def format_missing_ddl_warnings(task_results, missing_ddl_tables):
+    lines = []
+    for result in task_results or []:
+        missing_tables = sorted(result.get("missing_ddl_tables") or [])
+        if not missing_tables:
+            continue
+        lines.append(
+            "WARNING missing DDL: "
+            f"{result.get('source_file', '')} references "
+            f"{', '.join(missing_tables)}, "
+            "but no schema DDL was found."
+        )
+    if missing_ddl_tables:
+        lines.append(
+            "DDL warning: "
+            f"{len(missing_ddl_tables)} referenced tables are missing "
+            "from schema DDL."
+        )
+    return lines
 
 
 def _trace_lineage(
@@ -1719,6 +1816,14 @@ def main():
     all_lineage = extraction_result["lineage"]
     transient_tables = extraction_result["transient_tables"]
     all_lineage = [_canonical_lineage_entry(entry) for entry in all_lineage]
+    warning_lines = format_missing_ddl_warnings(
+        extraction_result["task_results"],
+        extraction_result["missing_ddl_tables"],
+    )
+    if warning_lines:
+        print()
+        for line in warning_lines:
+            print(line)
 
     output = build_lineage_output(
         all_lineage,
