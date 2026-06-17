@@ -581,6 +581,7 @@ def _lineage_nodes_for_select(
     file_path="",
     target_table="",
     diagnostics=None,
+    warnings=None,
 ):
     nodes = {}
     projections = (
@@ -591,7 +592,7 @@ def _lineage_nodes_for_select(
         scope = _lineage_scope(select_expr, sqlglot_schema)
     except Exception as exc:
         _record_diagnostic(
-            diagnostics,
+            warnings,
             file_path,
             "lineage_scope",
             exc,
@@ -1050,7 +1051,13 @@ def _add_stats(stats):
         STATS[key] += int((stats or {}).get(key, 0))
 
 
-def extract_lineage_from_sql(sql_text, file_path, schema, diagnostics=None):
+def extract_lineage_from_sql(
+    sql_text,
+    file_path,
+    schema,
+    diagnostics=None,
+    warnings=None,
+):
     entries = []
     try:
         statements = sqlglot.parse(sql_text, dialect="doris")
@@ -1066,15 +1073,33 @@ def extract_lineage_from_sql(sql_text, file_path, schema, diagnostics=None):
             continue
         if isinstance(stmt, exp.Insert):
             entries.extend(
-                _handle_insert(stmt, file_path, task_schema, diagnostics)
+                _handle_insert(
+                    stmt,
+                    file_path,
+                    task_schema,
+                    diagnostics,
+                    warnings,
+                )
             )
         elif isinstance(stmt, exp.Update):
             entries.extend(
-                _handle_update(stmt, file_path, task_schema, diagnostics)
+                _handle_update(
+                    stmt,
+                    file_path,
+                    task_schema,
+                    diagnostics,
+                    warnings,
+                )
             )
         elif isinstance(stmt, exp.Create):
             entries.extend(
-                _handle_create(stmt, file_path, task_schema, diagnostics)
+                _handle_create(
+                    stmt,
+                    file_path,
+                    task_schema,
+                    diagnostics,
+                    warnings,
+                )
             )
             _register_task_table_schema(
                 task_schema,
@@ -1083,13 +1108,25 @@ def extract_lineage_from_sql(sql_text, file_path, schema, diagnostics=None):
             )
         elif isinstance(stmt, exp.Merge):
             entries.extend(
-                _handle_merge(stmt, file_path, task_schema, diagnostics)
+                _handle_merge(
+                    stmt,
+                    file_path,
+                    task_schema,
+                    diagnostics,
+                    warnings,
+                )
             )
         elif isinstance(stmt, exp.Delete):
             entries.extend(_handle_delete(stmt, file_path))
         elif isinstance(stmt, exp.Select) and stmt.args.get("into"):
             entries.extend(
-                _handle_select_into(stmt, file_path, task_schema, diagnostics)
+                _handle_select_into(
+                    stmt,
+                    file_path,
+                    task_schema,
+                    diagnostics,
+                    warnings,
+                )
             )
     return [_canonical_lineage_entry(entry) for entry in entries]
 
@@ -1101,12 +1138,14 @@ def _extract_task_work_item(work_item, schema):
         source_file = work_item["source_file"]
         sql_text = work_item["sql_text"]
         diagnostics = []
+        warnings = []
         task_facts = extract_task_table_facts(sql_text, source_file)
         entries = extract_lineage_from_sql(
             sql_text,
             source_file,
             schema,
             diagnostics=diagnostics,
+            warnings=warnings,
         )
         return {
             "index": work_item["index"],
@@ -1115,6 +1154,7 @@ def _extract_task_work_item(work_item, schema):
             "transient_tables": task_facts["transient_tables"],
             "stats": dict(STATS),
             "errors": diagnostics,
+            "warnings": warnings,
         }
     finally:
         STATS.update(previous_stats)
@@ -1149,6 +1189,7 @@ def _task_failure_result(work_item, error, stage="worker"):
                 "error": _diagnostic_error(error),
             }
         ],
+        "warnings": [],
     }
 
 
@@ -1261,17 +1302,20 @@ def extract_lineage_from_task_files(
     all_lineage = []
     transient_tables = []
     errors = []
+    warnings = []
     for result in task_results:
         all_lineage.extend(result["entries"])
         transient_tables.extend(result["transient_tables"])
         _add_stats(result["stats"])
         errors.extend(result.get("errors") or [])
+        warnings.extend(result.get("warnings") or [])
 
     return {
         "lineage": all_lineage,
         "transient_tables": transient_tables,
         "task_results": task_results,
         "errors": errors,
+        "warnings": warnings,
     }
 
 
@@ -1306,6 +1350,7 @@ def _trace_lineage(
     file_path,
     target_columns=None,
     diagnostics=None,
+    warnings=None,
 ):
     entries = []
     nodes = _lineage_nodes_for_select(
@@ -1314,6 +1359,7 @@ def _trace_lineage(
         file_path=file_path,
         target_table=target_table,
         diagnostics=diagnostics,
+        warnings=warnings,
     )
     if not nodes and not _projection_output_names(select_expr):
         STATS["lineage_failures"] += 1
@@ -1410,7 +1456,13 @@ def _trace_lineage(
     return entries
 
 
-def _handle_insert(stmt, file_path, schema, diagnostics=None):
+def _handle_insert(
+    stmt,
+    file_path,
+    schema,
+    diagnostics=None,
+    warnings=None,
+):
     target_table = _target_table_sql(stmt.this)
     target_columns = _target_columns(stmt.this)
     if target_columns is None:
@@ -1426,11 +1478,18 @@ def _handle_insert(stmt, file_path, schema, diagnostics=None):
             file_path,
             target_columns,
             diagnostics,
+            warnings,
         )
     return []
 
 
-def _handle_update(stmt, file_path, schema, diagnostics=None):
+def _handle_update(
+    stmt,
+    file_path,
+    schema,
+    diagnostics=None,
+    warnings=None,
+):
     target_table = _target_table_sql(stmt.this)
     select = update_to_select(stmt)
     return _trace_lineage(
@@ -1439,10 +1498,17 @@ def _handle_update(stmt, file_path, schema, diagnostics=None):
         schema,
         file_path,
         diagnostics=diagnostics,
+        warnings=warnings,
     )
 
 
-def _handle_create(stmt, file_path, schema, diagnostics=None):
+def _handle_create(
+    stmt,
+    file_path,
+    schema,
+    diagnostics=None,
+    warnings=None,
+):
     target_table = _target_table_sql(stmt.this)
     target_columns = _target_columns(stmt.this)
     inner = stmt.args.get("expression")
@@ -1454,11 +1520,18 @@ def _handle_create(stmt, file_path, schema, diagnostics=None):
             file_path,
             target_columns,
             diagnostics,
+            warnings,
         )
     return []
 
 
-def _handle_merge(stmt, file_path, schema, diagnostics=None):
+def _handle_merge(
+    stmt,
+    file_path,
+    schema,
+    diagnostics=None,
+    warnings=None,
+):
     target_table = _target_table_sql(stmt.this)
     entries = []
     whens = stmt.args.get("whens")
@@ -1475,6 +1548,7 @@ def _handle_merge(stmt, file_path, schema, diagnostics=None):
                     schema,
                     file_path,
                     diagnostics=diagnostics,
+                    warnings=warnings,
                 )
             )
         elif isinstance(action, exp.Insert):
@@ -1487,6 +1561,7 @@ def _handle_merge(stmt, file_path, schema, diagnostics=None):
                         schema,
                         file_path,
                         diagnostics=diagnostics,
+                        warnings=warnings,
                     )
                 )
             elif isinstance(inner, exp.Tuple):
@@ -1496,7 +1571,13 @@ def _handle_merge(stmt, file_path, schema, diagnostics=None):
     return entries
 
 
-def _handle_select_into(stmt, file_path, schema, diagnostics=None):
+def _handle_select_into(
+    stmt,
+    file_path,
+    schema,
+    diagnostics=None,
+    warnings=None,
+):
     into = stmt.args.get("into")
     if not into:
         return []
@@ -1507,6 +1588,7 @@ def _handle_select_into(stmt, file_path, schema, diagnostics=None):
         schema,
         file_path,
         diagnostics=diagnostics,
+        warnings=warnings,
     )
 
 
@@ -1872,10 +1954,12 @@ def main():
     def print_task_progress(completed, total, task_result):
         entries = task_result["entries"]
         errors = task_result.get("errors") or []
+        warnings = task_result.get("warnings") or []
         error_text = f", {len(errors)} 个错误" if errors else ""
+        warning_text = f", {len(warnings)} 个警告" if warnings else ""
         print(
             f"  [{completed}/{total}] {task_result['source_file']}: "
-            f"{len(entries)} 条血缘{error_text}"
+            f"{len(entries)} 条血缘{error_text}{warning_text}"
         )
 
     extraction_result = extract_lineage_from_task_files(
@@ -1935,6 +2019,16 @@ def main():
                 print(f"      - {_format_diagnostic(diagnostic)}")
             if len(diagnostics) > 5:
                 print(f"      - ... 还有 {len(diagnostics) - 5} 个错误")
+    if extraction_result["warnings"]:
+        print("  警告任务明细:")
+        for source_file, diagnostics in sorted(
+            _diagnostics_by_source_file(extraction_result["warnings"]).items()
+        ):
+            print(f"    {source_file}: {len(diagnostics)} 个警告")
+            for diagnostic in diagnostics[:5]:
+                print(f"      - {_format_diagnostic(diagnostic)}")
+            if len(diagnostics) > 5:
+                print(f"      - ... 还有 {len(diagnostics) - 5} 个警告")
     print(f"  输出: {output_path}")
     if legacy_output_path:
         print(f"  兼容输出: {legacy_output_path}")

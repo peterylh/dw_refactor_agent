@@ -95,6 +95,70 @@ def test_lineage_nodes_for_select_reuses_scope_across_output_columns(
     assert scopes[0] is scopes[1]
 
 
+def test_lineage_scope_failures_are_reported_as_warnings(
+    tmp_path,
+    monkeypatch,
+):
+    schema = build_schema_from_texts(
+        [
+            """
+            CREATE TABLE shop_dm.ods_order (
+                order_id BIGINT,
+                amount DECIMAL(12,2)
+            )
+            """,
+            """
+            CREATE TABLE shop_dm.dwd_order (
+                order_id BIGINT,
+                amount DECIMAL(12,2)
+            )
+            """,
+        ]
+    )
+    tasks_dir = tmp_path / "tasks"
+    tasks_dir.mkdir()
+    task_file = tasks_dir / "dwd_order.sql"
+    task_file.write_text(
+        """
+        INSERT INTO shop_dm.dwd_order
+        SELECT order_id, amount FROM shop_dm.ods_order
+        """,
+        encoding="utf-8",
+    )
+
+    def fail_scope(_select_expr, _schema):
+        raise RuntimeError("scope boom")
+
+    def fake_lineage(column, sql, schema, dialect, scope=None):
+        assert scope is None
+        projection = next(
+            item for item in sql.expressions if item.alias_or_name == column
+        )
+        return types.SimpleNamespace(expression=projection, downstream=[])
+
+    monkeypatch.setattr(lineage_extractor, "_lineage_scope", fail_scope)
+    monkeypatch.setattr(lineage_extractor, "lineage", fake_lineage)
+
+    result = lineage_extractor.extract_lineage_from_task_files(
+        [task_file],
+        tasks_dir,
+        schema,
+        parallel=1,
+    )
+
+    assert result["errors"] == []
+    assert result["warnings"] == [
+        {
+            "source_file": "dwd_order.sql",
+            "stage": "lineage_scope",
+            "error": "RuntimeError: scope boom",
+            "target_table": "dwd_order",
+        }
+    ]
+    assert result["task_results"][0]["errors"] == []
+    assert result["task_results"][0]["warnings"] == result["warnings"]
+
+
 def test_collect_statement_table_names_includes_targets_sources_and_cte_sources():
     statements = sqlglot.parse(
         """
