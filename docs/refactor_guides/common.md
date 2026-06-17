@@ -75,10 +75,12 @@ python lineage/lineage_extractor.py --project <project>
 不要默认运行：
 
 ```bash
-pytest
+make test
 ```
 
-原因：数仓资产重构通常不应该影响工具代码测试。只有修改了工具代码时，才运行相关 pytest。
+原因：数仓资产重构通常不应该影响工具代码测试。只有修改了工具代码时，才运行
+`make test`。不要直接运行裸 `pytest`，它可能使用 PATH 中的 Homebrew Python 或其他
+全局解释器。
 
 不要默认运行：
 

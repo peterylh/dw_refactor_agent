@@ -189,7 +189,8 @@ def _read_task_sql(tasks_dir: Path, source_file: str) -> str | None:
 
 
 def _job_name(source_file: str) -> str:
-    return Path(source_file).name.removesuffix(".sql")
+    file_name = Path(source_file).name
+    return file_name[:-4] if file_name.endswith(".sql") else file_name
 
 
 def _build_table_rows(

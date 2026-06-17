@@ -563,6 +563,30 @@ python assess/model_metadata_writer.py --project shop --max-retries 2
 默认输出到 `assess/model_metadata_result_{project}.json`。
 
 
+## 本地测试环境
+
+项目默认使用名为 `dw-refactor-py37` 的 conda 环境运行本地开发检查。主工作区与
+git worktree 都应使用同一个命名环境，避免因为 worktree 路径不同而误用 Homebrew
+Python 或其他全局解释器。
+
+```bash
+# 首次创建环境
+make env-create
+
+# 检查当前解释器、Python 版本与必要依赖
+make doctor
+
+# 运行非 API 测试
+make test
+```
+
+不要直接运行裸 `pytest`。如需使用其他已存在解释器，必须显式指定：
+
+```bash
+make test PYTHON=/absolute/path/to/python
+```
+
+
 ## Git Commit 规范
 
 参见 [commit_message.md](./commit_message.md)。

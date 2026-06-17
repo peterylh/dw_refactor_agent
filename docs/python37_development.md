@@ -3,22 +3,52 @@
 This project defaults to Python 3.7 for local development and test runs.
 Use the released `sqlglot==26.9.0`; do not use a local sqlglot checkout.
 
-Create a project-local environment:
+Create the shared conda environment:
 
 ```bash
-CONDA_SUBDIR=osx-64 \
-XDG_CACHE_HOME="$PWD/.cache" \
-CONDA_PKGS_DIRS="$PWD/.conda-pkgs" \
-conda env create --prefix "$PWD/.conda-py37" -f environment-py37.yml
+make env-create
 ```
 
-On non-Apple-Silicon machines, `CONDA_SUBDIR=osx-64` is usually unnecessary.
+The default environment name is `dw-refactor-py37`. Because it is a named
+conda environment, the main checkout and all git worktrees use the same Python
+runtime.
+
+On Apple Silicon machines, Python 3.7 packages may require the osx-64 solver:
+
+```bash
+CONDA_SUBDIR=osx-64 make env-create
+```
+
+Update the environment after dependency changes:
+
+```bash
+make env-update
+```
 
 Run tests with the Python 3.7 environment:
 
 ```bash
-PYTHONPATH= ./.conda-py37/bin/python -m pytest -q -m 'not api'
+make test
 ```
 
-The empty `PYTHONPATH=` prevents editable or local checkouts such as
-`/Users/yulihua/Projects/sqlglot` from shadowing the pinned package.
+Check the interpreter and required modules without running the full suite:
+
+```bash
+make doctor
+```
+
+If you need to use a different already-created environment, override the
+interpreter explicitly:
+
+```bash
+make test PYTHON=/absolute/path/to/python
+```
+
+Do not run bare `pytest` in this repository. `pytest` uses whichever executable
+appears first on `PATH`, which may be Homebrew Python or another global
+installation. The project entrypoints use `python -m pytest` through the
+selected interpreter instead.
+
+The Makefile runs tests with an empty `PYTHONPATH=` so editable or local
+checkouts such as `/Users/yulihua/Projects/sqlglot` do not shadow the pinned
+package.

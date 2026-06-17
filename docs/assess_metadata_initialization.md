@@ -139,5 +139,5 @@ catalog 是治理层，应该先由 LLM 初始化，再人工修订确认。mode
 ```bash
 python assess/assess_middle_layer.py --project shop --model-design
 python assess/assess_middle_layer.py --project shop
-pytest -q -m "not api"
+make test
 ```
