@@ -50,6 +50,37 @@ class TestBuildSchemaFromTexts:
             "CUSTOMER_NAME",
         }
 
+    def test_schema_lookup_is_case_insensitive(self):
+        schema = build_schema_from_texts(
+            [
+                """
+                CREATE TABLE shop_dm.M_SHOP_01_CUST_DF (
+                    CUSTOMER_ID BIGINT,
+                    Customer_Name VARCHAR(64)
+                )
+                """
+            ]
+        )
+
+        assert _schema_columns_for_table(
+            schema, "SHOP_DM.m_shop_01_cust_df"
+        ) == [
+            "CUSTOMER_ID",
+            "Customer_Name",
+        ]
+        assert (
+            _schema_has_column(
+                schema, "shop_dm.m_shop_01_cust_df", "customer_id"
+            )
+            is True
+        )
+        assert (
+            _schema_has_column(
+                schema, "SHOP_DM.M_SHOP_01_CUST_DF", "customer_name"
+            )
+            is True
+        )
+
     def test_bare_table_uses_default_catalog_and_database(self):
         schema = build_schema_from_texts(
             [

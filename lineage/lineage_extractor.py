@@ -68,6 +68,10 @@ def _canonical_identifier(name):
     return text
 
 
+def _identifier_match_key(name):
+    return _canonical_identifier(name).casefold()
+
+
 def _canonical_qualified_identifier(name):
     text = str(name or "").strip()
     if not text:
@@ -103,6 +107,23 @@ def _table_identity(name, default_catalog=None, default_db=None):
     return parts[-3], parts[-2], parts[-1]
 
 
+def _schema_table_match_key(catalog, database, table):
+    return (
+        _identifier_match_key(catalog),
+        _identifier_match_key(database),
+        _identifier_match_key(table),
+    )
+
+
+def _table_identity_match_key(name, default_catalog=None, default_db=None):
+    catalog, database, table = _table_identity(
+        name,
+        default_catalog=default_catalog,
+        default_db=default_db,
+    )
+    return _schema_table_match_key(catalog, database, table)
+
+
 def _qualified_table_name(catalog, database, table):
     catalog = _canonical_identifier(catalog)
     database = _canonical_identifier(database)
@@ -115,9 +136,13 @@ def _display_table_name(name, strip_current_db=False):
     catalog, database, table = _table_identity(name)
     if not table:
         return ""
-    if catalog != _default_catalog():
+    if _identifier_match_key(catalog) != _identifier_match_key(
+        _default_catalog()
+    ):
         return _qualified_table_name(catalog, database, table)
-    if strip_current_db and database == _default_db():
+    if strip_current_db and _identifier_match_key(
+        database
+    ) == _identifier_match_key(_default_db()):
         return table
     if database:
         return f"{database}.{table}"
@@ -132,14 +157,70 @@ def _canonical_column(name):
     return _canonical_identifier(name)
 
 
-def _canonical_lineage_entry(entry):
+def _iter_matching_schema_tables(schema, table_name):
+    requested_key = _table_identity_match_key(table_name)
+    if not requested_key[2]:
+        return
+    for catalog, database, table, columns in _iter_schema_tables(schema):
+        if _schema_table_match_key(catalog, database, table) == requested_key:
+            yield catalog, database, table, columns
+
+
+def _schema_table_name(schema, table_name):
+    for catalog, database, table, _columns in _iter_matching_schema_tables(
+        schema, table_name
+    ):
+        return _display_table_name(
+            _qualified_table_name(catalog, database, table),
+            strip_current_db=True,
+        )
+    return _strip_db(table_name)
+
+
+def _schema_column_name(schema, table_name, column_name):
+    clean_column = _canonical_column(column_name)
+    column_key = _identifier_match_key(clean_column)
+    if not column_key:
+        return ""
+    for _catalog, _database, _table, columns in _iter_matching_schema_tables(
+        schema, table_name
+    ):
+        for raw_column in columns or {}:
+            if _identifier_match_key(raw_column) == column_key:
+                return _canonical_column(raw_column)
+    return clean_column
+
+
+def _canonical_lineage_entry(entry, schema=None):
     cleaned = dict(entry)
     for key in ("source_table", "target_table"):
         if key in cleaned:
-            cleaned[key] = _strip_db(cleaned[key])
-    for key in ("source_column", "target_column"):
-        if key in cleaned:
-            cleaned[key] = _canonical_column(cleaned[key])
+            if schema is not None:
+                cleaned[key] = _schema_table_name(schema, cleaned[key])
+            else:
+                cleaned[key] = _strip_db(cleaned[key])
+    if "source_column" in cleaned:
+        if schema is not None:
+            cleaned["source_column"] = _schema_column_name(
+                schema,
+                cleaned.get("source_table", ""),
+                cleaned["source_column"],
+            )
+        else:
+            cleaned["source_column"] = _canonical_column(
+                cleaned["source_column"]
+            )
+    if "target_column" in cleaned:
+        if schema is not None:
+            cleaned["target_column"] = _schema_column_name(
+                schema,
+                cleaned.get("target_table", ""),
+                cleaned["target_column"],
+            )
+        else:
+            cleaned["target_column"] = _canonical_column(
+                cleaned["target_column"]
+            )
     return cleaned
 
 
@@ -266,19 +347,10 @@ def _target_columns(target_expr):
 
 def _schema_columns_for_table(schema, table_name):
     """返回目标表 DDL 字段顺序,用于 INSERT 未声明目标列时按位置对齐。"""
-    requested_catalog, requested_db, requested_table = _table_identity(
-        table_name
-    )
-    if not requested_table:
-        return None
-
-    for catalog, database, table, columns in _iter_schema_tables(schema):
-        if (
-            catalog == requested_catalog
-            and database == requested_db
-            and table == requested_table
-            and columns
-        ):
+    for _catalog, _database, _table, columns in _iter_matching_schema_tables(
+        schema, table_name
+    ):
+        if columns:
             return [_canonical_column(col_name) for col_name in columns]
     return None
 
@@ -350,19 +422,9 @@ def schema_table_count(schema):
 
 
 def _schema_has_table(schema, table_name):
-    requested_catalog, requested_db, requested_table = _table_identity(
-        table_name
+    return any(
+        True for _table in _iter_matching_schema_tables(schema, table_name)
     )
-    if not requested_table:
-        return False
-    for catalog, database, table, _columns in _iter_schema_tables(schema):
-        if (
-            catalog == requested_catalog
-            and database == requested_db
-            and table == requested_table
-        ):
-            return True
-    return False
 
 
 def collect_statement_table_names(statements):
@@ -434,26 +496,36 @@ def missing_schema_tables_from_sql(sql_text, schema, transient_tables=None):
 def slice_schema(schema, table_names):
     """Return a schema containing only tables referenced by a task."""
     requested_identities = set()
+    requested_db_table_identities = set()
     requested_short_names = set()
     for table_name in table_names or []:
         catalog, database, table = _table_identity(table_name)
         if not table:
             continue
-        requested_short_names.add(table)
+        requested_short_names.add(_identifier_match_key(table))
         requested_identities.add(
-            _qualified_table_name(catalog, database, table)
+            _schema_table_match_key(catalog, database, table)
         )
         if database:
-            requested_identities.add(f"{database}.{table}")
+            requested_db_table_identities.add(
+                (
+                    _identifier_match_key(database),
+                    _identifier_match_key(table),
+                )
+            )
 
     sliced = {}
     for catalog, database, table, columns in _iter_schema_tables(schema):
-        full_name = _qualified_table_name(catalog, database, table)
-        db_table_name = f"{database}.{table}" if database else table
+        full_name_key = _schema_table_match_key(catalog, database, table)
+        db_table_key = (
+            _identifier_match_key(database),
+            _identifier_match_key(table),
+        )
+        table_key = _identifier_match_key(table)
         if (
-            full_name in requested_identities
-            or db_table_name in requested_identities
-            or table in requested_short_names
+            full_name_key in requested_identities
+            or db_table_key in requested_db_table_identities
+            or table_key in requested_short_names
         ):
             sliced.setdefault(catalog, {}).setdefault(database, {})[table] = (
                 dict(columns or {})
@@ -517,14 +589,17 @@ def _created_table_columns(stmt):
 
 
 def _infer_table_for_column(schema, preferred_table, column_name):
-    column_name = _canonical_column(column_name)
+    column_key = _identifier_match_key(column_name)
     preferred = _strip_db(preferred_table)
     if preferred and _schema_has_column(schema, preferred, column_name):
-        return preferred
+        return _schema_table_name(schema, preferred)
 
     matches = []
     for catalog, database, table_name, columns in _iter_schema_tables(schema):
-        if column_name in columns:
+        if any(
+            _identifier_match_key(raw_column) == column_key
+            for raw_column in (columns or {})
+        ):
             matches.append(
                 _display_table_name(
                     _qualified_table_name(catalog, database, table_name),
@@ -859,16 +934,15 @@ def _collect_ctes(select_expr):
 
 
 def _schema_has_column(schema, table_name, column_name):
-    requested_catalog, requested_db, requested_table = _table_identity(
-        table_name
-    )
-    column_name = _canonical_column(column_name)
-    for catalog, database, table, columns in _iter_schema_tables(schema):
-        if (
-            catalog == requested_catalog
-            and database == requested_db
-            and table == requested_table
-            and column_name in columns
+    column_key = _identifier_match_key(column_name)
+    if not column_key:
+        return False
+    for _catalog, _database, _table, columns in _iter_matching_schema_tables(
+        schema, table_name
+    ):
+        if any(
+            _identifier_match_key(raw_column) == column_key
+            for raw_column in (columns or {})
         ):
             return True
     return False
@@ -1191,7 +1265,7 @@ def extract_lineage_from_sql(sql_text, file_path, schema, diagnostics=None):
             entries.extend(
                 _handle_select_into(stmt, file_path, task_schema, diagnostics)
             )
-    return [_canonical_lineage_entry(entry) for entry in entries]
+    return [_canonical_lineage_entry(entry, task_schema) for entry in entries]
 
 
 def _extract_task_work_item(work_item, schema):
@@ -1736,6 +1810,9 @@ def _transient_table_occurrence(table):
 
 def build_lineage_output(all_lineage, schema, transient_tables=None):
     """Build serialized lineage output, preserving transient table metadata."""
+    all_lineage = [
+        _canonical_lineage_entry(entry, schema) for entry in all_lineage
+    ]
     unique = []
     seen = set()
     for e in all_lineage:
@@ -2084,7 +2161,9 @@ def main():
     )
     all_lineage = extraction_result["lineage"]
     transient_tables = extraction_result["transient_tables"]
-    all_lineage = [_canonical_lineage_entry(entry) for entry in all_lineage]
+    all_lineage = [
+        _canonical_lineage_entry(entry, schema) for entry in all_lineage
+    ]
     warning_lines = format_missing_ddl_warnings(
         extraction_result["task_results"],
         extraction_result["missing_ddl_tables"],

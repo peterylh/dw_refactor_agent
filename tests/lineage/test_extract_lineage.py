@@ -559,6 +559,55 @@ class TestEdgeCases:
         assert {e["source_table"] for e in direct} == {"M_SHOP_01_SRC_DF"}
         assert {e["target_table"] for e in direct} == {"M_SHOP_01_CUST_DF"}
 
+    def test_lineage_extraction_is_case_insensitive(self):
+        schema = build_schema_from_texts(
+            [
+                """
+                CREATE TABLE shop_dm.M_SHOP_01_SRC_DF (
+                    CUSTOMER_ID BIGINT,
+                    ORDER_AMOUNT DECIMAL(12,2)
+                )
+                """,
+                """
+                CREATE TABLE shop_dm.M_SHOP_01_CUST_DF (
+                    CUSTOMER_ID BIGINT,
+                    ORDER_AMOUNT DECIMAL(12,2)
+                )
+                """,
+            ]
+        )
+        sql = """
+        INSERT INTO shop_dm.m_shop_01_cust_df (customer_id, order_amount)
+        SELECT s.customer_id, s.order_amount
+        FROM shop_dm.m_shop_01_src_df s
+        WHERE s.customer_id > 0
+        """
+
+        entries = extract_lineage_from_sql(sql, "case.sql", schema)
+
+        assert _direct_edges(entries) == {
+            (
+                "M_SHOP_01_SRC_DF",
+                "CUSTOMER_ID",
+                "M_SHOP_01_CUST_DF",
+                "CUSTOMER_ID",
+            ),
+            (
+                "M_SHOP_01_SRC_DF",
+                "ORDER_AMOUNT",
+                "M_SHOP_01_CUST_DF",
+                "ORDER_AMOUNT",
+            ),
+        }
+        assert _indirect_edges(entries) == {
+            (
+                "M_SHOP_01_SRC_DF",
+                "CUSTOMER_ID",
+                "M_SHOP_01_CUST_DF",
+                "WHERE",
+            )
+        }
+
     def test_ctas_with_column_definitions_uses_plain_target_table(self):
         sql = """
         CREATE TABLE shop_dm.dws_daily_sales (
