@@ -11,6 +11,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from config import TEXT_ENCODING
 from lineage.formatters import (
     format_column_json,
     format_column_text,
@@ -96,7 +97,7 @@ def _handle_export_html(args: argparse.Namespace) -> int:
     )
     output_path = Path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(format_table_html(subgraph), encoding="utf-8")
+    output_path.write_text(format_table_html(subgraph), encoding=TEXT_ENCODING)
     _write_stdout(f"HTML written: {output_path}")
     return 0
 

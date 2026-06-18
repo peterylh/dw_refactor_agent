@@ -30,6 +30,7 @@ sys.path.insert(0, str(_root))
 from config import (
     DB_ENV_CONFIG,
     PROJECT_CONFIG,
+    TEXT_ENCODING,
     get_model_names_by_layer,
     get_mysql_cmd,
     iter_project_asset_files,
@@ -50,7 +51,7 @@ def _load_partition_units(project: str) -> dict[str, str]:
     """从 DDL 文件中读取每张表的 dynamic_partition.time_unit."""
     units: dict[str, str] = {}
     for f in iter_project_asset_files(project, "ddl", "*.sql"):
-        m = _TIME_UNIT_RE.search(f.read_text(encoding="utf-8"))
+        m = _TIME_UNIT_RE.search(f.read_text(encoding=TEXT_ENCODING))
         if m:
             units[f.stem] = m.group(1).upper()
     return units
@@ -70,7 +71,7 @@ def _build_job_dag(project: str) -> JobDAG:
             check=True,
             cwd=_root,
         )
-    data = json.loads(lineage_path.read_text(encoding="utf-8"))
+    data = json.loads(lineage_path.read_text(encoding=TEXT_ENCODING))
     return asset_job_dag_from_lineage(data)
 
 
@@ -191,7 +192,7 @@ def _run_job(
     db_name: str,
 ) -> None:
     _ensure_partition(db_name, job_name, etl_date, mysql_cmd)
-    sql_text = sql_file.read_text(encoding="utf-8")
+    sql_text = sql_file.read_text(encoding=TEXT_ENCODING)
     full_sql = (
         f"SET @etl_date = '{etl_date}';\nSET @full_refresh = 0;\n{sql_text}"
     )
@@ -231,7 +232,7 @@ def _load_schema(project: str) -> dict:
         print("  未找到 models/ 或 schema.yaml, 使用默认配置 (incremental)")
         _SCHEMA_CONFIG_CACHE[project] = {}
         return {}
-    with open(schema_path, encoding="utf-8") as f:
+    with open(schema_path, encoding=TEXT_ENCODING) as f:
         raw = yaml.safe_load(f) or {}
     config = {}
     for model in raw.get("models", []):
@@ -311,7 +312,7 @@ def _run_job_full_refresh(
             _ensure_full_refresh_partitions(
                 db_name, job_name, all_dates, mysql_cmd
             )
-            sql_text = companion.read_text(encoding="utf-8")
+            sql_text = companion.read_text(encoding=TEXT_ENCODING)
             full_sql = f"SET @full_refresh = 1;\n{sql_text}"
             r = subprocess.run(
                 mysql_cmd + [db_name],
@@ -348,7 +349,7 @@ def _run_job_full_refresh(
             )
         for etl_date in all_dates:
             _ensure_partition(db_name, job_name, etl_date, mysql_cmd)
-            sql_text = sql_file.read_text(encoding="utf-8")
+            sql_text = sql_file.read_text(encoding=TEXT_ENCODING)
             full_sql = f"SET @etl_date = '{etl_date}';\nSET @full_refresh = 0;\n{sql_text}"
             r = subprocess.run(
                 mysql_cmd + [db_name],
@@ -367,7 +368,7 @@ def _run_job_full_refresh(
     _ensure_full_refresh_partitions(db_name, job_name, all_dates, mysql_cmd)
 
     if materialized == "full":
-        sql_text = sql_file.read_text(encoding="utf-8")
+        sql_text = sql_file.read_text(encoding=TEXT_ENCODING)
         full_sql = f"SET @full_refresh = 1;\n{sql_text}"
         r = subprocess.run(
             mysql_cmd + [db_name],
@@ -382,7 +383,7 @@ def _run_job_full_refresh(
         return
 
     # incremental: run with @full_refresh=1
-    sql_text = sql_file.read_text(encoding="utf-8")
+    sql_text = sql_file.read_text(encoding=TEXT_ENCODING)
     full_sql = f"SET @full_refresh = 1; SET @etl_date = CURDATE();\n{sql_text}"
     r = subprocess.run(
         mysql_cmd + [db_name],

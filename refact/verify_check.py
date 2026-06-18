@@ -26,6 +26,7 @@ from config import (
     DORIS_PORT,
     DORIS_QA_USER,
     DORIS_USER,
+    TEXT_ENCODING,
 )
 
 # ============================================================
@@ -218,7 +219,7 @@ def main():
     )
     args = parser.parse_args()
 
-    meta = json.loads(Path(args.metadata).read_text(encoding="utf-8"))
+    meta = json.loads(Path(args.metadata).read_text(encoding=TEXT_ENCODING))
     prod_db = meta["project_db"]
     qa_db = meta["qa_db"]
     checks = meta.get("verification", {}).get("checks", [])
@@ -286,7 +287,7 @@ def main():
             ensure_ascii=False,
             indent=2,
         ),
-        encoding="utf-8",
+        encoding=TEXT_ENCODING,
     )
     print(f"结果已写入: {out_path}")
 

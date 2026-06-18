@@ -6,11 +6,18 @@
 from __future__ import annotations
 
 import random
+import sys
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 import yaml
+
+_root = Path(__file__).resolve().parent.parent
+if str(_root) not in sys.path:
+    sys.path.insert(0, str(_root))
+
+from config import TEXT_ENCODING
 
 PROJECT_DIR = Path(__file__).resolve().parent
 DBT_ROOT = Path(__file__).resolve().parents[2] / "finance_analytics_dbt"
@@ -36,7 +43,7 @@ GEO = [
 def load_source_columns() -> dict[str, list[str]]:
     data = yaml.safe_load(
         (DBT_ROOT / "models" / "ingestion" / "sources.yml").read_text(
-            encoding="utf-8"
+            encoding=TEXT_ENCODING
         )
     )
     tables: dict[str, list[str]] = {}
@@ -970,7 +977,7 @@ def main() -> None:
     for table_name, rows in datasets.items():
         sql = render_insert(table_name, columns[table_name], rows)
         (ODS_DATA_DIR / f"ods_{table_name}.sql").write_text(
-            sql, encoding="utf-8"
+            sql, encoding=TEXT_ENCODING
         )
 
 

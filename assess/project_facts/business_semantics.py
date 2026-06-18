@@ -12,6 +12,7 @@ import config
 from assess.project_facts.asset_catalog import (
     _short_table_name,
 )
+from config import TEXT_ENCODING
 
 CATALOG_VERSION = 1
 MODEL_TABLE_LAYERS = {"ODS", "DWD", "DWS", "DIM", "ADS"}
@@ -414,7 +415,7 @@ def write_initial_business_semantics_catalog(
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(
             yaml.safe_dump(catalog, allow_unicode=True, sort_keys=False),
-            encoding="utf-8",
+            encoding=TEXT_ENCODING,
         )
         config._business_semantics_cache.clear()
         config._naming_config_cache.clear()

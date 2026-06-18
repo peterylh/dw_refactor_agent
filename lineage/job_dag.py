@@ -17,8 +17,15 @@
 from __future__ import annotations
 
 import json
+import sys
 from collections import defaultdict, deque
+from pathlib import Path
 
+_root = Path(__file__).resolve().parent.parent
+if str(_root) not in sys.path:
+    sys.path.insert(0, str(_root))
+
+from config import TEXT_ENCODING
 from lineage.asset_graph import build_asset_table_graph
 
 
@@ -147,12 +154,12 @@ class JobDAG:
         return dag
 
     def save(self, path):
-        with open(path, "w", encoding="utf-8") as f:
+        with open(path, "w", encoding=TEXT_ENCODING) as f:
             json.dump(self.to_dict(), f, ensure_ascii=False, indent=2)
 
     @classmethod
     def load(cls, path):
-        with open(path, encoding="utf-8") as f:
+        with open(path, encoding=TEXT_ENCODING) as f:
             return cls.from_dict(json.load(f))
 
 

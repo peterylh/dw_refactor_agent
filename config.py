@@ -13,6 +13,7 @@ import yaml
 
 # 项目根目录
 PROJECT_ROOT = Path(__file__).resolve().parent
+TEXT_ENCODING = "utf-8"
 
 # 项目层级顺序。表的实际层级来自 models/{table}.yaml，这里只定义跨层依赖
 # 和展示排序时需要的稳定顺序。
@@ -1511,7 +1512,7 @@ def _business_semantics_dictionaries_for_naming_path(path: Path) -> dict:
     catalog_path = path.parent / BUSINESS_SEMANTICS_FILE_NAME
     if not catalog_path.exists():
         return {}
-    raw = yaml.safe_load(catalog_path.read_text(encoding="utf-8")) or {}
+    raw = yaml.safe_load(catalog_path.read_text(encoding=TEXT_ENCODING)) or {}
     return _business_semantics_dictionaries(
         raw if isinstance(raw, dict) else {}
     )
@@ -1519,7 +1520,7 @@ def _business_semantics_dictionaries_for_naming_path(path: Path) -> dict:
 
 def load_naming_config(path=None, extra_dictionaries: dict | None = None):
     path = Path(path) if path else NAMING_CONFIG_PATH
-    with open(path, encoding="utf-8") as f:
+    with open(path, encoding=TEXT_ENCODING) as f:
         raw = yaml.safe_load(f) or {}
     if extra_dictionaries is None:
         extra_dictionaries = _business_semantics_dictionaries_for_naming_path(
@@ -1771,7 +1772,7 @@ def load_business_semantics_catalog(project: str) -> dict:
     if not path.exists():
         _business_semantics_cache[cache_key] = {}
         return {}
-    raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    raw = yaml.safe_load(path.read_text(encoding=TEXT_ENCODING)) or {}
     if not isinstance(raw, dict):
         raw = {}
     _business_semantics_cache[cache_key] = raw
@@ -1894,7 +1895,9 @@ def load_model_metadata(project: str) -> dict:
 
     metadata = {}
     for model_path in model_paths:
-        raw = yaml.safe_load(model_path.read_text(encoding="utf-8")) or {}
+        raw = (
+            yaml.safe_load(model_path.read_text(encoding=TEXT_ENCODING)) or {}
+        )
         if not isinstance(raw, dict):
             continue
         name = raw.get("name") or model_path.stem

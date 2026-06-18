@@ -24,7 +24,7 @@ from sqlglot.lineage import lineage
 from sqlglot.lineage import qualify as lineage_qualify
 from sqlglot.schema import MappingSchema, Schema
 
-from config import PROJECT_CONFIG, project_asset_dirs
+from config import PROJECT_CONFIG, TEXT_ENCODING, project_asset_dirs
 from config import determine_layer as determine_config_layer
 from doris_sql import normalize_create_table_for_sqlglot
 from lineage.sql_task_facts import extract_task_table_facts
@@ -740,7 +740,7 @@ def build_schema_from_ddl(ddl_dir):
         if not directory.exists():
             continue
         texts.extend(
-            f.read_text(encoding="utf-8")
+            f.read_text(encoding=TEXT_ENCODING)
             for f in sorted(directory.glob("*.sql"))
         )
     return build_schema_from_texts(texts)
@@ -1269,7 +1269,7 @@ def _read_task_work_items(task_files, tasks_dir):
             {
                 "index": index,
                 "source_file": source_file,
-                "sql_text": task_path.read_text(encoding="utf-8"),
+                "sql_text": task_path.read_text(encoding=TEXT_ENCODING),
             }
         )
     return work_items
@@ -2141,7 +2141,7 @@ def main():
         transient_tables=transient_tables,
     )
     for path in output_paths:
-        with open(path, "w", encoding="utf-8") as fp:
+        with open(path, "w", encoding=TEXT_ENCODING) as fp:
             json.dump(output, fp, ensure_ascii=False, indent=2)
 
     if fatal_diagnostics:

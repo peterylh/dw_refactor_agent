@@ -18,7 +18,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from config import DB_ENV_CONFIG, PROJECT_CONFIG
+from config import DB_ENV_CONFIG, PROJECT_CONFIG, TEXT_ENCODING
 
 DEFAULT_BATCH_SIZE = 5000
 LINEAGE_DIR = Path(__file__).resolve().parent
@@ -185,7 +185,7 @@ def _read_task_sql(tasks_dir: Path, source_file: str) -> str | None:
     sql_file = tasks_dir / source_file
     if not sql_file.exists():
         return None
-    return sql_file.read_text(encoding="utf-8")
+    return sql_file.read_text(encoding=TEXT_ENCODING)
 
 
 def _job_name(source_file: str) -> str:
@@ -572,7 +572,7 @@ def bulk_insert(
 
 
 def _load_lineage_json(path: Path) -> dict[str, Any]:
-    with path.open(encoding="utf-8") as file:
+    with path.open(encoding=TEXT_ENCODING) as file:
         return json.load(file)
 
 

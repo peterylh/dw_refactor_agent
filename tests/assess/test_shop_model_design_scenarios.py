@@ -61,6 +61,17 @@ def _with_model_rule_scenarios(lineage_data: dict, model_metadata: dict):
         "dwd_order_summary_bad": {
             "layer": "DWD",
             "table_type": "fact",
+            "business_process": "ORDER_TRANSACTION",
+            "atomic_metrics": [
+                {
+                    "name": "order_count",
+                    "business_process": "ORDER_TRANSACTION",
+                },
+                {
+                    "name": "refund_count",
+                    "business_process": "REFUND_TRANSACTION",
+                },
+            ],
         },
         "dws_category_sales_monthly": {
             "layer": "DWS",

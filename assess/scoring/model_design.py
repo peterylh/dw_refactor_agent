@@ -18,7 +18,10 @@ from assess.project_facts.business_metadata import (
     _valid_inferred_business_area,
     _valid_inferred_data_domain,
 )
-from assess.project_facts.entity_metadata import grain_key_columns
+from assess.project_facts.entity_metadata import (
+    grain_key_columns,
+    model_entities,
+)
 from assess.result_model import finalize_dimension, make_check
 from assess.scoring.config import (
     ARCH_VIOLATION_RULES,
@@ -29,7 +32,8 @@ from assess.scoring.config import (
     SEVERITY_MEDIUM,
     SEVERITY_WEIGHT,
 )
-from config import layer_rank
+from config import TEXT_ENCODING, layer_rank
+from doris_sql import extract_doris_partition_column
 from lineage.table_graph import (
     build_table_edge_source_files,
     build_table_layer_map,
@@ -53,6 +57,7 @@ EVENT_KEY_TOKENS = (
     "payment",
     "transaction",
 )
+DATE_PARTITION_COLUMN = "data_dt"
 
 
 def _declared_table_type(model_metadata: dict | None, table_name: str) -> str:
@@ -223,7 +228,7 @@ def _task_sql_text(task: dict) -> str:
     if not path:
         return ""
     try:
-        return Path(path).read_text(encoding="utf-8")
+        return Path(path).read_text(encoding=TEXT_ENCODING)
     except (OSError, TypeError):
         return ""
 
@@ -331,6 +336,41 @@ def _metric_items(raw_metrics) -> list[dict]:
         if item["name"]:
             items.append(item)
     return items
+
+
+def _string_values(value) -> list[str]:
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item or "").strip()]
+    text = str(value or "").strip()
+    return [text] if text else []
+
+
+def _business_processes_for_dwd_fact(metadata: dict) -> list[str]:
+    processes = []
+
+    def add(value) -> None:
+        for process in _string_values(value):
+            if process and process not in processes:
+                processes.append(process)
+
+    add(metadata.get("business_process"))
+    for group in ("atomic_metrics", "derived_metrics", "calculated_metrics"):
+        for metric in _metric_items(metadata.get(group)):
+            add(metric.get("business_process"))
+    return sorted(processes)
+
+
+def _primary_entity_key_columns(metadata: dict) -> list[str]:
+    keys = []
+    for entity in model_entities(metadata):
+        if not isinstance(entity, dict):
+            continue
+        if str(entity.get("type") or "").strip().lower() != "primary":
+            continue
+        for key in _string_values(entity.get("key_columns")):
+            if key not in keys:
+                keys.append(key)
+    return sorted(keys)
 
 
 def _upstream_tables_for(table_name: str, table_edges: dict) -> list[str]:
@@ -462,6 +502,29 @@ def _has_event_key(table: dict, metadata: dict) -> bool:
         if any(token in name for token in EVENT_KEY_TOKENS):
             return True
     return False
+
+
+def _table_partition_column(
+    asset_catalog: dict | None,
+    table_name: str,
+) -> str:
+    if not asset_catalog:
+        return ""
+    table_asset = (asset_catalog.get("tables") or {}).get(table_name) or {}
+    ddl = table_asset.get("ddl") or {}
+    partition_column = str(ddl.get("partition_column") or "").strip()
+    if partition_column:
+        return partition_column
+
+    path = ddl.get("path")
+    if not path:
+        return ""
+    try:
+        return extract_doris_partition_column(
+            Path(path).read_text(encoding=TEXT_ENCODING)
+        )
+    except (OSError, TypeError):
+        return ""
 
 
 def _grain_group_by_mismatch(metadata: dict, sql_facts: dict) -> dict:
@@ -784,6 +847,29 @@ def score_model_design_health(
                 message="DIM模型包含指标分组，应移除或调整表类型",
             )
 
+        if layer in {"DWD", "DWS", "DIM"}:
+            partition_column = _table_partition_column(
+                asset_catalog,
+                table_name,
+            )
+            if partition_column:
+                record_check(
+                    rule_id="MODEL_DATE_PARTITION_USES_DATA_DT",
+                    target_table=table_name,
+                    passed=partition_column == DATE_PARTITION_COLUMN,
+                    expected="日期分区字段为data_dt",
+                    actual=f"日期分区字段={partition_column}",
+                    evidence={
+                        "partition_column": partition_column,
+                        "expected_partition_column": DATE_PARTITION_COLUMN,
+                    },
+                    message=(
+                        "日期分区字段未统一使用data_dt"
+                        if partition_column != DATE_PARTITION_COLUMN
+                        else ""
+                    ),
+                )
+
         if not _is_fact_table(model_metadata, table_name):
             continue
 
@@ -806,6 +892,50 @@ def score_model_design_health(
                 message=(
                     "DWD事实表疑似承载汇总逻辑，应保持明细粒度"
                     if has_aggregation
+                    else ""
+                ),
+            )
+            business_processes = _business_processes_for_dwd_fact(metadata)
+            record_check(
+                rule_id="MODEL_DWD_FACT_SINGLE_BUSINESS_PROCESS",
+                target_table=table_name,
+                passed=len(business_processes) <= 1,
+                expected="DWD事实表只承载一个业务过程",
+                actual=(
+                    "业务过程单一"
+                    if len(business_processes) <= 1
+                    else f"多个业务过程={business_processes}"
+                ),
+                evidence={"business_processes": business_processes},
+                message=(
+                    "DWD事实表包含多个业务过程，应按业务过程拆分"
+                    if len(business_processes) > 1
+                    else ""
+                ),
+            )
+            primary_entity_keys = _primary_entity_key_columns(metadata)
+            grain_keys = grain_key_columns(metadata)
+            has_primary_or_grain = bool(primary_entity_keys or grain_keys)
+            record_check(
+                rule_id="MODEL_DWD_FACT_HAS_PRIMARY_ENTITY_OR_GRAIN",
+                target_table=table_name,
+                passed=has_primary_or_grain,
+                expected="DWD事实表声明primary entity key或grain key",
+                actual=(
+                    "已声明业务主键或粒度"
+                    if has_primary_or_grain
+                    else "未声明业务主键或粒度"
+                ),
+                evidence={
+                    "primary_entity_key_columns": primary_entity_keys,
+                    "grain_keys": grain_keys,
+                    "entities": metadata.get("entities") or [],
+                    "grain": metadata.get("grain") or {},
+                },
+                message=(
+                    "DWD事实表缺少primary entity key或grain声明，"
+                    "业务粒度不清晰"
+                    if not has_primary_or_grain
                     else ""
                 ),
             )

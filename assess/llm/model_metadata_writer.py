@@ -49,6 +49,7 @@ from assess.project_facts.time_period import normalize_time_period
 from config import (
     PROJECT_CONFIG,
     PROJECT_ROOT,
+    TEXT_ENCODING,
     get_business_domain_config,
     load_model_metadata,
 )
@@ -823,7 +824,7 @@ def update_model_yaml(
     path = model_path_for_table(project, result.table_name)
     existing = {}
     if path.exists():
-        existing = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        existing = yaml.safe_load(path.read_text(encoding=TEXT_ENCODING)) or {}
     if not isinstance(existing, dict):
         existing = {}
 
@@ -873,7 +874,7 @@ def update_model_yaml(
                     yaml.safe_dump(
                         updated, allow_unicode=True, sort_keys=False
                     ),
-                    encoding="utf-8",
+                    encoding=TEXT_ENCODING,
                 )
             return {
                 "table": result.table_name,
@@ -1067,7 +1068,7 @@ def update_model_yaml(
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(
             yaml.safe_dump(updated, allow_unicode=True, sort_keys=False),
-            encoding="utf-8",
+            encoding=TEXT_ENCODING,
         )
 
     new_metric_count = 0
@@ -1125,7 +1126,7 @@ def _catalog_table_assets(project: str) -> dict[str, dict[str, Any]]:
 def _existing_model_data(path: Path) -> dict[str, Any]:
     if not path.exists():
         return {}
-    raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    raw = yaml.safe_load(path.read_text(encoding=TEXT_ENCODING)) or {}
     return raw if isinstance(raw, dict) else {}
 
 
@@ -1312,7 +1313,7 @@ def update_model_yaml_from_catalog(
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(
             yaml.safe_dump(updated, allow_unicode=True, sort_keys=False),
-            encoding="utf-8",
+            encoding=TEXT_ENCODING,
         )
 
     business_changed = any(
@@ -1832,7 +1833,8 @@ def main() -> None:
         )
     )
     output_path.write_text(
-        json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8"
+        json.dumps(result, ensure_ascii=False, indent=2),
+        encoding=TEXT_ENCODING,
     )
     print(f"结果已写入: {output_path}")
     if result.get("source") == "catalog":

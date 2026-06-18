@@ -29,10 +29,15 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import List, Optional, Tuple
 
+_root = Path(__file__).resolve().parent.parent
+if str(_root) not in sys.path:
+    sys.path.insert(0, str(_root))
+
 import sqlglot
 from sqlglot import exp
 from sqlglot.errors import ErrorLevel
 
+from config import TEXT_ENCODING
 from doris_sql import (
     extract_doris_distribution_column,
     extract_doris_key,
@@ -315,7 +320,7 @@ def parse_create_table(sql_text: str) -> Optional[TableDef]:
 
 
 def parse_ddl_file(filepath: Path) -> Optional[TableDef]:
-    text = filepath.read_text(encoding="utf-8")
+    text = filepath.read_text(encoding=TEXT_ENCODING)
     return parse_create_table(text)
 
 
@@ -671,7 +676,7 @@ def _emit_output(
         output = header + format_changes(changes)
 
     if output_path:
-        output_path.write_text(output, encoding="utf-8")
+        output_path.write_text(output, encoding=TEXT_ENCODING)
         print(f"输出已写入: {output_path}")
         print(f"共 {len(changes)} 条变更: {dict(stats)}")
     else:
@@ -685,7 +690,7 @@ def inject_uuid_to_dir(ddl_dir: Path, dry_run: bool = False) -> int:
     """
     count = 0
     for f in sorted(ddl_dir.glob("*.sql")):
-        text = f.read_text(encoding="utf-8")
+        text = f.read_text(encoding=TEXT_ENCODING)
         if extract_table_id(text):
             continue
         tid = generate_table_id()
@@ -693,7 +698,7 @@ def inject_uuid_to_dir(ddl_dir: Path, dry_run: bool = False) -> int:
         if dry_run:
             print(f"[DRY RUN] {f.name} → table_id: {tid}")
         else:
-            f.write_text(new_text, encoding="utf-8")
+            f.write_text(new_text, encoding=TEXT_ENCODING)
             print(f"{f.name} → table_id: {tid}")
         count += 1
     return count

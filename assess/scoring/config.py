@@ -383,6 +383,33 @@ MODEL_DESIGN_RULES = {
         strategy="move_non_atomic_metrics_to_dws",
         edit_scope=["models", "tasks"],
     ),
+    "MODEL_DWD_FACT_SINGLE_BUSINESS_PROCESS": rule_meta(
+        name="DWD事实表单业务过程",
+        severity=SEVERITY_HIGH,
+        title="DWD事实表包含多个业务过程",
+        remediation_summary="拆分DWD事实表，或修正指标字段的business_process归属",
+        strategy="split_dwd_fact_by_business_process",
+        edit_scope=["models", "ddl", "tasks"],
+    ),
+    "MODEL_DWD_FACT_HAS_PRIMARY_ENTITY_OR_GRAIN": rule_meta(
+        name="DWD事实表声明业务主键或粒度",
+        severity=SEVERITY_HIGH,
+        title="DWD事实表缺少业务主键或粒度声明",
+        remediation_summary=(
+            "在models YAML中补齐entities[type=primary].key_columns，"
+            "或声明明确的grain键"
+        ),
+        strategy="declare_dwd_primary_entity_or_grain",
+        edit_scope=["models"],
+    ),
+    "MODEL_DATE_PARTITION_USES_DATA_DT": rule_meta(
+        name="日期分区字段使用data_dt",
+        severity=SEVERITY_MEDIUM,
+        title="日期分区字段未使用data_dt",
+        remediation_summary="将日期分区字段统一为data_dt，并同步DDL、Task和Model引用",
+        strategy="rename_date_partition_to_data_dt",
+        edit_scope=["ddl", "tasks", "models"],
+    ),
     "MODEL_DERIVED_METRIC_BASE_ATOMIC": rule_meta(
         name="派生指标引用上游原子指标",
         severity=SEVERITY_HIGH,
