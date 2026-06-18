@@ -29,14 +29,17 @@ from assess.assessment_context import AssessmentContext
 from assess.llm.context_builder import build_contexts
 from assess.llm.table_inspector import TableInspector
 from assess.report import generate_report
-from assess.scoring.asset_completeness import score_asset_completeness
+from assess.rules import RuleSelection, rule_specs_by_id
+from assess.rules.dimensions.asset_completeness import (
+    score_asset_completeness,
+)
+from assess.rules.dimensions.depth import score_lineage_depth
+from assess.rules.dimensions.metadata_health import score_metadata_health
+from assess.rules.dimensions.model_design import score_model_design_health
+from assess.rules.dimensions.naming import score_naming_conventions
+from assess.rules.dimensions.reuse import score_reusability
+from assess.rules.dimensions.task_sql_quality import score_code_quality
 from assess.scoring.config import DEFAULT_WEIGHTS, normalize_score_weights
-from assess.scoring.depth import score_lineage_depth
-from assess.scoring.metadata_health import score_metadata_health
-from assess.scoring.model_design import score_model_design_health
-from assess.scoring.naming import score_naming_conventions
-from assess.scoring.reuse import score_reusability
-from assess.scoring.task_sql_quality import score_code_quality
 from config import PROJECT_CONFIG, PROJECT_ROOT
 from lineage.table_graph import load_lineage_data
 
@@ -62,6 +65,20 @@ def normalize_selected_dimensions(
     if unknown:
         raise ValueError(f"未知评估维度: {', '.join(unknown)}")
     return selected
+
+
+def build_rule_selection(
+    *,
+    disabled_rules: set[str] | list[str] | tuple[str, ...] | None = None,
+    only_rules: set[str] | list[str] | tuple[str, ...] | None = None,
+) -> RuleSelection:
+    disabled = set(disabled_rules or [])
+    only = set(only_rules or [])
+    known_rules = set(rule_specs_by_id())
+    unknown = sorted((disabled | only) - known_rules)
+    if unknown:
+        raise ValueError(f"未知评估规则: {', '.join(unknown)}")
+    return RuleSelection(disabled=disabled, only=only)
 
 
 def _filter_dimension_checks(
@@ -95,9 +112,15 @@ def assess(
     *,
     include_passed_checks: bool = False,
     selected_dimensions: set[str] | list[str] | tuple[str, ...] | None = None,
+    disabled_rules: set[str] | list[str] | tuple[str, ...] | None = None,
+    only_rules: set[str] | list[str] | tuple[str, ...] | None = None,
 ) -> dict:
     weights = normalize_score_weights(weights)
     selected_dimensions = normalize_selected_dimensions(selected_dimensions)
+    rule_selection = build_rule_selection(
+        disabled_rules=disabled_rules,
+        only_rules=only_rules,
+    )
 
     from config import (
         get_business_domain_config,
@@ -142,13 +165,29 @@ def assess(
         naming_config=nc,
     )
 
-    reuse_score = score_reusability(context)
-    depth_score = score_lineage_depth(context)
-    model_design_score = score_model_design_health(context, llm_results)
-    asset_completeness_score = score_asset_completeness(context)
-    code_quality_score = score_code_quality(context)
-    metadata_health_score = score_metadata_health(context)
-    naming_score = score_naming_conventions(context)
+    reuse_score = score_reusability(context, rule_selection=rule_selection)
+    depth_score = score_lineage_depth(context, rule_selection=rule_selection)
+    model_design_score = score_model_design_health(
+        context,
+        llm_results,
+        rule_selection=rule_selection,
+    )
+    asset_completeness_score = score_asset_completeness(
+        context,
+        rule_selection=rule_selection,
+    )
+    code_quality_score = score_code_quality(
+        context,
+        rule_selection=rule_selection,
+    )
+    metadata_health_score = score_metadata_health(
+        context,
+        rule_selection=rule_selection,
+    )
+    naming_score = score_naming_conventions(
+        context,
+        rule_selection=rule_selection,
+    )
 
     dimensions = dict(
         reuse=reuse_score,
@@ -259,6 +298,18 @@ def main():
         help="输出通过检查项的完整 checks 证据；默认只输出 issue 关联的失败 checks",
     )
     parser.add_argument(
+        "--disable-rule",
+        action="append",
+        default=[],
+        help="禁用指定规则ID；可重复传入",
+    )
+    parser.add_argument(
+        "--only-rule",
+        action="append",
+        default=[],
+        help="只运行指定规则ID；可重复传入",
+    )
+    parser.add_argument(
         "--reuse", action="store_true", help="只输出复用度维度"
     )
     parser.add_argument(
@@ -315,6 +366,8 @@ def main():
         weights,
         include_passed_checks=args.include_passed_checks,
         selected_dimensions=selected_dimensions,
+        disabled_rules=args.disable_rule,
+        only_rules=args.only_rule,
     )
 
     print(generate_report(result, result["weights"], args.project))

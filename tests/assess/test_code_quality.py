@@ -1,6 +1,6 @@
 from assess.assessment_context import AssessmentContext
 from assess.project_facts.asset_catalog import build_asset_catalog
-from assess.scoring.task_sql_quality import score_code_quality
+from assess.rules.dimensions.task_sql_quality import score_code_quality
 
 
 def _catalog_for_task(tmp_path, task_name, sql):

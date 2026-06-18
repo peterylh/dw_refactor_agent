@@ -1,24 +1,21 @@
-"""SQL task code quality checks for assess."""
+"""SQL task code quality rule definitions."""
 
 from __future__ import annotations
 
 import re
-from collections import defaultdict
 from pathlib import Path
 
 import sqlglot
 from sqlglot import exp
 
-from assess.assessment_context import AssessmentContext
 from assess.result_model import (
     SEVERITY_HIGH,
     SEVERITY_LOW,
     SEVERITY_MEDIUM,
-    finalize_dimension,
     make_check,
     rule_meta,
 )
-from config import TEXT_ENCODING
+from assess.rules.engine.base import AssessRule
 
 RULE_TEMP_TABLE_NAME_HAS_TEMP_OR_TMP = "TEMP_TABLE_NAME_HAS_TEMP_OR_TMP"
 RULE_TEMP_TABLE_DROPPED_IN_SAME_TASK = "TEMP_TABLE_DROPPED_IN_SAME_TASK"
@@ -80,6 +77,252 @@ CODE_QUALITY_RULES = {
         strategy="rewrite_sargable_filter",
         edit_scope=["tasks"],
     ),
+}
+
+
+class CodeTempTableNameHasTempOrTmpRule(AssessRule):
+    rule_id = CODE_RULE_TEMP_TABLE_NAME
+    dimension = "code_quality"
+    domain = "task"
+    target = "sql"
+
+    def evaluate(
+        self,
+        target: dict,
+        facts: dict,
+    ) -> list[dict]:
+        checks = []
+        for create in target["creates"]:
+            table_name = _short_table_name(create.get("table") or "")
+            if (
+                not table_name
+                or table_name.lower() == target["expected_table"].lower()
+            ):
+                continue
+            checks.append(self._check(target["file_name"], table_name))
+        return checks
+
+    def _check(self, file_name: str, table_name: str) -> dict:
+        ok = _temp_name_is_valid(table_name)
+        return make_check(
+            rule_id=self.rule_id,
+            target_type="table",
+            target=table_name,
+            passed=ok,
+            expected="临时表名包含temp或tmp",
+            actual=(
+                f"临时表名 {table_name} 符合要求"
+                if ok
+                else f"临时表名 {table_name} 未包含temp/tmp"
+            ),
+            evidence={"file": file_name, "table": table_name},
+            message="临时表名未包含temp/tmp" if not ok else "",
+        )
+
+
+class CodeTempTableDroppedInSameTaskRule(AssessRule):
+    rule_id = CODE_RULE_TEMP_TABLE_DROPPED
+    dimension = "code_quality"
+    domain = "task"
+    target = "sql"
+
+    def evaluate(
+        self,
+        target: dict,
+        facts: dict,
+    ) -> list[dict]:
+        checks = []
+        for create in target["creates"]:
+            table_name = _short_table_name(create.get("table") or "")
+            if (
+                not table_name
+                or table_name.lower() == target["expected_table"].lower()
+            ):
+                continue
+            checks.append(
+                self._check(
+                    target["file_name"],
+                    create,
+                    target["drop_indexes_by_table"],
+                )
+            )
+        return checks
+
+    def _check(
+        self,
+        file_name: str,
+        create: dict,
+        drop_indexes_by_table: dict,
+    ) -> dict:
+        table_name = _short_table_name(create.get("table") or "")
+        ok = any(
+            drop_index > create["index"]
+            for drop_index in drop_indexes_by_table.get(
+                table_name.lower(),
+                [],
+            )
+        )
+        return make_check(
+            rule_id=self.rule_id,
+            target_type="table",
+            target=table_name,
+            passed=ok,
+            expected="临时表在同一作业后续DROP清理",
+            actual="已清理" if ok else "未在同一作业后续DROP清理",
+            evidence={"file": file_name, "table": table_name},
+            message="临时表未在同一作业后续DROP清理" if not ok else "",
+        )
+
+
+class CodeNoSelectStarInWriteRule(AssessRule):
+    rule_id = CODE_RULE_NO_SELECT_STAR
+    dimension = "code_quality"
+    domain = "task"
+    target = "sql"
+
+    def evaluate(
+        self,
+        target: dict,
+        facts: dict,
+    ) -> list[dict]:
+        return [
+            self._check(target["file_name"], write_statement)
+            for write_statement in target["write_statements"]
+        ]
+
+    def _check(self, file_name: str, write_statement: dict) -> dict:
+        table_name = _short_table_name(write_statement.get("table") or "")
+        ok = not write_statement["has_select_star"]
+        return make_check(
+            rule_id=self.rule_id,
+            target_type="task",
+            target=file_name,
+            passed=ok,
+            expected="写入型语句显式列出字段",
+            actual=(
+                f"写入 {table_name} 时显式列出字段"
+                if ok
+                else f"写入 {table_name} 时使用 SELECT *"
+            ),
+            evidence={"file": file_name, "table": table_name},
+            message="写入型语句使用SELECT *，请显式列出字段" if not ok else "",
+        )
+
+
+class _CodeIssueRule(AssessRule):
+    def _issue_check(
+        self,
+        file_name: str,
+        table_name: str,
+        expected: str,
+        actual: str,
+        message: str,
+        evidence: dict,
+    ) -> dict:
+        full_evidence = {"file": file_name, "table": table_name}
+        full_evidence.update(evidence)
+        return make_check(
+            rule_id=self.rule_id,
+            target_type="task",
+            target=file_name,
+            passed=False,
+            expected=expected,
+            actual=actual,
+            evidence=full_evidence,
+            message=message,
+        )
+
+
+class CodeCartesianJoinRiskRule(_CodeIssueRule):
+    rule_id = CODE_RULE_CARTESIAN_JOIN_RISK
+    dimension = "code_quality"
+    domain = "task"
+    target = "sql"
+
+    def evaluate(
+        self,
+        target: dict,
+        facts: dict,
+    ) -> list[dict]:
+        return [
+            self._issue_check(
+                target["file_name"],
+                target["expected_table"],
+                "JOIN具备明确ON/USING条件且不使用隐式笛卡尔积",
+                f"存在{issue['reason']}",
+                "JOIN存在笛卡尔积风险，请补充明确关联条件",
+                issue,
+            )
+            for issue in _scan_cartesian_join_risks(target["sql"])
+        ]
+
+
+class CodeDwsJoinBeforeAggregationRule(_CodeIssueRule):
+    rule_id = CODE_RULE_DWS_JOIN_BEFORE_AGGREGATION
+    dimension = "code_quality"
+    domain = "task"
+    target = "sql"
+
+    def evaluate(
+        self,
+        target: dict,
+        facts: dict,
+    ) -> list[dict]:
+        task = target["task"]
+        asset_catalog = facts["asset_catalog"]
+        if not _is_dws_task(task, asset_catalog):
+            return []
+        return [
+            self._issue_check(
+                target["file_name"],
+                target["expected_table"],
+                "DWS聚合前JOIN已确认一对一或先预聚合",
+                "DWS作业存在JOIN后直接聚合",
+                "DWS聚合前JOIN可能放大明细行，需确认粒度或先预聚合",
+                issue,
+            )
+            for issue in _scan_join_before_aggregation(
+                target["sql"],
+                asset_catalog,
+            )
+        ]
+
+
+class CodeFilterColumnWrappedInFunctionRule(_CodeIssueRule):
+    rule_id = CODE_RULE_FILTER_COLUMN_WRAPPED
+    dimension = "code_quality"
+    domain = "task"
+    target = "sql"
+
+    def evaluate(
+        self,
+        target: dict,
+        facts: dict,
+    ) -> list[dict]:
+        return [
+            self._issue_check(
+                target["file_name"],
+                target["expected_table"],
+                "WHERE中的分区/过滤列保持裸列比较",
+                f"过滤列被{issue['function']}包裹: {issue['detail']}",
+                "过滤列被函数或CAST包裹，可能导致分区/索引裁剪失效",
+                issue,
+            )
+            for issue in _scan_wrapped_filter_columns(target["sql"])
+        ]
+
+
+CODE_QUALITY_RULE_CLASSES = [
+    CodeTempTableNameHasTempOrTmpRule,
+    CodeTempTableDroppedInSameTaskRule,
+    CodeNoSelectStarInWriteRule,
+    CodeCartesianJoinRiskRule,
+    CodeDwsJoinBeforeAggregationRule,
+    CodeFilterColumnWrappedInFunctionRule,
+]
+
+CODE_QUALITY_RULE_CLASSES_BY_ID = {
+    rule_class.rule_id: rule_class for rule_class in CODE_QUALITY_RULE_CLASSES
 }
 
 
@@ -490,99 +733,6 @@ def _is_dws_task(task: dict, asset_catalog: dict) -> bool:
     return str(table_asset.get("layer") or "").upper() == "DWS"
 
 
-def _empty_result() -> dict:
-    return dict(
-        checks=[],
-    )
-
-
-def _record_check(
-    result: dict,
-    rule: str,
-    file_name: str,
-    table_name: str,
-    ok: bool,
-    message: str,
-) -> None:
-    if rule == RULE_TEMP_TABLE_NAME_HAS_TEMP_OR_TMP:
-        rule_id = CODE_RULE_TEMP_TABLE_NAME
-        expected = "临时表名包含temp或tmp"
-        actual = (
-            f"临时表名 {table_name} 符合要求"
-            if ok
-            else f"临时表名 {table_name} 未包含temp/tmp"
-        )
-        target_type = "table"
-        target = table_name
-    elif rule == RULE_TEMP_TABLE_DROPPED_IN_SAME_TASK:
-        rule_id = CODE_RULE_TEMP_TABLE_DROPPED
-        expected = "临时表在同一作业后续DROP清理"
-        actual = "已清理" if ok else "未在同一作业后续DROP清理"
-        target_type = "table"
-        target = table_name
-    else:
-        rule_id = CODE_RULE_NO_SELECT_STAR
-        expected = "写入型语句显式列出字段"
-        actual = (
-            f"写入 {table_name} 时显式列出字段"
-            if ok
-            else f"写入 {table_name} 时使用 SELECT *"
-        )
-        target_type = "task"
-        target = file_name
-
-    result["checks"].append(
-        make_check(
-            rule_id=rule_id,
-            target_type=target_type,
-            target=target,
-            passed=ok,
-            expected=expected,
-            actual=actual,
-            evidence={"file": file_name, "table": table_name},
-            message=message if not ok else "",
-        )
-    )
-
-
-def _record_issue_check(
-    result: dict,
-    rule_id: str,
-    file_name: str,
-    table_name: str,
-    expected: str,
-    actual: str,
-    message: str,
-    evidence: dict,
-) -> None:
-    full_evidence = {"file": file_name, "table": table_name}
-    full_evidence.update(evidence)
-    result["checks"].append(
-        make_check(
-            rule_id=rule_id,
-            target_type="task",
-            target=file_name,
-            passed=False,
-            expected=expected,
-            actual=actual,
-            evidence=full_evidence,
-            message=message,
-        )
-    )
-
-
-def _finalize_result(result: dict) -> dict:
-    checks = result["checks"]
-    passed = sum(1 for check in checks if check["passed"])
-    total = len(checks)
-    return finalize_dimension(
-        dimension="code_quality",
-        score=round(passed / total * 100, 1) if total else 100.0,
-        checks=checks,
-        rules=CODE_QUALITY_RULES,
-    )
-
-
 def _fallback_scan(sql: str) -> tuple[list[dict], list[dict], list[dict]]:
     creates = []
     drops = []
@@ -693,99 +843,3 @@ def _scan_task_sql(sql: str) -> tuple[list[dict], list[dict], list[dict]]:
             )
 
     return creates, drops, write_statements
-
-
-def score_code_quality(context: AssessmentContext) -> dict:
-    """Score task SQL code quality checks."""
-    result = _empty_result()
-    asset_catalog = context.assets
-    project_dir = asset_catalog.get("project_dir")
-
-    for task in asset_catalog.get("tasks") or []:
-        task_path = Path(task["path"])
-        file_name = _display_file_path(project_dir, task_path)
-        sql = task_path.read_text(encoding=TEXT_ENCODING)
-        creates, drops, write_statements = _scan_task_sql(sql)
-        expected_table = _short_table_name(task.get("expected_table") or "")
-
-        drop_indexes_by_table = defaultdict(list)
-        for drop in drops:
-            table = _short_table_name(drop.get("table") or "")
-            if table:
-                drop_indexes_by_table[table.lower()].append(drop["index"])
-
-        for create in creates:
-            table = _short_table_name(create.get("table") or "")
-            if not table or table.lower() == expected_table.lower():
-                continue
-
-            _record_check(
-                result,
-                RULE_TEMP_TABLE_NAME_HAS_TEMP_OR_TMP,
-                file_name,
-                table,
-                _temp_name_is_valid(table),
-                "临时表名未包含temp/tmp",
-            )
-            dropped_after_create = any(
-                drop_index > create["index"]
-                for drop_index in drop_indexes_by_table.get(table.lower(), [])
-            )
-            _record_check(
-                result,
-                RULE_TEMP_TABLE_DROPPED_IN_SAME_TASK,
-                file_name,
-                table,
-                dropped_after_create,
-                "临时表未在同一作业后续DROP清理",
-            )
-
-        for write_statement in write_statements:
-            table = _short_table_name(write_statement.get("table") or "")
-            _record_check(
-                result,
-                RULE_NO_SELECT_STAR_IN_WRITE,
-                file_name,
-                table,
-                not write_statement["has_select_star"],
-                "写入型语句使用SELECT *，请显式列出字段",
-            )
-
-        for issue in _scan_cartesian_join_risks(sql):
-            _record_issue_check(
-                result,
-                CODE_RULE_CARTESIAN_JOIN_RISK,
-                file_name,
-                expected_table,
-                "JOIN具备明确ON/USING条件且不使用隐式笛卡尔积",
-                f"存在{issue['reason']}",
-                "JOIN存在笛卡尔积风险，请补充明确关联条件",
-                issue,
-            )
-
-        if _is_dws_task(task, asset_catalog):
-            for issue in _scan_join_before_aggregation(sql, asset_catalog):
-                _record_issue_check(
-                    result,
-                    CODE_RULE_DWS_JOIN_BEFORE_AGGREGATION,
-                    file_name,
-                    expected_table,
-                    "DWS聚合前JOIN已确认一对一或先预聚合",
-                    "DWS作业存在JOIN后直接聚合",
-                    "DWS聚合前JOIN可能放大明细行，需确认粒度或先预聚合",
-                    issue,
-                )
-
-        for issue in _scan_wrapped_filter_columns(sql):
-            _record_issue_check(
-                result,
-                CODE_RULE_FILTER_COLUMN_WRAPPED,
-                file_name,
-                expected_table,
-                "WHERE中的分区/过滤列保持裸列比较",
-                f"过滤列被{issue['function']}包裹: {issue['detail']}",
-                "过滤列被函数或CAST包裹，可能导致分区/索引裁剪失效",
-                issue,
-            )
-
-    return _finalize_result(result)

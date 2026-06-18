@@ -1,8 +1,8 @@
 from assess.assessment_context import AssessmentContext
-from assess.scoring.model_design import (
+from assess.rules.definitions.model_design import (
     extract_model_design_sql_facts,
-    score_model_design_health,
 )
+from assess.rules.dimensions.model_design import score_model_design_health
 
 
 def _context(

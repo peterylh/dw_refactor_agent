@@ -2,8 +2,8 @@ import copy
 
 from assess.assessment_context import AssessmentContext
 from assess.project_facts.asset_catalog import build_asset_catalog
+from assess.rules.dimensions.model_design import score_model_design_health
 from assess.scoring.config import MODEL_DESIGN_RULES
-from assess.scoring.model_design import score_model_design_health
 from config import (
     PROJECT_CONFIG,
     PROJECT_ROOT,

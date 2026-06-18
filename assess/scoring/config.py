@@ -243,14 +243,6 @@ LINEAGE_DEPTH_RULES = {
 }
 
 ARCHITECTURE_RULES = {
-    "ARCH_ALLOWED_DEPENDENCY": rule_meta(
-        name="层级依赖方向合理",
-        severity=SEVERITY_LOW,
-        title="层级依赖方向合理",
-        remediation_summary="无需处理",
-        strategy="none",
-        edit_scope=[],
-    ),
     "ARCH_REVERSE_DEPENDENCY": rule_meta(
         name="禁止反向依赖",
         severity=SEVERITY_HIGH,

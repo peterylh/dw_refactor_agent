@@ -1,1 +1,1 @@
-"""Assess scoring dimensions."""
+"""Shared scoring configuration and utilities."""

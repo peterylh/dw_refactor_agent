@@ -1,16 +1,14 @@
-"""Lineage depth scoring dimension."""
+"""Lineage depth rule definitions."""
 
 from __future__ import annotations
 
-from assess.assessment_context import AssessmentContext
 from assess.result_model import (
     SEVERITY_HIGH,
     SEVERITY_MEDIUM,
-    finalize_dimension,
     make_check,
 )
+from assess.rules.engine.base import AssessRule
 from assess.scoring.config import (
-    LINEAGE_DEPTH_RULES,
     MIDDLE_DEPTH_FALLBACK,
     MIDDLE_DEPTH_SCORE,
 )
@@ -65,24 +63,19 @@ def _depth_to_score(depth: int) -> int:
     return MIDDLE_DEPTH_SCORE.get(depth, MIDDLE_DEPTH_FALLBACK)
 
 
-def score_lineage_depth(context: AssessmentContext) -> dict:
-    tables = context.tables
-    table_layers = context.table_layers
-    upstream = context.upstream
+class DepthMiddleLayerIsOptimalRule(AssessRule):
+    rule_id = "DEPTH_MIDDLE_LAYER_IS_OPTIMAL"
+    dimension = "depth"
+    domain = "table"
+    target = "table"
 
-    # 不按表名推断缺失层级；models/lineage 中没有声明的表按 OTHER 处理。
-
-    ads = [t for t in tables if t["layer"] == "ADS"]
-
-    checks = []
-    scores = []
-    depths = []
-    for t in ads:
-        name = t["name"]
-        depth = _max_middle_depth(name, upstream, table_layers)
-        score = _depth_to_score(depth)
-        scores.append(score)
-        depths.append(depth)
+    def evaluate(self, target: dict, facts: dict) -> dict:
+        table_name = target["name"]
+        depth = _max_middle_depth(
+            table_name,
+            facts["upstream"],
+            facts["table_layers"],
+        )
         issue = {}
         if depth == 0:
             issue = {
@@ -102,30 +95,14 @@ def score_lineage_depth(context: AssessmentContext) -> dict:
                 "title": "ADS链路中间层过长",
                 "message": f"ADS链路中间层深度={depth}",
             }
-        checks.append(
-            make_check(
-                rule_id="DEPTH_MIDDLE_LAYER_IS_OPTIMAL",
-                target_type="table",
-                target=name,
-                passed=depth == 2,
-                expected="最大中间层深度 = 2",
-                actual=f"最大中间层深度 = {depth}",
-                evidence={"max_middle_depth": depth},
-                message=issue.get("message", ""),
-                issue=issue or None,
-            )
+        return make_check(
+            rule_id=self.rule_id,
+            target_type="table",
+            target=table_name,
+            passed=depth == 2,
+            expected="最大中间层深度 = 2",
+            actual=f"最大中间层深度 = {depth}",
+            evidence={"max_middle_depth": depth},
+            message=issue.get("message", ""),
+            issue=issue or None,
         )
-
-    avg_score = round(sum(scores) / len(scores), 1) if scores else 100.0
-    avg_depth = round(sum(depths) / len(depths), 2) if depths else 0.0
-
-    return finalize_dimension(
-        dimension="depth",
-        score=avg_score,
-        checks=checks,
-        rules=LINEAGE_DEPTH_RULES,
-        summary={
-            "avg_middle_depth": avg_depth,
-            "ideal_middle_depth": 2,
-        },
-    )

@@ -7,11 +7,13 @@ from assess.assessment_context import AssessmentContext
 from assess.llm.table_inspector import TableInspectResult
 from assess.project_facts.asset_catalog import build_asset_catalog
 from assess.report import generate_report
-from assess.scoring.asset_completeness import score_asset_completeness
+from assess.rules.dimensions.asset_completeness import (
+    score_asset_completeness,
+)
+from assess.rules.dimensions.metadata_health import score_metadata_health
+from assess.rules.dimensions.model_design import score_model_design_health
+from assess.rules.dimensions.naming import score_naming_conventions
 from assess.scoring.config import normalize_score_weights
-from assess.scoring.metadata_health import score_metadata_health
-from assess.scoring.model_design import score_model_design_health
-from assess.scoring.naming import score_naming_conventions
 from config import (
     PROJECT_ROOT,
     BusinessAreaDef,
@@ -176,9 +178,18 @@ def test_assess_returns_dimension_check_issue_model(
 def test_assess_can_include_passed_checks(
     monkeypatch, sample_lineage_data, isolated_assess_project
 ):
+    data = dict(sample_lineage_data)
+    data["edges"] = sample_lineage_data["edges"] + [
+        {
+            "source": "dws_store_sales_daily.order_count",
+            "target": "ads_sales_dashboard.total_orders",
+            "expression": "order_count",
+            "source_file": "ads_sales_dashboard.sql",
+        }
+    ]
     monkeypatch.setattr(
         "assess.assess_middle_layer.load_lineage_data",
-        lambda project: sample_lineage_data,
+        lambda project: data,
     )
 
     result = assess(
@@ -188,11 +199,17 @@ def test_assess_can_include_passed_checks(
 
     assert any(
         check["passed"]
-        for check in result["dimensions"]["model_design"]["checks"]
+        for dimension in result["dimensions"].values()
+        for check in dimension["checks"]
     )
     assert any(
         not check["passed"]
         for check in result["dimensions"]["model_design"]["checks"]
+    )
+    assert all(
+        check["rule_id"] != "ARCH_ALLOWED_DEPENDENCY"
+        for dimension in result["dimensions"].values()
+        for check in dimension["checks"]
     )
 
 
@@ -243,13 +260,13 @@ def test_assess_builds_one_context_with_derived_lineage_for_scoring_modules(
 
         return scorer
 
-    def fake_depth_score(context):
+    def fake_depth_score(context, **kwargs):
         captured["depth_context"] = context
         captured["depth_upstream_map"] = context.upstream
         captured["depth_table_layers"] = context.table_layers
         return dimension("depth")
 
-    def fake_model_design_score(context, llm_results=None):
+    def fake_model_design_score(context, llm_results=None, **kwargs):
         captured["model_context"] = context
         captured["model_lineage"] = context.lineage
         captured["model_table_edges"] = context.table_edges
@@ -747,7 +764,7 @@ def test_score_model_design_health_allows_ads_to_read_dim():
 
     assert result["score"] == 100.0
     assert result["issues"] == []
-    assert result["checks"][0]["rule_id"] == "ARCH_ALLOWED_DEPENDENCY"
+    assert result["checks"] == []
 
 
 def test_score_model_design_health_penalizes_llm_business_metadata_mismatch():
