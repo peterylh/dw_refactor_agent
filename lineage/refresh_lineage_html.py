@@ -17,7 +17,7 @@ import sqlglot
 from sqlglot import exp
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from config import PROJECT_CONFIG, determine_layer, layer_rank
+from config import PROJECT_CONFIG, TEXT_ENCODING, determine_layer, layer_rank
 
 LINEAGE_DIR = Path(__file__).parent
 
@@ -54,7 +54,7 @@ def resolve_lineage_data_path(project):
 
 def load_lineage_data(project):
     path = resolve_lineage_data_path(project)
-    with open(path, encoding="utf-8") as f:
+    with open(path, encoding=TEXT_ENCODING) as f:
         return json.load(f)
 
 
@@ -163,7 +163,7 @@ def generate_jobs(data, tasks_dir, current_db, job_logic=None, project="shop"):
                 targets.add(_strip_db(target_table, current_db))
 
         for stmt in sqlglot.parse(
-            f.read_text(encoding="utf-8"), dialect="doris"
+            f.read_text(encoding=TEXT_ENCODING), dialect="doris"
         ):
             if stmt is None:
                 continue
@@ -234,7 +234,7 @@ def get_project_context(project):
 
 
 def inject_into_html(template_path, output_path, lineage_json, jobs_json):
-    with open(template_path, encoding="utf-8") as f:
+    with open(template_path, encoding=TEXT_ENCODING) as f:
         html = f.read()
     html = re.sub(
         r"(const LD\s*=\s*)\{.*?\};",
@@ -248,7 +248,7 @@ def inject_into_html(template_path, output_path, lineage_json, jobs_json):
         html,
         flags=re.DOTALL,
     )
-    with open(output_path, "w", encoding="utf-8") as f:
+    with open(output_path, "w", encoding=TEXT_ENCODING) as f:
         f.write(html)
 
 
@@ -256,7 +256,7 @@ def update_lineage_html(lineage_json, template_path, output_path):
     """更新只含字段级视图的 lineage.html."""
     if not template_path.exists():
         return
-    with open(template_path, encoding="utf-8") as f:
+    with open(template_path, encoding=TEXT_ENCODING) as f:
         html = f.read()
     html = re.sub(
         r"(const LINEAGE_DATA\s*=\s*)\{.*?\};",
@@ -264,7 +264,7 @@ def update_lineage_html(lineage_json, template_path, output_path):
         html,
         flags=re.DOTALL,
     )
-    with open(output_path, "w", encoding="utf-8") as f:
+    with open(output_path, "w", encoding=TEXT_ENCODING) as f:
         f.write(html)
     print("  已更新:", output_path)
 

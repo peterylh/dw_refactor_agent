@@ -86,7 +86,10 @@ score = max(0, 100 * (1 - sum(table_capped) / table_count))
 | `data_domain` / `business_area` 与 LLM 推断一致 | 仅在对应层适用且 LLM 推断值可通过业务字典校验时检查；未配置时按低风险，不一致时按中风险。 |
 | DWD fact 保持明细粒度 | DWD fact 的 Task SQL 或 typed edge 血缘不应出现 `GROUP BY` 或聚合函数。 |
 | DWD fact 不配置派生/计算指标 | DWD fact 的 model 元数据不应配置 `derived_metrics` 或 `calculated_metrics`。 |
+| DWD fact 单业务过程 | DWD fact 的表级 `business_process` 与指标字段中的 `business_process` 去重后最多只能有 1 个，多个业务过程应拆分为不同事实表。 |
+| DWD fact 声明业务主键或粒度 | DWD fact 必须配置 `entities[type=primary].key_columns`，或配置可推导出键字段的 `grain`。只靠字段名出现事件 ID 不再视为完整粒度声明。 |
 | DWD fact 包含事件键 | 列名或实体键中应存在明显事件、流水、明细类 `_id`、`_no`、`_key` 字段。 |
+| 日期分区字段使用 `data_dt` | 对已声明 Doris `PARTITION BY RANGE(...)` 的 DWD/DWS/DIM 表，分区字段必须统一为 `data_dt`。未声明分区的表不参与该项检查。 |
 | DWS fact 配置 grain | DWS fact 必须配置 `grain`。 |
 | DWS grain 与 SQL `GROUP BY` 一致 | 已配置 `grain` 且 SQL 有 `GROUP BY` 时，检查 grain key 与 GROUP BY 输出粒度一致。 |
 | DWS fact 包含聚合逻辑 | 有作业或 typed edge 证据时，DWS fact 应出现聚合血缘。 |

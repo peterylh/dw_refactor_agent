@@ -20,6 +20,7 @@ from config import (
     DORIS_PORT,
     DORIS_USER,
     PROJECT_CONFIG,
+    TEXT_ENCODING,
     layer_rank,
 )
 from config import (
@@ -225,7 +226,7 @@ def main():
             "  请先运行 python lineage/lineage_extractor.py --project {args.project}"
         )
         sys.exit(1)
-    with open(lineage_path, encoding="utf-8") as f:
+    with open(lineage_path, encoding=TEXT_ENCODING) as f:
         lineage = json.load(f)
     dag = asset_job_dag_from_lineage(lineage)
     n = len(lineage.get("tables", []))
@@ -333,7 +334,7 @@ def main():
         fpath = tasks_dir / f"{jn}.sql"
         if not fpath.exists():
             continue
-        sql_text = fpath.read_text(encoding="utf-8")
+        sql_text = fpath.read_text(encoding=TEXT_ENCODING)
         jobs_to_run.append(
             {
                 "job": jn,
@@ -421,7 +422,7 @@ def main():
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(
-        json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8"
+        json.dumps(meta, ensure_ascii=False, indent=2), encoding=TEXT_ENCODING
     )
     print(f"\n=== 元数据已写入: {out_path} ===")
     print(f"  DDL 变更: {len(ddl_changes)}")

@@ -10,6 +10,7 @@ try:
 except ImportError:  # Python 3.7
     from typing_extensions import Protocol
 
+from config import TEXT_ENCODING
 from lineage.model import LineageSnapshot
 
 
@@ -38,7 +39,7 @@ class JsonLineageStore:
         snapshot_id: str | None = None,
     ) -> LineageSnapshot:
         path = self._snapshot_path(project, snapshot_id)
-        with path.open(encoding="utf-8") as file:
+        with path.open(encoding=TEXT_ENCODING) as file:
             data = json.load(file)
         return LineageSnapshot.from_dict(
             project,

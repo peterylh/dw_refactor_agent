@@ -25,7 +25,7 @@ import sqlglot
 from sqlglot import exp
 from sqlglot.errors import ErrorLevel
 
-from config import get_mysql_cmd
+from config import TEXT_ENCODING, get_mysql_cmd
 from doris_sql import extract_create_table_name
 
 # ============================================================
@@ -163,7 +163,7 @@ def main():
     )
     args = parser.parse_args()
 
-    meta = json.loads(Path(args.metadata).read_text(encoding="utf-8"))
+    meta = json.loads(Path(args.metadata).read_text(encoding=TEXT_ENCODING))
     prod_db = meta["project_db"]
     qa_db = meta["qa_db"]
     etl_date = meta.get("partition_info", {}).get("etl_date")
@@ -242,7 +242,7 @@ def main():
             print(f"  [SKIP] 文件不存在: {fpath}")
             continue
 
-        sql_text = fpath.read_text(encoding="utf-8")
+        sql_text = fpath.read_text(encoding=TEXT_ENCODING)
 
         # SQL Glot 表映射重写
         rewritten = rewrite_sql(sql_text, prod_db, qa_db, recalculated)
@@ -319,7 +319,7 @@ def _dry_run(meta):
             print("    [SKIP] 文件不存在")
             continue
 
-        sql_text = fpath.read_text(encoding="utf-8")
+        sql_text = fpath.read_text(encoding=TEXT_ENCODING)
         rewritten = rewrite_sql(sql_text, prod_db, qa_db, recalculated)
         needs_ed = job.get("needs_etl_date", False)
 

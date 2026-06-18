@@ -10,6 +10,7 @@ from assess.project_facts.business_semantics import (
     load_business_semantics_catalog,
 )
 from config import (
+    TEXT_ENCODING,
     get_business_domain_config,
     iter_project_asset_files,
     load_model_metadata,
@@ -75,7 +76,10 @@ def _load_model_metric_groups(
 
     for model_path in iter_project_asset_files(project, "models", "*.yaml"):
         try:
-            data = yaml.safe_load(model_path.read_text(encoding="utf-8")) or {}
+            data = (
+                yaml.safe_load(model_path.read_text(encoding=TEXT_ENCODING))
+                or {}
+            )
         except Exception:
             continue
         if not isinstance(data, dict):
@@ -219,13 +223,17 @@ def build_contexts(
         # Read DDL
         ddl_path = ddl_dir / f"{name}.sql"
         ddl_content = (
-            ddl_path.read_text(encoding="utf-8") if ddl_path.exists() else ""
+            ddl_path.read_text(encoding=TEXT_ENCODING)
+            if ddl_path.exists()
+            else ""
         )
 
         # Read ETL
         task_path = tasks_dir / f"{name}.sql"
         etl_content = (
-            task_path.read_text(encoding="utf-8") if task_path.exists() else ""
+            task_path.read_text(encoding=TEXT_ENCODING)
+            if task_path.exists()
+            else ""
         )
         upstream_tables = sorted(list(upstream.get(name, set())))
         upstream_metric_groups = {

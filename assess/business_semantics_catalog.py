@@ -17,7 +17,7 @@ from assess.llm.model_metadata_writer import (
 from assess.project_facts.business_semantics import (  # noqa: E402
     write_initial_business_semantics_catalog,
 )
-from config import PROJECT_CONFIG  # noqa: E402
+from config import PROJECT_CONFIG, TEXT_ENCODING  # noqa: E402
 
 
 def main() -> None:
@@ -92,7 +92,7 @@ def main() -> None:
     if args.output:
         Path(args.output).write_text(
             json.dumps(result, ensure_ascii=False, indent=2),
-            encoding="utf-8",
+            encoding=TEXT_ENCODING,
         )
     catalog = result.get("catalog") or {}
     print(

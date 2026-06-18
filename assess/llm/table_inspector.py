@@ -20,6 +20,7 @@ from assess.project_facts.time_period import (
     is_canonical_time_period,
     normalize_time_period,
 )
+from config import TEXT_ENCODING
 
 PROMPT_VERSION = "table-inspector-v24"
 VALID_LAYERS = {"ODS", "DWD", "DWS", "ADS", "DIM", "OTHER"}
@@ -1032,7 +1033,7 @@ class TableInspector:
             if self.cache_file and self.cache_file.exists():
                 try:
                     self.cache = json.loads(
-                        self.cache_file.read_text(encoding="utf-8")
+                        self.cache_file.read_text(encoding=TEXT_ENCODING)
                     )
                 except Exception:
                     self.cache = {}
@@ -1043,7 +1044,7 @@ class TableInspector:
                 self.cache_file.parent.mkdir(parents=True, exist_ok=True)
                 self.cache_file.write_text(
                     json.dumps(self.cache, ensure_ascii=False, indent=2),
-                    encoding="utf-8",
+                    encoding=TEXT_ENCODING,
                 )
 
     def _compute_hash(self, ctx: TableContext) -> str:
@@ -1056,7 +1057,7 @@ class TableInspector:
             f"{ctx.declared_business_area}|{ctx.business_domain_options}|"
             f"{ctx.business_semantics_options}|{ctx.project_context}"
         )
-        return hashlib.sha256(content.encode("utf-8")).hexdigest()
+        return hashlib.sha256(content.encode(TEXT_ENCODING)).hexdigest()
 
     def _emit_progress(
         self,
@@ -1096,7 +1097,7 @@ class TableInspector:
 
         req = urllib.request.Request(
             url,
-            data=json.dumps(data).encode("utf-8"),
+            data=json.dumps(data).encode(TEXT_ENCODING),
             headers=headers,
             method="POST",
         )
@@ -1104,7 +1105,7 @@ class TableInspector:
             with urllib.request.urlopen(
                 req, timeout=self.request_timeout
             ) as response:
-                return response.read().decode("utf-8")
+                return response.read().decode(TEXT_ENCODING)
         except Exception as e:
             raise RuntimeError(f"DeepSeek API 调用失败: {e}") from e
 

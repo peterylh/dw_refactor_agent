@@ -8,7 +8,9 @@ from pathlib import Path
 
 import yaml
 
+from config import TEXT_ENCODING
 from ddl_deriver.ddl_deriver import parse_create_table
+from doris_sql import extract_doris_partition_column
 from lineage.sql_task_facts import extract_task_table_facts
 from lineage.table_graph import _table_from_node
 
@@ -36,7 +38,7 @@ def _display_file_path(project_dir: Path, file_path: Path) -> str:
 
 
 def _ddl_declared_table_name(ddl_path: Path) -> str:
-    text = ddl_path.read_text(encoding="utf-8")
+    text = ddl_path.read_text(encoding=TEXT_ENCODING)
     try:
         table_def = parse_create_table(text)
         if table_def:
@@ -57,7 +59,9 @@ def _ddl_table_for_naming(
     ddl_path: Path, model_metadata: dict | None
 ) -> dict | None:
     try:
-        table_def = parse_create_table(ddl_path.read_text(encoding="utf-8"))
+        table_def = parse_create_table(
+            ddl_path.read_text(encoding=TEXT_ENCODING)
+        )
     except Exception:
         table_def = None
     if not table_def:
@@ -121,7 +125,7 @@ def _tables_for_naming(
 
 
 def _extract_task_table_facts(task_path: Path, source_file: str) -> dict:
-    text = task_path.read_text(encoding="utf-8")
+    text = task_path.read_text(encoding=TEXT_ENCODING)
     return extract_task_table_facts(text, source_file)
 
 
@@ -337,6 +341,9 @@ def build_asset_catalog(
                         key_columns=list(
                             (table or {}).get("key_columns") or []
                         ),
+                        partition_column=extract_doris_partition_column(
+                            ddl_path.read_text(encoding=TEXT_ENCODING)
+                        ),
                     )
                     asset["columns"] = columns
                     if table and table.get("layer") != "OTHER":
@@ -349,7 +356,7 @@ def build_asset_catalog(
                     try:
                         raw = (
                             yaml.safe_load(
-                                model_path.read_text(encoding="utf-8")
+                                model_path.read_text(encoding=TEXT_ENCODING)
                             )
                             or {}
                         )

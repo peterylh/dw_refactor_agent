@@ -27,6 +27,7 @@ sys.path.insert(0, str(_root))
 from config import (
     DB_ENV_CONFIG,
     PROJECT_CONFIG,
+    TEXT_ENCODING,
     get_model_names_by_layer,
     get_mysql_cmd,
     iter_project_asset_files,
@@ -125,7 +126,7 @@ def main():
     for f in ddl_files:
         print(f"  [DDL] {f.name}")
         try:
-            run_sql(f.read_text(encoding="utf-8"), db_name, env_cmd)
+            run_sql(f.read_text(encoding=TEXT_ENCODING), db_name, env_cmd)
         except Exception as e:
             print(f"  [FAIL] {f.name}: {e}")
             sys.exit(1)
@@ -140,14 +141,16 @@ def main():
             for f in ods_files:
                 print(f"  [ODS INIT] {f.name}")
                 try:
-                    run_sql(f.read_text(encoding="utf-8"), db_name, env_cmd)
+                    run_sql(
+                        f.read_text(encoding=TEXT_ENCODING), db_name, env_cmd
+                    )
                 except Exception as e:
                     print(f"  [FAIL] {f.name}: {e}")
                     sys.exit(1)
         else:
 
             def load_ods(f: Path) -> Path:
-                run_sql(f.read_text(encoding="utf-8"), db_name, env_cmd)
+                run_sql(f.read_text(encoding=TEXT_ENCODING), db_name, env_cmd)
                 return f
 
             ods_error: str | None = None

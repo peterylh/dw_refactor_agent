@@ -17,6 +17,7 @@ from assess.result_model import (
     make_check,
     rule_meta,
 )
+from config import TEXT_ENCODING
 
 RULE_TEMP_TABLE_NAME_HAS_TEMP_OR_TMP = "TEMP_TABLE_NAME_HAS_TEMP_OR_TMP"
 RULE_TEMP_TABLE_DROPPED_IN_SAME_TASK = "TEMP_TABLE_DROPPED_IN_SAME_TASK"
@@ -701,7 +702,7 @@ def score_code_quality(asset_catalog: dict) -> dict:
     for task in asset_catalog.get("tasks") or []:
         task_path = Path(task["path"])
         file_name = _display_file_path(project_dir, task_path)
-        sql = task_path.read_text(encoding="utf-8")
+        sql = task_path.read_text(encoding=TEXT_ENCODING)
         creates, drops, write_statements = _scan_task_sql(sql)
         expected_table = _short_table_name(task.get("expected_table") or "")
 

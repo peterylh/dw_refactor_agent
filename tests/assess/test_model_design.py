@@ -90,7 +90,18 @@ def test_model_design_flags_dwd_fact_with_group_by():
             ],
         }
     ]
-    model_metadata = {"dwd_order_summary": {"table_type": "fact"}}
+    model_metadata = {
+        "dwd_order_summary": {
+            "table_type": "fact",
+            "entities": [
+                {
+                    "code": "ORDER",
+                    "type": "primary",
+                    "key_columns": ["order_id"],
+                }
+            ],
+        }
+    }
 
     result = score_model_design_health(
         tables,
@@ -413,6 +424,153 @@ def test_model_design_flags_dwd_fact_with_non_atomic_metrics():
     )
 
     assert "MODEL_DWD_FACT_NO_DERIVED_METRICS" in _rule_ids(result)
+
+
+def test_model_design_flags_dwd_fact_with_multiple_business_processes():
+    tables = [
+        {
+            "name": "dwd_order_detail",
+            "layer": "DWD",
+            "columns": [{"name": "order_id", "type": "BIGINT"}],
+        }
+    ]
+    model_metadata = {
+        "dwd_order_detail": {
+            "table_type": "fact",
+            "business_process": "ORDER_TRANSACTION",
+            "atomic_metrics": [
+                {
+                    "name": "subtotal",
+                    "business_process": "ORDER_TRANSACTION",
+                },
+                {
+                    "name": "refund_amount",
+                    "business_process": "REFUND_TRANSACTION",
+                },
+            ],
+            "entities": [
+                {
+                    "code": "ORDER",
+                    "type": "primary",
+                    "key_columns": ["order_id"],
+                }
+            ],
+        }
+    }
+
+    result = score_model_design_health(
+        tables,
+        [],
+        [],
+        model_metadata=model_metadata,
+    )
+
+    assert "MODEL_DWD_FACT_SINGLE_BUSINESS_PROCESS" in _rule_ids(result)
+    check = next(
+        check
+        for check in result["checks"]
+        if check["rule_id"] == "MODEL_DWD_FACT_SINGLE_BUSINESS_PROCESS"
+    )
+    assert check["evidence"]["business_processes"] == [
+        "ORDER_TRANSACTION",
+        "REFUND_TRANSACTION",
+    ]
+
+
+def test_model_design_flags_dwd_fact_without_primary_entity_or_grain():
+    tables = [
+        {
+            "name": "dwd_order_detail",
+            "layer": "DWD",
+            "columns": [
+                {"name": "order_id", "type": "BIGINT"},
+                {"name": "customer_id", "type": "BIGINT"},
+            ],
+        }
+    ]
+    model_metadata = {
+        "dwd_order_detail": {
+            "table_type": "fact",
+            "business_process": "ORDER_TRANSACTION",
+            "entities": [
+                {
+                    "code": "CUST",
+                    "type": "foreign",
+                    "key_columns": ["customer_id"],
+                }
+            ],
+        }
+    }
+
+    result = score_model_design_health(
+        tables,
+        [],
+        [],
+        model_metadata=model_metadata,
+    )
+
+    assert "MODEL_DWD_FACT_HAS_PRIMARY_ENTITY_OR_GRAIN" in _rule_ids(result)
+
+
+def test_model_design_flags_partition_column_not_data_dt(tmp_path):
+    ddl_path = tmp_path / "dwd_order_detail.sql"
+    ddl_path.write_text(
+        """
+        CREATE TABLE shop_dm.dwd_order_detail (
+            order_id BIGINT NOT NULL,
+            order_date DATE NOT NULL,
+            subtotal DECIMAL(12,2) NULL
+        )
+        UNIQUE KEY(order_id, order_date)
+        PARTITION BY RANGE(order_date) (
+            PARTITION p20240601 VALUES LESS THAN ("2024-06-02")
+        )
+        DISTRIBUTED BY HASH(order_id) BUCKETS 1;
+        """,
+        encoding="utf-8",
+    )
+    tables = [
+        {
+            "name": "dwd_order_detail",
+            "layer": "DWD",
+            "columns": [
+                {"name": "order_id", "type": "BIGINT"},
+                {"name": "order_date", "type": "DATE"},
+                {"name": "subtotal", "type": "DECIMAL(12,2)"},
+            ],
+        }
+    ]
+    model_metadata = {
+        "dwd_order_detail": {
+            "table_type": "fact",
+            "business_process": "ORDER_TRANSACTION",
+            "entities": [
+                {
+                    "code": "ORDER",
+                    "type": "primary",
+                    "key_columns": ["order_id"],
+                }
+            ],
+        }
+    }
+    asset_catalog = {
+        "tables": {
+            "dwd_order_detail": {
+                "ddl": {"path": ddl_path},
+                "tasks": [],
+            }
+        }
+    }
+
+    result = score_model_design_health(
+        tables,
+        [],
+        [],
+        model_metadata=model_metadata,
+        asset_catalog=asset_catalog,
+    )
+
+    assert "MODEL_DATE_PARTITION_USES_DATA_DT" in _rule_ids(result)
 
 
 def test_model_design_flags_derived_metric_without_upstream_atomic_base():
