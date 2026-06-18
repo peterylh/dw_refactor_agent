@@ -1,18 +1,20 @@
-from assess.assess_middle_layer import build_asset_catalog
-from assess.code_quality import score_code_quality
+from assess.assessment_context import AssessmentContext
+from assess.project_facts.asset_catalog import build_asset_catalog
+from assess.scoring.task_sql_quality import score_code_quality
 
 
 def _catalog_for_task(tmp_path, task_name, sql):
     project_dir = tmp_path / "demo"
     (project_dir / "tasks").mkdir(parents=True)
     (project_dir / "tasks" / task_name).write_text(sql, encoding="utf-8")
-    return build_asset_catalog(
+    catalog = build_asset_catalog(
         [],
         None,
         project_dir,
         edges=[],
         indirect_edges=[],
     )
+    return AssessmentContext.from_facts(assets=catalog)
 
 
 def _catalog_for_task_and_ddl(tmp_path, task_name, sql, ddl_files):
@@ -25,13 +27,14 @@ def _catalog_for_task_and_ddl(tmp_path, task_name, sql, ddl_files):
             ddl_sql,
             encoding="utf-8",
         )
-    return build_asset_catalog(
+    catalog = build_asset_catalog(
         [],
         None,
         project_dir,
         edges=[],
         indirect_edges=[],
     )
+    return AssessmentContext.from_facts(assets=catalog)
 
 
 def _issue_rule_ids(result):
@@ -39,7 +42,7 @@ def _issue_rule_ids(result):
 
 
 def test_score_code_quality_accepts_named_and_dropped_temp_table(tmp_path):
-    catalog = _catalog_for_task(
+    context = _catalog_for_task(
         tmp_path,
         "dws_sales.sql",
         """
@@ -55,7 +58,7 @@ DROP TABLE IF EXISTS demo.tmp_sales_stage;
 """,
     )
 
-    result = score_code_quality(catalog)
+    result = score_code_quality(context)
 
     assert result["score"] == 100.0
     assert result["issues"] == []
@@ -64,7 +67,7 @@ DROP TABLE IF EXISTS demo.tmp_sales_stage;
 
 
 def test_score_code_quality_flags_bad_temp_name_and_missing_drop(tmp_path):
-    catalog = _catalog_for_task(
+    context = _catalog_for_task(
         tmp_path,
         "dws_sales.sql",
         """
@@ -78,7 +81,7 @@ FROM demo.stage_sales;
 """,
     )
 
-    result = score_code_quality(catalog)
+    result = score_code_quality(context)
 
     assert result["score"] == 50.0
     assert _issue_rule_ids(result) == {
@@ -94,7 +97,7 @@ FROM demo.stage_sales;
 
 
 def test_score_code_quality_requires_drop_after_create(tmp_path):
-    catalog = _catalog_for_task(
+    context = _catalog_for_task(
         tmp_path,
         "dws_sales.sql",
         """
@@ -110,7 +113,7 @@ FROM demo.tmp_sales_stage;
 """,
     )
 
-    result = score_code_quality(catalog)
+    result = score_code_quality(context)
 
     assert result["score"] == 75.0
     assert result["issues"][0]["rule_id"] == (
@@ -125,7 +128,7 @@ FROM demo.tmp_sales_stage;
 def test_score_code_quality_flags_select_star_only_in_write_statements(
     tmp_path,
 ):
-    catalog = _catalog_for_task(
+    context = _catalog_for_task(
         tmp_path,
         "dws_sales.sql",
         """
@@ -138,7 +141,7 @@ FROM demo.dwd_sales;
 """,
     )
 
-    result = score_code_quality(catalog)
+    result = score_code_quality(context)
 
     assert result["score"] == 0.0
     assert result["checks"] == [
@@ -181,7 +184,7 @@ FROM demo.dwd_sales;
 
 
 def test_score_code_quality_ignores_task_target_create_table(tmp_path):
-    catalog = _catalog_for_task(
+    context = _catalog_for_task(
         tmp_path,
         "dws_sales.sql",
         """
@@ -191,7 +194,7 @@ FROM demo.dwd_sales;
 """,
     )
 
-    result = score_code_quality(catalog)
+    result = score_code_quality(context)
 
     assert result["score"] == 100.0
     assert result["issues"] == []
@@ -199,7 +202,7 @@ FROM demo.dwd_sales;
 
 
 def test_score_code_quality_flags_cartesian_join_risks(tmp_path):
-    catalog = _catalog_for_task(
+    context = _catalog_for_task(
         tmp_path,
         "dwd_order_customer.sql",
         """
@@ -219,7 +222,7 @@ FROM demo.dwd_order a, demo.dwd_product b;
 """,
     )
 
-    result = score_code_quality(catalog)
+    result = score_code_quality(context)
 
     assert "CODE_CARTESIAN_JOIN_RISK" in _issue_rule_ids(result)
     failed = [
@@ -239,7 +242,7 @@ FROM demo.dwd_order a, demo.dwd_product b;
 def test_score_code_quality_accepts_keyed_join_without_cartesian_risk(
     tmp_path,
 ):
-    catalog = _catalog_for_task(
+    context = _catalog_for_task(
         tmp_path,
         "dwd_order_customer.sql",
         """
@@ -250,7 +253,7 @@ JOIN demo.dwd_customer b ON a.customer_id = b.customer_id;
 """,
     )
 
-    result = score_code_quality(catalog)
+    result = score_code_quality(context)
 
     assert "CODE_CARTESIAN_JOIN_RISK" not in _issue_rule_ids(result)
 
@@ -258,7 +261,7 @@ JOIN demo.dwd_customer b ON a.customer_id = b.customer_id;
 def test_score_code_quality_accepts_multiple_ctes_without_cartesian_risk(
     tmp_path,
 ):
-    catalog = _catalog_for_task(
+    context = _catalog_for_task(
         tmp_path,
         "ads_customer_rfm.sql",
         """
@@ -285,7 +288,7 @@ FROM rfm_scored;
 """,
     )
 
-    result = score_code_quality(catalog)
+    result = score_code_quality(context)
 
     assert "CODE_CARTESIAN_JOIN_RISK" not in _issue_rule_ids(result)
 
@@ -293,7 +296,7 @@ FROM rfm_scored;
 def test_score_code_quality_accepts_explicit_cross_join_without_cartesian_risk(
     tmp_path,
 ):
-    catalog = _catalog_for_task(
+    context = _catalog_for_task(
         tmp_path,
         "dim_date.sql",
         """
@@ -308,7 +311,7 @@ FROM date_spine;
 """,
     )
 
-    result = score_code_quality(catalog)
+    result = score_code_quality(context)
 
     assert "CODE_CARTESIAN_JOIN_RISK" not in _issue_rule_ids(result)
 
@@ -316,7 +319,7 @@ FROM date_spine;
 def test_score_code_quality_flags_dws_join_before_aggregation_fanout(
     tmp_path,
 ):
-    catalog = _catalog_for_task(
+    context = _catalog_for_task(
         tmp_path,
         "dws_store_sales_daily.sql",
         """
@@ -330,7 +333,7 @@ GROUP BY s.store_id;
 """,
     )
 
-    result = score_code_quality(catalog)
+    result = score_code_quality(context)
 
     assert "CODE_DWS_JOIN_BEFORE_AGGREGATION" in _issue_rule_ids(result)
 
@@ -338,7 +341,7 @@ GROUP BY s.store_id;
 def test_score_code_quality_accepts_dws_join_to_pre_aggregated_subquery(
     tmp_path,
 ):
-    catalog = _catalog_for_task(
+    context = _catalog_for_task(
         tmp_path,
         "dws_account_daily_snapshot.sql",
         """
@@ -361,7 +364,7 @@ FROM daily_snapshots;
 """,
     )
 
-    result = score_code_quality(catalog)
+    result = score_code_quality(context)
 
     assert "CODE_DWS_JOIN_BEFORE_AGGREGATION" not in _issue_rule_ids(result)
 
@@ -369,7 +372,7 @@ FROM daily_snapshots;
 def test_score_code_quality_accepts_dws_join_covering_right_unique_key(
     tmp_path,
 ):
-    catalog = _catalog_for_task_and_ddl(
+    context = _catalog_for_task_and_ddl(
         tmp_path,
         "dws_promotion_effect_daily.sql",
         """
@@ -399,7 +402,7 @@ PROPERTIES ("replication_num" = "1");
         },
     )
 
-    result = score_code_quality(catalog)
+    result = score_code_quality(context)
 
     assert "CODE_DWS_JOIN_BEFORE_AGGREGATION" not in _issue_rule_ids(result)
 
@@ -407,7 +410,7 @@ PROPERTIES ("replication_num" = "1");
 def test_score_code_quality_flags_dws_join_partially_covering_unique_key(
     tmp_path,
 ):
-    catalog = _catalog_for_task_and_ddl(
+    context = _catalog_for_task_and_ddl(
         tmp_path,
         "dws_promotion_effect_daily.sql",
         """
@@ -436,7 +439,7 @@ PROPERTIES ("replication_num" = "1");
         },
     )
 
-    result = score_code_quality(catalog)
+    result = score_code_quality(context)
 
     assert "CODE_DWS_JOIN_BEFORE_AGGREGATION" in _issue_rule_ids(result)
 
@@ -444,7 +447,7 @@ PROPERTIES ("replication_num" = "1");
 def test_score_code_quality_flags_function_wrapped_filter_column(
     tmp_path,
 ):
-    catalog = _catalog_for_task(
+    context = _catalog_for_task(
         tmp_path,
         "dwd_order_detail.sql",
         """
@@ -456,7 +459,7 @@ WHERE DATE(pay_time) = @etl_date
 """,
     )
 
-    result = score_code_quality(catalog)
+    result = score_code_quality(context)
 
     assert "CODE_FILTER_COLUMN_WRAPPED_IN_FUNCTION" in _issue_rule_ids(result)
     failed = [
@@ -471,7 +474,7 @@ WHERE DATE(pay_time) = @etl_date
 def test_score_code_quality_accepts_full_refresh_if_filter_predicate(
     tmp_path,
 ):
-    catalog = _catalog_for_task(
+    context = _catalog_for_task(
         tmp_path,
         "dws_customer_order_summary.sql",
         """
@@ -483,7 +486,7 @@ GROUP BY customer_id;
 """,
     )
 
-    result = score_code_quality(catalog)
+    result = score_code_quality(context)
 
     assert "CODE_FILTER_COLUMN_WRAPPED_IN_FUNCTION" not in _issue_rule_ids(
         result
@@ -493,7 +496,7 @@ GROUP BY customer_id;
 def test_score_code_quality_accepts_generator_expression_filter(
     tmp_path,
 ):
-    catalog = _catalog_for_task(
+    context = _catalog_for_task(
         tmp_path,
         "dim_date.sql",
         """
@@ -508,7 +511,7 @@ FROM date_spine;
 """,
     )
 
-    result = score_code_quality(catalog)
+    result = score_code_quality(context)
 
     assert "CODE_FILTER_COLUMN_WRAPPED_IN_FUNCTION" not in _issue_rule_ids(
         result
@@ -516,7 +519,7 @@ FROM date_spine;
 
 
 def test_score_code_quality_accepts_sargable_filter_columns(tmp_path):
-    catalog = _catalog_for_task(
+    context = _catalog_for_task(
         tmp_path,
         "dwd_order_detail.sql",
         """
@@ -529,7 +532,7 @@ WHERE pay_time >= @etl_date
 """,
     )
 
-    result = score_code_quality(catalog)
+    result = score_code_quality(context)
 
     assert "CODE_FILTER_COLUMN_WRAPPED_IN_FUNCTION" not in _issue_rule_ids(
         result

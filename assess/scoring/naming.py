@@ -5,11 +5,11 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from assess.assessment_context import AssessmentContext
 from assess.project_facts.asset_catalog import (
     _display_file_path,
     _related_files_for_table,
     _tables_for_naming,
-    build_asset_catalog,
 )
 from assess.project_facts.business_metadata import (
     _business_area_applies,
@@ -503,22 +503,13 @@ def _score_file_naming_conventions(
 
 
 def _prepare_naming_context(
-    tables: list,
-    nc,
-    model_metadata: dict | None,
-    business_domain_config,
-    project_dir: Path | None,
-    edges: list | None,
-    indirect_edges: list | None,
-    asset_catalog: dict | None,
+    assessment_context: AssessmentContext,
 ) -> dict:
-    catalog = asset_catalog or build_asset_catalog(
-        tables,
-        model_metadata,
-        project_dir,
-        edges=edges,
-        indirect_edges=indirect_edges,
-    )
+    catalog = assessment_context.assets
+    tables = assessment_context.tables
+    nc = assessment_context.naming_config
+    model_metadata = assessment_context.models
+    business_domain_config = assessment_context.business_domain_config
     if catalog.get("project_dir"):
         naming_tables = [
             dict(
@@ -536,9 +527,9 @@ def _prepare_naming_context(
     derived_rule_name = _metric_rule_name(nc, "derived", "derived_metrics")
     return dict(
         nc=nc,
-        model_metadata=model_metadata or {},
+        models=model_metadata or {},
         business_domain_config=business_domain_config,
-        asset_catalog=catalog,
+        assets=catalog,
         middle=[
             table
             for table in naming_tables
@@ -593,7 +584,7 @@ def _score_table_semantic_metadata(
     if not table_name_valid:
         return result, summary_checks
 
-    metadata = context["model_metadata"].get(table_name)
+    metadata = context["models"].get(table_name)
     business_config = context["business_domain_config"]
     if not isinstance(metadata, dict) or not business_config:
         return result, summary_checks
@@ -647,7 +638,7 @@ def _score_table_semantic_metadata(
 
 def _score_middle_table(table: dict, context: dict) -> dict:
     nc = context["nc"]
-    model_metadata = context["model_metadata"]
+    model_metadata = context["models"]
     name = table["name"]
     layer = table["layer"]
     columns = table.get("columns", [])
@@ -885,7 +876,7 @@ def _score_middle_table(table: dict, context: dict) -> dict:
 
 
 def _naming_issue_context(context: dict, table: str) -> dict:
-    related_files = _related_files_for_table(context["asset_catalog"], table)
+    related_files = _related_files_for_table(context["assets"], table)
     return (
         {
             "remediation": {
@@ -1019,7 +1010,7 @@ def _build_naming_checks(
                 "不合规原子指标",
                 _atomic_metric_names_for_table(
                     {"name": table},
-                    context["model_metadata"],
+                    context["models"],
                 ),
             ),
             (
@@ -1029,7 +1020,7 @@ def _build_naming_checks(
                 "不合规派生指标",
                 _derived_metric_names_for_table(
                     {"name": table},
-                    context["model_metadata"],
+                    context["models"],
                 ),
             ),
         ]
@@ -1136,31 +1127,14 @@ def _build_final_naming_result(
 
 
 def score_naming_conventions(
-    tables: list,
-    nc,
-    model_metadata: dict | None = None,
-    business_domain_config=None,
-    *,
-    project_dir: Path | None = None,
-    edges: list | None = None,
-    indirect_edges: list | None = None,
-    asset_catalog: dict | None = None,
+    context: AssessmentContext,
 ) -> dict:
-    context = _prepare_naming_context(
-        tables,
-        nc,
-        model_metadata,
-        business_domain_config,
-        project_dir,
-        edges,
-        indirect_edges,
-        asset_catalog,
-    )
+    context = _prepare_naming_context(context)
     table_results = [
         _score_middle_table(table, context) for table in context["middle"]
     ]
     file_result = _score_file_naming_conventions(
-        context["asset_catalog"],
+        context["assets"],
     )
     return _build_final_naming_result(
         table_results,

@@ -2,17 +2,16 @@ import pytest
 import yaml
 
 import config
-from assess.assess_middle_layer import (
-    assess,
-    build_asset_catalog,
-    generate_report,
-    normalize_score_weights,
-    score_architecture_health,
-    score_asset_completeness,
-    score_metadata_health,
-    score_naming_conventions,
-)
+from assess.assess_middle_layer import assess
+from assess.assessment_context import AssessmentContext
 from assess.llm.table_inspector import TableInspectResult
+from assess.project_facts.asset_catalog import build_asset_catalog
+from assess.report import generate_report
+from assess.scoring.asset_completeness import score_asset_completeness
+from assess.scoring.config import normalize_score_weights
+from assess.scoring.metadata_health import score_metadata_health
+from assess.scoring.model_design import score_model_design_health
+from assess.scoring.naming import score_naming_conventions
 from config import (
     PROJECT_ROOT,
     BusinessAreaDef,
@@ -34,6 +33,29 @@ def _business_domain_config():
             "CLNT": BusinessAreaDef(id="13", code="CLNT", name="客户经营"),
             "OTHR": BusinessAreaDef(id="99", code="OTHR", name="其它"),
         },
+    )
+
+
+def _context(
+    tables=None,
+    nc=None,
+    models=None,
+    business_domain_config=None,
+    *,
+    project_dir=None,
+    edges=None,
+    indirect_edges=None,
+    assets=None,
+):
+    return AssessmentContext.from_facts(
+        tables=tables or [],
+        edges=edges or [],
+        indirect_edges=indirect_edges or [],
+        models=models,
+        project_dir=project_dir,
+        business_domain_config=business_domain_config,
+        naming_config=nc,
+        assets=assets,
     )
 
 
@@ -191,23 +213,12 @@ def test_assess_can_run_selected_model_design_only(
     assert result["dimensions"]["model_design"]["score"] == 50.0
 
 
-def test_assess_accepts_architecture_dimension_alias(
-    monkeypatch, sample_lineage_data, isolated_assess_project
-):
-    monkeypatch.setattr(
-        "assess.assess_middle_layer.load_lineage_data",
-        lambda project: sample_lineage_data,
-    )
-
-    result = assess(
-        project=isolated_assess_project,
-        selected_dimensions={"architecture"},
-    )
-
-    assert set(result["dimensions"]) == {"model_design"}
+def test_assess_rejects_architecture_dimension_alias():
+    with pytest.raises(ValueError, match="architecture"):
+        assess(project="shop", selected_dimensions={"architecture"})
 
 
-def test_assess_passes_reusable_lineage_index_to_scoring_modules(
+def test_assess_builds_one_context_with_derived_lineage_for_scoring_modules(
     monkeypatch, sample_lineage_data, isolated_assess_project
 ):
     monkeypatch.setattr(
@@ -225,29 +236,29 @@ def test_assess_passes_reusable_lineage_index_to_scoring_modules(
             "summary": {},
         }
 
-    def fake_depth_score(tables, edges, indirect_edges, **kwargs):
-        captured["depth_upstream_map"] = kwargs.get("upstream_map")
-        captured["depth_table_layers"] = kwargs.get("table_layers")
+    def remember_context(name):
+        def scorer(context, *args, **kwargs):
+            captured[name] = context
+            return dimension(name)
+
+        return scorer
+
+    def fake_depth_score(context):
+        captured["depth_context"] = context
+        captured["depth_upstream_map"] = context.upstream
+        captured["depth_table_layers"] = context.table_layers
         return dimension("depth")
 
-    def fake_model_design_score(
-        tables,
-        edges,
-        indirect_edges,
-        llm_results=None,
-        model_metadata=None,
-        business_domain_config=None,
-        asset_catalog=None,
-        **kwargs,
-    ):
-        captured["model_lineage_view"] = kwargs.get("lineage_view")
-        captured["model_table_edges"] = kwargs.get("table_edges")
-        captured["model_table_layers"] = kwargs.get("table_layers")
+    def fake_model_design_score(context, llm_results=None):
+        captured["model_context"] = context
+        captured["model_lineage"] = context.lineage
+        captured["model_table_edges"] = context.table_edges
+        captured["model_table_layers"] = context.table_layers
         return dimension("model_design")
 
     monkeypatch.setattr(
         "assess.assess_middle_layer.score_reusability",
-        lambda tables, downstream: dimension("reuse"),
+        remember_context("reuse_context"),
     )
     monkeypatch.setattr(
         "assess.assess_middle_layer.score_lineage_depth",
@@ -259,28 +270,49 @@ def test_assess_passes_reusable_lineage_index_to_scoring_modules(
     )
     monkeypatch.setattr(
         "assess.assess_middle_layer.score_asset_completeness",
-        lambda asset_catalog: dimension("asset_completeness"),
+        remember_context("asset_completeness_context"),
     )
     monkeypatch.setattr(
         "assess.assess_middle_layer.score_code_quality",
-        lambda asset_catalog: dimension("code_quality"),
+        remember_context("code_quality_context"),
     )
     monkeypatch.setattr(
         "assess.assess_middle_layer.score_metadata_health",
-        lambda *args, **kwargs: dimension("metadata_health"),
+        remember_context("metadata_health_context"),
     )
     monkeypatch.setattr(
         "assess.assess_middle_layer.score_naming_conventions",
-        lambda *args, **kwargs: dimension("naming"),
+        remember_context("naming_context"),
     )
 
     assess(project=isolated_assess_project)
 
-    assert captured["depth_upstream_map"] is not None
-    assert captured["depth_table_layers"] is not None
-    assert captured["model_lineage_view"] is not None
-    assert captured["model_table_edges"] is not None
-    assert captured["model_table_layers"] is captured["depth_table_layers"]
+    assert captured["depth_upstream_map"] == {
+        "dwd_customer": {"ods_customer"},
+        "dws_store_sales_daily": {"dwd_order_detail"},
+        "ads_sales_dashboard": {"dwd_customer"},
+    }
+    assert captured["depth_table_layers"] == {
+        "dwd_customer": "DWD",
+        "dwd_order_detail": "DWD",
+        "dws_store_sales_daily": "DWS",
+        "ads_sales_dashboard": "ADS",
+    }
+    assert captured["model_table_edges"] == {
+        ("ods_customer", "dwd_customer"): {"dwd_customer.sql"},
+        ("dwd_order_detail", "dws_store_sales_daily"): {
+            "dws_store_sales_daily.sql"
+        },
+        ("dwd_customer", "ads_sales_dashboard"): {"ads_sales_dashboard.sql"},
+    }
+    assert captured["model_table_layers"] == captured["depth_table_layers"]
+    assert captured["reuse_context"] is captured["depth_context"]
+    assert captured["model_context"] is captured["depth_context"]
+    assert captured["model_lineage"] is captured["depth_context"].lineage
+    assert captured["asset_completeness_context"] is captured["depth_context"]
+    assert captured["code_quality_context"] is captured["depth_context"]
+    assert captured["metadata_health_context"] is captured["depth_context"]
+    assert captured["naming_context"] is captured["depth_context"]
 
 
 def test_generate_report_reads_dimension_issues(
@@ -316,13 +348,6 @@ def test_normalize_score_weights_supports_partial_override():
     )
     assert weights["naming"] == pytest.approx(0.160714, rel=0, abs=1e-6)
     assert weights["code_quality"] == pytest.approx(0.089286, rel=0, abs=1e-6)
-
-
-def test_normalize_score_weights_accepts_architecture_alias():
-    weights = normalize_score_weights({"architecture": 0.3})
-
-    assert weights["model_design"] == pytest.approx(0.267857, rel=0, abs=1e-6)
-    assert "architecture" not in weights
 
 
 def test_score_metadata_health_validates_model_entity_and_grain_entity():
@@ -364,7 +389,7 @@ def test_score_metadata_health_validates_model_entity_and_grain_entity():
         },
     }
 
-    result = score_metadata_health(tables, nc, model_metadata)
+    result = score_metadata_health(_context(tables, nc, model_metadata))
 
     assert result["score"] < 100.0
     assert result["rule_summary"]["METADATA_GRAIN_ENTITIES_DEFINED"] == {
@@ -446,7 +471,7 @@ def test_score_metadata_health_requires_grain_entities_on_same_table():
         },
     }
 
-    result = score_metadata_health(tables, nc, model_metadata)
+    result = score_metadata_health(_context(tables, nc, model_metadata))
 
     check = next(
         check
@@ -522,7 +547,7 @@ def test_score_metadata_health_passes_valid_entities_schema():
         },
     }
 
-    result = score_metadata_health(tables, nc, model_metadata)
+    result = score_metadata_health(_context(tables, nc, model_metadata))
 
     assert result["score"] == 100.0
     assert result["issues"] == []
@@ -554,7 +579,7 @@ def test_score_metadata_health_validates_dim_semantic_subject():
         }
     }
 
-    result = score_metadata_health(tables, nc, model_metadata)
+    result = score_metadata_health(_context(tables, nc, model_metadata))
 
     assert "METADATA_DIM_SEMANTIC_SUBJECT_MATCHES_PRIMARY" in _issue_rule_ids(
         result
@@ -585,7 +610,7 @@ def test_score_metadata_health_requires_dim_semantic_subject():
         }
     }
 
-    result = score_metadata_health(tables, nc, model_metadata)
+    result = score_metadata_health(_context(tables, nc, model_metadata))
 
     assert "METADATA_DIM_SEMANTIC_SUBJECT_MATCHES_PRIMARY" in _issue_rule_ids(
         result
@@ -595,9 +620,11 @@ def test_score_metadata_health_requires_dim_semantic_subject():
 def test_score_metadata_health_requires_dws_grain_entities_from_models():
     nc = load_naming_config(PROJECT_ROOT / "shop/naming_config.yaml")
     result = score_metadata_health(
-        [{"name": "I_SHOP_PROD_SALE_DS", "layer": "DWS", "columns": []}],
-        nc,
-        {"I_SHOP_PROD_SALE_DS": {"layer": "DWS", "table_type": "fact"}},
+        _context(
+            [{"name": "I_SHOP_PROD_SALE_DS", "layer": "DWS", "columns": []}],
+            nc,
+            {"I_SHOP_PROD_SALE_DS": {"layer": "DWS", "table_type": "fact"}},
+        )
     )
 
     assert result["score"] == 0.0
@@ -625,22 +652,24 @@ def test_score_metadata_health_requires_dws_grain_entities_from_models():
 def test_score_metadata_health_checks_business_dictionary_metadata(tmp_path):
     nc = _business_naming_config(tmp_path)
     result = score_metadata_health(
-        [
-            {"name": "M_PAYM_04_CHREM_DI", "layer": "DWD", "columns": []},
-            {"name": "M_BAD_98_CHREM_DI", "layer": "DWD", "columns": []},
-        ],
-        nc,
-        {
-            "M_PAYM_04_CHREM_DI": {
-                "data_domain": "04",
-                "business_area": "PAYM",
+        _context(
+            [
+                {"name": "M_PAYM_04_CHREM_DI", "layer": "DWD", "columns": []},
+                {"name": "M_BAD_98_CHREM_DI", "layer": "DWD", "columns": []},
+            ],
+            nc,
+            {
+                "M_PAYM_04_CHREM_DI": {
+                    "data_domain": "04",
+                    "business_area": "PAYM",
+                },
+                "M_BAD_98_CHREM_DI": {
+                    "data_domain": "98",
+                    "business_area": "BAD",
+                },
             },
-            "M_BAD_98_CHREM_DI": {
-                "data_domain": "98",
-                "business_area": "BAD",
-            },
-        },
-        nc.business_domain_config,
+            nc.business_domain_config,
+        )
     )
 
     assert result["rule_summary"]["METADATA_DATA_DOMAIN_VALID"] == {
@@ -660,13 +689,20 @@ def test_score_metadata_health_checks_business_dictionary_metadata(tmp_path):
     }
 
 
-def test_score_architecture_health_penalizes_declared_table_type_mismatch(
+def test_score_model_design_health_penalizes_declared_table_type_mismatch(
     sample_lineage_data,
 ):
-    result = score_architecture_health(
-        sample_lineage_data["tables"],
-        sample_lineage_data["edges"],
-        sample_lineage_data["indirect_edges"],
+    result = score_model_design_health(
+        _context(
+            sample_lineage_data["tables"],
+            edges=sample_lineage_data["edges"],
+            indirect_edges=sample_lineage_data["indirect_edges"],
+            models={
+                "dws_store_sales_daily": {
+                    "table_type": "fact",
+                }
+            },
+        ),
         llm_results=[
             TableInspectResult(
                 table_name="dws_store_sales_daily",
@@ -677,11 +713,6 @@ def test_score_architecture_health_penalizes_declared_table_type_mismatch(
                 reasoning_steps=[],
             )
         ],
-        model_metadata={
-            "dws_store_sales_daily": {
-                "table_type": "fact",
-            }
-        },
     )
 
     type_issue = next(
@@ -699,7 +730,7 @@ def test_score_architecture_health_penalizes_declared_table_type_mismatch(
     assert check["actual"] == "配置类型=fact, 推断类型=dimension"
 
 
-def test_score_architecture_health_allows_ads_to_read_dim():
+def test_score_model_design_health_allows_ads_to_read_dim():
     tables = [
         {"name": "dim_customer", "layer": "DIM", "columns": []},
         {"name": "ads_customer_by_segment", "layer": "ADS", "columns": []},
@@ -712,21 +743,28 @@ def test_score_architecture_health_allows_ads_to_read_dim():
         }
     ]
 
-    result = score_architecture_health(tables, edges, [])
+    result = score_model_design_health(_context(tables, edges=edges))
 
     assert result["score"] == 100.0
     assert result["issues"] == []
     assert result["checks"][0]["rule_id"] == "ARCH_ALLOWED_DEPENDENCY"
 
 
-def test_score_architecture_health_penalizes_llm_business_metadata_mismatch():
+def test_score_model_design_health_penalizes_llm_business_metadata_mismatch():
     business_config = _business_domain_config()
     tables = [{"name": "dwd_transactions", "layer": "DWD", "columns": []}]
 
-    result = score_architecture_health(
-        tables,
-        [],
-        [],
+    result = score_model_design_health(
+        _context(
+            tables,
+            models={
+                "dwd_transactions": {
+                    "data_domain": "10",
+                    "business_area": "CLNT",
+                }
+            },
+            business_domain_config=business_config,
+        ),
         llm_results=[
             TableInspectResult(
                 table_name="dwd_transactions",
@@ -739,13 +777,6 @@ def test_score_architecture_health_penalizes_llm_business_metadata_mismatch():
                 inferred_business_area="PAYM",
             )
         ],
-        model_metadata={
-            "dwd_transactions": {
-                "data_domain": "10",
-                "business_area": "CLNT",
-            }
-        },
-        business_domain_config=business_config,
     )
 
     assert _issue_rule_ids(result) == {
@@ -754,12 +785,18 @@ def test_score_architecture_health_penalizes_llm_business_metadata_mismatch():
     }
 
 
-def test_score_architecture_health_limits_business_checks_by_layer():
+def test_score_model_design_health_limits_business_checks_by_layer():
     business_config = _business_domain_config()
-    result = score_architecture_health(
-        [{"name": "dws_transactions", "layer": "DWS", "columns": []}],
-        [],
-        [],
+    result = score_model_design_health(
+        _context(
+            [{"name": "dws_transactions", "layer": "DWS", "columns": []}],
+            models={
+                "dws_transactions": {
+                    "business_area": "CLNT",
+                }
+            },
+            business_domain_config=business_config,
+        ),
         llm_results=[
             TableInspectResult(
                 table_name="dws_transactions",
@@ -772,12 +809,6 @@ def test_score_architecture_health_limits_business_checks_by_layer():
                 inferred_business_area="PAYM",
             )
         ],
-        model_metadata={
-            "dws_transactions": {
-                "business_area": "CLNT",
-            }
-        },
-        business_domain_config=business_config,
     )
 
     assert _issue_rule_ids(result) == {"ARCH_BUSINESS_AREA_MATCHES_LLM"}
@@ -816,7 +847,7 @@ DISTRIBUTED BY HASH(order_id) BUCKETS 1;
         edges=[],
         indirect_edges=[],
     )
-    result = score_asset_completeness(catalog)
+    result = score_asset_completeness(_context(assets=catalog))
 
     assert result["score"] == 25.0
     assert {
@@ -913,7 +944,7 @@ DROP TABLE IF EXISTS demo.tmp_orders_stage;
         ],
         indirect_edges=[],
     )
-    result = score_asset_completeness(catalog)
+    result = score_asset_completeness(_context(assets=catalog))
 
     assert catalog["tasks"][0]["output_tables"] == {"dws_orders"}
     assert catalog["tasks"][0]["lineage_targets"] == {"dws_orders"}
@@ -921,7 +952,7 @@ DROP TABLE IF EXISTS demo.tmp_orders_stage;
     assert result["issues"] == []
 
 
-def test_asset_catalog_does_not_link_transient_only_task_as_asset(tmp_path):
+def test_assets_does_not_link_transient_only_task_as_asset(tmp_path):
     project_dir = tmp_path / "demo"
     (project_dir / "tasks").mkdir(parents=True)
     (project_dir / "tasks" / "tmp_orders_stage.sql").write_text(
@@ -960,7 +991,7 @@ DROP TABLE IF EXISTS demo.tmp_orders_stage;
     assert "tmp_orders_stage" not in catalog["tables"]
 
 
-def test_asset_catalog_links_structured_edge_target_to_task(tmp_path):
+def test_assets_links_structured_edge_target_to_task(tmp_path):
     project_dir = tmp_path / "demo"
     (project_dir / "tasks").mkdir(parents=True)
     (project_dir / "tasks" / "dws_orders.sql").write_text(
@@ -1029,7 +1060,7 @@ DROP TABLE IF EXISTS demo.tmp_orders_stage;
         edges=[],
         indirect_edges=[],
     )
-    result = score_asset_completeness(catalog)
+    result = score_asset_completeness(_context(assets=catalog))
 
     assert "ASSET_TASK_SINGLE_OUTPUT" in _issue_rule_ids(result)
     task_output_check = _checks_by_rule(
@@ -1068,7 +1099,7 @@ INSERT INTO demo.dws_order_extra SELECT 1 AS id;
         ],
         indirect_edges=[],
     )
-    result = score_asset_completeness(catalog)
+    result = score_asset_completeness(_context(assets=catalog))
 
     assert _issue_rule_ids(result) == {"ASSET_TASK_SINGLE_OUTPUT"}
     task_output_check = _checks_by_rule(
@@ -1104,7 +1135,7 @@ def test_score_asset_completeness_flags_duplicate_table_writers(tmp_path):
         ],
         indirect_edges=[],
     )
-    result = score_asset_completeness(catalog)
+    result = score_asset_completeness(_context(assets=catalog))
 
     assert _issue_rule_ids(result) == {"ASSET_TABLE_SINGLE_WRITER"}
     writer_check = _checks_by_rule(
@@ -1147,7 +1178,7 @@ def test_score_asset_completeness_allows_full_refresh_companion_writer(
         ],
         indirect_edges=[],
     )
-    result = score_asset_completeness(catalog)
+    result = score_asset_completeness(_context(assets=catalog))
 
     assert result["issues"] == []
 
@@ -1156,14 +1187,16 @@ def test_score_naming_conventions_outputs_table_and_column_issues():
     nc = load_naming_config(PROJECT_ROOT / "naming_config.yaml")
 
     result = score_naming_conventions(
-        [
-            {
-                "name": "dwd_customer",
-                "layer": "DWD",
-                "columns": [{"name": "customer_id"}],
-            }
-        ],
-        nc,
+        _context(
+            [
+                {
+                    "name": "dwd_customer",
+                    "layer": "DWD",
+                    "columns": [{"name": "customer_id"}],
+                }
+            ],
+            nc,
+        )
     )
 
     assert result["score"] == 33.3
@@ -1182,14 +1215,16 @@ def test_score_naming_conventions_does_not_expose_internal_violation_text():
     nc = load_naming_config(PROJECT_ROOT / "naming_config.yaml")
 
     result = score_naming_conventions(
-        [
-            {
-                "name": "dwd_customer_name_that_is_too_long",
-                "layer": "DWD",
-                "columns": [],
-            }
-        ],
-        nc,
+        _context(
+            [
+                {
+                    "name": "dwd_customer_name_that_is_too_long",
+                    "layer": "DWD",
+                    "columns": [],
+                }
+            ],
+            nc,
+        )
     )
 
     assert {issue["rule_id"] for issue in result["issues"]} == {
@@ -1233,10 +1268,12 @@ PROPERTIES ("replication_num" = "1");
     )
 
     result = score_naming_conventions(
-        [],
-        nc,
-        {table_name: {"layer": "DWD"}},
-        project_dir=project_dir,
+        _context(
+            [],
+            nc,
+            {table_name: {"layer": "DWD"}},
+            project_dir=project_dir,
+        )
     )
 
     column_issue = next(
@@ -1256,22 +1293,24 @@ def test_naming_checks_business_segments_against_valid_model_metadata(
 ):
     nc = _business_naming_config(tmp_path)
     result = score_naming_conventions(
-        [
+        _context(
+            [
+                {
+                    "name": "M_PAYM_04_CHREM_DI",
+                    "layer": "DWD",
+                    "columns": [],
+                }
+            ],
+            nc,
             {
-                "name": "M_PAYM_04_CHREM_DI",
-                "layer": "DWD",
-                "columns": [],
-            }
-        ],
-        nc,
-        {
-            "M_PAYM_04_CHREM_DI": {
-                "layer": "DWD",
-                "data_domain": "10",
-                "business_area": "CLNT",
+                "M_PAYM_04_CHREM_DI": {
+                    "layer": "DWD",
+                    "data_domain": "10",
+                    "business_area": "CLNT",
+                },
             },
-        },
-        nc.business_domain_config,
+            nc.business_domain_config,
+        )
     )
 
     semantic_check = _checks_by_rule(
@@ -1308,18 +1347,20 @@ PROPERTIES ("replication_num" = "1");
     )
 
     result = score_naming_conventions(
-        [{"name": table_name, "layer": "DWD", "columns": []}],
-        nc,
-        {table_name: {"layer": "DWD"}},
-        project_dir=project_dir,
-        edges=[
-            {
-                "source": "ods_source.ID",
-                "target": f"{table_name}.ID",
-                "source_file": "wrong_task.sql",
-            }
-        ],
-        indirect_edges=[],
+        _context(
+            [{"name": table_name, "layer": "DWD", "columns": []}],
+            nc,
+            {table_name: {"layer": "DWD"}},
+            project_dir=project_dir,
+            edges=[
+                {
+                    "source": "ods_source.ID",
+                    "target": f"{table_name}.ID",
+                    "source_file": "wrong_task.sql",
+                }
+            ],
+            indirect_edges=[],
+        )
     )
 
     assert _issue_rule_ids(result) == {
@@ -1333,20 +1374,25 @@ PROPERTIES ("replication_num" = "1");
 def test_score_naming_conventions_checks_atomic_and_derived_metrics():
     nc = load_naming_config(PROJECT_ROOT / "naming_config.yaml")
     result = score_naming_conventions(
-        [
+        _context(
+            [
+                {
+                    "name": "M_WEMG_04_CHREM_DI",
+                    "layer": "DWD",
+                    "columns": [],
+                }
+            ],
+            nc,
             {
-                "name": "M_WEMG_04_CHREM_DI",
-                "layer": "DWD",
-                "columns": [],
-            }
-        ],
-        nc,
-        {
-            "M_WEMG_04_CHREM_DI": {
-                "atomic_metrics": ["PAY_AMT", "pay_amt"],
-                "derived_metrics": ["7D_OLD_PAY_AMT", "transaction_count"],
-            }
-        },
+                "M_WEMG_04_CHREM_DI": {
+                    "atomic_metrics": ["PAY_AMT", "pay_amt"],
+                    "derived_metrics": [
+                        "7D_OLD_PAY_AMT",
+                        "transaction_count",
+                    ],
+                }
+            },
+        )
     )
 
     assert result["rule_summary"]["NAMING_ATOMIC_METRIC"]["pass_count"] == 1
@@ -1361,41 +1407,51 @@ def test_score_naming_conventions_checks_dws_and_dim_entity_alignment():
     nc = load_naming_config(PROJECT_ROOT / "shop/naming_config.yaml")
 
     dws_result = score_naming_conventions(
-        [
-            {
-                "name": "I_SHOP_CAT_SALE_DS",
-                "layer": "DWS",
-                "columns": [
-                    {"name": "category_id"},
-                    {"name": "stat_date"},
-                ],
-            }
-        ],
-        nc,
-        {
-            "I_SHOP_CAT_SALE_DS": {
-                "grain": {
-                    "keys": ["category_id", "stat_date"],
-                    "entities": ["PROD"],
-                    "time_column": "stat_date",
-                    "time_period": "D",
+        _context(
+            [
+                {
+                    "name": "I_SHOP_CAT_SALE_DS",
+                    "layer": "DWS",
+                    "columns": [
+                        {"name": "category_id"},
+                        {"name": "stat_date"},
+                    ],
                 }
-            }
-        },
+            ],
+            nc,
+            {
+                "I_SHOP_CAT_SALE_DS": {
+                    "grain": {
+                        "keys": ["category_id", "stat_date"],
+                        "entities": ["PROD"],
+                        "time_column": "stat_date",
+                        "time_period": "D",
+                    }
+                }
+            },
+        )
     )
     assert "NAMING_DWS_ENTITY_ALIGNMENT" in _issue_rule_ids(dws_result)
 
     dim_result = score_naming_conventions(
-        [{"name": "DIM_BASE_PROD_INFO_INFO", "layer": "DIM", "columns": []}],
-        nc,
-        {
-            "DIM_BASE_PROD_INFO_INFO": {
-                "entity": {
-                    "code": "CUST",
-                    "key_columns": ["product_id"],
+        _context(
+            [
+                {
+                    "name": "DIM_BASE_PROD_INFO_INFO",
+                    "layer": "DIM",
+                    "columns": [],
                 }
-            }
-        },
+            ],
+            nc,
+            {
+                "DIM_BASE_PROD_INFO_INFO": {
+                    "entity": {
+                        "code": "CUST",
+                        "key_columns": ["product_id"],
+                    }
+                }
+            },
+        )
     )
     assert "NAMING_DIM_ENTITY_ALIGNMENT" in _issue_rule_ids(dim_result)
 
@@ -1404,21 +1460,29 @@ def test_score_naming_conventions_checks_dim_classification_alignment():
     nc = load_naming_config(PROJECT_ROOT / "shop/naming_config.yaml")
 
     result = score_naming_conventions(
-        [{"name": "DIM_BASE_PROD_INFO_INFO", "layer": "DIM", "columns": []}],
-        nc,
-        {
-            "DIM_BASE_PROD_INFO_INFO": {
-                "dimension_role": "ADDT",
-                "dimension_content_type": "TAG",
-                "entities": [
-                    {
-                        "code": "PROD",
-                        "type": "primary",
-                        "key_columns": ["product_id"],
-                    }
-                ],
-            }
-        },
+        _context(
+            [
+                {
+                    "name": "DIM_BASE_PROD_INFO_INFO",
+                    "layer": "DIM",
+                    "columns": [],
+                }
+            ],
+            nc,
+            {
+                "DIM_BASE_PROD_INFO_INFO": {
+                    "dimension_role": "ADDT",
+                    "dimension_content_type": "TAG",
+                    "entities": [
+                        {
+                            "code": "PROD",
+                            "type": "primary",
+                            "key_columns": ["product_id"],
+                        }
+                    ],
+                }
+            },
+        )
     )
 
     assert "NAMING_DIM_CLASSIFICATION_ALIGNMENT" in _issue_rule_ids(result)
@@ -1436,15 +1500,17 @@ def test_score_naming_conventions_ignores_lineage_tables_when_project_dir_exists
     (project_dir / "ddl").mkdir(parents=True)
 
     result = score_naming_conventions(
-        [
-            {
-                "name": "M_WEMG_04_CHREM_DI",
-                "layer": "DWD",
-                "columns": [{"name": "BAD_FIELD"}],
-            }
-        ],
-        nc,
-        project_dir=project_dir,
+        _context(
+            [
+                {
+                    "name": "M_WEMG_04_CHREM_DI",
+                    "layer": "DWD",
+                    "columns": [{"name": "BAD_FIELD"}],
+                }
+            ],
+            nc,
+            project_dir=project_dir,
+        )
     )
 
     assert result["score"] == 100.0

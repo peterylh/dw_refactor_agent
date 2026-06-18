@@ -25,23 +25,12 @@ _root = Path(__file__).resolve().parent.parent
 if str(_root) not in sys.path:
     sys.path.insert(0, str(_root))
 
-from assess.lineage_index import AssessmentLineageIndex
+from assess.assessment_context import AssessmentContext
 from assess.llm.context_builder import build_contexts
 from assess.llm.table_inspector import TableInspector
-from assess.project_facts.asset_catalog import (
-    build_asset_catalog as build_asset_catalog,
-)
 from assess.report import generate_report
-from assess.scoring.architecture import (
-    score_architecture_health as score_architecture_health,
-)
 from assess.scoring.asset_completeness import score_asset_completeness
-from assess.scoring.config import (
-    DEFAULT_WEIGHTS,
-)
-from assess.scoring.config import (
-    normalize_score_weights as normalize_score_weights,
-)
+from assess.scoring.config import DEFAULT_WEIGHTS, normalize_score_weights
 from assess.scoring.depth import score_lineage_depth
 from assess.scoring.metadata_health import score_metadata_health
 from assess.scoring.model_design import score_model_design_health
@@ -61,10 +50,6 @@ DEFAULT_DIMENSION_ORDER = [
     "code_quality",
 ]
 
-DIMENSION_ALIASES = {
-    "architecture": "model_design",
-}
-
 
 def normalize_selected_dimensions(
     selected_dimensions: set[str] | list[str] | tuple[str, ...] | None,
@@ -72,10 +57,7 @@ def normalize_selected_dimensions(
     if not selected_dimensions:
         return None
 
-    selected = {
-        DIMENSION_ALIASES.get(dimension, dimension)
-        for dimension in selected_dimensions
-    }
+    selected = set(selected_dimensions)
     unknown = sorted(set(selected) - set(DEFAULT_DIMENSION_ORDER))
     if unknown:
         raise ValueError(f"未知评估维度: {', '.join(unknown)}")
@@ -128,10 +110,6 @@ def assess(
     business_domain_config = get_business_domain_config(project)
 
     data = load_lineage_data(project)
-    edges = data.get("edges", [])
-    indirect_edges = data.get("indirect_edges", [])
-    tables = data.get("tables", [])
-
     llm_results = []
     if weights.get("enable_llm", False):
         api_key = os.environ.get("DEEPSEEK_API_KEY")
@@ -155,54 +133,22 @@ def assess(
             print("警告: 未提供 DEEPSEEK_API_KEY 环境变量，跳过分类。")
 
     project_dir = PROJECT_ROOT / PROJECT_CONFIG[project]["dir"]
-    lineage_index = AssessmentLineageIndex.build(
+    context = AssessmentContext.from_lineage_data(
         project=project,
         lineage_data=data,
-        model_metadata=model_metadata,
+        models=model_metadata,
         project_dir=project_dir,
+        business_domain_config=business_domain_config,
+        naming_config=nc,
     )
 
-    reuse_score = score_reusability(tables, lineage_index.downstream)
-    depth_score = score_lineage_depth(
-        tables,
-        edges,
-        indirect_edges,
-        upstream_map=lineage_index.upstream,
-        table_layers=lineage_index.table_layers,
-    )
-    model_design_score = score_model_design_health(
-        tables,
-        edges,
-        indirect_edges,
-        llm_results,
-        model_metadata,
-        business_domain_config,
-        asset_catalog=lineage_index.asset_catalog,
-        lineage_view=lineage_index.lineage_view,
-        table_edges=lineage_index.table_edges,
-        table_layers=lineage_index.table_layers,
-    )
-    asset_completeness_score = score_asset_completeness(
-        lineage_index.asset_catalog
-    )
-    code_quality_score = score_code_quality(lineage_index.asset_catalog)
-    metadata_health_score = score_metadata_health(
-        tables,
-        nc,
-        model_metadata,
-        business_domain_config,
-        asset_catalog=lineage_index.asset_catalog,
-    )
-    naming_score = score_naming_conventions(
-        tables,
-        nc,
-        model_metadata,
-        business_domain_config,
-        project_dir=project_dir,
-        edges=edges,
-        indirect_edges=indirect_edges,
-        asset_catalog=lineage_index.asset_catalog,
-    )
+    reuse_score = score_reusability(context)
+    depth_score = score_lineage_depth(context)
+    model_design_score = score_model_design_health(context, llm_results)
+    asset_completeness_score = score_asset_completeness(context)
+    code_quality_score = score_code_quality(context)
+    metadata_health_score = score_metadata_health(context)
+    naming_score = score_naming_conventions(context)
 
     dimensions = dict(
         reuse=reuse_score,
@@ -271,12 +217,6 @@ def main():
         help="模型设计权重，可单独指定，最终会自动归一化",
     )
     parser.add_argument(
-        "--architecture-weight",
-        type=float,
-        default=None,
-        help="兼容别名: 等同于 --model-design-weight",
-    )
-    parser.add_argument(
         "--metadata-health-weight",
         type=float,
         default=DEFAULT_WEIGHTS["metadata_health"],
@@ -328,11 +268,6 @@ def main():
         "--model-design", action="store_true", help="只输出模型设计维度"
     )
     parser.add_argument(
-        "--architecture",
-        action="store_true",
-        help="兼容别名: 等同于 --model-design",
-    )
-    parser.add_argument(
         "--naming", action="store_true", help="只输出命名规范维度"
     )
     parser.add_argument(
@@ -350,15 +285,10 @@ def main():
     )
     args = parser.parse_args()
 
-    model_design_weight = (
-        args.architecture_weight
-        if args.architecture_weight is not None
-        else args.model_design_weight
-    )
     weights = dict(
         reuse=args.reuse_weight,
         depth=args.depth_weight,
-        model_design=model_design_weight,
+        model_design=args.model_design_weight,
         naming=args.naming_weight,
         asset_completeness=args.asset_completeness_weight,
         metadata_health=args.metadata_health_weight,
@@ -371,7 +301,7 @@ def main():
     for enabled, dimension in [
         (args.reuse, "reuse"),
         (args.depth, "depth"),
-        (args.model_design or args.architecture, "model_design"),
+        (args.model_design, "model_design"),
         (args.naming, "naming"),
         (args.asset_completeness, "asset_completeness"),
         (args.metadata_health, "metadata_health"),

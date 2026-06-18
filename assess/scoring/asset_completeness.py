@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from assess.assessment_context import AssessmentContext
 from assess.result_model import finalize_dimension, make_check
 from assess.scoring.config import (
     ASSET_COMPLETENESS_RULES,
@@ -31,8 +32,9 @@ def _logical_task_key(task: dict) -> str:
     return str(task.get("expected_table") or task.get("file") or "")
 
 
-def score_asset_completeness(asset_catalog: dict) -> dict:
+def score_asset_completeness(context: AssessmentContext) -> dict:
     """Score DDL/model/task closure and task-lineage consistency."""
+    asset_catalog = context.assets
     checks = []
 
     def record(

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from assess.assessment_context import AssessmentContext
 from assess.project_facts.business_metadata import (
     _business_area_applies,
     _data_domain_applies,
@@ -28,15 +29,13 @@ def _table_column_names(table: dict) -> set[str]:
     }
 
 
-def score_metadata_health(
-    tables: list,
-    nc,
-    model_metadata: dict | None,
-    business_domain_config=None,
-    *,
-    asset_catalog: dict | None = None,
-) -> dict:
+def score_metadata_health(context: AssessmentContext) -> dict:
     """检查 models/*.yaml 的结构自洽性与业务元数据有效性。"""
+    tables = context.tables
+    nc = context.naming_config
+    model_metadata = context.models
+    business_domain_config = context.business_domain_config
+    asset_catalog = context.assets
     if not model_metadata:
         return finalize_dimension(
             dimension="metadata_health",
@@ -45,7 +44,7 @@ def score_metadata_health(
             rules=METADATA_HEALTH_RULES,
         )
 
-    if asset_catalog:
+    if asset_catalog and asset_catalog.get("tables"):
         tables_by_name = {
             name: dict(
                 name=name,

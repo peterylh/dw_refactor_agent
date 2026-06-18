@@ -1,34 +1,31 @@
-import assess.scoring.model_design as model_design_module
-from assess.scoring.architecture import score_architecture_health
+from assess.assessment_context import AssessmentContext
 from assess.scoring.model_design import (
     extract_model_design_sql_facts,
     score_model_design_health,
 )
 
 
+def _context(
+    tables,
+    edges=None,
+    indirect_edges=None,
+    *,
+    models=None,
+    business_domain_config=None,
+    assets=None,
+):
+    return AssessmentContext.from_facts(
+        tables=tables,
+        edges=edges or [],
+        indirect_edges=indirect_edges or [],
+        models=models,
+        business_domain_config=business_domain_config,
+        assets=assets,
+    )
+
+
 def _rule_ids(result):
     return {issue["rule_id"] for issue in result["issues"]}
-
-
-def test_architecture_wrapper_uses_model_design_dimension():
-    tables = [
-        {"name": "ods_order", "layer": "ODS", "columns": []},
-        {"name": "ads_sales", "layer": "ADS", "columns": []},
-    ]
-    edges = [
-        {
-            "source": "ods_order.order_id",
-            "target": "ads_sales.order_id",
-            "source_file": "ads_sales.sql",
-        }
-    ]
-
-    wrapped = score_architecture_health(tables, edges, [])
-    direct = score_model_design_health(tables, edges, [])
-
-    assert wrapped["score"] == direct["score"]
-    assert _rule_ids(wrapped) == {"ARCH_SKIP_LAYER_DEPENDENCY"}
-    assert _rule_ids(direct) == {"ARCH_SKIP_LAYER_DEPENDENCY"}
 
 
 def test_extract_model_design_sql_facts_detects_group_by_and_aggregates():
@@ -103,13 +100,14 @@ def test_model_design_flags_dwd_fact_with_group_by():
         }
     }
 
-    result = score_model_design_health(
+    context = _context(
         tables,
         [],
         [],
-        model_metadata=model_metadata,
-        asset_catalog=asset_catalog,
+        models=model_metadata,
+        assets=asset_catalog,
     )
+    result = score_model_design_health(context)
 
     assert _rule_ids(result) == {"MODEL_DWD_FACT_NO_AGGREGATION"}
 
@@ -151,13 +149,14 @@ def test_model_design_flags_dws_grain_mismatch_with_group_by():
         }
     }
 
-    result = score_model_design_health(
+    context = _context(
         tables,
         [],
         [],
-        model_metadata=model_metadata,
-        asset_catalog=asset_catalog,
+        models=model_metadata,
+        assets=asset_catalog,
     )
+    result = score_model_design_health(context)
 
     assert "MODEL_DWS_GRAIN_MATCHES_GROUP_BY" in _rule_ids(result)
 
@@ -216,12 +215,13 @@ def test_model_design_flags_dws_fact_without_aggregation_from_typed_edges():
         }
     }
 
-    result = score_model_design_health(
+    context = _context(
         tables,
         edges,
         [],
-        model_metadata=model_metadata,
+        models=model_metadata,
     )
+    result = score_model_design_health(context)
 
     assert "MODEL_DWS_FACT_HAS_AGGREGATION" in _rule_ids(result)
 
@@ -308,12 +308,13 @@ def test_model_design_flags_dws_plain_field_not_in_group_by_from_typed_edges():
         }
     }
 
-    result = score_model_design_health(
+    context = _context(
         tables,
         edges,
         [],
-        model_metadata=model_metadata,
+        models=model_metadata,
     )
+    result = score_model_design_health(context)
 
     assert "MODEL_DWS_SELECT_FIELDS_MATCH_GRAIN" in _rule_ids(result)
     check = next(
@@ -335,31 +336,32 @@ def test_model_design_flags_dim_metric_groups_without_llm():
         }
     }
 
-    result = score_model_design_health(
+    context = _context(
         tables,
         [],
         [],
-        model_metadata=model_metadata,
+        models=model_metadata,
     )
+    result = score_model_design_health(context)
 
     assert _rule_ids(result) == {"MODEL_DIM_NO_METRIC_GROUPS"}
 
 
-def test_score_model_design_reuses_one_lineage_view(monkeypatch):
-    calls = {"builds": 0, "fact_tables": []}
+def test_score_model_design_uses_context_lineage_view():
+    calls = {"fact_tables": []}
 
     class FakeLineageView:
-        @classmethod
-        def from_parts(cls, project, tables, edges, indirect_edges=None):
-            calls["builds"] += 1
-            assert project == "assessment"
-            assert [table["name"] for table in tables] == [
-                "dws_orders",
-                "dws_payments",
-            ]
-            assert edges == []
-            assert indirect_edges == []
-            return cls()
+        def __init__(self, base):
+            self.base = base
+
+        def tables(self):
+            return self.base.tables()
+
+        def asset_table_graph(self):
+            return self.base.asset_table_graph()
+
+        def table_edge_source_files(self):
+            return self.base.table_edge_source_files()
 
         def lineage_facts_for_table(self, table_name):
             calls["fact_tables"].append(table_name)
@@ -375,21 +377,14 @@ def test_score_model_design_reuses_one_lineage_view(monkeypatch):
                 "source_files": [],
             }
 
-    monkeypatch.setattr(
-        model_design_module,
-        "LineageView",
-        FakeLineageView,
-        raising=False,
-    )
-
-    score_model_design_health(
+    context = _context(
         [
             {"name": "dws_orders", "layer": "DWS", "columns": []},
             {"name": "dws_payments", "layer": "DWS", "columns": []},
         ],
         [],
         [],
-        model_metadata={
+        models={
             "dws_orders": {
                 "table_type": "fact",
                 "grain": {"keys": ["id"]},
@@ -400,9 +395,11 @@ def test_score_model_design_reuses_one_lineage_view(monkeypatch):
             },
         },
     )
+    context.lineage = FakeLineageView(context.lineage)
+
+    score_model_design_health(context)
 
     assert calls == {
-        "builds": 1,
         "fact_tables": ["dws_orders", "dws_payments"],
     }
 
@@ -416,12 +413,13 @@ def test_model_design_flags_dwd_fact_with_non_atomic_metrics():
         }
     }
 
-    result = score_model_design_health(
+    context = _context(
         tables,
         [],
         [],
-        model_metadata=model_metadata,
+        models=model_metadata,
     )
+    result = score_model_design_health(context)
 
     assert "MODEL_DWD_FACT_NO_DERIVED_METRICS" in _rule_ids(result)
 
@@ -458,12 +456,13 @@ def test_model_design_flags_dwd_fact_with_multiple_business_processes():
         }
     }
 
-    result = score_model_design_health(
+    context = _context(
         tables,
         [],
         [],
-        model_metadata=model_metadata,
+        models=model_metadata,
     )
+    result = score_model_design_health(context)
 
     assert "MODEL_DWD_FACT_SINGLE_BUSINESS_PROCESS" in _rule_ids(result)
     check = next(
@@ -502,12 +501,13 @@ def test_model_design_flags_dwd_fact_without_primary_entity_or_grain():
         }
     }
 
-    result = score_model_design_health(
+    context = _context(
         tables,
         [],
         [],
-        model_metadata=model_metadata,
+        models=model_metadata,
     )
+    result = score_model_design_health(context)
 
     assert "MODEL_DWD_FACT_HAS_PRIMARY_ENTITY_OR_GRAIN" in _rule_ids(result)
 
@@ -562,13 +562,14 @@ def test_model_design_flags_partition_column_not_data_dt(tmp_path):
         }
     }
 
-    result = score_model_design_health(
+    context = _context(
         tables,
         [],
         [],
-        model_metadata=model_metadata,
-        asset_catalog=asset_catalog,
+        models=model_metadata,
+        assets=asset_catalog,
     )
+    result = score_model_design_health(context)
 
     assert "MODEL_DATE_PARTITION_USES_DATA_DT" in _rule_ids(result)
 
@@ -607,12 +608,13 @@ def test_model_design_flags_derived_metric_without_upstream_atomic_base():
         },
     }
 
-    result = score_model_design_health(
+    context = _context(
         tables,
         edges,
         [],
-        model_metadata=model_metadata,
+        models=model_metadata,
     )
+    result = score_model_design_health(context)
 
     assert "MODEL_DERIVED_METRIC_BASE_ATOMIC" in _rule_ids(result)
     check = next(
@@ -665,12 +667,13 @@ def test_model_design_flags_ambiguous_derived_metric_base_table():
         },
     }
 
-    result = score_model_design_health(
+    context = _context(
         tables,
         edges,
         [],
-        model_metadata=model_metadata,
+        models=model_metadata,
     )
+    result = score_model_design_health(context)
 
     check = next(
         check

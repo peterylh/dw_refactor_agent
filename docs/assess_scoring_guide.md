@@ -22,7 +22,7 @@
 overall_score = sum(维度权重 * 维度得分) / 选中维度权重之和
 ```
 
-默认权重来自 `assess/scoring/config.py` 的 `DEFAULT_WEIGHTS`。CLI 支持用 `--reuse-weight`、`--depth-weight`、`--model-design-weight`、`--naming-weight`、`--asset-completeness-weight`、`--metadata-health-weight`、`--code-quality-weight` 覆盖；覆盖后会自动归一化。`--architecture-weight` 和 `--architecture` 是历史兼容别名，等同于 `model_design`。
+默认权重来自 `assess/scoring/config.py` 的 `DEFAULT_WEIGHTS`。CLI 支持用 `--reuse-weight`、`--depth-weight`、`--model-design-weight`、`--naming-weight`、`--asset-completeness-weight`、`--metadata-health-weight`、`--code-quality-weight` 覆盖；覆盖后会自动归一化。
 
 当只选择部分维度运行时，整体评分只使用被选中的维度及其权重。默认输出会过滤已通过的 `checks`，只保留和 `issues` 相关的失败检查；`--include-passed-checks` 只影响输出明细，不影响得分。
 
@@ -63,7 +63,7 @@ score = min(100, downstream_count / 3 * 100)
 
 ## 模型设计 `model_design`
 
-评分对象：项目血缘表与模型元数据。该维度替代旧的 `architecture` 维度，旧名称仍作为兼容别名。
+评分对象：项目血缘表与模型元数据。
 
 扣分方式不是简单的通过率，而是按表累计违规权重：
 

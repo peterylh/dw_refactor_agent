@@ -9,6 +9,7 @@ from pathlib import Path
 import sqlglot
 from sqlglot import exp
 
+from assess.assessment_context import AssessmentContext
 from assess.result_model import (
     SEVERITY_HIGH,
     SEVERITY_LOW,
@@ -694,9 +695,10 @@ def _scan_task_sql(sql: str) -> tuple[list[dict], list[dict], list[dict]]:
     return creates, drops, write_statements
 
 
-def score_code_quality(asset_catalog: dict) -> dict:
+def score_code_quality(context: AssessmentContext) -> dict:
     """Score task SQL code quality checks."""
     result = _empty_result()
+    asset_catalog = context.assets
     project_dir = asset_catalog.get("project_dir")
 
     for task in asset_catalog.get("tasks") or []:

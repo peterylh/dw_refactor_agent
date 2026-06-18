@@ -534,9 +534,6 @@ def normalize_score_weights(weights: dict | None = None) -> dict:
     extra = {}
     if weights:
         for key, value in weights.items():
-            if key == "architecture":
-                merged["model_design"] = value
-                continue
             if key in DEFAULT_WEIGHTS:
                 merged[key] = value
             else:

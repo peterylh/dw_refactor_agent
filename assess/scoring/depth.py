@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from assess.assessment_context import AssessmentContext
 from assess.result_model import (
     SEVERITY_HIGH,
     SEVERITY_MEDIUM,
@@ -13,7 +14,6 @@ from assess.scoring.config import (
     MIDDLE_DEPTH_FALLBACK,
     MIDDLE_DEPTH_SCORE,
 )
-from lineage.table_graph import build_table_graph, build_table_layer_map
 
 # ============================================================
 # 链路长度评分 (中间层深度)
@@ -65,24 +65,10 @@ def _depth_to_score(depth: int) -> int:
     return MIDDLE_DEPTH_SCORE.get(depth, MIDDLE_DEPTH_FALLBACK)
 
 
-def score_lineage_depth(
-    tables: list,
-    edges: list,
-    indirect_edges: list,
-    *,
-    upstream_map: dict | None = None,
-    table_layers: dict | None = None,
-) -> dict:
-    table_layers = (
-        table_layers
-        if table_layers is not None
-        else build_table_layer_map(tables)
-    )
-    upstream = (
-        upstream_map
-        if upstream_map is not None
-        else build_table_graph(edges, indirect_edges)[0]
-    )
+def score_lineage_depth(context: AssessmentContext) -> dict:
+    tables = context.tables
+    table_layers = context.table_layers
+    upstream = context.upstream
 
     # 不按表名推断缺失层级；models/lineage 中没有声明的表按 OTHER 处理。
 

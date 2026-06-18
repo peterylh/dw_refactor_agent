@@ -9,6 +9,7 @@ from pathlib import Path
 import sqlglot
 from sqlglot import exp
 
+from assess.assessment_context import AssessmentContext
 from assess.llm.table_inspector import VALID_TABLE_TYPES
 from assess.project_facts.business_metadata import (
     _business_area_applies,
@@ -34,10 +35,6 @@ from assess.scoring.config import (
 )
 from config import TEXT_ENCODING, layer_rank
 from doris_sql import extract_doris_partition_column
-from lineage.table_graph import (
-    build_table_edge_source_files,
-    build_table_layer_map,
-)
 from lineage.view import LineageView
 
 AGGREGATE_PATTERN = re.compile(
@@ -543,40 +540,22 @@ def _grain_group_by_mismatch(metadata: dict, sql_facts: dict) -> dict:
 
 
 def score_model_design_health(
-    tables: list,
-    edges: list,
-    indirect_edges: list,
-    llm_results: list = None,
-    model_metadata: dict | None = None,
-    business_domain_config=None,
-    asset_catalog: dict | None = None,
-    *,
-    lineage_view: LineageView | None = None,
-    table_edges: dict | None = None,
-    table_layers: dict | None = None,
+    context: AssessmentContext,
+    llm_results: list | None = None,
 ) -> dict:
     """Score model design health.
 
     This starts as the architecture ruleset and will grow model-specific
     checks for layer boundaries and grain clarity.
     """
-    table_layers = (
-        table_layers
-        if table_layers is not None
-        else build_table_layer_map(tables)
-    )
+    tables = context.tables
+    table_layers = context.table_layers
     table_count = len(tables)
-    lineage_view = lineage_view or LineageView.from_parts(
-        "assessment",
-        tables,
-        edges,
-        indirect_edges,
-    )
-    table_edges = (
-        table_edges
-        if table_edges is not None
-        else build_table_edge_source_files(edges, indirect_edges)
-    )
+    lineage_view = context.lineage
+    table_edges = context.table_edges
+    model_metadata = context.models
+    business_domain_config = context.business_domain_config
+    asset_catalog = context.assets
 
     checks = []
     table_weight = defaultdict(int)

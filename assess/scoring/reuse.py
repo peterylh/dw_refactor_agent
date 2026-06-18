@@ -1,5 +1,6 @@
 """Reusability scoring dimension."""
 
+from assess.assessment_context import AssessmentContext
 from assess.result_model import (
     SEVERITY_LOW,
     SEVERITY_MEDIUM,
@@ -13,7 +14,9 @@ from assess.scoring.config import REUSABILITY_RULES, REUSE_FULL_SCORE_AT
 # ============================================================
 
 
-def score_reusability(tables: list, downstream_map: dict) -> dict:
+def score_reusability(context: AssessmentContext) -> dict:
+    tables = context.tables
+    downstream_map = context.downstream
     middle = [t for t in tables if t["layer"] in ("DWD", "DWS", "DIM")]
 
     checks = []

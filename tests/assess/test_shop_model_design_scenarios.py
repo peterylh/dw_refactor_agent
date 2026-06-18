@@ -1,5 +1,6 @@
 import copy
 
+from assess.assessment_context import AssessmentContext
 from assess.project_facts.asset_catalog import build_asset_catalog
 from assess.scoring.config import MODEL_DESIGN_RULES
 from assess.scoring.model_design import score_model_design_health
@@ -121,14 +122,16 @@ def test_shop_model_design_has_detectable_scenario_for_each_model_rule():
         indirect_edges=lineage_data.get("indirect_edges", []),
     )
 
-    result = score_model_design_health(
-        lineage_data["tables"],
-        lineage_data["edges"],
-        lineage_data.get("indirect_edges", []),
-        model_metadata=model_metadata,
+    context = AssessmentContext.from_facts(
+        project="shop",
+        tables=lineage_data["tables"],
+        edges=lineage_data["edges"],
+        indirect_edges=lineage_data.get("indirect_edges", []),
+        models=model_metadata,
         business_domain_config=get_business_domain_config("shop"),
-        asset_catalog=asset_catalog,
+        assets=asset_catalog,
     )
+    result = score_model_design_health(context)
 
     rule_ids = {issue["rule_id"] for issue in result["issues"]}
     expected_rule_ids = {
