@@ -2,21 +2,55 @@
 
 from __future__ import annotations
 
+import unicodedata
+
+
+def _display_width(value: str) -> int:
+    width = 0
+    for char in value:
+        if unicodedata.combining(char):
+            continue
+        if unicodedata.east_asian_width(char) in {"F", "W"}:
+            width += 2
+        else:
+            width += 1
+    return width
+
+
+def _display_ljust(value: str, width: int) -> str:
+    padding = max(width - _display_width(value), 0)
+    return value + " " * padding
+
+
+def _resolve_col_widths(
+    headers: list[str],
+    rows: list[list],
+    col_widths: list[int],
+) -> list[int]:
+    resolved = []
+    for index, min_width in enumerate(col_widths):
+        values = [headers[index]] + [str(row[index]) for row in rows]
+        resolved.append(
+            max(min_width, *[_display_width(value) for value in values])
+        )
+    return resolved
+
 
 def _fmt_table(
     headers: list[str],
     rows: list[list],
     col_widths: list[int],
 ) -> str:
+    col_widths = _resolve_col_widths(headers, rows, col_widths)
     sep = "─" * (sum(col_widths) + len(col_widths) * 3 + 1)
     line = "│"
     for h, w in zip(headers, col_widths):
-        line += f" {h:<{w}} │"
+        line += f" {_display_ljust(h, w)} │"
     lines = [line, f"├{sep}┤"]
     for row in rows:
         line = "│"
         for val, w in zip(row, col_widths):
-            line += f" {str(val):<{w}} │"
+            line += f" {_display_ljust(str(val), w)} │"
         lines.append(line)
     return "\n".join(lines)
 
