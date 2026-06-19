@@ -37,7 +37,7 @@ class AssetDdlHasModelRule(_AssetCompletenessRule):
     rule_id = "ASSET_DDL_HAS_MODEL"
     target = "table"
 
-    def evaluate(self, target: dict, facts: dict) -> dict | None:
+    def evaluate(self, target: dict, rule_context: dict) -> dict | None:
         if target["kind"] != "table" or not target["has_ddl"]:
             return None
         return self.check(
@@ -53,7 +53,7 @@ class AssetExecutableDdlHasTaskRule(_AssetCompletenessRule):
     rule_id = "ASSET_EXECUTABLE_DDL_HAS_TASK"
     target = "table"
 
-    def evaluate(self, target: dict, facts: dict) -> dict | None:
+    def evaluate(self, target: dict, rule_context: dict) -> dict | None:
         if (
             target["kind"] != "table"
             or not target["has_ddl"]
@@ -77,7 +77,7 @@ class AssetModelHasDdlRule(_AssetCompletenessRule):
     rule_id = "ASSET_MODEL_HAS_DDL"
     target = "table"
 
-    def evaluate(self, target: dict, facts: dict) -> dict | None:
+    def evaluate(self, target: dict, rule_context: dict) -> dict | None:
         if target["kind"] != "table" or not target["has_model"]:
             return None
         return self.check(
@@ -93,7 +93,7 @@ class AssetTaskOutputHasDdlRule(_AssetCompletenessRule):
     rule_id = "ASSET_TASK_OUTPUT_HAS_DDL"
     target = "task"
 
-    def evaluate(self, target: dict, facts: dict) -> dict | None:
+    def evaluate(self, target: dict, rule_context: dict) -> dict | None:
         if target["kind"] != "output":
             return None
         asset = target["asset"]
@@ -110,7 +110,7 @@ class AssetTaskOutputHasModelRule(_AssetCompletenessRule):
     rule_id = "ASSET_TASK_OUTPUT_HAS_MODEL"
     target = "task"
 
-    def evaluate(self, target: dict, facts: dict) -> dict | None:
+    def evaluate(self, target: dict, rule_context: dict) -> dict | None:
         if target["kind"] != "output":
             return None
         asset = target["asset"]
@@ -127,7 +127,7 @@ class AssetTaskSingleOutputRule(_AssetCompletenessRule):
     rule_id = "ASSET_TASK_SINGLE_OUTPUT"
     target = "task"
 
-    def evaluate(self, target: dict, facts: dict) -> dict | None:
+    def evaluate(self, target: dict, rule_context: dict) -> dict | None:
         if target["kind"] != "task":
             return None
         outputs = sorted(set(target["task"].get("output_tables") or set()))
@@ -147,7 +147,7 @@ class AssetTableSingleWriterRule(_AssetCompletenessRule):
     rule_id = "ASSET_TABLE_SINGLE_WRITER"
     target = "task"
 
-    def evaluate(self, target: dict, facts: dict) -> dict | None:
+    def evaluate(self, target: dict, rule_context: dict) -> dict | None:
         if target["kind"] != "writer":
             return None
         writer_files = sorted(
@@ -175,7 +175,7 @@ class AssetTaskLineageMatchesOutputRule(_AssetCompletenessRule):
     rule_id = "ASSET_TASK_LINEAGE_MATCHES_OUTPUT"
     target = "task"
 
-    def evaluate(self, target: dict, facts: dict) -> dict | None:
+    def evaluate(self, target: dict, rule_context: dict) -> dict | None:
         if target["kind"] != "task":
             return None
         outputs = set(target["task"].get("output_tables") or set())

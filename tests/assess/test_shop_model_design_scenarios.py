@@ -57,6 +57,8 @@ def _with_model_rule_scenarios(lineage_data: dict, model_metadata: dict):
         "dim_store_metric_snapshot": {
             "layer": "DIM",
             "table_type": "dimension",
+            "dimension_role": "BASE",
+            "dimension_content_type": "INFO",
             "atomic_metrics": ["store_order_count"],
         },
         "dwd_order_summary_bad": {

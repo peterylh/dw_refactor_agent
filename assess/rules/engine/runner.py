@@ -60,15 +60,17 @@ class RuleRunner:
         domain: str,
         target: str,
         targets: list,
-        facts: dict | None = None,
+        rule_context: dict | None = None,
         dimension: str | None = None,
     ) -> list[dict]:
         checks = []
-        facts = facts or {}
+        rule_context = rule_context or {}
         for candidate in targets:
             for rule in self.rules_for(domain, target, dimension):
                 checks.extend(
-                    self._normalize_result(rule.evaluate(candidate, facts))
+                    self._normalize_result(
+                        rule.evaluate(candidate, rule_context)
+                    )
                 )
         return checks
 
@@ -76,10 +78,10 @@ class RuleRunner:
         self,
         rule_ids: list[str],
         targets: list,
-        facts: dict | None = None,
+        rule_context: dict | None = None,
     ) -> list[dict]:
         checks = []
-        facts = facts or {}
+        rule_context = rule_context or {}
         for candidate in targets:
             for rule_id in rule_ids:
                 if not self.is_enabled(rule_id):
@@ -87,7 +89,7 @@ class RuleRunner:
                 rule_class = self.rule_classes[rule_id]
                 checks.extend(
                     self._normalize_result(
-                        rule_class().evaluate(candidate, facts)
+                        rule_class().evaluate(candidate, rule_context)
                     )
                 )
         return checks

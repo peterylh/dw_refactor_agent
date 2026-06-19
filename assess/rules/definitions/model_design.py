@@ -96,6 +96,46 @@ def _dependency_actual(target: dict) -> str:
     )
 
 
+def _design_facts_for_target(target: dict, rule_context: dict) -> dict:
+    getter = rule_context.get("design_facts_for")
+    if getter:
+        return getter(target["table_name"])
+    return target.get("design_facts") or {}
+
+
+def _has_design_evidence(design_facts: dict) -> bool:
+    return bool(
+        design_facts.get("source_files")
+        or (design_facts.get("lineage") or {}).get("has_lineage")
+    )
+
+
+def _upstream_tables_from_context(
+    rule_context: dict,
+    table_name: str,
+) -> list[str]:
+    getter = rule_context.get("upstream_tables_for")
+    if getter:
+        return getter(table_name)
+    return _upstream_tables_for(
+        table_name, rule_context.get("table_edges", {})
+    )
+
+
+def _upstream_table_layers_from_context(
+    rule_context: dict,
+    table_name: str,
+) -> dict[str, str]:
+    table_layers = rule_context.get("table_layers") or {}
+    return {
+        upstream: table_layers.get(upstream, "OTHER")
+        for upstream in _upstream_tables_from_context(
+            rule_context,
+            table_name,
+        )
+    }
+
+
 def _dependency_violation(target: dict) -> tuple[str, str, str] | None:
     if (
         target["source_layer"] == "DIM" and target["target_layer"] == "ADS"
@@ -118,7 +158,7 @@ class ArchReverseDependencyRule(_ModelDesignRule):
     domain = "dependency"
     target = "edge"
 
-    def evaluate(self, target: dict, facts: dict) -> dict | None:
+    def evaluate(self, target: dict, rule_context: dict) -> dict | None:
         violation = _dependency_violation(target)
         if not violation or violation[0] != self.rule_id:
             return None
@@ -139,7 +179,7 @@ class ArchSameLayerDependencyRule(_ModelDesignRule):
     domain = "dependency"
     target = "edge"
 
-    def evaluate(self, target: dict, facts: dict) -> dict | None:
+    def evaluate(self, target: dict, rule_context: dict) -> dict | None:
         violation = _dependency_violation(target)
         if not violation or violation[0] != self.rule_id:
             return None
@@ -160,7 +200,7 @@ class ArchSkipLayerDependencyRule(_ModelDesignRule):
     domain = "dependency"
     target = "edge"
 
-    def evaluate(self, target: dict, facts: dict) -> dict | None:
+    def evaluate(self, target: dict, rule_context: dict) -> dict | None:
         violation = _dependency_violation(target)
         if not violation or violation[0] != self.rule_id:
             return None
@@ -180,7 +220,7 @@ class ArchDeclaredLayerMatchesLlmRule(_ModelDesignRule):
     rule_id = "ARCH_DECLARED_LAYER_MATCHES_LLM"
     domain = "table"
 
-    def evaluate(self, target: dict, facts: dict) -> dict:
+    def evaluate(self, target: dict, rule_context: dict) -> dict:
         result = target["llm_result"]
         layer = target["layer"]
         return self.check(
@@ -205,7 +245,7 @@ class ArchDwdDimensionPositionRule(_ModelDesignRule):
     rule_id = "ARCH_DWD_DIMENSION_POSITION"
     domain = "table"
 
-    def evaluate(self, target: dict, facts: dict) -> dict:
+    def evaluate(self, target: dict, rule_context: dict) -> dict:
         result = target["llm_result"]
         layer = target["layer"]
         is_dwd_dimension = result.table_type == "dimension" and layer == "DWD"
@@ -230,10 +270,10 @@ class ArchTableTypeMatchesLlmRule(_ModelDesignRule):
     rule_id = "ARCH_TABLE_TYPE_MATCHES_LLM"
     domain = "table"
 
-    def evaluate(self, target: dict, facts: dict) -> dict | None:
+    def evaluate(self, target: dict, rule_context: dict) -> dict | None:
         result = target["llm_result"]
         declared_type = _declared_table_type(
-            facts["model_metadata"],
+            rule_context["model_metadata"],
             target["table_name"],
         )
         if not declared_type:
@@ -261,26 +301,28 @@ class ArchDataDomainMatchesLlmRule(_ModelDesignRule):
     rule_id = "ARCH_DATA_DOMAIN_MATCHES_LLM"
     domain = "table"
 
-    def evaluate(self, target: dict, facts: dict) -> dict | None:
+    def evaluate(self, target: dict, rule_context: dict) -> dict | None:
         layer = target["layer"]
         result = target["llm_result"]
         if not _data_domain_applies(layer):
             return None
         inferred_domain = _valid_inferred_data_domain(
             result,
-            facts["business_domain_config"],
+            rule_context["business_domain_config"],
         )
         if not inferred_domain:
             return None
-        if facts["business_domain_config"]:
-            declared_domain = facts["business_domain_config"].normalize_domain(
+        if rule_context["business_domain_config"]:
+            declared_domain = rule_context[
+                "business_domain_config"
+            ].normalize_domain(
                 _declared_data_domain(
-                    facts["model_metadata"], target["table_name"]
+                    rule_context["model_metadata"], target["table_name"]
                 )
             )
         else:
             declared_domain = _declared_data_domain(
-                facts["model_metadata"],
+                rule_context["model_metadata"],
                 target["table_name"],
             )
         domain_mismatch = inferred_domain != declared_domain
@@ -310,29 +352,29 @@ class ArchBusinessAreaMatchesLlmRule(_ModelDesignRule):
     rule_id = "ARCH_BUSINESS_AREA_MATCHES_LLM"
     domain = "table"
 
-    def evaluate(self, target: dict, facts: dict) -> dict | None:
+    def evaluate(self, target: dict, rule_context: dict) -> dict | None:
         layer = target["layer"]
         result = target["llm_result"]
         if not _business_area_applies(layer):
             return None
         inferred_area = _valid_inferred_business_area(
             result,
-            facts["business_domain_config"],
+            rule_context["business_domain_config"],
         )
         if not inferred_area:
             return None
-        if facts["business_domain_config"]:
-            declared_area = facts[
+        if rule_context["business_domain_config"]:
+            declared_area = rule_context[
                 "business_domain_config"
             ].normalize_business_area(
                 _declared_business_area(
-                    facts["model_metadata"],
+                    rule_context["model_metadata"],
                     target["table_name"],
                 )
             )
         else:
             declared_area = _declared_business_area(
-                facts["model_metadata"],
+                rule_context["model_metadata"],
                 target["table_name"],
             )
         area_mismatch = inferred_area != declared_area
@@ -360,10 +402,10 @@ class ModelDwdFactNoAggregationRule(_ModelDesignRule):
     rule_id = "MODEL_DWD_FACT_NO_AGGREGATION"
     domain = "table"
 
-    def evaluate(self, target: dict, facts: dict) -> dict | None:
+    def evaluate(self, target: dict, rule_context: dict) -> dict | None:
         if target["layer"] != "DWD" or not target["is_fact_table"]:
             return None
-        design_facts = target["design_facts"]
+        design_facts = _design_facts_for_target(target, rule_context)
         has_aggregation = (
             design_facts["has_group_by"] or design_facts["has_aggregate"]
         )
@@ -385,7 +427,7 @@ class ModelDwsGrainPresentRule(_ModelDesignRule):
     rule_id = "MODEL_DWS_GRAIN_PRESENT"
     domain = "table"
 
-    def evaluate(self, target: dict, facts: dict) -> dict | None:
+    def evaluate(self, target: dict, rule_context: dict) -> dict | None:
         if target["layer"] != "DWS" or not target["is_fact_table"]:
             return None
         grain = target["metadata"].get("grain")
@@ -404,13 +446,13 @@ class ModelDwsGrainMatchesGroupByRule(_ModelDesignRule):
     rule_id = "MODEL_DWS_GRAIN_MATCHES_GROUP_BY"
     domain = "table"
 
-    def evaluate(self, target: dict, facts: dict) -> dict | None:
+    def evaluate(self, target: dict, rule_context: dict) -> dict | None:
         if target["layer"] != "DWS" or not target["is_fact_table"]:
             return None
         metadata = target["metadata"]
         grain = metadata.get("grain")
         has_grain = isinstance(grain, dict) and bool(grain)
-        design_facts = target["design_facts"]
+        design_facts = _design_facts_for_target(target, rule_context)
         if not has_grain or not design_facts["has_group_by"]:
             return None
         mismatch = _grain_group_by_mismatch(metadata, design_facts)
@@ -440,7 +482,7 @@ class ModelDwdFactHasEventKeyRule(_ModelDesignRule):
     rule_id = "MODEL_DWD_FACT_HAS_EVENT_KEY"
     domain = "table"
 
-    def evaluate(self, target: dict, facts: dict) -> dict | None:
+    def evaluate(self, target: dict, rule_context: dict) -> dict | None:
         if target["layer"] != "DWD" or not target["is_fact_table"]:
             return None
         has_event_key = _has_event_key(target["table"], target["metadata"])
@@ -465,11 +507,11 @@ class ModelDwsFactHasAggregationRule(_ModelDesignRule):
     rule_id = "MODEL_DWS_FACT_HAS_AGGREGATION"
     domain = "table"
 
-    def evaluate(self, target: dict, facts: dict) -> dict | None:
+    def evaluate(self, target: dict, rule_context: dict) -> dict | None:
         if target["layer"] != "DWS" or not target["is_fact_table"]:
             return None
-        design_facts = target["design_facts"]
-        if not target["has_design_evidence"]:
+        design_facts = _design_facts_for_target(target, rule_context)
+        if not _has_design_evidence(design_facts):
             return None
         return self.check(
             target_table=target["table_name"],
@@ -491,13 +533,13 @@ class ModelDwsSelectFieldsMatchGrainRule(_ModelDesignRule):
     rule_id = "MODEL_DWS_SELECT_FIELDS_MATCH_GRAIN"
     domain = "table"
 
-    def evaluate(self, target: dict, facts: dict) -> dict | None:
+    def evaluate(self, target: dict, rule_context: dict) -> dict | None:
         if target["layer"] != "DWS" or not target["is_fact_table"]:
             return None
         metadata = target["metadata"]
         grain = metadata.get("grain")
         has_grain = isinstance(grain, dict) and bool(grain)
-        design_facts = target["design_facts"]
+        design_facts = _design_facts_for_target(target, rule_context)
         if not has_grain or not design_facts["has_group_by"]:
             return None
         leakage = _dws_plain_field_leakage(metadata, design_facts)
@@ -523,11 +565,13 @@ class ModelDimNoMetricGroupsRule(_ModelDesignRule):
     rule_id = "MODEL_DIM_NO_METRIC_GROUPS"
     domain = "table"
 
-    def evaluate(self, target: dict, facts: dict) -> dict | None:
+    def evaluate(self, target: dict, rule_context: dict) -> dict | None:
         metric_groups = target["metric_groups"]
         if not (
             target["layer"] == "DIM"
-            or _table_type(facts["model_metadata"], target["table_name"])
+            or _table_type(
+                rule_context["model_metadata"], target["table_name"]
+            )
             == "dimension"
         ):
             return None
@@ -543,11 +587,93 @@ class ModelDimNoMetricGroupsRule(_ModelDesignRule):
         )
 
 
+class ModelDimInfoDirectOdsOnlyRule(_ModelDesignRule):
+    rule_id = "MODEL_DIM_INFO_DIRECT_ODS_ONLY"
+    domain = "table"
+
+    def evaluate(self, target: dict, rule_context: dict) -> dict | None:
+        metadata = target["metadata"]
+        table_type = str(metadata.get("table_type") or "").strip().lower()
+        content_type = (
+            str(metadata.get("dimension_content_type") or "").strip().upper()
+        )
+        is_dim_info = (
+            target["layer"] == "DIM"
+            and table_type == "dimension"
+            and content_type == "INFO"
+        )
+        if not is_dim_info:
+            return None
+
+        upstream_layers = _upstream_table_layers_from_context(
+            rule_context,
+            target["table_name"],
+        )
+        invalid_upstreams = [
+            {"table": table_name, "layer": layer}
+            for table_name, layer in sorted(upstream_layers.items())
+            if layer != "ODS"
+        ]
+
+        design_facts = _design_facts_for_target(target, rule_context)
+        lineage_facts = design_facts.get("lineage") or {}
+        aggregate_columns = sorted(
+            set(design_facts.get("aggregate_aliases") or [])
+            | set(lineage_facts.get("aggregate_columns") or [])
+        )
+        has_aggregate = bool(
+            design_facts.get("has_aggregate")
+            or lineage_facts.get("has_aggregate")
+        )
+        window_metric_columns = sorted(
+            design_facts.get("window_metric_aliases") or []
+        )
+
+        reason_codes = []
+        if invalid_upstreams:
+            reason_codes.append("non_ods_upstream")
+        if has_aggregate:
+            reason_codes.append("aggregate_output")
+        if window_metric_columns:
+            reason_codes.append("window_metric")
+
+        return self.check(
+            target_table=target["table_name"],
+            passed=not reason_codes,
+            expected="DIM INFO仅直接沉淀ODS实体属性，不承载行为事实或指标加工",
+            actual=(
+                "存在非INFO加工: " + ", ".join(reason_codes)
+                if reason_codes
+                else "未发现非INFO加工"
+            ),
+            evidence={
+                "upstream_tables": [
+                    {"table": table_name, "layer": layer}
+                    for table_name, layer in sorted(upstream_layers.items())
+                ],
+                "invalid_upstream_tables": invalid_upstreams,
+                "has_aggregate": has_aggregate,
+                "aggregate_columns": aggregate_columns,
+                "window_metric_columns": window_metric_columns,
+                "group_by_sources": (
+                    lineage_facts.get("group_by_sources") or []
+                ),
+                "source_files": design_facts.get("source_files") or [],
+                "reason_codes": reason_codes,
+            },
+            message=(
+                "DIM INFO表应只保留来自ODS的实体基础属性、状态属性和标准描述信息"
+                if reason_codes
+                else ""
+            ),
+        )
+
+
 class ModelDwdFactNoDerivedMetricsRule(_ModelDesignRule):
     rule_id = "MODEL_DWD_FACT_NO_DERIVED_METRICS"
     domain = "table"
 
-    def evaluate(self, target: dict, facts: dict) -> dict | None:
+    def evaluate(self, target: dict, rule_context: dict) -> dict | None:
         if target["layer"] != "DWD" or not target["is_fact_table"]:
             return None
         non_atomic_metric_groups = {
@@ -577,7 +703,7 @@ class ModelDwdFactSingleBusinessProcessRule(_ModelDesignRule):
     rule_id = "MODEL_DWD_FACT_SINGLE_BUSINESS_PROCESS"
     domain = "table"
 
-    def evaluate(self, target: dict, facts: dict) -> dict | None:
+    def evaluate(self, target: dict, rule_context: dict) -> dict | None:
         if target["layer"] != "DWD" or not target["is_fact_table"]:
             return None
         business_processes = _business_processes_for_dwd_fact(
@@ -605,7 +731,7 @@ class ModelDwdFactHasPrimaryEntityOrGrainRule(_ModelDesignRule):
     rule_id = "MODEL_DWD_FACT_HAS_PRIMARY_ENTITY_OR_GRAIN"
     domain = "table"
 
-    def evaluate(self, target: dict, facts: dict) -> dict | None:
+    def evaluate(self, target: dict, rule_context: dict) -> dict | None:
         if target["layer"] != "DWD" or not target["is_fact_table"]:
             return None
         metadata = target["metadata"]
@@ -639,7 +765,7 @@ class ModelDatePartitionUsesDataDtRule(_ModelDesignRule):
     rule_id = "MODEL_DATE_PARTITION_USES_DATA_DT"
     domain = "table"
 
-    def evaluate(self, target: dict, facts: dict) -> dict | None:
+    def evaluate(self, target: dict, rule_context: dict) -> dict | None:
         if target["layer"] not in {"DWD", "DWS", "DIM"}:
             return None
         partition_column = target["partition_column"]
@@ -666,17 +792,21 @@ class ModelDerivedMetricBaseAtomicRule(_ModelDesignRule):
     rule_id = "MODEL_DERIVED_METRIC_BASE_ATOMIC"
     domain = "table"
 
-    def evaluate(self, target: dict, facts: dict) -> dict | None:
+    def evaluate(self, target: dict, rule_context: dict) -> dict | None:
         if target["layer"] != "DWS" or not target["is_fact_table"]:
             return None
         metadata = target["metadata"]
         if not metadata.get("derived_metrics"):
             return None
+        upstream_tables = _upstream_tables_from_context(
+            rule_context,
+            target["table_name"],
+        )
         relationship_issues = _derived_metric_base_issues(
             metadata,
             _atomic_metric_names_by_table(
-                facts["model_metadata"] or {},
-                target["upstream_tables"],
+                rule_context["model_metadata"] or {},
+                upstream_tables,
             ),
         )
         invalid_relationships = (
@@ -700,7 +830,7 @@ class ModelDerivedMetricBaseAtomicRule(_ModelDesignRule):
             ),
             evidence={
                 **relationship_issues,
-                "upstream_tables": target["upstream_tables"],
+                "upstream_tables": upstream_tables,
             },
             message=(
                 "DWS派生指标应显式关联上游原子指标，并配置聚合方式"
@@ -726,6 +856,7 @@ MODEL_DESIGN_RULE_CLASSES = [
     ModelDwsFactHasAggregationRule,
     ModelDwsSelectFieldsMatchGrainRule,
     ModelDimNoMetricGroupsRule,
+    ModelDimInfoDirectOdsOnlyRule,
     ModelDwdFactNoDerivedMetricsRule,
     ModelDwdFactSingleBusinessProcessRule,
     ModelDwdFactHasPrimaryEntityOrGrainRule,
@@ -768,7 +899,34 @@ def _select_group_by_columns(select: exp.Select) -> list[str]:
 def _select_aggregate_aliases(select: exp.Select) -> list[str]:
     aliases = []
     for expression in select.expressions:
+        if not isinstance(expression, exp.Alias):
+            continue
+        if list(expression.find_all(exp.Window)):
+            continue
         if not list(expression.find_all(exp.AggFunc)):
+            continue
+        alias = expression.alias_or_name
+        if alias:
+            aliases.append(_short_column_name(alias))
+    return sorted({alias for alias in aliases if alias})
+
+
+def _select_has_non_window_aggregate(select: exp.Select) -> bool:
+    for expression in select.expressions:
+        if list(expression.find_all(exp.Window)):
+            continue
+        if list(expression.find_all(exp.AggFunc)):
+            return True
+    return False
+
+
+def _select_window_metric_aliases(select: exp.Select) -> list[str]:
+    aliases = []
+    for expression in select.expressions:
+        windows = list(expression.find_all(exp.Window))
+        if not windows:
+            continue
+        if not any(list(window.find_all(exp.AggFunc)) for window in windows):
             continue
         alias = expression.alias_or_name
         if alias:
@@ -802,7 +960,9 @@ def _extract_sql_facts_with_sqlglot(sql_text: str) -> dict | None:
     group_by_columns = []
     group_output_columns = []
     aggregate_aliases = []
+    window_metric_aliases = []
     has_aggregate = False
+    has_window_metric = False
     for statement in statements:
         if statement is None:
             continue
@@ -821,15 +981,23 @@ def _extract_sql_facts_with_sqlglot(sql_text: str) -> dict | None:
             for alias in aliases:
                 if alias not in aggregate_aliases:
                     aggregate_aliases.append(alias)
-            if list(select.find_all(exp.AggFunc)):
+            window_aliases = _select_window_metric_aliases(select)
+            for alias in window_aliases:
+                if alias not in window_metric_aliases:
+                    window_metric_aliases.append(alias)
+            if _select_has_non_window_aggregate(select):
                 has_aggregate = True
+            if window_aliases:
+                has_window_metric = True
 
     return {
         "has_group_by": bool(group_by_columns),
         "has_aggregate": has_aggregate,
+        "has_window_metric": has_window_metric,
         "group_by_columns": sorted(group_by_columns),
         "group_output_columns": sorted(group_output_columns),
         "aggregate_aliases": sorted(aggregate_aliases),
+        "window_metric_aliases": sorted(window_metric_aliases),
     }
 
 
@@ -848,6 +1016,7 @@ def _extract_sql_facts_with_regex(sql_text: str) -> dict:
                 group_by_columns.append(name)
 
     aggregate_aliases = []
+    window_metric_aliases = []
     for match in re.finditer(
         r"\b(?:SUM|COUNT|AVG|MIN|MAX)\s*\([^)]*\)\s+AS\s+`?(\w+)`?",
         str(sql_text or ""),
@@ -856,18 +1025,36 @@ def _extract_sql_facts_with_regex(sql_text: str) -> dict:
         alias = _short_column_name(match.group(1))
         if alias and alias not in aggregate_aliases:
             aggregate_aliases.append(alias)
+    for match in re.finditer(
+        r"\b(?:SUM|COUNT|AVG|MIN|MAX)\s*\([^)]*\)\s+OVER\s*\([^)]*\)"
+        r"\s+AS\s+`?(\w+)`?",
+        str(sql_text or ""),
+        flags=re.IGNORECASE | re.DOTALL,
+    ):
+        alias = _short_column_name(match.group(1))
+        if alias and alias not in window_metric_aliases:
+            window_metric_aliases.append(alias)
+
+    window_metric_pattern = re.compile(
+        r"\b(?:SUM|COUNT|AVG|MIN|MAX)\s*\([^)]*\)\s+OVER\s*\([^)]*\)"
+        r"\s+AS\s+`?\w+`?",
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    windowless_sql = window_metric_pattern.sub("", str(sql_text or ""))
 
     return {
         "has_group_by": bool(group_by_columns),
-        "has_aggregate": bool(AGGREGATE_PATTERN.search(str(sql_text or ""))),
+        "has_aggregate": bool(AGGREGATE_PATTERN.search(windowless_sql)),
+        "has_window_metric": bool(window_metric_aliases),
         "group_by_columns": sorted(group_by_columns),
         "group_output_columns": sorted(group_by_columns),
         "aggregate_aliases": sorted(aggregate_aliases),
+        "window_metric_aliases": sorted(window_metric_aliases),
     }
 
 
 def extract_model_design_sql_facts(sql_text: str) -> dict:
-    """Extract SQL facts needed by model design checks."""
+    """Extract SQL rule_context needed by model design checks."""
     parsed = _extract_sql_facts_with_sqlglot(sql_text)
     if parsed is not None:
         return parsed
@@ -929,28 +1116,38 @@ def _table_sql_facts(asset_catalog: dict | None, table_name: str) -> dict:
     group_by_columns = set()
     group_output_columns = set()
     aggregate_aliases = set()
+    window_metric_aliases = set()
     source_files = []
     has_group_by = False
     has_aggregate = False
+    has_window_metric = False
     for task in _table_tasks(asset_catalog, table_name):
         sql_text = _task_sql_text(task)
         if not sql_text:
             continue
-        facts = extract_model_design_sql_facts(sql_text)
-        has_group_by = has_group_by or facts["has_group_by"]
-        has_aggregate = has_aggregate or facts["has_aggregate"]
-        group_by_columns.update(facts.get("group_by_columns") or [])
-        group_output_columns.update(facts.get("group_output_columns") or [])
-        aggregate_aliases.update(facts.get("aggregate_aliases") or [])
+        sql_facts = extract_model_design_sql_facts(sql_text)
+        has_group_by = has_group_by or sql_facts["has_group_by"]
+        has_aggregate = has_aggregate or sql_facts["has_aggregate"]
+        has_window_metric = has_window_metric or sql_facts["has_window_metric"]
+        group_by_columns.update(sql_facts.get("group_by_columns") or [])
+        group_output_columns.update(
+            sql_facts.get("group_output_columns") or []
+        )
+        aggregate_aliases.update(sql_facts.get("aggregate_aliases") or [])
+        window_metric_aliases.update(
+            sql_facts.get("window_metric_aliases") or []
+        )
         source_file = _task_source_file(task)
         if source_file and source_file not in source_files:
             source_files.append(source_file)
     return {
         "has_group_by": has_group_by,
         "has_aggregate": has_aggregate,
+        "has_window_metric": has_window_metric,
         "group_by_columns": sorted(group_by_columns),
         "group_output_columns": sorted(group_output_columns),
         "aggregate_aliases": sorted(aggregate_aliases),
+        "window_metric_aliases": sorted(window_metric_aliases),
         "source_files": sorted(source_files),
     }
 
@@ -977,6 +1174,7 @@ def _combined_design_facts(
         "has_aggregate": (
             sql_facts["has_aggregate"] or edge_facts["has_aggregate"]
         ),
+        "has_window_metric": sql_facts["has_window_metric"],
         "source_files": sorted(
             set(sql_facts.get("source_files") or [])
             | set(edge_facts.get("source_files") or [])

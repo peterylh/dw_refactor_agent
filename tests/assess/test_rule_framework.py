@@ -65,8 +65,11 @@ def test_rule_runner_executes_enabled_rules_for_each_target():
         domain = "table"
         target = "table"
 
-        def evaluate(self, target, facts):
-            return {"rule_id": self.rule_id, "target": target["name"]}
+        def evaluate(self, target, rule_context):
+            return {
+                "rule_id": self.rule_id,
+                "target": target["name"] + rule_context["suffix"],
+            }
 
     class SecondRule(AssessRule):
         rule_id = "SECOND"
@@ -74,8 +77,13 @@ def test_rule_runner_executes_enabled_rules_for_each_target():
         domain = "table"
         target = "table"
 
-        def evaluate(self, target, facts):
-            return [{"rule_id": self.rule_id, "target": target["name"]}]
+        def evaluate(self, target, rule_context):
+            return [
+                {
+                    "rule_id": self.rule_id,
+                    "target": target["name"] + rule_context["suffix"],
+                }
+            ]
 
     runner = RuleRunner(
         RuleSelection(disabled={"SECOND"}),
@@ -89,12 +97,12 @@ def test_rule_runner_executes_enabled_rules_for_each_target():
         "table",
         "table",
         targets=[{"name": "a"}, {"name": "b"}],
-        facts={},
+        rule_context={"suffix": "!"},
     )
 
     assert checks == [
-        {"rule_id": "FIRST", "target": "a"},
-        {"rule_id": "FIRST", "target": "b"},
+        {"rule_id": "FIRST", "target": "a!"},
+        {"rule_id": "FIRST", "target": "b!"},
     ]
 
 

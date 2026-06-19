@@ -80,7 +80,7 @@ def score_metadata_health(
         )
 
     runner = RuleRunner(rule_selection)
-    facts = {
+    rule_context = {
         "business_domain_config": business_domain_config,
         "naming_config": nc,
     }
@@ -94,7 +94,7 @@ def score_metadata_health(
                         "METADATA_DIM_SEMANTIC_SUBJECT_MATCHES_PRIMARY",
                     ],
                     [target],
-                    facts,
+                    rule_context,
                 )
             )
         if target["table"]:
@@ -109,14 +109,14 @@ def score_metadata_health(
                             "METADATA_ENTITY_NOT_DUPLICATE_PRIMARY",
                         ],
                         [entity_target],
-                        facts,
+                        rule_context,
                     )
                 )
         checks.extend(
             runner.run_rules(
                 ["METADATA_GRAIN_KEYS_EXIST"],
                 [target],
-                facts,
+                rule_context,
             )
         )
         checks.extend(
@@ -128,7 +128,7 @@ def score_metadata_health(
                     "METADATA_BUSINESS_AREA_VALID",
                 ],
                 [target],
-                facts,
+                rule_context,
             )
         )
     passed = sum(1 for check in checks if check["passed"])

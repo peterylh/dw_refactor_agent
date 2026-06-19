@@ -367,6 +367,17 @@ MODEL_DESIGN_RULES = {
         strategy="remove_dim_metric_groups",
         edit_scope=["models"],
     ),
+    "MODEL_DIM_INFO_DIRECT_ODS_ONLY": rule_meta(
+        name="DIM INFO表只沉淀ODS实体属性",
+        severity=SEVERITY_HIGH,
+        title="DIM INFO表承载非实体属性加工结果",
+        remediation_summary=(
+            "将行为事实、指标聚合、窗口统计或复杂规则打标结果移至DWD/DWS，"
+            "DIM INFO仅保留来自ODS的实体基础属性、状态属性和标准描述信息"
+        ),
+        strategy="move_non_info_logic_out_of_dim_info",
+        edit_scope=["tasks", "models"],
+    ),
     "MODEL_DWD_FACT_NO_DERIVED_METRICS": rule_meta(
         name="DWD事实表不配置派生或计算指标",
         severity=SEVERITY_MEDIUM,

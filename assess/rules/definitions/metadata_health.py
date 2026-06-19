@@ -53,7 +53,7 @@ class _MetadataHealthRule(AssessRule):
 class MetadataDimHasPrimaryEntityRule(_MetadataHealthRule):
     rule_id = "METADATA_DIM_HAS_PRIMARY_ENTITY"
 
-    def evaluate(self, target: dict, facts: dict) -> dict | None:
+    def evaluate(self, target: dict, rule_context: dict) -> dict | None:
         if target["layer"] != "DIM":
             return None
         return self.check(
@@ -70,7 +70,7 @@ class MetadataDimHasPrimaryEntityRule(_MetadataHealthRule):
 class MetadataDimSemanticSubjectMatchesPrimaryRule(_MetadataHealthRule):
     rule_id = "METADATA_DIM_SEMANTIC_SUBJECT_MATCHES_PRIMARY"
 
-    def evaluate(self, target: dict, facts: dict) -> dict | None:
+    def evaluate(self, target: dict, rule_context: dict) -> dict | None:
         if target["layer"] != "DIM":
             return None
         metadata = target["metadata"]
@@ -105,7 +105,7 @@ class MetadataDimSemanticSubjectMatchesPrimaryRule(_MetadataHealthRule):
 class MetadataEntityKeysExistRule(_MetadataHealthRule):
     rule_id = "METADATA_ENTITY_KEYS_EXIST"
 
-    def evaluate(self, target: dict, facts: dict) -> list[dict]:
+    def evaluate(self, target: dict, rule_context: dict) -> list[dict]:
         if not target["table"]:
             return []
         checks = []
@@ -149,7 +149,7 @@ class MetadataEntityKeysExistRule(_MetadataHealthRule):
 class MetadataRelationshipFromPrimaryRule(_MetadataHealthRule):
     rule_id = "METADATA_RELATIONSHIP_FROM_PRIMARY"
 
-    def evaluate(self, target: dict, facts: dict) -> list[dict]:
+    def evaluate(self, target: dict, rule_context: dict) -> list[dict]:
         if not target["table"] or not target["primary_code"]:
             return []
         checks = []
@@ -192,7 +192,7 @@ class MetadataRelationshipFromPrimaryRule(_MetadataHealthRule):
 class MetadataEntityNotDuplicatePrimaryRule(_MetadataHealthRule):
     rule_id = "METADATA_ENTITY_NOT_DUPLICATE_PRIMARY"
 
-    def evaluate(self, target: dict, facts: dict) -> list[dict]:
+    def evaluate(self, target: dict, rule_context: dict) -> list[dict]:
         if not target["table"] or not target["primary_code"]:
             return []
         checks = []
@@ -229,7 +229,7 @@ class MetadataEntityNotDuplicatePrimaryRule(_MetadataHealthRule):
 class MetadataGrainKeysExistRule(_MetadataHealthRule):
     rule_id = "METADATA_GRAIN_KEYS_EXIST"
 
-    def evaluate(self, target: dict, facts: dict) -> dict | None:
+    def evaluate(self, target: dict, rule_context: dict) -> dict | None:
         if not target["table"] or not isinstance(target["grain"], dict):
             return None
         grain_keys = grain_key_columns(target["metadata"])
@@ -259,7 +259,7 @@ class MetadataGrainKeysExistRule(_MetadataHealthRule):
 class MetadataGrainEntitiesPresentRule(_MetadataHealthRule):
     rule_id = "METADATA_GRAIN_ENTITIES_PRESENT"
 
-    def evaluate(self, target: dict, facts: dict) -> dict | None:
+    def evaluate(self, target: dict, rule_context: dict) -> dict | None:
         if target["layer"] != "DWS" or target["grain_entities"]:
             return None
         return self.check(
@@ -276,7 +276,7 @@ class MetadataGrainEntitiesPresentRule(_MetadataHealthRule):
 class MetadataGrainEntitiesDefinedRule(_MetadataHealthRule):
     rule_id = "METADATA_GRAIN_ENTITIES_DEFINED"
 
-    def evaluate(self, target: dict, facts: dict) -> dict | None:
+    def evaluate(self, target: dict, rule_context: dict) -> dict | None:
         grain_entities = target["grain_entities"]
         if not grain_entities:
             return None
@@ -313,14 +313,14 @@ class MetadataGrainEntitiesDefinedRule(_MetadataHealthRule):
 class MetadataDataDomainValidRule(_MetadataHealthRule):
     rule_id = "METADATA_DATA_DOMAIN_VALID"
 
-    def evaluate(self, target: dict, facts: dict) -> dict | None:
-        if not facts["business_domain_config"] or not _data_domain_applies(
-            target["layer"]
-        ):
+    def evaluate(self, target: dict, rule_context: dict) -> dict | None:
+        if not rule_context[
+            "business_domain_config"
+        ] or not _data_domain_applies(target["layer"]):
             return None
         metadata = target["metadata"]
-        business_domain_config = facts["business_domain_config"]
-        nc = facts["naming_config"]
+        business_domain_config = rule_context["business_domain_config"]
+        nc = rule_context["naming_config"]
         raw_domain = metadata.get("data_domain")
         normalized_domain = business_domain_config.normalize_domain(raw_domain)
         if raw_domain in (None, ""):
@@ -357,14 +357,14 @@ class MetadataDataDomainValidRule(_MetadataHealthRule):
 class MetadataBusinessAreaValidRule(_MetadataHealthRule):
     rule_id = "METADATA_BUSINESS_AREA_VALID"
 
-    def evaluate(self, target: dict, facts: dict) -> dict | None:
-        if not facts["business_domain_config"] or not _business_area_applies(
-            target["layer"]
-        ):
+    def evaluate(self, target: dict, rule_context: dict) -> dict | None:
+        if not rule_context[
+            "business_domain_config"
+        ] or not _business_area_applies(target["layer"]):
             return None
         metadata = target["metadata"]
-        business_domain_config = facts["business_domain_config"]
-        nc = facts["naming_config"]
+        business_domain_config = rule_context["business_domain_config"]
+        nc = rule_context["naming_config"]
         raw_area = metadata.get("business_area")
         normalized_area = business_domain_config.normalize_business_area(
             raw_area

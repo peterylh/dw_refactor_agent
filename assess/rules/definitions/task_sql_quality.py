@@ -89,7 +89,7 @@ class CodeTempTableNameHasTempOrTmpRule(AssessRule):
     def evaluate(
         self,
         target: dict,
-        facts: dict,
+        rule_context: dict,
     ) -> list[dict]:
         checks = []
         for create in target["creates"]:
@@ -129,7 +129,7 @@ class CodeTempTableDroppedInSameTaskRule(AssessRule):
     def evaluate(
         self,
         target: dict,
-        facts: dict,
+        rule_context: dict,
     ) -> list[dict]:
         checks = []
         for create in target["creates"]:
@@ -183,7 +183,7 @@ class CodeNoSelectStarInWriteRule(AssessRule):
     def evaluate(
         self,
         target: dict,
-        facts: dict,
+        rule_context: dict,
     ) -> list[dict]:
         return [
             self._check(target["file_name"], write_statement)
@@ -242,7 +242,7 @@ class CodeCartesianJoinRiskRule(_CodeIssueRule):
     def evaluate(
         self,
         target: dict,
-        facts: dict,
+        rule_context: dict,
     ) -> list[dict]:
         return [
             self._issue_check(
@@ -266,10 +266,10 @@ class CodeDwsJoinBeforeAggregationRule(_CodeIssueRule):
     def evaluate(
         self,
         target: dict,
-        facts: dict,
+        rule_context: dict,
     ) -> list[dict]:
         task = target["task"]
-        asset_catalog = facts["asset_catalog"]
+        asset_catalog = rule_context["asset_catalog"]
         if not _is_dws_task(task, asset_catalog):
             return []
         return [
@@ -297,7 +297,7 @@ class CodeFilterColumnWrappedInFunctionRule(_CodeIssueRule):
     def evaluate(
         self,
         target: dict,
-        facts: dict,
+        rule_context: dict,
     ) -> list[dict]:
         return [
             self._issue_check(

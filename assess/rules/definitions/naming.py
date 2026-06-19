@@ -66,11 +66,11 @@ class _NamingRule(AssessRule):
 class NamingTableTemplateRule(_NamingRule):
     rule_id = "NAMING_TABLE_TEMPLATE"
 
-    def evaluate(self, target: dict, facts: dict) -> dict:
+    def evaluate(self, target: dict, rule_context: dict) -> dict:
         name = target["name"]
         layer = target["layer"]
-        nc = facts["nc"]
-        issue_context = _naming_issue_context(facts, name)
+        nc = rule_context["nc"]
+        issue_context = _naming_issue_context(rule_context, name)
         valid = _check_table_name_any_template(name, layer, nc)
         violation = None
         if not valid:
@@ -103,14 +103,14 @@ class NamingTableTemplateRule(_NamingRule):
 class NamingTableMaxLengthRule(_NamingRule):
     rule_id = "NAMING_TABLE_MAX_LENGTH"
 
-    def evaluate(self, target: dict, facts: dict) -> dict | None:
+    def evaluate(self, target: dict, rule_context: dict) -> dict | None:
         name = target["name"]
         layer = target["layer"]
-        nc = facts["nc"]
+        nc = rule_context["nc"]
         max_length = _table_name_max_length(name, layer, nc)
         if max_length is None:
             return None
-        issue_context = _naming_issue_context(facts, name)
+        issue_context = _naming_issue_context(rule_context, name)
         length_ok = _check_table_name_length(name, layer, nc)
         violation = None
         if not length_ok:
@@ -150,13 +150,15 @@ class NamingTableMaxLengthRule(_NamingRule):
 class NamingColumnNameRule(_NamingRule):
     rule_id = "NAMING_COLUMN_NAME"
 
-    def evaluate(self, target: dict, facts: dict) -> dict | None:
+    def evaluate(self, target: dict, rule_context: dict) -> dict | None:
         name = target["name"]
         layer = target["layer"]
-        nc = facts["nc"]
+        nc = rule_context["nc"]
         metric_columns = set(
-            _atomic_metric_names_for_table(target, facts["models"])
-        ) | set(_derived_metric_names_for_table(target, facts["models"]))
+            _atomic_metric_names_for_table(target, rule_context["models"])
+        ) | set(
+            _derived_metric_names_for_table(target, rule_context["models"])
+        )
         violations = []
         diagnostics = []
         total = 0
@@ -173,7 +175,7 @@ class NamingColumnNameRule(_NamingRule):
                 diagnostics.append(_column_name_diagnostic(column_name, nc))
         if total <= 0:
             return None
-        issue_context = _naming_issue_context(facts, name)
+        issue_context = _naming_issue_context(rule_context, name)
         return self.check(
             target_type="table",
             target=name,
@@ -203,17 +205,19 @@ class NamingColumnNameRule(_NamingRule):
 class NamingAtomicMetricRule(_NamingRule):
     rule_id = "NAMING_ATOMIC_METRIC"
 
-    def evaluate(self, target: dict, facts: dict) -> list[dict]:
-        if not facts["atomic_rule_name"]:
+    def evaluate(self, target: dict, rule_context: dict) -> list[dict]:
+        if not rule_context["atomic_rule_name"]:
             return []
         name = target["name"]
         layer = target["layer"]
-        issue_context = _naming_issue_context(facts, name)
+        issue_context = _naming_issue_context(rule_context, name)
         checks = []
         for metric_name in _atomic_metric_names_for_table(
-            target, facts["models"]
+            target, rule_context["models"]
         ):
-            failed = not _check_atomic_metric_name(metric_name, facts["nc"])
+            failed = not _check_atomic_metric_name(
+                metric_name, rule_context["nc"]
+            )
             checks.append(
                 self.check(
                     target_type="metric",
@@ -244,17 +248,19 @@ class NamingAtomicMetricRule(_NamingRule):
 class NamingDerivedMetricRule(_NamingRule):
     rule_id = "NAMING_DERIVED_METRIC"
 
-    def evaluate(self, target: dict, facts: dict) -> list[dict]:
-        if not facts["derived_rule_name"]:
+    def evaluate(self, target: dict, rule_context: dict) -> list[dict]:
+        if not rule_context["derived_rule_name"]:
             return []
         name = target["name"]
         layer = target["layer"]
-        issue_context = _naming_issue_context(facts, name)
+        issue_context = _naming_issue_context(rule_context, name)
         checks = []
         for metric_name in _derived_metric_names_for_table(
-            target, facts["models"]
+            target, rule_context["models"]
         ):
-            failed = not _check_derived_metric_name(metric_name, facts["nc"])
+            failed = not _check_derived_metric_name(
+                metric_name, rule_context["nc"]
+            )
             checks.append(
                 self.check(
                     target_type="metric",
@@ -285,16 +291,16 @@ class NamingDerivedMetricRule(_NamingRule):
 class NamingDwsEntityAlignmentRule(_NamingRule):
     rule_id = "NAMING_DWS_ENTITY_ALIGNMENT"
 
-    def evaluate(self, target: dict, facts: dict) -> dict | None:
+    def evaluate(self, target: dict, rule_context: dict) -> dict | None:
         name = target["name"]
         layer = target["layer"]
-        if not _check_table_name_any_template(name, layer, facts["nc"]):
+        if not _check_table_name_any_template(name, layer, rule_context["nc"]):
             return None
         check_result = _score_dws_entity_name(
             name,
             layer,
-            facts["nc"],
-            facts["models"],
+            rule_context["nc"],
+            rule_context["models"],
         )
         if check_result.get("total", 0) <= 0:
             return None
@@ -307,7 +313,9 @@ class NamingDwsEntityAlignmentRule(_NamingRule):
             actual="一致" if not violations else "; ".join(violations),
             evidence={"layer": layer, "violations": violations},
             message="; ".join(violations) if violations else "",
-            issue=_naming_issue_context(facts, name) if violations else None,
+            issue=_naming_issue_context(rule_context, name)
+            if violations
+            else None,
             score_passed=check_result["passed"],
             score_total=check_result["total"],
         )
@@ -316,16 +324,16 @@ class NamingDwsEntityAlignmentRule(_NamingRule):
 class NamingDimEntityAlignmentRule(_NamingRule):
     rule_id = "NAMING_DIM_ENTITY_ALIGNMENT"
 
-    def evaluate(self, target: dict, facts: dict) -> dict | None:
+    def evaluate(self, target: dict, rule_context: dict) -> dict | None:
         name = target["name"]
         layer = target["layer"]
-        if not _check_table_name_any_template(name, layer, facts["nc"]):
+        if not _check_table_name_any_template(name, layer, rule_context["nc"]):
             return None
         check_result = _score_dim_entity_name(
             name,
             layer,
-            facts["nc"],
-            facts["models"],
+            rule_context["nc"],
+            rule_context["models"],
         )
         if check_result.get("total", 0) <= 0:
             return None
@@ -338,7 +346,9 @@ class NamingDimEntityAlignmentRule(_NamingRule):
             actual="一致" if not violations else "; ".join(violations),
             evidence={"layer": layer, "violations": violations},
             message="; ".join(violations) if violations else "",
-            issue=_naming_issue_context(facts, name) if violations else None,
+            issue=_naming_issue_context(rule_context, name)
+            if violations
+            else None,
             score_passed=check_result["passed"],
             score_total=check_result["total"],
         )
@@ -347,16 +357,16 @@ class NamingDimEntityAlignmentRule(_NamingRule):
 class NamingDimClassificationAlignmentRule(_NamingRule):
     rule_id = "NAMING_DIM_CLASSIFICATION_ALIGNMENT"
 
-    def evaluate(self, target: dict, facts: dict) -> dict | None:
+    def evaluate(self, target: dict, rule_context: dict) -> dict | None:
         name = target["name"]
         layer = target["layer"]
-        if not _check_table_name_any_template(name, layer, facts["nc"]):
+        if not _check_table_name_any_template(name, layer, rule_context["nc"]):
             return None
         check_result = _score_dim_classification_name(
             name,
             layer,
-            facts["nc"],
-            facts["models"],
+            rule_context["nc"],
+            rule_context["models"],
         )
         if check_result.get("total", 0) <= 0:
             return None
@@ -369,7 +379,9 @@ class NamingDimClassificationAlignmentRule(_NamingRule):
             actual="一致" if not violations else "; ".join(violations),
             evidence={"layer": layer, "violations": violations},
             message="; ".join(violations) if violations else "",
-            issue=_naming_issue_context(facts, name) if violations else None,
+            issue=_naming_issue_context(rule_context, name)
+            if violations
+            else None,
             score_passed=check_result["passed"],
             score_total=check_result["total"],
         )
@@ -378,19 +390,19 @@ class NamingDimClassificationAlignmentRule(_NamingRule):
 class NamingSemanticMetadataAlignmentRule(_NamingRule):
     rule_id = "NAMING_SEMANTIC_METADATA_ALIGNMENT"
 
-    def evaluate(self, target: dict, facts: dict) -> dict | None:
+    def evaluate(self, target: dict, rule_context: dict) -> dict | None:
         name = target["name"]
         layer = target["layer"]
         table_name_valid = _check_table_name_any_template(
             name,
             layer,
-            facts["nc"],
+            rule_context["nc"],
         )
         check_result, _summary = _score_table_semantic_metadata(
             name,
             layer,
             table_name_valid,
-            facts,
+            rule_context,
         )
         if check_result.get("total", 0) <= 0:
             return None
@@ -403,7 +415,9 @@ class NamingSemanticMetadataAlignmentRule(_NamingRule):
             actual="一致" if not violations else "; ".join(violations),
             evidence={"layer": layer, "violations": violations},
             message="; ".join(violations) if violations else "",
-            issue=_naming_issue_context(facts, name) if violations else None,
+            issue=_naming_issue_context(rule_context, name)
+            if violations
+            else None,
             score_passed=check_result["passed"],
             score_total=check_result["total"],
         )
@@ -413,7 +427,7 @@ class _NamingFileRule(_NamingRule):
     domain = "asset"
     target = "file"
 
-    def evaluate(self, target: dict, facts: dict) -> dict:
+    def evaluate(self, target: dict, rule_context: dict) -> dict:
         return self.check_file(**target)
 
     def check_file(
@@ -458,13 +472,13 @@ class _NamingFileRule(_NamingRule):
 class NamingDdlFileNameRule(_NamingFileRule):
     rule_id = "NAMING_DDL_FILE_NAME"
 
-    def evaluate(self, target: dict, facts: dict) -> dict | None:
+    def evaluate(self, target: dict, rule_context: dict) -> dict | None:
         ddl = target.get("ddl")
         if not ddl:
             return None
         return self.check_file(
             display_file=_display_file_path(
-                facts["project_dir"],
+                rule_context["project_dir"],
                 ddl["path"],
             ),
             expected=ddl["file_stem"],
@@ -477,13 +491,13 @@ class NamingDdlFileNameRule(_NamingFileRule):
 class NamingModelFileNameRule(_NamingFileRule):
     rule_id = "NAMING_MODEL_FILE_NAME"
 
-    def evaluate(self, target: dict, facts: dict) -> dict | None:
+    def evaluate(self, target: dict, rule_context: dict) -> dict | None:
         model = target.get("model")
         if not model or not model.get("path"):
             return None
         return self.check_file(
             display_file=_display_file_path(
-                facts["project_dir"],
+                rule_context["project_dir"],
                 model["path"],
             ),
             expected=model["file_stem"],
@@ -496,7 +510,7 @@ class NamingModelFileNameRule(_NamingFileRule):
 class NamingTaskOutputNameRule(_NamingFileRule):
     rule_id = "NAMING_TASK_OUTPUT_NAME"
 
-    def evaluate(self, target: dict, facts: dict) -> dict | None:
+    def evaluate(self, target: dict, rule_context: dict) -> dict | None:
         task = target.get("task")
         if not task:
             return None
@@ -506,7 +520,7 @@ class NamingTaskOutputNameRule(_NamingFileRule):
         )
         return self.check_file(
             display_file=_display_file_path(
-                facts["project_dir"],
+                rule_context["project_dir"],
                 task["path"],
             ),
             expected=task["expected_table"],

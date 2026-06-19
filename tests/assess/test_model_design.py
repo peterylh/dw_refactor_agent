@@ -44,6 +44,19 @@ def test_extract_model_design_sql_facts_detects_group_by_and_aggregates():
     assert "total_amount" in facts["aggregate_aliases"]
 
 
+def test_extract_model_design_sql_facts_detects_unaliased_aggregate():
+    sql = """
+    SELECT COUNT(*)
+    FROM shop_dm.ods_order;
+    """
+
+    facts = extract_model_design_sql_facts(sql)
+
+    assert facts["has_aggregate"] is True
+    assert facts["aggregate_aliases"] == []
+    assert facts["has_window_metric"] is False
+
+
 def test_extract_model_design_sql_facts_detects_plain_detail_select():
     sql = """
     INSERT INTO shop_dm.dwd_order_detail
@@ -345,6 +358,226 @@ def test_model_design_flags_dim_metric_groups_without_llm():
     result = score_model_design_health(context)
 
     assert _rule_ids(result) == {"MODEL_DIM_NO_METRIC_GROUPS"}
+
+
+def test_model_design_flags_dim_info_from_non_ods_upstream():
+    tables = [
+        {"name": "dwd_customer_profile", "layer": "DWD", "columns": []},
+        {"name": "dim_base_customer_info", "layer": "DIM", "columns": []},
+    ]
+    edges = [
+        {
+            "source": {
+                "type": "column",
+                "id": "dwd_customer_profile.customer_status",
+            },
+            "target": {
+                "type": "column",
+                "id": "dim_base_customer_info.customer_status",
+            },
+            "relation_type": "direct",
+            "transformation_type": "passthrough",
+            "expression": "customer_status",
+            "source_file": "dim_base_customer_info.sql",
+        }
+    ]
+    model_metadata = {
+        "dim_base_customer_info": {
+            "table_type": "dimension",
+            "dimension_role": "BASE",
+            "dimension_content_type": "INFO",
+        }
+    }
+
+    context = _context(tables, edges, [], models=model_metadata)
+    result = score_model_design_health(context)
+
+    assert "MODEL_DIM_INFO_DIRECT_ODS_ONLY" in _rule_ids(result)
+    check = next(
+        check
+        for check in result["checks"]
+        if check["rule_id"] == "MODEL_DIM_INFO_DIRECT_ODS_ONLY"
+    )
+    assert check["evidence"]["invalid_upstream_tables"] == [
+        {
+            "table": "dwd_customer_profile",
+            "layer": "DWD",
+        }
+    ]
+    assert check["evidence"]["reason_codes"] == ["non_ods_upstream"]
+
+
+def test_model_design_flags_dim_info_with_aggregate_output():
+    asset_catalog = {
+        "tables": {
+            "dim_base_customer_info": {
+                "tasks": [
+                    {
+                        "source_file": "dim_base_customer_info.sql",
+                        "sql": """
+                        INSERT INTO shop_dm.dim_base_customer_info
+                        SELECT customer_id, COUNT(*) AS order_count
+                        FROM shop_dm.ods_order
+                        GROUP BY customer_id;
+                        """,
+                    }
+                ],
+            },
+        },
+    }
+    tables = [
+        {"name": "ods_order", "layer": "ODS", "columns": []},
+        {"name": "dim_base_customer_info", "layer": "DIM", "columns": []},
+    ]
+    model_metadata = {
+        "dim_base_customer_info": {
+            "table_type": "dimension",
+            "dimension_role": "BASE",
+            "dimension_content_type": "INFO",
+        }
+    }
+
+    context = _context(
+        tables,
+        [],
+        [],
+        models=model_metadata,
+        assets=asset_catalog,
+    )
+    result = score_model_design_health(context)
+
+    assert "MODEL_DIM_INFO_DIRECT_ODS_ONLY" in _rule_ids(result)
+    check = next(
+        check
+        for check in result["checks"]
+        if check["rule_id"] == "MODEL_DIM_INFO_DIRECT_ODS_ONLY"
+    )
+    assert check["evidence"]["aggregate_columns"] == ["order_count"]
+    assert check["evidence"]["reason_codes"] == ["aggregate_output"]
+
+
+def test_model_design_flags_dim_info_with_window_metric():
+    asset_catalog = {
+        "tables": {
+            "dim_base_customer_info": {
+                "tasks": [
+                    {
+                        "source_file": "dim_base_customer_info.sql",
+                        "sql": """
+                        INSERT INTO shop_dm.dim_base_customer_info
+                        SELECT customer_id,
+                               COUNT(*) OVER (
+                                   PARTITION BY customer_id
+                               ) AS order_count
+                        FROM shop_dm.ods_order;
+                        """,
+                    }
+                ],
+            },
+        },
+    }
+    tables = [
+        {"name": "ods_order", "layer": "ODS", "columns": []},
+        {"name": "dim_base_customer_info", "layer": "DIM", "columns": []},
+    ]
+    model_metadata = {
+        "dim_base_customer_info": {
+            "table_type": "dimension",
+            "dimension_role": "BASE",
+            "dimension_content_type": "INFO",
+        }
+    }
+
+    context = _context(
+        tables,
+        [],
+        [],
+        models=model_metadata,
+        assets=asset_catalog,
+    )
+    result = score_model_design_health(context)
+
+    assert "MODEL_DIM_INFO_DIRECT_ODS_ONLY" in _rule_ids(result)
+    check = next(
+        check
+        for check in result["checks"]
+        if check["rule_id"] == "MODEL_DIM_INFO_DIRECT_ODS_ONLY"
+    )
+    assert check["evidence"]["window_metric_columns"] == ["order_count"]
+    assert check["evidence"]["reason_codes"] == ["window_metric"]
+
+
+def test_model_design_allows_dim_info_from_ods_with_cleaning_and_dedup():
+    asset_catalog = {
+        "tables": {
+            "dim_base_customer_info": {
+                "tasks": [
+                    {
+                        "source_file": "dim_base_customer_info.sql",
+                        "sql": """
+                        INSERT INTO shop_dm.dim_base_customer_info
+                        SELECT customer_id,
+                               TRIM(customer_name) AS customer_name,
+                               CASE gender_code
+                                   WHEN 'M' THEN 'male'
+                                   WHEN 'F' THEN 'female'
+                                   ELSE 'unknown'
+                               END AS gender_name
+                        FROM (
+                            SELECT customer_id,
+                                   customer_name,
+                                   gender_code,
+                                   ROW_NUMBER() OVER (
+                                       PARTITION BY customer_id
+                                       ORDER BY updated_at DESC
+                                   ) AS rn
+                            FROM shop_dm.ods_customer
+                        ) t
+                        WHERE rn = 1;
+                        """,
+                    }
+                ],
+            },
+        },
+    }
+    tables = [
+        {"name": "ods_customer", "layer": "ODS", "columns": []},
+        {"name": "dim_base_customer_info", "layer": "DIM", "columns": []},
+    ]
+    edges = [
+        {
+            "source": {
+                "type": "column",
+                "id": "ods_customer.customer_name",
+            },
+            "target": {
+                "type": "column",
+                "id": "dim_base_customer_info.customer_name",
+            },
+            "relation_type": "direct",
+            "transformation_type": "passthrough",
+            "expression": "TRIM(customer_name) AS customer_name",
+            "source_file": "dim_base_customer_info.sql",
+        }
+    ]
+    model_metadata = {
+        "dim_base_customer_info": {
+            "table_type": "dimension",
+            "dimension_role": "BASE",
+            "dimension_content_type": "INFO",
+        }
+    }
+
+    context = _context(
+        tables,
+        edges,
+        [],
+        models=model_metadata,
+        assets=asset_catalog,
+    )
+    result = score_model_design_health(context)
+
+    assert "MODEL_DIM_INFO_DIRECT_ODS_ONLY" not in _rule_ids(result)
 
 
 def test_score_model_design_uses_context_lineage_view():

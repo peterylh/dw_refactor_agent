@@ -69,12 +69,12 @@ class DepthMiddleLayerIsOptimalRule(AssessRule):
     domain = "table"
     target = "table"
 
-    def evaluate(self, target: dict, facts: dict) -> dict:
+    def evaluate(self, target: dict, rule_context: dict) -> dict:
         table_name = target["name"]
         depth = _max_middle_depth(
             table_name,
-            facts["upstream"],
-            facts["table_layers"],
+            rule_context["upstream"],
+            rule_context["table_layers"],
         )
         issue = {}
         if depth == 0:

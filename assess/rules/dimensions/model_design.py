@@ -43,6 +43,25 @@ def score_model_design_health(
 
     runner = RuleRunner(rule_selection)
     checks = []
+    design_facts_cache = {}
+    upstream_tables_cache = {}
+
+    def design_facts_for(table_name: str) -> dict:
+        if table_name not in design_facts_cache:
+            design_facts_cache[table_name] = _combined_design_facts(
+                asset_catalog,
+                lineage_view,
+                table_name,
+            )
+        return design_facts_cache[table_name]
+
+    def upstream_tables_for(table_name: str) -> list[str]:
+        if table_name not in upstream_tables_cache:
+            upstream_tables_cache[table_name] = _upstream_tables_for(
+                table_name,
+                table_edges,
+            )
+        return upstream_tables_cache[table_name]
 
     dependency_targets = []
     for (src, tgt), files in table_edges.items():
@@ -123,11 +142,6 @@ def score_model_design_health(
         layer = str(table.get("layer") or "OTHER").upper()
         metadata = _table_metadata(model_metadata, table_name)
         is_fact = _is_fact_table(model_metadata, table_name)
-        design_facts = (
-            _combined_design_facts(asset_catalog, lineage_view, table_name)
-            if is_fact
-            else {}
-        )
         table_targets.append(
             {
                 "kind": "table",
@@ -141,27 +155,27 @@ def score_model_design_health(
                     asset_catalog,
                     table_name,
                 ),
-                "design_facts": design_facts,
-                "has_design_evidence": bool(
-                    design_facts.get("source_files")
-                    or (design_facts.get("lineage") or {}).get("has_lineage")
-                ),
-                "upstream_tables": _upstream_tables_for(
-                    table_name,
-                    table_edges,
-                ),
             }
         )
+
+    table_rule_context = {
+        "model_metadata": model_metadata,
+        "table_edges": table_edges,
+        "table_layers": table_layers,
+        "design_facts_for": design_facts_for,
+        "upstream_tables_for": upstream_tables_for,
+    }
 
     for target in table_targets:
         checks.extend(
             runner.run_rules(
                 [
                     "MODEL_DIM_NO_METRIC_GROUPS",
+                    "MODEL_DIM_INFO_DIRECT_ODS_ONLY",
                     "MODEL_DATE_PARTITION_USES_DATA_DT",
                 ],
                 [target],
-                {"model_metadata": model_metadata},
+                table_rule_context,
             )
         )
         if not target["is_fact_table"]:
@@ -177,7 +191,7 @@ def score_model_design_health(
                         "MODEL_DWD_FACT_HAS_EVENT_KEY",
                     ],
                     [target],
-                    {"model_metadata": model_metadata},
+                    table_rule_context,
                 )
             )
         if target["layer"] == "DWS":
@@ -191,7 +205,7 @@ def score_model_design_health(
                         "MODEL_DWS_SELECT_FIELDS_MATCH_GRAIN",
                     ],
                     [target],
-                    {"model_metadata": model_metadata},
+                    table_rule_context,
                 )
             )
 

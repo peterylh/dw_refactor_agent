@@ -21,8 +21,10 @@ class ReuseDownstreamReachesTargetRule(AssessRule):
     domain = "table"
     target = "table"
 
-    def evaluate(self, target: dict, facts: dict) -> dict:
-        downstream_count = len(facts["downstream"].get(target["name"], set()))
+    def evaluate(self, target: dict, rule_context: dict) -> dict:
+        downstream_count = len(
+            rule_context["downstream"].get(target["name"], set())
+        )
         issue = {}
         if downstream_count == 0:
             issue = {
