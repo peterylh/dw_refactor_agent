@@ -1,8 +1,8 @@
 import yaml
 
-import assess.context_builder as context_builder_module
+import assess.llm.context_builder as context_builder_module
 import config
-from assess.context_builder import (
+from assess.llm.context_builder import (
     build_contexts,
     extract_column_lineage,
     extract_dependencies,

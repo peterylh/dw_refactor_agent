@@ -483,8 +483,8 @@ python assess/business_semantics_catalog.py --project shop --llm --overwrite
 等价入口：
 
 ```bash
-python assess/model_metadata_writer.py --project shop --catalog-from-llm --dry-run --overwrite-catalog
-python assess/model_metadata_writer.py --project shop --catalog-from-llm --overwrite-catalog
+python -m assess.llm.model_metadata_writer --project shop --catalog-from-llm --dry-run --overwrite-catalog
+python -m assess.llm.model_metadata_writer --project shop --catalog-from-llm --overwrite-catalog
 ```
 
 LLM 目录发现会先做表级巡检，再将 fact 表指标字段中的
@@ -496,8 +496,8 @@ catalog 不长期维护 `tables`。
 从已确认 catalog 初始化或刷新 models：
 
 ```bash
-python assess/model_metadata_writer.py --project shop --from-catalog --write-scope business --dry-run
-python assess/model_metadata_writer.py --project shop --from-catalog --write-scope business
+python -m assess.llm.model_metadata_writer --project shop --from-catalog --write-scope business --dry-run
+python -m assess.llm.model_metadata_writer --project shop --from-catalog --write-scope business
 ```
 
 `--from-catalog --write-scope business` 不调用 LLM。表到业务过程/语义主题的归属以
@@ -515,7 +515,7 @@ python assess/model_metadata_writer.py --project shop --from-catalog --write-sco
 
 `assess/llm/table_inspector.py` 是基础表巡检能力，用于单次 DeepSeek 调用中完成表级分层、表类型判断和字段分组。
 
-`assess/model_metadata_writer.py` 用于扫描项目 DWD/DWS/DIM 层表，复用 `assess/llm/table_inspector.py` 的巡检结果，将 LLM 推断的表级元数据与事实表指标分组回写到 models。
+`assess/llm/model_metadata_writer.py` 用于扫描项目 DWD/DWS/DIM 层表，复用 `assess/llm/table_inspector.py` 的巡检结果，将 LLM 推断的表级元数据与事实表指标分组回写到 models。
 
 巡检与回写逻辑：
 
@@ -536,28 +536,28 @@ python assess/model_metadata_writer.py --project shop --from-catalog --write-sco
 
 ```bash
 # 只预览巡检与回写结果，不写模型 YAML
-python assess/model_metadata_writer.py --project shop --dry-run
+python -m assess.llm.model_metadata_writer --project shop --dry-run
 
 # 巡检 finance_analytics 并回写 models/*.yaml
-python assess/model_metadata_writer.py --project finance_analytics
+python -m assess.llm.model_metadata_writer --project finance_analytics
 
 # 只回写表信息 layer/table_type
-python assess/model_metadata_writer.py --project shop --write-scope table
+python -m assess.llm.model_metadata_writer --project shop --write-scope table
 
 # 只回写指标分组
-python assess/model_metadata_writer.py --project shop --write-scope metrics
+python -m assess.llm.model_metadata_writer --project shop --write-scope metrics
 
 # 只回写 entities/grain
-python assess/model_metadata_writer.py --project shop --write-scope grain
+python -m assess.llm.model_metadata_writer --project shop --write-scope grain
 
 # 从已确认 catalog 同步业务语义和基础模型元数据，不调用 LLM
-python assess/model_metadata_writer.py --project shop --from-catalog --write-scope business
+python -m assess.llm.model_metadata_writer --project shop --from-catalog --write-scope business
 
 # 忽略缓存，强制重新调用 DeepSeek
-python assess/model_metadata_writer.py --project shop --no-cache
+python -m assess.llm.model_metadata_writer --project shop --no-cache
 
 # LLM 返回校验失败时最多重试 2 次
-python assess/model_metadata_writer.py --project shop --max-retries 2
+python -m assess.llm.model_metadata_writer --project shop --max-retries 2
 ```
 
 默认输出到 `assess/model_metadata_result_{project}.json`。

@@ -46,8 +46,8 @@ LLM 发现的原则：
 等价入口也可以使用：
 
 ```bash
-python assess/model_metadata_writer.py --project shop --catalog-from-llm --dry-run --overwrite-catalog
-python assess/model_metadata_writer.py --project shop --catalog-from-llm --overwrite-catalog
+python -m assess.llm.model_metadata_writer --project shop --catalog-from-llm --dry-run --overwrite-catalog
+python -m assess.llm.model_metadata_writer --project shop --catalog-from-llm --overwrite-catalog
 ```
 
 ### 3. 人工修订 catalog
@@ -65,8 +65,8 @@ python assess/model_metadata_writer.py --project shop --catalog-from-llm --overw
 ### 4. 从 catalog 初始化或刷新 models
 
 ```bash
-python assess/model_metadata_writer.py --project shop --from-catalog --write-scope business --dry-run
-python assess/model_metadata_writer.py --project shop --from-catalog --write-scope business
+python -m assess.llm.model_metadata_writer --project shop --from-catalog --write-scope business --dry-run
+python -m assess.llm.model_metadata_writer --project shop --from-catalog --write-scope business
 ```
 
 这个命令不调用 LLM。它读取 `{project}/business_semantics.yaml`、`{project}/models/*.yaml` 和 `{project}/ods/models/{catalog}/{database}/*.yaml`，以 models 中已有的 `business_process` / `semantic_subject` 为表级归属事实，再从 catalog 补齐这些 code 对应的数据域和业务板块。
@@ -89,17 +89,17 @@ python assess/model_metadata_writer.py --project shop --from-catalog --write-sco
 表级 LLM 巡检用于补全和刷新更细的模型信息：
 
 ```bash
-python assess/model_metadata_writer.py --project shop --dry-run
-python assess/model_metadata_writer.py --project shop
+python -m assess.llm.model_metadata_writer --project shop --dry-run
+python -m assess.llm.model_metadata_writer --project shop
 ```
 
 常用写入范围：
 
 ```bash
-python assess/model_metadata_writer.py --project shop --write-scope table
-python assess/model_metadata_writer.py --project shop --write-scope metrics
-python assess/model_metadata_writer.py --project shop --write-scope grain
-python assess/model_metadata_writer.py --project shop --write-scope all
+python -m assess.llm.model_metadata_writer --project shop --write-scope table
+python -m assess.llm.model_metadata_writer --project shop --write-scope metrics
+python -m assess.llm.model_metadata_writer --project shop --write-scope grain
+python -m assess.llm.model_metadata_writer --project shop --write-scope all
 ```
 
 说明：

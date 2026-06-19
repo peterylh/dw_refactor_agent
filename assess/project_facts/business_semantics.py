@@ -498,15 +498,3 @@ def catalog_mapping_for_model(
         }
 
     return {"table": short_name}
-
-
-def catalog_mapping_for_table(
-    catalog: dict[str, Any], table_name: str
-) -> dict[str, Any]:
-    """Compatibility wrapper.
-
-    Catalog no longer owns table assignments, so this returns only a base
-    table mapping. Use catalog_mapping_for_model when model metadata is
-    available.
-    """
-    return {"table": _short_table_name(table_name)}

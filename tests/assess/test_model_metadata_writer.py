@@ -2,8 +2,7 @@ import pytest
 import yaml
 
 import config
-from assess.llm.table_inspector import TableInspectResult
-from assess.model_metadata_writer import (
+from assess.llm.model_metadata_writer import (
     build_dwd_contexts,
     build_inspection_contexts,
     build_metric_contexts,
@@ -17,6 +16,7 @@ from assess.model_metadata_writer import (
     run_metadata_write,
     update_model_yaml,
 )
+from assess.llm.table_inspector import TableInspectResult
 from config import BusinessAreaDef, BusinessDomainConfig, DomainDef
 
 
@@ -34,7 +34,7 @@ def _business_domain_config():
 
 
 def _configure_project_root(monkeypatch, project_root):
-    import assess.model_metadata_writer as writer_module
+    import assess.llm.model_metadata_writer as writer_module
 
     monkeypatch.setattr(config, "PROJECT_ROOT", project_root)
     monkeypatch.setattr(writer_module, "PROJECT_ROOT", project_root)
@@ -333,7 +333,7 @@ def test_metric_violations_allows_dws_derived_metrics():
 
 
 def test_update_model_yaml_preserves_existing_metadata(tmp_path, monkeypatch):
-    import assess.model_metadata_writer as writer_module
+    import assess.llm.model_metadata_writer as writer_module
 
     project_root = tmp_path
     models_dir = project_root / "demo" / "models"
@@ -372,7 +372,7 @@ def test_update_model_yaml_preserves_existing_metadata(tmp_path, monkeypatch):
 
 
 def test_update_model_yaml_defaults_to_declared_layer(tmp_path, monkeypatch):
-    import assess.model_metadata_writer as writer_module
+    import assess.llm.model_metadata_writer as writer_module
 
     project_root = tmp_path
     (project_root / "demo" / "models").mkdir(parents=True)
@@ -402,7 +402,7 @@ def test_update_model_yaml_defaults_to_declared_layer(tmp_path, monkeypatch):
 
 
 def test_update_model_yaml_writes_llm_table_metadata(tmp_path, monkeypatch):
-    import assess.model_metadata_writer as writer_module
+    import assess.llm.model_metadata_writer as writer_module
 
     project_root = tmp_path
     models_dir = project_root / "demo" / "models"
@@ -456,7 +456,7 @@ def test_update_model_yaml_writes_llm_table_metadata(tmp_path, monkeypatch):
 def test_update_model_yaml_writes_dimension_classification_metadata(
     tmp_path, monkeypatch
 ):
-    import assess.model_metadata_writer as writer_module
+    import assess.llm.model_metadata_writer as writer_module
 
     project_root = tmp_path
     models_dir = project_root / "demo" / "models"
@@ -502,7 +502,7 @@ def test_update_model_yaml_writes_dimension_classification_metadata(
 def test_update_model_yaml_removes_stale_dimension_classification_for_fact(
     tmp_path, monkeypatch
 ):
-    import assess.model_metadata_writer as writer_module
+    import assess.llm.model_metadata_writer as writer_module
 
     project_root = tmp_path
     models_dir = project_root / "demo" / "models"
@@ -546,7 +546,7 @@ def test_update_model_yaml_removes_stale_dimension_classification_for_fact(
 
 
 def test_business_metadata_for_result_limits_fields_by_layer(monkeypatch):
-    import assess.model_metadata_writer as writer_module
+    import assess.llm.model_metadata_writer as writer_module
 
     monkeypatch.setattr(
         writer_module,
@@ -583,7 +583,7 @@ def test_business_metadata_for_result_limits_fields_by_layer(monkeypatch):
 def test_update_model_yaml_keeps_existing_applicable_business_metadata(
     tmp_path, monkeypatch
 ):
-    import assess.model_metadata_writer as writer_module
+    import assess.llm.model_metadata_writer as writer_module
 
     project_root = tmp_path
     models_dir = project_root / "demo" / "models"
@@ -632,7 +632,7 @@ def test_update_model_yaml_keeps_existing_applicable_business_metadata(
 def test_update_model_yaml_forces_dimension_layer_and_warns(
     tmp_path, monkeypatch
 ):
-    import assess.model_metadata_writer as writer_module
+    import assess.llm.model_metadata_writer as writer_module
 
     project_root = tmp_path
     models_dir = project_root / "demo" / "models"
@@ -683,7 +683,7 @@ def test_result_for_report_includes_dimension_layer_warning():
 def test_update_model_yaml_dry_run_reports_metadata_change(
     tmp_path, monkeypatch
 ):
-    import assess.model_metadata_writer as writer_module
+    import assess.llm.model_metadata_writer as writer_module
 
     project_root = tmp_path
     models_dir = project_root / "demo" / "models"
@@ -719,7 +719,7 @@ def test_update_model_yaml_dry_run_reports_metadata_change(
 def test_update_model_yaml_table_scope_preserves_metrics(
     tmp_path, monkeypatch
 ):
-    import assess.model_metadata_writer as writer_module
+    import assess.llm.model_metadata_writer as writer_module
 
     project_root = tmp_path
     models_dir = project_root / "demo" / "models"
@@ -761,7 +761,7 @@ def test_update_model_yaml_table_scope_preserves_metrics(
 def test_update_model_yaml_metrics_scope_preserves_table_info(
     tmp_path, monkeypatch
 ):
-    import assess.model_metadata_writer as writer_module
+    import assess.llm.model_metadata_writer as writer_module
 
     project_root = tmp_path
     models_dir = project_root / "demo" / "models"
@@ -806,7 +806,7 @@ def test_update_model_yaml_metrics_scope_preserves_table_info(
 def test_update_model_yaml_metrics_scope_does_not_create_empty_model(
     tmp_path, monkeypatch
 ):
-    import assess.model_metadata_writer as writer_module
+    import assess.llm.model_metadata_writer as writer_module
 
     project_root = tmp_path
     (project_root / "demo" / "models").mkdir(parents=True)
@@ -827,7 +827,7 @@ def test_update_model_yaml_metrics_scope_does_not_create_empty_model(
 def test_update_model_yaml_grain_scope_writes_dws_grain_only(
     tmp_path, monkeypatch
 ):
-    import assess.model_metadata_writer as writer_module
+    import assess.llm.model_metadata_writer as writer_module
 
     project_root = tmp_path
     models_dir = project_root / "demo" / "models"
@@ -898,7 +898,7 @@ def test_update_model_yaml_grain_scope_writes_dws_grain_only(
 def test_update_model_yaml_normalizes_time_period_aliases(
     tmp_path, monkeypatch
 ):
-    import assess.model_metadata_writer as writer_module
+    import assess.llm.model_metadata_writer as writer_module
 
     project_root = tmp_path
     models_dir = project_root / "demo" / "models"
@@ -953,7 +953,7 @@ def test_update_model_yaml_normalizes_time_period_aliases(
 def test_update_model_yaml_grain_scope_keeps_full_dws_grain_entities(
     tmp_path, monkeypatch
 ):
-    import assess.model_metadata_writer as writer_module
+    import assess.llm.model_metadata_writer as writer_module
 
     project_root = tmp_path
     models_dir = project_root / "demo" / "models"
@@ -1008,7 +1008,7 @@ def test_update_model_yaml_grain_scope_keeps_full_dws_grain_entities(
 def test_update_model_yaml_grain_scope_writes_dimension_entity_only(
     tmp_path, monkeypatch
 ):
-    import assess.model_metadata_writer as writer_module
+    import assess.llm.model_metadata_writer as writer_module
 
     project_root = tmp_path
     models_dir = project_root / "demo" / "models"
@@ -1067,7 +1067,7 @@ def test_update_model_yaml_grain_scope_writes_dimension_entity_only(
 def test_update_model_yaml_grain_scope_removes_placeholder_empty_grain(
     tmp_path, monkeypatch
 ):
-    import assess.model_metadata_writer as writer_module
+    import assess.llm.model_metadata_writer as writer_module
 
     project_root = tmp_path
     models_dir = project_root / "demo" / "models"
@@ -1128,7 +1128,7 @@ def test_update_model_yaml_grain_scope_removes_placeholder_empty_grain(
 def test_update_model_yaml_grain_scope_writes_dimension_related_entities(
     tmp_path, monkeypatch
 ):
-    import assess.model_metadata_writer as writer_module
+    import assess.llm.model_metadata_writer as writer_module
 
     project_root = tmp_path
     models_dir = project_root / "demo" / "models"
@@ -1208,7 +1208,7 @@ def test_update_model_yaml_grain_scope_writes_dimension_related_entities(
 def test_update_model_yaml_grain_scope_migrates_legacy_entity_fields(
     tmp_path, monkeypatch
 ):
-    import assess.model_metadata_writer as writer_module
+    import assess.llm.model_metadata_writer as writer_module
 
     project_root = tmp_path
     models_dir = project_root / "demo" / "models"
@@ -1296,7 +1296,7 @@ def test_update_model_yaml_grain_scope_migrates_legacy_entity_fields(
 def test_update_model_yaml_grain_scope_migrates_existing_legacy_without_result(
     tmp_path, monkeypatch
 ):
-    import assess.model_metadata_writer as writer_module
+    import assess.llm.model_metadata_writer as writer_module
 
     project_root = tmp_path
     models_dir = project_root / "demo" / "models"
@@ -1348,7 +1348,7 @@ def test_update_model_yaml_grain_scope_migrates_existing_legacy_without_result(
 def test_update_model_yaml_grain_scope_canonicalizes_llm_entities(
     tmp_path, monkeypatch
 ):
-    import assess.model_metadata_writer as writer_module
+    import assess.llm.model_metadata_writer as writer_module
 
     project_root = tmp_path
     models_dir = project_root / "demo" / "models"
@@ -1418,7 +1418,7 @@ def test_update_model_yaml_grain_scope_canonicalizes_llm_entities(
 def test_update_model_yaml_preserves_dwd_fact_primary_entity(
     tmp_path, monkeypatch
 ):
-    import assess.model_metadata_writer as writer_module
+    import assess.llm.model_metadata_writer as writer_module
 
     project_root = tmp_path
     models_dir = project_root / "demo" / "models"
@@ -1485,7 +1485,7 @@ def test_update_model_yaml_preserves_dwd_fact_primary_entity(
 def test_update_model_yaml_grain_scope_treats_declared_dim_as_primary(
     tmp_path, monkeypatch
 ):
-    import assess.model_metadata_writer as writer_module
+    import assess.llm.model_metadata_writer as writer_module
 
     project_root = tmp_path
     models_dir = project_root / "demo" / "models"
@@ -1538,7 +1538,7 @@ def test_update_model_yaml_grain_scope_treats_declared_dim_as_primary(
 def test_update_model_yaml_grain_scope_migrates_blocked_existing_metadata(
     tmp_path, monkeypatch
 ):
-    import assess.model_metadata_writer as writer_module
+    import assess.llm.model_metadata_writer as writer_module
 
     project_root = tmp_path
     models_dir = project_root / "demo" / "models"
@@ -1607,7 +1607,7 @@ def test_update_model_yaml_grain_scope_migrates_blocked_existing_metadata(
 def test_update_models_for_results_allows_blocked_schema_migration(
     tmp_path, monkeypatch
 ):
-    import assess.model_metadata_writer as writer_module
+    import assess.llm.model_metadata_writer as writer_module
 
     project_root = tmp_path
     models_dir = project_root / "demo" / "models"
@@ -1672,7 +1672,7 @@ def test_update_models_for_results_allows_blocked_schema_migration(
 def test_blocked_schema_migration_keeps_grain_entities_consistent(
     tmp_path, monkeypatch
 ):
-    import assess.model_metadata_writer as writer_module
+    import assess.llm.model_metadata_writer as writer_module
 
     project_root = tmp_path
     models_dir = project_root / "demo" / "models"
@@ -1732,7 +1732,7 @@ def test_blocked_schema_migration_keeps_grain_entities_consistent(
 
 
 def test_update_model_yaml_replaces_existing_metrics(tmp_path, monkeypatch):
-    import assess.model_metadata_writer as writer_module
+    import assess.llm.model_metadata_writer as writer_module
 
     project_root = tmp_path
     models_dir = project_root / "demo" / "models"
@@ -1769,7 +1769,7 @@ def test_update_model_yaml_replaces_existing_metrics(tmp_path, monkeypatch):
 def test_update_model_yaml_replaces_legacy_metric_fields(
     tmp_path, monkeypatch
 ):
-    import assess.model_metadata_writer as writer_module
+    import assess.llm.model_metadata_writer as writer_module
 
     project_root = tmp_path
     models_dir = project_root / "demo" / "models"
@@ -1806,7 +1806,7 @@ def test_update_model_yaml_replaces_legacy_metric_fields(
 def test_update_model_yaml_removes_metrics_when_none_detected(
     tmp_path, monkeypatch
 ):
-    import assess.model_metadata_writer as writer_module
+    import assess.llm.model_metadata_writer as writer_module
 
     project_root = tmp_path
     models_dir = project_root / "demo" / "models"
@@ -1852,7 +1852,7 @@ def test_update_model_yaml_removes_metrics_when_none_detected(
 
 
 def test_update_model_yaml_skips_blocked_results(tmp_path, monkeypatch):
-    import assess.model_metadata_writer as writer_module
+    import assess.llm.model_metadata_writer as writer_module
 
     project_root = tmp_path
     models_dir = project_root / "demo" / "models"
@@ -1895,7 +1895,7 @@ def test_update_model_yaml_skips_blocked_results(tmp_path, monkeypatch):
 def test_run_metadata_write_reuses_table_inspector(
     monkeypatch, sample_lineage_data, isolated_writer_project
 ):
-    import assess.model_metadata_writer as writer_module
+    import assess.llm.model_metadata_writer as writer_module
 
     class FakeInspector:
         def __init__(
@@ -1969,7 +1969,7 @@ def test_run_metadata_write_reuses_table_inspector(
 def test_run_metadata_write_passes_parallelism(
     monkeypatch, sample_lineage_data, isolated_writer_project
 ):
-    import assess.model_metadata_writer as writer_module
+    import assess.llm.model_metadata_writer as writer_module
 
     seen = {}
 
@@ -1997,7 +1997,7 @@ def test_run_metadata_write_passes_parallelism(
 def test_run_metadata_write_counts_dimension_layer_warnings(
     monkeypatch, sample_lineage_data, isolated_writer_project
 ):
-    import assess.model_metadata_writer as writer_module
+    import assess.llm.model_metadata_writer as writer_module
 
     class FakeInspector:
         def __init__(
@@ -2049,7 +2049,7 @@ def test_run_metadata_write_counts_dimension_layer_warnings(
 def test_run_metadata_write_passes_dwd_metric_groups_to_dws(
     monkeypatch, sample_lineage_data, isolated_writer_project
 ):
-    import assess.model_metadata_writer as writer_module
+    import assess.llm.model_metadata_writer as writer_module
 
     seen_dws_contexts = []
 
@@ -2094,7 +2094,7 @@ def test_run_metadata_write_passes_dwd_metric_groups_to_dws(
 def test_run_metadata_write_discovers_related_entity_from_dws_grain(
     monkeypatch, tmp_path, isolated_writer_project
 ):
-    import assess.model_metadata_writer as writer_module
+    import assess.llm.model_metadata_writer as writer_module
 
     project_dir = tmp_path / isolated_writer_project
     models_dir = project_dir / "models"
@@ -2255,7 +2255,7 @@ def test_run_metadata_write_discovers_related_entity_from_dws_grain(
 def test_run_metadata_write_skips_blocked_model_updates(
     monkeypatch, sample_lineage_data, isolated_writer_project
 ):
-    import assess.model_metadata_writer as writer_module
+    import assess.llm.model_metadata_writer as writer_module
 
     blocked = _sample_fact_result()
     blocked.validation = {
@@ -2306,7 +2306,7 @@ def test_run_metadata_write_skips_blocked_model_updates(
 def test_run_catalog_discovery_writes_catalog_from_llm_results(
     tmp_path, monkeypatch, sample_lineage_data
 ):
-    import assess.model_metadata_writer as writer_module
+    import assess.llm.model_metadata_writer as writer_module
 
     project = "catalog_discovery"
     project_dir = tmp_path / project

@@ -68,7 +68,7 @@ next to `ddl/`, `tasks/`, and `models/`. Shared helpers may still live under
 the `assess` package directory.
 
 The catalog is initialized by `assess/business_semantics_catalog.py --llm` or
-`assess/model_metadata_writer.py --catalog-from-llm` using table-level
+`python -m assess.llm.model_metadata_writer --catalog-from-llm` using table-level
 inspection contexts rather than raw full-project prompt dumps. Each context
 summarizes table name, layer hints, DDL columns and comments, keys, task SQL
 features, lineage, upstream/downstream tables, and any existing model/LLM
@@ -85,8 +85,8 @@ proposal/accept workflow.
 Command shape:
 
 ```bash
-python assess/model_metadata_writer.py --project shop --from-catalog --write-scope business --dry-run
-python assess/model_metadata_writer.py --project shop --from-catalog --write-scope business
+python -m assess.llm.model_metadata_writer --project shop --from-catalog --write-scope business --dry-run
+python -m assess.llm.model_metadata_writer --project shop --from-catalog --write-scope business
 ```
 
 Initialization writes stable base metadata and catalog-backed business
@@ -130,8 +130,8 @@ Rules for writing model YAML:
 After the catalog changes, refresh table-level metadata from the catalog:
 
 ```bash
-python assess/model_metadata_writer.py --project shop --from-catalog --write-scope business --dry-run
-python assess/model_metadata_writer.py --project shop --from-catalog --write-scope business
+python -m assess.llm.model_metadata_writer --project shop --from-catalog --write-scope business --dry-run
+python -m assess.llm.model_metadata_writer --project shop --from-catalog --write-scope business
 ```
 
 `--from-catalog` means the accepted catalog is the governed code dictionary.
@@ -165,7 +165,7 @@ Use Git as the review and accept mechanism:
 
 ```bash
 python assess/business_semantics_catalog.py --project shop --llm --overwrite
-python assess/model_metadata_writer.py --project shop --from-catalog --write-scope business
+python -m assess.llm.model_metadata_writer --project shop --from-catalog --write-scope business
 git diff
 git add -p
 ```

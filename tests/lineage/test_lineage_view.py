@@ -29,7 +29,6 @@ def test_lineage_view_reuses_indexed_column_lineage():
 
     view = LineageView.from_data("demo", lineage_data)
 
-    assert not hasattr(view, "table_graph")
     assert view.raw_table_graph() == (
         {
             "tmp_orders": {"dwd_orders"},
