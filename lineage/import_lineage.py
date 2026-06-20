@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Bulk import lineage_data_<project>.json into the project lineage database."""
+"""Bulk import project lineage_data.json into the project lineage database."""
 
 from __future__ import annotations
 
@@ -18,7 +18,12 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from config import DB_ENV_CONFIG, PROJECT_CONFIG, TEXT_ENCODING
+from config import (
+    DB_ENV_CONFIG,
+    PROJECT_CONFIG,
+    TEXT_ENCODING,
+    lineage_data_path,
+)
 
 DEFAULT_BATCH_SIZE = 5000
 LINEAGE_DIR = Path(__file__).resolve().parent
@@ -77,7 +82,7 @@ class LineageImportRows:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="将 lineage_data_{project}.json 批量导入对应项目的 lineage 库"
+        description="将项目血缘 JSON 批量导入对应项目的 lineage 库"
     )
     parser.add_argument(
         "--project",
@@ -88,7 +93,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--lineage-file",
         default=None,
-        help="可选的血缘 JSON 文件路径，默认使用 lineage/lineage_data_<project>.json",
+        help="可选的血缘 JSON 文件路径，默认使用 {project}/lineage/lineage_data.json",
     )
     parser.add_argument(
         "--batch-size",
@@ -579,7 +584,7 @@ def _load_lineage_json(path: Path) -> dict[str, Any]:
 def _lineage_file(project: str, explicit_path: str | None) -> Path:
     if explicit_path:
         return Path(explicit_path)
-    return LINEAGE_DIR / f"lineage_data_{project}.json"
+    return lineage_data_path(project)
 
 
 def _open_connection(database: str, *, db_env: str = "prod"):

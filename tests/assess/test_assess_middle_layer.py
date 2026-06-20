@@ -1,3 +1,5 @@
+import sys
+
 import pytest
 import yaml
 
@@ -349,6 +351,57 @@ def test_generate_report_reads_dimension_issues(
     assert "ARCH_SKIP_LAYER_DEPENDENCY" in report
     assert "问题项" in report
     assert "总体评分(展示)" not in report
+
+
+def test_assess_cli_defaults_output_to_project_assess_dir(
+    monkeypatch,
+    tmp_path,
+):
+    import assess.assess_middle_layer as assess_module
+
+    project = "shop"
+    project_dir = tmp_path / "shop"
+    project_dir.mkdir()
+    tool_dir = tmp_path / "tool_assess"
+    tool_dir.mkdir()
+    monkeypatch.setattr(config, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(assess_module, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(
+        assess_module,
+        "__file__",
+        str(tool_dir / "assess_middle_layer.py"),
+    )
+    monkeypatch.setitem(
+        config.PROJECT_CONFIG,
+        project,
+        {
+            "dir": "shop",
+            "naming_config": "naming_config.yaml",
+        },
+    )
+    monkeypatch.setattr(
+        sys, "argv", ["assess_middle_layer.py", "--project", project]
+    )
+    monkeypatch.setattr(
+        assess_module,
+        "assess",
+        lambda *args, **kwargs: {
+            "project": project,
+            "weights": {},
+            "dimensions": {},
+        },
+    )
+    monkeypatch.setattr(
+        assess_module,
+        "generate_report",
+        lambda *args, **kwargs: "report",
+    )
+
+    assess_module.main()
+
+    output_path = project_dir / "assess" / "assess_result.json"
+    assert output_path.exists()
+    assert not (tool_dir / f"assess_result_{project}.json").exists()
 
 
 def test_normalize_score_weights_supports_partial_override():

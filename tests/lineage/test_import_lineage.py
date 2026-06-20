@@ -1,5 +1,7 @@
 import importlib
 
+import config
+
 
 def _demo_snapshot():
     return {
@@ -62,6 +64,33 @@ def test_parser_accepts_test_db_env():
     )
 
     assert args.db_env == "test"
+
+
+def test_default_lineage_file_ignores_old_tool_directory_file(
+    monkeypatch, tmp_path
+):
+    module = importlib.import_module("lineage.import_lineage")
+    project_dir = tmp_path / "demo_project"
+    (project_dir / "lineage").mkdir(parents=True)
+    old_lineage_dir = tmp_path / "lineage"
+    old_lineage_dir.mkdir()
+    (old_lineage_dir / "lineage_data_demo.json").write_text(
+        "{}",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(config, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(module, "LINEAGE_DIR", old_lineage_dir)
+    monkeypatch.setitem(
+        config.PROJECT_CONFIG,
+        "demo",
+        {
+            "dir": "demo_project",
+        },
+    )
+
+    assert module._lineage_file("demo", None) == (
+        project_dir / "lineage" / "lineage_data.json"
+    )
 
 
 def test_open_connection_uses_selected_db_env(monkeypatch):

@@ -37,10 +37,11 @@
 
 数仓资产重构默认不更新以下生成物：
 
-- `lineage/lineage_data_*.json`
-- `lineage/job_dag_*.json`
-- `lineage/*.html`
-- `assess/*_result_*.json`
+- `{project}/lineage/lineage_data.json`
+- `{project}/lineage/job_dag.json`
+- `{project}/lineage/*.html`
+- `{project}/assess/*.json`
+- `{project}/assess/cache/`
 - `refact/runs/`
 
 除非用户明确要求更新这些派生结果。

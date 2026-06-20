@@ -40,7 +40,12 @@ from assess.rules.dimensions.naming import score_naming_conventions
 from assess.rules.dimensions.reuse import score_reusability
 from assess.rules.dimensions.task_sql_quality import score_code_quality
 from assess.scoring.config import DEFAULT_WEIGHTS, normalize_score_weights
-from config import PROJECT_CONFIG, PROJECT_ROOT
+from config import (
+    PROJECT_CONFIG,
+    PROJECT_ROOT,
+    assess_cache_path,
+    assess_result_path,
+)
 from lineage.table_graph import load_lineage_data
 
 DEFAULT_DIMENSION_ORDER = [
@@ -141,10 +146,8 @@ def assess(
         if api_key:
             print("正在调用 DeepSeek API 进行表分类，请稍候...")
             contexts = build_contexts(project, data)
-            cache_file = (
-                Path(__file__).resolve().parent
-                / "cache"
-                / f"inspect_{project}.json"
+            cache_file = assess_cache_path(
+                project, "middle_layer_inspect.json"
             )
             if weights.get("no_cache", False) and cache_file.exists():
                 cache_file.unlink()
@@ -240,7 +243,7 @@ def main():
     )
     parser.add_argument(
         "--output",
-        help="输出 JSON 文件路径 (默认 assess/assess_result_{project}.json)",
+        help="输出 JSON 文件路径 (默认 {project}/assess/assess_result.json)",
     )
     parser.add_argument(
         "--reuse-weight",
@@ -379,11 +382,9 @@ def main():
 
     output_path = args.output
     if not output_path:
-        output_path = str(
-            Path(__file__).resolve().parent
-            / f"assess_result_{args.project}.json"
-        )
+        output_path = str(assess_result_path(args.project))
 
+    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, "w") as f:
         json.dump(result, f, ensure_ascii=False, indent=2)
     print(f"\n结果已写入: {output_path}")

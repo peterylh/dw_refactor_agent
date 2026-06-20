@@ -10,7 +10,7 @@ try:
 except ImportError:  # Python 3.7
     from typing_extensions import Protocol
 
-from config import TEXT_ENCODING
+from config import TEXT_ENCODING, lineage_data_path
 from lineage.model import LineageSnapshot
 
 
@@ -29,9 +29,7 @@ class JsonLineageStore:
     """Load lineage snapshots from the repository's JSON files."""
 
     def __init__(self, lineage_dir: Path | None = None):
-        self.lineage_dir = (
-            Path(lineage_dir) if lineage_dir else Path(__file__).parent
-        )
+        self.lineage_dir = Path(lineage_dir) if lineage_dir else None
 
     def load_snapshot(
         self,
@@ -48,19 +46,26 @@ class JsonLineageStore:
         )
 
     def _snapshot_path(self, project: str, snapshot_id: str | None) -> Path:
-        if snapshot_id:
+        if self.lineage_dir is not None and snapshot_id:
             return (
                 self.lineage_dir / f"lineage_data_{project}_{snapshot_id}.json"
             )
 
-        project_path = self.lineage_dir / f"lineage_data_{project}.json"
+        if self.lineage_dir is not None:
+            project_path = self.lineage_dir / f"lineage_data_{project}.json"
+            if project_path.exists():
+                return project_path
+
+            raise FileNotFoundError(
+                f"未找到 {project} 的血缘数据文件 "
+                f"(lineage_data_{project}.json)"
+            )
+
+        project_path = lineage_data_path(project, snapshot_id=snapshot_id)
         if project_path.exists():
             return project_path
 
-        legacy_path = self.lineage_dir / "lineage_data.json"
-        if project == "shop" and legacy_path.exists():
-            return legacy_path
-
         raise FileNotFoundError(
-            f"未找到 {project} 的血缘数据文件 (lineage_data_{project}.json)"
+            f"未找到 {project} 的血缘数据文件 "
+            f"({project}/lineage/lineage_data.json)"
         )

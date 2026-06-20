@@ -24,7 +24,12 @@ from sqlglot.lineage import lineage
 from sqlglot.lineage import qualify as lineage_qualify
 from sqlglot.schema import MappingSchema, Schema
 
-from config import PROJECT_CONFIG, TEXT_ENCODING, project_asset_dirs
+from config import (
+    PROJECT_CONFIG,
+    TEXT_ENCODING,
+    lineage_data_path,
+    project_asset_dirs,
+)
 from config import determine_layer as determine_config_layer
 from doris_sql import normalize_create_table_for_sqlglot
 from lineage.sql_task_facts import extract_task_table_facts
@@ -2173,14 +2178,8 @@ def main():
         for line in warning_lines:
             print(line)
 
-    output_path = (
-        Path(__file__).parent / f"lineage_data_{CURRENT_PROJECT}.json"
-    )
-    legacy_output_path = None
+    output_path = lineage_data_path(CURRENT_PROJECT)
     output_paths = [output_path]
-    if CURRENT_PROJECT == "shop":
-        legacy_output_path = Path(__file__).parent / "lineage_data.json"
-        output_paths.append(legacy_output_path)
 
     diagnostics = extraction_result["errors"]
     fatal_diagnostics = _fatal_diagnostics(diagnostics)
@@ -2220,6 +2219,7 @@ def main():
         transient_tables=transient_tables,
     )
     for path in output_paths:
+        path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "w", encoding=TEXT_ENCODING) as fp:
             json.dump(output, fp, ensure_ascii=False, indent=2)
 
@@ -2247,8 +2247,6 @@ def main():
     if STATS["lineage_failures"]:
         print(f"  lineage 失败: {STATS['lineage_failures']} 个目标表")
     print(f"  输出: {output_path}")
-    if legacy_output_path:
-        print(f"  兼容输出: {legacy_output_path}")
     if fatal_diagnostics and not args.force_overwrite_on_error:
         print("  存在严重错误, 已写出新输出文件但进程返回失败")
         sys.exit(1)

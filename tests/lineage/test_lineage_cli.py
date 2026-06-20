@@ -2,6 +2,7 @@ import json
 
 import pytest
 
+import config
 from lineage.lineage_cli import main
 from tests.lineage.test_lineage_query import _demo_view
 
@@ -13,6 +14,39 @@ def _write_demo_lineage(tmp_path):
         encoding="utf-8",
     )
     return path
+
+
+def _write_demo_project_lineage(tmp_path, monkeypatch):
+    project_dir = tmp_path / "demo_project"
+    lineage_dir = project_dir / "lineage"
+    lineage_dir.mkdir(parents=True)
+    path = lineage_dir / "lineage_data.json"
+    path.write_text(
+        json.dumps(_demo_view().snapshot.to_dict(), ensure_ascii=False),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(config, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setitem(
+        config.PROJECT_CONFIG,
+        "demo",
+        {
+            "dir": "demo_project",
+        },
+    )
+    return path
+
+
+def test_stats_reads_project_lineage_artifact_by_default(
+    tmp_path, monkeypatch, capsys
+):
+    _write_demo_project_lineage(tmp_path, monkeypatch)
+
+    exit_code = main(["stats", "--project", "demo"])
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert "Lineage Stats: demo" in captured.out
+    assert "Tables: 6" in captured.out
 
 
 def test_table_prints_table_lineage(tmp_path, capsys):

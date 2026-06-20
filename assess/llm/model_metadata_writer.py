@@ -50,8 +50,10 @@ from config import (
     PROJECT_CONFIG,
     PROJECT_ROOT,
     TEXT_ENCODING,
+    assess_cache_path,
     get_business_domain_config,
     load_model_metadata,
+    model_metadata_result_path,
 )
 from lineage.table_graph import load_lineage_data
 
@@ -1450,9 +1452,7 @@ def run_catalog_discovery(
     metadata_only_contexts = [
         ctx for ctx in contexts if ctx.layer not in METRIC_LAYERS
     ]
-    cache_file = (
-        Path(__file__).resolve().parent / "cache" / f"inspect_{project}.json"
-    )
+    cache_file = assess_cache_path(project, "inspect.json")
     if no_cache and cache_file.exists():
         cache_file.unlink()
 
@@ -1623,9 +1623,7 @@ def run_metadata_write(
     metadata_only_contexts = [
         ctx for ctx in contexts if ctx.layer not in METRIC_LAYERS
     ]
-    cache_file = (
-        Path(__file__).resolve().parent / "cache" / f"inspect_{project}.json"
-    )
+    cache_file = assess_cache_path(project, "inspect.json")
     if no_cache and cache_file.exists():
         cache_file.unlink()
 
@@ -1713,7 +1711,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--output",
-        help="输出 JSON 文件路径 (默认 assess/model_metadata_result_{project}.json)",
+        help="输出 JSON 文件路径 (默认 {project}/assess/model_metadata_result.json)",
     )
     parser.add_argument(
         "--model", default="deepseek-v4-flash", help="DeepSeek 模型名称"
@@ -1827,11 +1825,9 @@ def main() -> None:
     output_path = (
         Path(args.output)
         if args.output
-        else (
-            Path(__file__).resolve().parent
-            / f"model_metadata_result_{args.project}.json"
-        )
+        else model_metadata_result_path(args.project)
     )
+    output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(
         json.dumps(result, ensure_ascii=False, indent=2),
         encoding=TEXT_ENCODING,

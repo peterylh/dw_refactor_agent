@@ -1,3 +1,5 @@
+import sys
+
 import pytest
 import yaml
 
@@ -1897,6 +1899,8 @@ def test_run_metadata_write_reuses_table_inspector(
 ):
     import assess.llm.model_metadata_writer as writer_module
 
+    created_cache_files = []
+
     class FakeInspector:
         def __init__(
             self, api_key, *, model, cache_file, max_retries, parallelism
@@ -1906,6 +1910,7 @@ def test_run_metadata_write_reuses_table_inspector(
             self.cache_file = cache_file
             self.max_retries = max_retries
             self.parallelism = parallelism
+            created_cache_files.append(cache_file)
 
         def inspect_batch(self, contexts):
             results = []
@@ -1957,6 +1962,9 @@ def test_run_metadata_write_reuses_table_inspector(
     assert result["non_atomic_metric_violation_count"] == 2
     assert result["model_update_count"] == 0
     assert result["model_change_count"] == len(result["model_updates"])
+    assert created_cache_files[0] == config.assess_cache_path(
+        isolated_writer_project, "inspect.json"
+    )
     assert updates_by_table["dwd_customer"]["layer"] == "DIM"
     assert updates_by_table["dwd_customer"]["table_type"] == "dimension"
     assert updates_by_table["dwd_customer"]["updated"] is False
@@ -1964,6 +1972,54 @@ def test_run_metadata_write_reuses_table_inspector(
         "dws_store_sales_daily"
     )
     assert result["skipped_model_updates"] == []
+
+
+def test_model_metadata_writer_cli_defaults_output_to_project_assess_dir(
+    monkeypatch,
+    tmp_path,
+):
+    import assess.llm.model_metadata_writer as writer_module
+
+    project = "shop"
+    project_dir = tmp_path / project
+    project_dir.mkdir()
+    tool_dir = tmp_path / "tool_assess" / "llm"
+    tool_dir.mkdir(parents=True)
+    _configure_project_root(monkeypatch, tmp_path)
+    monkeypatch.setitem(
+        config.PROJECT_CONFIG,
+        project,
+        {
+            "dir": project,
+        },
+    )
+    monkeypatch.setattr(
+        writer_module,
+        "__file__",
+        str(tool_dir / "model_metadata_writer.py"),
+    )
+    monkeypatch.setattr(
+        writer_module,
+        "run_catalog_metadata_write",
+        lambda *args, **kwargs: {
+            "project": project,
+            "source": "catalog",
+            "inspected_table_count": 0,
+            "model_change_count": 0,
+            "model_update_count": 0,
+        },
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["model_metadata_writer.py", "--project", project, "--from-catalog"],
+    )
+
+    writer_module.main()
+
+    output_path = project_dir / "assess" / "model_metadata_result.json"
+    assert output_path.exists()
+    assert not (tool_dir / f"model_metadata_result_{project}.json").exists()
 
 
 def test_run_metadata_write_passes_parallelism(

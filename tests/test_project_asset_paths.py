@@ -111,6 +111,42 @@ def test_model_path_for_table_routes_ods_layer_to_catalog_database_dir(
     )
 
 
+def test_project_artifact_paths_are_project_scoped(monkeypatch, tmp_path):
+    monkeypatch.setattr(config, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setitem(
+        config.PROJECT_CONFIG,
+        "demo",
+        {
+            "dir": "demo_project",
+        },
+    )
+
+    assert config.project_artifact_dir("demo", "lineage") == Path(
+        tmp_path,
+        "demo_project",
+        "lineage",
+    )
+    assert config.lineage_data_path("demo") == Path(
+        tmp_path,
+        "demo_project",
+        "lineage",
+        "lineage_data.json",
+    )
+    assert config.job_dag_path("demo") == Path(
+        tmp_path,
+        "demo_project",
+        "lineage",
+        "job_dag.json",
+    )
+    assert config.assess_cache_path("demo", "inspect.json") == Path(
+        tmp_path,
+        "demo_project",
+        "assess",
+        "cache",
+        "inspect.json",
+    )
+
+
 def test_finance_analytics_ods_assets_are_under_catalog_database_dir():
     project_dir = config.PROJECT_ROOT / "finance_analytics"
     ods_root = project_dir / "ods"

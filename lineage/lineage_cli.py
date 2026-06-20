@@ -116,7 +116,10 @@ def _add_common_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--lineage-dir",
         default=None,
-        help="Directory containing lineage_data_<project>.json",
+        help=(
+            "Directory containing lineage_data_<project>.json; "
+            "defaults to {project}/lineage/lineage_data.json"
+        ),
     )
 
 

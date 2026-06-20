@@ -34,6 +34,8 @@ from config import (
     get_model_names_by_layer,
     get_mysql_cmd,
     iter_project_asset_files,
+    job_dag_path,
+    lineage_data_path,
     load_model_metadata,
 )
 from lineage.job_dag import JobDAG, asset_job_dag_from_lineage
@@ -58,7 +60,7 @@ def _load_partition_units(project: str) -> dict[str, str]:
 
 
 def _build_job_dag(project: str) -> JobDAG:
-    lineage_path = _root / "lineage" / f"lineage_data_{project}.json"
+    lineage_path = _resolve_lineage_data_file(project)
     if not lineage_path.exists():
         print("  lineage 数据不存在, 运行 lineage_extractor 生成...")
         subprocess.run(
@@ -71,8 +73,17 @@ def _build_job_dag(project: str) -> JobDAG:
             check=True,
             cwd=_root,
         )
+        lineage_path = _resolve_lineage_data_file(project)
     data = json.loads(lineage_path.read_text(encoding=TEXT_ENCODING))
     return asset_job_dag_from_lineage(data)
+
+
+def _resolve_lineage_data_file(project: str) -> Path:
+    return lineage_data_path(project)
+
+
+def _resolve_job_dag_file(project: str) -> Path:
+    return job_dag_path(project)
 
 
 def _dag_needs_refresh_for_tasks(dag: JobDAG, task_names: set[str]) -> bool:
@@ -550,18 +561,21 @@ def main():
     task_files = _get_task_files(project)
     task_names = set(task_files.keys())
 
-    dag_path = _root / "lineage" / f"job_dag_{project}.json"
-    if args.refresh_dag or not dag_path.exists():
+    dag_path = job_dag_path(project)
+    existing_dag_path = _resolve_job_dag_file(project)
+    if args.refresh_dag or not existing_dag_path.exists():
         print(f"生成 DAG: {dag_path}")
         dag = _build_job_dag(project)
+        dag_path.parent.mkdir(parents=True, exist_ok=True)
         dag.save(dag_path)
         print(f"  DAG 已保存: {len(dag._edges)} 条边")
     else:
-        print(f"加载 DAG: {dag_path}")
-        dag = JobDAG.load(dag_path)
+        print(f"加载 DAG: {existing_dag_path}")
+        dag = JobDAG.load(existing_dag_path)
         if _dag_needs_refresh_for_tasks(dag, task_names):
             print("  DAG 与当前作业不匹配, 重新生成...")
             dag = _build_job_dag(project)
+            dag_path.parent.mkdir(parents=True, exist_ok=True)
             dag.save(dag_path)
             print(f"  DAG 已保存: {len(dag._edges)} 条边")
 

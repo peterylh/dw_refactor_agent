@@ -298,9 +298,10 @@ def test_discover_ods_dates_uses_model_layer(monkeypatch, tmp_path):
 
 
 def test_build_job_dag_accepts_structured_lineage_edges(monkeypatch, tmp_path):
-    lineage_dir = tmp_path / "lineage"
-    lineage_dir.mkdir()
-    (lineage_dir / "lineage_data_demo.json").write_text(
+    project_dir = tmp_path / "demo_project"
+    lineage_dir = project_dir / "lineage"
+    lineage_dir.mkdir(parents=True)
+    (lineage_dir / "lineage_data.json").write_text(
         """
         {
           "edges": [
@@ -327,6 +328,14 @@ def test_build_job_dag_accepts_structured_lineage_edges(monkeypatch, tmp_path):
         encoding="utf-8",
     )
     monkeypatch.setattr(task_run, "_root", tmp_path)
+    monkeypatch.setattr(config, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setitem(
+        config.PROJECT_CONFIG,
+        "demo",
+        {
+            "dir": "demo_project",
+        },
+    )
 
     dag = task_run._build_job_dag("demo")
 
@@ -336,10 +345,44 @@ def test_build_job_dag_accepts_structured_lineage_edges(monkeypatch, tmp_path):
     }
 
 
+def test_task_run_resolvers_ignore_old_lineage_artifact_paths(
+    monkeypatch, tmp_path
+):
+    project_dir = tmp_path / "demo_project"
+    (project_dir / "lineage").mkdir(parents=True)
+    old_lineage_dir = tmp_path / "lineage"
+    old_lineage_dir.mkdir()
+    (old_lineage_dir / "lineage_data_demo.json").write_text(
+        "{}",
+        encoding="utf-8",
+    )
+    (old_lineage_dir / "job_dag_demo.json").write_text(
+        "{}",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(task_run, "_root", tmp_path)
+    monkeypatch.setattr(config, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setitem(
+        config.PROJECT_CONFIG,
+        "demo",
+        {
+            "dir": "demo_project",
+        },
+    )
+
+    assert task_run._resolve_lineage_data_file("demo") == (
+        project_dir / "lineage" / "lineage_data.json"
+    )
+    assert task_run._resolve_job_dag_file("demo") == (
+        project_dir / "lineage" / "job_dag.json"
+    )
+
+
 def test_build_job_dag_collapses_transient_tables(monkeypatch, tmp_path):
-    lineage_dir = tmp_path / "lineage"
-    lineage_dir.mkdir()
-    (lineage_dir / "lineage_data_demo.json").write_text(
+    project_dir = tmp_path / "demo_project"
+    lineage_dir = project_dir / "lineage"
+    lineage_dir.mkdir(parents=True)
+    (lineage_dir / "lineage_data.json").write_text(
         """
         {
           "tables": [
@@ -362,6 +405,14 @@ def test_build_job_dag_collapses_transient_tables(monkeypatch, tmp_path):
         encoding="utf-8",
     )
     monkeypatch.setattr(task_run, "_root", tmp_path)
+    monkeypatch.setattr(config, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setitem(
+        config.PROJECT_CONFIG,
+        "demo",
+        {
+            "dir": "demo_project",
+        },
+    )
 
     dag = task_run._build_job_dag("demo")
 

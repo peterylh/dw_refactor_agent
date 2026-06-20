@@ -3,7 +3,7 @@
 血缘 HTML 刷新工具。
 
 从 `PROJECT_CONFIG` 推导项目目录和数据库名，读取对应的
-`lineage_data_{project}.json`，并刷新项目对应的血缘 HTML。
+`{project}/lineage/lineage_data.json`，并刷新项目对应的血缘 HTML。
 """
 
 import argparse
@@ -17,7 +17,15 @@ import sqlglot
 from sqlglot import exp
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from config import PROJECT_CONFIG, TEXT_ENCODING, determine_layer, layer_rank
+from config import (
+    PROJECT_CONFIG,
+    TEXT_ENCODING,
+    determine_layer,
+    layer_rank,
+    lineage_data_path,
+    lineage_html_path,
+    lineage_job_html_path,
+)
 
 LINEAGE_DIR = Path(__file__).parent
 
@@ -42,14 +50,7 @@ JOB_LOGIC_MAP = {
 
 
 def resolve_lineage_data_path(project):
-    path = LINEAGE_DIR / f"lineage_data_{project}.json"
-    if path.exists():
-        return path
-    if project == "shop":
-        legacy_path = LINEAGE_DIR / "lineage_data.json"
-        if legacy_path.exists():
-            return legacy_path
-    return path
+    return lineage_data_path(project)
 
 
 def load_lineage_data(project):
@@ -205,18 +206,11 @@ def generate_jobs(data, tasks_dir, current_db, job_logic=None, project="shop"):
 def resolve_output_paths(project):
     job_template = LINEAGE_DIR / "lineage_job.html"
     lineage_template = LINEAGE_DIR / "lineage.html"
-    if project == "shop":
-        return {
-            "job_template": job_template,
-            "job_output": job_template,
-            "lineage_template": lineage_template,
-            "lineage_output": lineage_template,
-        }
     return {
         "job_template": job_template,
-        "job_output": LINEAGE_DIR / f"lineage_job_{project}.html",
+        "job_output": lineage_job_html_path(project),
         "lineage_template": lineage_template,
-        "lineage_output": LINEAGE_DIR / f"lineage_{project}.html",
+        "lineage_output": lineage_html_path(project),
     }
 
 
@@ -248,6 +242,7 @@ def inject_into_html(template_path, output_path, lineage_json, jobs_json):
         html,
         flags=re.DOTALL,
     )
+    output_path.parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, "w", encoding=TEXT_ENCODING) as f:
         f.write(html)
 
@@ -264,6 +259,7 @@ def update_lineage_html(lineage_json, template_path, output_path):
         html,
         flags=re.DOTALL,
     )
+    output_path.parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, "w", encoding=TEXT_ENCODING) as f:
         f.write(html)
     print("  已更新:", output_path)

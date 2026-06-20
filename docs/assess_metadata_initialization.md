@@ -17,7 +17,7 @@
 python lineage/lineage_extractor.py --project shop
 ```
 
-如果已有 `lineage/lineage_data_{project}.json`，可以复用。
+默认输出到 `{project}/lineage/lineage_data.json`。
 
 ### 2. 初始化或更新业务语义目录
 

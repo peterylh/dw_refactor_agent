@@ -3,6 +3,8 @@ import re
 import sys
 import types
 
+import config
+
 try:
     import sqlglot  # noqa: F401
 except ModuleNotFoundError:
@@ -67,43 +69,94 @@ except ModuleNotFoundError:
 import lineage.refresh_lineage_html as refresh_html
 
 
-def test_resolve_lineage_data_path_prefers_project_specific(
+def test_resolve_lineage_data_path_prefers_project_artifact(
     monkeypatch, tmp_path
 ):
-    monkeypatch.setattr(refresh_html, "LINEAGE_DIR", tmp_path)
-    project_file = tmp_path / "lineage_data_shop.json"
-    legacy_file = tmp_path / "lineage_data.json"
+    project_dir = tmp_path / "demo_project"
+    project_lineage_dir = project_dir / "lineage"
+    project_lineage_dir.mkdir(parents=True)
+    project_file = project_lineage_dir / "lineage_data.json"
     project_file.write_text('{"source": "project"}', encoding="utf-8")
-    legacy_file.write_text('{"source": "legacy"}', encoding="utf-8")
+    old_file = tmp_path / "tool_lineage" / "lineage_data_demo.json"
+    old_file.parent.mkdir()
+    old_file.write_text('{"source": "old"}', encoding="utf-8")
+    monkeypatch.setattr(config, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(refresh_html, "LINEAGE_DIR", old_file.parent)
+    monkeypatch.setitem(
+        config.PROJECT_CONFIG,
+        "demo",
+        {
+            "dir": "demo_project",
+        },
+    )
+    monkeypatch.setitem(
+        refresh_html.PROJECT_CONFIG,
+        "demo",
+        {
+            "dir": "demo_project",
+        },
+    )
 
-    assert refresh_html.resolve_lineage_data_path("shop") == project_file
+    assert refresh_html.resolve_lineage_data_path("demo") == project_file
 
 
-def test_resolve_lineage_data_path_shop_falls_back_to_legacy(
+def test_resolve_lineage_data_path_ignores_old_project_file(
     monkeypatch, tmp_path
 ):
-    monkeypatch.setattr(refresh_html, "LINEAGE_DIR", tmp_path)
-    legacy_file = tmp_path / "lineage_data.json"
-    legacy_file.write_text('{"source": "legacy"}', encoding="utf-8")
+    monkeypatch.setattr(config, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(refresh_html, "LINEAGE_DIR", tmp_path / "lineage")
+    monkeypatch.setitem(
+        config.PROJECT_CONFIG,
+        "demo",
+        {
+            "dir": "demo_project",
+        },
+    )
+    monkeypatch.setitem(
+        refresh_html.PROJECT_CONFIG,
+        "demo",
+        {
+            "dir": "demo_project",
+        },
+    )
+    old_file = refresh_html.LINEAGE_DIR / "lineage_data_demo.json"
+    old_file.parent.mkdir()
+    old_file.write_text('{"source": "old"}', encoding="utf-8")
 
-    assert refresh_html.resolve_lineage_data_path("shop") == legacy_file
+    assert refresh_html.resolve_lineage_data_path("demo") == (
+        tmp_path / "demo_project" / "lineage" / "lineage_data.json"
+    )
 
 
-def test_resolve_output_paths_uses_project_isolation_for_non_shop(
-    monkeypatch, tmp_path
-):
-    monkeypatch.setattr(refresh_html, "LINEAGE_DIR", tmp_path)
+def test_resolve_output_paths_uses_project_artifact_dir(monkeypatch, tmp_path):
+    project_dir = tmp_path / "demo_project"
+    monkeypatch.setattr(config, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(refresh_html, "LINEAGE_DIR", tmp_path / "lineage")
+    monkeypatch.setitem(
+        config.PROJECT_CONFIG,
+        "demo",
+        {
+            "dir": "demo_project",
+        },
+    )
+    monkeypatch.setitem(
+        refresh_html.PROJECT_CONFIG,
+        "demo",
+        {
+            "dir": "demo_project",
+        },
+    )
 
-    paths = refresh_html.resolve_output_paths("finance_analytics")
+    paths = refresh_html.resolve_output_paths("demo")
 
-    assert paths["job_template"] == tmp_path / "lineage_job.html"
-    assert paths["lineage_template"] == tmp_path / "lineage.html"
     assert (
-        paths["job_output"] == tmp_path / "lineage_job_finance_analytics.html"
+        paths["job_template"] == refresh_html.LINEAGE_DIR / "lineage_job.html"
     )
     assert (
-        paths["lineage_output"] == tmp_path / "lineage_finance_analytics.html"
+        paths["lineage_template"] == refresh_html.LINEAGE_DIR / "lineage.html"
     )
+    assert paths["job_output"] == project_dir / "lineage" / "lineage_job.html"
+    assert paths["lineage_output"] == project_dir / "lineage" / "lineage.html"
 
 
 def test_generate_jobs_strips_project_db_and_defaults_logic(

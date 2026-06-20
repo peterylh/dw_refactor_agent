@@ -1814,6 +1814,72 @@ def project_dir(project: str) -> Optional[Path]:
     return PROJECT_ROOT / cfg["dir"]
 
 
+def project_artifact_dir(project: str, *parts: str) -> Optional[Path]:
+    """返回项目级生成产物目录."""
+    base_dir = project_dir(project)
+    if not base_dir:
+        return None
+    return base_dir.joinpath(*parts)
+
+
+def lineage_data_path(project: str, snapshot_id: str | None = None) -> Path:
+    """返回项目血缘 JSON 默认路径."""
+    lineage_dir = project_artifact_dir(project, "lineage")
+    if lineage_dir is None:
+        raise KeyError(f"未知项目: {project}")
+    if snapshot_id:
+        return lineage_dir / f"lineage_data_{snapshot_id}.json"
+    return lineage_dir / "lineage_data.json"
+
+
+def job_dag_path(project: str) -> Path:
+    """返回项目作业 DAG 默认路径."""
+    lineage_dir = project_artifact_dir(project, "lineage")
+    if lineage_dir is None:
+        raise KeyError(f"未知项目: {project}")
+    return lineage_dir / "job_dag.json"
+
+
+def lineage_html_path(project: str) -> Path:
+    """返回项目字段血缘 HTML 默认路径."""
+    lineage_dir = project_artifact_dir(project, "lineage")
+    if lineage_dir is None:
+        raise KeyError(f"未知项目: {project}")
+    return lineage_dir / "lineage.html"
+
+
+def lineage_job_html_path(project: str) -> Path:
+    """返回项目作业血缘 HTML 默认路径."""
+    lineage_dir = project_artifact_dir(project, "lineage")
+    if lineage_dir is None:
+        raise KeyError(f"未知项目: {project}")
+    return lineage_dir / "lineage_job.html"
+
+
+def assess_result_path(project: str) -> Path:
+    """返回项目中间层评估结果默认路径."""
+    assess_dir = project_artifact_dir(project, "assess")
+    if assess_dir is None:
+        raise KeyError(f"未知项目: {project}")
+    return assess_dir / "assess_result.json"
+
+
+def model_metadata_result_path(project: str) -> Path:
+    """返回项目模型元数据回写结果默认路径."""
+    assess_dir = project_artifact_dir(project, "assess")
+    if assess_dir is None:
+        raise KeyError(f"未知项目: {project}")
+    return assess_dir / "model_metadata_result.json"
+
+
+def assess_cache_path(project: str, filename: str) -> Path:
+    """返回项目评估缓存文件默认路径."""
+    cache_dir = project_artifact_dir(project, "assess", "cache")
+    if cache_dir is None:
+        raise KeyError(f"未知项目: {project}")
+    return cache_dir / filename
+
+
 def project_ods_asset_dir(project: str, asset_kind: str) -> Optional[Path]:
     """返回 ODS 资产按 catalog/database 组织后的目录."""
     cfg = PROJECT_CONFIG.get(project)

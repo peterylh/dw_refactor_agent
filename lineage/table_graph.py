@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import json
 from collections import defaultdict
-from pathlib import Path
+
+from config import TEXT_ENCODING, lineage_data_path
 
 # ============================================================
 # 数据加载与图构建
@@ -12,19 +13,13 @@ from pathlib import Path
 
 
 def load_lineage_data(project: str) -> dict:
-    lineage_dir = Path(__file__).resolve().parent.parent / "lineage"
-    project_path = lineage_dir / f"lineage_data_{project}.json"
+    project_path = lineage_data_path(project)
     if project_path.exists():
-        with open(project_path) as f:
-            return json.load(f)
-
-    legacy_path = lineage_dir / "lineage_data.json"
-    if project == "shop" and legacy_path.exists():
-        with open(legacy_path) as f:
+        with open(project_path, encoding=TEXT_ENCODING) as f:
             return json.load(f)
 
     raise FileNotFoundError(
-        f"未找到 {project} 的血缘数据文件 (lineage_data_{project}.json)"
+        f"未找到 {project} 的血缘数据文件 ({project}/lineage/lineage_data.json)"
     )
 
 

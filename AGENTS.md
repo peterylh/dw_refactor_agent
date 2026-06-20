@@ -52,17 +52,13 @@ shop-dm/
 │   ├── refresh_lineage_html.py     # 刷新可视化 HTML
 │   ├── job_dag.py                  # 基于血缘边生成作业 DAG
 │   ├── task_cache.py               # 任务级血缘缓存 key 与缓存项 helpers
-│   ├── lineage_data_{project}.json # 各项目血缘结果
-│   ├── job_dag_{project}.json      # 各项目序列化 DAG
-│   ├── lineage.html
-│   └── lineage_job.html
+│   ├── lineage.html                # 字段血缘 HTML 模板
+│   └── lineage_job.html            # 作业血缘 HTML 模板
 ├── assess/
 │   ├── assess_middle_layer.py      # 中间层评估入口
 │   ├── context_builder.py          # 构造 LLM 表巡检上下文
 │   ├── llm/                        # DeepSeek 表巡检、字段分组与缓存
-│   ├── model_metadata_writer.py    # LLM 表元数据与指标分组回写
-│   ├── assess_result_shop.json
-│   └── cache/                      # LLM 表巡检缓存
+│   └── model_metadata_writer.py    # LLM 表元数据与指标分组回写
 ├── exec/
 │   ├── reinit_project.py           # 重建 DDL + 初始化 ODS + 触发作业执行
 │   └── task_run.py                 # 按 DAG 拓扑执行 ETL 作业
@@ -106,8 +102,7 @@ shop-dm/
 
 字段级血缘解析引擎。读取 `{project}/ddl/`、`{project}/ods/ddl/{catalog}/{database}/` 建表 SQL 与 `{project}/tasks/` ETL SQL，输出：
 
-- `lineage/lineage_data_{project}.json`
-- 默认兼容文件 `lineage/lineage_data.json`（历史用途）
+- `{project}/lineage/lineage_data.json`
 
 支持 `--project shop|finance_analytics`：
 
@@ -121,7 +116,7 @@ python lineage/lineage_extractor.py --project finance_analytics
 
 ### import_lineage.py
 
-将 `lineage_data_{project}.json` 导入 Doris 对应 lineage 库：
+将 `{project}/lineage/lineage_data.json` 导入 Doris 对应 lineage 库：
 
 - `shop` → `shop_lineage`
 - `finance_analytics` → `finance_analytics_lineage`
@@ -137,7 +132,7 @@ python lineage/lineage_extractor.py --project finance_analytics
 常用参数：
 
 - `--project shop|finance_analytics`
-- `--lineage-file <path>`：指定血缘 JSON，默认 `lineage/lineage_data_{project}.json`
+- `--lineage-file <path>`：指定血缘 JSON，默认 `{project}/lineage/lineage_data.json`
 - `--db-env prod|test`：选择 Doris 物理环境，默认 `prod`
 - `--snapshot-id <id>`：指定快照 ID，便于可重复导入或比对
 - `--batch-size <n>`：控制每批 `executemany` 行数，默认 `5000`
@@ -160,7 +155,7 @@ python lineage/import_lineage.py --project shop --snapshot-id 202606160001 --no-
 
 ### lineage_cli.py
 
-读取本地 `lineage_data_{project}.json` 进行命令行查询，不依赖 Doris：
+读取本地 `{project}/lineage/lineage_data.json` 进行命令行查询，不依赖 Doris：
 
 ```bash
 # 项目统计
@@ -180,20 +175,20 @@ python lineage/lineage_cli.py export-html --project shop --table ads_sales_dashb
 
 ### refresh_lineage_html.py
 
-读取 `lineage_data_{project}.json`，将血缘数据注入 HTML 页面并刷新可视化。
+读取 `{project}/lineage/lineage_data.json`，将血缘数据注入 HTML 页面并刷新可视化。
 
 支持 `--project shop|finance_analytics`。
 
 路径规则：
 
 - 项目上下文从 `config.py` 中的 `PROJECT_CONFIG` 推导
-- `shop` 保持历史兼容输出
-- 非 `shop` 项目使用独立 HTML 文件，避免覆盖 `shop` 的可视化结果
+- HTML 模板位于 `lineage/lineage.html`、`lineage/lineage_job.html`
+- HTML 输出位于项目目录，避免不同项目互相覆盖
 
 输出位置：
 
-- `shop` → `lineage/lineage.html`、`lineage/lineage_job.html`
-- `finance_analytics` → `lineage/lineage_finance_analytics.html`、`lineage/lineage_job_finance_analytics.html`
+- `shop` → `shop/lineage/lineage.html`、`shop/lineage/lineage_job.html`
+- `finance_analytics` → `finance_analytics/lineage/lineage.html`、`finance_analytics/lineage/lineage_job.html`
 
 示例：
 
@@ -216,9 +211,7 @@ python lineage/refresh_lineage_html.py --project finance_analytics
 
 生成的 DAG 文件位于：
 
-- `lineage/job_dag_shop.json`
-- `lineage/job_dag_finance_analytics.json`
-- 以及按需生成的 `lineage/job_dag_{project}.json`
+- `{project}/lineage/job_dag.json`
 
 ### lineage DDL
 
@@ -438,7 +431,7 @@ python assess/assess_middle_layer.py --llm --no-cache
 参数说明：
 
 - `--llm`：调用 DeepSeek API 进行智能分层检测
-- `--no-cache`：忽略 `assess/cache/inspect_{project}.json` 缓存，强制重新调用
+- `--no-cache`：忽略 `{project}/assess/cache/` 下的 LLM 缓存，强制重新调用
 
 ### 评估维度
 
@@ -449,7 +442,7 @@ python assess/assess_middle_layer.py --llm --no-cache
 | 依赖健康度 | 25% | 检测跨层依赖、跳层依赖、反向依赖等问题 |
 | 命名规范 | 25% | 表名/字段名是否符合配置化命名规范 |
 
-结果输出到 `assess/assess_result_{project}.json`。
+结果输出到 `{project}/assess/assess_result.json`。
 
 ### 业务语义目录与 models 初始化
 
@@ -559,7 +552,7 @@ python -m assess.llm.model_metadata_writer --project shop --no-cache
 python -m assess.llm.model_metadata_writer --project shop --max-retries 2
 ```
 
-默认输出到 `assess/model_metadata_result_{project}.json`。
+默认输出到 `{project}/assess/model_metadata_result.json`。
 
 
 ## 本地测试环境
