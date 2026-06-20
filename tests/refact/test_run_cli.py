@@ -1,0 +1,207 @@
+import json
+from datetime import datetime, timezone
+
+import refact.run as run_cli
+from refact.session import create_run_manifest, write_manifest
+
+
+def _write_json(path, data):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=2))
+
+
+def test_start_creates_manifest_and_baseline_artifacts(tmp_path, monkeypatch):
+    def fake_lineage(
+        project, output_path, cache_path, previous_cache_path=None
+    ):
+        _write_json(output_path, {"tables": [], "edges": []})
+        _write_json(cache_path, {"project": project, "tasks": []})
+        return {"lineage": {"tables": [], "edges": []}}
+
+    def fake_assess(project, **kwargs):
+        return {"project": project, "overall_score": 100.0, "dimensions": {}}
+
+    monkeypatch.setattr(run_cli, "build_lineage_artifacts", fake_lineage)
+    monkeypatch.setattr(run_cli, "assess", fake_assess)
+    monkeypatch.setattr(
+        run_cli,
+        "_git_info",
+        lambda _root: {"branch": "main", "head": "abc123", "dirty": False},
+    )
+    monkeypatch.setattr(
+        run_cli,
+        "_now",
+        lambda: datetime(2026, 6, 20, 7, 30, tzinfo=timezone.utc),
+    )
+
+    exit_code = run_cli.main(
+        ["start", "--project", "shop", "--root", str(tmp_path)]
+    )
+
+    assert exit_code == 0
+    run_root = tmp_path / "refact" / "runs" / "20260620_073000_shop"
+    assert (run_root / "manifest.json").exists()
+    assert (run_root / "baseline" / "lineage_data_shop.json").exists()
+    assert (run_root / "baseline" / "task_lineage_cache.json").exists()
+    assert (run_root / "baseline" / "assess_result.json").exists()
+
+
+def test_analyze_refreshes_current_analysis_diff_and_plan(
+    tmp_path, monkeypatch
+):
+    manifest_path, manifest = create_run_manifest(
+        tmp_path,
+        "shop",
+        now=datetime(2026, 6, 20, 7, 30, tzinfo=timezone.utc),
+        git_info={"branch": "main", "head": "abc123", "dirty": False},
+    )
+    write_manifest(manifest_path, manifest)
+    run_root = manifest_path.parent
+    _write_json(
+        run_root / "baseline" / "lineage_data_shop.json",
+        {"tables": [], "edges": []},
+    )
+    _write_json(
+        run_root / "baseline" / "assess_result.json",
+        {
+            "project": "shop",
+            "overall_score": 50.0,
+            "dimensions": {
+                "naming": {
+                    "score": 50.0,
+                    "issues": [{"fingerprint": "old"}],
+                }
+            },
+        },
+    )
+    _write_json(run_root / "baseline" / "task_lineage_cache.json", {})
+
+    def fake_lineage(
+        project, output_path, cache_path, previous_cache_path=None
+    ):
+        _write_json(output_path, {"tables": [], "edges": []})
+        _write_json(cache_path, {"project": project, "tasks": []})
+        return {"lineage": {"tables": [], "edges": []}}
+
+    def fake_assess(project, **kwargs):
+        return {
+            "project": project,
+            "overall_score": 90.0,
+            "dimensions": {
+                "naming": {
+                    "score": 90.0,
+                    "issues": [{"fingerprint": "new"}],
+                }
+            },
+        }
+
+    monkeypatch.setattr(run_cli, "build_lineage_artifacts", fake_lineage)
+    monkeypatch.setattr(run_cli, "assess", fake_assess)
+    monkeypatch.setattr(
+        run_cli,
+        "changed_files_since_head",
+        lambda root, head, project_dir: ["shop/models/dwd_order.yaml"],
+    )
+    plan_calls = []
+
+    def fake_plan(
+        project,
+        analysis,
+        base_ref=None,
+        repo_root=None,
+        lineage_data=None,
+        partition=None,
+    ):
+        plan_calls.append(
+            {
+                "base_ref": base_ref,
+                "lineage_data": lineage_data,
+                "partition": partition,
+            }
+        )
+        return {
+            "project": project,
+            "project_db": "shop_dm",
+            "qa_db": "shop_dm_qa",
+            "baseline_ddl": {},
+            "ddl_changes": [],
+            "partition_info": {},
+            "jobs_to_run": [],
+            "checks": [],
+            "verification": {"checks": []},
+        }
+
+    monkeypatch.setattr(run_cli, "build_verification_plan", fake_plan)
+
+    exit_code = run_cli.main(
+        [
+            "analyze",
+            "--manifest",
+            str(manifest_path),
+            "--partition",
+            "2025-01-15",
+        ]
+    )
+
+    assert exit_code == 0
+    assert (run_root / "current" / "lineage_data_shop.json").exists()
+    assert (run_root / "current" / "assess_result.json").exists()
+    assert (run_root / "analysis" / "change_analysis.json").exists()
+    issue_diff = json.loads(
+        (run_root / "analysis" / "issue_diff.json").read_text()
+    )
+    assert issue_diff["summary"]["fixed_count"] == 1
+    assert issue_diff["summary"]["new_count"] == 1
+    assert (run_root / "verification" / "plan.json").exists()
+    assert plan_calls == [
+        {
+            "base_ref": "abc123",
+            "lineage_data": {"tables": [], "edges": []},
+            "partition": "2025-01-15",
+        }
+    ]
+
+
+def test_check_subcommand_is_removed():
+    try:
+        run_cli.main(["check", "--manifest", "missing.json"])
+    except SystemExit as exc:
+        assert exc.code == 2
+    else:
+        raise AssertionError("check subcommand should not be registered")
+
+
+def test_shadow_run_and_compare_delegate_to_plan_handlers(
+    tmp_path, monkeypatch
+):
+    manifest_path, manifest = create_run_manifest(
+        tmp_path,
+        "shop",
+        now=datetime(2026, 6, 20, 7, 30, tzinfo=timezone.utc),
+        git_info={},
+    )
+    write_manifest(manifest_path, manifest)
+    plan_path = manifest_path.parent / "verification" / "plan.json"
+    _write_json(plan_path, {"project": "shop"})
+    calls = []
+
+    def fake_shadow(plan, output, dry_run=False):
+        calls.append(("shadow", plan, output, dry_run))
+        _write_json(output, {"ok": True})
+        return {"ok": True}
+
+    def fake_compare(plan, output, method="all", sample=0, precision=0.01):
+        calls.append(("compare", plan, output, method, sample, precision))
+        _write_json(output, {"ok": True})
+        return {"ok": True}
+
+    monkeypatch.setattr(run_cli, "run_shadow_plan", fake_shadow)
+    monkeypatch.setattr(run_cli, "compare_shadow_results", fake_compare)
+
+    assert run_cli.main(["shadow-run", "--manifest", str(manifest_path)]) == 0
+    assert run_cli.main(["compare", "--manifest", str(manifest_path)]) == 0
+
+    assert calls[0][0] == "shadow"
+    assert calls[0][1] == plan_path
+    assert calls[1][0] == "compare"
+    assert calls[1][1] == plan_path

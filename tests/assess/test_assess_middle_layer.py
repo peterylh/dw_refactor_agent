@@ -648,6 +648,10 @@ def test_score_metadata_health_requires_dws_grain_entities_from_models():
     assert result["issues"] == [
         {
             "id": "metadata_health.iss_001",
+            "fingerprint": (
+                "metadata_health|METADATA_GRAIN_ENTITIES_PRESENT|table|"
+                "I_SHOP_PROD_SALE_DS"
+            ),
             "severity": "高",
             "rule_id": "METADATA_GRAIN_ENTITIES_PRESENT",
             "target": {

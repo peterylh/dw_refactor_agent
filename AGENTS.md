@@ -51,6 +51,7 @@ shop-dm/
 │   ├── lineage_cli.py              # 本地血缘查询 CLI
 │   ├── refresh_lineage_html.py     # 刷新可视化 HTML
 │   ├── job_dag.py                  # 基于血缘边生成作业 DAG
+│   ├── task_cache.py               # 任务级血缘缓存 key 与缓存项 helpers
 │   ├── lineage_data_{project}.json # 各项目血缘结果
 │   ├── job_dag_{project}.json      # 各项目序列化 DAG
 │   ├── lineage.html
@@ -67,16 +68,17 @@ shop-dm/
 │   └── task_run.py                 # 按 DAG 拓扑执行 ETL 作业
 ├── refact/
 │   ├── __init__.py
-│   ├── analyze_refact.py           # 检测变更并生成验证元数据
-│   ├── verify_run.py               # 在 QA 库执行重构验证
-│   └── verify_check.py             # 对比基线与 QA 结果
+│   ├── incremental_lineage.py      # 重构 run 的血缘产物构建
+│   ├── run.py                      # 重构 run session 统一入口
+│   ├── shadow_run.py               # 旁路执行验证计划
+│   └── compare.py                  # 对比生产与验证库结果
 ├── tests/
 │   ├── __init__.py
 │   ├── conftest.py
 │   ├── assess/                     # assess/context_builder/table_inspector 测试
 │   ├── ddl_deriver/                # DDL 推导与 git 模式测试
 │   ├── lineage/                    # 血缘提取与 JobDAG 测试
-│   ├── refact/                     # analyze_refact / verify_run / verify_check 测试
+│   ├── refact/                     # run / shadow_run / compare 测试
 │   ├── test_naming_config.py       # 命名规范配置测试
 │   └── test_task_run.py            # task_run 辅助逻辑测试
 ├── logs/                           # 本地日志与调试 SQL
@@ -344,45 +346,42 @@ python finance_analytics/generate_ods_data.py
 ### 工作流
 
 ```bash
-# 1. 分析变更 → 元数据
-python refact/analyze_refact.py
+# 1. 固化重构基线
+python refact/run.py start --project shop
 
-# 2. 预览执行计划
-python refact/verify_run.py --metadata refact/refact_metadata.json --dry-run
+# 2. 基于当前修改刷新血缘、评估与验证计划
+python refact/run.py analyze --manifest refact/runs/<run_id>/manifest.json
 
-# 3. 执行验证
-python refact/verify_run.py --metadata refact/refact_metadata.json
+# 可选：手工指定验证分区
+python refact/run.py analyze --manifest refact/runs/<run_id>/manifest.json --partition 2025-01-15
 
-# 4. 校验对比
-python refact/verify_check.py --metadata refact/refact_metadata.json --method all
+# 3. 预览旁路执行计划
+python refact/run.py shadow-run --manifest refact/runs/<run_id>/manifest.json --dry-run
+
+# 4. 执行旁路验证
+python refact/run.py shadow-run --manifest refact/runs/<run_id>/manifest.json
+
+# 5. 对比生产与验证库结果
+python refact/run.py compare --manifest refact/runs/<run_id>/manifest.json --method all
 ```
 
-### analyze_refact.py
+### run.py analyze
 
-通过 `git diff` 发现 DDL 和作业变更，结合血缘与 JobDAG 自动追踪下游、发现锚点、选择分区，输出 `refact/refact_metadata.json`。
+分析入口。读取 run manifest 中的基线信息，基于当前工作区刷新血缘、变更范围、issue diff 与验证计划。
 
-示例：
-
-```bash
-python refact/analyze_refact.py
-python refact/analyze_refact.py --project finance_analytics
-python refact/analyze_refact.py --partition 2025-01-15
-python refact/analyze_refact.py --anchor ads_sales_dashboard
-```
-
-输出元数据包含：
+输出的 `verification/plan.json` 包含：
 
 - `baseline_ddl`：merge-base 的完整 DDL（已剥离 INSERT）
 - `ddl_changes`：由 `ddl_deriver` 推导的 DDL 变更
 - `modified_jobs` / `downstream_tables`：波及范围
 - `anchors`：验证锚点
-- `partition_info`：自动选择的公共分区
+- `partition_info`：手工指定的验证分区信息，默认可为空
 - `jobs_to_run`：按拓扑排序后的待执行作业
 - `verification.checks`：自动配置的校验项
 
-### verify_run.py
+### shadow_run.py
 
-根据元数据执行三阶段验证：
+根据验证计划执行三阶段旁路验证：
 
 1. **Phase 0 - 重置**：重建 QA 库
 2. **Phase 1 - 基线建表**：按 `baseline_ddl` 还原 merge-base 结构
@@ -391,17 +390,17 @@ python refact/analyze_refact.py --anchor ads_sales_dashboard
 
 关键策略：作业读取生产库中的 ODS / 未变更中间表，以及已在 QA 侧重算出的中间结果；写入目标统一指向 `{project}_dm_qa`，从而做到 **不复制生产数据，仅重算必要链路**。
 
-### verify_check.py
+### compare.py
 
-负责对比生产基线与 QA 结果，输出 `refact/verify_result.json`。
+负责对比生产基线与 QA 结果，默认输出到 run 目录下的 `verification/compare_result.json`。
 
 示例：
 
 ```bash
-python refact/verify_check.py --metadata refact/refact_metadata.json
-python refact/verify_check.py --metadata refact/refact_metadata.json --method count
-python refact/verify_check.py --metadata refact/refact_metadata.json --method row_compare --sample 1000
-python refact/verify_check.py --metadata refact/refact_metadata.json --precision 0.001
+python refact/run.py compare --manifest refact/runs/<run_id>/manifest.json
+python refact/run.py compare --manifest refact/runs/<run_id>/manifest.json --method count
+python refact/run.py compare --manifest refact/runs/<run_id>/manifest.json --method row_compare --sample 1000
+python refact/run.py compare --manifest refact/runs/<run_id>/manifest.json --precision 0.001
 ```
 
 支持校验方法：

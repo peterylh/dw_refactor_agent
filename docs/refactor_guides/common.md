@@ -41,8 +41,7 @@
 - `lineage/job_dag_*.json`
 - `lineage/*.html`
 - `assess/*_result_*.json`
-- `refact/refact_metadata.json`
-- `refact/verify_result.json`
+- `refact/runs/`
 
 除非用户明确要求更新这些派生结果。
 
@@ -115,5 +114,5 @@ python exec/task_run.py --project <project> --db-env test --job-list <job_name>
 如果需要预览重构验证计划，应使用重构验证工具的 dry-run：
 
 ```bash
-python refact/verify_run.py --metadata refact/refact_metadata.json --dry-run
+python refact/run.py shadow-run --manifest refact/runs/<run_id>/manifest.json --dry-run
 ```

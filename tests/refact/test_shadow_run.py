@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 import sqlglot
 from sqlglot import exp
 from sqlglot.errors import ErrorLevel
 
-from refact.verify_run import _get_dml_target, rewrite_sql
+from refact.shadow_run import _get_dml_target, rewrite_sql, run_shadow_plan
 
 
 def _parse_one(sql: str):
@@ -25,6 +27,11 @@ def _table_refs(sql: str) -> list[tuple[str, str]]:
         for table in stmt.find_all(exp.Table):
             refs.append((table.name, table.db))
     return refs
+
+
+def _write_json(path, data):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=2))
 
 
 @pytest.mark.parametrize(
@@ -148,3 +155,51 @@ def test_rewrite_sql_does_not_invent_database_prefixes(sql):
 
 def test_rewrite_sql_text_empty():
     assert rewrite_sql("", "shop_dm", "shop_dm_qa", set()) == ""
+
+
+def test_run_shadow_plan_executes_self_contained(tmp_path, monkeypatch):
+    job_file = tmp_path / "shop" / "tasks" / "dwd_order_detail.sql"
+    job_file.parent.mkdir(parents=True)
+    job_file.write_text(
+        "INSERT INTO shop_dm.dwd_order_detail SELECT * FROM shop_dm.ods_order",
+        encoding="utf-8",
+    )
+    plan_path = tmp_path / "verification" / "plan.json"
+    output_path = tmp_path / "verification" / "shadow_run_result.json"
+    _write_json(
+        plan_path,
+        {
+            "project": "shop",
+            "project_db": "shop_dm",
+            "qa_db": "shop_dm_qa",
+            "baseline_ddl": {},
+            "ddl_changes": [],
+            "partition_info": {},
+            "jobs_to_run": [
+                {
+                    "job": "dwd_order_detail",
+                    "file": "shop/tasks/dwd_order_detail.sql",
+                    "layer": "DWD",
+                }
+            ],
+            "verification": {"checks": []},
+        },
+    )
+    calls = []
+
+    monkeypatch.setattr("refact.shadow_run._project_root", lambda: tmp_path)
+    monkeypatch.setattr(
+        "refact.shadow_run.run_sql",
+        lambda sql, db="", qa=False: calls.append(("sql", sql, db, qa)),
+    )
+    monkeypatch.setattr(
+        "refact.shadow_run.run_sql_text",
+        lambda sql, db="", qa=False: calls.append(("text", sql, db, qa)),
+    )
+
+    result = run_shadow_plan(plan_path, output_path)
+
+    assert result["status"] == "completed"
+    assert result["job_count"] == 1
+    assert any(call[0] == "text" for call in calls)
+    assert json.loads(output_path.read_text(encoding="utf-8")) == result
