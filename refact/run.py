@@ -103,7 +103,7 @@ def _previous_cache_path(manifest_path: Path) -> Path:
     return artifact_path(manifest_path, "baseline_task_cache")
 
 
-def _check(args) -> int:
+def _analyze(args) -> int:
     manifest_path = Path(args.manifest)
     manifest = load_manifest(manifest_path)
     project = manifest["project"]
@@ -150,9 +150,16 @@ def _check(args) -> int:
     issue_diff = diff_assess_results(baseline_assess, current_assess)
     _write_json(artifact_path(manifest_path, "issue_diff"), issue_diff)
 
-    plan = build_verification_plan(project, change_analysis)
+    plan = build_verification_plan(
+        project,
+        change_analysis,
+        base_ref=manifest.get("base_git", {}).get("head"),
+        repo_root=config.PROJECT_ROOT,
+        lineage_data=current_lineage,
+        partition=args.partition,
+    )
     _write_json(artifact_path(manifest_path, "verification_plan"), plan)
-    print(f"Check complete: {manifest_path}")
+    print(f"Analyze complete: {manifest_path}")
     return 0
 
 
@@ -191,9 +198,17 @@ def build_parser() -> argparse.ArgumentParser:
     start.add_argument("--root", default=str(config.PROJECT_ROOT))
     start.set_defaults(func=_start)
 
-    check = subparsers.add_parser("check", help="refresh current analysis")
-    check.add_argument("--manifest", required=True)
-    check.set_defaults(func=_check)
+    analyze = subparsers.add_parser(
+        "analyze",
+        help="refresh current lineage, issue diff, and validation plan",
+    )
+    analyze.add_argument("--manifest", required=True)
+    analyze.add_argument(
+        "--partition",
+        default=None,
+        help="manual partition value for shadow-run and compare",
+    )
+    analyze.set_defaults(func=_analyze)
 
     shadow = subparsers.add_parser("shadow-run", help="run QA shadow plan")
     shadow.add_argument("--manifest", required=True)

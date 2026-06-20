@@ -4,9 +4,9 @@
 
 **Goal:** Build the `refact/run.py` workflow for refactor sessions with baseline/current artifacts, comparable assess issues, scoped change analysis, incremental lineage cache reuse, and shadow-run/compare commands.
 
-**Architecture:** Keep `refact/run.py` as a thin subcommand entrypoint and move behavior into focused modules. Reuse the existing lineage extractor, assess runner, and verify execution/checking logic rather than duplicating SQL parsing or Doris execution code. Make generated files deterministic so tests can assert exact manifests, fingerprints, issue diffs, and cache behavior.
+**Architecture:** Keep `refact/run.py` as a thin subcommand entrypoint and move behavior into focused modules. Reuse the existing lineage extractor and assess runner. Keep shadow execution in `refact/shadow_run.py` and production-vs-QA comparison in `refact/compare.py` rather than routing through separate verify modules. Make generated files deterministic so tests can assert exact manifests, fingerprints, issue diffs, and cache behavior.
 
-**Tech Stack:** Python 3.7, stdlib `argparse/json/hashlib/datetime/pathlib/subprocess`, existing `lineage.lineage_extractor`, existing `assess.assess_middle_layer`, existing `refact.verify_run` and `refact.verify_check`, `pytest`, `make test`.
+**Tech Stack:** Python 3.7, stdlib `argparse/json/hashlib/datetime/pathlib/subprocess`, existing `lineage.lineage_extractor`, existing `assess.assess_middle_layer`, `pytest`, `make test`.
 
 ---
 
@@ -16,13 +16,14 @@
 - Modify `assess/assess_middle_layer.py`: allow callers to pass explicit lineage data and output-scoping metadata.
 - Create `refact/session.py`: create/load run directories and manifests.
 - Create `refact/issue_diff.py`: compare baseline/current `assess_result.json` by issue fingerprint.
-- Create `refact/incremental_lineage.py`: build full lineage and task cache artifacts under a run directory.
+- Create `lineage/task_cache.py`: provide reusable task cache key and cache entry helpers.
+- Create `refact/incremental_lineage.py`: build full lineage artifacts under a run directory using the shared task cache helpers.
 - Create `refact/change_analysis.py`: compute changed files/assets, affected scope, and lineage edge diff.
 - Create `refact/verification_plan.py`: build `verification/plan.json` from change analysis and current project state.
-- Create `refact/run.py`: expose `start`, `check`, `shadow-run`, and `compare`.
-- Modify `refact/verify_run.py`: expose a function that accepts a metadata dict and writes a result file.
-- Modify `refact/verify_check.py`: expose a function that accepts a metadata dict and writes a result file.
-- Add tests under `tests/assess/` and `tests/refact/`.
+- Create `refact/run.py`: expose `start`, `analyze`, `shadow-run`, and `compare`.
+- Create `refact/shadow_run.py`: execute or dry-run a validation plan against QA.
+- Create `refact/compare.py`: compare production and QA results for a validation plan.
+- Add tests under `tests/assess/`, `tests/lineage/`, and `tests/refact/`.
 
 ## Task 1: Comparable Assess Issues
 
@@ -269,20 +270,26 @@ Expected: pass.
 ## Task 4: Incremental Lineage Cache
 
 **Files:**
+- Create: `lineage/task_cache.py`
 - Create: `refact/incremental_lineage.py`
+- Test: `tests/lineage/test_task_cache.py`
 - Test: `tests/refact/test_incremental_lineage.py`
 
 - [ ] **Step 1: Write failing tests**
 
 Use a temp project with one DDL and one task. Assert that the first build writes
 a cache entry, the second build reuses it, and changing DDL invalidates the task
-by changing the schema slice hash.
+by changing the schema slice hash. Add direct `lineage/task_cache.py` tests for
+stable cache key behavior, cache loading, and cache entry serialization.
 
-- [ ] **Step 2: Implement lineage builder**
+- [ ] **Step 2: Implement cache helpers and lineage builder**
 
 Implement:
 
 ```python
+def task_cache_key(...) -> str
+def load_task_cache(path: Path | None) -> dict
+def cache_entry_from_result(result: dict, cache_key: str) -> dict
 def build_lineage_artifacts(project: str, output_path: Path, cache_path: Path, previous_cache_path: Path | None = None) -> dict
 ```
 
@@ -294,12 +301,13 @@ Internally reuse:
 - `extract_lineage_from_task_files`
 - `build_lineage_output`
 
-Cache entries store `cache_key`, `source_file`, `entries`, `transient_tables`,
-`missing_ddl_tables`, `errors`, and `stats`.
+`lineage/task_cache.py` owns cache keys and entry serialization.
+`refact/incremental_lineage.py` owns refactor run artifact paths and uses those
+helpers while building baseline/current lineage outputs.
 
 - [ ] **Step 3: Run tests**
 
-Run: `make test PYTEST_ARGS="tests/refact/test_incremental_lineage.py -q"`
+Run: `make test PYTEST_ARGS="tests/lineage/test_task_cache.py tests/refact/test_incremental_lineage.py -q"`
 
 Expected: pass.
 
@@ -358,7 +366,8 @@ Expected: pass.
 Use monkeypatches for lineage/assess builders. Assert:
 
 - `start --project demo --root <tmp>` writes manifest and baseline artifacts.
-- `check --manifest <path>` writes current artifacts, change analysis, issue diff, and verification plan.
+- `analyze --manifest <path>` writes current artifacts, change analysis, issue diff, and verification plan.
+- `analyze --manifest <path> --partition <value>` writes the manual partition into `verification/plan.json`.
 - `shadow-run --manifest <path>` delegates to shadow execution with `verification/plan.json`.
 - `compare --manifest <path>` delegates to comparison with `verification/plan.json`.
 
@@ -368,13 +377,13 @@ Add subcommands:
 
 ```python
 start
-check
+analyze
 shadow-run
 compare
 ```
 
 `start` calls session creation, baseline lineage build, and baseline assess.
-`check` loads the manifest, builds current lineage, runs current assess, writes
+`analyze` loads the manifest, builds current lineage, runs current assess, writes
 issue diff, writes change analysis, and writes verification plan.
 
 - [ ] **Step 3: Run tests**
@@ -386,19 +395,19 @@ Expected: pass.
 ## Task 7: Shadow Run and Compare Wrappers
 
 **Files:**
-- Modify: `refact/verify_run.py`
-- Modify: `refact/verify_check.py`
 - Create: `refact/shadow_run.py`
 - Create: `refact/compare.py`
-- Test: `tests/refact/test_shadow_compare_wrappers.py`
+- Test: `tests/refact/test_shadow_run.py`
+- Test: `tests/refact/test_compare.py`
 
 - [ ] **Step 1: Write failing tests**
 
-Monkeypatch the existing `verify_run` and `verify_check` internals so wrappers
-can be tested without Doris. Assert result files are written under
+Assert `shadow_run.py` owns SQL rewriting and plan execution, and `compare.py`
+owns count/row comparison. Monkeypatch Doris connection and execution helpers so
+tests run without a database. Assert result files are written under
 `verification/shadow_run_result.json` and `verification/compare_result.json`.
 
-- [ ] **Step 2: Implement wrappers**
+- [ ] **Step 2: Implement shadow-run and compare modules**
 
 Create:
 
@@ -407,12 +416,12 @@ def run_shadow_plan(plan_path: Path, output_path: Path, dry_run: bool = False) -
 def compare_shadow_results(plan_path: Path, output_path: Path, method: str = "all") -> dict
 ```
 
-Wrappers load `verification/plan.json`, call reusable functions exposed from the
-old scripts, and write compact result metadata.
+Both functions load `verification/plan.json`, execute their own module's core
+logic, and write compact result metadata.
 
 - [ ] **Step 3: Run tests**
 
-Run: `make test PYTEST_ARGS="tests/refact/test_shadow_compare_wrappers.py -q"`
+Run: `make test PYTEST_ARGS="tests/refact/test_shadow_run.py tests/refact/test_compare.py -q"`
 
 Expected: pass.
 
@@ -426,7 +435,7 @@ Expected: pass.
 Run:
 
 ```bash
-make test PYTEST_ARGS="tests/assess/test_result_model.py tests/refact/test_issue_diff.py tests/refact/test_session.py tests/refact/test_incremental_lineage.py tests/refact/test_change_analysis.py tests/refact/test_verification_plan.py tests/refact/test_run_cli.py tests/refact/test_shadow_compare_wrappers.py -q"
+make test PYTEST_ARGS="tests/assess/test_result_model.py tests/lineage/test_task_cache.py tests/refact/test_issue_diff.py tests/refact/test_session.py tests/refact/test_incremental_lineage.py tests/refact/test_change_analysis.py tests/refact/test_verification_plan.py tests/refact/test_run_cli.py tests/refact/test_shadow_run.py tests/refact/test_compare.py -q"
 ```
 
 Expected: pass.

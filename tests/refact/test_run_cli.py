@@ -46,7 +46,9 @@ def test_start_creates_manifest_and_baseline_artifacts(tmp_path, monkeypatch):
     assert (run_root / "baseline" / "assess_result.json").exists()
 
 
-def test_check_refreshes_current_analysis_diff_and_plan(tmp_path, monkeypatch):
+def test_analyze_refreshes_current_analysis_diff_and_plan(
+    tmp_path, monkeypatch
+):
     manifest_path, manifest = create_run_manifest(
         tmp_path,
         "shop",
@@ -100,10 +102,24 @@ def test_check_refreshes_current_analysis_diff_and_plan(tmp_path, monkeypatch):
         "changed_files_since_head",
         lambda root, head, project_dir: ["shop/models/dwd_order.yaml"],
     )
-    monkeypatch.setattr(
-        run_cli,
-        "build_verification_plan",
-        lambda project, analysis: {
+    plan_calls = []
+
+    def fake_plan(
+        project,
+        analysis,
+        base_ref=None,
+        repo_root=None,
+        lineage_data=None,
+        partition=None,
+    ):
+        plan_calls.append(
+            {
+                "base_ref": base_ref,
+                "lineage_data": lineage_data,
+                "partition": partition,
+            }
+        )
+        return {
             "project": project,
             "project_db": "shop_dm",
             "qa_db": "shop_dm_qa",
@@ -113,10 +129,19 @@ def test_check_refreshes_current_analysis_diff_and_plan(tmp_path, monkeypatch):
             "jobs_to_run": [],
             "checks": [],
             "verification": {"checks": []},
-        },
-    )
+        }
 
-    exit_code = run_cli.main(["check", "--manifest", str(manifest_path)])
+    monkeypatch.setattr(run_cli, "build_verification_plan", fake_plan)
+
+    exit_code = run_cli.main(
+        [
+            "analyze",
+            "--manifest",
+            str(manifest_path),
+            "--partition",
+            "2025-01-15",
+        ]
+    )
 
     assert exit_code == 0
     assert (run_root / "current" / "lineage_data_shop.json").exists()
@@ -128,6 +153,22 @@ def test_check_refreshes_current_analysis_diff_and_plan(tmp_path, monkeypatch):
     assert issue_diff["summary"]["fixed_count"] == 1
     assert issue_diff["summary"]["new_count"] == 1
     assert (run_root / "verification" / "plan.json").exists()
+    assert plan_calls == [
+        {
+            "base_ref": "abc123",
+            "lineage_data": {"tables": [], "edges": []},
+            "partition": "2025-01-15",
+        }
+    ]
+
+
+def test_check_subcommand_is_removed():
+    try:
+        run_cli.main(["check", "--manifest", "missing.json"])
+    except SystemExit as exc:
+        assert exc.code == 2
+    else:
+        raise AssertionError("check subcommand should not be registered")
 
 
 def test_shadow_run_and_compare_delegate_to_plan_handlers(
