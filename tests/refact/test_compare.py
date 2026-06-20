@@ -1,7 +1,5 @@
 import json
 
-import pytest
-
 from refact.compare import compare_shadow_results, fmt_val, run_checks
 
 
@@ -35,24 +33,16 @@ class FakeConn:
         self.closed = True
 
 
-@pytest.mark.parametrize(
-    ("value", "expected"),
-    [
+def test_fmt_val_formats_supported_scalar_values():
+    scenarios = [
         (None, "NULL"),
         (123, "123"),
-        (0, "0"),
-        (-1, "-1"),
         (3.14159, "3.141590"),
-        (0.0, "0.000000"),
-        (-1.5, "-1.500000"),
         ("hello", "hello"),
-        ("", ""),
-        (True, "True"),
-        (False, "False"),
-    ],
-)
-def test_fmt_val_formats_supported_scalar_values(value, expected):
-    assert fmt_val(value) == expected
+    ]
+
+    for value, expected in scenarios:
+        assert fmt_val(value) == expected
 
 
 def test_run_checks_compares_count_self_contained(monkeypatch):

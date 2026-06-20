@@ -226,34 +226,27 @@ def _expected_pay_amt_1d_metric() -> dict:
     }
 
 
-def test_build_dwd_contexts_filters_out_non_dwd(
+def test_build_inspection_context_scope_scenarios(
     sample_lineage_data, isolated_writer_project
 ):
-    contexts = build_dwd_contexts(isolated_writer_project, sample_lineage_data)
+    dwd_contexts = build_dwd_contexts(
+        isolated_writer_project, sample_lineage_data
+    )
 
-    assert {ctx.table_name for ctx in contexts} == {
+    assert {ctx.table_name for ctx in dwd_contexts} == {
         "dwd_customer",
         "dwd_order_detail",
     }
 
-
-def test_build_metric_contexts_includes_dwd_and_dws(
-    sample_lineage_data, isolated_writer_project
-):
-    contexts = build_metric_contexts(
+    metric_contexts = build_metric_contexts(
         isolated_writer_project, sample_lineage_data
     )
-
-    assert {ctx.table_name for ctx in contexts} == {
+    assert {ctx.table_name for ctx in metric_contexts} == {
         "dwd_customer",
         "dwd_order_detail",
         "dws_store_sales_daily",
     }
 
-
-def test_build_inspection_contexts_includes_dim(
-    sample_lineage_data, isolated_writer_project
-):
     data = dict(sample_lineage_data)
     data["tables"] = sample_lineage_data["tables"] + [
         {
@@ -274,13 +267,11 @@ def test_build_inspection_contexts_includes_dim(
     }
 
 
-def test_metric_names_for_model_includes_all_metric_types():
+def test_metric_helper_scenarios():
     metrics = metric_names_for_model(_sample_fact_result())
 
     assert metrics == ["pay_amt", "pay_amt_1d", "gross_profit"]
 
-
-def test_metric_groups_for_model_splits_metric_types():
     metric_groups = metric_groups_for_model(_sample_fact_result())
 
     assert metric_groups == {
@@ -289,8 +280,6 @@ def test_metric_groups_for_model_splits_metric_types():
         "calculated_metrics": ["gross_profit"],
     }
 
-
-def test_metric_violations_uses_non_atomic_groups():
     violations = metric_violations(_sample_fact_result())
 
     assert violations == [
@@ -310,8 +299,6 @@ def test_metric_violations_uses_non_atomic_groups():
         },
     ]
 
-
-def test_metric_violations_skips_non_fact():
     result = TableInspectResult(
         table_name="dwd_customer",
         declared_layer="DWD",
@@ -328,9 +315,6 @@ def test_metric_violations_skips_non_fact():
     )
 
     assert metric_violations(result) == []
-
-
-def test_metric_violations_allows_dws_derived_metrics():
     assert metric_violations(_sample_dws_result()) == []
 
 

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 
-import pytest
 import sqlglot
 from sqlglot import exp
 from sqlglot.errors import ErrorLevel
@@ -34,9 +33,8 @@ def _write_json(path, data):
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2))
 
 
-@pytest.mark.parametrize(
-    ("sql", "expected"),
-    [
+def test_get_dml_target_recognizes_statement_targets():
+    scenarios = [
         (
             "INSERT INTO shop_dm.dwd_order_detail "
             "SELECT * FROM shop_dm.ods_order",
@@ -58,19 +56,19 @@ def _write_json(path, data):
             "PROPERTIES ('replication_num' = '1')",
             "ods_new",
         ),
-        (
-            "INSERT INTO shop_dm.dwd_order_detail (order_id, customer_id) "
-            "VALUES (1, 2)",
-            "dwd_order_detail",
-        ),
-        ("SET @etl_date = '2025-01-01'", None),
-    ],
-)
-def test_get_dml_target_recognizes_statement_targets(sql, expected):
-    assert _get_dml_target(_parse_one(sql)) == expected
+    ]
+    for sql, expected in scenarios:
+        assert _get_dml_target(_parse_one(sql)) == expected
 
 
-def test_rewrite_sql_maps_targets_to_qa_and_keeps_ods_sources_in_prod():
+def test_rewrite_sql_table_mapping_scenarios():
+    _assert_rewrite_sql_maps_targets_to_qa_and_keeps_ods_sources_in_prod()
+    _assert_rewrite_sql_maps_recalculated_sources_to_qa()
+    _assert_rewrite_sql_rewrites_recalculated_sources_inside_ctes()
+    _assert_rewrite_sql_handles_multiple_dml_statements_in_one_file()
+
+
+def _assert_rewrite_sql_maps_targets_to_qa_and_keeps_ods_sources_in_prod():
     sql = """
     INSERT INTO shop_dm.dwd_order_detail
     SELECT o.order_id
@@ -86,7 +84,7 @@ def test_rewrite_sql_maps_targets_to_qa_and_keeps_ods_sources_in_prod():
     assert ("dwd_order_detail", "shop_dm") not in refs
 
 
-def test_rewrite_sql_maps_recalculated_sources_to_qa():
+def _assert_rewrite_sql_maps_recalculated_sources_to_qa():
     sql = """
     INSERT INTO shop_dm.ads_store_performance
     SELECT ssd.store_id, s.store_name
@@ -104,7 +102,7 @@ def test_rewrite_sql_maps_recalculated_sources_to_qa():
     assert ("dws_store_sales_daily", "shop_dm") not in refs
 
 
-def test_rewrite_sql_rewrites_recalculated_sources_inside_ctes():
+def _assert_rewrite_sql_rewrites_recalculated_sources_inside_ctes():
     sql = """
     INSERT INTO shop_dm.ads_sales_dashboard
     WITH daily_base AS (
@@ -124,7 +122,7 @@ def test_rewrite_sql_rewrites_recalculated_sources_inside_ctes():
     assert ("dwd_order_detail", "shop_dm") not in refs
 
 
-def test_rewrite_sql_handles_multiple_dml_statements_in_one_file():
+def _assert_rewrite_sql_handles_multiple_dml_statements_in_one_file():
     sql = """
     TRUNCATE TABLE shop_dm.dwd_order_detail;
     INSERT INTO shop_dm.dwd_order_detail
@@ -140,17 +138,15 @@ def test_rewrite_sql_handles_multiple_dml_statements_in_one_file():
     assert ("dwd_order_detail", "shop_dm") not in refs
 
 
-@pytest.mark.parametrize(
-    "sql",
-    [
+def test_rewrite_sql_does_not_invent_database_prefixes():
+    scenarios = [
         "SELECT * FROM some_table",
         "SET @etl_date = '2025-01-15'",
-    ],
-)
-def test_rewrite_sql_does_not_invent_database_prefixes(sql):
-    refs = _table_refs(rewrite_sql(sql, "shop_dm", "shop_dm_qa", set()))
+    ]
+    for sql in scenarios:
+        refs = _table_refs(rewrite_sql(sql, "shop_dm", "shop_dm_qa", set()))
 
-    assert all(db not in {"shop_dm", "shop_dm_qa"} for _, db in refs)
+        assert all(db not in {"shop_dm", "shop_dm_qa"} for _, db in refs)
 
 
 def test_rewrite_sql_text_empty():

@@ -110,9 +110,8 @@ def isolated_project_naming_configs(tmp_path, monkeypatch):
 
 
 class TestTypeDef:
-    @pytest.mark.parametrize(
-        ("typedef", "valid_values", "invalid_values"),
-        [
+    def test_validate_scenarios(self):
+        scenarios = [
             (
                 TypeDef(label="load_type", allow=["full", "inc"]),
                 ["full", "inc"],
@@ -130,17 +129,16 @@ class TestTypeDef:
                 ["D", "MTD", "7D"],
                 ["0M"],
             ),
-        ],
-    )
-    def test_validate_uses_allow_and_patterns(
-        self, typedef, valid_values, invalid_values
-    ):
-        for value in valid_values:
-            assert typedef.validate(value) is True
-        for value in invalid_values:
-            assert typedef.validate(value) is False
+        ]
+        for typedef, valid_values, invalid_values in scenarios:
+            for value in valid_values:
+                assert typedef.validate(value) is True
+            for value in invalid_values:
+                assert typedef.validate(value) is False
 
-    def test_without_validator_accepts_freeform_values(self):
+        self._assert_without_validator_accepts_freeform_values()
+
+    def _assert_without_validator_accepts_freeform_values(self):
         assert TypeDef(label="freeform").validate("anything") is True
 
 
@@ -150,7 +148,19 @@ class TestTypeDef:
 
 
 class TestParseSegments:
-    def test_basic_list(self):
+    def test_parse_segment_scenarios(self):
+        self._assert_basic_list()
+        self._assert_optional_right_gets_sep_before()
+        self._assert_optional_left_gets_sep_after()
+        self._assert_double_optional()
+        self._assert_empty_list()
+        self._assert_single_literal()
+        self._assert_single_type()
+        self._assert_plus_prefixed_type_syntax_is_rejected()
+        self._assert_optional_marker_without_dollar()
+        self._assert_all_required_separator()
+
+    def _assert_basic_list(self):
         """[ods, $source, $entity] → 3 段 + 2 个 _"""
         result = _parse_segments(["ods", "$source", "$entity"], {})
         assert len(result) == 5
@@ -195,7 +205,7 @@ class TestParseSegments:
             "concat_left": False,
         }
 
-    def test_optional_right_gets_sep_before(self):
+    def _assert_optional_right_gets_sep_before(self):
         """[$entity, "$time_granularity?"] → 右侧可选段获得 sep_before，不插入独立 _"""
         result = _parse_segments(["$entity", "$time_granularity?"], {})
         assert len(result) == 2
@@ -216,7 +226,7 @@ class TestParseSegments:
             "concat_left": False,
         }
 
-    def test_optional_left_gets_sep_after(self):
+    def _assert_optional_left_gets_sep_after(self):
         """["$prefix_field?", $entity] → 左侧可选段获得 sep_after"""
         result = _parse_segments(["$prefix_field?", "$entity"], {})
         assert len(result) == 2
@@ -237,7 +247,7 @@ class TestParseSegments:
             "concat_left": False,
         }
 
-    def test_double_optional(self):
+    def _assert_double_optional(self):
         """["$prefix_field?", "$entity", "$suffix_field?"] → 混合可选绑定"""
         result = _parse_segments(
             ["$prefix_field?", "$entity", "$suffix_field?"], {}
@@ -257,28 +267,28 @@ class TestParseSegments:
         )
         assert result[2]["sep_before"] == "_"
 
-    def test_empty_list(self):
+    def _assert_empty_list(self):
         assert _parse_segments([], {}) == []
 
-    def test_single_literal(self):
+    def _assert_single_literal(self):
         result = _parse_segments(["dim"], {})
         assert len(result) == 1
         assert result[0]["kind"] == "literal"
         assert result[0]["name"] == "dim"
 
-    def test_single_type(self):
+    def _assert_single_type(self):
         result = _parse_segments(["$entity"], {})
         assert len(result) == 1
         assert result[0]["kind"] == "type"
         assert result[0]["name"] == "entity"
 
-    def test_plus_prefixed_type_syntax_is_rejected(self):
+    def _assert_plus_prefixed_type_syntax_is_rejected(self):
         with pytest.raises(
             ValueError, match=r"\$\+TYPE syntax is not supported"
         ):
             _parse_segments(["$+entity"], {})
 
-    def test_optional_marker_without_dollar(self):
+    def _assert_optional_marker_without_dollar(self):
         """无 $ 前缀的 ? 被识别为字面量"""
         result = _parse_segments(["time_granularity?"], {})
         # '?' 在名称中是字面量的一部分
@@ -288,7 +298,7 @@ class TestParseSegments:
         )
         assert result[0]["kind"] == "literal"
 
-    def test_all_required_separator(self):
+    def _assert_all_required_separator(self):
         """[a, b, c] 全 required → 段间插入 _"""
         result = _parse_segments(["a", "b", "c"], {})
         assert len(result) == 5
@@ -301,13 +311,19 @@ class TestParseSegments:
 
 
 class TestParseTemplate:
-    def test_list_format_passthrough(self):
+    def test_parse_template_scenarios(self):
+        self._assert_list_format_passthrough()
+        self._assert_string_format_conversion()
+        self._assert_string_format_with_optional()
+        self._assert_empty_string()
+
+    def _assert_list_format_passthrough(self):
         """列表格式直接委托给 _parse_segments"""
         result = _parse_template(["$entity"], {})
         assert result[0]["kind"] == "type"
         assert result[0]["name"] == "entity"
 
-    def test_string_format_conversion(self):
+    def _assert_string_format_conversion(self):
         """ "ods_{source}_{entity}_{load_type}" → 添加 $ 前缀"""
         result = _parse_template("ods_{source}_{entity}_{load_type}", {})
         type_names = [s["name"] for s in result if s["kind"] == "type"]
@@ -316,14 +332,14 @@ class TestParseTemplate:
         assert "load_type" in type_names
         assert result[0]["kind"] == "literal" and result[0]["name"] == "ods_"
 
-    def test_string_format_with_optional(self):
+    def _assert_string_format_with_optional(self):
         """ "_{type?}" 转换"""
         result = _parse_template("_{type?}", {})
         types = [s for s in result if s["kind"] == "type"]
         assert types[0]["name"] == "type"
         assert types[0]["optional"] is True
 
-    def test_empty_string(self):
+    def _assert_empty_string(self):
         result = _parse_template("", {})
         assert result == []
 
@@ -404,7 +420,15 @@ class TestMatchOds:
     def nc(self):
         return _build_nc({"ODS": ["ods", "$source", "$entity", "$load_type"]})
 
-    def test_full_match(self, nc):
+    def test_match_ods_scenarios(self, nc):
+        self._assert_full_match(nc)
+        self._assert_inc_variant(nc)
+        self._assert_missing_load_type(nc)
+        self._assert_missing_source(nc)
+        self._assert_no_match_prefix(nc)
+        self._assert_db_prefixed_name(nc)
+
+    def _assert_full_match(self, nc):
         segs = nc.layers["ODS"].templates[0]
         r = nc._match_segments("ods_mysql_orders_full", segs)
         assert r == {
@@ -413,26 +437,26 @@ class TestMatchOds:
             "load_type": "full",
         }
 
-    def test_inc_variant(self, nc):
+    def _assert_inc_variant(self, nc):
         segs = nc.layers["ODS"].templates[0]
         r = nc._match_segments("ods_erp_customer_inc", segs)
         assert r == {"source": "erp", "entity": "customer", "load_type": "inc"}
 
-    def test_missing_load_type(self, nc):
+    def _assert_missing_load_type(self, nc):
         """ODS 要求 load_type，缺失则返回 None"""
         segs = nc.layers["ODS"].templates[0]
         assert nc._match_segments("ods_mysql_customer", segs) is None
 
-    def test_missing_source(self, nc):
+    def _assert_missing_source(self, nc):
         """ODS 要求 source，缺失则返回 None"""
         segs = nc.layers["ODS"].templates[0]
         assert nc._match_segments("ods_customer_full", segs) is None
 
-    def test_no_match_prefix(self, nc):
+    def _assert_no_match_prefix(self, nc):
         segs = nc.layers["ODS"].templates[0]
         assert nc._match_segments("xxx_customer_full", segs) is None
 
-    def test_db_prefixed_name(self, nc):
+    def _assert_db_prefixed_name(self, nc):
         """_match_segments 不会自动剥离 db 前缀"""
         segs = nc.layers["ODS"].templates[0]
         assert (
@@ -450,17 +474,22 @@ class TestMatchDwd:
     def nc(self):
         return _build_nc({"DWD": ["dwd", "$entity"]})
 
-    def test_basic(self, nc):
+    def test_match_dwd_scenarios(self, nc):
+        self._assert_basic(nc)
+        self._assert_with_underscore(nc)
+        self._assert_no_match(nc)
+
+    def _assert_basic(self, nc):
         segs = nc.layers["DWD"].templates[0]
         r = nc._match_segments("dwd_customer", segs)
         assert r == {"entity": "customer"}
 
-    def test_with_underscore(self, nc):
+    def _assert_with_underscore(self, nc):
         segs = nc.layers["DWD"].templates[0]
         r = nc._match_segments("dwd_order_detail", segs)
         assert r == {"entity": "order_detail"}
 
-    def test_no_match(self, nc):
+    def _assert_no_match(self, nc):
         segs = nc.layers["DWD"].templates[0]
         assert nc._match_segments("ods_customer", segs) is None
 
@@ -475,17 +504,22 @@ class TestMatchDws:
     def nc(self):
         return _build_nc({"DWS": ["dws", "$entity", "$time_granularity?"]})
 
-    def test_with_granularity(self, nc):
+    def test_match_dws_scenarios(self, nc):
+        self._assert_with_granularity(nc)
+        self._assert_with_monthly(nc)
+        self._assert_without_granularity(nc)
+
+    def _assert_with_granularity(self, nc):
         segs = nc.layers["DWS"].templates[0]
         r = nc._match_segments("dws_store_sales_daily", segs)
         assert r == {"entity": "store_sales", "time_granularity": "daily"}
 
-    def test_with_monthly(self, nc):
+    def _assert_with_monthly(self, nc):
         segs = nc.layers["DWS"].templates[0]
         r = nc._match_segments("dws_category_sales_monthly", segs)
         assert r == {"entity": "category_sales", "time_granularity": "monthly"}
 
-    def test_without_granularity(self, nc):
+    def _assert_without_granularity(self, nc):
         """可选段缺失时只返回 entity"""
         segs = nc.layers["DWS"].templates[0]
         r = nc._match_segments("dws_customer_order_summary", segs)
@@ -502,12 +536,16 @@ class TestMatchAds:
     def nc(self):
         return _build_nc({"ADS": ["ads", "$business_view"]})
 
-    def test_basic(self, nc):
+    def test_match_ads_scenarios(self, nc):
+        self._assert_basic(nc)
+        self._assert_with_underscore(nc)
+
+    def _assert_basic(self, nc):
         segs = nc.layers["ADS"].templates[0]
         r = nc._match_segments("ads_customer_rfm", segs)
         assert r == {"business_view": "customer_rfm"}
 
-    def test_with_underscore(self, nc):
+    def _assert_with_underscore(self, nc):
         segs = nc.layers["ADS"].templates[0]
         r = nc._match_segments("ads_product_topn_daily", segs)
         assert r == {"business_view": "product_topn_daily"}
@@ -542,9 +580,8 @@ class TestMatchColumn:
             col_segments=["$prefix_field?", "$entity", "$suffix_field?"],
         )
 
-    @pytest.mark.parametrize(
-        ("name", "expected"),
-        [
+    def test_column_segments_match_expected_parts(self, nc):
+        scenarios = [
             ("customer_id", {"entity": "customer", "suffix_field": "id"}),
             ("order_date", {"entity": "order", "suffix_field": "date"}),
             ("quantity", {"entity": "quantity"}),
@@ -566,14 +603,17 @@ class TestMatchColumn:
                     "suffix_field": "num",
                 },
             ),
-        ],
-    )
-    def test_column_segments_match_expected_parts(self, nc, name, expected):
-        assert nc._match_segments(name, nc.column_segments) == expected
+        ]
+        for name, expected in scenarios:
+            assert nc._match_segments(name, nc.column_segments) == expected
 
 
 class TestNamingDiagnostics:
-    def test_column_diagnostic_exposes_configured_expression(self):
+    def test_diagnostics_expose_configured_rules(self):
+        self._assert_column_diagnostic_exposes_configured_expression()
+        self._assert_table_diagnostic_exposes_segment_plan()
+
+    def _assert_column_diagnostic_exposes_configured_expression(self):
         nc = load_naming_config(PROJECT_ROOT / "naming_config.yaml")
 
         diagnostic = nc.diagnose_column_name("customer_id")
@@ -587,7 +627,7 @@ class TestNamingDiagnostics:
         ]
         assert attempt["failure"]["code"] == "type_pattern_mismatch"
 
-    def test_table_diagnostic_exposes_segment_plan(self):
+    def _assert_table_diagnostic_exposes_segment_plan(self):
         nc = load_naming_config(config.NAMING_CONFIG_PATH)
 
         diagnostic = nc.diagnose_table_name("dwd_customer", "DWD")
@@ -638,17 +678,13 @@ class TestTopLevelDetermineLayer:
 
 
 class TestLayerRank:
-    def test_ordered(self):
+    def test_layer_rank_scenarios(self):
         assert layer_rank("ODS") == 0
         assert layer_rank("DIM") == 1
         assert layer_rank("DWD") == 1
         assert layer_rank("DWS") == 2
         assert layer_rank("ADS") == 3
-
-    def test_unknown(self):
         assert layer_rank("UNKNOWN") == -1
-
-    def test_normalizes_case(self):
         assert layer_rank("dwd") == 1
 
 
@@ -658,36 +694,19 @@ class TestLayerRank:
 
 
 class TestLoadNamingConfig:
-    def test_load_production_config(self):
+    def test_load_production_config_scenarios(self):
         """加载生产 YAML 无异常，关键层存在"""
         nc = load_naming_config()
         for layer in ("DWD", "DWS", "ADS", "DIM"):
             assert layer in nc.layers
-
-    def test_table_templates_do_not_require_layers_block(self):
-        nc = load_naming_config()
         assert "DWD" in nc.layers
         assert len(nc.layers["DWD"].templates) == 1
-
-    def test_column_segments(self):
-        nc = load_naming_config()
         assert len(nc.column_segments) > 0
-
-    def test_common_columns(self):
-        nc = load_naming_config()
         assert "ETL_TIME" in nc.common_columns
         assert "SNAPSHOT_DATE" in nc.common_columns
         assert "etl_time" not in nc.common_columns
-
-    def test_removed_legacy_column_segment_types(self):
-        nc = load_naming_config()
         assert "prefix_field" not in nc.types
         assert "suffix_field" not in nc.types
-
-    def test_column_default_requires_uppercase_identifier_shorter_than_16(
-        self,
-    ):
-        nc = load_naming_config()
         assert nc._match_segments("CUSTOMER_ID", nc.column_segments) == {
             "COLUMN_IDENTIFIER": "CUSTOMER_ID",
         }
@@ -821,12 +840,16 @@ from config import PROJECT_ROOT, get_naming_config
 
 
 class TestJoinExpressionSyntax:
-    def test_parse_nested_empty_join(self):
+    def test_join_expression_syntax_scenarios(self):
+        self._assert_parse_nested_empty_join()
+        self._assert_segment_match_uses_patterns_when_allow_misses()
+
+    def _assert_parse_nested_empty_join(self):
         result = _parse_rule_expression(["_", "$a", ["", "$b", "$c"]], {})
         assert [item["name"] for item in result] == ["a", "_", "b", "c"]
         assert result[3].get("concat_left") is True
 
-    def test_segment_match_uses_patterns_when_allow_misses(self):
+    def _assert_segment_match_uses_patterns_when_allow_misses(self):
         td = TypeDef(label="period", patterns=["^[0-9]+D$"], allow=["D"])
         types = {"period": td}
         nc = NamingConfig(
@@ -852,7 +875,25 @@ class TestEnterpriseNaming:
     def nc(self):
         return load_naming_config(PROJECT_ROOT / "naming_config.yaml")
 
-    def test_match_dwd_v2(self, nc):
+    def test_enterprise_naming_scenarios(self, nc):
+        self._assert_match_dwd_v2(nc)
+        self._assert_match_dws_v2(nc)
+        self._assert_match_dws_v2_single_entity(nc)
+        self._assert_match_dws_v2_requires_entity(nc)
+        self._assert_match_ads_v2(nc)
+        self._assert_match_dim_v2(nc)
+        self._assert_match_dim_v2_addt(nc)
+        self._assert_match_dim_pm(nc)
+        self._assert_table_name_max_length(nc)
+        self._assert_entity_types_declare_model_sources(nc)
+        self._assert_removed_legacy_column_segment_types(nc)
+        self._assert_column_default_requires_uppercase_identifier_shorter_than_16(
+            nc
+        )
+        self._assert_atomic_metric_rule(nc)
+        self._assert_derived_metric_types(nc)
+
+    def _assert_match_dwd_v2(self, nc):
         segs = nc.layers["DWD"].templates[0]
         r = nc._match_segments("M_WEMG_04_CHREM_DI", segs)
         assert r == {
@@ -863,7 +904,7 @@ class TestEnterpriseNaming:
             "DWD_GRANULARITY": "I",
         }
 
-    def test_match_dws_v2(self, nc):
+    def _assert_match_dws_v2(self, nc):
         segs = nc.layers["DWS"].templates[0]
         r = nc._match_segments("I_FRTN_CUST_PROD_BAL_DS", segs)
         assert r == {
@@ -874,7 +915,7 @@ class TestEnterpriseNaming:
             "DWS_GRANULARITY": "S",
         }
 
-    def test_match_dws_v2_single_entity(self, nc):
+    def _assert_match_dws_v2_single_entity(self, nc):
         assert (
             nc._match_segments(
                 "I_FRTN_CUST_BAL_DS",
@@ -893,13 +934,13 @@ class TestEnterpriseNaming:
             "DWS_GRANULARITY": "S",
         }
 
-    def test_match_dws_v2_requires_entity(self, nc):
+    def _assert_match_dws_v2_requires_entity(self, nc):
         assert all(
             nc._match_segments("I_FRTN_BAL_DS", segs) is None
             for segs in nc.layers["DWS"].templates
         )
 
-    def test_match_ads_v2(self, nc):
+    def _assert_match_ads_v2(self, nc):
         segs = nc.layers["ADS"].templates[0]
         r = nc._match_segments("A13_CUST_DS", segs)
         assert r == {
@@ -909,7 +950,7 @@ class TestEnterpriseNaming:
             "ADS_GRANULARITY": "S",
         }
 
-    def test_match_dim_v2(self, nc):
+    def _assert_match_dim_v2(self, nc):
         segs = nc.layers["DIM"].templates[0]
         r = nc._match_segments("DIM_BASE_CUST_INFO_INFO", segs)
         assert r == {
@@ -919,7 +960,7 @@ class TestEnterpriseNaming:
             "DIM_CONTENT_TYPE": "INFO",
         }
 
-    def test_match_dim_v2_addt(self, nc):
+    def _assert_match_dim_v2_addt(self, nc):
         segs = nc.layers["DIM"].templates[0]
         r = nc._match_segments("DIM_ADDT_CUST_SCTY_RELA_INFO", segs)
         assert r == {
@@ -929,15 +970,15 @@ class TestEnterpriseNaming:
             "DIM_CONTENT_TYPE": "INFO",
         }
 
-    def test_match_dim_pm(self, nc):
+    def _assert_match_dim_pm(self, nc):
         segs = nc.layers["DIM"].templates[1]
         r = nc._match_segments("DIM_PM_CD", segs)
         assert r == {"DIM_DESC": "CD"}
 
-    def test_table_name_max_length(self, nc):
+    def _assert_table_name_max_length(self, nc):
         assert nc.table_name_max_length == 30
 
-    def test_entity_types_declare_model_sources(self, nc):
+    def _assert_entity_types_declare_model_sources(self, nc):
         assert nc.types["MODEL_ENTITY"].values_from == {
             "scope": "current_model",
             "paths": ["entities.code", "entity.code"],
@@ -947,11 +988,11 @@ class TestEnterpriseNaming:
             "paths": ["grain.entities"],
         }
 
-    def test_removed_legacy_column_segment_types(self, nc):
+    def _assert_removed_legacy_column_segment_types(self, nc):
         assert "prefix_field" not in nc.types
         assert "suffix_field" not in nc.types
 
-    def test_column_default_requires_uppercase_identifier_shorter_than_16(
+    def _assert_column_default_requires_uppercase_identifier_shorter_than_16(
         self, nc
     ):
         assert nc._match_segments("CUST_ID", nc.column_segments) == {
@@ -965,7 +1006,7 @@ class TestEnterpriseNaming:
             nc._match_segments("CUSTOMER_ID_LONG1", nc.column_segments) is None
         )
 
-    def test_atomic_metric_rule(self, nc):
+    def _assert_atomic_metric_rule(self, nc):
         assert nc.types["ACTION_VERB"].validate("PAY") is True
         assert nc.types["ACTION_VERB"].validate("pay") is False
         assert "AMT" in nc.types["MEASURE_NOUN"].allow
@@ -977,7 +1018,7 @@ class TestEnterpriseNaming:
         assert nc.match_metric_rule("PAY_UNKNOWN", "atomic") is None
         assert nc.match_metric_rule("pay_amt", "atomic") is None
 
-    def test_derived_metric_types(self, nc):
+    def _assert_derived_metric_types(self, nc):
         assert "7D" not in nc.types["METRIC_TIME_PERIOD"].allow
         assert nc.types["METRIC_TIME_PERIOD"].validate("7D") is True
         assert nc.types["METRIC_TIME_PERIOD"].validate("L13M") is True

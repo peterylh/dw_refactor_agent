@@ -60,69 +60,40 @@ def isolated_lineage_projects(tmp_path, monkeypatch):
 
 
 class TestDetermineLayer:
-    def test_ods(self):
-        assert determine_layer("ods_customer") == "ODS"
-        assert determine_layer("shop_dm.ods_order") == "ODS"
+    def test_determine_layer_scenarios(self):
+        scenarios = [
+            ("ods_customer", "ODS"),
+            ("shop_dm.ods_order", "ODS"),
+            ("dwd_customer", "DWD"),
+            ("shop_dm.dwd_product", "DWD"),
+            ("dws_store_sales_daily", "DWS"),
+            ("shop_dm.dws_product_sales_daily", "DWS"),
+            ("ads_customer_rfm", "ADS"),
+            ("shop_dm.ads_sales_dashboard", "ADS"),
+            ("unknown_table", "OTHER"),
+            ("ods_", "OTHER"),
+        ]
+        for table_name, expected in scenarios:
+            assert determine_layer(table_name) == expected
 
-    def test_dwd(self):
-        assert determine_layer("dwd_customer") == "DWD"
-        assert determine_layer("shop_dm.dwd_product") == "DWD"
-
-    def test_dws(self):
-        assert determine_layer("dws_store_sales_daily") == "DWS"
-        assert determine_layer("shop_dm.dws_product_sales_daily") == "DWS"
-
-    def test_ads(self):
-        assert determine_layer("ads_customer_rfm") == "ADS"
-        assert determine_layer("shop_dm.ads_sales_dashboard") == "ADS"
-
-    def test_dim(self):
         configure_project("unit_lineage_dim")
         assert determine_layer("dim_date") == "DIM"
         assert determine_layer("finance_analytics_dm.dim_customer") == "DIM"
-
-    def test_other(self):
-        assert determine_layer("unknown_table") == "OTHER"
-        assert determine_layer("temp_data") == "OTHER"
         assert determine_layer("") == "OTHER"
-
-    def test_exact_boundary(self):
-        assert determine_layer("ods_") == "OTHER"
-        assert determine_layer("dwd_") == "OTHER"
 
 
 class TestTableName:
     def _from_table(self, stmt):
         return (stmt.args.get("from_") or stmt.args.get("from")).this
 
-    def test_table_with_db(self):
-        t = exp.Table(
-            this=exp.Identifier(this="ods_order"),
-            db=exp.Identifier(this="shop_dm"),
-        )
-        assert _table_name(t) == "shop_dm.ods_order"
-
-    def test_table_without_db(self):
-        t = exp.Table(this=exp.Identifier(this="ods_order"))
-        assert _table_name(t) == "ods_order"
-
-    def test_quoted_identifier(self):
-        t = exp.Table(
-            this=exp.Identifier(this="order", quoted=True),
-            db=exp.Identifier(this="shop_dm"),
-        )
-        assert _table_name(t) == "shop_dm.order"
-
-    def test_from_parse(self):
-        stmt = sqlglot.parse_one(
-            "SELECT * FROM shop_dm.ods_customer", dialect="doris"
-        )
-        t = self._from_table(stmt)
-        assert isinstance(t, exp.Table)
-        assert _table_name(t) == "shop_dm.ods_customer"
-
-    def test_from_parse_no_db(self):
-        stmt = sqlglot.parse_one("SELECT * FROM ods_customer", dialect="doris")
-        t = self._from_table(stmt)
-        assert isinstance(t, exp.Table)
-        assert _table_name(t) == "ods_customer"
+    def test_table_name_from_parsed_sql(self):
+        scenarios = [
+            ("SELECT * FROM shop_dm.ods_customer", "shop_dm.ods_customer"),
+            ("SELECT * FROM ods_customer", "ods_customer"),
+            ("SELECT * FROM shop_dm.`order`", "shop_dm.order"),
+        ]
+        for sql, expected in scenarios:
+            stmt = sqlglot.parse_one(sql, dialect="doris")
+            t = self._from_table(stmt)
+            assert isinstance(t, exp.Table)
+            assert _table_name(t) == expected

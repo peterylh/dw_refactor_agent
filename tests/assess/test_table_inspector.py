@@ -24,7 +24,16 @@ from assess.llm.table_inspector import (
 # ============================================================
 
 
-def test_build_prompt_exposes_context_and_json_contract():
+def test_build_prompt_scenarios():
+    _assert_build_prompt_exposes_context_and_json_contract()
+    _assert_build_prompt_omits_empty_etl_section()
+    _assert_build_prompt_keeps_metadata_contracts_without_project_examples()
+    _assert_build_prompt_includes_catalog_and_project_context_as_inputs()
+    _assert_build_prompt_documents_business_metadata_scope()
+    _assert_build_prompt_keeps_metric_expression_separate_from_grain()
+
+
+def _assert_build_prompt_exposes_context_and_json_contract():
     ctx = TableContext(
         table_name="dwd_customer",
         layer="DWD",
@@ -57,7 +66,7 @@ def test_build_prompt_exposes_context_and_json_contract():
     assert "is_violating_declared_layer" not in prompt
 
 
-def test_build_prompt_omits_empty_etl_section():
+def _assert_build_prompt_omits_empty_etl_section():
     ctx = TableContext(
         table_name="dwd_customer",
         layer="DWD",
@@ -73,7 +82,7 @@ def test_build_prompt_omits_empty_etl_section():
     assert "## ETL 加工逻辑" not in prompt
 
 
-def test_build_prompt_keeps_metadata_contracts_without_project_examples():
+def _assert_build_prompt_keeps_metadata_contracts_without_project_examples():
     ctx = TableContext(
         table_name="DIM_BASE_CUST_INFO",
         layer="DIM",
@@ -103,7 +112,7 @@ def test_build_prompt_keeps_metadata_contracts_without_project_examples():
         assert hardcoded_example not in prompt
 
 
-def test_build_prompt_includes_catalog_and_project_context_as_inputs():
+def _assert_build_prompt_includes_catalog_and_project_context_as_inputs():
     ctx = TableContext(
         table_name="dwd_event_detail",
         layer="DWD",
@@ -138,40 +147,38 @@ def test_build_prompt_includes_catalog_and_project_context_as_inputs():
     assert '"tables"' not in prompt
 
 
-@pytest.mark.parametrize(
-    ("layer", "expected_section"),
-    [
+def _assert_build_prompt_documents_business_metadata_scope():
+    scenarios = [
         ("DWD", "数据域与业务板块候选"),
         ("DIM", "数据域与业务板块字典"),
-    ],
-)
-def test_build_prompt_documents_business_metadata_scope(
-    layer, expected_section
-):
-    options = None
-    if layer == "DIM":
-        options = {
-            "domains": [{"id": "06", "code": "ORGN", "name": "机构域"}],
-            "business_areas": [{"code": "CHNL", "name": "渠道业务"}],
-        }
-    ctx = TableContext(
-        table_name="dim_location" if layer == "DIM" else "dwd_event_detail",
-        layer=layer,
-        ddl="CREATE TABLE t (id BIGINT);",
-        etl_sql="",
-        upstream_tables=[],
-        downstream_tables=[],
-        business_domain_options=options,
-    )
+    ]
+    for layer, expected_section in scenarios:
+        options = None
+        if layer == "DIM":
+            options = {
+                "domains": [{"id": "06", "code": "ORGN", "name": "机构域"}],
+                "business_areas": [{"code": "CHNL", "name": "渠道业务"}],
+            }
+        ctx = TableContext(
+            table_name=(
+                "dim_location" if layer == "DIM" else "dwd_event_detail"
+            ),
+            layer=layer,
+            ddl="CREATE TABLE t (id BIGINT);",
+            etl_sql="",
+            upstream_tables=[],
+            downstream_tables=[],
+            business_domain_options=options,
+        )
 
-    prompt = build_prompt(ctx)
+        prompt = build_prompt(ctx)
 
-    assert expected_section in prompt
-    assert "inferred_data_domain" in prompt
-    assert "inferred_business_area" in prompt
+        assert expected_section in prompt
+        assert "inferred_data_domain" in prompt
+        assert "inferred_business_area" in prompt
 
 
-def test_build_prompt_keeps_metric_expression_separate_from_grain():
+def _assert_build_prompt_keeps_metric_expression_separate_from_grain():
     ctx = TableContext(
         table_name="dws_store_sales_daily",
         layer="DWS",
@@ -728,55 +735,32 @@ def test_parse_response_preserves_related_entities_metadata():
     assert cached["related_entities"] == result.related_entities
 
 
-def test_parse_fact_response():
-    resp = {
-        "choices": [
-            {
-                "message": {
-                    "content": '{"table_type": "fact", "confidence": 0.8, "reason": "test fact"}'
-                }
-            }
-        ]
-    }
-    result = parse_response("dwd_order", resp)
-    assert result.table_type == "fact"
-    assert result.confidence == 0.8
+def test_parse_basic_response_shapes():
+    scenarios = [
+        (
+            "dwd_order",
+            '{"table_type": "fact", "confidence": 0.8, "reason": "test fact"}',
+            "fact",
+            0.8,
+            None,
+        ),
+        (
+            "t1",
+            '```json\n{"table_type": "dimension", "confidence": 0.9, "reason": "test"}\n```',
+            "dimension",
+            0.9,
+            None,
+        ),
+        ("t1", "This is a dimension table", "other", 0.0, "JSON 解析失败"),
+    ]
 
-
-def test_parse_other_response():
-    resp = {
-        "choices": [
-            {
-                "message": {
-                    "content": '{"table_type": "other", "confidence": 0.5, "reason": "test other"}'
-                }
-            }
-        ]
-    }
-    result = parse_response("dwd_mapping", resp)
-    assert result.table_type == "other"
-
-
-def test_parse_markdown_wrapped_response():
-    resp = {
-        "choices": [
-            {
-                "message": {
-                    "content": '```json\n{"table_type": "dimension", "confidence": 0.9, "reason": "test"}\n```'
-                }
-            }
-        ]
-    }
-    result = parse_response("t1", resp)
-    assert result.table_type == "dimension"
-
-
-def test_parse_malformed_response():
-    resp = {"choices": [{"message": {"content": "This is a dimension table"}}]}
-    result = parse_response("t1", resp)
-    assert result.table_type == "other"
-    assert result.confidence == 0.0
-    assert "JSON 解析失败" in result.reasoning_steps[0]
+    for table_name, content, table_type, confidence, reason in scenarios:
+        resp = {"choices": [{"message": {"content": content}}]}
+        result = parse_response(table_name, resp)
+        assert result.table_type == table_type
+        assert result.confidence == confidence
+        if reason:
+            assert reason in result.reasoning_steps[0]
 
 
 def test_parse_grouped_column_response():
@@ -874,7 +858,7 @@ def test_parse_grouped_column_response():
     assert result.others[0]["role"] == "audit"
 
 
-def test_result_to_dict_includes_system_layer_violation():
+def test_result_serialization_handles_system_fields():
     resp = {
         "choices": [
             {
@@ -894,33 +878,11 @@ def test_result_to_dict_includes_system_layer_violation():
 
     result = parse_response("dwd_customer", resp, declared_layer="DWD")
     data = result_to_dict(result)
+    cached = result_to_cache_dict(result)
 
     assert data["is_violating_declared_layer"] is True
-
-
-def test_result_to_cache_dict_omits_system_layer_violation():
-    resp = {
-        "choices": [
-            {
-                "message": {
-                    "content": json.dumps(
-                        {
-                            "inferred_layer": "DIM",
-                            "table_type": "dimension",
-                            "confidence": 0.9,
-                            "reasoning_steps": ["dimension table"],
-                        }
-                    )
-                }
-            }
-        ]
-    }
-
-    result = parse_response("dwd_customer", resp, declared_layer="DWD")
-    data = result_to_cache_dict(result)
-
-    assert "is_violating_declared_layer" not in data
-    assert "status" not in data
+    assert "is_violating_declared_layer" not in cached
+    assert "status" not in cached
 
 
 def test_validate_columns_flags_unknown_duplicate_and_missing_fields():
@@ -1966,7 +1928,7 @@ def test_inspect_retries_missing_dwd_fact_primary_entity(
     assert result.entities[0]["type"] == "primary"
 
 
-def test_cache_hash_includes_declared_layer(tmp_path):
+def test_cache_hash_includes_context_fields(tmp_path):
     inspector = TableInspector(
         api_key="test", cache_file=tmp_path / "cache.json"
     )
@@ -1983,12 +1945,6 @@ def test_cache_hash_includes_declared_layer(tmp_path):
 
     assert inspector._compute_hash(dwd_ctx) != inspector._compute_hash(dws_ctx)
 
-
-def test_cache_hash_includes_project_context(tmp_path):
-    inspector = TableInspector(
-        api_key="test", cache_file=tmp_path / "cache.json"
-    )
-
     base = dict(
         table_name="t1",
         layer="DWD",
@@ -2003,11 +1959,6 @@ def test_cache_hash_includes_project_context(tmp_path):
     assert inspector._compute_hash(retail_ctx) != inspector._compute_hash(
         finance_ctx
     )
-
-
-def test_default_parallelism_is_two():
-    inspector = TableInspector(api_key="test", cache_file=None)
-
     assert inspector.parallelism == 2
 
 

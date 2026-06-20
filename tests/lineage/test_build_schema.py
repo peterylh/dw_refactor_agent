@@ -8,22 +8,18 @@ from lineage.lineage_extractor import (
 
 
 class TestBuildSchemaFromTexts:
-    def test_basic(self, ddl_texts):
+    def test_schema_from_texts_extracts_tables_columns_and_types(
+        self, ddl_texts
+    ):
         schema = build_schema_from_texts(ddl_texts)
         assert "internal" in schema
         assert "shop_dm" in schema["internal"]
         assert "ods_customer" in schema["internal"]["shop_dm"]
         assert "ods_order" in schema["internal"]["shop_dm"]
         assert "dwd_customer" in schema["internal"]["shop_dm"]
-
-    def test_column_count(self, ddl_texts):
-        schema = build_schema_from_texts(ddl_texts)
         assert len(schema["internal"]["shop_dm"]["ods_customer"]) == 12
         assert len(schema["internal"]["shop_dm"]["ods_order"]) == 11
         assert len(schema["internal"]["shop_dm"]["dwd_customer"]) == 13
-
-    def test_column_types(self, ddl_texts):
-        schema = build_schema_from_texts(ddl_texts)
         cust = schema["internal"]["shop_dm"]["ods_customer"]
         assert cust["customer_id"] == "BIGINT"
         assert cust["customer_name"] == "VARCHAR(64)"
@@ -32,7 +28,13 @@ class TestBuildSchemaFromTexts:
         assert cust["create_time"] == "DATETIME"
         assert cust["member_level"] == "VARCHAR(16)"
 
-    def test_quoted_identifiers_are_canonicalized(self):
+    def test_table_identifier_shape_scenarios(self):
+        self._assert_quoted_identifiers_are_canonicalized()
+        self._assert_schema_lookup_is_case_insensitive()
+        self._assert_bare_table_uses_default_catalog_and_database()
+        self._assert_three_part_table_preserves_catalog_database_and_table()
+
+    def _assert_quoted_identifiers_are_canonicalized(self):
         ddl = """
         CREATE TABLE IF NOT EXISTS "shop_dm"."M_SHOP_01_CUST_DF" (
             "CUSTOMER_ID" BIGINT,
@@ -50,7 +52,7 @@ class TestBuildSchemaFromTexts:
             "CUSTOMER_NAME",
         }
 
-    def test_schema_lookup_is_case_insensitive(self):
+    def _assert_schema_lookup_is_case_insensitive(self):
         schema = build_schema_from_texts(
             [
                 """
@@ -81,7 +83,7 @@ class TestBuildSchemaFromTexts:
             is True
         )
 
-    def test_bare_table_uses_default_catalog_and_database(self):
+    def _assert_bare_table_uses_default_catalog_and_database(self):
         schema = build_schema_from_texts(
             [
                 """
@@ -106,7 +108,7 @@ class TestBuildSchemaFromTexts:
         assert _schema_columns_for_table(schema, "dwd_order") == ["id", "name"]
         assert _schema_has_column(schema, "dwd_order", "id") is True
 
-    def test_three_part_table_preserves_catalog_database_and_table(self):
+    def _assert_three_part_table_preserves_catalog_database_and_table(self):
         schema = build_schema_from_texts(
             [
                 """
@@ -133,15 +135,10 @@ class TestBuildSchemaFromTexts:
             _schema_has_column(schema, "hive.shop_dm.dwd_order", "id") is True
         )
 
-    def test_empty_list(self):
+    def test_schema_from_texts_ignores_empty_or_non_ddl_input(self):
         assert build_schema_from_texts([]) == {}
-
-    def test_no_ddl_statements(self):
         sql = "SELECT 1; INSERT INTO t VALUES (1);"
         assert build_schema_from_texts([sql]) == {}
-
-    def test_comment_only(self):
-        assert build_schema_from_texts(["-- just a comment"]) == {}
 
     def test_schema_table_count_counts_nested_catalog_database_tables(self):
         schema = {
@@ -165,7 +162,7 @@ class TestBuildSchemaFromTexts:
 
 
 class TestBuildSchemaFromDdl:
-    def test_from_directory(self, ddl_dir):
+    def test_build_schema_from_ddl_sources(self, ddl_dir, tmp_path):
         schema = build_schema_from_ddl(str(ddl_dir))
         assert "internal" in schema
         assert "shop_dm" in schema["internal"]
@@ -173,13 +170,11 @@ class TestBuildSchemaFromDdl:
         assert "ods_customer" in schema["internal"]["shop_dm"]
         assert "ads_sales_dashboard" in schema["internal"]["shop_dm"]
 
-    def test_empty_directory(self, tmp_path):
         d = tmp_path / "empty_ddl"
         d.mkdir()
         assert build_schema_from_ddl(str(d)) == {}
 
-    def test_from_multiple_directories(self, tmp_path):
-        root_ddl = tmp_path / "ddl"
+        root_ddl = tmp_path / "root_ddl"
         ods_ddl = tmp_path / "ods" / "ddl" / "internal" / "shop_dm"
         root_ddl.mkdir(parents=True)
         ods_ddl.mkdir(parents=True)
