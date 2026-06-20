@@ -165,6 +165,10 @@ FROM demo.dwd_sales;
     assert result["issues"] == [
         {
             "id": "code_quality.iss_001",
+            "fingerprint": (
+                "code_quality|CODE_NO_SELECT_STAR_IN_WRITE|task|"
+                "demo/tasks/dws_sales.sql"
+            ),
             "severity": "高",
             "rule_id": "CODE_NO_SELECT_STAR_IN_WRITE",
             "target": {

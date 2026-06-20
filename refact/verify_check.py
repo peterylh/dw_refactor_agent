@@ -64,13 +64,16 @@ def get_pymysql_conn(db_name: str, qa: bool = False):
 def check_count(prod_conn, qa_conn, ck: dict, precision: float) -> dict:
     """COUNT(*) 对比."""
     table = ck["table"]
-    pc = ck["partition_col"]
-    pv = ck["partition_value"]
+    pc = ck.get("partition_col")
+    pv = ck.get("partition_value")
 
     cursor_p = prod_conn.cursor()
     cursor_q = qa_conn.cursor()
 
-    sql = f"SELECT COUNT(*) FROM {table} WHERE {pc} = '{pv}'"
+    if pc and pv is not None:
+        sql = f"SELECT COUNT(*) FROM {table} WHERE {pc} = '{pv}'"
+    else:
+        sql = f"SELECT COUNT(*) FROM {table}"
     cursor_p.execute(sql)
     prod_cnt = cursor_p.fetchone()[0]
     cursor_q.execute(sql)
@@ -98,8 +101,8 @@ def check_row_compare(
 ) -> dict:
     """逐行逐列对比."""
     table = ck["table"]
-    pc = ck["partition_col"]
-    pv = ck["partition_value"]
+    pc = ck.get("partition_col")
+    pv = ck.get("partition_value")
 
     cursor_p = prod_conn.cursor()
     cursor_q = qa_conn.cursor()
@@ -119,13 +122,14 @@ def check_row_compare(
 
     limit_sql = f"LIMIT {sample}" if sample else ""
 
+    where_sql = f"WHERE {pc} = '{pv}' " if pc and pv is not None else ""
     prod_sql = (
         f"SELECT {col_list} FROM {table} "
-        f"WHERE {pc} = '{pv}' ORDER BY {order_cols} {limit_sql}"
+        f"{where_sql}ORDER BY {order_cols} {limit_sql}"
     )
     qa_sql = (
         f"SELECT {col_list} FROM {table} "
-        f"WHERE {pc} = '{pv}' ORDER BY {order_cols} {limit_sql}"
+        f"{where_sql}ORDER BY {order_cols} {limit_sql}"
     )
 
     cursor_p.execute(prod_sql)
@@ -195,6 +199,74 @@ def check_row_compare(
     }
 
 
+def run_checks(
+    meta: dict,
+    *,
+    method: str = "all",
+    sample: int = 0,
+    precision: float = 0.01,
+) -> dict:
+    """Run configured production-vs-QA checks."""
+    prod_db = meta["project_db"]
+    qa_db = meta["qa_db"]
+    checks = meta.get("checks") or meta.get("verification", {}).get(
+        "checks", []
+    )
+
+    # 过滤
+    filtered = [c for c in checks if method in ("all", c["method"])]
+    if not filtered:
+        print(f"没有匹配的校验项 (method={method})")
+        return {"all_pass": True, "results": []}
+
+    print(f"{'=' * 60}")
+    print(f"验证库: {qa_db}")
+    print(f"方法:   {method}")
+    if sample:
+        print(f"抽样:   {sample} 行")
+    print(f"容差:   {precision}")
+
+    prod_conn = get_pymysql_conn(prod_db)
+    qa_conn = get_pymysql_conn(qa_db, qa=True)
+
+    results = []
+    all_pass = True
+
+    for ck in filtered:
+        table = ck["table"]
+        method = ck["method"]
+        pc = ck.get("partition_col")
+        pv = ck.get("partition_value")
+
+        if pc and pv is not None:
+            print(f"\n--- [{method}] {table} WHERE {pc} = '{pv}' ---")
+        else:
+            print(f"\n--- [{method}] {table} ---")
+
+        if ck["method"] == "count":
+            r = check_count(prod_conn, qa_conn, ck, precision)
+        elif ck["method"] == "row_compare":
+            r = check_row_compare(prod_conn, qa_conn, ck, sample, precision)
+        else:
+            continue
+
+        results.append(r)
+        if not r["match"]:
+            all_pass = False
+
+    prod_conn.close()
+    qa_conn.close()
+
+    total = len(results)
+    passed = sum(1 for r in results if r["match"])
+    failed = total - passed
+
+    print(f"\n{'=' * 60}")
+    print(f"{'全部通过!' if all_pass else '存在差异!'}")
+    print(f"  校验项: {total}  通过: {passed}  失败: {failed}")
+    return {"all_pass": all_pass, "results": results}
+
+
 # ============================================================
 # 主流程
 # ============================================================
@@ -220,60 +292,12 @@ def main():
     args = parser.parse_args()
 
     meta = json.loads(Path(args.metadata).read_text(encoding=TEXT_ENCODING))
-    prod_db = meta["project_db"]
-    qa_db = meta["qa_db"]
-    checks = meta.get("verification", {}).get("checks", [])
-
-    # 过滤
-    filtered = [c for c in checks if args.method in ("all", c["method"])]
-    if not filtered:
-        print(f"没有匹配的校验项 (method={args.method})")
-        return
-
-    print(f"{'=' * 60}")
-    print(f"验证库: {qa_db}")
-    print(f"方法:   {args.method}")
-    if args.sample:
-        print(f"抽样:   {args.sample} 行")
-    print(f"容差:   {args.precision}")
-
-    prod_conn = get_pymysql_conn(prod_db)
-    qa_conn = get_pymysql_conn(qa_db, qa=True)
-
-    results = []
-    all_pass = True
-
-    for ck in filtered:
-        table = ck["table"]
-        method = ck["method"]
-        pc = ck["partition_col"]
-        pv = ck["partition_value"]
-
-        print(f"\n--- [{method}] {table} WHERE {pc} = '{pv}' ---")
-
-        if method == "count":
-            r = check_count(prod_conn, qa_conn, ck, args.precision)
-        elif method == "row_compare":
-            r = check_row_compare(
-                prod_conn, qa_conn, ck, args.sample, args.precision
-            )
-        else:
-            continue
-
-        results.append(r)
-        if not r["match"]:
-            all_pass = False
-
-    prod_conn.close()
-    qa_conn.close()
-
-    total = len(results)
-    passed = sum(1 for r in results if r["match"])
-    failed = total - passed
-
-    print(f"\n{'=' * 60}")
-    print(f"{'全部通过!' if all_pass else '存在差异!'}")
-    print(f"  校验项: {total}  通过: {passed}  失败: {failed}")
+    result = run_checks(
+        meta,
+        method=args.method,
+        sample=args.sample,
+        precision=args.precision,
+    )
 
     out_path = (
         Path(args.output)
@@ -282,16 +306,12 @@ def main():
     )
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(
-        json.dumps(
-            {"all_pass": all_pass, "results": results},
-            ensure_ascii=False,
-            indent=2,
-        ),
+        json.dumps(result, ensure_ascii=False, indent=2),
         encoding=TEXT_ENCODING,
     )
     print(f"结果已写入: {out_path}")
 
-    sys.exit(0 if all_pass else 1)
+    sys.exit(0 if result["all_pass"] else 1)
 
 
 if __name__ == "__main__":

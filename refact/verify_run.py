@@ -153,17 +153,8 @@ def rewrite_sql(
 # ============================================================
 
 
-def main():
-    parser = argparse.ArgumentParser(
-        description="验证执行: 重建验证库 + SQL Glot 表映射执行"
-    )
-    parser.add_argument("--metadata", required=True, help="元数据 JSON 路径")
-    parser.add_argument(
-        "--dry-run", action="store_true", help="只输出执行计划, 不连接数据库"
-    )
-    args = parser.parse_args()
-
-    meta = json.loads(Path(args.metadata).read_text(encoding=TEXT_ENCODING))
+def run_metadata(meta: dict, dry_run: bool = False) -> dict:
+    """Execute a verification metadata plan."""
     prod_db = meta["project_db"]
     qa_db = meta["qa_db"]
     etl_date = meta.get("partition_info", {}).get("etl_date")
@@ -180,9 +171,13 @@ def main():
         )
         print("    如果只是想确认作业不报错，可继续执行\n")
 
-    if args.dry_run:
+    if dry_run:
         _dry_run(meta)
-        return
+        return {
+            "status": "dry_run",
+            "qa_db": qa_db,
+            "job_count": len(jobs_to_run),
+        }
 
     # ── Phase 0: 重置验证库 ──
     print("=" * 60)
@@ -262,6 +257,25 @@ def main():
 
     print(f"\n{'=' * 60}")
     print(f"验证执行完成! 共执行 {len(jobs_to_run)} 个作业, 目标库: {qa_db}")
+    return {
+        "status": "completed",
+        "qa_db": qa_db,
+        "job_count": len(jobs_to_run),
+    }
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="验证执行: 重建验证库 + SQL Glot 表映射执行"
+    )
+    parser.add_argument("--metadata", required=True, help="元数据 JSON 路径")
+    parser.add_argument(
+        "--dry-run", action="store_true", help="只输出执行计划, 不连接数据库"
+    )
+    args = parser.parse_args()
+
+    meta = json.loads(Path(args.metadata).read_text(encoding=TEXT_ENCODING))
+    run_metadata(meta, dry_run=args.dry_run)
 
 
 # ============================================================
@@ -281,10 +295,13 @@ def _dry_run(meta):
     print(f"{'=' * 60}")
     print("=== DRY RUN ===")
     print(f"  项目: {meta['project']}")
-    print(f"  分支: {meta['git']['branch']}")
-    print(f"  基线: {meta['git']['merge_base'][:12]}...")
+    git_info = meta.get("git") or {}
+    if git_info:
+        print(f"  分支: {git_info.get('branch', '')}")
+        merge_base = str(git_info.get("merge_base") or "")
+        print(f"  基线: {merge_base[:12]}...")
     print(f"  生产库: {prod_db} → 验证库: {qa_db}")
-    print(f"  锚点: {meta['anchors']}")
+    print(f"  锚点: {meta.get('anchors', [])}")
     print(f"  分区: {meta['partition_info'].get('partition', 'N/A')}")
     checks = meta.get("verification", {}).get("checks", [])
     if not meta.get("anchors") and not checks:
@@ -340,7 +357,8 @@ def _dry_run(meta):
         for ck in checks:
             print(
                 f"  [{ck['method']}] {qa_db}.{ck['table']} "
-                f"WHERE {ck['partition_col']} = '{ck['partition_value']}'"
+                f"WHERE {ck.get('partition_col', '*')} = "
+                f"'{ck.get('partition_value', '*')}'"
             )
 
 

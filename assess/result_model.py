@@ -50,6 +50,7 @@ def make_check(
     evidence: dict[str, Any] | None = None,
     message: str = "",
     issue: dict[str, Any] | None = None,
+    fingerprint_discriminator: str = "",
 ) -> dict[str, Any]:
     check = {
         "rule_id": rule_id,
@@ -64,6 +65,8 @@ def make_check(
         check["message"] = message
     if issue:
         check["_issue"] = issue
+    if fingerprint_discriminator:
+        check["_fingerprint_discriminator"] = str(fingerprint_discriminator)
     return check
 
 
@@ -115,6 +118,20 @@ def build_rule_summary(
     return summary
 
 
+def issue_fingerprint(dimension: str, check: dict[str, Any]) -> str:
+    target = check.get("target") or {}
+    parts = [
+        dimension,
+        str(check.get("rule_id") or ""),
+        str(target.get("type") or ""),
+        str(target.get("name") or ""),
+    ]
+    discriminator = str(check.get("_fingerprint_discriminator") or "").strip()
+    if discriminator:
+        parts.append(discriminator)
+    return "|".join(parts)
+
+
 def issues_from_checks(
     dimension: str,
     checks: list[dict[str, Any]],
@@ -134,6 +151,7 @@ def issues_from_checks(
         )
         issue = {
             "id": issue_id,
+            "fingerprint": issue_fingerprint(dimension, check),
             "severity": override.get("severity") or rule.get("severity", ""),
             "rule_id": rule_id,
             "target": deepcopy(check["target"]),

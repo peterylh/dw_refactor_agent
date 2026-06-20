@@ -114,6 +114,8 @@ def assess(
     selected_dimensions: set[str] | list[str] | tuple[str, ...] | None = None,
     disabled_rules: set[str] | list[str] | tuple[str, ...] | None = None,
     only_rules: set[str] | list[str] | tuple[str, ...] | None = None,
+    lineage_data: dict | None = None,
+    scope: dict | None = None,
 ) -> dict:
     weights = normalize_score_weights(weights)
     selected_dimensions = normalize_selected_dimensions(selected_dimensions)
@@ -132,7 +134,7 @@ def assess(
     model_metadata = load_model_metadata(project)
     business_domain_config = get_business_domain_config(project)
 
-    data = load_lineage_data(project)
+    data = lineage_data or load_lineage_data(project)
     llm_results = []
     if weights.get("enable_llm", False):
         api_key = os.environ.get("DEEPSEEK_API_KEY")
@@ -215,12 +217,15 @@ def assess(
         include_passed_checks=include_passed_checks,
     )
 
-    return dict(
+    result = dict(
         project=project,
         overall_score=overall_score,
         weights=weights,
         dimensions=output_dimensions,
     )
+    if scope:
+        result["scope"] = scope
+    return result
 
 
 def main():
