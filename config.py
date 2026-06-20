@@ -1840,6 +1840,14 @@ def job_dag_path(project: str) -> Path:
     return lineage_dir / "job_dag.json"
 
 
+def lineage_task_cache_path(project: str) -> Path:
+    """返回项目 task 级血缘缓存默认路径."""
+    lineage_dir = project_artifact_dir(project, "lineage")
+    if lineage_dir is None:
+        raise KeyError(f"未知项目: {project}")
+    return lineage_dir / "task_lineage_cache.json"
+
+
 def lineage_html_path(project: str) -> Path:
     """返回项目字段血缘 HTML 默认路径."""
     lineage_dir = project_artifact_dir(project, "lineage")

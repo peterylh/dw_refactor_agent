@@ -28,6 +28,7 @@ from config import (
     PROJECT_CONFIG,
     TEXT_ENCODING,
     lineage_data_path,
+    lineage_task_cache_path,
     project_asset_dirs,
 )
 from config import determine_layer as determine_config_layer
@@ -1354,6 +1355,66 @@ def _read_task_work_items(task_files, tasks_dir):
     return work_items
 
 
+def _task_result_from_cache(work_item, cached):
+    return {
+        "index": work_item["index"],
+        "source_file": work_item["source_file"],
+        "entries": cached.get("entries") or [],
+        "transient_tables": cached.get("transient_tables") or [],
+        "missing_ddl_tables": cached.get("missing_ddl_tables") or [],
+        "stats": cached.get("stats") or {},
+        "errors": cached.get("errors") or [],
+        "cache_hit": True,
+    }
+
+
+def _project_config_for_cache(project):
+    return PROJECT_CONFIG.get(
+        project,
+        {
+            "catalog": CURRENT_CATALOG,
+            "db": CURRENT_DB,
+        },
+    )
+
+
+def _task_cache_key(work_item, schema, project):
+    from lineage.task_cache import task_cache_key
+
+    return task_cache_key(
+        project=project,
+        source_file=work_item["source_file"],
+        sql_text=work_item["sql_text"],
+        schema=schema,
+        project_config=_project_config_for_cache(project),
+    )
+
+
+def _load_previous_task_cache(path):
+    from lineage.task_cache import load_task_cache
+
+    return load_task_cache(path)
+
+
+def _build_task_cache(project, schema, task_cache_entries):
+    from lineage.task_cache import stable_json_hash
+
+    return {
+        "project": project,
+        "schema_hash": stable_json_hash(schema),
+        "tasks": sorted(
+            task_cache_entries,
+            key=lambda item: item.get("source_file", ""),
+        ),
+    }
+
+
+def _cache_entry_from_result(result, cache_key):
+    from lineage.task_cache import cache_entry_from_result
+
+    return cache_entry_from_result(result, cache_key)
+
+
 def _notify_progress(progress_callback, completed, total, result):
     if progress_callback is not None:
         progress_callback(completed, total, result)
@@ -1427,23 +1488,78 @@ def extract_lineage_from_task_files(
     schema,
     parallel=1,
     progress_callback=None,
+    previous_cache_file=None,
+    cache_project=None,
 ):
     work_items = _read_task_work_items(task_files, tasks_dir)
     parallel = max(1, int(parallel or 1))
+    cache_enabled = previous_cache_file is not None
+    cache_project = cache_project or CURRENT_PROJECT
+    previous_cache = (
+        _load_previous_task_cache(previous_cache_file) if cache_enabled else {}
+    )
+    task_cache_entries = []
 
-    if len(work_items) <= 1 or parallel == 1:
-        task_results = _extract_task_work_items_serial(
-            work_items,
+    total = len(work_items)
+    completed = 0
+    cached_results = []
+    uncached_work_items = []
+    for work_item in work_items:
+        if not cache_enabled:
+            uncached_work_items.append(work_item)
+            continue
+        work_item["cache_key"] = _task_cache_key(
+            work_item,
             schema,
-            progress_callback,
+            cache_project,
+        )
+        cached = previous_cache.get(work_item["source_file"])
+        if cached and cached.get("cache_key") == work_item["cache_key"]:
+            result = _task_result_from_cache(work_item, cached)
+            cached_results.append(result)
+            task_cache_entries.append(
+                _cache_entry_from_result(result, work_item["cache_key"])
+            )
+            completed += 1
+            _notify_progress(progress_callback, completed, total, result)
+        else:
+            uncached_work_items.append(work_item)
+
+    def notify_uncached_progress(_completed, _total, result):
+        nonlocal completed
+        completed += 1
+        _notify_progress(progress_callback, completed, total, result)
+
+    if len(uncached_work_items) <= 1 or parallel == 1:
+        computed_results = _extract_task_work_items_serial(
+            uncached_work_items,
+            schema,
+            notify_uncached_progress,
         )
     else:
-        task_results = _extract_task_work_items_parallel(
-            work_items,
+        computed_results = _extract_task_work_items_parallel(
+            uncached_work_items,
             schema,
             parallel,
-            progress_callback,
+            notify_uncached_progress,
         )
+    for result in computed_results:
+        cache_key = next(
+            (
+                item["cache_key"]
+                for item in uncached_work_items
+                if cache_enabled and item["index"] == result["index"]
+            ),
+            None,
+        )
+        if cache_key:
+            task_cache_entries.append(
+                _cache_entry_from_result(result, cache_key)
+            )
+    task_results = sorted(
+        [*cached_results, *computed_results],
+        key=lambda result: result["index"],
+    )
 
     all_lineage = []
     transient_tables = []
@@ -1461,6 +1577,11 @@ def extract_lineage_from_task_files(
         "transient_tables": transient_tables,
         "missing_ddl_tables": sorted(missing_ddl_tables),
         "task_results": task_results,
+        "task_cache": (
+            _build_task_cache(cache_project, schema, task_cache_entries)
+            if cache_enabled
+            else None
+        ),
         "errors": errors,
     }
 
@@ -2115,6 +2236,19 @@ def main():
         action="store_true",
         help="存在严重错误时仍覆盖写出 lineage_data 文件",
     )
+    parser.add_argument(
+        "--cache-file",
+        default=None,
+        help=(
+            "task 级血缘缓存文件; 默认使用 "
+            "{project}/lineage/task_lineage_cache.json"
+        ),
+    )
+    parser.add_argument(
+        "--no-cache",
+        action="store_true",
+        help="禁用 task 级血缘缓存",
+    )
     args = parser.parse_args()
     configure_project(args.project)
     _reset_stats()
@@ -2145,6 +2279,8 @@ def main():
         fatal_count = len(_fatal_diagnostics(diagnostics))
         warning_count = len(diagnostics) - fatal_count
         diagnostic_parts = []
+        if task_result.get("cache_hit"):
+            diagnostic_parts.append("cache hit")
         if fatal_count:
             diagnostic_parts.append(f"{fatal_count} 个错误")
         if warning_count:
@@ -2157,12 +2293,22 @@ def main():
             f"{len(entries)} 条血缘{diagnostic_text}"
         )
 
+    cache_path = None
+    if not args.no_cache:
+        cache_path = (
+            Path(args.cache_file)
+            if args.cache_file
+            else lineage_task_cache_path(CURRENT_PROJECT)
+        )
+
     extraction_result = extract_lineage_from_task_files(
         task_files,
         tasks_dir,
         schema,
         parallel=parallel,
         progress_callback=print_task_progress,
+        previous_cache_file=cache_path,
+        cache_project=CURRENT_PROJECT,
     )
     all_lineage = extraction_result["lineage"]
     transient_tables = extraction_result["transient_tables"]
@@ -2222,6 +2368,15 @@ def main():
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "w", encoding=TEXT_ENCODING) as fp:
             json.dump(output, fp, ensure_ascii=False, indent=2)
+    if cache_path is not None:
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(cache_path, "w", encoding=TEXT_ENCODING) as fp:
+            json.dump(
+                extraction_result["task_cache"],
+                fp,
+                ensure_ascii=False,
+                indent=2,
+            )
 
     if fatal_diagnostics:
         print("\n血缘提取完成, 但存在严重错误!")

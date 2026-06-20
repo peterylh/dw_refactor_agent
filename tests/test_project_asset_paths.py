@@ -138,6 +138,12 @@ def test_project_artifact_paths_are_project_scoped(monkeypatch, tmp_path):
         "lineage",
         "job_dag.json",
     )
+    assert config.lineage_task_cache_path("demo") == Path(
+        tmp_path,
+        "demo_project",
+        "lineage",
+        "task_lineage_cache.json",
+    )
     assert config.assess_cache_path("demo", "inspect.json") == Path(
         tmp_path,
         "demo_project",

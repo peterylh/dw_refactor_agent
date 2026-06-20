@@ -103,8 +103,18 @@ shop-dm/
 字段级血缘解析引擎。读取 `{project}/ddl/`、`{project}/ods/ddl/{catalog}/{database}/` 建表 SQL 与 `{project}/tasks/` ETL SQL，输出：
 
 - `{project}/lineage/lineage_data.json`
+- `{project}/lineage/task_lineage_cache.json`
 
-支持 `--project shop|finance_analytics`：
+全量提取默认启用 task 级血缘缓存；未变化的 task 会按 SQL、相关 DDL
+schema 切片、项目 catalog/database 与 extractor 代码版本复用缓存结果。
+
+常用参数：
+
+- `--project shop|finance_analytics`
+- `--parallel <n>`：task 文件级并行度
+- `--cache-file <path>`：指定 task 级血缘缓存文件，默认
+  `{project}/lineage/task_lineage_cache.json`
+- `--no-cache`：禁用 task 级血缘缓存
 
 ```bash
 # shop 项目（默认）
