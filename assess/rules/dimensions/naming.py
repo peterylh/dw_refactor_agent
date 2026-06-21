@@ -12,6 +12,7 @@ from assess.rules.definitions.naming import (
 from assess.rules.engine.filtering import selected_rules
 from assess.rules.engine.runner import RuleRunner
 from assess.rules.engine.selection import RuleSelection
+from assess.scoped_plan import scoped_names
 from assess.scoring.config import (
     ATOMIC_METRIC_RULE_NAME,
     DERIVED_METRIC_RULE_NAME,
@@ -27,17 +28,32 @@ def _empty_file_score() -> dict:
     )
 
 
+def _task_name(task: dict) -> str:
+    return str(task.get("expected_table") or task.get("file") or "")
+
+
 def _score_file_naming_conventions(
     asset_catalog: dict,
     rule_selection: RuleSelection | None = None,
+    scope: dict | None = None,
 ) -> dict:
     project_dir = asset_catalog.get("project_dir")
     if not project_dir:
         return _empty_file_score()
 
+    table_scope = scoped_names(scope, "tables")
+    task_scope = scoped_names(scope, "tasks")
     table_targets = list((asset_catalog.get("tables") or {}).values())
+    if table_scope is not None:
+        table_targets = [
+            target
+            for target in table_targets
+            if target.get("name") in table_scope
+        ]
     task_targets = [
-        {"task": task} for task in asset_catalog.get("tasks") or []
+        {"task": task}
+        for task in asset_catalog.get("tasks") or []
+        if task_scope is None or _task_name(task) in task_scope
     ]
     runner = RuleRunner(rule_selection)
     checks = []
@@ -116,11 +132,18 @@ def _prepare_naming_context(
 def score_naming_conventions(
     context: AssessmentContext,
     rule_selection: RuleSelection | None = None,
+    scope: dict | None = None,
 ) -> dict:
     context = _prepare_naming_context(context)
     runner = RuleRunner(rule_selection)
     checks = []
-    for table in context["middle"]:
+    table_scope = scoped_names(scope, "tables")
+    middle = context["middle"]
+    if table_scope is not None:
+        middle = [
+            table for table in middle if table.get("name") in table_scope
+        ]
+    for table in middle:
         checks.extend(
             runner.run_rules(
                 [
@@ -141,6 +164,7 @@ def score_naming_conventions(
     file_result = _score_file_naming_conventions(
         context["assets"],
         rule_selection,
+        scope=scope,
     )
     checks.extend(file_result.get("checks") or [])
     total_passed = sum(

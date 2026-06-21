@@ -83,10 +83,14 @@ def test_analyze_refreshes_current_analysis_diff_and_plan(
         _write_json(cache_path, {"project": project, "tasks": []})
         return {"lineage": {"tables": [], "edges": []}}
 
+    assess_calls = []
+
     def fake_assess(project, **kwargs):
+        assess_calls.append(kwargs)
         return {
             "project": project,
             "overall_score": 90.0,
+            "scope_plan": {"dimensions": {}},
             "dimensions": {
                 "naming": {
                     "score": 90.0,
@@ -152,6 +156,9 @@ def test_analyze_refreshes_current_analysis_diff_and_plan(
     )
     assert issue_diff["summary"]["fixed_count"] == 1
     assert issue_diff["summary"]["new_count"] == 1
+    assert assess_calls[0]["change_analysis"]["affected_scope"][
+        "assessment_tables"
+    ] == ["dwd_order"]
     assert (run_root / "verification" / "plan.json").exists()
     assert plan_calls == [
         {

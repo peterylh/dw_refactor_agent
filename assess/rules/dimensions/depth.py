@@ -12,12 +12,14 @@ from assess.rules.definitions.depth import (
 from assess.rules.engine.filtering import selected_rules
 from assess.rules.engine.runner import RuleRunner
 from assess.rules.engine.selection import RuleSelection
+from assess.scoped_plan import scoped_names
 from assess.scoring.config import LINEAGE_DEPTH_RULES
 
 
 def score_lineage_depth(
     context: AssessmentContext,
     rule_selection: RuleSelection | None = None,
+    scope: dict | None = None,
 ) -> dict:
     rules = selected_rules(LINEAGE_DEPTH_RULES, rule_selection)
     rule = DepthMiddleLayerIsOptimalRule()
@@ -39,6 +41,9 @@ def score_lineage_depth(
 
     # 不按表名推断缺失层级；models/lineage 中没有声明的表按 OTHER 处理。
     ads = [t for t in tables if t["layer"] == "ADS"]
+    table_names = scoped_names(scope, "tables")
+    if table_names is not None:
+        ads = [t for t in ads if t["name"] in table_names]
 
     scores = []
     depths = []

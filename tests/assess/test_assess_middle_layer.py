@@ -334,6 +334,103 @@ def test_assess_builds_one_context_with_derived_lineage_for_scoring_modules(
     assert captured["naming_context"] is captured["depth_context"]
 
 
+def test_assess_builds_scope_plan_and_passes_dimension_scopes(
+    monkeypatch, sample_lineage_data, isolated_assess_project
+):
+    monkeypatch.setattr(
+        "assess.assess_middle_layer.load_lineage_data",
+        lambda project: sample_lineage_data,
+    )
+    captured = {}
+
+    def dimension(name):
+        return {
+            "score": 100.0,
+            "rule_summary": {},
+            "checks": [],
+            "issues": [],
+        }
+
+    def remember_scope(name):
+        def scorer(context, *args, **kwargs):
+            captured[name] = kwargs.get("scope")
+            return dimension(name)
+
+        return scorer
+
+    def fake_model_design_score(context, llm_results=None, **kwargs):
+        captured["model_design"] = kwargs.get("scope")
+        return dimension("model_design")
+
+    monkeypatch.setattr(
+        "assess.assess_middle_layer.score_reusability",
+        remember_scope("reuse"),
+    )
+    monkeypatch.setattr(
+        "assess.assess_middle_layer.score_lineage_depth",
+        remember_scope("depth"),
+    )
+    monkeypatch.setattr(
+        "assess.assess_middle_layer.score_model_design_health",
+        fake_model_design_score,
+    )
+    monkeypatch.setattr(
+        "assess.assess_middle_layer.score_asset_completeness",
+        remember_scope("asset_completeness"),
+    )
+    monkeypatch.setattr(
+        "assess.assess_middle_layer.score_code_quality",
+        remember_scope("code_quality"),
+    )
+    monkeypatch.setattr(
+        "assess.assess_middle_layer.score_metadata_health",
+        remember_scope("metadata_health"),
+    )
+    monkeypatch.setattr(
+        "assess.assess_middle_layer.score_naming_conventions",
+        remember_scope("naming"),
+    )
+    change_analysis = {
+        "changed_assets": {
+            "ddl_tables": [],
+            "task_jobs": ["dwd_customer"],
+            "model_tables": [],
+            "config_files": [],
+        },
+        "affected_scope": {
+            "direct_tables": ["dwd_customer"],
+            "downstream_tables": ["ads_sales_dashboard"],
+            "anchor_tables": ["ads_sales_dashboard"],
+            "assessment_tables": ["dwd_customer", "ads_sales_dashboard"],
+            "assessment_tasks": ["dwd_customer", "ads_sales_dashboard"],
+            "global_dimensions": [],
+        },
+        "lineage_diff": {
+            "added_edges": [],
+            "removed_edges": [],
+            "changed_tables": [],
+        },
+    }
+
+    result = assess(
+        project=isolated_assess_project,
+        change_analysis=change_analysis,
+    )
+
+    assert result["assessment_mode"] == "scoped"
+    assert result["score_semantics"] == "scope_local"
+    assert captured["code_quality"]["tasks"] == [
+        "ads_sales_dashboard",
+        "dwd_customer",
+    ]
+    assert captured["metadata_health"]["tables"] == [
+        "ads_sales_dashboard",
+        "dwd_customer",
+    ]
+    assert captured["depth"]["tables"] == ["ads_sales_dashboard"]
+    assert result["scope_plan"]["dimensions"]["naming"]["mode"] == "scoped"
+
+
 def test_generate_report_reads_dimension_issues(
     monkeypatch, sample_lineage_data, isolated_assess_project
 ):

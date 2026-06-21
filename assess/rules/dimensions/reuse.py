@@ -8,12 +8,14 @@ from assess.rules.definitions.reuse import ReuseDownstreamReachesTargetRule
 from assess.rules.engine.filtering import selected_rules
 from assess.rules.engine.runner import RuleRunner
 from assess.rules.engine.selection import RuleSelection
+from assess.scoped_plan import scoped_names
 from assess.scoring.config import REUSABILITY_RULES, REUSE_FULL_SCORE_AT
 
 
 def score_reusability(
     context: AssessmentContext,
     rule_selection: RuleSelection | None = None,
+    scope: dict | None = None,
 ) -> dict:
     rules = selected_rules(REUSABILITY_RULES, rule_selection)
     rule = ReuseDownstreamReachesTargetRule()
@@ -33,6 +35,9 @@ def score_reusability(
     tables = context.tables
     downstream_map = context.downstream
     middle = [t for t in tables if t["layer"] in ("DWD", "DWS", "DIM")]
+    table_names = scoped_names(scope, "tables")
+    if table_names is not None:
+        middle = [t for t in middle if t["name"] in table_names]
 
     scores = []
     downstream_counts = []

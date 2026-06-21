@@ -13,12 +13,14 @@ from assess.rules.definitions.metadata_health import (
 from assess.rules.engine.filtering import selected_rules
 from assess.rules.engine.runner import RuleRunner
 from assess.rules.engine.selection import RuleSelection
+from assess.scoped_plan import scoped_names
 from assess.scoring.config import METADATA_HEALTH_RULES
 
 
 def score_metadata_health(
     context: AssessmentContext,
     rule_selection: RuleSelection | None = None,
+    scope: dict | None = None,
 ) -> dict:
     """检查 models/*.yaml 的结构自洽性与业务元数据有效性。"""
     rules = selected_rules(METADATA_HEALTH_RULES, rule_selection)
@@ -49,8 +51,11 @@ def score_metadata_health(
         tables_by_name = {table["name"]: table for table in tables}
 
     targets = []
+    table_scope = scoped_names(scope, "tables")
     for table_name, metadata in model_metadata.items():
         if not isinstance(metadata, dict):
+            continue
+        if table_scope is not None and table_name not in table_scope:
             continue
         table = tables_by_name.get(table_name)
         columns = _table_column_names(table) if table else set()

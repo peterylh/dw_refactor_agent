@@ -7,6 +7,7 @@ from assess.result_model import finalize_dimension
 from assess.rules.engine.filtering import selected_rules
 from assess.rules.engine.runner import RuleRunner
 from assess.rules.engine.selection import RuleSelection
+from assess.scoped_plan import scoped_names
 from assess.scoring.config import ASSET_COMPLETENESS_RULES
 
 
@@ -17,14 +18,19 @@ def _logical_task_key(task: dict) -> str:
 def score_asset_completeness(
     context: AssessmentContext,
     rule_selection: RuleSelection | None = None,
+    scope: dict | None = None,
 ) -> dict:
     """Score DDL/model/task closure and task-lineage consistency."""
     asset_catalog = context.assets
     rules = selected_rules(ASSET_COMPLETENESS_RULES, rule_selection)
+    table_scope = scoped_names(scope, "tables")
+    task_scope = scoped_names(scope, "tasks")
 
     assets = asset_catalog.get("tables") or {}
     table_targets = []
     for name, asset in sorted(assets.items()):
+        if table_scope is not None and name not in table_scope:
+            continue
         has_ddl = bool(asset.get("ddl"))
         has_model = bool(asset.get("model"))
         tasks = asset.get("tasks") or []
@@ -52,9 +58,12 @@ def score_asset_completeness(
     task_targets = [
         {"kind": "task", "task": task}
         for task in asset_catalog.get("tasks") or []
+        if task_scope is None or _logical_task_key(task) in task_scope
     ]
 
     for output in task_outputs:
+        if table_scope is not None and output not in table_scope:
+            continue
         task_targets.append(
             {
                 "kind": "output",
@@ -72,6 +81,8 @@ def score_asset_completeness(
             ).add(task["file"])
 
     for output, writers_by_key in sorted(writers_by_output.items()):
+        if table_scope is not None and output not in table_scope:
+            continue
         task_targets.append(
             {
                 "kind": "writer",

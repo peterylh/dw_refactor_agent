@@ -39,6 +39,11 @@ from assess.rules.dimensions.model_design import score_model_design_health
 from assess.rules.dimensions.naming import score_naming_conventions
 from assess.rules.dimensions.reuse import score_reusability
 from assess.rules.dimensions.task_sql_quality import score_code_quality
+from assess.scoped_plan import (
+    build_scoped_assessment_plan,
+    dimension_scope,
+    scoped_names,
+)
 from assess.scoring.config import DEFAULT_WEIGHTS, normalize_score_weights
 from config import (
     PROJECT_CONFIG,
@@ -121,6 +126,8 @@ def assess(
     only_rules: set[str] | list[str] | tuple[str, ...] | None = None,
     lineage_data: dict | None = None,
     scope: dict | None = None,
+    change_analysis: dict | None = None,
+    scope_plan: dict | None = None,
 ) -> dict:
     weights = normalize_score_weights(weights)
     selected_dimensions = normalize_selected_dimensions(selected_dimensions)
@@ -140,12 +147,36 @@ def assess(
     business_domain_config = get_business_domain_config(project)
 
     data = lineage_data or load_lineage_data(project)
+    project_dir = PROJECT_ROOT / PROJECT_CONFIG[project]["dir"]
+    context = AssessmentContext.from_lineage_data(
+        project=project,
+        lineage_data=data,
+        models=model_metadata,
+        project_dir=project_dir,
+        business_domain_config=business_domain_config,
+        naming_config=nc,
+    )
+    if scope_plan is None and change_analysis:
+        scope_plan = build_scoped_assessment_plan(
+            project,
+            change_analysis,
+            context,
+        )
+
     llm_results = []
     if weights.get("enable_llm", False):
         api_key = os.environ.get("DEEPSEEK_API_KEY")
         if api_key:
             print("正在调用 DeepSeek API 进行表分类，请稍候...")
             contexts = build_contexts(project, data)
+            model_scope = dimension_scope(scope_plan, "model_design")
+            scoped_tables = scoped_names(model_scope, "tables")
+            if scoped_tables is not None:
+                contexts = [
+                    item
+                    for item in contexts
+                    if getattr(item, "table_name", "") in scoped_tables
+                ]
             cache_file = assess_cache_path(
                 project, "middle_layer_inspect.json"
             )
@@ -160,38 +191,41 @@ def assess(
         else:
             print("警告: 未提供 DEEPSEEK_API_KEY 环境变量，跳过分类。")
 
-    project_dir = PROJECT_ROOT / PROJECT_CONFIG[project]["dir"]
-    context = AssessmentContext.from_lineage_data(
-        project=project,
-        lineage_data=data,
-        models=model_metadata,
-        project_dir=project_dir,
-        business_domain_config=business_domain_config,
-        naming_config=nc,
+    reuse_score = score_reusability(
+        context,
+        rule_selection=rule_selection,
+        scope=dimension_scope(scope_plan, "reuse"),
     )
-
-    reuse_score = score_reusability(context, rule_selection=rule_selection)
-    depth_score = score_lineage_depth(context, rule_selection=rule_selection)
+    depth_score = score_lineage_depth(
+        context,
+        rule_selection=rule_selection,
+        scope=dimension_scope(scope_plan, "depth"),
+    )
     model_design_score = score_model_design_health(
         context,
         llm_results,
         rule_selection=rule_selection,
+        scope=dimension_scope(scope_plan, "model_design"),
     )
     asset_completeness_score = score_asset_completeness(
         context,
         rule_selection=rule_selection,
+        scope=dimension_scope(scope_plan, "asset_completeness"),
     )
     code_quality_score = score_code_quality(
         context,
         rule_selection=rule_selection,
+        scope=dimension_scope(scope_plan, "code_quality"),
     )
     metadata_health_score = score_metadata_health(
         context,
         rule_selection=rule_selection,
+        scope=dimension_scope(scope_plan, "metadata_health"),
     )
     naming_score = score_naming_conventions(
         context,
         rule_selection=rule_selection,
+        scope=dimension_scope(scope_plan, "naming"),
     )
 
     dimensions = dict(
@@ -228,6 +262,13 @@ def assess(
     )
     if scope:
         result["scope"] = scope
+    if scope_plan:
+        result["assessment_mode"] = scope_plan.get("mode", "scoped")
+        result["score_semantics"] = scope_plan.get(
+            "score_semantics",
+            "scope_local",
+        )
+        result["scope_plan"] = scope_plan
     return result
 
 

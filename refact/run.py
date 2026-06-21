@@ -140,14 +140,18 @@ def _analyze(args) -> int:
     current_assess = assess(
         project,
         lineage_data=current_lineage,
-        scope=change_analysis.get("affected_scope"),
+        change_analysis=change_analysis,
     )
     _write_json(artifact_path(manifest_path, "current_assess"), current_assess)
 
     baseline_assess = _read_json(
         artifact_path(manifest_path, "baseline_assess")
     )
-    issue_diff = diff_assess_results(baseline_assess, current_assess)
+    issue_diff = diff_assess_results(
+        baseline_assess,
+        current_assess,
+        scope_plan=current_assess.get("scope_plan"),
+    )
     _write_json(artifact_path(manifest_path, "issue_diff"), issue_diff)
 
     plan = build_verification_plan(

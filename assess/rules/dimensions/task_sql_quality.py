@@ -18,25 +18,30 @@ from assess.rules.engine.selection import (
     RuleSelection,
     normalize_rule_selection,
 )
+from assess.scoped_plan import scoped_names
 from config import TEXT_ENCODING
 
 
 def score_code_quality(
     context: AssessmentContext,
     rule_selection: RuleSelection | None = None,
+    scope: dict | None = None,
 ) -> dict:
     """Score task SQL code quality checks."""
     rule_selection = normalize_rule_selection(rule_selection)
     asset_catalog = context.assets
     project_dir = asset_catalog.get("project_dir")
     targets = []
+    task_names = scoped_names(scope, "tasks")
 
     for task in asset_catalog.get("tasks") or []:
+        expected_table = _short_table_name(task.get("expected_table") or "")
+        if task_names is not None and expected_table not in task_names:
+            continue
         task_path = Path(task["path"])
         file_name = _display_file_path(project_dir, task_path)
         sql = task_path.read_text(encoding=TEXT_ENCODING)
         creates, drops, write_statements = _scan_task_sql(sql)
-        expected_table = _short_table_name(task.get("expected_table") or "")
 
         drop_indexes_by_table = defaultdict(list)
         for drop in drops:

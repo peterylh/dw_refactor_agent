@@ -17,6 +17,7 @@ from assess.rules.definitions.model_design import (
 from assess.rules.engine.filtering import selected_rules
 from assess.rules.engine.runner import RuleRunner
 from assess.rules.engine.selection import RuleSelection
+from assess.scoped_plan import scoped_names
 from assess.scoring.config import (
     MODEL_DESIGN_RULES,
     PER_TABLE_CAP,
@@ -29,11 +30,11 @@ def score_model_design_health(
     context: AssessmentContext,
     llm_results: list | None = None,
     rule_selection: RuleSelection | None = None,
+    scope: dict | None = None,
 ) -> dict:
     """Score model design health."""
     tables = context.tables
     table_layers = context.table_layers
-    table_count = len(tables)
     lineage_view = context.lineage
     table_edges = context.table_edges
     model_metadata = context.models
@@ -45,6 +46,13 @@ def score_model_design_health(
     checks = []
     design_facts_cache = {}
     upstream_tables_cache = {}
+    table_scope = scoped_names(scope, "tables")
+    edge_pairs = None
+    if scope and scope.get("mode") == "scoped" and "edges" in scope:
+        edge_pairs = {
+            (edge.get("source"), edge.get("target"))
+            for edge in scope.get("edges", [])
+        }
 
     def design_facts_for(table_name: str) -> dict:
         if table_name not in design_facts_cache:
@@ -65,6 +73,8 @@ def score_model_design_health(
 
     dependency_targets = []
     for (src, tgt), files in table_edges.items():
+        if edge_pairs is not None and (src, tgt) not in edge_pairs:
+            continue
         src_layer = table_layers.get(src, "OTHER")
         tgt_layer = table_layers.get(tgt, "OTHER")
         src_rank = layer_rank(src_layer)
@@ -116,6 +126,7 @@ def score_model_design_health(
             for name, result in {
                 result.table_name: result for result in llm_results
             }.items()
+            if table_scope is None or name in table_scope
         ]
         checks.extend(
             runner.run_rules(
@@ -139,6 +150,8 @@ def score_model_design_health(
         table_name = str(table.get("name") or "").strip()
         if not table_name:
             continue
+        if table_scope is not None and table_name not in table_scope:
+            continue
         layer = str(table.get("layer") or "OTHER").upper()
         metadata = _table_metadata(model_metadata, table_name)
         is_fact = _is_fact_table(model_metadata, table_name)
@@ -157,6 +170,7 @@ def score_model_design_health(
                 ),
             }
         )
+    table_count = len(table_targets)
 
     table_rule_context = {
         "model_metadata": model_metadata,
