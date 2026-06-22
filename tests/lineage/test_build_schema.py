@@ -264,8 +264,8 @@ class TestBuildSchemaFromDdl:
                 "dir": "demo_project",
                 "catalog": "internal",
                 "db": "demo_dm",
-                "ods_source_catalogs": {
-                    "hive": {"ddl_dialect": "hive"},
+                "ods_source_catalog_dialects": {
+                    "hive": "hive",
                 },
             },
         )

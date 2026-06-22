@@ -47,6 +47,10 @@ def test_iter_project_asset_files_includes_configured_ods_source_catalogs(
     (project_dir / "ddl").mkdir(parents=True)
     (project_dir / "ods" / "ddl" / "internal" / "demo_dm").mkdir(parents=True)
     (project_dir / "ods" / "ddl" / "hive" / "source_db").mkdir(parents=True)
+    (project_dir / "ods" / "ddl" / "hive" / "ods_source").mkdir(parents=True)
+    (project_dir / "ods" / "ddl" / "external" / "source_dm").mkdir(
+        parents=True
+    )
     (project_dir / "ddl" / "dwd_customer.sql").write_text(
         "",
         encoding="utf-8",
@@ -67,6 +71,22 @@ def test_iter_project_asset_files_includes_configured_ods_source_catalogs(
         / "source_db"
         / "tran_data_menu.sql"
     ).write_text("", encoding="utf-8")
+    (
+        project_dir
+        / "ods"
+        / "ddl"
+        / "hive"
+        / "ods_source"
+        / "tran_data_account.sql"
+    ).write_text("", encoding="utf-8")
+    (
+        project_dir
+        / "ods"
+        / "ddl"
+        / "external"
+        / "source_dm"
+        / "source_customer.sql"
+    ).write_text("", encoding="utf-8")
 
     monkeypatch.setattr(config, "PROJECT_ROOT", tmp_path)
     monkeypatch.setitem(
@@ -76,8 +96,8 @@ def test_iter_project_asset_files_includes_configured_ods_source_catalogs(
             "dir": "demo_project",
             "catalog": "internal",
             "db": "demo_dm",
-            "ods_source_catalogs": {
-                "hive": {"ddl_dialect": "hive"},
+            "ods_source_catalog_dialects": {
+                "hive": "hive",
             },
         },
     )
@@ -87,8 +107,15 @@ def test_iter_project_asset_files_includes_configured_ods_source_catalogs(
     assert [path.name for path in files] == [
         "dwd_customer.sql",
         "ods_customer.sql",
+        "source_customer.sql",
+        "tran_data_account.sql",
         "tran_data_menu.sql",
     ]
+    assert config.project_ods_source_catalog_dialects("demo") == {
+        "internal": "doris",
+        "hive": "hive",
+    }
+    assert config.ods_source_catalog_ddl_dialect("demo", "external") == "doris"
     assert config.ods_source_catalog_ddl_dialect("demo", "internal") == "doris"
     assert config.ods_source_catalog_ddl_dialect("demo", "hive") == "hive"
 
