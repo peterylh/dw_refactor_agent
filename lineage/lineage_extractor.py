@@ -48,6 +48,7 @@ AGGREGATE_PATTERN = re.compile(
 CURRENT_PROJECT = "shop"
 CURRENT_CATALOG = "internal"
 CURRENT_DB = "shop_dm"
+LINEAGE_DIALECT = "doris, normalization_strategy=lowercase"
 
 
 def configure_project(project_name):
@@ -553,16 +554,41 @@ def _task_schema_for_statements(schema, statements):
     return task_schema
 
 
+def _lineage_schema_mapping(schema):
+    mapping = {}
+    for catalog, database, table, columns in _iter_schema_tables(schema):
+        column_mapping = {}
+        for column_name, column_type in (columns or {}).items():
+            canonical = _canonical_column(column_name)
+            if not canonical:
+                continue
+            column_mapping[canonical] = column_type
+            column_mapping.setdefault(
+                _identifier_match_key(canonical),
+                column_type,
+            )
+        if column_mapping:
+            mapping.setdefault(_identifier_match_key(catalog), {}).setdefault(
+                _identifier_match_key(database),
+                {},
+            )[_identifier_match_key(table)] = column_mapping
+    return mapping
+
+
 def _lineage_schema(schema):
     if isinstance(schema, Schema):
         return schema
-    return MappingSchema(schema, dialect="doris")
+    return MappingSchema(
+        _lineage_schema_mapping(schema),
+        dialect=LINEAGE_DIALECT,
+        normalize=False,
+    )
 
 
 def _lineage_scope(select_expr, schema):
     qualified = lineage_qualify.qualify(
         select_expr.copy(),
-        dialect="doris",
+        dialect=LINEAGE_DIALECT,
         schema=_lineage_schema(schema),
         validate_qualify_columns=False,
         identify=False,
@@ -691,6 +717,23 @@ def _projection_output_name(projection):
     return ""
 
 
+def _projection_output_identifier(projection):
+    if isinstance(projection, exp.Alias):
+        return projection.args.get("alias")
+    if isinstance(projection, exp.Column):
+        return projection.this
+    return None
+
+
+def _lineage_column_arg(projection, column_name):
+    identifier = _projection_output_identifier(projection)
+    if isinstance(identifier, exp.Identifier) and identifier.args.get(
+        "quoted"
+    ):
+        return exp.to_identifier(column_name, quoted=True)
+    return column_name
+
+
 def _projection_output_names(query_expr):
     if isinstance(query_expr, exp.Select):
         return [
@@ -787,11 +830,14 @@ def _lineage_nodes_for_select(
         ):
             continue
         try:
+            column_arg = col_name
+            if idx < len(projections):
+                column_arg = _lineage_column_arg(projections[idx], col_name)
             nodes[col_name] = lineage(
-                column=col_name,
+                column=column_arg,
                 sql=select_expr.copy(),
                 schema=sqlglot_schema,
-                dialect="doris",
+                dialect=LINEAGE_DIALECT,
                 scope=scope,
             )
         except Exception as exc:
@@ -967,7 +1013,7 @@ def _derived_leaf_sources(
             column=column_name,
             sql=select_expr.copy(),
             schema=_lineage_schema(schema),
-            dialect="doris",
+            dialect=LINEAGE_DIALECT,
         )
     except Exception as exc:
         _record_diagnostic(

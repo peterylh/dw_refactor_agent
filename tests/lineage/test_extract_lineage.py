@@ -559,6 +559,56 @@ class TestEdgeCases:
         assert {e["source_table"] for e in direct} == {"M_SHOP_01_SRC_DF"}
         assert {e["target_table"] for e in direct} == {"M_SHOP_01_CUST_DF"}
 
+    def test_quoted_alias_column_is_canonicalized_in_lineage_entries(self):
+        schema = {
+            "shop_dm": {
+                "M_SHOP_01_SRC_DF": {"CUSTOMER_ID": "BIGINT"},
+                "M_SHOP_01_CUST_DF": {"CUSTOMER_ID": "BIGINT"},
+            }
+        }
+        sql = """
+        INSERT INTO shop_dm.M_SHOP_01_CUST_DF (`CUSTOMER_ID`)
+        SELECT s.`CUSTOMER_ID`
+        FROM shop_dm.M_SHOP_01_SRC_DF s
+        """
+        entries = extract_lineage_from_sql(
+            sql, "quoted_alias_column.sql", schema
+        )
+
+        assert _direct_edges(entries) == {
+            (
+                "M_SHOP_01_SRC_DF",
+                "CUSTOMER_ID",
+                "M_SHOP_01_CUST_DF",
+                "CUSTOMER_ID",
+            ),
+        }
+
+    def test_quoted_projection_alias_is_canonicalized_in_lineage_entries(self):
+        schema = {
+            "shop_dm": {
+                "M_SHOP_01_SRC_DF": {"CUSTOMER_ID": "BIGINT"},
+                "M_SHOP_01_CUST_DF": {"CUSTOMER_ID": "BIGINT"},
+            }
+        }
+        sql = """
+        INSERT INTO shop_dm.M_SHOP_01_CUST_DF (`CUSTOMER_ID`)
+        SELECT s.customer_id AS `CUSTOMER_ID`
+        FROM shop_dm.M_SHOP_01_SRC_DF s
+        """
+        entries = extract_lineage_from_sql(
+            sql, "quoted_projection_alias.sql", schema
+        )
+
+        assert _direct_edges(entries) == {
+            (
+                "M_SHOP_01_SRC_DF",
+                "CUSTOMER_ID",
+                "M_SHOP_01_CUST_DF",
+                "CUSTOMER_ID",
+            ),
+        }
+
     def test_lineage_extraction_is_case_insensitive(self):
         schema = build_schema_from_texts(
             [
@@ -606,6 +656,64 @@ class TestEdgeCases:
                 "M_SHOP_01_CUST_DF",
                 "WHERE",
             )
+        }
+
+    def test_lineage_extraction_matches_lowercase_aliased_column_to_uppercase_ddl(
+        self,
+    ):
+        schema = build_schema_from_texts(
+            [
+                """
+                CREATE TABLE shop_dm.ods_a (
+                    MORTAGAGE_AMT DECIMAL(18,2)
+                )
+                """,
+                """
+                CREATE TABLE shop_dm.dwd_b (
+                    MORTAGAGE_AMT DECIMAL(18,2)
+                )
+                """,
+            ]
+        )
+        sql = """
+        INSERT INTO dwd_b
+        SELECT a.mortagage_amt
+        FROM ods_a a
+        """
+
+        entries = extract_lineage_from_sql(sql, "case_aliased.sql", schema)
+
+        assert _direct_edges(entries) == {
+            ("ods_a", "MORTAGAGE_AMT", "dwd_b", "MORTAGAGE_AMT"),
+        }
+
+    def test_lineage_extraction_does_not_use_target_for_unaliased_lowercase_column(
+        self,
+    ):
+        schema = build_schema_from_texts(
+            [
+                """
+                CREATE TABLE shop_dm.ods_a (
+                    MORTAGAGE_AMT DECIMAL(18,2)
+                )
+                """,
+                """
+                CREATE TABLE shop_dm.dwd_b (
+                    MORTAGAGE_AMT DECIMAL(18,2)
+                )
+                """,
+            ]
+        )
+        sql = """
+        INSERT INTO dwd_b
+        SELECT mortagage_amt
+        FROM ods_a
+        """
+
+        entries = extract_lineage_from_sql(sql, "case_unaliased.sql", schema)
+
+        assert _direct_edges(entries) == {
+            ("ods_a", "MORTAGAGE_AMT", "dwd_b", "MORTAGAGE_AMT"),
         }
 
     def test_ctas_with_column_definitions_uses_plain_target_table(self):
