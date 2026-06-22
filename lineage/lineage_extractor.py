@@ -29,7 +29,9 @@ from config import (
     TEXT_ENCODING,
     lineage_data_path,
     lineage_task_cache_path,
-    project_asset_dirs,
+    ods_source_catalog_ddl_dialect,
+    project_dir,
+    project_ods_asset_dirs,
 )
 from config import determine_layer as determine_config_layer
 from doris_sql import normalize_create_table_for_sqlglot
@@ -49,6 +51,7 @@ CURRENT_PROJECT = "shop"
 CURRENT_CATALOG = "internal"
 CURRENT_DB = "shop_dm"
 LINEAGE_DIALECT = "doris, normalization_strategy=lowercase"
+DDL_DIALECTS_WITH_PARTITIONED_BY = {"hive", "spark"}
 
 
 def configure_project(project_name):
@@ -676,34 +679,79 @@ def _fallback_direct_edges_from_expression(
 # ============================================================
 
 
-def build_schema_from_texts(sql_texts):
+def _parse_schema_create_statements(sql_text, dialect="doris"):
+    text = (
+        normalize_create_table_for_sqlglot(sql_text)
+        if dialect == "doris"
+        else sql_text
+    )
+    try:
+        statements = sqlglot.parse(text, dialect=dialect)
+    except Exception:
+        return
+    for stmt in statements:
+        if isinstance(stmt, exp.Create) and isinstance(stmt.this, exp.Schema):
+            yield stmt
+
+
+def _column_def_type(col, dialect):
+    kind = col.args.get("kind")
+    return kind.sql(dialect=dialect) if kind else "UNKNOWN"
+
+
+def _add_column_def(col_map, col, dialect):
+    if not isinstance(col, exp.ColumnDef):
+        return
+    col_name = _canonical_column(col.this.name)
+    if not col_name:
+        return
+    if col_name not in col_map:
+        col_map[col_name] = _column_def_type(col, dialect)
+
+
+def _partition_column_defs(stmt):
+    properties = stmt.args.get("properties")
+    for prop in getattr(properties, "expressions", None) or []:
+        if prop.__class__.__name__ != "PartitionedByProperty":
+            continue
+        partition_schema = prop.args.get("this")
+        if partition_schema is None:
+            continue
+        yield from partition_schema.find_all(exp.ColumnDef)
+
+
+def build_schema_from_texts(
+    sql_texts,
+    dialect="doris",
+    default_catalog=None,
+    default_db=None,
+):
     schema = {}
     for text in sql_texts:
-        for stmt in sqlglot.parse(
-            normalize_create_table_for_sqlglot(text),
-            dialect="doris",
-        ):
-            if stmt is None:
+        ddl_tables = {}
+        for stmt in _parse_schema_create_statements(text, dialect=dialect):
+            full_name = _canonical_qualified_identifier(
+                stmt.this.this.sql(dialect=dialect)
+            )
+            if not full_name:
                 continue
-            if isinstance(stmt, exp.Create) and isinstance(
-                stmt.this, exp.Schema
-            ):
-                full_name = _canonical_qualified_identifier(
-                    stmt.this.this.sql(dialect="doris")
+            col_map = ddl_tables.setdefault(full_name, {})
+            for col in stmt.this.expressions:
+                _add_column_def(col_map, col, dialect)
+            if dialect in DDL_DIALECTS_WITH_PARTITIONED_BY:
+                for col in _partition_column_defs(stmt):
+                    _add_column_def(col_map, col, dialect)
+
+        for full_name, col_map in ddl_tables.items():
+            if col_map:
+                catalog, database, table = _table_identity(
+                    full_name,
+                    default_catalog=default_catalog,
+                    default_db=default_db,
                 )
-                col_map = {}
-                for col in stmt.this.expressions:
-                    if isinstance(col, exp.ColumnDef):
-                        col_map[_canonical_column(col.this.name)] = (
-                            col.args.get("kind").sql(dialect="doris")
-                            if col.args.get("kind")
-                            else "UNKNOWN"
-                        )
-                if col_map:
-                    catalog, database, table = _table_identity(full_name)
-                    schema.setdefault(catalog, {}).setdefault(database, {})[
-                        table
-                    ] = col_map
+                schema.setdefault(catalog, {}).setdefault(database, {})[
+                    table
+                ] = col_map
     return schema
 
 
@@ -857,7 +905,20 @@ def _lineage_nodes_for_select(
     return nodes
 
 
-def build_schema_from_ddl(ddl_dir):
+def _merge_schema(target, source):
+    for catalog, database, table, columns in _iter_schema_tables(source):
+        target.setdefault(catalog, {}).setdefault(database, {})[table] = dict(
+            columns
+        )
+    return target
+
+
+def build_schema_from_ddl(
+    ddl_dir,
+    dialect="doris",
+    default_catalog=None,
+    default_db=None,
+):
     if isinstance(ddl_dir, (str, Path)):
         ddl_dirs = [Path(ddl_dir)]
     else:
@@ -870,7 +931,45 @@ def build_schema_from_ddl(ddl_dir):
             f.read_text(encoding=TEXT_ENCODING)
             for f in sorted(directory.glob("*.sql"))
         )
-    return build_schema_from_texts(texts)
+    return build_schema_from_texts(
+        texts,
+        dialect=dialect,
+        default_catalog=default_catalog,
+        default_db=default_db,
+    )
+
+
+def build_schema_from_project_ddl(project):
+    cfg = PROJECT_CONFIG[project]
+    schema = {}
+    root_dir = project_dir(project)
+    if not root_dir:
+        return schema
+
+    root_ddl_dir = root_dir / "ddl"
+    _merge_schema(
+        schema,
+        build_schema_from_ddl(
+            root_ddl_dir,
+            dialect="doris",
+            default_catalog=cfg.get("catalog", "internal"),
+            default_db=cfg.get("db"),
+        ),
+    )
+
+    for ods_dir in project_ods_asset_dirs(project, "ddl"):
+        catalog = ods_dir.parent.name
+        database = ods_dir.name
+        _merge_schema(
+            schema,
+            build_schema_from_ddl(
+                ods_dir,
+                dialect=ods_source_catalog_ddl_dialect(project, catalog),
+                default_catalog=catalog,
+                default_db=database,
+            ),
+        )
+    return schema
 
 
 # ============================================================
@@ -2301,10 +2400,8 @@ def main():
     cfg = PROJECT_CONFIG[args.project]
     project_dir = Path(__file__).parent.parent / cfg["dir"]
     tasks_dir = project_dir / "tasks"
-    ddl_dirs = project_asset_dirs(args.project, "ddl")
-
     # 1. 构建 Schema
-    schema = build_schema_from_ddl(ddl_dirs)
+    schema = build_schema_from_project_ddl(args.project)
     table_count = schema_table_count(schema)
     print(f"Schema: {table_count} 个表")
 

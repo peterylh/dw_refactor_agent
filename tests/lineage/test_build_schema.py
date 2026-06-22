@@ -1,7 +1,9 @@
+import config
 from lineage.lineage_extractor import (
     _schema_columns_for_table,
     _schema_has_column,
     build_schema_from_ddl,
+    build_schema_from_project_ddl,
     build_schema_from_texts,
     schema_table_count,
 )
@@ -27,6 +29,57 @@ class TestBuildSchemaFromTexts:
         assert cust["register_date"] == "DATE"
         assert cust["create_time"] == "DATETIME"
         assert cust["member_level"] == "VARCHAR(16)"
+
+    def test_schema_from_texts_extracts_hive_partition_columns(self):
+        ddl = """
+        CREATE TABLE `tran_data_menu`(
+          `id` decimal(38,0) COMMENT 'identifier',
+          `menu_name` string COMMENT 'menu name',
+          `channel_type` string COMMENT 'channel')
+        COMMENT 'ods hive table'
+        PARTITIONED BY (
+          `row_date` string COMMENT 'partition date')
+        ROW FORMAT SERDE
+          'org.apache.hadoop.hive.ql.io.parquet.serde.ParquetHiveSerDe'
+        WITH SERDEPROPERTIES (
+          'serialization.format' = '1')
+        STORED AS INPUTFORMAT
+          'org.apache.hadoop.hive.ql.io.parquet.MapredParquetInputFormat'
+        OUTPUTFORMAT
+          'org.apache.hadoop.hive.ql.io.parquet.MapredParquetOutputFormat'
+        LOCATION
+          'hdfs://easyops-cluster/user/hive/warehouse/etl.db/tran_data_menu'
+        TBLPROPERTIES (
+          'transient_lastDdlTime'='1776664703');
+        """
+
+        schema = build_schema_from_texts(
+            [ddl],
+            dialect="hive",
+            default_catalog="internal",
+            default_db="shop_dm",
+        )
+
+        assert schema["internal"]["shop_dm"]["tran_data_menu"] == {
+            "id": "DECIMAL(38, 0)",
+            "menu_name": "STRING",
+            "channel_type": "STRING",
+            "row_date": "STRING",
+        }
+        assert (
+            _schema_has_column(
+                schema, "internal.shop_dm.tran_data_menu", "row_date"
+            )
+            is True
+        )
+        assert _schema_columns_for_table(
+            schema, "internal.shop_dm.tran_data_menu"
+        ) == [
+            "id",
+            "menu_name",
+            "channel_type",
+            "row_date",
+        ]
 
     def test_table_identifier_shape_scenarios(self):
         self._assert_quoted_identifiers_are_canonicalized()
@@ -162,6 +215,80 @@ class TestBuildSchemaFromTexts:
 
 
 class TestBuildSchemaFromDdl:
+    def test_build_schema_from_project_ddl_uses_ods_catalog_dialect(
+        self,
+        monkeypatch,
+        tmp_path,
+    ):
+        project_dir = tmp_path / "demo_project"
+        root_ddl = project_dir / "ddl"
+        hive_ods_ddl = project_dir / "ods" / "ddl" / "hive" / "source_db"
+        root_ddl.mkdir(parents=True)
+        hive_ods_ddl.mkdir(parents=True)
+        (root_ddl / "dwd_customer.sql").write_text(
+            """
+            CREATE TABLE demo_dm.dwd_customer (
+                customer_id BIGINT
+            )
+            ENGINE=OLAP
+            DUPLICATE KEY(customer_id)
+            DISTRIBUTED BY HASH(customer_id) BUCKETS 1
+            PROPERTIES ("replication_num" = "1");
+            """,
+            encoding="utf-8",
+        )
+        (hive_ods_ddl / "tran_data_menu.sql").write_text(
+            """
+            CREATE TABLE `tran_data_menu`(
+              `id` decimal(38,0),
+              `menu_name` string)
+            PARTITIONED BY (
+              `row_date` string)
+            ROW FORMAT SERDE
+              'org.apache.hadoop.hive.ql.io.parquet.serde.ParquetHiveSerDe'
+            STORED AS INPUTFORMAT
+              'org.apache.hadoop.hive.ql.io.parquet.MapredParquetInputFormat'
+            OUTPUTFORMAT
+              'org.apache.hadoop.hive.ql.io.parquet.MapredParquetOutputFormat'
+            LOCATION
+              'hdfs://cluster/warehouse/source_db/tran_data_menu';
+            """,
+            encoding="utf-8",
+        )
+
+        monkeypatch.setattr(config, "PROJECT_ROOT", tmp_path)
+        monkeypatch.setitem(
+            config.PROJECT_CONFIG,
+            "demo",
+            {
+                "dir": "demo_project",
+                "catalog": "internal",
+                "db": "demo_dm",
+                "ods_source_catalogs": {
+                    "hive": {"ddl_dialect": "hive"},
+                },
+            },
+        )
+
+        schema = build_schema_from_project_ddl("demo")
+
+        assert _schema_columns_for_table(
+            schema, "internal.demo_dm.dwd_customer"
+        ) == ["customer_id"]
+        assert _schema_columns_for_table(
+            schema, "hive.source_db.tran_data_menu"
+        ) == [
+            "id",
+            "menu_name",
+            "row_date",
+        ]
+        assert (
+            _schema_has_column(
+                schema, "hive.source_db.tran_data_menu", "row_date"
+            )
+            is True
+        )
+
     def test_build_schema_from_ddl_sources(self, ddl_dir, tmp_path):
         schema = build_schema_from_ddl(str(ddl_dir))
         assert "internal" in schema

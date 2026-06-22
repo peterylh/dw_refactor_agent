@@ -46,9 +46,7 @@ def build_lineage_artifacts(
 ) -> dict:
     """Build lineage output and task cache for a project."""
     extractor.configure_project(project)
-    schema = extractor.build_schema_from_ddl(
-        config.project_asset_dirs(project, "ddl")
-    )
+    schema = extractor.build_schema_from_project_ddl(project)
     tasks_dir, task_files = _task_files(project)
     previous_cache = load_task_cache(previous_cache_path)
 

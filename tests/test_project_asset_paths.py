@@ -39,6 +39,60 @@ def test_iter_project_asset_files_includes_catalog_database_ods_dir(
     ]
 
 
+def test_iter_project_asset_files_includes_configured_ods_source_catalogs(
+    monkeypatch,
+    tmp_path,
+):
+    project_dir = tmp_path / "demo_project"
+    (project_dir / "ddl").mkdir(parents=True)
+    (project_dir / "ods" / "ddl" / "internal" / "demo_dm").mkdir(parents=True)
+    (project_dir / "ods" / "ddl" / "hive" / "source_db").mkdir(parents=True)
+    (project_dir / "ddl" / "dwd_customer.sql").write_text(
+        "",
+        encoding="utf-8",
+    )
+    (
+        project_dir
+        / "ods"
+        / "ddl"
+        / "internal"
+        / "demo_dm"
+        / "ods_customer.sql"
+    ).write_text("", encoding="utf-8")
+    (
+        project_dir
+        / "ods"
+        / "ddl"
+        / "hive"
+        / "source_db"
+        / "tran_data_menu.sql"
+    ).write_text("", encoding="utf-8")
+
+    monkeypatch.setattr(config, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setitem(
+        config.PROJECT_CONFIG,
+        "demo",
+        {
+            "dir": "demo_project",
+            "catalog": "internal",
+            "db": "demo_dm",
+            "ods_source_catalogs": {
+                "hive": {"ddl_dialect": "hive"},
+            },
+        },
+    )
+
+    files = list(config.iter_project_asset_files("demo", "ddl", "*.sql"))
+
+    assert [path.name for path in files] == [
+        "dwd_customer.sql",
+        "ods_customer.sql",
+        "tran_data_menu.sql",
+    ]
+    assert config.ods_source_catalog_ddl_dialect("demo", "internal") == "doris"
+    assert config.ods_source_catalog_ddl_dialect("demo", "hive") == "hive"
+
+
 def test_load_model_metadata_reads_catalog_database_ods_models(
     monkeypatch,
     tmp_path,

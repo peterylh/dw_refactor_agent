@@ -1899,14 +1899,99 @@ def project_ods_asset_dir(project: str, asset_kind: str) -> Optional[Path]:
     return base_dir / "ods" / asset_kind / catalog / database
 
 
+def _configured_databases(value) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        raw_values = [value]
+    elif isinstance(value, (list, tuple, set)):
+        raw_values = value
+    else:
+        raw_values = [value]
+    return [str(item) for item in raw_values if str(item)]
+
+
+def project_ods_source_catalogs(project: str) -> dict[str, dict]:
+    """返回 ODS 源 catalog 配置，默认项目 ODS catalog 使用 Doris DDL."""
+    cfg = PROJECT_CONFIG.get(project)
+    if not cfg:
+        return {}
+
+    default_catalog = str(cfg.get("catalog") or "internal")
+    default_db = str(cfg.get("db") or "")
+    result = {
+        default_catalog: {
+            "ddl_dialect": "doris",
+            "databases": [default_db] if default_db else [],
+        }
+    }
+
+    raw_catalogs = cfg.get("ods_source_catalogs") or {}
+    if not isinstance(raw_catalogs, dict):
+        return result
+
+    for raw_catalog, raw_catalog_cfg in raw_catalogs.items():
+        catalog = str(raw_catalog)
+        if not catalog:
+            continue
+        if isinstance(raw_catalog_cfg, str):
+            catalog_cfg = {"ddl_dialect": raw_catalog_cfg}
+        elif isinstance(raw_catalog_cfg, dict):
+            catalog_cfg = dict(raw_catalog_cfg)
+        else:
+            catalog_cfg = {}
+        existing = result.setdefault(catalog, {})
+        existing.update(catalog_cfg)
+        existing.setdefault("ddl_dialect", "doris")
+        if "databases" not in existing and "database" in existing:
+            existing["databases"] = _configured_databases(
+                existing.get("database")
+            )
+
+    return result
+
+
+def ods_source_catalog_ddl_dialect(project: str, catalog: str) -> str:
+    """返回指定 ODS source catalog 的 DDL 方言，默认 Doris."""
+    catalog_key = str(catalog or "")
+    catalog_cfg = project_ods_source_catalogs(project).get(catalog_key) or {}
+    return str(catalog_cfg.get("ddl_dialect") or "doris")
+
+
+def project_ods_asset_dirs(project: str, asset_kind: str) -> list[Path]:
+    """返回配置化 ODS 资产目录，按 catalog/database 组织."""
+    base_dir = project_dir(project)
+    if not base_dir:
+        return []
+
+    ods_root = base_dir / "ods" / asset_kind
+    dirs = []
+    seen = set()
+    for catalog, catalog_cfg in project_ods_source_catalogs(project).items():
+        catalog_dir = ods_root / catalog
+        databases = _configured_databases(catalog_cfg.get("databases"))
+        if not databases and catalog_dir.exists():
+            databases = [
+                path.name
+                for path in sorted(catalog_dir.iterdir())
+                if path.is_dir()
+            ]
+        for database in databases:
+            asset_dir = catalog_dir / database
+            if asset_dir in seen:
+                continue
+            seen.add(asset_dir)
+            dirs.append(asset_dir)
+    return dirs
+
+
 def project_asset_dirs(project: str, asset_kind: str) -> list[Path]:
     """返回项目资产目录，包含通用目录和 ODS 专用目录."""
     base_dir = project_dir(project)
     if not base_dir:
         return []
     dirs = [base_dir / asset_kind]
-    ods_dir = project_ods_asset_dir(project, asset_kind)
-    if ods_dir:
+    for ods_dir in project_ods_asset_dirs(project, asset_kind):
         dirs.append(ods_dir)
     return dirs
 
@@ -2053,6 +2138,7 @@ def get_naming_config(project: str = None) -> NamingConfig:
 #   catalog - 默认 catalog, 未显式声明时使用 internal
 #   db      - 生产库 (ETL 读写, verify 时作为源)
 #   qa_db   - 验证库 (verify 时写入, 用于重构对比)
+#   ods_source_catalogs - 可选，ODS 源 catalog 配置，如 {"hive": {"ddl_dialect": "hive"}}
 PROJECT_CONFIG = {
     "shop": {
         "dir": "shop",
