@@ -4,6 +4,7 @@ from pathlib import Path
 PROJECT_NAME = "lineage_benchmark"
 CATALOG = "internal"
 DATABASE = "lineage_benchmark_dm"
+COMPLEXITIES = {"normal", "high", "stress"}
 
 
 @dataclass(frozen=True)
@@ -40,6 +41,7 @@ class BenchmarkDataset:
     task_count: int
     column_count: int
     expected_min_edges: int
+    complexity: str = "normal"
     project_name: str = PROJECT_NAME
     catalog: str = CATALOG
     database: str = DATABASE
@@ -52,8 +54,9 @@ PROFILES = {
 }
 
 
-def generate_dataset(size, root_dir):
+def generate_dataset(size, root_dir, complexity="normal"):
     profile = _profile(size)
+    complexity = _complexity(complexity)
     root = Path(root_dir)
     ddl_dir = root / "ddl"
     tasks_dir = root / "tasks"
@@ -88,7 +91,11 @@ def generate_dataset(size, root_dir):
             )
         )
         task_files.append(
-            _write_task(tasks_dir, table_name, _dwd_task_sql(index, profile))
+            _write_task(
+                tasks_dir,
+                table_name,
+                _dwd_task_sql(index, profile, complexity),
+            )
         )
         column_count += len(columns)
 
@@ -104,7 +111,11 @@ def generate_dataset(size, root_dir):
             )
         )
         task_files.append(
-            _write_task(tasks_dir, table_name, _dws_task_sql(index, profile))
+            _write_task(
+                tasks_dir,
+                table_name,
+                _dws_task_sql(index, profile, complexity),
+            )
         )
         column_count += len(columns)
 
@@ -120,7 +131,11 @@ def generate_dataset(size, root_dir):
             )
         )
         task_files.append(
-            _write_task(tasks_dir, table_name, _ads_task_sql(index, profile))
+            _write_task(
+                tasks_dir,
+                table_name,
+                _ads_task_sql(index, profile, complexity),
+            )
         )
         column_count += len(columns)
 
@@ -135,6 +150,7 @@ def generate_dataset(size, root_dir):
         task_count=profile.task_count,
         column_count=column_count,
         expected_min_edges=profile.task_count * 8,
+        complexity=complexity,
     )
 
 
@@ -146,6 +162,15 @@ def _profile(size):
         raise ValueError(
             "unknown benchmark size: {} ({})".format(size, choices)
         ) from None
+
+
+def _complexity(complexity):
+    if complexity in COMPLEXITIES:
+        return complexity
+    choices = ", ".join(sorted(COMPLEXITIES))
+    raise ValueError(
+        "unknown benchmark complexity: {} ({})".format(complexity, choices)
+    )
 
 
 def _ods_columns():
@@ -282,11 +307,30 @@ def _write_task(tasks_dir, table_name, sql_text):
     return path
 
 
-def _dwd_task_sql(index, profile):
+def _dwd_task_sql(index, profile, complexity):
+    if complexity == "stress" and index % 3 == 0:
+        return _dwd_stress_task_sql(index, profile)
+    if complexity == "high" and index % 4 == 0:
+        return _transient_task_sql(
+            _tmp_table("tmp_dwd_base", index),
+            _q(_dwd_table(index)),
+            _dwd_columns(),
+            _dwd_normal_select_sql(index, profile),
+        )
+    return _dwd_normal_task_sql(index, profile)
+
+
+def _dwd_normal_task_sql(index, profile):
+    return _insert_select_sql(
+        _q(_dwd_table(index)),
+        _dwd_columns(),
+        _dwd_normal_select_sql(index, profile),
+    )
+
+
+def _dwd_normal_select_sql(index, profile):
     ods_table = _q(_ods_table(index % profile.ods_tables))
     ref_table = _q(_ods_table((index + 1) % profile.ods_tables))
-    target = _q(_dwd_table(index))
-    target_columns = _column_list(_dwd_columns())
     select_sql = """SELECT
     o.id,
     o.event_date,
@@ -356,25 +400,63 @@ LEFT JOIN {ref_table} ref
             ods_table=ods_table,
             ref_table=ref_table,
         )
-    return """INSERT INTO {target} (
-{target_columns}
-)
-{select_sql};
-""".format(
-        target=target,
-        target_columns=target_columns,
-        select_sql=select_sql,
+    return select_sql
+
+
+def _dwd_stress_task_sql(index, profile):
+    tmp_base = _tmp_table("tmp_dwd_base", index)
+    tmp_enriched = _tmp_table("tmp_dwd_enriched", index)
+    tmp_base_qualified = _q(tmp_base)
+    tmp_enriched_qualified = _q(tmp_enriched)
+    target = _q(_dwd_table(index))
+    columns = _dwd_columns()
+    return """CREATE TEMPORARY TABLE {tmp_base} AS
+{base_select};
+
+CREATE TEMPORARY TABLE {tmp_enriched} AS
+SELECT
+{enriched_columns}
+FROM {tmp_base} b
+WHERE b.event_date >= '2025-01-01';
+
+{insert_sql}""".format(
+        tmp_base=tmp_base_qualified,
+        base_select=_dwd_normal_select_sql(index, profile),
+        tmp_enriched=tmp_enriched_qualified,
+        enriched_columns=_alias_column_list(columns, "b"),
+        insert_sql=_insert_from_table_sql(
+            target,
+            columns,
+            tmp_enriched_qualified,
+        ),
     )
 
 
-def _dws_task_sql(index, profile):
+def _dws_task_sql(index, profile, complexity):
+    if complexity == "stress" and index % 3 == 0:
+        return _dws_stress_task_sql(index, profile)
+    if complexity == "high" and index % 4 == 0:
+        return _transient_task_sql(
+            _tmp_table("tmp_dws_base", index),
+            _q(_dws_table(index)),
+            _dws_columns(),
+            _dws_normal_select_sql(index, profile),
+        )
+    return _dws_normal_task_sql(index, profile)
+
+
+def _dws_normal_task_sql(index, profile):
+    return _insert_select_sql(
+        _q(_dws_table(index)),
+        _dws_columns(),
+        _dws_normal_select_sql(index, profile),
+    )
+
+
+def _dws_normal_select_sql(index, profile):
     source = _q(_dwd_table(index % profile.dwd_tables))
     ref = _q(_dwd_table((index + 1) % profile.dwd_tables))
-    target = _q(_dws_table(index))
-    return """INSERT INTO {target} (
-{target_columns}
-)
-SELECT
+    return """SELECT
     d.event_date AS stat_date,
     d.customer_id,
     d.product_id,
@@ -406,21 +488,87 @@ GROUP BY
     d.store_id,
     d.category_id;
 """.format(
-        target=target,
-        target_columns=_column_list(_dws_columns()),
         source=source,
         ref=ref,
     )
 
 
-def _ads_task_sql(index, profile):
+def _dws_stress_task_sql(index, profile):
+    tmp_base = _tmp_table("tmp_dws_base", index)
+    tmp_enriched = _tmp_table("tmp_dws_enriched", index)
+    tmp_base_qualified = _q(tmp_base)
+    tmp_enriched_qualified = _q(tmp_enriched)
+    ref = _q(_dwd_table((index + 2) % profile.dwd_tables))
+    target = _q(_dws_table(index))
+    columns = _dws_columns()
+    return """CREATE TEMPORARY TABLE {tmp_base} AS
+{base_select};
+
+CREATE TEMPORARY TABLE {tmp_enriched} AS
+SELECT
+    b.stat_date,
+    b.customer_id,
+    b.product_id,
+    b.store_id,
+    b.category_id,
+    b.order_count,
+    b.total_amount,
+    b.total_quantity,
+    b.avg_amount,
+    b.discount_amount,
+    b.tax_amount,
+    b.active_days,
+    b.high_value_count,
+    b.metric_01,
+    b.metric_02,
+    b.metric_03 + ref.net_amount AS metric_03,
+    b.metric_04,
+    b.metric_05,
+    b.metric_06,
+    NOW() AS etl_time
+FROM {tmp_base} b
+LEFT JOIN {ref} ref
+    ON b.product_id = ref.product_id
+WHERE b.order_count >= 0;
+
+{insert_sql}""".format(
+        tmp_base=tmp_base_qualified,
+        base_select=_dws_normal_select_sql(index, profile),
+        tmp_enriched=tmp_enriched_qualified,
+        ref=ref,
+        insert_sql=_insert_from_table_sql(
+            target,
+            columns,
+            tmp_enriched_qualified,
+        ),
+    )
+
+
+def _ads_task_sql(index, profile, complexity):
+    if complexity == "stress" and index % 2 == 0:
+        return _ads_stress_task_sql(index, profile)
+    if complexity == "high" and index % 3 == 0:
+        return _transient_task_sql(
+            _tmp_table("tmp_ads_base", index),
+            _q(_ads_table(index)),
+            _ads_columns(),
+            _ads_normal_select_sql(index, profile),
+        )
+    return _ads_normal_task_sql(index, profile)
+
+
+def _ads_normal_task_sql(index, profile):
+    return _insert_select_sql(
+        _q(_ads_table(index)),
+        _ads_columns(),
+        _ads_normal_select_sql(index, profile),
+    )
+
+
+def _ads_normal_select_sql(index, profile):
     source = _q(_dws_table(index % profile.dws_tables))
     ref = _q(_dws_table((index + 1) % profile.dws_tables))
-    target = _q(_ads_table(index))
-    return """INSERT INTO {target} (
-{target_columns}
-)
-SELECT
+    return """SELECT
     s.stat_date AS report_date,
     s.customer_id,
     s.product_id,
@@ -451,15 +599,108 @@ GROUP BY
     s.store_id,
     s.category_id;
 """.format(
-        target=target,
-        target_columns=_column_list(_ads_columns()),
         source=source,
         ref=ref,
     )
 
 
+def _ads_stress_task_sql(index, profile):
+    tmp_base = _tmp_table("tmp_ads_base", index)
+    tmp_enriched = _tmp_table("tmp_ads_enriched", index)
+    tmp_base_qualified = _q(tmp_base)
+    tmp_enriched_qualified = _q(tmp_enriched)
+    ref = _q(_dws_table((index + 2) % profile.dws_tables))
+    target = _q(_ads_table(index))
+    columns = _ads_columns()
+    return """CREATE TEMPORARY TABLE {tmp_base} AS
+{base_select};
+
+CREATE TEMPORARY TABLE {tmp_enriched} AS
+SELECT
+    b.report_date,
+    b.customer_id,
+    b.product_id,
+    b.store_id,
+    b.category_id,
+    b.total_amount + ref.total_amount AS total_amount,
+    b.total_orders + ref.order_count AS total_orders,
+    b.avg_amount,
+    b.conversion_rate,
+    b.high_value_count,
+    b.metric_01,
+    b.metric_02,
+    b.metric_03,
+    b.metric_04,
+    b.metric_05 + ref.metric_05 AS metric_05,
+    NOW() AS etl_time
+FROM {tmp_base} b
+LEFT JOIN {ref} ref
+    ON b.customer_id = ref.customer_id
+WHERE b.report_date >= '2025-01-01';
+
+{insert_sql}""".format(
+        tmp_base=tmp_base_qualified,
+        base_select=_ads_normal_select_sql(index, profile),
+        tmp_enriched=tmp_enriched_qualified,
+        ref=ref,
+        insert_sql=_insert_from_table_sql(
+            target,
+            columns,
+            tmp_enriched_qualified,
+        ),
+    )
+
+
 def _column_list(columns):
     return ",\n".join("    {}".format(name) for name, _data_type in columns)
+
+
+def _alias_column_list(columns, alias):
+    return ",\n".join(
+        "    {alias}.{column}".format(alias=alias, column=name)
+        for name, _data_type in columns
+    )
+
+
+def _insert_select_sql(target, columns, select_sql):
+    return """INSERT INTO {target} (
+{target_columns}
+)
+{select_sql};
+""".format(
+        target=target,
+        target_columns=_column_list(columns),
+        select_sql=select_sql,
+    )
+
+
+def _insert_from_table_sql(target, columns, source_table):
+    return _insert_select_sql(
+        target,
+        columns,
+        """SELECT
+{source_columns}
+FROM {source_table} t""".format(
+            source_columns=_alias_column_list(columns, "t"),
+            source_table=source_table,
+        ),
+    )
+
+
+def _transient_task_sql(tmp_table, target, columns, select_sql):
+    tmp_table_qualified = _q(tmp_table)
+    return """CREATE TEMPORARY TABLE {tmp_table} AS
+{select_sql};
+
+{insert_sql}""".format(
+        tmp_table=tmp_table_qualified,
+        select_sql=select_sql,
+        insert_sql=_insert_from_table_sql(
+            target,
+            columns,
+            tmp_table_qualified,
+        ),
+    )
 
 
 def _q(table_name):
@@ -480,3 +721,7 @@ def _dws_table(index):
 
 def _ads_table(index):
     return "ads_report_{:04d}".format(index)
+
+
+def _tmp_table(prefix, index):
+    return "{}_{:04d}".format(prefix, index)

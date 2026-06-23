@@ -22,6 +22,22 @@ The generated SQL covers ODS to DWD mappings, DWD to DWS aggregations, DWS to
 ADS joins, filters, grouping, derived expressions, and a controlled subset of
 CTEs.
 
+## Task Complexity
+
+Size controls how many tables and tasks are generated. Complexity controls how
+much work each generated task contains.
+
+| Complexity | Behavior | Use |
+|------------|----------|-----|
+| `normal` | one target write per task, with joins, filters, CTEs, and aggregations | stable default baseline |
+| `high` | deterministic subsets of tasks create one temporary table before the final insert | transient table overhead |
+| `stress` | deterministic subsets of tasks create two-step temporary table chains before the final insert | transient lineage stress |
+
+Temporary table profiles use `CREATE TEMPORARY TABLE ... AS SELECT ...` inside
+the task file. The final target insert reads from the generated temporary
+table, so the extractor must parse multi-statement tasks, preserve transient
+table metadata, and rebuild final output from task-level lineage entries.
+
 ## Running
 
 Use the project Python environment. The default Make target runs the medium
@@ -35,8 +51,9 @@ Run specific profiles directly:
 
 ```bash
 PYTHONPATH= conda run -n dw-refactor-py37 python benchmarks/lineage_extractor/run.py --size small
+PYTHONPATH= conda run -n dw-refactor-py37 python benchmarks/lineage_extractor/run.py --size medium --complexity high
 PYTHONPATH= conda run -n dw-refactor-py37 python benchmarks/lineage_extractor/run.py --size medium --repeat 3 --output benchmark.json
-PYTHONPATH= conda run -n dw-refactor-py37 python benchmarks/lineage_extractor/run.py --size large --parallel 4 --keep-assets
+PYTHONPATH= conda run -n dw-refactor-py37 python benchmarks/lineage_extractor/run.py --size large --complexity stress --parallel 4 --keep-assets
 ```
 
 Use `--keep-assets` when debugging generated SQL. The runner prints the asset

@@ -17,6 +17,7 @@ import config
 import lineage.lineage_extractor as lineage_extractor
 from benchmarks.lineage_extractor.dataset import (
     CATALOG,
+    COMPLEXITIES,
     DATABASE,
     PROFILES,
     PROJECT_NAME,
@@ -26,6 +27,7 @@ from benchmarks.lineage_extractor.dataset import (
 
 def run_benchmark(
     size="medium",
+    complexity="normal",
     parallel=1,
     repeat=1,
     output_path=None,
@@ -36,6 +38,14 @@ def run_benchmark(
         choices = ", ".join(sorted(PROFILES))
         raise ValueError(
             "unknown benchmark size: {} ({})".format(size, choices)
+        )
+    if complexity not in COMPLEXITIES:
+        choices = ", ".join(sorted(COMPLEXITIES))
+        raise ValueError(
+            "unknown benchmark complexity: {} ({})".format(
+                complexity,
+                choices,
+            )
         )
     repeat = max(1, int(repeat or 1))
     parallel = max(1, int(parallel or 1))
@@ -69,7 +79,7 @@ def run_benchmark(
                 shutil.rmtree(str(run_root))
             run_root.mkdir(parents=True)
 
-            result = _run_once(size, parallel, run_root)
+            result = _run_once(size, complexity, parallel, run_root)
             results.append(result)
             dataset_summary = result.pop("dataset")
     finally:
@@ -86,6 +96,7 @@ def run_benchmark(
     report = {
         "benchmark": "lineage_extractor",
         "size": size,
+        "complexity": complexity,
         "parallel": parallel,
         "repeat": repeat,
         "python_version": sys.version.split()[0],
@@ -106,9 +117,9 @@ def run_benchmark(
     return report
 
 
-def _run_once(size, parallel, root):
+def _run_once(size, complexity, parallel, root):
     generated_at = time.perf_counter()
-    dataset = generate_dataset(size, root)
+    dataset = generate_dataset(size, root, complexity=complexity)
     generation_seconds = _elapsed(generated_at)
 
     ddl_texts = [
@@ -253,6 +264,7 @@ def _elapsed(started_at):
 def _print_report(report):
     print("lineage_extractor benchmark")
     print("  size: {}".format(report["size"]))
+    print("  complexity: {}".format(report["complexity"]))
     print("  parallel: {}".format(report["parallel"]))
     print("  repeat: {}".format(report["repeat"]))
     dataset = report["dataset"]
@@ -294,6 +306,12 @@ def main(argv=None):
         help="Task extraction parallelism.",
     )
     parser.add_argument(
+        "--complexity",
+        default="normal",
+        choices=sorted(COMPLEXITIES),
+        help="Task SQL complexity profile.",
+    )
+    parser.add_argument(
         "--repeat",
         type=int,
         default=1,
@@ -317,6 +335,7 @@ def main(argv=None):
     args = parser.parse_args(argv)
     report = run_benchmark(
         size=args.size,
+        complexity=args.complexity,
         parallel=args.parallel,
         repeat=args.repeat,
         output_path=args.output,
