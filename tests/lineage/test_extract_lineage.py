@@ -716,6 +716,51 @@ class TestEdgeCases:
             ("ods_a", "MORTAGAGE_AMT", "dwd_b", "MORTAGAGE_AMT"),
         }
 
+    def test_lineage_extraction_matches_quoted_derived_column_case_insensitively(
+        self,
+    ):
+        schema = build_schema_from_texts(
+            [
+                """
+                CREATE TABLE shop_dm.ods_operator (
+                    oper_no BIGINT,
+                    `alias` VARCHAR(64)
+                )
+                """,
+                """
+                CREATE TABLE shop_dm.m05_czpt_group_cus_info (
+                    operator_name VARCHAR(64)
+                )
+                """,
+            ]
+        )
+        sql = """
+        INSERT INTO shop_dm.m05_czpt_group_cus_info (operator_name)
+        SELECT t7.`ALIAS` AS operator_name
+        FROM (
+            SELECT oper_no, `alias`
+            FROM shop_dm.ods_operator
+        ) t7
+        """
+        diagnostics = []
+
+        entries = extract_lineage_from_sql(
+            sql,
+            "m05_czpt_group_cus_info.sql",
+            schema,
+            diagnostics=diagnostics,
+        )
+
+        assert diagnostics == []
+        assert _direct_edges(entries) == {
+            (
+                "ods_operator",
+                "alias",
+                "m05_czpt_group_cus_info",
+                "operator_name",
+            ),
+        }
+
     def test_ctas_with_column_definitions_uses_plain_target_table(self):
         sql = """
         CREATE TABLE shop_dm.dws_daily_sales (

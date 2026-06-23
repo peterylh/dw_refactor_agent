@@ -867,6 +867,94 @@ def _projection_output_names(query_expr):
     return []
 
 
+def _derived_output_column_lookup(query_expr):
+    lookup = {}
+    ambiguous_keys = set()
+    for output_name in _projection_output_names(query_expr):
+        key = _identifier_match_key(output_name)
+        if not key:
+            continue
+        existing = lookup.get(key)
+        if existing is not None and existing != output_name:
+            ambiguous_keys.add(key)
+            continue
+        lookup[key] = output_name
+    for key in ambiguous_keys:
+        lookup.pop(key, None)
+    return lookup
+
+
+def _derived_output_lookups_for_select(select_expr):
+    lookups = {}
+    ctes = _collect_ctes(select_expr)
+
+    for relation in _iter_relation_sources(select_expr):
+        if isinstance(relation, exp.Subquery) and isinstance(
+            relation.this, (exp.Select, exp.SetOperation)
+        ):
+            alias = _canonical_identifier(relation.alias_or_name)
+            if alias:
+                lookup = _derived_output_column_lookup(relation.this)
+                if lookup:
+                    lookups[_identifier_match_key(alias)] = lookup
+        elif isinstance(relation, exp.Table):
+            tbl = _strip_db(_table_name(relation))
+            if tbl not in ctes:
+                continue
+            lookup = _derived_output_column_lookup(ctes[tbl])
+            if not lookup:
+                continue
+            alias = _canonical_identifier(
+                relation.alias_or_name or relation.name
+            )
+            for name in (alias, tbl):
+                if name:
+                    lookups[_identifier_match_key(name)] = lookup
+
+    return lookups
+
+
+def _enclosing_select(expression):
+    current = getattr(expression, "parent", None)
+    while current is not None:
+        if isinstance(current, exp.Select):
+            return current
+        current = getattr(current, "parent", None)
+    return None
+
+
+def _normalize_derived_column_reference_case(query_expr):
+    """Match quoted derived-table column references like `ALIAS` to `alias`."""
+    normalized = query_expr.copy()
+    if not isinstance(normalized, (exp.Select, exp.SetOperation)):
+        return normalized
+
+    for select_expr in list(normalized.find_all(exp.Select)):
+        output_lookups = _derived_output_lookups_for_select(select_expr)
+        if not output_lookups:
+            continue
+        for column in list(select_expr.find_all(exp.Column)):
+            if _enclosing_select(column) is not select_expr:
+                continue
+            identifier = column.this
+            if not isinstance(identifier, exp.Identifier):
+                continue
+            if not identifier.args.get("quoted"):
+                continue
+            table_key = _identifier_match_key(column.table)
+            if not table_key:
+                continue
+            output_lookup = output_lookups.get(table_key)
+            if not output_lookup:
+                continue
+            output_name = output_lookup.get(_identifier_match_key(column.name))
+            if not output_name or output_name == column.name:
+                continue
+            column.set("this", exp.to_identifier(output_name, quoted=True))
+
+    return normalized
+
+
 def _diagnostic_error(error):
     return f"{type(error).__name__}: {error}"
 
@@ -929,6 +1017,7 @@ def _lineage_nodes_for_select(
     diagnostics=None,
 ):
     nodes = {}
+    select_expr = _normalize_derived_column_reference_case(select_expr)
     projections = (
         select_expr.expressions if isinstance(select_expr, exp.Select) else []
     )
@@ -1181,6 +1270,7 @@ def _derived_leaf_sources(
     diagnostics=None,
 ):
     """将派生表/CTE 输出列追溯到物理源表列。"""
+    select_expr = _normalize_derived_column_reference_case(select_expr)
     try:
         node = lineage(
             column=column_name,
