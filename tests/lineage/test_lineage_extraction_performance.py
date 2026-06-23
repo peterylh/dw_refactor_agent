@@ -69,9 +69,20 @@ def test_lineage_nodes_for_select_reuses_scope_across_output_columns(
     schema_ods_order,
 ):
     scopes = []
+    sql_expressions = []
+    trim_selects_values = []
 
-    def fake_lineage(column, sql, schema, dialect, scope=None):
+    def fake_lineage(
+        column,
+        sql,
+        schema,
+        dialect,
+        scope=None,
+        trim_selects=None,
+    ):
         scopes.append(scope)
+        sql_expressions.append(sql)
+        trim_selects_values.append(trim_selects)
         projection = next(
             item for item in sql.expressions if item.alias_or_name == column
         )
@@ -93,6 +104,8 @@ def test_lineage_nodes_for_select_reuses_scope_across_output_columns(
     assert len(scopes) == 2
     assert scopes[0] is not None
     assert scopes[0] is scopes[1]
+    assert sql_expressions[0] is sql_expressions[1]
+    assert trim_selects_values == [False, False]
 
 
 def test_lineage_scope_failure_is_reported_as_warning(
@@ -104,7 +117,7 @@ def test_lineage_scope_failure_is_reported_as_warning(
     def fail_scope(_select_expr, _schema):
         raise RuntimeError("scope boom")
 
-    def fake_lineage(column, sql, schema, dialect, scope=None):
+    def fake_lineage(column, sql, schema, dialect, scope=None, **kwargs):
         projection = next(
             item for item in sql.expressions if item.alias_or_name == column
         )

@@ -1869,10 +1869,11 @@ def _lineage_node_items_for_select(
                     projection,
                     lineage(
                         column=column_arg,
-                        sql=lineage_expr.copy(),
+                        sql=lineage_expr,
                         schema=sqlglot_schema,
                         dialect=LINEAGE_DIALECT,
                         scope=scope,
+                        trim_selects=False,
                     ),
                 )
             )
@@ -2146,9 +2147,10 @@ def _derived_leaf_sources(
     try:
         node = lineage(
             column=lineage_column_name,
-            sql=lineage_expr.copy(),
+            sql=lineage_expr,
             schema=_lineage_schema(schema),
             dialect=LINEAGE_DIALECT,
+            trim_selects=False,
         )
     except Exception as exc:
         _record_diagnostic(
