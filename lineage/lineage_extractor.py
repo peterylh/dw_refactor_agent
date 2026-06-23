@@ -687,13 +687,31 @@ def _register_task_table_schema(schema, table_name, columns):
     }
 
 
-def _created_table_columns(stmt):
+def _created_table_columns_from_schema(
+    stmt,
+    schema,
+    file_path="",
+    diagnostics=None,
+):
     target_columns = _target_columns(stmt.this)
     if target_columns:
         return target_columns
     inner = stmt.args.get("expression")
     if isinstance(inner, (exp.Select, exp.SetOperation)):
-        return _projection_output_names(inner)
+        (
+            _expanded_inner,
+            output_columns,
+            has_unresolved_output,
+        ) = _expand_query_star_projections(
+            inner,
+            schema,
+            file_path=file_path,
+            target_table=_target_table_sql(stmt.this),
+            diagnostics=diagnostics,
+        )
+        if has_unresolved_output and not output_columns:
+            return []
+        return output_columns
     return []
 
 
@@ -867,6 +885,667 @@ def _projection_output_names(query_expr):
     return []
 
 
+def _is_star_projection(projection):
+    return isinstance(projection, exp.Star) or (
+        isinstance(projection, exp.Column)
+        and isinstance(projection.this, exp.Star)
+    )
+
+
+def _star_projection_table(projection):
+    if isinstance(projection, exp.Column) and isinstance(
+        projection.this, exp.Star
+    ):
+        parts = [
+            _canonical_identifier(part.name)
+            for part in projection.parts
+            if _canonical_identifier(part.name)
+        ]
+        if parts and parts[-1] == "*":
+            return ".".join(parts[:-1])
+        return _canonical_identifier(projection.table)
+    return ""
+
+
+def _star_has_modifiers(star_expr):
+    if not isinstance(star_expr, exp.Star):
+        return False
+    modifier_args = {"except", "except_", "replace", "rename"}
+    return any(star_expr.args.get(arg) for arg in modifier_args)
+
+
+def _relation_alias(relation):
+    return _canonical_identifier(
+        getattr(relation, "alias_or_name", None)
+        or getattr(relation, "name", "")
+    )
+
+
+def _explicit_relation_alias(relation):
+    alias = relation.args.get("alias") if relation is not None else None
+    if not alias:
+        return ""
+    return _canonical_identifier(alias.this.name)
+
+
+def _relation_match_keys(*names):
+    return {
+        _identifier_match_key(name)
+        for name in names
+        if _identifier_match_key(name)
+    }
+
+
+def _column_projection(reference_name, column_name, output_name=None):
+    reference_parts = [
+        _canonical_identifier(part)
+        for part in str(reference_name or "").split(".")
+        if _canonical_identifier(part)
+    ]
+    if len(reference_parts) >= 3:
+        column = exp.column(
+            column_name,
+            table=reference_parts[-1],
+            db=reference_parts[-2],
+            catalog=reference_parts[-3],
+        )
+    elif len(reference_parts) == 2:
+        column = exp.column(
+            column_name,
+            table=reference_parts[-1],
+            db=reference_parts[-2],
+        )
+    else:
+        column = exp.column(column_name, table=reference_name or None)
+    return exp.alias_(column, output_name or column_name, quoted=False)
+
+
+def _alias_column_names(expression):
+    alias = expression.args.get("alias") if expression is not None else None
+    if not alias:
+        return []
+    return [
+        _canonical_column(getattr(column, "name", column))
+        for column in (alias.args.get("columns") or [])
+    ]
+
+
+def _exposed_columns(output_columns, alias_columns):
+    exposed = list(output_columns or [])
+    for idx, alias_name in enumerate(alias_columns or []):
+        if idx >= len(exposed):
+            break
+        exposed[idx] = alias_name
+    return exposed
+
+
+def _has_unexpanded_star_projection(query_expr):
+    if isinstance(query_expr, exp.Select):
+        return any(
+            _is_star_projection(projection)
+            for projection in query_expr.expressions
+        )
+    if isinstance(query_expr, exp.SetOperation):
+        left = query_expr.args.get("this")
+        return _has_unexpanded_star_projection(left)
+    return False
+
+
+def _mark_unresolved_star_source(select_expr, *names):
+    keys = {
+        _identifier_match_key(name)
+        for name in names
+        if _identifier_match_key(name)
+    }
+    if not keys:
+        return
+    select_expr.meta.setdefault("unresolved_star_sources", set()).update(keys)
+
+
+def _unresolved_star_source_keys(select_expr):
+    return set(
+        getattr(select_expr, "meta", {}).get("unresolved_star_sources")
+        or set()
+    )
+
+
+def _projection_references_unresolved_source(projection, unresolved_keys):
+    if not projection or not unresolved_keys:
+        return False
+    for column in projection.find_all(exp.Column):
+        table_key = _identifier_match_key(column.table)
+        if not table_key:
+            return True
+        if table_key in unresolved_keys:
+            return True
+    return False
+
+
+def _relation_source_match_keys(relation):
+    if isinstance(relation, exp.Subquery):
+        return _relation_match_keys(_relation_alias(relation))
+    if isinstance(relation, exp.Table):
+        table_name = _table_name(relation)
+        return _relation_match_keys(
+            _relation_alias(relation),
+            _strip_db(table_name),
+            table_name,
+        )
+    return set()
+
+
+def _expand_query_star_projections(
+    query_expr,
+    schema,
+    file_path="",
+    target_table="",
+    diagnostics=None,
+    _cte_context=None,
+    _visited=None,
+):
+    if isinstance(query_expr, exp.Select):
+        return _expand_select_star_projections(
+            query_expr,
+            schema,
+            file_path=file_path,
+            target_table=target_table,
+            diagnostics=diagnostics,
+            _cte_context=_cte_context,
+            _visited=_visited,
+        )
+    if isinstance(query_expr, exp.SetOperation):
+        expanded = query_expr.copy()
+        left = expanded.args.get("this")
+        right = expanded.args.get("expression")
+        output_columns = _projection_output_names(left)
+        has_unresolved_output = False
+        if isinstance(left, (exp.Select, exp.SetOperation)):
+            (
+                expanded_left,
+                output_columns,
+                has_unresolved_output,
+            ) = _expand_query_star_projections(
+                left,
+                schema,
+                file_path=file_path,
+                target_table=target_table,
+                diagnostics=diagnostics,
+                _cte_context=_cte_context,
+                _visited=_visited,
+            )
+            expanded.set("this", expanded_left)
+        if isinstance(right, (exp.Select, exp.SetOperation)):
+            (
+                expanded_right,
+                _right_columns,
+                _right_unresolved,
+            ) = _expand_query_star_projections(
+                right,
+                schema,
+                file_path=file_path,
+                target_table=target_table,
+                diagnostics=diagnostics,
+                _cte_context=_cte_context,
+                _visited=_visited,
+            )
+            expanded.set("expression", expanded_right)
+            has_unresolved_output = has_unresolved_output or _right_unresolved
+        return expanded, output_columns, has_unresolved_output
+    return query_expr.copy(), [], False
+
+
+def _expand_select_star_projections(
+    select_expr,
+    schema,
+    file_path="",
+    target_table="",
+    diagnostics=None,
+    _cte_context=None,
+    _visited=None,
+):
+    expanded = select_expr.copy()
+    visible_ctes = dict(_cte_context or {})
+    visited = set(_visited or set())
+
+    with_ = expanded.args.get("with_") or expanded.args.get("with")
+    if with_:
+        for cte in with_.expressions or []:
+            if not isinstance(cte.this, (exp.Select, exp.SetOperation)):
+                continue
+            cte_key = _identifier_match_key(cte.alias_or_name)
+            if not cte_key:
+                continue
+            cte_visible = dict(visible_ctes)
+            (
+                expanded_cte,
+                _cte_columns,
+                _cte_unresolved,
+            ) = _expand_query_star_projections(
+                cte.this,
+                schema,
+                file_path=file_path,
+                target_table=target_table,
+                diagnostics=diagnostics,
+                _cte_context=cte_visible,
+                _visited=visited | {cte_key},
+            )
+            cte.set("this", expanded_cte)
+            visible_ctes[cte_key] = {
+                "query": expanded_cte,
+                "alias_columns": _alias_column_names(cte),
+                "has_unresolved_output": _cte_unresolved,
+            }
+
+    has_star_projection = any(
+        _is_star_projection(projection) for projection in expanded.expressions
+    )
+    has_unresolved_derived_source = False
+    relation_sources = []
+    has_unresolved_source = False
+    if has_star_projection:
+        bare_star = any(
+            not _star_projection_table(projection)
+            for projection in expanded.expressions
+            if _is_star_projection(projection)
+        )
+        qualified_star_keys = {
+            _identifier_match_key(_star_projection_table(projection))
+            for projection in expanded.expressions
+            if _is_star_projection(projection)
+            and _star_projection_table(projection)
+        }
+        relation_sources, has_unresolved_source = _build_star_relation_sources(
+            expanded,
+            schema,
+            visible_ctes,
+            file_path,
+            target_table,
+            diagnostics,
+            visited,
+            require_all=bare_star,
+            required_keys=qualified_star_keys,
+        )
+        if not bare_star:
+            has_unresolved_derived_source = _expand_explicit_derived_sources(
+                expanded,
+                schema,
+                visible_ctes,
+                file_path,
+                target_table,
+                diagnostics,
+                visited,
+            )
+    if not has_star_projection:
+        has_unresolved_derived_source = _expand_explicit_derived_sources(
+            expanded,
+            schema,
+            visible_ctes,
+            file_path,
+            target_table,
+            diagnostics,
+            visited,
+        )
+    expanded_items = []
+    for projection in expanded.expressions:
+        if not _is_star_projection(projection):
+            expanded_items.append(
+                {
+                    "projection": projection.copy(),
+                    "output_name": _projection_output_name(projection),
+                }
+            )
+            continue
+        star_expr = (
+            projection if isinstance(projection, exp.Star) else projection.this
+        )
+        if _star_has_modifiers(star_expr):
+            _record_diagnostic(
+                diagnostics,
+                file_path,
+                "lineage_star_expand",
+                ValueError("Unsupported SELECT * modifier"),
+                severity="warning",
+                target_table=_strip_db(target_table),
+                expression=projection.sql(dialect="doris"),
+            )
+            expanded_items.append(
+                {
+                    "projection": projection.copy(),
+                    "output_name": _projection_output_name(projection),
+                }
+            )
+            continue
+        expanded_star = _expand_star_projection_from_sources(
+            projection,
+            relation_sources,
+            has_unresolved_source,
+            file_path,
+            target_table,
+            diagnostics,
+        )
+        if not expanded_star:
+            expanded_items.append(
+                {
+                    "projection": projection.copy(),
+                    "output_name": _projection_output_name(projection),
+                }
+            )
+            continue
+        expanded_items.extend(expanded_star)
+
+    output_columns = [
+        _canonical_column(item.get("output_name", ""))
+        for item in expanded_items
+    ]
+    output_counts = {}
+    for output_name in output_columns:
+        output_key = _identifier_match_key(output_name)
+        if output_key:
+            output_counts[output_key] = output_counts.get(output_key, 0) + 1
+
+    expanded_projections = []
+    for idx, item in enumerate(expanded_items):
+        if "projection" in item:
+            expanded_projections.append(item["projection"])
+            continue
+        output_name = item["output_name"]
+        output_key = _identifier_match_key(output_name)
+        alias_name = output_name
+        if output_key and output_counts.get(output_key, 0) > 1:
+            alias_name = f"__lineage_star_{idx}"
+        expanded_projections.append(
+            _column_projection(
+                item["reference"],
+                item["column"],
+                output_name=alias_name,
+            )
+        )
+    expanded.set("expressions", expanded_projections)
+    return (
+        expanded,
+        output_columns,
+        _has_unexpanded_star_projection(expanded)
+        or has_unresolved_derived_source,
+    )
+
+
+def _expand_explicit_derived_sources(
+    select_expr,
+    schema,
+    cte_context,
+    file_path,
+    target_table,
+    diagnostics,
+    visited,
+):
+    has_unresolved_source = False
+    for relation in _iter_relation_sources(select_expr):
+        if not isinstance(relation, exp.Subquery):
+            if not isinstance(relation, exp.Table):
+                continue
+            table_name = _table_name(relation)
+            table_short = _strip_db(table_name)
+            table_key = _identifier_match_key(table_short)
+            is_qualified_table = bool(
+                relation.args.get("db") or relation.args.get("catalog")
+            )
+            if is_qualified_table or table_key not in cte_context:
+                continue
+            cte_info = cte_context[table_key]
+            if not isinstance(cte_info, dict):
+                continue
+            if not cte_info.get("has_unresolved_output", False):
+                continue
+            has_unresolved_source = True
+            _mark_unresolved_star_source(
+                select_expr,
+                _relation_alias(relation),
+                table_short,
+            )
+            continue
+        alias = _relation_alias(relation)
+        if not alias or not isinstance(
+            relation.this, (exp.Select, exp.SetOperation)
+        ):
+            continue
+        (
+            expanded_inner,
+            _output_columns,
+            has_unresolved_output,
+        ) = _expand_query_star_projections(
+            relation.this,
+            schema,
+            file_path=file_path,
+            target_table=target_table,
+            diagnostics=diagnostics,
+            _cte_context=cte_context,
+            _visited=visited,
+        )
+        relation.set("this", expanded_inner)
+        if has_unresolved_output:
+            has_unresolved_source = True
+            _mark_unresolved_star_source(select_expr, alias)
+    return has_unresolved_source
+
+
+def _build_star_relation_sources(
+    select_expr,
+    schema,
+    cte_context,
+    file_path,
+    target_table,
+    diagnostics,
+    visited,
+    require_all=False,
+    required_keys=None,
+):
+    sources = []
+    has_unresolved_source = False
+    required_keys = set(required_keys or set())
+    for relation in _iter_relation_sources(select_expr):
+        relation_keys = _relation_source_match_keys(relation)
+        if not require_all and not (relation_keys & required_keys):
+            continue
+        source = _star_relation_source(
+            relation,
+            schema,
+            cte_context,
+            file_path,
+            target_table,
+            diagnostics,
+            visited,
+        )
+        if source:
+            sources.append(source)
+        else:
+            has_unresolved_source = True
+    return sources, has_unresolved_source
+
+
+def _star_relation_source(
+    relation,
+    schema,
+    cte_context,
+    file_path,
+    target_table,
+    diagnostics,
+    visited,
+):
+    if isinstance(relation, exp.Subquery):
+        alias = _relation_alias(relation)
+        if not alias or not isinstance(
+            relation.this, (exp.Select, exp.SetOperation)
+        ):
+            return None
+        (
+            expanded_inner,
+            output_columns,
+            has_unresolved_output,
+        ) = _expand_query_star_projections(
+            relation.this,
+            schema,
+            file_path=file_path,
+            target_table=target_table,
+            diagnostics=diagnostics,
+            _cte_context=cte_context,
+            _visited=visited,
+        )
+        relation.set("this", expanded_inner)
+        if has_unresolved_output:
+            return None
+        alias_columns = _alias_column_names(relation)
+        actual_columns = _exposed_columns(
+            _projection_output_names(expanded_inner),
+            alias_columns,
+        )
+        return {
+            "reference": alias,
+            "columns": _exposed_columns(output_columns, alias_columns),
+            "actual_columns": actual_columns,
+            "match_keys": _relation_match_keys(alias),
+        }
+
+    if not isinstance(relation, exp.Table):
+        return None
+
+    table_name = _table_name(relation)
+    table_short = _strip_db(table_name)
+    alias = _explicit_relation_alias(relation)
+    table_key = _identifier_match_key(table_short)
+    is_qualified_table = bool(
+        relation.args.get("db") or relation.args.get("catalog")
+    )
+    if (
+        not is_qualified_table
+        and table_key in cte_context
+        and table_key not in visited
+    ):
+        cte_info = cte_context[table_key]
+        cte_query = (
+            cte_info.get("query") if isinstance(cte_info, dict) else cte_info
+        )
+        alias_columns = (
+            cte_info.get("alias_columns", [])
+            if isinstance(cte_info, dict)
+            else []
+        )
+        cte_previously_unresolved = (
+            cte_info.get("has_unresolved_output", False)
+            if isinstance(cte_info, dict)
+            else False
+        )
+        (
+            expanded_cte,
+            output_columns,
+            has_unresolved_output,
+        ) = _expand_query_star_projections(
+            cte_query,
+            schema,
+            file_path=file_path,
+            target_table=target_table,
+            diagnostics=diagnostics,
+            _cte_context=cte_context,
+            _visited=visited | {table_key},
+        )
+        cte_context[table_key] = {
+            "query": expanded_cte,
+            "alias_columns": alias_columns,
+            "has_unresolved_output": (
+                cte_previously_unresolved or has_unresolved_output
+            ),
+        }
+        if cte_previously_unresolved or has_unresolved_output:
+            return None
+        actual_columns = _exposed_columns(
+            _projection_output_names(expanded_cte),
+            alias_columns,
+        )
+        return {
+            "reference": alias or table_short,
+            "columns": _exposed_columns(output_columns, alias_columns),
+            "actual_columns": actual_columns,
+            "match_keys": _relation_match_keys(alias, table_short, table_name),
+        }
+
+    columns = _schema_columns_for_table(schema, table_name)
+    if not columns:
+        _record_diagnostic(
+            diagnostics,
+            file_path,
+            "lineage_star_expand",
+            ValueError(
+                f"Missing schema columns for table: {_strip_db(table_name)}"
+            ),
+            severity="warning",
+            target_table=_strip_db(target_table),
+        )
+        return None
+    return {
+        "reference": alias or table_name,
+        "columns": columns,
+        "actual_columns": columns,
+        "match_keys": _relation_match_keys(alias, table_short, table_name),
+    }
+
+
+def _expand_star_projection_from_sources(
+    projection,
+    relation_sources,
+    has_unresolved_source,
+    file_path,
+    target_table,
+    diagnostics,
+):
+    qualifier = _star_projection_table(projection)
+    if qualifier:
+        qualifier_key = _identifier_match_key(qualifier)
+        matched_sources = [
+            source
+            for source in relation_sources
+            if qualifier_key in source["match_keys"]
+        ]
+        if not matched_sources:
+            _record_diagnostic(
+                diagnostics,
+                file_path,
+                "lineage_star_expand",
+                ValueError(
+                    f"Cannot expand SELECT star for alias: {qualifier}"
+                ),
+                severity="warning",
+                target_table=_strip_db(target_table),
+                expression=projection.sql(dialect="doris"),
+            )
+            return []
+        return [
+            {
+                "reference": source["reference"],
+                "column": actual_column,
+                "output_name": output_name,
+            }
+            for source in matched_sources
+            for output_name, actual_column in zip(
+                source["columns"],
+                source.get("actual_columns", source["columns"]),
+            )
+        ]
+
+    if has_unresolved_source:
+        return []
+    return [
+        {
+            "reference": source["reference"],
+            "column": actual_column,
+            "output_name": output_name,
+        }
+        for source in relation_sources
+        for output_name, actual_column in zip(
+            source["columns"],
+            source.get("actual_columns", source["columns"]),
+        )
+    ]
+
+
 def _derived_output_column_lookup(query_expr):
     lookup = {}
     ambiguous_keys = set()
@@ -961,6 +1640,7 @@ def _diagnostic_error(error):
 
 _DIAGNOSTIC_SEVERITY_BY_STAGE = {
     "lineage_scope": "warning",
+    "lineage_star_expand": "warning",
     "derived_lineage_column": "warning",
     "parse": "error",
     "lineage_column": "error",
@@ -1009,18 +1689,19 @@ def _fatal_diagnostics(diagnostics):
     ]
 
 
-def _lineage_nodes_for_select(
+def _lineage_node_items_for_select(
     select_expr,
     schema,
     file_path="",
     target_table="",
     diagnostics=None,
 ):
-    nodes = {}
+    node_items = []
     select_expr = _normalize_derived_column_reference_case(select_expr)
     projections = (
         select_expr.expressions if isinstance(select_expr, exp.Select) else []
     )
+    unresolved_source_keys = _unresolved_star_source_keys(select_expr)
     sqlglot_schema = _lineage_schema(schema)
     try:
         scope = _lineage_scope(select_expr, sqlglot_schema)
@@ -1034,27 +1715,42 @@ def _lineage_nodes_for_select(
         )
         scope = None
     for idx, col_name in enumerate(_projection_output_names(select_expr)):
+        projection = projections[idx] if idx < len(projections) else None
         if not col_name:
+            node_items.append((col_name, projection, None))
             continue
-        if idx < len(projections) and not list(
-            projections[idx].find_all(exp.Column)
+        if projection is not None and not list(
+            projection.find_all(exp.Column)
         ):
+            node_items.append((col_name, projection, None))
+            continue
+        if _projection_references_unresolved_source(
+            projection,
+            unresolved_source_keys,
+        ):
+            node_items.append((col_name, projection, None))
             continue
         try:
             column_arg = col_name
-            if idx < len(projections):
-                column_arg = _lineage_column_arg(projections[idx], col_name)
-            nodes[col_name] = lineage(
-                column=column_arg,
-                sql=select_expr.copy(),
-                schema=sqlglot_schema,
-                dialect=LINEAGE_DIALECT,
-                scope=scope,
+            if projection is not None:
+                column_arg = _lineage_column_arg(projection, col_name)
+            node_items.append(
+                (
+                    col_name,
+                    projection,
+                    lineage(
+                        column=column_arg,
+                        sql=select_expr.copy(),
+                        schema=sqlglot_schema,
+                        dialect=LINEAGE_DIALECT,
+                        scope=scope,
+                    ),
+                )
             )
         except Exception as exc:
             expression = ""
-            if idx < len(projections) and hasattr(projections[idx], "sql"):
-                expression = projections[idx].sql(dialect="doris")
+            if projection is not None and hasattr(projection, "sql"):
+                expression = projection.sql(dialect="doris")
             _record_diagnostic(
                 diagnostics,
                 file_path,
@@ -1064,8 +1760,49 @@ def _lineage_nodes_for_select(
                 target_column=col_name,
                 expression=expression,
             )
+            node_items.append((col_name, projection, None))
             continue
+    return node_items
+
+
+def _lineage_nodes_for_select(
+    select_expr,
+    schema,
+    file_path="",
+    target_table="",
+    diagnostics=None,
+):
+    nodes = {}
+    for col_name, _projection, node in _lineage_node_items_for_select(
+        select_expr,
+        schema,
+        file_path=file_path,
+        target_table=target_table,
+        diagnostics=diagnostics,
+    ):
+        if col_name and node is not None:
+            nodes[col_name] = node
     return nodes
+
+
+def _target_column_for_projection(
+    idx,
+    col_name,
+    target_columns=None,
+    output_columns=None,
+):
+    if target_columns is not None and idx < len(target_columns):
+        return target_columns[idx]
+    if output_columns is not None and idx < len(output_columns):
+        return output_columns[idx]
+    return col_name
+
+
+def _leftmost_set_operand(query_expr):
+    current = query_expr
+    while isinstance(current, exp.SetOperation):
+        current = current.args.get("this")
+    return current
 
 
 def _merge_schema(target, source):
@@ -1322,6 +2059,7 @@ def _indirect_entries_from_select(
     derived_sources = {}
     relation_aliases = []
     ctes = _collect_ctes(select_expr)
+    unresolved_source_keys = _unresolved_star_source_keys(select_expr)
 
     def _remember_alias(alias):
         if alias and alias not in relation_aliases:
@@ -1354,6 +2092,8 @@ def _indirect_entries_from_select(
         tbl_or_alias = _canonical_identifier(col.table)
         col_name = _canonical_column(col.name)
         if tbl_or_alias:
+            if _identifier_match_key(tbl_or_alias) in unresolved_source_keys:
+                return []
             if tbl_or_alias in derived_sources:
                 return _derived_leaf_sources(
                     derived_sources[tbl_or_alias],
@@ -1368,6 +2108,9 @@ def _indirect_entries_from_select(
                     col_name,
                 )
             ]
+
+        if unresolved_source_keys:
+            return []
 
         derived_aliases = [a for a in relation_aliases if a in derived_sources]
         if len(derived_aliases) == 1:
@@ -1568,7 +2311,12 @@ def extract_lineage_from_sql(sql_text, file_path, schema, diagnostics=None):
             _register_task_table_schema(
                 task_schema,
                 _target_table_sql(stmt.this),
-                _created_table_columns(stmt),
+                _created_table_columns_from_schema(
+                    stmt,
+                    task_schema,
+                    file_path=file_path,
+                    diagnostics=None,
+                ),
             )
         elif isinstance(stmt, exp.Merge):
             entries.extend(
@@ -1973,22 +2721,58 @@ def _trace_lineage(
     diagnostics=None,
 ):
     entries = []
-    nodes = _lineage_nodes_for_select(
+    (
+        expanded_select_expr,
+        output_columns,
+        has_unresolved_output,
+    ) = _expand_query_star_projections(
         select_expr,
         schema,
         file_path=file_path,
         target_table=target_table,
         diagnostics=diagnostics,
     )
-    if not nodes and not _projection_output_names(select_expr):
+    lineage_select_expr = expanded_select_expr
+    if has_unresolved_output and isinstance(
+        expanded_select_expr, exp.SetOperation
+    ):
+        lineage_select_expr = _leftmost_set_operand(expanded_select_expr)
+    node_items = _lineage_node_items_for_select(
+        lineage_select_expr,
+        schema,
+        file_path=file_path,
+        target_table=target_table,
+        diagnostics=diagnostics,
+    )
+    has_direct_nodes = any(
+        node is not None for _col_name, _projection, node in node_items
+    )
+    if not has_direct_nodes and not output_columns:
+        output_columns = _projection_output_names(expanded_select_expr)
+    if not has_direct_nodes and not output_columns:
         STATS["lineage_failures"] += 1
         return entries
 
-    for idx, (col_name, node) in enumerate(nodes.items()):
-        target_col = (
-            target_columns[idx]
-            if target_columns is not None and idx < len(target_columns)
-            else col_name
+    first_unresolved_star_idx = None
+    if isinstance(lineage_select_expr, exp.Select):
+        for idx, projection in enumerate(lineage_select_expr.expressions):
+            if _is_star_projection(projection):
+                first_unresolved_star_idx = idx
+                break
+
+    for idx, (col_name, _projection, node) in enumerate(node_items):
+        if (
+            first_unresolved_star_idx is not None
+            and idx > first_unresolved_star_idx
+        ):
+            continue
+        if node is None or not col_name:
+            continue
+        target_col = _target_column_for_projection(
+            idx,
+            col_name,
+            target_columns=target_columns,
+            output_columns=output_columns,
         )
         target_col = _canonical_column(target_col)
         edges = _extract_leaf_edges(node, target_table, target_col)
@@ -2009,6 +2793,8 @@ def _trace_lineage(
             )
             if key not in seen:
                 seen.add(key)
+                if _identifier_match_key(edge["source_column"]) == "*":
+                    continue
                 entries.append(
                     {
                         **edge,
@@ -2020,18 +2806,24 @@ def _trace_lineage(
                     }
                 )
 
-    if isinstance(select_expr, exp.Select):
-        for idx, projection in enumerate(select_expr.expressions):
+    if isinstance(expanded_select_expr, exp.Select):
+        for idx, projection in enumerate(expanded_select_expr.expressions):
+            if (
+                first_unresolved_star_idx is not None
+                and idx > first_unresolved_star_idx
+            ):
+                continue
             if list(projection.find_all(exp.Column)):
                 continue
             if isinstance(projection, exp.Star) or list(
                 projection.find_all(exp.Star)
             ):
                 continue
-            target_col = (
-                target_columns[idx]
-                if target_columns is not None and idx < len(target_columns)
-                else projection.alias_or_name
+            target_col = _target_column_for_projection(
+                idx,
+                projection.alias_or_name,
+                target_columns=target_columns,
+                output_columns=output_columns,
             )
             target_col = _canonical_column(target_col)
             if not target_col:
@@ -2064,7 +2856,7 @@ def _trace_lineage(
 
     # 间接血缘: WHERE / JOIN ON / GROUP BY / HAVING
     indirect_entries = _extract_indirect(
-        select_expr,
+        expanded_select_expr,
         target_table,
         file_path,
         schema,
