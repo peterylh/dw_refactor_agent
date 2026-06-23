@@ -158,6 +158,31 @@ def test_run_benchmark_writes_json_report(tmp_path):
     assert json.loads(report_path.read_text(encoding="utf-8")) == report
 
 
+def test_run_benchmark_writes_cprofile_report(tmp_path):
+    profile_path = tmp_path / "profile.json"
+
+    report = run_benchmark(
+        size="small",
+        complexity="normal",
+        parallel=1,
+        repeat=1,
+        asset_dir=tmp_path / "assets",
+        keep_assets=True,
+        profile="cprofile",
+        profile_output_path=profile_path,
+        profile_limit=5,
+    )
+
+    profile = report["profile"]
+    assert profile["mode"] == "cprofile"
+    assert profile["phase_percentages"]["cold_extraction"] > 0
+    assert profile["cache_impact"]["warm_cache_hits"] == 40
+    assert len(profile["top_functions"]) <= 5
+    assert profile["top_functions"][0]["cumulative_seconds"] > 0
+    assert profile_path.exists()
+    assert json.loads(profile_path.read_text(encoding="utf-8")) == profile
+
+
 def test_runner_script_help_works_without_pythonpath():
     env = dict(os.environ)
     env["PYTHONPATH"] = ""

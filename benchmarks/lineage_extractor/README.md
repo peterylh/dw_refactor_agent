@@ -59,6 +59,30 @@ PYTHONPATH= conda run -n dw-refactor-py37 python benchmarks/lineage_extractor/ru
 Use `--keep-assets` when debugging generated SQL. The runner prints the asset
 directory when assets are retained.
 
+## Profiling
+
+Profiling is optional and disabled by default. Use it when elapsed time changes
+and you need to locate the bottleneck:
+
+```bash
+PYTHONPATH= conda run -n dw-refactor-py37 python benchmarks/lineage_extractor/run.py \
+  --size large \
+  --complexity stress \
+  --profile cprofile \
+  --profile-output /tmp/lineage_profile_large_stress.json \
+  --output /tmp/lineage_benchmark_large_stress_profiled.json
+```
+
+The profile section contains:
+
+- phase percentages for generation, schema build, cold extraction, warm
+  extraction, and output build;
+- cache impact, including cold/warm extraction time, saved seconds, speedup, and
+  warm cache hits;
+- top cumulative-time functions from `cProfile`, useful for locating hotspots
+  in SQL parsing, scope construction, lineage extraction, schema lookup, or
+  output assembly.
+
 ## Comparing Runs
 
 Run the same command before and after an extractor change on the same machine,

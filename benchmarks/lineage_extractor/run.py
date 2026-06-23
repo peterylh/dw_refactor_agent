@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 import argparse
+import cProfile
 import json
+import pstats
 import shutil
 import sys
 import tempfile
@@ -24,6 +26,8 @@ from benchmarks.lineage_extractor.dataset import (
     generate_dataset,
 )
 
+PROFILE_MODES = {"none", "cprofile"}
+
 
 def run_benchmark(
     size="medium",
@@ -33,6 +37,9 @@ def run_benchmark(
     output_path=None,
     asset_dir=None,
     keep_assets=False,
+    profile="none",
+    profile_output_path=None,
+    profile_limit=20,
 ):
     if size not in PROFILES:
         choices = ", ".join(sorted(PROFILES))
@@ -47,9 +54,18 @@ def run_benchmark(
                 choices,
             )
         )
+    if profile not in PROFILE_MODES:
+        choices = ", ".join(sorted(PROFILE_MODES))
+        raise ValueError(
+            "unknown benchmark profile: {} ({})".format(profile, choices)
+        )
     repeat = max(1, int(repeat or 1))
     parallel = max(1, int(parallel or 1))
+    profile_limit = max(1, int(profile_limit or 1))
     output_path = Path(output_path) if output_path else None
+    profile_output_path = (
+        Path(profile_output_path) if profile_output_path else None
+    )
 
     managed_root = None
     root = Path(asset_dir) if asset_dir is not None else None
@@ -64,6 +80,7 @@ def run_benchmark(
     original_db = lineage_extractor.CURRENT_DB
 
     results = []
+    profilers = []
     dataset_summary = None
     try:
         config.PROJECT_CONFIG[PROJECT_NAME] = {
@@ -79,9 +96,18 @@ def run_benchmark(
                 shutil.rmtree(str(run_root))
             run_root.mkdir(parents=True)
 
-            result = _run_once(size, complexity, parallel, run_root)
-            results.append(result)
+            result = _run_once(
+                size,
+                complexity,
+                parallel,
+                run_root,
+                profile=profile,
+            )
             dataset_summary = result.pop("dataset")
+            profiler = result.pop("_profiler", None)
+            if profiler is not None:
+                profilers.append(profiler)
+            results.append(result)
     finally:
         if original_config is None:
             config.PROJECT_CONFIG.pop(PROJECT_NAME, None)
@@ -104,6 +130,14 @@ def run_benchmark(
         "dataset": dataset_summary,
         "results": results,
     }
+    if profile == "cprofile":
+        report["profile"] = _build_profile_summary(
+            mode=profile,
+            results=results,
+            profilers=profilers,
+            dataset_summary=dataset_summary,
+            limit=profile_limit,
+        )
     if keep_assets:
         report["asset_dir"] = str(root)
 
@@ -113,13 +147,27 @@ def run_benchmark(
             json.dumps(report, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
+    if profile_output_path is not None and "profile" in report:
+        profile_output_path.parent.mkdir(parents=True, exist_ok=True)
+        profile_output_path.write_text(
+            json.dumps(report["profile"], ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
 
     return report
 
 
-def _run_once(size, complexity, parallel, root):
+def _run_once(size, complexity, parallel, root, profile="none"):
+    profiler = cProfile.Profile() if profile == "cprofile" else None
+
     generated_at = time.perf_counter()
-    dataset = generate_dataset(size, root, complexity=complexity)
+    dataset = _profile_call(
+        profiler,
+        generate_dataset,
+        size,
+        root,
+        complexity=complexity,
+    )
     generation_seconds = _elapsed(generated_at)
 
     ddl_texts = [
@@ -127,7 +175,9 @@ def _run_once(size, complexity, parallel, root):
         for path in dataset.ddl_files
     ]
     schema_started_at = time.perf_counter()
-    schema = lineage_extractor.build_schema_from_texts(
+    schema = _profile_call(
+        profiler,
+        lineage_extractor.build_schema_from_texts,
         ddl_texts,
         default_catalog=dataset.catalog,
         default_db=dataset.database,
@@ -145,7 +195,9 @@ def _run_once(size, complexity, parallel, root):
 
     cold_cache_path = root / "cold_task_lineage_cache.json"
     cold_started_at = time.perf_counter()
-    cold = lineage_extractor.extract_lineage_from_task_files(
+    cold = _profile_call(
+        profiler,
+        lineage_extractor.extract_lineage_from_task_files,
         dataset.task_files,
         dataset.tasks_dir,
         schema,
@@ -162,7 +214,9 @@ def _run_once(size, complexity, parallel, root):
     )
 
     warm_started_at = time.perf_counter()
-    warm = lineage_extractor.extract_lineage_from_task_files(
+    warm = _profile_call(
+        profiler,
+        lineage_extractor.extract_lineage_from_task_files,
         dataset.task_files,
         dataset.tasks_dir,
         schema,
@@ -185,13 +239,17 @@ def _run_once(size, complexity, parallel, root):
         )
 
     output_started_at = time.perf_counter()
-    cold_output = lineage_extractor.build_lineage_output(
+    cold_output = _profile_call(
+        profiler,
+        lineage_extractor.build_lineage_output,
         cold["lineage"],
         schema,
         transient_tables=cold["transient_tables"],
     )
     output_build_seconds = _elapsed(output_started_at)
-    warm_output = lineage_extractor.build_lineage_output(
+    warm_output = _profile_call(
+        profiler,
+        lineage_extractor.build_lineage_output,
         warm["lineage"],
         schema,
         transient_tables=warm["transient_tables"],
@@ -219,7 +277,7 @@ def _run_once(size, complexity, parallel, root):
     indirect_edges = len(cold_output["edges"]) - direct_edges
     diagnostics = list(cold["errors"]) + list(warm["errors"])
 
-    return {
+    result = {
         "dataset": {
             "tables": dataset.table_count,
             "tasks": dataset.task_count,
@@ -236,6 +294,100 @@ def _run_once(size, complexity, parallel, root):
         "errors": _diagnostic_count(diagnostics, "error"),
         "warm_cache_hits": warm_cache_hits,
     }
+    if profiler is not None:
+        result["_profiler"] = profiler
+    return result
+
+
+def _profile_call(profiler, func, *args, **kwargs):
+    if profiler is None:
+        return func(*args, **kwargs)
+    return profiler.runcall(func, *args, **kwargs)
+
+
+def _build_profile_summary(
+    mode,
+    results,
+    profilers,
+    dataset_summary,
+    limit,
+):
+    return {
+        "mode": mode,
+        "phase_percentages": _phase_percentages(results),
+        "cache_impact": _cache_impact(results, dataset_summary),
+        "top_functions": _top_profile_functions(profilers, limit),
+    }
+
+
+def _phase_percentages(results):
+    phase_keys = [
+        "generation_seconds",
+        "schema_build_seconds",
+        "cold_extraction_seconds",
+        "warm_extraction_seconds",
+        "output_build_seconds",
+    ]
+    totals = {
+        key.replace("_seconds", ""): sum(result[key] for result in results)
+        for key in phase_keys
+    }
+    total_seconds = sum(totals.values())
+    if total_seconds <= 0:
+        return {key: 0.0 for key in totals}
+    return {
+        key: round(value * 100.0 / total_seconds, 2)
+        for key, value in totals.items()
+    }
+
+
+def _cache_impact(results, dataset_summary):
+    cold_seconds = sum(result["cold_extraction_seconds"] for result in results)
+    warm_seconds = sum(result["warm_extraction_seconds"] for result in results)
+    warm_cache_hits = sum(result["warm_cache_hits"] for result in results)
+    expected_cache_hits = int(dataset_summary["tasks"]) * len(results)
+    return {
+        "cold_extraction_seconds": round(cold_seconds, 6),
+        "warm_extraction_seconds": round(warm_seconds, 6),
+        "saved_seconds": round(cold_seconds - warm_seconds, 6),
+        "speedup": round(cold_seconds / warm_seconds, 2)
+        if warm_seconds > 0
+        else None,
+        "warm_cache_hits": warm_cache_hits,
+        "expected_cache_hits": expected_cache_hits,
+    }
+
+
+def _top_profile_functions(profilers, limit):
+    if not profilers:
+        return []
+    stats = pstats.Stats(profilers[0])
+    for profiler in profilers[1:]:
+        stats.add(profiler)
+    rows = sorted(
+        stats.stats.items(),
+        key=lambda item: item[1][3],
+        reverse=True,
+    )
+    top_functions = []
+    for rank, (func_key, values) in enumerate(rows[:limit], start=1):
+        filename, line_number, function_name = func_key
+        primitive_calls, total_calls, total_time, cumulative_time, _callers = (
+            values
+        )
+        top_functions.append(
+            {
+                "rank": rank,
+                "file": filename,
+                "line": line_number,
+                "function": function_name,
+                "primitive_calls": primitive_calls,
+                "calls": total_calls,
+                "total_seconds": round(total_time, 6),
+                "cumulative_seconds": round(cumulative_time, 6),
+            }
+        )
+    return top_functions
 
 
 def _raise_on_fatal(label, diagnostics):
@@ -285,6 +437,26 @@ def _print_report(report):
                 hits=result["warm_cache_hits"],
             )
         )
+    profile = report.get("profile")
+    if profile:
+        cache = profile["cache_impact"]
+        print(
+            "  profile: {mode}, cache speedup={speedup}x, "
+            "saved={saved:.3f}s".format(
+                mode=profile["mode"],
+                speedup=cache["speedup"],
+                saved=cache["saved_seconds"],
+            )
+        )
+        top_functions = profile.get("top_functions") or []
+        if top_functions:
+            top = top_functions[0]
+            print(
+                "  hottest: {function} ({seconds:.3f}s cumulative)".format(
+                    function=top["function"],
+                    seconds=top["cumulative_seconds"],
+                )
+            )
     if report.get("asset_dir"):
         print("  assets: {}".format(report["asset_dir"]))
 
@@ -318,6 +490,23 @@ def main(argv=None):
         help="Number of benchmark repetitions.",
     )
     parser.add_argument(
+        "--profile",
+        default="none",
+        choices=sorted(PROFILE_MODES),
+        help="Optional profiler mode.",
+    )
+    parser.add_argument(
+        "--profile-output",
+        default=None,
+        help="Optional standalone JSON profile output path.",
+    )
+    parser.add_argument(
+        "--profile-limit",
+        type=int,
+        default=20,
+        help="Number of cProfile functions to include in the report.",
+    )
+    parser.add_argument(
         "--output",
         default=None,
         help="Optional JSON report path.",
@@ -341,6 +530,9 @@ def main(argv=None):
         output_path=args.output,
         asset_dir=args.asset_dir,
         keep_assets=args.keep_assets,
+        profile=args.profile,
+        profile_output_path=args.profile_output,
+        profile_limit=args.profile_limit,
     )
     _print_report(report)
     return report
