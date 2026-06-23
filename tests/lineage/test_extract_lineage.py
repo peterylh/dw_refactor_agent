@@ -1541,6 +1541,81 @@ class TestEdgeCases:
             ("ods_a", "MORTAGAGE_AMT", "dwd_b", "MORTAGAGE_AMT"),
         }
 
+    def test_lineage_extraction_matches_uppercase_sql_columns_to_lowercase_ddl(
+        self,
+    ):
+        schema = build_schema_from_texts(
+            [
+                """
+                CREATE TABLE ndh_hive.etl_cdmtest.p03_corp_cust_info (
+                    cust_no STRING
+                )
+                """,
+                """
+                CREATE TABLE ndh_hive.etl_cdmtest.p01_pub_cd_info (
+                    code STRING,
+                    name STRING
+                )
+                """,
+                """
+                CREATE TABLE ndh_hive.etl_cdmtest.target_t (
+                    cust_num STRING,
+                    gxgm01 STRING
+                )
+                """,
+            ]
+        )
+        sql = """
+        INSERT INTO NDH_HIVE.ETL_CDMTEST.TARGET_T
+        SELECT T.CUST_NUM, T.GXGM01
+        FROM (
+            SELECT
+                A.CUST_NO AS cust_num,
+                B.NAME AS gxgm01
+            FROM NDH_HIVE.ETL_CDMTEST.P03_CORP_CUST_INFO AS a
+            LEFT JOIN ndh_hive.etl_cdmtest.P01_PUB_CD_INFO AS b
+              ON A.CUST_NO = B.CODE
+        ) AS t
+        """
+        diagnostics = []
+
+        entries = extract_lineage_from_sql(
+            sql,
+            "case_subquery_join.sql",
+            schema,
+            diagnostics=diagnostics,
+        )
+
+        assert diagnostics == []
+        assert _direct_edges(entries) == {
+            (
+                "ndh_hive.etl_cdmtest.p03_corp_cust_info",
+                "cust_no",
+                "ndh_hive.etl_cdmtest.target_t",
+                "cust_num",
+            ),
+            (
+                "ndh_hive.etl_cdmtest.p01_pub_cd_info",
+                "name",
+                "ndh_hive.etl_cdmtest.target_t",
+                "gxgm01",
+            ),
+        }
+        assert _indirect_edges(entries) == {
+            (
+                "ndh_hive.etl_cdmtest.p03_corp_cust_info",
+                "cust_no",
+                "ndh_hive.etl_cdmtest.target_t",
+                "JOIN_ON",
+            ),
+            (
+                "ndh_hive.etl_cdmtest.p01_pub_cd_info",
+                "code",
+                "ndh_hive.etl_cdmtest.target_t",
+                "JOIN_ON",
+            ),
+        }
+
     def test_lineage_extraction_does_not_use_target_for_unaliased_lowercase_column(
         self,
     ):

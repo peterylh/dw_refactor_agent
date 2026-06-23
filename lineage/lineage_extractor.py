@@ -332,6 +332,14 @@ def _expression_source(expression):
     return {"type": "expression", "expression": expression}
 
 
+def _expression_sql(expression):
+    return (
+        expression.sql(dialect="doris")
+        if hasattr(expression, "sql")
+        else str(expression)
+    )
+
+
 def _source_sort_key(source):
     if not isinstance(source, dict):
         return str(source or "")
@@ -660,6 +668,107 @@ def _lineage_schema(schema):
         dialect=LINEAGE_DIALECT,
         normalize=False,
     )
+
+
+def _identifier_arg_name(expression, arg_name):
+    identifier = expression.args.get(arg_name)
+    if identifier is None:
+        return ""
+    return _canonical_identifier(getattr(identifier, "name", identifier))
+
+
+def _set_identifier_arg(expression, arg_name, name):
+    normalized = _identifier_match_key(name)
+    if not normalized:
+        return
+    current = expression.args.get(arg_name)
+    quoted = (
+        isinstance(current, exp.Identifier)
+        and current.args.get("quoted")
+    )
+    expression.set(
+        arg_name,
+        exp.to_identifier(normalized, quoted=bool(quoted)),
+    )
+
+
+def _normalize_table_alias(alias):
+    if not alias:
+        return
+    _set_identifier_arg(alias, "this", _identifier_arg_name(alias, "this"))
+    normalized_columns = []
+    for column in alias.args.get("columns") or []:
+        column_name = _canonical_identifier(getattr(column, "name", column))
+        column_key = _identifier_match_key(column_name)
+        if not column_key:
+            continue
+        quoted = (
+            isinstance(column, exp.Identifier)
+            and column.args.get("quoted")
+        )
+        normalized_columns.append(
+            exp.to_identifier(column_key, quoted=bool(quoted))
+        )
+    if normalized_columns:
+        alias.set("columns", normalized_columns)
+
+
+def _normalize_lineage_table_identifier(table):
+    for arg_name in ("catalog", "db"):
+        _set_identifier_arg(
+            table,
+            arg_name,
+            _identifier_arg_name(table, arg_name),
+        )
+    _set_identifier_arg(table, "this", table.name)
+
+
+def _normalize_lineage_column_identifier(column):
+    if isinstance(column.this, exp.Star):
+        return
+    for arg_name in ("catalog", "db", "table"):
+        _set_identifier_arg(
+            column,
+            arg_name,
+            _identifier_arg_name(column, arg_name),
+        )
+    _set_identifier_arg(column, "this", column.name)
+
+
+def _normalize_lineage_projection_alias(alias_expr):
+    alias = alias_expr.args.get("alias")
+    if isinstance(alias, exp.Identifier):
+        _set_identifier_arg(alias_expr, "alias", alias.name)
+
+
+def _normalize_lineage_identifier_case(query_expr):
+    """Return a parser-only AST where table and column names are casefolded."""
+    normalized = query_expr.copy()
+    for table_alias in list(normalized.find_all(exp.TableAlias)):
+        _normalize_table_alias(table_alias)
+    for table in list(normalized.find_all(exp.Table)):
+        _normalize_lineage_table_identifier(table)
+    for column in list(normalized.find_all(exp.Column)):
+        _normalize_lineage_column_identifier(column)
+    for alias_expr in list(normalized.find_all(exp.Alias)):
+        _normalize_lineage_projection_alias(alias_expr)
+    return normalized
+
+
+def _lineage_output_column_name(display_expr, lineage_expr, column_name):
+    requested_key = _identifier_match_key(column_name)
+    display_names = _projection_output_names(display_expr)
+    lineage_names = _projection_output_names(lineage_expr)
+    if requested_key:
+        for idx, display_name in enumerate(display_names):
+            if _identifier_match_key(display_name) == requested_key:
+                if idx < len(lineage_names) and lineage_names[idx]:
+                    return lineage_names[idx]
+                break
+        for lineage_name in lineage_names:
+            if _identifier_match_key(lineage_name) == requested_key:
+                return lineage_name
+    return _identifier_match_key(column_name) or column_name
 
 
 def _lineage_scope(select_expr, schema):
@@ -1566,6 +1675,10 @@ def _derived_output_column_lookup(query_expr):
 def _derived_output_lookups_for_select(select_expr):
     lookups = {}
     ctes = _collect_ctes(select_expr)
+    ctes_by_key = {
+        _identifier_match_key(cte_name): cte_query
+        for cte_name, cte_query in ctes.items()
+    }
 
     for relation in _iter_relation_sources(select_expr):
         if isinstance(relation, exp.Subquery) and isinstance(
@@ -1578,9 +1691,10 @@ def _derived_output_lookups_for_select(select_expr):
                     lookups[_identifier_match_key(alias)] = lookup
         elif isinstance(relation, exp.Table):
             tbl = _strip_db(_table_name(relation))
-            if tbl not in ctes:
+            tbl_key = _identifier_match_key(tbl)
+            if tbl_key not in ctes_by_key:
                 continue
-            lookup = _derived_output_column_lookup(ctes[tbl])
+            lookup = _derived_output_column_lookup(ctes_by_key[tbl_key])
             if not lookup:
                 continue
             alias = _canonical_identifier(
@@ -1697,14 +1811,24 @@ def _lineage_node_items_for_select(
     diagnostics=None,
 ):
     node_items = []
-    select_expr = _normalize_derived_column_reference_case(select_expr)
+    display_expr = _normalize_derived_column_reference_case(select_expr)
+    lineage_expr = _normalize_lineage_identifier_case(display_expr)
     projections = (
-        select_expr.expressions if isinstance(select_expr, exp.Select) else []
+        display_expr.expressions if isinstance(display_expr, exp.Select) else []
     )
-    unresolved_source_keys = _unresolved_star_source_keys(select_expr)
+    lineage_projections = (
+        lineage_expr.expressions
+        if isinstance(lineage_expr, exp.Select)
+        else []
+    )
+    display_column_names = _projection_output_names(display_expr)
+    lineage_column_names = _projection_output_names(lineage_expr)
+    if len(lineage_column_names) < len(display_column_names):
+        lineage_column_names = list(display_column_names)
+    unresolved_source_keys = _unresolved_star_source_keys(display_expr)
     sqlglot_schema = _lineage_schema(schema)
     try:
-        scope = _lineage_scope(select_expr, sqlglot_schema)
+        scope = _lineage_scope(lineage_expr, sqlglot_schema)
     except Exception as exc:
         _record_diagnostic(
             diagnostics,
@@ -1714,8 +1838,18 @@ def _lineage_node_items_for_select(
             target_table=_strip_db(target_table),
         )
         scope = None
-    for idx, col_name in enumerate(_projection_output_names(select_expr)):
+    for idx, col_name in enumerate(display_column_names):
         projection = projections[idx] if idx < len(projections) else None
+        lineage_projection = (
+            lineage_projections[idx]
+            if idx < len(lineage_projections)
+            else None
+        )
+        lineage_col_name = (
+            lineage_column_names[idx]
+            if idx < len(lineage_column_names)
+            else col_name
+        )
         if not col_name:
             node_items.append((col_name, projection, None))
             continue
@@ -1732,15 +1866,20 @@ def _lineage_node_items_for_select(
             continue
         try:
             column_arg = col_name
-            if projection is not None:
-                column_arg = _lineage_column_arg(projection, col_name)
+            if lineage_projection is not None:
+                column_arg = _lineage_column_arg(
+                    lineage_projection,
+                    lineage_col_name,
+                )
+            else:
+                column_arg = lineage_col_name
             node_items.append(
                 (
                     col_name,
                     projection,
                     lineage(
                         column=column_arg,
-                        sql=select_expr.copy(),
+                        sql=lineage_expr.copy(),
                         schema=sqlglot_schema,
                         dialect=LINEAGE_DIALECT,
                         scope=scope,
@@ -2007,11 +2146,17 @@ def _derived_leaf_sources(
     diagnostics=None,
 ):
     """将派生表/CTE 输出列追溯到物理源表列。"""
-    select_expr = _normalize_derived_column_reference_case(select_expr)
+    display_expr = _normalize_derived_column_reference_case(select_expr)
+    lineage_expr = _normalize_lineage_identifier_case(display_expr)
+    lineage_column_name = _lineage_output_column_name(
+        display_expr,
+        lineage_expr,
+        column_name,
+    )
     try:
         node = lineage(
-            column=column_name,
-            sql=select_expr.copy(),
+            column=lineage_column_name,
+            sql=lineage_expr.copy(),
             schema=_lineage_schema(schema),
             dialect=LINEAGE_DIALECT,
         )
@@ -2059,44 +2204,58 @@ def _indirect_entries_from_select(
     derived_sources = {}
     relation_aliases = []
     ctes = _collect_ctes(select_expr)
+    ctes_by_key = {
+        _identifier_match_key(cte_name): cte_query
+        for cte_name, cte_query in ctes.items()
+    }
     unresolved_source_keys = _unresolved_star_source_keys(select_expr)
 
     def _remember_alias(alias):
-        if alias and alias not in relation_aliases:
-            relation_aliases.append(alias)
+        alias_key = _identifier_match_key(alias)
+        if alias_key and alias_key not in relation_aliases:
+            relation_aliases.append(alias_key)
 
     for relation in _iter_relation_sources(select_expr):
         if isinstance(relation, exp.Subquery) and isinstance(
             relation.this, (exp.Select, exp.SetOperation)
         ):
             alias = _canonical_identifier(relation.alias_or_name)
-            if alias:
-                derived_sources[alias] = relation.this
+            alias_key = _identifier_match_key(alias)
+            if alias_key:
+                derived_sources[alias_key] = relation.this
                 _remember_alias(alias)
         elif isinstance(relation, exp.Table):
             tbl = _strip_db(_table_name(relation))
             alias = _canonical_identifier(
                 relation.alias_or_name or relation.name
             )
-            if tbl in ctes:
-                derived_sources[alias] = ctes[tbl]
-                derived_sources[tbl] = ctes[tbl]
+            tbl_key = _identifier_match_key(tbl)
+            alias_key = _identifier_match_key(alias)
+            relation_name_key = _identifier_match_key(relation.name)
+            if tbl_key in ctes_by_key:
+                cte_query = ctes_by_key[tbl_key]
+                if alias_key:
+                    derived_sources[alias_key] = cte_query
+                derived_sources[tbl_key] = cte_query
                 _remember_alias(alias)
             elif tbl and tbl != "UNKNOWN":
                 from_tables.add(tbl)
-                alias_map[alias] = tbl
-                alias_map[_canonical_identifier(relation.name)] = tbl
+                if alias_key:
+                    alias_map[alias_key] = tbl
+                if relation_name_key:
+                    alias_map[relation_name_key] = tbl
                 _remember_alias(alias)
 
     def _resolve_column_sources(col):
         tbl_or_alias = _canonical_identifier(col.table)
         col_name = _canonical_column(col.name)
         if tbl_or_alias:
-            if _identifier_match_key(tbl_or_alias) in unresolved_source_keys:
+            tbl_or_alias_key = _identifier_match_key(tbl_or_alias)
+            if tbl_or_alias_key in unresolved_source_keys:
                 return []
-            if tbl_or_alias in derived_sources:
+            if tbl_or_alias_key in derived_sources:
                 return _derived_leaf_sources(
-                    derived_sources[tbl_or_alias],
+                    derived_sources[tbl_or_alias_key],
                     col_name,
                     schema,
                     file_path=file_path,
@@ -2104,7 +2263,9 @@ def _indirect_entries_from_select(
                 )
             return [
                 (
-                    _strip_db(alias_map.get(tbl_or_alias, tbl_or_alias)),
+                    _strip_db(
+                        alias_map.get(tbl_or_alias_key, tbl_or_alias)
+                    ),
                     col_name,
                 )
             ]
@@ -2760,7 +2921,7 @@ def _trace_lineage(
                 first_unresolved_star_idx = idx
                 break
 
-    for idx, (col_name, _projection, node) in enumerate(node_items):
+    for idx, (col_name, projection, node) in enumerate(node_items):
         if (
             first_unresolved_star_idx is not None
             and idx > first_unresolved_star_idx
@@ -2799,9 +2960,11 @@ def _trace_lineage(
                     {
                         **edge,
                         "lineage_type": "direct",
-                        "expression": node.expression.sql(dialect="doris")
-                        if hasattr(node.expression, "sql")
-                        else str(node.expression),
+                        "expression": _expression_sql(
+                            projection
+                            if projection is not None
+                            else node.expression
+                        ),
                         "source_file": file_path,
                     }
                 )
