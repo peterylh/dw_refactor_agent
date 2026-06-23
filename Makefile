@@ -1,4 +1,4 @@
-.PHONY: install-hooks env-create env-update doctor lint test test-cov
+.PHONY: install-hooks env-create env-update doctor lint test test-cov benchmark-lineage
 
 CONDA_ENV ?= dw-refactor-py37
 CONDA_SUBDIR ?=
@@ -42,3 +42,6 @@ test: lint
 
 test-cov: lint
 	PYTHONPATH= $(PYTHON) -m pytest $(PYTEST_ARGS) $(COVERAGE_ARGS)
+
+benchmark-lineage: doctor
+	PYTHONPATH= $(PYTHON) benchmarks/lineage_extractor/run.py --size medium
