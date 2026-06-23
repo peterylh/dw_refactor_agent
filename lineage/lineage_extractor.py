@@ -2161,8 +2161,7 @@ def build_lineage_output(all_lineage, schema, transient_tables=None):
     """Build serialized lineage output, preserving transient table metadata."""
     schema_lookup = _schema_lookup(schema)
     all_lineage = [
-        _canonical_lineage_entry(entry, schema_lookup)
-        for entry in all_lineage
+        _canonical_lineage_entry(entry, schema_lookup) for entry in all_lineage
     ]
     unique = []
     seen = set()
