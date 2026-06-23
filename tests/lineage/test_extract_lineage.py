@@ -1616,6 +1616,45 @@ class TestEdgeCases:
             ),
         }
 
+    def test_lineage_extraction_preserves_sources_for_aliases_differing_only_by_case(
+        self,
+    ):
+        schema = build_schema_from_texts(
+            [
+                """
+                CREATE TABLE shop_dm.src (
+                    a INT,
+                    b INT
+                )
+                """,
+                """
+                CREATE TABLE shop_dm.dst (
+                    c1 INT,
+                    c2 INT
+                )
+                """,
+            ]
+        )
+        sql = """
+        INSERT INTO dst (c1, c2)
+        SELECT a AS `Foo`, b AS `foo`
+        FROM src
+        """
+        diagnostics = []
+
+        entries = extract_lineage_from_sql(
+            sql,
+            "case_alias_collision.sql",
+            schema,
+            diagnostics=diagnostics,
+        )
+
+        assert diagnostics == []
+        assert _direct_edges(entries) == {
+            ("src", "a", "dst", "c1"),
+            ("src", "b", "dst", "c2"),
+        }
+
     def test_lineage_extraction_does_not_use_target_for_unaliased_lowercase_column(
         self,
     ):

@@ -682,10 +682,7 @@ def _set_identifier_arg(expression, arg_name, name):
     if not normalized:
         return
     current = expression.args.get(arg_name)
-    quoted = (
-        isinstance(current, exp.Identifier)
-        and current.args.get("quoted")
-    )
+    quoted = isinstance(current, exp.Identifier) and current.args.get("quoted")
     expression.set(
         arg_name,
         exp.to_identifier(normalized, quoted=bool(quoted)),
@@ -702,9 +699,8 @@ def _normalize_table_alias(alias):
         column_key = _identifier_match_key(column_name)
         if not column_key:
             continue
-        quoted = (
-            isinstance(column, exp.Identifier)
-            and column.args.get("quoted")
+        quoted = isinstance(column, exp.Identifier) and column.args.get(
+            "quoted"
         )
         normalized_columns.append(
             exp.to_identifier(column_key, quoted=bool(quoted))
@@ -735,12 +731,6 @@ def _normalize_lineage_column_identifier(column):
     _set_identifier_arg(column, "this", column.name)
 
 
-def _normalize_lineage_projection_alias(alias_expr):
-    alias = alias_expr.args.get("alias")
-    if isinstance(alias, exp.Identifier):
-        _set_identifier_arg(alias_expr, "alias", alias.name)
-
-
 def _normalize_lineage_identifier_case(query_expr):
     """Return a parser-only AST where table and column names are casefolded."""
     normalized = query_expr.copy()
@@ -750,8 +740,6 @@ def _normalize_lineage_identifier_case(query_expr):
         _normalize_lineage_table_identifier(table)
     for column in list(normalized.find_all(exp.Column)):
         _normalize_lineage_column_identifier(column)
-    for alias_expr in list(normalized.find_all(exp.Alias)):
-        _normalize_lineage_projection_alias(alias_expr)
     return normalized
 
 
@@ -1814,7 +1802,9 @@ def _lineage_node_items_for_select(
     display_expr = _normalize_derived_column_reference_case(select_expr)
     lineage_expr = _normalize_lineage_identifier_case(display_expr)
     projections = (
-        display_expr.expressions if isinstance(display_expr, exp.Select) else []
+        display_expr.expressions
+        if isinstance(display_expr, exp.Select)
+        else []
     )
     lineage_projections = (
         lineage_expr.expressions
@@ -2263,9 +2253,7 @@ def _indirect_entries_from_select(
                 )
             return [
                 (
-                    _strip_db(
-                        alias_map.get(tbl_or_alias_key, tbl_or_alias)
-                    ),
+                    _strip_db(alias_map.get(tbl_or_alias_key, tbl_or_alias)),
                     col_name,
                 )
             ]
