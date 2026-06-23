@@ -1004,6 +1004,47 @@ def _projection_output_names(query_expr):
     return []
 
 
+def _projection_items(query_expr):
+    if isinstance(query_expr, exp.Select):
+        return list(query_expr.expressions)
+    if isinstance(query_expr, exp.SetOperation):
+        left = query_expr.args.get("this")
+        return _projection_items(left) if left is not None else []
+    return []
+
+
+def _identifier_needs_quotes(name):
+    return re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", str(name or "")) is None
+
+
+def _projection_can_inline_through_star(projection):
+    if projection is None or _is_star_projection(projection):
+        return False
+    if isinstance(projection, exp.Column):
+        return False
+    return not list(projection.find_all(exp.Column)) and not list(
+        projection.find_all(exp.Star)
+    )
+
+
+def _inline_star_projection(projection, output_name):
+    inlined = projection.copy()
+    output_name = _canonical_column(output_name)
+    if not output_name:
+        return inlined
+    if isinstance(inlined, exp.Alias):
+        if _identifier_match_key(inlined.alias) == _identifier_match_key(
+            output_name
+        ):
+            return inlined
+        inlined = inlined.this.copy()
+    return exp.alias_(
+        inlined,
+        output_name,
+        quoted=_identifier_needs_quotes(output_name),
+    )
+
+
 def _is_star_projection(projection):
     return isinstance(projection, exp.Star) or (
         isinstance(projection, exp.Column)
@@ -1521,6 +1562,7 @@ def _star_relation_source(
             "reference": alias,
             "columns": _exposed_columns(output_columns, alias_columns),
             "actual_columns": actual_columns,
+            "projections": _projection_items(expanded_inner),
             "match_keys": _relation_match_keys(alias),
         }
 
@@ -1583,6 +1625,7 @@ def _star_relation_source(
             "reference": alias or table_short,
             "columns": _exposed_columns(output_columns, alias_columns),
             "actual_columns": actual_columns,
+            "projections": _projection_items(expanded_cte),
             "match_keys": _relation_match_keys(alias, table_short, table_name),
         }
 
@@ -1615,6 +1658,37 @@ def _expand_star_projection_from_sources(
     target_table,
     diagnostics,
 ):
+    def _expanded_items(source):
+        projections = source.get("projections") or []
+        source_columns = source["columns"]
+        actual_columns = source.get("actual_columns", source_columns)
+        items = []
+        for idx, (output_name, actual_column) in enumerate(
+            zip(source_columns, actual_columns)
+        ):
+            source_projection = (
+                projections[idx] if idx < len(projections) else None
+            )
+            if _projection_can_inline_through_star(source_projection):
+                items.append(
+                    {
+                        "projection": _inline_star_projection(
+                            source_projection,
+                            output_name,
+                        ),
+                        "output_name": output_name,
+                    }
+                )
+                continue
+            items.append(
+                {
+                    "reference": source["reference"],
+                    "column": actual_column,
+                    "output_name": output_name,
+                }
+            )
+        return items
+
     qualifier = _star_projection_table(projection)
     if qualifier:
         qualifier_key = _identifier_match_key(qualifier)
@@ -1637,31 +1711,15 @@ def _expand_star_projection_from_sources(
             )
             return []
         return [
-            {
-                "reference": source["reference"],
-                "column": actual_column,
-                "output_name": output_name,
-            }
+            item
             for source in matched_sources
-            for output_name, actual_column in zip(
-                source["columns"],
-                source.get("actual_columns", source["columns"]),
-            )
+            for item in _expanded_items(source)
         ]
 
     if has_unresolved_source:
         return []
     return [
-        {
-            "reference": source["reference"],
-            "column": actual_column,
-            "output_name": output_name,
-        }
-        for source in relation_sources
-        for output_name, actual_column in zip(
-            source["columns"],
-            source.get("actual_columns", source["columns"]),
-        )
+        item for source in relation_sources for item in _expanded_items(source)
     ]
 
 

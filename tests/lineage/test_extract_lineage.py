@@ -497,6 +497,72 @@ class TestSelectStarLineage:
             ("ods_order", "amount", "dwd_order", "amount"),
         }
 
+    def test_subquery_star_inlines_unaliased_constant_projection(self):
+        schema = build_schema_from_texts(
+            [
+                """
+                CREATE TABLE shop_dm.src_bill_detail (
+                    bill_no STRING
+                )
+                """,
+                """
+                CREATE TABLE shop_dm.rept_bill_detail (
+                    id STRING,
+                    bill_no STRING,
+                    data_dt DATE
+                )
+                """,
+            ]
+        )
+        sql = """
+        INSERT INTO shop_dm.rept_bill_detail
+        SELECT
+            NULL AS id,
+            t.*
+        FROM (
+            SELECT
+                bill_no,
+                TO_DATE('20260602')
+            FROM shop_dm.src_bill_detail
+        ) t
+        """
+        diagnostics = []
+
+        entries = extract_lineage_from_sql(
+            sql,
+            "a_rept_bill_dtl_d.sql",
+            schema,
+            diagnostics=diagnostics,
+        )
+
+        assert diagnostics == []
+        assert _direct_edges(entries) >= {
+            (
+                "src_bill_detail",
+                "bill_no",
+                "rept_bill_detail",
+                "bill_no",
+            ),
+            (None, None, "rept_bill_detail", "id"),
+            (None, None, "rept_bill_detail", "data_dt"),
+        }
+        data_dt_entries = [
+            entry
+            for entry in entries
+            if entry.get("target_column") == "data_dt"
+        ]
+        assert len(data_dt_entries) == 1
+        assert data_dt_entries[0]["lineage_type"] == "direct"
+        assert data_dt_entries[0]["source_type"] == "expression"
+        assert data_dt_entries[0]["target_table"] == "rept_bill_detail"
+        assert data_dt_entries[0]["target_column"] == "data_dt"
+        assert data_dt_entries[0]["transformation_type"] == "constant"
+        assert data_dt_entries[0]["source_file"] == "a_rept_bill_dtl_d.sql"
+        assert "TO_DATE('20260602')" in data_dt_entries[0]["expression"]
+        assert not any(
+            entry.get("target_column") == "20260602" for entry in entries
+        )
+
     def test_insert_select_star_expands_cte_outputs(self):
         sql = """
         INSERT INTO shop_dm.dwd_order (order_id, customer_id, amount)
