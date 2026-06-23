@@ -13,6 +13,8 @@ COVERAGE_ARGS ?= --cov=config --cov=lineage --cov=assess --cov=ddl_deriver --cov
 REQUIRED_PYTHON_VERSION ?= 3.7
 REQUIRED_PYTHON_MODULES ?= yaml sqlglot pymysql pytest ruff
 
+-include Makefile.local
+
 install-hooks:
 	git config core.hooksPath .githooks
 

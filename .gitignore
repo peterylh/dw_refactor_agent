@@ -9,6 +9,7 @@ htmlcov/
 .cache/
 .conda-pkgs/
 .conda-py37/
+Makefile.local
 dbenv.md
 logs/
 refact/refact_metadata.json
