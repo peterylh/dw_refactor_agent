@@ -1,3 +1,4 @@
+import json
 import types
 
 import sqlglot
@@ -386,6 +387,86 @@ def test_extract_lineage_from_task_files_reports_task_progress(
         (1, 2, "a.sql", 1),
         (2, 2, "b.sql", 1),
     ]
+
+
+def test_extract_lineage_from_task_files_parses_uncached_task_once_with_cache(
+    tmp_path,
+    monkeypatch,
+    schema_ods_order,
+):
+    tasks_dir = tmp_path / "tasks"
+    tasks_dir.mkdir()
+    task_file = tasks_dir / "a.sql"
+    task_sql = "INSERT INTO t1 SELECT order_id FROM shop_dm.ods_order"
+    task_file.write_text(task_sql, encoding="utf-8")
+    original_parse = lineage_extractor.sqlglot.parse
+    task_parse_count = 0
+
+    def counted_parse(sql_text, dialect):
+        nonlocal task_parse_count
+        if sql_text == task_sql:
+            task_parse_count += 1
+        return original_parse(sql_text, dialect=dialect)
+
+    monkeypatch.setattr(lineage_extractor.sqlglot, "parse", counted_parse)
+
+    result = lineage_extractor.extract_lineage_from_task_files(
+        [task_file],
+        tasks_dir,
+        schema_ods_order,
+        parallel=1,
+        previous_cache_file=tmp_path / "task_cache.json",
+    )
+
+    assert result["errors"] == []
+    assert task_parse_count == 1
+    assert result["task_cache"] is not None
+
+
+def test_extract_lineage_from_task_files_uses_cache_metadata_without_sql_parse(
+    tmp_path,
+    monkeypatch,
+    schema_ods_order,
+):
+    tasks_dir = tmp_path / "tasks"
+    tasks_dir.mkdir()
+    task_file = tasks_dir / "a.sql"
+    task_sql = "INSERT INTO t1 SELECT order_id FROM shop_dm.ods_order"
+    task_file.write_text(task_sql, encoding="utf-8")
+    cache_path = tmp_path / "task_cache.json"
+
+    cold = lineage_extractor.extract_lineage_from_task_files(
+        [task_file],
+        tasks_dir,
+        schema_ods_order,
+        parallel=1,
+        previous_cache_file=cache_path,
+    )
+    cache_path.write_text(json.dumps(cold["task_cache"]), encoding="utf-8")
+
+    original_parse = lineage_extractor.sqlglot.parse
+
+    task_parse_count = 0
+
+    def counted_parse(sql_text, dialect):
+        nonlocal task_parse_count
+        if sql_text == task_sql:
+            task_parse_count += 1
+        return original_parse(sql_text, dialect=dialect)
+
+    monkeypatch.setattr(lineage_extractor.sqlglot, "parse", counted_parse)
+
+    warm = lineage_extractor.extract_lineage_from_task_files(
+        [task_file],
+        tasks_dir,
+        schema_ods_order,
+        parallel=1,
+        previous_cache_file=cache_path,
+    )
+
+    assert warm["errors"] == []
+    assert warm["task_results"][0]["cache_hit"] is True
+    assert task_parse_count == 0
 
 
 def test_extract_lineage_from_task_files_reports_parse_errors(

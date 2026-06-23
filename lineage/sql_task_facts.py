@@ -118,16 +118,14 @@ def _finalize_task_facts(
     }
 
 
-def _parse_with_sqlglot(sql_text: str, source_file: str) -> dict | None:
+def extract_task_table_facts_from_statements(
+    statements,
+    source_file: str = "",
+) -> dict:
+    """Return task facts from already parsed SQLGlot statements."""
     outputs = set()
     creates_by_table = defaultdict(list)
     drops_by_table = defaultdict(list)
-    try:
-        statements = sqlglot.parse(sql_text, dialect="doris")
-    except Exception:
-        return None
-    if not statements:
-        return None
 
     for index, stmt in enumerate(statements):
         if stmt is None:
@@ -163,6 +161,16 @@ def _parse_with_sqlglot(sql_text: str, source_file: str) -> dict | None:
         drops_by_table,
         source_file,
     )
+
+
+def _parse_with_sqlglot(sql_text: str, source_file: str) -> dict | None:
+    try:
+        statements = sqlglot.parse(sql_text, dialect="doris")
+    except Exception:
+        return None
+    if not statements:
+        return None
+    return extract_task_table_facts_from_statements(statements, source_file)
 
 
 def _parse_with_regex(sql_text: str, source_file: str) -> dict:

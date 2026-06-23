@@ -35,7 +35,10 @@ from config import (
 )
 from config import determine_layer as determine_config_layer
 from doris_sql import normalize_create_table_for_sqlglot
-from lineage.sql_task_facts import extract_task_table_facts
+from lineage.sql_task_facts import (
+    extract_task_table_facts,
+    extract_task_table_facts_from_statements,
+)
 
 AGGREGATE_PATTERN = re.compile(
     r"\b(SUM|COUNT|AVG|MIN|MAX)\s*\(",
@@ -2433,16 +2436,13 @@ def _add_stats(stats):
         STATS[key] += int((stats or {}).get(key, 0))
 
 
-def extract_lineage_from_sql(sql_text, file_path, schema, diagnostics=None):
+def extract_lineage_from_statements(
+    statements,
+    file_path,
+    schema,
+    diagnostics=None,
+):
     entries = []
-    try:
-        statements = sqlglot.parse(sql_text, dialect="doris")
-    except Exception as e:
-        print(f"  解析失败 {file_path}: {e}")
-        _record_diagnostic(diagnostics, file_path, "parse", e)
-        STATS["parse_failures"] += 1
-        return entries
-
     task_schema = _task_schema_for_statements(schema, statements)
     for stmt in statements:
         if stmt is None:
@@ -2486,6 +2486,23 @@ def extract_lineage_from_sql(sql_text, file_path, schema, diagnostics=None):
     ]
 
 
+def extract_lineage_from_sql(sql_text, file_path, schema, diagnostics=None):
+    try:
+        statements = sqlglot.parse(sql_text, dialect="doris")
+    except Exception as e:
+        print(f"  解析失败 {file_path}: {e}")
+        _record_diagnostic(diagnostics, file_path, "parse", e)
+        STATS["parse_failures"] += 1
+        return []
+
+    return extract_lineage_from_statements(
+        statements,
+        file_path,
+        schema,
+        diagnostics=diagnostics,
+    )
+
+
 def _extract_task_work_item(work_item, schema):
     previous_stats = dict(STATS)
     _reset_stats()
@@ -2493,24 +2510,45 @@ def _extract_task_work_item(work_item, schema):
         source_file = work_item["source_file"]
         sql_text = work_item["sql_text"]
         diagnostics = []
-        task_facts = extract_task_table_facts(sql_text, source_file)
-        missing_ddl_tables = missing_schema_tables_from_sql(
-            sql_text,
-            schema,
-            transient_tables=task_facts["transient_tables"],
-        )
-        entries = extract_lineage_from_sql(
-            sql_text,
-            source_file,
-            schema,
-            diagnostics=diagnostics,
-        )
+        referenced_tables = []
+        try:
+            statements = sqlglot.parse(sql_text, dialect="doris")
+        except Exception as e:
+            print(f"  解析失败 {source_file}: {e}")
+            _record_diagnostic(diagnostics, source_file, "parse", e)
+            STATS["parse_failures"] += 1
+            task_facts = extract_task_table_facts(sql_text, source_file)
+            missing_ddl_tables = []
+            entries = []
+        else:
+            task_facts = extract_task_table_facts_from_statements(
+                statements,
+                source_file,
+            )
+            missing_ddl_tables = missing_schema_tables_for_statements(
+                schema,
+                statements,
+                transient_tables=task_facts["transient_tables"],
+            )
+            entries = extract_lineage_from_statements(
+                statements,
+                source_file,
+                schema,
+                diagnostics=diagnostics,
+            )
+            try:
+                referenced_tables = sorted(
+                    collect_statement_table_names(statements)
+                )
+            except Exception:
+                referenced_tables = []
         return {
             "index": work_item["index"],
             "source_file": source_file,
             "entries": entries,
             "transient_tables": task_facts["transient_tables"],
             "missing_ddl_tables": missing_ddl_tables,
+            "referenced_tables": referenced_tables,
             "stats": dict(STATS),
             "errors": diagnostics,
         }
@@ -2540,6 +2578,7 @@ def _task_failure_result(work_item, error, stage="worker"):
         "entries": [],
         "transient_tables": [],
         "missing_ddl_tables": [],
+        "referenced_tables": [],
         "stats": {},
         "errors": [
             {
@@ -2568,16 +2607,26 @@ def _read_task_work_items(task_files, tasks_dir):
 
 
 def _task_result_from_cache(work_item, cached):
-    return {
+    result = {
         "index": work_item["index"],
         "source_file": work_item["source_file"],
         "entries": cached.get("entries") or [],
         "transient_tables": cached.get("transient_tables") or [],
         "missing_ddl_tables": cached.get("missing_ddl_tables") or [],
+        "referenced_tables": cached.get("referenced_tables") or [],
         "stats": cached.get("stats") or {},
         "errors": cached.get("errors") or [],
         "cache_hit": True,
     }
+    for key in (
+        "sql_hash",
+        "schema_slice_hash",
+        "extractor_hash",
+        "project_config",
+    ):
+        if key in cached:
+            result[key] = cached[key]
+    return result
 
 
 def _project_config_for_cache(project):
@@ -2590,7 +2639,39 @@ def _project_config_for_cache(project):
     )
 
 
-def _task_cache_key(work_item, schema, project):
+def _cache_project_config(project):
+    from lineage.task_cache import cache_project_config
+
+    return cache_project_config(_project_config_for_cache(project))
+
+
+def _extractor_hash_for_cache():
+    from lineage.task_cache import extractor_version_hash
+
+    return extractor_version_hash()
+
+
+def _task_sql_hash(work_item):
+    from lineage.task_cache import sha256_text
+
+    return sha256_text(work_item["sql_text"])
+
+
+def _schema_slice_hash_for_tables(schema, referenced_tables):
+    from lineage.task_cache import schema_slice_hash_for_table_names
+
+    return schema_slice_hash_for_table_names(referenced_tables, schema)
+
+
+def _task_cache_key(
+    work_item,
+    schema,
+    project,
+    extractor_hash=None,
+    sql_hash=None,
+    referenced_tables=None,
+    schema_slice_hash=None,
+):
     from lineage.task_cache import task_cache_key
 
     return task_cache_key(
@@ -2599,7 +2680,86 @@ def _task_cache_key(work_item, schema, project):
         sql_text=work_item["sql_text"],
         schema=schema,
         project_config=_project_config_for_cache(project),
+        extractor_hash=extractor_hash,
+        sql_hash=sql_hash,
+        referenced_tables=referenced_tables,
+        schema_slice_hash=schema_slice_hash,
     )
+
+
+def _cache_key_from_cached_metadata(
+    work_item,
+    cached,
+    schema,
+    project,
+    extractor_hash,
+):
+    required_keys = (
+        "sql_hash",
+        "referenced_tables",
+        "schema_slice_hash",
+        "extractor_hash",
+        "project_config",
+    )
+    if not all(key in cached for key in required_keys):
+        return None
+
+    sql_hash = work_item.get("sql_hash") or _task_sql_hash(work_item)
+    if cached.get("sql_hash") != sql_hash:
+        return None
+    if cached.get("extractor_hash") != extractor_hash:
+        return None
+    if cached.get("project_config") != _cache_project_config(project):
+        return None
+
+    referenced_tables = cached.get("referenced_tables") or []
+    schema_slice_hash = _schema_slice_hash_for_tables(
+        schema,
+        referenced_tables,
+    )
+    if cached.get("schema_slice_hash") != schema_slice_hash:
+        return None
+
+    return _task_cache_key(
+        work_item,
+        schema,
+        project,
+        extractor_hash=extractor_hash,
+        sql_hash=sql_hash,
+        referenced_tables=referenced_tables,
+        schema_slice_hash=schema_slice_hash,
+    )
+
+
+def _cache_metadata_for_result(
+    result, work_item, schema, project, extractor_hash
+):
+    referenced_tables = sorted(result.get("referenced_tables") or [])
+    sql_hash = work_item.get("sql_hash") or _task_sql_hash(work_item)
+    schema_slice_hash = _schema_slice_hash_for_tables(
+        schema,
+        referenced_tables,
+    )
+    cached_result = dict(result)
+    cached_result.update(
+        {
+            "sql_hash": sql_hash,
+            "referenced_tables": referenced_tables,
+            "schema_slice_hash": schema_slice_hash,
+            "extractor_hash": extractor_hash,
+            "project_config": _cache_project_config(project),
+        }
+    )
+    cache_key = _task_cache_key(
+        work_item,
+        schema,
+        project,
+        extractor_hash=extractor_hash,
+        sql_hash=sql_hash,
+        referenced_tables=referenced_tables,
+        schema_slice_hash=schema_slice_hash,
+    )
+    return cache_key, cached_result
 
 
 def _load_previous_task_cache(path):
@@ -2710,6 +2870,8 @@ def extract_lineage_from_task_files(
     previous_cache = (
         _load_previous_task_cache(previous_cache_file) if cache_enabled else {}
     )
+    extractor_hash = _extractor_hash_for_cache() if cache_enabled else None
+    work_items_by_index = {item["index"]: item for item in work_items}
     task_cache_entries = []
 
     total = len(work_items)
@@ -2720,17 +2882,31 @@ def extract_lineage_from_task_files(
         if not cache_enabled:
             uncached_work_items.append(work_item)
             continue
-        work_item["cache_key"] = _task_cache_key(
-            work_item,
-            schema,
-            cache_project,
-        )
+        work_item["sql_hash"] = _task_sql_hash(work_item)
         cached = previous_cache.get(work_item["source_file"])
-        if cached and cached.get("cache_key") == work_item["cache_key"]:
+        if cached:
+            cache_key = _cache_key_from_cached_metadata(
+                work_item,
+                cached,
+                schema,
+                cache_project,
+                extractor_hash,
+            )
+            if cache_key is None:
+                cache_key = _task_cache_key(
+                    work_item,
+                    schema,
+                    cache_project,
+                    extractor_hash=extractor_hash,
+                    sql_hash=work_item["sql_hash"],
+                )
+            work_item["cache_key"] = cache_key
+
+        if cached and cached.get("cache_key") == work_item.get("cache_key"):
             result = _task_result_from_cache(work_item, cached)
             cached_results.append(result)
             task_cache_entries.append(
-                _cache_entry_from_result(result, work_item["cache_key"])
+                _cache_entry_from_result(result, work_item.get("cache_key"))
             )
             completed += 1
             _notify_progress(progress_callback, completed, total, result)
@@ -2756,17 +2932,17 @@ def extract_lineage_from_task_files(
             notify_uncached_progress,
         )
     for result in computed_results:
-        cache_key = next(
-            (
-                item["cache_key"]
-                for item in uncached_work_items
-                if cache_enabled and item["index"] == result["index"]
-            ),
-            None,
-        )
-        if cache_key:
+        if cache_enabled:
+            work_item = work_items_by_index.get(result["index"])
+            cache_key, cache_result = _cache_metadata_for_result(
+                result,
+                work_item,
+                schema,
+                cache_project,
+                extractor_hash,
+            )
             task_cache_entries.append(
-                _cache_entry_from_result(result, cache_key)
+                _cache_entry_from_result(cache_result, cache_key)
             )
     task_results = sorted(
         [*cached_results, *computed_results],
