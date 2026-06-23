@@ -175,6 +175,54 @@ def test_should_write_lineage_output_allows_forced_overwrite_on_fatal_error(
     )
 
 
+def test_build_lineage_output_indexes_schema_once(monkeypatch):
+    schema = build_schema_from_texts(
+        [
+            """
+            CREATE TABLE shop_dm.ods_order (
+                order_id BIGINT,
+                amount DECIMAL(12,2)
+            )
+            """,
+            """
+            CREATE TABLE shop_dm.dwd_order (
+                order_id BIGINT,
+                amount DECIMAL(12,2)
+            )
+            """,
+        ]
+    )
+    entries = [
+        {
+            "source_table": "shop_dm.ods_order",
+            "source_column": "amount",
+            "target_table": "shop_dm.dwd_order",
+            "target_column": "amount",
+            "expression": "amount",
+            "source_file": f"task_{index}.sql",
+        }
+        for index in range(20)
+    ]
+    original_iter_schema_tables = lineage_extractor._iter_schema_tables
+    call_count = {"value": 0}
+
+    def counting_iter_schema_tables(schema_arg):
+        call_count["value"] += 1
+        for item in original_iter_schema_tables(schema_arg):
+            yield item
+
+    monkeypatch.setattr(
+        lineage_extractor,
+        "_iter_schema_tables",
+        counting_iter_schema_tables,
+    )
+
+    output = lineage_extractor.build_lineage_output(entries, schema)
+
+    assert len(output["edges"]) == 20
+    assert call_count["value"] == 1
+
+
 def test_collect_statement_table_names_includes_targets_sources_and_cte_sources():
     statements = sqlglot.parse(
         """

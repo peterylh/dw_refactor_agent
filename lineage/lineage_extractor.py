@@ -167,6 +167,76 @@ def _canonical_column(name):
     return _canonical_identifier(name)
 
 
+class _SchemaLookup:
+    """Precomputed schema indexes for hot-path lineage normalization."""
+
+    def __init__(self, schema):
+        self.table_by_match_key = {}
+        self.columns_by_match_key = {}
+        self.schema_columns_by_table = {}
+        self.schema_type_by_table_col = {}
+
+        for catalog, database, table, columns in _iter_schema_tables(schema):
+            match_key = _schema_table_match_key(catalog, database, table)
+            full_table_name = _qualified_table_name(catalog, database, table)
+            display_table = _display_table_name(
+                full_table_name,
+                strip_current_db=True,
+            )
+            if not display_table:
+                continue
+
+            self.table_by_match_key.setdefault(match_key, display_table)
+            column_lookup = self.columns_by_match_key.setdefault(
+                match_key,
+                {},
+            )
+            table_columns = self.schema_columns_by_table.setdefault(
+                display_table,
+                [],
+            )
+            for raw_column, col_type in (columns or {}).items():
+                column = _canonical_column(raw_column)
+                if not column:
+                    continue
+                column_lookup.setdefault(
+                    _identifier_match_key(column),
+                    column,
+                )
+
+                type_key = (display_table, column)
+                if type_key in self.schema_type_by_table_col:
+                    continue
+                self.schema_type_by_table_col[type_key] = col_type
+                table_columns.append((column, col_type))
+
+    def table_name(self, table_name):
+        requested_key = _table_identity_match_key(table_name)
+        if not requested_key[2]:
+            return _strip_db(table_name)
+        return self.table_by_match_key.get(
+            requested_key,
+            _strip_db(table_name),
+        )
+
+    def column_name(self, table_name, column_name):
+        clean_column = _canonical_column(column_name)
+        column_key = _identifier_match_key(clean_column)
+        if not column_key:
+            return ""
+        requested_key = _table_identity_match_key(table_name)
+        return self.columns_by_match_key.get(requested_key, {}).get(
+            column_key,
+            clean_column,
+        )
+
+
+def _schema_lookup(schema):
+    if isinstance(schema, _SchemaLookup):
+        return schema
+    return _SchemaLookup(schema)
+
+
 def _iter_matching_schema_tables(schema, table_name):
     requested_key = _table_identity_match_key(table_name)
     if not requested_key[2]:
@@ -177,6 +247,8 @@ def _iter_matching_schema_tables(schema, table_name):
 
 
 def _schema_table_name(schema, table_name):
+    if isinstance(schema, _SchemaLookup):
+        return schema.table_name(table_name)
     for catalog, database, table, _columns in _iter_matching_schema_tables(
         schema, table_name
     ):
@@ -188,6 +260,8 @@ def _schema_table_name(schema, table_name):
 
 
 def _schema_column_name(schema, table_name, column_name):
+    if isinstance(schema, _SchemaLookup):
+        return schema.column_name(table_name, column_name)
     clean_column = _canonical_column(column_name)
     column_key = _identifier_match_key(clean_column)
     if not column_key:
@@ -1416,7 +1490,11 @@ def extract_lineage_from_sql(sql_text, file_path, schema, diagnostics=None):
             entries.extend(
                 _handle_select_into(stmt, file_path, task_schema, diagnostics)
             )
-    return [_canonical_lineage_entry(entry, task_schema) for entry in entries]
+    task_schema_lookup = _schema_lookup(task_schema)
+    return [
+        _canonical_lineage_entry(entry, task_schema_lookup)
+        for entry in entries
+    ]
 
 
 def _extract_task_work_item(work_item, schema):
@@ -2081,8 +2159,10 @@ def _transient_table_occurrence(table):
 
 def build_lineage_output(all_lineage, schema, transient_tables=None):
     """Build serialized lineage output, preserving transient table metadata."""
+    schema_lookup = _schema_lookup(schema)
     all_lineage = [
-        _canonical_lineage_entry(entry, schema) for entry in all_lineage
+        _canonical_lineage_entry(entry, schema_lookup)
+        for entry in all_lineage
     ]
     unique = []
     seen = set()
@@ -2157,23 +2237,8 @@ def build_lineage_output(all_lineage, schema, transient_tables=None):
             _transient_table_occurrence(table)
         )
 
-    schema_columns_by_table = {}
-    schema_type_by_table_col = {}
-    for catalog, database, raw_tbl, cols in _iter_schema_tables(schema):
-        full_table_name = _qualified_table_name(catalog, database, raw_tbl)
-        tbl = _strip_db(full_table_name)
-        if not tbl:
-            continue
-        table_columns = schema_columns_by_table.setdefault(tbl, [])
-        for raw_col, col_type in (cols or {}).items():
-            col = _canonical_column(raw_col)
-            if not col:
-                continue
-            key = (tbl, col)
-            if key in schema_type_by_table_col:
-                continue
-            schema_type_by_table_col[key] = col_type
-            table_columns.append((col, col_type))
+    schema_columns_by_table = schema_lookup.schema_columns_by_table
+    schema_type_by_table_col = schema_lookup.schema_type_by_table_col
 
     column_names_by_table = {}
     column_objects_by_table = {}
@@ -2455,9 +2520,6 @@ def main():
     )
     all_lineage = extraction_result["lineage"]
     transient_tables = extraction_result["transient_tables"]
-    all_lineage = [
-        _canonical_lineage_entry(entry, schema) for entry in all_lineage
-    ]
     warning_lines = format_missing_ddl_warnings(
         extraction_result["task_results"],
         extraction_result["missing_ddl_tables"],
