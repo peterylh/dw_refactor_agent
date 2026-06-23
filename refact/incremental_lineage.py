@@ -12,7 +12,6 @@ from lineage.task_cache import (
     cache_entry_from_result,
     load_task_cache,
     stable_json_hash,
-    task_cache_key,
 )
 
 
@@ -54,39 +53,47 @@ def build_lineage_artifacts(
     task_results = []
     reused = 0
     computed = 0
+    extractor_hash = extractor._extractor_hash_for_cache()
 
     for index, task_file in enumerate(task_files):
         source_file = task_file.relative_to(tasks_dir).as_posix()
         sql_text = task_file.read_text(encoding=TEXT_ENCODING)
-        cache_key = task_cache_key(
-            project=project,
+        work_item = extractor.TaskWorkItem(
+            index=index,
             source_file=source_file,
             sql_text=sql_text,
-            schema=schema,
-            project_config=config.PROJECT_CONFIG[project],
         )
+        work_item.sql_hash = extractor._task_sql_hash(work_item)
         cached = previous_cache.get(source_file)
+        cache_key = ""
+        if cached:
+            cache_key = (
+                extractor._cache_key_from_cached_metadata(
+                    work_item,
+                    cached,
+                    schema,
+                    project,
+                    extractor_hash,
+                )
+                or ""
+            )
         if cached and cached.get("cache_key") == cache_key:
             reused += 1
-            result = {
-                "index": index,
-                "source_file": source_file,
-                "entries": cached.get("entries") or [],
-                "transient_tables": cached.get("transient_tables") or [],
-                "missing_ddl_tables": cached.get("missing_ddl_tables") or [],
-                "stats": cached.get("stats") or {},
-                "errors": cached.get("errors") or [],
-            }
+            result = extractor._task_result_from_cache(work_item, cached)
         else:
             computed += 1
-            work_item = {
-                "index": index,
-                "source_file": source_file,
-                "sql_text": sql_text,
-            }
             result = extractor._extract_task_work_item(work_item, schema)
         task_results.append(result)
-        task_cache_entries.append(cache_entry_from_result(result, cache_key))
+        cache_key, cache_result = extractor._cache_metadata_for_result(
+            result,
+            work_item,
+            schema,
+            project,
+            extractor_hash,
+        )
+        task_cache_entries.append(
+            cache_entry_from_result(cache_result, cache_key)
+        )
 
     all_lineage = []
     transient_tables = []

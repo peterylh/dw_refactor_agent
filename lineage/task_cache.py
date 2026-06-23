@@ -4,12 +4,19 @@ from __future__ import annotations
 
 import hashlib
 import json
+from dataclasses import dataclass
 from pathlib import Path
 
-import sqlglot
-
 from config import TEXT_ENCODING
-from lineage import lineage_extractor as extractor
+
+
+@dataclass
+class TaskCacheMetadata:
+    sql_hash: str
+    referenced_tables: tuple
+    schema_slice_hash: str
+    extractor_hash: str
+    project_config: dict
 
 
 def sha256_text(text: str) -> str:
@@ -20,10 +27,8 @@ def stable_json_hash(value) -> str:
     return sha256_text(json.dumps(value, ensure_ascii=False, sort_keys=True))
 
 
-def extractor_version_hash() -> str:
-    return sha256_text(
-        Path(extractor.__file__).read_text(encoding=TEXT_ENCODING)
-    )
+def extractor_version_hash(extractor_file: str | Path) -> str:
+    return sha256_text(Path(extractor_file).read_text(encoding=TEXT_ENCODING))
 
 
 def cache_project_config(project_config: dict) -> dict:
@@ -33,59 +38,19 @@ def cache_project_config(project_config: dict) -> dict:
     }
 
 
-def schema_slice_for_table_names(table_names, schema: dict) -> dict:
-    if table_names:
-        return extractor.slice_schema(schema, table_names)
-    return extractor._copy_schema(schema)
-
-
-def schema_slice_hash_for_table_names(table_names, schema: dict) -> str:
-    return stable_json_hash(schema_slice_for_table_names(table_names, schema))
-
-
-def schema_slice_for_sql(sql_text: str, schema: dict) -> dict:
-    try:
-        statements = sqlglot.parse(sql_text, dialect="doris")
-        table_names = extractor.collect_statement_table_names(statements)
-        if table_names:
-            return schema_slice_for_table_names(table_names, schema)
-    except Exception:
-        pass
-    return extractor._copy_schema(schema)
-
-
 def task_cache_key(
     *,
     project: str,
     source_file: str,
-    sql_text: str,
-    schema: dict,
-    project_config: dict,
-    extractor_hash: str | None = None,
-    sql_hash: str | None = None,
-    referenced_tables=None,
-    schema_slice_hash: str | None = None,
+    metadata: TaskCacheMetadata,
 ) -> str:
-    if sql_hash is None:
-        sql_hash = sha256_text(sql_text)
-    if schema_slice_hash is None:
-        if referenced_tables is not None:
-            schema_slice_hash = schema_slice_hash_for_table_names(
-                referenced_tables,
-                schema,
-            )
-        else:
-            schema_slice_hash = stable_json_hash(
-                schema_slice_for_sql(sql_text, schema)
-            )
-
     payload = {
         "project": project,
         "source_file": source_file,
-        "sql_hash": sql_hash,
-        "schema_slice_hash": schema_slice_hash,
-        "extractor_hash": extractor_hash or extractor_version_hash(),
-        "project_config": cache_project_config(project_config),
+        "sql_hash": metadata.sql_hash,
+        "schema_slice_hash": metadata.schema_slice_hash,
+        "extractor_hash": metadata.extractor_hash,
+        "project_config": cache_project_config(metadata.project_config),
     }
     return stable_json_hash(payload)
 

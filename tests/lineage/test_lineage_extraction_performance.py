@@ -389,6 +389,120 @@ def test_extract_lineage_from_task_files_reports_task_progress(
     ]
 
 
+def test_parse_task_context_materializes_reusable_task_state():
+    schema = build_schema_from_texts(
+        [
+            """
+            CREATE TABLE shop_dm.ods_order (
+                order_id BIGINT,
+                customer_id BIGINT
+            )
+            """,
+            """
+            CREATE TABLE shop_dm.dwd_order (
+                order_id BIGINT,
+                customer_id BIGINT
+            )
+            """,
+        ]
+    )
+    sql_text = """
+    INSERT INTO shop_dm.dwd_order
+    SELECT order_id, customer_id FROM shop_dm.ods_order
+    """
+    work_item = lineage_extractor.TaskWorkItem(
+        index=0,
+        source_file="dwd_order.sql",
+        sql_text=sql_text,
+    )
+
+    context = lineage_extractor._parse_task_context(work_item, schema)
+    entries = lineage_extractor.extract_lineage_from_context(context)
+
+    assert context.source_file == "dwd_order.sql"
+    assert context.sql_hash
+    assert context.task_facts["output_tables"] == {"dwd_order"}
+    assert context.referenced_tables == (
+        "shop_dm.dwd_order",
+        "shop_dm.ods_order",
+    )
+    assert context.missing_ddl_tables == []
+    assert lineage_extractor.schema_table_count(context.task_schema) == 2
+    assert {
+        (
+            entry["source_table"],
+            entry["source_column"],
+            entry["target_table"],
+            entry["target_column"],
+        )
+        for entry in entries
+        if entry.get("lineage_type") == "direct"
+    } == {
+        ("ods_order", "order_id", "dwd_order", "order_id"),
+        ("ods_order", "customer_id", "dwd_order", "customer_id"),
+    }
+
+
+def test_task_cache_metadata_is_built_from_parsed_context():
+    schema = build_schema_from_texts(
+        [
+            """
+            CREATE TABLE shop_dm.ods_order (
+                order_id BIGINT
+            )
+            """,
+            """
+            CREATE TABLE shop_dm.dwd_order (
+                order_id BIGINT
+            )
+            """,
+        ]
+    )
+    work_item = lineage_extractor.TaskWorkItem(
+        index=0,
+        source_file="dwd_order.sql",
+        sql_text=(
+            "INSERT INTO shop_dm.dwd_order "
+            "SELECT order_id FROM shop_dm.ods_order"
+        ),
+    )
+    context = lineage_extractor._parse_task_context(work_item, schema)
+
+    metadata = lineage_extractor._task_cache_metadata_from_context(
+        context,
+        schema,
+        project="shop",
+        extractor_hash="extractor-v1",
+    )
+    cache_key = lineage_extractor._task_cache_key_from_metadata(
+        context.work_item,
+        project="shop",
+        metadata=metadata,
+    )
+    cache_result = lineage_extractor._result_with_cache_metadata(
+        {
+            "source_file": "dwd_order.sql",
+            "entries": [],
+            "transient_tables": [],
+            "missing_ddl_tables": [],
+            "stats": {},
+            "errors": [],
+        },
+        metadata,
+    )
+
+    assert metadata.sql_hash == context.sql_hash
+    assert metadata.referenced_tables == context.referenced_tables
+    assert metadata.extractor_hash == "extractor-v1"
+    assert metadata.schema_slice_hash
+    assert cache_key
+    assert cache_result["sql_hash"] == metadata.sql_hash
+    assert cache_result["referenced_tables"] == list(
+        metadata.referenced_tables
+    )
+    assert cache_result["schema_slice_hash"] == metadata.schema_slice_hash
+
+
 def test_extract_lineage_from_task_files_parses_uncached_task_once_with_cache(
     tmp_path,
     monkeypatch,
@@ -501,6 +615,46 @@ def test_extract_lineage_from_task_files_reports_parse_errors(
         }
     ]
     assert result["task_results"][0]["errors"] == result["errors"]
+
+
+def test_extract_lineage_from_task_files_reports_context_errors_as_worker(
+    tmp_path,
+    monkeypatch,
+    schema_ods_order,
+):
+    tasks_dir = tmp_path / "tasks"
+    tasks_dir.mkdir()
+    task_file = tasks_dir / "a.sql"
+    task_file.write_text(
+        "INSERT INTO t1 SELECT order_id FROM shop_dm.ods_order",
+        encoding="utf-8",
+    )
+
+    def fail_task_facts(_statements, _source_file):
+        raise RuntimeError("task facts boom")
+
+    monkeypatch.setattr(
+        lineage_extractor,
+        "extract_task_table_facts_from_statements",
+        fail_task_facts,
+    )
+
+    result = lineage_extractor.extract_lineage_from_task_files(
+        [task_file],
+        tasks_dir,
+        schema_ods_order,
+        parallel=1,
+    )
+
+    assert result["lineage"] == []
+    assert result["errors"] == [
+        {
+            "source_file": "a.sql",
+            "stage": "worker",
+            "severity": "error",
+            "error": "RuntimeError: task facts boom",
+        }
+    ]
 
 
 def test_extract_lineage_reports_failed_task_and_column(

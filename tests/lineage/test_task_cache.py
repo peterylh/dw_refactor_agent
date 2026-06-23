@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import inspect
 import json
 
+import lineage.task_cache as task_cache
 from lineage.task_cache import (
+    TaskCacheMetadata,
     cache_entry_from_result,
     load_task_cache,
     stable_json_hash,
@@ -10,72 +13,68 @@ from lineage.task_cache import (
 )
 
 
+def test_task_cache_does_not_depend_on_sql_parser_or_extractor():
+    source = inspect.getsource(task_cache)
+
+    assert "import sqlglot" not in source
+    assert "lineage_extractor" not in source
+
+
 def test_task_cache_key_changes_when_sql_schema_or_project_config_changes():
-    schema = {
-        "internal": {
-            "demo_dm": {
-                "ods_order": {"order_id": "BIGINT", "amount": "DECIMAL"},
-                "dwd_order": {"order_id": "BIGINT", "amount": "DECIMAL"},
-            }
-        }
-    }
-    sql = """
-    INSERT INTO demo_dm.dwd_order
-    SELECT order_id, amount FROM demo_dm.ods_order
-    """
+    metadata = TaskCacheMetadata(
+        sql_hash="sql-v1",
+        referenced_tables=("demo_dm.dwd_order", "demo_dm.ods_order"),
+        schema_slice_hash="schema-v1",
+        extractor_hash="extractor-v1",
+        project_config={"catalog": "internal", "db": "demo_dm"},
+    )
+    changed_sql = TaskCacheMetadata(
+        sql_hash="sql-v2",
+        referenced_tables=metadata.referenced_tables,
+        schema_slice_hash=metadata.schema_slice_hash,
+        extractor_hash=metadata.extractor_hash,
+        project_config=metadata.project_config,
+    )
+    changed_schema = TaskCacheMetadata(
+        sql_hash=metadata.sql_hash,
+        referenced_tables=metadata.referenced_tables,
+        schema_slice_hash="schema-v2",
+        extractor_hash=metadata.extractor_hash,
+        project_config=metadata.project_config,
+    )
+    changed_project = TaskCacheMetadata(
+        sql_hash=metadata.sql_hash,
+        referenced_tables=metadata.referenced_tables,
+        schema_slice_hash=metadata.schema_slice_hash,
+        extractor_hash=metadata.extractor_hash,
+        project_config={"catalog": "internal", "db": "other_dm"},
+    )
 
     base_key = task_cache_key(
         project="demo",
         source_file="dwd_order.sql",
-        sql_text=sql,
-        schema=schema,
-        project_config={"catalog": "internal", "db": "demo_dm"},
-        extractor_hash="extractor-v1",
+        metadata=metadata,
     )
 
     assert base_key == task_cache_key(
         project="demo",
         source_file="dwd_order.sql",
-        sql_text=sql,
-        schema=schema,
-        project_config={"db": "demo_dm", "catalog": "internal"},
-        extractor_hash="extractor-v1",
+        metadata=metadata,
     )
     assert base_key != task_cache_key(
         project="demo",
         source_file="dwd_order.sql",
-        sql_text=sql.replace("amount", "net_amount"),
-        schema=schema,
-        project_config={"catalog": "internal", "db": "demo_dm"},
-        extractor_hash="extractor-v1",
-    )
-    changed_schema = {
-        "internal": {
-            "demo_dm": {
-                "ods_order": {
-                    "order_id": "BIGINT",
-                    "amount": "DECIMAL",
-                    "status": "VARCHAR",
-                },
-                "dwd_order": {"order_id": "BIGINT", "amount": "DECIMAL"},
-            }
-        }
-    }
-    assert base_key != task_cache_key(
-        project="demo",
-        source_file="dwd_order.sql",
-        sql_text=sql,
-        schema=changed_schema,
-        project_config={"catalog": "internal", "db": "demo_dm"},
-        extractor_hash="extractor-v1",
+        metadata=changed_sql,
     )
     assert base_key != task_cache_key(
         project="demo",
         source_file="dwd_order.sql",
-        sql_text=sql,
-        schema=schema,
-        project_config={"catalog": "internal", "db": "other_dm"},
-        extractor_hash="extractor-v1",
+        metadata=changed_schema,
+    )
+    assert base_key != task_cache_key(
+        project="demo",
+        source_file="dwd_order.sql",
+        metadata=changed_project,
     )
 
 
