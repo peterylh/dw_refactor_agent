@@ -420,10 +420,18 @@ class TestSelectStarLineage:
             ("ods_order", "amount", "dwd_order", "amount"),
         }
 
-    def test_ctas_unaliased_expression_registers_output_for_later_star(self):
+    def test_ctas_unaliased_complex_expression_does_not_become_column_name(
+        self,
+    ):
         sql = """
         CREATE TABLE cdm.tmp AS
-        SELECT TRUE;
+        SELECT COALESCE(
+            CASE
+                WHEN t1.xd_used_amt >= 40000000 THEN 40000000
+                ELSE t1.xd_used_amt
+            END
+        )
+        FROM cdm.src AS t1;
 
         CREATE TABLE cdm.tmp_out AS
         SELECT t.* FROM cdm.tmp AS t;
@@ -431,10 +439,11 @@ class TestSelectStarLineage:
 
         entries = extract_lineage_from_sql(sql, "ctas_expr_star.sql", {})
 
-        assert _direct_edges(entries) >= {
-            (None, None, "cdm.tmp", "TRUE"),
-            ("cdm.tmp", "TRUE", "cdm.tmp_out", "TRUE"),
-        }
+        assert not any(
+            "COALESCE" in str(edge_part)
+            for edge in _direct_edges(entries)
+            for edge_part in edge
+        )
 
     def test_insert_select_alias_star_expands_only_alias_columns(self):
         sql = """

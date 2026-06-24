@@ -975,8 +975,6 @@ def _projection_output_name(projection):
         return ""
     if getattr(projection, "alias_or_name", None):
         return _canonical_column(projection.alias_or_name)
-    if hasattr(projection, "sql"):
-        return _canonical_column(projection.sql(dialect="doris"))
     return ""
 
 
