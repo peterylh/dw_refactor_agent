@@ -806,6 +806,37 @@ def _register_task_table_schema(schema, table_name, columns):
     }
 
 
+def _apply_alter_table_to_task_schema(schema, stmt, dialect="doris"):
+    if not isinstance(stmt, exp.Alter):
+        return
+    table_expr = stmt.this
+    if not isinstance(table_expr, exp.Table):
+        return
+    table_name = _table_name(table_expr)
+    catalog, database, table_short = _table_identity(table_name)
+    if not table_short:
+        return
+
+    new_columns = []
+    for action in stmt.args.get("actions") or []:
+        if not isinstance(action, exp.ColumnDef):
+            continue
+        col_name = _canonical_column(action.this.name)
+        if col_name:
+            new_columns.append((col_name, _column_def_type(action, dialect)))
+    if not new_columns:
+        return
+
+    table_columns = schema.setdefault(catalog, {}).setdefault(
+        database,
+        {},
+    ).setdefault(table_short, {})
+    for col_name, col_type in new_columns:
+        if not col_name or col_name in table_columns:
+            continue
+        table_columns[col_name] = col_type
+
+
 def _created_table_columns_from_schema(
     stmt,
     schema,
@@ -2668,6 +2699,8 @@ def extract_lineage_from_context(context):
                     diagnostics=None,
                 ),
             )
+        elif isinstance(stmt, exp.Alter):
+            _apply_alter_table_to_task_schema(context.task_schema, stmt)
         elif isinstance(stmt, exp.Merge):
             entries.extend(
                 _handle_merge(

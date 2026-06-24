@@ -420,6 +420,39 @@ class TestSelectStarLineage:
             ("ods_order", "amount", "dwd_order", "amount"),
         }
 
+    def test_task_alter_add_column_updates_ctas_schema_for_later_star(self):
+        schema = build_schema_from_texts(
+            [
+                """
+                CREATE TABLE cdm.src (
+                    id BIGINT
+                )
+                """,
+            ],
+            default_db="cdm",
+        )
+        sql = """
+        CREATE TABLE cdm.tmp AS
+        SELECT id FROM cdm.src;
+
+        ALTER TABLE cdm.tmp ADD COLUMN name STRING;
+
+        CREATE TABLE cdm.tmp_out AS
+        SELECT t.* FROM cdm.tmp AS t;
+        """
+
+        entries = extract_lineage_from_sql(
+            sql,
+            "alter_add_column_star.sql",
+            schema,
+        )
+
+        assert _direct_edges(entries) >= {
+            ("cdm.src", "id", "cdm.tmp", "id"),
+            ("cdm.tmp", "id", "cdm.tmp_out", "id"),
+            ("cdm.tmp", "name", "cdm.tmp_out", "name"),
+        }
+
     def test_insert_select_alias_star_expands_only_alias_columns(self):
         sql = """
         INSERT INTO shop_dm.dwd_order (order_id, customer_id, amount)
