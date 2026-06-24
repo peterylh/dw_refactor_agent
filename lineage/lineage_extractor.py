@@ -1914,16 +1914,8 @@ def _lineage_node_items_for_select(
     node_items = []
     display_expr = _normalize_derived_column_reference_case(select_expr)
     lineage_expr = _normalize_lineage_identifier_case(display_expr)
-    projections = (
-        display_expr.expressions
-        if isinstance(display_expr, exp.Select)
-        else []
-    )
-    lineage_projections = (
-        lineage_expr.expressions
-        if isinstance(lineage_expr, exp.Select)
-        else []
-    )
+    projections = _projection_items(display_expr)
+    lineage_projections = _projection_items(lineage_expr)
     display_column_names = _projection_output_names(display_expr)
     lineage_column_names = _projection_output_names(lineage_expr)
     if len(lineage_column_names) < len(display_column_names):
@@ -3402,53 +3394,52 @@ def _trace_lineage(
                     }
                 )
 
-    if isinstance(expanded_select_expr, exp.Select):
-        for idx, projection in enumerate(expanded_select_expr.expressions):
-            if (
-                first_unresolved_star_idx is not None
-                and idx > first_unresolved_star_idx
-            ):
-                continue
-            if list(projection.find_all(exp.Column)):
-                continue
-            if isinstance(projection, exp.Star) or list(
-                projection.find_all(exp.Star)
-            ):
-                continue
-            target_col = _target_column_for_projection(
-                idx,
-                projection.alias_or_name,
-                target_columns=target_columns,
-                output_columns=output_columns,
+    for idx, projection in enumerate(_projection_items(expanded_select_expr)):
+        if (
+            first_unresolved_star_idx is not None
+            and idx > first_unresolved_star_idx
+        ):
+            continue
+        if list(projection.find_all(exp.Column)):
+            continue
+        if isinstance(projection, exp.Star) or list(
+            projection.find_all(exp.Star)
+        ):
+            continue
+        target_col = _target_column_for_projection(
+            idx,
+            projection.alias_or_name,
+            target_columns=target_columns,
+            output_columns=output_columns,
+        )
+        target_col = _canonical_column(target_col)
+        if not target_col:
+            continue
+        key = (
+            "constant",
+            _strip_db(target_table),
+            target_col,
+            projection.sql(dialect="doris"),
+        )
+        existing = {
+            (
+                entry.get("transformation_type"),
+                entry.get("target_table"),
+                entry.get("target_column"),
+                entry.get("expression"),
             )
-            target_col = _canonical_column(target_col)
-            if not target_col:
-                continue
-            key = (
-                "constant",
-                _strip_db(target_table),
+            for entry in entries
+        }
+        if key in existing:
+            continue
+        entries.append(
+            _constant_lineage_entry(
+                target_table,
                 target_col,
-                projection.sql(dialect="doris"),
+                projection,
+                file_path,
             )
-            existing = {
-                (
-                    entry.get("transformation_type"),
-                    entry.get("target_table"),
-                    entry.get("target_column"),
-                    entry.get("expression"),
-                )
-                for entry in entries
-            }
-            if key in existing:
-                continue
-            entries.append(
-                _constant_lineage_entry(
-                    target_table,
-                    target_col,
-                    projection,
-                    file_path,
-                )
-            )
+        )
 
     # 间接血缘: WHERE / JOIN ON / GROUP BY / HAVING
     indirect_entries = _extract_indirect(

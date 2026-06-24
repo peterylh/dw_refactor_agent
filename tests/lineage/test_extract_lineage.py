@@ -1,4 +1,5 @@
 from lineage.lineage_extractor import (
+    build_lineage_output,
     build_schema_from_texts,
     extract_lineage_from_sql,
 )
@@ -260,6 +261,302 @@ class TestIntegrationEtlToDwd:
             "dws_daily_sales",
             "total_amount",
         ) in _direct_edges(entries)
+
+    def test_insert_select_metric_literals_are_not_source_columns(self):
+        schema = build_schema_from_texts(
+            [
+                """
+                CREATE TABLE shop_dm.src_metric (
+                    metric_value DECIMAL(18,4),
+                    dt DATE
+                )
+                """,
+                """
+                CREATE TABLE shop_dm.ads_metric (
+                    metric_code VARCHAR(300),
+                    metric_value DECIMAL(18,4),
+                    measure_index VARCHAR(300),
+                    updated_at DATETIME,
+                    optional_note STRING,
+                    dt DATE
+                )
+                """,
+            ]
+        )
+        cases = [
+            (
+                "ads_metric_alias.sql",
+                """
+                INSERT INTO shop_dm.ads_metric
+                SELECT
+                    'ZBJ00000093',
+                    metric_value,
+                    'ZBJ00000092' AS measure_index,
+                    NOW() AS updated_at,
+                    NULL AS optional_note,
+                    dt
+                FROM shop_dm.src_metric
+                """,
+            ),
+            (
+                "ads_metric_no_alias.sql",
+                """
+                INSERT INTO shop_dm.ads_metric
+                SELECT
+                    'ZBJ00000093',
+                    metric_value,
+                    'ZBJ00000092',
+                    NOW(),
+                    NULL,
+                    dt
+                FROM shop_dm.src_metric
+                """,
+            ),
+            (
+                "ads_metric_explicit_insert_columns.sql",
+                """
+                INSERT INTO shop_dm.ads_metric (
+                    metric_code,
+                    metric_value,
+                    measure_index,
+                    updated_at,
+                    optional_note,
+                    dt
+                )
+                SELECT
+                    'ZBJ00000093',
+                    metric_value,
+                    'ZBJ00000092',
+                    NOW(),
+                    NULL,
+                    dt
+                FROM shop_dm.src_metric
+                """,
+            ),
+        ]
+
+        for file_path, sql in cases:
+            entries = extract_lineage_from_sql(
+                sql,
+                file_path,
+                schema,
+            )
+            output = build_lineage_output(entries, schema)
+
+            assert _direct_edges(entries) == {
+                (
+                    "src_metric",
+                    "metric_value",
+                    "ads_metric",
+                    "metric_value",
+                ),
+                ("src_metric", "dt", "ads_metric", "dt"),
+                (None, None, "ads_metric", "metric_code"),
+                (None, None, "ads_metric", "measure_index"),
+                (None, None, "ads_metric", "updated_at"),
+                (None, None, "ads_metric", "optional_note"),
+            }
+            constant_sources = {
+                entry["target_column"]: entry["source_type"]
+                for entry in entries
+                if entry.get("transformation_type") == "constant"
+            }
+            assert constant_sources == {
+                "metric_code": "literal",
+                "measure_index": "literal",
+                "updated_at": "expression",
+                "optional_note": "expression",
+            }
+            column_source_ids = {
+                edge["source"].get("id")
+                for edge in output["edges"]
+                if edge["source"].get("type") == "column"
+            }
+            assert column_source_ids == {
+                "src_metric.dt",
+                "src_metric.metric_value",
+            }
+            all_column_names = {
+                column["name"]
+                for table in output["tables"]
+                for column in table["columns"]
+            }
+            assert not {"ZBJ00000092", "ZBJ00000093", "NOW", "NULL"} & (
+                all_column_names - {"metric_code", "measure_index"}
+            )
+
+    def test_insert_union_metric_literals_are_not_lineage_columns(self):
+        schema = build_schema_from_texts(
+            [
+                """
+                CREATE TABLE shop_dm.src_metric (
+                    metric_value DECIMAL(18,4)
+                )
+                """,
+                """
+                CREATE TABLE shop_dm.ads_metric (
+                    metric_code VARCHAR(300),
+                    measure_index VARCHAR(300),
+                    metric_value DECIMAL(18,4)
+                )
+                """,
+            ]
+        )
+        sql = """
+        INSERT INTO shop_dm.ads_metric
+        SELECT
+            'ZBJ00000093',
+            'ZBJ00000092' AS measure_index,
+            metric_value
+        FROM shop_dm.src_metric
+        UNION ALL
+        SELECT
+            'ZBJ00000093',
+            'ZBJ00000092' AS measure_index,
+            metric_value
+        FROM shop_dm.src_metric
+        """
+        diagnostics = []
+
+        entries = extract_lineage_from_sql(
+            sql,
+            "ads_metric_union.sql",
+            schema,
+            diagnostics=diagnostics,
+        )
+        output = build_lineage_output(entries, schema)
+
+        assert diagnostics == []
+        assert _direct_edges(entries) == {
+            (
+                "src_metric",
+                "metric_value",
+                "ads_metric",
+                "metric_value",
+            ),
+            (None, None, "ads_metric", "metric_code"),
+            (None, None, "ads_metric", "measure_index"),
+        }
+        constant_sources = {
+            entry["target_column"]: entry["source_type"]
+            for entry in entries
+            if entry.get("transformation_type") == "constant"
+        }
+        assert constant_sources == {
+            "metric_code": "literal",
+            "measure_index": "literal",
+        }
+        column_source_ids = {
+            edge["source"].get("id")
+            for edge in output["edges"]
+            if edge["source"].get("type") == "column"
+        }
+        assert column_source_ids == {"src_metric.metric_value"}
+        all_column_names = {
+            column["name"]
+            for table in output["tables"]
+            for column in table["columns"]
+        }
+        assert not {"ZBJ00000092", "ZBJ00000093"} & all_column_names
+
+    def test_ctas_metric_literals_are_not_source_columns(self):
+        schema = build_schema_from_texts(
+            [
+                """
+                CREATE TABLE shop_dm.src_metric (
+                    metric_value DECIMAL(18,4),
+                    dt DATE
+                )
+                """,
+            ]
+        )
+        cases = [
+            (
+                "ctas_metric_alias.sql",
+                """
+                CREATE TABLE shop_dm.ads_metric AS
+                SELECT
+                    'ZBJ00000093' AS metric_code,
+                    metric_value,
+                    'ZBJ00000092' AS measure_index,
+                    NOW() AS updated_at,
+                    NULL AS optional_note,
+                    dt
+                FROM shop_dm.src_metric
+                """,
+            ),
+            (
+                "ctas_metric_column_defs.sql",
+                """
+                CREATE TABLE shop_dm.ads_metric (
+                    metric_code VARCHAR(300),
+                    metric_value DECIMAL(18,4),
+                    measure_index VARCHAR(300),
+                    updated_at DATETIME,
+                    optional_note STRING,
+                    dt DATE
+                ) AS
+                SELECT
+                    'ZBJ00000093',
+                    metric_value,
+                    'ZBJ00000092' AS measure_index,
+                    NOW(),
+                    NULL,
+                    dt
+                FROM shop_dm.src_metric
+                """,
+            ),
+        ]
+
+        for file_path, sql in cases:
+            entries = extract_lineage_from_sql(
+                sql,
+                file_path,
+                schema,
+            )
+            output = build_lineage_output(entries, schema)
+
+            assert _direct_edges(entries) == {
+                (
+                    "src_metric",
+                    "metric_value",
+                    "ads_metric",
+                    "metric_value",
+                ),
+                ("src_metric", "dt", "ads_metric", "dt"),
+                (None, None, "ads_metric", "metric_code"),
+                (None, None, "ads_metric", "measure_index"),
+                (None, None, "ads_metric", "updated_at"),
+                (None, None, "ads_metric", "optional_note"),
+            }
+            constant_sources = {
+                entry["target_column"]: entry["source_type"]
+                for entry in entries
+                if entry.get("transformation_type") == "constant"
+            }
+            assert constant_sources == {
+                "metric_code": "literal",
+                "measure_index": "literal",
+                "updated_at": "expression",
+                "optional_note": "expression",
+            }
+            column_source_ids = {
+                edge["source"].get("id")
+                for edge in output["edges"]
+                if edge["source"].get("type") == "column"
+            }
+            assert column_source_ids == {
+                "src_metric.dt",
+                "src_metric.metric_value",
+            }
+            all_column_names = {
+                column["name"]
+                for table in output["tables"]
+                for column in table["columns"]
+            }
+            assert not {"ZBJ00000092", "ZBJ00000093", "NOW", "NULL"} & (
+                all_column_names - {"metric_code", "measure_index"}
+            )
 
 
 class TestIntegrationUpdatePattern:
