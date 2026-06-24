@@ -420,6 +420,22 @@ class TestSelectStarLineage:
             ("ods_order", "amount", "dwd_order", "amount"),
         }
 
+    def test_ctas_unaliased_expression_registers_output_for_later_star(self):
+        sql = """
+        CREATE TABLE cdm.tmp AS
+        SELECT TRUE;
+
+        CREATE TABLE cdm.tmp_out AS
+        SELECT t.* FROM cdm.tmp AS t;
+        """
+
+        entries = extract_lineage_from_sql(sql, "ctas_expr_star.sql", {})
+
+        assert _direct_edges(entries) >= {
+            (None, None, "cdm.tmp", "TRUE"),
+            ("cdm.tmp", "TRUE", "cdm.tmp_out", "TRUE"),
+        }
+
     def test_insert_select_alias_star_expands_only_alias_columns(self):
         sql = """
         INSERT INTO shop_dm.dwd_order (order_id, customer_id, amount)

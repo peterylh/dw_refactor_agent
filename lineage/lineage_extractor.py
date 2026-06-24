@@ -971,8 +971,12 @@ def _projection_output_name(projection):
         return _canonical_column(projection.alias)
     if isinstance(projection, exp.Column):
         return _canonical_column(projection.name)
+    if isinstance(projection, exp.Star):
+        return ""
     if getattr(projection, "alias_or_name", None):
         return _canonical_column(projection.alias_or_name)
+    if hasattr(projection, "sql"):
+        return _canonical_column(projection.sql(dialect="doris"))
     return ""
 
 
