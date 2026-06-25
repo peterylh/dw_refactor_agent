@@ -601,6 +601,192 @@ class TestIntegrationEtlToDwd:
             "cust_num",
         ) in _direct_edges(entries)
 
+    def test_insert_alias_star_names_anonymous_literal_by_target_position(self):
+        schema = build_schema_from_texts(
+            [
+                """
+                CREATE TABLE cdm.i10_bill_org_index_amt_sum (
+                    id STRING,
+                    data_Dt DATE,
+                    org_num STRING,
+                    org_num_lv STRING,
+                    index_id STRING
+                );
+                CREATE TABLE i00_org_info_lvl_dim (
+                    data_Dt DATE,
+                    dept_code_lv5 STRING
+                );
+                CREATE TABLE index_dict (
+                    index_id STRING,
+                    org_num STRING
+                );
+                """,
+            ]
+        )
+        sql = """
+        INSERT INTO cdm.i10_bill_org_index_amt_sum (
+          id,
+          data_Dt,
+          org_num,
+          org_num_lv,
+          index_id
+        )
+        SELECT
+          NULL AS id,
+          aa.*
+        FROM (
+          SELECT
+            info.data_Dt,
+            info.dept_code_lv5 AS org_num,
+            '', /* dim.org_num_lv as org_num_lv */
+            dict.index_id
+          FROM i00_org_info_lvl_dim AS info
+          JOIN index_dict AS dict
+            ON info.dept_code_lv5 = dict.org_num
+        ) AS aa
+        """
+        diagnostics = []
+
+        entries = extract_lineage_from_sql(
+            sql,
+            "insert_alias_star_anonymous_literal.sql",
+            schema,
+            diagnostics=diagnostics,
+        )
+
+        assert diagnostics == []
+        assert (
+            "i00_org_info_lvl_dim",
+            "dept_code_lv5",
+            "cdm.i10_bill_org_index_amt_sum",
+            "org_num",
+        ) in _direct_edges(entries)
+        literal_entries = [
+            entry
+            for entry in entries
+            if entry.get("target_column") == "org_num_lv"
+        ]
+        assert literal_entries == [
+            {
+                "lineage_type": "direct",
+                "source_type": "literal",
+                "source_value": "",
+                "target_table": "cdm.i10_bill_org_index_amt_sum",
+                "target_column": "org_num_lv",
+                "expression": "'' /* dim.org_num_lv as org_num_lv */ AS org_num_lv",
+                "transformation_type": "constant",
+                "source_file": "insert_alias_star_anonymous_literal.sql",
+            }
+        ]
+
+    def test_insert_alias_star_aligns_expanded_columns_to_targets(self):
+        schema = build_schema_from_texts(
+            [
+                """
+                CREATE TABLE cdm.i10_bill_org_index_amt_sum (
+                    id BIGINT,
+                    data_dt DATE,
+                    org_num STRING,
+                    org_num_lv STRING,
+                    index_id STRING,
+                    index_nm STRING,
+                    cnt BIGINT
+                );
+                CREATE TABLE i00_org_info_lvl_dim (
+                    data_Dt DATE,
+                    dept_code_lv5 STRING
+                );
+                CREATE TABLE org_dim (
+                    dept_code_lv STRING,
+                    org_num_lv STRING
+                );
+                CREATE TABLE index_dict (
+                    index_id STRING,
+                    index_nm STRING,
+                    org_num STRING
+                );
+                """,
+            ]
+        )
+        sql = """
+        INSERT INTO cdm.i10_bill_org_index_amt_sum (
+          id,
+          data_dt,
+          org_num,
+          org_num_lv,
+          index_id,
+          index_nm,
+          cnt
+        )
+        SELECT
+          NULL AS id,
+          aa.*
+        FROM (
+          SELECT
+            info.data_Dt,
+            dim.dept_code_lv AS org_num,
+            dim.org_num_lv AS org_num_lv,
+            dict.index_id,
+            dict.index_nm,
+            COUNT(*) AS cnt
+          FROM i00_org_info_lvl_dim AS info
+          JOIN org_dim AS dim
+            ON info.dept_code_lv5 = dim.dept_code_lv
+          JOIN index_dict AS dict
+            ON dim.dept_code_lv = dict.org_num
+          GROUP BY
+            info.data_Dt,
+            dim.dept_code_lv,
+            dim.org_num_lv,
+            dict.index_id,
+            dict.index_nm
+        ) AS aa
+        """
+        diagnostics = []
+
+        entries = extract_lineage_from_sql(
+            sql,
+            "insert_alias_star_target_alignment.sql",
+            schema,
+            diagnostics=diagnostics,
+        )
+
+        assert diagnostics == []
+        direct_edges = _direct_edges(entries)
+        assert (
+            "i00_org_info_lvl_dim",
+            "data_dt",
+            "cdm.i10_bill_org_index_amt_sum",
+            "data_dt",
+        ) in direct_edges
+        assert (
+            "i00_org_info_lvl_dim",
+            "data_dt",
+            "cdm.i10_bill_org_index_amt_sum",
+            "id",
+        ) not in direct_edges
+        assert (
+            "aa",
+            "cnt",
+            "cdm.i10_bill_org_index_amt_sum",
+            "cnt",
+        ) not in direct_edges
+        cnt_entries = [
+            entry for entry in entries if entry.get("target_column") == "cnt"
+        ]
+        assert cnt_entries == [
+            {
+                "lineage_type": "direct",
+                "source_type": "expression",
+                "source_expression": "COUNT(*) AS cnt",
+                "target_table": "cdm.i10_bill_org_index_amt_sum",
+                "target_column": "cnt",
+                "expression": "COUNT(*) AS cnt",
+                "transformation_type": "constant",
+                "source_file": "insert_alias_star_target_alignment.sql",
+            }
+        ]
+
 
 class TestIntegrationUpdatePattern:
     """Test UPDATE statements commonly used in ETL tasks"""

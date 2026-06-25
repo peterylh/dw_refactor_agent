@@ -1063,9 +1063,7 @@ def _projection_can_inline_through_star(projection):
         return False
     if isinstance(projection, exp.Column):
         return False
-    return not list(projection.find_all(exp.Column)) and not list(
-        projection.find_all(exp.Star)
-    )
+    return not list(projection.find_all(exp.Column))
 
 
 def _inline_star_projection(projection, output_name):
@@ -2039,6 +2037,44 @@ def _target_column_for_projection(
     if output_columns is not None and idx < len(output_columns):
         return output_columns[idx]
     return col_name
+
+
+def _align_projection_names_to_targets(query_expr, target_columns):
+    """Alias projections by target position before lineage qualify."""
+    if not target_columns:
+        return query_expr
+    if isinstance(query_expr, exp.Select):
+        aligned = query_expr.copy()
+        expressions = []
+        for idx, projection in enumerate(aligned.expressions):
+            if (
+                idx < len(target_columns)
+                and target_columns[idx]
+                and not _is_star_projection(projection)
+                and _projection_output_name(projection)
+                != _canonical_column(target_columns[idx])
+            ):
+                expressions.append(
+                    exp.alias_(
+                        projection.copy(),
+                        target_columns[idx],
+                        quoted=_identifier_needs_quotes(target_columns[idx]),
+                    )
+                )
+                continue
+            expressions.append(projection)
+        aligned.set("expressions", expressions)
+        return aligned
+    if isinstance(query_expr, exp.SetOperation):
+        aligned = query_expr.copy()
+        left = aligned.args.get("this")
+        if left is not None:
+            aligned.set(
+                "this",
+                _align_projection_names_to_targets(left, target_columns),
+            )
+        return aligned
+    return query_expr
 
 
 def _leftmost_set_operand(query_expr):
@@ -3326,6 +3362,20 @@ def _trace_lineage(
         target_table=target_table,
         diagnostics=diagnostics,
     )
+    expanded_select_expr = _align_projection_names_to_targets(
+        expanded_select_expr,
+        target_columns,
+    )
+    output_columns = [
+        _target_column_for_projection(
+            idx,
+            col_name,
+            target_columns=target_columns,
+        )
+        for idx, col_name in enumerate(
+            _projection_output_names(expanded_select_expr)
+        )
+    ]
     lineage_select_expr = expanded_select_expr
     if has_unresolved_output and isinstance(
         expanded_select_expr, exp.SetOperation
@@ -3410,9 +3460,7 @@ def _trace_lineage(
             continue
         if list(projection.find_all(exp.Column)):
             continue
-        if isinstance(projection, exp.Star) or list(
-            projection.find_all(exp.Star)
-        ):
+        if _is_star_projection(projection):
             continue
         target_col = _target_column_for_projection(
             idx,
