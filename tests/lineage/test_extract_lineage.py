@@ -2046,6 +2046,94 @@ class TestEdgeCases:
             ("info", "order_id", "dws_daily_sales", "order_count"),
         }
 
+    def test_lateral_view_named_struct_fields_are_lineage_sources(self):
+        schema = build_schema_from_texts(
+            [
+                """
+                CREATE TABLE a_ibank_cust_ind_d (
+                    data_dt DATE,
+                    cust_no STRING,
+                    valid_cust_mark STRING,
+                    basic_cust_org_mark STRING
+                );
+                CREATE TABLE cdm.a10_corp_cust_bool_label_t2 (
+                    data_dt DATE,
+                    cust_num STRING,
+                    label_name STRING,
+                    label_index INT
+                );
+                """,
+            ]
+        )
+        sql = """
+        INSERT INTO cdm.a10_corp_cust_bool_label_t2 (
+            data_dt,
+            cust_num,
+            label_name,
+            label_index
+        )
+        SELECT DISTINCT
+            data_dt,
+            customer_no,
+            title,
+            CAST(flag AS INT) AS flag
+        FROM (
+            SELECT
+                CAST('20260601' AS DATE) AS data_dt,
+                t.cust_no AS customer_no,
+                f.flag AS flag,
+                f.title AS title
+            FROM (
+                SELECT *
+                FROM a_ibank_cust_ind_d
+                WHERE data_dt = CAST('20260601' AS DATE)
+            ) AS t
+            LATERAL VIEW EXPLODE(ARRAY(
+                NAMED_STRUCT('flag', valid_cust_mark, 'title', 'tyyxkh01'),
+                NAMED_STRUCT('flag', basic_cust_org_mark, 'title', 'jgtyxzjckh01')
+            )) f AS f
+        ) AS g
+        WHERE g.flag = '1'
+        """
+        diagnostics = []
+
+        entries = extract_lineage_from_sql(
+            sql,
+            "a10_corp_cust_bool_label_t2.sql",
+            schema,
+            diagnostics=diagnostics,
+        )
+
+        assert diagnostics == []
+        assert _direct_edges(entries) >= {
+            (
+                "a_ibank_cust_ind_d",
+                "valid_cust_mark",
+                "cdm.a10_corp_cust_bool_label_t2",
+                "label_index",
+            ),
+            (
+                "a_ibank_cust_ind_d",
+                "basic_cust_org_mark",
+                "cdm.a10_corp_cust_bool_label_t2",
+                "label_index",
+            ),
+        }
+        assert _indirect_edges(entries) >= {
+            (
+                "a_ibank_cust_ind_d",
+                "valid_cust_mark",
+                "cdm.a10_corp_cust_bool_label_t2",
+                "WHERE",
+            ),
+            (
+                "a_ibank_cust_ind_d",
+                "basic_cust_org_mark",
+                "cdm.a10_corp_cust_bool_label_t2",
+                "WHERE",
+            ),
+        }
+
     def test_insert_without_target_column_list_maps_to_ddl_columns_by_position(
         self,
     ):

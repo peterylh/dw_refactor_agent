@@ -1872,6 +1872,104 @@ def _normalize_derived_column_reference_case(query_expr):
     return normalized
 
 
+def _named_struct_field_expressions(named_struct):
+    if not (
+        isinstance(named_struct, exp.Anonymous)
+        and str(named_struct.this).upper() == "NAMED_STRUCT"
+    ):
+        return {}
+    fields = {}
+    values = list(named_struct.expressions or [])
+    for idx in range(0, len(values) - 1, 2):
+        key_expr = values[idx]
+        value_expr = values[idx + 1]
+        if not isinstance(key_expr, exp.Literal) or not key_expr.is_string:
+            continue
+        field_key = _identifier_match_key(key_expr.this)
+        if not field_key:
+            continue
+        fields.setdefault(field_key, []).append(value_expr.copy())
+    return fields
+
+
+def _lateral_named_struct_field_lookups(select_expr):
+    lookups = {}
+    for lateral in select_expr.args.get("laterals") or []:
+        if not isinstance(lateral, exp.Lateral):
+            continue
+        alias = lateral.args.get("alias")
+        if not alias:
+            continue
+        alias_names = [
+            _canonical_identifier(column.name)
+            for column in (alias.args.get("columns") or [])
+            if _canonical_identifier(column.name)
+        ]
+        if not alias_names:
+            alias_name = _canonical_identifier(alias.this.name)
+            if alias_name:
+                alias_names = [alias_name]
+        if not alias_names:
+            continue
+
+        explode = lateral.this
+        if not isinstance(explode, exp.Explode):
+            continue
+        array_expr = explode.this
+        if not isinstance(array_expr, exp.Array):
+            continue
+
+        field_values = {}
+        for item in array_expr.expressions or []:
+            for field_key, values in _named_struct_field_expressions(
+                item
+            ).items():
+                field_values.setdefault(field_key, []).extend(values)
+        if not field_values:
+            continue
+
+        for alias_name in alias_names:
+            lookups[_identifier_match_key(alias_name)] = field_values
+    return lookups
+
+
+def _lineage_expression_for_lateral_field(values):
+    copied = [value.copy() for value in values if value is not None]
+    if not copied:
+        return None
+    if len(copied) == 1:
+        return copied[0]
+    return exp.Coalesce(this=copied[0], expressions=copied[1:])
+
+
+def _rewrite_lateral_named_struct_fields(query_expr):
+    """Inline exploded NAMED_STRUCT fields so sqlglot can qualify lineage."""
+    rewritten = query_expr.copy()
+    if not isinstance(rewritten, (exp.Select, exp.SetOperation)):
+        return rewritten
+
+    for select_expr in list(rewritten.find_all(exp.Select)):
+        lookups = _lateral_named_struct_field_lookups(select_expr)
+        if not lookups:
+            continue
+        for column in list(select_expr.find_all(exp.Column)):
+            if _enclosing_select(column) is not select_expr:
+                continue
+            table_key = _identifier_match_key(column.table)
+            if not table_key:
+                continue
+            field_values = lookups.get(table_key)
+            if not field_values:
+                continue
+            replacement = _lineage_expression_for_lateral_field(
+                field_values.get(_identifier_match_key(column.name))
+            )
+            if replacement is not None:
+                column.replace(replacement)
+
+    return rewritten
+
+
 def _diagnostic_error(error):
     return f"{type(error).__name__}: {error}"
 
@@ -1935,7 +2033,9 @@ def _lineage_node_items_for_select(
     diagnostics=None,
 ):
     node_items = []
-    display_expr = _normalize_derived_column_reference_case(select_expr)
+    display_expr = _rewrite_lateral_named_struct_fields(
+        _normalize_derived_column_reference_case(select_expr)
+    )
     lineage_expr = _normalize_lineage_identifier_case(display_expr)
     projections = _projection_items(display_expr)
     lineage_projections = _projection_items(lineage_expr)
@@ -2303,7 +2403,9 @@ def _derived_leaf_sources(
     diagnostics=None,
 ):
     """将派生表/CTE 输出列追溯到物理源表列。"""
-    display_expr = _normalize_derived_column_reference_case(select_expr)
+    display_expr = _rewrite_lateral_named_struct_fields(
+        _normalize_derived_column_reference_case(select_expr)
+    )
     lineage_expr = _normalize_lineage_identifier_case(display_expr)
     lineage_column_name = _lineage_output_column_name(
         display_expr,
