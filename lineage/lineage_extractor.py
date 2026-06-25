@@ -1977,6 +1977,7 @@ def _diagnostic_error(error):
 _DIAGNOSTIC_SEVERITY_BY_STAGE = {
     "lineage_scope": "warning",
     "lineage_star_expand": "warning",
+    "lineage_target": "warning",
     "derived_lineage_column": "warning",
     "parse": "error",
     "lineage_column": "error",
@@ -3513,6 +3514,13 @@ def _trace_lineage(
     if not has_direct_nodes and not output_columns:
         output_columns = _projection_output_names(expanded_select_expr)
     if not has_direct_nodes and not output_columns:
+        _record_diagnostic(
+            diagnostics,
+            file_path,
+            "lineage_target",
+            ValueError("No lineage nodes or output columns extracted"),
+            target_table=_strip_db(target_table),
+        )
         STATS["lineage_failures"] += 1
         return entries
 
@@ -4248,7 +4256,7 @@ def main():
     if STATS["parse_failures"]:
         print(f"  解析失败: {STATS['parse_failures']} 个文件")
     if STATS["lineage_failures"]:
-        print(f"  lineage 失败: {STATS['lineage_failures']} 个目标表")
+        print(f"  lineage 未抽取: {STATS['lineage_failures']} 个目标表")
     print(f"  输出: {output_path}")
     if fatal_diagnostics and not args.force_overwrite_on_error:
         print("  存在严重错误, 已写出新输出文件但进程返回失败")

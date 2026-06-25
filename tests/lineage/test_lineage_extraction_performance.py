@@ -153,6 +153,51 @@ def test_lineage_scope_failure_is_reported_as_warning(
     assert lineage_extractor._fatal_diagnostics(diagnostics) == []
 
 
+def test_empty_target_lineage_failure_records_target_table(monkeypatch):
+    diagnostics = []
+
+    def no_output_columns(*_args, **_kwargs):
+        return sqlglot.exp.Select(), [], False
+
+    monkeypatch.setattr(
+        lineage_extractor,
+        "_expand_query_star_projections",
+        no_output_columns,
+    )
+    monkeypatch.setattr(
+        lineage_extractor,
+        "_lineage_node_items_for_select",
+        lambda *_args, **_kwargs: [],
+    )
+    lineage_extractor._reset_stats()
+
+    try:
+        entries = lineage_extractor._trace_lineage(
+            "shop_dm.dwd_order",
+            sqlglot.parse_one("SELECT order_id FROM shop_dm.ods_order"),
+            {},
+            "dwd_order.sql",
+            diagnostics=diagnostics,
+        )
+
+        assert entries == []
+        assert lineage_extractor.STATS["lineage_failures"] == 1
+        assert diagnostics == [
+            {
+                "source_file": "dwd_order.sql",
+                "stage": "lineage_target",
+                "severity": "warning",
+                "error": (
+                    "ValueError: No lineage nodes or output columns extracted"
+                ),
+                "target_table": "dwd_order",
+            }
+        ]
+        assert lineage_extractor._fatal_diagnostics(diagnostics) == []
+    finally:
+        lineage_extractor._reset_stats()
+
+
 def test_should_write_lineage_output_blocks_existing_file_on_fatal_error(
     tmp_path,
 ):
