@@ -1717,6 +1717,14 @@ def _expand_star_projection_from_sources(
             source_projection = (
                 projections[idx] if idx < len(projections) else None
             )
+            if not output_name and source_projection is not None:
+                items.append(
+                    {
+                        "projection": source_projection.copy(),
+                        "output_name": output_name,
+                    }
+                )
+                continue
             if _projection_can_inline_through_star(source_projection):
                 items.append(
                     {

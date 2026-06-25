@@ -2012,6 +2012,40 @@ class TestEdgeCases:
         assert ("order_id", "customer_id") in direct
         assert ("customer_id", "order_id") in direct
 
+    def test_insert_star_expands_anonymous_derived_projections_to_targets(
+        self,
+    ):
+        sql = """
+        INSERT INTO shop_dm.dws_daily_sales (
+            order_date,
+            total_amount,
+            order_count
+        )
+        SELECT aa.*
+        FROM (
+            SELECT
+                info.order_date,
+                SUM(info.total_amount),
+                COUNT(info.order_id)
+            FROM shop_dm.ods_order AS info
+            GROUP BY info.order_date
+        ) AS aa
+        """
+        diagnostics = []
+        entries = extract_lineage_from_sql(
+            sql,
+            "dws_daily_sales.sql",
+            self.schema,
+            diagnostics=diagnostics,
+        )
+
+        assert diagnostics == []
+        assert _direct_edges(entries) >= {
+            ("ods_order", "order_date", "dws_daily_sales", "order_date"),
+            ("info", "total_amount", "dws_daily_sales", "total_amount"),
+            ("info", "order_id", "dws_daily_sales", "order_count"),
+        }
+
     def test_insert_without_target_column_list_maps_to_ddl_columns_by_position(
         self,
     ):
