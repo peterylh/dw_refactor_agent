@@ -846,7 +846,7 @@ def _created_table_columns_from_schema(
     target_columns = _target_columns(stmt.this)
     if target_columns:
         return target_columns
-    inner = stmt.args.get("expression")
+    inner = _unwrap_query_expression(stmt.args.get("expression"))
     if isinstance(inner, (exp.Select, exp.SetOperation)):
         (
             _expanded_inner,
@@ -1052,6 +1052,15 @@ def _projection_items(query_expr):
         left = query_expr.args.get("this")
         return _projection_items(left) if left is not None else []
     return []
+
+
+def _unwrap_query_expression(query_expr):
+    while isinstance(query_expr, exp.Subquery) and isinstance(
+        query_expr.this,
+        (exp.Select, exp.SetOperation),
+    ):
+        query_expr = query_expr.this
+    return query_expr
 
 
 def _identifier_needs_quotes(name):
@@ -3545,7 +3554,7 @@ def _handle_update(stmt, file_path, schema, diagnostics=None):
 def _handle_create(stmt, file_path, schema, diagnostics=None):
     target_table = _target_table_sql(stmt.this)
     target_columns = _target_columns(stmt.this)
-    inner = stmt.args.get("expression")
+    inner = _unwrap_query_expression(stmt.args.get("expression"))
     if isinstance(inner, (exp.Select, exp.SetOperation)):
         return _trace_lineage(
             target_table,

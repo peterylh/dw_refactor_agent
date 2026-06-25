@@ -1,4 +1,7 @@
+import sqlglot
+
 from lineage.lineage_extractor import (
+    _created_table_columns_from_schema,
     build_lineage_output,
     build_schema_from_texts,
     extract_lineage_from_sql,
@@ -786,6 +789,87 @@ class TestIntegrationEtlToDwd:
                 "source_file": "insert_alias_star_target_alignment.sql",
             }
         ]
+
+    def test_ctas_parenthesized_select_registers_transient_schema(self):
+        schema = build_schema_from_texts(
+            [
+                """
+                CREATE TABLE m10_txn_transfer_disc (
+                    node_no STRING,
+                    data_Dt DATE
+                );
+                CREATE TABLE i00_org_info_lvl_dim (
+                    dept_code_lv STRING,
+                    dept_code_lv5 STRING,
+                    data_Dt DATE
+                );
+                """,
+            ]
+        )
+        sql = """
+        CREATE TABLE IF NOT EXISTS tmp_i10_bill_transfer_disc_org_sum_202606021
+        DISTRIBUTED BY HASH (
+          node_no
+        ) AS
+        (
+          SELECT
+            *
+          FROM (
+            SELECT
+              a1.node_no,
+              a2.dept_code_lv5,
+              ROW_NUMBER() OVER (
+                PARTITION BY a1.node_no
+                ORDER BY a2.dept_code_lv5
+              ) AS rn
+            FROM (
+              SELECT DISTINCT
+                COALESCE(node_no, 'MGMT9999') AS node_no
+              FROM m10_txn_transfer_disc
+              WHERE
+                data_Dt = CAST('20260602' AS DATE)
+            ) AS a1
+            LEFT JOIN i00_org_info_lvl_dim AS a2
+              ON a1.node_no = a2.dept_code_lv
+              AND a2.data_Dt = CAST('20260602' AS DATE)
+          ) AS aa
+          WHERE
+            aa.rn = 1
+        )
+        """
+        diagnostics = []
+
+        entries = extract_lineage_from_sql(
+            sql,
+            "ctas_parenthesized_select_transient_schema.sql",
+            schema,
+            diagnostics=diagnostics,
+        )
+        output = build_lineage_output(entries, schema)
+        stmt = sqlglot.parse_one(sql, dialect="doris")
+
+        assert diagnostics == []
+        assert _created_table_columns_from_schema(stmt, schema) == [
+            "node_no",
+            "dept_code_lv5",
+            "rn",
+        ]
+        assert (
+            "i00_org_info_lvl_dim",
+            "dept_code_lv5",
+            "tmp_i10_bill_transfer_disc_org_sum_202606021",
+            "dept_code_lv5",
+        ) in _direct_edges(entries)
+        transient_table = next(
+            table
+            for table in output["tables"]
+            if table["name"] == "tmp_i10_bill_transfer_disc_org_sum_202606021"
+        )
+        assert {column["name"] for column in transient_table["columns"]} == {
+            "node_no",
+            "dept_code_lv5",
+            "rn",
+        }
 
 
 class TestIntegrationUpdatePattern:
