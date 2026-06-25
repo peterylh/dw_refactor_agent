@@ -997,7 +997,14 @@ def build_schema_from_texts(
     return schema
 
 
+def _unwrap_paren_projection(projection):
+    while isinstance(projection, exp.Paren):
+        projection = projection.this
+    return projection
+
+
 def _projection_output_name(projection):
+    projection = _unwrap_paren_projection(projection)
     if isinstance(projection, exp.Alias):
         return _canonical_column(projection.alias)
     if isinstance(projection, exp.Column):
@@ -1010,6 +1017,7 @@ def _projection_output_name(projection):
 
 
 def _projection_output_identifier(projection):
+    projection = _unwrap_paren_projection(projection)
     if isinstance(projection, exp.Alias):
         return projection.args.get("alias")
     if isinstance(projection, exp.Column):

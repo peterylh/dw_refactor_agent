@@ -558,6 +558,49 @@ class TestIntegrationEtlToDwd:
                 all_column_names - {"metric_code", "measure_index"}
             )
 
+    def test_ctas_parenthesized_column_projection_keeps_lineage(self):
+        schema = build_schema_from_texts(
+            [
+                """
+                CREATE TABLE cdm.a12_cust_tag_list_t2 (
+                    cust_num STRING,
+                    cust_type STRING,
+                    data_dt STRING
+                )
+                """,
+            ]
+        )
+        sql = """
+        CREATE TABLE IF NOT EXISTS tmp_a10_cdm_corp_biz_info_t2_01
+        DISTRIBUTED BY RANDOM BUCKETS 15 AS
+        SELECT DISTINCT
+          (
+            cust_num
+          ),
+          cust_type AS cust_type_cd,
+          CASE
+            WHEN cust_type = '1' THEN '存量客户'
+            WHEN cust_type = '2' THEN '沉睡客户'
+            WHEN cust_type = '3' THEN '流失客户'
+            WHEN cust_type = '4' THEN '空客户'
+          END AS cust_type
+        FROM cdm.a12_cust_tag_list_t2
+        WHERE data_dt = '20260601'
+        """
+
+        entries = extract_lineage_from_sql(
+            sql,
+            "ctas_parenthesized_column.sql",
+            schema,
+        )
+
+        assert (
+            "cdm.a12_cust_tag_list_t2",
+            "cust_num",
+            "tmp_a10_cdm_corp_biz_info_t2_01",
+            "cust_num",
+        ) in _direct_edges(entries)
+
 
 class TestIntegrationUpdatePattern:
     """Test UPDATE statements commonly used in ETL tasks"""
