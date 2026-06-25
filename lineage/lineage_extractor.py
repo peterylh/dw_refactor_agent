@@ -1035,6 +1035,7 @@ def _lineage_column_arg(projection, column_name):
 
 
 def _projection_output_names(query_expr):
+    query_expr = _unwrap_query_expression(query_expr)
     if isinstance(query_expr, exp.Select):
         return [
             _projection_output_name(item) for item in query_expr.expressions
@@ -1046,6 +1047,7 @@ def _projection_output_names(query_expr):
 
 
 def _projection_items(query_expr):
+    query_expr = _unwrap_query_expression(query_expr)
     if isinstance(query_expr, exp.Select):
         return list(query_expr.expressions)
     if isinstance(query_expr, exp.SetOperation):
@@ -1251,6 +1253,7 @@ def _expand_query_star_projections(
     _cte_context=None,
     _visited=None,
 ):
+    query_expr = _unwrap_query_expression(query_expr)
     if isinstance(query_expr, exp.Select):
         return _expand_select_star_projections(
             query_expr,
@@ -1267,7 +1270,9 @@ def _expand_query_star_projections(
         right = expanded.args.get("expression")
         output_columns = _projection_output_names(left)
         has_unresolved_output = False
-        if isinstance(left, (exp.Select, exp.SetOperation)):
+        if isinstance(
+            _unwrap_query_expression(left), (exp.Select, exp.SetOperation)
+        ):
             (
                 expanded_left,
                 output_columns,
@@ -1282,7 +1287,9 @@ def _expand_query_star_projections(
                 _visited=_visited,
             )
             expanded.set("this", expanded_left)
-        if isinstance(right, (exp.Select, exp.SetOperation)):
+        if isinstance(
+            _unwrap_query_expression(right), (exp.Select, exp.SetOperation)
+        ):
             (
                 expanded_right,
                 _right_columns,
@@ -2196,9 +2203,9 @@ def _align_projection_names_to_targets(query_expr, target_columns):
 
 
 def _leftmost_set_operand(query_expr):
-    current = query_expr
+    current = _unwrap_query_expression(query_expr)
     while isinstance(current, exp.SetOperation):
-        current = current.args.get("this")
+        current = _unwrap_query_expression(current.args.get("this"))
     return current
 
 

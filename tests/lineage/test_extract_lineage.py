@@ -871,6 +871,79 @@ class TestIntegrationEtlToDwd:
             "rn",
         }
 
+    def test_ctas_parenthesized_union_has_output_columns(self):
+        schema = build_schema_from_texts(
+            [
+                """
+                CREATE TABLE i02_confer_flow_effic_index (
+                    data_dt DATE,
+                    org_num STRING,
+                    confer_num STRING,
+                    assure_amt DECIMAL(18, 2)
+                )
+                """,
+            ]
+        )
+        sql = """
+        CREATE TABLE IF NOT EXISTS temp_confer_org_flow AS
+        (
+          SELECT
+            data_dt,
+            org_num,
+            '00' AS flow_status,
+            0 AS index_1,
+            00 AS index_2
+          FROM i02_confer_flow_effic_index
+          GROUP BY data_dt, org_num
+        )
+        UNION ALL
+        (
+          SELECT
+            data_dt,
+            org_num,
+            '01' AS flow_status,
+            COUNT(DISTINCT confer_num) AS index_1,
+            SUM(assure_amt) AS index_2
+          FROM i02_confer_flow_effic_index
+          GROUP BY data_dt, org_num
+        )
+        """
+        diagnostics = []
+
+        entries = extract_lineage_from_sql(
+            sql,
+            "ctas_parenthesized_union.sql",
+            schema,
+            diagnostics=diagnostics,
+        )
+        output = build_lineage_output(entries, schema)
+
+        assert diagnostics == []
+        assert (
+            "i02_confer_flow_effic_index",
+            "data_dt",
+            "temp_confer_org_flow",
+            "data_dt",
+        ) in _direct_edges(entries)
+        assert (
+            "i02_confer_flow_effic_index",
+            "org_num",
+            "temp_confer_org_flow",
+            "org_num",
+        ) in _direct_edges(entries)
+        transient_table = next(
+            table
+            for table in output["tables"]
+            if table["name"] == "temp_confer_org_flow"
+        )
+        assert {column["name"] for column in transient_table["columns"]} == {
+            "data_dt",
+            "org_num",
+            "flow_status",
+            "index_1",
+            "index_2",
+        }
+
 
 class TestIntegrationUpdatePattern:
     """Test UPDATE statements commonly used in ETL tasks"""
