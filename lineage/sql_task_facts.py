@@ -53,23 +53,49 @@ def _is_table_drop(stmt) -> bool:
     )
 
 
+def _temp_name_is_valid(table_name: str) -> bool:
+    lowered = _short_table_name(table_name).lower()
+    return "temp" in lowered or "tmp" in lowered
+
+
 def _transient_table_facts(
     creates_by_table: dict[str, list[dict]],
-    drops_by_table: dict[str, list[int]],
+    drops_by_table: dict[str, list[dict]],
     source_file: str,
 ) -> list[dict]:
     transient_tables = []
     for table_key, creates in creates_by_table.items():
-        drop_indexes = drops_by_table.get(table_key, [])
+        drops = drops_by_table.get(table_key, [])
+        previous_create_index = -1
         for create in creates:
+            pre_drops = [
+                drop["index"]
+                for drop in drops
+                if previous_create_index < drop["index"] < create["index"]
+                and drop.get("if_exists")
+            ]
             later_drops = [
-                drop_index
-                for drop_index in drop_indexes
-                if drop_index > create["index"]
+                drop["index"]
+                for drop in drops
+                if drop["index"] > create["index"]
             ]
             is_temporary = bool(create.get("is_temporary"))
-            if not later_drops and not is_temporary:
+            has_pre_drop_create = bool(pre_drops) and _temp_name_is_valid(
+                create.get("table", "")
+            )
+            if (
+                not later_drops
+                and not is_temporary
+                and not has_pre_drop_create
+            ):
+                previous_create_index = create["index"]
                 continue
+            if later_drops:
+                reason = "created_then_dropped_in_same_task"
+            elif is_temporary:
+                reason = "temporary_create_without_post_drop"
+            else:
+                reason = "pre_drop_create_without_post_drop"
             fact = {
                 "name": create["table"],
                 "source_file": source_file,
@@ -80,11 +106,13 @@ def _transient_table_facts(
                 "is_ctas": create["is_ctas"],
                 "is_transient": True,
                 "dropped_in_same_task": bool(later_drops),
+                "pre_drop_statement_indexes": pre_drops,
+                "reason": reason,
             }
             if is_temporary:
                 fact["is_temporary"] = True
             transient_tables.append(fact)
-            break
+            previous_create_index = create["index"]
     return sorted(
         transient_tables,
         key=lambda item: (
@@ -98,7 +126,7 @@ def _transient_table_facts(
 def _finalize_task_facts(
     outputs: set[str],
     creates_by_table: dict[str, list[dict]],
-    drops_by_table: dict[str, list[int]],
+    drops_by_table: dict[str, list[dict]],
     source_file: str,
 ) -> dict:
     transient_tables = _transient_table_facts(
@@ -147,7 +175,12 @@ def extract_task_table_facts_from_statements(
         elif _is_table_drop(stmt):
             target = _target_short_name(stmt.this)
             if target:
-                drops_by_table[target.lower()].append(index)
+                drops_by_table[target.lower()].append(
+                    {
+                        "index": index,
+                        "if_exists": bool(stmt.args.get("exists")),
+                    }
+                )
 
         if isinstance(stmt, (exp.Insert, exp.Update, exp.Delete, exp.Merge)):
             outputs.add(_target_short_name(stmt.this))
@@ -186,7 +219,7 @@ def _parse_with_regex(sql_text: str, source_file: str) -> dict:
     for index, statement in enumerate(statements):
         create_match = re.search(
             r"\bCREATE\s+(TEMPORARY\s+)?TABLE\s+"
-            r"(?:IF\s+NOT\s+EXISTS\s+)?(?:`?\w+`?\.)?`?(\w+)`?",
+            r"(?:IF\s+NOT\s+EXISTS\s+)?((?:`?\w+`?\.)*`?\w+`?)",
             statement,
             flags=re.IGNORECASE,
         )
@@ -212,23 +245,28 @@ def _parse_with_regex(sql_text: str, source_file: str) -> dict:
                     outputs.add(target)
 
         drop_match = re.search(
-            r"\bDROP\s+TABLE\s+(?:IF\s+EXISTS\s+)?"
-            r"(?:`?\w+`?\.)?`?(\w+)`?",
+            r"\bDROP\s+TABLE\s+(IF\s+EXISTS\s+)?"
+            r"((?:`?\w+`?\.)*`?\w+`?)",
             statement,
             flags=re.IGNORECASE,
         )
         if drop_match:
-            target = _short_table_name(drop_match.group(1))
+            target = _short_table_name(drop_match.group(2))
             if target:
-                drops_by_table[target.lower()].append(index)
+                drops_by_table[target.lower()].append(
+                    {
+                        "index": index,
+                        "if_exists": bool(drop_match.group(1)),
+                    }
+                )
 
     write_patterns = [
         r"\bINSERT\s+(?:OVERWRITE\s+TABLE|INTO)\s+"
-        r"(?:`?\w+`?\.)?`?(\w+)`?",
-        r"\bUPDATE\s+(?:`?\w+`?\.)?`?(\w+)`?",
-        r"\bDELETE\s+FROM\s+(?:`?\w+`?\.)?`?(\w+)`?",
-        r"\bTRUNCATE\s+(?:TABLE\s+)?(?:`?\w+`?\.)?`?(\w+)`?",
-        r"\bMERGE\s+INTO\s+(?:`?\w+`?\.)?`?(\w+)`?",
+        r"((?:`?\w+`?\.)*`?\w+`?)",
+        r"\bUPDATE\s+((?:`?\w+`?\.)*`?\w+`?)",
+        r"\bDELETE\s+FROM\s+((?:`?\w+`?\.)*`?\w+`?)",
+        r"\bTRUNCATE\s+(?:TABLE\s+)?((?:`?\w+`?\.)*`?\w+`?)",
+        r"\bMERGE\s+INTO\s+((?:`?\w+`?\.)*`?\w+`?)",
     ]
     for pattern in write_patterns:
         for match in re.finditer(pattern, sql_text, flags=re.IGNORECASE):

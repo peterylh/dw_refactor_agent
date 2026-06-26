@@ -390,6 +390,9 @@ def build_asset_catalog(
                     file=_relative_asset_path(project_path, task_path),
                     expected_table=expected,
                     output_tables=outputs,
+                    transient_tables=task_table_facts_by_path[task_path][
+                        "transient_tables"
+                    ],
                     lineage_targets=lineage_targets.get(
                         relative_source,
                         set(),

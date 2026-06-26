@@ -1,3 +1,5 @@
+import assess.rules.definitions.task_sql_quality as task_sql_quality_defs
+import assess.rules.dimensions.task_sql_quality as task_sql_quality_dimension
 from assess.assessment_context import AssessmentContext
 from assess.project_facts.asset_catalog import build_asset_catalog
 from assess.rules.dimensions.task_sql_quality import score_code_quality
@@ -23,6 +25,30 @@ def _catalog_for_task_and_ddl(tmp_path, task_name, sql, ddl_files):
     (project_dir / "ddl").mkdir(parents=True)
     (project_dir / "tasks" / task_name).write_text(sql, encoding="utf-8")
     for ddl_name, ddl_sql in ddl_files.items():
+        (project_dir / "ddl" / ddl_name).write_text(
+            ddl_sql,
+            encoding="utf-8",
+        )
+    catalog = build_asset_catalog(
+        [],
+        None,
+        project_dir,
+        edges=[],
+        indirect_edges=[],
+    )
+    return AssessmentContext.from_facts(assets=catalog)
+
+
+def _catalog_for_tasks_and_ddl(tmp_path, task_sql_by_name, ddl_files=None):
+    project_dir = tmp_path / "demo"
+    (project_dir / "tasks").mkdir(parents=True)
+    for task_name, sql in task_sql_by_name.items():
+        (project_dir / "tasks" / task_name).write_text(
+            sql,
+            encoding="utf-8",
+        )
+    for ddl_name, ddl_sql in (ddl_files or {}).items():
+        (project_dir / "ddl").mkdir(parents=True, exist_ok=True)
         (project_dir / "ddl" / ddl_name).write_text(
             ddl_sql,
             encoding="utf-8",
@@ -115,13 +141,326 @@ FROM demo.tmp_sales_stage;
 
     result = score_code_quality(context)
 
-    assert result["score"] == 75.0
-    assert result["issues"][0]["rule_id"] == (
-        "CODE_TEMP_TABLE_DROPPED_IN_SAME_TASK"
+    assert result["score"] == 60.0
+    assert _issue_rule_ids(result) == {
+        "CODE_TEMP_TABLE_DROPPED_IN_SAME_TASK",
+        "CODE_TEMP_TABLE_CREATED_WITH_PRE_DROP_NOT_CLEANED",
+    }
+    missing_drop_issue = next(
+        issue
+        for issue in result["issues"]
+        if issue["rule_id"] == "CODE_TEMP_TABLE_DROPPED_IN_SAME_TASK"
     )
-    assert result["issues"][0]["severity"] == "中"
-    assert result["issues"][0]["remediation"]["strategy"] == (
+    assert missing_drop_issue["severity"] == "中"
+    assert missing_drop_issue["remediation"]["strategy"] == (
         "drop_temp_table_after_use"
+    )
+
+
+def test_score_code_quality_flags_pre_dropped_tmp_table_without_post_drop(
+    tmp_path,
+):
+    context = _catalog_for_task(
+        tmp_path,
+        "dws_sales.sql",
+        """
+DROP TABLE IF EXISTS demo.tmp_sales_stage;
+
+CREATE TABLE demo.tmp_sales_stage AS
+SELECT order_id, amount
+FROM demo.dwd_sales;
+
+INSERT INTO demo.dws_sales
+SELECT order_id, amount
+FROM demo.tmp_sales_stage;
+""",
+    )
+
+    result = score_code_quality(context)
+
+    assert "CODE_TEMP_TABLE_CREATED_WITH_PRE_DROP_NOT_CLEANED" in (
+        _issue_rule_ids(result)
+    )
+    failed = [
+        check
+        for check in result["checks"]
+        if check["rule_id"]
+        == "CODE_TEMP_TABLE_CREATED_WITH_PRE_DROP_NOT_CLEANED"
+        and not check["passed"]
+    ]
+    assert failed == [
+        {
+            "id": failed[0]["id"],
+            "rule_id": "CODE_TEMP_TABLE_CREATED_WITH_PRE_DROP_NOT_CLEANED",
+            "target": {
+                "type": "table",
+                "name": "tmp_sales_stage",
+            },
+            "passed": False,
+            "expected": "DROP IF EXISTS只能清理历史残留，CREATE后需在同一作业后续DROP",
+            "actual": "CREATE之后未找到后续DROP清理",
+            "evidence": {
+                "file": "demo/tasks/dws_sales.sql",
+                "table": "tmp_sales_stage",
+                "reason": "pre_drop_create_without_post_drop",
+                "created_statement_index": 1,
+                "pre_drop_statement_indexes": [0],
+                "post_create_drop_statement_indexes": [],
+            },
+            "message": "DROP IF EXISTS发生在CREATE之前，不能证明本次临时表生命周期闭合",
+        }
+    ]
+
+
+def test_score_code_quality_flags_cross_task_tmp_table_dependency(tmp_path):
+    context = _catalog_for_tasks_and_ddl(
+        tmp_path,
+        {
+            "build_tmp_sales.sql": """
+DROP TABLE IF EXISTS demo.tmp_sales_stage;
+
+CREATE TABLE demo.tmp_sales_stage AS
+SELECT order_id, amount
+FROM demo.dwd_sales;
+""",
+            "dws_sales.sql": """
+INSERT INTO demo.dws_sales
+SELECT order_id, amount
+FROM demo.tmp_sales_stage;
+""",
+        },
+    )
+
+    result = score_code_quality(context)
+
+    assert "CODE_TEMP_TABLE_USED_ACROSS_TASKS" in _issue_rule_ids(result)
+    failed = [
+        check
+        for check in result["checks"]
+        if check["rule_id"] == "CODE_TEMP_TABLE_USED_ACROSS_TASKS"
+        and not check["passed"]
+    ]
+    assert len(failed) == 1
+    assert failed[0]["target"] == {
+        "type": "table",
+        "name": "tmp_sales_stage",
+    }
+    assert failed[0]["evidence"] == {
+        "file": "demo/tasks/build_tmp_sales.sql",
+        "table": "tmp_sales_stage",
+        "reason": "pre_drop_create_without_post_drop",
+        "creator_task": "demo/tasks/build_tmp_sales.sql",
+        "reader_tasks": ["demo/tasks/dws_sales.sql"],
+        "created_statement_index": 1,
+        "pre_drop_statement_indexes": [0],
+        "post_create_drop_statement_indexes": [],
+    }
+    assert failed[0]["message"] == (
+        "临时/过程表被其他task读取，形成跨task隐式依赖"
+    )
+
+
+def test_score_code_quality_flags_repeated_same_name_unclosed_lifecycle(
+    tmp_path,
+):
+    context = _catalog_for_tasks_and_ddl(
+        tmp_path,
+        {
+            "build_tmp_sales.sql": """
+DROP TABLE IF EXISTS demo.tmp_sales_stage;
+
+CREATE TABLE demo.tmp_sales_stage AS
+SELECT order_id, amount
+FROM demo.dwd_sales;
+
+DROP TABLE IF EXISTS demo.tmp_sales_stage;
+
+CREATE TABLE demo.tmp_sales_stage AS
+SELECT order_id, amount
+FROM demo.dwd_sales_retry;
+""",
+            "dws_sales.sql": """
+INSERT INTO demo.dws_sales
+SELECT order_id, amount
+FROM demo.tmp_sales_stage;
+""",
+        },
+    )
+
+    result = score_code_quality(context)
+
+    assert {
+        "CODE_TEMP_TABLE_CREATED_WITH_PRE_DROP_NOT_CLEANED",
+        "CODE_TEMP_TABLE_USED_ACROSS_TASKS",
+    }.issubset(_issue_rule_ids(result))
+    cross_task = [
+        check
+        for check in result["checks"]
+        if check["rule_id"] == "CODE_TEMP_TABLE_USED_ACROSS_TASKS"
+        and not check["passed"]
+    ]
+    assert len(cross_task) == 1
+    assert cross_task[0]["evidence"]["created_statement_index"] == 3
+    assert cross_task[0]["evidence"]["pre_drop_statement_indexes"] == [2]
+
+
+def test_score_code_quality_uses_transient_facts_for_tmp_lifecycle(
+    tmp_path,
+    monkeypatch,
+):
+    context = _catalog_for_tasks_and_ddl(
+        tmp_path,
+        {
+            "build_tmp_sales.sql": """
+DROP TABLE IF EXISTS demo.tmp_sales_stage;
+
+CREATE TABLE demo.tmp_sales_stage AS
+SELECT order_id, amount
+FROM demo.dwd_sales;
+""",
+            "dws_sales.sql": """
+INSERT INTO demo.dws_sales
+SELECT order_id, amount
+FROM demo.tmp_sales_stage;
+""",
+        },
+    )
+
+    monkeypatch.setattr(
+        task_sql_quality_dimension,
+        "_scan_task_sql",
+        lambda sql: ([], [], []),
+    )
+
+    result = score_code_quality(context)
+
+    assert {
+        "CODE_TEMP_TABLE_CREATED_WITH_PRE_DROP_NOT_CLEANED",
+        "CODE_TEMP_TABLE_USED_ACROSS_TASKS",
+    }.issubset(_issue_rule_ids(result))
+
+
+def test_score_code_quality_cross_task_fallback_handles_qualified_names(
+    tmp_path,
+    monkeypatch,
+):
+    context = _catalog_for_tasks_and_ddl(
+        tmp_path,
+        {
+            "build_tmp_sales.sql": """
+-- FORCE_FALLBACK
+DROP TABLE IF EXISTS internal.shop_dm.tmp_sales_stage;
+
+CREATE TABLE internal.shop_dm.tmp_sales_stage AS
+SELECT order_id, amount
+FROM internal.shop_dm.dwd_sales;
+""",
+            "dws_sales.sql": """
+-- FORCE_FALLBACK
+INSERT INTO internal.shop_dm.dws_sales
+SELECT order_id, amount
+FROM internal.shop_dm.tmp_sales_stage;
+""",
+        },
+    )
+    original_parse = task_sql_quality_defs._parse_statements
+
+    def parse_with_forced_fallback(sql):
+        if "FORCE_FALLBACK" in sql:
+            return []
+        return original_parse(sql)
+
+    monkeypatch.setattr(
+        task_sql_quality_defs,
+        "_parse_statements",
+        parse_with_forced_fallback,
+    )
+
+    result = score_code_quality(context)
+
+    failed = [
+        check
+        for check in result["checks"]
+        if check["rule_id"] == "CODE_TEMP_TABLE_USED_ACROSS_TASKS"
+        and not check["passed"]
+    ]
+    assert len(failed) == 1
+    assert failed[0]["evidence"]["table"] == "tmp_sales_stage"
+    assert failed[0]["evidence"]["reader_tasks"] == [
+        "demo/tasks/dws_sales.sql"
+    ]
+    assert failed[0]["evidence"]["reason"] == (
+        "pre_drop_create_without_post_drop"
+    )
+
+
+def test_score_code_quality_does_not_flag_cross_task_tmp_name_without_transient_fact(
+    tmp_path,
+):
+    context = _catalog_for_tasks_and_ddl(
+        tmp_path,
+        {
+            "build_tmp_sales.sql": """
+CREATE TABLE demo.tmp_sales_stage AS
+SELECT order_id, amount
+FROM demo.dwd_sales;
+""",
+            "dws_sales.sql": """
+INSERT INTO demo.dws_sales
+SELECT order_id, amount
+FROM demo.tmp_sales_stage;
+""",
+        },
+    )
+
+    result = score_code_quality(context)
+
+    assert "CODE_TEMP_TABLE_CREATED_WITH_PRE_DROP_NOT_CLEANED" not in (
+        _issue_rule_ids(result)
+    )
+    assert "CODE_TEMP_TABLE_USED_ACROSS_TASKS" not in _issue_rule_ids(result)
+
+
+def test_score_code_quality_does_not_flag_governed_tmp_named_table(
+    tmp_path,
+):
+    context = _catalog_for_tasks_and_ddl(
+        tmp_path,
+        {
+            "build_tmp_sales.sql": """
+DROP TABLE IF EXISTS demo.tmp_sales_stage;
+
+CREATE TABLE demo.tmp_sales_stage AS
+SELECT order_id, amount
+FROM demo.dwd_sales;
+""",
+            "dws_sales.sql": """
+INSERT INTO demo.dws_sales
+SELECT order_id, amount
+FROM demo.tmp_sales_stage;
+""",
+        },
+        {
+            "tmp_sales_stage.sql": """
+CREATE TABLE demo.tmp_sales_stage (
+    order_id BIGINT,
+    amount DECIMAL(18, 2)
+) ENGINE=OLAP
+DUPLICATE KEY(order_id)
+DISTRIBUTED BY HASH(order_id) BUCKETS 1
+PROPERTIES ("replication_num" = "1");
+"""
+        },
+    )
+
+    result = score_code_quality(context)
+
+    assert "CODE_TEMP_TABLE_CREATED_WITH_PRE_DROP_NOT_CLEANED" not in (
+        _issue_rule_ids(result)
+    )
+    assert "CODE_TEMP_TABLE_USED_ACROSS_TASKS" not in _issue_rule_ids(result)
+    assert "CODE_TEMP_TABLE_DROPPED_IN_SAME_TASK" not in _issue_rule_ids(
+        result
     )
 
 

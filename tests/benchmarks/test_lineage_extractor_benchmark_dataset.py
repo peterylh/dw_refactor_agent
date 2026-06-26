@@ -74,7 +74,7 @@ def test_high_complexity_dataset_generates_transient_table_tasks(tmp_path):
         path.read_text(encoding="utf-8") for path in dataset.task_files
     ]
 
-    assert any("CREATE TEMPORARY TABLE" in text for text in task_texts)
+    assert any("DROP TABLE IF EXISTS" in text for text in task_texts)
 
     schema = build_schema_from_texts(
         [path.read_text(encoding="utf-8") for path in dataset.ddl_files],
@@ -84,7 +84,7 @@ def test_high_complexity_dataset_generates_transient_table_tasks(tmp_path):
     task_file = next(
         path
         for path in dataset.task_files
-        if "CREATE TEMPORARY TABLE" in path.read_text(encoding="utf-8")
+        if "DROP TABLE IF EXISTS" in path.read_text(encoding="utf-8")
     )
     result = extract_lineage_from_task_files(
         [task_file],
@@ -105,9 +105,7 @@ def test_stress_complexity_dataset_generates_transient_table_chains(tmp_path):
         path.read_text(encoding="utf-8") for path in dataset.task_files
     ]
 
-    assert any(
-        text.count("CREATE TEMPORARY TABLE") >= 2 for text in task_texts
-    )
+    assert any(text.count("DROP TABLE IF EXISTS") >= 2 for text in task_texts)
 
     schema = build_schema_from_texts(
         [path.read_text(encoding="utf-8") for path in dataset.ddl_files],
@@ -117,8 +115,7 @@ def test_stress_complexity_dataset_generates_transient_table_chains(tmp_path):
     task_file = next(
         path
         for path in dataset.task_files
-        if path.read_text(encoding="utf-8").count("CREATE TEMPORARY TABLE")
-        >= 2
+        if path.read_text(encoding="utf-8").count("DROP TABLE IF EXISTS") >= 2
     )
     result = extract_lineage_from_task_files(
         [task_file],

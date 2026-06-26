@@ -197,8 +197,10 @@ score = 通过检查数 / 总检查数 * 100
 
 | 检查项 | 口径 |
 | --- | --- |
-| 临时表名包含 `temp` 或 `tmp` | Task 内 `CREATE TABLE` 的非目标表视为中间临时表，名称必须包含 `temp` 或 `tmp`。 |
-| 临时表在同一作业清理 | 临时表必须在创建后的后续语句中被 `DROP TABLE` 清理。 |
+| 临时表名包含 `temp` 或 `tmp` | Task 内 `CREATE TABLE` 的非目标表视为中间临时表，名称必须包含 `temp` 或 `tmp`；已存在正式 DDL/model 的表不按临时表处理。 |
+| 临时表在同一作业清理 | 临时表必须在创建后的后续语句中被 `DROP TABLE` 清理；`CREATE` 之前的 `DROP IF EXISTS` 只视为历史残留清理。 |
+| DROP 后 CREATE 伪临时表生命周期闭合 | 对 `DROP TABLE IF EXISTS tmp_xxx` 后又 `CREATE TABLE tmp_xxx`、且 `CREATE` 后没有后续 `DROP` 的非治理表报 issue。 |
+| 临时/过程表不跨 task 复用 | 对上述未闭合的临时/过程表，如果其他 task 读取该表，报出创建方 task、读取方 task 和表名。 |
 | 写入型语句不使用 `SELECT *` | `INSERT` 和 `CREATE TABLE AS SELECT` 等写入型语句必须显式列出字段；普通只读 `SELECT *` 不计入。 |
 
 ## 输出结构

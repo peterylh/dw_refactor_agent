@@ -410,16 +410,20 @@ def _dwd_stress_task_sql(index, profile):
     tmp_enriched_qualified = _q(tmp_enriched)
     target = _q(_dwd_table(index))
     columns = _dwd_columns()
-    return """CREATE TEMPORARY TABLE {tmp_base} AS
+    return """DROP TABLE IF EXISTS {tmp_base};
+CREATE TABLE {tmp_base} AS
 {base_select};
 
-CREATE TEMPORARY TABLE {tmp_enriched} AS
+DROP TABLE IF EXISTS {tmp_enriched};
+CREATE TABLE {tmp_enriched} AS
 SELECT
 {enriched_columns}
 FROM {tmp_base} b
 WHERE b.event_date >= '2025-01-01';
 
-{insert_sql}""".format(
+{insert_sql}
+DROP TABLE IF EXISTS {tmp_enriched};
+DROP TABLE IF EXISTS {tmp_base};""".format(
         tmp_base=tmp_base_qualified,
         base_select=_dwd_normal_select_sql(index, profile),
         tmp_enriched=tmp_enriched_qualified,
@@ -501,10 +505,12 @@ def _dws_stress_task_sql(index, profile):
     ref = _q(_dwd_table((index + 2) % profile.dwd_tables))
     target = _q(_dws_table(index))
     columns = _dws_columns()
-    return """CREATE TEMPORARY TABLE {tmp_base} AS
+    return """DROP TABLE IF EXISTS {tmp_base};
+CREATE TABLE {tmp_base} AS
 {base_select};
 
-CREATE TEMPORARY TABLE {tmp_enriched} AS
+DROP TABLE IF EXISTS {tmp_enriched};
+CREATE TABLE {tmp_enriched} AS
 SELECT
     b.stat_date,
     b.customer_id,
@@ -531,7 +537,9 @@ LEFT JOIN {ref} ref
     ON b.product_id = ref.product_id
 WHERE b.order_count >= 0;
 
-{insert_sql}""".format(
+{insert_sql}
+DROP TABLE IF EXISTS {tmp_enriched};
+DROP TABLE IF EXISTS {tmp_base};""".format(
         tmp_base=tmp_base_qualified,
         base_select=_dws_normal_select_sql(index, profile),
         tmp_enriched=tmp_enriched_qualified,
@@ -612,10 +620,12 @@ def _ads_stress_task_sql(index, profile):
     ref = _q(_dws_table((index + 2) % profile.dws_tables))
     target = _q(_ads_table(index))
     columns = _ads_columns()
-    return """CREATE TEMPORARY TABLE {tmp_base} AS
+    return """DROP TABLE IF EXISTS {tmp_base};
+CREATE TABLE {tmp_base} AS
 {base_select};
 
-CREATE TEMPORARY TABLE {tmp_enriched} AS
+DROP TABLE IF EXISTS {tmp_enriched};
+CREATE TABLE {tmp_enriched} AS
 SELECT
     b.report_date,
     b.customer_id,
@@ -638,7 +648,9 @@ LEFT JOIN {ref} ref
     ON b.customer_id = ref.customer_id
 WHERE b.report_date >= '2025-01-01';
 
-{insert_sql}""".format(
+{insert_sql}
+DROP TABLE IF EXISTS {tmp_enriched};
+DROP TABLE IF EXISTS {tmp_base};""".format(
         tmp_base=tmp_base_qualified,
         base_select=_ads_normal_select_sql(index, profile),
         tmp_enriched=tmp_enriched_qualified,
@@ -689,10 +701,12 @@ FROM {source_table} t""".format(
 
 def _transient_task_sql(tmp_table, target, columns, select_sql):
     tmp_table_qualified = _q(tmp_table)
-    return """CREATE TEMPORARY TABLE {tmp_table} AS
+    return """DROP TABLE IF EXISTS {tmp_table};
+CREATE TABLE {tmp_table} AS
 {select_sql};
 
-{insert_sql}""".format(
+{insert_sql}
+DROP TABLE IF EXISTS {tmp_table};""".format(
         tmp_table=tmp_table_qualified,
         select_sql=select_sql,
         insert_sql=_insert_from_table_sql(

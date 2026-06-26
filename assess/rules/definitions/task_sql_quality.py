@@ -27,6 +27,10 @@ CODE_RULE_NO_SELECT_STAR = "CODE_NO_SELECT_STAR_IN_WRITE"
 CODE_RULE_CARTESIAN_JOIN_RISK = "CODE_CARTESIAN_JOIN_RISK"
 CODE_RULE_DWS_JOIN_BEFORE_AGGREGATION = "CODE_DWS_JOIN_BEFORE_AGGREGATION"
 CODE_RULE_FILTER_COLUMN_WRAPPED = "CODE_FILTER_COLUMN_WRAPPED_IN_FUNCTION"
+CODE_RULE_TEMP_TABLE_PRE_DROP_NOT_CLEANED = (
+    "CODE_TEMP_TABLE_CREATED_WITH_PRE_DROP_NOT_CLEANED"
+)
+CODE_RULE_TEMP_TABLE_USED_ACROSS_TASKS = "CODE_TEMP_TABLE_USED_ACROSS_TASKS"
 
 CODE_QUALITY_RULES = {
     CODE_RULE_TEMP_TABLE_NAME: rule_meta(
@@ -77,6 +81,26 @@ CODE_QUALITY_RULES = {
         strategy="rewrite_sargable_filter",
         edit_scope=["tasks"],
     ),
+    CODE_RULE_TEMP_TABLE_PRE_DROP_NOT_CLEANED: rule_meta(
+        name="DROP后CREATE临时/过程表需后续清理",
+        severity=SEVERITY_MEDIUM,
+        title="伪临时表生命周期未闭合",
+        remediation_summary=(
+            "在CREATE后的同一作业补充DROP TABLE，或改为正式中间层资产"
+        ),
+        strategy="close_pseudo_temp_table_lifecycle",
+        edit_scope=["tasks", "models", "ddl"],
+    ),
+    CODE_RULE_TEMP_TABLE_USED_ACROSS_TASKS: rule_meta(
+        name="临时/过程表不跨task复用",
+        severity=SEVERITY_HIGH,
+        title="临时/过程表形成跨task依赖",
+        remediation_summary=(
+            "将跨task复用的临时/过程表治理为正式中间层资产，或收敛到同一task内"
+        ),
+        strategy="promote_pseudo_temp_table_to_governed_asset",
+        edit_scope=["tasks", "models", "ddl"],
+    ),
 }
 
 
@@ -92,11 +116,13 @@ class CodeTempTableNameHasTempOrTmpRule(AssessRule):
         rule_context: dict,
     ) -> list[dict]:
         checks = []
+        governed_tables = rule_context.get("governed_tables") or set()
         for create in target["creates"]:
             table_name = _short_table_name(create.get("table") or "")
             if (
                 not table_name
                 or table_name.lower() == target["expected_table"].lower()
+                or table_name.lower() in governed_tables
             ):
                 continue
             checks.append(self._check(target["file_name"], table_name))
@@ -132,11 +158,13 @@ class CodeTempTableDroppedInSameTaskRule(AssessRule):
         rule_context: dict,
     ) -> list[dict]:
         checks = []
+        governed_tables = rule_context.get("governed_tables") or set()
         for create in target["creates"]:
             table_name = _short_table_name(create.get("table") or "")
             if (
                 not table_name
                 or table_name.lower() == target["expected_table"].lower()
+                or table_name.lower() in governed_tables
             ):
                 continue
             checks.append(
@@ -312,6 +340,117 @@ class CodeFilterColumnWrappedInFunctionRule(_CodeIssueRule):
         ]
 
 
+class CodeTempTableCreatedWithPreDropNotCleanedRule(AssessRule):
+    rule_id = CODE_RULE_TEMP_TABLE_PRE_DROP_NOT_CLEANED
+    dimension = "code_quality"
+    domain = "task"
+    target = "sql"
+
+    def evaluate(
+        self,
+        target: dict,
+        rule_context: dict,
+    ) -> list[dict]:
+        return [
+            self._check(target["file_name"], issue)
+            for issue in _unclosed_transient_table_issues(
+                target,
+                rule_context.get("governed_tables") or set(),
+                allowed_reasons={"pre_drop_create_without_post_drop"},
+            )
+        ]
+
+    def _check(self, file_name: str, issue: dict) -> dict:
+        table_name = issue["table"]
+        return make_check(
+            rule_id=self.rule_id,
+            target_type="table",
+            target=table_name,
+            passed=False,
+            expected="DROP IF EXISTS只能清理历史残留，CREATE后需在同一作业后续DROP",
+            actual="CREATE之后未找到后续DROP清理",
+            evidence={
+                "file": file_name,
+                "table": table_name,
+                "reason": issue["reason"],
+                "created_statement_index": issue["created_statement_index"],
+                "pre_drop_statement_indexes": issue[
+                    "pre_drop_statement_indexes"
+                ],
+                "post_create_drop_statement_indexes": issue[
+                    "post_create_drop_statement_indexes"
+                ],
+            },
+            message="DROP IF EXISTS发生在CREATE之前，不能证明本次临时表生命周期闭合",
+        )
+
+
+class CodeTempTableUsedAcrossTasksRule(AssessRule):
+    rule_id = CODE_RULE_TEMP_TABLE_USED_ACROSS_TASKS
+    dimension = "code_quality"
+    domain = "task"
+    target = "sql"
+
+    def evaluate(
+        self,
+        target: dict,
+        rule_context: dict,
+    ) -> list[dict]:
+        reader_tasks_by_table = rule_context.get("reader_tasks_by_table") or {}
+        checks = []
+        for issue in _unclosed_transient_table_issues(
+            target,
+            rule_context.get("governed_tables") or set(),
+        ):
+            table_name = issue["table"]
+            reader_tasks = [
+                task
+                for task in reader_tasks_by_table.get(table_name.lower(), [])
+                if task != target["file_name"]
+            ]
+            if not reader_tasks:
+                continue
+            checks.append(
+                self._check(
+                    target["file_name"],
+                    issue,
+                    sorted(reader_tasks),
+                )
+            )
+        return checks
+
+    def _check(
+        self,
+        file_name: str,
+        issue: dict,
+        reader_tasks: list[str],
+    ) -> dict:
+        table_name = issue["table"]
+        return make_check(
+            rule_id=self.rule_id,
+            target_type="table",
+            target=table_name,
+            passed=False,
+            expected="临时/过程表只在同一task内创建、使用并清理",
+            actual="临时/过程表被其他task读取",
+            evidence={
+                "file": file_name,
+                "table": table_name,
+                "reason": issue["reason"],
+                "creator_task": file_name,
+                "reader_tasks": reader_tasks,
+                "created_statement_index": issue["created_statement_index"],
+                "pre_drop_statement_indexes": issue[
+                    "pre_drop_statement_indexes"
+                ],
+                "post_create_drop_statement_indexes": issue[
+                    "post_create_drop_statement_indexes"
+                ],
+            },
+            message="临时/过程表被其他task读取，形成跨task隐式依赖",
+        )
+
+
 CODE_QUALITY_RULE_CLASSES = [
     CodeTempTableNameHasTempOrTmpRule,
     CodeTempTableDroppedInSameTaskRule,
@@ -319,6 +458,8 @@ CODE_QUALITY_RULE_CLASSES = [
     CodeCartesianJoinRiskRule,
     CodeDwsJoinBeforeAggregationRule,
     CodeFilterColumnWrappedInFunctionRule,
+    CodeTempTableCreatedWithPreDropNotCleanedRule,
+    CodeTempTableUsedAcrossTasksRule,
 ]
 
 CODE_QUALITY_RULE_CLASSES_BY_ID = {
@@ -411,6 +552,16 @@ def _is_table_create(stmt) -> bool:
     return (
         isinstance(stmt, exp.Create)
         and str(stmt.args.get("kind") or "").upper() == "TABLE"
+    )
+
+
+def _is_temporary_create(stmt) -> bool:
+    properties = stmt.args.get("properties")
+    if not properties:
+        return False
+    return any(
+        isinstance(prop, exp.TemporaryProperty)
+        for prop in properties.expressions or []
     )
 
 
@@ -733,6 +884,112 @@ def _is_dws_task(task: dict, asset_catalog: dict) -> bool:
     return str(table_asset.get("layer") or "").upper() == "DWS"
 
 
+def _unclosed_transient_table_issues(
+    target: dict,
+    governed_tables: set[str],
+    allowed_reasons: set[str] | None = None,
+) -> list[dict]:
+    issues = []
+    for table in target.get("transient_tables") or []:
+        table_name = _short_table_name(
+            table.get("name") or table.get("table") or ""
+        )
+        table_key = table_name.lower()
+        if not table_name or table_key in governed_tables:
+            continue
+        if table.get("dropped_in_same_task") or (
+            table.get("dropped_statement_index") is not None
+        ):
+            continue
+        reason = str(
+            table.get("reason") or "transient_table_without_post_drop"
+        )
+        if allowed_reasons is not None and reason not in allowed_reasons:
+            continue
+
+        issues.append(
+            {
+                "table": table_name,
+                "reason": reason,
+                "created_statement_index": table.get(
+                    "created_statement_index"
+                ),
+                "pre_drop_statement_indexes": list(
+                    table.get("pre_drop_statement_indexes") or []
+                ),
+                "post_create_drop_statement_indexes": [],
+            }
+        )
+    return issues
+
+
+def _target_table_nodes(target_expr) -> set[int]:
+    if isinstance(target_expr, exp.Schema):
+        target_expr = target_expr.this
+    if isinstance(target_expr, exp.Table):
+        return {id(target_expr)}
+    return set()
+
+
+def _statement_target_table_nodes(stmt) -> set[int]:
+    if isinstance(stmt, exp.Insert):
+        return _target_table_nodes(stmt.this)
+    if _is_table_create(stmt) or _is_table_drop(stmt):
+        return _target_table_nodes(stmt.this)
+    if isinstance(stmt, (exp.Update, exp.Delete, exp.Merge)):
+        return _target_table_nodes(stmt.this)
+    if isinstance(stmt, exp.TruncateTable):
+        nodes = set()
+        for table in stmt.expressions:
+            nodes.update(_target_table_nodes(table))
+        return nodes
+    return set()
+
+
+def _cte_names(statement) -> set[str]:
+    names = set()
+    for cte in statement.find_all(exp.CTE):
+        name = _short_table_name(cte.alias_or_name)
+        if name:
+            names.add(name.lower())
+    return names
+
+
+def _fallback_scan_source_tables(sql: str) -> set[str]:
+    source_tables = set()
+    sql = _strip_string_literals(_strip_line_comments(sql))
+    pattern = (
+        r"\b(?:FROM|JOIN)\s+"
+        r"((?:`?\w+`?\.)*`?\w+`?)"
+    )
+    for match in re.finditer(pattern, sql, flags=re.IGNORECASE):
+        table_name = _short_table_name(match.group(1))
+        if table_name:
+            source_tables.add(table_name)
+    return source_tables
+
+
+def _scan_task_source_tables(sql: str) -> set[str]:
+    statements = _parse_statements(sql)
+    if not statements:
+        return _fallback_scan_source_tables(sql)
+
+    source_tables = set()
+    for statement in statements:
+        target_node_ids = _statement_target_table_nodes(statement)
+        cte_names = _cte_names(statement)
+        for table in statement.find_all(exp.Table):
+            table_name = _short_table_name(table.name)
+            if not table_name:
+                continue
+            if id(table) in target_node_ids:
+                continue
+            if table_name.lower() in cte_names:
+                continue
+            source_tables.add(table_name)
+    return source_tables
+
+
 def _fallback_scan(sql: str) -> tuple[list[dict], list[dict], list[dict]]:
     creates = []
     drops = []
@@ -742,14 +999,20 @@ def _fallback_scan(sql: str) -> tuple[list[dict], list[dict], list[dict]]:
     ]
     for index, statement in enumerate(statements):
         create_match = re.search(
-            r"\bCREATE\s+(?:TEMPORARY\s+)?TABLE\s+"
-            r"(?:IF\s+NOT\s+EXISTS\s+)?(?:`?\w+`?\.)?`?(\w+)`?",
+            r"\bCREATE\s+(TEMPORARY\s+)?TABLE\s+"
+            r"(?:IF\s+NOT\s+EXISTS\s+)?((?:`?\w+`?\.)*`?\w+`?)",
             statement,
             flags=re.IGNORECASE,
         )
         if create_match:
-            table = _short_table_name(create_match.group(1))
-            creates.append({"table": table, "index": index})
+            table = _short_table_name(create_match.group(2))
+            creates.append(
+                {
+                    "table": table,
+                    "index": index,
+                    "is_temporary": bool(create_match.group(1)),
+                }
+            )
             is_ctas = bool(
                 re.search(
                     r"\bAS\s+SELECT\b",
@@ -770,16 +1033,17 @@ def _fallback_scan(sql: str) -> tuple[list[dict], list[dict], list[dict]]:
                 )
 
         drop_match = re.search(
-            r"\bDROP\s+TABLE\s+(?:IF\s+EXISTS\s+)?"
-            r"(?:`?\w+`?\.)?`?(\w+)`?",
+            r"\bDROP\s+TABLE\s+(IF\s+EXISTS\s+)?"
+            r"((?:`?\w+`?\.)*`?\w+`?)",
             statement,
             flags=re.IGNORECASE,
         )
         if drop_match:
             drops.append(
                 {
-                    "table": _short_table_name(drop_match.group(1)),
+                    "table": _short_table_name(drop_match.group(2)),
                     "index": index,
+                    "if_exists": bool(drop_match.group(1)),
                 }
             )
 
@@ -820,6 +1084,7 @@ def _scan_task_sql(sql: str) -> tuple[list[dict], list[dict], list[dict]]:
                 {
                     "table": _target_table_name(stmt.this),
                     "index": index,
+                    "is_temporary": _is_temporary_create(stmt),
                 }
             )
         elif _is_table_drop(stmt):
@@ -827,6 +1092,7 @@ def _scan_task_sql(sql: str) -> tuple[list[dict], list[dict], list[dict]]:
                 {
                     "table": _target_table_name(stmt.this),
                     "index": index,
+                    "if_exists": bool(stmt.args.get("exists")),
                 }
             )
 

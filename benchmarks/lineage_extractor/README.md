@@ -33,10 +33,12 @@ much work each generated task contains.
 | `high` | deterministic subsets of tasks create one temporary table before the final insert | transient table overhead |
 | `stress` | deterministic subsets of tasks create two-step temporary table chains before the final insert | transient lineage stress |
 
-Temporary table profiles use `CREATE TEMPORARY TABLE ... AS SELECT ...` inside
-the task file. The final target insert reads from the generated temporary
-table, so the extractor must parse multi-statement tasks, preserve transient
-table metadata, and rebuild final output from task-level lineage entries.
+Temporary table profiles use `DROP TABLE IF EXISTS tmp_xxx` followed by
+`CREATE TABLE tmp_xxx AS SELECT ...` inside the task file, and clean the
+temporary table after the final target insert. The final target insert reads
+from the generated temporary table, so the extractor must parse
+multi-statement tasks, preserve transient table metadata, and rebuild final
+output from task-level lineage entries.
 
 ## Running
 

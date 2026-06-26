@@ -37,13 +37,17 @@ def test_extract_lineage_missing_ddl_ignores_transient_tables(tmp_path):
         tmp_path,
         "dws_orders.sql",
         """
-        CREATE TEMPORARY TABLE shop_dm.tmp_orders_stage AS
+        DROP TABLE IF EXISTS shop_dm.tmp_orders_stage;
+
+        CREATE TABLE shop_dm.tmp_orders_stage AS
         SELECT order_id
         FROM shop_dm.dwd_orders;
 
         INSERT INTO shop_dm.dws_orders(order_id)
         SELECT order_id
         FROM shop_dm.tmp_orders_stage;
+
+        DROP TABLE IF EXISTS shop_dm.tmp_orders_stage;
         """,
     )
     schema = {
