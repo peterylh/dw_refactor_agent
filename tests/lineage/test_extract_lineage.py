@@ -2721,6 +2721,63 @@ class TestEdgeCases:
             ("tmp_2", "status", "tmp_3", "status"),
         }
 
+    def test_create_table_like_registers_schema_for_later_star(self):
+        schema = build_schema_from_texts(
+            [
+                """
+                CREATE TABLE cdm.a11_unite_busi_oppor_info (
+                    busi_oppor_id BIGINT,
+                    cust_id STRING,
+                    update_time DATETIME
+                )
+                """,
+            ]
+        )
+        sql = """
+        DROP TABLE IF EXISTS tmp_a11_unite_busi_oppor_info_12_20260601 FORCE;
+
+        CREATE TABLE IF NOT EXISTS tmp_a11_unite_busi_oppor_info_12_20260601
+        LIKE cdm.a11_unite_busi_oppor_info;
+
+        CREATE TABLE tmp_like_out AS
+        SELECT *
+        FROM tmp_a11_unite_busi_oppor_info_12_20260601;
+        """
+        diagnostics = []
+
+        entries = extract_lineage_from_sql(
+            sql,
+            "tmp_like_star.sql",
+            schema,
+            diagnostics=diagnostics,
+        )
+
+        assert not [
+            diagnostic
+            for diagnostic in diagnostics
+            if diagnostic.get("stage") == "lineage_star_expand"
+        ]
+        assert _direct_edges(entries) == {
+            (
+                "tmp_a11_unite_busi_oppor_info_12_20260601",
+                "busi_oppor_id",
+                "tmp_like_out",
+                "busi_oppor_id",
+            ),
+            (
+                "tmp_a11_unite_busi_oppor_info_12_20260601",
+                "cust_id",
+                "tmp_like_out",
+                "cust_id",
+            ),
+            (
+                "tmp_a11_unite_busi_oppor_info_12_20260601",
+                "update_time",
+                "tmp_like_out",
+                "update_time",
+            ),
+        }
+
     def test_select_into(self):
         sql = """
         SELECT order_id, total_amount

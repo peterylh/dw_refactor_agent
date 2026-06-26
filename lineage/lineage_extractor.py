@@ -454,6 +454,19 @@ def _schema_columns_for_table(schema, table_name):
     return None
 
 
+def _schema_column_map_for_table(schema, table_name):
+    for _catalog, _database, _table, columns in _iter_matching_schema_tables(
+        schema, table_name
+    ):
+        if columns:
+            return {
+                _canonical_column(col_name): col_type
+                for col_name, col_type in columns.items()
+                if _canonical_column(col_name)
+            }
+    return None
+
+
 def _is_column_map(value):
     return isinstance(value, dict) and all(
         not isinstance(col_type, dict) for col_type in value.values()
@@ -796,16 +809,23 @@ def _lineage_scope(select_expr, schema):
 
 def _register_task_table_schema(schema, table_name, columns):
     catalog, database, table_short = _table_identity(table_name)
-    clean_columns = [
-        _canonical_column(column_name)
-        for column_name in (columns or [])
-        if _canonical_column(column_name)
-    ]
-    if not table_short or not clean_columns:
+    if isinstance(columns, dict):
+        clean_column_map = {
+            _canonical_column(column_name): column_type
+            for column_name, column_type in columns.items()
+            if _canonical_column(column_name)
+        }
+    else:
+        clean_column_map = {
+            _canonical_column(column_name): "UNKNOWN"
+            for column_name in (columns or [])
+            if _canonical_column(column_name)
+        }
+    if not table_short or not clean_column_map:
         return
-    schema.setdefault(catalog, {}).setdefault(database, {})[table_short] = {
-        column_name: "UNKNOWN" for column_name in clean_columns
-    }
+    schema.setdefault(catalog, {}).setdefault(database, {})[
+        table_short
+    ] = clean_column_map
 
 
 def _apply_alter_table_to_task_schema(schema, stmt, dialect="doris"):
@@ -839,6 +859,17 @@ def _apply_alter_table_to_task_schema(schema, stmt, dialect="doris"):
         table_columns[col_name] = col_type
 
 
+def _create_like_source_table(stmt):
+    properties = stmt.args.get("properties")
+    for prop in getattr(properties, "expressions", None) or []:
+        if isinstance(prop, exp.LikeProperty) and isinstance(
+            prop.this,
+            exp.Table,
+        ):
+            return _table_name(prop.this)
+    return ""
+
+
 def _created_table_columns_from_schema(
     stmt,
     schema,
@@ -864,6 +895,9 @@ def _created_table_columns_from_schema(
         if has_unresolved_output and not output_columns:
             return []
         return output_columns
+    like_source_table = _create_like_source_table(stmt)
+    if like_source_table:
+        return _schema_column_map_for_table(schema, like_source_table) or {}
     return []
 
 
