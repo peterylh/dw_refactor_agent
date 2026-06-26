@@ -2675,6 +2675,52 @@ class TestEdgeCases:
             ("dwd_order", "total_amount", "dws_daily_sales", "total_amount"),
         }
 
+    def test_ctas_target_comment_does_not_pollute_task_schema(self):
+        schema = build_schema_from_texts(
+            [
+                """
+                CREATE TABLE ods_customer (
+                    customer_id BIGINT,
+                    status STRING
+                )
+                """,
+            ]
+        )
+        sql = """
+        CREATE TABLE tmp_2 /* comment */ AS
+        SELECT
+            customer_id,
+            status
+        FROM ods_customer
+        ;
+
+        CREATE TABLE tmp_3 AS
+        SELECT a.*
+        FROM tmp_2 a
+        """
+        diagnostics = []
+
+        entries = extract_lineage_from_sql(
+            sql,
+            "tmp_comment_ctas.sql",
+            schema,
+            diagnostics=diagnostics,
+        )
+
+        assert not [
+            diagnostic
+            for diagnostic in diagnostics
+            if diagnostic.get("stage") == "lineage_star_expand"
+        ]
+        assert {
+            edge
+            for edge in _direct_edges(entries)
+            if edge[0] == "tmp_2" and edge[2] == "tmp_3"
+        } == {
+            ("tmp_2", "customer_id", "tmp_3", "customer_id"),
+            ("tmp_2", "status", "tmp_3", "status"),
+        }
+
     def test_select_into(self):
         sql = """
         SELECT order_id, total_amount

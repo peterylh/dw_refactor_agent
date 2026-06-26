@@ -426,6 +426,8 @@ def _target_table_sql(target_expr):
     """返回写入目标表名,不包含 INSERT/CREATE 目标列清单。"""
     if isinstance(target_expr, exp.Schema):
         target_expr = target_expr.this
+    if isinstance(target_expr, exp.Table):
+        return _table_name(target_expr)
     return _canonical_qualified_identifier(target_expr.sql(dialect="doris"))
 
 
