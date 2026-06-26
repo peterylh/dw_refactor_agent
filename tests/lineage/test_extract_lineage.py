@@ -604,7 +604,9 @@ class TestIntegrationEtlToDwd:
             "cust_num",
         ) in _direct_edges(entries)
 
-    def test_insert_alias_star_names_anonymous_literal_by_target_position(self):
+    def test_insert_alias_star_names_anonymous_literal_by_target_position(
+        self,
+    ):
         schema = build_schema_from_texts(
             [
                 """

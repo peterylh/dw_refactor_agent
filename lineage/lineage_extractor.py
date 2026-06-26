@@ -823,9 +823,9 @@ def _register_task_table_schema(schema, table_name, columns):
         }
     if not table_short or not clean_column_map:
         return
-    schema.setdefault(catalog, {}).setdefault(database, {})[
-        table_short
-    ] = clean_column_map
+    schema.setdefault(catalog, {}).setdefault(database, {})[table_short] = (
+        clean_column_map
+    )
 
 
 def _apply_alter_table_to_task_schema(schema, stmt, dialect="doris"):
@@ -849,10 +849,14 @@ def _apply_alter_table_to_task_schema(schema, stmt, dialect="doris"):
     if not new_columns:
         return
 
-    table_columns = schema.setdefault(catalog, {}).setdefault(
-        database,
-        {},
-    ).setdefault(table_short, {})
+    table_columns = (
+        schema.setdefault(catalog, {})
+        .setdefault(
+            database,
+            {},
+        )
+        .setdefault(table_short, {})
+    )
     for col_name, col_type in new_columns:
         if not col_name or col_name in table_columns:
             continue
