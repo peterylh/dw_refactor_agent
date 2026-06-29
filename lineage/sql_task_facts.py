@@ -8,15 +8,15 @@ from collections import defaultdict
 import sqlglot
 from sqlglot import exp
 
+from lineage.identifiers import identifier_match_key, short_table_name
+
 
 def _short_table_name(table_name: str) -> str:
-    name = str(table_name or "").strip().rstrip(";")
-    if not name:
-        return ""
-    name = re.sub(r"/\*[\s\S]*?\*/", " ", name)
-    name = re.sub(r"--[^\n]*", " ", name).strip()
-    name = name.replace("`", "").replace('"', "")
-    return name.split(".")[-1].strip()
+    return short_table_name(table_name)
+
+
+def _table_match_key(table_name: str) -> str:
+    return identifier_match_key(_short_table_name(table_name))
 
 
 def _target_table_sql(target_expr) -> str:
@@ -56,8 +56,8 @@ def _is_table_drop(stmt) -> bool:
 
 
 def _temp_name_is_valid(table_name: str) -> bool:
-    lowered = _short_table_name(table_name).lower()
-    return "temp" in lowered or "tmp" in lowered
+    table_key = _table_match_key(table_name)
+    return "temp" in table_key or "tmp" in table_key
 
 
 def _transient_table_facts(
@@ -136,13 +136,15 @@ def _finalize_task_facts(
         drops_by_table,
         source_file,
     )
-    transient_names = {table["name"] for table in transient_tables}
+    transient_names = {
+        _table_match_key(table["name"]) for table in transient_tables
+    }
     return {
         "source_file": source_file,
         "output_tables": {
             output
             for output in outputs
-            if output and output not in transient_names
+            if output and _table_match_key(output) not in transient_names
         },
         "created_tables": {
             create["table"]
@@ -170,7 +172,7 @@ def extract_task_table_facts_from_statements(
             target = _target_short_name(stmt.this)
             if target:
                 is_ctas = stmt.args.get("expression") is not None
-                creates_by_table[target.lower()].append(
+                creates_by_table[_table_match_key(target)].append(
                     {
                         "table": target,
                         "index": index,
@@ -183,7 +185,7 @@ def extract_task_table_facts_from_statements(
         elif _is_table_drop(stmt):
             target = _target_short_name(stmt.this)
             if target:
-                drops_by_table[target.lower()].append(
+                drops_by_table[_table_match_key(target)].append(
                     {
                         "index": index,
                         "if_exists": bool(stmt.args.get("exists")),
@@ -241,7 +243,7 @@ def _parse_with_regex(sql_text: str, source_file: str) -> dict:
                         flags=re.IGNORECASE | re.DOTALL,
                     )
                 )
-                creates_by_table[target.lower()].append(
+                creates_by_table[_table_match_key(target)].append(
                     {
                         "table": target,
                         "index": index,
@@ -261,7 +263,7 @@ def _parse_with_regex(sql_text: str, source_file: str) -> dict:
         if drop_match:
             target = _short_table_name(drop_match.group(2))
             if target:
-                drops_by_table[target.lower()].append(
+                drops_by_table[_table_match_key(target)].append(
                     {
                         "index": index,
                         "if_exists": bool(drop_match.group(1)),

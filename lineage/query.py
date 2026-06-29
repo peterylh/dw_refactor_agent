@@ -6,6 +6,11 @@ import re
 from collections import Counter, deque
 from dataclasses import dataclass
 
+from lineage.identifiers import (
+    canonical_identifier,
+    identifier_match_key,
+    split_column_ref,
+)
 from lineage.view import LineageView
 
 VALID_DIRECTIONS = {"upstream", "downstream", "both"}
@@ -172,7 +177,57 @@ def _column_node(table_name: str, column_name: str) -> str:
 
 
 def _table_from_column(node: str) -> str:
-    return str(node or "").rsplit(".", 1)[0]
+    split_ref = split_column_ref(node)
+    return split_ref[0] if split_ref is not None else str(node or "")
+
+
+def _column_from_node(node: str) -> str:
+    split_ref = split_column_ref(node)
+    return split_ref[1] if split_ref is not None else str(node or "")
+
+
+def _resolve_identifier(
+    requested: str,
+    candidates: set[str],
+    *,
+    label: str,
+) -> str:
+    clean_requested = canonical_identifier(requested)
+    if clean_requested in candidates:
+        return clean_requested
+
+    requested_key = identifier_match_key(clean_requested)
+    matches = sorted(
+        candidate
+        for candidate in candidates
+        if identifier_match_key(candidate) == requested_key
+    )
+    if len(matches) == 1:
+        return matches[0]
+    if len(matches) > 1:
+        raise ValueError(
+            f"ambiguous {label}: {clean_requested} matches {matches}"
+        )
+    return clean_requested
+
+
+def _columns_for_table(view: LineageView, table_name: str) -> set[str]:
+    columns = {
+        column.name
+        for table in view.tables()
+        if table.name == table_name
+        for column in table.columns
+        if column.name
+    }
+    for step in _all_column_steps(view):
+        if _table_from_column(step.source) == table_name:
+            columns.add(_column_from_node(step.source))
+        if _table_from_column(step.target) == table_name:
+            columns.add(_column_from_node(step.target))
+        for condition in step.conditions:
+            if _table_from_column(condition.source) == table_name:
+                columns.add(_column_from_node(condition.source))
+    return columns
 
 
 def _transformation_type(expression: str) -> str:
@@ -384,14 +439,20 @@ def build_column_lineage(
     """Return bounded column lineage paths for one required table column."""
     normalized_direction = _normalize_direction(direction)
 
-    table = str(table_name or "").strip()
-    column = str(column_name or "").strip()
-    if not column:
+    table = canonical_identifier(table_name)
+    requested_column = canonical_identifier(column_name)
+    if not requested_column:
         raise ValueError("column is required for column lineage")
 
     layers = _table_layers(view)
+    table = _resolve_identifier(table, set(layers), label="table")
     if table not in layers:
         raise ValueError(f"unknown table: {table}")
+    column = _resolve_identifier(
+        requested_column,
+        _columns_for_table(view, table),
+        label="column",
+    )
 
     max_depth = max(0, int(depth))
     target_node = _column_node(table, column)
@@ -453,11 +514,12 @@ def build_table_subgraph(
     """Return a bounded table-level lineage subgraph around one root table."""
     normalized_direction = _normalize_direction(direction)
     max_depth = max(0, int(depth))
-    root = str(table_name or "").strip()
+    root = canonical_identifier(table_name)
 
     upstream, downstream = view.asset_table_graph()
     layers = _table_layers(view)
     known_tables = set(layers) | _graph_tables(upstream, downstream)
+    root = _resolve_identifier(root, known_tables, label="table")
     if root not in known_tables:
         raise ValueError(f"unknown table: {root}")
 

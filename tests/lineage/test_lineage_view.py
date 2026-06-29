@@ -76,6 +76,56 @@ def test_lineage_view_reuses_indexed_column_lineage():
     ]
 
 
+def test_lineage_view_collapses_transient_column_lineage_case_insensitively():
+    lineage_data = {
+        "tables": [{"name": "tmp_orders", "is_transient": True}],
+        "edges": [
+            {
+                "source": "DWD_Orders.amount",
+                "target": "TMP_Orders.amount",
+                "expression": "DWD_Orders.amount",
+                "source_file": "dws_orders.sql",
+            },
+            {
+                "source": "tmp_orders.amount",
+                "target": "DWS_Orders.total_amount",
+                "expression": "tmp_orders.amount AS total_amount",
+                "source_file": "dws_orders.sql",
+            },
+        ],
+    }
+
+    view = LineageView.from_data("demo", lineage_data)
+
+    assert view.asset_table_graph() == (
+        {"DWS_Orders": {"DWD_Orders"}},
+        {"DWD_Orders": {"DWS_Orders"}},
+    )
+    assert view.column_lineage_for_table("dws_orders") == [
+        {
+            "source": "DWD_Orders.amount",
+            "target": "DWS_Orders.total_amount",
+            "expression": "tmp_orders.amount AS total_amount",
+            "source_file": "dws_orders.sql",
+            "transient_path": ["tmp_orders.amount"],
+            "expression_chain": [
+                {
+                    "source": "DWD_Orders.amount",
+                    "target": "TMP_Orders.amount",
+                    "expression": "DWD_Orders.amount",
+                    "source_file": "dws_orders.sql",
+                },
+                {
+                    "source": "tmp_orders.amount",
+                    "target": "DWS_Orders.total_amount",
+                    "expression": "tmp_orders.amount AS total_amount",
+                    "source_file": "dws_orders.sql",
+                },
+            ],
+        }
+    ]
+
+
 def test_lineage_view_indexes_design_facts_by_table():
     lineage_data = {
         "tables": [{"name": "dws_orders", "layer": "DWS", "columns": []}],

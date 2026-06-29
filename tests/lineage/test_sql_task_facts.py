@@ -210,3 +210,33 @@ FROM internal.shop_dm.tmp_orders_stage;
     assert facts["transient_tables"][0]["reason"] == (
         "pre_drop_create_without_post_drop"
     )
+
+
+def test_extract_task_table_facts_pairs_mixed_case_qualified_temp_table():
+    facts = extract_task_table_facts(
+        """
+CREATE TABLE Shop_Dm.Tmp_Orders_Stage AS
+SELECT 1 AS order_id;
+
+DROP TABLE shop_dm.tmp_orders_stage;
+
+INSERT INTO DWS_ORDERS
+SELECT order_id FROM shop_dm.tmp_orders_stage;
+""",
+        "dws_orders.sql",
+    )
+
+    assert facts["output_tables"] == {"DWS_ORDERS"}
+    assert facts["transient_tables"] == [
+        {
+            "name": "Tmp_Orders_Stage",
+            "source_file": "dws_orders.sql",
+            "created_statement_index": 0,
+            "dropped_statement_index": 1,
+            "is_ctas": True,
+            "is_transient": True,
+            "dropped_in_same_task": True,
+            "pre_drop_statement_indexes": [],
+            "reason": "created_then_dropped_in_same_task",
+        }
+    ]

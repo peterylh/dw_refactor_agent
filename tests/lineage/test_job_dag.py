@@ -80,6 +80,37 @@ def test_topological_sort_keeps_dependencies_before_dependents():
     )
 
 
+def test_topological_sort_matches_requested_jobs_case_insensitively():
+    dag = JobDAG(
+        _edges(
+            ("DWD_Order_Detail", "DWS_Store_Sales_Daily"),
+            ("DWS_Store_Sales_Daily", "ADS_Sales_Dashboard"),
+        )
+    )
+
+    order = dag.topological_sort(
+        {
+            "dwd_order_detail",
+            "dws_store_sales_daily",
+            "ads_sales_dashboard",
+        }
+    )
+
+    assert order == [
+        "dwd_order_detail",
+        "dws_store_sales_daily",
+        "ads_sales_dashboard",
+    ]
+
+
+def test_downstream_traversal_matches_seeds_case_insensitively():
+    dag = JobDAG(_edges(("DWD_Order_Detail", "DWS_Store_Sales_Daily")))
+
+    assert dag.bfs_downstream({"dwd_order_detail"}) == {
+        "DWS_Store_Sales_Daily"
+    }
+
+
 def test_topological_sort_ignores_edges_outside_requested_jobs():
     dag = JobDAG(_edges(("a", "b"), ("b", "c"), ("external", "sink")))
 

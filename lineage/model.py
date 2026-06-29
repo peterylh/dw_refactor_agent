@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from lineage.identifiers import split_column_ref
+
 
 def _strip_sql_suffix(value: str) -> str:
     return value[:-4] if value.endswith(".sql") else value
@@ -88,12 +90,14 @@ class LineageRef:
             return self.id
         if self.type != "column" or not self.id:
             return ""
-        return self.id.rsplit(".", 1)[0]
+        split_ref = split_column_ref(self.id)
+        return split_ref[0] if split_ref is not None else ""
 
     def column_name(self) -> str:
         if self.type != "column" or not self.id:
             return ""
-        return self.id.rsplit(".", 1)[-1]
+        split_ref = split_column_ref(self.id)
+        return split_ref[1] if split_ref is not None else ""
 
 
 @dataclass(frozen=True)

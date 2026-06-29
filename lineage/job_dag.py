@@ -27,6 +27,11 @@ if str(_root) not in sys.path:
 
 from config import TEXT_ENCODING
 from lineage.asset_graph import build_asset_table_graph
+from lineage.identifiers import (
+    canonical_qualified_identifier,
+    identifier_match_key,
+    split_column_ref,
+)
 
 
 class JobDAG:
@@ -36,6 +41,7 @@ class JobDAG:
         self._edges = edges or []
         self._deps: dict[str, set[str]] = {}
         self._rev: dict[str, set[str]] = {}
+        self._node_by_key: dict[str, str] = {}
         self._build()
 
     # ── 图构建 ──
@@ -43,27 +49,68 @@ class JobDAG:
     def _build(self):
         deps = defaultdict(set)
         rev = defaultdict(set)
+        node_by_key = {}
         for e in self._edges:
-            src = self._edge_table(e.get("source"))
-            tgt = self._edge_table(e.get("target"))
-            if src and tgt and src != tgt:
+            src = self._remember_node(
+                node_by_key, self._edge_table(e.get("source"))
+            )
+            tgt = self._remember_node(
+                node_by_key, self._edge_table(e.get("target"))
+            )
+            if src and tgt and self._node_key(src) != self._node_key(tgt):
                 deps[src].add(tgt)
                 rev[tgt].add(src)
         self._deps = dict(deps)
         self._rev = dict(rev)
+        self._node_by_key = node_by_key
 
     @staticmethod
     def _edge_table(ref) -> str:
         if isinstance(ref, dict):
             if ref.get("type") == "column":
-                return str(ref.get("id") or "").rsplit(".", 1)[0]
+                return JobDAG._edge_table(ref.get("id", ""))
             if ref.get("type") == "table":
-                return str(ref.get("id") or "")
+                return canonical_qualified_identifier(ref.get("id"))
             return ""
-        return str(ref or "").rsplit(".", 1)[0]
+        split_ref = split_column_ref(ref)
+        if split_ref is not None:
+            return split_ref[0]
+        return canonical_qualified_identifier(ref)
+
+    @staticmethod
+    def _node_key(node: str) -> str:
+        return identifier_match_key(node)
+
+    @classmethod
+    def _remember_node(cls, node_by_key: dict, node: str) -> str:
+        node_key = cls._node_key(node)
+        if not node_key:
+            return ""
+        return node_by_key.setdefault(node_key, node)
+
+    def _resolve_node(self, node: str) -> str:
+        return self._node_by_key.get(self._node_key(node), node)
+
+    def _rebuild_node_index(self) -> None:
+        node_by_key = {}
+        for source, targets in self._deps.items():
+            self._remember_node(node_by_key, source)
+            for target in targets:
+                self._remember_node(node_by_key, target)
+        for target, sources in self._rev.items():
+            self._remember_node(node_by_key, target)
+            for source in sources:
+                self._remember_node(node_by_key, source)
+        self._node_by_key = node_by_key
 
     def add_edge(self, source: str, target: str):
-        if source != target:
+        source = self._remember_node(self._node_by_key, source)
+        target = self._remember_node(self._node_by_key, target)
+        if (
+            source
+            and target
+            and self._node_key(source) != self._node_key(target)
+        ):
             self._deps.setdefault(source, set()).add(target)
             self._rev.setdefault(target, set()).add(source)
             self._edges.append({"source": source, "target": target})
@@ -71,31 +118,47 @@ class JobDAG:
     # ── 遍历 ──
 
     def bfs_downstream(self, seeds: set) -> set:
-        visited = set(seeds)
-        q = deque(seeds)
+        seed_keys = {
+            self._node_key(seed) for seed in seeds if self._node_key(seed)
+        }
+        visited_keys = set(seed_keys)
+        visited_nodes = {}
+        q = deque(self._resolve_node(seed) for seed in seeds)
         while q:
             t = q.popleft()
+            t = self._resolve_node(t)
             for dt in self._deps.get(t, set()):
-                if dt not in visited:
-                    visited.add(dt)
+                dt_key = self._node_key(dt)
+                if dt_key not in visited_keys:
+                    visited_keys.add(dt_key)
+                    visited_nodes[dt_key] = dt
                     q.append(dt)
-        return visited - seeds
+        return {
+            node
+            for node_key, node in visited_nodes.items()
+            if node_key not in seed_keys
+        }
 
     def get_downstream(self, job: str) -> set[str]:
-        return self._deps.get(job, set())
+        return self._deps.get(self._resolve_node(job), set())
 
     def compute_in_degree(
         self, jobs_set: set
     ) -> tuple[dict[str, int], dict[str, list[str]]]:
+        jobs_by_key = {
+            self._node_key(job): job for job in jobs_set if self._node_key(job)
+        }
         in_degree = dict.fromkeys(jobs_set, 0)
         adj: dict[str, list[str]] = {j: [] for j in jobs_set}
         for src, targets in self._deps.items():
-            if src not in jobs_set:
+            source_job = jobs_by_key.get(self._node_key(src))
+            if source_job is None:
                 continue
             for tgt in targets:
-                if tgt in jobs_set:
-                    adj[src].append(tgt)
-                    in_degree[tgt] = in_degree.get(tgt, 0) + 1
+                target_job = jobs_by_key.get(self._node_key(tgt))
+                if target_job is not None:
+                    adj[source_job].append(target_job)
+                    in_degree[target_job] = in_degree.get(target_job, 0) + 1
         return in_degree, adj
 
     def topological_sort(self, jobs_set: set) -> list:
@@ -151,6 +214,7 @@ class JobDAG:
         dag._edges = list(data.get("edges", []))
         dag._deps = {k: set(v) for k, v in data.get("deps", {}).items()}
         dag._rev = {k: set(v) for k, v in data.get("rev", {}).items()}
+        dag._rebuild_node_index()
         return dag
 
     def save(self, path):

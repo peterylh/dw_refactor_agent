@@ -24,6 +24,11 @@ from config import (
     TEXT_ENCODING,
     lineage_data_path,
 )
+from lineage.identifiers import (
+    column_ref_match_key,
+    identifier_match_key,
+    split_column_ref,
+)
 
 DEFAULT_BATCH_SIZE = 5000
 LINEAGE_DIR = Path(__file__).resolve().parent
@@ -136,12 +141,7 @@ def _normalize_relation_type(value: Any) -> str:
 
 
 def _split_column_ref(ref: str) -> tuple[str, str] | None:
-    if "." not in str(ref or ""):
-        return None
-    table_name, column_name = str(ref).rsplit(".", 1)
-    if not table_name or not column_name:
-        return None
-    return table_name, column_name
+    return split_column_ref(ref)
 
 
 def _typed_direct_column_edges(
@@ -223,7 +223,7 @@ def _build_table_rows(
                 ),
             )
         )
-        table_id_map[table_name] = table_id
+        table_id_map[identifier_match_key(table_name)] = table_id
     return table_rows, table_id_map
 
 
@@ -238,7 +238,7 @@ def _build_column_rows(
     column_id = 1
     for table in tables:
         table_name = str(table.get("name") or "").strip()
-        table_id = table_id_map.get(table_name)
+        table_id = table_id_map.get(identifier_match_key(table_name))
         if not table_id:
             continue
         for ordinal, column in enumerate(table.get("columns") or []):
@@ -257,7 +257,7 @@ def _build_column_rows(
                     ordinal,
                 )
             )
-            column_id_map[column_ref] = column_id
+            column_id_map[column_ref_match_key(column_ref)] = column_id
             column_id += 1
     return column_rows, column_id_map
 
@@ -330,10 +330,10 @@ def _build_column_lineage_rows(
 
         source_table, _source_column = source_ref
         target_table, _target_column = target_ref
-        source_table_id = table_id_map.get(source_table)
-        target_table_id = table_id_map.get(target_table)
-        source_column_id = column_id_map.get(source)
-        target_column_id = column_id_map.get(target)
+        source_table_id = table_id_map.get(identifier_match_key(source_table))
+        target_table_id = table_id_map.get(identifier_match_key(target_table))
+        source_column_id = column_id_map.get(column_ref_match_key(source))
+        target_column_id = column_id_map.get(column_ref_match_key(target))
         if not all(
             [
                 source_table_id,
@@ -404,9 +404,9 @@ def _build_indirect_lineage_rows(
             continue
 
         source_table, _source_column = source_ref
-        source_table_id = table_id_map.get(source_table)
-        source_column_id = column_id_map.get(source)
-        target_table_id = table_id_map.get(target_table)
+        source_table_id = table_id_map.get(identifier_match_key(source_table))
+        source_column_id = column_id_map.get(column_ref_match_key(source))
+        target_table_id = table_id_map.get(identifier_match_key(target_table))
         job_id = job_id_map.get(str(edge.get("source_file") or ""))
         if not all(
             [source_table_id, source_column_id, target_table_id, job_id]

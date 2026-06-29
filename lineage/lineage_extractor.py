@@ -37,6 +37,16 @@ from config import (
 )
 from config import determine_layer as determine_config_layer
 from doris_sql import normalize_create_table_for_sqlglot
+from lineage.identifiers import (
+    canonical_identifier,
+    canonical_qualified_identifier,
+    display_table_name,
+    identifier_match_key,
+    qualified_table_name,
+    schema_table_match_key,
+    table_identity,
+    table_identity_match_key,
+)
 from lineage.sql_task_facts import (
     extract_task_table_facts,
     extract_task_table_facts_from_statements,
@@ -44,6 +54,10 @@ from lineage.sql_task_facts import (
 
 AGGREGATE_PATTERN = re.compile(
     r"\b(SUM|COUNT|AVG|MIN|MAX)\s*\(",
+    flags=re.IGNORECASE,
+)
+DROP_TABLE_FORCE_PATTERN = re.compile(
+    r"(\bDROP\s+TABLE\b[^;]*?)\s+FORCE(\s*(?:;|$))",
     flags=re.IGNORECASE,
 )
 
@@ -71,31 +85,22 @@ def configure_project(project_name):
     CURRENT_DB = cfg["db"]
 
 
+def _sqlglot_task_sql(sql_text):
+    """Remove Doris task syntax that sqlglot cannot parse."""
+    return DROP_TABLE_FORCE_PATTERN.sub(r"\1\2", str(sql_text or ""))
+
+
 def _canonical_identifier(name):
     """Return the logical identifier name without SQL quote wrappers."""
-    if name is None:
-        return ""
-    text = str(name).strip()
-    while len(text) >= 2 and (
-        (text[0] == text[-1] == "`") or (text[0] == text[-1] == '"')
-    ):
-        text = text[1:-1].strip()
-    return text
+    return canonical_identifier(name)
 
 
 def _identifier_match_key(name):
-    return _canonical_identifier(name).casefold()
+    return identifier_match_key(name)
 
 
 def _canonical_qualified_identifier(name):
-    text = str(name or "").strip()
-    if not text:
-        return ""
-    return ".".join(
-        _canonical_identifier(part)
-        for part in text.split(".")
-        if str(part).strip()
-    )
+    return canonical_qualified_identifier(name)
 
 
 def _default_catalog():
@@ -108,60 +113,37 @@ def _default_db():
 
 def _table_identity(name, default_catalog=None, default_db=None):
     """Return (catalog, database, table), filling project defaults as needed."""
-    full_name = _canonical_qualified_identifier(name)
-    parts = [part for part in full_name.split(".") if part]
-    if not parts:
-        return "", "", ""
-
-    catalog = _canonical_identifier(default_catalog or _default_catalog())
-    database = _canonical_identifier(default_db or _default_db())
-    if len(parts) == 1:
-        return catalog, database, parts[0]
-    if len(parts) == 2:
-        return catalog, parts[0], parts[1]
-    return parts[-3], parts[-2], parts[-1]
+    return table_identity(
+        name,
+        default_catalog=default_catalog or _default_catalog(),
+        default_db=default_db or _default_db(),
+    )
 
 
 def _schema_table_match_key(catalog, database, table):
-    return (
-        _identifier_match_key(catalog),
-        _identifier_match_key(database),
-        _identifier_match_key(table),
-    )
+    return schema_table_match_key(catalog, database, table)
 
 
 def _table_identity_match_key(name, default_catalog=None, default_db=None):
-    catalog, database, table = _table_identity(
+    return table_identity_match_key(
         name,
-        default_catalog=default_catalog,
-        default_db=default_db,
+        default_catalog=default_catalog or _default_catalog(),
+        default_db=default_db or _default_db(),
     )
-    return _schema_table_match_key(catalog, database, table)
 
 
 def _qualified_table_name(catalog, database, table):
-    catalog = _canonical_identifier(catalog)
-    database = _canonical_identifier(database)
-    table = _canonical_identifier(table)
-    return ".".join(part for part in (catalog, database, table) if part)
+    return qualified_table_name(catalog, database, table)
 
 
 def _display_table_name(name, strip_current_db=False):
     """Format a table name for output, hiding the default internal catalog."""
-    catalog, database, table = _table_identity(name)
-    if not table:
-        return ""
-    if _identifier_match_key(catalog) != _identifier_match_key(
-        _default_catalog()
-    ):
-        return _qualified_table_name(catalog, database, table)
-    if strip_current_db and _identifier_match_key(
-        database
-    ) == _identifier_match_key(_default_db()):
-        return table
-    if database:
-        return f"{database}.{table}"
-    return table
+    return display_table_name(
+        name,
+        default_catalog=_default_catalog(),
+        default_db=_default_db(),
+        strip_current_db=strip_current_db,
+    )
 
 
 def _strip_db(name):
@@ -632,7 +614,9 @@ def missing_schema_tables_from_sql(
     sql_text, schema, transient_tables=None, created_tables=None
 ):
     try:
-        statements = sqlglot.parse(sql_text, dialect="doris")
+        statements = sqlglot.parse(
+            _sqlglot_task_sql(sql_text), dialect="doris"
+        )
     except Exception:
         return []
     if created_tables is None:
@@ -2865,7 +2849,9 @@ def _task_context_from_statements(
 
 
 def _parse_task_context(work_item, schema, diagnostics=None):
-    statements = sqlglot.parse(work_item.sql_text, dialect="doris")
+    statements = sqlglot.parse(
+        _sqlglot_task_sql(work_item.sql_text), dialect="doris"
+    )
     return _task_context_from_statements(
         work_item,
         statements,
@@ -2981,7 +2967,9 @@ def extract_lineage_from_context(context):
 
 def extract_lineage_from_sql(sql_text, file_path, schema, diagnostics=None):
     try:
-        statements = sqlglot.parse(sql_text, dialect="doris")
+        statements = sqlglot.parse(
+            _sqlglot_task_sql(sql_text), dialect="doris"
+        )
     except Exception as e:
         print(f"  解析失败 {file_path}: {e}")
         _record_diagnostic(diagnostics, file_path, "parse", e)
@@ -3002,7 +2990,10 @@ def _extract_task_work_item(work_item, schema):
     try:
         diagnostics = []
         try:
-            statements = sqlglot.parse(work_item.sql_text, dialect="doris")
+            statements = sqlglot.parse(
+                _sqlglot_task_sql(work_item.sql_text),
+                dialect="doris",
+            )
         except Exception as e:
             print(f"  解析失败 {work_item.source_file}: {e}")
             _record_diagnostic(diagnostics, work_item.source_file, "parse", e)

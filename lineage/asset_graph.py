@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from collections import defaultdict
 
+from lineage.identifiers import column_ref_match_key, identifier_match_key
 from lineage.table_graph import _table_from_node, build_table_graph
 
 
@@ -27,6 +28,20 @@ def _all_graph_tables(upstream: dict, downstream: dict) -> set[str]:
     for tables in downstream.values():
         names.update(tables)
     return names
+
+
+def _table_match_key(table_name: str) -> str:
+    return identifier_match_key(table_name)
+
+
+def _column_node_match_key(node: str) -> tuple:
+    return column_ref_match_key(node)
+
+
+def _is_transient_table(
+    table_name: str, transient_table_keys: set[str]
+) -> bool:
+    return _table_match_key(table_name) in transient_table_keys
 
 
 def _edge_record(edge: dict) -> dict[str, str]:
@@ -92,19 +107,19 @@ def _condition_sort_key(edge: dict) -> tuple[str, str, str, str]:
 def _collapse_upstream(
     table: str,
     upstream: dict,
-    transient_tables: set[str],
+    transient_table_keys: set[str],
     visiting: set[str],
 ) -> set[str]:
     result = set()
     for parent in upstream.get(table, set()):
         if parent in visiting:
             continue
-        if parent in transient_tables:
+        if _is_transient_table(parent, transient_table_keys):
             result.update(
                 _collapse_upstream(
                     parent,
                     upstream,
-                    transient_tables,
+                    transient_table_keys,
                     visiting | {parent},
                 )
             )
@@ -116,19 +131,19 @@ def _collapse_upstream(
 def _collapse_downstream(
     table: str,
     downstream: dict,
-    transient_tables: set[str],
+    transient_table_keys: set[str],
     visiting: set[str],
 ) -> set[str]:
     result = set()
     for child in downstream.get(table, set()):
         if child in visiting:
             continue
-        if child in transient_tables:
+        if _is_transient_table(child, transient_table_keys):
             result.update(
                 _collapse_downstream(
                     child,
                     downstream,
-                    transient_tables,
+                    transient_table_keys,
                     visiting | {child},
                 )
             )
@@ -146,8 +161,15 @@ def build_asset_table_graph(lineage_data: dict) -> tuple[dict, dict]:
     transient_tables = transient_table_names(lineage_data)
     if not transient_tables:
         return upstream, downstream
+    transient_table_keys = {
+        _table_match_key(table) for table in transient_tables if table
+    }
 
-    asset_tables = _all_graph_tables(upstream, downstream) - transient_tables
+    asset_tables = {
+        table
+        for table in _all_graph_tables(upstream, downstream)
+        if not _is_transient_table(table, transient_table_keys)
+    }
     asset_upstream = {}
     asset_downstream = {}
 
@@ -157,10 +179,11 @@ def build_asset_table_graph(lineage_data: dict) -> tuple[dict, dict]:
             for parent in _collapse_upstream(
                 table,
                 upstream,
-                transient_tables,
+                transient_table_keys,
                 {table},
             )
-            if parent != table and parent not in transient_tables
+            if parent != table
+            and not _is_transient_table(parent, transient_table_keys)
         }
         if parents:
             asset_upstream[table] = parents
@@ -170,10 +193,11 @@ def build_asset_table_graph(lineage_data: dict) -> tuple[dict, dict]:
             for child in _collapse_downstream(
                 table,
                 downstream,
-                transient_tables,
+                transient_table_keys,
                 {table},
             )
-            if child != table and child not in transient_tables
+            if child != table
+            and not _is_transient_table(child, transient_table_keys)
         }
         if children:
             asset_downstream[table] = children
@@ -187,7 +211,7 @@ def _column_incoming_edges(
     incoming = defaultdict(list)
     for edge in edges:
         if edge["source"] and edge["target"]:
-            incoming[edge["target"]].append(edge)
+            incoming[_column_node_match_key(edge["target"])].append(edge)
     for target, target_edges in incoming.items():
         incoming[target] = sorted(target_edges, key=_edge_sort_key)
     return dict(incoming)
@@ -196,22 +220,23 @@ def _column_incoming_edges(
 def _trace_asset_column_sources(
     node: str,
     incoming: dict[str, list[dict[str, str]]],
-    transient_tables: set[str],
+    transient_table_keys: set[str],
     visiting: set[str],
 ) -> list[tuple[str, list[dict[str, str]], list[str]]]:
     table = _table_from_node(node)
-    if table not in transient_tables:
+    if not _is_transient_table(table, transient_table_keys):
         return [(node, [], [])]
-    if node in visiting:
+    node_key = _column_node_match_key(node)
+    if node_key in visiting:
         return []
 
     traces = []
-    for edge in incoming.get(node, []):
+    for edge in incoming.get(node_key, []):
         for asset_source, chain, path in _trace_asset_column_sources(
             edge["source"],
             incoming,
-            transient_tables,
-            visiting | {node},
+            transient_table_keys,
+            visiting | {node_key},
         ):
             traces.append((asset_source, chain + [edge], path + [node]))
     return traces
@@ -221,7 +246,7 @@ def _asset_condition_lineage(
     lineage_data: dict,
     table_name: str,
     incoming: dict[str, list[dict[str, str]]],
-    transient_tables: set[str],
+    transient_table_keys: set[str],
 ) -> list[dict]:
     conditions = []
     seen = set()
@@ -243,7 +268,7 @@ def _asset_condition_lineage(
             edge_target = str((edge.get("target") or {}).get("id") or "")
         else:
             edge_target = str(edge.get("target_table") or "")
-        if edge_target != table_name:
+        if _table_match_key(edge_target) != _table_match_key(table_name):
             continue
         if isinstance(edge.get("source"), dict):
             source = str((edge.get("source") or {}).get("id") or "")
@@ -253,7 +278,10 @@ def _asset_condition_lineage(
             continue
 
         base = _condition_record(edge)
-        if _table_from_node(source) not in transient_tables:
+        if not _is_transient_table(
+            _table_from_node(source),
+            transient_table_keys,
+        ):
             item = dict(base)
             key = json.dumps(item, ensure_ascii=False, sort_keys=True)
             if key not in seen:
@@ -264,10 +292,13 @@ def _asset_condition_lineage(
         for asset_source, chain, transient_path in _trace_asset_column_sources(
             source,
             incoming,
-            transient_tables,
+            transient_table_keys,
             set(),
         ):
-            if _table_from_node(asset_source) in transient_tables:
+            if _is_transient_table(
+                _table_from_node(asset_source),
+                transient_table_keys,
+            ):
                 continue
             item = {
                 **base,
@@ -289,6 +320,9 @@ def build_asset_column_lineage(
 ) -> list[dict]:
     """Return column lineage for an asset table with transient fields bypassed."""
     transient_tables = transient_table_names(lineage_data)
+    transient_table_keys = {
+        _table_match_key(table) for table in transient_tables if table
+    }
     edges = [
         record
         for edge in lineage_data.get("edges") or []
@@ -300,16 +334,21 @@ def build_asset_column_lineage(
         lineage_data,
         table_name,
         incoming,
-        transient_tables,
+        transient_table_keys,
     )
     lineage = []
     seen = set()
 
     for edge in sorted(edges, key=_edge_sort_key):
-        if _table_from_node(edge["target"]) != table_name:
+        if _table_match_key(
+            _table_from_node(edge["target"])
+        ) != _table_match_key(table_name):
             continue
 
-        if _table_from_node(edge["source"]) not in transient_tables:
+        if not _is_transient_table(
+            _table_from_node(edge["source"]),
+            transient_table_keys,
+        ):
             item = dict(edge)
             if condition_lineage:
                 item["condition_lineage"] = condition_lineage
@@ -322,10 +361,13 @@ def build_asset_column_lineage(
         for asset_source, chain, transient_path in _trace_asset_column_sources(
             edge["source"],
             incoming,
-            transient_tables,
+            transient_table_keys,
             set(),
         ):
-            if _table_from_node(asset_source) in transient_tables:
+            if _is_transient_table(
+                _table_from_node(asset_source),
+                transient_table_keys,
+            ):
                 continue
             item = {
                 "source": asset_source,

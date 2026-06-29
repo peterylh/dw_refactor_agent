@@ -167,6 +167,21 @@ def test_build_table_subgraph_limits_upstream_by_depth():
     ]
 
 
+def test_build_table_subgraph_matches_root_case_insensitively():
+    subgraph = build_table_subgraph(
+        _demo_view(),
+        "ADS_SALES_DASHBOARD",
+        direction="upstream",
+        depth=1,
+    )
+
+    assert subgraph.root == "ads_sales_dashboard"
+    assert subgraph.tables == {
+        "ads_sales_dashboard",
+        "dws_product_sales_daily",
+    }
+
+
 def test_build_table_subgraph_rejects_unknown_table():
     with pytest.raises(ValueError, match="unknown table"):
         build_table_subgraph(
@@ -246,6 +261,23 @@ def test_build_column_lineage_traces_specific_column_upstream_by_depth():
             "dws_product_sales_daily.sql",
         ),
     ]
+
+
+def test_build_column_lineage_matches_table_and_column_case_insensitively():
+    lineage = build_column_lineage(
+        _demo_view(),
+        "DWS_PRODUCT_SALES_DAILY",
+        "SALES_AMOUNT",
+        direction="upstream",
+        depth=1,
+    )
+
+    assert lineage.table == "dws_product_sales_daily"
+    assert lineage.column == "sales_amount"
+    assert lineage.paths[0].nodes == (
+        "dwd_order_detail.sale_amount",
+        "dws_product_sales_daily.sales_amount",
+    )
 
 
 def test_build_column_lineage_rejects_empty_column():

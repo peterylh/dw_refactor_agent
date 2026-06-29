@@ -17,6 +17,7 @@ from lineage.asset_graph import (
     build_asset_table_graph,
     transient_table_names,
 )
+from lineage.identifiers import identifier_match_key, short_table_name
 from lineage.model import LineageSnapshot
 from lineage.table_graph import (
     _table_from_node,
@@ -52,11 +53,7 @@ def _short_column_name(sql_text: str) -> str:
 
 
 def _short_table_name(table_name: str) -> str:
-    name = str(table_name or "").strip().rstrip(";")
-    if not name:
-        return ""
-    name = name.replace("`", "").replace('"', "")
-    return name.split(".")[-1].strip()
+    return short_table_name(table_name)
 
 
 def _transformation_type_for_expression(expression: str) -> str:
@@ -80,6 +77,11 @@ class LineageView:
             dict(edge) for edge in snapshot.indirect_edges
         ]
         self._transient_tables = transient_table_names(self._data)
+        self._transient_table_keys = {
+            identifier_match_key(table)
+            for table in self._transient_tables
+            if table
+        }
         self._raw_table_graph = build_table_graph(
             self._raw_edges,
             self._raw_indirect_edges,
@@ -143,14 +145,18 @@ class LineageView:
         _upstream, downstream = self._asset_table_graph
         return set(downstream.get(table_name, set()))
 
+    def _is_transient_table(self, table_name: str) -> bool:
+        return identifier_match_key(table_name) in self._transient_table_keys
+
     def column_lineage_for_table(self, table_name: str) -> list[dict]:
         self._ensure_column_indexes()
         condition_lineage = self._condition_lineage_for_table(table_name)
         lineage = []
         seen = set()
 
-        for edge in self._column_edges_by_target_table.get(table_name, []):
-            if _table_from_node(edge["source"]) not in self._transient_tables:
+        target_key = identifier_match_key(table_name)
+        for edge in self._column_edges_by_target_table.get(target_key, []):
+            if not self._is_transient_table(_table_from_node(edge["source"])):
                 item = dict(edge)
                 if condition_lineage:
                     item["condition_lineage"] = condition_lineage
@@ -167,10 +173,10 @@ class LineageView:
             ) in _trace_asset_column_sources(
                 edge["source"],
                 self._incoming,
-                self._transient_tables,
+                self._transient_table_keys,
                 set(),
             ):
-                if _table_from_node(asset_source) in self._transient_tables:
+                if self._is_transient_table(_table_from_node(asset_source)):
                     continue
                 item = {
                     "source": asset_source,
@@ -250,7 +256,7 @@ class LineageView:
         for edge in self._column_edges:
             target_table = _table_from_node(edge["target"])
             if target_table:
-                grouped[target_table].append(edge)
+                grouped[identifier_match_key(target_table)].append(edge)
         return dict(grouped)
 
     def _index_condition_edges(self) -> dict[str, list[dict]]:
@@ -269,7 +275,7 @@ class LineageView:
         for edge in condition_edges:
             target = self._condition_target_table(edge)
             if target:
-                grouped[target].append(edge)
+                grouped[identifier_match_key(target)].append(edge)
         return dict(grouped)
 
     def _condition_lineage_for_table(self, table_name: str) -> list[dict]:
@@ -277,13 +283,14 @@ class LineageView:
         conditions = []
         seen = set()
 
-        for edge in self._condition_edges_by_target_table.get(table_name, []):
+        target_key = identifier_match_key(table_name)
+        for edge in self._condition_edges_by_target_table.get(target_key, []):
             source = self._condition_source(edge)
             if not source:
                 continue
 
             base = _condition_record(edge)
-            if _table_from_node(source) not in self._transient_tables:
+            if not self._is_transient_table(_table_from_node(source)):
                 item = dict(base)
                 key = json.dumps(item, ensure_ascii=False, sort_keys=True)
                 if key not in seen:
@@ -298,10 +305,10 @@ class LineageView:
             ) in _trace_asset_column_sources(
                 source,
                 self._incoming,
-                self._transient_tables,
+                self._transient_table_keys,
                 set(),
             ):
-                if _table_from_node(asset_source) in self._transient_tables:
+                if self._is_transient_table(_table_from_node(asset_source)):
                     continue
                 item = {
                     **base,

@@ -193,6 +193,39 @@ def test_build_import_rows_normalizes_snapshot_for_database(tmp_path):
     assert rows.skipped_edges == []
 
 
+def test_build_import_rows_matches_mixed_case_edge_refs_to_metadata(tmp_path):
+    module = importlib.import_module("lineage.import_lineage")
+    tasks_dir = tmp_path / "tasks"
+    tasks_dir.mkdir()
+    (tasks_dir / "dwd_order_detail.sql").write_text("", encoding="utf-8")
+    data = _demo_snapshot()
+    data["edges"][0]["source"]["id"] = "ODS_ORDER.AMOUNT"
+    data["edges"][0]["target"]["id"] = "DWD_ORDER_DETAIL.AMOUNT"
+    data["edges"][1]["source"]["id"] = "ODS_ORDER.AMOUNT"
+    data["edges"][1]["target"]["id"] = "DWD_ORDER_DETAIL"
+
+    rows = module.build_import_rows(
+        data,
+        tasks_dir=tasks_dir,
+        context=module.ImportContext(
+            project="shop",
+            snapshot_id=42,
+            datasource_id=1,
+            datasource_name="shop_dm",
+            db_type="doris",
+            host="127.0.0.1:9030",
+        ),
+    )
+
+    assert rows.column_lineage_rows == [
+        (1, 42, 1, 1, 2, 2, 1, "DIRECT", "", "amount")
+    ]
+    assert rows.indirect_lineage_rows == [
+        (1, 42, 1, 1, 2, 1, "FILTER", "amount > 0")
+    ]
+    assert rows.skipped_edges == []
+
+
 def test_bulk_insert_uses_executemany_in_chunks():
     module = importlib.import_module("lineage.import_lineage")
 

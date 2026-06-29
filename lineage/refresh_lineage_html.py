@@ -26,6 +26,10 @@ from config import (
     lineage_html_path,
     lineage_job_html_path,
 )
+from lineage.identifiers import (
+    canonical_qualified_identifier,
+    split_column_ref,
+)
 
 LINEAGE_DIR = Path(__file__).parent
 
@@ -142,11 +146,12 @@ def generate_jobs(data, tasks_dir, current_db, job_logic=None, project="shop"):
     def _edge_ref_table(ref):
         if isinstance(ref, dict):
             if ref.get("type") == "column":
-                return str(ref.get("id") or "").rsplit(".", 1)[0]
+                return _edge_ref_table(ref.get("id"))
             if ref.get("type") == "table":
-                return str(ref.get("id") or "")
+                return canonical_qualified_identifier(ref.get("id"))
             return ""
-        return str(ref or "").rsplit(".", 1)[0]
+        split_ref = split_column_ref(ref)
+        return split_ref[0] if split_ref is not None else ""
 
     for f in iter_task_sql_files(tasks_dir):
         fname = f.relative_to(tasks_dir).as_posix()
