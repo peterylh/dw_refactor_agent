@@ -2510,6 +2510,7 @@ def _indirect_entries_from_select(
     from_tables = set()
     alias_map = {}
     derived_sources = {}
+    derived_output_lookups = {}
     relation_aliases = []
     ctes = _collect_ctes(select_expr)
     ctes_by_key = {
@@ -2531,6 +2532,9 @@ def _indirect_entries_from_select(
             alias_key = _identifier_match_key(alias)
             if alias_key:
                 derived_sources[alias_key] = relation.this
+                derived_output_lookups[alias_key] = (
+                    _derived_output_column_lookup(relation.this)
+                )
                 _remember_alias(alias)
         elif isinstance(relation, exp.Table):
             tbl = _strip_db(_table_name(relation))
@@ -2544,7 +2548,13 @@ def _indirect_entries_from_select(
                 cte_query = ctes_by_key[tbl_key]
                 if alias_key:
                     derived_sources[alias_key] = cte_query
+                    derived_output_lookups[alias_key] = (
+                        _derived_output_column_lookup(cte_query)
+                    )
                 derived_sources[tbl_key] = cte_query
+                derived_output_lookups[tbl_key] = (
+                    _derived_output_column_lookup(cte_query)
+                )
                 _remember_alias(alias)
             elif tbl and tbl != "UNKNOWN":
                 from_tables.add(tbl)
@@ -2579,7 +2589,13 @@ def _indirect_entries_from_select(
         if unresolved_source_keys:
             return []
 
-        derived_aliases = [a for a in relation_aliases if a in derived_sources]
+        col_key = _identifier_match_key(col_name)
+        derived_aliases = [
+            a
+            for a in relation_aliases
+            if a in derived_sources
+            and col_key in (derived_output_lookups.get(a) or {})
+        ]
         if len(derived_aliases) == 1:
             sources = _derived_leaf_sources(
                 derived_sources[derived_aliases[0]],

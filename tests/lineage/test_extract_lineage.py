@@ -2780,6 +2780,70 @@ class TestEdgeCases:
             ),
         }
 
+    def test_unqualified_filter_column_ignores_derived_table_without_column(
+        self,
+    ):
+        schema = build_schema_from_texts(
+            [
+                """
+                CREATE TABLE bs_epbp_trans_total (
+                    batch_jnls_no STRING,
+                    row_date DATE,
+                    send_date DATE,
+                    pay_acc_no STRING
+                )
+                """,
+                """
+                CREATE TABLE tmp_a10_channel_cust_day_dtl_df (
+                    batch_jnls_no STRING
+                )
+                """,
+                """
+                CREATE TABLE target_t (
+                    batch_jnls_no STRING,
+                    row_date DATE,
+                    pay_acc_no STRING
+                )
+                """,
+            ]
+        )
+        sql = """
+        INSERT INTO target_t (batch_jnls_no, row_date, pay_acc_no)
+        SELECT
+            t.batch_jnls_no,
+            row_date,
+            pay_acc_no
+        FROM bs_epbp_trans_total AS t
+        LEFT JOIN (
+            SELECT DISTINCT
+                batch_jnls_no
+            FROM tmp_a10_channel_cust_day_dtl_df
+        ) AS t2
+            ON t.batch_jnls_no = t2.batch_jnls_no
+        WHERE
+            row_date = CAST('20260602' AS DATE)
+            AND send_date = '20260602'
+            AND t2.batch_jnls_no IS NULL
+        """
+        diagnostics = []
+
+        entries = extract_lineage_from_sql(
+            sql,
+            "unqualified_filter_derived_join.sql",
+            schema,
+            diagnostics=diagnostics,
+        )
+
+        assert not [
+            diagnostic
+            for diagnostic in diagnostics
+            if diagnostic.get("stage") == "derived_lineage_column"
+        ]
+        assert _indirect_edges(entries) >= {
+            ("bs_epbp_trans_total", "row_date", "target_t", "WHERE"),
+            ("bs_epbp_trans_total", "send_date", "target_t", "WHERE"),
+        }
+
     def test_select_into(self):
         sql = """
         SELECT order_id, total_amount
