@@ -13,6 +13,8 @@ def _short_table_name(table_name: str) -> str:
     name = str(table_name or "").strip().rstrip(";")
     if not name:
         return ""
+    name = re.sub(r"/\*[\s\S]*?\*/", " ", name)
+    name = re.sub(r"--[^\n]*", " ", name).strip()
     name = name.replace("`", "").replace('"', "")
     return name.split(".")[-1].strip()
 
@@ -141,6 +143,12 @@ def _finalize_task_facts(
             output
             for output in outputs
             if output and output not in transient_names
+        },
+        "created_tables": {
+            create["table"]
+            for creates in creates_by_table.values()
+            for create in creates
+            if create.get("table")
         },
         "transient_tables": transient_tables,
     }

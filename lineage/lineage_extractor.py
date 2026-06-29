@@ -545,7 +545,19 @@ def collect_statement_table_names(statements):
     for stmt in statements or []:
         if stmt is None:
             continue
+        target_table_ids = set()
+        if (
+            isinstance(stmt, (exp.Create, exp.Drop))
+            and str(stmt.args.get("kind") or "").upper() == "TABLE"
+        ):
+            target_expr = stmt.this
+            if isinstance(target_expr, exp.Schema):
+                target_expr = target_expr.this
+            if isinstance(target_expr, exp.Table):
+                target_table_ids.add(id(target_expr))
         for table_expr in stmt.find_all(exp.Table):
+            if id(table_expr) in target_table_ids:
+                continue
             table_name = _canonical_qualified_identifier(
                 _table_name(table_expr)
             )
@@ -568,17 +580,22 @@ def collect_statement_cte_names(statements):
 
 
 def _normalized_skip_table_names(table_names):
-    return {_strip_db(table_name) for table_name in table_names if table_name}
+    return {
+        _identifier_match_key(_strip_db(table_name))
+        for table_name in table_names
+        if table_name
+    }
 
 
 def missing_schema_tables_for_statements(
-    schema, statements, transient_tables=None
+    schema, statements, transient_tables=None, created_tables=None
 ):
     """Return referenced physical tables missing from parsed DDL schema."""
     return missing_schema_tables_for_table_names(
         schema,
         collect_statement_table_names(statements),
         transient_tables=transient_tables,
+        created_tables=created_tables,
         cte_names=collect_statement_cte_names(statements),
     )
 
@@ -587,34 +604,46 @@ def missing_schema_tables_for_table_names(
     schema,
     table_names,
     transient_tables=None,
+    created_tables=None,
     cte_names=None,
 ):
     """Return referenced physical tables missing from DDL schema."""
     transient_names = _normalized_skip_table_names(
         table.get("name", "") for table in (transient_tables or [])
     )
+    created_table_names = _normalized_skip_table_names(created_tables or [])
     cte_table_names = _normalized_skip_table_names(cte_names or [])
-    skip_names = transient_names | cte_table_names
+    skip_names = transient_names | created_table_names | cte_table_names
 
     missing_tables = set()
     for table_name in table_names:
         display_name = _strip_db(table_name)
-        if not display_name or display_name in skip_names:
+        if (
+            not display_name
+            or _identifier_match_key(display_name) in skip_names
+        ):
             continue
         if not _schema_has_table(schema, table_name):
             missing_tables.add(display_name)
     return sorted(missing_tables)
 
 
-def missing_schema_tables_from_sql(sql_text, schema, transient_tables=None):
+def missing_schema_tables_from_sql(
+    sql_text, schema, transient_tables=None, created_tables=None
+):
     try:
         statements = sqlglot.parse(sql_text, dialect="doris")
     except Exception:
         return []
+    if created_tables is None:
+        created_tables = extract_task_table_facts_from_statements(
+            statements
+        ).get("created_tables", set())
     return missing_schema_tables_for_statements(
         schema,
         statements,
         transient_tables=transient_tables,
+        created_tables=created_tables,
     )
 
 
@@ -2818,6 +2847,7 @@ def _task_context_from_statements(
         schema,
         referenced_tables,
         transient_tables=task_facts["transient_tables"],
+        created_tables=task_facts.get("created_tables") or [],
         cte_names=cte_names,
     )
     if not work_item.sql_hash:

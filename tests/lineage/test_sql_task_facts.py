@@ -100,6 +100,34 @@ FROM shop_dm.tmp_orders_stage;
     ]
 
 
+def test_extract_task_table_facts_strips_comment_after_create_target():
+    facts = extract_task_table_facts(
+        """
+DROP TABLE IF EXISTS tmp_A_IBANK_CUST_IND_D__20260601_5_base FORCE;
+
+CREATE TABLE IF NOT EXISTS tmp_A_IBANK_CUST_IND_D__20260601_5_base
+/* 算收入 */ AS
+SELECT order_id
+FROM cdm.dwd_orders;
+""",
+        "a_ibank.sql",
+    )
+
+    assert facts["transient_tables"] == [
+        {
+            "name": "tmp_A_IBANK_CUST_IND_D__20260601_5_base",
+            "source_file": "a_ibank.sql",
+            "created_statement_index": 1,
+            "dropped_statement_index": None,
+            "is_ctas": True,
+            "is_transient": True,
+            "dropped_in_same_task": False,
+            "pre_drop_statement_indexes": [0],
+            "reason": "pre_drop_create_without_post_drop",
+        }
+    ]
+
+
 def test_extract_task_table_facts_keeps_repeated_same_name_lifecycles():
     facts = extract_task_table_facts(
         """
