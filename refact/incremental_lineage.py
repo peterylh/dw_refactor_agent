@@ -98,11 +98,15 @@ def build_lineage_artifacts(
     all_lineage = []
     transient_tables = []
     missing_ddl_tables = set()
+    missing_source_ddl = set()
+    missing_target_ddl = set()
     diagnostics = []
     for result in task_results:
         all_lineage.extend(result.get("entries") or [])
         transient_tables.extend(result.get("transient_tables") or [])
         missing_ddl_tables.update(result.get("missing_ddl_tables") or [])
+        missing_source_ddl.update(result.get("missing_source_ddl") or [])
+        missing_target_ddl.update(result.get("missing_target_ddl") or [])
         diagnostics.extend(result.get("errors") or [])
 
     output = extractor.build_lineage_output(
@@ -130,6 +134,8 @@ def build_lineage_artifacts(
             "computed_task_count": computed,
             "reused_task_count": reused,
             "missing_ddl_tables": sorted(missing_ddl_tables),
+            "missing_source_ddl": sorted(missing_source_ddl),
+            "missing_target_ddl": sorted(missing_target_ddl),
             "diagnostic_count": len(diagnostics),
         },
     }

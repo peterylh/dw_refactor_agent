@@ -582,121 +582,105 @@ def collect_statement_cte_names(statements):
     return cte_names
 
 
+def _is_table_create_statement(stmt):
+    return (
+        isinstance(stmt, exp.Create)
+        and str(stmt.args.get("kind") or "").upper() == "TABLE"
+    )
+
+
+def _is_table_drop_statement(stmt):
+    return (
+        isinstance(stmt, exp.Drop)
+        and str(stmt.args.get("kind") or "").upper() == "TABLE"
+    )
+
+
+def _target_table_expr(target_expr):
+    if isinstance(target_expr, exp.Schema):
+        target_expr = target_expr.this
+    return target_expr if isinstance(target_expr, exp.Table) else None
+
+
+def _statement_table_target_exprs(stmt):
+    if stmt is None:
+        return []
+    if _is_table_create_statement(stmt) or _is_table_drop_statement(stmt):
+        target_expr = _target_table_expr(stmt.this)
+        return [target_expr] if target_expr is not None else []
+    if isinstance(stmt, (exp.Insert, exp.Update, exp.Delete, exp.Merge)):
+        target_expr = _target_table_expr(stmt.this)
+        return [target_expr] if target_expr is not None else []
+    if isinstance(stmt, exp.TruncateTable):
+        return [
+            target_expr
+            for target_expr in (
+                _target_table_expr(expr) for expr in stmt.expressions
+            )
+            if target_expr is not None
+        ]
+    if isinstance(stmt, exp.Alter):
+        target_expr = _target_table_expr(stmt.this)
+        return [target_expr] if target_expr is not None else []
+    return []
+
+
+def _statement_source_table_names(stmt):
+    if stmt is None:
+        return set()
+    target_table_ids = {
+        id(expr) for expr in _statement_table_target_exprs(stmt)
+    }
+    cte_table_names = _normalized_skip_table_names(
+        collect_statement_cte_names([stmt])
+    )
+
+    table_names = set()
+    for table_expr in stmt.find_all(exp.Table):
+        if id(table_expr) in target_table_ids:
+            continue
+        table_name = _canonical_qualified_identifier(_table_name(table_expr))
+        if not table_name:
+            continue
+        is_qualified = bool(
+            table_expr.args.get("db") or table_expr.args.get("catalog")
+        )
+        if (
+            not is_qualified
+            and _identifier_match_key(_strip_db(table_name)) in cte_table_names
+        ):
+            continue
+        table_names.add(table_name)
+    return table_names
+
+
+def _statement_existing_target_table_names(stmt):
+    if not isinstance(
+        stmt,
+        (
+            exp.Insert,
+            exp.Update,
+            exp.Delete,
+            exp.Merge,
+            exp.TruncateTable,
+            exp.Alter,
+        ),
+    ):
+        return set()
+    table_names = set()
+    for target_expr in _statement_table_target_exprs(stmt):
+        table_name = _canonical_qualified_identifier(_table_name(target_expr))
+        if table_name:
+            table_names.add(table_name)
+    return table_names
+
+
 def _normalized_skip_table_names(table_names):
     return {
         _identifier_match_key(_strip_db(table_name))
         for table_name in table_names
         if table_name
     }
-
-
-def _created_table_statement_indexes(statements):
-    created_indexes = {}
-    for statement_index, stmt in enumerate(statements or []):
-        if not (
-            isinstance(stmt, exp.Create)
-            and str(stmt.args.get("kind") or "").upper() == "TABLE"
-        ):
-            continue
-        target_table = _statement_target_table(stmt)
-        if target_table is None:
-            continue
-        table_name = _canonical_qualified_identifier(_table_name(target_table))
-        if not table_name:
-            continue
-        created_indexes.setdefault(
-            _table_identity_match_key(table_name),
-            [],
-        ).append(statement_index)
-    return created_indexes
-
-
-def _is_reference_after_created_table(reference, created_indexes):
-    table_key = _table_identity_match_key(reference.get("table_name"))
-    create_indexes = created_indexes.get(table_key) or []
-    return any(
-        create_index < reference.get("statement_index", -1)
-        for create_index in create_indexes
-    )
-
-
-def missing_schema_tables_for_statements(
-    schema, statements, transient_tables=None, created_tables=None
-):
-    """Return referenced physical tables missing from parsed DDL schema."""
-    return missing_schema_tables_for_table_names(
-        schema,
-        collect_statement_table_names(statements),
-        transient_tables=transient_tables,
-        created_tables=created_tables,
-        cte_names=collect_statement_cte_names(statements),
-        table_references=_statement_table_references(statements),
-        created_table_indexes=_created_table_statement_indexes(statements),
-    )
-
-
-def missing_schema_tables_for_table_names(
-    schema,
-    table_names,
-    transient_tables=None,
-    created_tables=None,
-    cte_names=None,
-    table_references=None,
-    created_table_indexes=None,
-):
-    """Return referenced physical tables missing from DDL schema."""
-    transient_names = _normalized_skip_table_names(
-        table.get("name", "") for table in (transient_tables or [])
-    )
-    created_table_names = (
-        _normalized_skip_table_names(created_tables or [])
-        if table_references is None
-        else set()
-    )
-    cte_table_names = _normalized_skip_table_names(cte_names or [])
-    skip_names = transient_names | created_table_names | cte_table_names
-
-    missing_tables = set()
-    references = table_references or [
-        {"statement_index": -1, "table_name": table_name}
-        for table_name in table_names
-    ]
-    created_table_indexes = created_table_indexes or {}
-    for reference in references:
-        table_name = reference["table_name"]
-        display_name = _strip_db(table_name)
-        if (
-            not display_name
-            or _identifier_match_key(display_name) in skip_names
-            or _is_reference_after_created_table(
-                reference, created_table_indexes
-            )
-        ):
-            continue
-        if not _schema_has_table(schema, table_name):
-            missing_tables.add(display_name)
-    return sorted(missing_tables)
-
-
-def missing_schema_tables_from_sql(
-    sql_text, schema, transient_tables=None, created_tables=None
-):
-    try:
-        statements = sqlglot.parse(
-            _sqlglot_task_sql(sql_text), dialect="doris"
-        )
-    except Exception:
-        return []
-    if created_tables is None:
-        created_tables = extract_task_table_facts_from_statements(
-            statements
-        ).get("created_tables", set())
-    return missing_schema_tables_for_statements(
-        schema,
-        statements,
-        transient_tables=transient_tables,
-        created_tables=created_tables,
-    )
 
 
 def slice_schema(schema, table_names):
@@ -907,6 +891,32 @@ def _register_task_table_schema(schema, table_name, columns):
     schema.setdefault(catalog, {}).setdefault(database, {})[table_short] = (
         clean_column_map
     )
+
+
+def _drop_task_table_schema(schema, table_name):
+    target_key = _table_identity_match_key(table_name)
+    if not target_key[2]:
+        return
+    for catalog_key, databases in list((schema or {}).items()):
+        if not isinstance(databases, dict):
+            continue
+        for database_key, tables in list(databases.items()):
+            if not isinstance(tables, dict):
+                continue
+            for table_key in list(tables):
+                if (
+                    _schema_table_match_key(
+                        catalog_key,
+                        database_key,
+                        table_key,
+                    )
+                    == target_key
+                ):
+                    tables.pop(table_key, None)
+            if not tables:
+                databases.pop(database_key, None)
+        if not databases:
+            schema.pop(catalog_key, None)
 
 
 def _apply_alter_table_to_task_schema(schema, stmt, dialect="doris"):
@@ -2864,6 +2874,8 @@ class ParsedTaskContext:
     cte_names: Tuple[str, ...]
     task_schema: Dict[str, Any]
     missing_ddl_tables: List[str]
+    missing_source_ddl: List[str]
+    missing_target_ddl: List[str]
     diagnostics: List[Dict[str, Any]] = field(default_factory=list)
 
     @property
@@ -2895,15 +2907,6 @@ def _task_context_from_statements(
         work_item.source_file,
     )
     task_schema = _task_schema_for_table_names(schema, referenced_tables)
-    missing_ddl_tables = missing_schema_tables_for_table_names(
-        schema,
-        referenced_tables,
-        transient_tables=task_facts["transient_tables"],
-        created_tables=task_facts.get("created_tables") or [],
-        cte_names=cte_names,
-        table_references=_statement_table_references(statements),
-        created_table_indexes=_created_table_statement_indexes(statements),
-    )
     if not work_item.sql_hash:
         work_item.sql_hash = _task_sql_hash(work_item)
     return ParsedTaskContext(
@@ -2913,7 +2916,9 @@ def _task_context_from_statements(
         referenced_tables=referenced_tables,
         cte_names=cte_names,
         task_schema=task_schema,
-        missing_ddl_tables=missing_ddl_tables,
+        missing_ddl_tables=[],
+        missing_source_ddl=[],
+        missing_target_ddl=[],
         diagnostics=diagnostics,
     )
 
@@ -2937,6 +2942,8 @@ def _task_result_from_context(context, entries):
         "entries": entries,
         "transient_tables": context.task_facts["transient_tables"],
         "missing_ddl_tables": context.missing_ddl_tables,
+        "missing_source_ddl": context.missing_source_ddl,
+        "missing_target_ddl": context.missing_target_ddl,
         "referenced_tables": list(context.referenced_tables),
         "sql_hash": context.sql_hash,
         "stats": dict(STATS),
@@ -2964,11 +2971,42 @@ def extract_lineage_from_statements(
     return extract_lineage_from_context(context)
 
 
+def _add_context_missing_ddl(context, category, table_name):
+    display_name = _strip_db(table_name)
+    if not display_name:
+        return
+    missing_tables = getattr(context, category)
+    if display_name not in missing_tables:
+        missing_tables.append(display_name)
+        missing_tables.sort()
+    context.missing_ddl_tables = sorted(
+        set(context.missing_source_ddl) | set(context.missing_target_ddl)
+    )
+
+
+def _record_statement_missing_ddl(context, stmt):
+    for table_name in _statement_source_table_names(stmt):
+        if not _schema_has_table(context.task_schema, table_name):
+            _add_context_missing_ddl(
+                context,
+                "missing_source_ddl",
+                table_name,
+            )
+    for table_name in _statement_existing_target_table_names(stmt):
+        if not _schema_has_table(context.task_schema, table_name):
+            _add_context_missing_ddl(
+                context,
+                "missing_target_ddl",
+                table_name,
+            )
+
+
 def extract_lineage_from_context(context):
     entries = []
     for stmt in context.statements:
         if stmt is None:
             continue
+        _record_statement_missing_ddl(context, stmt)
         if isinstance(stmt, exp.Insert):
             entries.extend(
                 _handle_insert(
@@ -3008,6 +3046,11 @@ def extract_lineage_from_context(context):
             )
         elif isinstance(stmt, exp.Alter):
             _apply_alter_table_to_task_schema(context.task_schema, stmt)
+        elif _is_table_drop_statement(stmt):
+            _drop_task_table_schema(
+                context.task_schema,
+                _target_table_sql(stmt.this),
+            )
         elif isinstance(stmt, exp.Merge):
             entries.extend(
                 _handle_merge(
@@ -3080,6 +3123,8 @@ def _extract_task_work_item(work_item, schema):
                 "entries": [],
                 "transient_tables": task_facts["transient_tables"],
                 "missing_ddl_tables": [],
+                "missing_source_ddl": [],
+                "missing_target_ddl": [],
                 "referenced_tables": [],
                 "sql_hash": work_item.sql_hash,
                 "stats": dict(STATS),
@@ -3120,6 +3165,8 @@ def _task_failure_result(work_item, error, stage="worker"):
         "entries": [],
         "transient_tables": [],
         "missing_ddl_tables": [],
+        "missing_source_ddl": [],
+        "missing_target_ddl": [],
         "referenced_tables": [],
         "stats": {},
         "errors": [
@@ -3155,6 +3202,8 @@ def _task_result_from_cache(work_item, cached):
         "entries": cached.get("entries") or [],
         "transient_tables": cached.get("transient_tables") or [],
         "missing_ddl_tables": cached.get("missing_ddl_tables") or [],
+        "missing_source_ddl": cached.get("missing_source_ddl") or [],
+        "missing_target_ddl": cached.get("missing_target_ddl") or [],
         "referenced_tables": cached.get("referenced_tables") or [],
         "stats": cached.get("stats") or {},
         "errors": cached.get("errors") or [],
@@ -3529,11 +3578,15 @@ def extract_lineage_from_task_files(
     all_lineage = []
     transient_tables = []
     missing_ddl_tables = set()
+    missing_source_ddl = set()
+    missing_target_ddl = set()
     errors = []
     for result in task_results:
         all_lineage.extend(result["entries"])
         transient_tables.extend(result["transient_tables"])
         missing_ddl_tables.update(result.get("missing_ddl_tables") or [])
+        missing_source_ddl.update(result.get("missing_source_ddl") or [])
+        missing_target_ddl.update(result.get("missing_target_ddl") or [])
         _add_stats(result["stats"])
         errors.extend(result.get("errors") or [])
 
@@ -3541,6 +3594,8 @@ def extract_lineage_from_task_files(
         "lineage": all_lineage,
         "transient_tables": transient_tables,
         "missing_ddl_tables": sorted(missing_ddl_tables),
+        "missing_source_ddl": sorted(missing_source_ddl),
+        "missing_target_ddl": sorted(missing_target_ddl),
         "task_results": task_results,
         "task_cache": (
             _build_task_cache(cache_project, schema, task_cache_entries)
@@ -3554,6 +3609,24 @@ def extract_lineage_from_task_files(
 def format_missing_ddl_warnings(task_results, missing_ddl_tables):
     lines = []
     for result in task_results or []:
+        source_missing = sorted(result.get("missing_source_ddl") or [])
+        target_missing = sorted(result.get("missing_target_ddl") or [])
+        if source_missing or target_missing:
+            if source_missing:
+                lines.append(
+                    "WARNING missing source DDL: "
+                    f"{result.get('source_file', '')} reads "
+                    f"{', '.join(source_missing)}, "
+                    "but no schema DDL was found."
+                )
+            if target_missing:
+                lines.append(
+                    "WARNING missing target DDL: "
+                    f"{result.get('source_file', '')} writes "
+                    f"{', '.join(target_missing)}, "
+                    "but no schema DDL was found."
+                )
+            continue
         missing_tables = sorted(result.get("missing_ddl_tables") or [])
         if not missing_tables:
             continue

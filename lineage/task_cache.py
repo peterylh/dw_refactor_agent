@@ -76,6 +76,8 @@ def cache_entry_from_result(result: dict, cache_key: str) -> dict:
         "entries": result.get("entries") or [],
         "transient_tables": result.get("transient_tables") or [],
         "missing_ddl_tables": result.get("missing_ddl_tables") or [],
+        "missing_source_ddl": result.get("missing_source_ddl") or [],
+        "missing_target_ddl": result.get("missing_target_ddl") or [],
         "stats": result.get("stats") or {},
         "errors": result.get("errors") or [],
     }

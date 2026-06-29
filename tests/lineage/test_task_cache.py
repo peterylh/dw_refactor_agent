@@ -108,6 +108,8 @@ def test_cache_entry_from_result_preserves_reusable_task_result_fields():
         "entries": [{"target": "demo_dm.dwd_order"}],
         "transient_tables": ["tmp_order"],
         "missing_ddl_tables": ["missing_table"],
+        "missing_source_ddl": ["missing_source"],
+        "missing_target_ddl": ["missing_target"],
         "stats": {"entry_count": 1},
         "errors": [{"message": "warn"}],
     }
@@ -118,6 +120,8 @@ def test_cache_entry_from_result_preserves_reusable_task_result_fields():
         "entries": [{"target": "demo_dm.dwd_order"}],
         "transient_tables": ["tmp_order"],
         "missing_ddl_tables": ["missing_table"],
+        "missing_source_ddl": ["missing_source"],
+        "missing_target_ddl": ["missing_target"],
         "stats": {"entry_count": 1},
         "errors": [{"message": "warn"}],
     }

@@ -26,10 +26,14 @@ def test_extract_lineage_reports_tables_missing_from_schema_ddl(tmp_path):
     result = extract_lineage_from_task_files([task_file], tasks_dir, schema={})
 
     assert result["missing_ddl_tables"] == ["dwd_order", "ods_order"]
+    assert result["missing_source_ddl"] == ["ods_order"]
+    assert result["missing_target_ddl"] == ["dwd_order"]
     assert result["task_results"][0]["missing_ddl_tables"] == [
         "dwd_order",
         "ods_order",
     ]
+    assert result["task_results"][0]["missing_source_ddl"] == ["ods_order"]
+    assert result["task_results"][0]["missing_target_ddl"] == ["dwd_order"]
 
 
 def test_extract_lineage_missing_ddl_ignores_transient_tables(tmp_path):
@@ -63,6 +67,8 @@ def test_extract_lineage_missing_ddl_ignores_transient_tables(tmp_path):
 
     assert result["missing_ddl_tables"] == []
     assert result["task_results"][0]["missing_ddl_tables"] == []
+    assert result["task_results"][0]["missing_source_ddl"] == []
+    assert result["task_results"][0]["missing_target_ddl"] == []
 
 
 def test_extract_lineage_missing_ddl_ignores_case_variant_transient_drop(
@@ -308,9 +314,142 @@ def test_extract_lineage_missing_ddl_still_reports_create_table_sources(
     result = extract_lineage_from_task_files([task_file], tasks_dir, schema={})
 
     assert result["missing_ddl_tables"] == ["r_yygl_regional_customer_01"]
+    assert result["missing_source_ddl"] == ["r_yygl_regional_customer_01"]
+    assert result["missing_target_ddl"] == []
     assert result["task_results"][0]["missing_ddl_tables"] == [
         "r_yygl_regional_customer_01",
     ]
+    assert result["task_results"][0]["missing_source_ddl"] == [
+        "r_yygl_regional_customer_01",
+    ]
+    assert result["task_results"][0]["missing_target_ddl"] == []
+
+
+def test_extract_lineage_missing_ddl_reports_dml_target_separately(tmp_path):
+    tasks_dir, task_file = _write_task(
+        tmp_path,
+        "dwd_order.sql",
+        """
+        INSERT INTO dwd_order(order_id)
+        SELECT order_id
+        FROM ods_order;
+        """,
+    )
+    schema = {
+        "internal": {
+            "shop_dm": {
+                "ods_order": {"order_id": "BIGINT"},
+            }
+        }
+    }
+
+    result = extract_lineage_from_task_files([task_file], tasks_dir, schema)
+
+    assert result["missing_ddl_tables"] == ["dwd_order"]
+    assert result["missing_source_ddl"] == []
+    assert result["missing_target_ddl"] == ["dwd_order"]
+    assert result["task_results"][0]["missing_source_ddl"] == []
+    assert result["task_results"][0]["missing_target_ddl"] == ["dwd_order"]
+
+
+def test_extract_lineage_missing_ddl_reports_source_used_before_create(
+    tmp_path,
+):
+    tasks_dir, task_file = _write_task(
+        tmp_path,
+        "ads_orders.sql",
+        """
+        INSERT INTO ads_orders(order_id)
+        SELECT order_id
+        FROM tmp_orders;
+
+        CREATE TABLE tmp_orders AS
+        SELECT order_id
+        FROM ods_order;
+        """,
+    )
+    schema = {
+        "internal": {
+            "shop_dm": {
+                "ads_orders": {"order_id": "BIGINT"},
+                "ods_order": {"order_id": "BIGINT"},
+            }
+        }
+    }
+
+    result = extract_lineage_from_task_files([task_file], tasks_dir, schema)
+
+    assert result["missing_ddl_tables"] == ["tmp_orders"]
+    assert result["missing_source_ddl"] == ["tmp_orders"]
+    assert result["missing_target_ddl"] == []
+    assert result["task_results"][0]["missing_source_ddl"] == ["tmp_orders"]
+    assert result["task_results"][0]["missing_target_ddl"] == []
+
+
+def test_extract_lineage_missing_ddl_reports_source_after_drop(tmp_path):
+    tasks_dir, task_file = _write_task(
+        tmp_path,
+        "ads_orders.sql",
+        """
+        CREATE TABLE tmp_orders AS
+        SELECT order_id
+        FROM ods_order;
+
+        DROP TABLE tmp_orders;
+
+        INSERT INTO ads_orders(order_id)
+        SELECT order_id
+        FROM tmp_orders;
+        """,
+    )
+    schema = {
+        "internal": {
+            "shop_dm": {
+                "ads_orders": {"order_id": "BIGINT"},
+                "ods_order": {"order_id": "BIGINT"},
+            }
+        }
+    }
+
+    result = extract_lineage_from_task_files([task_file], tasks_dir, schema)
+
+    assert result["missing_ddl_tables"] == ["tmp_orders"]
+    assert result["missing_source_ddl"] == ["tmp_orders"]
+    assert result["missing_target_ddl"] == []
+    assert result["task_results"][0]["missing_source_ddl"] == ["tmp_orders"]
+    assert result["task_results"][0]["missing_target_ddl"] == []
+
+
+def test_extract_lineage_missing_ddl_keeps_same_short_name_databases_distinct(
+    tmp_path,
+):
+    tasks_dir, task_file = _write_task(
+        tmp_path,
+        "ads_orders.sql",
+        """
+        CREATE TABLE staging.tmp_orders AS
+        SELECT order_id
+        FROM ods_order;
+
+        INSERT INTO ads_orders(order_id)
+        SELECT order_id
+        FROM shop_dm.tmp_orders;
+        """,
+    )
+    schema = {
+        "internal": {
+            "shop_dm": {
+                "ads_orders": {"order_id": "BIGINT"},
+                "ods_order": {"order_id": "BIGINT"},
+            }
+        }
+    }
+
+    result = extract_lineage_from_task_files([task_file], tasks_dir, schema)
+
+    assert result["missing_ddl_tables"] == ["tmp_orders"]
+    assert result["missing_source_ddl"] == ["tmp_orders"]
+    assert result["missing_target_ddl"] == []
 
 
 def test_extract_lineage_missing_ddl_ignores_cte_names(tmp_path):
