@@ -521,22 +521,30 @@ def _schema_has_table(schema, table_name):
     )
 
 
-def collect_statement_table_names(statements):
-    """Collect table names referenced by a parsed task."""
-    table_names = set()
-    for stmt in statements or []:
+def _statement_target_table(stmt):
+    if not (
+        isinstance(stmt, (exp.Create, exp.Drop))
+        and str(stmt.args.get("kind") or "").upper() == "TABLE"
+    ):
+        return None
+    target_expr = stmt.this
+    if isinstance(target_expr, exp.Schema):
+        target_expr = target_expr.this
+    if isinstance(target_expr, exp.Table):
+        return target_expr
+    return None
+
+
+def _statement_table_references(statements):
+    """Collect referenced table names with their statement index."""
+    references = []
+    for statement_index, stmt in enumerate(statements or []):
         if stmt is None:
             continue
-        target_table_ids = set()
-        if (
-            isinstance(stmt, (exp.Create, exp.Drop))
-            and str(stmt.args.get("kind") or "").upper() == "TABLE"
-        ):
-            target_expr = stmt.this
-            if isinstance(target_expr, exp.Schema):
-                target_expr = target_expr.this
-            if isinstance(target_expr, exp.Table):
-                target_table_ids.add(id(target_expr))
+        target_table = _statement_target_table(stmt)
+        target_table_ids = (
+            {id(target_table)} if target_table is not None else set()
+        )
         for table_expr in stmt.find_all(exp.Table):
             if id(table_expr) in target_table_ids:
                 continue
@@ -544,8 +552,21 @@ def collect_statement_table_names(statements):
                 _table_name(table_expr)
             )
             if table_name:
-                table_names.add(table_name)
-    return table_names
+                references.append(
+                    {
+                        "statement_index": statement_index,
+                        "table_name": table_name,
+                    }
+                )
+    return references
+
+
+def collect_statement_table_names(statements):
+    """Collect table names referenced by a parsed task."""
+    return {
+        reference["table_name"]
+        for reference in _statement_table_references(statements)
+    }
 
 
 def collect_statement_cte_names(statements):
@@ -569,6 +590,36 @@ def _normalized_skip_table_names(table_names):
     }
 
 
+def _created_table_statement_indexes(statements):
+    created_indexes = {}
+    for statement_index, stmt in enumerate(statements or []):
+        if not (
+            isinstance(stmt, exp.Create)
+            and str(stmt.args.get("kind") or "").upper() == "TABLE"
+        ):
+            continue
+        target_table = _statement_target_table(stmt)
+        if target_table is None:
+            continue
+        table_name = _canonical_qualified_identifier(_table_name(target_table))
+        if not table_name:
+            continue
+        created_indexes.setdefault(
+            _table_identity_match_key(table_name),
+            [],
+        ).append(statement_index)
+    return created_indexes
+
+
+def _is_reference_after_created_table(reference, created_indexes):
+    table_key = _table_identity_match_key(reference.get("table_name"))
+    create_indexes = created_indexes.get(table_key) or []
+    return any(
+        create_index < reference.get("statement_index", -1)
+        for create_index in create_indexes
+    )
+
+
 def missing_schema_tables_for_statements(
     schema, statements, transient_tables=None, created_tables=None
 ):
@@ -579,6 +630,8 @@ def missing_schema_tables_for_statements(
         transient_tables=transient_tables,
         created_tables=created_tables,
         cte_names=collect_statement_cte_names(statements),
+        table_references=_statement_table_references(statements),
+        created_table_indexes=_created_table_statement_indexes(statements),
     )
 
 
@@ -588,21 +641,36 @@ def missing_schema_tables_for_table_names(
     transient_tables=None,
     created_tables=None,
     cte_names=None,
+    table_references=None,
+    created_table_indexes=None,
 ):
     """Return referenced physical tables missing from DDL schema."""
     transient_names = _normalized_skip_table_names(
         table.get("name", "") for table in (transient_tables or [])
     )
-    created_table_names = _normalized_skip_table_names(created_tables or [])
+    created_table_names = (
+        _normalized_skip_table_names(created_tables or [])
+        if table_references is None
+        else set()
+    )
     cte_table_names = _normalized_skip_table_names(cte_names or [])
     skip_names = transient_names | created_table_names | cte_table_names
 
     missing_tables = set()
-    for table_name in table_names:
+    references = table_references or [
+        {"statement_index": -1, "table_name": table_name}
+        for table_name in table_names
+    ]
+    created_table_indexes = created_table_indexes or {}
+    for reference in references:
+        table_name = reference["table_name"]
         display_name = _strip_db(table_name)
         if (
             not display_name
             or _identifier_match_key(display_name) in skip_names
+            or _is_reference_after_created_table(
+                reference, created_table_indexes
+            )
         ):
             continue
         if not _schema_has_table(schema, table_name):
@@ -2833,6 +2901,8 @@ def _task_context_from_statements(
         transient_tables=task_facts["transient_tables"],
         created_tables=task_facts.get("created_tables") or [],
         cte_names=cte_names,
+        table_references=_statement_table_references(statements),
+        created_table_indexes=_created_table_statement_indexes(statements),
     )
     if not work_item.sql_hash:
         work_item.sql_hash = _task_sql_hash(work_item)

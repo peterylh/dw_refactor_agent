@@ -231,6 +231,66 @@ def test_extract_lineage_missing_ddl_ignores_table_created_in_same_task(
     assert result["task_results"][0]["missing_ddl_tables"] == []
 
 
+def test_extract_lineage_missing_ddl_reports_default_db_table_with_same_created_short_name(
+    tmp_path,
+):
+    tasks_dir, task_file = _write_task(
+        tmp_path,
+        "same_short_name.sql",
+        """
+        CREATE TABLE staging.tmp_orders AS
+        SELECT id
+        FROM staging.src_orders;
+
+        INSERT INTO target_db.target_orders(id)
+        SELECT id
+        FROM shop_dm.tmp_orders;
+        """,
+    )
+    schema = {
+        "internal": {
+            "staging": {"src_orders": {"id": "BIGINT"}},
+            "target_db": {"target_orders": {"id": "BIGINT"}},
+        }
+    }
+
+    result = extract_lineage_from_task_files([task_file], tasks_dir, schema)
+
+    assert result["missing_ddl_tables"] == ["tmp_orders"]
+    assert result["task_results"][0]["missing_ddl_tables"] == ["tmp_orders"]
+
+
+def test_extract_lineage_missing_ddl_reports_table_read_before_create(
+    tmp_path,
+):
+    tasks_dir, task_file = _write_task(
+        tmp_path,
+        "read_before_create.sql",
+        """
+        INSERT INTO shop_dm.target_orders(id)
+        SELECT id
+        FROM tmp_orders;
+
+        CREATE TABLE tmp_orders AS
+        SELECT id
+        FROM shop_dm.src_orders;
+        """,
+    )
+    schema = {
+        "internal": {
+            "shop_dm": {
+                "src_orders": {"id": "BIGINT"},
+                "target_orders": {"id": "BIGINT"},
+            }
+        }
+    }
+
+    result = extract_lineage_from_task_files([task_file], tasks_dir, schema)
+
+    assert result["missing_ddl_tables"] == ["tmp_orders"]
+    assert result["task_results"][0]["missing_ddl_tables"] == ["tmp_orders"]
+
+
 def test_extract_lineage_missing_ddl_still_reports_create_table_sources(
     tmp_path,
 ):
