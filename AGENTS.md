@@ -18,75 +18,21 @@
 - 命名规范配置化校验
 
 
-## 目录结构
+## 模块地图
 
-```text
-shop-dm/
-├── ddl_deriver/                    # DDL 变更自动推导工具
-│   ├── __init__.py
-│   └── ddl_deriver.py
-├── shop/                           # 零售门店数仓
-│   ├── ddl/                        # DWD/DWS/ADS/DIM 建表 SQL
-│   ├── ods/                        # ODS 层资产，按 ddl/models/data/{catalog}/{database}/ 组织
-│   │   ├── ddl/internal/shop_dm/    # ODS 建表 SQL
-│   │   ├── models/internal/shop_dm/ # ODS 表级元数据配置
-│   │   └── data/internal/shop_dm/   # ODS 初始化数据 SQL
-│   ├── tasks/                      # ETL 作业 SQL
-│   │   └── full_refresh/           # shop 专用批量全刷 SQL
-│   └── models/                     # 表级元数据配置 (tablename.yaml)
-├── finance_analytics/              # 金融分析数仓
-│   ├── ddl/                        # DWD/DWS/ADS/DIM 建表 SQL
-│   ├── ods/                        # ODS 层资产，按 ddl/models/data/{catalog}/{database}/ 组织
-│   │   ├── ddl/internal/finance_analytics_dm/    # ODS 建表 SQL
-│   │   ├── models/internal/finance_analytics_dm/ # ODS 表级元数据配置
-│   │   └── data/internal/finance_analytics_dm/   # ODS 初始化数据 SQL
-│   ├── tasks/                      # 可执行 ETL SQL
-│   ├── models/                     # 表级元数据配置 (tablename.yaml)
-│   └── generate_ods_data.py        # 生成 ODS 模拟数据 SQL
-├── lineage/
-│   ├── __init__.py
-│   ├── ddl/                        # lineage 库快照表与核心元数据表
-│   ├── lineage_extractor.py        # 字段级血缘抽取
-│   ├── import_lineage.py           # 快照化批量导入 lineage 库
-│   ├── lineage_cli.py              # 本地血缘查询 CLI
-│   ├── refresh_lineage_html.py     # 刷新可视化 HTML
-│   ├── job_dag.py                  # 基于血缘边生成作业 DAG
-│   ├── task_cache.py               # 任务级血缘缓存 key 与缓存项 helpers
-│   ├── lineage.html                # 字段血缘 HTML 模板
-│   └── lineage_job.html            # 作业血缘 HTML 模板
-├── assess/
-│   ├── assess_middle_layer.py      # 中间层评估入口
-│   ├── context_builder.py          # 构造 LLM 表巡检上下文
-│   ├── llm/                        # DeepSeek 表巡检、字段分组与缓存
-│   └── model_metadata_writer.py    # LLM 表元数据与指标分组回写
-├── exec/
-│   ├── reinit_project.py           # 重建 DDL + 初始化 ODS + 触发作业执行
-│   └── task_run.py                 # 按 DAG 拓扑执行 ETL 作业
-├── refact/
-│   ├── __init__.py
-│   ├── incremental_lineage.py      # 重构 run 的血缘产物构建
-│   ├── run.py                      # 重构 run session 统一入口
-│   ├── shadow_run.py               # 旁路执行验证计划
-│   └── compare.py                  # 对比生产与验证库结果
-├── tests/
-│   ├── __init__.py
-│   ├── conftest.py
-│   ├── assess/                     # assess/context_builder/table_inspector 测试
-│   ├── ddl_deriver/                # DDL 推导与 git 模式测试
-│   ├── lineage/                    # 血缘提取与 JobDAG 测试
-│   ├── refact/                     # run / shadow_run / compare 测试
-│   ├── test_naming_config.py       # 命名规范配置测试
-│   └── test_task_run.py            # task_run 辅助逻辑测试
-├── logs/                           # 本地日志与调试 SQL
-├── docs/
-│   └── refactor_guides/             # 数仓资产重构操作指南
-├── AGENTS.md
-├── commit_message.md               # Git Commit 规范
-├── config.py
-├── naming_config.yaml
-├── python_coding_standards.md
-└── sql_dev_standards.md
-```
+根 `AGENTS.md` 只保留高层模块地图，细节优先放到对应目录的专属文档或代码附近。
+
+- `shop/`、`finance_analytics/`：项目数据仓库资产，包含 DDL、ODS 资产、任务 SQL 与
+  表级模型 YAML。
+- `lineage/`：字段级血缘抽取、查询、导入、HTML 刷新、作业 DAG 与 lineage 库 DDL。
+- `assess/`：中间层质量评估、LLM 表巡检、业务语义目录、表元数据与指标分组回写。
+- `refact/`：数仓重构验证入口、增量血缘分析、旁路执行与结果对比。
+- `exec/`：项目重建、ODS 初始化与 ETL DAG 执行。
+- `ddl_deriver/`：DDL 变更自动推导工具。
+- `tests/`：单元测试与集成测试；血缘相关测试在 `tests/lineage/`。
+- `benchmarks/`：本地性能基准；血缘抽取基准在 `benchmarks/lineage_extractor/`。
+- `docs/refactor_guides/`：常见数仓资产重构操作指南。
+- `config.py`、`naming_config.yaml`：项目路径、库名、命名规范等共享配置。
 
 ## 数仓资产重构指南
 
@@ -98,143 +44,21 @@ shop-dm/
 
 ## 血缘与 DAG 工具
 
-### lineage_extractor.py
+修改 `lineage/`、项目目录下的 `{project}/lineage/` 产物生成逻辑、血缘导入/查询或 DAG
+相关逻辑时，先阅读 `lineage/AGENTS.md`。
 
-字段级血缘解析引擎。读取 `{project}/ddl/`、`{project}/ods/ddl/{catalog}/{database}/` 建表 SQL 与 `{project}/tasks/` ETL SQL，输出：
+血缘相关 SQL 标识符匹配默认大小写不敏感：表名、字段名、catalog、database/schema
+在解析、查找、比较、追踪时应使用统一 canonical/casefold key；用户可见输出和 SQL
+表达式可按现有逻辑保留展示大小写。
 
-- `{project}/lineage/lineage_data.json`
-- `{project}/lineage/task_lineage_cache.json`
+详细参数、路径规则和示例命令集中维护在 `lineage/AGENTS.md`。根目录只保留入口索引：
 
-全量提取默认启用 task 级血缘缓存；未变化的 task 会按 SQL、相关 DDL
-schema 切片、项目 catalog/database 与 extractor 代码版本复用缓存结果。
-
-常用参数：
-
-- `--project shop|finance_analytics`
-- `--parallel <n>`：task 文件级并行度
-- `--cache-file <path>`：指定 task 级血缘缓存文件，默认
-  `{project}/lineage/task_lineage_cache.json`
-- `--no-cache`：禁用 task 级血缘缓存
-
-```bash
-# shop 项目（默认）
-python lineage/lineage_extractor.py
-
-# finance_analytics 项目
-python lineage/lineage_extractor.py --project finance_analytics
-```
-
-### import_lineage.py
-
-将 `{project}/lineage/lineage_data.json` 导入 Doris 对应 lineage 库：
-
-- `shop` → `shop_lineage`
-- `finance_analytics` → `finance_analytics_lineage`
-
-导入采用快照化模型：
-
-- 每次导入写入一个 `snapshot_id`
-- 默认按当前时间毫秒生成快照 ID，也可用 `--snapshot-id` 指定
-- 重跑同一个 `snapshot_id` 时只删除该快照的数据，不再 `TRUNCATE` 整个 lineage 库
-- 导入完成后默认将当前快照标记为 active，可用 `--no-activate` 禁用
-- 表、字段、作业、直接字段血缘、间接血缘、表级血缘均使用分批 `executemany`
-
-常用参数：
-
-- `--project shop|finance_analytics`
-- `--lineage-file <path>`：指定血缘 JSON，默认 `{project}/lineage/lineage_data.json`
-- `--db-env prod|test`：选择 Doris 物理环境，默认 `prod`
-- `--snapshot-id <id>`：指定快照 ID，便于可重复导入或比对
-- `--batch-size <n>`：控制每批 `executemany` 行数，默认 `5000`
-- `--no-activate`：只导入快照，不切换 active 指针
-
-示例：
-
-```bash
-# shop 项目，默认快照 ID，导入后设为 active
-python lineage/import_lineage.py --project shop
-
-# finance_analytics 大批量导入，放大 executemany 批次
-python lineage/import_lineage.py --project finance_analytics --db-env test --batch-size 10000
-
-# 指定快照 ID 重复导入，不切换 active
-python lineage/import_lineage.py --project shop --snapshot-id 202606160001 --no-activate
-```
-
-首次部署或 DDL 变更后，需要先在对应 lineage 库中执行 `lineage/ddl/*.sql`。
-
-### lineage_cli.py
-
-读取本地 `{project}/lineage/lineage_data.json` 进行命令行查询，不依赖 Doris：
-
-```bash
-# 项目统计
-python lineage/lineage_cli.py stats --project shop
-
-# 表级上游/下游血缘
-python lineage/lineage_cli.py table --project shop --table ads_sales_dashboard --direction upstream --depth 2
-
-# 字段级血缘，--verbose 会展示 WHERE/GROUP BY/JOIN 等间接依赖
-python lineage/lineage_cli.py column --project shop --table dws_product_sales_daily --column sales_amount --depth 2 --verbose
-
-# 导出某张表附近的本地 HTML 子图
-python lineage/lineage_cli.py export-html --project shop --table ads_sales_dashboard --depth 2 --output lineage/local_ads_sales_dashboard.html
-```
-
-`table` 支持 `--format text|json|dot`，`column` 支持 `--format text|json`。
-
-### refresh_lineage_html.py
-
-读取 `{project}/lineage/lineage_data.json`，将血缘数据注入 HTML 页面并刷新可视化。
-
-支持 `--project shop|finance_analytics`。
-
-路径规则：
-
-- 项目上下文从 `config.py` 中的 `PROJECT_CONFIG` 推导
-- HTML 模板位于 `lineage/lineage.html`、`lineage/lineage_job.html`
-- HTML 输出位于项目目录，避免不同项目互相覆盖
-
-输出位置：
-
-- `shop` → `shop/lineage/lineage.html`、`shop/lineage/lineage_job.html`
-- `finance_analytics` → `finance_analytics/lineage/lineage.html`、`finance_analytics/lineage/lineage_job.html`
-
-示例：
-
-```bash
-# shop 项目（默认）
-python lineage/refresh_lineage_html.py
-
-# finance_analytics 项目
-python lineage/refresh_lineage_html.py --project finance_analytics
-```
-
-### job_dag.py
-
-基于血缘边构建可序列化作业 DAG，供正常执行与重构验证共用，支持：
-
-- `bfs_downstream()` 下游追踪
-- `topological_sort()` 拓扑排序
-- `topological_layers()` 分层拓扑
-- `save()` / `load()` DAG 持久化
-
-生成的 DAG 文件位于：
-
-- `{project}/lineage/job_dag.json`
-
-### lineage DDL
-
-`lineage/ddl/` 中维护 lineage 库的快照表与 7 张核心表：
-
-- `lineage_snapshot`
-- `datasource`
-- `table_info`
-- `column_info`
-- `job`
-- `column_lineage`
-- `indirect_lineage`
-- `table_lineage`
+- `lineage/lineage_extractor.py`：字段级 SQL 血缘抽取，生成 `{project}/lineage/lineage_data.json` 与 task 缓存。
+- `lineage/import_lineage.py`：将本地血缘 JSON 快照化导入 Doris lineage 库。
+- `lineage/lineage_cli.py`：读取本地血缘 JSON 做表级/字段级查询和 HTML 子图导出。
+- `lineage/refresh_lineage_html.py`：刷新项目目录下的字段血缘与作业血缘 HTML。
+- `lineage/job_dag.py`：基于血缘边生成可序列化作业 DAG，供执行与重构验证复用。
+- `lineage/ddl/`：维护 lineage 库快照表和核心元数据表 DDL。
 
 ## ETL 执行与初始化
 
