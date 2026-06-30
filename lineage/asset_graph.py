@@ -6,7 +6,11 @@ import json
 from collections import defaultdict
 
 from lineage.identifiers import column_ref_match_key, identifier_match_key
-from lineage.table_graph import _table_from_node, build_table_graph
+from lineage.table_graph import (
+    _table_from_node,
+    build_table_graph,
+    collect_table_self_edges,
+)
 
 
 def transient_table_names(lineage_data: dict) -> set[str]:
@@ -203,6 +207,23 @@ def build_asset_table_graph(lineage_data: dict) -> tuple[dict, dict]:
             asset_downstream[table] = children
 
     return asset_upstream, asset_downstream
+
+
+def build_asset_self_edges(lineage_data: dict) -> list[dict]:
+    """Return self-loop facts for non-transient asset tables."""
+    transient_table_keys = {
+        _table_match_key(table)
+        for table in transient_table_names(lineage_data)
+        if table
+    }
+    return [
+        edge
+        for edge in collect_table_self_edges(
+            lineage_data.get("edges") or [],
+            lineage_data.get("indirect_edges") or [],
+        )
+        if not _is_transient_table(edge.get("table", ""), transient_table_keys)
+    ]
 
 
 def _column_incoming_edges(

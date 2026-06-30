@@ -26,7 +26,7 @@ if str(_root) not in sys.path:
     sys.path.insert(0, str(_root))
 
 from config import TEXT_ENCODING
-from lineage.asset_graph import build_asset_table_graph
+from lineage.asset_graph import build_asset_self_edges, build_asset_table_graph
 from lineage.identifiers import (
     canonical_qualified_identifier,
     identifier_match_key,
@@ -37,8 +37,14 @@ from lineage.identifiers import (
 class JobDAG:
     """基于血缘边构建的作业 DAG, 支持序列化持久化."""
 
-    def __init__(self, edges: list | None = None):
+    def __init__(
+        self,
+        edges: list | None = None,
+        self_edges: list | None = None,
+    ):
         self._edges = edges or []
+        self._provided_self_edges = list(self_edges or [])
+        self._self_edges: list[dict] = []
         self._deps: dict[str, set[str]] = {}
         self._rev: dict[str, set[str]] = {}
         self._node_by_key: dict[str, str] = {}
@@ -50,6 +56,7 @@ class JobDAG:
         deps = defaultdict(set)
         rev = defaultdict(set)
         node_by_key = {}
+        self_edges = []
         for e in self._edges:
             src = self._remember_node(
                 node_by_key, self._edge_table(e.get("source"))
@@ -57,12 +64,18 @@ class JobDAG:
             tgt = self._remember_node(
                 node_by_key, self._edge_table(e.get("target"))
             )
-            if src and tgt and self._node_key(src) != self._node_key(tgt):
+            if not src or not tgt:
+                continue
+            if self._node_key(src) == self._node_key(tgt):
+                self_edges.append(self._self_edge_record(e, src, tgt))
+            else:
                 deps[src].add(tgt)
                 rev[tgt].add(src)
+        self_edges.extend(self._provided_self_edges)
         self._deps = dict(deps)
         self._rev = dict(rev)
         self._node_by_key = node_by_key
+        self._self_edges = self._dedupe_self_edges(self_edges)
 
     @staticmethod
     def _edge_table(ref) -> str:
@@ -87,6 +100,41 @@ class JobDAG:
         if not node_key:
             return ""
         return node_by_key.setdefault(node_key, node)
+
+    @staticmethod
+    def _self_edge_record(edge: dict, source: str, target: str) -> dict:
+        record = {
+            "table": source,
+            "source_table": source,
+            "target_table": target,
+        }
+        if isinstance(edge, dict):
+            record["source"] = edge.get("source")
+            record["target"] = edge.get("target")
+            for key in (
+                "relation_type",
+                "transformation_type",
+                "expression",
+                "source_file",
+            ):
+                if key in edge:
+                    record[key] = edge.get(key)
+        else:
+            record["source"] = source
+            record["target"] = target
+        return record
+
+    @staticmethod
+    def _dedupe_self_edges(records: list[dict]) -> list[dict]:
+        deduped = []
+        seen = set()
+        for record in records:
+            key = json.dumps(record, ensure_ascii=False, sort_keys=True)
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(record)
+        return deduped
 
     def _resolve_node(self, node: str) -> str:
         return self._node_by_key.get(self._node_key(node), node)
@@ -114,6 +162,21 @@ class JobDAG:
             self._deps.setdefault(source, set()).add(target)
             self._rev.setdefault(target, set()).add(source)
             self._edges.append({"source": source, "target": target})
+        elif source and target:
+            self._self_edges = self._dedupe_self_edges(
+                [
+                    *self._self_edges,
+                    self._self_edge_record(
+                        {"source": source, "target": target},
+                        source,
+                        target,
+                    ),
+                ]
+            )
+
+    @property
+    def self_edges(self) -> list[dict]:
+        return [dict(edge) for edge in self._self_edges]
 
     # ── 遍历 ──
 
@@ -204,6 +267,7 @@ class JobDAG:
     def to_dict(self) -> dict:
         return {
             "edges": list(self._edges),
+            "self_edges": self.self_edges,
             "deps": {k: sorted(v) for k, v in self._deps.items()},
             "rev": {k: sorted(v) for k, v in self._rev.items()},
         }
@@ -212,10 +276,41 @@ class JobDAG:
     def from_dict(cls, data: dict):
         dag = cls.__new__(cls)
         dag._edges = list(data.get("edges", []))
+        dag._provided_self_edges = []
+        dag._self_edges = cls._dedupe_self_edges(
+            list(data.get("self_edges") or [])
+        )
+        if not dag._self_edges:
+            dag._self_edges = cls._dedupe_self_edges(
+                cls._self_edges_from_raw_edges(dag._edges)
+            )
         dag._deps = {k: set(v) for k, v in data.get("deps", {}).items()}
         dag._rev = {k: set(v) for k, v in data.get("rev", {}).items()}
         dag._rebuild_node_index()
         return dag
+
+    @classmethod
+    def _self_edges_from_raw_edges(cls, edges: list) -> list[dict]:
+        records = []
+        node_by_key = {}
+        for edge in edges:
+            if not isinstance(edge, dict):
+                continue
+            source = cls._remember_node(
+                node_by_key,
+                cls._edge_table(edge.get("source")),
+            )
+            target = cls._remember_node(
+                node_by_key,
+                cls._edge_table(edge.get("target")),
+            )
+            if (
+                source
+                and target
+                and cls._node_key(source) == cls._node_key(target)
+            ):
+                records.append(cls._self_edge_record(edge, source, target))
+        return records
 
     def save(self, path):
         with open(path, "w", encoding=TEXT_ENCODING) as f:
@@ -241,4 +336,7 @@ def asset_job_dag_from_lineage(lineage_data: dict) -> JobDAG:
                 continue
             seen.add(key)
             table_edges.append({"source": source, "target": target})
-    return JobDAG(table_edges)
+    return JobDAG(
+        table_edges,
+        self_edges=build_asset_self_edges(lineage_data or {}),
+    )

@@ -53,13 +53,17 @@ def _normalize_table_pair(
     source_table: str,
     target_table: str,
     display_by_key: dict,
+    include_self_loops: bool = False,
 ) -> tuple[str, str]:
     source = _remember_table(display_by_key, source_table)
     target = _remember_table(display_by_key, target_table)
     if (
         not source
         or not target
-        or identifier_match_key(source) == identifier_match_key(target)
+        or (
+            not include_self_loops
+            and identifier_match_key(source) == identifier_match_key(target)
+        )
     ):
         return "", ""
     return source, target
@@ -77,7 +81,94 @@ def _edge_target_table(edge: dict) -> str:
     return _table_from_node(target)
 
 
-def build_table_graph(edges: list, indirect_edges: list) -> tuple[dict, dict]:
+def _edge_relation_type(edge: dict) -> str:
+    return str(
+        edge.get("relation_type") or edge.get("condition_type") or "direct"
+    )
+
+
+def _edge_expression(edge: dict) -> str:
+    return str(
+        edge.get("expression") or edge.get("condition_expression") or ""
+    )
+
+
+def _edge_target(edge: dict):
+    if "target" in edge:
+        return edge.get("target")
+    return edge.get("target_table")
+
+
+def _self_edge_record(
+    edge: dict,
+    source_table: str,
+    target_table: str,
+) -> dict:
+    return {
+        "table": source_table,
+        "source_table": source_table,
+        "target_table": target_table,
+        "source": edge.get("source"),
+        "target": _edge_target(edge),
+        "relation_type": _edge_relation_type(edge),
+        "expression": _edge_expression(edge),
+        "source_file": str(edge.get("source_file") or ""),
+    }
+
+
+def _dedupe_self_edges(records: list[dict]) -> list[dict]:
+    deduped = []
+    seen = set()
+    for record in records:
+        key = json.dumps(record, ensure_ascii=False, sort_keys=True)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(record)
+    return deduped
+
+
+def collect_table_self_edges(edges: list, indirect_edges: list) -> list[dict]:
+    """Return table self-loop lineage facts without adding graph dependencies."""
+    records = []
+    display_by_key = {}
+
+    for edge in edges:
+        src, tgt = _normalize_table_pair(
+            _edge_source_table(edge),
+            _edge_target_table(edge),
+            display_by_key,
+            include_self_loops=True,
+        )
+        if (
+            src
+            and tgt
+            and identifier_match_key(src) == identifier_match_key(tgt)
+        ):
+            records.append(_self_edge_record(edge, src, tgt))
+
+    for edge in indirect_edges:
+        src, tgt = _normalize_table_pair(
+            _table_from_node(edge.get("source")),
+            edge.get("target_table") or _edge_target_table(edge),
+            display_by_key,
+            include_self_loops=True,
+        )
+        if (
+            src
+            and tgt
+            and identifier_match_key(src) == identifier_match_key(tgt)
+        ):
+            records.append(_self_edge_record(edge, src, tgt))
+
+    return _dedupe_self_edges(records)
+
+
+def build_table_graph(
+    edges: list,
+    indirect_edges: list,
+    include_self_loops: bool = False,
+) -> tuple[dict, dict]:
     upstream = defaultdict(set)
     downstream = defaultdict(set)
     display_by_key = {}
@@ -87,6 +178,7 @@ def build_table_graph(edges: list, indirect_edges: list) -> tuple[dict, dict]:
             _edge_source_table(e),
             _edge_target_table(e),
             display_by_key,
+            include_self_loops=include_self_loops,
         )
         if src and tgt:
             upstream[tgt].add(src)
@@ -97,6 +189,7 @@ def build_table_graph(edges: list, indirect_edges: list) -> tuple[dict, dict]:
             _table_from_node(ie.get("source")),
             ie.get("target_table") or _edge_target_table(ie),
             display_by_key,
+            include_self_loops=include_self_loops,
         )
         if src and tgt:
             upstream[tgt].add(src)

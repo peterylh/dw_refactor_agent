@@ -14,6 +14,7 @@ from lineage.asset_graph import (
     _edge_record,
     _edge_sort_key,
     _trace_asset_column_sources,
+    build_asset_self_edges,
     build_asset_table_graph,
     transient_table_names,
 )
@@ -23,6 +24,7 @@ from lineage.table_graph import (
     _table_from_node,
     build_table_edge_source_files,
     build_table_graph,
+    collect_table_self_edges,
 )
 
 AGGREGATE_PATTERN = re.compile(
@@ -87,6 +89,11 @@ class LineageView:
             self._raw_indirect_edges,
         )
         self._asset_table_graph = build_asset_table_graph(self._data)
+        self._raw_self_edges = collect_table_self_edges(
+            self._raw_edges,
+            self._raw_indirect_edges,
+        )
+        self._asset_self_edges = build_asset_self_edges(self._data)
         self._column_edges = None
         self._incoming = None
         self._column_edges_by_target_table = None
@@ -144,6 +151,20 @@ class LineageView:
     def downstream_tables(self, table_name: str) -> set[str]:
         _upstream, downstream = self._asset_table_graph
         return set(downstream.get(table_name, set()))
+
+    def raw_self_edges(self) -> list[dict]:
+        return [dict(edge) for edge in self._raw_self_edges]
+
+    def asset_self_edges(self) -> list[dict]:
+        return [dict(edge) for edge in self._asset_self_edges]
+
+    def self_edges_for_table(self, table_name: str) -> list[dict]:
+        table_key = identifier_match_key(table_name)
+        return [
+            dict(edge)
+            for edge in self._asset_self_edges
+            if identifier_match_key(edge.get("table", "")) == table_key
+        ]
 
     def _is_transient_table(self, table_name: str) -> bool:
         return identifier_match_key(table_name) in self._transient_table_keys

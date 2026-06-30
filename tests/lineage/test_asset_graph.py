@@ -1,10 +1,12 @@
 from lineage.asset_graph import (
     build_asset_column_lineage,
+    build_asset_self_edges,
     build_asset_table_graph,
 )
 from lineage.table_graph import (
     build_table_edge_source_files,
     build_table_graph,
+    collect_table_self_edges,
 )
 
 
@@ -79,6 +81,84 @@ def test_build_table_graph_merges_table_nodes_case_insensitively():
     }
 
 
+def test_table_graph_exposes_self_edges_without_dependency_noise():
+    lineage_data = {
+        "edges": [
+            {
+                "source": {"type": "column", "id": "dwd_orders.amount"},
+                "target": {"type": "column", "id": "DWD_Orders.amount"},
+                "relation_type": "direct",
+                "expression": "amount + 1",
+                "source_file": "dwd_orders.sql",
+            },
+            {
+                "source": {"type": "column", "id": "dwd_orders.dt"},
+                "target": {"type": "table", "id": "dwd_orders"},
+                "relation_type": "filter",
+                "expression": "dt = @etl_date",
+                "source_file": "dwd_orders.sql",
+            },
+            {
+                "source": "dwd_orders.id",
+                "target": "dws_orders.id",
+                "source_file": "dws_orders.sql",
+            },
+        ],
+        "indirect_edges": [
+            {
+                "source": "dwd_orders.status",
+                "target_table": "DWD_Orders",
+                "condition_type": "WHERE",
+                "condition_expression": "status = 'ACTIVE'",
+                "source_file": "dwd_orders.sql",
+            }
+        ],
+    }
+
+    upstream, downstream = build_table_graph(
+        lineage_data["edges"],
+        lineage_data["indirect_edges"],
+    )
+
+    assert upstream == {"dws_orders": {"dwd_orders"}}
+    assert downstream == {"dwd_orders": {"dws_orders"}}
+    assert collect_table_self_edges(
+        lineage_data["edges"],
+        lineage_data["indirect_edges"],
+    ) == [
+        {
+            "table": "dwd_orders",
+            "source_table": "dwd_orders",
+            "target_table": "dwd_orders",
+            "source": {"type": "column", "id": "dwd_orders.amount"},
+            "target": {"type": "column", "id": "DWD_Orders.amount"},
+            "relation_type": "direct",
+            "expression": "amount + 1",
+            "source_file": "dwd_orders.sql",
+        },
+        {
+            "table": "dwd_orders",
+            "source_table": "dwd_orders",
+            "target_table": "dwd_orders",
+            "source": {"type": "column", "id": "dwd_orders.dt"},
+            "target": {"type": "table", "id": "dwd_orders"},
+            "relation_type": "filter",
+            "expression": "dt = @etl_date",
+            "source_file": "dwd_orders.sql",
+        },
+        {
+            "table": "dwd_orders",
+            "source_table": "dwd_orders",
+            "target_table": "dwd_orders",
+            "source": "dwd_orders.status",
+            "target": "DWD_Orders",
+            "relation_type": "WHERE",
+            "expression": "status = 'ACTIVE'",
+            "source_file": "dwd_orders.sql",
+        },
+    ]
+
+
 def test_build_asset_table_graph_collapses_transient_tables():
     lineage_data = {
         "edges": [
@@ -147,6 +227,39 @@ def test_build_asset_table_graph_uses_table_transient_flags():
     assert downstream["dwd_events"] == {"dws_events"}
     assert "tmp_events" not in upstream
     assert "tmp_events" not in downstream
+
+
+def test_build_asset_self_edges_excludes_transient_table_loops():
+    lineage_data = {
+        "edges": [
+            {
+                "source": "dwd_orders.amount",
+                "target": "dwd_orders.amount",
+                "expression": "amount + 1",
+                "source_file": "dwd_orders.sql",
+            },
+            {
+                "source": "tmp_orders.amount",
+                "target": "tmp_orders.amount",
+                "expression": "amount + 1",
+                "source_file": "tmp_orders.sql",
+            },
+        ],
+        "tables": [{"name": "tmp_orders", "is_transient": True}],
+    }
+
+    assert build_asset_self_edges(lineage_data) == [
+        {
+            "table": "dwd_orders",
+            "source_table": "dwd_orders",
+            "target_table": "dwd_orders",
+            "source": "dwd_orders.amount",
+            "target": "dwd_orders.amount",
+            "relation_type": "direct",
+            "expression": "amount + 1",
+            "source_file": "dwd_orders.sql",
+        }
+    ]
 
 
 def test_build_asset_column_lineage_keeps_direct_asset_edges():

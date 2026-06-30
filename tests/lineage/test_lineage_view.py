@@ -242,3 +242,70 @@ def test_lineage_view_indexes_table_edge_source_files():
         ("dwd_orders", "dws_orders"): {"dws_orders.sql"},
         ("dwd_payments", "dws_payments"): {"dws_payments.sql"},
     }
+
+
+def test_lineage_view_exposes_self_edges_separately_from_table_graphs():
+    lineage_data = {
+        "tables": [{"name": "tmp_orders", "is_transient": True}],
+        "edges": [
+            {
+                "source": "dwd_orders.amount",
+                "target": "DWD_Orders.amount",
+                "expression": "amount + 1",
+                "source_file": "dwd_orders.sql",
+            },
+            {
+                "source": "tmp_orders.amount",
+                "target": "tmp_orders.amount",
+                "expression": "amount + 1",
+                "source_file": "tmp_orders.sql",
+            },
+            {
+                "source": "dwd_orders.id",
+                "target": "dws_orders.id",
+                "source_file": "dws_orders.sql",
+            },
+        ],
+    }
+
+    view = LineageView.from_data("demo", lineage_data)
+
+    assert view.raw_table_graph() == (
+        {"dws_orders": {"dwd_orders"}},
+        {"dwd_orders": {"dws_orders"}},
+    )
+    assert view.raw_self_edges() == [
+        {
+            "table": "dwd_orders",
+            "source_table": "dwd_orders",
+            "target_table": "dwd_orders",
+            "source": "dwd_orders.amount",
+            "target": "DWD_Orders.amount",
+            "relation_type": "direct",
+            "expression": "amount + 1",
+            "source_file": "dwd_orders.sql",
+        },
+        {
+            "table": "tmp_orders",
+            "source_table": "tmp_orders",
+            "target_table": "tmp_orders",
+            "source": "tmp_orders.amount",
+            "target": "tmp_orders.amount",
+            "relation_type": "direct",
+            "expression": "amount + 1",
+            "source_file": "tmp_orders.sql",
+        },
+    ]
+    assert view.asset_self_edges() == [
+        {
+            "table": "dwd_orders",
+            "source_table": "dwd_orders",
+            "target_table": "dwd_orders",
+            "source": "dwd_orders.amount",
+            "target": "DWD_Orders.amount",
+            "relation_type": "direct",
+            "expression": "amount + 1",
+            "source_file": "dwd_orders.sql",
+        }
+    ]
+    assert view.self_edges_for_table("DWD_ORDERS") == view.asset_self_edges()

@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from lineage.job_dag import JobDAG
+from lineage.job_dag import JobDAG, asset_job_dag_from_lineage
 
 
 def _edges(*pairs):
@@ -137,6 +137,15 @@ def test_self_references_are_not_dependencies():
 
     assert dag.bfs_downstream({"a"}) == {"b"}
     assert dag.topological_sort({"a", "b"}) == ["a", "b"]
+    assert dag.self_edges == [
+        {
+            "table": "a",
+            "source_table": "a",
+            "target_table": "a",
+            "source": "a.x",
+            "target": "a.x",
+        }
+    ]
 
 
 def test_topological_layers_group_parallel_jobs():
@@ -173,8 +182,49 @@ def test_structured_lineage_edges_are_accepted():
     }
 
 
+def test_asset_job_dag_preserves_asset_self_edges_as_metadata():
+    dag = asset_job_dag_from_lineage(
+        {
+            "edges": [
+                {
+                    "source": "dwd_orders.amount",
+                    "target": "dwd_orders.amount",
+                    "expression": "amount + 1",
+                    "source_file": "dwd_orders.sql",
+                },
+                {
+                    "source": "tmp_orders.amount",
+                    "target": "tmp_orders.amount",
+                    "expression": "amount + 1",
+                    "source_file": "tmp_orders.sql",
+                },
+                {
+                    "source": "dwd_orders.id",
+                    "target": "dws_orders.id",
+                    "source_file": "dws_orders.sql",
+                },
+            ],
+            "tables": [{"name": "tmp_orders", "is_transient": True}],
+        }
+    )
+
+    assert dag.bfs_downstream({"dwd_orders"}) == {"dws_orders"}
+    assert dag.self_edges == [
+        {
+            "table": "dwd_orders",
+            "source_table": "dwd_orders",
+            "target_table": "dwd_orders",
+            "source": "dwd_orders.amount",
+            "target": "dwd_orders.amount",
+            "relation_type": "direct",
+            "expression": "amount + 1",
+            "source_file": "dwd_orders.sql",
+        }
+    ]
+
+
 def test_serialization_roundtrip_preserves_behavior(tmp_path):
-    dag = JobDAG(_edges(("a", "b"), ("b", "c")))
+    dag = JobDAG(_edges(("a", "a"), ("a", "b"), ("b", "c")))
     path = tmp_path / "dag.json"
 
     dag.save(path)
@@ -182,6 +232,16 @@ def test_serialization_roundtrip_preserves_behavior(tmp_path):
     loaded = JobDAG.load(path)
 
     assert raw["deps"] == {"a": ["b"], "b": ["c"]}
+    assert raw["self_edges"] == [
+        {
+            "table": "a",
+            "source_table": "a",
+            "target_table": "a",
+            "source": "a.x",
+            "target": "a.x",
+        }
+    ]
+    assert loaded.self_edges == raw["self_edges"]
     assert loaded.bfs_downstream({"a"}) == {"b", "c"}
     assert loaded.topological_sort({"a", "b", "c"}) == ["a", "b", "c"]
 
