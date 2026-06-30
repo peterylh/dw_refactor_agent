@@ -174,6 +174,92 @@ def test_model_design_flags_dws_grain_mismatch_with_group_by():
     assert "MODEL_DWS_GRAIN_MATCHES_GROUP_BY" in _rule_ids(result)
 
 
+def test_model_design_matches_dws_grain_columns_case_insensitively():
+    asset_catalog = {
+        "tables": {
+            "dws_customer_sales_daily": {
+                "tasks": [
+                    {
+                        "source_file": "dws_customer_sales_daily.sql",
+                        "sql": """
+                    INSERT INTO shop_dm.dws_customer_sales_daily
+                    SELECT Customer_ID, STAT_DATE, SUM(pay_amt) AS pay_amt
+                    FROM shop_dm.dwd_payment_detail
+                    GROUP BY Customer_ID, STAT_DATE;
+                    """,
+                    }
+                ],
+            },
+        },
+    }
+    tables = [
+        {"name": "dws_customer_sales_daily", "layer": "DWS", "columns": []}
+    ]
+    edges = [
+        {
+            "source": {
+                "type": "column",
+                "id": "dwd_payment_detail.customer_id",
+            },
+            "target": {
+                "type": "column",
+                "id": "dws_customer_sales_daily.Customer_ID",
+            },
+            "relation_type": "direct",
+            "transformation_type": "passthrough",
+            "expression": "customer_id AS Customer_ID",
+            "source_file": "dws_customer_sales_daily.sql",
+        },
+        {
+            "source": {"type": "column", "id": "dwd_payment_detail.pay_amt"},
+            "target": {
+                "type": "column",
+                "id": "dws_customer_sales_daily.pay_amt",
+            },
+            "relation_type": "direct",
+            "transformation_type": "aggregation",
+            "expression": "SUM(pay_amt) AS pay_amt",
+            "source_file": "dws_customer_sales_daily.sql",
+        },
+        {
+            "source": {"type": "column", "id": "dwd_payment_detail.stat_date"},
+            "target": {"type": "table", "id": "dws_customer_sales_daily"},
+            "relation_type": "group_by",
+            "transformation_type": "group_by",
+            "expression": "STAT_DATE",
+            "source_file": "dws_customer_sales_daily.sql",
+        },
+    ]
+    model_metadata = {
+        "dws_customer_sales_daily": {
+            "table_type": "fact",
+            "entities": [
+                {
+                    "code": "CUSTOMER",
+                    "type": "foreign",
+                    "key_columns": ["CUSTOMER_ID"],
+                }
+            ],
+            "grain": {
+                "entities": ["CUSTOMER"],
+                "time_column": "stat_date",
+            },
+        }
+    }
+
+    context = _context(
+        tables,
+        edges,
+        [],
+        models=model_metadata,
+        assets=asset_catalog,
+    )
+    result = score_model_design_health(context)
+
+    assert "MODEL_DWS_GRAIN_MATCHES_GROUP_BY" not in _rule_ids(result)
+    assert "MODEL_DWS_SELECT_FIELDS_MATCH_GRAIN" not in _rule_ids(result)
+
+
 def test_model_design_flags_dws_fact_without_aggregation_from_typed_edges():
     tables = [
         {
