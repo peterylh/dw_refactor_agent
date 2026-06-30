@@ -5,8 +5,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -18,6 +20,23 @@ from sqlglot.tokens import Tokenizer, TokenType
 
 from config import TEXT_ENCODING, get_mysql_cmd
 from doris_sql import extract_create_table_name
+
+FINAL_ALTER_JOB_STATES = {"FINISHED", "CANCELLED"}
+DEFAULT_ALTER_JOB_TIMEOUT_SECONDS = 300
+DEFAULT_ALTER_JOB_POLL_INTERVAL_SECONDS = 2
+ALTER_TABLE_RE = re.compile(
+    r"^\s*ALTER\s+TABLE\s+"
+    r"(?P<table>(?:`[^`]+`|[^\s]+)(?:\s*\.\s*(?:`[^`]+`|[^\s]+))?)"
+    r"\s+(?P<body>.*?)\s*;?\s*$",
+    re.IGNORECASE | re.DOTALL,
+)
+TABLE_RENAME_RE = re.compile(
+    r"^\s*RENAME\s+"
+    r"(?!COLUMN\b|ROLLUP\b|PARTITION\b)"
+    r"(?P<target>(?:`[^`]+`|[^\s;]+)"
+    r"(?:\s*\.\s*(?:`[^`]+`|[^\s;]+))?)\s*$",
+    re.IGNORECASE | re.DOTALL,
+)
 
 
 def _project_root() -> Path:
@@ -58,6 +77,277 @@ def run_sql_text(sql_text: str, db: str = "", qa: bool = False) -> str:
         print(f"  ERROR: {result.stderr.strip()}")
         sys.exit(1)
     return result.stdout
+
+
+def _with_semicolon(sql: str) -> str:
+    sql = sql.strip()
+    return sql if sql.endswith(";") else f"{sql};"
+
+
+def _split_outside_quotes(text: str, delimiter: str) -> list[str]:
+    parts = []
+    current = []
+    quote = ""
+    i = 0
+    while i < len(text):
+        ch = text[i]
+        nxt = text[i + 1] if i + 1 < len(text) else ""
+
+        if quote:
+            current.append(ch)
+            if ch == "\\" and nxt:
+                current.append(nxt)
+                i += 2
+                continue
+            if ch == quote:
+                if nxt == quote:
+                    current.append(nxt)
+                    i += 2
+                    continue
+                quote = ""
+            i += 1
+            continue
+
+        if ch in {"'", '"', "`"}:
+            quote = ch
+            current.append(ch)
+            i += 1
+            continue
+
+        if ch == "-" and nxt == "-":
+            line_end = text.find("\n", i + 2)
+            if line_end == -1:
+                current.append(text[i:])
+                break
+            current.append(text[i : line_end + 1])
+            i = line_end + 1
+            continue
+
+        if ch == "/" and nxt == "*":
+            block_end = text.find("*/", i + 2)
+            if block_end == -1:
+                current.append(text[i:])
+                break
+            current.append(text[i : block_end + 2])
+            i = block_end + 2
+            continue
+
+        if ch == delimiter:
+            parts.append("".join(current))
+            current = []
+            i += 1
+            continue
+
+        current.append(ch)
+        i += 1
+
+    parts.append("".join(current))
+    return parts
+
+
+def _split_sql_statements(sql_text: str) -> list[str]:
+    return [
+        _with_semicolon(part)
+        for part in _split_outside_quotes(sql_text, ";")
+        if part.strip()
+    ]
+
+
+def _ddl_change_statements(sql_text: str) -> list[str]:
+    """Return the DDL statements provided by the plan without rewriting them."""
+    return _split_sql_statements(sql_text)
+
+
+def _split_identifier_path(identifier: str) -> list[str]:
+    parts = []
+    current = []
+    in_backticks = False
+    for ch in identifier.strip():
+        if ch == "`":
+            in_backticks = not in_backticks
+            current.append(ch)
+        elif ch == "." and not in_backticks:
+            parts.append("".join(current).strip())
+            current = []
+        else:
+            current.append(ch)
+    parts.append("".join(current).strip())
+    return [part for part in parts if part]
+
+
+def _unquote_identifier(identifier: str) -> str:
+    identifier = identifier.strip()
+    if identifier.startswith("`") and identifier.endswith("`"):
+        return identifier[1:-1].replace("``", "`")
+    return identifier
+
+
+def _quote_identifier(identifier: str) -> str:
+    return f"`{identifier.replace('`', '``')}`"
+
+
+def _quote_string_value(value: str) -> str:
+    return value.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def _resolve_table_ref(
+    table_ref: str, default_db: str
+) -> tuple[str, str] | None:
+    parts = [
+        _unquote_identifier(part) for part in _split_identifier_path(table_ref)
+    ]
+    if len(parts) == 1:
+        return default_db, parts[0]
+    if len(parts) == 2:
+        return parts[0], parts[1]
+    return None
+
+
+def _dedupe_refs(refs: list[tuple[str, str]]) -> list[tuple[str, str]]:
+    result = []
+    seen = set()
+    for ref in refs:
+        if ref in seen:
+            continue
+        seen.add(ref)
+        result.append(ref)
+    return result
+
+
+def _alter_table_wait_refs(
+    statement: str, default_db: str
+) -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
+    match = ALTER_TABLE_RE.match(statement)
+    if not match:
+        return [], []
+
+    current_ref = _resolve_table_ref(match.group("table"), default_db)
+    if current_ref is None:
+        return [], []
+
+    before_refs = [current_ref]
+    after_refs = [current_ref]
+    rename_match = TABLE_RENAME_RE.match(match.group("body").strip())
+    if rename_match:
+        target_ref = _resolve_table_ref(
+            rename_match.group("target"), current_ref[0] or default_db
+        )
+        if target_ref is not None:
+            after_refs = [target_ref]
+
+    return _dedupe_refs(before_refs), _dedupe_refs(after_refs)
+
+
+def _parse_mysql_table(output: str) -> list[dict]:
+    lines = [line for line in output.splitlines() if line.strip()]
+    if not lines:
+        return []
+
+    headers = [header.strip() for header in lines[0].split("\t")]
+    if "State" not in headers:
+        return []
+
+    rows = []
+    for line in lines[1:]:
+        values = line.split("\t")
+        if len(values) < len(headers):
+            values.extend([""] * (len(headers) - len(values)))
+        rows.append(
+            {headers[idx]: values[idx].strip() for idx in range(len(headers))}
+        )
+    return rows
+
+
+def _show_table_alter_jobs(
+    db_name: str, table_name: str, qa: bool
+) -> list[dict]:
+    sql = (
+        f"SHOW ALTER TABLE COLUMN FROM {_quote_identifier(db_name)} "
+        f'WHERE TableName = "{_quote_string_value(table_name)}" '
+        "ORDER BY CreateTime DESC LIMIT 10"
+    )
+    return _parse_mysql_table(run_sql(sql, qa=qa))
+
+
+def _job_ids(jobs: list[dict]) -> set[str]:
+    return {job.get("JobId", "") for job in jobs if job.get("JobId")}
+
+
+def _active_alter_jobs(jobs: list[dict]) -> list[dict]:
+    return [
+        job
+        for job in jobs
+        if job.get("State", "").strip().upper() not in FINAL_ALTER_JOB_STATES
+    ]
+
+
+def _new_cancelled_jobs(
+    jobs: list[dict], known_job_ids: set[str] | None
+) -> list[dict]:
+    if known_job_ids is None:
+        return []
+    return [
+        job
+        for job in jobs
+        if job.get("JobId")
+        and job.get("JobId") not in known_job_ids
+        and job.get("State", "").strip().upper() == "CANCELLED"
+    ]
+
+
+def _wait_for_table_alter_jobs(
+    db_name: str,
+    table_name: str,
+    *,
+    qa: bool,
+    known_job_ids: set[str] | None = None,
+    poll_interval_seconds: float = DEFAULT_ALTER_JOB_POLL_INTERVAL_SECONDS,
+    timeout_seconds: float = DEFAULT_ALTER_JOB_TIMEOUT_SECONDS,
+) -> list[dict]:
+    deadline = time.monotonic() + timeout_seconds
+    while True:
+        jobs = _show_table_alter_jobs(db_name, table_name, qa)
+        cancelled = _new_cancelled_jobs(jobs, known_job_ids)
+        if cancelled:
+            msg = cancelled[0].get("Msg", "")
+            raise RuntimeError(
+                f"ALTER job cancelled for {db_name}.{table_name}: {msg}"
+            )
+
+        active_jobs = _active_alter_jobs(jobs)
+        if not active_jobs:
+            return jobs
+
+        if time.monotonic() >= deadline:
+            states = ", ".join(
+                f"{job.get('JobId')}:{job.get('State')}" for job in active_jobs
+            )
+            raise TimeoutError(
+                f"Timed out waiting for ALTER jobs on "
+                f"{db_name}.{table_name}: {states}"
+            )
+        time.sleep(poll_interval_seconds)
+
+
+def _execute_ddl_statement(statement: str, qa_db: str) -> None:
+    before_refs, after_refs = _alter_table_wait_refs(statement, qa_db)
+    known_job_ids_by_ref = {}
+
+    for db_name, table_name in before_refs:
+        jobs = _wait_for_table_alter_jobs(db_name, table_name, qa=True)
+        known_job_ids_by_ref[(db_name, table_name)] = _job_ids(jobs)
+
+    run_sql(statement, qa_db, qa=True)
+
+    for db_name, table_name in after_refs:
+        known_job_ids = known_job_ids_by_ref.get((db_name, table_name))
+        jobs = _wait_for_table_alter_jobs(
+            db_name,
+            table_name,
+            qa=True,
+            known_job_ids=known_job_ids,
+        )
+        known_job_ids_by_ref[(db_name, table_name)] = _job_ids(jobs)
 
 
 def _get_dml_target(stmt):
@@ -444,14 +734,17 @@ def execute_shadow_plan(plan: dict, *, dry_run: bool = False) -> dict:
             if not sql.strip():
                 continue
             sql_qa = sql.replace(f"{prod_db}.", f"{qa_db}.")
+            statements = _ddl_change_statements(sql_qa)
             try:
-                run_sql(sql_qa, qa_db, qa=True)
+                for statement in statements:
+                    _execute_ddl_statement(statement, qa_db)
                 print(
                     f"  [{change.get('change_type')}] "
                     f"{change.get('table_name', '?')}"
                 )
             except Exception as exc:
-                print(f"  [SKIP] {change.get('change_type')}: {exc}")
+                print(f"  [FAIL] {change.get('change_type')}: {exc}")
+                sys.exit(1)
 
     print(f"\n{'=' * 60}")
     print(f"Phase 3: 执行作业 ({len(jobs_to_run)} 个)")

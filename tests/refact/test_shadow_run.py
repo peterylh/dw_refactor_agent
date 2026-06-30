@@ -7,7 +7,9 @@ from sqlglot import exp
 from sqlglot.errors import ErrorLevel
 
 from refact.shadow_run import (
+    _ddl_change_statements,
     _get_dml_target,
+    _wait_for_table_alter_jobs,
     execute_shadow_plan,
     rewrite_sql,
     run_shadow_plan,
@@ -215,6 +217,122 @@ def test_rewrite_sql_preserves_non_table_sql_text():
 
 def test_rewrite_sql_text_empty():
     assert rewrite_sql("", "shop_dm", "shop_dm_qa", set()) == ""
+
+
+def test_ddl_change_statements_do_not_rewrite_invalid_multi_rename_column():
+    sql = (
+        "ALTER TABLE shop_dm.dwd_order_detail "
+        "RENAME COLUMN unit_price price_unit, "
+        "RENAME COLUMN quantity item_quantity;"
+    )
+
+    assert _ddl_change_statements(sql) == [sql]
+
+
+def test_ddl_change_statements_split_semicolon_separated_statements():
+    sql = (
+        "ALTER TABLE shop_dm.dwd_order_detail "
+        "RENAME COLUMN unit_price price_unit; "
+        "ALTER TABLE shop_dm.dwd_order_detail "
+        "RENAME COLUMN quantity item_quantity;"
+    )
+
+    assert _ddl_change_statements(sql) == [
+        (
+            "ALTER TABLE shop_dm.dwd_order_detail "
+            "RENAME COLUMN unit_price price_unit;"
+        ),
+        (
+            "ALTER TABLE shop_dm.dwd_order_detail "
+            "RENAME COLUMN quantity item_quantity;"
+        ),
+    ]
+
+
+def test_execute_shadow_plan_splits_rename_columns_and_waits(monkeypatch):
+    plan = {
+        "project": "shop",
+        "project_db": "shop_dm",
+        "qa_db": "shop_dm_qa",
+        "baseline_ddl": {},
+        "ddl_changes": [
+            {
+                "change_type": "ALTER",
+                "table_name": "shop_dm.dwd_order_detail",
+                "sql": (
+                    "ALTER TABLE shop_dm.dwd_order_detail "
+                    "RENAME COLUMN unit_price price_unit; "
+                    "ALTER TABLE shop_dm.dwd_order_detail "
+                    "RENAME COLUMN quantity item_quantity;"
+                ),
+            }
+        ],
+        "partition_info": {},
+        "jobs_to_run": [],
+        "verification": {"checks": []},
+    }
+    calls = []
+
+    def fake_run_sql(sql, db="", qa=False):
+        calls.append((sql, db, qa))
+        return ""
+
+    monkeypatch.setattr("refact.shadow_run.run_sql", fake_run_sql)
+
+    execute_shadow_plan(plan)
+
+    alter_calls = [sql for sql, _, _ in calls if sql.startswith("ALTER TABLE")]
+    show_calls = [
+        sql for sql, _, _ in calls if sql.startswith("SHOW ALTER TABLE COLUMN")
+    ]
+    assert alter_calls == [
+        (
+            "ALTER TABLE shop_dm_qa.dwd_order_detail "
+            "RENAME COLUMN unit_price price_unit;"
+        ),
+        (
+            "ALTER TABLE shop_dm_qa.dwd_order_detail "
+            "RENAME COLUMN quantity item_quantity;"
+        ),
+    ]
+    assert len(show_calls) == 4
+
+
+def test_wait_for_table_alter_jobs_polls_until_finished(monkeypatch):
+    outputs = [
+        (
+            "JobId\tTableName\tCreateTime\tFinishedTime\tState\tMsg\n"
+            "1\tdwd_order_detail\t2026-06-30 12:00:00\tN/A\tRUNNING\t\n"
+        ),
+        (
+            "JobId\tTableName\tCreateTime\tFinishedTime\tState\tMsg\n"
+            "1\tdwd_order_detail\t2026-06-30 12:00:00\t"
+            "2026-06-30 12:00:03\tFINISHED\t\n"
+        ),
+    ]
+    calls = []
+
+    def fake_run_sql(sql, db="", qa=False):
+        calls.append((sql, db, qa))
+        return outputs.pop(0)
+
+    monkeypatch.setattr("refact.shadow_run.run_sql", fake_run_sql)
+    monkeypatch.setattr("refact.shadow_run.time.sleep", lambda _: None)
+
+    _wait_for_table_alter_jobs(
+        "shop_dm_qa",
+        "dwd_order_detail",
+        qa=True,
+        poll_interval_seconds=0,
+        timeout_seconds=1,
+    )
+
+    assert len(calls) == 2
+    assert calls[0][0] == (
+        "SHOW ALTER TABLE COLUMN FROM `shop_dm_qa` "
+        'WHERE TableName = "dwd_order_detail" '
+        "ORDER BY CreateTime DESC LIMIT 10"
+    )
 
 
 def test_dry_run_omits_where_for_unpartitioned_checks(capsys):
