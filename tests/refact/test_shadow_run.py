@@ -143,15 +143,74 @@ def _assert_rewrite_sql_handles_multiple_dml_statements_in_one_file():
     assert ("dwd_order_detail", "shop_dm") not in refs
 
 
+def test_rewrite_sql_qualifies_unqualified_physical_table_references():
+    sql = """
+    INSERT INTO dwd_order_detail
+    SELECT o.order_id, d.discount_amount
+    FROM ods_order o
+    LEFT JOIN dwd_discount d ON o.order_id = d.order_id
+    """
+
+    rewritten = rewrite_sql(sql, "shop_dm", "shop_dm_qa", {"dwd_discount"})
+    refs = _table_refs(rewritten)
+
+    assert ("dwd_order_detail", "shop_dm_qa") in refs
+    assert ("ods_order", "shop_dm") in refs
+    assert ("dwd_discount", "shop_dm_qa") in refs
+    assert "INSERT INTO shop_dm_qa.dwd_order_detail" in rewritten
+    assert "FROM shop_dm.ods_order o" in rewritten
+    assert "JOIN shop_dm_qa.dwd_discount d" in rewritten
+
+
+def test_rewrite_sql_does_not_qualify_unqualified_cte_references():
+    sql = """
+    INSERT INTO ads_sales_dashboard
+    WITH daily_base AS (
+        SELECT order_date, COUNT(*) AS cnt
+        FROM dwd_order_detail
+        GROUP BY order_date
+    )
+    SELECT order_date, cnt FROM daily_base
+    """
+
+    rewritten = rewrite_sql(sql, "shop_dm", "shop_dm_qa", {"dwd_order_detail"})
+    refs = _table_refs(rewritten)
+
+    assert ("ads_sales_dashboard", "shop_dm_qa") in refs
+    assert ("dwd_order_detail", "shop_dm_qa") in refs
+    assert ("daily_base", "shop_dm_qa") not in refs
+    assert "FROM daily_base" in rewritten
+
+
 def test_rewrite_sql_does_not_invent_database_prefixes():
     scenarios = [
-        "SELECT * FROM some_table",
         "SET @etl_date = '2025-01-15'",
     ]
     for sql in scenarios:
         refs = _table_refs(rewrite_sql(sql, "shop_dm", "shop_dm_qa", set()))
 
         assert all(db not in {"shop_dm", "shop_dm_qa"} for _, db in refs)
+
+
+def test_rewrite_sql_preserves_non_table_sql_text():
+    sql = """
+    SET @etl_date = COALESCE(@etl_date, CURDATE());
+    -- shop_dm.dwd_customer should stay comment text
+    INSERT INTO shop_dm.dwd_customer
+    SELECT customer_id, CURDATE() AS snapshot_date
+    FROM shop_dm.ods_customer
+    WHERE created_at < CURDATE()
+      AND note <> 'shop_dm.dwd_customer should stay literal'
+    """
+
+    rewritten = rewrite_sql(sql, "shop_dm", "shop_dm_qa", set())
+
+    assert "shop_dm_qa.dwd_customer" in rewritten
+    assert "shop_dm.ods_customer" in rewritten
+    assert "CURDATE()" in rewritten
+    assert "CURRENT_DATE" not in rewritten
+    assert "-- shop_dm.dwd_customer should stay comment text" in rewritten
+    assert "'shop_dm.dwd_customer should stay literal'" in rewritten
 
 
 def test_rewrite_sql_text_empty():

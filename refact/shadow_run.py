@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import sqlglot
 from sqlglot import exp
 from sqlglot.errors import ErrorLevel
+from sqlglot.tokens import Tokenizer, TokenType
 
 from config import TEXT_ENCODING, get_mysql_cmd
 from doris_sql import extract_create_table_name
@@ -88,6 +89,280 @@ def _get_dml_target(stmt):
     return None
 
 
+def _statement_ranges(sql_text: str) -> list[tuple[int, int]]:
+    """Return raw SQL statement ranges, including statement terminators."""
+    tokens = Tokenizer(dialect="doris").tokenize(sql_text)
+    ranges = []
+    start = 0
+    for token in tokens:
+        if token.token_type == TokenType.SEMICOLON:
+            end = token.end + 1
+            ranges.append((start, end))
+            start = end
+    if sql_text[start:].strip():
+        ranges.append((start, len(sql_text)))
+    return ranges
+
+
+def _parse_first_statement(sql_text: str):
+    statements = sqlglot.parse(
+        sql_text, dialect="doris", error_level=ErrorLevel.IGNORE
+    )
+    return next((stmt for stmt in statements if stmt is not None), None)
+
+
+def _is_backtick(token) -> bool:
+    return token.token_type == TokenType.UNKNOWN and token.text == "`"
+
+
+def _next_non_backtick(tokens: list, index: int) -> int:
+    while index < len(tokens) and _is_backtick(tokens[index]):
+        index += 1
+    return index
+
+
+def _previous_non_backtick(tokens: list, index: int) -> int:
+    index -= 1
+    while index >= 0 and _is_backtick(tokens[index]):
+        index -= 1
+    return index
+
+
+def _identifier_matches(token, value: str) -> bool:
+    if token.token_type not in {TokenType.IDENTIFIER, TokenType.VAR}:
+        return False
+    return token.text.casefold() == value.casefold()
+
+
+def _identifier_replacement(sql_text: str, token, value: str) -> str:
+    original = sql_text[token.start : token.end + 1]
+    if (
+        len(original) >= 2
+        and original[0] == original[-1]
+        and original[0] in {'"', "`"}
+    ):
+        return f"{original[0]}{value}{original[-1]}"
+    return value
+
+
+def _identifier_start(tokens: list, index: int) -> int:
+    previous_index = index - 1
+    if previous_index >= 0 and _is_backtick(tokens[previous_index]):
+        return tokens[previous_index].start
+    return tokens[index].start
+
+
+def _is_unqualified_identifier(tokens: list, index: int) -> bool:
+    previous_index = _previous_non_backtick(tokens, index)
+    next_index = _next_non_backtick(tokens, index + 1)
+    if (
+        previous_index >= 0
+        and tokens[previous_index].token_type == TokenType.DOT
+    ):
+        return False
+    return not (
+        next_index < len(tokens)
+        and tokens[next_index].token_type == TokenType.DOT
+    )
+
+
+def _comma_continues_table_context(tokens: list, comma_index: int) -> bool:
+    boundary_tokens = {
+        TokenType.SELECT,
+        TokenType.WHERE,
+        TokenType.ON,
+        TokenType.GROUP_BY,
+        TokenType.ORDER_BY,
+        TokenType.HAVING,
+        TokenType.LIMIT,
+        TokenType.WITH,
+        TokenType.SEMICOLON,
+    }
+    index = comma_index - 1
+    while index >= 0:
+        token_type = tokens[index].token_type
+        if token_type in {TokenType.FROM, TokenType.JOIN}:
+            return True
+        if token_type in boundary_tokens:
+            return False
+        index -= 1
+    return False
+
+
+def _is_table_reference_context(tokens: list, index: int) -> bool:
+    previous_index = _previous_non_backtick(tokens, index)
+    if previous_index < 0:
+        return False
+    previous_type = tokens[previous_index].token_type
+    if previous_type in {
+        TokenType.FROM,
+        TokenType.JOIN,
+        TokenType.UPDATE,
+        TokenType.INTO,
+        TokenType.TABLE,
+    }:
+        return True
+    if previous_type == TokenType.COMMA:
+        return _comma_continues_table_context(tokens, previous_index)
+    return False
+
+
+def _cte_names(stmt) -> set[str]:
+    return {
+        cte.alias_or_name.casefold()
+        for cte in stmt.find_all(exp.CTE)
+        if cte.alias_or_name
+    }
+
+
+def _unqualified_table_dbs(
+    stmt,
+    prod_db: str,
+    qa_db: str,
+    recalculated: set,
+    dml_target: str | None,
+) -> dict[str, str]:
+    cte_names = _cte_names(stmt)
+    recalculated_names = {name.casefold() for name in recalculated}
+    target_name = dml_target.casefold() if dml_target else ""
+    table_dbs = {}
+
+    for table in stmt.find_all(exp.Table):
+        if table.db:
+            continue
+        table_name = table.name
+        if not table_name:
+            continue
+        canonical_name = table_name.casefold()
+        if canonical_name in cte_names and canonical_name != target_name:
+            continue
+        if (
+            canonical_name == target_name
+            or canonical_name in recalculated_names
+        ):
+            table_dbs[canonical_name] = qa_db
+        else:
+            table_dbs[canonical_name] = prod_db
+
+    return table_dbs
+
+
+def _rewrite_qualified_table_dbs(
+    sql_text: str,
+    prod_db: str,
+    qa_db: str,
+    table_names: set[str],
+) -> str:
+    if not table_names:
+        return sql_text
+
+    wanted_tables = {name.casefold() for name in table_names}
+    tokens = Tokenizer(dialect="doris").tokenize(sql_text)
+    replacements = []
+
+    for index, token in enumerate(tokens):
+        if not _identifier_matches(token, prod_db):
+            continue
+
+        dot_index = _next_non_backtick(tokens, index + 1)
+        if (
+            dot_index >= len(tokens)
+            or tokens[dot_index].token_type != TokenType.DOT
+        ):
+            continue
+
+        table_index = _next_non_backtick(tokens, dot_index + 1)
+        if table_index >= len(tokens):
+            continue
+
+        table_token = tokens[table_index]
+        if table_token.token_type not in {TokenType.IDENTIFIER, TokenType.VAR}:
+            continue
+        if table_token.text.casefold() not in wanted_tables:
+            continue
+
+        after_table = _next_non_backtick(tokens, table_index + 1)
+        if (
+            after_table < len(tokens)
+            and tokens[after_table].token_type == TokenType.DOT
+        ):
+            continue
+
+        replacements.append(
+            (
+                token.start,
+                token.end + 1,
+                _identifier_replacement(sql_text, token, qa_db),
+            )
+        )
+
+    if not replacements:
+        return sql_text
+
+    rewritten = sql_text
+    for start, end, value in reversed(replacements):
+        rewritten = f"{rewritten[:start]}{value}{rewritten[end:]}"
+    return rewritten
+
+
+def _rewrite_unqualified_table_dbs(
+    sql_text: str,
+    table_dbs: dict[str, str],
+) -> str:
+    if not table_dbs:
+        return sql_text
+
+    tokens = Tokenizer(dialect="doris").tokenize(sql_text)
+    replacements = []
+
+    for index, token in enumerate(tokens):
+        if token.token_type not in {TokenType.IDENTIFIER, TokenType.VAR}:
+            continue
+        target_db = table_dbs.get(token.text.casefold())
+        if not target_db:
+            continue
+        if not _is_unqualified_identifier(tokens, index):
+            continue
+        if not _is_table_reference_context(tokens, index):
+            continue
+        replacements.append(
+            (
+                _identifier_start(tokens, index),
+                _identifier_start(tokens, index),
+                f"{target_db}.",
+            )
+        )
+
+    if not replacements:
+        return sql_text
+
+    rewritten = sql_text
+    for start, end, value in reversed(replacements):
+        rewritten = f"{rewritten[:start]}{value}{rewritten[end:]}"
+    return rewritten
+
+
+def _rewrite_statement_sql(
+    sql_text: str, prod_db: str, qa_db: str, recalculated: set
+) -> str:
+    stmt = _parse_first_statement(sql_text)
+    if stmt is None:
+        return sql_text
+
+    table_names = set(recalculated)
+    dml_target = _get_dml_target(stmt)
+    if dml_target:
+        table_names.add(dml_target)
+
+    rewritten = _rewrite_qualified_table_dbs(
+        sql_text, prod_db, qa_db, table_names
+    )
+    table_dbs = _unqualified_table_dbs(
+        stmt, prod_db, qa_db, recalculated, dml_target
+    )
+    return _rewrite_unqualified_table_dbs(rewritten, table_dbs)
+
+
 def rewrite_sql(
     sql_text: str, prod_db: str, qa_db: str, recalculated: set
 ) -> str:
@@ -97,32 +372,25 @@ def rewrite_sql(
     DML targets write to QA. Already recalculated intermediate sources read from
     QA. ODS and untouched intermediate sources keep reading from production.
     """
-    statements = sqlglot.parse(
-        sql_text, dialect="doris", error_level=ErrorLevel.IGNORE
-    )
-    rewritten = []
-    for stmt in statements:
-        if stmt is None:
-            continue
-
-        dml_target = _get_dml_target(stmt)
-        todo = []
-        for table in stmt.find_all(exp.Table):
-            db_node = table.args.get("db")
-            if db_node is None:
-                continue
-            table_name = table.name
-            if table_name == dml_target or table_name in recalculated:
-                todo.append((table, qa_db))
-
-        for table, target_db in todo:
-            table.args["db"] = exp.to_identifier(target_db)
-
-        rewritten.append(stmt.sql(dialect="doris"))
-
-    if not rewritten:
+    if not sql_text.strip():
         return ""
-    return ";\n".join(rewritten) + ";"
+
+    ranges = _statement_ranges(sql_text)
+    if not ranges:
+        return sql_text
+
+    parts = []
+    cursor = 0
+    for start, end in ranges:
+        parts.append(sql_text[cursor:start])
+        parts.append(
+            _rewrite_statement_sql(
+                sql_text[start:end], prod_db, qa_db, recalculated
+            )
+        )
+        cursor = end
+    parts.append(sql_text[cursor:])
+    return "".join(parts)
 
 
 def execute_shadow_plan(plan: dict, *, dry_run: bool = False) -> dict:
