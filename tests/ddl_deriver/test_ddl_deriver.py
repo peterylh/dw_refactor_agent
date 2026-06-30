@@ -708,6 +708,70 @@ def test_alter_rename_column():
     assert "RENAME COLUMN unit_price price_unit" in sql
 
 
+def test_alter_rename_prefers_matching_column_comments():
+    """列同类型时, 应优先按注释语义匹配, 避免指标字段互换."""
+    tid = generate_table_id()
+    old_t = TableDef(
+        full_name="shop_dm.dws_product_sales_daily",
+        short_name="dws_product_sales_daily",
+        columns=[
+            ColumnDef(
+                "order_count",
+                "INT",
+                nullable=False,
+                default="0",
+                comment="订单笔数",
+            ),
+            ColumnDef(
+                "sale_quantity",
+                "INT",
+                nullable=False,
+                default="0",
+                comment="销售数量",
+            ),
+        ],
+        key_type="UNIQUE",
+        key_columns=["order_count"],
+        distribution_col="order_count",
+        table_id=tid,
+    )
+    new_t = TableDef(
+        full_name="shop_dm.I_SHOP_PROD_SALES_DS",
+        short_name="I_SHOP_PROD_SALES_DS",
+        columns=[
+            ColumnDef(
+                "ORDER_CNT",
+                "INT",
+                nullable=False,
+                default="0",
+                comment="订单笔数",
+            ),
+            ColumnDef(
+                "D_PROD_SALE_QTY",
+                "INT",
+                nullable=False,
+                default="0",
+                comment="销售数量",
+            ),
+        ],
+        key_type="UNIQUE",
+        key_columns=["ORDER_CNT"],
+        distribution_col="ORDER_CNT",
+        table_id=tid,
+    )
+
+    changes = derive_ddl_changes(
+        {"dws_product_sales_daily": old_t},
+        {"I_SHOP_PROD_SALES_DS": new_t},
+    )
+
+    a = next(c for c in changes if isinstance(c, AlterTable))
+    assert a.renames == [
+        ("order_count", "ORDER_CNT"),
+        ("sale_quantity", "D_PROD_SALE_QTY"),
+    ]
+
+
 def test_alter_rename_and_add_column():
     """ALTER TABLE: 列重命名 + 新增另一列."""
     old_t = TableDef(
@@ -787,6 +851,39 @@ def test_alter_rename_no_false_positive():
     assert a.drops[0].name == "old_col"
     assert len(a.adds) == 1
     assert a.adds[0].name == "new_col"
+
+
+def test_alter_rename_skips_ambiguous_same_type_columns_without_semantics():
+    """多个同类型字段缺少语义证据时, 不应任意推断 rename."""
+    old_t = TableDef(
+        full_name="shop_dm.test",
+        short_name="test",
+        columns=[
+            ColumnDef("old_a", "INT", nullable=False),
+            ColumnDef("old_b", "INT", nullable=False),
+        ],
+        key_type="DUPLICATE",
+        key_columns=["old_a"],
+        distribution_col="old_a",
+    )
+    new_t = TableDef(
+        full_name="shop_dm.test",
+        short_name="test",
+        columns=[
+            ColumnDef("new_x", "INT", nullable=False),
+            ColumnDef("new_y", "INT", nullable=False),
+        ],
+        key_type="DUPLICATE",
+        key_columns=["new_x"],
+        distribution_col="new_x",
+    )
+
+    changes = derive_ddl_changes({"test": old_t}, {"test": new_t})
+
+    a = next(c for c in changes if isinstance(c, AlterTable))
+    assert a.renames == []
+    assert {col.name for col in a.drops} == {"old_a", "old_b"}
+    assert {col.name for col in a.adds} == {"new_x", "new_y"}
 
 
 def test_rename_table_with_rename_column():

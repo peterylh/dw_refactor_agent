@@ -173,31 +173,45 @@ class AlterTable(DDLChange):
         self.renames = renames or []
 
     def to_sql(self) -> str:
-        parts = []
+        statements = []
+        pre_rename_parts = []
         for col in self.drops:
-            parts.append(f"DROP COLUMN {col.name}")
+            pre_rename_parts.append(f"DROP COLUMN {col.name}")
+        if pre_rename_parts:
+            alter_body = ",\n    ".join(pre_rename_parts)
+            statements.append(
+                f"ALTER TABLE {self.table_name}\n    {alter_body};"
+            )
         for old_name, new_name in self.renames:
-            parts.append(f"RENAME COLUMN {old_name} {new_name}")
+            statements.append(
+                f"ALTER TABLE {self.table_name}\n"
+                f"    RENAME COLUMN {old_name} {new_name};"
+            )
+        post_rename_parts = []
         for col in self.adds:
             nullable = "NULL" if col.nullable else "NOT NULL"
             default = f"DEFAULT {col.default}" if col.default else ""
             comment = f"COMMENT '{col.comment}'" if col.comment else ""
-            parts.append(
+            post_rename_parts.append(
                 f"ADD COLUMN {col.name} {col.data_type} {nullable} {default} {comment}".strip()
             )
         for _old, new in self.modifies:
             nullable = "NULL" if new.nullable else "NOT NULL"
             default = f"DEFAULT {new.default}" if new.default else ""
             comment = f"COMMENT '{new.comment}'" if new.comment else ""
-            parts.append(
+            post_rename_parts.append(
                 f"MODIFY COLUMN {new.name} {new.data_type} {nullable} {default} {comment}".strip()
             )
-        if not parts:
+        if post_rename_parts:
+            alter_body = ",\n    ".join(post_rename_parts)
+            statements.append(
+                f"ALTER TABLE {self.table_name}\n    {alter_body};"
+            )
+        if not statements:
             return (
                 f"-- ALTER TABLE {self.table_name}: 无结构化变更(仅注释变更)"
             )
-        alter_body = ",\n    ".join(parts)
-        return f"ALTER TABLE {self.table_name}\n    {alter_body};"
+        return "\n".join(statements)
 
 
 # ============================================================
@@ -418,6 +432,120 @@ def _jaccard_similarity(
     return len(intersection) / len(union)
 
 
+_COLUMN_TOKEN_ALIASES = {
+    "amt": "amount",
+    "cnt": "count",
+    "disc": "discount",
+    "dt": "date",
+    "prod": "product",
+    "qty": "quantity",
+}
+
+
+def _normalized_column_tokens(name: str) -> set:
+    tokens = re.findall(r"[a-zA-Z0-9]+", name.lower())
+    return {_COLUMN_TOKEN_ALIASES.get(token, token) for token in tokens}
+
+
+def _column_name_similarity(old_name: str, new_name: str) -> float:
+    old_tokens = _normalized_column_tokens(old_name)
+    new_tokens = _normalized_column_tokens(new_name)
+    if not old_tokens and not new_tokens:
+        return 1.0
+    if not old_tokens or not new_tokens:
+        return 0.0
+    return len(old_tokens & new_tokens) / len(old_tokens | new_tokens)
+
+
+def _comment_matches(old_col: ColumnDef, new_col: ColumnDef) -> bool:
+    old_comment = (old_col.comment or "").strip()
+    new_comment = (new_col.comment or "").strip()
+    return bool(old_comment) and old_comment == new_comment
+
+
+def _column_rename_scores(
+    old_col: ColumnDef, new_col: ColumnDef
+) -> Tuple[int, int]:
+    score = 0
+    if _comment_matches(old_col, new_col):
+        score += 1000
+    score += int(_column_name_similarity(old_col.name, new_col.name) * 100)
+    ranking_score = score
+    if (
+        old_col.default not in (None, "")
+        and old_col.default == new_col.default
+    ):
+        ranking_score += 10
+    return ranking_score, score
+
+
+def _derive_column_renames(
+    dropped: List[ColumnDef],
+    added: List[ColumnDef],
+    old: TableDef,
+    new: TableDef,
+) -> List[Tuple[int, int, str, str]]:
+    old_positions = {col.name: idx for idx, col in enumerate(old.columns)}
+    new_positions = {col.name: idx for idx, col in enumerate(new.columns)}
+    eligible_by_drop = {}
+    eligible_by_add = {}
+    candidates = []
+
+    for di, drop_col in enumerate(dropped):
+        for ai, add_col in enumerate(added):
+            if (
+                drop_col.data_type != add_col.data_type
+                or drop_col.nullable != add_col.nullable
+            ):
+                continue
+            ranking_score, semantic_score = _column_rename_scores(
+                drop_col, add_col
+            )
+            position_gap = abs(
+                old_positions.get(drop_col.name, di)
+                - new_positions.get(add_col.name, ai)
+            )
+            eligible_by_drop[di] = eligible_by_drop.get(di, 0) + 1
+            eligible_by_add[ai] = eligible_by_add.get(ai, 0) + 1
+            candidates.append(
+                (
+                    ranking_score,
+                    -position_gap,
+                    semantic_score,
+                    drop_col.name,
+                    add_col.name,
+                    di,
+                    ai,
+                )
+            )
+
+    candidates.sort(reverse=True)
+    matched_drops = set()
+    matched_adds = set()
+    renames = []
+
+    for (
+        _ranking_score,
+        _position_score,
+        semantic_score,
+        _old_name,
+        _new_name,
+        di,
+        ai,
+    ) in candidates:
+        if di in matched_drops or ai in matched_adds:
+            continue
+        if semantic_score == 0 and (
+            eligible_by_drop.get(di, 0) > 1 or eligible_by_add.get(ai, 0) > 1
+        ):
+            continue
+        matched_drops.add(di)
+        matched_adds.add(ai)
+        renames.append((di, ai, dropped[di].name, added[ai].name))
+
+    return sorted(renames, key=lambda item: item[0])
+
+
 def derive_ddl_changes(old_tables: dict, new_tables: dict) -> List[DDLChange]:
     """
     核心方法: 对比 old/new 两套表定义,返回变更列表。
@@ -523,7 +651,8 @@ def derive_ddl_changes(old_tables: dict, new_tables: dict) -> List[DDLChange]:
 def _derive_alter_columns(old: TableDef, new: TableDef) -> dict:
     """逐列对比 old/new 同名 table,返回 {adds, drops, modifies, renames}.
 
-    列重命名检测: 配对 data_type + nullable 均相同的 drop/add 列为 rename。
+    列重命名检测: data_type + nullable 相同的 drop/add 列进入候选池,
+    再按注释、字段名 token、默认值和列顺序排序,避免同类型字段误配。
     """
     old_cols = {c.name: c for c in old.columns}
     new_cols = {c.name: c for c in new.columns}
@@ -534,24 +663,15 @@ def _derive_alter_columns(old: TableDef, new: TableDef) -> dict:
     dropped = [old_cols[n] for n in sorted(old_names - new_names)]
     added = [new_cols[n] for n in sorted(new_names - old_names)]
 
-    # 检测列重命名: 按 data_type + nullable 配对
-    renames = []
-    matched_drops = set()
-    matched_adds = set()
-    for di, drop_col in enumerate(dropped):
-        for ai, add_col in enumerate(added):
-            if ai in matched_adds:
-                continue
-            if (
-                drop_col.data_type == add_col.data_type
-                and drop_col.nullable == add_col.nullable
-            ):
-                renames.append((drop_col.name, add_col.name))
-                matched_drops.add(di)
-                matched_adds.add(ai)
-                break
+    # 检测列重命名: 相同结构候选按语义证据配对
+    rename_matches = _derive_column_renames(dropped, added, old, new)
+    renames = [
+        (old_name, new_name) for _, _, old_name, new_name in rename_matches
+    ]
 
     if renames:
+        matched_drops = {di for di, _, _, _ in rename_matches}
+        matched_adds = {ai for _, ai, _, _ in rename_matches}
         dropped = [c for i, c in enumerate(dropped) if i not in matched_drops]
         added = [c for i, c in enumerate(added) if i not in matched_adds]
 
