@@ -544,6 +544,355 @@ FROM demo.dwd_sales;
     assert result["checks"][0]["rule_id"] == "CODE_NO_SELECT_STAR_IN_WRITE"
 
 
+def test_score_code_quality_flags_sql_references_not_matching_ddl_spelling(
+    tmp_path,
+):
+    context = _catalog_for_task_and_ddl(
+        tmp_path,
+        "dws_sales.sql",
+        """
+INSERT INTO demo.DWS_SALES
+SELECT
+    o.Order_ID,
+    o.Pay_Amount
+FROM demo.DWD_ORDER_DETAIL o;
+""",
+        {
+            "dwd_order_detail.sql": """
+CREATE TABLE demo.dwd_order_detail (
+    order_id BIGINT NOT NULL,
+    pay_amount DECIMAL(12,2) NULL
+) ENGINE=OLAP
+DUPLICATE KEY(order_id)
+DISTRIBUTED BY HASH(order_id) BUCKETS 1
+PROPERTIES ("replication_num" = "1");
+""",
+            "dws_sales.sql": """
+CREATE TABLE demo.dws_sales (
+    order_id BIGINT NOT NULL,
+    pay_amount DECIMAL(12,2) NULL
+) ENGINE=OLAP
+DUPLICATE KEY(order_id)
+DISTRIBUTED BY HASH(order_id) BUCKETS 1
+PROPERTIES ("replication_num" = "1");
+""",
+        },
+    )
+
+    result = score_code_quality(context)
+
+    assert "CODE_SQL_REFERENCES_MATCH_DDL_SPELLING" in _issue_rule_ids(result)
+    failed = [
+        check
+        for check in result["checks"]
+        if check["rule_id"] == "CODE_SQL_REFERENCES_MATCH_DDL_SPELLING"
+        and not check["passed"]
+    ]
+    assert len(failed) == 1
+    assert failed[0]["evidence"]["table_mismatches"] == [
+        {"sql_table": "DWD_ORDER_DETAIL", "ddl_table": "dwd_order_detail"},
+        {"sql_table": "DWS_SALES", "ddl_table": "dws_sales"},
+    ]
+    assert failed[0]["evidence"]["column_mismatches"] == [
+        {
+            "table": "dwd_order_detail",
+            "sql_column": "Order_ID",
+            "ddl_column": "order_id",
+        },
+        {
+            "table": "dwd_order_detail",
+            "sql_column": "Pay_Amount",
+            "ddl_column": "pay_amount",
+        },
+    ]
+
+
+def test_score_code_quality_accepts_exact_sql_references_and_external_tables(
+    tmp_path,
+):
+    context = _catalog_for_task_and_ddl(
+        tmp_path,
+        "dws_sales.sql",
+        """
+INSERT INTO demo.dws_sales
+SELECT
+    o.order_id,
+    o.pay_amount,
+    ext.Source_Value
+FROM demo.dwd_order_detail o
+JOIN external.Source_Table ext ON o.order_id = ext.Order_ID;
+""",
+        {
+            "dwd_order_detail.sql": """
+CREATE TABLE demo.dwd_order_detail (
+    order_id BIGINT NOT NULL,
+    pay_amount DECIMAL(12,2) NULL
+) ENGINE=OLAP
+DUPLICATE KEY(order_id)
+DISTRIBUTED BY HASH(order_id) BUCKETS 1
+PROPERTIES ("replication_num" = "1");
+""",
+            "dws_sales.sql": """
+CREATE TABLE demo.dws_sales (
+    order_id BIGINT NOT NULL,
+    pay_amount DECIMAL(12,2) NULL
+) ENGINE=OLAP
+DUPLICATE KEY(order_id)
+DISTRIBUTED BY HASH(order_id) BUCKETS 1
+PROPERTIES ("replication_num" = "1");
+""",
+        },
+    )
+
+    result = score_code_quality(context)
+
+    assert "CODE_SQL_REFERENCES_MATCH_DDL_SPELLING" not in _issue_rule_ids(
+        result
+    )
+
+
+def test_score_code_quality_flags_resolvable_unqualified_columns(
+    tmp_path,
+):
+    context = _catalog_for_task_and_ddl(
+        tmp_path,
+        "dws_sales.sql",
+        """
+INSERT INTO demo.dws_sales
+SELECT
+    Order_ID,
+    Pay_Amount
+FROM demo.dwd_order_detail;
+""",
+        {
+            "dwd_order_detail.sql": """
+CREATE TABLE demo.dwd_order_detail (
+    order_id BIGINT NOT NULL,
+    pay_amount DECIMAL(12,2) NULL
+) ENGINE=OLAP
+DUPLICATE KEY(order_id)
+DISTRIBUTED BY HASH(order_id) BUCKETS 1
+PROPERTIES ("replication_num" = "1");
+""",
+            "dws_sales.sql": """
+CREATE TABLE demo.dws_sales (
+    order_id BIGINT NOT NULL,
+    pay_amount DECIMAL(12,2) NULL
+) ENGINE=OLAP
+DUPLICATE KEY(order_id)
+DISTRIBUTED BY HASH(order_id) BUCKETS 1
+PROPERTIES ("replication_num" = "1");
+""",
+        },
+    )
+
+    result = score_code_quality(context)
+
+    failed = [
+        check
+        for check in result["checks"]
+        if check["rule_id"] == "CODE_SQL_REFERENCES_MATCH_DDL_SPELLING"
+        and not check["passed"]
+    ]
+    assert len(failed) == 1
+    assert failed[0]["evidence"]["column_mismatches"] == [
+        {
+            "table": "dwd_order_detail",
+            "sql_column": "Order_ID",
+            "ddl_column": "order_id",
+        },
+        {
+            "table": "dwd_order_detail",
+            "sql_column": "Pay_Amount",
+            "ddl_column": "pay_amount",
+        },
+    ]
+
+
+def test_score_code_quality_flags_cte_reference_spelling(tmp_path):
+    context = _catalog_for_task_and_ddl(
+        tmp_path,
+        "dws_sales.sql",
+        """
+INSERT INTO demo.dws_sales
+WITH Order_Base AS (
+    SELECT
+        o.order_id AS order_id,
+        o.pay_amount AS pay_amount
+    FROM demo.dwd_order_detail o
+)
+SELECT
+    b.Order_ID,
+    Pay_Amount
+FROM order_base b;
+""",
+        {
+            "dwd_order_detail.sql": """
+CREATE TABLE demo.dwd_order_detail (
+    order_id BIGINT NOT NULL,
+    pay_amount DECIMAL(12,2) NULL
+) ENGINE=OLAP
+DUPLICATE KEY(order_id)
+DISTRIBUTED BY HASH(order_id) BUCKETS 1
+PROPERTIES ("replication_num" = "1");
+""",
+            "dws_sales.sql": """
+CREATE TABLE demo.dws_sales (
+    order_id BIGINT NOT NULL,
+    pay_amount DECIMAL(12,2) NULL
+) ENGINE=OLAP
+DUPLICATE KEY(order_id)
+DISTRIBUTED BY HASH(order_id) BUCKETS 1
+PROPERTIES ("replication_num" = "1");
+""",
+        },
+    )
+
+    result = score_code_quality(context)
+
+    failed = [
+        check
+        for check in result["checks"]
+        if check["rule_id"] == "CODE_SQL_REFERENCES_MATCH_DDL_SPELLING"
+        and not check["passed"]
+    ]
+    assert len(failed) == 1
+    assert failed[0]["evidence"]["table_mismatches"] == [
+        {"sql_table": "order_base", "ddl_table": "Order_Base"}
+    ]
+    assert failed[0]["evidence"]["column_mismatches"] == [
+        {
+            "table": "Order_Base",
+            "sql_column": "Order_ID",
+            "ddl_column": "order_id",
+        },
+        {
+            "table": "Order_Base",
+            "sql_column": "Pay_Amount",
+            "ddl_column": "pay_amount",
+        },
+    ]
+
+
+def test_score_code_quality_flags_transient_table_reference_spelling(
+    tmp_path,
+):
+    context = _catalog_for_task_and_ddl(
+        tmp_path,
+        "dws_sales.sql",
+        """
+CREATE TABLE demo.tmp_sales_stage AS
+SELECT
+    order_id AS order_id,
+    pay_amount AS pay_amount
+FROM demo.dwd_order_detail;
+
+INSERT INTO demo.dws_sales
+SELECT
+    s.Order_ID,
+    Pay_Amount
+FROM demo.TMP_SALES_STAGE s;
+""",
+        {
+            "dwd_order_detail.sql": """
+CREATE TABLE demo.dwd_order_detail (
+    order_id BIGINT NOT NULL,
+    pay_amount DECIMAL(12,2) NULL
+) ENGINE=OLAP
+DUPLICATE KEY(order_id)
+DISTRIBUTED BY HASH(order_id) BUCKETS 1
+PROPERTIES ("replication_num" = "1");
+""",
+            "dws_sales.sql": """
+CREATE TABLE demo.dws_sales (
+    order_id BIGINT NOT NULL,
+    pay_amount DECIMAL(12,2) NULL
+) ENGINE=OLAP
+DUPLICATE KEY(order_id)
+DISTRIBUTED BY HASH(order_id) BUCKETS 1
+PROPERTIES ("replication_num" = "1");
+""",
+        },
+    )
+
+    result = score_code_quality(context)
+
+    failed = [
+        check
+        for check in result["checks"]
+        if check["rule_id"] == "CODE_SQL_REFERENCES_MATCH_DDL_SPELLING"
+        and not check["passed"]
+    ]
+    assert len(failed) == 1
+    assert failed[0]["evidence"]["table_mismatches"] == [
+        {"sql_table": "TMP_SALES_STAGE", "ddl_table": "tmp_sales_stage"}
+    ]
+    assert failed[0]["evidence"]["column_mismatches"] == [
+        {
+            "table": "tmp_sales_stage",
+            "sql_column": "Order_ID",
+            "ddl_column": "order_id",
+        },
+        {
+            "table": "tmp_sales_stage",
+            "sql_column": "Pay_Amount",
+            "ddl_column": "pay_amount",
+        },
+    ]
+
+
+def test_score_code_quality_flags_local_relations_without_project_ddl(
+    tmp_path,
+):
+    context = _catalog_for_task(
+        tmp_path,
+        "ad_hoc_sales.sql",
+        """
+CREATE TABLE demo.tmp_sales_stage AS
+SELECT
+    1 AS order_id,
+    2 AS pay_amount;
+
+WITH Order_Base AS (
+    SELECT
+        order_id AS order_id,
+        pay_amount AS pay_amount
+    FROM demo.TMP_SALES_STAGE
+)
+SELECT
+    b.Order_ID,
+    Pay_Amount
+FROM order_base b;
+""",
+    )
+
+    result = score_code_quality(context)
+
+    failed = [
+        check
+        for check in result["checks"]
+        if check["rule_id"] == "CODE_SQL_REFERENCES_MATCH_DDL_SPELLING"
+        and not check["passed"]
+    ]
+    assert len(failed) == 1
+    assert failed[0]["evidence"]["table_mismatches"] == [
+        {"sql_table": "order_base", "ddl_table": "Order_Base"},
+        {"sql_table": "TMP_SALES_STAGE", "ddl_table": "tmp_sales_stage"},
+    ]
+    assert failed[0]["evidence"]["column_mismatches"] == [
+        {
+            "table": "Order_Base",
+            "sql_column": "Order_ID",
+            "ddl_column": "order_id",
+        },
+        {
+            "table": "Order_Base",
+            "sql_column": "Pay_Amount",
+            "ddl_column": "pay_amount",
+        },
+    ]
+
+
 def test_score_code_quality_flags_cartesian_join_risks(tmp_path):
     context = _catalog_for_task(
         tmp_path,

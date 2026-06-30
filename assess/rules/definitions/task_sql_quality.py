@@ -7,6 +7,7 @@ from pathlib import Path
 
 import sqlglot
 from sqlglot import exp
+from sqlglot.optimizer.scope import traverse_scope
 
 from assess.result_model import (
     SEVERITY_HIGH,
@@ -16,6 +17,7 @@ from assess.result_model import (
     rule_meta,
 )
 from assess.rules.engine.base import AssessRule
+from lineage.identifiers import identifier_match_key
 
 RULE_TEMP_TABLE_NAME_HAS_TEMP_OR_TMP = "TEMP_TABLE_NAME_HAS_TEMP_OR_TMP"
 RULE_TEMP_TABLE_DROPPED_IN_SAME_TASK = "TEMP_TABLE_DROPPED_IN_SAME_TASK"
@@ -31,6 +33,7 @@ CODE_RULE_TEMP_TABLE_PRE_DROP_NOT_CLEANED = (
     "CODE_TEMP_TABLE_CREATED_WITH_PRE_DROP_NOT_CLEANED"
 )
 CODE_RULE_TEMP_TABLE_USED_ACROSS_TASKS = "CODE_TEMP_TABLE_USED_ACROSS_TASKS"
+CODE_RULE_SQL_REFERENCES_MATCH_DDL = "CODE_SQL_REFERENCES_MATCH_DDL_SPELLING"
 
 CODE_QUALITY_RULES = {
     CODE_RULE_TEMP_TABLE_NAME: rule_meta(
@@ -100,6 +103,14 @@ CODE_QUALITY_RULES = {
         ),
         strategy="promote_pseudo_temp_table_to_governed_asset",
         edit_scope=["tasks", "models", "ddl"],
+    ),
+    CODE_RULE_SQL_REFERENCES_MATCH_DDL: rule_meta(
+        name="SQL引用表/字段与DDL拼写一致",
+        severity=SEVERITY_MEDIUM,
+        title="SQL引用与DDL拼写不一致",
+        remediation_summary="将Task SQL中的表名和字段名调整为DDL中的精确拼写",
+        strategy="align_sql_references_with_ddl",
+        edit_scope=["tasks"],
     ),
 }
 
@@ -451,6 +462,44 @@ class CodeTempTableUsedAcrossTasksRule(AssessRule):
         )
 
 
+class CodeSqlReferencesMatchDdlSpellingRule(AssessRule):
+    rule_id = CODE_RULE_SQL_REFERENCES_MATCH_DDL
+    dimension = "code_quality"
+    domain = "task"
+    target = "sql"
+
+    def evaluate(
+        self,
+        target: dict,
+        rule_context: dict,
+    ) -> list[dict]:
+        ddl_index = _ddl_reference_index(
+            rule_context.get("asset_catalog") or {}
+        )
+        issue = _scan_sql_reference_spelling_issues(
+            target["sql"],
+            ddl_index,
+        )
+        if not issue:
+            return []
+        return [
+            make_check(
+                rule_id=self.rule_id,
+                target_type="task",
+                target=target["file_name"],
+                passed=False,
+                expected="SQL引用表名和字段名与DDL精确拼写一致",
+                actual="SQL引用与DDL存在大小写或拼写差异",
+                evidence={
+                    "file": target["file_name"],
+                    "table_mismatches": issue["table_mismatches"],
+                    "column_mismatches": issue["column_mismatches"],
+                },
+                message="SQL引用表名或字段名与DDL拼写不一致",
+            )
+        ]
+
+
 CODE_QUALITY_RULE_CLASSES = [
     CodeTempTableNameHasTempOrTmpRule,
     CodeTempTableDroppedInSameTaskRule,
@@ -460,6 +509,7 @@ CODE_QUALITY_RULE_CLASSES = [
     CodeFilterColumnWrappedInFunctionRule,
     CodeTempTableCreatedWithPreDropNotCleanedRule,
     CodeTempTableUsedAcrossTasksRule,
+    CodeSqlReferencesMatchDdlSpellingRule,
 ]
 
 CODE_QUALITY_RULE_CLASSES_BY_ID = {
@@ -473,6 +523,336 @@ def _short_table_name(table_name: str) -> str:
         return ""
     name = name.replace("`", "").replace('"', "")
     return name.split(".")[-1].strip()
+
+
+def _ddl_reference_index(asset_catalog: dict) -> dict:
+    index = {}
+    for table_name, asset in sorted(
+        (asset_catalog.get("tables") or {}).items()
+    ):
+        ddl = asset.get("ddl") or {}
+        if not ddl.get("exists"):
+            continue
+        declared_name = _short_table_name(
+            ddl.get("declared_name") or table_name
+        )
+        if not declared_name:
+            continue
+        columns = {}
+        for column in ddl.get("columns") or []:
+            column_name = _short_table_name(
+                column.get("name") if isinstance(column, dict) else column
+            )
+            column_key = identifier_match_key(column_name)
+            if column_key:
+                columns.setdefault(column_key, column_name)
+        index[identifier_match_key(declared_name)] = {
+            "table": declared_name,
+            "columns": columns,
+        }
+    return index
+
+
+def _relation_entry(table_name: str, columns: list[str]) -> dict:
+    column_index = {}
+    for column_name in columns:
+        display_name = _short_table_name(column_name)
+        column_key = identifier_match_key(display_name)
+        if column_key:
+            column_index.setdefault(column_key, display_name)
+    return {"table": _short_table_name(table_name), "columns": column_index}
+
+
+def _entry_for_sql_table(
+    table_name: str,
+    ddl_index: dict,
+    local_index: dict | None = None,
+    *,
+    prefer_local: bool = False,
+) -> dict | None:
+    table_key = identifier_match_key(_short_table_name(table_name))
+    local_index = local_index or {}
+    if prefer_local:
+        return local_index.get(table_key) or ddl_index.get(table_key)
+    return ddl_index.get(table_key) or local_index.get(table_key)
+
+
+def _add_table_spelling_mismatch(
+    mismatches: list[dict],
+    seen: set[tuple[str, str]],
+    sql_table: str,
+    ddl_entry: dict,
+) -> None:
+    sql_table = _short_table_name(sql_table)
+    ddl_table = ddl_entry.get("table", "")
+    if not sql_table or not ddl_table or sql_table == ddl_table:
+        return
+    pair = (sql_table, ddl_table)
+    if pair in seen:
+        return
+    seen.add(pair)
+    mismatches.append({"sql_table": sql_table, "ddl_table": ddl_table})
+
+
+def _add_column_spelling_mismatch(
+    mismatches: list[dict],
+    seen: set[tuple[str, str, str]],
+    ddl_entry: dict,
+    sql_column: str,
+) -> None:
+    sql_column = _short_table_name(sql_column)
+    column_key = identifier_match_key(sql_column)
+    ddl_column = (ddl_entry.get("columns") or {}).get(column_key)
+    if not sql_column or not ddl_column or sql_column == ddl_column:
+        return
+    table_name = ddl_entry.get("table", "")
+    key = (table_name, sql_column, ddl_column)
+    if key in seen:
+        return
+    seen.add(key)
+    mismatches.append(
+        {
+            "table": table_name,
+            "sql_column": sql_column,
+            "ddl_column": ddl_column,
+        }
+    )
+
+
+def _target_table_expressions(stmt) -> list:
+    target_exprs = []
+    if (
+        isinstance(stmt, (exp.Insert, exp.Update, exp.Delete, exp.Merge))
+        or _is_table_create(stmt)
+        or _is_table_drop(stmt)
+    ):
+        target_exprs.append(stmt.this)
+    elif isinstance(stmt, exp.TruncateTable):
+        target_exprs.extend(stmt.expressions or [])
+
+    tables = []
+    for target_expr in target_exprs:
+        if isinstance(target_expr, exp.Schema):
+            target_expr = target_expr.this
+        if isinstance(target_expr, exp.Table):
+            tables.append(target_expr)
+    return tables
+
+
+def _projection_output_name(projection) -> str:
+    alias = str(getattr(projection, "alias", "") or "").strip()
+    if alias:
+        return alias
+    if isinstance(projection, exp.Column):
+        return projection.name
+    return str(getattr(projection, "alias_or_name", "") or "").strip()
+
+
+def _query_output_column_names(query) -> list[str]:
+    if not isinstance(query, exp.Select):
+        return []
+    names = []
+    for projection in query.expressions or []:
+        if isinstance(projection, exp.Star):
+            continue
+        if isinstance(projection, exp.Column) and isinstance(
+            projection.this, exp.Star
+        ):
+            continue
+        name = _projection_output_name(projection)
+        if name:
+            names.append(name)
+    return names
+
+
+def _create_output_column_names(stmt) -> list[str]:
+    schema = stmt.this if _is_table_create(stmt) else None
+    if isinstance(schema, exp.Schema):
+        columns = [
+            col.this.name
+            for col in schema.expressions or []
+            if isinstance(col, exp.ColumnDef)
+        ]
+        if columns:
+            return columns
+
+    expression = (
+        stmt.args.get("expression") if _is_table_create(stmt) else None
+    )
+    return _query_output_column_names(expression)
+
+
+def _created_local_relation_index(statements: list) -> dict:
+    index = {}
+    for statement in statements:
+        if not _is_table_create(statement):
+            continue
+        table_name = _target_table_name(statement.this)
+        columns = _create_output_column_names(statement)
+        if not table_name or not columns:
+            continue
+        index[identifier_match_key(table_name)] = _relation_entry(
+            table_name,
+            columns,
+        )
+    return index
+
+
+def _cte_relation_index(statement) -> dict:
+    index = {}
+    for cte in statement.find_all(exp.CTE):
+        table_name = _short_table_name(cte.alias_or_name)
+        if not table_name:
+            continue
+        columns = list(getattr(cte, "alias_column_names", []) or [])
+        if not columns:
+            columns = _query_output_column_names(cte.this)
+        if not columns:
+            continue
+        index[identifier_match_key(table_name)] = _relation_entry(
+            table_name,
+            columns,
+        )
+    return index
+
+
+def _unique_relation_entries(entries: list[dict]) -> list[dict]:
+    unique = {}
+    for entry in entries:
+        table_key = identifier_match_key(entry.get("table", ""))
+        if table_key:
+            unique.setdefault(table_key, entry)
+    return list(unique.values())
+
+
+def _resolve_unqualified_column_entry(
+    column_name: str,
+    relation_entries: list[dict],
+) -> dict | None:
+    column_key = identifier_match_key(_short_table_name(column_name))
+    if not column_key:
+        return None
+    matches = [
+        entry
+        for entry in _unique_relation_entries(relation_entries)
+        if column_key in (entry.get("columns") or {})
+    ]
+    if len(matches) != 1:
+        return None
+    return matches[0]
+
+
+def _scan_sql_reference_spelling_issues(
+    sql: str,
+    ddl_index: dict,
+) -> dict:
+    statements = _parse_statements(sql)
+    if not statements:
+        return {}
+
+    table_mismatches = []
+    column_mismatches = []
+    seen_table_mismatches = set()
+    seen_column_mismatches = set()
+    task_local_index = _created_local_relation_index(statements)
+
+    for statement in statements:
+        statement_local_index = dict(task_local_index)
+        statement_local_index.update(_cte_relation_index(statement))
+
+        for table in _target_table_expressions(statement):
+            if _is_table_create(statement):
+                ddl_entry = _entry_for_sql_table(table.name, ddl_index)
+            else:
+                ddl_entry = _entry_for_sql_table(
+                    table.name,
+                    ddl_index,
+                    statement_local_index,
+                )
+            if not ddl_entry:
+                continue
+            _add_table_spelling_mismatch(
+                table_mismatches,
+                seen_table_mismatches,
+                table.name,
+                ddl_entry,
+            )
+
+        for scope in traverse_scope(statement):
+            alias_to_table = {}
+            relation_entries = []
+            for alias, source in scope.sources.items():
+                if not isinstance(source, exp.Table):
+                    continue
+                ddl_entry = _entry_for_sql_table(
+                    source.name,
+                    ddl_index,
+                    statement_local_index,
+                    prefer_local=True,
+                )
+                if not ddl_entry:
+                    continue
+                _add_table_spelling_mismatch(
+                    table_mismatches,
+                    seen_table_mismatches,
+                    source.name,
+                    ddl_entry,
+                )
+                relation_entries.append(ddl_entry)
+                for qualifier in (alias, source.name):
+                    qualifier_key = identifier_match_key(
+                        _short_table_name(qualifier)
+                    )
+                    if qualifier_key:
+                        alias_to_table[qualifier_key] = ddl_entry
+
+            for column in scope.columns:
+                qualifier_key = identifier_match_key(
+                    _short_table_name(column.table)
+                )
+                if not qualifier_key:
+                    ddl_entry = _resolve_unqualified_column_entry(
+                        column.name,
+                        relation_entries,
+                    )
+                    if not ddl_entry:
+                        continue
+                    _add_column_spelling_mismatch(
+                        column_mismatches,
+                        seen_column_mismatches,
+                        ddl_entry,
+                        column.name,
+                    )
+                    continue
+                ddl_entry = alias_to_table.get(qualifier_key)
+                if not ddl_entry:
+                    continue
+                _add_column_spelling_mismatch(
+                    column_mismatches,
+                    seen_column_mismatches,
+                    ddl_entry,
+                    column.name,
+                )
+
+    if not table_mismatches and not column_mismatches:
+        return {}
+    return {
+        "table_mismatches": sorted(
+            table_mismatches,
+            key=lambda item: (
+                identifier_match_key(item["sql_table"]),
+                identifier_match_key(item["ddl_table"]),
+            ),
+        ),
+        "column_mismatches": sorted(
+            column_mismatches,
+            key=lambda item: (
+                identifier_match_key(item["table"]),
+                identifier_match_key(item["sql_column"]),
+                identifier_match_key(item["ddl_column"]),
+            ),
+        ),
+    }
 
 
 def _target_table_name(target_expr) -> str:
