@@ -7,7 +7,9 @@ from sqlglot import exp
 from sqlglot.errors import ErrorLevel
 
 from refact.shadow_run import (
+    _ddl_change_statements,
     _get_dml_target,
+    _wait_for_table_alter_jobs,
     execute_shadow_plan,
     rewrite_sql,
     run_shadow_plan,
@@ -143,9 +145,47 @@ def _assert_rewrite_sql_handles_multiple_dml_statements_in_one_file():
     assert ("dwd_order_detail", "shop_dm") not in refs
 
 
+def test_rewrite_sql_qualifies_unqualified_physical_table_references():
+    sql = """
+    INSERT INTO dwd_order_detail
+    SELECT o.order_id, d.discount_amount
+    FROM ods_order o
+    LEFT JOIN dwd_discount d ON o.order_id = d.order_id
+    """
+
+    rewritten = rewrite_sql(sql, "shop_dm", "shop_dm_qa", {"dwd_discount"})
+    refs = _table_refs(rewritten)
+
+    assert ("dwd_order_detail", "shop_dm_qa") in refs
+    assert ("ods_order", "shop_dm") in refs
+    assert ("dwd_discount", "shop_dm_qa") in refs
+    assert "INSERT INTO shop_dm_qa.dwd_order_detail" in rewritten
+    assert "FROM shop_dm.ods_order o" in rewritten
+    assert "JOIN shop_dm_qa.dwd_discount d" in rewritten
+
+
+def test_rewrite_sql_does_not_qualify_unqualified_cte_references():
+    sql = """
+    INSERT INTO ads_sales_dashboard
+    WITH daily_base AS (
+        SELECT order_date, COUNT(*) AS cnt
+        FROM dwd_order_detail
+        GROUP BY order_date
+    )
+    SELECT order_date, cnt FROM daily_base
+    """
+
+    rewritten = rewrite_sql(sql, "shop_dm", "shop_dm_qa", {"dwd_order_detail"})
+    refs = _table_refs(rewritten)
+
+    assert ("ads_sales_dashboard", "shop_dm_qa") in refs
+    assert ("dwd_order_detail", "shop_dm_qa") in refs
+    assert ("daily_base", "shop_dm_qa") not in refs
+    assert "FROM daily_base" in rewritten
+
+
 def test_rewrite_sql_does_not_invent_database_prefixes():
     scenarios = [
-        "SELECT * FROM some_table",
         "SET @etl_date = '2025-01-15'",
     ]
     for sql in scenarios:
@@ -154,8 +194,145 @@ def test_rewrite_sql_does_not_invent_database_prefixes():
         assert all(db not in {"shop_dm", "shop_dm_qa"} for _, db in refs)
 
 
+def test_rewrite_sql_preserves_non_table_sql_text():
+    sql = """
+    SET @etl_date = COALESCE(@etl_date, CURDATE());
+    -- shop_dm.dwd_customer should stay comment text
+    INSERT INTO shop_dm.dwd_customer
+    SELECT customer_id, CURDATE() AS snapshot_date
+    FROM shop_dm.ods_customer
+    WHERE created_at < CURDATE()
+      AND note <> 'shop_dm.dwd_customer should stay literal'
+    """
+
+    rewritten = rewrite_sql(sql, "shop_dm", "shop_dm_qa", set())
+
+    assert "shop_dm_qa.dwd_customer" in rewritten
+    assert "shop_dm.ods_customer" in rewritten
+    assert "CURDATE()" in rewritten
+    assert "CURRENT_DATE" not in rewritten
+    assert "-- shop_dm.dwd_customer should stay comment text" in rewritten
+    assert "'shop_dm.dwd_customer should stay literal'" in rewritten
+
+
 def test_rewrite_sql_text_empty():
     assert rewrite_sql("", "shop_dm", "shop_dm_qa", set()) == ""
+
+
+def test_ddl_change_statements_do_not_rewrite_invalid_multi_rename_column():
+    sql = (
+        "ALTER TABLE shop_dm.dwd_order_detail "
+        "RENAME COLUMN unit_price price_unit, "
+        "RENAME COLUMN quantity item_quantity;"
+    )
+
+    assert _ddl_change_statements(sql) == [sql]
+
+
+def test_ddl_change_statements_split_semicolon_separated_statements():
+    sql = (
+        "ALTER TABLE shop_dm.dwd_order_detail "
+        "RENAME COLUMN unit_price price_unit; "
+        "ALTER TABLE shop_dm.dwd_order_detail "
+        "RENAME COLUMN quantity item_quantity;"
+    )
+
+    assert _ddl_change_statements(sql) == [
+        (
+            "ALTER TABLE shop_dm.dwd_order_detail "
+            "RENAME COLUMN unit_price price_unit;"
+        ),
+        (
+            "ALTER TABLE shop_dm.dwd_order_detail "
+            "RENAME COLUMN quantity item_quantity;"
+        ),
+    ]
+
+
+def test_execute_shadow_plan_splits_rename_columns_and_waits(monkeypatch):
+    plan = {
+        "project": "shop",
+        "project_db": "shop_dm",
+        "qa_db": "shop_dm_qa",
+        "baseline_ddl": {},
+        "ddl_changes": [
+            {
+                "change_type": "ALTER",
+                "table_name": "shop_dm.dwd_order_detail",
+                "sql": (
+                    "ALTER TABLE shop_dm.dwd_order_detail "
+                    "RENAME COLUMN unit_price price_unit; "
+                    "ALTER TABLE shop_dm.dwd_order_detail "
+                    "RENAME COLUMN quantity item_quantity;"
+                ),
+            }
+        ],
+        "partition_info": {},
+        "jobs_to_run": [],
+        "verification": {"checks": []},
+    }
+    calls = []
+
+    def fake_run_sql(sql, db="", qa=False):
+        calls.append((sql, db, qa))
+        return ""
+
+    monkeypatch.setattr("refact.shadow_run.run_sql", fake_run_sql)
+
+    execute_shadow_plan(plan)
+
+    alter_calls = [sql for sql, _, _ in calls if sql.startswith("ALTER TABLE")]
+    show_calls = [
+        sql for sql, _, _ in calls if sql.startswith("SHOW ALTER TABLE COLUMN")
+    ]
+    assert alter_calls == [
+        (
+            "ALTER TABLE shop_dm_qa.dwd_order_detail "
+            "RENAME COLUMN unit_price price_unit;"
+        ),
+        (
+            "ALTER TABLE shop_dm_qa.dwd_order_detail "
+            "RENAME COLUMN quantity item_quantity;"
+        ),
+    ]
+    assert len(show_calls) == 4
+
+
+def test_wait_for_table_alter_jobs_polls_until_finished(monkeypatch):
+    outputs = [
+        (
+            "JobId\tTableName\tCreateTime\tFinishedTime\tState\tMsg\n"
+            "1\tdwd_order_detail\t2026-06-30 12:00:00\tN/A\tRUNNING\t\n"
+        ),
+        (
+            "JobId\tTableName\tCreateTime\tFinishedTime\tState\tMsg\n"
+            "1\tdwd_order_detail\t2026-06-30 12:00:00\t"
+            "2026-06-30 12:00:03\tFINISHED\t\n"
+        ),
+    ]
+    calls = []
+
+    def fake_run_sql(sql, db="", qa=False):
+        calls.append((sql, db, qa))
+        return outputs.pop(0)
+
+    monkeypatch.setattr("refact.shadow_run.run_sql", fake_run_sql)
+    monkeypatch.setattr("refact.shadow_run.time.sleep", lambda _: None)
+
+    _wait_for_table_alter_jobs(
+        "shop_dm_qa",
+        "dwd_order_detail",
+        qa=True,
+        poll_interval_seconds=0,
+        timeout_seconds=1,
+    )
+
+    assert len(calls) == 2
+    assert calls[0][0] == (
+        "SHOW ALTER TABLE COLUMN FROM `shop_dm_qa` "
+        'WHERE TableName = "dwd_order_detail" '
+        "ORDER BY CreateTime DESC LIMIT 10"
+    )
 
 
 def test_dry_run_omits_where_for_unpartitioned_checks(capsys):
