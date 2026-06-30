@@ -7,8 +7,8 @@ WHERE IF(@full_refresh = 1, 1=1, stat_date = CAST(@etl_date AS DATE));
 INSERT INTO shop_dm.dws_order_passthrough_daily
 SELECT
     order_item_id,
-    order_id,
     order_date AS stat_date,
+    order_id,
     store_id,
     product_id,
     subtotal,

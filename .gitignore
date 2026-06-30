@@ -27,6 +27,7 @@ lineage/job_dag_*.json
 # 项目级生成产物
 */lineage/lineage_data*.json
 */lineage/job_dag*.json
+*/lineage/task_lineage_cache*.json
 */lineage/*.html
 */assess/assess_result.json
 */assess/model_metadata_result.json

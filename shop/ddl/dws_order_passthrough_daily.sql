@@ -2,8 +2,8 @@
 DROP TABLE IF EXISTS shop_dm.dws_order_passthrough_daily;
 CREATE TABLE IF NOT EXISTS shop_dm.dws_order_passthrough_daily (
     order_item_id BIGINT        NOT NULL COMMENT 'Order item ID',
-    order_id      BIGINT        NOT NULL COMMENT 'Order ID',
     stat_date     DATE          NOT NULL COMMENT 'Stat date',
+    order_id      BIGINT        NOT NULL COMMENT 'Order ID',
     store_id      BIGINT        NOT NULL COMMENT 'Store ID',
     product_id    BIGINT        NOT NULL COMMENT 'Product ID',
     subtotal      DECIMAL(12,2) NOT NULL COMMENT 'Line subtotal',
