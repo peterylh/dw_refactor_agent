@@ -60,10 +60,6 @@ DROP_TABLE_FORCE_PATTERN = re.compile(
     r"(\bDROP\s+TABLE\b[^;]*?)\s+FORCE(\s*(?:;|$))",
     flags=re.IGNORECASE,
 )
-CREATE_TABLE_PATTERN = re.compile(
-    r"\bCREATE\s+(?:OR\s+REPLACE\s+)?(?:(?:TEMPORARY|TEMP)\s+)?TABLE\b",
-    flags=re.IGNORECASE,
-)
 
 
 # ============================================================
@@ -2867,7 +2863,6 @@ class TaskWorkItem:
     sql_text: str
     sql_hash: str = ""
     cache_key: str = ""
-    schema_excluded_tables: Tuple[str, ...] = ()
 
 
 @dataclass
@@ -3106,7 +3101,6 @@ def _extract_task_work_item(work_item, schema):
     previous_stats = dict(STATS)
     _reset_stats()
     try:
-        schema = _schema_for_work_item(schema, work_item)
         diagnostics = []
         try:
             statements = sqlglot.parse(
@@ -3183,328 +3177,6 @@ def _task_failure_result(work_item, error, stage="worker"):
                 "error": _diagnostic_error(error),
             }
         ],
-    }
-
-
-def _schema_without_tables(schema, table_names):
-    if not table_names:
-        return schema
-    scoped_schema = _copy_schema(schema)
-    for table_name in table_names:
-        _drop_task_table_schema(scoped_schema, table_name)
-    return scoped_schema
-
-
-def _schema_for_work_item(schema, work_item):
-    return _schema_without_tables(
-        schema,
-        getattr(work_item, "schema_excluded_tables", ()),
-    )
-
-
-def _create_table_statement_by_index(statements):
-    create_statements = {}
-    for statement_index, stmt in enumerate(statements or []):
-        if not _is_table_create_statement(stmt):
-            continue
-        target_table = _target_table_sql(stmt.this)
-        if target_table:
-            create_statements[statement_index] = stmt
-    return create_statements
-
-
-def _persistent_transient_create_records(
-    work_item,
-    statements,
-    task_facts,
-    base_schema,
-):
-    create_statements = _create_table_statement_by_index(statements)
-    records = []
-    excluded_tables = []
-    for fact in task_facts.get("transient_tables") or []:
-        if fact.get("dropped_in_same_task"):
-            continue
-        statement_index = fact.get("created_statement_index")
-        stmt = create_statements.get(statement_index)
-        if stmt is None:
-            continue
-        table_name = _target_table_sql(stmt.this)
-        if not table_name or _schema_has_table(base_schema, table_name):
-            continue
-        excluded_tables.append(table_name)
-        records.append(
-            {
-                "key": _table_identity_match_key(table_name),
-                "table": _strip_db(table_name),
-                "full_table": table_name,
-                "source_file": work_item.source_file,
-                "statement_index": statement_index,
-                "statement": stmt,
-                "fact": fact,
-            }
-        )
-    return records, excluded_tables
-
-
-def _column_schema_signature(columns):
-    if isinstance(columns, dict):
-        items = columns.items()
-    else:
-        items = ((column_name, "UNKNOWN") for column_name in (columns or []))
-    return tuple(
-        sorted(
-            (
-                _identifier_match_key(column_name),
-                str(column_type or "UNKNOWN").upper(),
-            )
-            for column_name, column_type in items
-            if _canonical_column(column_name)
-        )
-    )
-
-
-def _schema_pool_diagnostic(diagnostics, source_file, error, **context):
-    _record_diagnostic(
-        diagnostics,
-        source_file,
-        "task_created_schema_pool",
-        error,
-        severity="warning",
-        **context,
-    )
-
-
-def _resolve_task_created_schema_records(records, base_schema, diagnostics):
-    if not records:
-        return _copy_schema(base_schema), {}
-
-    augmented_schema = _copy_schema(base_schema)
-    unresolved_by_key = {}
-    for record in records:
-        unresolved_by_key.setdefault(record["key"], []).append(record)
-
-    resolved_by_key = {}
-    max_iterations = len(unresolved_by_key) + 1
-    for _iteration in range(max_iterations):
-        progressed = False
-        for table_key, table_records in list(unresolved_by_key.items()):
-            resolved_records = []
-            for record in table_records:
-                columns = _created_table_columns_from_schema(
-                    record["statement"],
-                    augmented_schema,
-                    file_path=record["source_file"],
-                    diagnostics=None,
-                )
-                if not columns:
-                    continue
-                resolved = dict(record)
-                resolved["columns"] = columns
-                resolved["signature"] = _column_schema_signature(columns)
-                resolved_records.append(resolved)
-
-            if len(resolved_records) != len(table_records):
-                continue
-
-            signatures = {record["signature"] for record in resolved_records}
-            if len(signatures) > 1:
-                table_name = resolved_records[0]["table"]
-                creators = ", ".join(
-                    sorted(
-                        record["source_file"] for record in resolved_records
-                    )
-                )
-                _schema_pool_diagnostic(
-                    diagnostics,
-                    "<task-created-schema-pool>",
-                    ValueError(
-                        "ambiguous task-created table {} from {}".format(
-                            table_name,
-                            creators,
-                        )
-                    ),
-                    target_table=table_name,
-                )
-                unresolved_by_key.pop(table_key, None)
-                progressed = True
-                continue
-
-            first = resolved_records[0]
-            _register_task_table_schema(
-                augmented_schema,
-                first["full_table"],
-                first["columns"],
-            )
-            resolved_by_key[table_key] = {
-                "key": table_key,
-                "table": first["table"],
-                "full_table": first["full_table"],
-                "columns": first["columns"],
-                "creators": sorted(
-                    {record["source_file"] for record in resolved_records}
-                ),
-                "records": resolved_records,
-            }
-            unresolved_by_key.pop(table_key, None)
-            progressed = True
-
-        if not unresolved_by_key or not progressed:
-            break
-
-    return augmented_schema, resolved_by_key
-
-
-def _task_created_table_dependencies(referenced_by_source, resolved_by_key):
-    dependencies = {}
-    consumed_by_key = {table_key: set() for table_key in resolved_by_key}
-    for source_file, table_names in referenced_by_source.items():
-        for table_name in table_names:
-            table_key = _table_identity_match_key(table_name)
-            pool_record = resolved_by_key.get(table_key)
-            if not pool_record:
-                continue
-            for creator in pool_record["creators"]:
-                if creator == source_file:
-                    continue
-                key = (
-                    creator,
-                    source_file,
-                    pool_record["table"],
-                )
-                dependencies[key] = {
-                    "source_file": creator,
-                    "target_file": source_file,
-                    "table": pool_record["table"],
-                    "dependency_type": "task_created_table",
-                }
-                consumed_by_key.setdefault(table_key, set()).add(source_file)
-    return (
-        sorted(
-            dependencies.values(),
-            key=lambda item: (
-                item["source_file"],
-                item["target_file"],
-                item["table"],
-            ),
-        ),
-        consumed_by_key,
-    )
-
-
-def _enrich_cross_task_transient_tables(
-    transient_tables,
-    resolved_by_key,
-    consumed_by_key,
-):
-    if not resolved_by_key:
-        return transient_tables
-    by_source_and_table = {}
-    for table_key, pool_record in resolved_by_key.items():
-        for creator in pool_record["creators"]:
-            by_source_and_table[(creator, table_key)] = (
-                pool_record,
-                consumed_by_key.get(table_key, set()),
-            )
-
-    enriched = []
-    for transient_table in transient_tables or []:
-        table_key = _table_identity_match_key(transient_table.get("name", ""))
-        source_file = transient_table.get("source_file", "")
-        metadata = by_source_and_table.get((source_file, table_key))
-        if not metadata:
-            enriched.append(transient_table)
-            continue
-        pool_record, consumers = metadata
-        item = dict(transient_table)
-        item["transient_scope"] = "cross_task"
-        item["schema_source"] = "task_create"
-        item["created_by_tasks"] = list(pool_record["creators"])
-        item["consumed_by_tasks"] = sorted(consumers)
-        item["governance_warning"] = "persistent_temp_table_without_ddl"
-        enriched.append(item)
-    return enriched
-
-
-def _cached_task_has_no_persistent_transient_tables(
-    work_item,
-    previous_cache,
-    extractor_hash,
-):
-    cached = (previous_cache or {}).get(work_item.source_file)
-    if not cached:
-        return False
-    if cached.get("sql_hash") != (
-        work_item.sql_hash or _task_sql_hash(work_item)
-    ):
-        return False
-    if extractor_hash and cached.get("extractor_hash") != extractor_hash:
-        return False
-    transient_tables = cached.get("transient_tables")
-    if transient_tables is None:
-        return False
-    return not any(
-        not table.get("dropped_in_same_task") for table in transient_tables
-    )
-
-
-def _scan_task_created_schema_pool(
-    work_items,
-    schema,
-    previous_cache=None,
-    extractor_hash=None,
-):
-    diagnostics = []
-    records = []
-    excluded_by_source = {}
-
-    for work_item in work_items:
-        if not CREATE_TABLE_PATTERN.search(work_item.sql_text or ""):
-            excluded_by_source[work_item.source_file] = []
-            continue
-        if _cached_task_has_no_persistent_transient_tables(
-            work_item,
-            previous_cache,
-            extractor_hash,
-        ):
-            excluded_by_source[work_item.source_file] = []
-            continue
-        try:
-            statements = sqlglot.parse(
-                _sqlglot_task_sql(work_item.sql_text),
-                dialect="doris",
-            )
-        except Exception:
-            excluded_by_source[work_item.source_file] = []
-            continue
-
-        try:
-            task_facts = extract_task_table_facts_from_statements(
-                statements,
-                work_item.source_file,
-            )
-        except Exception:
-            excluded_by_source[work_item.source_file] = []
-            continue
-        task_records, excluded_tables = _persistent_transient_create_records(
-            work_item,
-            statements,
-            task_facts,
-            schema,
-        )
-        records.extend(task_records)
-        excluded_by_source[work_item.source_file] = excluded_tables
-
-    augmented_schema, resolved_by_key = _resolve_task_created_schema_records(
-        records,
-        schema,
-        diagnostics,
-    )
-    return {
-        "schema": augmented_schema,
-        "resolved_by_key": resolved_by_key,
-        "excluded_by_source": excluded_by_source,
-        "errors": diagnostics,
     }
 
 
@@ -3833,23 +3505,6 @@ def extract_lineage_from_task_files(
         _load_previous_task_cache(previous_cache_file) if cache_enabled else {}
     )
     extractor_hash = _extractor_hash_for_cache() if cache_enabled else None
-
-    for work_item in work_items:
-        if cache_enabled:
-            work_item.sql_hash = _task_sql_hash(work_item)
-
-    schema_pool = _scan_task_created_schema_pool(
-        work_items,
-        schema,
-        previous_cache=previous_cache,
-        extractor_hash=extractor_hash,
-    )
-    schema = schema_pool["schema"]
-    for work_item in work_items:
-        work_item.schema_excluded_tables = tuple(
-            schema_pool["excluded_by_source"].get(work_item.source_file, [])
-        )
-
     work_items_by_index = {item.index: item for item in work_items}
     task_cache_entries = []
 
@@ -3861,13 +3516,13 @@ def extract_lineage_from_task_files(
         if not cache_enabled:
             uncached_work_items.append(work_item)
             continue
+        work_item.sql_hash = _task_sql_hash(work_item)
         cached = previous_cache.get(work_item.source_file)
         if cached:
-            work_item_schema = _schema_for_work_item(schema, work_item)
             cache_key = _cache_key_from_cached_metadata(
                 work_item,
                 cached,
-                work_item_schema,
+                schema,
                 cache_project,
                 extractor_hash,
             )
@@ -3905,11 +3560,10 @@ def extract_lineage_from_task_files(
     for result in computed_results:
         if cache_enabled:
             work_item = work_items_by_index.get(result["index"])
-            work_item_schema = _schema_for_work_item(schema, work_item)
             cache_key, cache_result = _cache_metadata_for_result(
                 result,
                 work_item,
-                work_item_schema,
+                schema,
                 cache_project,
                 extractor_hash,
             )
@@ -3919,14 +3573,6 @@ def extract_lineage_from_task_files(
     task_results = sorted(
         [*cached_results, *computed_results],
         key=lambda result: result["index"],
-    )
-    referenced_by_source = {
-        result["source_file"]: result.get("referenced_tables") or []
-        for result in task_results
-    }
-    task_dependencies, consumed_by_key = _task_created_table_dependencies(
-        referenced_by_source,
-        schema_pool["resolved_by_key"],
     )
 
     all_lineage = []
@@ -3943,12 +3589,6 @@ def extract_lineage_from_task_files(
         missing_target_ddl.update(result.get("missing_target_ddl") or [])
         _add_stats(result["stats"])
         errors.extend(result.get("errors") or [])
-    errors.extend(schema_pool["errors"])
-    transient_tables = _enrich_cross_task_transient_tables(
-        transient_tables,
-        schema_pool["resolved_by_key"],
-        consumed_by_key,
-    )
 
     return {
         "lineage": all_lineage,
@@ -3962,7 +3602,6 @@ def extract_lineage_from_task_files(
             if cache_enabled
             else None
         ),
-        "task_dependencies": task_dependencies,
         "errors": errors,
     }
 
@@ -4468,7 +4107,6 @@ def build_lineage_output(all_lineage, schema, transient_tables=None):
     transient_tables = _normalize_transient_tables(transient_tables)
     transient_sources_by_table = {}
     transient_occurrences_by_table = {}
-    transient_metadata_by_table = {}
     for table in transient_tables:
         transient_sources_by_table.setdefault(table["name"], set()).add(
             table.get("source_file", "")
@@ -4476,21 +4114,6 @@ def build_lineage_output(all_lineage, schema, transient_tables=None):
         transient_occurrences_by_table.setdefault(table["name"], []).append(
             _transient_table_occurrence(table)
         )
-        metadata = transient_metadata_by_table.setdefault(table["name"], {})
-        for key in (
-            "transient_scope",
-            "schema_source",
-            "governance_warning",
-        ):
-            if table.get(key):
-                metadata[key] = table[key]
-        for key in ("created_by_tasks", "consumed_by_tasks"):
-            if table.get(key):
-                values = table[key]
-                if isinstance(values, str):
-                    metadata.setdefault(key, set()).add(values)
-                else:
-                    metadata.setdefault(key, set()).update(values)
 
     schema_columns_by_table = schema_lookup.schema_columns_by_table
     schema_type_by_table_col = schema_lookup.schema_type_by_table_col
@@ -4541,17 +4164,6 @@ def build_lineage_output(all_lineage, schema, transient_tables=None):
                     item.get("dropped_statement_index") or -1,
                 ),
             )
-            metadata = transient_metadata_by_table.get(tbl, {})
-            for key in (
-                "transient_scope",
-                "schema_source",
-                "governance_warning",
-            ):
-                if metadata.get(key):
-                    tables[tbl][key] = metadata[key]
-            for key in ("created_by_tasks", "consumed_by_tasks"):
-                if metadata.get(key):
-                    tables[tbl][key] = sorted(metadata[key])
 
     def _ensure_column(tbl, col):
         tbl = _strip_db(tbl)
@@ -4835,8 +4447,6 @@ def main():
         schema,
         transient_tables=transient_tables,
     )
-    if extraction_result.get("task_dependencies"):
-        output["task_dependencies"] = extraction_result["task_dependencies"]
     for path in output_paths:
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "w", encoding=TEXT_ENCODING) as fp:
