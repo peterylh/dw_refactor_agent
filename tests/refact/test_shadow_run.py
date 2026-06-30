@@ -6,7 +6,12 @@ import sqlglot
 from sqlglot import exp
 from sqlglot.errors import ErrorLevel
 
-from refact.shadow_run import _get_dml_target, rewrite_sql, run_shadow_plan
+from refact.shadow_run import (
+    _get_dml_target,
+    execute_shadow_plan,
+    rewrite_sql,
+    run_shadow_plan,
+)
 
 
 def _parse_one(sql: str):
@@ -151,6 +156,34 @@ def test_rewrite_sql_does_not_invent_database_prefixes():
 
 def test_rewrite_sql_text_empty():
     assert rewrite_sql("", "shop_dm", "shop_dm_qa", set()) == ""
+
+
+def test_dry_run_omits_where_for_unpartitioned_checks(capsys):
+    plan = {
+        "project": "shop",
+        "project_db": "shop_dm",
+        "qa_db": "shop_dm_qa",
+        "baseline_ddl": {},
+        "ddl_changes": [],
+        "partition_info": {},
+        "jobs_to_run": [],
+        "verification": {
+            "checks": [
+                {"table": "ads_sales_dashboard", "method": "count"},
+                {
+                    "table": "ads_sales_dashboard",
+                    "method": "row_compare",
+                },
+            ]
+        },
+    }
+
+    execute_shadow_plan(plan, dry_run=True)
+
+    output = capsys.readouterr().out
+    assert "WHERE * = '*'" not in output
+    assert "[count] shop_dm_qa.ads_sales_dashboard" in output
+    assert "[row_compare] shop_dm_qa.ads_sales_dashboard" in output
 
 
 def test_run_shadow_plan_executes_self_contained(tmp_path, monkeypatch):

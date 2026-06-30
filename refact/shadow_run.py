@@ -323,11 +323,12 @@ def _dry_run(plan: dict) -> None:
     if checks:
         print(f"\n--- 校验检查 ({len(checks)} 项) ---")
         for check in checks:
-            print(
-                f"  [{check['method']}] {qa_db}.{check['table']} "
-                f"WHERE {check.get('partition_col', '*')} = "
-                f"'{check.get('partition_value', '*')}'"
-            )
+            line = f"  [{check['method']}] {qa_db}.{check['table']}"
+            partition_col = check.get("partition_col")
+            partition_value = check.get("partition_value")
+            if partition_col and partition_value is not None:
+                line = f"{line} WHERE {partition_col} = '{partition_value}'"
+            print(line)
 
 
 def build_parser() -> argparse.ArgumentParser:
