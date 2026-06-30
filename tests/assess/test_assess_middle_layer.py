@@ -721,6 +721,66 @@ def test_score_metadata_health_passes_valid_entities_schema():
     assert all(check["passed"] for check in result["checks"])
 
 
+def test_score_metadata_health_matches_columns_case_insensitively_and_reports_spelling():
+    nc = load_naming_config(PROJECT_ROOT / "naming_config.yaml")
+    tables = [
+        {
+            "name": "dws_customer_sales_daily",
+            "layer": "DWS",
+            "columns": [
+                {"name": "Customer_ID", "type": "BIGINT"},
+                {"name": "STAT_DATE", "type": "DATE"},
+            ],
+        }
+    ]
+    model_metadata = {
+        "dws_customer_sales_daily": {
+            "layer": "DWS",
+            "table_type": "fact",
+            "entities": [
+                {
+                    "code": "CUST",
+                    "type": "foreign",
+                    "key_columns": ["CUSTOMER_ID"],
+                }
+            ],
+            "grain": {
+                "entities": ["CUST"],
+                "time_column": "stat_date",
+                "time_period": "D",
+            },
+        }
+    }
+
+    result = score_metadata_health(_context(tables, nc, model_metadata))
+
+    entity_key_check = _checks_by_rule(
+        result,
+        "METADATA_ENTITY_KEYS_EXIST",
+    )[0]
+    grain_key_check = _checks_by_rule(
+        result,
+        "METADATA_GRAIN_KEYS_EXIST",
+    )[0]
+    spelling_check = _checks_by_rule(
+        result,
+        "METADATA_MODEL_COLUMN_SPELLING_MATCHES_DDL",
+    )[0]
+    assert entity_key_check["passed"] is True
+    assert grain_key_check["passed"] is True
+    assert spelling_check["passed"] is False
+    assert spelling_check["evidence"]["mismatches"] == [
+        {
+            "model_column": "CUSTOMER_ID",
+            "ddl_column": "Customer_ID",
+        },
+        {
+            "model_column": "stat_date",
+            "ddl_column": "STAT_DATE",
+        },
+    ]
+
+
 def test_score_metadata_health_validates_dim_semantic_subject():
     nc = load_naming_config(PROJECT_ROOT / "naming_config.yaml")
     tables = [

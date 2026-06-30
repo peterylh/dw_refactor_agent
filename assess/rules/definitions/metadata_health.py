@@ -10,6 +10,10 @@ from assess.project_facts.entity_metadata import (
     grain_key_columns,
     primary_entity_codes,
 )
+from assess.project_facts.identifier_index import (
+    identifier_spelling_mismatches,
+    missing_identifier_names,
+)
 from assess.result_model import make_check
 from assess.rules.engine.base import AssessRule
 from assess.scoring.config import SEVERITY_LOW
@@ -120,7 +124,7 @@ class MetadataEntityKeysExistRule(_MetadataHealthRule):
             key_columns = _as_string_list(entity.get("key_columns"))
             if not key_columns:
                 continue
-            missing_keys = [key for key in key_columns if key not in columns]
+            missing_keys = missing_identifier_names(key_columns, columns)
             checks.append(
                 self.check(
                     target["table_name"],
@@ -235,9 +239,10 @@ class MetadataGrainKeysExistRule(_MetadataHealthRule):
         grain_keys = grain_key_columns(target["metadata"])
         if not grain_keys:
             return None
-        missing_grain_keys = [
-            key for key in grain_keys if key not in target["columns"]
-        ]
+        missing_grain_keys = missing_identifier_names(
+            grain_keys,
+            target["columns"],
+        )
         return self.check(
             target["table_name"],
             not missing_grain_keys,
@@ -253,6 +258,40 @@ class MetadataGrainKeysExistRule(_MetadataHealthRule):
             },
             "",
             f"grain.keys不存在={missing_grain_keys}",
+        )
+
+
+class MetadataModelColumnSpellingMatchesDdlRule(_MetadataHealthRule):
+    rule_id = "METADATA_MODEL_COLUMN_SPELLING_MATCHES_DDL"
+
+    def evaluate(self, target: dict, rule_context: dict) -> dict | None:
+        if not target["table"]:
+            return None
+        references = _model_column_references(target)
+        if not references:
+            return None
+        mismatches = identifier_spelling_mismatches(
+            references,
+            target["columns"],
+        )
+        return self.check(
+            target["table_name"],
+            not mismatches,
+            "models中的字段引用与DDL字段名大小写和拼写一致",
+            (
+                "全部一致"
+                if not mismatches
+                else f"拼写不一致字段: {mismatches}"
+            ),
+            {
+                "model_columns": references,
+                "table_columns": sorted(target["columns"]),
+                "mismatches": mismatches,
+            },
+            "spelling_mismatch" if mismatches else "",
+            f"models字段引用与DDL拼写不一致={mismatches}"
+            if mismatches
+            else "",
         )
 
 
@@ -409,6 +448,7 @@ METADATA_HEALTH_RULE_CLASSES = [
     MetadataRelationshipFromPrimaryRule,
     MetadataEntityNotDuplicatePrimaryRule,
     MetadataGrainKeysExistRule,
+    MetadataModelColumnSpellingMatchesDdlRule,
     MetadataGrainEntitiesPresentRule,
     MetadataGrainEntitiesDefinedRule,
     MetadataDataDomainValidRule,
@@ -431,3 +471,17 @@ def _table_column_names(table: dict) -> set[str]:
         for column in table.get("columns", []) or []
         if str(column.get("name") or "").strip()
     }
+
+
+def _model_column_references(target: dict) -> list[str]:
+    references = []
+    for entity in target.get("entities") or []:
+        if not isinstance(entity, dict):
+            continue
+        for key in _as_string_list(entity.get("key_columns")):
+            if key not in references:
+                references.append(key)
+    for key in grain_key_columns(target.get("metadata")):
+        if key not in references:
+            references.append(key)
+    return references

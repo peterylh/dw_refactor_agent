@@ -21,6 +21,7 @@ from assess.project_facts.entity_metadata import (
     grain_key_columns,
     model_entities,
 )
+from assess.project_facts.identifier_index import missing_identifier_names
 from assess.result_model import make_check
 from assess.rules.engine.base import AssessRule
 from assess.scoring.config import (
@@ -31,6 +32,7 @@ from assess.scoring.config import (
 )
 from config import TEXT_ENCODING
 from doris_sql import extract_doris_partition_column
+from lineage.identifiers import column_ref_match_key, identifier_match_key
 from lineage.view import LineageView
 
 AGGREGATE_PATTERN = re.compile(
@@ -1335,12 +1337,18 @@ def _dws_plain_field_leakage(metadata: dict, design_facts: dict) -> dict:
     lineage = design_facts.get("lineage") or {}
     plain_sources = lineage.get("plain_column_sources") or {}
     group_sources = set(lineage.get("group_by_sources") or [])
-    grain_keys = set(grain_key_columns(metadata))
+    group_source_keys = {
+        _lineage_source_match_key(source) for source in group_sources if source
+    }
+    grain_keys = grain_key_columns(metadata)
+    grain_key_match_keys = {
+        identifier_match_key(key) for key in grain_keys if key
+    }
     leaked = []
     for target_column, source_id in plain_sources.items():
-        if target_column in grain_keys:
+        if identifier_match_key(target_column) in grain_key_match_keys:
             continue
-        if source_id in group_sources:
+        if _lineage_source_match_key(source_id) in group_source_keys:
             continue
         leaked.append(target_column)
     return {
@@ -1361,6 +1369,13 @@ def _table_column_names(table: dict) -> list[str]:
         if name and name not in names:
             names.append(name)
     return names
+
+
+def _lineage_source_match_key(source_id: str) -> tuple[str, ...]:
+    table_key, column_key = column_ref_match_key(source_id)
+    if table_key or column_key:
+        return ("column", table_key, column_key)
+    return ("identifier", identifier_match_key(source_id))
 
 
 def _has_event_key(table: dict, metadata: dict) -> bool:
@@ -1404,14 +1419,14 @@ def _table_partition_column(
 
 
 def _grain_group_by_mismatch(metadata: dict, sql_facts: dict) -> dict:
-    grain_keys = set(grain_key_columns(metadata))
-    group_outputs = set(sql_facts.get("group_output_columns") or [])
-    missing_in_group_by = sorted(grain_keys - group_outputs)
-    extra_group_by = sorted(group_outputs - grain_keys)
+    grain_keys = grain_key_columns(metadata)
+    group_outputs = sorted(set(sql_facts.get("group_output_columns") or []))
+    missing_in_group_by = missing_identifier_names(grain_keys, group_outputs)
+    extra_group_by = missing_identifier_names(group_outputs, grain_keys)
     return {
         "grain_keys": sorted(grain_keys),
         "group_by_columns": sql_facts.get("group_by_columns") or [],
-        "group_output_columns": sorted(group_outputs),
+        "group_output_columns": group_outputs,
         "missing_in_group_by": missing_in_group_by,
         "extra_group_by": extra_group_by,
         "matched": not missing_in_group_by and not extra_group_by,

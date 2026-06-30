@@ -103,6 +103,13 @@ def score_metadata_health(
                 )
             )
         if target["table"]:
+            checks.extend(
+                runner.run_rules(
+                    ["METADATA_MODEL_COLUMN_SPELLING_MATCHES_DDL"],
+                    [target],
+                    rule_context,
+                )
+            )
             for entity in target["entities"]:
                 entity_target = dict(target)
                 entity_target["entity"] = entity

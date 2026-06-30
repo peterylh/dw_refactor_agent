@@ -108,6 +108,14 @@ METADATA_HEALTH_RULES = {
         strategy="align_grain_key_columns",
         edit_scope=["models", "ddl"],
     ),
+    "METADATA_MODEL_COLUMN_SPELLING_MATCHES_DDL": rule_meta(
+        name="models字段引用与DDL字段名一致",
+        severity=SEVERITY_MEDIUM,
+        title="models字段引用与DDL字段名拼写不一致",
+        remediation_summary="将models YAML中的字段引用调整为DDL中的精确字段名",
+        strategy="align_model_column_spelling",
+        edit_scope=["models"],
+    ),
     "METADATA_GRAIN_ENTITIES_PRESENT": rule_meta(
         name="grain.entities已配置",
         severity=SEVERITY_HIGH,
