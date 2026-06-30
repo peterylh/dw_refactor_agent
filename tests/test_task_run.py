@@ -82,6 +82,84 @@ def test_ensure_partition_skips_non_partitioned_table(monkeypatch):
     assert calls == ["SHOW CREATE TABLE shop_dm.ads_sales_dashboard;"]
 
 
+def test_ensure_partition_keeps_static_partition_table_static(monkeypatch):
+    calls = []
+
+    def fake_run(*args, **kwargs):
+        input = kwargs.get("input", args[1] if len(args) > 1 else "")
+        calls.append(input.strip())
+        if input.strip().startswith("SHOW CREATE TABLE"):
+            return _completed(
+                stdout=(
+                    "Table\tCreate Table\n"
+                    "ads_sales_dashboard\tCREATE TABLE `ads_sales_dashboard` (\n"
+                    "  `stat_date` date NOT NULL\n"
+                    ") ENGINE=OLAP\n"
+                    "PARTITION BY RANGE(`stat_date`) (\n"
+                    "  PARTITION p20250101 VALUES LESS THAN "
+                    '("2025-01-02")\n'
+                    ")\n"
+                    "DISTRIBUTED BY HASH(`stat_date`) BUCKETS 1\n"
+                    'PROPERTIES ("replication_num" = "1")'
+                )
+            )
+        return _completed()
+
+    monkeypatch.setattr(task_run.subprocess, "run", fake_run)
+    task_run._TABLE_PARTITIONED_CACHE.clear()
+    task_run._TABLE_PARTITION_UNITS = {}
+
+    task_run._ensure_partition(
+        "shop_dm", "ads_sales_dashboard", "2025-01-01", ["mysql"]
+    )
+
+    assert calls == [
+        "SHOW CREATE TABLE shop_dm.ads_sales_dashboard;",
+        "ALTER TABLE shop_dm.ads_sales_dashboard DROP PARTITION IF EXISTS p20250101;",
+        'ALTER TABLE shop_dm.ads_sales_dashboard ADD PARTITION p20250101 VALUES LESS THAN ("2025-01-02");',
+    ]
+
+
+def test_ensure_partition_toggles_dynamic_partition_table(monkeypatch):
+    calls = []
+
+    def fake_run(*args, **kwargs):
+        input = kwargs.get("input", args[1] if len(args) > 1 else "")
+        calls.append(input.strip())
+        if input.strip().startswith("SHOW CREATE TABLE"):
+            return _completed(
+                stdout=(
+                    "Table\tCreate Table\n"
+                    "ads_sales_dashboard\tCREATE TABLE `ads_sales_dashboard` (\n"
+                    "  `stat_date` date NOT NULL\n"
+                    ") ENGINE=OLAP\n"
+                    "PARTITION BY RANGE(`stat_date`) ()\n"
+                    "DISTRIBUTED BY HASH(`stat_date`) BUCKETS 1\n"
+                    "PROPERTIES (\n"
+                    '  "replication_num" = "1",\n'
+                    '  "dynamic_partition.enable" = "true"\n'
+                    ")"
+                )
+            )
+        return _completed()
+
+    monkeypatch.setattr(task_run.subprocess, "run", fake_run)
+    task_run._TABLE_PARTITIONED_CACHE.clear()
+    task_run._TABLE_PARTITION_UNITS = {}
+
+    task_run._ensure_partition(
+        "shop_dm", "ads_sales_dashboard", "2025-01-01", ["mysql"]
+    )
+
+    assert calls == [
+        "SHOW CREATE TABLE shop_dm.ads_sales_dashboard;",
+        "ALTER TABLE shop_dm.ads_sales_dashboard SET ('dynamic_partition.enable' = 'false');",
+        "ALTER TABLE shop_dm.ads_sales_dashboard DROP PARTITION IF EXISTS p20250101;",
+        'ALTER TABLE shop_dm.ads_sales_dashboard ADD PARTITION p20250101 VALUES LESS THAN ("2025-01-02");',
+        "ALTER TABLE shop_dm.ads_sales_dashboard SET ('dynamic_partition.enable' = 'true');",
+    ]
+
+
 def test_ensure_full_refresh_partitions_skips_non_partitioned_table(
     monkeypatch,
 ):
@@ -111,6 +189,103 @@ def test_ensure_full_refresh_partitions_skips_non_partitioned_table(
     )
 
     assert calls == ["SHOW CREATE TABLE shop_dm.ads_sales_dashboard;"]
+
+
+def test_ensure_full_refresh_partitions_keeps_static_table_static(
+    monkeypatch,
+):
+    calls = []
+
+    def fake_run(*args, **kwargs):
+        input = kwargs.get("input", args[1] if len(args) > 1 else "")
+        calls.append(input.strip())
+        if input.strip().startswith("SHOW CREATE TABLE"):
+            return _completed(
+                stdout=(
+                    "Table\tCreate Table\n"
+                    "ads_sales_dashboard\tCREATE TABLE `ads_sales_dashboard` (\n"
+                    "  `stat_date` date NOT NULL\n"
+                    ") ENGINE=OLAP\n"
+                    "PARTITION BY RANGE(`stat_date`) (\n"
+                    "  PARTITION p20250101 VALUES LESS THAN "
+                    '("2025-01-02")\n'
+                    ")\n"
+                    "DISTRIBUTED BY HASH(`stat_date`) BUCKETS 1\n"
+                    'PROPERTIES ("replication_num" = "1")'
+                )
+            )
+        if input.strip().startswith("SHOW PARTITIONS"):
+            return _completed(
+                stdout="PartitionId\tPartitionName\n1\tp20250101\n"
+            )
+        return _completed()
+
+    monkeypatch.setattr(task_run.subprocess, "run", fake_run)
+    task_run._TABLE_PARTITIONED_CACHE.clear()
+
+    task_run._ensure_full_refresh_partitions(
+        "shop_dm",
+        "ads_sales_dashboard",
+        ["2025-01-01"],
+        ["mysql"],
+    )
+
+    assert all("dynamic_partition.enable" not in call for call in calls)
+    assert any(
+        call
+        == (
+            "ALTER TABLE shop_dm.ads_sales_dashboard "
+            "DROP PARTITION IF EXISTS p20250101;"
+        )
+        for call in calls
+    )
+    assert any(
+        call.startswith(
+            "ALTER TABLE shop_dm.ads_sales_dashboard "
+            "ADD PARTITION p_full VALUES LESS THAN"
+        )
+        for call in calls
+    )
+
+
+def test_snapshot_full_refresh_without_companion_keeps_static_table_static(
+    monkeypatch,
+    tmp_path,
+):
+    calls = []
+    ensured = []
+    sql_file = tmp_path / "dwd_customer.sql"
+    sql_file.write_text("SELECT 1;", encoding="utf-8")
+
+    def fake_run(*args, **kwargs):
+        calls.append(kwargs.get("input", "").strip())
+        return _completed()
+
+    monkeypatch.setattr(task_run.subprocess, "run", fake_run)
+    monkeypatch.setattr(task_run, "_is_partitioned_table", lambda *args: True)
+    monkeypatch.setattr(
+        task_run,
+        "_ensure_partition",
+        lambda db, table, etl_date, mysql_cmd: ensured.append(
+            (db, table, etl_date)
+        ),
+    )
+
+    task_run._run_job_full_refresh(
+        "dwd_customer",
+        sql_file,
+        ["mysql"],
+        "shop_dm",
+        {"dwd_customer": "snapshot"},
+        ["2025-01-01"],
+    )
+
+    assert all("dynamic_partition.enable" not in call for call in calls)
+    assert (
+        "ALTER TABLE shop_dm.dwd_customer DROP PARTITION IF EXISTS p_full;"
+        in calls
+    )
+    assert ensured == [("shop_dm", "dwd_customer", "2025-01-01")]
 
 
 def test_load_schema_reads_table_model_files(monkeypatch, tmp_path):
