@@ -770,6 +770,11 @@ def test_alter_rename_prefers_matching_column_comments():
         ("order_count", "ORDER_CNT"),
         ("sale_quantity", "D_PROD_SALE_QTY"),
     ]
+    sql = a.to_sql()
+    assert sql.count("ALTER TABLE shop_dm.I_SHOP_PROD_SALES_DS") == 2
+    assert "RENAME COLUMN order_count ORDER_CNT;" in sql
+    assert "RENAME COLUMN sale_quantity D_PROD_SALE_QTY;" in sql
+    assert "RENAME COLUMN order_count ORDER_CNT," not in sql
 
 
 def test_alter_rename_and_add_column():
