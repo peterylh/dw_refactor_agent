@@ -46,6 +46,7 @@ _TIME_UNIT_RE = re.compile(
 )
 _TABLE_PARTITION_UNITS: dict[str, str] | None = None
 _TABLE_PARTITIONED_CACHE: dict[tuple[str, str], bool] = {}
+_TABLE_DYNAMIC_PARTITION_CACHE: dict[tuple[str, str], bool] = {}
 _SCHEMA_CONFIG_CACHE: dict[str, dict[str, str]] = {}
 
 
@@ -146,7 +147,39 @@ def _is_partitioned_table(
 
     is_partitioned = "PARTITION BY" in r.stdout.upper()
     _TABLE_PARTITIONED_CACHE[cache_key] = is_partitioned
+    _TABLE_DYNAMIC_PARTITION_CACHE[cache_key] = (
+        "DYNAMIC_PARTITION.ENABLE" in r.stdout.upper()
+    )
     return is_partitioned
+
+
+def _is_dynamic_partition_table(
+    db_name: str, table_name: str, mysql_cmd: list[str]
+) -> bool:
+    """检查目标表是否配置了 Doris 动态分区。"""
+    cache_key = (db_name, table_name)
+    if cache_key in _TABLE_DYNAMIC_PARTITION_CACHE:
+        return _TABLE_DYNAMIC_PARTITION_CACHE[cache_key]
+
+    full_name = f"{db_name}.{table_name}"
+    r = subprocess.run(
+        mysql_cmd + [db_name],
+        input=f"SHOW CREATE TABLE {full_name};",
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    if r.returncode != 0:
+        raise RuntimeError(
+            f"[{table_name}] [SHOW CREATE FAIL]\n  {r.stderr.strip()}"
+        )
+
+    upper_ddl = r.stdout.upper()
+    _TABLE_PARTITIONED_CACHE[cache_key] = "PARTITION BY" in upper_ddl
+    _TABLE_DYNAMIC_PARTITION_CACHE[cache_key] = (
+        "DYNAMIC_PARTITION.ENABLE" in upper_ddl
+    )
+    return _TABLE_DYNAMIC_PARTITION_CACHE[cache_key]
 
 
 def _ensure_partition(
@@ -154,6 +187,9 @@ def _ensure_partition(
 ) -> None:
     if not _is_partitioned_table(db_name, table_name, mysql_cmd):
         return
+    is_dynamic_partition = _is_dynamic_partition_table(
+        db_name, table_name, mysql_cmd
+    )
 
     dt = datetime.strptime(etl_date, "%Y-%m-%d").date()
     full_name = f"{db_name}.{table_name}"
@@ -183,12 +219,18 @@ def _ensure_partition(
             timeout=30,
         )
 
-    run(f"ALTER TABLE {full_name} SET ('dynamic_partition.enable' = 'false');")
+    if is_dynamic_partition:
+        run(
+            f"ALTER TABLE {full_name} SET ('dynamic_partition.enable' = 'false');"
+        )
     run(f"ALTER TABLE {full_name} DROP PARTITION IF EXISTS {p_name};")
     r = run(
         f'ALTER TABLE {full_name} ADD PARTITION {p_name} VALUES LESS THAN ("{next_val}");'
     )
-    run(f"ALTER TABLE {full_name} SET ('dynamic_partition.enable' = 'true');")
+    if is_dynamic_partition:
+        run(
+            f"ALTER TABLE {full_name} SET ('dynamic_partition.enable' = 'true');"
+        )
     if r.returncode != 0:
         stderr = r.stderr.strip()
         if "already exists" not in stderr.lower():
@@ -265,10 +307,13 @@ def _ensure_full_refresh_partitions(
     """为全量刷新模式重建分区: 清除所有旧分区, 建单个覆盖全 ODS 范围的分区."""
     if not _is_partitioned_table(db_name, table_name, mysql_cmd):
         return
+    is_dynamic_partition = _is_dynamic_partition_table(
+        db_name, table_name, mysql_cmd
+    )
 
     full_name = f"{db_name}.{table_name}"
 
-    # 1) 禁用动态分区
+    # 动态表重建静态验证分区前先停用调度；静态表不写动态属性。
     def run(sql):
         return subprocess.run(
             mysql_cmd + [db_name],
@@ -278,9 +323,12 @@ def _ensure_full_refresh_partitions(
             timeout=30,
         )
 
-    run(f"ALTER TABLE {full_name} SET ('dynamic_partition.enable' = 'false');")
+    if is_dynamic_partition:
+        run(
+            f"ALTER TABLE {full_name} SET ('dynamic_partition.enable' = 'false');"
+        )
 
-    # 2) 查询当前分区列表, 全部 DROP
+    # 查询当前分区列表, 全部 DROP
     r = run("SHOW PARTITIONS FROM " + full_name)
     pnames = []
     for line in r.stdout.strip().split("\n")[1:]:
@@ -342,6 +390,10 @@ def _run_job_full_refresh(
             f"  [{job_name}] 未找到伴生文件, 按逐日模式执行 ({len(all_dates)} 个日期)"
         )
         if _is_partitioned_table(db_name, job_name, mysql_cmd):
+            is_dynamic_partition = _is_dynamic_partition_table(
+                db_name, job_name, mysql_cmd
+            )
+
             # 清理可能存在的宽分区 (来自 previous full-refresh run)
             def run(sql):
                 return subprocess.run(
@@ -355,9 +407,10 @@ def _run_job_full_refresh(
             run(
                 f"ALTER TABLE {db_name}.{job_name} DROP PARTITION IF EXISTS p_full;"
             )
-            run(
-                f"ALTER TABLE {db_name}.{job_name} SET ('dynamic_partition.enable' = 'true');"
-            )
+            if is_dynamic_partition:
+                run(
+                    f"ALTER TABLE {db_name}.{job_name} SET ('dynamic_partition.enable' = 'true');"
+                )
         for etl_date in all_dates:
             _ensure_partition(db_name, job_name, etl_date, mysql_cmd)
             sql_text = sql_file.read_text(encoding=TEXT_ENCODING)
