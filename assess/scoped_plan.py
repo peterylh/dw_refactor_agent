@@ -136,6 +136,57 @@ def _base_tasks(base_scope: dict) -> set[str]:
     return set(base_scope.get("assessment_tasks") or [])
 
 
+def _current_table_names(context) -> set[str]:
+    return {
+        str(table.get("name") or "").strip()
+        for table in context.tables
+        if str(table.get("name") or "").strip()
+    }
+
+
+def _current_task_names(context) -> set[str]:
+    tasks = set()
+    asset_catalog = context.assets or {}
+    for task in asset_catalog.get("tasks") or []:
+        task_name = _short_task_name(task)
+        if task_name:
+            tasks.add(task_name)
+    return tasks
+
+
+def _filter_scope_names(values, allowed_names: set[str]) -> list[str]:
+    if not allowed_names:
+        return _sorted(values)
+    return _sorted(
+        value for value in values or [] if str(value or "") in allowed_names
+    )
+
+
+def _current_base_scope(base_scope: dict, context) -> dict:
+    table_names = _current_table_names(context)
+    task_names = _current_task_names(context) | table_names
+    current_scope = dict(base_scope)
+
+    for key in (
+        "direct_tables",
+        "downstream_tables",
+        "anchor_tables",
+        "assessment_tables",
+    ):
+        current_scope[key] = _filter_scope_names(
+            base_scope.get(key) or [],
+            table_names,
+        )
+    current_scope["assessment_tasks"] = _filter_scope_names(
+        base_scope.get("assessment_tasks") or [],
+        task_names,
+    )
+    current_scope["global_dimensions"] = _sorted(
+        base_scope.get("global_dimensions") or []
+    )
+    return current_scope
+
+
 def _impacted_ads_tables(base_tables: set[str], context) -> set[str]:
     table_layers = context.table_layers
     return {
@@ -153,9 +204,7 @@ def _model_design_edges(
 ) -> set[tuple[str, str]]:
     edges = set()
     lineage_diff = change_analysis.get("lineage_diff") or {}
-    for edge in list(lineage_diff.get("added_edges") or []) + list(
-        lineage_diff.get("removed_edges") or []
-    ):
+    for edge in lineage_diff.get("added_edges") or []:
         source = str(edge.get("source") or "").strip()
         target = str(edge.get("target") or "").strip()
         if source and target:
@@ -217,7 +266,10 @@ def build_scoped_assessment_plan(
     context,
 ) -> dict:
     """Build per-dimension scoped assessment targets."""
-    base_scope = change_analysis.get("affected_scope") or {}
+    base_scope = _current_base_scope(
+        change_analysis.get("affected_scope") or {},
+        context,
+    )
     base_tables = _base_tables(base_scope)
     base_tasks = _base_tasks(base_scope)
     changed_types = changed_types_for_analysis(project, change_analysis)

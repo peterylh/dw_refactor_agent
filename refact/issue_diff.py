@@ -71,7 +71,16 @@ def _table_renames(
     table_renames: dict[str, str] = {}
     _add_rename_items(table_renames, rename_mapping)
 
-    lineage_diff = (change_analysis or {}).get("lineage_diff") or {}
+    analysis = change_analysis or {}
+    for key in (
+        "renamed_tables",
+        "table_renames",
+        "rename_mapping",
+        "renames",
+    ):
+        _add_rename_items(table_renames, analysis.get(key))
+
+    lineage_diff = analysis.get("lineage_diff") or {}
     for key in (
         "renamed_tables",
         "table_renames",

@@ -348,11 +348,8 @@ def test_diff_assess_results_reads_rename_mapping_from_change_analysis():
         }
     }
     change_analysis = {
-        "lineage_diff": {
-            "rename_mapping": {
-                "old": "dwd_customer",
-                "new": "DIM_BASE_CUST_PROFILE_INFO",
-            }
+        "rename_mapping": {
+            "dwd_customer": "DIM_BASE_CUST_PROFILE_INFO",
         }
     }
 
