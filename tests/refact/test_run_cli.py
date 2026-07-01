@@ -69,7 +69,17 @@ def test_analyze_refreshes_current_analysis_diff_and_plan(
             "dimensions": {
                 "naming": {
                     "score": 50.0,
-                    "issues": [{"fingerprint": "old"}],
+                    "issues": [
+                        {
+                            "fingerprint": (
+                                "naming|NAMING_COLUMN_NAME|table|dwd_customer"
+                            ),
+                            "target": {
+                                "type": "table",
+                                "name": "dwd_customer",
+                            },
+                        }
+                    ],
                 }
             },
         },
@@ -94,7 +104,18 @@ def test_analyze_refreshes_current_analysis_diff_and_plan(
             "dimensions": {
                 "naming": {
                     "score": 90.0,
-                    "issues": [{"fingerprint": "new"}],
+                    "issues": [
+                        {
+                            "fingerprint": (
+                                "naming|NAMING_COLUMN_NAME|table|"
+                                "DIM_BASE_CUST_PROFILE_INFO"
+                            ),
+                            "target": {
+                                "type": "table",
+                                "name": "DIM_BASE_CUST_PROFILE_INFO",
+                            },
+                        }
+                    ],
                 }
             },
         }
@@ -128,7 +149,13 @@ def test_analyze_refreshes_current_analysis_diff_and_plan(
             "project_db": "shop_dm",
             "qa_db": "shop_dm_qa",
             "baseline_ddl": {},
-            "ddl_changes": [],
+            "ddl_changes": [
+                {
+                    "change_type": "RENAME",
+                    "old_name": "shop_dm.dwd_customer",
+                    "new_name": "shop_dm.DIM_BASE_CUST_PROFILE_INFO",
+                }
+            ],
             "partition_info": {},
             "jobs_to_run": [],
             "verification": {"checks": []},
@@ -153,8 +180,9 @@ def test_analyze_refreshes_current_analysis_diff_and_plan(
     issue_diff = json.loads(
         (run_root / "analysis" / "issue_diff.json").read_text()
     )
-    assert issue_diff["summary"]["fixed_count"] == 1
-    assert issue_diff["summary"]["new_count"] == 1
+    assert issue_diff["summary"]["fixed_count"] == 0
+    assert issue_diff["summary"]["remaining_count"] == 1
+    assert issue_diff["summary"]["new_count"] == 0
     assert assess_calls[0]["change_analysis"]["affected_scope"][
         "assessment_tables"
     ] == ["dwd_order"]

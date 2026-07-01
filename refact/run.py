@@ -144,16 +144,6 @@ def _analyze(args) -> int:
     )
     _write_json(artifact_path(manifest_path, "current_assess"), current_assess)
 
-    baseline_assess = _read_json(
-        artifact_path(manifest_path, "baseline_assess")
-    )
-    issue_diff = diff_assess_results(
-        baseline_assess,
-        current_assess,
-        scope_plan=current_assess.get("scope_plan"),
-    )
-    _write_json(artifact_path(manifest_path, "issue_diff"), issue_diff)
-
     plan = build_verification_plan(
         project,
         change_analysis,
@@ -163,6 +153,19 @@ def _analyze(args) -> int:
         partition=args.partition,
     )
     _write_json(artifact_path(manifest_path, "verification_plan"), plan)
+
+    baseline_assess = _read_json(
+        artifact_path(manifest_path, "baseline_assess")
+    )
+    issue_diff = diff_assess_results(
+        baseline_assess,
+        current_assess,
+        scope_plan=current_assess.get("scope_plan"),
+        change_analysis=change_analysis,
+        verification_plan=plan,
+    )
+    _write_json(artifact_path(manifest_path, "issue_diff"), issue_diff)
+
     print(f"Analyze complete: {manifest_path}")
     return 0
 
