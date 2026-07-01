@@ -509,7 +509,7 @@ class NamingConfig:
         ]
 
     def expression_text(self, segments: list) -> str:
-        parts = []
+        text = ""
         for segment in segments:
             name = segment.get("name", "")
             token = (
@@ -517,11 +517,22 @@ class NamingConfig:
             )
             if segment.get("optional"):
                 token += "?"
-            if segment.get("concat_left") and parts:
-                parts[-1] = parts[-1] + token
+            token = (
+                f"{segment.get('sep_before', '')}"
+                f"{token}"
+                f"{segment.get('sep_after', '')}"
+            )
+
+            if (
+                not text
+                or segment.get("concat_left")
+                or token.startswith("_")
+                or text.endswith("_")
+            ):
+                text += token
             else:
-                parts.append(token)
-        return " ".join(parts)
+                text += f" {token}"
+        return text
 
     def _candidate_for_type(
         self,

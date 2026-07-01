@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import json
 from copy import deepcopy
 from typing import Any
 
+SCHEMA_VERSION = "assess.diagnostic.v1"
 SEVERITY_HIGH = "高"
 SEVERITY_MEDIUM = "中"
 SEVERITY_LOW = "低"
@@ -32,11 +34,19 @@ def rule_meta(
     }
 
 
-def target_ref(target_type: str, name: str) -> dict[str, str]:
-    return {
+def target_ref(
+    target_type: str,
+    name: str,
+    detail: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    target = {
         "type": target_type,
         "name": str(name),
     }
+    for key, value in (detail or {}).items():
+        if value not in (None, "", []):
+            target[key] = value
+    return target
 
 
 def make_check(
@@ -45,22 +55,29 @@ def make_check(
     target_type: str,
     target: str,
     passed: bool,
-    expected: str,
-    actual: str,
+    expected: Any,
+    actual: Any,
+    target_detail: dict[str, Any] | None = None,
     evidence: dict[str, Any] | None = None,
+    diagnostic: dict[str, Any] | None = None,
+    summary: str = "",
     message: str = "",
     issue: dict[str, Any] | None = None,
     fingerprint_discriminator: str = "",
 ) -> dict[str, Any]:
     check = {
         "rule_id": rule_id,
-        "target": target_ref(target_type, target),
+        "target": target_ref(target_type, target, target_detail),
         "passed": bool(passed),
         "expected": expected,
         "actual": actual,
     }
     if evidence:
         check["evidence"] = evidence
+    if diagnostic:
+        check["diagnostic"] = diagnostic
+    if summary:
+        check["summary"] = summary
     if message:
         check["message"] = message
     if issue:
@@ -85,6 +102,45 @@ def _clean_check(check: dict[str, Any]) -> dict[str, Any]:
     return {
         key: value for key, value in check.items() if not key.startswith("_")
     }
+
+
+def _message_text(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    return json.dumps(value, ensure_ascii=False, sort_keys=True)
+
+
+def _enrich_check(
+    *,
+    dimension: str,
+    check: dict[str, Any],
+    rule: dict[str, Any],
+) -> dict[str, Any]:
+    enriched = dict(check)
+    override = enriched.get("_issue") or {}
+    remediation = _merge_remediation(
+        rule.get("remediation", {}),
+        override.get("remediation"),
+    )
+    enriched["schema_version"] = SCHEMA_VERSION
+    enriched["dimension"] = dimension
+    enriched["status"] = "passed" if enriched.get("passed") else "failed"
+    enriched["severity"] = override.get("severity") or rule.get(
+        "severity",
+        "",
+    )
+    default_summary = (
+        rule.get("name") if enriched.get("passed") else rule.get("title")
+    )
+    enriched["summary"] = (
+        enriched.get("summary")
+        or default_summary
+        or enriched.get("message")
+        or _message_text(enriched.get("actual", ""))
+    )
+    if remediation and not enriched.get("passed"):
+        enriched["remediation"] = remediation
+    return enriched
 
 
 def build_rule_summary(
@@ -158,7 +214,8 @@ def issues_from_checks(
             "title": override.get("title") or rule.get("title", rule_id),
             "message": override.get("message")
             or check.get("message")
-            or check.get("actual", ""),
+            or check.get("summary")
+            or _message_text(check.get("actual", "")),
             "remediation": remediation,
             "check_ids": [check["id"]],
         }
@@ -178,7 +235,13 @@ def finalize_dimension(
     for index, check in enumerate(checks, start=1):
         numbered = dict(check)
         numbered["id"] = f"{dimension}.chk_{index:03d}"
-        numbered_checks.append(numbered)
+        numbered_checks.append(
+            _enrich_check(
+                dimension=dimension,
+                check=numbered,
+                rule=rules.get(numbered["rule_id"], {}),
+            )
+        )
 
     result = {
         "score": score,
