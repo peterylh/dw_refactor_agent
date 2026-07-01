@@ -74,9 +74,10 @@ class NamingTableTemplateRule(_NamingRule):
         valid = _check_table_name_any_template(name, layer, nc)
         violation = None
         if not valid:
+            model = (rule_context.get("models") or {}).get(name)
             diagnostic = {
                 "check": "table_template",
-                **_table_name_diagnostic(name, layer, nc),
+                **_table_name_diagnostic(name, nc, model),
             }
             violation = {
                 "code": "table_template",
@@ -560,12 +561,14 @@ def _check_table_name_any_template(name: str, layer: str, nc) -> bool:
     return False
 
 
-def _table_name_diagnostic(name: str, layer: str, nc) -> dict:
+def _table_name_diagnostic(name: str, nc, model: dict | None) -> dict:
     if hasattr(nc, "diagnose_table_name"):
-        return nc.diagnose_table_name(name, layer)
+        return nc.diagnose_table_name(name, model)
     return {
         "actual": name,
-        "layer": layer,
+        "layer": (model or {}).get("layer"),
+        "layer_source": "model",
+        "model_name": (model or {}).get("name"),
         "passed": False,
         "message": "命名配置对象不支持结构化诊断",
     }
