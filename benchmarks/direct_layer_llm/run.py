@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import inspect
 import json
 import os
 import re
@@ -473,14 +474,16 @@ def summarize_project_with_table_inspector(
     )
     if cache_path.exists():
         cache_path.unlink()
-    inspector = TableInspector(
-        api_key=api_key,
-        model=model,
-        base_url=base_url,
-        cache_file=cache_path,
-        max_retries=max_retries,
-        parallelism=parallelism,
-    )
+    inspector_kwargs = {
+        "api_key": api_key,
+        "model": model,
+        "cache_file": cache_path,
+        "max_retries": max_retries,
+        "parallelism": parallelism,
+    }
+    if "base_url" in inspect.signature(TableInspector).parameters:
+        inspector_kwargs["base_url"] = base_url
+    inspector = TableInspector(**inspector_kwargs)
 
     print(
         f"[{source_project}] table-inspector runner calling LLM "
