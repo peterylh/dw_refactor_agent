@@ -188,9 +188,7 @@ def run_checks(
     """Run configured production-vs-QA checks."""
     prod_db = plan["project_db"]
     qa_db = plan["qa_db"]
-    checks = plan.get("checks") or plan.get("verification", {}).get(
-        "checks", []
-    )
+    checks = plan.get("verification", {}).get("checks", [])
 
     filtered = [
         check for check in checks if method in ("all", check["method"])

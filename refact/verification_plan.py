@@ -186,9 +186,12 @@ def build_verification_plan(
 ) -> dict:
     cfg = config.PROJECT_CONFIG[project]
     scope = change_analysis.get("affected_scope") or {}
-    assessment_tables = set(scope.get("assessment_tables") or [])
-    assessment_tasks = set(scope.get("assessment_tasks") or [])
-    anchors = sorted(set(scope.get("anchor_tables") or []))
+    affected_scope = _normalized_affected_scope(scope)
+    assessment_tables = set(affected_scope["assessment_tables"])
+    assessment_tasks = set(affected_scope["assessment_tasks"])
+    anchors = affected_scope["anchor_tables"]
+    downstream_tables = affected_scope["downstream_tables"]
+    modified_jobs = _modified_jobs(change_analysis, assessment_tasks)
 
     sorted_jobs = _sort_jobs_for_execution(
         project,
@@ -248,13 +251,36 @@ def build_verification_plan(
         "project": project,
         "project_db": cfg["db"],
         "qa_db": cfg["qa_db"],
+        "affected_scope": affected_scope,
+        "modified_jobs": modified_jobs,
+        "downstream_tables": downstream_tables,
+        "anchors": anchors,
         "baseline_ddl": dict(sorted(baseline_ddl.items())),
         "ddl_changes": ddl_changes,
         "partition_info": partition_info,
         "jobs_to_run": jobs_to_run,
-        "checks": checks,
         "verification": {"checks": checks},
     }
+
+
+def _normalized_affected_scope(scope: dict) -> dict:
+    return {
+        "direct_tables": sorted(set(scope.get("direct_tables") or [])),
+        "downstream_tables": sorted(set(scope.get("downstream_tables") or [])),
+        "anchor_tables": sorted(set(scope.get("anchor_tables") or [])),
+        "assessment_tables": sorted(set(scope.get("assessment_tables") or [])),
+        "assessment_tasks": sorted(set(scope.get("assessment_tasks") or [])),
+        "global_dimensions": sorted(set(scope.get("global_dimensions") or [])),
+    }
+
+
+def _modified_jobs(
+    change_analysis: dict, assessment_tasks: set[str]
+) -> list[str]:
+    changed_assets = change_analysis.get("changed_assets")
+    if isinstance(changed_assets, dict) and "task_jobs" in changed_assets:
+        return sorted(set(changed_assets.get("task_jobs") or []))
+    return sorted(assessment_tasks)
 
 
 def _sort_jobs_for_execution(

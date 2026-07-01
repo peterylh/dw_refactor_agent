@@ -57,15 +57,19 @@ def test_build_verification_plan_uses_baseline_ddl_changes_and_jobs(
         ],
     )
 
+    change_analysis = {
+        "affected_scope": {
+            "direct_tables": ["dwd_order"],
+            "downstream_tables": ["ads_order"],
+            "assessment_tables": ["dws_order"],
+            "assessment_tasks": ["dws_order"],
+            "anchor_tables": ["dws_order"],
+        }
+    }
+
     plan = build_verification_plan(
         "demo",
-        {
-            "affected_scope": {
-                "assessment_tables": ["dws_order"],
-                "assessment_tasks": ["dws_order"],
-                "anchor_tables": ["dws_order"],
-            }
-        },
+        change_analysis,
         base_ref="abc123",
         repo_root=tmp_path,
         lineage_data={
@@ -81,6 +85,17 @@ def test_build_verification_plan_uses_baseline_ddl_changes_and_jobs(
     assert plan["project"] == "demo"
     assert plan["project_db"] == "demo_dm"
     assert plan["qa_db"] == "demo_dm_qa"
+    assert plan["affected_scope"] == {
+        "direct_tables": ["dwd_order"],
+        "downstream_tables": ["ads_order"],
+        "assessment_tables": ["dws_order"],
+        "assessment_tasks": ["dws_order"],
+        "anchor_tables": ["dws_order"],
+        "global_dimensions": [],
+    }
+    assert plan["anchors"] == ["dws_order"]
+    assert plan["downstream_tables"] == ["ads_order"]
+    assert plan["modified_jobs"] == ["dws_order"]
     assert plan["baseline_ddl"] == {
         "dws_order": "CREATE TABLE demo_dm.dws_order (order_id BIGINT) ENGINE=OLAP;"
     }
@@ -100,7 +115,8 @@ def test_build_verification_plan_uses_baseline_ddl_changes_and_jobs(
             "needs_etl_date": True,
         }
     ]
-    assert plan["checks"] == [
+    assert "checks" not in plan
+    assert plan["verification"]["checks"] == [
         {"table": "dws_order", "method": "count"},
         {"table": "dws_order", "method": "row_compare"},
     ]
@@ -148,6 +164,53 @@ def test_build_verification_plan_requires_lineage_when_jobs_exist(
             assert "lineage" in str(exc)
         else:
             raise AssertionError("expected missing lineage to fail")
+
+
+def test_build_verification_plan_preserves_empty_modified_jobs(
+    tmp_path, monkeypatch
+):
+    project_dir = tmp_path / "demo"
+    (project_dir / "ddl").mkdir(parents=True)
+    (project_dir / "models").mkdir()
+    (project_dir / "tasks").mkdir()
+    (project_dir / "tasks" / "dws_order.sql").write_text(
+        "INSERT INTO demo_dm.dws_order SELECT 1;",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(config, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setitem(
+        config.PROJECT_CONFIG,
+        "demo",
+        {
+            "dir": "demo",
+            "db": "demo_dm",
+            "qa_db": "demo_dm_qa",
+            "catalog": "internal",
+        },
+    )
+
+    plan = build_verification_plan(
+        "demo",
+        {
+            "changed_assets": {"task_jobs": []},
+            "affected_scope": {
+                "assessment_tables": ["dws_order"],
+                "assessment_tasks": ["dws_order"],
+                "anchor_tables": ["dws_order"],
+            },
+        },
+        lineage_data={
+            "edges": [
+                {
+                    "source": {"type": "column", "id": "ods_order.id"},
+                    "target": {"type": "column", "id": "dws_order.id"},
+                }
+            ]
+        },
+    )
+
+    assert plan["modified_jobs"] == []
+    assert [job["job"] for job in plan["jobs_to_run"]] == ["dws_order"]
 
 
 def test_build_verification_plan_rejects_cyclic_job_lineage(
@@ -275,7 +338,8 @@ PROPERTIES ("replication_num" = "1");"""
             }
         },
     }
-    assert plan["checks"] == [
+    assert "checks" not in plan
+    assert plan["verification"]["checks"] == [
         {
             "table": "dws_order",
             "method": "count",

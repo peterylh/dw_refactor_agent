@@ -131,7 +131,6 @@ def test_analyze_refreshes_current_analysis_diff_and_plan(
             "ddl_changes": [],
             "partition_info": {},
             "jobs_to_run": [],
-            "checks": [],
             "verification": {"checks": []},
         }
 

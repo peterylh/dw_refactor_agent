@@ -72,6 +72,24 @@ def test_run_checks_compares_count_self_contained(monkeypatch):
     assert qa_conn.closed is True
 
 
+def test_run_checks_ignores_legacy_top_level_checks(monkeypatch):
+    def fail_if_called(db_name, qa=False):
+        raise AssertionError("legacy top-level checks should be ignored")
+
+    monkeypatch.setattr("refact.compare.get_pymysql_conn", fail_if_called)
+
+    result = run_checks(
+        {
+            "project_db": "shop_dm",
+            "qa_db": "shop_dm_qa",
+            "checks": [{"table": "ads_sales_dashboard", "method": "count"}],
+        },
+        method="count",
+    )
+
+    assert result == {"all_pass": True, "results": []}
+
+
 def test_compare_shadow_results_writes_compare_output(tmp_path, monkeypatch):
     plan_path = tmp_path / "verification" / "plan.json"
     output_path = tmp_path / "verification" / "compare_result.json"
