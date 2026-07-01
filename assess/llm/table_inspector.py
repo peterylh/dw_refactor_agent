@@ -875,7 +875,10 @@ def validate_primary_entities(
     result: TableInspectResult,
 ) -> dict[str, list[str]]:
     """校验事实明细表必须返回当前事实行主实体。"""
-    if result.declared_layer != "DWD" or not result.is_fact_table:
+    if (
+        result.declared_layer != "DWD"
+        and result.inferred_layer != "DWD"
+    ) or not result.is_fact_table:
         return {}
     has_primary = any(
         str(entity.get("type") or "").strip().lower() == "primary"

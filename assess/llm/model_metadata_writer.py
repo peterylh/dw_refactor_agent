@@ -125,17 +125,19 @@ METRIC_COLUMN_HINTS = {
 }
 DIRECT_APPLICATION_OUTPUT_TOKENS = {
     "ads",
-    "alert",
-    "alerts",
     "cockpit",
     "dashboard",
-    "performance",
     "portal",
-    "rfm",
-    "roi",
     "rpt",
     "screen",
     "topn",
+}
+DIRECT_AMBIGUOUS_APPLICATION_OUTPUT_TOKENS = {
+    "alert",
+    "alerts",
+    "performance",
+    "rfm",
+    "roi",
 }
 DIRECT_APPLICATION_OUTPUT_PHRASES = {
     "indicator app",
@@ -149,6 +151,10 @@ DIRECT_APPLICATION_OUTPUT_PHRASES = {
     "大屏",
     "指标应用",
     "专题",
+}
+DIRECT_APPLICATION_REPORT_TOKENS = {
+    "report",
+    "reports",
 }
 DIRECT_APPLICATION_SUMMARY_TOKENS = {"summary"}
 DIRECT_APPLICATION_TIME_GRAIN_TOKENS = {
@@ -1607,29 +1613,6 @@ def _direct_task_text(asset: dict[str, Any]) -> str:
     )
 
 
-def _direct_task_has_fact_signals(
-    asset: dict[str, Any],
-    *,
-    process_score: float,
-    lineage_facts: dict[str, Any],
-) -> bool:
-    if lineage_facts.get("has_aggregate") or lineage_facts.get("has_group_by"):
-        return True
-
-    task_text = _direct_task_text(asset).lower()
-    if not task_text:
-        return False
-    if process_score >= 2:
-        return True
-    if re.search(r"\b(sum|count|avg|min|max)\s*\(", task_text):
-        return True
-    if re.search(r"\bgroup\s+by\b", task_text):
-        return True
-    if re.search(r"\bover\s*\(", task_text):
-        return True
-    return _has_metric_column_hints(asset)
-
-
 def _direct_generation_layer_from_asset_placement(
     project: str,
     asset: dict[str, Any],
@@ -1664,6 +1647,43 @@ def _direct_has_aggregate_signals(
     )
 
 
+def _direct_application_output_signal_strength(
+    table_name: str,
+    asset: dict[str, Any],
+    match_text: str,
+    *,
+    has_aggregate: bool = False,
+    downstream_tables: set[str] | None = None,
+) -> str:
+    text = f"{table_name}\n{match_text}".lower()
+    if any(phrase in text for phrase in DIRECT_APPLICATION_OUTPUT_PHRASES):
+        return "strong"
+
+    table_tokens = set(_split_identifier_tokens(table_name))
+    if table_tokens & DIRECT_APPLICATION_OUTPUT_TOKENS:
+        return "strong"
+    if (
+        {"metric", "snapshot"} <= table_tokens
+        and table_tokens & DIRECT_APPLICATION_REPORT_TOKENS
+    ):
+        return "strong"
+    if table_tokens & DIRECT_AMBIGUOUS_APPLICATION_OUTPUT_TOKENS:
+        if has_aggregate and not downstream_tables:
+            return "strong"
+        return ""
+
+    if not has_aggregate or downstream_tables:
+        return ""
+    if "by" in table_tokens:
+        return "strong"
+    if (
+        table_tokens & DIRECT_APPLICATION_SUMMARY_TOKENS
+        and not (table_tokens & DIRECT_APPLICATION_TIME_GRAIN_TOKENS)
+    ):
+        return "weak"
+    return ""
+
+
 def _direct_has_application_output_signal(
     table_name: str,
     asset: dict[str, Any],
@@ -1672,24 +1692,15 @@ def _direct_has_application_output_signal(
     has_aggregate: bool = False,
     downstream_tables: set[str] | None = None,
 ) -> bool:
-    text = f"{table_name}\n{match_text}".lower()
-    if any(phrase in text for phrase in DIRECT_APPLICATION_OUTPUT_PHRASES):
-        return True
-
-    table_tokens = set(_split_identifier_tokens(table_name))
-    if table_tokens & DIRECT_APPLICATION_OUTPUT_TOKENS:
-        return True
-
-    if not has_aggregate or downstream_tables:
-        return False
-    if "by" in table_tokens:
-        return True
-    if (
-        table_tokens & DIRECT_APPLICATION_SUMMARY_TOKENS
-        and not (table_tokens & DIRECT_APPLICATION_TIME_GRAIN_TOKENS)
-    ):
-        return True
-    return bool({"metric", "snapshot"} <= table_tokens)
+    return bool(
+        _direct_application_output_signal_strength(
+            table_name,
+            asset,
+            match_text,
+            has_aggregate=has_aggregate,
+            downstream_tables=downstream_tables,
+        )
+    )
 
 
 def _direct_has_dimension_layer_signal(
@@ -1731,6 +1742,37 @@ def _direct_has_dimension_layer_signal(
     if subject_score >= process_score + 2:
         return True
     return subject_score >= 8 and not _has_metric_column_hints(asset)
+
+
+def _direct_has_profile_dimension_signal(
+    table_name: str,
+    *,
+    has_aggregate: bool,
+) -> bool:
+    if has_aggregate:
+        return False
+    table_tokens = set(_split_identifier_tokens(table_name))
+    return bool(
+        table_tokens & {"profile", "master", "reference"}
+        and not (table_tokens & DIRECT_FACT_EVENT_NAME_TOKENS)
+    )
+
+
+def _direct_has_event_detail_layer_signal(
+    table_name: str,
+    *,
+    has_aggregate: bool,
+    process_score: float,
+    has_metric_hints: bool,
+    upstream_tables: set[str],
+    application_output_strength: str,
+) -> bool:
+    if has_aggregate or application_output_strength:
+        return False
+    table_tokens = set(_split_identifier_tokens(table_name))
+    if table_tokens & DIRECT_FACT_EVENT_NAME_TOKENS:
+        return True
+    return bool(process_score >= 2 and (has_metric_hints or upstream_tables))
 
 
 def _direct_has_source_layer_signal(
@@ -1780,7 +1822,11 @@ def _direct_infer_layer(
         table_name, asset, lineage_view
     )
 
-    if normalized_seed == "ODS" or placement_layer == "ODS" or has_source_layer_signal:
+    if (
+        normalized_seed == "ODS"
+        or placement_layer == "ODS"
+        or has_source_layer_signal
+    ):
         return "ODS"
 
     lineage_facts = (
@@ -1795,7 +1841,7 @@ def _direct_infer_layer(
     downstream_tables = (
         lineage_view.downstream_tables(table_name) if lineage_view else set()
     )
-    has_application_output = _direct_has_application_output_signal(
+    application_output_strength = _direct_application_output_signal_strength(
         table_name,
         asset,
         match_text,
@@ -1803,10 +1849,20 @@ def _direct_infer_layer(
         downstream_tables=downstream_tables,
     )
 
-    if normalized_seed == "ADS" or (
-        has_application_output and normalized_seed not in {"ODS", "DWD", "DWS"}
+    if normalized_seed == "ADS":
+        return "ADS"
+
+    if (
+        application_output_strength == "strong"
+        and normalized_seed not in {"ODS", "DWD", "DWS"}
     ):
         return "ADS"
+
+    if _direct_has_profile_dimension_signal(
+        table_name,
+        has_aggregate=has_aggregate,
+    ):
+        return "DIM"
 
     if (
         prefer_table_inspector
@@ -1818,6 +1874,15 @@ def _direct_infer_layer(
             table_inspector_layer_result.get("layer") or ""
         ).upper()
         if inspected_layer in VALID_LAYERS and inspected_layer != "OTHER":
+            if inspected_layer == "ADS" and _direct_has_event_detail_layer_signal(
+                table_name,
+                has_aggregate=has_aggregate,
+                process_score=float(process_match.get("score") or 0),
+                has_metric_hints=_has_metric_column_hints(asset),
+                upstream_tables=upstream_tables,
+                application_output_strength=application_output_strength,
+            ):
+                return "DWD"
             return inspected_layer
 
     if normalized_seed and normalized_seed != "OTHER":
@@ -1833,7 +1898,19 @@ def _direct_infer_layer(
             table_inspector_layer_result.get("layer") or ""
         ).upper()
         if inspected_layer in VALID_LAYERS:
+            if inspected_layer == "ADS" and _direct_has_event_detail_layer_signal(
+                table_name,
+                has_aggregate=has_aggregate,
+                process_score=float(process_match.get("score") or 0),
+                has_metric_hints=_has_metric_column_hints(asset),
+                upstream_tables=upstream_tables,
+                application_output_strength=application_output_strength,
+            ):
+                return "DWD"
             return inspected_layer
+
+    if application_output_strength:
+        return "ADS"
 
     if _direct_has_dimension_layer_signal(
         table_name,
@@ -2127,8 +2204,12 @@ def _direct_table_inspector_layer_result_from_inspection(
     result: TableInspectResult,
 ) -> dict[str, Any]:
     inferred_layer = str(result.inferred_layer or "OTHER").upper()
-    applied_layer = layer_for_model(result)
-    if applied_layer not in VALID_LAYERS:
+    declared_layer = str(result.declared_layer or "OTHER").upper()
+    if inferred_layer in VALID_LAYERS and inferred_layer != "OTHER":
+        applied_layer = inferred_layer
+    elif declared_layer in VALID_LAYERS and declared_layer != "OTHER":
+        applied_layer = declared_layer
+    else:
         applied_layer = (
             inferred_layer if inferred_layer in VALID_LAYERS else "OTHER"
         )
@@ -2345,12 +2426,6 @@ def _direct_infer_table_type(
     if layer == "ODS" or name.startswith("ods_"):
         return "other"
     if layer == "ADS" or name.startswith("ads_"):
-        if _direct_task_has_fact_signals(
-            asset,
-            process_score=process_score,
-            lineage_facts=lineage_facts,
-        ):
-            return "fact"
         return "other"
     if _direct_table_inspector_layer_result_is_usable(
         table_inspector_layer_result
@@ -2391,6 +2466,36 @@ def _direct_existing_catalog_mapping(
             assignment = "existing_semantic_subject"
         mapping["assignment_source"] = assignment
         mapping["assignment_reason"] = "existing_model_metadata"
+    return mapping
+
+
+def _direct_apply_table_inspector_layer_mapping(
+    mapping: dict[str, Any],
+    table_inspector_layer_result: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if not _direct_table_inspector_layer_result_is_usable(
+        table_inspector_layer_result
+    ):
+        return mapping
+
+    inspected_layer = str(
+        table_inspector_layer_result.get("layer") or ""
+    ).upper()
+    inspected_table_type = str(
+        table_inspector_layer_result.get("table_type") or ""
+    ).lower()
+    if inspected_layer == "ADS":
+        mapping["table_type"] = "other"
+    elif (
+        inspected_table_type in VALID_TABLE_TYPES
+        and inspected_table_type != "other"
+    ):
+        mapping["table_type"] = inspected_table_type
+    if inspected_layer in VALID_LAYERS and inspected_layer != "OTHER":
+        mapping["layer"] = (
+            "DIM" if inspected_table_type == "dimension" else inspected_layer
+        )
+        mapping["materialized"] = _materialized_for_layer(mapping["layer"])
     return mapping
 
 
@@ -2498,7 +2603,15 @@ def _direct_catalog_mapping_for_model(
         if existing_mapping.get("business_process") or existing_mapping.get(
             "semantic_subject"
         ):
-            return existing_mapping
+            existing_mapping = _direct_apply_table_inspector_layer_mapping(
+                existing_mapping,
+                table_inspector_layer_result,
+            )
+            return _direct_apply_table_inspector_metadata_mapping(
+                project=project,
+                mapping=existing_mapping,
+                table_inspector_layer_result=table_inspector_layer_result,
+            )
 
     match_text = _direct_model_match_text(table_name, asset, lineage_view)
     seed_layer = _direct_seed_layer(
@@ -3148,11 +3261,21 @@ def _apply_table_inspector_payload_to_direct_model(
         return
 
     model_layer = str(updated.get("layer") or "").upper()
+    if model_layer in {"ODS", "ADS"}:
+        updated.pop("atomic_metrics", None)
+        updated.pop("derived_metrics", None)
+        updated.pop("calculated_metrics", None)
+        updated.pop("metrics", None)
+        updated.pop("entities", None)
+        updated.pop("entity", None)
+        updated.pop("related_entities", None)
+        updated.pop("grain", None)
+        return
+
     can_write_metrics = (
         model_layer in METRIC_LAYERS
         and str(updated.get("table_type") or "").lower() == "fact"
         and float(result.confidence or 0) >= 0.5
-        and should_write_metric_groups(result, write_scope)
     )
     if can_write_metrics:
         detected_groups = metric_groups_for_model(result)
@@ -3307,6 +3430,14 @@ def update_model_yaml_from_direct_generation(
     )
     detected_metrics = _extract_existing_metric_names(updated)
     previous_metrics = _extract_existing_metric_names(previous)
+    entity_count = len(
+        normalize_entities(
+            updated.get("entities"),
+            updated.get("entity"),
+            updated.get("related_entities"),
+        )
+    )
+    has_grain = bool(_effective_grain(updated.get("grain")))
     inspection_result = mapping.get("_table_inspector_result")
     metric_generation_source = ""
     if (
@@ -3315,7 +3446,7 @@ def update_model_yaml_from_direct_generation(
         and float(inspection_result.confidence or 0) >= 0.5
         and str(updated.get("layer") or "").upper() in METRIC_LAYERS
         and str(updated.get("table_type") or "").lower() == "fact"
-        and should_write_metric_groups(inspection_result, write_scope)
+        and _validate_write_scope(write_scope) == "all"
     ):
         metric_generation_source = "table_inspector"
     return {
@@ -3339,6 +3470,8 @@ def update_model_yaml_from_direct_generation(
             [name for name in previous_metrics if name not in detected_metrics]
         ),
         "grain_changed": grain_changed,
+        "entity_count": entity_count,
+        "has_grain": has_grain,
         "updated": bool(changed and not dry_run),
         "write_scope": write_scope,
         "source": "direct_generation",

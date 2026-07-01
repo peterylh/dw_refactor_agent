@@ -288,7 +288,7 @@ def summarize_project(
     )
     result = run_direct_model_generation(
         target_project,
-        dry_run=True,
+        dry_run=False,
         ignore_existing_models=True,
         infer_layer_with_llm=True,
         api_key=api_key,
@@ -337,6 +337,7 @@ def summarize_project(
                 "assignment_source": update.get("assignment_source"),
                 "metric_count": int(update.get("metric_count") or 0),
                 "entity_count": int(update.get("entity_count") or 0),
+                "has_grain": bool(update.get("has_grain")),
                 "grain_changed": bool(update.get("grain_changed")),
                 "metric_generation_source": update.get(
                     "metric_generation_source"
@@ -417,6 +418,7 @@ def summarize_project(
         "metric_table_count": sum(1 for row in rows if row["metric_count"]),
         "entity_count": sum(row["entity_count"] for row in rows),
         "entity_table_count": sum(1 for row in rows if row["entity_count"]),
+        "grain_table_count": sum(1 for row in rows if row["has_grain"]),
         "grain_change_count": sum(1 for row in rows if row["grain_changed"]),
         "final_ads_metric_tables": final_ads_metric_tables,
         "mismatches": mismatches,

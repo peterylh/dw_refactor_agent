@@ -61,6 +61,7 @@ def test_validate_response_contract_scenarios():
         _assert_validate_time_periods_flags_unrecognized_values,
         _assert_validate_metric_expressions_flags_grain_text,
         _assert_validate_primary_entities_requires_dwd_fact_primary,
+        _assert_validate_primary_entities_uses_inferred_dwd_for_cold_start,
         _assert_validate_columns_flags_unknown_duplicate_and_missing_fields,
         _assert_validate_columns_requires_all_dws_fact_fields,
         _assert_validate_metric_relationships_requires_derived_base_metric_in_upstream_atomic,
@@ -669,6 +670,50 @@ def _assert_validate_primary_entities_requires_dwd_fact_primary():
             ]
         },
         declared_layer="DWD",
+    )
+
+    validation = validate_primary_entities(result)
+
+    assert validation == {
+        "missing_primary_entities": [
+            "DWD fact必须返回至少一个type=primary的entities项"
+        ]
+    }
+
+
+def _assert_validate_primary_entities_uses_inferred_dwd_for_cold_start():
+    result = parse_response(
+        "order_detail",
+        {
+            "choices": [
+                {
+                    "message": {
+                        "content": json.dumps(
+                            {
+                                "inferred_layer": "DWD",
+                                "table_type": "fact",
+                                "confidence": 0.9,
+                                "entities": [
+                                    {
+                                        "code": "CUSTOMER",
+                                        "type": "foreign",
+                                        "key_columns": ["customer_id"],
+                                    }
+                                ],
+                                "columns": {
+                                    "atomic_metrics": [],
+                                    "derived_metrics": [],
+                                    "calculated_metrics": [],
+                                    "dimensions": [{"name": "order_id"}],
+                                    "others": [],
+                                },
+                            }
+                        )
+                    }
+                }
+            ]
+        },
+        declared_layer="OTHER",
     )
 
     validation = validate_primary_entities(result)

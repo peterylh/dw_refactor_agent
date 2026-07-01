@@ -24,7 +24,9 @@ python3 benchmarks/table_inspector_layer/run.py \
 ```
 
 The benchmark writes only to a temporary project root and the requested output
-file. It does not modify the source demo projects.
+file. It does not modify the source demo projects. Generated model YAML files
+are written under the temporary project root reported as `tmp_dir`, so the
+layer result and YAML payload can both be reviewed.
 
 ## What It Checks
 
@@ -37,6 +39,8 @@ file. It does not modify the source demo projects.
 - Final layer accuracy is compared with the source project model metadata.
 - Metric/entity/grain counts are reported, including whether final ADS tables
   received metrics.
+- Generated YAML payloads are written to the temporary project for content
+  review.
 
 ## Latest Local Validation
 
