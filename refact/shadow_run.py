@@ -39,8 +39,20 @@ TABLE_RENAME_RE = re.compile(
 )
 
 
+class ShadowRunSqlError(RuntimeError):
+    """Raised when a SQL command fails during shadow-run execution."""
+
+
 def _project_root() -> Path:
     return Path(__file__).resolve().parent.parent
+
+
+def _sql_error_message(result: subprocess.CompletedProcess) -> str:
+    return (
+        result.stderr.strip()
+        or result.stdout.strip()
+        or f"mysql exited with status {result.returncode}"
+    )
 
 
 def run_sql(sql: str, db: str = "", qa: bool = False) -> str:
@@ -56,8 +68,7 @@ def run_sql(sql: str, db: str = "", qa: bool = False) -> str:
         timeout=300,
     )
     if result.returncode != 0:
-        print(f"  ERROR: {result.stderr.strip()}")
-        sys.exit(1)
+        raise ShadowRunSqlError(_sql_error_message(result))
     return result.stdout
 
 
@@ -74,8 +85,7 @@ def run_sql_text(sql_text: str, db: str = "", qa: bool = False) -> str:
         timeout=300,
     )
     if result.returncode != 0:
-        print(f"  ERROR: {result.stderr.strip()}")
-        sys.exit(1)
+        raise ShadowRunSqlError(_sql_error_message(result))
     return result.stdout
 
 
@@ -683,15 +693,170 @@ def rewrite_sql(
     return "".join(parts)
 
 
+def _check_result(check: dict, status: str) -> dict:
+    return {
+        "table": check.get("table"),
+        "method": check.get("method"),
+        "status": status,
+        "partition_col": check.get("partition_col"),
+        "partition_value": check.get("partition_value"),
+    }
+
+
+def _ddl_change_result(
+    change: dict,
+    status: str,
+    error: str | None = None,
+) -> dict:
+    result = {
+        "change_type": change.get("change_type"),
+        "sql": change.get("sql", ""),
+        "status": status,
+        "error": error,
+    }
+    for key in ("table_name", "old_name", "new_name"):
+        if key in change:
+            result[key] = change.get(key)
+    return result
+
+
+def _job_result(
+    job: dict,
+    status: str,
+    error: str | None = None,
+) -> dict:
+    job_name = job.get("job")
+    return {
+        "job": job_name,
+        "file": job.get("file"),
+        "layer": job.get("layer", "?"),
+        "target": job.get("target") or job_name,
+        "needs_etl_date": bool(job.get("needs_etl_date", False)),
+        "status": status,
+        "error": error,
+    }
+
+
+def _compare_phase(plan: dict, status: str = "not_run") -> dict:
+    checks = plan.get("verification", {}).get("checks", [])
+    return {
+        "name": "compare",
+        "status": status,
+        "checks": [_check_result(check, status) for check in checks],
+    }
+
+
+def _result_summary(plan: dict, phases: list[dict]) -> dict:
+    phase_by_name = {phase.get("name"): phase for phase in phases}
+    ddl_changes = phase_by_name.get("apply_ddl_changes", {}).get(
+        "ddl_changes", []
+    )
+    jobs = phase_by_name.get("run_jobs", {}).get("jobs", [])
+    checks = phase_by_name.get("compare", {}).get("checks", [])
+    return {
+        "baseline_table_count": len(plan.get("baseline_ddl", {})),
+        "ddl_change_count": len(plan.get("ddl_changes", [])),
+        "job_count": len(plan.get("jobs_to_run", [])),
+        "check_count": len(plan.get("verification", {}).get("checks", [])),
+        "failed_job_count": sum(
+            1 for job in jobs if job.get("status") == "failed"
+        ),
+        "failed_ddl_change_count": sum(
+            1
+            for ddl_change in ddl_changes
+            if ddl_change.get("status") == "failed"
+        ),
+        "failed_check_count": sum(
+            1 for check in checks if check.get("status") == "failed"
+        ),
+    }
+
+
+def _shadow_result(
+    plan: dict, *, mode: str, status: str, phases: list
+) -> dict:
+    return {
+        "status": status,
+        "mode": mode,
+        "project": plan.get("project"),
+        "project_db": plan.get("project_db"),
+        "qa_db": plan["qa_db"],
+        "job_count": len(plan.get("jobs_to_run", [])),
+        "summary": _result_summary(plan, phases),
+        "phases": phases,
+    }
+
+
+def _failed_shadow_result(plan: dict, phases: list[dict]) -> dict:
+    if not any(phase.get("name") == "compare" for phase in phases):
+        phases.append(_compare_phase(plan))
+    return _shadow_result(
+        plan,
+        mode="execute",
+        status="failed",
+        phases=phases,
+    )
+
+
+def _dry_run_phases(plan: dict) -> list[dict]:
+    root = _project_root()
+    baseline_ddl = plan.get("baseline_ddl", {})
+    ddl_changes = plan.get("ddl_changes", [])
+    jobs_to_run = plan.get("jobs_to_run", [])
+    qa_db = plan["qa_db"]
+
+    jobs = []
+    for job in jobs_to_run:
+        file_path = root / job["file"]
+        jobs.append(
+            _job_result(
+                job,
+                "dry_run" if file_path.exists() else "skipped",
+                None if file_path.exists() else "文件不存在",
+            )
+        )
+
+    return [
+        {
+            "name": "reset_qa_db",
+            "status": "dry_run",
+            "actions": [
+                f"DROP DATABASE IF EXISTS {qa_db}",
+                f"CREATE DATABASE {qa_db}",
+            ],
+        },
+        {
+            "name": "create_baseline_tables",
+            "status": "dry_run",
+            "tables": [
+                {"table": table_name, "status": "dry_run"}
+                for table_name in sorted(baseline_ddl)
+            ],
+        },
+        {
+            "name": "apply_ddl_changes",
+            "status": "dry_run",
+            "ddl_changes": [
+                _ddl_change_result(change, "dry_run") for change in ddl_changes
+            ],
+        },
+        {
+            "name": "run_jobs",
+            "status": "dry_run",
+            "jobs": jobs,
+        },
+        _compare_phase(plan),
+    ]
+
+
 def execute_shadow_plan(plan: dict, *, dry_run: bool = False) -> dict:
     """Execute or preview a shadow-run validation plan."""
     if dry_run:
         _dry_run(plan)
-        return {
-            "status": "dry_run",
-            "qa_db": plan["qa_db"],
-            "job_count": len(plan.get("jobs_to_run", [])),
-        }
+        phases = _dry_run_phases(plan)
+        return _shadow_result(
+            plan, mode="dry_run", status="dry_run", phases=phases
+        )
 
     prod_db = plan["project_db"]
     qa_db = plan["qa_db"]
@@ -699,6 +864,7 @@ def execute_shadow_plan(plan: dict, *, dry_run: bool = False) -> dict:
     baseline_ddl = plan.get("baseline_ddl", {})
     ddl_changes = plan.get("ddl_changes", [])
     jobs_to_run = plan.get("jobs_to_run", [])
+    phases = []
 
     checks = plan.get("verification", {}).get("checks", [])
     if not plan.get("anchors") and not checks:
@@ -708,30 +874,73 @@ def execute_shadow_plan(plan: dict, *, dry_run: bool = False) -> dict:
 
     print("=" * 60)
     print(f"Phase 0: 重置验证数据库 {qa_db}")
-    run_sql(f"DROP DATABASE IF EXISTS {qa_db}", "information_schema", qa=True)
-    run_sql(f"CREATE DATABASE {qa_db}", "information_schema", qa=True)
+    reset_phase = {
+        "name": "reset_qa_db",
+        "status": "success",
+        "actions": [
+            f"DROP DATABASE IF EXISTS {qa_db}",
+            f"CREATE DATABASE {qa_db}",
+        ],
+    }
+    try:
+        run_sql(
+            f"DROP DATABASE IF EXISTS {qa_db}",
+            "information_schema",
+            qa=True,
+        )
+        run_sql(f"CREATE DATABASE {qa_db}", "information_schema", qa=True)
+    except Exception as exc:
+        print(f"  [FAIL] 重置验证数据库失败: {exc}")
+        reset_phase["status"] = "failed"
+        reset_phase["error"] = str(exc)
+        phases.append(reset_phase)
+        return _failed_shadow_result(plan, phases)
     print(f"  {qa_db} 已重建")
+    phases.append(reset_phase)
 
     print(f"\n{'=' * 60}")
     print(f"Phase 1: 基线建表 ({len(baseline_ddl)} 张)")
+    table_results = []
+    create_phase = {
+        "name": "create_baseline_tables",
+        "status": "success",
+        "tables": table_results,
+    }
     for table_name in sorted(baseline_ddl):
         ddl_raw = baseline_ddl[table_name]
         if not ddl_raw.strip():
+            table_results.append({"table": table_name, "status": "skipped"})
             continue
         ddl_qa = ddl_raw.replace(f"{prod_db}.", f"{qa_db}.")
         try:
             run_sql(ddl_qa, qa_db, qa=True)
             print(f"  [CREATE] {qa_db}.{table_name}")
+            table_results.append({"table": table_name, "status": "success"})
         except Exception as exc:
             print(f"  [FAIL] {qa_db}.{table_name}: {exc}")
-            sys.exit(1)
+            table_results.append(
+                {"table": table_name, "status": "failed", "error": str(exc)}
+            )
+            create_phase["status"] = "failed"
+            phases.append(create_phase)
+            return _failed_shadow_result(plan, phases)
+    phases.append(create_phase)
 
+    ddl_change_results = []
+    ddl_phase = {
+        "name": "apply_ddl_changes",
+        "status": "success",
+        "ddl_changes": ddl_change_results,
+    }
     if ddl_changes:
         print(f"\n{'-' * 60}")
         print(f"Phase 2: 应用 DDL 变更 ({len(ddl_changes)} 条)")
         for change in ddl_changes:
             sql = change.get("sql", "")
             if not sql.strip():
+                ddl_change_results.append(
+                    _ddl_change_result(change, "skipped")
+                )
                 continue
             sql_qa = sql.replace(f"{prod_db}.", f"{qa_db}.")
             statements = _ddl_change_statements(sql_qa)
@@ -742,14 +951,29 @@ def execute_shadow_plan(plan: dict, *, dry_run: bool = False) -> dict:
                     f"  [{change.get('change_type')}] "
                     f"{change.get('table_name', '?')}"
                 )
+                ddl_change_results.append(
+                    _ddl_change_result(change, "success")
+                )
             except Exception as exc:
                 print(f"  [FAIL] {change.get('change_type')}: {exc}")
-                sys.exit(1)
+                ddl_change_results.append(
+                    _ddl_change_result(change, "failed", str(exc))
+                )
+                ddl_phase["status"] = "failed"
+                phases.append(ddl_phase)
+                return _failed_shadow_result(plan, phases)
+    phases.append(ddl_phase)
 
     print(f"\n{'=' * 60}")
     print(f"Phase 3: 执行作业 ({len(jobs_to_run)} 个)")
     recalculated = set()
     root = _project_root()
+    job_results = []
+    job_phase = {
+        "name": "run_jobs",
+        "status": "success",
+        "jobs": job_results,
+    }
 
     for idx, job in enumerate(jobs_to_run, 1):
         job_name = job["job"]
@@ -761,6 +985,7 @@ def execute_shadow_plan(plan: dict, *, dry_run: bool = False) -> dict:
         file_path = root / job_file
         if not file_path.exists():
             print(f"  [SKIP] 文件不存在: {file_path}")
+            job_results.append(_job_result(job, "skipped", "文件不存在"))
             continue
 
         sql_text = file_path.read_text(encoding=TEXT_ENCODING)
@@ -772,21 +997,28 @@ def execute_shadow_plan(plan: dict, *, dry_run: bool = False) -> dict:
         try:
             run_sql_text(rewritten, qa_db, qa=True)
             print(f"  + {qa_db}.{job_name}")
+            job_results.append(_job_result(job, "success"))
         except Exception as exc:
             print(f"  [FAIL] {job_name}: {exc}")
-            sys.exit(1)
+            job_results.append(_job_result(job, "failed", str(exc)))
+            job_phase["status"] = "failed"
+            phases.append(job_phase)
+            return _failed_shadow_result(plan, phases)
 
         recalculated.add(job_name)
+    phases.append(job_phase)
+    phases.append(_compare_phase(plan))
 
     print(f"\n{'=' * 60}")
     print(
         f"Shadow run 完成! 共执行 {len(jobs_to_run)} 个作业, 目标库: {qa_db}"
     )
-    return {
-        "status": "completed",
-        "qa_db": qa_db,
-        "job_count": len(jobs_to_run),
-    }
+    return _shadow_result(
+        plan,
+        mode="execute",
+        status="completed",
+        phases=phases,
+    )
 
 
 def run_shadow_plan(
@@ -917,8 +1149,8 @@ def main(argv: list[str] | None = None) -> int:
         if args.output
         else plan_path.parent / "shadow_run_result.json"
     )
-    run_shadow_plan(plan_path, output_path, dry_run=args.dry_run)
-    return 0
+    result = run_shadow_plan(plan_path, output_path, dry_run=args.dry_run)
+    return 1 if result.get("status") == "failed" else 0
 
 
 if __name__ == "__main__":

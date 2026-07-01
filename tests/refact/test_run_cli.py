@@ -211,3 +211,23 @@ def test_shadow_run_and_compare_delegate_to_plan_handlers(
     assert calls[0][1] == plan_path
     assert calls[1][0] == "compare"
     assert calls[1][1] == plan_path
+
+
+def test_shadow_run_cli_reports_handler_failure(tmp_path, monkeypatch):
+    manifest_path, manifest = create_run_manifest(
+        tmp_path,
+        "shop",
+        now=datetime(2026, 6, 20, 7, 30, tzinfo=timezone.utc),
+        git_info={},
+    )
+    write_manifest(manifest_path, manifest)
+    plan_path = manifest_path.parent / "verification" / "plan.json"
+    _write_json(plan_path, {"project": "shop"})
+
+    def fake_shadow(plan, output, dry_run=False):
+        _write_json(output, {"status": "failed"})
+        return {"status": "failed"}
+
+    monkeypatch.setattr(run_cli, "run_shadow_plan", fake_shadow)
+
+    assert run_cli.main(["shadow-run", "--manifest", str(manifest_path)]) == 1

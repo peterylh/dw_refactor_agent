@@ -169,12 +169,12 @@ def _analyze(args) -> int:
 
 def _shadow_run(args) -> int:
     manifest_path = Path(args.manifest)
-    run_shadow_plan(
+    result = run_shadow_plan(
         artifact_path(manifest_path, "verification_plan"),
         artifact_path(manifest_path, "shadow_run_result"),
         dry_run=args.dry_run,
     )
-    return 0
+    return 1 if result.get("status") == "failed" else 0
 
 
 def _compare(args) -> int:

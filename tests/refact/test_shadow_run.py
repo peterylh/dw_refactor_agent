@@ -7,10 +7,12 @@ from sqlglot import exp
 from sqlglot.errors import ErrorLevel
 
 from refact.shadow_run import (
+    ShadowRunSqlError,
     _ddl_change_statements,
     _get_dml_target,
     _wait_for_table_alter_jobs,
     execute_shadow_plan,
+    main,
     rewrite_sql,
     run_shadow_plan,
 )
@@ -406,6 +408,213 @@ def test_run_shadow_plan_executes_self_contained(tmp_path, monkeypatch):
     result = run_shadow_plan(plan_path, output_path)
 
     assert result["status"] == "completed"
+    assert result["mode"] == "execute"
     assert result["job_count"] == 1
+    assert result["summary"]["job_count"] == 1
+    assert result["summary"]["failed_job_count"] == 0
+    phase_by_name = {phase["name"]: phase for phase in result["phases"]}
+    assert phase_by_name["run_jobs"]["jobs"] == [
+        {
+            "job": "dwd_order_detail",
+            "file": "shop/tasks/dwd_order_detail.sql",
+            "layer": "DWD",
+            "target": "dwd_order_detail",
+            "needs_etl_date": False,
+            "status": "success",
+            "error": None,
+        }
+    ]
+    assert phase_by_name["compare"] == {
+        "name": "compare",
+        "status": "not_run",
+        "checks": [],
+    }
     assert any(call[0] == "text" for call in calls)
+    assert json.loads(output_path.read_text(encoding="utf-8")) == result
+
+
+def test_run_shadow_plan_persists_failed_job_result(tmp_path, monkeypatch):
+    job_file = tmp_path / "shop" / "tasks" / "dwd_order_detail.sql"
+    job_file.parent.mkdir(parents=True)
+    job_file.write_text(
+        "INSERT INTO shop_dm.dwd_order_detail SELECT * FROM shop_dm.ods_order",
+        encoding="utf-8",
+    )
+    plan_path = tmp_path / "verification" / "plan.json"
+    output_path = tmp_path / "verification" / "shadow_run_result.json"
+    _write_json(
+        plan_path,
+        {
+            "project": "shop",
+            "project_db": "shop_dm",
+            "qa_db": "shop_dm_qa",
+            "baseline_ddl": {},
+            "ddl_changes": [],
+            "partition_info": {},
+            "jobs_to_run": [
+                {
+                    "job": "dwd_order_detail",
+                    "file": "shop/tasks/dwd_order_detail.sql",
+                    "layer": "DWD",
+                }
+            ],
+            "verification": {
+                "checks": [{"table": "ads_sales_dashboard", "method": "count"}]
+            },
+        },
+    )
+
+    monkeypatch.setattr("refact.shadow_run._project_root", lambda: tmp_path)
+    monkeypatch.setattr(
+        "refact.shadow_run.run_sql",
+        lambda sql, db="", qa=False: "",
+    )
+    monkeypatch.setattr(
+        "refact.shadow_run.run_sql_text",
+        lambda sql, db="", qa=False: (_ for _ in ()).throw(
+            ShadowRunSqlError("insert failed")
+        ),
+    )
+
+    result = run_shadow_plan(plan_path, output_path)
+
+    assert result["status"] == "failed"
+    assert result["mode"] == "execute"
+    assert result["summary"]["failed_job_count"] == 1
+    phase_by_name = {phase["name"]: phase for phase in result["phases"]}
+    assert phase_by_name["run_jobs"]["status"] == "failed"
+    assert phase_by_name["run_jobs"]["jobs"] == [
+        {
+            "job": "dwd_order_detail",
+            "file": "shop/tasks/dwd_order_detail.sql",
+            "layer": "DWD",
+            "target": "dwd_order_detail",
+            "needs_etl_date": False,
+            "status": "failed",
+            "error": "insert failed",
+        }
+    ]
+    assert phase_by_name["compare"]["status"] == "not_run"
+    assert json.loads(output_path.read_text(encoding="utf-8")) == result
+
+
+def test_shadow_run_cli_returns_nonzero_for_failed_result(
+    tmp_path, monkeypatch
+):
+    plan_path = tmp_path / "verification" / "plan.json"
+    output_path = tmp_path / "verification" / "shadow_run_result.json"
+    _write_json(plan_path, {"project": "shop"})
+
+    monkeypatch.setattr(
+        "refact.shadow_run.run_shadow_plan",
+        lambda plan, output, dry_run=False: {"status": "failed"},
+    )
+
+    assert main(["--plan", str(plan_path), "--output", str(output_path)]) == 1
+
+
+def test_run_shadow_plan_dry_run_persists_phase_summary(tmp_path, monkeypatch):
+    job_file = tmp_path / "shop" / "tasks" / "M_SHOP_05_INV_DF.sql"
+    job_file.parent.mkdir(parents=True)
+    job_file.write_text(
+        (
+            "SET @etl_date = COALESCE(@etl_date, CURDATE());\n"
+            "INSERT INTO shop_dm.M_SHOP_05_INV_DF "
+            "SELECT * FROM shop_dm.ods_inventory"
+        ),
+        encoding="utf-8",
+    )
+    plan_path = tmp_path / "verification" / "plan.json"
+    output_path = tmp_path / "verification" / "shadow_run_result.json"
+    plan = {
+        "project": "shop",
+        "project_db": "shop_dm",
+        "qa_db": "shop_dm_qa",
+        "baseline_ddl": {
+            "dwd_inventory": "CREATE TABLE shop_dm.dwd_inventory (id INT)"
+        },
+        "ddl_changes": [
+            {
+                "change_type": "RENAME",
+                "sql": (
+                    "ALTER TABLE shop_dm.dwd_inventory "
+                    "RENAME M_SHOP_05_INV_DF;"
+                ),
+                "old_name": "shop_dm.dwd_inventory",
+                "new_name": "shop_dm.M_SHOP_05_INV_DF",
+            }
+        ],
+        "partition_info": {"etl_date": "2025-01-15"},
+        "jobs_to_run": [
+            {
+                "job": "M_SHOP_05_INV_DF",
+                "file": "shop/tasks/M_SHOP_05_INV_DF.sql",
+                "layer": "DWD",
+                "target": "M_SHOP_05_INV_DF",
+                "needs_etl_date": True,
+            }
+        ],
+        "verification": {
+            "checks": [
+                {"table": "dws_inventory_daily", "method": "count"},
+                {"table": "dws_inventory_daily", "method": "row_compare"},
+            ]
+        },
+    }
+    _write_json(plan_path, plan)
+
+    monkeypatch.setattr("refact.shadow_run._project_root", lambda: tmp_path)
+
+    result = run_shadow_plan(plan_path, output_path, dry_run=True)
+
+    assert result["status"] == "dry_run"
+    assert result["mode"] == "dry_run"
+    assert result["summary"] == {
+        "baseline_table_count": 1,
+        "ddl_change_count": 1,
+        "job_count": 1,
+        "check_count": 2,
+        "failed_job_count": 0,
+        "failed_ddl_change_count": 0,
+        "failed_check_count": 0,
+    }
+    phase_by_name = {phase["name"]: phase for phase in result["phases"]}
+    assert phase_by_name["reset_qa_db"]["actions"] == [
+        "DROP DATABASE IF EXISTS shop_dm_qa",
+        "CREATE DATABASE shop_dm_qa",
+    ]
+    assert phase_by_name["create_baseline_tables"]["tables"] == [
+        {"table": "dwd_inventory", "status": "dry_run"}
+    ]
+    assert phase_by_name["apply_ddl_changes"]["ddl_changes"] == [
+        {
+            "change_type": "RENAME",
+            "sql": (
+                "ALTER TABLE shop_dm.dwd_inventory RENAME M_SHOP_05_INV_DF;"
+            ),
+            "old_name": "shop_dm.dwd_inventory",
+            "new_name": "shop_dm.M_SHOP_05_INV_DF",
+            "status": "dry_run",
+            "error": None,
+        }
+    ]
+    assert phase_by_name["run_jobs"]["jobs"][0]["job"] == "M_SHOP_05_INV_DF"
+    assert phase_by_name["run_jobs"]["jobs"][0]["status"] == "dry_run"
+    assert phase_by_name["compare"]["status"] == "not_run"
+    assert phase_by_name["compare"]["checks"] == [
+        {
+            "table": "dws_inventory_daily",
+            "method": "count",
+            "status": "not_run",
+            "partition_col": None,
+            "partition_value": None,
+        },
+        {
+            "table": "dws_inventory_daily",
+            "method": "row_compare",
+            "status": "not_run",
+            "partition_col": None,
+            "partition_value": None,
+        },
+    ]
     assert json.loads(output_path.read_text(encoding="utf-8")) == result
