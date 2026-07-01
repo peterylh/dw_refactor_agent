@@ -38,6 +38,8 @@
 
 - `--project shop|finance_analytics`
 - `--parallel <n>`：task 文件级并行度
+- `--output <path>`：指定血缘 JSON 输出文件，默认
+  `{project}/lineage/lineage_data.json`
 - `--cache-file <path>`：指定 task 级血缘缓存文件，默认
   `{project}/lineage/task_lineage_cache.json`
 - `--no-cache`：禁用 task 级血缘缓存
