@@ -176,14 +176,18 @@ def build_rule_summary(
 
 def issue_fingerprint(dimension: str, check: dict[str, Any]) -> str:
     target = check.get("target") or {}
+    target_type = str(target.get("type") or "")
+    target_name = str(target.get("name") or "")
+    if target_type in {"column", "metric"} and target.get("qualified_name"):
+        target_name = str(target.get("qualified_name") or "")
     parts = [
         dimension,
         str(check.get("rule_id") or ""),
-        str(target.get("type") or ""),
-        str(target.get("name") or ""),
+        target_type,
+        target_name,
     ]
     discriminator = str(check.get("_fingerprint_discriminator") or "").strip()
-    if discriminator:
+    if discriminator and target_name == str(target.get("name") or ""):
         parts.append(discriminator)
     return "|".join(parts)
 
@@ -252,3 +256,336 @@ def finalize_dimension(
     if summary:
         result["summary"] = summary
     return result
+
+
+DIAGNOSTIC_CONTRACT = {
+    "primary_entry": "dimensions.*.issues",
+    "stable_identity": "issues[].fingerprint",
+    "issue_id_scope": "report_local",
+    "remediation_source": "issues[].remediation",
+    "diagnostic_source": "issues[].diagnostic",
+    "rule_summary_source": "dimensions.*.rule_summary",
+}
+
+
+def compact_assessment_result(result: dict[str, Any]) -> dict[str, Any]:
+    """Return the default issue-primary assessment JSON shape."""
+    compact = deepcopy(result)
+    compact["diagnostic_contract"] = deepcopy(DIAGNOSTIC_CONTRACT)
+
+    for dimension_name, dimension in (compact.get("dimensions") or {}).items():
+        checks_by_id = {
+            check.get("id"): check for check in dimension.get("checks") or []
+        }
+        diagnostic_catalog = {}
+        for issue in dimension.get("issues") or []:
+            check = _issue_check(issue, checks_by_id)
+            if check:
+                diagnostic = _compact_issue_diagnostic(
+                    dimension_name,
+                    check,
+                    diagnostic_catalog,
+                )
+                if diagnostic:
+                    issue["diagnostic"] = diagnostic
+            issue.pop("check_ids", None)
+
+        dimension.pop("checks", None)
+        if diagnostic_catalog:
+            dimension["diagnostic_catalog"] = {
+                "naming_rules": dict(sorted(diagnostic_catalog.items()))
+            }
+
+    return compact
+
+
+def _issue_check(
+    issue: dict[str, Any],
+    checks_by_id: dict[str, dict[str, Any]],
+) -> dict[str, Any] | None:
+    for check_id in issue.get("check_ids") or []:
+        check = checks_by_id.get(check_id)
+        if check:
+            return check
+    return None
+
+
+def _compact_issue_diagnostic(
+    dimension_name: str,
+    check: dict[str, Any],
+    diagnostic_catalog: dict[str, Any],
+) -> dict[str, Any]:
+    if dimension_name == "naming" and check.get("diagnostic"):
+        return _compact_naming_diagnostic(check, diagnostic_catalog)
+
+    diagnostic = {}
+    if check.get("expected") not in (None, "", [], {}):
+        diagnostic["expected"] = deepcopy(check["expected"])
+    if check.get("actual") not in (None, "", [], {}):
+        diagnostic["actual"] = deepcopy(check["actual"])
+    evidence = {}
+    if check.get("evidence") not in (None, "", [], {}):
+        evidence.update(deepcopy(check["evidence"]))
+    if check.get("diagnostic") not in (None, "", [], {}):
+        evidence["raw"] = deepcopy(check["diagnostic"])
+    if evidence:
+        diagnostic["evidence"] = evidence
+    return diagnostic
+
+
+def _compact_naming_diagnostic(
+    check: dict[str, Any],
+    diagnostic_catalog: dict[str, Any],
+) -> dict[str, Any]:
+    raw = check.get("diagnostic") or {}
+    diagnostic = {}
+    expected = _compact_naming_expected(check.get("expected"))
+    if expected not in (None, "", [], {}):
+        diagnostic["expected"] = expected
+
+    if check.get("actual") not in (None, "", [], {}):
+        diagnostic["actual"] = deepcopy(check["actual"])
+
+    evidence = {}
+    if raw.get("code"):
+        evidence["code"] = raw["code"]
+
+    attempts = []
+    for attempt in raw.get("attempts") or []:
+        compact_attempt = _compact_naming_attempt(
+            attempt,
+            diagnostic_catalog,
+        )
+        if compact_attempt:
+            attempts.append(compact_attempt)
+    if attempts:
+        evidence["attempts"] = attempts
+
+    failure = _compact_naming_failure(raw.get("failure"), {})
+    if failure:
+        evidence["failure"] = failure
+
+    for key in ("actual_length", "max_length"):
+        if raw.get(key) not in (None, "", [], {}):
+            evidence[key] = raw[key]
+
+    if evidence:
+        diagnostic["evidence"] = evidence
+
+    return diagnostic
+
+
+def _compact_naming_expected(value: Any) -> Any:
+    if not isinstance(value, dict):
+        return deepcopy(value)
+
+    compact = {}
+    if value.get("description"):
+        compact["description"] = value["description"]
+
+    rule_refs = _naming_expected_rule_refs(value)
+    if rule_refs:
+        compact["rule_refs"] = rule_refs
+
+    return compact
+
+
+def _naming_expected_rule_refs(value: dict[str, Any]) -> list[str]:
+    refs = value.get("rule_refs") or value.get("rule_names") or []
+    if not refs:
+        refs = []
+        for attempt in value.get("attempts") or []:
+            rule_ref = (
+                attempt.get("rule_ref")
+                or attempt.get("rule_name")
+                or (attempt.get("rule") or {}).get("name")
+            )
+            if rule_ref:
+                refs.append(rule_ref)
+
+    unique_refs = []
+    seen = set()
+    for ref in refs:
+        ref_text = str(ref).strip()
+        if ref_text and ref_text not in seen:
+            unique_refs.append(ref_text)
+            seen.add(ref_text)
+    return unique_refs
+
+
+def _compact_naming_attempt(
+    attempt: dict[str, Any],
+    diagnostic_catalog: dict[str, Any],
+) -> dict[str, Any]:
+    rule = attempt.get("rule") or {}
+    rule_ref = str(rule.get("name") or "").strip()
+    if rule_ref:
+        _add_naming_rule_catalog(rule_ref, attempt, diagnostic_catalog)
+
+    position_index = _segment_position_index(
+        attempt.get("segments") or attempt.get("nodes") or []
+    )
+    failure = _compact_naming_failure(
+        attempt.get("failure"),
+        position_index,
+    )
+    compact = {}
+    if rule_ref:
+        compact["rule_ref"] = rule_ref
+    if failure:
+        compact["failure"] = failure
+    return compact
+
+
+def _add_naming_rule_catalog(
+    rule_ref: str,
+    attempt: dict[str, Any],
+    diagnostic_catalog: dict[str, Any],
+) -> None:
+    if rule_ref in diagnostic_catalog:
+        return
+
+    item = {}
+    if attempt.get("expression"):
+        item["expression"] = attempt["expression"]
+
+    segments = _catalog_segments(attempt.get("segments") or [])
+    if segments:
+        item["segments"] = segments
+
+    nodes = _catalog_segments(attempt.get("nodes") or [])
+    if nodes:
+        item["nodes"] = nodes
+
+    if item:
+        diagnostic_catalog[rule_ref] = item
+
+
+def _catalog_segments(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    catalog = []
+    ordinal = 0
+    for item in items or []:
+        if not _include_catalog_segment(item):
+            continue
+        ordinal += 1
+        catalog.append(_compact_catalog_segment(item, ordinal))
+    return catalog
+
+
+def _segment_position_index(
+    items: list[dict[str, Any]],
+) -> dict[int, dict[str, Any]]:
+    index = {}
+    ordinal = 0
+    for item in items or []:
+        if not _include_catalog_segment(item):
+            continue
+        ordinal += 1
+        position = item.get("position")
+        if position is None:
+            position = ordinal
+        index[int(position)] = {
+            "name": str(item.get("name") or ""),
+            "ordinal": ordinal,
+        }
+    return index
+
+
+def _include_catalog_segment(item: dict[str, Any]) -> bool:
+    kind = item.get("kind")
+    name = str(item.get("name") or "")
+    if kind in {"type", "rule"}:
+        return bool(name)
+    if kind == "literal":
+        return bool(name and name != "_")
+    return False
+
+
+def _compact_catalog_segment(
+    item: dict[str, Any],
+    ordinal: int,
+) -> dict[str, Any]:
+    segment = {
+        "name": str(item.get("name") or ""),
+        "ordinal": ordinal,
+        "kind": item.get("kind"),
+    }
+    if item.get("repeat"):
+        segment["repeat"] = deepcopy(item["repeat"])
+
+    type_def = item.get("type") or {}
+    for key in ("label", "allow", "patterns", "values_from"):
+        if type_def.get(key) not in (None, "", [], {}):
+            segment[key] = deepcopy(type_def[key])
+
+    return {key: value for key, value in segment.items() if value}
+
+
+def _compact_naming_failure(
+    failure: dict[str, Any] | None,
+    position_index: dict[int, dict[str, Any]],
+) -> dict[str, Any]:
+    if not isinstance(failure, dict):
+        return {}
+
+    compact = {}
+    if failure.get("code"):
+        compact["code"] = failure["code"]
+
+    segment = _failure_segment(failure, position_index)
+    if segment:
+        compact["segment"] = segment
+
+    expected = _compact_failure_expected(failure.get("expected"))
+    if expected not in (None, "", [], {}):
+        compact["expected"] = expected
+
+    actual = failure.get("actual")
+    if actual in (None, "", [], {}):
+        actual = failure.get("actual_remaining")
+    if actual not in (None, "", [], {}):
+        compact["actual"] = actual
+
+    if failure.get("message"):
+        compact["message"] = failure["message"]
+    if failure.get("paths"):
+        compact["paths"] = deepcopy(failure["paths"])
+
+    return compact
+
+
+def _failure_segment(
+    failure: dict[str, Any],
+    position_index: dict[int, dict[str, Any]],
+) -> dict[str, Any]:
+    raw_segment = failure.get("segment") or {}
+    if not isinstance(raw_segment, dict):
+        return {}
+    position = raw_segment.get("position") or failure.get("position")
+    if position is not None:
+        segment = position_index.get(int(position))
+        if segment:
+            return segment
+
+    if not _include_catalog_segment(raw_segment):
+        return {}
+    return {
+        "name": str(raw_segment.get("name") or ""),
+        "ordinal": int(position or 1),
+    }
+
+
+def _compact_failure_expected(value: Any) -> Any:
+    if not isinstance(value, list):
+        return deepcopy(value)
+    return [_compact_expected_item(item) for item in value]
+
+
+def _compact_expected_item(item: Any) -> Any:
+    if not isinstance(item, dict):
+        return deepcopy(item)
+    compact = {}
+    for key in ("kind", "name", "repeat"):
+        if item.get(key) not in (None, "", [], {}):
+            compact[key] = deepcopy(item[key])
+    return compact or deepcopy(item)

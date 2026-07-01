@@ -27,7 +27,7 @@ overall_score = sum(维度权重 * 维度得分) / 选中维度权重之和
 
 默认权重来自 `assess/scoring/config.py` 的 `DEFAULT_WEIGHTS`。CLI 支持用 `--reuse-weight`、`--depth-weight`、`--model-design-weight`、`--naming-weight`、`--asset-completeness-weight`、`--metadata-health-weight`、`--code-quality-weight` 覆盖；覆盖后会自动归一化。
 
-当只选择部分维度运行时，整体评分只使用被选中的维度及其权重。默认输出会过滤已通过的 `checks`，只保留和 `issues` 相关的失败检查；`--include-passed-checks` 只影响输出明细，不影响得分。
+当只选择部分维度运行时，整体评分只使用被选中的维度及其权重。默认 JSON 以 `issues` 为诊断入口，不输出规则内部 `checks` 明细；失败检查中的必要证据会精简后写入对应 issue 的 `diagnostic`。
 
 ## 复用度 `reuse`
 
@@ -209,7 +209,9 @@ score = 通过检查数 / 总检查数 * 100
 
 - `score`: 维度得分。
 - `rule_summary`: 按规则汇总的通过数、总数和通过率。
-- `checks`: 检查项明细，默认结果中只保留失败检查；使用 `--include-passed-checks` 可输出全部检查。
-- `issues`: 由失败检查生成的问题项，包含严重度、规则、目标、修复摘要和关联 `check_ids`。
+- `issues`: 由失败检查生成的问题项，是默认 JSON 的诊断入口。每个 issue 包含严重度、规则、目标、修复摘要和精简后的 `diagnostic` 证据。`diagnostic` 统一使用 `expected`、`actual`、`evidence` 三段；命名解析尝试放在 `diagnostic.evidence.attempts` 中。
+- `diagnostic_catalog`: 可选。当前主要用于命名规范，将重复的命名模板、字段模板和指标模板结构按规则去重存放；issue 通过 `diagnostic.evidence.attempts[].rule_ref` 引用。
+
+顶层 `diagnostic_contract` 说明默认报告的读取约定：`issues[].fingerprint` 是跨次对比的稳定身份，`issues[].id` 仅是本次报告内的短编号，修复入口是 `issues[].remediation`，诊断证据入口是 `issues[].diagnostic`。
 
 严重度用于描述修复优先级；除 `model_design` 外，严重度不参与维度分数计算。

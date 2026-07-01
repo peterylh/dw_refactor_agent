@@ -204,23 +204,23 @@ def test_assess_returns_dimension_check_issue_model(
         assert set(dimension) >= {
             "score",
             "rule_summary",
-            "checks",
             "issues",
         }
+        assert "checks" not in dimension
     assert result["dimensions"]["model_design"]["score"] == 50.0
     assert (
         result["dimensions"]["model_design"]["issues"][0]["severity"] == "中"
     )
     assert result["dimensions"]["asset_completeness"]["issues"] == []
-    assert result["dimensions"]["asset_completeness"]["checks"] == []
-    assert all(
-        not check["passed"]
-        for dimension in result["dimensions"].values()
-        for check in dimension["checks"]
+    assert result["diagnostic_contract"]["primary_entry"] == (
+        "dimensions.*.issues"
+    )
+    assert result["diagnostic_contract"]["stable_identity"] == (
+        "issues[].fingerprint"
     )
 
 
-def test_assess_can_include_passed_checks(
+def test_assess_omits_checks_from_default_output(
     monkeypatch, sample_lineage_data, isolated_assess_project
 ):
     data = dict(sample_lineage_data)
@@ -237,25 +237,13 @@ def test_assess_can_include_passed_checks(
         lambda project: data,
     )
 
-    result = assess(
-        project=isolated_assess_project,
-        include_passed_checks=True,
-    )
+    result = assess(project=isolated_assess_project)
 
-    assert any(
-        check["passed"]
-        for dimension in result["dimensions"].values()
-        for check in dimension["checks"]
-    )
-    assert any(
-        not check["passed"]
-        for check in result["dimensions"]["model_design"]["checks"]
-    )
     assert all(
-        check["rule_id"] != "ARCH_ALLOWED_DEPENDENCY"
+        "checks" not in dimension
         for dimension in result["dimensions"].values()
-        for check in dimension["checks"]
     )
+    assert result["dimensions"]["model_design"]["issues"]
 
 
 def test_assess_can_run_selected_model_design_only(
@@ -1553,8 +1541,7 @@ def test_naming_diagnostics_are_agent_actionable():
         if issue["rule_id"] == "NAMING_COLUMN_NAME"
     )
     assert column_issue["fingerprint"] == (
-        "naming|NAMING_COLUMN_NAME|column|customer_id|"
-        "column:dwd_customer.customer_id"
+        "naming|NAMING_COLUMN_NAME|column|dwd_customer.customer_id"
     )
 
 

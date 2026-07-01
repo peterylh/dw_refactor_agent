@@ -9,7 +9,6 @@
     python assess/assess_middle_layer.py --output report.json
     python assess/assess_middle_layer.py --reuse-weight 0.3
     python assess/assess_middle_layer.py --reuse-weight 0.3 --depth-weight 0.2
-    python assess/assess_middle_layer.py --include-passed-checks
 """
 
 from __future__ import annotations
@@ -29,6 +28,7 @@ from assess.assessment_context import AssessmentContext
 from assess.llm.context_builder import build_contexts
 from assess.llm.table_inspector import TableInspector
 from assess.report import generate_report
+from assess.result_model import compact_assessment_result
 from assess.rules import RuleSelection, rule_specs_by_id
 from assess.rules.dimensions.asset_completeness import (
     score_asset_completeness,
@@ -91,36 +91,10 @@ def build_rule_selection(
     return RuleSelection(disabled=disabled, only=only)
 
 
-def _filter_dimension_checks(
-    dimensions: dict,
-    *,
-    include_passed_checks: bool,
-) -> dict:
-    if include_passed_checks:
-        return dimensions
-
-    filtered = {}
-    for name, dimension in dimensions.items():
-        issue_check_ids = {
-            check_id
-            for issue in dimension.get("issues", [])
-            for check_id in issue.get("check_ids", [])
-        }
-        compact_dimension = dict(dimension)
-        compact_dimension["checks"] = [
-            check
-            for check in dimension.get("checks", [])
-            if check.get("id") in issue_check_ids
-        ]
-        filtered[name] = compact_dimension
-    return filtered
-
-
 def assess(
     project: str,
     weights: dict = None,
     *,
-    include_passed_checks: bool = False,
     selected_dimensions: set[str] | list[str] | tuple[str, ...] | None = None,
     disabled_rules: set[str] | list[str] | tuple[str, ...] | None = None,
     only_rules: set[str] | list[str] | tuple[str, ...] | None = None,
@@ -249,16 +223,12 @@ def assess(
         / selected_weight_total,
         1,
     )
-    output_dimensions = _filter_dimension_checks(
-        dimensions,
-        include_passed_checks=include_passed_checks,
-    )
 
     result = dict(
         project=project,
         overall_score=overall_score,
         weights=weights,
-        dimensions=output_dimensions,
+        dimensions=dimensions,
     )
     if scope:
         result["scope"] = scope
@@ -269,7 +239,7 @@ def assess(
             "scope_local",
         )
         result["scope_plan"] = scope_plan
-    return result
+    return compact_assessment_result(result)
 
 
 def main():
@@ -342,11 +312,6 @@ def main():
         "--parallel", type=int, default=2, help="LLM 并发调用数，默认 2"
     )
     parser.add_argument(
-        "--include-passed-checks",
-        action="store_true",
-        help="输出通过检查项的完整 checks 证据；默认只输出 issue 关联的失败 checks",
-    )
-    parser.add_argument(
         "--disable-rule",
         action="append",
         default=[],
@@ -413,7 +378,6 @@ def main():
     result = assess(
         args.project,
         weights,
-        include_passed_checks=args.include_passed_checks,
         selected_dimensions=selected_dimensions,
         disabled_rules=args.disable_rule,
         only_rules=args.only_rule,

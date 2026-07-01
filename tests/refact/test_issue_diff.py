@@ -98,6 +98,67 @@ def test_diff_assess_results_filters_baseline_by_scope_plan():
     ]
 
 
+def test_diff_assess_results_filters_column_issue_by_qualified_name():
+    baseline = {
+        "overall_score": 40.0,
+        "dimensions": {
+            "naming": {
+                "score": 40.0,
+                "issues": [
+                    {
+                        "fingerprint": (
+                            "naming|NAMING_COLUMN_NAME|column|"
+                            "dwd_order.customer_id"
+                        ),
+                        "title": "bad customer id",
+                        "target": {
+                            "type": "column",
+                            "name": "customer_id",
+                            "qualified_name": "dwd_order.customer_id",
+                        },
+                    },
+                    {
+                        "fingerprint": (
+                            "naming|NAMING_COLUMN_NAME|column|"
+                            "dwd_customer.customer_id"
+                        ),
+                        "title": "other bad customer id",
+                        "target": {
+                            "type": "column",
+                            "name": "customer_id",
+                            "qualified_name": "dwd_customer.customer_id",
+                        },
+                    },
+                ],
+            }
+        },
+    }
+    current = {
+        "overall_score": 100.0,
+        "dimensions": {"naming": {"score": 100.0, "issues": []}},
+    }
+    scope_plan = {
+        "dimensions": {
+            "naming": {
+                "mode": "scoped",
+                "tables": ["dwd_order"],
+                "tasks": [],
+            }
+        }
+    }
+
+    result = diff_assess_results(
+        baseline,
+        current,
+        scope_plan=scope_plan,
+    )
+
+    assert result["summary"]["baseline_issue_count"] == 1
+    assert [issue["fingerprint"] for issue in result["fixed_issues"]] == [
+        "naming|NAMING_COLUMN_NAME|column|dwd_order.customer_id"
+    ]
+
+
 def test_diff_assess_results_filters_task_path_by_job_name():
     baseline = {
         "overall_score": 40.0,

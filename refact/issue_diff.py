@@ -216,8 +216,12 @@ def _scope_name(name: str) -> str:
 def _target_table_name(target: dict) -> str:
     name = str(target.get("name") or "").strip()
     target_type = str(target.get("type") or "").strip()
-    if target_type in {"column", "metric"} and "." in name:
-        return name.split(".", 1)[0]
+    if target_type in {"column", "metric"}:
+        qualified_name = str(target.get("qualified_name") or "").strip()
+        if "." in qualified_name:
+            return qualified_name.split(".", 1)[0]
+        if "." in name:
+            return name.split(".", 1)[0]
     if target_type in {"file", "task"}:
         return _scope_name(name)
     return name
