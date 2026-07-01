@@ -4325,6 +4325,13 @@ def main():
         help="存在严重错误时仍覆盖写出 lineage_data 文件",
     )
     parser.add_argument(
+        "--output",
+        default=None,
+        help=(
+            "血缘 JSON 输出文件; 默认使用 {project}/lineage/lineage_data.json"
+        ),
+    )
+    parser.add_argument(
         "--cache-file",
         default=None,
         help=(
@@ -4407,7 +4414,11 @@ def main():
         for line in warning_lines:
             print(line)
 
-    output_path = lineage_data_path(CURRENT_PROJECT)
+    output_path = (
+        Path(args.output)
+        if args.output
+        else lineage_data_path(CURRENT_PROJECT)
+    )
     output_paths = [output_path]
 
     diagnostics = extraction_result["errors"]
