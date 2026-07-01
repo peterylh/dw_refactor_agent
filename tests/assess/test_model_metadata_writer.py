@@ -1,3 +1,4 @@
+import json
 import sys
 
 import pytest
@@ -15,6 +16,7 @@ from assess.llm.model_metadata_writer import (
     result_for_report,
     run_catalog_discovery,
     run_catalog_metadata_write,
+    run_direct_model_generation,
     run_metadata_write,
     update_model_yaml,
 )
@@ -2713,6 +2715,1249 @@ def test_run_catalog_metadata_write_enriches_existing_model_business_codes(
     assert model["business_process"] == "ORDER_DETAIL"
     assert model["data_domain"] == "04"
     assert model["business_area"] == "SHOP"
+
+
+def test_run_direct_model_generation_assigns_catalog_refs_from_assets(
+    tmp_path, monkeypatch
+):
+    project = "direct_model_writer"
+    project_dir = tmp_path / project
+    (project_dir / "ddl").mkdir(parents=True)
+    (project_dir / "tasks").mkdir()
+    (project_dir / "lineage").mkdir()
+    (tmp_path / "naming_config.yaml").write_text(
+        "types: {}\nbindings: {}\ndictionaries: {}\n",
+        encoding="utf-8",
+    )
+    (project_dir / "business_semantics.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "version": 1,
+                "project": project,
+                "data_domains": [
+                    {"id": "03", "code": "STORE", "name": "门店域"},
+                    {"id": "04", "code": "ORDER", "name": "订单域"},
+                ],
+                "business_areas": [
+                    {"id": "SHOP", "code": "SHOP", "name": "零售业务"}
+                ],
+                "business_processes": [
+                    {
+                        "code": "ORDER_DETAIL",
+                        "name": "订单明细",
+                        "data_domain": "04",
+                        "business_area": "SHOP",
+                    }
+                ],
+                "semantic_subjects": [
+                    {
+                        "code": "STORE",
+                        "name": "门店",
+                        "data_domain": "03",
+                        "business_area": "SHOP",
+                    },
+                    {
+                        "code": "PROMOTION",
+                        "name": "促销活动",
+                        "data_domain": "04",
+                        "business_area": "SHOP",
+                    }
+                ],
+            },
+            allow_unicode=True,
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    (project_dir / "ddl" / "dwd_order_detail.sql").write_text(
+        """
+        -- DWD 订单明细事实表
+            CREATE TABLE dwd_order_detail (
+                order_id BIGINT,
+                store_id BIGINT,
+                promotion_id BIGINT,
+                pay_amount DECIMAL(12,2)
+            );
+        """,
+        encoding="utf-8",
+    )
+    (project_dir / "ddl" / "dws_store_sales_daily.sql").write_text(
+        """
+        -- DWS 门店销售日汇总
+        CREATE TABLE dws_store_sales_daily (
+            store_id BIGINT,
+            stat_date DATE,
+            order_count BIGINT,
+            pay_amount DECIMAL(12,2)
+        );
+        """,
+        encoding="utf-8",
+    )
+    (project_dir / "ddl" / "dim_store.sql").write_text(
+        """
+        -- DIM 门店维度表
+        CREATE TABLE dim_store (
+            store_id BIGINT,
+            store_name VARCHAR(64)
+        );
+        """,
+        encoding="utf-8",
+    )
+    (project_dir / "tasks" / "dws_store_sales_daily.sql").write_text(
+        """
+        INSERT INTO dws_store_sales_daily
+        SELECT store_id, order_date AS stat_date, COUNT(*) AS order_count,
+               SUM(pay_amount) AS pay_amount
+        FROM dwd_order_detail
+        GROUP BY store_id, order_date;
+        """,
+        encoding="utf-8",
+    )
+    (project_dir / "lineage" / "lineage_data.json").write_text(
+        json.dumps(
+            {
+                "tables": [
+                    {"name": "dwd_order_detail", "layer": "DWD"},
+                    {"name": "dws_store_sales_daily", "layer": "DWS"},
+                    {"name": "dim_store", "layer": "DIM"},
+                ],
+                "edges": [
+                    {
+                        "source": "dwd_order_detail.store_id",
+                        "target": "dws_store_sales_daily.store_id",
+                        "expression": "store_id",
+                        "source_file": "dws_store_sales_daily.sql",
+                    },
+                    {
+                        "source": "dwd_order_detail.order_id",
+                        "target": "dws_store_sales_daily.order_count",
+                        "expression": "COUNT(*)",
+                        "source_file": "dws_store_sales_daily.sql",
+                    },
+                ],
+                "indirect_edges": [],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    _configure_project_root(monkeypatch, tmp_path)
+    monkeypatch.setitem(
+        config.PROJECT_CONFIG,
+        project,
+        {
+            "dir": project,
+            "naming_config": "naming_config.yaml",
+        },
+    )
+
+    result = run_direct_model_generation(project, dry_run=False)
+
+    models_dir = project_dir / "models"
+    dwd_model = yaml.safe_load(
+        (models_dir / "dwd_order_detail.yaml").read_text(encoding="utf-8")
+    )
+    dws_model = yaml.safe_load(
+        (models_dir / "dws_store_sales_daily.yaml").read_text(
+            encoding="utf-8"
+        )
+    )
+    dim_model = yaml.safe_load(
+        (models_dir / "dim_store.yaml").read_text(encoding="utf-8")
+    )
+    assert result["source"] == "direct_generation"
+    assert result["model_update_count"] == 3
+    assert result["assigned_business_process_count"] == 2
+    assert result["assigned_semantic_subject_count"] == 1
+    assert dwd_model["table_type"] == "fact"
+    assert dwd_model["business_process"] == "ORDER_DETAIL"
+    assert dwd_model["data_domain"] == "04"
+    assert dwd_model["business_area"] == "SHOP"
+    assert dwd_model["entities"] == [
+        {
+            "code": "STORE",
+            "type": "foreign",
+            "name": "门店",
+            "key_columns": ["store_id"],
+        },
+        {
+            "code": "PROMOTION",
+            "type": "foreign",
+            "name": "促销活动",
+            "key_columns": ["promotion_id"],
+        }
+    ]
+    assert dws_model["business_process"] == "ORDER_DETAIL"
+    assert dws_model["grain"] == {
+        "entities": ["STORE"],
+        "time_column": "stat_date",
+        "time_period": "D",
+    }
+    assert dim_model["layer"] == "DIM"
+    assert dim_model["table_type"] == "dimension"
+    assert dim_model["semantic_subject"] == "STORE"
+    assert dim_model["entities"][0]["key_columns"] == ["store_id"]
+
+
+def test_run_direct_model_generation_keeps_ods_materialized_source(
+    tmp_path, monkeypatch
+):
+    project = "direct_model_writer_ods"
+    project_dir = tmp_path / project
+    ods_ddl_dir = project_dir / "ods" / "ddl" / "internal" / "demo_dm"
+    ods_ddl_dir.mkdir(parents=True)
+    (tmp_path / "naming_config.yaml").write_text(
+        "types: {}\nbindings: {}\ndictionaries: {}\n",
+        encoding="utf-8",
+    )
+    (project_dir / "business_semantics.yaml").write_text(
+        yaml.safe_dump(
+            {"version": 1, "project": project},
+            allow_unicode=True,
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    (ods_ddl_dir / "ods_customer.sql").write_text(
+        """
+        -- ODS 客户每日快照源表
+        CREATE TABLE ods_customer (
+            customer_id BIGINT,
+            load_time DATETIME
+        );
+        """,
+        encoding="utf-8",
+    )
+    _configure_project_root(monkeypatch, tmp_path)
+    monkeypatch.setitem(
+        config.PROJECT_CONFIG,
+        project,
+        {
+            "dir": project,
+            "catalog": "internal",
+            "db": "demo_dm",
+            "naming_config": "naming_config.yaml",
+        },
+    )
+
+    result = run_direct_model_generation(project, dry_run=False)
+
+    model_path = (
+        project_dir
+        / "ods"
+        / "models"
+        / "internal"
+        / "demo_dm"
+        / "ods_customer.yaml"
+    )
+    model = yaml.safe_load(model_path.read_text(encoding="utf-8"))
+    assert result["model_update_count"] == 1
+    assert model["layer"] == "ODS"
+    assert model["table_type"] == "other"
+    assert model["config"]["materialized"] == "source"
+
+
+def test_run_direct_model_generation_reports_documentation_changes(
+    tmp_path, monkeypatch
+):
+    project = "direct_model_writer_doc_change"
+    project_dir = tmp_path / project
+    ods_ddl_dir = project_dir / "ods" / "ddl" / "internal" / "demo_dm"
+    ods_model_dir = project_dir / "ods" / "models" / "internal" / "demo_dm"
+    ods_ddl_dir.mkdir(parents=True)
+    ods_model_dir.mkdir(parents=True)
+    (tmp_path / "naming_config.yaml").write_text(
+        "types: {}\nbindings: {}\ndictionaries: {}\n",
+        encoding="utf-8",
+    )
+    (project_dir / "business_semantics.yaml").write_text(
+        yaml.safe_dump(
+            {"version": 1, "project": project},
+            allow_unicode=True,
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    (ods_ddl_dir / "ods_customer.sql").write_text(
+        """
+        -- ODS 客户每日快照源表
+        CREATE TABLE ods_customer (
+            customer_id BIGINT,
+            load_time DATETIME
+        );
+        """,
+        encoding="utf-8",
+    )
+    (ods_model_dir / "ods_customer.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "version": 2,
+                "name": "ods_customer",
+                "layer": "ODS",
+                "table_type": "other",
+                "config": {"materialized": "source"},
+            },
+            allow_unicode=True,
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    _configure_project_root(monkeypatch, tmp_path)
+    monkeypatch.setitem(
+        config.PROJECT_CONFIG,
+        project,
+        {
+            "dir": project,
+            "catalog": "internal",
+            "db": "demo_dm",
+            "naming_config": "naming_config.yaml",
+        },
+    )
+
+    result = run_direct_model_generation(project, dry_run=True)
+
+    update = result["model_updates"][0]
+    assert update["table"] == "ods_customer"
+    assert update["changed"] is True
+    assert update["documentation_changed"] is True
+    assert update["config_changed"] is False
+    assert update["metadata_changed"] is False
+    assert update["business_changed"] is False
+    assert update["grain_changed"] is False
+
+
+def test_run_direct_model_generation_can_ignore_existing_model_metadata(
+    tmp_path, monkeypatch
+):
+    project = "direct_model_writer_ignore_existing"
+    project_dir = tmp_path / project
+    (project_dir / "ddl").mkdir(parents=True)
+    (project_dir / "models").mkdir()
+    (tmp_path / "naming_config.yaml").write_text(
+        "types: {}\nbindings: {}\ndictionaries: {}\n",
+        encoding="utf-8",
+    )
+    (project_dir / "business_semantics.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "version": 1,
+                "project": project,
+                "business_processes": [
+                    {
+                        "code": "ORDER_TRANSACTION",
+                        "name": "订单交易",
+                        "data_domain": "04",
+                        "business_area": "SHOP",
+                    }
+                ],
+                "semantic_subjects": [
+                    {
+                        "code": "CUST",
+                        "name": "客户",
+                        "data_domain": "01",
+                        "business_area": "SHOP",
+                    }
+                ],
+            },
+            allow_unicode=True,
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    (project_dir / "ddl" / "dwd_customer.sql").write_text(
+        """
+        -- DWD 客户维度宽表
+        CREATE TABLE dwd_customer (
+            customer_id BIGINT,
+            customer_name VARCHAR(64),
+            snapshot_date DATE
+        );
+        """,
+        encoding="utf-8",
+    )
+    (project_dir / "models" / "dwd_customer.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "version": 2,
+                "name": "dwd_customer",
+                "layer": "DWD",
+                "table_type": "fact",
+                "business_process": "ORDER_TRANSACTION",
+                "config": {"materialized": "incremental"},
+            },
+            allow_unicode=True,
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    _configure_project_root(monkeypatch, tmp_path)
+    monkeypatch.setitem(
+        config.PROJECT_CONFIG,
+        project,
+        {
+            "dir": project,
+            "naming_config": "naming_config.yaml",
+        },
+    )
+
+    result = run_direct_model_generation(
+        project,
+        dry_run=True,
+        ignore_existing_models=True,
+    )
+
+    update = result["model_updates"][0]
+    assert result["ignore_existing_models"] is True
+    assert update["assignment_source"] == "direct_catalog_match"
+    assert update["assignment_reason"].startswith("semantic_subject_match")
+    assert update["previous_layer"] == "DWD"
+    assert update["layer"] == "DIM"
+    assert update["previous_table_type"] == "fact"
+    assert update["table_type"] == "dimension"
+    assert update["business_process"] is None
+    assert update["semantic_subject"] == "CUST"
+
+
+def test_run_direct_model_generation_preserves_existing_governance_on_fallback(
+    tmp_path, monkeypatch
+):
+    project = "direct_model_writer_preserve_governance"
+    project_dir = tmp_path / project
+    ddl_dir = project_dir / "ddl"
+    models_dir = project_dir / "models"
+    ddl_dir.mkdir(parents=True)
+    models_dir.mkdir()
+    (tmp_path / "naming_config.yaml").write_text(
+        "types: {}\nbindings: {}\ndictionaries: {}\n",
+        encoding="utf-8",
+    )
+    (project_dir / "business_semantics.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "version": 1,
+                "project": project,
+                "business_processes": [],
+                "semantic_subjects": [],
+            },
+            allow_unicode=True,
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    (ddl_dir / "dwd_transactions.sql").write_text(
+        """
+        CREATE TABLE dwd_transactions (
+            transaction_id BIGINT,
+            amount DECIMAL(12,2)
+        );
+        """,
+        encoding="utf-8",
+    )
+    (ddl_dir / "dws_transactions_daily.sql").write_text(
+        """
+        CREATE TABLE dws_transactions_daily (
+            stat_date DATE,
+            amount DECIMAL(12,2)
+        );
+        """,
+        encoding="utf-8",
+    )
+    (models_dir / "dwd_transactions.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "version": 2,
+                "name": "dwd_transactions",
+                "layer": "DWD",
+                "table_type": "fact",
+                "config": {"materialized": "incremental"},
+                "data_domain": "04",
+                "business_area": "PAYM",
+                "business_process": "PAYMENT_TRANSACTION",
+            },
+            allow_unicode=True,
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    (models_dir / "dws_transactions_daily.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "version": 2,
+                "name": "dws_transactions_daily",
+                "layer": "DWS",
+                "table_type": "fact",
+                "config": {"materialized": "incremental"},
+                "business_area": "PAYM",
+                "business_process": "PAYMENT_TRANSACTION",
+            },
+            allow_unicode=True,
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    _configure_project_root(monkeypatch, tmp_path)
+    monkeypatch.setitem(
+        config.PROJECT_CONFIG,
+        project,
+        {
+            "dir": project,
+            "naming_config": "naming_config.yaml",
+        },
+    )
+
+    result = run_direct_model_generation(
+        project,
+        dry_run=True,
+        write_scope="business",
+    )
+
+    assert result["model_change_count"] == 0
+    assert result["model_updates"] == []
+
+
+def test_run_direct_model_generation_does_not_use_downstream_for_process_match(
+    tmp_path, monkeypatch
+):
+    project = "direct_model_writer_downstream_process"
+    project_dir = tmp_path / project
+    (project_dir / "ddl").mkdir(parents=True)
+    (project_dir / "tasks").mkdir()
+    (project_dir / "lineage").mkdir()
+    (tmp_path / "naming_config.yaml").write_text(
+        "types: {}\nbindings: {}\ndictionaries: {}\n",
+        encoding="utf-8",
+    )
+    (project_dir / "business_semantics.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "version": 1,
+                "project": project,
+                "business_processes": [
+                    {
+                        "code": "ORDER_TRANSACTION",
+                        "name": "订单交易",
+                        "data_domain": "04",
+                        "business_area": "SHOP",
+                    },
+                    {
+                        "code": "PROMOTION_EFFECT",
+                        "name": "促销效果",
+                        "data_domain": "06",
+                        "business_area": "SHOP",
+                    },
+                ],
+                "semantic_subjects": [
+                    {
+                        "code": "PROMOTION",
+                        "name": "促销活动",
+                        "data_domain": "06",
+                        "business_area": "SHOP",
+                    }
+                ],
+            },
+            allow_unicode=True,
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    (project_dir / "ddl" / "dwd_order_detail.sql").write_text(
+        """
+        -- DWD 订单明细事实表
+        CREATE TABLE dwd_order_detail (
+            order_id BIGINT,
+            promotion_id BIGINT,
+            quantity INT,
+            subtotal DECIMAL(12,2)
+        );
+        """,
+        encoding="utf-8",
+    )
+    (project_dir / "ddl" / "dws_promotion_effect_daily.sql").write_text(
+        """
+        -- DWS 促销效果日汇总表
+        CREATE TABLE dws_promotion_effect_daily (
+            promotion_id BIGINT,
+            stat_date DATE,
+            sale_amount DECIMAL(12,2)
+        );
+        """,
+        encoding="utf-8",
+    )
+    (project_dir / "tasks" / "dws_promotion_effect_daily.sql").write_text(
+        """
+        INSERT INTO dws_promotion_effect_daily
+        SELECT promotion_id, order_date AS stat_date, SUM(subtotal)
+        FROM dwd_order_detail
+        GROUP BY promotion_id, order_date;
+        """,
+        encoding="utf-8",
+    )
+    (project_dir / "lineage" / "lineage_data.json").write_text(
+        json.dumps(
+            {
+                "tables": [
+                    {"name": "dwd_order_detail", "layer": "DWD"},
+                    {"name": "dws_promotion_effect_daily", "layer": "DWS"},
+                ],
+                "edges": [
+                    {
+                        "source": "dwd_order_detail.promotion_id",
+                        "target": "dws_promotion_effect_daily.promotion_id",
+                        "expression": "promotion_id",
+                        "source_file": "dws_promotion_effect_daily.sql",
+                    },
+                    {
+                        "source": "dwd_order_detail.subtotal",
+                        "target": "dws_promotion_effect_daily.sale_amount",
+                        "expression": "SUM(subtotal)",
+                        "source_file": "dws_promotion_effect_daily.sql",
+                    },
+                ],
+                "indirect_edges": [],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    _configure_project_root(monkeypatch, tmp_path)
+    monkeypatch.setitem(
+        config.PROJECT_CONFIG,
+        project,
+        {
+            "dir": project,
+            "naming_config": "naming_config.yaml",
+        },
+    )
+
+    result = run_direct_model_generation(
+        project,
+        dry_run=True,
+        ignore_existing_models=True,
+    )
+
+    updates = {update["table"]: update for update in result["model_updates"]}
+    assert updates["dwd_order_detail"]["business_process"] == "ORDER_TRANSACTION"
+    assert updates["dwd_order_detail"]["data_domain"] == "04"
+    assert updates["dws_promotion_effect_daily"]["business_process"] == (
+        "PROMOTION_EFFECT"
+    )
+
+
+def test_run_direct_model_generation_materialized_uses_target_task_pattern(
+    tmp_path, monkeypatch
+):
+    project = "direct_model_writer_materialized"
+    project_dir = tmp_path / project
+    (project_dir / "ddl").mkdir(parents=True)
+    (project_dir / "tasks").mkdir()
+    (tmp_path / "naming_config.yaml").write_text(
+        "types: {}\nbindings: {}\ndictionaries: {}\n",
+        encoding="utf-8",
+    )
+    (project_dir / "business_semantics.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "version": 1,
+                "project": project,
+                "business_processes": [
+                    {
+                        "code": "INVENTORY_MANAGEMENT",
+                        "name": "库存管理",
+                        "data_domain": "05",
+                        "business_area": "SHOP",
+                    }
+                ],
+            },
+            allow_unicode=True,
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    (project_dir / "ddl" / "dws_inventory_daily.sql").write_text(
+        """
+        -- DWS 库存日汇总表
+        CREATE TABLE dws_inventory_daily (
+            product_id BIGINT,
+            store_id BIGINT,
+            stat_date DATE,
+            quantity INT
+        );
+        """,
+        encoding="utf-8",
+    )
+    (project_dir / "tasks" / "dws_inventory_daily.sql").write_text(
+        """
+        DELETE FROM dws_inventory_daily WHERE stat_date = CURRENT_DATE;
+        INSERT INTO dws_inventory_daily
+        SELECT product_id, store_id, snapshot_date AS stat_date, SUM(quantity)
+        FROM dwd_inventory
+        GROUP BY product_id, store_id, snapshot_date;
+        """,
+        encoding="utf-8",
+    )
+    (project_dir / "ddl" / "ads_sales_dashboard.sql").write_text(
+        """
+        -- ADS 销售驾驶舱
+        CREATE TABLE ads_sales_dashboard (
+            stat_date DATE,
+            total_amount DECIMAL(12,2)
+        );
+        """,
+        encoding="utf-8",
+    )
+    (project_dir / "tasks" / "ads_sales_dashboard.sql").write_text(
+        """
+        TRUNCATE TABLE ads_sales_dashboard;
+        INSERT INTO ads_sales_dashboard
+        SELECT stat_date, SUM(total_amount)
+        FROM dws_store_sales_daily
+        GROUP BY stat_date;
+        """,
+        encoding="utf-8",
+    )
+    _configure_project_root(monkeypatch, tmp_path)
+    monkeypatch.setitem(
+        config.PROJECT_CONFIG,
+        project,
+        {
+            "dir": project,
+            "naming_config": "naming_config.yaml",
+        },
+    )
+
+    result = run_direct_model_generation(
+        project,
+        dry_run=False,
+        ignore_existing_models=True,
+    )
+
+    models_dir = project_dir / "models"
+    dws_model = yaml.safe_load(
+        (models_dir / "dws_inventory_daily.yaml").read_text(
+            encoding="utf-8"
+        )
+    )
+    ads_model = yaml.safe_load(
+        (models_dir / "ads_sales_dashboard.yaml").read_text(encoding="utf-8")
+    )
+    assert result["ignore_existing_models"] is True
+    assert dws_model["config"]["materialized"] == "incremental"
+    assert ads_model["config"]["materialized"] == "full"
+
+
+def test_run_direct_model_generation_infers_ads_fact_from_task(
+    tmp_path, monkeypatch
+):
+    project = "direct_model_writer_ads_task"
+    project_dir = tmp_path / project
+    (project_dir / "ddl").mkdir(parents=True)
+    (project_dir / "tasks").mkdir()
+    (project_dir / "lineage").mkdir()
+    (tmp_path / "naming_config.yaml").write_text(
+        "types: {}\nbindings: {}\ndictionaries: {}\n",
+        encoding="utf-8",
+    )
+    (project_dir / "business_semantics.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "version": 1,
+                "project": project,
+                "business_processes": [
+                    {
+                        "code": "ORDER_TRANSACTION",
+                        "name": "订单交易",
+                        "data_domain": "04",
+                        "business_area": "SHOP",
+                    }
+                ],
+            },
+            allow_unicode=True,
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    (project_dir / "ddl" / "dws_order_sales_daily.sql").write_text(
+        """
+        CREATE TABLE dws_order_sales_daily (
+            store_id BIGINT,
+            stat_date DATE,
+            sale_amount DECIMAL(12,2)
+        );
+        """,
+        encoding="utf-8",
+    )
+    (project_dir / "ddl" / "ads_sales_dashboard.sql").write_text(
+        """
+        CREATE TABLE ads_sales_dashboard (
+            stat_date DATE,
+            total_amount DECIMAL(12,2)
+        );
+        """,
+        encoding="utf-8",
+    )
+    (project_dir / "tasks" / "ads_sales_dashboard.sql").write_text(
+        """
+        DELETE FROM ads_sales_dashboard WHERE stat_date = CURRENT_DATE;
+        INSERT INTO ads_sales_dashboard
+        SELECT stat_date, SUM(sale_amount) AS total_amount
+        FROM dws_order_sales_daily
+        GROUP BY stat_date;
+        """,
+        encoding="utf-8",
+    )
+    (project_dir / "lineage" / "lineage_data.json").write_text(
+        json.dumps(
+                {
+                    "tables": [
+                        {"name": "dws_order_sales_daily", "layer": "DWS"},
+                        {"name": "ads_sales_dashboard", "layer": "ADS"},
+                    ],
+                    "edges": [
+                        {
+                            "source": "dws_order_sales_daily.sale_amount",
+                            "target": "ads_sales_dashboard.total_amount",
+                            "expression": "SUM(sale_amount)",
+                        "source_file": "ads_sales_dashboard.sql",
+                    }
+                ],
+                "indirect_edges": [],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    _configure_project_root(monkeypatch, tmp_path)
+    monkeypatch.setitem(
+        config.PROJECT_CONFIG,
+        project,
+        {
+            "dir": project,
+            "naming_config": "naming_config.yaml",
+        },
+    )
+
+    result = run_direct_model_generation(
+        project,
+        dry_run=False,
+        ignore_existing_models=True,
+    )
+
+    models_dir = project_dir / "models"
+    dws_model = yaml.safe_load(
+        (models_dir / "dws_order_sales_daily.yaml").read_text(
+            encoding="utf-8"
+        )
+    )
+    ads_model = yaml.safe_load(
+        (models_dir / "ads_sales_dashboard.yaml").read_text(encoding="utf-8")
+    )
+    assert result["assigned_business_process_count"] == 2
+    assert dws_model["table_type"] == "fact"
+    assert dws_model["business_process"] == "ORDER_TRANSACTION"
+    assert ads_model["layer"] == "ADS"
+    assert ads_model["table_type"] == "fact"
+    assert ads_model["business_process"] == "ORDER_TRANSACTION"
+    assert ads_model["config"]["materialized"] == "incremental"
+
+
+def test_run_direct_model_generation_infers_layers_without_model_or_prefix_metadata(
+    tmp_path, monkeypatch
+):
+    project = "direct_model_writer_no_layer_metadata"
+    project_dir = tmp_path / project
+    ods_ddl_dir = project_dir / "ods" / "ddl" / "internal" / "demo_dm"
+    ods_ddl_dir.mkdir(parents=True)
+    (project_dir / "ddl").mkdir(parents=True)
+    (project_dir / "tasks").mkdir()
+    (project_dir / "lineage").mkdir()
+    (tmp_path / "naming_config.yaml").write_text(
+        "types: {}\nbindings: {}\ndictionaries: {}\n",
+        encoding="utf-8",
+    )
+    (project_dir / "business_semantics.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "version": 1,
+                "project": project,
+                "business_processes": [
+                    {
+                        "code": "ORDER_TRANSACTION",
+                        "name": "订单交易",
+                        "data_domain": "04",
+                        "business_area": "SHOP",
+                    }
+                ],
+                "semantic_subjects": [
+                    {
+                        "code": "CUSTOMER",
+                        "name": "客户",
+                        "data_domain": "01",
+                        "business_area": "SHOP",
+                    }
+                ],
+            },
+            allow_unicode=True,
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    (ods_ddl_dir / "source_orders.sql").write_text(
+        """
+        -- 订单源表
+        CREATE TABLE source_orders (
+            order_id BIGINT,
+            customer_id BIGINT,
+            order_date DATE,
+            pay_amount DECIMAL(12,2)
+        );
+        """,
+        encoding="utf-8",
+    )
+    (project_dir / "ddl" / "order_detail.sql").write_text(
+        """
+        -- 订单交易明细事实表
+        CREATE TABLE order_detail (
+            order_id BIGINT,
+            customer_id BIGINT,
+            order_date DATE,
+            pay_amount DECIMAL(12,2)
+        );
+        """,
+        encoding="utf-8",
+    )
+    (project_dir / "ddl" / "store_sales_daily.sql").write_text(
+        """
+        -- 订单交易门店销售日汇总表
+        CREATE TABLE store_sales_daily (
+            customer_id BIGINT,
+            stat_date DATE,
+            pay_amount DECIMAL(12,2)
+        );
+        """,
+        encoding="utf-8",
+    )
+    (project_dir / "ddl" / "sales_dashboard.sql").write_text(
+        """
+        -- 订单交易销售驾驶舱
+        CREATE TABLE sales_dashboard (
+            stat_date DATE,
+            total_amount DECIMAL(12,2)
+        );
+        """,
+        encoding="utf-8",
+    )
+    (project_dir / "ddl" / "customer_profile.sql").write_text(
+        """
+        -- 客户维度属性档案
+        CREATE TABLE customer_profile (
+            customer_id BIGINT,
+            customer_name VARCHAR(64)
+        );
+        """,
+        encoding="utf-8",
+    )
+    (project_dir / "tasks" / "order_detail.sql").write_text(
+        """
+        INSERT INTO order_detail
+        SELECT order_id, customer_id, order_date, pay_amount
+        FROM source_orders;
+        """,
+        encoding="utf-8",
+    )
+    (project_dir / "tasks" / "store_sales_daily.sql").write_text(
+        """
+        INSERT INTO store_sales_daily
+        SELECT customer_id, order_date AS stat_date, SUM(pay_amount)
+        FROM order_detail
+        GROUP BY customer_id, order_date;
+        """,
+        encoding="utf-8",
+    )
+    (project_dir / "tasks" / "sales_dashboard.sql").write_text(
+        """
+        INSERT INTO sales_dashboard
+        SELECT stat_date, SUM(pay_amount) AS total_amount
+        FROM store_sales_daily
+        GROUP BY stat_date;
+        """,
+        encoding="utf-8",
+    )
+    (project_dir / "lineage" / "lineage_data.json").write_text(
+        json.dumps(
+            {
+                "tables": [
+                    {"name": "source_orders", "layer": "OTHER"},
+                    {"name": "order_detail", "layer": "OTHER"},
+                    {"name": "store_sales_daily", "layer": "OTHER"},
+                    {"name": "sales_dashboard", "layer": "OTHER"},
+                    {"name": "customer_profile", "layer": "OTHER"},
+                ],
+                "edges": [
+                    {
+                        "source": "source_orders.order_id",
+                        "target": "order_detail.order_id",
+                        "expression": "order_id",
+                        "source_file": "order_detail.sql",
+                    },
+                    {
+                        "source": "order_detail.pay_amount",
+                        "target": "store_sales_daily.pay_amount",
+                        "expression": "SUM(pay_amount)",
+                        "source_file": "store_sales_daily.sql",
+                    },
+                    {
+                        "source": "store_sales_daily.pay_amount",
+                        "target": "sales_dashboard.total_amount",
+                        "expression": "SUM(pay_amount)",
+                        "source_file": "sales_dashboard.sql",
+                    },
+                ],
+                "indirect_edges": [],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    _configure_project_root(monkeypatch, tmp_path)
+    monkeypatch.setitem(
+        config.PROJECT_CONFIG,
+        project,
+        {
+            "dir": project,
+            "catalog": "internal",
+            "db": "demo_dm",
+            "naming_config": "naming_config.yaml",
+        },
+    )
+
+    result = run_direct_model_generation(
+        project,
+        dry_run=False,
+        ignore_existing_models=True,
+    )
+
+    models_dir = project_dir / "models"
+    ods_model = yaml.safe_load(
+        (
+            project_dir
+            / "ods"
+            / "models"
+            / "internal"
+            / "demo_dm"
+            / "source_orders.yaml"
+        ).read_text(encoding="utf-8")
+    )
+    order_model = yaml.safe_load(
+        (models_dir / "order_detail.yaml").read_text(encoding="utf-8")
+    )
+    dws_model = yaml.safe_load(
+        (models_dir / "store_sales_daily.yaml").read_text(encoding="utf-8")
+    )
+    ads_model = yaml.safe_load(
+        (models_dir / "sales_dashboard.yaml").read_text(encoding="utf-8")
+    )
+    dim_model = yaml.safe_load(
+        (models_dir / "customer_profile.yaml").read_text(encoding="utf-8")
+    )
+    assert result["model_update_count"] == 5
+    assert ods_model["layer"] == "ODS"
+    assert ods_model["table_type"] == "other"
+    assert ods_model["config"]["materialized"] == "source"
+    assert order_model["layer"] == "DWD"
+    assert order_model["table_type"] == "fact"
+    assert order_model["business_process"] == "ORDER_TRANSACTION"
+    assert dws_model["layer"] == "DWS"
+    assert dws_model["table_type"] == "fact"
+    assert ads_model["layer"] == "ADS"
+    assert ads_model["table_type"] == "fact"
+    assert dim_model["layer"] == "DIM"
+    assert dim_model["table_type"] == "dimension"
+    assert dim_model["semantic_subject"] == "CUSTOMER"
+
+
+def test_run_direct_model_generation_uses_table_inspector_for_missing_layer_metadata(
+    tmp_path, monkeypatch
+):
+    import assess.llm.model_metadata_writer as writer_module
+
+    project = "direct_model_writer_table_inspector_layer"
+    project_dir = tmp_path / project
+    (project_dir / "ddl").mkdir(parents=True)
+    (project_dir / "tasks").mkdir()
+    (tmp_path / "naming_config.yaml").write_text(
+        "types: {}\nbindings: {}\ndictionaries: {}\n",
+        encoding="utf-8",
+    )
+    (project_dir / "business_semantics.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "version": 1,
+                "project": project,
+                "business_processes": [
+                    {
+                        "code": "SALES_ANALYSIS",
+                        "name": "销售分析",
+                        "data_domain": "04",
+                        "business_area": "SHOP",
+                    }
+                ],
+            },
+            allow_unicode=True,
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    (project_dir / "ddl" / "sales_result.sql").write_text(
+        """
+        -- 销售结果汇总
+        CREATE TABLE sales_result (
+            stat_date DATE,
+            total_amount DECIMAL(12,2)
+        );
+        """,
+        encoding="utf-8",
+    )
+    (project_dir / "tasks" / "sales_result.sql").write_text(
+        """
+        INSERT INTO sales_result
+        SELECT stat_date, SUM(pay_amount) AS total_amount
+        FROM order_detail
+        GROUP BY stat_date;
+        """,
+        encoding="utf-8",
+    )
+    _configure_project_root(monkeypatch, tmp_path)
+    monkeypatch.setitem(
+        config.PROJECT_CONFIG,
+        project,
+        {
+            "dir": project,
+            "naming_config": "naming_config.yaml",
+        },
+    )
+    calls = []
+
+    def fake_call_api(_self, prompt):
+        calls.append(prompt)
+        return json.dumps(
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": json.dumps(
+                                {
+                                    "inferred_layer": "ADS",
+                                    "table_type": "fact",
+                                    "confidence": 0.92,
+                                    "reasoning_steps": ["面向最终报表输出"],
+                                },
+                                ensure_ascii=False,
+                            )
+                        }
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        )
+
+    monkeypatch.setattr(writer_module.TableInspector, "_call_api", fake_call_api)
+
+    result = run_direct_model_generation(
+        project,
+        dry_run=False,
+        ignore_existing_models=True,
+        infer_layer_with_llm=True,
+        api_key="test",
+        model="fake-layer-model",
+        no_cache=True,
+        show_progress=False,
+    )
+
+    model = yaml.safe_load(
+        (project_dir / "models" / "sales_result.yaml").read_text(
+            encoding="utf-8"
+        )
+    )
+    update = result["model_updates"][0]
+    assert len(calls) == 1
+    assert "sales_result" in calls[0]
+    assert "统一巡检" in calls[0]
+    assert "inferred_layer" in calls[0]
+    assert result["table_inspector_layer_inference_attempt_count"] == 1
+    assert result["table_inspector_layer_inference_count"] == 1
+    assert model["layer"] == "ADS"
+    assert model["table_type"] == "fact"
+    assert (
+        update["layer_assignment_source"]
+        == "table_inspector_layer_inference"
+    )
+    assert update["layer_assignment_reason"] == "面向最终报表输出"
+
+
+def test_run_direct_model_generation_skips_table_inspector_for_explicit_layer_metadata(
+    tmp_path, monkeypatch
+):
+    import assess.llm.model_metadata_writer as writer_module
+
+    project = "direct_model_writer_table_inspector_layer_skip"
+    project_dir = tmp_path / project
+    (project_dir / "ddl").mkdir(parents=True)
+    (tmp_path / "naming_config.yaml").write_text(
+        "types: {}\nbindings: {}\ndictionaries: {}\n",
+        encoding="utf-8",
+    )
+    (project_dir / "business_semantics.yaml").write_text(
+        yaml.safe_dump(
+            {"version": 1, "project": project},
+            allow_unicode=True,
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    (project_dir / "ddl" / "dwd_order_detail.sql").write_text(
+        """
+        CREATE TABLE dwd_order_detail (
+            order_id BIGINT,
+            pay_amount DECIMAL(12,2)
+        );
+        """,
+        encoding="utf-8",
+    )
+    _configure_project_root(monkeypatch, tmp_path)
+    monkeypatch.setitem(
+        config.PROJECT_CONFIG,
+        project,
+        {
+            "dir": project,
+            "naming_config": "naming_config.yaml",
+        },
+    )
+
+    def fail_call_api(_self, _prompt):
+        raise AssertionError(
+            "Table inspector should not be called for prefixed tables"
+        )
+
+    monkeypatch.setattr(writer_module.TableInspector, "_call_api", fail_call_api)
+
+    result = run_direct_model_generation(
+        project,
+        dry_run=False,
+        infer_layer_with_llm=True,
+        api_key="test",
+        model="fake-layer-model",
+        no_cache=True,
+        show_progress=False,
+    )
+
+    model = yaml.safe_load(
+        (project_dir / "models" / "dwd_order_detail.yaml").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert result["table_inspector_layer_inference_attempt_count"] == 0
+    assert result["table_inspector_layer_inference_count"] == 0
+    assert model["layer"] == "DWD"
 
 
 def test_run_catalog_metadata_write_can_dry_run_with_init_catalog(

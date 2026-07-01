@@ -343,6 +343,17 @@ python -m assess.llm.model_metadata_writer --project shop --from-catalog --write
 
 这个命令不会识别指标、不会刷新 entities/grain，不会根据 catalog 反向给表分配业务过程，也不会改 DDL、任务 SQL、表名或文件名。LLM 目录发现阶段识别出的表归属会直接写入 models，而不是长期写在 catalog 中。
 
+如果项目没有可用的 `models/*.yaml`，可以用直接生成模式：
+
+```bash
+python -m assess.llm.model_metadata_writer --project shop --generate-models --dry-run
+python -m assess.llm.model_metadata_writer --project shop --generate-models
+```
+
+`--generate-models` 不调用 LLM，会读取 `business_semantics.yaml`、DDL、task SQL 和 lineage 数据，创建/补齐 `models/*.yaml`。它会保守匹配缺失的 `business_process` / `semantic_subject`，写入基础表元数据、适用的 `data_domain` / `business_area`，并在 `--write-scope all` 下补齐可由 DDL/catalog 推断的初始 `entities` 和 DWS `grain`。无法匹配的表只生成基础 model 元数据，匹配来源写入结果 JSON 的 `assignment_source` / `assignment_reason`。
+
+验证完全从 DDL/task/lineage/catalog 推断、且不使用当前 models YAML 作为先验时，使用 `--generate-models --ignore-existing-models --dry-run`。
+
 ### 指标识别与回写
 
 `assess/llm/table_inspector.py` 是基础表巡检能力，用于单次 DeepSeek 调用中完成表级分层、表类型判断和字段分组。

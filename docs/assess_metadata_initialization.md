@@ -89,6 +89,33 @@ python -m assess.llm.model_metadata_writer --project shop --from-catalog --write
 
 如果某张表的 model 中还没有 `business_process` 或 `semantic_subject`，工具仍会为该表创建或保留基础 model 元数据，但不会凭表名生成业务过程。
 
+如果项目还没有可用的 `models/*.yaml`，可以使用直接生成模式。它不调用 LLM，
+会读取 `{project}/business_semantics.yaml`、`ddl/*.sql`、`tasks/*.sql`，
+并尽量使用 `{project}/lineage/lineage_data.json` 的上下游和聚合事实，为缺失
+model 创建 YAML，并对缺失的 `business_process` / `semantic_subject` 做保守匹配：
+
+```bash
+python -m assess.llm.model_metadata_writer --project shop --generate-models --dry-run
+python -m assess.llm.model_metadata_writer --project shop --generate-models
+```
+
+直接生成模式会写入或补齐：
+
+- 基础字段：`version`、`name`、`layer`、`table_type`、`config.materialized`。
+- 业务语义：按 catalog 匹配到的 `business_process` / `semantic_subject`，以及适用的 `data_domain` / `business_area`。
+- 初始粒度：能从 catalog 主题和 DDL 字段匹配出的 `entities`，以及 DWS fact 的简单 `grain`。
+
+它不会识别指标分组，也不会替代 LLM 巡检；没有足够匹配依据的表只生成基础 model 元数据，并在结果 JSON 的 `assignment_source` / `assignment_reason` 中说明来源。
+
+如果要验证“完全不依赖现有 models YAML”的纯生成效果，可加
+`--ignore-existing-models`。该模式不会把当前 `models/*.yaml` 中的
+`layer`、`table_type`、`business_process`、`semantic_subject` 或执行策略作为推断先验，
+只把现有文件作为 dry-run 对比或最终覆盖目标：
+
+```bash
+python -m assess.llm.model_metadata_writer --project shop --generate-models --ignore-existing-models --dry-run
+```
+
 ### 5. 用 LLM 补全模型细节
 
 表级 LLM 巡检用于补全和刷新更细的模型信息：

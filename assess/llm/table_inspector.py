@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import threading
+import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
@@ -23,6 +25,7 @@ from assess.project_facts.time_period import (
 from config import TEXT_ENCODING
 
 PROMPT_VERSION = "table-inspector-v24"
+DEFAULT_API_BASE_URL = "https://api.deepseek.com"
 VALID_LAYERS = {"ODS", "DWD", "DWS", "ADS", "DIM", "OTHER"}
 VALID_TABLE_TYPES = {"dimension", "fact", "other"}
 VALID_DIMENSION_ROLES = {"BASE", "ADDT"}
@@ -48,6 +51,22 @@ VALIDATION_ERROR_KEYS = (
     "missing_primary_entities",
 )
 VALIDATION_WARNING_KEYS = ("missing_columns",)
+
+
+def _normalize_api_base_url(base_url: str) -> str:
+    return str(base_url or DEFAULT_API_BASE_URL).strip().rstrip("/")
+
+
+def _completion_urls(base_url: str) -> list[str]:
+    normalized = _normalize_api_base_url(base_url)
+    if normalized.endswith("/chat/completions"):
+        return [normalized]
+    if normalized.endswith("/v1"):
+        return [f"{normalized}/chat/completions"]
+    urls = [f"{normalized}/chat/completions"]
+    if normalized != DEFAULT_API_BASE_URL:
+        urls.append(f"{normalized}/v1/chat/completions")
+    return urls
 
 
 def _empty_columns() -> dict[str, list[dict[str, Any]]]:
@@ -1016,9 +1035,16 @@ class TableInspector:
         max_retries: int = 1,
         parallelism: int = 2,
         request_timeout: int = 60,
+        base_url: str = "",
     ):
         self.api_key = api_key
         self.model = model
+        self.base_url = _normalize_api_base_url(
+            base_url
+            or os.environ.get("LLM_BASE_URL")
+            or os.environ.get("DEEPSEEK_BASE_URL")
+            or DEFAULT_API_BASE_URL
+        )
         self.cache_file = cache_file
         self.max_retries = max(0, int(max_retries))
         self.parallelism = max(1, int(parallelism))
@@ -1050,7 +1076,8 @@ class TableInspector:
     def _compute_hash(self, ctx: TableContext) -> str:
         # 缓存 hash 需要包含所有影响 LLM 判断的特征与 prompt schema 版本。
         content = (
-            f"{PROMPT_VERSION}|{ctx.table_name}|{ctx.layer}|{ctx.ddl}|"
+            f"{PROMPT_VERSION}|{self.model}|{self.base_url}|"
+            f"{ctx.table_name}|{ctx.layer}|{ctx.ddl}|"
             f"{ctx.etl_sql}|{ctx.upstream_tables}|{ctx.downstream_tables}|"
             f"{ctx.depth_from_ods}|{ctx.upstream_metric_groups}|"
             f"{ctx.column_lineage}|{ctx.declared_data_domain}|"
@@ -1084,10 +1111,11 @@ class TableInspector:
             return
 
     def _call_api(self, prompt: str) -> str:
-        url = "https://api.deepseek.com/chat/completions"
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {self.api_key}",
+            "User-Agent": "Mozilla/5.0",
+            "Accept": "application/json",
         }
         data = {
             "model": self.model,
@@ -1095,19 +1123,38 @@ class TableInspector:
             "temperature": 0.0,
         }
 
-        req = urllib.request.Request(
-            url,
-            data=json.dumps(data).encode(TEXT_ENCODING),
-            headers=headers,
-            method="POST",
-        )
+        payload = json.dumps(data).encode(TEXT_ENCODING)
+        errors: list[Exception] = []
+        urls = _completion_urls(self.base_url)
+        for index, url in enumerate(urls):
+            req = urllib.request.Request(
+                url,
+                data=payload,
+                headers=headers,
+                method="POST",
+            )
+            try:
+                with urllib.request.urlopen(
+                    req, timeout=self.request_timeout
+                ) as response:
+                    return response.read().decode(TEXT_ENCODING)
+            except urllib.error.HTTPError as e:
+                body = e.read().decode(TEXT_ENCODING, errors="replace")
+                errors.append(
+                    RuntimeError(
+                        f"HTTP {e.code}: {body[:500] or e.reason}"
+                    )
+                )
+                if e.code not in {403, 404, 405, 501} or index == len(urls) - 1:
+                    break
+            except Exception as e:
+                errors.append(e)
+                break
+        last_error = errors[-1] if errors else RuntimeError("unknown error")
         try:
-            with urllib.request.urlopen(
-                req, timeout=self.request_timeout
-            ) as response:
-                return response.read().decode(TEXT_ENCODING)
-        except Exception as e:
-            raise RuntimeError(f"DeepSeek API 调用失败: {e}") from e
+            raise RuntimeError(f"LLM API 调用失败: {last_error}") from last_error
+        finally:
+            errors.clear()
 
     def inspect(
         self,

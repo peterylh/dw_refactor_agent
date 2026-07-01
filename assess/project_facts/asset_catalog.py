@@ -238,6 +238,7 @@ def build_asset_catalog(
     *,
     edges: list | None = None,
     indirect_edges: list | None = None,
+    include_model_files: bool = True,
 ) -> dict:
     """Collect project asset facts without assigning scores."""
     project_path = Path(project_dir) if project_dir else None
@@ -305,22 +306,23 @@ def build_asset_catalog(
         asset["lineage_table"] = dict(table)
         asset["columns"] = list(table.get("columns") or [])
 
-    for name, metadata in (model_metadata or {}).items():
-        if not isinstance(metadata, dict):
-            continue
-        declared_name = _short_table_name(metadata.get("name") or name)
-        if not declared_name:
-            continue
-        asset = ensure_asset(declared_name)
-        asset["model"] = dict(
-            exists=True,
-            path=None,
-            file_stem=None,
-            declared_name=declared_name,
-            metadata=metadata,
-        )
-        if metadata.get("layer"):
-            asset["layer"] = str(metadata["layer"]).upper()
+    if include_model_files:
+        for name, metadata in (model_metadata or {}).items():
+            if not isinstance(metadata, dict):
+                continue
+            declared_name = _short_table_name(metadata.get("name") or name)
+            if not declared_name:
+                continue
+            asset = ensure_asset(declared_name)
+            asset["model"] = dict(
+                exists=True,
+                path=None,
+                file_stem=None,
+                declared_name=declared_name,
+                metadata=metadata,
+            )
+            if metadata.get("layer"):
+                asset["layer"] = str(metadata["layer"]).upper()
 
     if project_path:
         ddl_dirs = _asset_dirs(project_path, "ddl")
@@ -357,7 +359,7 @@ def build_asset_catalog(
                         asset["layer"] = ddl_layer
 
         models_dirs = _asset_dirs(project_path, "models")
-        if models_dirs:
+        if include_model_files and models_dirs:
             for models_dir in models_dirs:
                 for model_path in sorted(models_dir.glob("*.yaml")):
                     try:

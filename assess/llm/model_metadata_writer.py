@@ -28,6 +28,8 @@ if str(_root) not in sys.path:
 
 from assess.llm.context_builder import TableContext, build_contexts
 from assess.llm.table_inspector import (
+    VALID_LAYERS,
+    VALID_TABLE_TYPES,
     TableInspector,
     TableInspectResult,
 )
@@ -36,6 +38,8 @@ from assess.llm.table_inspector import (
 )
 from assess.project_facts.asset_catalog import build_asset_catalog
 from assess.project_facts.business_semantics import (
+    _display_name_from_code,
+    _entry_by_code,
     _infer_table_type,
     _layer_from_table_name,
     _materialized_for_layer,
@@ -57,6 +61,7 @@ from config import (
     model_metadata_result_path,
 )
 from lineage.table_graph import load_lineage_data
+from lineage.view import LineageView
 
 METRIC_LAYERS = {"DWD", "DWS"}
 WRITABLE_METADATA_LAYERS = {"DWD", "DWS", "DIM"}
@@ -75,6 +80,144 @@ DDL_NON_COLUMN_PREFIXES = {
     "PRIMARY",
     "PROPERTIES",
     "UNIQUE",
+}
+DIRECT_MODEL_WRITE_SCOPES = {"all", "table", "business"}
+DIRECT_MATCH_STOPWORDS = {
+    "and",
+    "area",
+    "business",
+    "data",
+    "detail",
+    "dim",
+    "dwd",
+    "dws",
+    "fact",
+    "full",
+    "info",
+    "layer",
+    "model",
+    "snapshot",
+    "summary",
+    "table",
+    "type",
+}
+METRIC_COLUMN_HINTS = {
+    "amount",
+    "amt",
+    "balance",
+    "cnt",
+    "cost",
+    "count",
+    "fee",
+    "gmv",
+    "margin",
+    "metric",
+    "price",
+    "profit",
+    "qty",
+    "quantity",
+    "rate",
+    "ratio",
+    "score",
+    "sum",
+    "total",
+    "value",
+}
+DIRECT_APPLICATION_OUTPUT_TOKENS = {
+    "ads",
+    "cockpit",
+    "dashboard",
+    "portal",
+    "rpt",
+    "screen",
+}
+DIRECT_APPLICATION_OUTPUT_PHRASES = {
+    "indicator app",
+    "indicator application",
+    "metric app",
+    "metric application",
+    "应用",
+    "报表",
+    "驾驶舱",
+    "看板",
+    "大屏",
+    "指标应用",
+    "专题",
+}
+DIRECT_SOURCE_LAYER_TOKENS = {
+    "raw",
+    "source",
+    "src",
+    "sync",
+}
+DIRECT_DIMENSION_NAME_TOKENS = {
+    "account",
+    "accounts",
+    "atm",
+    "branch",
+    "calendar",
+    "campaign",
+    "campaigns",
+    "category",
+    "customer",
+    "customers",
+    "date",
+    "dimension",
+    "economic",
+    "entity",
+    "indicator",
+    "indicators",
+    "location",
+    "locations",
+    "master",
+    "merchant",
+    "merchants",
+    "profile",
+    "product",
+    "products",
+    "promotion",
+    "reference",
+    "segment",
+    "segments",
+    "store",
+}
+DIRECT_FACT_EVENT_NAME_TOKENS = {
+    "alert",
+    "alerts",
+    "application",
+    "applications",
+    "assessment",
+    "assessments",
+    "detail",
+    "event",
+    "events",
+    "interaction",
+    "interactions",
+    "inventory",
+    "loan",
+    "order",
+    "orders",
+    "payment",
+    "payments",
+    "regulatory",
+    "report",
+    "reports",
+    "risk",
+    "transaction",
+    "transactions",
+}
+TIME_COLUMN_HINTS = {
+    "date",
+    "day",
+    "dt",
+    "hour",
+    "month",
+    "period",
+    "quarter",
+    "stat_date",
+    "time",
+    "week",
+    "year",
 }
 
 
@@ -1140,6 +1283,1305 @@ def _existing_model_data(path: Path) -> dict[str, Any]:
     return raw if isinstance(raw, dict) else {}
 
 
+def _empty_lineage_data() -> dict[str, list[Any]]:
+    return {"tables": [], "edges": [], "indirect_edges": []}
+
+
+def _load_lineage_data_for_direct_generation(
+    project: str,
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    try:
+        return load_lineage_data(project), []
+    except FileNotFoundError as exc:
+        return (
+            _empty_lineage_data(),
+            [
+                {
+                    "type": "lineage_missing",
+                    "severity": "warning",
+                    "message": str(exc),
+                }
+            ],
+        )
+
+
+def _direct_table_assets(
+    project: str,
+    lineage_data: dict[str, Any],
+    *,
+    model_metadata: dict[str, Any] | None = None,
+    include_model_files: bool = True,
+) -> dict[str, dict[str, Any]]:
+    project_cfg = PROJECT_CONFIG[project]
+    project_dir = PROJECT_ROOT / project_cfg["dir"]
+    if model_metadata is None:
+        model_metadata = load_model_metadata(project)
+    return (
+        build_asset_catalog(
+            lineage_data.get("tables") or [],
+            model_metadata,
+            project_dir,
+            edges=lineage_data.get("edges") or [],
+            indirect_edges=lineage_data.get("indirect_edges") or [],
+            include_model_files=include_model_files,
+        ).get("tables")
+        or {}
+    )
+
+
+def _safe_read_text(path: Any) -> str:
+    if not path:
+        return ""
+    try:
+        return Path(path).read_text(encoding=TEXT_ENCODING)
+    except OSError:
+        return ""
+
+
+def _lineage_view_for_direct_generation(
+    project: str, lineage_data: dict[str, Any]
+) -> LineageView | None:
+    if not any(
+        lineage_data.get(key) for key in ("tables", "edges", "indirect_edges")
+    ):
+        return None
+    return LineageView.from_data(project, lineage_data)
+
+
+def _direct_lineage_text(
+    table_name: str,
+    lineage_view: LineageView | None,
+    *,
+    include_downstream: bool = True,
+) -> str:
+    if not lineage_view:
+        return ""
+    upstream = sorted(lineage_view.upstream_tables(table_name))
+    downstream = (
+        sorted(lineage_view.downstream_tables(table_name))
+        if include_downstream
+        else []
+    )
+    facts = lineage_view.lineage_facts_for_table(table_name)
+    parts: list[str] = []
+    if upstream:
+        parts.append("upstream " + " ".join(upstream))
+    if downstream:
+        parts.append("downstream " + " ".join(downstream))
+    for key in (
+        "aggregate_columns",
+        "constant_columns",
+        "plain_columns",
+        "group_by_sources",
+        "source_files",
+    ):
+        values = facts.get(key) or []
+        if values:
+            parts.append(f"{key} " + " ".join(str(item) for item in values))
+    return "\n".join(parts)
+
+
+def _asset_column_names(asset: dict[str, Any]) -> list[str]:
+    names = []
+    for column in (
+        ((asset.get("ddl") or {}).get("columns") or [])
+        + (asset.get("columns") or [])
+    ):
+        if not isinstance(column, dict):
+            continue
+        name = str(column.get("name") or "").strip()
+        if name and name not in names:
+            names.append(name)
+    return names
+
+
+def _asset_ddl_text(asset: dict[str, Any]) -> str:
+    ddl = asset.get("ddl") or {}
+    return _safe_read_text(ddl.get("path"))
+
+
+def _direct_model_match_text(
+    table_name: str,
+    asset: dict[str, Any],
+    lineage_view: LineageView | None,
+) -> str:
+    parts: list[str] = [table_name]
+    ddl_text = _asset_ddl_text(asset)
+    if ddl_text:
+        parts.append(ddl_text)
+        comments = _column_comments_from_ddl(ddl_text)
+        if comments:
+            parts.append(" ".join(comments.values()))
+    for column_name in _asset_column_names(asset):
+        parts.append(column_name)
+    for task in asset.get("tasks") or []:
+        for key in ("file", "expected_table"):
+            if task.get(key):
+                parts.append(str(task[key]))
+        for key in ("output_tables", "lineage_targets"):
+            values = task.get(key) or []
+            if values:
+                parts.append(" ".join(str(item) for item in values))
+        parts.append(_safe_read_text(task.get("path")))
+    lineage_text = _direct_lineage_text(
+        table_name,
+        lineage_view,
+        include_downstream=False,
+    )
+    if lineage_text:
+        parts.append(lineage_text)
+    return "\n".join(part for part in parts if part)
+
+
+def _split_identifier_tokens(value: Any) -> list[str]:
+    text = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", str(value or ""))
+    tokens = re.findall(r"[A-Za-z0-9]+|[\u4e00-\u9fff]+", text.lower())
+    return [token for token in tokens if token]
+
+
+def _normalize_match_text(value: Any) -> str:
+    return " ".join(_split_identifier_tokens(value))
+
+
+def _catalog_string_values(value: Any) -> list[str]:
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    if isinstance(value, dict):
+        return [
+            str(item).strip()
+            for item in value.values()
+            if str(item).strip()
+        ]
+    text = str(value or "").strip()
+    return [text] if text else []
+
+
+def _catalog_entry_signals(entry: dict[str, Any]) -> list[str]:
+    signals = []
+    for key in ("code", "name"):
+        for value in _catalog_string_values(entry.get(key)):
+            if value not in signals:
+                signals.append(value)
+    for key in ("alias", "aliases", "keywords", "synonyms"):
+        for value in _catalog_string_values(entry.get(key)):
+            if value not in signals:
+                signals.append(value)
+    return signals
+
+
+def _is_match_token(token: str, signal_token: str) -> bool:
+    token = token.strip().lower()
+    signal_token = signal_token.strip().lower()
+    if not token or not signal_token:
+        return False
+    if token == signal_token:
+        return True
+    if token.rstrip("s") == signal_token.rstrip("s"):
+        return True
+    if len(signal_token) >= 4 and token.startswith(signal_token):
+        return True
+    return len(token) >= 4 and signal_token.startswith(token)
+
+
+def _is_weak_match_token(token: str) -> bool:
+    if token in DIRECT_MATCH_STOPWORDS:
+        return True
+    return len(token) < 3 or token.isdigit()
+
+
+def _score_catalog_entry(
+    entry: dict[str, Any],
+    *,
+    table_name: str,
+    match_text: str,
+) -> tuple[float, list[str]]:
+    table_raw = str(table_name or "").lower()
+    full_raw = str(match_text or "").lower()
+    table_norm = _normalize_match_text(table_name)
+    full_norm = _normalize_match_text(match_text)
+    table_tokens = set(_split_identifier_tokens(table_name))
+    full_tokens = set(_split_identifier_tokens(match_text))
+    score = 0.0
+    matches: list[str] = []
+
+    for signal in _catalog_entry_signals(entry):
+        raw_signal = str(signal or "").strip().lower()
+        if not raw_signal or raw_signal.isdigit():
+            continue
+        norm_signal = _normalize_match_text(raw_signal)
+        if raw_signal in table_raw:
+            score += 10.0
+            matches.append(signal)
+        elif raw_signal in full_raw:
+            score += 4.0
+            matches.append(signal)
+        elif norm_signal and norm_signal in table_norm:
+            score += 8.0
+            matches.append(signal)
+        elif norm_signal and norm_signal in full_norm:
+            score += 3.0
+            matches.append(signal)
+
+        for token in _split_identifier_tokens(signal):
+            if _is_weak_match_token(token):
+                continue
+            if any(_is_match_token(table_token, token) for table_token in table_tokens):
+                score += 4.0
+                matches.append(token)
+            elif any(
+                _is_match_token(full_token, token) for full_token in full_tokens
+            ):
+                score += 0.75
+                matches.append(token)
+
+    deduped_matches = []
+    for match in matches:
+        if match not in deduped_matches:
+            deduped_matches.append(match)
+    return score, deduped_matches
+
+
+def _best_catalog_entry_match(
+    entries: list[dict[str, Any]],
+    *,
+    table_name: str,
+    match_text: str,
+) -> dict[str, Any]:
+    best: dict[str, Any] = {}
+    for entry in entries:
+        score, matches = _score_catalog_entry(
+            entry,
+            table_name=table_name,
+            match_text=match_text,
+        )
+        if not best or score > best.get("score", 0):
+            best = {
+                "entry": entry,
+                "score": score,
+                "matches": matches,
+            }
+    if not best or best.get("score", 0) <= 0:
+        return {}
+    return best
+
+
+def _catalog_entries(catalog: dict[str, Any], key: str) -> list[dict[str, Any]]:
+    entries = catalog.get(key) or []
+    return [dict(entry) for entry in entries if isinstance(entry, dict)]
+
+
+def _has_metric_column_hints(asset: dict[str, Any]) -> bool:
+    for column_name in _asset_column_names(asset):
+        tokens = _split_identifier_tokens(column_name)
+        if any(token in METRIC_COLUMN_HINTS for token in tokens):
+            return True
+    return False
+
+
+def _direct_task_text(asset: dict[str, Any]) -> str:
+    return "\n".join(
+        _safe_read_text(task.get("path")) for task in asset.get("tasks") or []
+    )
+
+
+def _direct_task_has_fact_signals(
+    asset: dict[str, Any],
+    *,
+    process_score: float,
+    lineage_facts: dict[str, Any],
+) -> bool:
+    if lineage_facts.get("has_aggregate") or lineage_facts.get("has_group_by"):
+        return True
+
+    task_text = _direct_task_text(asset).lower()
+    if not task_text:
+        return False
+    if process_score >= 2:
+        return True
+    if re.search(r"\b(sum|count|avg|min|max)\s*\(", task_text):
+        return True
+    if re.search(r"\bgroup\s+by\b", task_text):
+        return True
+    if re.search(r"\bover\s*\(", task_text):
+        return True
+    return _has_metric_column_hints(asset)
+
+
+def _direct_generation_layer_from_asset_placement(
+    project: str,
+    asset: dict[str, Any],
+) -> str:
+    project_cfg = PROJECT_CONFIG.get(project) or {}
+    project_dir = PROJECT_ROOT / str(project_cfg.get("dir") or project)
+    for key, expected_dir in (("ddl", "ddl"), ("model", "models")):
+        path = (asset.get(key) or {}).get("path")
+        if not path:
+            continue
+        try:
+            parts = Path(path).relative_to(project_dir).parts
+        except ValueError:
+            continue
+        if len(parts) >= 2 and parts[0] == "ods" and parts[1] == expected_dir:
+            return "ODS"
+    return ""
+
+
+def _direct_has_aggregate_signals(
+    asset: dict[str, Any],
+    lineage_facts: dict[str, Any],
+) -> bool:
+    if lineage_facts.get("has_aggregate") or lineage_facts.get("has_group_by"):
+        return True
+
+    task_text = _direct_task_text(asset)
+    return bool(
+        re.search(r"\b(sum|count|avg|min|max)\s*\(", task_text, re.IGNORECASE)
+        or re.search(r"\bgroup\s+by\b", task_text, re.IGNORECASE)
+        or re.search(r"\bover\s*\(", task_text, re.IGNORECASE)
+    )
+
+
+def _direct_has_application_output_signal(
+    table_name: str,
+    asset: dict[str, Any],
+    match_text: str,
+) -> bool:
+    text = f"{table_name}\n{match_text}".lower()
+    if any(phrase in text for phrase in DIRECT_APPLICATION_OUTPUT_PHRASES):
+        return True
+
+    tokens = set(_split_identifier_tokens(text))
+    return bool(tokens & DIRECT_APPLICATION_OUTPUT_TOKENS)
+
+
+def _direct_has_dimension_layer_signal(
+    table_name: str,
+    asset: dict[str, Any],
+    *,
+    process_match: dict[str, Any],
+    subject_match: dict[str, Any],
+    match_text: str,
+    has_aggregate: bool,
+) -> bool:
+    if has_aggregate:
+        return False
+
+    name_tokens = set(_split_identifier_tokens(table_name))
+    if (
+        name_tokens & {"dimension", "entity", "master", "profile", "reference"}
+        and not (name_tokens & DIRECT_FACT_EVENT_NAME_TOKENS)
+    ):
+        return True
+    if (
+        name_tokens & DIRECT_DIMENSION_NAME_TOKENS
+        and not (name_tokens & DIRECT_FACT_EVENT_NAME_TOKENS)
+    ):
+        return True
+
+    process_score = float(process_match.get("score") or 0)
+    subject_score = float(subject_match.get("score") or 0)
+    if subject_score < 2:
+        return False
+
+    lowered_match_text = match_text.lower()
+    has_dimension_text = any(
+        token in lowered_match_text
+        for token in (" dimension", "维度", "实体", "属性", "档案", "主数据")
+    )
+    if has_dimension_text:
+        return True
+    if subject_score >= process_score + 2:
+        return True
+    return subject_score >= 8 and not _has_metric_column_hints(asset)
+
+
+def _direct_has_source_layer_signal(
+    table_name: str,
+    asset: dict[str, Any],
+    lineage_view: LineageView | None,
+) -> bool:
+    name_tokens = set(_split_identifier_tokens(table_name))
+    if not (name_tokens & DIRECT_SOURCE_LAYER_TOKENS):
+        return False
+    if asset.get("tasks"):
+        return False
+    upstream_tables = (
+        lineage_view.upstream_tables(table_name) if lineage_view else set()
+    )
+    return not upstream_tables
+
+
+def _direct_table_inspector_layer_result_is_usable(
+    table_inspector_layer_result: dict[str, Any] | None,
+) -> bool:
+    if not table_inspector_layer_result:
+        return False
+    if table_inspector_layer_result.get("status") not in {"passed", "warning"}:
+        return False
+    return float(table_inspector_layer_result.get("confidence") or 0) >= 0.5
+
+
+def _direct_infer_layer(
+    *,
+    project: str,
+    table_name: str,
+    asset: dict[str, Any],
+    seed_layer: str,
+    process_match: dict[str, Any],
+    subject_match: dict[str, Any],
+    lineage_view: LineageView | None,
+    match_text: str,
+    table_inspector_layer_result: dict[str, Any] | None = None,
+) -> str:
+    normalized_seed = str(seed_layer or "").strip().upper()
+    if normalized_seed and normalized_seed != "OTHER":
+        return normalized_seed
+
+    placement_layer = _direct_generation_layer_from_asset_placement(
+        project, asset
+    )
+    if placement_layer:
+        return placement_layer
+
+    lineage_facts = (
+        lineage_view.lineage_facts_for_table(table_name)
+        if lineage_view
+        else {}
+    )
+    has_aggregate = _direct_has_aggregate_signals(asset, lineage_facts)
+    upstream_tables = (
+        lineage_view.upstream_tables(table_name) if lineage_view else set()
+    )
+    downstream_tables = (
+        lineage_view.downstream_tables(table_name) if lineage_view else set()
+    )
+    has_application_output = _direct_has_application_output_signal(
+        table_name,
+        asset,
+        match_text,
+    )
+
+    if _direct_has_source_layer_signal(table_name, asset, lineage_view):
+        return "ODS"
+
+    if _direct_table_inspector_layer_result_is_usable(
+        table_inspector_layer_result
+    ):
+        inspected_layer = str(
+            table_inspector_layer_result.get("layer") or ""
+        ).upper()
+        if inspected_layer in VALID_LAYERS:
+            return inspected_layer
+
+    if has_application_output:
+        return "ADS"
+    if _direct_has_dimension_layer_signal(
+        table_name,
+        asset,
+        process_match=process_match,
+        subject_match=subject_match,
+        match_text=match_text,
+        has_aggregate=has_aggregate,
+    ):
+        return "DIM"
+
+    if has_aggregate:
+        if downstream_tables:
+            return "DWS"
+        if upstream_tables:
+            return "ADS"
+        return "DWS"
+    if (
+        float(process_match.get("score") or 0) >= 2
+        or _has_metric_column_hints(asset)
+        or upstream_tables
+    ):
+        return "DWD"
+    if float(subject_match.get("score") or 0) >= 2:
+        return "DIM"
+    return "OTHER"
+
+
+def _direct_seed_layer(
+    table_name: str,
+    asset: dict[str, Any],
+    *,
+    existing: dict[str, Any],
+    use_existing_model_metadata: bool,
+) -> str:
+    for candidate in (
+        existing.get("layer") if use_existing_model_metadata else "",
+        asset.get("layer") if use_existing_model_metadata else "",
+        _layer_from_table_name(table_name),
+    ):
+        layer = str(candidate or "").upper()
+        if layer and layer != "OTHER":
+            return layer
+    return "OTHER"
+
+
+def _direct_needs_table_inspector_layer_inference(
+    *,
+    project: str,
+    table_name: str,
+    asset: dict[str, Any],
+    existing: dict[str, Any],
+    use_existing_model_metadata: bool,
+) -> bool:
+    seed_layer = _direct_seed_layer(
+        table_name,
+        asset,
+        existing=existing,
+        use_existing_model_metadata=use_existing_model_metadata,
+    )
+    if seed_layer and seed_layer != "OTHER":
+        return False
+    return not _direct_generation_layer_from_asset_placement(project, asset)
+
+
+def _direct_catalog_option_entries(raw_entries: Any) -> list[dict[str, Any]]:
+    entries = []
+    if not isinstance(raw_entries, list):
+        return entries
+    for raw in raw_entries:
+        if not isinstance(raw, dict):
+            continue
+        code = str(raw.get("code") or "").strip()
+        if not code:
+            continue
+        entry = {
+            "code": code,
+            "name": str(raw.get("name") or "").strip(),
+        }
+        for key in ("data_domain", "business_area"):
+            value = str(raw.get(key) or "").strip()
+            if value:
+                entry[key] = value
+        entries.append(entry)
+    return entries
+
+
+def _direct_business_semantics_options(
+    catalog: dict[str, Any],
+) -> dict[str, Any]:
+    options: dict[str, Any] = {}
+    processes = _direct_catalog_option_entries(
+        catalog.get("business_processes") or []
+    )
+    subjects = _direct_catalog_option_entries(
+        catalog.get("semantic_subjects") or []
+    )
+    if processes:
+        options["business_processes"] = processes
+    if subjects:
+        options["semantic_subjects"] = subjects
+    return options
+
+
+def _direct_depth_from_ods(
+    *,
+    project: str,
+    table_name: str,
+    table_assets: dict[str, dict[str, Any]],
+    lineage_view: LineageView | None,
+    memo: dict[str, int],
+    visiting: set[str] | None = None,
+) -> int:
+    if table_name in memo:
+        return memo[table_name]
+    if visiting is None:
+        visiting = set()
+    if table_name in visiting:
+        return 1
+
+    asset = table_assets.get(table_name) or {}
+    asset_layer = str(asset.get("layer") or "").upper()
+    if (
+        asset_layer == "ODS"
+        or _layer_from_table_name(table_name) == "ODS"
+        or _direct_generation_layer_from_asset_placement(project, asset)
+        == "ODS"
+        or _direct_has_source_layer_signal(table_name, asset, lineage_view)
+    ):
+        memo[table_name] = 0
+        return 0
+
+    upstream_tables = (
+        sorted(lineage_view.upstream_tables(table_name))
+        if lineage_view
+        else []
+    )
+    if not upstream_tables:
+        memo[table_name] = 1
+        return 1
+
+    visiting.add(table_name)
+    depth = min(
+        _direct_depth_from_ods(
+            project=project,
+            table_name=upstream,
+            table_assets=table_assets,
+            lineage_view=lineage_view,
+            memo=memo,
+            visiting=visiting,
+        )
+        for upstream in upstream_tables
+    ) + 1
+    visiting.remove(table_name)
+    memo[table_name] = depth
+    return depth
+
+
+def _direct_inspection_context(
+    *,
+    catalog: dict[str, Any],
+    project: str,
+    table_name: str,
+    asset: dict[str, Any],
+    table_assets: dict[str, dict[str, Any]],
+    lineage_view: LineageView | None,
+    depth_memo: dict[str, int],
+) -> TableContext:
+    upstream_tables = (
+        sorted(lineage_view.upstream_tables(table_name))
+        if lineage_view
+        else []
+    )
+    downstream_tables = (
+        sorted(lineage_view.downstream_tables(table_name))
+        if lineage_view
+        else []
+    )
+    business_domain_config = get_business_domain_config(project)
+    business_domain_options = (
+        business_domain_config.prompt_options()
+        if business_domain_config
+        else {}
+    )
+    return TableContext(
+        table_name=table_name,
+        layer="OTHER",
+        ddl=_asset_ddl_text(asset),
+        etl_sql=_direct_task_text(asset),
+        upstream_tables=upstream_tables,
+        downstream_tables=downstream_tables,
+        depth_from_ods=_direct_depth_from_ods(
+            project=project,
+            table_name=table_name,
+            table_assets=table_assets,
+            lineage_view=lineage_view,
+            memo=depth_memo,
+        ),
+        upstream_metric_groups={},
+        column_lineage=(
+            lineage_view.column_lineage_for_table(table_name)
+            if lineage_view
+            else []
+        ),
+        declared_data_domain="",
+        declared_business_area="",
+        project_context=str(catalog.get("project_context") or "").strip(),
+        business_domain_options=business_domain_options,
+        business_semantics_options=_direct_business_semantics_options(catalog),
+    )
+
+
+def _direct_table_inspector_layer_result_from_inspection(
+    result: TableInspectResult,
+) -> dict[str, Any]:
+    inferred_layer = str(result.inferred_layer or "OTHER").upper()
+    applied_layer = layer_for_model(result)
+    if applied_layer not in VALID_LAYERS:
+        applied_layer = (
+            inferred_layer if inferred_layer in VALID_LAYERS else "OTHER"
+        )
+    reasoning = [
+        str(step).strip()
+        for step in result.reasoning_steps
+        if str(step).strip()
+    ]
+    return {
+        "status": result.status,
+        "layer": applied_layer,
+        "inferred_layer": inferred_layer,
+        "table_type": result.table_type,
+        "confidence": result.confidence,
+        "reason": "；".join(reasoning[:3]),
+        "reasoning_steps": reasoning,
+        "validation": result.validation,
+        "retry_count": result.retry_count,
+        "source": "table_inspector_layer_inference",
+    }
+
+
+def _direct_infer_layers_with_table_inspector(
+    *,
+    catalog: dict[str, Any],
+    project: str,
+    table_assets: dict[str, dict[str, Any]],
+    lineage_view: LineageView | None,
+    api_key: str,
+    model: str,
+    base_url: str,
+    max_retries: int,
+    parallelism: int,
+    no_cache: bool,
+    show_progress: bool,
+) -> tuple[dict[str, dict[str, Any]], list[dict[str, Any]]]:
+    if not table_assets:
+        return {}, []
+
+    cache_file = assess_cache_path(project, "table_inspector_layer.json")
+    if no_cache and cache_file.exists():
+        cache_file.unlink()
+    inspector = TableInspector(
+        api_key=api_key,
+        model=model,
+        base_url=base_url,
+        cache_file=cache_file,
+        max_retries=max_retries,
+        parallelism=parallelism,
+    )
+
+    if show_progress:
+        inspector.progress_callback = build_progress_callback()
+
+    depth_memo: dict[str, int] = {}
+    contexts = [
+        _direct_inspection_context(
+            catalog=catalog,
+            project=project,
+            table_name=table_name,
+            asset=asset,
+            table_assets=table_assets,
+            lineage_view=lineage_view,
+            depth_memo=depth_memo,
+        )
+        for table_name, asset in sorted(table_assets.items())
+    ]
+    inspection_results = inspector.inspect_batch(contexts)
+    layer_results = {
+        result.table_name: _direct_table_inspector_layer_result_from_inspection(
+            result
+        )
+        for result in inspection_results
+    }
+    warnings = []
+    for table_name, result in layer_results.items():
+        if result.get("status") == "passed":
+            continue
+        if result.get("status") == "warning":
+            warnings.append(
+                {
+                    "type": "table_inspector_layer_warning",
+                    "severity": "warning",
+                    "table": table_name,
+                    "message": result.get("reason")
+                    or "Table inspector returned validation warnings",
+                    "validation": result.get("validation") or {},
+                }
+            )
+            continue
+        warnings.append(
+            {
+                "type": "table_inspector_layer_failed",
+                "severity": "warning",
+                "table": table_name,
+                "message": result.get("reason")
+                or "Table inspector layer inference failed",
+            }
+        )
+    return layer_results, warnings
+
+
+def _direct_materialized(
+    *,
+    layer: str,
+    table_type: str,
+    table_name: str,
+    asset: dict[str, Any],
+    match_text: str,
+) -> str:
+    normalized_layer = str(layer or "").upper()
+    if normalized_layer == "ODS":
+        return _materialized_for_layer(normalized_layer)
+
+    text = f"{table_name}\n{_asset_ddl_text(asset)}".lower()
+    ddl = asset.get("ddl") or {}
+    key_columns = [str(item).lower() for item in ddl.get("key_columns") or []]
+    if "snapshot" in text or "快照" in text:
+        return "snapshot"
+    if table_type == "dimension" and any(
+        _is_time_grain_key(column) for column in key_columns
+    ):
+        return "snapshot"
+    if _direct_has_incremental_refresh(asset, table_name):
+        return "incremental"
+    return _materialized_for_layer(normalized_layer)
+
+
+def _direct_has_incremental_refresh(
+    asset: dict[str, Any], table_name: str
+) -> bool:
+    task_text = _direct_task_text(asset).lower()
+    if not task_text:
+        return False
+    if "truncate table" in task_text:
+        return False
+    target = str(table_name or "").lower()
+    return "delete from" in task_text and target in task_text
+
+
+def _direct_infer_table_type(
+    *,
+    table_name: str,
+    layer: str,
+    existing: dict[str, Any],
+    asset: dict[str, Any],
+    process_match: dict[str, Any],
+    subject_match: dict[str, Any],
+    lineage_view: LineageView | None,
+    table_inspector_layer_result: dict[str, Any] | None = None,
+) -> str:
+    existing_type = str(existing.get("table_type") or "").strip().lower()
+    if existing_type:
+        return existing_type
+
+    name = str(table_name or "").lower()
+    match_text = _direct_model_match_text(table_name, asset, lineage_view)
+    lowered_match_text = match_text.lower()
+    process_score = float(process_match.get("score") or 0)
+    subject_score = float(subject_match.get("score") or 0)
+    lineage_facts = (
+        lineage_view.lineage_facts_for_table(table_name)
+        if lineage_view
+        else {}
+    )
+    has_metric_hints = _has_metric_column_hints(asset)
+    has_fact_text = any(
+        token in lowered_match_text
+        for token in (" fact", "事实", "汇总", "明细事实", "snapshot fact")
+    )
+    has_dimension_text = any(
+        token in lowered_match_text
+        for token in (" dimension", "维度", "实体", "属性")
+    )
+
+    if layer == "ODS" or name.startswith("ods_"):
+        return "other"
+    if _direct_table_inspector_layer_result_is_usable(
+        table_inspector_layer_result
+    ):
+        inspected_table_type = str(
+            table_inspector_layer_result.get("table_type") or ""
+        ).strip().lower()
+        if inspected_table_type in (VALID_TABLE_TYPES - {"other"}):
+            return inspected_table_type
+    if layer == "ADS" or name.startswith("ads_"):
+        if _direct_task_has_fact_signals(
+            asset,
+            process_score=process_score,
+            lineage_facts=lineage_facts,
+        ):
+            return "fact"
+        return "other"
+    if layer == "DIM" or name.startswith("dim_"):
+        return "dimension"
+    if layer == "DWS":
+        return "fact"
+    if layer == "DWD" and subject_score >= 2 and has_dimension_text:
+        return "dimension"
+    if layer == "DWD" and process_score >= 2 and (
+        has_metric_hints or lineage_facts.get("has_aggregate") or has_fact_text
+    ):
+        return "fact"
+    if subject_score >= 2 and subject_score >= process_score + 2:
+        return "dimension"
+    if process_score >= 2:
+        return "fact"
+    if lineage_facts.get("has_aggregate"):
+        return "fact"
+    return _infer_table_type(table_name, layer)
+
+
+def _direct_existing_catalog_mapping(
+    catalog: dict[str, Any],
+    table_name: str,
+    existing: dict[str, Any],
+) -> dict[str, Any]:
+    mapping = catalog_mapping_for_model(catalog, table_name, existing)
+    if mapping.get("business_process") or mapping.get("semantic_subject"):
+        assignment = "existing_business_process"
+        if mapping.get("semantic_subject"):
+            assignment = "existing_semantic_subject"
+        mapping["assignment_source"] = assignment
+        mapping["assignment_reason"] = "existing_model_metadata"
+    return mapping
+
+
+def _direct_catalog_mapping_for_model(
+    catalog: dict[str, Any],
+    project: str,
+    table_name: str,
+    asset: dict[str, Any],
+    *,
+    existing: dict[str, Any],
+    lineage_view: LineageView | None,
+    use_existing_model_metadata: bool = True,
+    table_inspector_layer_result: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    if use_existing_model_metadata:
+        existing_mapping = _direct_existing_catalog_mapping(
+            catalog, table_name, existing
+        )
+        if existing_mapping.get("business_process") or existing_mapping.get(
+            "semantic_subject"
+        ):
+            return existing_mapping
+
+    match_text = _direct_model_match_text(table_name, asset, lineage_view)
+    seed_layer = _direct_seed_layer(
+        table_name,
+        asset,
+        existing=existing,
+        use_existing_model_metadata=use_existing_model_metadata,
+    )
+    process_match = _best_catalog_entry_match(
+        _catalog_entries(catalog, "business_processes"),
+        table_name=table_name,
+        match_text=match_text,
+    )
+    subject_match = _best_catalog_entry_match(
+        _catalog_entries(catalog, "semantic_subjects"),
+        table_name=table_name,
+        match_text=match_text,
+    )
+    layer = _direct_infer_layer(
+        project=project,
+        table_name=table_name,
+        asset=asset,
+        seed_layer=seed_layer,
+        process_match=process_match,
+        subject_match=subject_match,
+        lineage_view=lineage_view,
+        match_text=match_text,
+        table_inspector_layer_result=table_inspector_layer_result,
+    )
+    table_type = _direct_infer_table_type(
+        table_name=table_name,
+        layer=layer,
+        existing=existing if use_existing_model_metadata else {},
+        asset=asset,
+        process_match=process_match,
+        subject_match=subject_match,
+        lineage_view=lineage_view,
+        table_inspector_layer_result=table_inspector_layer_result,
+    )
+    applied_layer = "DIM" if table_type == "dimension" else layer
+    mapping: dict[str, Any] = {
+        "table": table_name,
+        "layer": applied_layer,
+        "table_type": table_type or "other",
+        "materialized": _direct_materialized(
+            layer=applied_layer,
+            table_type=table_type,
+            table_name=table_name,
+            asset=asset,
+            match_text=match_text,
+        ),
+        "assignment_source": "direct_catalog_match",
+    }
+    if (
+        _direct_table_inspector_layer_result_is_usable(
+            table_inspector_layer_result
+        )
+        and str(table_inspector_layer_result.get("layer") or "").upper()
+        == layer
+    ):
+        mapping.update(
+            {
+                "layer_assignment_source": "table_inspector_layer_inference",
+                "layer_assignment_reason": str(
+                    table_inspector_layer_result.get("reason") or ""
+                ).strip(),
+                "layer_assignment_score": table_inspector_layer_result.get(
+                    "confidence", 0
+                ),
+            }
+        )
+    else:
+        mapping["layer_assignment_source"] = "direct_rule"
+
+    if table_type == "dimension" and subject_match.get("score", 0) >= 2:
+        subject = subject_match["entry"]
+        mapping.update(
+            {
+                "data_domain": str(subject.get("data_domain") or "").strip(),
+                "business_area": str(subject.get("business_area") or "").strip(),
+                "semantic_subject": str(subject.get("code") or "").strip(),
+                "dimension_role": str(
+                    subject.get("dimension_role") or "BASE"
+                ).strip(),
+                "dimension_content_type": str(
+                    subject.get("dimension_content_type") or "INFO"
+                ).strip(),
+                "assignment_reason": (
+                    "semantic_subject_match:"
+                    + ",".join(str(item) for item in subject_match["matches"])
+                ),
+                "assignment_score": subject_match["score"],
+            }
+        )
+        return mapping
+
+    if table_type == "fact" and process_match.get("score", 0) >= 2:
+        process = process_match["entry"]
+        mapping.update(
+            {
+                "data_domain": str(process.get("data_domain") or "").strip(),
+                "business_area": str(process.get("business_area") or "").strip(),
+                "business_process": str(process.get("code") or "").strip(),
+                "assignment_reason": (
+                    "business_process_match:"
+                    + ",".join(str(item) for item in process_match["matches"])
+                ),
+                "assignment_score": process_match["score"],
+            }
+        )
+        return mapping
+
+    mapping.update(
+        {
+            "assignment_source": "fallback",
+            "assignment_reason": "no_catalog_assignment_matched",
+            "assignment_score": max(
+                float(process_match.get("score") or 0),
+                float(subject_match.get("score") or 0),
+            ),
+        }
+    )
+    return mapping
+
+
+def _apply_direct_lineage_business_process_propagation(
+    catalog: dict[str, Any],
+    mappings: dict[str, dict[str, Any]],
+    lineage_view: LineageView | None,
+) -> None:
+    if not lineage_view:
+        return
+
+    processes = _catalog_entries(catalog, "business_processes")
+    for table_name, mapping in mappings.items():
+        if mapping.get("business_process"):
+            continue
+        if mapping.get("table_type") != "fact":
+            continue
+        if str(mapping.get("layer") or "").upper() not in {"DWS", "ADS"}:
+            continue
+
+        upstream_sources: dict[str, list[str]] = {}
+        for upstream_table in sorted(lineage_view.upstream_tables(table_name)):
+            upstream_mapping = mappings.get(upstream_table) or {}
+            process_code = str(
+                upstream_mapping.get("business_process") or ""
+            ).strip()
+            if not process_code:
+                continue
+            upstream_sources.setdefault(process_code, []).append(upstream_table)
+
+        if len(upstream_sources) != 1:
+            continue
+
+        process_code, source_tables = next(iter(upstream_sources.items()))
+        process = _entry_by_code(processes, process_code)
+        if not process:
+            continue
+        mapping.update(
+            {
+                "data_domain": str(process.get("data_domain") or "").strip(),
+                "business_area": str(process.get("business_area") or "").strip(),
+                "business_process": process_code,
+                "assignment_source": "direct_lineage_propagation",
+                "assignment_reason": (
+                    "upstream_business_process:" + ",".join(source_tables)
+                ),
+                "assignment_score": max(
+                    float(mapping.get("assignment_score") or 0),
+                    2.0,
+                ),
+            }
+        )
+
+
+def _entry_display_name(entry: dict[str, Any], code: str) -> str:
+    return str(entry.get("name") or "").strip() or _display_name_from_code(code)
+
+
+def _column_matches_entry(column_name: str, entry: dict[str, Any]) -> bool:
+    column_tokens = set(_split_identifier_tokens(column_name))
+    for signal in _catalog_entry_signals(entry):
+        for token in _split_identifier_tokens(signal):
+            if _is_weak_match_token(token):
+                continue
+            if any(
+                _is_match_token(column_token, token)
+                for column_token in column_tokens
+            ):
+                return True
+    return False
+
+
+def _candidate_key_columns_for_entry(
+    asset: dict[str, Any],
+    entry: dict[str, Any],
+) -> list[str]:
+    column_names = _asset_column_names(asset)
+    ddl = asset.get("ddl") or {}
+    key_columns = [
+        str(column).strip()
+        for column in ddl.get("key_columns") or []
+        if str(column).strip()
+    ]
+    candidates = []
+    for column in key_columns + column_names:
+        column_lower = column.lower()
+        if column in candidates:
+            continue
+        if _is_time_grain_key(column_lower):
+            continue
+        if not (
+            column_lower.endswith("_id")
+            or column_lower == "id"
+            or column in key_columns
+        ):
+            continue
+        if _column_matches_entry(column, entry):
+            candidates.append(column)
+    return candidates
+
+
+def _direct_entities_for_model(
+    catalog: dict[str, Any],
+    mapping: dict[str, Any],
+    asset: dict[str, Any],
+) -> list[dict[str, Any]]:
+    subjects = _catalog_entries(catalog, "semantic_subjects")
+    if mapping.get("semantic_subject"):
+        subject = _entry_by_code(subjects, mapping["semantic_subject"])
+        if not subject:
+            return []
+        code = str(subject.get("code") or "").strip()
+        keys = _candidate_key_columns_for_entry(asset, subject)
+        if not code or not keys:
+            return []
+        return [
+            {
+                "code": code,
+                "type": "primary",
+                "name": _entry_display_name(subject, code),
+                "key_columns": keys,
+            }
+        ]
+
+    if mapping.get("table_type") != "fact":
+        return []
+
+    entities = []
+    seen = set()
+    for subject in subjects:
+        code = str(subject.get("code") or "").strip()
+        keys = _candidate_key_columns_for_entry(asset, subject)
+        if not code or not keys or code in seen:
+            continue
+        seen.add(code)
+        entities.append(
+            {
+                "code": code,
+                "type": "foreign",
+                "name": _entry_display_name(subject, code),
+                "key_columns": keys,
+            }
+        )
+    return entities
+
+
+def _infer_time_column(asset: dict[str, Any]) -> str:
+    for column in _asset_column_names(asset):
+        column_lower = column.lower()
+        if column_lower in TIME_COLUMN_HINTS:
+            return column
+    for column in _asset_column_names(asset):
+        if _is_time_grain_key(column):
+            return column
+    return ""
+
+
+def _infer_time_period_from_name(table_name: str, time_column: str) -> str:
+    text = f"{table_name}_{time_column}".lower()
+    if any(token in text for token in ("hour", "hourly", "_hh")):
+        return "H"
+    if any(token in text for token in ("week", "weekly")):
+        return "W"
+    if any(token in text for token in ("month", "monthly")):
+        return "M"
+    if any(token in text for token in ("quarter", "quarterly")):
+        return "Q"
+    if any(token in text for token in ("year", "yearly")):
+        return "Y"
+    if any(token in text for token in ("date", "daily", "day", "_dt")):
+        return "D"
+    return ""
+
+
+def _description_from_ddl(ddl_text: str) -> str:
+    for line in str(ddl_text or "").splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("--"):
+            continue
+        description = stripped[2:].strip()
+        if not description or description.lower().startswith("table_id:"):
+            continue
+        return description
+    return ""
+
+
+def _direct_extra_model_metadata(
+    *,
+    catalog: dict[str, Any],
+    mapping: dict[str, Any],
+    asset: dict[str, Any],
+    table_name: str,
+) -> dict[str, Any]:
+    extra: dict[str, Any] = {}
+    ddl_text = _asset_ddl_text(asset)
+    description = _description_from_ddl(ddl_text)
+    if description:
+        extra["description"] = description
+
+    entities = _direct_entities_for_model(catalog, mapping, asset)
+    if entities:
+        extra["entities"] = entities
+    if mapping.get("table_type") == "fact" and mapping.get("layer") == "DWS":
+        grain: dict[str, Any] = {}
+        entity_codes = [
+            str(entity.get("code") or "").strip()
+            for entity in entities
+            if str(entity.get("code") or "").strip()
+        ]
+        time_column = _infer_time_column(asset)
+        time_period = _infer_time_period_from_name(table_name, time_column)
+        if entity_codes:
+            grain["entities"] = entity_codes
+        if time_column:
+            grain["time_column"] = time_column
+        if time_period:
+            grain["time_period"] = time_period
+        if grain:
+            extra["grain"] = grain
+    return extra
+
+
 def _catalog_model_payload(
     *,
     table_name: str,
@@ -1208,6 +2650,38 @@ def _catalog_model_payload(
         updated.pop("dimension_role", None)
         updated.pop("dimension_content_type", None)
     return updated
+
+
+def _direct_mapping_preserving_existing_governance(
+    *,
+    table_name: str,
+    existing: dict[str, Any],
+    mapping: dict[str, Any],
+) -> dict[str, Any]:
+    """Keep existing governance metadata when direct matching is inconclusive."""
+    if not existing:
+        return mapping
+
+    preserved = dict(mapping)
+    layer = str(
+        preserved.get("layer")
+        or existing.get("layer")
+        or _layer_from_table_name(table_name)
+    ).upper()
+
+    if (
+        layer in DATA_DOMAIN_LAYERS
+        and not str(preserved.get("data_domain") or "").strip()
+        and str(existing.get("data_domain") or "").strip()
+    ):
+        preserved["data_domain"] = existing["data_domain"]
+    if (
+        layer in BUSINESS_AREA_LAYERS
+        and not str(preserved.get("business_area") or "").strip()
+        and str(existing.get("business_area") or "").strip()
+    ):
+        preserved["business_area"] = existing["business_area"]
+    return preserved
 
 
 def _business_processes_from_result(result: TableInspectResult) -> list[str]:
@@ -1319,6 +2793,10 @@ def update_model_yaml_from_catalog(
                 updated[key] = previous[key]
 
     changed = updated != previous
+    config_changed = updated.get("config") != previous.get("config")
+    documentation_changed = updated.get("description") != previous.get(
+        "description"
+    )
     if changed and not dry_run:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(
@@ -1346,6 +2824,8 @@ def update_model_yaml_from_catalog(
             updated.get(key) != previous.get(key)
             for key in ("layer", "table_type")
         ),
+        "config_changed": config_changed,
+        "documentation_changed": documentation_changed,
         "business_changed": business_changed,
         "metric_changed": False,
         "grain_changed": False,
@@ -1364,6 +2844,307 @@ def update_model_yaml_from_catalog(
         "semantic_subject": updated.get("semantic_subject"),
         "dimension_role": updated.get("dimension_role"),
         "dimension_content_type": updated.get("dimension_content_type"),
+    }
+
+
+def update_model_yaml_from_direct_generation(
+    project: str,
+    table_name: str,
+    mapping: dict[str, Any],
+    *,
+    catalog: dict[str, Any],
+    asset: dict[str, Any],
+    dry_run: bool = False,
+    write_scope: str = "all",
+    base_existing: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    write_scope = _validate_write_scope(write_scope)
+    if write_scope not in DIRECT_MODEL_WRITE_SCOPES:
+        raise ValueError("generate-models 仅支持 write_scope=all/table/business")
+
+    path = model_path_for_table(
+        project,
+        table_name,
+        layer=mapping.get("layer"),
+    )
+    existing = _existing_model_data(path)
+    previous = dict(existing)
+    payload_existing = existing if base_existing is None else dict(base_existing)
+    payload_mapping = (
+        _direct_mapping_preserving_existing_governance(
+            table_name=table_name,
+            existing=existing,
+            mapping=mapping,
+        )
+        if base_existing is None
+        else mapping
+    )
+    updated = _catalog_model_payload(
+        table_name=table_name,
+        existing=payload_existing,
+        mapping=payload_mapping,
+    )
+    if write_scope == "table":
+        for key in (
+            "data_domain",
+            "business_area",
+            "business_process",
+            "semantic_subject",
+            "dimension_role",
+            "dimension_content_type",
+        ):
+            if key not in previous:
+                updated.pop(key, None)
+            else:
+                updated[key] = previous[key]
+
+    if write_scope == "all":
+        extra = _direct_extra_model_metadata(
+            catalog=catalog,
+            mapping=mapping,
+            asset=asset,
+            table_name=table_name,
+        )
+        if extra.get("description") and not updated.get("description"):
+            updated["description"] = extra["description"]
+        for key in ("entities", "grain"):
+            if extra.get(key) and not updated.get(key):
+                updated[key] = extra[key]
+
+    changed = updated != previous
+    config_changed = updated.get("config") != previous.get("config")
+    documentation_changed = updated.get("description") != previous.get(
+        "description"
+    )
+    if changed and not dry_run:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            yaml.safe_dump(updated, allow_unicode=True, sort_keys=False),
+            encoding=TEXT_ENCODING,
+        )
+
+    business_changed = any(
+        updated.get(key) != previous.get(key)
+        for key in (
+            "data_domain",
+            "business_area",
+            "business_process",
+            "semantic_subject",
+            "dimension_role",
+            "dimension_content_type",
+        )
+    )
+    grain_changed = any(
+        updated.get(key) != previous.get(key)
+        for key in ("entities", "grain")
+    )
+    return {
+        "table": table_name,
+        "path": str(path),
+        "status": "passed",
+        "changed": changed,
+        "metadata_changed": any(
+            updated.get(key) != previous.get(key)
+            for key in ("layer", "table_type")
+        ),
+        "config_changed": config_changed,
+        "documentation_changed": documentation_changed,
+        "business_changed": business_changed,
+        "metric_changed": False,
+        "grain_changed": grain_changed,
+        "updated": bool(changed and not dry_run),
+        "write_scope": write_scope,
+        "source": "direct_generation",
+        "assignment_source": mapping.get("assignment_source", ""),
+        "assignment_reason": mapping.get("assignment_reason", ""),
+        "assignment_score": mapping.get("assignment_score", 0),
+        "layer_assignment_source": mapping.get("layer_assignment_source", ""),
+        "layer_assignment_reason": mapping.get("layer_assignment_reason", ""),
+        "layer_assignment_score": mapping.get("layer_assignment_score", 0),
+        "previous_layer": previous.get("layer"),
+        "layer": updated.get("layer"),
+        "previous_table_type": previous.get("table_type"),
+        "table_type": updated.get("table_type"),
+        "previous_data_domain": previous.get("data_domain"),
+        "data_domain": updated.get("data_domain"),
+        "previous_business_area": previous.get("business_area"),
+        "business_area": updated.get("business_area"),
+        "business_process": updated.get("business_process"),
+        "semantic_subject": updated.get("semantic_subject"),
+        "dimension_role": updated.get("dimension_role"),
+        "dimension_content_type": updated.get("dimension_content_type"),
+    }
+
+
+def run_direct_model_generation(
+    project: str,
+    *,
+    dry_run: bool = False,
+    write_scope: str = "all",
+    ignore_existing_models: bool = False,
+    infer_layer_with_llm: bool = False,
+    api_key: str = "",
+    model: str = "deepseek-v4-flash",
+    base_url: str = "",
+    max_retries: int = 1,
+    parallelism: int = 4,
+    no_cache: bool = False,
+    show_progress: bool = False,
+) -> dict[str, Any]:
+    """Generate model YAML from catalog, DDL, tasks, and lineage facts."""
+    write_scope = _validate_write_scope(write_scope)
+    if write_scope not in DIRECT_MODEL_WRITE_SCOPES:
+        raise ValueError("generate-models 仅支持 write_scope=all/table/business")
+    if infer_layer_with_llm and not api_key:
+        raise ValueError("infer_layer_with_llm=True 时必须提供 api_key")
+
+    catalog = load_business_semantics_catalog(project)
+    if not catalog:
+        raise FileNotFoundError(
+            f"未找到 {project}/business_semantics.yaml，请先初始化目录"
+        )
+
+    lineage_data, warnings = _load_lineage_data_for_direct_generation(project)
+    lineage_view = _lineage_view_for_direct_generation(project, lineage_data)
+    model_metadata = {} if ignore_existing_models else load_model_metadata(project)
+    assets = _direct_table_assets(
+        project,
+        lineage_data,
+        model_metadata=model_metadata,
+        include_model_files=not ignore_existing_models,
+    )
+    updates = []
+    table_assets: dict[str, dict[str, Any]] = {}
+    existing_by_table: dict[str, dict[str, Any]] = {}
+    mappings: dict[str, dict[str, Any]] = {}
+    for table_name, asset in sorted(assets.items()):
+        ddl = asset.get("ddl") or {}
+        lineage_table = asset.get("lineage_table") or {}
+        tasks = asset.get("tasks") or []
+        if not ddl.get("exists") and not lineage_table and not tasks:
+            continue
+        existing = model_metadata.get(table_name, {})
+        table_assets[table_name] = asset
+        existing_by_table[table_name] = existing
+
+    table_inspector_layer_results: dict[str, dict[str, Any]] = {}
+    if infer_layer_with_llm:
+        llm_candidates = {
+            table_name: asset
+            for table_name, asset in table_assets.items()
+            if _direct_needs_table_inspector_layer_inference(
+                project=project,
+                table_name=table_name,
+                asset=asset,
+                existing=existing_by_table.get(table_name, {}),
+                use_existing_model_metadata=not ignore_existing_models,
+            )
+        }
+        (
+            table_inspector_layer_results,
+            table_inspector_warnings,
+        ) = _direct_infer_layers_with_table_inspector(
+            catalog=catalog,
+            project=project,
+            table_assets=llm_candidates,
+            lineage_view=lineage_view,
+            api_key=api_key,
+            model=model,
+            base_url=base_url,
+            max_retries=max_retries,
+            parallelism=parallelism,
+            no_cache=no_cache,
+            show_progress=show_progress,
+        )
+        warnings.extend(table_inspector_warnings)
+
+    for table_name, asset in sorted(table_assets.items()):
+        existing = existing_by_table.get(table_name, {})
+        mappings[table_name] = _direct_catalog_mapping_for_model(
+            catalog,
+            project,
+            table_name,
+            asset,
+            existing=existing,
+            lineage_view=lineage_view,
+            use_existing_model_metadata=not ignore_existing_models,
+            table_inspector_layer_result=table_inspector_layer_results.get(
+                table_name
+            ),
+        )
+
+    _apply_direct_lineage_business_process_propagation(
+        catalog,
+        mappings,
+        lineage_view,
+    )
+
+    for table_name, asset in sorted(table_assets.items()):
+        mapping = mappings[table_name]
+        updates.append(
+            update_model_yaml_from_direct_generation(
+                project,
+                table_name,
+                mapping,
+                catalog=catalog,
+                asset=asset,
+                dry_run=dry_run,
+                write_scope=write_scope,
+                base_existing={} if ignore_existing_models else None,
+            )
+        )
+    if not dry_run:
+        import config as _config
+
+        _config._model_metadata_cache.clear()
+
+    changed_updates = [update for update in updates if update["changed"]]
+    return {
+        "project": project,
+        "source": "direct_generation",
+        "write_scope": write_scope,
+        "ignore_existing_models": ignore_existing_models,
+        "infer_layer_with_llm": infer_layer_with_llm,
+        "catalog_path": str(
+            PROJECT_ROOT
+            / PROJECT_CONFIG[project]["dir"]
+            / "business_semantics.yaml"
+        ),
+        "warning_count": len(warnings),
+        "warnings": warnings,
+        "inspected_table_count": len(updates),
+        "model_updates": changed_updates,
+        "model_update_count": len(
+            [update for update in changed_updates if update.get("updated")]
+        ),
+        "model_change_count": len(changed_updates),
+        "assigned_business_process_count": len(
+            [
+                update
+                for update in updates
+                if update.get("business_process")
+                and update.get("assignment_source") != "fallback"
+            ]
+        ),
+        "assigned_semantic_subject_count": len(
+            [
+                update
+                for update in updates
+                if update.get("semantic_subject")
+                and update.get("assignment_source") != "fallback"
+            ]
+        ),
+        "table_inspector_layer_inference_attempt_count": len(
+            table_inspector_layer_results
+        ),
+        "table_inspector_layer_inference_count": len(
+            [
+                update
+                for update in updates
+                if update.get("layer_assignment_source")
+                == "table_inspector_layer_inference"
+            ]
+        ),
     }
 
 
@@ -1444,6 +3225,7 @@ def run_catalog_discovery(
     *,
     api_key: str,
     model: str = "deepseek-v4-flash",
+    base_url: str = "",
     max_retries: int = 1,
     parallelism: int = 2,
     no_cache: bool = False,
@@ -1464,13 +3246,15 @@ def run_catalog_discovery(
     if no_cache and cache_file.exists():
         cache_file.unlink()
 
-    inspector = TableInspector(
-        api_key=api_key,
-        model=model,
-        cache_file=cache_file,
-        max_retries=max_retries,
-        parallelism=parallelism,
-    )
+    inspector_kwargs = {
+        "model": model,
+        "cache_file": cache_file,
+        "max_retries": max_retries,
+        "parallelism": parallelism,
+    }
+    if base_url:
+        inspector_kwargs["base_url"] = base_url
+    inspector = TableInspector(api_key=api_key, **inspector_kwargs)
     if show_progress:
         inspector.progress_callback = build_progress_callback()
 
@@ -1614,6 +3398,7 @@ def run_metadata_write(
     *,
     api_key: str,
     model: str = "deepseek-v4-flash",
+    base_url: str = "",
     max_retries: int = 1,
     parallelism: int = 2,
     no_cache: bool = False,
@@ -1635,13 +3420,15 @@ def run_metadata_write(
     if no_cache and cache_file.exists():
         cache_file.unlink()
 
-    inspector = TableInspector(
-        api_key=api_key,
-        model=model,
-        cache_file=cache_file,
-        max_retries=max_retries,
-        parallelism=parallelism,
-    )
+    inspector_kwargs = {
+        "model": model,
+        "cache_file": cache_file,
+        "max_retries": max_retries,
+        "parallelism": parallelism,
+    }
+    if base_url:
+        inspector_kwargs["base_url"] = base_url
+    inspector = TableInspector(api_key=api_key, **inspector_kwargs)
     if show_progress:
         inspector.progress_callback = build_progress_callback()
     dwd_results = inspector.inspect_batch(dwd_contexts)
@@ -1725,6 +3512,14 @@ def main() -> None:
         "--model", default="deepseek-v4-flash", help="DeepSeek 模型名称"
     )
     parser.add_argument(
+        "--base-url",
+        default=os.environ.get("LLM_BASE_URL", ""),
+        help=(
+            "OpenAI-compatible API Base URL，默认使用 DeepSeek；"
+            "也可通过 LLM_BASE_URL 或 DEEPSEEK_BASE_URL 设置"
+        ),
+    )
+    parser.add_argument(
         "--max-retries",
         type=int,
         default=1,
@@ -1756,6 +3551,30 @@ def main() -> None:
         help="从 business_semantics.yaml 刷新/初始化 models",
     )
     parser.add_argument(
+        "--generate-models",
+        action="store_true",
+        help=(
+            "基于 business_semantics.yaml、DDL、task 和 lineage "
+            "直接生成/补齐 models YAML，默认不调用 LLM"
+        ),
+    )
+    parser.add_argument(
+        "--infer-layer-with-llm",
+        action="store_true",
+        help=(
+            "仅用于 --generate-models: 当没有现有 layer、表名前缀或 ODS "
+            "目录等明确分层信息时，调用 LLM 判断 layer"
+        ),
+    )
+    parser.add_argument(
+        "--ignore-existing-models",
+        action="store_true",
+        help=(
+            "仅用于 --generate-models: 不读取现有 models YAML 作为推断先验，"
+            "按 business_semantics、DDL、task 和 lineage 从零生成"
+        ),
+    )
+    parser.add_argument(
         "--write-scope",
         choices=sorted(WRITE_SCOPES),
         default="all",
@@ -1772,7 +3591,7 @@ def main() -> None:
         help="忽略本地缓存，强制重新调用 API",
     )
     parser.add_argument(
-        "--parallel", type=int, default=2, help="LLM 并发调用数，默认 2"
+        "--parallel", type=int, default=4, help="LLM 并发调用数，默认 4"
     )
     parser.add_argument(
         "--quiet", action="store_true", help="不打印单表巡检进度"
@@ -1789,6 +3608,7 @@ def main() -> None:
             args.project,
             api_key=api_key,
             model=args.model,
+            base_url=args.base_url,
             max_retries=args.max_retries,
             parallelism=args.parallel,
             no_cache=args.no_cache,
@@ -1801,6 +3621,28 @@ def main() -> None:
             args.project,
             dry_run=args.dry_run,
             overwrite=args.overwrite_catalog,
+        )
+    elif args.generate_models:
+        api_key = ""
+        if args.infer_layer_with_llm:
+            api_key = os.environ.get("DEEPSEEK_API_KEY", "")
+            if not api_key:
+                raise SystemExit(
+                    "未提供 DEEPSEEK_API_KEY 环境变量，无法调用 LLM 推断 layer"
+                )
+        result = run_direct_model_generation(
+            args.project,
+            dry_run=args.dry_run,
+            write_scope=args.write_scope,
+            ignore_existing_models=args.ignore_existing_models,
+            infer_layer_with_llm=args.infer_layer_with_llm,
+            api_key=api_key,
+            model=args.model,
+            base_url=args.base_url,
+            max_retries=args.max_retries,
+            parallelism=args.parallel,
+            no_cache=args.no_cache,
+            show_progress=not args.quiet,
         )
     elif args.from_catalog:
         result = run_catalog_metadata_write(
@@ -1822,6 +3664,7 @@ def main() -> None:
             args.project,
             api_key=api_key,
             model=args.model,
+            base_url=args.base_url,
             max_retries=args.max_retries,
             parallelism=args.parallel,
             no_cache=args.no_cache,
@@ -1848,6 +3691,19 @@ def main() -> None:
             "模型变更: {model_change_count}, 已写入: {model_update_count}".format(
                 **result
             )
+        )
+        return
+    if result.get("source") == "direct_generation":
+        print(
+            "直接生成: "
+            "巡检表: {inspected_table_count}, "
+            "模型变更: {model_change_count}, 已写入: {model_update_count}, "
+            "业务过程归属: {assigned_business_process_count}, "
+            "语义主题归属: {assigned_semantic_subject_count}, "
+            "表巡检分层: "
+            "{table_inspector_layer_inference_count}/"
+            "{table_inspector_layer_inference_attempt_count}, "
+            "警告: {warning_count}".format(**result)
         )
         return
     if result.get("source") == "llm_catalog_discovery":

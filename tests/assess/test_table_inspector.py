@@ -1,6 +1,7 @@
 import json
 import threading
 import time
+import urllib.error
 from unittest.mock import patch
 
 import pytest
@@ -45,6 +46,7 @@ def test_parse_response_metadata_scenarios():
         _assert_dict_to_result_normalizes_placeholder_empty_grain,
         _assert_parse_response_preserves_related_entities_metadata,
         _assert_parse_basic_response_shapes,
+        _assert_parse_response_ignores_legacy_layer_reason_fields,
         _assert_parse_grouped_column_response,
         _assert_result_serialization_handles_system_fields,
     ]
@@ -810,14 +812,30 @@ def _assert_parse_basic_response_shapes():
     scenarios = [
         (
             "dwd_order",
-            '{"table_type": "fact", "confidence": 0.8, "reason": "test fact"}',
+            json.dumps(
+                {
+                    "inferred_layer": "DWD",
+                    "table_type": "fact",
+                    "confidence": 0.8,
+                    "reasoning_steps": ["test fact"],
+                }
+            ),
             "fact",
             0.8,
             None,
         ),
         (
             "t1",
-            '```json\n{"table_type": "dimension", "confidence": 0.9, "reason": "test"}\n```',
+            "```json\n"
+            + json.dumps(
+                {
+                    "inferred_layer": "DIM",
+                    "table_type": "dimension",
+                    "confidence": 0.9,
+                    "reasoning_steps": ["test"],
+                }
+            )
+            + "\n```",
             "dimension",
             0.9,
             None,
@@ -832,6 +850,30 @@ def _assert_parse_basic_response_shapes():
         assert result.confidence == confidence
         if reason:
             assert reason in result.reasoning_steps[0]
+
+
+def _assert_parse_response_ignores_legacy_layer_reason_fields():
+    resp = {
+        "choices": [
+            {
+                "message": {
+                    "content": json.dumps(
+                        {
+                            "layer": "DIM",
+                            "table_type": "dimension",
+                            "confidence": 0.9,
+                            "reason": "legacy response",
+                        }
+                    )
+                }
+            }
+        ]
+    }
+
+    result = parse_response("t1", resp)
+
+    assert result.inferred_layer == "OTHER"
+    assert result.reasoning_steps == []
 
 
 def _assert_parse_grouped_column_response():
@@ -1211,6 +1253,46 @@ def _assert_result_status_from_validation():
         "missing_columns": [],
     }
     assert result.status == "passed"
+
+
+def test_call_api_falls_back_to_v1_for_custom_base_url(monkeypatch):
+    calls = []
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self):
+            return b'{"choices": []}'
+
+    def fake_urlopen(req, timeout):
+        calls.append(req.full_url)
+        if len(calls) == 1:
+            raise urllib.error.HTTPError(
+                req.full_url,
+                404,
+                "not found",
+                {},
+                None,
+            )
+        return FakeResponse()
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+
+    inspector = TableInspector(
+        api_key="test",
+        cache_file=None,
+        base_url="https://api.example.com",
+    )
+
+    assert inspector._call_api("hello") == '{"choices": []}'
+    assert calls == [
+        "https://api.example.com/chat/completions",
+        "https://api.example.com/v1/chat/completions",
+    ]
 
 
 def test_inspect_preserves_llm_metric_groups(tmp_path, monkeypatch):
