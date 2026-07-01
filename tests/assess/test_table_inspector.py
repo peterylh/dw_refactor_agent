@@ -32,6 +32,7 @@ def test_build_prompt_scenarios():
     _assert_build_prompt_includes_catalog_and_project_context_as_inputs()
     _assert_build_prompt_documents_business_metadata_scope()
     _assert_build_prompt_keeps_metric_expression_separate_from_grain()
+    _assert_build_prompt_groups_metrics_from_inferred_layer()
 
 
 def test_parse_response_metadata_scenarios():
@@ -153,6 +154,60 @@ def _assert_build_prompt_omits_empty_etl_section():
 
     assert "dwd_customer" in prompt
     assert "## ETL 加工逻辑" not in prompt
+
+
+def _assert_build_prompt_groups_metrics_from_inferred_layer():
+    ctx = TableContext(
+        table_name="sales_daily",
+        layer="OTHER",
+        ddl="CREATE TABLE sales_daily (store_id BIGINT, total_amt DECIMAL);",
+        etl_sql=(
+            "INSERT INTO sales_daily SELECT store_id, SUM(pay_amt) total_amt "
+            "FROM order_detail GROUP BY store_id;"
+        ),
+        upstream_tables=["order_detail"],
+        downstream_tables=[],
+    )
+
+    prompt = build_prompt(ctx)
+
+    assert "冷启动时原始配置可能是 OTHER" in prompt
+    assert "inferred_layer 是 DWD 或 DWS" in prompt
+    assert "不要因为原始配置层级是 OTHER 而跳过指标字段分组" in prompt
+
+    result = parse_response(
+        "sales_daily",
+        {
+            "choices": [
+                {
+                    "message": {
+                        "content": json.dumps(
+                            {
+                                "inferred_layer": "DWS",
+                                "table_type": "fact",
+                                "confidence": 0.9,
+                                "reasoning_steps": ["公共汇总事实"],
+                                "columns": {
+                                    "atomic_metrics": [
+                                        {"name": "total_amt"}
+                                    ],
+                                    "derived_metrics": [],
+                                    "calculated_metrics": [],
+                                    "dimensions": [],
+                                    "others": [],
+                                },
+                            }
+                        )
+                    }
+                }
+            ]
+        },
+        "OTHER",
+    )
+
+    validation = validate_columns(result, {"store_id", "total_amt"})
+
+    assert validation["missing_columns"] == ["store_id"]
 
 
 def _assert_build_prompt_keeps_metadata_contracts_without_project_examples():

@@ -25,6 +25,16 @@ from assess.llm.model_metadata_writer import (
 )
 
 LAYER_PREFIXES = ("ods_", "dwd_", "dws_", "ads_", "dim_")
+LAYER_WORD_PATTERN = re.compile(
+    r"(?i)\b(?:ODS|DWD|DWS|ADS|DIM)\b|"
+    r"(?:贴源层|原始层|明细层|汇总层|应用层|维度层|维表|"
+    r"明细事实表|汇总事实表|应用表|看板表|驾驶舱|"
+    r"明细粒度|汇总指标|分层|数据分层|层级)"
+)
+SQL_LINE_COMMENT_PATTERN = re.compile(r"(?m)^\s*--[^\n]*(?:\n|$)")
+SQL_COMMENT_CLAUSE_PATTERN = re.compile(
+    r"\s+COMMENT\s+(?:'[^']*'|\"[^\"]*\")", re.IGNORECASE
+)
 
 
 def reset_config(project_root: Path) -> None:
@@ -43,8 +53,7 @@ def strip_layer_prefix(name: str) -> str:
 
 
 def sanitize_text(text: str) -> str:
-    text = re.sub(r"\b(ODS|DWD|DWS|ADS|DIM)\b\s*", "", text)
-    return re.sub(r"\b(ods|dwd|dws|ads|dim)\b\s*", "", text)
+    return LAYER_WORD_PATTERN.sub("", text)
 
 
 def replace_table_refs(text: str, mapping: dict[str, str]) -> str:
@@ -57,6 +66,14 @@ def replace_table_refs(text: str, mapping: dict[str, str]) -> str:
             text,
         )
     return sanitize_text(text)
+
+
+def sanitize_sql(text: str, mapping: dict[str, str]) -> str:
+    text = replace_table_refs(text, mapping)
+    text = SQL_LINE_COMMENT_PATTERN.sub("", text)
+    text = SQL_COMMENT_CLAUSE_PATTERN.sub("", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip() + "\n"
 
 
 def model_paths(project: str) -> list[Path]:
@@ -188,7 +205,7 @@ def build_temp_project(
     for ddl_path in ddl_paths(source_project):
         new = mapping[ddl_path.stem]
         (target_dir / "ddl" / f"{new}.sql").write_text(
-            replace_table_refs(ddl_path.read_text(encoding="utf-8"), mapping),
+            sanitize_sql(ddl_path.read_text(encoding="utf-8"), mapping),
             encoding="utf-8",
         )
 
@@ -204,7 +221,7 @@ def build_temp_project(
         out_dir = target_dir / "tasks" / rel_parent
         out_dir.mkdir(parents=True, exist_ok=True)
         (out_dir / f"{new}.sql").write_text(
-            replace_table_refs(task_path.read_text(encoding="utf-8"), mapping),
+            sanitize_sql(task_path.read_text(encoding="utf-8"), mapping),
             encoding="utf-8",
         )
 
@@ -252,6 +269,7 @@ def summarize_project(
     base_url: str,
     parallelism: int,
     max_retries: int,
+    request_timeout: int,
 ) -> dict[str, Any]:
     print(f"[{source_project}] preparing temp project", flush=True)
     target_dir, mapping, expected = build_temp_project(
@@ -278,6 +296,7 @@ def summarize_project(
         base_url=base_url,
         max_retries=max_retries,
         parallelism=parallelism,
+        request_timeout=request_timeout,
         no_cache=True,
         show_progress=True,
     )
@@ -315,6 +334,13 @@ def summarize_project(
                 "final_layer": str(update.get("layer") or "MISSING").upper(),
                 "final_table_type": update.get("table_type"),
                 "layer_source": update.get("layer_assignment_source"),
+                "assignment_source": update.get("assignment_source"),
+                "metric_count": int(update.get("metric_count") or 0),
+                "entity_count": int(update.get("entity_count") or 0),
+                "grain_changed": bool(update.get("grain_changed")),
+                "metric_generation_source": update.get(
+                    "metric_generation_source"
+                ),
             }
         )
 
@@ -335,6 +361,8 @@ def summarize_project(
     )
     confusion = Counter()
     mismatches = []
+    final_layer_counts = Counter()
+    final_ads_metric_tables = []
     for row in rows:
         item = by_expected[row["expected_layer"]]
         item["total"] += 1
@@ -343,6 +371,9 @@ def summarize_project(
         )
         item["final_correct"] += int(row["final_layer"] == row["expected_layer"])
         confusion[(row["expected_layer"], row["table_inspector_layer"])] += 1
+        final_layer_counts[row["final_layer"]] += 1
+        if row["final_layer"] == "ADS" and row["metric_count"]:
+            final_ads_metric_tables.append(row)
         if (
             row["table_inspector_layer"] != row["expected_layer"]
             or row["final_layer"] != row["expected_layer"]
@@ -366,6 +397,9 @@ def summarize_project(
         "table_inspector_attempt_count": result.get(
             "table_inspector_layer_inference_attempt_count"
         ),
+        "table_inspector_candidate_count": result.get(
+            "table_inspector_layer_inference_candidate_count"
+        ),
         "table_inspector_used_count": result.get(
             "table_inspector_layer_inference_count"
         ),
@@ -378,6 +412,13 @@ def summarize_project(
             f"{key[0]}->{key[1]}": value
             for key, value in sorted(confusion.items())
         },
+        "final_layer_counts": dict(sorted(final_layer_counts.items())),
+        "metric_count": sum(row["metric_count"] for row in rows),
+        "metric_table_count": sum(1 for row in rows if row["metric_count"]),
+        "entity_count": sum(row["entity_count"] for row in rows),
+        "entity_table_count": sum(1 for row in rows if row["entity_count"]),
+        "grain_change_count": sum(1 for row in rows if row["grain_changed"]),
+        "final_ads_metric_tables": final_ads_metric_tables,
         "mismatches": mismatches,
     }
 
@@ -389,6 +430,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--base-url", default="https://api.deepseek.com")
     parser.add_argument("--parallel", type=int, default=4)
     parser.add_argument("--max-retries", type=int, default=1)
+    parser.add_argument("--request-timeout", type=int, default=240)
     parser.add_argument(
         "--projects",
         nargs="+",
@@ -420,6 +462,7 @@ def main() -> None:
                     base_url=args.base_url,
                     parallelism=args.parallel,
                     max_retries=args.max_retries,
+                    request_timeout=args.request_timeout,
                 )
             )
         total = sum(summary["table_count"] for summary in summaries)
@@ -437,6 +480,7 @@ def main() -> None:
             "model": args.model,
             "base_url": args.base_url,
             "parallelism": args.parallel,
+            "request_timeout": args.request_timeout,
             "tmp_root": str(tmp_root),
             "total_table_count": total,
             "total_table_inspector_attempt_count": sum(
@@ -451,6 +495,16 @@ def main() -> None:
                 table_inspector_correct / total if total else 0
             ),
             "combined_final_accuracy": final_correct / total if total else 0,
+            "total_metric_count": sum(
+                summary["metric_count"] for summary in summaries
+            ),
+            "total_metric_table_count": sum(
+                summary["metric_table_count"] for summary in summaries
+            ),
+            "total_final_ads_metric_table_count": sum(
+                len(summary["final_ads_metric_tables"])
+                for summary in summaries
+            ),
             "projects": summaries,
         }
         output = Path(args.output)

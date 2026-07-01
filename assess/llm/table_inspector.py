@@ -158,13 +158,13 @@ def build_prompt(ctx: TableContext) -> str:
 1. 客观推断这张表真实应该归属的数仓分层。
 2. 判断它的物理表类型（维度表/事实表/其他）。
 3. 识别 entities、grain 元数据候选。
-4. 如果原始配置层级是 DWD 或 DWS 且你判断它是事实表，则对字段分组识别原子指标、派生指标、衍生指标、维度字段和其他字段。
+4. 如果你判断该表真实层级是 DWD 或 DWS 且它是事实表，则对字段分组识别原子指标、派生指标、衍生指标、维度字段和其他字段；冷启动时原始配置可能是 OTHER，也必须按 inferred_layer 做字段分组。
 
 ## 数仓分层判定标准
 - ODS (贴源层): 直接同步业务库，通常不含复杂的转化逻辑，数据粒度与源库完全一致。
 - DWD (明细宽表层): 对 ODS 进行数据清洗、维度退化(多表 JOIN 拉宽)，但**保持事务明细粒度，严禁包含聚合(GROUP BY)操作**。
-- DWS (汇总层): 包含明确的聚合操作(GROUP BY/SUM/COUNT)，用于计算公共维度下的周期性指标，具备**被多个下游复用**的特征。
-- ADS (应用层): 面向最终报表或业务大屏的定制化数据，可能包含复杂的衍生指标，最明显的特征是**下游通常不再被其他数据表引用 (出度为 0)**。
+- DWS (汇总层): 包含明确的聚合操作(GROUP BY/SUM/COUNT)，用于计算公共维度下的周期性指标，通常具备可复用特征；冷启动血缘不完整时，下游为 0 不能单独否定 DWS。
+- ADS (应用层): 面向最终报表、业务大屏、专题分析或运营看板的定制化数据，可能包含复杂的衍生指标；下游通常不再被其他数据表引用，但出度为 0 只是弱信号，不能覆盖 ETL、粒度和表语义证据。典型应用输出形态包括 TOPN/排名、ROI、RFM、预警、绩效看板、按人群/地域/分群的 by_* 分析表，以及没有明确周期复用语义的 summary 应用表。
 - DIM (公共维度表): 记录实体属性，主键通常为单一实体 ID，被其他宽表广泛 LEFT JOIN。
 
 ## 表类型判定标准
@@ -300,13 +300,13 @@ def build_prompt(ctx: TableContext) -> str:
 
 ## 思考步骤
 1. 首先分析 ETL_SQL 中是否包含 GROUP BY 等聚合操作，如果有，排除 DWD 和 ODS。
-2. 观察下游被引用次数。如果为 0，大概率是 ADS；如果 > 1，倾向于 DWS 或 DWD。
+2. 观察下游被引用次数。出度为 0 只作为弱信号：聚合且口径公共的表仍可能是 DWS，明细事实表仍可能是 DWD；存在 TOPN/ROI/RFM/预警/绩效/看板/by_* 分析/无周期 summary 等明确应用输出语义时，应倾向 ADS。
 3. 判断是否为 dimension（主键是否为实体属性）。
-4. 如果原始配置层级是 DWD 或 DWS 且表类型为 fact，再按字段语义、DDL 注释、ETL 表达式和业务过程分组。
+4. 如果 inferred_layer 是 DWD 或 DWS 且表类型为 fact，再按字段语义、DDL 注释、ETL 表达式和业务过程分组；不要因为原始配置层级是 OTHER 而跳过指标字段分组。
 
 请严格返回 JSON 格式数据，只允许返回下方 JSON schema 中列出的顶层字段: inferred_layer、table_type、inferred_data_domain、inferred_business_area、dimension_role、dimension_content_type、entities、grain、confidence、reasoning_steps、columns。
 不要返回 Markdown，不要返回额外解释，不要新增任何字段。
-如果不需要做字段分组，columns 下五个数组都返回空数组。
+如果 inferred_layer 不是 DWD/DWS 或 table_type 不是 fact，columns 下五个数组都返回空数组。
 
 {{
   "inferred_layer": "ODS|DWD|DWS|ADS|DIM|OTHER",
@@ -816,7 +816,10 @@ def validate_columns(
         "missing_columns": [],
     }
     if (
-        result.declared_layer in METRIC_GROUPING_LAYERS
+        (
+            result.declared_layer in METRIC_GROUPING_LAYERS
+            or result.inferred_layer in METRIC_GROUPING_LAYERS
+        )
         and result.is_fact_table
     ):
         validation["missing_columns"] = sorted(ddl_columns - returned)
@@ -1034,7 +1037,7 @@ class TableInspector:
         cache_file: Path = None,
         max_retries: int = 1,
         parallelism: int = 2,
-        request_timeout: int = 60,
+        request_timeout: int = 180,
         base_url: str = "",
     ):
         self.api_key = api_key

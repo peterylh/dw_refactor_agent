@@ -2957,6 +2957,344 @@ def test_run_direct_model_generation_keeps_ods_materialized_source(
     assert model["config"]["materialized"] == "source"
 
 
+def test_run_direct_model_generation_keeps_source_layer_over_table_inspector(
+    tmp_path, monkeypatch
+):
+    import assess.llm.model_metadata_writer as writer_module
+
+    project = "direct_model_writer_ods_table_inspector_guard"
+    project_dir = tmp_path / project
+    ods_ddl_dir = project_dir / "ods" / "ddl" / "internal" / "demo_dm"
+    ods_ddl_dir.mkdir(parents=True)
+    (project_dir / "lineage").mkdir()
+    (tmp_path / "naming_config.yaml").write_text(
+        "types: {}\nbindings: {}\ndictionaries: {}\n",
+        encoding="utf-8",
+    )
+    (project_dir / "business_semantics.yaml").write_text(
+        yaml.safe_dump(
+            {"version": 1, "project": project},
+            allow_unicode=True,
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    (ods_ddl_dir / "order_source.sql").write_text(
+        """
+        CREATE TABLE order_source (
+            order_id BIGINT,
+            customer_id BIGINT,
+            pay_amount DECIMAL(12,2)
+        );
+        """,
+        encoding="utf-8",
+    )
+    (project_dir / "lineage" / "lineage_data.json").write_text(
+        json.dumps(
+            {
+                "tables": [{"name": "order_source"}],
+                "edges": [],
+                "indirect_edges": [],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    _configure_project_root(monkeypatch, tmp_path)
+    monkeypatch.setitem(
+        config.PROJECT_CONFIG,
+        project,
+        {
+            "dir": project,
+            "catalog": "internal",
+            "db": "demo_dm",
+            "naming_config": "naming_config.yaml",
+        },
+    )
+    prompts = []
+
+    def fake_call_api(_self, prompt):
+        prompts.append(prompt)
+        content = {
+            "inferred_layer": "DWD",
+            "table_type": "fact",
+            "confidence": 0.94,
+            "reasoning_steps": ["字段像明细事实"],
+            "columns": {
+                "atomic_metrics": [
+                    {
+                        "name": "pay_amount",
+                        "business_process": "ORDER_TRANSACTION",
+                    }
+                ],
+                "derived_metrics": [],
+                "calculated_metrics": [],
+                "dimensions": [{"name": "order_id"}, {"name": "customer_id"}],
+                "others": [],
+            },
+            "entities": [],
+            "grain": {},
+        }
+        return json.dumps(
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": json.dumps(
+                                content,
+                                ensure_ascii=False,
+                            )
+                        }
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        )
+
+    monkeypatch.setattr(writer_module.TableInspector, "_call_api", fake_call_api)
+
+    result = run_direct_model_generation(
+        project,
+        dry_run=False,
+        ignore_existing_models=True,
+        infer_layer_with_llm=True,
+        api_key="test",
+        model="fake-layer-model",
+        no_cache=True,
+        show_progress=False,
+    )
+
+    model_path = (
+        project_dir
+        / "ods"
+        / "models"
+        / "internal"
+        / "demo_dm"
+        / "order_source.yaml"
+    )
+    model = yaml.safe_load(model_path.read_text(encoding="utf-8"))
+    update = result["model_updates"][0]
+    assert "原始配置层级: ODS" in prompts[0]
+    assert model["layer"] == "ODS"
+    assert model["table_type"] == "other"
+    assert model["config"]["materialized"] == "source"
+    assert "atomic_metrics" not in model
+    assert "derived_metrics" not in model
+    assert update["metric_changed"] is False
+    assert update["metric_generation_source"] == ""
+    assert update["layer_assignment_source"] == "direct_rule"
+    assert result["table_inspector_layer_inference_attempt_count"] == 1
+    assert result["table_inspector_layer_inference_count"] == 0
+
+
+def test_run_direct_model_generation_prefers_strong_ads_signal_over_inspector(
+    tmp_path, monkeypatch
+):
+    import assess.llm.model_metadata_writer as writer_module
+
+    project = "direct_model_writer_ads_signal_guard"
+    project_dir = tmp_path / project
+    (project_dir / "ddl").mkdir(parents=True)
+    (project_dir / "tasks").mkdir()
+    (project_dir / "lineage").mkdir()
+    (tmp_path / "naming_config.yaml").write_text(
+        "types: {}\nbindings: {}\ndictionaries: {}\n",
+        encoding="utf-8",
+    )
+    (project_dir / "business_semantics.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "version": 1,
+                "project": project,
+                "business_processes": [
+                    {
+                        "code": "CUSTOMER_ANALYSIS",
+                        "name": "客户分析",
+                    }
+                ],
+            },
+            allow_unicode=True,
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    (project_dir / "ddl" / "customer_by_age_group.sql").write_text(
+        """
+        CREATE TABLE customer_by_age_group (
+            age_group STRING,
+            customer_count BIGINT,
+            avg_revenue DECIMAL(12,2)
+        );
+        """,
+        encoding="utf-8",
+    )
+    (project_dir / "tasks" / "customer_by_age_group.sql").write_text(
+        """
+        INSERT INTO customer_by_age_group
+        SELECT age_group,
+               COUNT(DISTINCT customer_id) AS customer_count,
+               AVG(revenue) AS avg_revenue
+        FROM customer_profile
+        GROUP BY age_group;
+        """,
+        encoding="utf-8",
+    )
+    (project_dir / "ddl" / "customer_monthly_summary.sql").write_text(
+        """
+        CREATE TABLE customer_monthly_summary (
+            customer_id BIGINT,
+            stat_month DATE,
+            total_amount DECIMAL(12,2)
+        );
+        """,
+        encoding="utf-8",
+    )
+    (project_dir / "tasks" / "customer_monthly_summary.sql").write_text(
+        """
+        INSERT INTO customer_monthly_summary
+        SELECT customer_id, stat_month, SUM(pay_amount) AS total_amount
+        FROM order_detail
+        GROUP BY customer_id, stat_month;
+        """,
+        encoding="utf-8",
+    )
+    (project_dir / "lineage" / "lineage_data.json").write_text(
+        json.dumps(
+            {
+                "tables": [
+                    {"name": "customer_by_age_group"},
+                    {"name": "customer_monthly_summary"},
+                ],
+                "edges": [],
+                "indirect_edges": [],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    _configure_project_root(monkeypatch, tmp_path)
+    monkeypatch.setitem(
+        config.PROJECT_CONFIG,
+        project,
+        {
+            "dir": project,
+            "naming_config": "naming_config.yaml",
+        },
+    )
+
+    def fake_call_api(_self, prompt):
+        if "customer_by_age_group" in prompt:
+            content = {
+                "inferred_layer": "DWS",
+                "table_type": "fact",
+                "confidence": 0.91,
+                "reasoning_steps": ["按年龄段聚合，像公共汇总"],
+                "columns": {
+                    "atomic_metrics": [
+                        {
+                            "name": "customer_count",
+                            "business_process": "CUSTOMER_ANALYSIS",
+                        },
+                        {
+                            "name": "avg_revenue",
+                            "business_process": "CUSTOMER_ANALYSIS",
+                        },
+                    ],
+                    "derived_metrics": [],
+                    "calculated_metrics": [],
+                    "dimensions": [{"name": "age_group"}],
+                    "others": [],
+                },
+                "entities": [],
+                "grain": {},
+            }
+        else:
+            content = {
+                "inferred_layer": "DWS",
+                "table_type": "fact",
+                "confidence": 0.91,
+                "reasoning_steps": ["按客户月粒度公共汇总"],
+                "columns": {
+                    "atomic_metrics": [
+                        {
+                            "name": "total_amount",
+                            "business_process": "CUSTOMER_ANALYSIS",
+                        }
+                    ],
+                    "derived_metrics": [],
+                    "calculated_metrics": [],
+                    "dimensions": [
+                        {"name": "customer_id"},
+                        {"name": "stat_month"},
+                    ],
+                    "others": [],
+                },
+                "entities": [
+                    {
+                        "code": "CUSTOMER",
+                        "type": "foreign",
+                        "key_columns": ["customer_id"],
+                    }
+                ],
+                "grain": {
+                    "entities": ["CUSTOMER"],
+                    "time_column": "stat_month",
+                    "time_period": "M",
+                },
+            }
+        return json.dumps(
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": json.dumps(
+                                content,
+                                ensure_ascii=False,
+                            )
+                        }
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        )
+
+    monkeypatch.setattr(writer_module.TableInspector, "_call_api", fake_call_api)
+
+    result = run_direct_model_generation(
+        project,
+        dry_run=False,
+        ignore_existing_models=True,
+        infer_layer_with_llm=True,
+        api_key="test",
+        model="fake-layer-model",
+        no_cache=True,
+        show_progress=False,
+    )
+
+    models_dir = project_dir / "models"
+    ads_model = yaml.safe_load(
+        (models_dir / "customer_by_age_group.yaml").read_text(
+            encoding="utf-8"
+        )
+    )
+    dws_model = yaml.safe_load(
+        (models_dir / "customer_monthly_summary.yaml").read_text(
+            encoding="utf-8"
+        )
+    )
+    updates = {update["table"]: update for update in result["model_updates"]}
+    assert ads_model["layer"] == "ADS"
+    assert ads_model["table_type"] == "fact"
+    assert "atomic_metrics" not in ads_model
+    assert updates["customer_by_age_group"]["metric_generation_source"] == ""
+    assert updates["customer_by_age_group"]["layer_assignment_source"] == (
+        "direct_rule"
+    )
+    assert dws_model["layer"] == "DWS"
+    assert dws_model["atomic_metrics"] == ["total_amount"]
+    assert dws_model["grain"]["time_period"] == "M"
+
+
 def test_run_direct_model_generation_reports_documentation_changes(
     tmp_path, monkeypatch
 ):
@@ -3773,6 +4111,323 @@ def test_run_direct_model_generation_infers_layers_without_model_or_prefix_metad
     assert dim_model["layer"] == "DIM"
     assert dim_model["table_type"] == "dimension"
     assert dim_model["semantic_subject"] == "CUSTOMER"
+
+
+def test_run_direct_model_generation_propagates_business_process_fixpoint(
+    tmp_path, monkeypatch
+):
+    project = "direct_model_writer_lineage_fixpoint"
+    project_dir = tmp_path / project
+    (project_dir / "ddl").mkdir(parents=True)
+    (project_dir / "tasks").mkdir()
+    (project_dir / "lineage").mkdir()
+    (tmp_path / "naming_config.yaml").write_text(
+        "types: {}\nbindings: {}\ndictionaries: {}\n",
+        encoding="utf-8",
+    )
+    (project_dir / "business_semantics.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "version": 1,
+                "project": project,
+                "business_processes": [
+                    {
+                        "code": "ORDER_TRANSACTION",
+                        "name": "订单交易",
+                        "data_domain": "04",
+                        "business_area": "SHOP",
+                    }
+                ],
+            },
+            allow_unicode=True,
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    (project_dir / "ddl" / "dwd_order_detail.sql").write_text(
+        """
+        CREATE TABLE dwd_order_detail (
+            order_id BIGINT,
+            stat_date DATE,
+            pay_amount DECIMAL(12,2)
+        );
+        """,
+        encoding="utf-8",
+    )
+    (project_dir / "ddl" / "dws_store_daily.sql").write_text(
+        """
+        CREATE TABLE dws_store_daily (
+            store_id BIGINT,
+            stat_date DATE,
+            total_amount DECIMAL(12,2)
+        );
+        """,
+        encoding="utf-8",
+    )
+    (project_dir / "ddl" / "ads_store_dashboard.sql").write_text(
+        """
+        CREATE TABLE ads_store_dashboard (
+            stat_date DATE,
+            total_amount DECIMAL(12,2)
+        );
+        """,
+        encoding="utf-8",
+    )
+    (project_dir / "tasks" / "dws_store_daily.sql").write_text(
+        """
+        INSERT INTO dws_store_daily
+        SELECT store_id, stat_date, SUM(pay_amount) AS total_amount
+        FROM dwd_order_detail
+        GROUP BY store_id, stat_date;
+        """,
+        encoding="utf-8",
+    )
+    (project_dir / "tasks" / "ads_store_dashboard.sql").write_text(
+        """
+        INSERT INTO ads_store_dashboard
+        SELECT stat_date, SUM(total_amount) AS total_amount
+        FROM dws_store_daily
+        GROUP BY stat_date;
+        """,
+        encoding="utf-8",
+    )
+    (project_dir / "lineage" / "lineage_data.json").write_text(
+        json.dumps(
+            {
+                "tables": [
+                    {"name": "dwd_order_detail"},
+                    {"name": "dws_store_daily"},
+                    {"name": "ads_store_dashboard"},
+                ],
+                "edges": [
+                    {
+                        "source": "dwd_order_detail.pay_amount",
+                        "target": "dws_store_daily.total_amount",
+                        "expression": "SUM(pay_amount)",
+                        "source_file": "dws_store_daily.sql",
+                    },
+                    {
+                        "source": "dws_store_daily.total_amount",
+                        "target": "ads_store_dashboard.total_amount",
+                        "expression": "SUM(total_amount)",
+                        "source_file": "ads_store_dashboard.sql",
+                    },
+                ],
+                "indirect_edges": [],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    _configure_project_root(monkeypatch, tmp_path)
+    monkeypatch.setitem(
+        config.PROJECT_CONFIG,
+        project,
+        {
+            "dir": project,
+            "naming_config": "naming_config.yaml",
+        },
+    )
+
+    result = run_direct_model_generation(
+        project,
+        dry_run=False,
+        ignore_existing_models=True,
+    )
+
+    models_dir = project_dir / "models"
+    dws_model = yaml.safe_load(
+        (models_dir / "dws_store_daily.yaml").read_text(encoding="utf-8")
+    )
+    ads_model = yaml.safe_load(
+        (models_dir / "ads_store_dashboard.yaml").read_text(encoding="utf-8")
+    )
+    updates = {update["table"]: update for update in result["model_updates"]}
+    assert dws_model["business_process"] == "ORDER_TRANSACTION"
+    assert ads_model["business_process"] == "ORDER_TRANSACTION"
+    assert updates["dws_store_daily"]["assignment_source"] == (
+        "direct_lineage_propagation"
+    )
+    assert updates["ads_store_dashboard"]["assignment_source"] == (
+        "direct_lineage_propagation"
+    )
+
+
+def test_run_direct_model_generation_cold_start_inspects_prefixed_table_metadata(
+    tmp_path, monkeypatch
+):
+    import assess.llm.model_metadata_writer as writer_module
+
+    project = "direct_model_writer_table_inspector_cold_start"
+    project_dir = tmp_path / project
+    (project_dir / "ddl").mkdir(parents=True)
+    (project_dir / "lineage").mkdir()
+    (tmp_path / "naming_config.yaml").write_text(
+        "types: {}\nbindings: {}\ndictionaries: {}\n",
+        encoding="utf-8",
+    )
+    (project_dir / "business_semantics.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "version": 1,
+                "project": project,
+                "business_processes": [
+                    {
+                        "code": "ORDER_TRANSACTION",
+                        "name": "订单交易",
+                        "data_domain": "04",
+                        "business_area": "SHOP",
+                    }
+                ],
+                "semantic_subjects": [
+                    {
+                        "code": "CUSTOMER",
+                        "name": "客户",
+                    }
+                ],
+            },
+            allow_unicode=True,
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    (project_dir / "ddl" / "dwd_order_detail.sql").write_text(
+        """
+        CREATE TABLE dwd_order_detail (
+            order_id BIGINT,
+            customer_id BIGINT,
+            order_date DATE,
+            pay_amount DECIMAL(12,2)
+        );
+        """,
+        encoding="utf-8",
+    )
+    (project_dir / "lineage" / "lineage_data.json").write_text(
+        json.dumps(
+            {
+                "tables": [{"name": "dwd_order_detail"}],
+                "edges": [],
+                "indirect_edges": [],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    _configure_project_root(monkeypatch, tmp_path)
+    monkeypatch.setitem(
+        config.PROJECT_CONFIG,
+        project,
+        {
+            "dir": project,
+            "naming_config": "naming_config.yaml",
+        },
+    )
+    calls = []
+    timeouts = []
+
+    def fake_call_api(_self, prompt):
+        calls.append(prompt)
+        timeouts.append(_self.request_timeout)
+        content = {
+            "inferred_layer": "DWD",
+            "table_type": "fact",
+            "confidence": 0.93,
+            "reasoning_steps": ["订单明细事实表"],
+            "inferred_data_domain": "04",
+            "inferred_business_area": "SHOP",
+            "columns": {
+                "atomic_metrics": [
+                    {
+                        "name": "pay_amount",
+                        "business_process": "ORDER_TRANSACTION",
+                        "reason": "明细支付金额",
+                        "confidence": 0.91,
+                    }
+                ],
+                "derived_metrics": [],
+                "calculated_metrics": [],
+                "dimensions": [
+                    {"name": "order_id"},
+                    {"name": "customer_id"},
+                    {"name": "order_date"},
+                ],
+                "others": [],
+            },
+            "entities": [
+                {
+                    "code": "ORDER",
+                    "type": "primary",
+                    "key_columns": ["order_id"],
+                },
+                {
+                    "code": "CUSTOMER",
+                    "type": "foreign",
+                    "key_columns": ["customer_id"],
+                },
+            ],
+            "grain": {},
+        }
+        return json.dumps(
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": json.dumps(
+                                content,
+                                ensure_ascii=False,
+                            )
+                        }
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        )
+
+    monkeypatch.setattr(writer_module.TableInspector, "_call_api", fake_call_api)
+
+    result = run_direct_model_generation(
+        project,
+        dry_run=False,
+        ignore_existing_models=True,
+        infer_layer_with_llm=True,
+        api_key="test",
+        model="fake-layer-model",
+        request_timeout=240,
+        no_cache=True,
+        show_progress=False,
+    )
+
+    model = yaml.safe_load(
+        (project_dir / "models" / "dwd_order_detail.yaml").read_text(
+            encoding="utf-8"
+        )
+    )
+    update = result["model_updates"][0]
+    assert len(calls) == 1
+    assert timeouts == [240]
+    assert "原始配置层级: DWD" in calls[0]
+    assert result["table_inspector_layer_inference_candidate_count"] == 1
+    assert result["table_inspector_layer_inference_candidates"] == [
+        {"table": "dwd_order_detail", "reason": "cold_start_full_metadata"}
+    ]
+    assert result["table_inspector_layer_inference_attempt_count"] == 1
+    assert result["table_inspector_layer_inference_count"] == 1
+    assert model["atomic_metrics"] == ["pay_amount"]
+    assert model["entities"] == [
+        {
+            "code": "ORDER",
+            "type": "primary",
+            "key_columns": ["order_id"],
+        },
+        {
+            "code": "CUSTOMER",
+            "type": "foreign",
+            "key_columns": ["customer_id"],
+        },
+    ]
+    assert model["business_process"] == "ORDER_TRANSACTION"
+    assert update["metric_changed"] is True
+    assert update["metric_generation_source"] == "table_inspector"
 
 
 def test_run_direct_model_generation_uses_table_inspector_for_missing_layer_metadata(

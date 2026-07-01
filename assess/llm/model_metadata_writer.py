@@ -125,11 +125,17 @@ METRIC_COLUMN_HINTS = {
 }
 DIRECT_APPLICATION_OUTPUT_TOKENS = {
     "ads",
+    "alert",
+    "alerts",
     "cockpit",
     "dashboard",
+    "performance",
     "portal",
+    "rfm",
+    "roi",
     "rpt",
     "screen",
+    "topn",
 }
 DIRECT_APPLICATION_OUTPUT_PHRASES = {
     "indicator app",
@@ -143,6 +149,20 @@ DIRECT_APPLICATION_OUTPUT_PHRASES = {
     "大屏",
     "指标应用",
     "专题",
+}
+DIRECT_APPLICATION_SUMMARY_TOKENS = {"summary"}
+DIRECT_APPLICATION_TIME_GRAIN_TOKENS = {
+    "daily",
+    "day",
+    "monthly",
+    "month",
+    "quarterly",
+    "quarter",
+    "snapshot",
+    "weekly",
+    "week",
+    "year",
+    "yearly",
 }
 DIRECT_SOURCE_LAYER_TOKENS = {
     "raw",
@@ -1298,8 +1318,11 @@ def _load_lineage_data_for_direct_generation(
             [
                 {
                     "type": "lineage_missing",
-                    "severity": "warning",
-                    "message": str(exc),
+                    "severity": "degraded",
+                    "message": (
+                        f"{str(exc)}；冷启动 metadata 生成会缺少上下游传播、"
+                        "字段血缘和聚合判断上下文"
+                    ),
                 }
             ],
         )
@@ -1645,13 +1668,28 @@ def _direct_has_application_output_signal(
     table_name: str,
     asset: dict[str, Any],
     match_text: str,
+    *,
+    has_aggregate: bool = False,
+    downstream_tables: set[str] | None = None,
 ) -> bool:
     text = f"{table_name}\n{match_text}".lower()
     if any(phrase in text for phrase in DIRECT_APPLICATION_OUTPUT_PHRASES):
         return True
 
-    tokens = set(_split_identifier_tokens(text))
-    return bool(tokens & DIRECT_APPLICATION_OUTPUT_TOKENS)
+    table_tokens = set(_split_identifier_tokens(table_name))
+    if table_tokens & DIRECT_APPLICATION_OUTPUT_TOKENS:
+        return True
+
+    if not has_aggregate or downstream_tables:
+        return False
+    if "by" in table_tokens:
+        return True
+    if (
+        table_tokens & DIRECT_APPLICATION_SUMMARY_TOKENS
+        and not (table_tokens & DIRECT_APPLICATION_TIME_GRAIN_TOKENS)
+    ):
+        return True
+    return bool({"metric", "snapshot"} <= table_tokens)
 
 
 def _direct_has_dimension_layer_signal(
@@ -1732,16 +1770,18 @@ def _direct_infer_layer(
     lineage_view: LineageView | None,
     match_text: str,
     table_inspector_layer_result: dict[str, Any] | None = None,
+    prefer_table_inspector: bool = False,
 ) -> str:
     normalized_seed = str(seed_layer or "").strip().upper()
-    if normalized_seed and normalized_seed != "OTHER":
-        return normalized_seed
-
     placement_layer = _direct_generation_layer_from_asset_placement(
         project, asset
     )
-    if placement_layer:
-        return placement_layer
+    has_source_layer_signal = _direct_has_source_layer_signal(
+        table_name, asset, lineage_view
+    )
+
+    if normalized_seed == "ODS" or placement_layer == "ODS" or has_source_layer_signal:
+        return "ODS"
 
     lineage_facts = (
         lineage_view.lineage_facts_for_table(table_name)
@@ -1759,10 +1799,32 @@ def _direct_infer_layer(
         table_name,
         asset,
         match_text,
+        has_aggregate=has_aggregate,
+        downstream_tables=downstream_tables,
     )
 
-    if _direct_has_source_layer_signal(table_name, asset, lineage_view):
-        return "ODS"
+    if normalized_seed == "ADS" or (
+        has_application_output and normalized_seed not in {"ODS", "DWD", "DWS"}
+    ):
+        return "ADS"
+
+    if (
+        prefer_table_inspector
+        and _direct_table_inspector_layer_result_is_usable(
+            table_inspector_layer_result
+        )
+    ):
+        inspected_layer = str(
+            table_inspector_layer_result.get("layer") or ""
+        ).upper()
+        if inspected_layer in VALID_LAYERS and inspected_layer != "OTHER":
+            return inspected_layer
+
+    if normalized_seed and normalized_seed != "OTHER":
+        return normalized_seed
+
+    if placement_layer:
+        return placement_layer
 
     if _direct_table_inspector_layer_result_is_usable(
         table_inspector_layer_result
@@ -1773,8 +1835,6 @@ def _direct_infer_layer(
         if inspected_layer in VALID_LAYERS:
             return inspected_layer
 
-    if has_application_output:
-        return "ADS"
     if _direct_has_dimension_layer_signal(
         table_name,
         asset,
@@ -1837,6 +1897,82 @@ def _direct_needs_table_inspector_layer_inference(
     if seed_layer and seed_layer != "OTHER":
         return False
     return not _direct_generation_layer_from_asset_placement(project, asset)
+
+
+def _direct_table_inspector_candidate_reason(
+    *,
+    project: str,
+    table_name: str,
+    asset: dict[str, Any],
+    existing: dict[str, Any],
+    use_existing_model_metadata: bool,
+    cold_start_full_metadata: bool,
+) -> str:
+    if cold_start_full_metadata:
+        return "cold_start_full_metadata"
+    if _direct_needs_table_inspector_layer_inference(
+        project=project,
+        table_name=table_name,
+        asset=asset,
+        existing=existing,
+        use_existing_model_metadata=use_existing_model_metadata,
+    ):
+        return "missing_layer"
+    return ""
+
+
+def _direct_table_inspector_skip_reason(
+    *,
+    project: str,
+    table_name: str,
+    asset: dict[str, Any],
+    existing: dict[str, Any],
+    use_existing_model_metadata: bool,
+) -> str:
+    seed_layer = _direct_seed_layer(
+        table_name,
+        asset,
+        existing=existing,
+        use_existing_model_metadata=use_existing_model_metadata,
+    )
+    if seed_layer and seed_layer != "OTHER":
+        return "explicit_layer_signal"
+    if _direct_generation_layer_from_asset_placement(project, asset):
+        return "asset_placement_layer_signal"
+    return "not_required"
+
+
+def _direct_table_inspector_declared_layer(
+    *,
+    project: str,
+    table_name: str,
+    asset: dict[str, Any],
+    existing: dict[str, Any],
+    use_existing_model_metadata: bool,
+    lineage_view: LineageView | None,
+) -> str:
+    seed_layer = _direct_seed_layer(
+        table_name,
+        asset,
+        existing=existing,
+        use_existing_model_metadata=use_existing_model_metadata,
+    )
+    if seed_layer and seed_layer != "OTHER":
+        return seed_layer
+    placement_layer = _direct_generation_layer_from_asset_placement(
+        project, asset
+    )
+    if placement_layer:
+        return placement_layer
+    if _direct_has_source_layer_signal(table_name, asset, lineage_view):
+        return "ODS"
+    return "OTHER"
+
+
+def _direct_catalog_has_business_entries(catalog: dict[str, Any]) -> bool:
+    return bool(
+        catalog.get("business_processes") or catalog.get("semantic_subjects")
+    )
 
 
 def _direct_catalog_option_entries(raw_entries: Any) -> list[dict[str, Any]]:
@@ -1941,6 +2077,7 @@ def _direct_inspection_context(
     table_assets: dict[str, dict[str, Any]],
     lineage_view: LineageView | None,
     depth_memo: dict[str, int],
+    declared_layer: str = "OTHER",
 ) -> TableContext:
     upstream_tables = (
         sorted(lineage_view.upstream_tables(table_name))
@@ -1960,7 +2097,7 @@ def _direct_inspection_context(
     )
     return TableContext(
         table_name=table_name,
-        layer="OTHER",
+        layer=str(declared_layer or "OTHER").upper(),
         ddl=_asset_ddl_text(asset),
         etl_sql=_direct_task_text(asset),
         upstream_tables=upstream_tables,
@@ -2010,8 +2147,29 @@ def _direct_table_inspector_layer_result_from_inspection(
         "reasoning_steps": reasoning,
         "validation": result.validation,
         "retry_count": result.retry_count,
+        "metric_count": len(metric_names_for_model(result)),
+        "entity_count": len(_effective_entities(result)),
+        "has_grain": bool(_effective_grain(result.grain)),
+        "_inspection_result": result,
         "source": "table_inspector_layer_inference",
     }
+
+
+def _create_table_inspector(
+    *,
+    api_key: str,
+    inspector_kwargs: dict[str, Any],
+) -> TableInspector:
+    try:
+        return TableInspector(api_key=api_key, **inspector_kwargs)
+    except TypeError as exc:
+        if "request_timeout" not in inspector_kwargs:
+            raise
+        if "request_timeout" not in str(exc):
+            raise
+        fallback_kwargs = dict(inspector_kwargs)
+        fallback_kwargs.pop("request_timeout", None)
+        return TableInspector(api_key=api_key, **fallback_kwargs)
 
 
 def _direct_infer_layers_with_table_inspector(
@@ -2019,12 +2177,16 @@ def _direct_infer_layers_with_table_inspector(
     catalog: dict[str, Any],
     project: str,
     table_assets: dict[str, dict[str, Any]],
+    all_table_assets: dict[str, dict[str, Any]] | None = None,
+    existing_by_table: dict[str, dict[str, Any]] | None = None,
+    use_existing_model_metadata: bool = True,
     lineage_view: LineageView | None,
     api_key: str,
     model: str,
     base_url: str,
     max_retries: int,
     parallelism: int,
+    request_timeout: int,
     no_cache: bool,
     show_progress: bool,
 ) -> tuple[dict[str, dict[str, Any]], list[dict[str, Any]]]:
@@ -2034,28 +2196,41 @@ def _direct_infer_layers_with_table_inspector(
     cache_file = assess_cache_path(project, "table_inspector_layer.json")
     if no_cache and cache_file.exists():
         cache_file.unlink()
-    inspector = TableInspector(
+    inspector = _create_table_inspector(
         api_key=api_key,
-        model=model,
-        base_url=base_url,
-        cache_file=cache_file,
-        max_retries=max_retries,
-        parallelism=parallelism,
+        inspector_kwargs={
+            "model": model,
+            "base_url": base_url,
+            "cache_file": cache_file,
+            "max_retries": max_retries,
+            "parallelism": parallelism,
+            "request_timeout": request_timeout,
+        },
     )
 
     if show_progress:
         inspector.progress_callback = build_progress_callback()
 
     depth_memo: dict[str, int] = {}
+    all_table_assets = all_table_assets or table_assets
+    existing_by_table = existing_by_table or {}
     contexts = [
         _direct_inspection_context(
             catalog=catalog,
             project=project,
             table_name=table_name,
             asset=asset,
-            table_assets=table_assets,
+            table_assets=all_table_assets,
             lineage_view=lineage_view,
             depth_memo=depth_memo,
+            declared_layer=_direct_table_inspector_declared_layer(
+                project=project,
+                table_name=table_name,
+                asset=asset,
+                existing=existing_by_table.get(table_name, {}),
+                use_existing_model_metadata=use_existing_model_metadata,
+                lineage_view=lineage_view,
+            ),
         )
         for table_name, asset in sorted(table_assets.items())
     ]
@@ -2169,14 +2344,6 @@ def _direct_infer_table_type(
 
     if layer == "ODS" or name.startswith("ods_"):
         return "other"
-    if _direct_table_inspector_layer_result_is_usable(
-        table_inspector_layer_result
-    ):
-        inspected_table_type = str(
-            table_inspector_layer_result.get("table_type") or ""
-        ).strip().lower()
-        if inspected_table_type in (VALID_TABLE_TYPES - {"other"}):
-            return inspected_table_type
     if layer == "ADS" or name.startswith("ads_"):
         if _direct_task_has_fact_signals(
             asset,
@@ -2185,6 +2352,14 @@ def _direct_infer_table_type(
         ):
             return "fact"
         return "other"
+    if _direct_table_inspector_layer_result_is_usable(
+        table_inspector_layer_result
+    ):
+        inspected_table_type = str(
+            table_inspector_layer_result.get("table_type") or ""
+        ).strip().lower()
+        if inspected_table_type in (VALID_TABLE_TYPES - {"other"}):
+            return inspected_table_type
     if layer == "DIM" or name.startswith("dim_"):
         return "dimension"
     if layer == "DWS":
@@ -2219,6 +2394,91 @@ def _direct_existing_catalog_mapping(
     return mapping
 
 
+def _direct_apply_table_inspector_metadata_mapping(
+    *,
+    project: str,
+    mapping: dict[str, Any],
+    table_inspector_layer_result: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if not _direct_table_inspector_layer_result_is_usable(
+        table_inspector_layer_result
+    ):
+        return mapping
+
+    result = table_inspector_layer_result.get("_inspection_result")
+    if not isinstance(result, TableInspectResult):
+        return mapping
+
+    mapping["_table_inspector_result"] = result
+    business_metadata = business_metadata_for_result(
+        project,
+        result,
+        str(mapping.get("layer") or ""),
+    )
+    for key, allowed_layers in (
+        ("data_domain", DATA_DOMAIN_LAYERS),
+        ("business_area", BUSINESS_AREA_LAYERS),
+    ):
+        if mapping.get(key):
+            continue
+        layer = str(mapping.get("layer") or "").upper()
+        value = str(business_metadata.get(key) or "").strip()
+        if not value and layer in allowed_layers:
+            value = str(getattr(result, f"inferred_{key}") or "").strip()
+        if value:
+            mapping[key] = value
+
+    table_type = str(mapping.get("table_type") or result.table_type).lower()
+    if table_type == "dimension":
+        semantic_subject = _semantic_subject_from_result(result)
+        if semantic_subject and not mapping.get("semantic_subject"):
+            mapping["semantic_subject"] = semantic_subject
+            mapping.pop("business_process", None)
+        if result.dimension_role and not mapping.get("dimension_role"):
+            mapping["dimension_role"] = result.dimension_role
+        if result.dimension_content_type and not mapping.get(
+            "dimension_content_type"
+        ):
+            mapping["dimension_content_type"] = result.dimension_content_type
+        if (
+            mapping.get("semantic_subject")
+            and mapping.get("assignment_source") == "fallback"
+        ):
+            mapping.update(
+                {
+                    "assignment_source": "table_inspector_metadata_inference",
+                    "assignment_reason": "table_inspector_semantic_subject",
+                    "assignment_score": max(
+                        float(mapping.get("assignment_score") or 0),
+                        float(result.confidence or 0),
+                    ),
+                }
+            )
+        return mapping
+
+    if table_type == "fact":
+        processes = _business_processes_from_result(result)
+        if len(processes) == 1 and not mapping.get("business_process"):
+            mapping["business_process"] = processes[0]
+            mapping.pop("semantic_subject", None)
+        if (
+            mapping.get("business_process")
+            and mapping.get("assignment_source") == "fallback"
+        ):
+            mapping.update(
+                {
+                    "assignment_source": "table_inspector_metadata_inference",
+                    "assignment_reason": "table_inspector_business_process",
+                    "assignment_score": max(
+                        float(mapping.get("assignment_score") or 0),
+                        float(result.confidence or 0),
+                    ),
+                }
+            )
+
+    return mapping
+
+
 def _direct_catalog_mapping_for_model(
     catalog: dict[str, Any],
     project: str,
@@ -2229,6 +2489,7 @@ def _direct_catalog_mapping_for_model(
     lineage_view: LineageView | None,
     use_existing_model_metadata: bool = True,
     table_inspector_layer_result: dict[str, Any] | None = None,
+    prefer_table_inspector_layer: bool = False,
 ) -> dict[str, Any]:
     if use_existing_model_metadata:
         existing_mapping = _direct_existing_catalog_mapping(
@@ -2266,6 +2527,7 @@ def _direct_catalog_mapping_for_model(
         lineage_view=lineage_view,
         match_text=match_text,
         table_inspector_layer_result=table_inspector_layer_result,
+        prefer_table_inspector=prefer_table_inspector_layer,
     )
     table_type = _direct_infer_table_type(
         table_name=table_name,
@@ -2332,7 +2594,11 @@ def _direct_catalog_mapping_for_model(
                 "assignment_score": subject_match["score"],
             }
         )
-        return mapping
+        return _direct_apply_table_inspector_metadata_mapping(
+            project=project,
+            mapping=mapping,
+            table_inspector_layer_result=table_inspector_layer_result,
+        )
 
     if table_type == "fact" and process_match.get("score", 0) >= 2:
         process = process_match["entry"]
@@ -2348,7 +2614,11 @@ def _direct_catalog_mapping_for_model(
                 "assignment_score": process_match["score"],
             }
         )
-        return mapping
+        return _direct_apply_table_inspector_metadata_mapping(
+            project=project,
+            mapping=mapping,
+            table_inspector_layer_result=table_inspector_layer_result,
+        )
 
     mapping.update(
         {
@@ -2360,7 +2630,11 @@ def _direct_catalog_mapping_for_model(
             ),
         }
     )
-    return mapping
+    return _direct_apply_table_inspector_metadata_mapping(
+        project=project,
+        mapping=mapping,
+        table_inspector_layer_result=table_inspector_layer_result,
+    )
 
 
 def _apply_direct_lineage_business_process_propagation(
@@ -2372,46 +2646,59 @@ def _apply_direct_lineage_business_process_propagation(
         return
 
     processes = _catalog_entries(catalog, "business_processes")
-    for table_name, mapping in mappings.items():
-        if mapping.get("business_process"):
-            continue
-        if mapping.get("table_type") != "fact":
-            continue
-        if str(mapping.get("layer") or "").upper() not in {"DWS", "ADS"}:
-            continue
-
-        upstream_sources: dict[str, list[str]] = {}
-        for upstream_table in sorted(lineage_view.upstream_tables(table_name)):
-            upstream_mapping = mappings.get(upstream_table) or {}
-            process_code = str(
-                upstream_mapping.get("business_process") or ""
-            ).strip()
-            if not process_code:
+    for _ in range(max(1, len(mappings))):
+        changed = False
+        for table_name, mapping in mappings.items():
+            if mapping.get("business_process"):
                 continue
-            upstream_sources.setdefault(process_code, []).append(upstream_table)
+            if mapping.get("table_type") != "fact":
+                continue
+            if str(mapping.get("layer") or "").upper() not in {"DWS", "ADS"}:
+                continue
 
-        if len(upstream_sources) != 1:
-            continue
+            upstream_sources: dict[str, list[str]] = {}
+            for upstream_table in sorted(
+                lineage_view.upstream_tables(table_name)
+            ):
+                upstream_mapping = mappings.get(upstream_table) or {}
+                process_code = str(
+                    upstream_mapping.get("business_process") or ""
+                ).strip()
+                if not process_code:
+                    continue
+                upstream_sources.setdefault(process_code, []).append(
+                    upstream_table
+                )
 
-        process_code, source_tables = next(iter(upstream_sources.items()))
-        process = _entry_by_code(processes, process_code)
-        if not process:
-            continue
-        mapping.update(
-            {
-                "data_domain": str(process.get("data_domain") or "").strip(),
-                "business_area": str(process.get("business_area") or "").strip(),
-                "business_process": process_code,
-                "assignment_source": "direct_lineage_propagation",
-                "assignment_reason": (
-                    "upstream_business_process:" + ",".join(source_tables)
-                ),
-                "assignment_score": max(
-                    float(mapping.get("assignment_score") or 0),
-                    2.0,
-                ),
-            }
-        )
+            if len(upstream_sources) != 1:
+                continue
+
+            process_code, source_tables = next(iter(upstream_sources.items()))
+            process = _entry_by_code(processes, process_code)
+            if not process:
+                continue
+            mapping.update(
+                {
+                    "data_domain": str(
+                        process.get("data_domain") or ""
+                    ).strip(),
+                    "business_area": str(
+                        process.get("business_area") or ""
+                    ).strip(),
+                    "business_process": process_code,
+                    "assignment_source": "direct_lineage_propagation",
+                    "assignment_reason": (
+                        "upstream_business_process:" + ",".join(source_tables)
+                    ),
+                    "assignment_score": max(
+                        float(mapping.get("assignment_score") or 0),
+                        2.0,
+                    ),
+                }
+            )
+            changed = True
+        if not changed:
+            break
 
 
 def _entry_display_name(entry: dict[str, Any], code: str) -> str:
@@ -2847,6 +3134,72 @@ def update_model_yaml_from_catalog(
     }
 
 
+def _apply_table_inspector_payload_to_direct_model(
+    updated: dict[str, Any],
+    result: TableInspectResult | None,
+    *,
+    write_scope: str,
+) -> None:
+    if (
+        not isinstance(result, TableInspectResult)
+        or result.status == "blocked"
+        or _validate_write_scope(write_scope) != "all"
+    ):
+        return
+
+    model_layer = str(updated.get("layer") or "").upper()
+    can_write_metrics = (
+        model_layer in METRIC_LAYERS
+        and str(updated.get("table_type") or "").lower() == "fact"
+        and float(result.confidence or 0) >= 0.5
+        and should_write_metric_groups(result, write_scope)
+    )
+    if can_write_metrics:
+        detected_groups = metric_groups_for_model(result)
+        detected_metrics = metric_names_for_model(result)
+        if detected_metrics:
+            for key in (
+                "atomic_metrics",
+                "derived_metrics",
+                "calculated_metrics",
+            ):
+                if detected_groups[key]:
+                    updated[key] = detected_groups[key]
+                else:
+                    updated.pop(key, None)
+        else:
+            updated.pop("atomic_metrics", None)
+            updated.pop("derived_metrics", None)
+            updated.pop("calculated_metrics", None)
+        updated.pop("metrics", None)
+    elif _validate_write_scope(write_scope) == "all":
+        updated.pop("atomic_metrics", None)
+        updated.pop("derived_metrics", None)
+        updated.pop("calculated_metrics", None)
+        updated.pop("metrics", None)
+
+    if should_write_grain_metadata(result, write_scope):
+        entity_metadata = _canonical_entities_for_write(
+            result,
+            _effective_entities(result),
+            model_layer=str(updated.get("layer") or ""),
+        )
+        grain_metadata = _canonical_grain_for_write(
+            _effective_grain(result.grain),
+            entity_metadata,
+        )
+        if entity_metadata:
+            updated["entities"] = entity_metadata
+        else:
+            updated.pop("entities", None)
+        updated.pop("entity", None)
+        updated.pop("related_entities", None)
+        if grain_metadata:
+            updated["grain"] = grain_metadata
+        else:
+            updated.pop("grain", None)
+
+
 def update_model_yaml_from_direct_generation(
     project: str,
     table_name: str,
@@ -2910,6 +3263,11 @@ def update_model_yaml_from_direct_generation(
         for key in ("entities", "grain"):
             if extra.get(key) and not updated.get(key):
                 updated[key] = extra[key]
+        _apply_table_inspector_payload_to_direct_model(
+            updated,
+            mapping.get("_table_inspector_result"),
+            write_scope=write_scope,
+        )
 
     changed = updated != previous
     config_changed = updated.get("config") != previous.get("config")
@@ -2934,10 +3292,32 @@ def update_model_yaml_from_direct_generation(
             "dimension_content_type",
         )
     )
+    metric_changed = any(
+        updated.get(key) != previous.get(key)
+        for key in (
+            "metrics",
+            "atomic_metrics",
+            "derived_metrics",
+            "calculated_metrics",
+        )
+    )
     grain_changed = any(
         updated.get(key) != previous.get(key)
         for key in ("entities", "grain")
     )
+    detected_metrics = _extract_existing_metric_names(updated)
+    previous_metrics = _extract_existing_metric_names(previous)
+    inspection_result = mapping.get("_table_inspector_result")
+    metric_generation_source = ""
+    if (
+        isinstance(inspection_result, TableInspectResult)
+        and inspection_result.status != "blocked"
+        and float(inspection_result.confidence or 0) >= 0.5
+        and str(updated.get("layer") or "").upper() in METRIC_LAYERS
+        and str(updated.get("table_type") or "").lower() == "fact"
+        and should_write_metric_groups(inspection_result, write_scope)
+    ):
+        metric_generation_source = "table_inspector"
     return {
         "table": table_name,
         "path": str(path),
@@ -2950,11 +3330,19 @@ def update_model_yaml_from_direct_generation(
         "config_changed": config_changed,
         "documentation_changed": documentation_changed,
         "business_changed": business_changed,
-        "metric_changed": False,
+        "metric_changed": metric_changed,
+        "metric_count": len(detected_metrics),
+        "new_metric_count": len(
+            [name for name in detected_metrics if name not in previous_metrics]
+        ),
+        "removed_metric_count": len(
+            [name for name in previous_metrics if name not in detected_metrics]
+        ),
         "grain_changed": grain_changed,
         "updated": bool(changed and not dry_run),
         "write_scope": write_scope,
         "source": "direct_generation",
+        "metric_generation_source": metric_generation_source,
         "assignment_source": mapping.get("assignment_source", ""),
         "assignment_reason": mapping.get("assignment_reason", ""),
         "assignment_score": mapping.get("assignment_score", 0),
@@ -2988,6 +3376,7 @@ def run_direct_model_generation(
     base_url: str = "",
     max_retries: int = 1,
     parallelism: int = 4,
+    request_timeout: int = 180,
     no_cache: bool = False,
     show_progress: bool = False,
 ) -> dict[str, Any]:
@@ -3005,6 +3394,20 @@ def run_direct_model_generation(
         )
 
     lineage_data, warnings = _load_lineage_data_for_direct_generation(project)
+    if ignore_existing_models and not _direct_catalog_has_business_entries(
+        catalog
+    ):
+        warnings.append(
+            {
+                "type": "business_semantics_catalog_empty",
+                "severity": "degraded",
+                "message": (
+                    "business_semantics.yaml 未配置 business_processes 或 "
+                    "semantic_subjects；冷启动业务域、业务板块、业务过程和"
+                    "语义主题归属会明显降级"
+                ),
+            }
+        )
     lineage_view = _lineage_view_for_direct_generation(project, lineage_data)
     model_metadata = {} if ignore_existing_models else load_model_metadata(project)
     assets = _direct_table_assets(
@@ -3028,18 +3431,39 @@ def run_direct_model_generation(
         existing_by_table[table_name] = existing
 
     table_inspector_layer_results: dict[str, dict[str, Any]] = {}
+    table_inspector_candidate_details: list[dict[str, str]] = []
+    table_inspector_skip_reasons: dict[str, int] = {}
     if infer_layer_with_llm:
-        llm_candidates = {
-            table_name: asset
-            for table_name, asset in table_assets.items()
-            if _direct_needs_table_inspector_layer_inference(
+        cold_start_full_metadata = (
+            ignore_existing_models and write_scope == "all"
+        )
+        llm_candidates = {}
+        for table_name, asset in sorted(table_assets.items()):
+            existing = existing_by_table.get(table_name, {})
+            reason = _direct_table_inspector_candidate_reason(
                 project=project,
                 table_name=table_name,
                 asset=asset,
-                existing=existing_by_table.get(table_name, {}),
+                existing=existing,
+                use_existing_model_metadata=not ignore_existing_models,
+                cold_start_full_metadata=cold_start_full_metadata,
+            )
+            if reason:
+                llm_candidates[table_name] = asset
+                table_inspector_candidate_details.append(
+                    {"table": table_name, "reason": reason}
+                )
+                continue
+            skip_reason = _direct_table_inspector_skip_reason(
+                project=project,
+                table_name=table_name,
+                asset=asset,
+                existing=existing,
                 use_existing_model_metadata=not ignore_existing_models,
             )
-        }
+            table_inspector_skip_reasons[skip_reason] = (
+                table_inspector_skip_reasons.get(skip_reason, 0) + 1
+            )
         (
             table_inspector_layer_results,
             table_inspector_warnings,
@@ -3047,12 +3471,16 @@ def run_direct_model_generation(
             catalog=catalog,
             project=project,
             table_assets=llm_candidates,
+            all_table_assets=table_assets,
+            existing_by_table=existing_by_table,
+            use_existing_model_metadata=not ignore_existing_models,
             lineage_view=lineage_view,
             api_key=api_key,
             model=model,
             base_url=base_url,
             max_retries=max_retries,
             parallelism=parallelism,
+            request_timeout=request_timeout,
             no_cache=no_cache,
             show_progress=show_progress,
         )
@@ -3071,6 +3499,7 @@ def run_direct_model_generation(
             table_inspector_layer_result=table_inspector_layer_results.get(
                 table_name
             ),
+            prefer_table_inspector_layer=ignore_existing_models,
         )
 
     _apply_direct_lineage_business_process_propagation(
@@ -3105,6 +3534,7 @@ def run_direct_model_generation(
         "write_scope": write_scope,
         "ignore_existing_models": ignore_existing_models,
         "infer_layer_with_llm": infer_layer_with_llm,
+        "request_timeout": request_timeout if infer_layer_with_llm else 0,
         "catalog_path": str(
             PROJECT_ROOT
             / PROJECT_CONFIG[project]["dir"]
@@ -3136,6 +3566,15 @@ def run_direct_model_generation(
         ),
         "table_inspector_layer_inference_attempt_count": len(
             table_inspector_layer_results
+        ),
+        "table_inspector_layer_inference_candidate_count": len(
+            table_inspector_candidate_details
+        ),
+        "table_inspector_layer_inference_candidates": (
+            table_inspector_candidate_details
+        ),
+        "table_inspector_layer_inference_skip_reasons": (
+            table_inspector_skip_reasons
         ),
         "table_inspector_layer_inference_count": len(
             [
@@ -3228,6 +3667,7 @@ def run_catalog_discovery(
     base_url: str = "",
     max_retries: int = 1,
     parallelism: int = 2,
+    request_timeout: int = 180,
     no_cache: bool = False,
     dry_run: bool = False,
     overwrite: bool = False,
@@ -3251,10 +3691,14 @@ def run_catalog_discovery(
         "cache_file": cache_file,
         "max_retries": max_retries,
         "parallelism": parallelism,
+        "request_timeout": request_timeout,
     }
     if base_url:
         inspector_kwargs["base_url"] = base_url
-    inspector = TableInspector(api_key=api_key, **inspector_kwargs)
+    inspector = _create_table_inspector(
+        api_key=api_key,
+        inspector_kwargs=inspector_kwargs,
+    )
     if show_progress:
         inspector.progress_callback = build_progress_callback()
 
@@ -3401,6 +3845,7 @@ def run_metadata_write(
     base_url: str = "",
     max_retries: int = 1,
     parallelism: int = 2,
+    request_timeout: int = 180,
     no_cache: bool = False,
     dry_run: bool = False,
     write_scope: str = "all",
@@ -3425,10 +3870,14 @@ def run_metadata_write(
         "cache_file": cache_file,
         "max_retries": max_retries,
         "parallelism": parallelism,
+        "request_timeout": request_timeout,
     }
     if base_url:
         inspector_kwargs["base_url"] = base_url
-    inspector = TableInspector(api_key=api_key, **inspector_kwargs)
+    inspector = _create_table_inspector(
+        api_key=api_key,
+        inspector_kwargs=inspector_kwargs,
+    )
     if show_progress:
         inspector.progress_callback = build_progress_callback()
     dwd_results = inspector.inspect_batch(dwd_contexts)
@@ -3594,6 +4043,12 @@ def main() -> None:
         "--parallel", type=int, default=4, help="LLM 并发调用数，默认 4"
     )
     parser.add_argument(
+        "--request-timeout",
+        type=int,
+        default=180,
+        help="单次 LLM 请求超时时间（秒），默认 180",
+    )
+    parser.add_argument(
         "--quiet", action="store_true", help="不打印单表巡检进度"
     )
     args = parser.parse_args()
@@ -3611,6 +4066,7 @@ def main() -> None:
             base_url=args.base_url,
             max_retries=args.max_retries,
             parallelism=args.parallel,
+            request_timeout=args.request_timeout,
             no_cache=args.no_cache,
             dry_run=args.dry_run,
             overwrite=args.overwrite_catalog,
@@ -3641,6 +4097,7 @@ def main() -> None:
             base_url=args.base_url,
             max_retries=args.max_retries,
             parallelism=args.parallel,
+            request_timeout=args.request_timeout,
             no_cache=args.no_cache,
             show_progress=not args.quiet,
         )
@@ -3667,6 +4124,7 @@ def main() -> None:
             base_url=args.base_url,
             max_retries=args.max_retries,
             parallelism=args.parallel,
+            request_timeout=args.request_timeout,
             no_cache=args.no_cache,
             dry_run=args.dry_run,
             write_scope=args.write_scope,
@@ -3702,7 +4160,8 @@ def main() -> None:
             "语义主题归属: {assigned_semantic_subject_count}, "
             "表巡检分层: "
             "{table_inspector_layer_inference_count}/"
-            "{table_inspector_layer_inference_attempt_count}, "
+            "{table_inspector_layer_inference_attempt_count}"
+            " (候选 {table_inspector_layer_inference_candidate_count}), "
             "警告: {warning_count}".format(**result)
         )
         return
