@@ -326,6 +326,51 @@ def build_temp_project(
     return target_dir, mapping, expected
 
 
+def correct_no_layer_depth_from_ods(
+    contexts: list[Any],
+    mapping: dict[str, str],
+    expected: dict[str, dict[str, str]],
+) -> None:
+    """Recompute depth after benchmark table names remove layer prefixes."""
+    ods_roots = {
+        new
+        for old, new in mapping.items()
+        if expected.get(old, {}).get("layer") == "ODS"
+    }
+    contexts_by_table = {ctx.table_name: ctx for ctx in contexts}
+    memo: dict[str, int] = {}
+
+    def depth(table_name: str, visiting: set[str] | None = None) -> int:
+        if table_name in memo:
+            return memo[table_name]
+        if table_name in ods_roots:
+            memo[table_name] = 0
+            return 0
+        ctx = contexts_by_table.get(table_name)
+        if ctx is None:
+            return 1
+        if visiting is None:
+            visiting = set()
+        if table_name in visiting:
+            return ctx.depth_from_ods
+        visiting.add(table_name)
+        parents = [
+            parent
+            for parent in ctx.upstream_tables
+            if parent in contexts_by_table or parent in ods_roots
+        ]
+        if parents:
+            result = min(depth(parent, visiting) for parent in parents) + 1
+        else:
+            result = ctx.depth_from_ods
+        visiting.remove(table_name)
+        memo[table_name] = result
+        return result
+
+    for ctx in contexts:
+        ctx.depth_from_ods = depth(ctx.table_name)
+
+
 def summarize_project_with_direct_generation(
     *,
     source_project: str,
@@ -468,6 +513,7 @@ def summarize_project_with_table_inspector(
         )
     )
     contexts = build_contexts(target_project, lineage_data, layers={"OTHER"})
+    correct_no_layer_depth_from_ods(contexts, mapping, expected)
     contexts_by_table = {ctx.table_name: ctx for ctx in contexts}
     cache_path = (
         target_dir / "assess" / "cache" / "table_inspector_layer.json"
