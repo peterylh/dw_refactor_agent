@@ -41,7 +41,7 @@ def test_start_creates_manifest_and_baseline_artifacts(tmp_path, monkeypatch):
     assert exit_code == 0
     run_root = tmp_path / "refact" / "runs" / "20260620_073000_shop"
     assert (run_root / "manifest.json").exists()
-    assert (run_root / "baseline" / "lineage_data_shop.json").exists()
+    assert (run_root / "baseline" / "lineage_data.json").exists()
     assert (run_root / "baseline" / "task_lineage_cache.json").exists()
     assert (run_root / "baseline" / "assess_result.json").exists()
 
@@ -58,7 +58,7 @@ def test_analyze_refreshes_current_analysis_diff_and_plan(
     write_manifest(manifest_path, manifest)
     run_root = manifest_path.parent
     _write_json(
-        run_root / "baseline" / "lineage_data_shop.json",
+        run_root / "baseline" / "lineage_data.json",
         {"tables": [], "edges": []},
     )
     _write_json(
@@ -147,7 +147,7 @@ def test_analyze_refreshes_current_analysis_diff_and_plan(
     )
 
     assert exit_code == 0
-    assert (run_root / "current" / "lineage_data_shop.json").exists()
+    assert (run_root / "current" / "lineage_data.json").exists()
     assert (run_root / "current" / "assess_result.json").exists()
     assert (run_root / "analysis" / "change_analysis.json").exists()
     issue_diff = json.loads(

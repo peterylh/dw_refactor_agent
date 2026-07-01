@@ -9,12 +9,12 @@ from pathlib import Path
 from config import TEXT_ENCODING
 
 
-def _artifact_paths(project: str) -> dict:
+def _artifact_paths() -> dict:
     return {
-        "baseline_lineage": f"baseline/lineage_data_{project}.json",
+        "baseline_lineage": "baseline/lineage_data.json",
         "baseline_task_cache": "baseline/task_lineage_cache.json",
         "baseline_assess": "baseline/assess_result.json",
-        "current_lineage": f"current/lineage_data_{project}.json",
+        "current_lineage": "current/lineage_data.json",
         "current_task_cache": "current/task_lineage_cache.json",
         "current_assess": "current/assess_result.json",
         "change_analysis": "analysis/change_analysis.json",
@@ -49,7 +49,7 @@ def create_run_manifest(
         "project": project,
         "created_at": now.isoformat(),
         "base_git": git_info or {},
-        "artifacts": _artifact_paths(project),
+        "artifacts": _artifact_paths(),
     }
     manifest_path = run_root / "manifest.json"
     write_manifest(manifest_path, manifest)

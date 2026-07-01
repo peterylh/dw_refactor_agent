@@ -43,12 +43,12 @@ refact/runs/<run_id>/
   manifest.json
 
   baseline/
-    lineage_data_<project>.json
+    lineage_data.json
     task_lineage_cache.json
     assess_result.json
 
   current/
-    lineage_data_<project>.json
+    lineage_data.json
     task_lineage_cache.json
     assess_result.json
 
@@ -81,9 +81,9 @@ baseline contract, not a container for large facts.
     "dirty": false
   },
   "artifacts": {
-    "baseline_lineage": "baseline/lineage_data_shop.json",
+    "baseline_lineage": "baseline/lineage_data.json",
     "baseline_assess": "baseline/assess_result.json",
-    "current_lineage": "current/lineage_data_shop.json",
+    "current_lineage": "current/lineage_data.json",
     "current_assess": "current/assess_result.json",
     "change_analysis": "analysis/change_analysis.json",
     "issue_diff": "analysis/issue_diff.json",

@@ -33,7 +33,7 @@ def test_create_run_manifest_writes_expected_layout(tmp_path):
         assert (manifest_path.parent / dirname).is_dir()
 
     assert artifact_path(manifest_path, "baseline_lineage") == (
-        manifest_path.parent / "baseline" / "lineage_data_shop.json"
+        manifest_path.parent / "baseline" / "lineage_data.json"
     )
 
 
