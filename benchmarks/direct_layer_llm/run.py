@@ -529,6 +529,8 @@ def summarize_project_with_table_inspector(
     }
     if "base_url" in inspect.signature(TableInspector).parameters:
         inspector_kwargs["base_url"] = base_url
+    if "request_timeout" in inspect.signature(TableInspector).parameters:
+        inspector_kwargs["request_timeout"] = request_timeout
     inspector = TableInspector(**inspector_kwargs)
 
     print(
@@ -640,6 +642,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--base-url", default="https://api.deepseek.com")
     parser.add_argument("--parallel", type=int, default=4)
     parser.add_argument("--max-retries", type=int, default=1)
+    parser.add_argument("--request-timeout", type=int, default=180)
     parser.add_argument("--runner", choices=RUNNERS, default="table-inspector")
     parser.add_argument(
         "--projects",
@@ -707,6 +710,7 @@ def run_project_summary(
     base_url: str,
     parallelism: int,
     max_retries: int,
+    request_timeout: int,
 ) -> dict[str, Any]:
     if runner == "direct":
         return summarize_project_with_direct_generation(
@@ -728,6 +732,7 @@ def run_project_summary(
         base_url=base_url,
         parallelism=parallelism,
         max_retries=max_retries,
+        request_timeout=request_timeout,
     )
 
 
@@ -804,6 +809,7 @@ def main() -> None:
                         base_url=args.base_url,
                         parallelism=args.parallel,
                         max_retries=args.max_retries,
+                        request_timeout=args.request_timeout,
                     )
                 )
             runner_payloads[runner] = aggregate_runner(runner, summaries)
@@ -812,6 +818,7 @@ def main() -> None:
             "model": args.model,
             "base_url": args.base_url,
             "parallelism": args.parallel,
+            "request_timeout": args.request_timeout,
             "runner": args.runner,
             "tmp_root": str(tmp_root),
         }

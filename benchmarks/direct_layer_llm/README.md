@@ -21,6 +21,7 @@ python3 benchmarks/direct_layer_llm/run.py \
   --model deepseek-v4-pro \
   --base-url https://api.deepseek.com \
   --parallel 4 \
+  --request-timeout 180 \
   --output /tmp/table_inspector_layer_validation.json
 ```
 
