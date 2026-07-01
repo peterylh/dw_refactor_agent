@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 
@@ -23,13 +24,72 @@ def _target_table_name(target: dict) -> str:
     return name
 
 
-def _issue_in_scope(issue: dict, dimension_scope: dict | None) -> bool:
+def _short_name(name: str) -> str:
+    return str(name or "").strip().strip("`").split(".")[-1]
+
+
+def _rename_mapping(change_analysis: dict | None) -> dict[str, str]:
+    if not change_analysis:
+        return {}
+
+    mapping = {}
+    for old_name, new_name in (
+        change_analysis.get("rename_mapping") or {}
+    ).items():
+        old_short = _short_name(old_name)
+        new_short = _short_name(new_name)
+        if old_short and new_short:
+            mapping[old_short] = new_short
+
+    for rename in change_analysis.get("renames") or []:
+        old_short = _short_name(rename.get("old") or rename.get("old_name"))
+        new_short = _short_name(rename.get("new") or rename.get("new_name"))
+        if old_short and new_short:
+            mapping[old_short] = new_short
+
+    for change in change_analysis.get("ddl_changes") or []:
+        if change.get("change_type") != "RENAME":
+            continue
+        old_short = _short_name(change.get("old_name"))
+        new_short = _short_name(change.get("new_name"))
+        if old_short and new_short:
+            mapping[old_short] = new_short
+    return mapping
+
+
+def _map_identifier_text(value: str, rename_mapping: dict[str, str]) -> str:
+    mapped = str(value or "")
+    for old_name, new_name in sorted(
+        rename_mapping.items(),
+        key=lambda item: len(item[0]),
+        reverse=True,
+    ):
+        pattern = re.compile(
+            rf"(?<![A-Za-z0-9_]){re.escape(old_name)}(?![A-Za-z0-9_])"
+        )
+        mapped = pattern.sub(new_name, mapped)
+    return mapped
+
+
+def _map_scope_name(name: str, rename_mapping: dict[str, str]) -> str:
+    return rename_mapping.get(name, name)
+
+
+def _issue_in_scope(
+    issue: dict,
+    dimension_scope: dict | None,
+    rename_mapping: dict[str, str] | None = None,
+) -> bool:
     if not dimension_scope or dimension_scope.get("mode") != "scoped":
         return True
 
+    rename_mapping = rename_mapping or {}
     target = issue.get("target") or {}
     target_type = str(target.get("type") or "").strip()
-    target_name = _target_table_name(target)
+    target_name = _map_scope_name(
+        _target_table_name(target),
+        rename_mapping,
+    )
     table_names = set(dimension_scope.get("tables") or [])
     task_names = set(dimension_scope.get("tasks") or [])
 
@@ -51,17 +111,27 @@ def _dimension_scope(scope_plan: dict | None, dimension: str) -> dict | None:
 def _issues_by_fingerprint(
     assess_result: dict,
     scope_plan: dict | None = None,
+    rename_mapping: dict[str, str] | None = None,
 ) -> dict:
+    rename_mapping = rename_mapping or {}
     issues = {}
     for dimension_name, dimension in (
         assess_result.get("dimensions") or {}
     ).items():
         dimension_scope = _dimension_scope(scope_plan, dimension_name)
         for issue in dimension.get("issues") or []:
-            if not _issue_in_scope(issue, dimension_scope):
+            if not _issue_in_scope(
+                issue,
+                dimension_scope,
+                rename_mapping=rename_mapping,
+            ):
                 continue
             fingerprint = str(issue.get("fingerprint") or "").strip()
             if fingerprint:
+                fingerprint = _map_identifier_text(
+                    fingerprint,
+                    rename_mapping,
+                )
                 issues[fingerprint] = issue
     return issues
 
@@ -80,9 +150,15 @@ def diff_assess_results(
     baseline: dict,
     current: dict,
     scope_plan: dict | None = None,
+    change_analysis: dict | None = None,
 ) -> dict:
     """Compare two assess results by issue fingerprint."""
-    baseline_issues = _issues_by_fingerprint(baseline, scope_plan)
+    rename_mapping = _rename_mapping(change_analysis)
+    baseline_issues = _issues_by_fingerprint(
+        baseline,
+        scope_plan,
+        rename_mapping=rename_mapping,
+    )
     current_issues = _issues_by_fingerprint(current, scope_plan)
     baseline_keys = set(baseline_issues)
     current_keys = set(current_issues)

@@ -71,6 +71,36 @@ def _project_dir(project: str) -> str:
     return PROJECT_CONFIG[project]["dir"]
 
 
+def _short_name(name: str) -> str:
+    return str(name or "").strip().strip("`").split(".")[-1]
+
+
+def _rename_mapping_from_ddl_changes(
+    ddl_changes: list[dict],
+) -> dict[str, str]:
+    mapping = {}
+    for change in ddl_changes or []:
+        if change.get("change_type") != "RENAME":
+            continue
+        old_name = _short_name(change.get("old_name"))
+        new_name = _short_name(change.get("new_name"))
+        if old_name and new_name:
+            mapping[old_name] = new_name
+    return dict(sorted(mapping.items()))
+
+
+def _with_rename_mapping(
+    change_analysis: dict,
+    ddl_changes: list[dict],
+) -> dict:
+    rename_mapping = _rename_mapping_from_ddl_changes(ddl_changes)
+    if not rename_mapping:
+        return change_analysis
+    enriched = dict(change_analysis)
+    enriched["rename_mapping"] = rename_mapping
+    return enriched
+
+
 def _start(args) -> int:
     root = Path(args.root)
     manifest_path, manifest = create_run_manifest(
@@ -137,6 +167,23 @@ def _analyze(args) -> int:
         change_analysis,
     )
 
+    plan = build_verification_plan(
+        project,
+        change_analysis,
+        base_ref=manifest.get("base_git", {}).get("head"),
+        repo_root=config.PROJECT_ROOT,
+        lineage_data=current_lineage,
+        partition=args.partition,
+    )
+    change_analysis = _with_rename_mapping(
+        change_analysis,
+        plan.get("ddl_changes") or [],
+    )
+    _write_json(
+        artifact_path(manifest_path, "change_analysis"),
+        change_analysis,
+    )
+
     current_assess = assess(
         project,
         lineage_data=current_lineage,
@@ -151,17 +198,10 @@ def _analyze(args) -> int:
         baseline_assess,
         current_assess,
         scope_plan=current_assess.get("scope_plan"),
+        change_analysis=change_analysis,
     )
     _write_json(artifact_path(manifest_path, "issue_diff"), issue_diff)
 
-    plan = build_verification_plan(
-        project,
-        change_analysis,
-        base_ref=manifest.get("base_git", {}).get("head"),
-        repo_root=config.PROJECT_ROOT,
-        lineage_data=current_lineage,
-        partition=args.partition,
-    )
     _write_json(artifact_path(manifest_path, "verification_plan"), plan)
     print(f"Analyze complete: {manifest_path}")
     return 0
