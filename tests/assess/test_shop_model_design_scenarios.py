@@ -95,11 +95,6 @@ def _with_model_rule_scenarios(lineage_data: dict, model_metadata: dict):
         },
     }
 
-    for table in lineage_data["tables"]:
-        table_name = table.get("name")
-        if table_name in overrides:
-            table["layer"] = overrides[table_name]["layer"]
-
     for table_name, override in overrides.items():
         metadata = dict(model_metadata.get(table_name) or {})
         metadata.update(override)

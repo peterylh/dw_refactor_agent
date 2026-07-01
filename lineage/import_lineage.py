@@ -215,7 +215,6 @@ def _build_table_rows(
                 context.datasource_id,
                 table_name,
                 str(table.get("full_name") or table_name),
-                str(table.get("layer") or "OTHER").upper(),
                 1 if table.get("is_transient") else 0,
                 json.dumps(
                     table.get("transient_sources") or [],
@@ -614,6 +613,36 @@ def delete_snapshot_rows(cursor, *, snapshot_id: int) -> None:
     )
 
 
+def _column_name_from_show_columns_row(row: Any) -> str:
+    if isinstance(row, dict):
+        return str(
+            row.get("Field")
+            or row.get("field")
+            or row.get("Column")
+            or row.get("column")
+            or ""
+        ).strip()
+    if isinstance(row, (list, tuple)) and row:
+        return str(row[0] or "").strip()
+    return ""
+
+
+def _table_info_has_column(cursor, column_name: str) -> bool:
+    cursor.execute("SHOW COLUMNS FROM table_info")
+    expected = column_name.lower()
+    return any(
+        _column_name_from_show_columns_row(row).lower() == expected
+        for row in cursor.fetchall()
+    )
+
+
+def migrate_lineage_schema(cursor) -> None:
+    """Apply idempotent schema migrations before writing lineage snapshots."""
+    if _table_info_has_column(cursor, "layer"):
+        LOGGER.info("迁移 table_info: 删除历史 layer 列")
+        cursor.execute("ALTER TABLE table_info DROP COLUMN layer")
+
+
 def _insert_all(
     cursor,
     *,
@@ -632,9 +661,9 @@ def _insert_all(
         (
             "table_info",
             "INSERT INTO table_info "
-            "(id, snapshot_id, datasource_id, table_name, full_name, layer, "
+            "(id, snapshot_id, datasource_id, table_name, full_name, "
             "is_transient, transient_sources) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+            "VALUES (%s, %s, %s, %s, %s, %s, %s)",
             rows.table_rows,
         ),
         (
@@ -777,6 +806,10 @@ def import_lineage(
     try:
         cursor = connection.cursor()
         try:
+            LOGGER.info("检查 lineage schema 兼容性")
+            migrate_lineage_schema(cursor)
+            connection.commit()
+
             LOGGER.info("清理快照 %s 的历史导入数据", current_snapshot_id)
             delete_snapshot_rows(cursor, snapshot_id=current_snapshot_id)
             connection.commit()

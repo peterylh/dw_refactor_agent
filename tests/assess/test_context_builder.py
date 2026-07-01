@@ -1,3 +1,4 @@
+import pytest
 import yaml
 
 import assess.llm.context_builder as context_builder_module
@@ -7,6 +8,25 @@ from assess.llm.context_builder import (
     extract_column_lineage,
     extract_dependencies,
 )
+
+MODEL_METADATA = {
+    "dwd_customer": {"name": "dwd_customer", "layer": "DWD"},
+    "dwd_order_detail": {"name": "dwd_order_detail", "layer": "DWD"},
+    "dws_store_sales_daily": {
+        "name": "dws_store_sales_daily",
+        "layer": "DWS",
+    },
+    "ads_sales_dashboard": {"name": "ads_sales_dashboard", "layer": "ADS"},
+}
+
+
+@pytest.fixture(autouse=True)
+def model_metadata(monkeypatch):
+    monkeypatch.setattr(
+        context_builder_module,
+        "load_model_metadata",
+        lambda project: MODEL_METADATA,
+    )
 
 
 def test_extract_dependencies(sample_lineage_data):

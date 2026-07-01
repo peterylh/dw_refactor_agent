@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from collections import defaultdict
 
-from config import TEXT_ENCODING, lineage_data_path
+from config import TEXT_ENCODING, determine_layer, lineage_data_path
 from lineage.identifiers import (
     canonical_qualified_identifier,
     identifier_match_key,
@@ -223,5 +223,18 @@ def build_table_edge_source_files(edges: list, indirect_edges: list) -> dict:
     return dict(table_edges)
 
 
-def build_table_layer_map(tables: list) -> dict:
-    return {t["name"]: t["layer"] for t in tables}
+def build_table_layer_map(
+    tables: list,
+    project: str,
+    model_metadata: dict | None = None,
+) -> dict:
+    layers = {}
+    for table in tables:
+        name = str(table.get("name") or "")
+        if not name:
+            continue
+        short_name = name.split(".")[-1]
+        metadata = (model_metadata or {}).get(short_name) or {}
+        layer = metadata.get("layer") or determine_layer(short_name, project)
+        layers[name] = str(layer or "OTHER").upper()
+    return layers

@@ -9,7 +9,6 @@ def _demo_snapshot():
             {
                 "name": "ods_order",
                 "full_name": "shop_dm.ods_order",
-                "layer": "ODS",
                 "columns": [
                     {
                         "name": "amount",
@@ -21,7 +20,6 @@ def _demo_snapshot():
             {
                 "name": "dwd_order_detail",
                 "full_name": "shop_dm.dwd_order_detail",
-                "layer": "DWD",
                 "columns": [
                     {
                         "name": "amount",
@@ -143,14 +141,13 @@ def test_build_import_rows_normalizes_snapshot_for_database(tmp_path):
         (1, 42, "shop", "shop_dm", "doris", "127.0.0.1:9030"),
     ]
     assert rows.table_rows == [
-        (1, 42, 1, "ods_order", "shop_dm.ods_order", "ODS", 0, "[]"),
+        (1, 42, 1, "ods_order", "shop_dm.ods_order", 0, "[]"),
         (
             2,
             42,
             1,
             "dwd_order_detail",
             "shop_dm.dwd_order_detail",
-            "DWD",
             0,
             "[]",
         ),
@@ -280,4 +277,58 @@ def test_delete_snapshot_rows_does_not_truncate_whole_lineage_database():
         ("DELETE FROM table_info WHERE snapshot_id = %s", (42,)),
         ("DELETE FROM datasource WHERE snapshot_id = %s", (42,)),
         ("DELETE FROM lineage_snapshot WHERE id = %s", (42,)),
+    ]
+
+
+def test_migrate_lineage_schema_drops_legacy_table_layer_column():
+    module = importlib.import_module("lineage.import_lineage")
+
+    class RecordingCursor:
+        def __init__(self):
+            self.execute_calls = []
+
+        def execute(self, sql, params=None):
+            self.execute_calls.append((sql, params))
+
+        def fetchall(self):
+            return [
+                ("id",),
+                ("snapshot_id",),
+                ("layer",),
+                ("table_name",),
+            ]
+
+    cursor = RecordingCursor()
+
+    module.migrate_lineage_schema(cursor)
+
+    assert cursor.execute_calls == [
+        ("SHOW COLUMNS FROM table_info", None),
+        ("ALTER TABLE table_info DROP COLUMN layer", None),
+    ]
+
+
+def test_migrate_lineage_schema_leaves_current_table_info_schema():
+    module = importlib.import_module("lineage.import_lineage")
+
+    class RecordingCursor:
+        def __init__(self):
+            self.execute_calls = []
+
+        def execute(self, sql, params=None):
+            self.execute_calls.append((sql, params))
+
+        def fetchall(self):
+            return [
+                {"Field": "id"},
+                {"Field": "snapshot_id"},
+                {"Field": "table_name"},
+            ]
+
+    cursor = RecordingCursor()
+
+    module.migrate_lineage_schema(cursor)
+
+    assert cursor.execute_calls == [
+        ("SHOW COLUMNS FROM table_info", None),
     ]

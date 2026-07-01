@@ -21,6 +21,10 @@ DATA_DOMAIN_LAYERS = {"DWD"}
 BUSINESS_AREA_LAYERS = {"DWD", "DWS"}
 
 
+def _short_table_name(table_name: str) -> str:
+    return str(table_name or "").strip().split(".")[-1]
+
+
 @dataclass
 class TableContext:
     table_name: str
@@ -214,14 +218,15 @@ def build_contexts(
         return result
 
     for table in lineage_data.get("tables", []):
-        layer = table.get("layer", "")
+        name = table["name"]
+        short_name = _short_table_name(name)
+        metadata = model_metadata.get(short_name, {})
+        layer = str(metadata.get("layer") or "OTHER").upper()
         if layer not in target_layers:
             continue
 
-        name = table["name"]
-
         # Read DDL
-        ddl_path = ddl_dir / f"{name}.sql"
+        ddl_path = ddl_dir / f"{short_name}.sql"
         ddl_content = (
             ddl_path.read_text(encoding=TEXT_ENCODING)
             if ddl_path.exists()
@@ -229,7 +234,7 @@ def build_contexts(
         )
 
         # Read ETL
-        task_path = tasks_dir / f"{name}.sql"
+        task_path = tasks_dir / f"{short_name}.sql"
         etl_content = (
             task_path.read_text(encoding=TEXT_ENCODING)
             if task_path.exists()
@@ -241,11 +246,10 @@ def build_contexts(
             for upstream_table in upstream_tables
             if upstream_table in metric_groups
         }
-        metadata = model_metadata.get(name, {})
 
         contexts.append(
             TableContext(
-                table_name=name,
+                table_name=short_name,
                 layer=layer,
                 ddl=ddl_content,
                 etl_sql=etl_content,

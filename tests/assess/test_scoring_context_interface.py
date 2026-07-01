@@ -32,6 +32,14 @@ def _check_by_rule(result, rule_id):
     )
 
 
+def _models_from_tables(tables):
+    return {
+        table["name"]: {"name": table["name"], "layer": table["layer"]}
+        for table in tables
+        if table.get("name") and table.get("layer")
+    }
+
+
 def test_assessment_context_derives_lineage_indexes_from_lineage_view():
     tables = [
         {"name": "ods_order", "layer": "ODS", "columns": []},
@@ -54,6 +62,7 @@ def test_assessment_context_derives_lineage_indexes_from_lineage_view():
         project="unit",
         lineage=_FakeLineageView(tables, upstream, downstream, table_edges),
         assets={"tables": {}, "tasks": []},
+        models=_models_from_tables(tables),
     )
 
     assert context.tables == tables
@@ -94,7 +103,7 @@ def test_lineage_scorers_use_context_derived_graphs():
         tables=tables,
         edges=edges,
         indirect_edges=[],
-        models={},
+        models=_models_from_tables(tables),
         project_dir=None,
     )
 

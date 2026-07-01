@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from assess.project_facts.asset_catalog import build_asset_catalog
+from config import determine_layer
 from lineage.table_graph import build_table_layer_map
 from lineage.view import LineageView
 
@@ -45,11 +46,23 @@ class AssessmentContext:
 
     @_cached_property
     def tables(self) -> list:
-        return [dict(table.raw) for table in self.lineage.tables()]
+        tables = []
+        for table in self.lineage.tables():
+            row = dict(table.raw)
+            if row.get("name"):
+                short_name = str(row["name"]).split(".")[-1]
+                metadata = (self.models or {}).get(short_name) or {}
+                layer = metadata.get("layer") or determine_layer(
+                    short_name,
+                    self.project,
+                )
+                row["layer"] = str(layer or "OTHER").upper()
+            tables.append(row)
+        return tables
 
     @_cached_property
     def table_layers(self) -> dict:
-        return build_table_layer_map(self.tables)
+        return build_table_layer_map(self.tables, self.project, self.models)
 
     @_cached_property
     def upstream(self) -> dict:

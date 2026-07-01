@@ -48,7 +48,20 @@ def _configure_project_root(monkeypatch, project_root):
 @pytest.fixture
 def isolated_writer_project(tmp_path, monkeypatch):
     project = "unit_writer"
-    (tmp_path / project).mkdir()
+    project_dir = tmp_path / project
+    models_dir = project_dir / "models"
+    models_dir.mkdir(parents=True)
+    for table_name, layer in [
+        ("dwd_customer", "DWD"),
+        ("dwd_order_detail", "DWD"),
+        ("dws_store_sales_daily", "DWS"),
+        ("ads_sales_dashboard", "ADS"),
+        ("dim_store", "DIM"),
+    ]:
+        (models_dir / f"{table_name}.yaml").write_text(
+            f"version: 2\nname: {table_name}\nlayer: {layer}\n",
+            encoding="utf-8",
+        )
     (tmp_path / "naming_config.yaml").write_text(
         "types: {}\nbindings: {}\n",
         encoding="utf-8",
@@ -2139,7 +2152,7 @@ def test_run_metadata_write_discovers_related_entity_from_dws_grain(
     project_dir = tmp_path / isolated_writer_project
     models_dir = project_dir / "models"
     ddl_dir = project_dir / "ddl"
-    models_dir.mkdir()
+    models_dir.mkdir(exist_ok=True)
     ddl_dir.mkdir()
     (models_dir / "dwd_product.yaml").write_text(
         yaml.safe_dump(
@@ -2351,6 +2364,16 @@ def test_run_catalog_discovery_writes_catalog_from_llm_results(
     project = "catalog_discovery"
     project_dir = tmp_path / project
     (project_dir / "ddl").mkdir(parents=True)
+    models_dir = project_dir / "models"
+    models_dir.mkdir()
+    for table_name, layer in [
+        ("dwd_customer", "DWD"),
+        ("dwd_order_detail", "DWD"),
+    ]:
+        (models_dir / f"{table_name}.yaml").write_text(
+            f"version: 2\nname: {table_name}\nlayer: {layer}\n",
+            encoding="utf-8",
+        )
     (project_dir / "tasks").mkdir()
     (tmp_path / "naming_config.yaml").write_text(
         "types: {}\nbindings: {}\ndictionaries: {}\n",

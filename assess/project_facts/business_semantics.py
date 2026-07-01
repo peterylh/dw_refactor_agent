@@ -15,7 +15,11 @@ from assess.project_facts.asset_catalog import (
 from config import TEXT_ENCODING
 
 CATALOG_VERSION = 1
-MODEL_TABLE_LAYERS = {"ODS", "DWD", "DWS", "DIM", "ADS"}
+
+
+def _layer_from_table_name(table_name: str) -> str:
+    first = str(table_name or "").split("_", 1)[0].upper()
+    return first if first in {"ODS", "DWD", "DWS", "DIM", "ADS"} else "OTHER"
 
 
 def business_semantics_path(project: str) -> Path:
@@ -47,11 +51,6 @@ def _domain_entries_from_naming(project: str) -> list[dict[str, Any]]:
 def _business_area_entries_from_naming(project: str) -> list[dict[str, Any]]:
     naming = config.get_naming_config(project)
     return _entry_values((naming.dictionaries or {}).get("business_areas"))
-
-
-def _layer_from_table_name(table_name: str) -> str:
-    first = str(table_name or "").split("_", 1)[0].upper()
-    return first if first in MODEL_TABLE_LAYERS else "OTHER"
 
 
 def _display_name_from_code(code: str) -> str:

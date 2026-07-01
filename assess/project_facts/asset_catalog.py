@@ -94,10 +94,17 @@ def _tables_for_naming(
     current_tables = []
     for table in tables:
         name = str(table.get("name") or "")
-        metadata = model_metadata.get(name, {}) if model_metadata else {}
+        metadata = (
+            model_metadata.get(_short_table_name(name), {})
+            if model_metadata
+            else {}
+        )
         current = dict(table)
-        if metadata.get("layer"):
-            current["layer"] = str(metadata["layer"]).upper()
+        current["layer"] = (
+            str(metadata["layer"]).upper()
+            if metadata.get("layer")
+            else "OTHER"
+        )
         current_tables.append(current)
 
     if not project_dir:
@@ -296,7 +303,6 @@ def build_asset_catalog(
             continue
         asset = ensure_asset(name)
         asset["lineage_table"] = dict(table)
-        asset["layer"] = str(table.get("layer") or "OTHER").upper()
         asset["columns"] = list(table.get("columns") or [])
 
     for name, metadata in (model_metadata or {}).items():
@@ -346,8 +352,9 @@ def build_asset_catalog(
                         ),
                     )
                     asset["columns"] = columns
-                    if table and table.get("layer") != "OTHER":
-                        asset["layer"] = table["layer"]
+                    ddl_layer = (table or {}).get("layer")
+                    if ddl_layer and ddl_layer != "OTHER":
+                        asset["layer"] = ddl_layer
 
         models_dirs = _asset_dirs(project_path, "models")
         if models_dirs:

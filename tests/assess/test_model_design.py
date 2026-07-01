@@ -5,6 +5,29 @@ from assess.rules.definitions.model_design import (
 from assess.rules.dimensions.model_design import score_model_design_health
 
 
+def _models_from_tables(tables):
+    return {
+        table["name"]: {"name": table["name"], "layer": table["layer"]}
+        for table in tables
+        if table.get("name") and table.get("layer")
+    }
+
+
+def _merge_model_layers(tables, models):
+    merged = {
+        name: dict(metadata) for name, metadata in (models or {}).items()
+    }
+    for table in tables:
+        name = table.get("name")
+        layer = table.get("layer")
+        if not name or not layer:
+            continue
+        metadata = merged.setdefault(name, {})
+        metadata.setdefault("name", name)
+        metadata.setdefault("layer", layer)
+    return merged
+
+
 def _context(
     tables,
     edges=None,
@@ -14,6 +37,11 @@ def _context(
     business_domain_config=None,
     assets=None,
 ):
+    models = (
+        _merge_model_layers(tables, models)
+        if models is not None
+        else _models_from_tables(tables)
+    )
     return AssessmentContext.from_facts(
         tables=tables,
         edges=edges or [],

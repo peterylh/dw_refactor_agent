@@ -151,7 +151,6 @@ def test_build_lineage_output_keeps_transient_table_without_edges_in_tables():
         {
             "name": "tmp_orders_stage",
             "full_name": "shop_dm.tmp_orders_stage",
-            "layer": "OTHER",
             "columns": [],
             "is_transient": True,
             "transient_sources": ["tmp_orders_stage.sql"],

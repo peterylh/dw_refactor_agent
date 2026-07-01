@@ -90,9 +90,16 @@ def _edge_ref_id(ref):
     return str(ref or "")
 
 
-def build_frontend_lineage_data(data):
+def build_frontend_lineage_data(data, project):
     """Build lineage payload compatible with the HTML field graph."""
     frontend_data = dict(data)
+    frontend_tables = []
+    for table in data.get("tables") or []:
+        normalized_table = dict(table)
+        normalized_table.pop("layer", None)
+        frontend_tables.append(normalized_table)
+    frontend_data["tables"] = frontend_tables
+
     frontend_edges = []
     for edge in data.get("edges") or []:
         normalized = dict(edge)
@@ -107,7 +114,7 @@ def build_frontend_lineage_data(data):
         table_name = str(table.get("name") or "")
         if not table_name:
             continue
-        layer = str(table.get("layer") or "")
+        layer = determine_layer(table_name, project)
         for column in table.get("columns") or []:
             column_name = str(column.get("name") or "")
             if not column_name:
@@ -129,7 +136,13 @@ def build_frontend_lineage_data(data):
     if nodes:
         frontend_data["nodes"] = nodes
     elif "nodes" in data:
-        frontend_data["nodes"] = list(data["nodes"])
+        frontend_nodes = []
+        for node in data["nodes"]:
+            normalized_node = dict(node)
+            table_name = str(normalized_node.get("table") or "")
+            normalized_node["layer"] = determine_layer(table_name, project)
+            frontend_nodes.append(normalized_node)
+        frontend_data["nodes"] = frontend_nodes
 
     return frontend_data
 
@@ -296,7 +309,7 @@ def main():
         project=args.project,
     )
 
-    frontend_data = build_frontend_lineage_data(data)
+    frontend_data = build_frontend_lineage_data(data, args.project)
     lineage_json = json.dumps(frontend_data, ensure_ascii=False, indent=2)
     jobs_json = json.dumps(jobs, ensure_ascii=False, indent=2)
 

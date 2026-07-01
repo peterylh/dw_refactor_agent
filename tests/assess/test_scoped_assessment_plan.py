@@ -3,14 +3,19 @@ from assess.scoped_plan import build_scoped_assessment_plan
 
 
 def _context():
+    tables = [
+        {"name": "dwd_order", "layer": "DWD", "columns": []},
+        {"name": "dws_order_daily", "layer": "DWS", "columns": []},
+        {"name": "ads_order_dashboard", "layer": "ADS", "columns": []},
+        {"name": "ads_unrelated", "layer": "ADS", "columns": []},
+    ]
     return AssessmentContext.from_facts(
         project="shop",
-        tables=[
-            {"name": "dwd_order", "layer": "DWD", "columns": []},
-            {"name": "dws_order_daily", "layer": "DWS", "columns": []},
-            {"name": "ads_order_dashboard", "layer": "ADS", "columns": []},
-            {"name": "ads_unrelated", "layer": "ADS", "columns": []},
-        ],
+        tables=tables,
+        models={
+            table["name"]: {"name": table["name"], "layer": table["layer"]}
+            for table in tables
+        },
         edges=[
             {
                 "source": "dwd_order.order_id",

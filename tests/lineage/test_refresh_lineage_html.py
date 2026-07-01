@@ -279,17 +279,23 @@ def test_update_lineage_html_writes_new_output_from_template(tmp_path):
     assert '{"old": true}' in template.read_text(encoding="utf-8")
 
 
-def test_build_frontend_lineage_data_normalizes_structured_edges():
+def test_build_frontend_lineage_data_normalizes_structured_edges(monkeypatch):
+    monkeypatch.setattr(
+        refresh_html,
+        "determine_layer",
+        lambda table_name, project: {
+            "ods_order": "ODS",
+            "dwd_order_detail": "DWD",
+        }.get(table_name, "OTHER"),
+    )
     data = {
         "tables": [
             {
                 "name": "ods_order",
-                "layer": "ODS",
                 "columns": [{"name": "order_id", "type": "BIGINT"}],
             },
             {
                 "name": "dwd_order_detail",
-                "layer": "DWD",
                 "columns": [{"name": "order_id", "type": "BIGINT"}],
             },
         ],
@@ -310,8 +316,9 @@ def test_build_frontend_lineage_data_normalizes_structured_edges():
         ],
     }
 
-    frontend_data = refresh_html.build_frontend_lineage_data(data)
+    frontend_data = refresh_html.build_frontend_lineage_data(data, "demo")
 
+    assert "layer" not in frontend_data["tables"][0]
     assert frontend_data["edges"][0]["source"] == "ods_order.order_id"
     assert frontend_data["edges"][0]["target"] == "dwd_order_detail.order_id"
     assert frontend_data["edges"][1]["source"] == ""

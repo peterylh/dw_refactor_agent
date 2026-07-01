@@ -1,31 +1,37 @@
 import lineage.lineage_extractor as lineage_extractor
 
 
-def test_format_layer_statistics_summarizes_without_table_names():
+def test_format_layer_statistics_summarizes_without_table_names(monkeypatch):
+    layers = {
+        "ods_customer": "ODS",
+        "ods_order": "ODS",
+        "dwd_order_detail": "DWD",
+        "dim_date": "DIM",
+    }
+    monkeypatch.setattr(
+        lineage_extractor,
+        "determine_layer",
+        lambda table_name: layers.get(table_name, "OTHER"),
+    )
     tables = [
         {
             "name": "ods_customer",
-            "layer": "ODS",
             "columns": [{"name": "customer_id"}, {"name": "customer_name"}],
         },
         {
             "name": "ods_order",
-            "layer": "ODS",
             "columns": [{"name": "order_id"}],
         },
         {
             "name": "dwd_order_detail",
-            "layer": "DWD",
             "columns": [{"name": "order_id"}, {"name": "payment_amount"}],
         },
         {
             "name": "dim_date",
-            "layer": "DIM",
             "columns": [{"name": "date_key"}],
         },
         {
             "name": "tmp_stage",
-            "layer": "OTHER",
             "columns": [],
         },
     ]

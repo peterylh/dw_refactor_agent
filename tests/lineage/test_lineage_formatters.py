@@ -1,5 +1,8 @@
 import json
 
+import pytest
+
+import config
 from lineage.formatters import (
     format_column_json,
     format_column_text,
@@ -9,7 +12,17 @@ from lineage.formatters import (
     format_table_text,
 )
 from lineage.query import build_column_lineage, build_table_subgraph
-from tests.lineage.test_lineage_query import _demo_view
+from tests.lineage.test_lineage_query import (
+    _demo_view,
+    configure_demo_project_layers,
+)
+
+
+@pytest.fixture(autouse=True)
+def demo_project_layers(monkeypatch, tmp_path):
+    configure_demo_project_layers(monkeypatch, tmp_path)
+    yield
+    config._model_metadata_cache.clear()
 
 
 def _table_subgraph():

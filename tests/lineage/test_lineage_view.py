@@ -128,7 +128,7 @@ def test_lineage_view_collapses_transient_column_lineage_case_insensitively():
 
 def test_lineage_view_indexes_design_facts_by_table():
     lineage_data = {
-        "tables": [{"name": "dws_orders", "layer": "DWS", "columns": []}],
+        "tables": [{"name": "dws_orders", "columns": []}],
         "edges": [
             {
                 "source": {"type": "column", "id": "dwd_orders.store_id"},

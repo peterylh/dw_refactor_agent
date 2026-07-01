@@ -51,6 +51,22 @@ def _context(
     indirect_edges=None,
     assets=None,
 ):
+    if tables:
+        table_models = {
+            table["name"]: {"name": table["name"], "layer": table["layer"]}
+            for table in tables
+            if table.get("name") and table.get("layer")
+        }
+        if models is None:
+            models = table_models
+        else:
+            models = {
+                name: dict(metadata) for name, metadata in models.items()
+            }
+            for table_name, table_model in table_models.items():
+                metadata = models.setdefault(table_name, {})
+                metadata.setdefault("name", table_name)
+                metadata.setdefault("layer", table_model["layer"])
     return AssessmentContext.from_facts(
         tables=tables or [],
         edges=edges or [],
@@ -106,7 +122,34 @@ def isolated_assess_project(tmp_path, monkeypatch):
     import assess.assess_middle_layer as assess_module
 
     project = "unit_assess"
-    (tmp_path / project).mkdir()
+    project_dir = tmp_path / project
+    models_dir = project_dir / "models"
+    models_dir.mkdir(parents=True)
+    for table_name, layer in [
+        ("dwd_customer", "DWD"),
+        ("dwd_order_detail", "DWD"),
+        ("dws_store_sales_daily", "DWS"),
+        ("ads_sales_dashboard", "ADS"),
+    ]:
+        (models_dir / f"{table_name}.yaml").write_text(
+            (
+                f"version: 2\nname: {table_name}\nlayer: {layer}\n"
+                "config:\n  materialized: source\n"
+            ),
+            encoding="utf-8",
+        )
+    ddl_dir = project_dir / "ddl"
+    ddl_dir.mkdir()
+    for table_name in [
+        "dwd_customer",
+        "dwd_order_detail",
+        "dws_store_sales_daily",
+        "ads_sales_dashboard",
+    ]:
+        (ddl_dir / f"{table_name}.sql").write_text(
+            f"CREATE TABLE {table_name} (id BIGINT);",
+            encoding="utf-8",
+        )
     (tmp_path / "naming_config.yaml").write_text(
         (PROJECT_ROOT / "naming_config.yaml").read_text(encoding="utf-8"),
         encoding="utf-8",

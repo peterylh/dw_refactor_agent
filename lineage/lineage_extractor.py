@@ -4146,7 +4146,6 @@ def build_lineage_output(all_lineage, schema, transient_tables=None):
             tables[tbl] = {
                 "name": tbl,
                 "full_name": _display_table_name(tbl),
-                "layer": determine_layer(tbl),
                 "columns": [],
             }
             column_names_by_table[tbl] = set()
@@ -4278,7 +4277,7 @@ def format_layer_statistics(tables):
     }
 
     for table in tables or []:
-        layer = str(table.get("layer") or "OTHER").upper()
+        layer = determine_layer(table.get("name") or "")
         if layer not in stats:
             layer = "OTHER"
         stats[layer]["tables"] += 1

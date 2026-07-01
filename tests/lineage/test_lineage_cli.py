@@ -4,7 +4,17 @@ import pytest
 
 import config
 from lineage.lineage_cli import main
-from tests.lineage.test_lineage_query import _demo_view
+from tests.lineage.test_lineage_query import (
+    _demo_view,
+    configure_demo_project_layers,
+)
+
+
+@pytest.fixture(autouse=True)
+def demo_project_layers(monkeypatch, tmp_path):
+    configure_demo_project_layers(monkeypatch, tmp_path)
+    yield
+    config._model_metadata_cache.clear()
 
 
 def _write_demo_lineage(tmp_path):

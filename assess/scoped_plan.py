@@ -137,10 +137,12 @@ def _base_tasks(base_scope: dict) -> set[str]:
 
 
 def _impacted_ads_tables(base_tables: set[str], context) -> set[str]:
+    table_layers = context.table_layers
     return {
         table["name"]
         for table in context.tables
-        if table.get("layer") == "ADS" and table.get("name") in base_tables
+        if table_layers.get(table.get("name")) == "ADS"
+        and table.get("name") in base_tables
     }
 
 

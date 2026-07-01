@@ -62,9 +62,7 @@ def score_metadata_health(
         entities = model_entities(metadata)
         entity_codes = _model_entity_codes(metadata)
         grain = metadata.get("grain")
-        layer = str(
-            metadata.get("layer") or (table or {}).get("layer") or "OTHER"
-        ).upper()
+        layer = str(metadata.get("layer") or "OTHER").upper()
         targets.append(
             {
                 "table_name": table_name,

@@ -33,7 +33,6 @@ class LineageColumn:
 class LineageTable:
     name: str
     full_name: str = ""
-    layer: str = "OTHER"
     columns: tuple[LineageColumn, ...] = ()
     is_transient: bool = False
     transient_sources: tuple[str, ...] = ()
@@ -43,10 +42,11 @@ class LineageTable:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "LineageTable":
+        raw = dict(data)
+        raw.pop("layer", None)
         return cls(
             name=str(data.get("name") or "").strip(),
             full_name=str(data.get("full_name") or ""),
-            layer=str(data.get("layer") or "OTHER").upper(),
             columns=tuple(
                 LineageColumn.from_dict(column)
                 for column in data.get("columns") or []
@@ -58,7 +58,7 @@ class LineageTable:
                 for source in data.get("transient_sources") or []
                 if str(source or "")
             ),
-            raw=dict(data),
+            raw=raw,
         )
 
 
@@ -189,4 +189,6 @@ class LineageSnapshot:
         )
 
     def to_dict(self) -> dict[str, Any]:
-        return dict(self.raw)
+        data = dict(self.raw)
+        data["tables"] = [dict(table.raw) for table in self.tables]
+        return data

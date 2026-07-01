@@ -1,7 +1,40 @@
 import pytest
 
-from lineage.query import build_column_lineage, build_table_subgraph
+import config
+from lineage.query import (
+    build_column_lineage,
+    build_project_stats,
+    build_table_subgraph,
+)
 from lineage.view import LineageView
+
+
+def configure_demo_project_layers(monkeypatch, tmp_path):
+    project_dir = tmp_path / "demo_project"
+    models_dir = project_dir / "models"
+    models_dir.mkdir(parents=True)
+    for table_name, layer in [
+        ("ods_order", "ODS"),
+        ("dwd_order_detail", "DWD"),
+        ("dwd_product", "DWD"),
+        ("dws_product_sales_daily", "DWS"),
+        ("ads_sales_dashboard", "ADS"),
+        ("ads_unrelated", "ADS"),
+    ]:
+        (models_dir / f"{table_name}.yaml").write_text(
+            f"version: 2\nname: {table_name}\nlayer: {layer}\n",
+            encoding="utf-8",
+        )
+    monkeypatch.setattr(config, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setitem(config.PROJECT_CONFIG, "demo", {"dir": "demo_project"})
+    config._model_metadata_cache.clear()
+
+
+@pytest.fixture(autouse=True)
+def demo_project_layers(monkeypatch, tmp_path):
+    configure_demo_project_layers(monkeypatch, tmp_path)
+    yield
+    config._model_metadata_cache.clear()
 
 
 def _demo_view():
@@ -11,22 +44,18 @@ def _demo_view():
             "tables": [
                 {
                     "name": "ods_order",
-                    "layer": "ODS",
                     "columns": [{"name": "sale_amount"}],
                 },
                 {
                     "name": "dwd_order_detail",
-                    "layer": "DWD",
                     "columns": [{"name": "sale_amount"}],
                 },
                 {
                     "name": "dwd_product",
-                    "layer": "DWD",
                     "columns": [{"name": "product_id"}],
                 },
                 {
                     "name": "dws_product_sales_daily",
-                    "layer": "DWS",
                     "columns": [
                         {"name": "product_id"},
                         {"name": "sales_amount"},
@@ -34,12 +63,10 @@ def _demo_view():
                 },
                 {
                     "name": "ads_sales_dashboard",
-                    "layer": "ADS",
                     "columns": [{"name": "sales_amount"}],
                 },
                 {
                     "name": "ads_unrelated",
-                    "layer": "ADS",
                     "columns": [{"name": "sales_amount"}],
                 },
             ],
@@ -121,6 +148,27 @@ def _demo_view():
             ],
         },
     )
+
+
+def test_project_stats_ignores_legacy_snapshot_layer():
+    view = LineageView.from_data(
+        "demo",
+        {
+            "tables": [
+                {
+                    "name": "dwd_order_detail",
+                    "layer": "ADS",
+                    "columns": [],
+                }
+            ],
+            "edges": [],
+        },
+    )
+
+    stats = build_project_stats(view)
+
+    assert "layer" not in view.snapshot.to_dict()["tables"][0]
+    assert stats.layer_counts == {"DWD": 1}
 
 
 def test_build_table_subgraph_limits_upstream_by_depth():
