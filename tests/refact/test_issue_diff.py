@@ -96,3 +96,68 @@ def test_diff_assess_results_filters_baseline_by_scope_plan():
     assert [issue["fingerprint"] for issue in result["fixed_issues"]] == [
         "in_scope"
     ]
+
+
+def test_diff_assess_results_filters_task_path_by_job_name():
+    baseline = {
+        "overall_score": 40.0,
+        "dimensions": {
+            "code_quality": {
+                "score": 40.0,
+                "issues": [
+                    {
+                        "fingerprint": (
+                            "code_quality|CODE_FILTER|task|"
+                            "shop/tasks/dwd_inventory.sql"
+                        ),
+                        "title": "wrapped filter",
+                        "target": {
+                            "type": "task",
+                            "name": "shop/tasks/dwd_inventory.sql",
+                        },
+                    },
+                    {
+                        "fingerprint": (
+                            "code_quality|CODE_FILTER|task|"
+                            "shop/tasks/dwd_customer.sql"
+                        ),
+                        "title": "customer wrapped filter",
+                        "target": {
+                            "type": "task",
+                            "name": "shop/tasks/dwd_customer.sql",
+                        },
+                    },
+                ],
+            }
+        },
+    }
+    current = {
+        "overall_score": 100.0,
+        "dimensions": {
+            "code_quality": {
+                "score": 100.0,
+                "issues": [],
+            }
+        },
+    }
+    scope_plan = {
+        "dimensions": {
+            "code_quality": {
+                "mode": "scoped",
+                "tables": [],
+                "tasks": ["dwd_inventory"],
+            }
+        }
+    }
+
+    result = diff_assess_results(
+        baseline,
+        current,
+        scope_plan=scope_plan,
+    )
+
+    assert result["summary"]["baseline_issue_count"] == 1
+    assert result["summary"]["fixed_count"] == 1
+    assert [issue["fingerprint"] for issue in result["fixed_issues"]] == [
+        "code_quality|CODE_FILTER|task|shop/tasks/dwd_inventory.sql"
+    ]

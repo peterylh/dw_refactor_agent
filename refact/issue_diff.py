@@ -18,7 +18,7 @@ def _target_table_name(target: dict) -> str:
     target_type = str(target.get("type") or "").strip()
     if target_type in {"column", "metric"} and "." in name:
         return name.split(".", 1)[0]
-    if target_type == "file":
+    if target_type in {"file", "task"}:
         return _scope_name(name)
     return name
 
