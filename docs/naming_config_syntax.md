@@ -265,7 +265,7 @@ dwd_customer
 查看某个项目的结构化诊断：
 
 ```bash
-python -c "from config import get_naming_config; import json; nc=get_naming_config('shop'); print(json.dumps(nc.diagnose_table_name('dwd_customer', 'DWD'), ensure_ascii=False, indent=2))"
+python -c "from config import get_naming_config; import json; nc=get_naming_config('shop'); print(json.dumps(nc.diagnose_table_name('dwd_customer', {'name': 'dwd_customer', 'layer': 'DWD'}), ensure_ascii=False, indent=2))"
 ```
 
 字段诊断：

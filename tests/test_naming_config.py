@@ -630,7 +630,10 @@ class TestNamingDiagnostics:
     def _assert_table_diagnostic_exposes_segment_plan(self):
         nc = load_naming_config(config.NAMING_CONFIG_PATH)
 
-        diagnostic = nc.diagnose_table_name("dwd_customer", "DWD")
+        diagnostic = nc.diagnose_table_name(
+            "dwd_customer",
+            {"name": "dwd_customer", "layer": "DWD"},
+        )
 
         assert diagnostic["passed"] is False
         attempt = diagnostic["attempts"][0]
@@ -639,6 +642,116 @@ class TestNamingDiagnostics:
         assert attempt["failure"]["code"] == "literal_mismatch"
         assert attempt["segments"][0]["kind"] == "literal"
         assert attempt["segments"][0]["name"] == "M"
+
+    def test_table_diagnostic_uses_model_layer_and_model_values(self):
+        nc = load_naming_config(config.NAMING_CONFIG_PATH)
+
+        passing_diagnostic = nc.diagnose_table_name(
+            "DIM_BASE_CUST_PROFILE_INFO",
+            {
+                "name": "dim_customer",
+                "layer": "DIM",
+                "entities": [
+                    {
+                        "code": "CUST",
+                        "type": "primary",
+                    },
+                    {
+                        "code": "PROD",
+                        "type": "foreign",
+                    },
+                ],
+            },
+        )
+        passing_constraint = passing_diagnostic["attempts"][0][
+            "model_constraints"
+        ]["MODEL_ENTITY"]
+        assert passing_constraint["matched_model_value"] is True
+        assert "model_value_failure" not in passing_constraint
+
+        diagnostic = nc.diagnose_table_name(
+            "DIM_BASE_PROD_PROFILE_INFO",
+            {
+                "name": "dim_customer",
+                "layer": "DIM",
+                "entities": [
+                    {
+                        "code": "CUST",
+                        "type": "primary",
+                    },
+                    {
+                        "code": "PROD",
+                        "type": "foreign",
+                    },
+                ],
+            },
+        )
+
+        assert diagnostic["layer"] == "DIM"
+        assert diagnostic["layer_source"] == "model"
+        assert diagnostic["model_name"] == "dim_customer"
+        assert diagnostic["passed"] is False
+        attempt = diagnostic["attempts"][0]
+        assert attempt["template_passed"] is True
+        assert attempt["matched_values"]["MODEL_ENTITY"] == "PROD"
+        assert attempt["model_constraints"] == {
+            "MODEL_ENTITY": {
+                "values_from": {
+                    "scope": "current_model",
+                    "paths": ["entities.code", "entity.code"],
+                },
+                "allowed_values_from_model": ["CUST"],
+                "actual_values": ["PROD"],
+                "matched_model_value": False,
+                "model_value_failure": {
+                    "code": "model_value_mismatch",
+                    "actual": ["PROD"],
+                    "expected": ["CUST"],
+                },
+            }
+        }
+
+    def test_table_diagnostic_reports_missing_model_layer(self):
+        nc = load_naming_config(config.NAMING_CONFIG_PATH)
+
+        diagnostic = nc.diagnose_table_name(
+            "DIM_BASE_CUST_PROFILE_INFO",
+            {"name": "dim_customer"},
+        )
+
+        assert diagnostic == {
+            "actual": "DIM_BASE_CUST_PROFILE_INFO",
+            "layer": None,
+            "layer_source": "model",
+            "model_name": "dim_customer",
+            "passed": False,
+            "attempts": [],
+            "failure": {
+                "code": "missing_model_layer",
+                "message": "model.layer is required to diagnose table name",
+            },
+        }
+
+    def test_table_diagnostic_reports_unknown_model_layer(self):
+        nc = load_naming_config(config.NAMING_CONFIG_PATH)
+
+        diagnostic = nc.diagnose_table_name(
+            "DIM_BASE_CUST_PROFILE_INFO",
+            {"name": "dim_customer", "layer": "UNKNOWN"},
+        )
+
+        assert diagnostic == {
+            "actual": "DIM_BASE_CUST_PROFILE_INFO",
+            "layer": "UNKNOWN",
+            "layer_source": "model",
+            "model_name": "dim_customer",
+            "passed": False,
+            "attempts": [],
+            "failure": {
+                "code": "unknown_model_layer",
+                "message": "model.layer is not defined in naming config",
+            },
+        }
 
 
 class TestTopLevelDetermineLayer:

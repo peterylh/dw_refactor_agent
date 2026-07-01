@@ -710,19 +710,195 @@ class NamingConfig:
         diagnostic["failure"] = self._locate_segment_failure(name, segments)
         return diagnostic
 
-    def diagnose_table_name(self, name: str, layer: str) -> dict:
+    def _model_path_values(self, model: dict, path: str) -> list[str]:
+        values = [model]
+        for part in str(path or "").split("."):
+            next_values = []
+            for value in values:
+                if isinstance(value, list):
+                    for item in value:
+                        if isinstance(item, dict) and part in item:
+                            next_values.append(item[part])
+                elif isinstance(value, dict) and part in value:
+                    next_values.append(value[part])
+            values = next_values
+
+        result = []
+        seen = set()
+
+        def collect(value) -> None:
+            if isinstance(value, list):
+                for item in value:
+                    collect(item)
+                return
+            if value is None:
+                return
+            text = str(value)
+            if not text or text in seen:
+                return
+            seen.add(text)
+            result.append(text)
+
+        for value in values:
+            collect(value)
+        return result
+
+    @staticmethod
+    def _dedupe_text_values(values: list) -> list[str]:
+        result = []
+        seen = set()
+        for value in values:
+            if value is None:
+                continue
+            text = str(value)
+            if not text or text in seen:
+                continue
+            seen.add(text)
+            result.append(text)
+        return result
+
+    def _primary_model_entity_values(self, model: dict) -> list[str]:
+        values = []
+        entities = model.get("entities")
+        if isinstance(entities, dict):
+            entities = [entities]
+        if isinstance(entities, list):
+            for entity in entities:
+                if (
+                    isinstance(entity, dict)
+                    and entity.get("type") == "primary"
+                ):
+                    values.append(entity.get("code"))
+
+        legacy_entity = model.get("entity")
+        if isinstance(legacy_entity, dict):
+            values.append(legacy_entity.get("code"))
+        return self._dedupe_text_values(values)
+
+    def _model_values_for_type(
+        self, model: dict, type_name: str, values_from: dict
+    ) -> list[str]:
+        if type_name == "MODEL_ENTITY":
+            return self._primary_model_entity_values(model)
+
+        result = []
+        seen = set()
+        for path in values_from.get("paths") or []:
+            for value in self._model_path_values(model, path):
+                if value in seen:
+                    continue
+                seen.add(value)
+                result.append(value)
+        return result
+
+    @staticmethod
+    def _matched_values_as_list(value) -> list[str]:
+        raw_values = value if isinstance(value, list) else [value]
+        return [str(item) for item in raw_values if item is not None]
+
+    def _attach_model_constraints(
+        self,
+        attempt: dict,
+        model: dict,
+    ) -> dict:
+        if not attempt.get("passed") or not attempt.get("matched_values"):
+            return attempt
+
+        constraints = {}
+        matched_values = attempt.get("matched_values") or {}
+        for type_name, value in matched_values.items():
+            type_def = self.types.get(type_name)
+            values_from = type_def.values_from if type_def else None
+            if not values_from or values_from.get("scope") != "current_model":
+                continue
+
+            allowed_values = self._model_values_for_type(
+                model, type_name, values_from
+            )
+            actual_values = self._matched_values_as_list(value)
+            constraint = {
+                "values_from": values_from,
+                "allowed_values_from_model": allowed_values,
+                "actual_values": actual_values,
+            }
+            if allowed_values and set(actual_values).issubset(
+                set(allowed_values)
+            ):
+                constraint["matched_model_value"] = True
+            else:
+                constraint["matched_model_value"] = False
+                if allowed_values:
+                    constraint["model_value_failure"] = {
+                        "code": "model_value_mismatch",
+                        "actual": actual_values,
+                        "expected": allowed_values,
+                    }
+                else:
+                    constraint["model_value_failure"] = {
+                        "code": "missing_model_values",
+                        "paths": list(values_from.get("paths") or []),
+                    }
+            constraints[type_name] = constraint
+
+        if not constraints:
+            return attempt
+
+        attempt["model_constraints"] = constraints
+        attempt["passed"] = attempt.get("passed") and all(
+            constraint.get("matched_model_value")
+            for constraint in constraints.values()
+        )
+        return attempt
+
+    def diagnose_table_name(self, name: str, model: dict | None) -> dict:
+        model_data = model if isinstance(model, dict) else {}
+        layer = model_data.get("layer")
+        model_name = model_data.get("name")
+        if not layer:
+            return {
+                "actual": name,
+                "layer": None,
+                "layer_source": "model",
+                "model_name": model_name,
+                "passed": False,
+                "attempts": [],
+                "failure": {
+                    "code": "missing_model_layer",
+                    "message": (
+                        "model.layer is required to diagnose table name"
+                    ),
+                },
+            }
+
         layer_def = self.layers.get(layer)
+        if not layer_def:
+            return {
+                "actual": name,
+                "layer": layer,
+                "layer_source": "model",
+                "model_name": model_name,
+                "passed": False,
+                "attempts": [],
+                "failure": {
+                    "code": "unknown_model_layer",
+                    "message": ("model.layer is not defined in naming config"),
+                },
+            }
+
         attempts = []
-        if layer_def:
-            rules = layer_def.template_rules or [
-                {} for _ in layer_def.templates
-            ]
-            for segments, rule in zip(layer_def.templates, rules):
-                attempts.append(self.diagnose_segments(name, segments, rule))
+        rules = layer_def.template_rules or [{} for _ in layer_def.templates]
+        for segments, rule in zip(layer_def.templates, rules):
+            attempt = self.diagnose_segments(name, segments, rule)
+            attempt["template_passed"] = bool(attempt.get("passed"))
+            attempts.append(
+                self._attach_model_constraints(attempt, model_data)
+            )
 
         return {
             "actual": name,
             "layer": layer,
+            "layer_source": "model",
+            "model_name": model_name,
             "passed": any(attempt.get("passed") for attempt in attempts),
             "attempts": attempts,
         }
