@@ -37,13 +37,17 @@ class _NamingRule(AssessRule):
         target_type: str,
         target: str,
         passed: bool,
-        expected: str,
-        actual: str,
+        expected,
+        actual,
+        target_detail: dict | None = None,
         evidence: dict,
+        diagnostic: dict | None = None,
+        summary: str = "",
         message: str,
         issue: dict | None,
         score_passed: int | None = None,
         score_total: int | None = None,
+        fingerprint_discriminator: str = "",
     ) -> dict:
         check = make_check(
             rule_id=self.rule_id,
@@ -52,9 +56,13 @@ class _NamingRule(AssessRule):
             passed=passed,
             expected=expected,
             actual=actual,
+            target_detail=target_detail,
             evidence=evidence,
+            diagnostic=diagnostic,
+            summary=summary,
             message=message,
             issue=issue,
+            fingerprint_discriminator=fingerprint_discriminator,
         )
         if score_passed is not None:
             check["_score_passed"] = score_passed
@@ -72,28 +80,35 @@ class NamingTableTemplateRule(_NamingRule):
         nc = rule_context["nc"]
         issue_context = _naming_issue_context(rule_context, name)
         valid = _check_table_name_any_template(name, layer, nc)
+        model = dict((rule_context.get("models") or {}).get(name) or {})
+        model.setdefault("name", name)
+        model.setdefault("layer", layer)
+        raw_diagnostic = _table_name_diagnostic(name, nc, model)
         violation = None
         if not valid:
-            model = (rule_context.get("models") or {}).get(name)
-            diagnostic = {
-                "check": "table_template",
-                **_table_name_diagnostic(name, nc, model),
-            }
             violation = {
                 "code": "table_template",
                 "rule_id": self.rule_id,
                 "expected": "表名符合所在层级命名模板",
                 "actual": name,
                 "message": f"{name} 不符合 {layer} 层表名模板",
-                "evidence": diagnostic,
             }
         return self.check(
             target_type="table",
             target=name,
             passed=valid,
-            expected="表名符合所在层级命名模板",
-            actual="符合" if valid else violation["message"],
-            evidence=_naming_violation_evidence(violation, {"layer": layer}),
+            target_detail=_table_target_detail(layer),
+            expected=_expected_from_diagnostic(
+                raw_diagnostic,
+                description="表名符合所在层级命名模板",
+                layer=layer,
+            ),
+            actual={"value": name},
+            evidence=None,
+            diagnostic=(
+                None if valid else _diagnostic_from_diagnostic(raw_diagnostic)
+            ),
+            summary="表名不符合规范模板" if not valid else "表名符合规范模板",
             message="" if valid else violation["message"],
             issue=issue_context if violation else None,
             score_passed=int(valid),
@@ -116,12 +131,9 @@ class NamingTableMaxLengthRule(_NamingRule):
         violation = None
         if not length_ok:
             diagnostic = {
-                "check": "table_max_length",
-                "actual": name,
-                "layer": layer,
-                "passed": False,
-                "expected": {"max_length": max_length},
+                "code": "max_length_exceeded",
                 "actual_length": len(name),
+                "max_length": max_length,
             }
             violation = {
                 "code": "table_max_length",
@@ -129,18 +141,22 @@ class NamingTableMaxLengthRule(_NamingRule):
                 "expected": f"表名长度 <= {max_length}",
                 "actual": {"name": name, "length": len(name)},
                 "message": f"表名长度 {len(name)} 超过配置上限 {max_length}",
-                "evidence": diagnostic,
             }
         return self.check(
             target_type="table",
             target=name,
             passed=length_ok,
-            expected="表名长度不超过配置上限",
-            actual=f"长度={len(name)}" if length_ok else violation["message"],
-            evidence=_naming_violation_evidence(
-                violation,
-                {"layer": layer, "actual_length": len(name)},
-            ),
+            target_detail=_table_target_detail(layer),
+            expected={
+                "description": "表名长度不超过配置上限",
+                "max_length": max_length,
+            },
+            actual={"value": name, "length": len(name)},
+            evidence=None,
+            diagnostic=None if length_ok else diagnostic,
+            summary="表名超过长度限制"
+            if not length_ok
+            else "表名长度符合限制",
             message="" if length_ok else violation["message"],
             issue=issue_context if violation else None,
             score_passed=int(length_ok),
@@ -151,7 +167,7 @@ class NamingTableMaxLengthRule(_NamingRule):
 class NamingColumnNameRule(_NamingRule):
     rule_id = "NAMING_COLUMN_NAME"
 
-    def evaluate(self, target: dict, rule_context: dict) -> dict | None:
+    def evaluate(self, target: dict, rule_context: dict) -> list[dict]:
         name = target["name"]
         layer = target["layer"]
         nc = rule_context["nc"]
@@ -160,47 +176,45 @@ class NamingColumnNameRule(_NamingRule):
         ) | set(
             _derived_metric_names_for_table(target, rule_context["models"])
         )
-        violations = []
-        diagnostics = []
-        total = 0
-        passed = 0
+        checks = []
+        issue_context = _naming_issue_context(rule_context, name)
         for column in target.get("columns") or []:
             column_name = column["name"]
             if column_name in metric_columns:
                 continue
-            total += 1
             ok, _matched = _check_column_name(column_name, nc)
-            passed += int(ok)
-            if not ok:
-                violations.append(column_name)
-                diagnostics.append(_column_name_diagnostic(column_name, nc))
-        if total <= 0:
-            return None
-        issue_context = _naming_issue_context(rule_context, name)
-        return self.check(
-            target_type="table",
-            target=name,
-            passed=not violations,
-            expected="所有非指标字段符合字段命名规则",
-            actual=(
-                "全部合规"
-                if not violations
-                else f"不合规字段: {_sort_naming_violations(violations)}"
-            ),
-            evidence={
-                "layer": layer,
-                "violations": _sort_naming_violations(violations),
-                "checked_count": total,
-            },
-            message=(
-                f"不合规字段: {', '.join(_sort_naming_violations(violations))}"
-                if violations
-                else ""
-            ),
-            issue=issue_context if violations else None,
-            score_passed=passed,
-            score_total=total,
-        )
+            raw_diagnostic = _column_name_diagnostic(column_name, nc)
+            checks.append(
+                self.check(
+                    target_type="column",
+                    target=column_name,
+                    target_detail=_column_target_detail(
+                        name,
+                        column_name,
+                        layer,
+                    ),
+                    passed=ok,
+                    expected=_expected_from_diagnostic(
+                        raw_diagnostic,
+                        description="非指标字段符合字段命名规则",
+                        layer=layer,
+                    ),
+                    actual={"value": column_name},
+                    evidence=None,
+                    diagnostic=(
+                        None
+                        if ok
+                        else _diagnostic_from_diagnostic(raw_diagnostic)
+                    ),
+                    summary=("字段名符合规范" if ok else "字段名不符合规范"),
+                    message=(f"不合规字段: {column_name}" if not ok else ""),
+                    issue=issue_context if not ok else None,
+                    score_passed=int(ok),
+                    score_total=1,
+                    fingerprint_discriminator=(f"column:{name}.{column_name}"),
+                )
+            )
+        return checks
 
 
 class NamingAtomicMetricRule(_NamingRule):
@@ -216,31 +230,49 @@ class NamingAtomicMetricRule(_NamingRule):
         for metric_name in _atomic_metric_names_for_table(
             target, rule_context["models"]
         ):
+            rule_name = rule_context["atomic_rule_name"]
+            raw_diagnostic = _metric_name_diagnostic(
+                metric_name,
+                rule_context["nc"],
+                rule_name,
+            )
             failed = not _check_atomic_metric_name(
                 metric_name, rule_context["nc"]
             )
             checks.append(
                 self.check(
                     target_type="metric",
-                    target=f"{name}.{metric_name}",
-                    passed=not failed,
-                    expected="所有原子指标符合指标命名规则",
-                    actual=(
-                        "合规"
-                        if not failed
-                        else f"不合规原子指标: {metric_name}"
+                    target=metric_name,
+                    target_detail=_metric_target_detail(
+                        name,
+                        metric_name,
+                        layer,
                     ),
-                    evidence={
-                        "table": name,
-                        "layer": layer,
-                        "metric": metric_name,
-                    },
+                    passed=not failed,
+                    expected=_expected_from_diagnostic(
+                        raw_diagnostic,
+                        description="原子指标符合指标命名规则",
+                        layer=layer,
+                    ),
+                    actual={"value": metric_name},
+                    evidence=None,
+                    diagnostic=(
+                        None
+                        if not failed
+                        else _diagnostic_from_diagnostic(raw_diagnostic)
+                    ),
+                    summary=(
+                        "原子指标命名合规"
+                        if not failed
+                        else "原子指标命名不合规"
+                    ),
                     message=(
                         f"不合规原子指标: {metric_name}" if failed else ""
                     ),
                     issue=issue_context if failed else None,
                     score_passed=0 if failed else 1,
                     score_total=1,
+                    fingerprint_discriminator=f"metric:{name}.{metric_name}",
                 )
             )
         return checks
@@ -259,31 +291,49 @@ class NamingDerivedMetricRule(_NamingRule):
         for metric_name in _derived_metric_names_for_table(
             target, rule_context["models"]
         ):
+            rule_name = rule_context["derived_rule_name"]
+            raw_diagnostic = _metric_name_diagnostic(
+                metric_name,
+                rule_context["nc"],
+                rule_name,
+            )
             failed = not _check_derived_metric_name(
                 metric_name, rule_context["nc"]
             )
             checks.append(
                 self.check(
                     target_type="metric",
-                    target=f"{name}.{metric_name}",
-                    passed=not failed,
-                    expected="所有派生指标符合指标命名规则",
-                    actual=(
-                        "合规"
-                        if not failed
-                        else f"不合规派生指标: {metric_name}"
+                    target=metric_name,
+                    target_detail=_metric_target_detail(
+                        name,
+                        metric_name,
+                        layer,
                     ),
-                    evidence={
-                        "table": name,
-                        "layer": layer,
-                        "metric": metric_name,
-                    },
+                    passed=not failed,
+                    expected=_expected_from_diagnostic(
+                        raw_diagnostic,
+                        description="派生指标符合指标命名规则",
+                        layer=layer,
+                    ),
+                    actual={"value": metric_name},
+                    evidence=None,
+                    diagnostic=(
+                        None
+                        if not failed
+                        else _diagnostic_from_diagnostic(raw_diagnostic)
+                    ),
+                    summary=(
+                        "派生指标命名合规"
+                        if not failed
+                        else "派生指标命名不合规"
+                    ),
                     message=(
                         f"不合规派生指标: {metric_name}" if failed else ""
                     ),
                     issue=issue_context if failed else None,
                     score_passed=0 if failed else 1,
                     score_total=1,
+                    fingerprint_discriminator=f"metric:{name}.{metric_name}",
                 )
             )
         return checks
@@ -310,9 +360,23 @@ class NamingDwsEntityAlignmentRule(_NamingRule):
             target_type="table",
             target=name,
             passed=not violations,
-            expected="DWS表名实体包含于grain.entities",
-            actual="一致" if not violations else "; ".join(violations),
-            evidence={"layer": layer, "violations": violations},
+            target_detail=_table_target_detail(layer),
+            expected={
+                "description": "DWS表名实体包含于grain.entities",
+            },
+            actual={"violations": violations},
+            evidence=None,
+            diagnostic=None
+            if not violations
+            else {
+                "code": "dws_entity_alignment_mismatch",
+                "violations": violations,
+            },
+            summary=(
+                "DWS表名实体与grain.entities一致"
+                if not violations
+                else "DWS表名实体与grain.entities不一致"
+            ),
             message="; ".join(violations) if violations else "",
             issue=_naming_issue_context(rule_context, name)
             if violations
@@ -343,9 +407,23 @@ class NamingDimEntityAlignmentRule(_NamingRule):
             target_type="table",
             target=name,
             passed=not violations,
-            expected="DIM表名实体等于主实体",
-            actual="一致" if not violations else "; ".join(violations),
-            evidence={"layer": layer, "violations": violations},
+            target_detail=_table_target_detail(layer),
+            expected={
+                "description": "DIM表名实体等于主实体",
+            },
+            actual={"violations": violations},
+            evidence=None,
+            diagnostic=None
+            if not violations
+            else {
+                "code": "dim_entity_alignment_mismatch",
+                "violations": violations,
+            },
+            summary=(
+                "DIM表名实体与主实体一致"
+                if not violations
+                else "DIM表名实体与主实体不一致"
+            ),
             message="; ".join(violations) if violations else "",
             issue=_naming_issue_context(rule_context, name)
             if violations
@@ -376,9 +454,23 @@ class NamingDimClassificationAlignmentRule(_NamingRule):
             target_type="table",
             target=name,
             passed=not violations,
-            expected="DIM表名分类段与模型元数据一致",
-            actual="一致" if not violations else "; ".join(violations),
-            evidence={"layer": layer, "violations": violations},
+            target_detail=_table_target_detail(layer),
+            expected={
+                "description": "DIM表名分类段与模型元数据一致",
+            },
+            actual={"violations": violations},
+            evidence=None,
+            diagnostic=None
+            if not violations
+            else {
+                "code": "dim_classification_alignment_mismatch",
+                "violations": violations,
+            },
+            summary=(
+                "DIM表名分类段与模型元数据一致"
+                if not violations
+                else "DIM表名分类段与模型元数据不一致"
+            ),
             message="; ".join(violations) if violations else "",
             issue=_naming_issue_context(rule_context, name)
             if violations
@@ -412,9 +504,23 @@ class NamingSemanticMetadataAlignmentRule(_NamingRule):
             target_type="table",
             target=name,
             passed=not violations,
-            expected="表名语义段与模型元数据一致",
-            actual="一致" if not violations else "; ".join(violations),
-            evidence={"layer": layer, "violations": violations},
+            target_detail=_table_target_detail(layer),
+            expected={
+                "description": "表名语义段与模型元数据一致",
+            },
+            actual={"violations": violations},
+            evidence=None,
+            diagnostic=None
+            if not violations
+            else {
+                "code": "semantic_metadata_alignment_mismatch",
+                "violations": violations,
+            },
+            summary=(
+                "表名语义段与模型元数据一致"
+                if not violations
+                else "表名语义段与模型元数据不一致"
+            ),
             message="; ".join(violations) if violations else "",
             issue=_naming_issue_context(rule_context, name)
             if violations
@@ -445,17 +551,19 @@ class _NamingFileRule(_NamingRule):
             target_type="file",
             target=display_file,
             passed=passed,
-            expected=rule_name,
-            actual=(
-                "一致"
-                if passed
-                else f"期望: {expected} | 实际: {actual_display}"
-            ),
-            evidence={
-                "file": display_file,
+            expected={
+                "description": rule_name,
+                "value": expected,
+            },
+            actual={"value": actual_display},
+            diagnostic=None
+            if passed
+            else {
+                "code": "file_name_mismatch",
                 "expected": expected,
                 "actual": actual_display,
             },
+            summary=rule_name if passed else f"{rule_name}不一致",
             message="" if passed else f"{rule_name}不一致",
             issue={
                 "remediation": {
@@ -574,6 +682,114 @@ def _table_name_diagnostic(name: str, nc, model: dict | None) -> dict:
     }
 
 
+def _table_target_detail(layer: str) -> dict:
+    return {"layer": layer}
+
+
+def _column_target_detail(
+    table_name: str, column_name: str, layer: str
+) -> dict:
+    return {
+        "table": table_name,
+        "qualified_name": f"{table_name}.{column_name}",
+        "layer": layer,
+    }
+
+
+def _metric_target_detail(
+    table_name: str, metric_name: str, layer: str
+) -> dict:
+    return {
+        "table": table_name,
+        "qualified_name": f"{table_name}.{metric_name}",
+        "layer": layer,
+    }
+
+
+def _attempt_rule_name(attempt: dict) -> str:
+    rule = attempt.get("rule") or {}
+    return str(rule.get("name") or "")
+
+
+def _attempt_expected(attempt: dict) -> dict:
+    rule = attempt.get("rule") or {}
+    expected = {
+        "rule_name": rule.get("name"),
+        "description": rule.get("description"),
+        "raw_expr": rule.get("raw_expr"),
+        "constraints": rule.get("constraints") or {},
+        "expression": attempt.get("expression"),
+        "segments": attempt.get("segments") or [],
+        "nodes": attempt.get("nodes") or [],
+    }
+    if attempt.get("model_constraints"):
+        expected["model_constraints"] = attempt["model_constraints"]
+    return {
+        key: value
+        for key, value in expected.items()
+        if value not in (None, "", [])
+    }
+
+
+def _diagnostic_failure_from_attempt(attempt: dict) -> dict | None:
+    if attempt.get("failure"):
+        return attempt["failure"]
+    for constraint in (attempt.get("model_constraints") or {}).values():
+        failure = constraint.get("model_value_failure")
+        if failure:
+            return failure
+    return None
+
+
+def _diagnostic_code(
+    raw_diagnostic: dict, default: str = "match_failed"
+) -> str:
+    failure = raw_diagnostic.get("failure")
+    if failure and failure.get("code"):
+        return str(failure["code"])
+    for attempt in raw_diagnostic.get("attempts") or []:
+        if attempt.get("passed"):
+            continue
+        failure = _diagnostic_failure_from_attempt(attempt)
+        if failure and failure.get("code"):
+            return str(failure["code"])
+    return default
+
+
+def _expected_from_diagnostic(
+    raw_diagnostic: dict,
+    *,
+    description: str,
+    layer: str | None = None,
+) -> dict:
+    attempts = raw_diagnostic.get("attempts") or []
+    expected = {
+        "description": description,
+        "rule_names": [
+            name
+            for name in (_attempt_rule_name(attempt) for attempt in attempts)
+            if name
+        ],
+        "attempts": [_attempt_expected(attempt) for attempt in attempts],
+    }
+    if layer:
+        expected["layer"] = layer
+    failure = raw_diagnostic.get("failure")
+    if failure:
+        expected["failure"] = failure
+    return expected
+
+
+def _diagnostic_from_diagnostic(raw_diagnostic: dict) -> dict:
+    diagnostic = {
+        "code": _diagnostic_code(raw_diagnostic),
+        "attempts": raw_diagnostic.get("attempts") or [],
+    }
+    if raw_diagnostic.get("failure"):
+        diagnostic["failure"] = raw_diagnostic["failure"]
+    return diagnostic
+
+
 def _table_name_max_length(name: str, layer: str, nc) -> int | None:
     if hasattr(nc, "table_max_length_for"):
         return nc.table_max_length_for(name, layer)
@@ -625,6 +841,113 @@ def _column_name_diagnostic(col_name: str, nc) -> dict:
         "actual": col_name,
         "passed": False,
         "message": "命名配置对象不支持结构化诊断",
+    }
+
+
+def _metric_node_expected(nc, node: dict) -> dict:
+    expected = dict(node)
+    type_name = node.get("name") if node.get("kind") == "type" else ""
+    if type_name:
+        type_def = getattr(nc, "types", {}).get(type_name)
+        if type_def:
+            expected["type"] = {
+                "name": type_name,
+                "label": type_def.label,
+                "description": type_def.desc,
+                "allow": type_def.allow,
+                "patterns": type_def.patterns,
+                "dictionary": type_def.dictionary,
+                "values_from": type_def.values_from,
+            }
+    return expected
+
+
+def _metric_rule_label_for_name(nc, rule_name: str) -> str:
+    labels = getattr(nc, "metric_rule_labels", {}) or {}
+    return labels.get(rule_name, rule_name)
+
+
+def _metric_name_diagnostic(metric_name: str, nc, rule_name: str) -> dict:
+    attempts = []
+    for rule_def in (getattr(nc, "metric_rules", {}) or {}).get(rule_name, []):
+        kind = rule_def.get("kind")
+        if kind == "segments":
+            attempts.append(
+                nc.diagnose_segments(
+                    metric_name,
+                    rule_def["template"],
+                    {
+                        "name": rule_name,
+                        "description": _metric_rule_label_for_name(
+                            nc,
+                            rule_name,
+                        ),
+                        "raw_expr": rule_def.get("raw_expr"),
+                        "constraints": {},
+                    },
+                )
+            )
+            continue
+        if kind == "sequence":
+            matched = nc._match_metric_sequence(
+                metric_name,
+                rule_def["nodes"],
+                (),
+            )
+            attempt = {
+                "actual": metric_name,
+                "passed": matched is not None,
+                "rule": {
+                    "name": rule_name,
+                    "description": _metric_rule_label_for_name(
+                        nc,
+                        rule_name,
+                    ),
+                    "raw_expr": rule_def.get("raw_expr"),
+                    "constraints": {},
+                },
+                "nodes": [
+                    _metric_node_expected(nc, node)
+                    for node in rule_def.get("nodes") or []
+                ],
+            }
+            if matched is not None:
+                attempt["matched_values"] = matched
+            else:
+                attempt["failure"] = {
+                    "code": "metric_sequence_mismatch",
+                    "expected": attempt["nodes"],
+                    "actual": metric_name,
+                }
+            attempts.append(attempt)
+            continue
+        attempts.append(
+            {
+                "actual": metric_name,
+                "passed": False,
+                "rule": {"name": rule_name},
+                "failure": {
+                    "code": "unsupported_metric_rule_kind",
+                    "actual": kind,
+                },
+            }
+        )
+
+    if not attempts:
+        return {
+            "actual": metric_name,
+            "passed": False,
+            "attempts": [],
+            "failure": {
+                "code": "unknown_metric_rule",
+                "actual": rule_name,
+            },
+        }
+
+    return {
+        "actual": metric_name,
+        "passed": any(attempt.get("passed") for attempt in attempts),
+        "attempts": attempts,
     }
 
 

@@ -639,6 +639,10 @@ class TestNamingDiagnostics:
         attempt = diagnostic["attempts"][0]
         assert attempt["rule"]["name"] == "TABLE_DWD"
         assert attempt["rule"]["raw_expr"][0] == "_"
+        assert attempt["expression"] == (
+            "M_{BUSINESS_AREA_CODE}_{DATA_DOMAIN_ID}_"
+            "{BIZ_PROCESS}_{TIME_PERIOD}{DWD_GRANULARITY}"
+        )
         assert attempt["failure"]["code"] == "literal_mismatch"
         assert attempt["segments"][0]["kind"] == "literal"
         assert attempt["segments"][0]["name"] == "M"

@@ -1482,7 +1482,80 @@ def test_score_naming_conventions_outputs_table_and_column_issues():
         "rename_table_and_rewrite_references"
     )
     column_check = _checks_by_rule(result, "NAMING_COLUMN_NAME")[0]
-    assert column_check["actual"] == "不合规字段: ['customer_id']"
+    assert column_check["target"]["qualified_name"] == (
+        "dwd_customer.customer_id"
+    )
+    assert column_check["actual"] == {"value": "customer_id"}
+
+
+def test_naming_diagnostics_are_agent_actionable():
+    nc = load_naming_config(PROJECT_ROOT / "naming_config.yaml")
+
+    result = score_naming_conventions(
+        _context(
+            [
+                {
+                    "name": "dwd_customer",
+                    "layer": "DWD",
+                    "columns": [{"name": "customer_id"}],
+                }
+            ],
+            nc,
+        )
+    )
+
+    table_check = _checks_by_rule(result, "NAMING_TABLE_TEMPLATE")[0]
+    assert table_check["schema_version"] == "assess.diagnostic.v1"
+    assert table_check["dimension"] == "naming"
+    assert table_check["status"] == "failed"
+    assert table_check["severity"] == "中"
+    assert table_check["summary"] == "表名不符合规范模板"
+    assert table_check["target"] == {
+        "type": "table",
+        "name": "dwd_customer",
+        "layer": "DWD",
+    }
+    assert table_check["expected"]["rule_names"] == ["TABLE_DWD"]
+    assert table_check["actual"] == {"value": "dwd_customer"}
+    assert table_check["diagnostic"]["code"] == "literal_mismatch"
+    assert (
+        table_check["diagnostic"]["attempts"][0]["failure"]["code"]
+        == "literal_mismatch"
+    )
+    assert "evidence" not in table_check
+    assert table_check["remediation"]["strategy"] == (
+        "rename_table_and_rewrite_references"
+    )
+
+    column_check = _checks_by_rule(result, "NAMING_COLUMN_NAME")[0]
+    assert column_check["target"] == {
+        "type": "column",
+        "name": "customer_id",
+        "table": "dwd_customer",
+        "qualified_name": "dwd_customer.customer_id",
+        "layer": "DWD",
+    }
+    assert column_check["expected"]["rule_names"] == ["COLUMN_DEFAULT"]
+    assert column_check["expected"]["attempts"][0]["segments"][0]["type"][
+        "patterns"
+    ] == ["^[A-Z][A-Z0-9_]{0,14}$"]
+    assert column_check["actual"] == {"value": "customer_id"}
+    assert column_check["diagnostic"]["code"] == "type_pattern_mismatch"
+    assert column_check["diagnostic"]["attempts"][0]["failure"][
+        "expected"
+    ] == ["^[A-Z][A-Z0-9_]{0,14}$"]
+    assert column_check["remediation"]["strategy"] == (
+        "rename_columns_and_rewrite_references"
+    )
+    column_issue = next(
+        issue
+        for issue in result["issues"]
+        if issue["rule_id"] == "NAMING_COLUMN_NAME"
+    )
+    assert column_issue["fingerprint"] == (
+        "naming|NAMING_COLUMN_NAME|column|customer_id|"
+        "column:dwd_customer.customer_id"
+    )
 
 
 def test_score_naming_conventions_does_not_expose_internal_violation_text():
@@ -1592,8 +1665,14 @@ def test_naming_checks_business_segments_against_valid_model_metadata(
         "NAMING_SEMANTIC_METADATA_ALIGNMENT",
     )[0]
     assert semantic_check["passed"] is False
-    assert "model.data_domain=10" in semantic_check["actual"]
-    assert "model.business_area=CLNT" in semantic_check["actual"]
+    assert any(
+        "model.data_domain=10" in violation
+        for violation in semantic_check["actual"]["violations"]
+    )
+    assert any(
+        "model.business_area=CLNT" in violation
+        for violation in semantic_check["actual"]["violations"]
+    )
 
 
 def test_score_naming_conventions_checks_project_file_names(tmp_path):

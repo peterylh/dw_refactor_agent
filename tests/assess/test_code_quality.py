@@ -188,28 +188,43 @@ FROM demo.tmp_sales_stage;
         == "CODE_TEMP_TABLE_CREATED_WITH_PRE_DROP_NOT_CLEANED"
         and not check["passed"]
     ]
-    assert failed == [
-        {
-            "id": failed[0]["id"],
-            "rule_id": "CODE_TEMP_TABLE_CREATED_WITH_PRE_DROP_NOT_CLEANED",
-            "target": {
-                "type": "table",
-                "name": "tmp_sales_stage",
-            },
-            "passed": False,
-            "expected": "DROP IF EXISTS只能清理历史残留，CREATE后需在同一作业后续DROP",
-            "actual": "CREATE之后未找到后续DROP清理",
-            "evidence": {
-                "file": "demo/tasks/dws_sales.sql",
-                "table": "tmp_sales_stage",
-                "reason": "pre_drop_create_without_post_drop",
-                "created_statement_index": 1,
-                "pre_drop_statement_indexes": [0],
-                "post_create_drop_statement_indexes": [],
-            },
-            "message": "DROP IF EXISTS发生在CREATE之前，不能证明本次临时表生命周期闭合",
-        }
-    ]
+    assert len(failed) == 1
+    assert {
+        key: failed[0][key]
+        for key in (
+            "rule_id",
+            "target",
+            "passed",
+            "expected",
+            "actual",
+            "evidence",
+            "message",
+        )
+    } == {
+        "rule_id": "CODE_TEMP_TABLE_CREATED_WITH_PRE_DROP_NOT_CLEANED",
+        "target": {
+            "type": "table",
+            "name": "tmp_sales_stage",
+        },
+        "passed": False,
+        "expected": "DROP IF EXISTS只能清理历史残留，CREATE后需在同一作业后续DROP",
+        "actual": "CREATE之后未找到后续DROP清理",
+        "evidence": {
+            "file": "demo/tasks/dws_sales.sql",
+            "table": "tmp_sales_stage",
+            "reason": "pre_drop_create_without_post_drop",
+            "created_statement_index": 1,
+            "pre_drop_statement_indexes": [0],
+            "post_create_drop_statement_indexes": [],
+        },
+        "message": "DROP IF EXISTS发生在CREATE之前，不能证明本次临时表生命周期闭合",
+    }
+    assert failed[0]["schema_version"] == "assess.diagnostic.v1"
+    assert failed[0]["dimension"] == "code_quality"
+    assert failed[0]["status"] == "failed"
+    assert failed[0]["remediation"]["strategy"] == (
+        "close_pseudo_temp_table_lifecycle"
+    )
 
 
 def test_score_code_quality_flags_cross_task_tmp_table_dependency(tmp_path):
@@ -483,24 +498,40 @@ FROM demo.dwd_sales;
     result = score_code_quality(context)
 
     assert result["score"] == 0.0
-    assert result["checks"] == [
-        {
-            "id": "code_quality.chk_001",
-            "rule_id": "CODE_NO_SELECT_STAR_IN_WRITE",
-            "target": {
-                "type": "task",
-                "name": "demo/tasks/dws_sales.sql",
-            },
-            "passed": False,
-            "expected": "写入型语句显式列出字段",
-            "actual": "写入 dws_sales 时使用 SELECT *",
-            "evidence": {
-                "file": "demo/tasks/dws_sales.sql",
-                "table": "dws_sales",
-            },
-            "message": "写入型语句使用SELECT *，请显式列出字段",
-        }
-    ]
+    assert len(result["checks"]) == 1
+    check = result["checks"][0]
+    assert {
+        key: check[key]
+        for key in (
+            "id",
+            "rule_id",
+            "target",
+            "passed",
+            "expected",
+            "actual",
+            "evidence",
+            "message",
+        )
+    } == {
+        "id": "code_quality.chk_001",
+        "rule_id": "CODE_NO_SELECT_STAR_IN_WRITE",
+        "target": {
+            "type": "task",
+            "name": "demo/tasks/dws_sales.sql",
+        },
+        "passed": False,
+        "expected": "写入型语句显式列出字段",
+        "actual": "写入 dws_sales 时使用 SELECT *",
+        "evidence": {
+            "file": "demo/tasks/dws_sales.sql",
+            "table": "dws_sales",
+        },
+        "message": "写入型语句使用SELECT *，请显式列出字段",
+    }
+    assert check["schema_version"] == "assess.diagnostic.v1"
+    assert check["dimension"] == "code_quality"
+    assert check["status"] == "failed"
+    assert check["remediation"]["strategy"] == "expand_select_star"
     assert result["issues"] == [
         {
             "id": "code_quality.iss_001",
