@@ -7,6 +7,7 @@ import argparse
 import json
 import subprocess
 import sys
+from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
 
@@ -30,6 +31,11 @@ from refact.session import (
 )
 from refact.shadow_run import run_shadow_plan
 from refact.verification_plan import build_verification_plan
+
+NO_CHANGES_SCORE_REASON = (
+    "No relevant file, lineage, DDL, or job changes were detected; scoped "
+    "assessment score is not applicable."
+)
 
 
 def _now() -> datetime:
@@ -99,6 +105,101 @@ def _with_rename_mapping(
     enriched = dict(change_analysis)
     enriched["rename_mapping"] = rename_mapping
     return enriched
+
+
+def _has_any_items(mapping: dict, keys: tuple[str, ...]) -> bool:
+    return any(bool(mapping.get(key)) for key in keys)
+
+
+def _change_analysis_has_work(change_analysis: dict) -> bool:
+    changed_assets = change_analysis.get("changed_assets") or {}
+    affected_scope = change_analysis.get("affected_scope") or {}
+    lineage_diff = change_analysis.get("lineage_diff") or {}
+    return bool(
+        change_analysis.get("changed_files")
+        or _has_any_items(
+            changed_assets,
+            ("ddl_tables", "task_jobs", "model_tables", "config_files"),
+        )
+        or _has_any_items(
+            affected_scope,
+            (
+                "direct_tables",
+                "downstream_tables",
+                "anchor_tables",
+                "assessment_tables",
+                "assessment_tasks",
+                "global_dimensions",
+            ),
+        )
+        or _has_any_items(
+            lineage_diff,
+            ("added_edges", "removed_edges", "changed_tables"),
+        )
+    )
+
+
+def _verification_plan_has_work(plan: dict) -> bool:
+    affected_scope = plan.get("affected_scope") or {}
+    return bool(
+        plan.get("modified_jobs")
+        or plan.get("anchors")
+        or plan.get("ddl_changes")
+        or plan.get("jobs_to_run")
+        or _has_any_items(
+            affected_scope,
+            (
+                "direct_tables",
+                "downstream_tables",
+                "anchor_tables",
+                "assessment_tables",
+                "assessment_tasks",
+                "global_dimensions",
+            ),
+        )
+    )
+
+
+def _has_no_refactor_changes(change_analysis: dict, plan: dict) -> bool:
+    return not _change_analysis_has_work(
+        change_analysis
+    ) and not _verification_plan_has_work(plan)
+
+
+def _not_applicable_dimension(dimension: dict) -> dict:
+    marked = dict(dimension)
+    marked["score"] = None
+    marked["status"] = "not_applicable"
+    marked["score_status"] = "not_applicable"
+    summary = dict(marked.get("summary") or {})
+    summary["status"] = "not_applicable"
+    summary["reason"] = NO_CHANGES_SCORE_REASON
+    marked["summary"] = summary
+    return marked
+
+
+def _mark_assessment_no_changes(assess_result: dict) -> dict:
+    marked = deepcopy(assess_result)
+    marked["status"] = "no_changes"
+    marked["overall_score"] = None
+    marked["score_status"] = "not_applicable"
+    marked["assessment_mode"] = "no_changes"
+    marked["score_semantics"] = "not_applicable"
+    marked["status_reason"] = NO_CHANGES_SCORE_REASON
+    marked["dimensions"] = {
+        name: _not_applicable_dimension(dimension)
+        for name, dimension in (marked.get("dimensions") or {}).items()
+    }
+
+    scope_plan = marked.get("scope_plan")
+    if scope_plan:
+        marked_scope = dict(scope_plan)
+        marked_scope["mode"] = "no_changes"
+        marked_scope["score_semantics"] = "not_applicable"
+        marked_scope["status"] = "no_changes"
+        marked_scope["reason"] = [NO_CHANGES_SCORE_REASON]
+        marked["scope_plan"] = marked_scope
+    return marked
 
 
 def _start(args) -> int:
@@ -189,6 +290,8 @@ def _analyze(args) -> int:
         lineage_data=current_lineage,
         change_analysis=change_analysis,
     )
+    if _has_no_refactor_changes(change_analysis, plan):
+        current_assess = _mark_assessment_no_changes(current_assess)
     _write_json(artifact_path(manifest_path, "current_assess"), current_assess)
     _write_json(artifact_path(manifest_path, "verification_plan"), plan)
 

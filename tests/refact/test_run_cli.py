@@ -200,6 +200,134 @@ def test_analyze_refreshes_current_analysis_diff_and_plan(
     ]
 
 
+def test_analyze_marks_empty_diff_assessment_not_applicable(
+    tmp_path, monkeypatch
+):
+    manifest_path, manifest = create_run_manifest(
+        tmp_path,
+        "shop",
+        now=datetime(2026, 6, 20, 7, 30, tzinfo=timezone.utc),
+        git_info={"branch": "main", "head": "abc123", "dirty": False},
+    )
+    write_manifest(manifest_path, manifest)
+    run_root = manifest_path.parent
+    lineage = {"tables": [], "edges": []}
+    _write_json(run_root / "baseline" / "lineage_data.json", lineage)
+    _write_json(
+        run_root / "baseline" / "assess_result.json",
+        {
+            "project": "shop",
+            "overall_score": 50.0,
+            "dimensions": {
+                "naming": {
+                    "score": 50.0,
+                    "issues": [
+                        {
+                            "fingerprint": (
+                                "naming|NAMING_COLUMN_NAME|table|dwd_customer"
+                            ),
+                            "target": {
+                                "type": "table",
+                                "name": "dwd_customer",
+                            },
+                        }
+                    ],
+                }
+            },
+        },
+    )
+    _write_json(run_root / "baseline" / "task_lineage_cache.json", {})
+
+    def fake_lineage(
+        project, output_path, cache_path, previous_cache_path=None
+    ):
+        _write_json(output_path, lineage)
+        _write_json(cache_path, {"project": project, "tasks": []})
+        return {"lineage": lineage}
+
+    def fake_assess(project, **kwargs):
+        return {
+            "project": project,
+            "overall_score": 82.0,
+            "assessment_mode": "scoped",
+            "score_semantics": "scope_local",
+            "scope_plan": {
+                "mode": "scoped",
+                "score_semantics": "scope_local",
+                "dimensions": {},
+            },
+            "dimensions": {
+                "reuse": {"score": 0.0, "issues": []},
+                "naming": {"score": 100.0, "issues": []},
+            },
+        }
+
+    def fake_plan(
+        project,
+        analysis,
+        base_ref=None,
+        repo_root=None,
+        lineage_data=None,
+        partition=None,
+    ):
+        return {
+            "project": project,
+            "project_db": "shop_dm",
+            "qa_db": "shop_dm_qa",
+            "affected_scope": {
+                "direct_tables": [],
+                "downstream_tables": [],
+                "anchor_tables": [],
+                "assessment_tables": [],
+                "assessment_tasks": [],
+                "global_dimensions": [],
+            },
+            "modified_jobs": [],
+            "downstream_tables": [],
+            "anchors": [],
+            "baseline_ddl": {},
+            "ddl_changes": [],
+            "partition_info": {},
+            "jobs_to_run": [],
+            "verification": {
+                "checks": [],
+                "data_anchor_status": "not_required",
+            },
+        }
+
+    monkeypatch.setattr(run_cli, "build_lineage_artifacts", fake_lineage)
+    monkeypatch.setattr(run_cli, "assess", fake_assess)
+    monkeypatch.setattr(run_cli, "changed_files_since_head", lambda *args: [])
+    monkeypatch.setattr(run_cli, "build_verification_plan", fake_plan)
+
+    exit_code = run_cli.main(["analyze", "--manifest", str(manifest_path)])
+
+    assert exit_code == 0
+    current_assess = json.loads(
+        (run_root / "current" / "assess_result.json").read_text()
+    )
+    assert current_assess["status"] == "no_changes"
+    assert current_assess["overall_score"] is None
+    assert current_assess["score_status"] == "not_applicable"
+    assert current_assess["assessment_mode"] == "no_changes"
+    assert current_assess["score_semantics"] == "not_applicable"
+    assert current_assess["dimensions"]["reuse"]["score"] is None
+    assert current_assess["dimensions"]["naming"]["score"] is None
+
+    issue_diff = json.loads(
+        (run_root / "analysis" / "issue_diff.json").read_text()
+    )
+    assert issue_diff["status"] == "no_changes"
+    assert issue_diff["summary"] == {
+        "baseline_issue_count": 0,
+        "current_issue_count": 0,
+        "fixed_count": 0,
+        "remaining_count": 0,
+        "new_count": 0,
+    }
+    assert issue_diff["scope_score"]["overall_score"] is None
+
+
 def test_check_subcommand_is_removed():
     try:
         run_cli.main(["check", "--manifest", "missing.json"])

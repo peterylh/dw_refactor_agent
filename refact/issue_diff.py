@@ -303,13 +303,41 @@ def _issues_by_fingerprint(
 
 
 def _score_summary(assess_result: dict) -> dict:
-    return {
+    result = {
         "overall_score": assess_result.get("overall_score"),
         "dimensions": {
             name: {"score": value.get("score")}
             for name, value in (assess_result.get("dimensions") or {}).items()
         },
     }
+    for key in (
+        "status",
+        "score_status",
+        "assessment_mode",
+        "score_semantics",
+        "status_reason",
+    ):
+        if key in assess_result:
+            result[key] = assess_result[key]
+    return result
+
+
+def _empty_diff_summary() -> dict:
+    return {
+        "baseline_issue_count": 0,
+        "current_issue_count": 0,
+        "fixed_count": 0,
+        "remaining_count": 0,
+        "new_count": 0,
+    }
+
+
+def _is_no_changes_result(assess_result: dict) -> bool:
+    return (
+        assess_result.get("status") == "no_changes"
+        or assess_result.get("assessment_mode") == "no_changes"
+        or assess_result.get("score_status") == "not_applicable"
+    )
 
 
 def diff_assess_results(
@@ -323,6 +351,16 @@ def diff_assess_results(
     rename_mapping=None,
 ) -> dict:
     """Compare two assess results by issue fingerprint."""
+    if _is_no_changes_result(current):
+        return {
+            "status": "no_changes",
+            "summary": _empty_diff_summary(),
+            "fixed_issues": [],
+            "remaining_issues": [],
+            "new_issues": [],
+            "scope_score": _score_summary(current),
+        }
+
     table_renames = _table_renames(
         change_analysis=change_analysis,
         verification_plan=verification_plan,
