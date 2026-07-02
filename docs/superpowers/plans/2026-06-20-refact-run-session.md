@@ -158,8 +158,8 @@ def test_diff_assess_results_classifies_fixed_remaining_and_new():
     result = diff_assess_results(baseline, current)
 
     assert result["summary"] == {
-        "baseline_issue_count": 2,
-        "current_issue_count": 2,
+        "baseline_scoped_issue_count": 2,
+        "current_scoped_issue_count": 2,
         "fixed_count": 1,
         "remaining_count": 1,
         "new_count": 1,
@@ -216,8 +216,8 @@ def diff_assess_results(baseline: dict, current: dict) -> dict:
 
     return {
         "summary": {
-            "baseline_issue_count": len(baseline_issues),
-            "current_issue_count": len(current_issues),
+            "baseline_scoped_issue_count": len(baseline_issues),
+            "current_scoped_issue_count": len(current_issues),
             "fixed_count": len(fixed),
             "remaining_count": len(remaining),
             "new_count": len(new),

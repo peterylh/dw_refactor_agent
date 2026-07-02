@@ -324,8 +324,8 @@ def _score_summary(assess_result: dict) -> dict:
 
 def _empty_diff_summary() -> dict:
     return {
-        "baseline_issue_count": 0,
-        "current_issue_count": 0,
+        "baseline_scoped_issue_count": 0,
+        "current_scoped_issue_count": 0,
         "fixed_count": 0,
         "remaining_count": 0,
         "new_count": 0,
@@ -386,8 +386,8 @@ def diff_assess_results(
 
     return {
         "summary": {
-            "baseline_issue_count": len(baseline_issues),
-            "current_issue_count": len(current_issues),
+            "baseline_scoped_issue_count": len(baseline_issues),
+            "current_scoped_issue_count": len(current_issues),
             "fixed_count": len(fixed),
             "remaining_count": len(remaining),
             "new_count": len(new),

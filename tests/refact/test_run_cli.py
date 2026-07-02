@@ -319,8 +319,8 @@ def test_analyze_marks_empty_diff_assessment_not_applicable(
     )
     assert issue_diff["status"] == "no_changes"
     assert issue_diff["summary"] == {
-        "baseline_issue_count": 0,
-        "current_issue_count": 0,
+        "baseline_scoped_issue_count": 0,
+        "current_scoped_issue_count": 0,
         "fixed_count": 0,
         "remaining_count": 0,
         "new_count": 0,

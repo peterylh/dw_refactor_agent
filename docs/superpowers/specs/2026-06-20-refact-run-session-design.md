@@ -199,8 +199,8 @@ by issue fingerprint.
 ```json
 {
   "summary": {
-    "baseline_issue_count": 8,
-    "current_issue_count": 3,
+    "baseline_scoped_issue_count": 8,
+    "current_scoped_issue_count": 3,
     "fixed_count": 6,
     "remaining_count": 2,
     "new_count": 1

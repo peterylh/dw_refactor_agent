@@ -38,8 +38,8 @@ def test_diff_assess_results_classifies_fixed_remaining_and_new():
     result = diff_assess_results(baseline, current)
 
     assert result["summary"] == {
-        "baseline_issue_count": 2,
-        "current_issue_count": 2,
+        "baseline_scoped_issue_count": 2,
+        "current_scoped_issue_count": 2,
         "fixed_count": 1,
         "remaining_count": 1,
         "new_count": 1,
@@ -91,7 +91,7 @@ def test_diff_assess_results_filters_baseline_by_scope_plan():
         scope_plan=scope_plan,
     )
 
-    assert result["summary"]["baseline_issue_count"] == 1
+    assert result["summary"]["baseline_scoped_issue_count"] == 1
     assert result["summary"]["fixed_count"] == 1
     assert [issue["fingerprint"] for issue in result["fixed_issues"]] == [
         "in_scope"
@@ -153,7 +153,7 @@ def test_diff_assess_results_filters_column_issue_by_qualified_name():
         scope_plan=scope_plan,
     )
 
-    assert result["summary"]["baseline_issue_count"] == 1
+    assert result["summary"]["baseline_scoped_issue_count"] == 1
     assert [issue["fingerprint"] for issue in result["fixed_issues"]] == [
         "naming|NAMING_COLUMN_NAME|column|dwd_order.customer_id"
     ]
@@ -217,7 +217,7 @@ def test_diff_assess_results_filters_task_path_by_job_name():
         scope_plan=scope_plan,
     )
 
-    assert result["summary"]["baseline_issue_count"] == 1
+    assert result["summary"]["baseline_scoped_issue_count"] == 1
     assert result["summary"]["fixed_count"] == 1
     assert [issue["fingerprint"] for issue in result["fixed_issues"]] == [
         "code_quality|CODE_FILTER|task|shop/tasks/dwd_inventory.sql"
