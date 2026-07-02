@@ -188,12 +188,35 @@ def run_checks(
     """Run configured production-vs-QA checks."""
     prod_db = plan["project_db"]
     qa_db = plan["qa_db"]
-    checks = plan.get("verification", {}).get("checks", [])
+    verification = plan.get("verification", {})
+    checks = verification.get("checks", [])
+    if verification.get("schema_anchor_status") == "blocked":
+        reason = verification.get("schema_anchor_reason") or (
+            "verification plan has blocked schema anchor changes"
+        )
+        print(f"表定义锚点校验被阻断: {reason}")
+        return {
+            "all_pass": False,
+            "status": "schema_anchor_blocked",
+            "reason": reason,
+            "results": [],
+        }
 
     filtered = [
         check for check in checks if method in ("all", check["method"])
     ]
     if not filtered:
+        if not checks and verification.get("data_anchor_status") == "none":
+            reason = verification.get("data_anchor_reason") or (
+                "verification plan has affected work but no data anchor checks"
+            )
+            print(f"没有可校验的数据锚点: {reason}")
+            return {
+                "all_pass": False,
+                "status": "no_data_anchor",
+                "reason": reason,
+                "results": [],
+            }
         print(f"没有匹配的校验项 (method={method})")
         return {"all_pass": True, "results": []}
 

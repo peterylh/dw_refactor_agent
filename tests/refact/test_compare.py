@@ -90,6 +90,73 @@ def test_run_checks_ignores_legacy_top_level_checks(monkeypatch):
     assert result == {"all_pass": True, "results": []}
 
 
+def test_run_checks_reports_no_data_anchor_as_not_passed(monkeypatch):
+    def fail_if_called(db_name, qa=False):
+        raise AssertionError(
+            "no-data-anchor plans should not open connections"
+        )
+
+    monkeypatch.setattr("refact.compare.get_pymysql_conn", fail_if_called)
+
+    result = run_checks(
+        {
+            "project_db": "shop_dm",
+            "qa_db": "shop_dm_qa",
+            "affected_scope": {"direct_tables": ["dws_terminal"]},
+            "jobs_to_run": [
+                {
+                    "job": "dws_terminal",
+                    "target": "dws_terminal",
+                }
+            ],
+            "verification": {
+                "checks": [],
+                "data_anchor_status": "none",
+                "data_anchor_reason": "no invariant downstream anchor tables",
+            },
+        },
+        method="count",
+    )
+
+    assert result == {
+        "all_pass": False,
+        "status": "no_data_anchor",
+        "reason": "no invariant downstream anchor tables",
+        "results": [],
+    }
+
+
+def test_run_checks_reports_blocked_schema_anchor_as_not_passed(monkeypatch):
+    def fail_if_called(db_name, qa=False):
+        raise AssertionError(
+            "schema-blocked plans should not open connections"
+        )
+
+    monkeypatch.setattr("refact.compare.get_pymysql_conn", fail_if_called)
+
+    result = run_checks(
+        {
+            "project_db": "shop_dm",
+            "qa_db": "shop_dm_qa",
+            "verification": {
+                "schema_anchor_status": "blocked",
+                "schema_anchor_reason": (
+                    "ADS table definitions must remain unchanged"
+                ),
+                "checks": [{"table": "ads_final", "method": "count"}],
+            },
+        },
+        method="count",
+    )
+
+    assert result == {
+        "all_pass": False,
+        "status": "schema_anchor_blocked",
+        "reason": "ADS table definitions must remain unchanged",
+        "results": [],
+    }
+
+
 def test_compare_shadow_results_writes_compare_output(tmp_path, monkeypatch):
     plan_path = tmp_path / "verification" / "plan.json"
     output_path = tmp_path / "verification" / "compare_result.json"

@@ -233,6 +233,305 @@ def test_build_verification_plan_preserves_empty_modified_jobs(
     assert [job["job"] for job in plan["jobs_to_run"]] == ["dws_order"]
 
 
+def test_build_verification_plan_self_anchors_sql_only_task_without_downstream(
+    tmp_path, monkeypatch
+):
+    project_dir = tmp_path / "demo"
+    (project_dir / "ddl").mkdir(parents=True)
+    (project_dir / "models").mkdir()
+    (project_dir / "tasks").mkdir()
+    (project_dir / "ddl" / "dws_terminal.sql").write_text(
+        "CREATE TABLE demo_dm.dws_terminal (id BIGINT) ENGINE=OLAP;",
+        encoding="utf-8",
+    )
+    (project_dir / "models" / "dws_terminal.yaml").write_text(
+        "version: 2\nname: dws_terminal\nlayer: DWS\n",
+        encoding="utf-8",
+    )
+    (project_dir / "tasks" / "dws_terminal.sql").write_text(
+        "INSERT INTO demo_dm.dws_terminal SELECT id FROM demo_dm.ods_order;",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(config, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setitem(
+        config.PROJECT_CONFIG,
+        "demo",
+        {
+            "dir": "demo",
+            "db": "demo_dm",
+            "qa_db": "demo_dm_qa",
+            "catalog": "internal",
+        },
+    )
+    config._model_metadata_cache.clear()
+
+    plan = build_verification_plan(
+        "demo",
+        {
+            "changed_assets": {"task_jobs": ["dws_terminal"]},
+            "affected_scope": {
+                "direct_tables": ["dws_terminal"],
+                "assessment_tables": ["dws_terminal"],
+                "assessment_tasks": ["dws_terminal"],
+                "anchor_tables": [],
+            },
+        },
+        lineage_data={
+            "edges": [
+                {
+                    "source": {"type": "column", "id": "ods_order.id"},
+                    "target": {"type": "column", "id": "dws_terminal.id"},
+                }
+            ]
+        },
+    )
+
+    assert plan["anchors"] == ["dws_terminal"]
+    assert plan["verification"]["data_anchor_status"] == "self_anchor_warning"
+    assert plan["verification"]["self_anchor_tables"] == ["dws_terminal"]
+    assert "fallback self-anchor" in plan["verification"]["data_anchor_reason"]
+    assert plan["verification"]["warnings"] == [
+        {
+            "type": "fallback_self_anchor",
+            "tables": ["dws_terminal"],
+            "message": (
+                "No downstream data anchor is available; using SQL-only "
+                "changed terminal tables as fallback anchors. Passing compare "
+                "does not prove SQL semantic equivalence."
+            ),
+        }
+    ]
+    assert plan["verification"]["checks"] == [
+        {"table": "dws_terminal", "method": "count"},
+        {"table": "dws_terminal", "method": "row_compare"},
+    ]
+
+    config._model_metadata_cache.clear()
+
+
+def test_build_verification_plan_does_not_self_anchor_when_downstream_anchor_exists(
+    tmp_path, monkeypatch
+):
+    project_dir = tmp_path / "demo"
+    (project_dir / "ddl").mkdir(parents=True)
+    (project_dir / "models").mkdir()
+    (project_dir / "tasks").mkdir()
+    for table_name, layer in [
+        ("dws_terminal", "DWS"),
+        ("ads_final", "ADS"),
+    ]:
+        (project_dir / "ddl" / f"{table_name}.sql").write_text(
+            f"CREATE TABLE demo_dm.{table_name} (id BIGINT) ENGINE=OLAP;",
+            encoding="utf-8",
+        )
+        (project_dir / "models" / f"{table_name}.yaml").write_text(
+            f"version: 2\nname: {table_name}\nlayer: {layer}\n",
+            encoding="utf-8",
+        )
+        (project_dir / "tasks" / f"{table_name}.sql").write_text(
+            f"INSERT INTO demo_dm.{table_name} SELECT id FROM demo_dm.ods_order;",
+            encoding="utf-8",
+        )
+    monkeypatch.setattr(config, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setitem(
+        config.PROJECT_CONFIG,
+        "demo",
+        {
+            "dir": "demo",
+            "db": "demo_dm",
+            "qa_db": "demo_dm_qa",
+            "catalog": "internal",
+        },
+    )
+    config._model_metadata_cache.clear()
+
+    plan = build_verification_plan(
+        "demo",
+        {
+            "changed_assets": {"task_jobs": ["dws_terminal"]},
+            "affected_scope": {
+                "direct_tables": ["dws_terminal"],
+                "downstream_tables": ["ads_final"],
+                "assessment_tables": ["ads_final", "dws_terminal"],
+                "assessment_tasks": ["ads_final", "dws_terminal"],
+                "anchor_tables": ["ads_final"],
+            },
+        },
+        lineage_data={
+            "edges": [
+                {
+                    "source": {"type": "column", "id": "dws_terminal.id"},
+                    "target": {"type": "column", "id": "ads_final.id"},
+                }
+            ]
+        },
+    )
+
+    assert plan["anchors"] == ["ads_final"]
+    assert plan["verification"]["data_anchor_status"] == "ready"
+    assert "self_anchor_tables" not in plan["verification"]
+    assert plan["verification"]["checks"] == [
+        {"table": "ads_final", "method": "count"},
+        {"table": "ads_final", "method": "row_compare"},
+    ]
+
+    config._model_metadata_cache.clear()
+
+
+def test_build_verification_plan_blocks_ads_ddl_changes(tmp_path, monkeypatch):
+    project_dir = tmp_path / "demo"
+    (project_dir / "ddl").mkdir(parents=True)
+    (project_dir / "models").mkdir()
+    (project_dir / "tasks").mkdir()
+    (project_dir / "ddl" / "ads_final.sql").write_text(
+        (
+            "CREATE TABLE demo_dm.ads_final "
+            "(id BIGINT, amount DECIMAL(10,2)) ENGINE=OLAP;"
+        ),
+        encoding="utf-8",
+    )
+    (project_dir / "models" / "ads_final.yaml").write_text(
+        "version: 2\nname: ads_final\nlayer: ADS\n",
+        encoding="utf-8",
+    )
+    (project_dir / "tasks" / "ads_final.sql").write_text(
+        "INSERT INTO demo_dm.ads_final SELECT id, amount FROM demo_dm.dws_order;",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(config, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setitem(
+        config.PROJECT_CONFIG,
+        "demo",
+        {
+            "dir": "demo",
+            "db": "demo_dm",
+            "qa_db": "demo_dm_qa",
+            "catalog": "internal",
+        },
+    )
+    config._model_metadata_cache.clear()
+    monkeypatch.setattr(
+        "refact.verification_plan.load_baseline_ddl",
+        lambda project, base_ref, repo_root=None: {
+            "ads_final": (
+                "CREATE TABLE demo_dm.ads_final (id BIGINT) ENGINE=OLAP;"
+            )
+        },
+    )
+    monkeypatch.setattr(
+        "refact.verification_plan.derive_project_ddl_changes",
+        lambda project, base_ref, repo_root=None: [
+            {
+                "change_type": "ALTER",
+                "table_name": "demo_dm.ads_final",
+                "sql": (
+                    "ALTER TABLE demo_dm.ads_final "
+                    "ADD COLUMN amount DECIMAL(10,2);"
+                ),
+            }
+        ],
+    )
+
+    plan = build_verification_plan(
+        "demo",
+        {
+            "changed_assets": {
+                "ddl_tables": ["ads_final"],
+                "task_jobs": ["ads_final"],
+            },
+            "affected_scope": {
+                "direct_tables": ["ads_final"],
+                "assessment_tables": ["ads_final"],
+                "assessment_tasks": ["ads_final"],
+                "anchor_tables": [],
+            },
+        },
+        base_ref="abc123",
+        repo_root=tmp_path,
+        lineage_data={
+            "edges": [
+                {
+                    "source": {"type": "column", "id": "dws_order.id"},
+                    "target": {"type": "column", "id": "ads_final.id"},
+                }
+            ]
+        },
+    )
+
+    assert plan["anchors"] == []
+    assert plan["verification"]["schema_anchor_status"] == "blocked"
+    assert plan["verification"]["blocked_schema_tables"] == ["ads_final"]
+    assert (
+        "ADS table definitions must remain unchanged"
+        in plan["verification"]["schema_anchor_reason"]
+    )
+
+    config._model_metadata_cache.clear()
+
+
+def test_build_verification_plan_marks_no_data_anchor_for_terminal_ddl_change(
+    tmp_path, monkeypatch
+):
+    project_dir = tmp_path / "demo"
+    (project_dir / "ddl").mkdir(parents=True)
+    (project_dir / "models").mkdir()
+    (project_dir / "tasks").mkdir()
+    (project_dir / "ddl" / "dws_terminal.sql").write_text(
+        "CREATE TABLE demo_dm.dws_terminal (id BIGINT) ENGINE=OLAP;",
+        encoding="utf-8",
+    )
+    (project_dir / "models" / "dws_terminal.yaml").write_text(
+        "version: 2\nname: dws_terminal\nlayer: DWS\n",
+        encoding="utf-8",
+    )
+    (project_dir / "tasks" / "dws_terminal.sql").write_text(
+        "INSERT INTO demo_dm.dws_terminal SELECT id FROM demo_dm.ods_order;",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(config, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setitem(
+        config.PROJECT_CONFIG,
+        "demo",
+        {
+            "dir": "demo",
+            "db": "demo_dm",
+            "qa_db": "demo_dm_qa",
+            "catalog": "internal",
+        },
+    )
+    config._model_metadata_cache.clear()
+
+    plan = build_verification_plan(
+        "demo",
+        {
+            "changed_assets": {"ddl_tables": ["dws_terminal"]},
+            "affected_scope": {
+                "direct_tables": ["dws_terminal"],
+                "assessment_tables": ["dws_terminal"],
+                "assessment_tasks": ["dws_terminal"],
+                "anchor_tables": [],
+            },
+        },
+        lineage_data={
+            "edges": [
+                {
+                    "source": {"type": "column", "id": "ods_order.id"},
+                    "target": {"type": "column", "id": "dws_terminal.id"},
+                }
+            ]
+        },
+    )
+
+    assert plan["anchors"] == []
+    assert plan["verification"]["checks"] == []
+    assert plan["verification"]["data_anchor_status"] == "none"
+    assert (
+        "no invariant downstream" in plan["verification"]["data_anchor_reason"]
+    )
+
+    config._model_metadata_cache.clear()
+
+
 def test_build_verification_plan_rejects_cyclic_job_lineage(
     tmp_path, monkeypatch
 ):
