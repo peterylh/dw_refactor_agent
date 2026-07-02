@@ -7,7 +7,7 @@ from lineage import store, table_graph
 
 
 def _configure_project(monkeypatch, tmp_path):
-    monkeypatch.setattr(config, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
     monkeypatch.setitem(
         config.PROJECT_CONFIG,
         "demo",

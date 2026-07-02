@@ -9,7 +9,7 @@ PRODUCTION_PATHS = [
     "finance_analytics",
     "lineage",
     "refact",
-    "config.py",
+    "config",
 ]
 
 
@@ -37,7 +37,7 @@ def test_text_encoding_is_centralized_in_production_code():
                 continue
             parent = getattr(node, "parent", None)
             if (
-                file_path.name == "config.py"
+                file_path.name == "core.py"
                 and isinstance(parent, ast.Assign)
                 and any(
                     isinstance(target, ast.Name)

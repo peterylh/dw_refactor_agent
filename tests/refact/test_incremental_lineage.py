@@ -53,13 +53,13 @@ def test_build_lineage_artifacts_reuses_valid_task_cache(
     tmp_path, monkeypatch
 ):
     _write_demo_project(tmp_path)
-    monkeypatch.setattr(config, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
     monkeypatch.setitem(
         config.PROJECT_CONFIG,
         "demo",
         {"dir": "demo", "catalog": "internal", "db": "demo_dm"},
     )
-    config._model_metadata_cache.clear()
+    config.clear_model_metadata_cache()
 
     output_path = tmp_path / "lineage_data_demo.json"
     cache_path = tmp_path / "task_lineage_cache.json"
@@ -98,4 +98,4 @@ def test_build_lineage_artifacts_reuses_valid_task_cache(
     assert third["summary"]["computed_task_count"] == 1
     assert third["summary"]["reused_task_count"] == 0
 
-    config._model_metadata_cache.clear()
+    config.clear_model_metadata_cache()

@@ -22,7 +22,7 @@ from tests.lineage.test_lineage_query import (
 def demo_project_layers(monkeypatch, tmp_path):
     configure_demo_project_layers(monkeypatch, tmp_path)
     yield
-    config._model_metadata_cache.clear()
+    config.clear_model_metadata_cache()
 
 
 def _table_subgraph():

@@ -256,7 +256,7 @@ class TestBuildSchemaFromDdl:
             encoding="utf-8",
         )
 
-        monkeypatch.setattr(config, "PROJECT_ROOT", tmp_path)
+        monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
         monkeypatch.setitem(
             config.PROJECT_CONFIG,
             "demo",

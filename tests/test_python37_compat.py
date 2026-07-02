@@ -9,6 +9,7 @@ import pytest
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 PROJECT_CODE_DIRS = (
+    "config",
     "assess",
     "ddl_deriver",
     "exec",
@@ -16,7 +17,7 @@ PROJECT_CODE_DIRS = (
     "lineage",
     "refact",
 )
-ROOT_MODULES = ("config.py", "doris_sql.py")
+ROOT_MODULES = ("doris_sql.py",)
 
 
 def _project_python_files():
@@ -36,6 +37,7 @@ def test_project_modules_import_under_python37_with_released_sqlglot():
 
     script = textwrap.dedent(
         """
+        import importlib
         import importlib.util
         import json
         from pathlib import Path
@@ -58,12 +60,20 @@ def test_project_modules_import_under_python37_with_released_sqlglot():
         failures = []
         for raw_path in module_paths:
             path = Path(raw_path)
-            module_name = "compat_" + re.sub(r"[^0-9A-Za-z_]", "_", str(path))
             try:
-                spec = importlib.util.spec_from_file_location(module_name, str(path))
-                module = importlib.util.module_from_spec(spec)
-                sys.modules[module_name] = module
-                spec.loader.exec_module(module)
+                rel = path.relative_to(Path.cwd())
+                if rel.parts[0] == "config":
+                    if path.name == "__init__.py":
+                        module_name = ".".join(rel.parts[:-1])
+                    else:
+                        module_name = ".".join(rel.with_suffix("").parts)
+                    importlib.import_module(module_name)
+                else:
+                    module_name = "compat_" + re.sub(r"[^0-9A-Za-z_]", "_", str(path))
+                    spec = importlib.util.spec_from_file_location(module_name, str(path))
+                    module = importlib.util.module_from_spec(spec)
+                    sys.modules[module_name] = module
+                    spec.loader.exec_module(module)
             except Exception as exc:
                 failures.append("%s: %s: %s" % (path, type(exc).__name__, exc))
 

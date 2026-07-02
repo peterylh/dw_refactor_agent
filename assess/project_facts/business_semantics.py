@@ -416,8 +416,8 @@ def write_initial_business_semantics_catalog(
             yaml.safe_dump(catalog, allow_unicode=True, sort_keys=False),
             encoding=TEXT_ENCODING,
         )
-        config._business_semantics_cache.clear()
-        config._naming_config_cache.clear()
+        config.clear_business_semantics_cache()
+        config.clear_naming_config_cache()
     return {
         "project": project,
         "path": str(path),

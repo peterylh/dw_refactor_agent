@@ -38,11 +38,11 @@ def _business_domain_config():
 def _configure_project_root(monkeypatch, project_root):
     import assess.llm.model_metadata_writer as writer_module
 
-    monkeypatch.setattr(config, "PROJECT_ROOT", project_root)
+    monkeypatch.setattr(config.core, "PROJECT_ROOT", project_root)
     monkeypatch.setattr(writer_module, "PROJECT_ROOT", project_root)
-    config._naming_config_cache.clear()
-    config._model_metadata_cache.clear()
-    config._business_semantics_cache.clear()
+    config.clear_naming_config_cache()
+    config.clear_model_metadata_cache()
+    config.clear_business_semantics_cache()
 
 
 @pytest.fixture
@@ -76,9 +76,9 @@ def isolated_writer_project(tmp_path, monkeypatch):
         },
     )
     yield project
-    config._naming_config_cache.clear()
-    config._model_metadata_cache.clear()
-    config._business_semantics_cache.clear()
+    config.clear_naming_config_cache()
+    config.clear_model_metadata_cache()
+    config.clear_business_semantics_cache()
 
 
 def _sample_fact_result() -> TableInspectResult:

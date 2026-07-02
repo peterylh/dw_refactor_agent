@@ -253,7 +253,7 @@ def test_build_contexts_includes_business_semantics_catalog_options(
         ),
         encoding="utf-8",
     )
-    monkeypatch.setattr(config, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
     monkeypatch.setitem(
         config.PROJECT_CONFIG,
         project,
@@ -262,7 +262,7 @@ def test_build_contexts_includes_business_semantics_catalog_options(
             "naming_config": "naming_config.yaml",
         },
     )
-    config._business_semantics_cache.clear()
+    config.clear_business_semantics_cache()
 
     contexts = build_contexts(project, sample_lineage_data)
     ctx = next(c for c in contexts if c.table_name == "dwd_order_detail")
@@ -317,7 +317,7 @@ def test_build_contexts_includes_project_context_from_business_semantics(
         ),
         encoding="utf-8",
     )
-    monkeypatch.setattr(config, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
     monkeypatch.setitem(
         config.PROJECT_CONFIG,
         project,
@@ -326,7 +326,7 @@ def test_build_contexts_includes_project_context_from_business_semantics(
             "naming_config": "naming_config.yaml",
         },
     )
-    config._business_semantics_cache.clear()
+    config.clear_business_semantics_cache()
 
     contexts = build_contexts(project, sample_lineage_data)
     ctx = next(c for c in contexts if c.table_name == "dwd_order_detail")

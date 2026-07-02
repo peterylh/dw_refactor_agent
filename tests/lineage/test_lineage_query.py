@@ -25,16 +25,16 @@ def configure_demo_project_layers(monkeypatch, tmp_path):
             f"version: 2\nname: {table_name}\nlayer: {layer}\n",
             encoding="utf-8",
         )
-    monkeypatch.setattr(config, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
     monkeypatch.setitem(config.PROJECT_CONFIG, "demo", {"dir": "demo_project"})
-    config._model_metadata_cache.clear()
+    config.clear_model_metadata_cache()
 
 
 @pytest.fixture(autouse=True)
 def demo_project_layers(monkeypatch, tmp_path):
     configure_demo_project_layers(monkeypatch, tmp_path)
     yield
-    config._model_metadata_cache.clear()
+    config.clear_model_metadata_cache()
 
 
 def _demo_view():

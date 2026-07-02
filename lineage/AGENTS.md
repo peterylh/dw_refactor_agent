@@ -18,7 +18,7 @@
   `_canonical_identifier`、`_identifier_match_key`、`_table_identity`、
   `_schema_table_match_key` 及同类局部封装；避免在新代码里散落 ad hoc `.lower()` 或
   手写拆分规则。
-- 任务级缓存、lineage JSON、HTML、DAG 输出路径应由 `config.py` 和现有 helper 推导，
+- 任务级缓存、lineage JSON、HTML、DAG 输出路径应由 `config` 和现有 helper 推导，
   避免硬编码单一项目路径。
 
 ## 工具说明
@@ -119,7 +119,7 @@ python lineage/lineage_cli.py export-html --project shop --table ads_sales_dashb
 
 路径规则：
 
-- 项目上下文从 `config.py` 中的 `PROJECT_CONFIG` 推导
+- 项目上下文从 `config` 中的 `PROJECT_CONFIG` 推导
 - HTML 模板位于 `lineage/lineage.html`、`lineage/lineage_job.html`
 - HTML 输出位于项目目录，避免不同项目互相覆盖
 

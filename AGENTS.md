@@ -32,7 +32,7 @@
 - `tests/`：单元测试与集成测试；血缘相关测试在 `tests/lineage/`。
 - `benchmarks/`：本地性能基准；血缘抽取基准在 `benchmarks/lineage_extractor/`。
 - `docs/refactor_guides/`：常见数仓资产重构操作指南。
-- `config.py`、`naming_config.yaml`：项目路径、库名、命名规范等共享配置。
+- `config/`、`naming_config.yaml`：项目路径、库名、命名规范等共享配置。
 
 ## 数仓资产重构指南
 

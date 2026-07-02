@@ -80,7 +80,7 @@ def test_resolve_lineage_data_path_prefers_project_artifact(
     old_file = tmp_path / "tool_lineage" / "lineage_data_demo.json"
     old_file.parent.mkdir()
     old_file.write_text('{"source": "old"}', encoding="utf-8")
-    monkeypatch.setattr(config, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
     monkeypatch.setattr(refresh_html, "LINEAGE_DIR", old_file.parent)
     monkeypatch.setitem(
         config.PROJECT_CONFIG,
@@ -103,7 +103,7 @@ def test_resolve_lineage_data_path_prefers_project_artifact(
 def test_resolve_lineage_data_path_ignores_old_project_file(
     monkeypatch, tmp_path
 ):
-    monkeypatch.setattr(config, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
     monkeypatch.setattr(refresh_html, "LINEAGE_DIR", tmp_path / "lineage")
     monkeypatch.setitem(
         config.PROJECT_CONFIG,
@@ -130,7 +130,7 @@ def test_resolve_lineage_data_path_ignores_old_project_file(
 
 def test_resolve_output_paths_uses_project_artifact_dir(monkeypatch, tmp_path):
     project_dir = tmp_path / "demo_project"
-    monkeypatch.setattr(config, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
     monkeypatch.setattr(refresh_html, "LINEAGE_DIR", tmp_path / "lineage")
     monkeypatch.setitem(
         config.PROJECT_CONFIG,

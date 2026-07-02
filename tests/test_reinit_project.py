@@ -34,14 +34,14 @@ def test_get_etl_date_partitions_uses_model_layer(monkeypatch, tmp_path):
             return "Tables_in_demo_db\nsource_events\nods_legacy\n"
         return "d\n2025-01-02\n2025-01-01\n"
 
-    monkeypatch.setattr(config, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
     monkeypatch.setitem(
         reinit_project.PROJECT_CONFIG,
         "demo",
         {"dir": "demo_project"},
     )
     monkeypatch.setattr(reinit_project, "run_sql", fake_run_sql)
-    config._model_metadata_cache.clear()
+    config.clear_model_metadata_cache()
 
     assert reinit_project.get_etl_date_partitions(
         "demo",
@@ -56,7 +56,7 @@ def test_get_etl_date_partitions_uses_model_layer(monkeypatch, tmp_path):
             ["mysql"],
         ),
     ]
-    config._model_metadata_cache.clear()
+    config.clear_model_metadata_cache()
 
 
 def test_project_sql_files_include_catalog_database_ods_assets(
@@ -72,7 +72,7 @@ def test_project_sql_files_include_catalog_database_ods_assets(
     (ods_ddl_dir / "ods_customer.sql").write_text("", encoding="utf-8")
 
     monkeypatch.setattr(reinit_project, "_root", tmp_path)
-    monkeypatch.setattr(config, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
     monkeypatch.setitem(
         reinit_project.PROJECT_CONFIG,
         "demo",

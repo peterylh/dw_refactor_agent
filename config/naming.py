@@ -1,6 +1,4 @@
-"""
-全局配置文件
-"""
+"""Naming-rule DSL loading, matching, and diagnostics."""
 
 from __future__ import annotations
 
@@ -11,24 +9,24 @@ from typing import Optional
 
 import yaml
 
-# 项目根目录
-PROJECT_ROOT = Path(__file__).resolve().parent
-TEXT_ENCODING = "utf-8"
+from . import core
+from .semantics import (
+    BUSINESS_SEMANTICS_FILE_NAME,
+    business_domain_config_from_dictionaries,
+    business_semantics_dictionaries,
+    load_business_semantics_catalog,
+)
 
-# 项目层级顺序。表的实际层级来自 models/{table}.yaml，这里只定义跨层依赖
-# 和展示排序时需要的稳定顺序。
-LAYER_ORDER = [
-    ["ODS"],
-    ["DIM", "DWD"],
-    ["DWS"],
-    ["ADS"],
-]
 
-# ============================================================
-# 命名规范配置
-# ============================================================
+def naming_config_path() -> Path:
+    return core.PROJECT_ROOT / "naming_config.yaml"
 
-NAMING_CONFIG_PATH = PROJECT_ROOT / "naming_config.yaml"
+
+_naming_config_cache = {}
+
+
+def clear_naming_config_cache() -> None:
+    _naming_config_cache.clear()
 
 
 @dataclass
@@ -1085,83 +1083,6 @@ class NamingConfig:
         }
 
 
-@dataclass
-class DomainDef:
-    id: str
-    code: str
-    name: str
-    desc: str = ""
-    keywords: list[str] = field(default_factory=list)
-
-
-@dataclass
-class BusinessAreaDef:
-    id: str
-    code: str
-    name: str
-    desc: str = ""
-    keywords: list[str] = field(default_factory=list)
-
-
-@dataclass
-class BusinessDomainConfig:
-    domains: dict[str, DomainDef]
-    business_areas: dict[str, BusinessAreaDef]
-
-    @property
-    def domain_ids(self) -> list[str]:
-        return sorted(self.domains)
-
-    @property
-    def business_area_codes(self) -> list[str]:
-        return sorted(self.business_areas)
-
-    def is_valid_domain(self, value: str) -> bool:
-        return str(value or "").strip() in self.domains
-
-    def is_valid_business_area(self, value: str) -> bool:
-        return str(value or "").strip().upper() in self.business_areas
-
-    def normalize_business_area(self, value: str) -> str:
-        return str(value or "").strip().upper()
-
-    def normalize_domain(self, value: str) -> str:
-        raw = str(value or "").strip()
-        if raw in self.domains:
-            return raw
-        if raw.isdigit():
-            padded = raw.zfill(2)
-            if padded in self.domains:
-                return padded
-        upper = raw.upper()
-        for domain in self.domains.values():
-            if upper == domain.code:
-                return domain.id
-        return raw
-
-    def prompt_options(self) -> dict:
-        return {
-            "domains": [
-                {
-                    "id": domain.id,
-                    "code": domain.code,
-                    "name": domain.name,
-                    "description": domain.desc,
-                }
-                for domain in self.domains.values()
-            ],
-            "business_areas": [
-                {
-                    "id": area.id,
-                    "code": area.code,
-                    "name": area.name,
-                    "description": area.desc,
-                }
-                for area in self.business_areas.values()
-            ],
-        }
-
-
 _REPEAT_RE = re.compile(r"^(?P<name>.+)\{(?P<min>\d+),(?P<max>\d*)\}$")
 
 
@@ -1374,6 +1295,10 @@ def _template_to_segment_items(template) -> list:
     while i < len(template):
         if template[i] == "{":
             j = template.find("}", i)
+            if j == -1:
+                raise ValueError(
+                    f"Unclosed type placeholder in naming template: {template!r}"
+                )
             content = template[i + 1 : j]
             i = j + 1
             repeat_match = _TEMPLATE_REPEAT_PREFIX_RE.match(template[i:])
@@ -1797,25 +1722,6 @@ def _merge_dictionary_entries(
     return merged
 
 
-def _business_semantics_dictionaries(catalog: dict) -> dict:
-    if not isinstance(catalog, dict) or not catalog:
-        return {}
-    dictionaries = {}
-    data_domains = [
-        dict(entry)
-        for entry in _dictionary_entries(catalog.get("data_domains"))
-    ]
-    business_areas = [
-        dict(entry)
-        for entry in _dictionary_entries(catalog.get("business_areas"))
-    ]
-    if data_domains:
-        dictionaries["data_domains"] = {"values": data_domains}
-    if business_areas:
-        dictionaries["business_areas"] = {"values": business_areas}
-    return dictionaries
-
-
 def _merge_naming_dictionaries(
     raw_dictionaries: dict,
     extra_dictionaries: dict | None = None,
@@ -1845,15 +1751,18 @@ def _business_semantics_dictionaries_for_naming_path(path: Path) -> dict:
     catalog_path = path.parent / BUSINESS_SEMANTICS_FILE_NAME
     if not catalog_path.exists():
         return {}
-    raw = yaml.safe_load(catalog_path.read_text(encoding=TEXT_ENCODING)) or {}
-    return _business_semantics_dictionaries(
+    raw = (
+        yaml.safe_load(catalog_path.read_text(encoding=core.TEXT_ENCODING))
+        or {}
+    )
+    return business_semantics_dictionaries(
         raw if isinstance(raw, dict) else {}
     )
 
 
 def load_naming_config(path=None, extra_dictionaries: dict | None = None):
-    path = Path(path) if path else NAMING_CONFIG_PATH
-    with open(path, encoding=TEXT_ENCODING) as f:
+    path = Path(path) if path else naming_config_path()
+    with open(path, encoding=core.TEXT_ENCODING) as f:
         raw = yaml.safe_load(f) or {}
     if extra_dictionaries is None:
         extra_dictionaries = _business_semantics_dictionaries_for_naming_path(
@@ -2021,407 +1930,15 @@ def load_naming_config(path=None, extra_dictionaries: dict | None = None):
         metric_rules=metric_rules,
         metric_rule_labels=metric_rule_labels,
         dictionaries=raw_dictionaries,
-        business_domain_config=_business_domain_config_from_dictionaries(
+        business_domain_config=business_domain_config_from_dictionaries(
             raw_dictionaries
         ),
     )
 
 
-BUSINESS_SEMANTICS_FILE_NAME = "business_semantics.yaml"
-
-_naming_config_cache = {}
-_model_metadata_cache = {}
-_business_semantics_cache = {}
-
-
-def _as_keywords(value) -> list[str]:
-    return [str(item).strip() for item in _as_list(value) if str(item).strip()]
-
-
-def _load_domain_defs(raw_domains) -> dict[str, DomainDef]:
-    domains = {}
-    for cfg in _dictionary_entries(raw_domains):
-        domain_id = str(cfg.get("id") or "").strip()
-        if not domain_id:
-            continue
-        domain_code = str(cfg.get("code") or domain_id).strip().upper()
-        domains[domain_id] = DomainDef(
-            id=domain_id,
-            code=domain_code,
-            name=str(cfg.get("name") or domain_code),
-            desc=str(cfg.get("desc") or cfg.get("description") or ""),
-            keywords=_as_keywords(cfg.get("keywords")),
-        )
-    return domains
-
-
-def _load_business_area_defs(raw_areas) -> dict[str, BusinessAreaDef]:
-    business_areas = {}
-    for cfg in _dictionary_entries(raw_areas):
-        area_code = str(cfg.get("code") or "").strip().upper()
-        if not area_code:
-            continue
-        business_areas[area_code] = BusinessAreaDef(
-            id=str(cfg.get("id") or area_code),
-            code=area_code,
-            name=str(cfg.get("name") or area_code),
-            desc=str(cfg.get("desc") or cfg.get("description") or ""),
-            keywords=_as_keywords(cfg.get("keywords")),
-        )
-    return business_areas
-
-
-def _business_domain_config_from_dictionaries(
-    raw_dictionaries: dict,
-) -> Optional[BusinessDomainConfig]:
-    raw_domains = (raw_dictionaries or {}).get("data_domains")
-    raw_areas = (raw_dictionaries or {}).get("business_areas")
-    if not raw_domains or not raw_areas:
-        return None
-    domains = _load_domain_defs(raw_domains)
-    business_areas = _load_business_area_defs(raw_areas)
-    if not domains or not business_areas:
-        return None
-    return BusinessDomainConfig(
-        domains=domains,
-        business_areas=business_areas,
-    )
-
-
-def business_semantics_path(project: str) -> Optional[Path]:
-    cfg = PROJECT_CONFIG.get(project)
-    if not cfg:
-        return None
-    return PROJECT_ROOT / cfg["dir"] / BUSINESS_SEMANTICS_FILE_NAME
-
-
-def load_business_semantics_catalog(project: str) -> dict:
-    path = business_semantics_path(project)
-    if not path:
-        return {}
-    cache_key = f"{project}:{path}"
-    if cache_key in _business_semantics_cache:
-        return _business_semantics_cache[cache_key]
-    if not path.exists():
-        _business_semantics_cache[cache_key] = {}
-        return {}
-    raw = yaml.safe_load(path.read_text(encoding=TEXT_ENCODING)) or {}
-    if not isinstance(raw, dict):
-        raw = {}
-    _business_semantics_cache[cache_key] = raw
-    return raw
-
-
-def _business_domain_config_from_semantics_catalog(
-    catalog: dict,
-) -> Optional[BusinessDomainConfig]:
-    if not catalog:
-        return None
-    domains = _load_domain_defs(catalog.get("data_domains"))
-    business_areas = _load_business_area_defs(catalog.get("business_areas"))
-    if not domains or not business_areas:
-        return None
-    return BusinessDomainConfig(
-        domains=domains,
-        business_areas=business_areas,
-    )
-
-
-def get_business_domain_config(
-    project: str = None,
-) -> Optional[BusinessDomainConfig]:
-    if project:
-        catalog_config = _business_domain_config_from_semantics_catalog(
-            load_business_semantics_catalog(project)
-        )
-        if catalog_config:
-            return catalog_config
-    return get_naming_config(project).business_domain_config
-
-
-def project_dir(project: str) -> Optional[Path]:
-    """返回项目根目录."""
-    cfg = PROJECT_CONFIG.get(project)
-    if not cfg:
-        return None
-    return PROJECT_ROOT / cfg["dir"]
-
-
-def project_artifact_dir(project: str, *parts: str) -> Optional[Path]:
-    """返回项目级生成产物目录."""
-    base_dir = project_dir(project)
-    if not base_dir:
-        return None
-    return base_dir.joinpath(*parts)
-
-
-def lineage_data_path(project: str, snapshot_id: str | None = None) -> Path:
-    """返回项目血缘 JSON 默认路径."""
-    lineage_dir = project_artifact_dir(project, "lineage")
-    if lineage_dir is None:
-        raise KeyError(f"未知项目: {project}")
-    if snapshot_id:
-        return lineage_dir / f"lineage_data_{snapshot_id}.json"
-    return lineage_dir / "lineage_data.json"
-
-
-def job_dag_path(project: str) -> Path:
-    """返回项目作业 DAG 默认路径."""
-    lineage_dir = project_artifact_dir(project, "lineage")
-    if lineage_dir is None:
-        raise KeyError(f"未知项目: {project}")
-    return lineage_dir / "job_dag.json"
-
-
-def lineage_task_cache_path(project: str) -> Path:
-    """返回项目 task 级血缘缓存默认路径."""
-    lineage_dir = project_artifact_dir(project, "lineage")
-    if lineage_dir is None:
-        raise KeyError(f"未知项目: {project}")
-    return lineage_dir / "task_lineage_cache.json"
-
-
-def lineage_html_path(project: str) -> Path:
-    """返回项目字段血缘 HTML 默认路径."""
-    lineage_dir = project_artifact_dir(project, "lineage")
-    if lineage_dir is None:
-        raise KeyError(f"未知项目: {project}")
-    return lineage_dir / "lineage.html"
-
-
-def lineage_job_html_path(project: str) -> Path:
-    """返回项目作业血缘 HTML 默认路径."""
-    lineage_dir = project_artifact_dir(project, "lineage")
-    if lineage_dir is None:
-        raise KeyError(f"未知项目: {project}")
-    return lineage_dir / "lineage_job.html"
-
-
-def assess_result_path(project: str) -> Path:
-    """返回项目中间层评估结果默认路径."""
-    assess_dir = project_artifact_dir(project, "assess")
-    if assess_dir is None:
-        raise KeyError(f"未知项目: {project}")
-    return assess_dir / "assess_result.json"
-
-
-def model_metadata_result_path(project: str) -> Path:
-    """返回项目模型元数据回写结果默认路径."""
-    assess_dir = project_artifact_dir(project, "assess")
-    if assess_dir is None:
-        raise KeyError(f"未知项目: {project}")
-    return assess_dir / "model_metadata_result.json"
-
-
-def assess_cache_path(project: str, filename: str) -> Path:
-    """返回项目评估缓存文件默认路径."""
-    cache_dir = project_artifact_dir(project, "assess", "cache")
-    if cache_dir is None:
-        raise KeyError(f"未知项目: {project}")
-    return cache_dir / filename
-
-
-def project_ods_asset_dir(project: str, asset_kind: str) -> Optional[Path]:
-    """返回 ODS 资产按 catalog/database 组织后的目录."""
-    cfg = PROJECT_CONFIG.get(project)
-    base_dir = project_dir(project)
-    if not cfg or not base_dir:
-        return None
-    catalog = str(cfg.get("catalog") or "internal")
-    database = str(cfg.get("db") or "")
-    return base_dir / "ods" / asset_kind / catalog / database
-
-
-def project_ods_source_catalog_dialects(project: str) -> dict[str, str]:
-    """返回 ODS 源 catalog 到 DDL 方言的映射."""
-    cfg = PROJECT_CONFIG.get(project)
-    if not cfg:
-        return {}
-
-    default_catalog = str(cfg.get("catalog") or "internal")
-    result = {default_catalog: "doris"}
-
-    raw_dialects = cfg.get("ods_source_catalog_dialects") or {}
-    if not isinstance(raw_dialects, dict):
-        return result
-
-    for raw_catalog, raw_dialect in raw_dialects.items():
-        catalog = str(raw_catalog)
-        if not catalog:
-            continue
-        result[catalog] = str(raw_dialect or "doris")
-
-    return result
-
-
-def ods_source_catalog_ddl_dialect(project: str, catalog: str) -> str:
-    """返回指定 ODS source catalog 的 DDL 方言，默认 Doris."""
-    catalog_key = str(catalog or "")
-    return project_ods_source_catalog_dialects(project).get(
-        catalog_key, "doris"
-    )
-
-
-def project_ods_asset_dirs(project: str, asset_kind: str) -> list[Path]:
-    """返回磁盘上的 ODS 资产目录，按 catalog/database 组织."""
-    base_dir = project_dir(project)
-    if not base_dir:
-        return []
-
-    ods_root = base_dir / "ods" / asset_kind
-    if not ods_root.exists():
-        return []
-
-    dirs = []
-    seen = set()
-    default_catalog = str(
-        (PROJECT_CONFIG.get(project) or {}).get("catalog") or "internal"
-    )
-    catalog_dirs = [
-        path for path in sorted(ods_root.iterdir()) if path.is_dir()
-    ]
-    catalog_dirs.sort(
-        key=lambda path: (0 if path.name == default_catalog else 1, path.name)
-    )
-    for catalog_dir in catalog_dirs:
-        for asset_dir in sorted(catalog_dir.iterdir()):
-            if not asset_dir.is_dir():
-                continue
-            if asset_dir in seen:
-                continue
-            seen.add(asset_dir)
-            dirs.append(asset_dir)
-    return dirs
-
-
-def project_asset_dirs(project: str, asset_kind: str) -> list[Path]:
-    """返回项目资产目录，包含通用目录和 ODS 专用目录."""
-    base_dir = project_dir(project)
-    if not base_dir:
-        return []
-    dirs = [base_dir / asset_kind]
-    for ods_dir in project_ods_asset_dirs(project, asset_kind):
-        dirs.append(ods_dir)
-    return dirs
-
-
-def iter_project_asset_files(
-    project: str,
-    asset_kind: str,
-    pattern: str,
-) -> list[Path]:
-    """按稳定顺序返回项目资产文件."""
-    files: list[Path] = []
-    seen: set[Path] = set()
-    for asset_dir in project_asset_dirs(project, asset_kind):
-        if not asset_dir.exists():
-            continue
-        for asset_path in sorted(asset_dir.glob(pattern)):
-            if asset_path in seen:
-                continue
-            seen.add(asset_path)
-            files.append(asset_path)
-    return files
-
-
-def model_path_for_table(
-    project: str,
-    table_name: str,
-    *,
-    layer: str | None = None,
-) -> Path:
-    """返回表级模型元数据写入路径."""
-    cfg = PROJECT_CONFIG[project]
-    filename = f"{table_name}.yaml"
-    normalized_layer = str(layer or "").upper()
-    if normalized_layer == "ODS":
-        ods_dir = project_ods_asset_dir(project, "models")
-        if ods_dir:
-            return ods_dir / filename
-
-    existing_ods_dir = project_ods_asset_dir(project, "models")
-    if existing_ods_dir and (existing_ods_dir / filename).exists():
-        return existing_ods_dir / filename
-
-    return PROJECT_ROOT / cfg["dir"] / "models" / filename
-
-
-def load_model_metadata(project: str) -> dict:
-    """加载项目 models/{table}.yaml 表级元数据."""
-    if project in _model_metadata_cache:
-        return _model_metadata_cache[project]
-
-    cfg = PROJECT_CONFIG.get(project)
-    if not cfg:
-        _model_metadata_cache[project] = {}
-        return {}
-
-    model_paths = iter_project_asset_files(project, "models", "*.yaml")
-    if not model_paths:
-        _model_metadata_cache[project] = {}
-        return {}
-
-    metadata = {}
-    for model_path in model_paths:
-        raw = (
-            yaml.safe_load(model_path.read_text(encoding=TEXT_ENCODING)) or {}
-        )
-        if not isinstance(raw, dict):
-            continue
-        name = raw.get("name") or model_path.stem
-        raw = dict(raw)
-        raw["name"] = name
-        metadata[name] = raw
-
-    _model_metadata_cache[project] = metadata
-    return metadata
-
-
-def get_model_metadata(table_name: str, project: str) -> Optional[dict]:
-    short = table_name.split(".")[-1]
-    return load_model_metadata(project).get(short)
-
-
-def get_model_layer(table_name: str, project: str) -> Optional[str]:
-    metadata = get_model_metadata(table_name, project)
-    if not metadata:
-        return None
-    layer = metadata.get("layer")
-    return str(layer).upper() if layer else None
-
-
-def get_model_names_by_layer(project: str, layer: str) -> list[str]:
-    """按 models 元数据返回指定层级的表名."""
-    target_layer = str(layer).upper()
-    names = []
-    for name, metadata in load_model_metadata(project).items():
-        model_layer = metadata.get("layer")
-        if model_layer and str(model_layer).upper() == target_layer:
-            names.append(name)
-    return sorted(names)
-
-
-def determine_layer(table_name: str, project: str = None) -> str:
-    """从项目 models 显式元数据获取表层级."""
-    short = table_name.split(".")[-1]
-    if not project:
-        return "OTHER"
-    return get_model_layer(short, project) or "OTHER"
-
-
-def layer_rank(layer_name: str) -> int:
-    """返回稳定的项目层级顺序，未知层级返回 -1."""
-    normalized = str(layer_name or "").upper()
-    for rank, group in enumerate(LAYER_ORDER):
-        if normalized in group:
-            return rank
-    return -1
-
-
 def get_naming_config(project: str = None) -> NamingConfig:
-    global _naming_config_cache
-    if project and project in PROJECT_CONFIG:
-        cfg_file = PROJECT_CONFIG[project].get(
+    if project and project in core.PROJECT_CONFIG:
+        cfg_file = core.PROJECT_CONFIG[project].get(
             "naming_config", "naming_config.yaml"
         )
         key = f"{project}:{cfg_file}"
@@ -2431,86 +1948,12 @@ def get_naming_config(project: str = None) -> NamingConfig:
 
     if key not in _naming_config_cache:
         extra_dictionaries = None
-        if project and project in PROJECT_CONFIG:
-            extra_dictionaries = _business_semantics_dictionaries(
+        if project and project in core.PROJECT_CONFIG:
+            extra_dictionaries = business_semantics_dictionaries(
                 load_business_semantics_catalog(project)
             )
         _naming_config_cache[key] = load_naming_config(
-            PROJECT_ROOT / cfg_file,
+            core.PROJECT_ROOT / cfg_file,
             extra_dictionaries=extra_dictionaries,
         )
     return _naming_config_cache[key]
-
-
-# 项目配置映射
-# 每个数据集市项目拥有一个默认 catalog 和两个库:
-#   catalog - 默认 catalog, 未显式声明时使用 internal
-#   db      - 生产库 (ETL 读写, verify 时作为源)
-#   qa_db   - 验证库 (verify 时写入, 用于重构对比)
-#   ods_source_catalog_dialects - ODS 源 catalog 到 DDL 方言的映射
-PROJECT_CONFIG = {
-    "shop": {
-        "dir": "shop",
-        "catalog": "internal",
-        "db": "shop_dm",
-        "qa_db": "shop_dm_qa",
-        "lineage_db": "shop_lineage",
-        "naming_config": "shop/naming_config.yaml",
-        "ods_source_catalog_dialects": {
-            "internal": "doris",
-        },
-    },
-    "finance_analytics": {
-        "dir": "finance_analytics",
-        "catalog": "internal",
-        "db": "finance_analytics_dm",
-        "qa_db": "finance_analytics_dm_qa",
-        "lineage_db": "finance_analytics_lineage",
-        "naming_config": "finance_analytics/naming_config.yaml",
-        "ods_source_catalog_dialects": {
-            "internal": "doris",
-        },
-    },
-}
-
-# 兼容旧的命名
-PROJECT_MAP = PROJECT_CONFIG
-
-# 数据库环境配置 (MySQL 协议)
-# 环境 = 物理集群, 不同的 host/port 组合
-# qa_user = 操作验证库 (qa_db) 的专用用户, 权限仅限 qa_db
-DB_ENV_CONFIG = {
-    "prod": {
-        "host": "172.16.0.90",
-        "port": 19030,
-        "user": "root",
-        "qa_user": "qa",
-    },
-    "test": {
-        "host": "172.16.0.90",
-        "port": 9034,
-        "user": "root",
-        "qa_user": "qa",
-    },
-}
-
-# Doris HTTP 协议配置 (Stream Load 使用)
-DORIS_HTTP_PORT = 8030
-
-# 默认提供 prod 环境的快捷访问
-DORIS_HOST = DB_ENV_CONFIG["prod"]["host"]
-DORIS_PORT = DB_ENV_CONFIG["prod"]["port"]
-DORIS_USER = DB_ENV_CONFIG["prod"]["user"]
-DORIS_QA_USER = DB_ENV_CONFIG["prod"]["qa_user"]
-
-
-def get_mysql_cmd(env: str = "prod", qa: bool = False) -> list[str]:
-    """获取 mysql 命令行参数数组.
-
-    Args:
-        env: 物理环境 (prod / test)
-        qa: True 时使用 qa_user 连接, 用于操作验证库
-    """
-    cfg = DB_ENV_CONFIG[env]
-    user = cfg["qa_user"] if qa else cfg["user"]
-    return ["mysql", f"-h{cfg['host']}", f"-P{cfg['port']}", f"-u{user}"]

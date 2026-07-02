@@ -57,7 +57,7 @@ def _configure_catalog_project(monkeypatch, tmp_path):
         """,
         encoding="utf-8",
     )
-    monkeypatch.setattr(config, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
     monkeypatch.setitem(
         config.PROJECT_CONFIG,
         project,
@@ -66,9 +66,9 @@ def _configure_catalog_project(monkeypatch, tmp_path):
             "naming_config": "naming_config.yaml",
         },
     )
-    config._naming_config_cache.clear()
-    config._model_metadata_cache.clear()
-    config._business_semantics_cache.clear()
+    config.clear_naming_config_cache()
+    config.clear_model_metadata_cache()
+    config.clear_business_semantics_cache()
     return project
 
 
@@ -222,7 +222,7 @@ def test_catalog_builder_adds_llm_domain_and_area_candidates_without_dictionary(
         "types: {}\nbindings: {}\ndictionaries: {}\n",
         encoding="utf-8",
     )
-    monkeypatch.setattr(config, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
     monkeypatch.setitem(
         config.PROJECT_CONFIG,
         project,
@@ -231,8 +231,8 @@ def test_catalog_builder_adds_llm_domain_and_area_candidates_without_dictionary(
             "naming_config": "naming_config.yaml",
         },
     )
-    config._naming_config_cache.clear()
-    config._business_semantics_cache.clear()
+    config.clear_naming_config_cache()
+    config.clear_business_semantics_cache()
     result = TableInspectResult(
         table_name="dwd_event_detail",
         declared_layer="DWD",

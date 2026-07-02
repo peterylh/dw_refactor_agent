@@ -47,7 +47,7 @@ def test_build_verification_plan_uses_baseline_ddl_changes_and_jobs(
         "INSERT INTO demo_dm.dws_order SELECT @etl_date;",
         encoding="utf-8",
     )
-    monkeypatch.setattr(config, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
     monkeypatch.setitem(
         config.PROJECT_CONFIG,
         "demo",
@@ -58,7 +58,7 @@ def test_build_verification_plan_uses_baseline_ddl_changes_and_jobs(
             "catalog": "internal",
         },
     )
-    config._model_metadata_cache.clear()
+    config.clear_model_metadata_cache()
 
     monkeypatch.setattr(
         "refact.verification_plan.load_baseline_ddl",
@@ -141,7 +141,7 @@ def test_build_verification_plan_uses_baseline_ddl_changes_and_jobs(
         {"table": "dws_order", "method": "row_compare"},
     ]
 
-    config._model_metadata_cache.clear()
+    config.clear_model_metadata_cache()
 
 
 def test_build_verification_plan_requires_lineage_when_jobs_exist(
@@ -155,7 +155,7 @@ def test_build_verification_plan_requires_lineage_when_jobs_exist(
         "INSERT INTO demo_dm.dws_order SELECT 1;",
         encoding="utf-8",
     )
-    monkeypatch.setattr(config, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
     monkeypatch.setitem(
         config.PROJECT_CONFIG,
         "demo",
@@ -197,7 +197,7 @@ def test_build_verification_plan_preserves_empty_modified_jobs(
         "INSERT INTO demo_dm.dws_order SELECT 1;",
         encoding="utf-8",
     )
-    monkeypatch.setattr(config, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
     monkeypatch.setitem(
         config.PROJECT_CONFIG,
         "demo",
@@ -245,7 +245,7 @@ def test_build_verification_plan_rejects_cyclic_job_lineage(
             f"INSERT INTO demo_dm.{table_name} SELECT 1;",
             encoding="utf-8",
         )
-    monkeypatch.setattr(config, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
     monkeypatch.setitem(
         config.PROJECT_CONFIG,
         "demo",
@@ -297,7 +297,7 @@ def test_build_verification_plan_applies_manual_partition_to_checks(
         "INSERT INTO demo_dm.dws_order SELECT @etl_date;",
         encoding="utf-8",
     )
-    monkeypatch.setattr(config, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
     monkeypatch.setitem(
         config.PROJECT_CONFIG,
         "demo",
@@ -399,7 +399,7 @@ def test_build_verification_plan_orders_jobs_topologically(
             f"INSERT INTO demo_dm.{table_name} SELECT 1;",
             encoding="utf-8",
         )
-    monkeypatch.setattr(config, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
     monkeypatch.setitem(
         config.PROJECT_CONFIG,
         "demo",
@@ -410,7 +410,7 @@ def test_build_verification_plan_orders_jobs_topologically(
             "catalog": "internal",
         },
     )
-    config._model_metadata_cache.clear()
+    config.clear_model_metadata_cache()
 
     plan = build_verification_plan(
         "demo",
@@ -449,7 +449,7 @@ def test_build_verification_plan_orders_jobs_topologically(
         "ads_order",
     ]
 
-    config._model_metadata_cache.clear()
+    config.clear_model_metadata_cache()
 
 
 def test_strip_insert_data_removes_data_after_first_insert():

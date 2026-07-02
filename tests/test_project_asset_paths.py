@@ -20,7 +20,7 @@ def test_iter_project_asset_files_includes_catalog_database_ods_dir(
         / "ods_customer.sql"
     ).write_text("", encoding="utf-8")
 
-    monkeypatch.setattr(config, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
     monkeypatch.setitem(
         config.PROJECT_CONFIG,
         "demo",
@@ -88,7 +88,7 @@ def test_iter_project_asset_files_includes_configured_ods_source_catalogs(
         / "source_customer.sql"
     ).write_text("", encoding="utf-8")
 
-    monkeypatch.setattr(config, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
     monkeypatch.setitem(
         config.PROJECT_CONFIG,
         "demo",
@@ -145,7 +145,7 @@ def test_load_model_metadata_reads_catalog_database_ods_models(
         encoding="utf-8",
     )
 
-    monkeypatch.setattr(config, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
     monkeypatch.setitem(
         config.PROJECT_CONFIG,
         "demo",
@@ -155,20 +155,20 @@ def test_load_model_metadata_reads_catalog_database_ods_models(
             "db": "demo_dm",
         },
     )
-    config._model_metadata_cache.clear()
+    config.clear_model_metadata_cache()
 
     metadata = config.load_model_metadata("demo")
 
     assert sorted(metadata) == ["dwd_customer", "ods_customer"]
     assert metadata["ods_customer"]["layer"] == "ODS"
-    config._model_metadata_cache.clear()
+    config.clear_model_metadata_cache()
 
 
 def test_model_path_for_table_routes_ods_layer_to_catalog_database_dir(
     monkeypatch,
     tmp_path,
 ):
-    monkeypatch.setattr(config, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
     monkeypatch.setitem(
         config.PROJECT_CONFIG,
         "demo",
@@ -193,7 +193,7 @@ def test_model_path_for_table_routes_ods_layer_to_catalog_database_dir(
 
 
 def test_project_artifact_paths_are_project_scoped(monkeypatch, tmp_path):
-    monkeypatch.setattr(config, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
     monkeypatch.setitem(
         config.PROJECT_CONFIG,
         "demo",

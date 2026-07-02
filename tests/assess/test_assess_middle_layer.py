@@ -154,7 +154,7 @@ def isolated_assess_project(tmp_path, monkeypatch):
         (PROJECT_ROOT / "naming_config.yaml").read_text(encoding="utf-8"),
         encoding="utf-8",
     )
-    monkeypatch.setattr(config, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
     monkeypatch.setattr(assess_module, "PROJECT_ROOT", tmp_path)
     monkeypatch.setitem(
         config.PROJECT_CONFIG,
@@ -164,11 +164,11 @@ def isolated_assess_project(tmp_path, monkeypatch):
             "naming_config": "naming_config.yaml",
         },
     )
-    config._naming_config_cache.clear()
-    config._model_metadata_cache.clear()
+    config.clear_naming_config_cache()
+    config.clear_model_metadata_cache()
     yield project
-    config._naming_config_cache.clear()
-    config._model_metadata_cache.clear()
+    config.clear_naming_config_cache()
+    config.clear_model_metadata_cache()
 
 
 def _issue_rule_ids(result):
@@ -492,7 +492,7 @@ def test_assess_cli_defaults_output_to_project_assess_dir(
     project_dir.mkdir()
     tool_dir = tmp_path / "tool_assess"
     tool_dir.mkdir()
-    monkeypatch.setattr(config, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
     monkeypatch.setattr(assess_module, "PROJECT_ROOT", tmp_path)
     monkeypatch.setattr(
         assess_module,

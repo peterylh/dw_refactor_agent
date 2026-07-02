@@ -76,7 +76,7 @@ def test_default_lineage_file_ignores_old_tool_directory_file(
         "{}",
         encoding="utf-8",
     )
-    monkeypatch.setattr(config, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
     monkeypatch.setattr(module, "LINEAGE_DIR", old_lineage_dir)
     monkeypatch.setitem(
         config.PROJECT_CONFIG,

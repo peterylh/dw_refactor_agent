@@ -1,4 +1,4 @@
-"""config.py NamingConfig 的单元测试"""
+"""config NamingConfig 的单元测试"""
 
 import pytest
 import yaml
@@ -8,17 +8,21 @@ from config import (
     LayerDef,
     NamingConfig,
     TypeDef,
-    _parse_rule_expression,
-    _parse_segments,
-    _parse_template,
     get_business_domain_config,
     layer_rank,
     load_naming_config,
 )
+from config.naming import (
+    _parse_rule_expression,
+    _parse_segments,
+    _parse_template,
+)
 
 
 def _write_dictionary_naming_config(tmp_path, filename, *, domains, areas):
-    raw = yaml.safe_load(config.NAMING_CONFIG_PATH.read_text(encoding="utf-8"))
+    raw = yaml.safe_load(
+        config.naming_config_path().read_text(encoding="utf-8")
+    )
     raw["dictionaries"] = {
         "data_domains": {
             "values": [
@@ -79,7 +83,7 @@ def isolated_project_naming_configs(tmp_path, monkeypatch):
         ],
         areas=["LOAN", "PAYM", "CLNT", "OTHR"],
     )
-    monkeypatch.setattr(config, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
     monkeypatch.setitem(
         config.PROJECT_CONFIG,
         "unit_shop",
@@ -96,12 +100,12 @@ def isolated_project_naming_configs(tmp_path, monkeypatch):
             "naming_config": finance_cfg.name,
         },
     )
-    config._naming_config_cache.clear()
+    config.clear_naming_config_cache()
     yield {
         "shop": "unit_shop",
         "finance": "unit_finance",
     }
-    config._naming_config_cache.clear()
+    config.clear_naming_config_cache()
 
 
 # ============================================================
@@ -316,6 +320,10 @@ class TestParseTemplate:
         self._assert_string_format_conversion()
         self._assert_string_format_with_optional()
         self._assert_empty_string()
+
+    def test_unclosed_placeholder_raises_value_error(self):
+        with pytest.raises(ValueError, match="Unclosed type placeholder"):
+            _parse_template("ods_{source", {})
 
     def _assert_list_format_passthrough(self):
         """列表格式直接委托给 _parse_segments"""
@@ -628,7 +636,7 @@ class TestNamingDiagnostics:
         assert attempt["failure"]["code"] == "type_pattern_mismatch"
 
     def _assert_table_diagnostic_exposes_segment_plan(self):
-        nc = load_naming_config(config.NAMING_CONFIG_PATH)
+        nc = load_naming_config(config.naming_config_path())
 
         diagnostic = nc.diagnose_table_name(
             "dwd_customer",
@@ -648,7 +656,7 @@ class TestNamingDiagnostics:
         assert attempt["segments"][0]["name"] == "M"
 
     def test_table_diagnostic_uses_model_layer_and_model_values(self):
-        nc = load_naming_config(config.NAMING_CONFIG_PATH)
+        nc = load_naming_config(config.naming_config_path())
 
         passing_diagnostic = nc.diagnose_table_name(
             "DIM_BASE_CUST_PROFILE_INFO",
@@ -716,7 +724,7 @@ class TestNamingDiagnostics:
         }
 
     def test_table_diagnostic_reports_missing_model_layer(self):
-        nc = load_naming_config(config.NAMING_CONFIG_PATH)
+        nc = load_naming_config(config.naming_config_path())
 
         diagnostic = nc.diagnose_table_name(
             "DIM_BASE_CUST_PROFILE_INFO",
@@ -737,7 +745,7 @@ class TestNamingDiagnostics:
         }
 
     def test_table_diagnostic_reports_unknown_model_layer(self):
-        nc = load_naming_config(config.NAMING_CONFIG_PATH)
+        nc = load_naming_config(config.naming_config_path())
 
         diagnostic = nc.diagnose_table_name(
             "DIM_BASE_CUST_PROFILE_INFO",
@@ -758,7 +766,7 @@ class TestNamingDiagnostics:
         }
 
     def test_metric_diagnostic_exposes_atomic_rule_failure(self):
-        nc = load_naming_config(config.NAMING_CONFIG_PATH)
+        nc = load_naming_config(config.naming_config_path())
 
         diagnostic = nc.diagnose_metric_name(
             "pay_amt",
@@ -778,7 +786,7 @@ class TestNamingDiagnostics:
         assert attempt["failure"]["code"] == "metric_sequence_mismatch"
 
     def test_metric_diagnostic_exposes_derived_rule_match(self):
-        nc = load_naming_config(config.NAMING_CONFIG_PATH)
+        nc = load_naming_config(config.naming_config_path())
 
         diagnostic = nc.diagnose_metric_name(
             "7D_OLD_CHREM_PAY_AMT",
@@ -797,7 +805,7 @@ class TestNamingDiagnostics:
         }
 
     def test_metric_diagnostic_reports_unknown_rule(self):
-        nc = load_naming_config(config.NAMING_CONFIG_PATH)
+        nc = load_naming_config(config.naming_config_path())
 
         diagnostic = nc.diagnose_metric_name("PAY_AMT", rule_name="missing")
 
@@ -823,20 +831,20 @@ class TestTopLevelDetermineLayer:
             encoding="utf-8",
         )
 
-        monkeypatch.setattr(config, "PROJECT_ROOT", tmp_path)
+        monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
         monkeypatch.setitem(
             config.PROJECT_CONFIG, "demo", {"dir": "demo_project"}
         )
-        config._model_metadata_cache.clear()
+        config.clear_model_metadata_cache()
 
         assert config.determine_layer("legacy_name", "demo") == "ADS"
 
     def test_no_prefix_fallback(self, tmp_path, monkeypatch):
         project = "unit_empty_layers"
         (tmp_path / project / "models").mkdir(parents=True)
-        monkeypatch.setattr(config, "PROJECT_ROOT", tmp_path)
+        monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
         monkeypatch.setitem(config.PROJECT_CONFIG, project, {"dir": project})
-        config._model_metadata_cache.clear()
+        config.clear_model_metadata_cache()
 
         assert config.determine_layer("ods_", project) == "OTHER"
         assert config.determine_layer("dwd_", project) == "OTHER"
@@ -1332,7 +1340,7 @@ class TestGetNamingConfigByProject:
         project_dir = tmp_path / project
         project_dir.mkdir()
         raw = yaml.safe_load(
-            config.NAMING_CONFIG_PATH.read_text(encoding="utf-8")
+            config.naming_config_path().read_text(encoding="utf-8")
         )
         raw.pop("dictionaries", None)
         raw["types"]["BUSINESS_AREA_CODE"]["allow"] = {
@@ -1376,7 +1384,7 @@ class TestGetNamingConfigByProject:
             ),
             encoding="utf-8",
         )
-        monkeypatch.setattr(config, "PROJECT_ROOT", tmp_path)
+        monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
         monkeypatch.setitem(
             config.PROJECT_CONFIG,
             project,
@@ -1385,8 +1393,8 @@ class TestGetNamingConfigByProject:
                 "naming_config": "naming_config.yaml",
             },
         )
-        config._naming_config_cache.clear()
-        config._business_semantics_cache.clear()
+        config.clear_naming_config_cache()
+        config.clear_business_semantics_cache()
 
         nc = get_naming_config(project)
 

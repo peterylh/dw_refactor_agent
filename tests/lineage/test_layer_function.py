@@ -50,13 +50,13 @@ def isolated_lineage_projects(tmp_path, monkeypatch):
             },
         )
 
-    monkeypatch.setattr(config, "PROJECT_ROOT", tmp_path)
-    config._model_metadata_cache.clear()
+    monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
+    config.clear_model_metadata_cache()
     configure_project(default_project)
     yield
     lineage_extractor.CURRENT_PROJECT = original_project
     lineage_extractor.CURRENT_DB = original_db
-    config._model_metadata_cache.clear()
+    config.clear_model_metadata_cache()
 
 
 class TestDetermineLayer:

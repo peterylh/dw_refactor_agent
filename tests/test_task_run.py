@@ -306,18 +306,18 @@ def test_load_schema_reads_table_model_files(monkeypatch, tmp_path):
     )
 
     monkeypatch.setattr(task_run, "_root", tmp_path)
-    monkeypatch.setattr(config, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
     monkeypatch.setitem(
         task_run.PROJECT_CONFIG, "demo", {"dir": "demo_project"}
     )
     task_run._SCHEMA_CONFIG_CACHE.clear()
-    config._model_metadata_cache.clear()
+    config.clear_model_metadata_cache()
 
     assert task_run._load_schema("demo") == {
         "dwd_customer": "snapshot",
         "ads_sales_dashboard": "full",
     }
-    config._model_metadata_cache.clear()
+    config.clear_model_metadata_cache()
 
 
 def test_load_schema_reads_catalog_database_ods_models(
@@ -347,7 +347,7 @@ def test_load_schema_reads_catalog_database_ods_models(
     )
 
     monkeypatch.setattr(task_run, "_root", tmp_path)
-    monkeypatch.setattr(config, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
     monkeypatch.setitem(
         task_run.PROJECT_CONFIG,
         "demo",
@@ -358,13 +358,13 @@ def test_load_schema_reads_catalog_database_ods_models(
         },
     )
     task_run._SCHEMA_CONFIG_CACHE.clear()
-    config._model_metadata_cache.clear()
+    config.clear_model_metadata_cache()
 
     assert task_run._load_schema("demo") == {
         "dwd_customer": "snapshot",
         "ods_customer": "source",
     }
-    config._model_metadata_cache.clear()
+    config.clear_model_metadata_cache()
 
 
 def test_load_schema_cache_is_scoped_by_project(monkeypatch, tmp_path):
@@ -384,13 +384,13 @@ def test_load_schema_cache_is_scoped_by_project(monkeypatch, tmp_path):
         monkeypatch.setitem(task_run.PROJECT_CONFIG, project, {"dir": project})
 
     monkeypatch.setattr(task_run, "_root", tmp_path)
-    monkeypatch.setattr(config, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
     task_run._SCHEMA_CONFIG_CACHE.clear()
-    config._model_metadata_cache.clear()
+    config.clear_model_metadata_cache()
 
     assert task_run._load_schema("shop_like") == {"same_name": "snapshot"}
     assert task_run._load_schema("finance_like") == {"same_name": "full"}
-    config._model_metadata_cache.clear()
+    config.clear_model_metadata_cache()
 
 
 def test_load_partition_units_reads_catalog_database_ods_ddl(
@@ -414,7 +414,7 @@ def test_load_partition_units_reads_catalog_database_ods_ddl(
     )
 
     monkeypatch.setattr(task_run, "_root", tmp_path)
-    monkeypatch.setattr(config, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
     monkeypatch.setitem(
         task_run.PROJECT_CONFIG,
         "demo",
@@ -454,12 +454,12 @@ def test_discover_ods_dates_uses_model_layer(monkeypatch, tmp_path):
             )
         return _completed(stdout="d\n2025-01-02\n2025-01-01\n")
 
-    monkeypatch.setattr(config, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
     monkeypatch.setitem(
         task_run.PROJECT_CONFIG, "demo", {"dir": "demo_project"}
     )
     monkeypatch.setattr(task_run.subprocess, "run", fake_run)
-    config._model_metadata_cache.clear()
+    config.clear_model_metadata_cache()
 
     assert task_run._discover_ods_dates("demo", "demo_db", ["mysql"]) == [
         "2025-01-01",
@@ -469,7 +469,7 @@ def test_discover_ods_dates_uses_model_layer(monkeypatch, tmp_path):
         "SHOW TABLES",
         "SELECT DISTINCT DATE(load_time) AS d FROM demo_db.source_events ORDER BY d",
     ]
-    config._model_metadata_cache.clear()
+    config.clear_model_metadata_cache()
 
 
 def test_build_job_dag_accepts_structured_lineage_edges(monkeypatch, tmp_path):
@@ -503,7 +503,7 @@ def test_build_job_dag_accepts_structured_lineage_edges(monkeypatch, tmp_path):
         encoding="utf-8",
     )
     monkeypatch.setattr(task_run, "_root", tmp_path)
-    monkeypatch.setattr(config, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
     monkeypatch.setitem(
         config.PROJECT_CONFIG,
         "demo",
@@ -536,7 +536,7 @@ def test_task_run_resolvers_ignore_old_lineage_artifact_paths(
         encoding="utf-8",
     )
     monkeypatch.setattr(task_run, "_root", tmp_path)
-    monkeypatch.setattr(config, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
     monkeypatch.setitem(
         config.PROJECT_CONFIG,
         "demo",
@@ -580,7 +580,7 @@ def test_build_job_dag_collapses_transient_tables(monkeypatch, tmp_path):
         encoding="utf-8",
     )
     monkeypatch.setattr(task_run, "_root", tmp_path)
-    monkeypatch.setattr(config, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
     monkeypatch.setitem(
         config.PROJECT_CONFIG,
         "demo",
