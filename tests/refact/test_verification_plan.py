@@ -1,3 +1,6 @@
+import ast
+from pathlib import Path
+
 import config
 from refact.verification_plan import (
     build_verification_plan,
@@ -6,6 +9,23 @@ from refact.verification_plan import (
     parse_partition_col_from_ddl,
     strip_insert_data,
 )
+
+
+def test_verification_plan_uses_public_ddl_deriver_api():
+    source_path = Path(__file__).parents[2] / "refact" / "verification_plan.py"
+    tree = ast.parse(source_path.read_text(encoding="utf-8"))
+
+    private_imports = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ImportFrom):
+            continue
+        if node.module != "ddl_deriver.ddl_deriver":
+            continue
+        private_imports.extend(
+            alias.name for alias in node.names if alias.name.startswith("_")
+        )
+
+    assert private_imports == []
 
 
 def test_build_verification_plan_uses_baseline_ddl_changes_and_jobs(
@@ -450,37 +470,31 @@ SELECT 1;
 def test_load_baseline_ddl_reads_git_ref_and_strips_insert(monkeypatch):
     calls = []
 
-    def fake_git_cmd(repo, *args):
-        calls.append((repo, args))
-        if args[:3] == ("ls-tree", "-r", "--name-only"):
-            return "demo/ddl/dwd_order.sql\nREADME.md"
-        if args[:1] == ("show",):
-            return (
+    def fake_load_git_ddl_texts(repo, ddl_dir_rel, ref):
+        calls.append((repo, ddl_dir_rel, ref))
+        return {
+            "dwd_order": (
                 "CREATE TABLE demo_dm.dwd_order (id BIGINT) ENGINE=OLAP;\n"
                 "INSERT INTO demo_dm.dwd_order VALUES (1);"
             )
-        raise AssertionError(args)
+        }
 
     monkeypatch.setitem(
         config.PROJECT_CONFIG,
         "demo",
         {"dir": "demo", "db": "demo_dm", "qa_db": "demo_dm_qa"},
     )
-    monkeypatch.setattr("refact.verification_plan._git_cmd", fake_git_cmd)
+    monkeypatch.setattr(
+        "refact.verification_plan.load_git_ddl_texts",
+        fake_load_git_ddl_texts,
+    )
 
     result = load_baseline_ddl("demo", "abc123", repo_root="/repo")
 
     assert result == {
         "dwd_order": "CREATE TABLE demo_dm.dwd_order (id BIGINT) ENGINE=OLAP;"
     }
-    assert calls[0][1] == (
-        "ls-tree",
-        "-r",
-        "--name-only",
-        "abc123",
-        "--",
-        "demo/ddl",
-    )
+    assert calls == [(Path("/repo"), "demo/ddl", "abc123")]
 
 
 def test_parse_partition_col_from_ddl_and_get_partition_col():

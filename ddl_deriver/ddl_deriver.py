@@ -375,16 +375,26 @@ def _get_merge_base(repo: Path, branch: str = "main") -> str:
     return _git_cmd(repo, "merge-base", "--all", branch, "HEAD").split("\n")[0]
 
 
-def _load_git_tables(repo: Path, ddl_dir_rel: str, ref: str) -> dict:
-    """从 git ref 加载 DDL 文件并解析为 {short_name: TableDef}."""
+def load_git_ddl_texts(repo: Path, ddl_dir_rel: str, ref: str) -> dict:
+    """从 git ref 加载 DDL 文件文本,返回 {table_name: ddl_text}."""
     raw = _git_cmd(
         repo, "ls-tree", "-r", "--name-only", ref, "--", ddl_dir_rel
     )
-    tables = {}
-    for rel_path in raw.split("\n"):
+    ddl_texts = {}
+    for rel_path in raw.splitlines():
+        rel_path = rel_path.strip()
         if not rel_path.endswith(".sql"):
             continue
-        content = _git_cmd(repo, "show", f"{ref}:{rel_path}")
+        ddl_texts[Path(rel_path).stem] = _git_cmd(
+            repo, "show", f"{ref}:{rel_path}"
+        )
+    return dict(sorted(ddl_texts.items()))
+
+
+def load_git_tables(repo: Path, ddl_dir_rel: str, ref: str) -> dict:
+    """从 git ref 加载 DDL 文件并解析为 {short_name: TableDef}."""
+    tables = {}
+    for content in load_git_ddl_texts(repo, ddl_dir_rel, ref).values():
         t = parse_create_table(content)
         if t:
             tables[t.short_name] = t
@@ -410,7 +420,7 @@ def derive_from_git(
     if repo is None:
         repo = _find_git_root(Path.cwd())
     base_ref = _get_merge_base(repo, base_branch)
-    old_tables = _load_git_tables(repo, ddl_dir_rel, base_ref)
+    old_tables = load_git_tables(repo, ddl_dir_rel, base_ref)
     new_tables = load_tables_from_dir(repo / ddl_dir_rel)
     return derive_ddl_changes(old_tables, new_tables)
 

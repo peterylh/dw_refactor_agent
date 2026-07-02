@@ -10,8 +10,9 @@ from ddl_deriver.ddl_deriver import (
     RenameTable,
     _find_git_root,
     _get_merge_base,
-    _load_git_tables,
     derive_from_git,
+    load_git_ddl_texts,
+    load_git_tables,
 )
 
 # ============================================================
@@ -123,18 +124,31 @@ def test_get_merge_base(tmp_path):
 
 
 # ============================================================
-# 测试 _load_git_tables
+# 测试 Git ref DDL 读取
 # ============================================================
 
 
 def test_load_git_tables(tmp_path):
     repo = _init_test_repo(tmp_path)
     head = _git(repo, "rev-parse", "HEAD")
-    tables = _load_git_tables(repo, DDL_DIR_REL, head)
+    tables = load_git_tables(repo, DDL_DIR_REL, head)
     assert "ods_user_info" in tables
     assert "ods_order" in tables
     assert len(tables["ods_user_info"].columns) == 4
     assert len(tables["ods_order"].columns) == 2
+
+
+def test_load_git_ddl_texts(tmp_path):
+    repo = _init_test_repo(tmp_path)
+    head = _git(repo, "rev-parse", "HEAD")
+
+    ddl_texts = load_git_ddl_texts(repo, DDL_DIR_REL, head)
+
+    assert sorted(ddl_texts) == ["ods_order", "ods_user_info"]
+    assert (
+        "CREATE TABLE IF NOT EXISTS shop_dm.ods_order"
+        in ddl_texts["ods_order"]
+    )
 
 
 # ============================================================

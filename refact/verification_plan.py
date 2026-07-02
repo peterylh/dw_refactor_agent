@@ -7,10 +7,10 @@ from pathlib import Path
 import config
 from config import TEXT_ENCODING
 from ddl_deriver.ddl_deriver import (
-    _git_cmd,
-    _load_git_tables,
     changes_to_json,
     derive_ddl_changes,
+    load_git_ddl_texts,
+    load_git_tables,
     load_tables_from_dir,
 )
 from doris_sql import extract_doris_partition_column
@@ -71,22 +71,12 @@ def load_baseline_ddl(
     """Load project DDL text from a git base ref."""
     repo = _project_repo_root(repo_root)
     ddl_rel = _project_ddl_rel(project)
-    raw = _git_cmd(
-        repo,
-        "ls-tree",
-        "-r",
-        "--name-only",
-        base_ref,
-        "--",
-        ddl_rel,
-    )
-    baseline_ddl = {}
-    for rel_path in raw.splitlines():
-        rel_path = rel_path.strip()
-        if not rel_path.endswith(".sql"):
-            continue
-        content = _git_cmd(repo, "show", f"{base_ref}:{rel_path}")
-        baseline_ddl[Path(rel_path).stem] = strip_insert_data(content)
+    baseline_ddl = {
+        table_name: strip_insert_data(content)
+        for table_name, content in load_git_ddl_texts(
+            repo, ddl_rel, base_ref
+        ).items()
+    }
     return dict(sorted(baseline_ddl.items()))
 
 
@@ -99,7 +89,7 @@ def derive_project_ddl_changes(
     """Derive DDL changes between a git base ref and the working tree."""
     repo = _project_repo_root(repo_root)
     ddl_rel = _project_ddl_rel(project)
-    old_tables = _load_git_tables(repo, ddl_rel, base_ref)
+    old_tables = load_git_tables(repo, ddl_rel, base_ref)
     new_tables = load_tables_from_dir(repo / ddl_rel)
     changes = derive_ddl_changes(old_tables, new_tables)
     return changes_to_json(changes)["changes"]
