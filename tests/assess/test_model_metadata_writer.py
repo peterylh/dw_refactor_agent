@@ -2722,8 +2722,8 @@ def test_run_direct_model_generation_assigns_catalog_refs_from_assets(
 ):
     project = "direct_model_writer"
     project_dir = tmp_path / project
-    (project_dir / "ddl").mkdir(parents=True)
-    (project_dir / "tasks").mkdir()
+    (project_dir / "mid" / "ddl").mkdir(parents=True)
+    (project_dir / "mid" / "tasks").mkdir()
     (project_dir / "lineage").mkdir()
     (tmp_path / "naming_config.yaml").write_text(
         "types: {}\nbindings: {}\ndictionaries: {}\n",
@@ -2769,7 +2769,7 @@ def test_run_direct_model_generation_assigns_catalog_refs_from_assets(
         ),
         encoding="utf-8",
     )
-    (project_dir / "ddl" / "dwd_order_detail.sql").write_text(
+    (project_dir / "mid" / "ddl" / "dwd_order_detail.sql").write_text(
         """
         -- DWD 订单明细事实表
             CREATE TABLE dwd_order_detail (
@@ -2781,7 +2781,7 @@ def test_run_direct_model_generation_assigns_catalog_refs_from_assets(
         """,
         encoding="utf-8",
     )
-    (project_dir / "ddl" / "dws_store_sales_daily.sql").write_text(
+    (project_dir / "mid" / "ddl" / "dws_store_sales_daily.sql").write_text(
         """
         -- DWS 门店销售日汇总
         CREATE TABLE dws_store_sales_daily (
@@ -2793,7 +2793,7 @@ def test_run_direct_model_generation_assigns_catalog_refs_from_assets(
         """,
         encoding="utf-8",
     )
-    (project_dir / "ddl" / "dim_store.sql").write_text(
+    (project_dir / "mid" / "ddl" / "dim_store.sql").write_text(
         """
         -- DIM 门店维度表
         CREATE TABLE dim_store (
@@ -2803,7 +2803,7 @@ def test_run_direct_model_generation_assigns_catalog_refs_from_assets(
         """,
         encoding="utf-8",
     )
-    (project_dir / "tasks" / "dws_store_sales_daily.sql").write_text(
+    (project_dir / "mid" / "tasks" / "dws_store_sales_daily.sql").write_text(
         """
         INSERT INTO dws_store_sales_daily
         SELECT store_id, order_date AS stat_date, COUNT(*) AS order_count,
@@ -2853,7 +2853,7 @@ def test_run_direct_model_generation_assigns_catalog_refs_from_assets(
 
     result = run_direct_model_generation(project, dry_run=False)
 
-    models_dir = project_dir / "models"
+    models_dir = project_dir / "mid" / "models"
     dwd_model = yaml.safe_load(
         (models_dir / "dwd_order_detail.yaml").read_text(encoding="utf-8")
     )
@@ -3060,8 +3060,8 @@ def test_run_direct_model_generation_prefers_strong_ads_signal_over_inspector(
 
     project = "direct_model_writer_ads_signal_guard"
     project_dir = tmp_path / project
-    (project_dir / "ddl").mkdir(parents=True)
-    (project_dir / "tasks").mkdir()
+    (project_dir / "mid" / "ddl").mkdir(parents=True)
+    (project_dir / "mid" / "tasks").mkdir()
     (project_dir / "lineage").mkdir()
     (tmp_path / "naming_config.yaml").write_text(
         "types: {}\nbindings: {}\ndictionaries: {}\n",
@@ -3084,7 +3084,7 @@ def test_run_direct_model_generation_prefers_strong_ads_signal_over_inspector(
         ),
         encoding="utf-8",
     )
-    (project_dir / "ddl" / "customer_by_age_group.sql").write_text(
+    (project_dir / "mid" / "ddl" / "customer_by_age_group.sql").write_text(
         """
         CREATE TABLE customer_by_age_group (
             age_group STRING,
@@ -3094,7 +3094,7 @@ def test_run_direct_model_generation_prefers_strong_ads_signal_over_inspector(
         """,
         encoding="utf-8",
     )
-    (project_dir / "tasks" / "customer_by_age_group.sql").write_text(
+    (project_dir / "mid" / "tasks" / "customer_by_age_group.sql").write_text(
         """
         INSERT INTO customer_by_age_group
         SELECT age_group,
@@ -3105,7 +3105,7 @@ def test_run_direct_model_generation_prefers_strong_ads_signal_over_inspector(
         """,
         encoding="utf-8",
     )
-    (project_dir / "ddl" / "customer_monthly_summary.sql").write_text(
+    (project_dir / "mid" / "ddl" / "customer_monthly_summary.sql").write_text(
         """
         CREATE TABLE customer_monthly_summary (
             customer_id BIGINT,
@@ -3115,7 +3115,7 @@ def test_run_direct_model_generation_prefers_strong_ads_signal_over_inspector(
         """,
         encoding="utf-8",
     )
-    (project_dir / "tasks" / "customer_monthly_summary.sql").write_text(
+    (project_dir / "mid" / "tasks" / "customer_monthly_summary.sql").write_text(
         """
         INSERT INTO customer_monthly_summary
         SELECT customer_id, stat_month, SUM(pay_amount) AS total_amount
@@ -3237,11 +3237,14 @@ def test_run_direct_model_generation_prefers_strong_ads_signal_over_inspector(
         show_progress=False,
     )
 
-    models_dir = project_dir / "models"
+    models_dir = project_dir / "mid" / "models"
     ads_model = yaml.safe_load(
-        (models_dir / "customer_by_age_group.yaml").read_text(
-            encoding="utf-8"
-        )
+        (
+            project_dir
+            / "ads"
+            / "models"
+            / "customer_by_age_group.yaml"
+        ).read_text(encoding="utf-8")
     )
     dws_model = yaml.safe_load(
         (models_dir / "customer_monthly_summary.yaml").read_text(
@@ -3337,8 +3340,8 @@ def test_run_direct_model_generation_can_ignore_existing_model_metadata(
 ):
     project = "direct_model_writer_ignore_existing"
     project_dir = tmp_path / project
-    (project_dir / "ddl").mkdir(parents=True)
-    (project_dir / "models").mkdir()
+    (project_dir / "mid" / "ddl").mkdir(parents=True)
+    (project_dir / "mid" / "models").mkdir()
     (tmp_path / "naming_config.yaml").write_text(
         "types: {}\nbindings: {}\ndictionaries: {}\n",
         encoding="utf-8",
@@ -3370,7 +3373,7 @@ def test_run_direct_model_generation_can_ignore_existing_model_metadata(
         ),
         encoding="utf-8",
     )
-    (project_dir / "ddl" / "dwd_customer.sql").write_text(
+    (project_dir / "mid" / "ddl" / "dwd_customer.sql").write_text(
         """
         -- DWD 客户维度宽表
         CREATE TABLE dwd_customer (
@@ -3381,7 +3384,7 @@ def test_run_direct_model_generation_can_ignore_existing_model_metadata(
         """,
         encoding="utf-8",
     )
-    (project_dir / "models" / "dwd_customer.yaml").write_text(
+    (project_dir / "mid" / "models" / "dwd_customer.yaml").write_text(
         yaml.safe_dump(
             {
                 "version": 2,
@@ -3429,8 +3432,8 @@ def test_run_direct_model_generation_preserves_existing_governance_on_fallback(
 ):
     project = "direct_model_writer_preserve_governance"
     project_dir = tmp_path / project
-    ddl_dir = project_dir / "ddl"
-    models_dir = project_dir / "models"
+    ddl_dir = project_dir / "mid" / "ddl"
+    models_dir = project_dir / "mid" / "models"
     ddl_dir.mkdir(parents=True)
     models_dir.mkdir()
     (tmp_path / "naming_config.yaml").write_text(
@@ -3526,8 +3529,8 @@ def test_run_direct_model_generation_does_not_use_downstream_for_process_match(
 ):
     project = "direct_model_writer_downstream_process"
     project_dir = tmp_path / project
-    (project_dir / "ddl").mkdir(parents=True)
-    (project_dir / "tasks").mkdir()
+    (project_dir / "mid" / "ddl").mkdir(parents=True)
+    (project_dir / "mid" / "tasks").mkdir()
     (project_dir / "lineage").mkdir()
     (tmp_path / "naming_config.yaml").write_text(
         "types: {}\nbindings: {}\ndictionaries: {}\n",
@@ -3566,7 +3569,7 @@ def test_run_direct_model_generation_does_not_use_downstream_for_process_match(
         ),
         encoding="utf-8",
     )
-    (project_dir / "ddl" / "dwd_order_detail.sql").write_text(
+    (project_dir / "mid" / "ddl" / "dwd_order_detail.sql").write_text(
         """
         -- DWD 订单明细事实表
         CREATE TABLE dwd_order_detail (
@@ -3578,7 +3581,7 @@ def test_run_direct_model_generation_does_not_use_downstream_for_process_match(
         """,
         encoding="utf-8",
     )
-    (project_dir / "ddl" / "dws_promotion_effect_daily.sql").write_text(
+    (project_dir / "mid" / "ddl" / "dws_promotion_effect_daily.sql").write_text(
         """
         -- DWS 促销效果日汇总表
         CREATE TABLE dws_promotion_effect_daily (
@@ -3589,7 +3592,7 @@ def test_run_direct_model_generation_does_not_use_downstream_for_process_match(
         """,
         encoding="utf-8",
     )
-    (project_dir / "tasks" / "dws_promotion_effect_daily.sql").write_text(
+    (project_dir / "mid" / "tasks" / "dws_promotion_effect_daily.sql").write_text(
         """
         INSERT INTO dws_promotion_effect_daily
         SELECT promotion_id, order_date AS stat_date, SUM(subtotal)
@@ -3654,8 +3657,8 @@ def test_run_direct_model_generation_materialized_uses_target_task_pattern(
 ):
     project = "direct_model_writer_materialized"
     project_dir = tmp_path / project
-    (project_dir / "ddl").mkdir(parents=True)
-    (project_dir / "tasks").mkdir()
+    (project_dir / "mid" / "ddl").mkdir(parents=True)
+    (project_dir / "mid" / "tasks").mkdir()
     (tmp_path / "naming_config.yaml").write_text(
         "types: {}\nbindings: {}\ndictionaries: {}\n",
         encoding="utf-8",
@@ -3679,7 +3682,7 @@ def test_run_direct_model_generation_materialized_uses_target_task_pattern(
         ),
         encoding="utf-8",
     )
-    (project_dir / "ddl" / "dws_inventory_daily.sql").write_text(
+    (project_dir / "mid" / "ddl" / "dws_inventory_daily.sql").write_text(
         """
         -- DWS 库存日汇总表
         CREATE TABLE dws_inventory_daily (
@@ -3691,7 +3694,7 @@ def test_run_direct_model_generation_materialized_uses_target_task_pattern(
         """,
         encoding="utf-8",
     )
-    (project_dir / "tasks" / "dws_inventory_daily.sql").write_text(
+    (project_dir / "mid" / "tasks" / "dws_inventory_daily.sql").write_text(
         """
         DELETE FROM dws_inventory_daily WHERE stat_date = CURRENT_DATE;
         INSERT INTO dws_inventory_daily
@@ -3701,7 +3704,7 @@ def test_run_direct_model_generation_materialized_uses_target_task_pattern(
         """,
         encoding="utf-8",
     )
-    (project_dir / "ddl" / "ads_sales_dashboard.sql").write_text(
+    (project_dir / "mid" / "ddl" / "ads_sales_dashboard.sql").write_text(
         """
         -- ADS 销售驾驶舱
         CREATE TABLE ads_sales_dashboard (
@@ -3711,7 +3714,7 @@ def test_run_direct_model_generation_materialized_uses_target_task_pattern(
         """,
         encoding="utf-8",
     )
-    (project_dir / "tasks" / "ads_sales_dashboard.sql").write_text(
+    (project_dir / "mid" / "tasks" / "ads_sales_dashboard.sql").write_text(
         """
         TRUNCATE TABLE ads_sales_dashboard;
         INSERT INTO ads_sales_dashboard
@@ -3737,14 +3740,16 @@ def test_run_direct_model_generation_materialized_uses_target_task_pattern(
         ignore_existing_models=True,
     )
 
-    models_dir = project_dir / "models"
+    models_dir = project_dir / "mid" / "models"
     dws_model = yaml.safe_load(
         (models_dir / "dws_inventory_daily.yaml").read_text(
             encoding="utf-8"
         )
     )
     ads_model = yaml.safe_load(
-        (models_dir / "ads_sales_dashboard.yaml").read_text(encoding="utf-8")
+        (
+            project_dir / "ads" / "models" / "ads_sales_dashboard.yaml"
+        ).read_text(encoding="utf-8")
     )
     assert result["ignore_existing_models"] is True
     assert dws_model["config"]["materialized"] == "incremental"
@@ -3756,8 +3761,8 @@ def test_run_direct_model_generation_infers_ads_fact_from_task(
 ):
     project = "direct_model_writer_ads_task"
     project_dir = tmp_path / project
-    (project_dir / "ddl").mkdir(parents=True)
-    (project_dir / "tasks").mkdir()
+    (project_dir / "mid" / "ddl").mkdir(parents=True)
+    (project_dir / "mid" / "tasks").mkdir()
     (project_dir / "lineage").mkdir()
     (tmp_path / "naming_config.yaml").write_text(
         "types: {}\nbindings: {}\ndictionaries: {}\n",
@@ -3782,7 +3787,7 @@ def test_run_direct_model_generation_infers_ads_fact_from_task(
         ),
         encoding="utf-8",
     )
-    (project_dir / "ddl" / "dws_order_sales_daily.sql").write_text(
+    (project_dir / "mid" / "ddl" / "dws_order_sales_daily.sql").write_text(
         """
         CREATE TABLE dws_order_sales_daily (
             store_id BIGINT,
@@ -3792,7 +3797,7 @@ def test_run_direct_model_generation_infers_ads_fact_from_task(
         """,
         encoding="utf-8",
     )
-    (project_dir / "ddl" / "ads_sales_dashboard.sql").write_text(
+    (project_dir / "mid" / "ddl" / "ads_sales_dashboard.sql").write_text(
         """
         CREATE TABLE ads_sales_dashboard (
             stat_date DATE,
@@ -3801,7 +3806,7 @@ def test_run_direct_model_generation_infers_ads_fact_from_task(
         """,
         encoding="utf-8",
     )
-    (project_dir / "tasks" / "ads_sales_dashboard.sql").write_text(
+    (project_dir / "mid" / "tasks" / "ads_sales_dashboard.sql").write_text(
         """
         DELETE FROM ads_sales_dashboard WHERE stat_date = CURRENT_DATE;
         INSERT INTO ads_sales_dashboard
@@ -3848,14 +3853,16 @@ def test_run_direct_model_generation_infers_ads_fact_from_task(
         ignore_existing_models=True,
     )
 
-    models_dir = project_dir / "models"
+    models_dir = project_dir / "mid" / "models"
     dws_model = yaml.safe_load(
         (models_dir / "dws_order_sales_daily.yaml").read_text(
             encoding="utf-8"
         )
     )
     ads_model = yaml.safe_load(
-        (models_dir / "ads_sales_dashboard.yaml").read_text(encoding="utf-8")
+        (
+            project_dir / "ads" / "models" / "ads_sales_dashboard.yaml"
+        ).read_text(encoding="utf-8")
     )
     assert result["assigned_business_process_count"] == 1
     assert dws_model["table_type"] == "fact"
@@ -3873,8 +3880,8 @@ def test_run_direct_model_generation_infers_layers_without_model_or_prefix_metad
     project_dir = tmp_path / project
     ods_ddl_dir = project_dir / "ods" / "ddl" / "internal" / "demo_dm"
     ods_ddl_dir.mkdir(parents=True)
-    (project_dir / "ddl").mkdir(parents=True)
-    (project_dir / "tasks").mkdir()
+    (project_dir / "mid" / "ddl").mkdir(parents=True)
+    (project_dir / "mid" / "tasks").mkdir()
     (project_dir / "lineage").mkdir()
     (tmp_path / "naming_config.yaml").write_text(
         "types: {}\nbindings: {}\ndictionaries: {}\n",
@@ -3919,7 +3926,7 @@ def test_run_direct_model_generation_infers_layers_without_model_or_prefix_metad
         """,
         encoding="utf-8",
     )
-    (project_dir / "ddl" / "order_detail.sql").write_text(
+    (project_dir / "mid" / "ddl" / "order_detail.sql").write_text(
         """
         -- 订单交易明细事实表
         CREATE TABLE order_detail (
@@ -3931,7 +3938,7 @@ def test_run_direct_model_generation_infers_layers_without_model_or_prefix_metad
         """,
         encoding="utf-8",
     )
-    (project_dir / "ddl" / "store_sales_daily.sql").write_text(
+    (project_dir / "mid" / "ddl" / "store_sales_daily.sql").write_text(
         """
         -- 订单交易门店销售日汇总表
         CREATE TABLE store_sales_daily (
@@ -3942,7 +3949,7 @@ def test_run_direct_model_generation_infers_layers_without_model_or_prefix_metad
         """,
         encoding="utf-8",
     )
-    (project_dir / "ddl" / "sales_dashboard.sql").write_text(
+    (project_dir / "mid" / "ddl" / "sales_dashboard.sql").write_text(
         """
         -- 订单交易销售驾驶舱
         CREATE TABLE sales_dashboard (
@@ -3952,7 +3959,7 @@ def test_run_direct_model_generation_infers_layers_without_model_or_prefix_metad
         """,
         encoding="utf-8",
     )
-    (project_dir / "ddl" / "customer_profile.sql").write_text(
+    (project_dir / "mid" / "ddl" / "customer_profile.sql").write_text(
         """
         -- 客户维度属性档案
         CREATE TABLE customer_profile (
@@ -3962,7 +3969,7 @@ def test_run_direct_model_generation_infers_layers_without_model_or_prefix_metad
         """,
         encoding="utf-8",
     )
-    (project_dir / "tasks" / "order_detail.sql").write_text(
+    (project_dir / "mid" / "tasks" / "order_detail.sql").write_text(
         """
         INSERT INTO order_detail
         SELECT order_id, customer_id, order_date, pay_amount
@@ -3970,7 +3977,7 @@ def test_run_direct_model_generation_infers_layers_without_model_or_prefix_metad
         """,
         encoding="utf-8",
     )
-    (project_dir / "tasks" / "store_sales_daily.sql").write_text(
+    (project_dir / "mid" / "tasks" / "store_sales_daily.sql").write_text(
         """
         INSERT INTO store_sales_daily
         SELECT customer_id, order_date AS stat_date, SUM(pay_amount)
@@ -3979,7 +3986,7 @@ def test_run_direct_model_generation_infers_layers_without_model_or_prefix_metad
         """,
         encoding="utf-8",
     )
-    (project_dir / "tasks" / "sales_dashboard.sql").write_text(
+    (project_dir / "mid" / "tasks" / "sales_dashboard.sql").write_text(
         """
         INSERT INTO sales_dashboard
         SELECT stat_date, SUM(pay_amount) AS total_amount
@@ -4042,7 +4049,7 @@ def test_run_direct_model_generation_infers_layers_without_model_or_prefix_metad
         ignore_existing_models=True,
     )
 
-    models_dir = project_dir / "models"
+    models_dir = project_dir / "mid" / "models"
     ods_model = yaml.safe_load(
         (
             project_dir
@@ -4060,7 +4067,9 @@ def test_run_direct_model_generation_infers_layers_without_model_or_prefix_metad
         (models_dir / "store_sales_daily.yaml").read_text(encoding="utf-8")
     )
     ads_model = yaml.safe_load(
-        (models_dir / "sales_dashboard.yaml").read_text(encoding="utf-8")
+        (project_dir / "ads" / "models" / "sales_dashboard.yaml").read_text(
+            encoding="utf-8"
+        )
     )
     dim_model = yaml.safe_load(
         (models_dir / "customer_profile.yaml").read_text(encoding="utf-8")
@@ -4086,8 +4095,8 @@ def test_run_direct_model_generation_propagates_business_process_fixpoint(
 ):
     project = "direct_model_writer_lineage_fixpoint"
     project_dir = tmp_path / project
-    (project_dir / "ddl").mkdir(parents=True)
-    (project_dir / "tasks").mkdir()
+    (project_dir / "mid" / "ddl").mkdir(parents=True)
+    (project_dir / "mid" / "tasks").mkdir()
     (project_dir / "lineage").mkdir()
     (tmp_path / "naming_config.yaml").write_text(
         "types: {}\nbindings: {}\ndictionaries: {}\n",
@@ -4112,7 +4121,7 @@ def test_run_direct_model_generation_propagates_business_process_fixpoint(
         ),
         encoding="utf-8",
     )
-    (project_dir / "ddl" / "dwd_order_detail.sql").write_text(
+    (project_dir / "mid" / "ddl" / "dwd_order_detail.sql").write_text(
         """
         CREATE TABLE dwd_order_detail (
             order_id BIGINT,
@@ -4122,7 +4131,7 @@ def test_run_direct_model_generation_propagates_business_process_fixpoint(
         """,
         encoding="utf-8",
     )
-    (project_dir / "ddl" / "dws_store_daily.sql").write_text(
+    (project_dir / "mid" / "ddl" / "dws_store_daily.sql").write_text(
         """
         CREATE TABLE dws_store_daily (
             store_id BIGINT,
@@ -4132,7 +4141,7 @@ def test_run_direct_model_generation_propagates_business_process_fixpoint(
         """,
         encoding="utf-8",
     )
-    (project_dir / "ddl" / "ads_store_dashboard.sql").write_text(
+    (project_dir / "mid" / "ddl" / "ads_store_dashboard.sql").write_text(
         """
         CREATE TABLE ads_store_dashboard (
             stat_date DATE,
@@ -4141,7 +4150,7 @@ def test_run_direct_model_generation_propagates_business_process_fixpoint(
         """,
         encoding="utf-8",
     )
-    (project_dir / "tasks" / "dws_store_daily.sql").write_text(
+    (project_dir / "mid" / "tasks" / "dws_store_daily.sql").write_text(
         """
         INSERT INTO dws_store_daily
         SELECT store_id, stat_date, SUM(pay_amount) AS total_amount
@@ -4150,7 +4159,7 @@ def test_run_direct_model_generation_propagates_business_process_fixpoint(
         """,
         encoding="utf-8",
     )
-    (project_dir / "tasks" / "ads_store_dashboard.sql").write_text(
+    (project_dir / "mid" / "tasks" / "ads_store_dashboard.sql").write_text(
         """
         INSERT INTO ads_store_dashboard
         SELECT stat_date, SUM(total_amount) AS total_amount
@@ -4203,12 +4212,14 @@ def test_run_direct_model_generation_propagates_business_process_fixpoint(
         ignore_existing_models=True,
     )
 
-    models_dir = project_dir / "models"
+    models_dir = project_dir / "mid" / "models"
     dws_model = yaml.safe_load(
         (models_dir / "dws_store_daily.yaml").read_text(encoding="utf-8")
     )
     ads_model = yaml.safe_load(
-        (models_dir / "ads_store_dashboard.yaml").read_text(encoding="utf-8")
+        (
+            project_dir / "ads" / "models" / "ads_store_dashboard.yaml"
+        ).read_text(encoding="utf-8")
     )
     updates = {update["table"]: update for update in result["model_updates"]}
     assert dws_model["business_process"] == "ORDER_TRANSACTION"
@@ -4227,7 +4238,7 @@ def test_run_direct_model_generation_cold_start_inspects_prefixed_table_metadata
 
     project = "direct_model_writer_table_inspector_cold_start"
     project_dir = tmp_path / project
-    (project_dir / "ddl").mkdir(parents=True)
+    (project_dir / "mid" / "ddl").mkdir(parents=True)
     (project_dir / "lineage").mkdir()
     (tmp_path / "naming_config.yaml").write_text(
         "types: {}\nbindings: {}\ndictionaries: {}\n",
@@ -4258,7 +4269,7 @@ def test_run_direct_model_generation_cold_start_inspects_prefixed_table_metadata
         ),
         encoding="utf-8",
     )
-    (project_dir / "ddl" / "dwd_order_detail.sql").write_text(
+    (project_dir / "mid" / "ddl" / "dwd_order_detail.sql").write_text(
         """
         CREATE TABLE dwd_order_detail (
             order_id BIGINT,
@@ -4365,7 +4376,7 @@ def test_run_direct_model_generation_cold_start_inspects_prefixed_table_metadata
     )
 
     model = yaml.safe_load(
-        (project_dir / "models" / "dwd_order_detail.yaml").read_text(
+        (project_dir / "mid" / "models" / "dwd_order_detail.yaml").read_text(
             encoding="utf-8"
         )
     )
@@ -4423,8 +4434,8 @@ def test_run_direct_model_generation_prefers_inspector_over_application_token(
 
     project = "direct_model_writer_application_token"
     project_dir = tmp_path / project
-    (project_dir / "ddl").mkdir(parents=True)
-    (project_dir / "tasks").mkdir()
+    (project_dir / "mid" / "ddl").mkdir(parents=True)
+    (project_dir / "mid" / "tasks").mkdir()
     (tmp_path / "naming_config.yaml").write_text(
         "types: {}\nbindings: {}\ndictionaries: {}\n",
         encoding="utf-8",
@@ -4446,7 +4457,7 @@ def test_run_direct_model_generation_prefers_inspector_over_application_token(
         ),
         encoding="utf-8",
     )
-    (project_dir / "ddl" / "customer_rfm_events.sql").write_text(
+    (project_dir / "mid" / "ddl" / "customer_rfm_events.sql").write_text(
         """
         CREATE TABLE customer_rfm_events (
             event_id BIGINT,
@@ -4457,7 +4468,7 @@ def test_run_direct_model_generation_prefers_inspector_over_application_token(
         """,
         encoding="utf-8",
     )
-    (project_dir / "tasks" / "customer_rfm_events.sql").write_text(
+    (project_dir / "mid" / "tasks" / "customer_rfm_events.sql").write_text(
         """
         INSERT INTO customer_rfm_events
         SELECT event_id, customer_id, event_date, event_amount
@@ -4535,7 +4546,7 @@ def test_run_direct_model_generation_prefers_inspector_over_application_token(
     )
 
     model = yaml.safe_load(
-        (project_dir / "models" / "customer_rfm_events.yaml").read_text(
+        (project_dir / "mid" / "models" / "customer_rfm_events.yaml").read_text(
             encoding="utf-8"
         )
     )
@@ -4550,8 +4561,8 @@ def test_run_direct_model_generation_uses_table_inspector_for_missing_layer_meta
 
     project = "direct_model_writer_table_inspector_layer"
     project_dir = tmp_path / project
-    (project_dir / "ddl").mkdir(parents=True)
-    (project_dir / "tasks").mkdir()
+    (project_dir / "mid" / "ddl").mkdir(parents=True)
+    (project_dir / "mid" / "tasks").mkdir()
     (tmp_path / "naming_config.yaml").write_text(
         "types: {}\nbindings: {}\ndictionaries: {}\n",
         encoding="utf-8",
@@ -4575,7 +4586,7 @@ def test_run_direct_model_generation_uses_table_inspector_for_missing_layer_meta
         ),
         encoding="utf-8",
     )
-    (project_dir / "ddl" / "sales_result.sql").write_text(
+    (project_dir / "mid" / "ddl" / "sales_result.sql").write_text(
         """
         -- 销售结果汇总
         CREATE TABLE sales_result (
@@ -4585,7 +4596,7 @@ def test_run_direct_model_generation_uses_table_inspector_for_missing_layer_meta
         """,
         encoding="utf-8",
     )
-    (project_dir / "tasks" / "sales_result.sql").write_text(
+    (project_dir / "mid" / "tasks" / "sales_result.sql").write_text(
         """
         INSERT INTO sales_result
         SELECT stat_date, SUM(pay_amount) AS total_amount
@@ -4642,7 +4653,7 @@ def test_run_direct_model_generation_uses_table_inspector_for_missing_layer_meta
     )
 
     model = yaml.safe_load(
-        (project_dir / "models" / "sales_result.yaml").read_text(
+        (project_dir / "mid" / "models" / "sales_result.yaml").read_text(
             encoding="utf-8"
         )
     )
@@ -4675,9 +4686,9 @@ def test_run_direct_model_generation_merges_inspector_with_existing_governance(
 
     project = "direct_model_writer_existing_governance"
     project_dir = tmp_path / project
-    (project_dir / "ddl").mkdir(parents=True)
-    (project_dir / "tasks").mkdir()
-    (project_dir / "models").mkdir()
+    (project_dir / "mid" / "ddl").mkdir(parents=True)
+    (project_dir / "mid" / "tasks").mkdir()
+    (project_dir / "mid" / "models").mkdir()
     (tmp_path / "naming_config.yaml").write_text(
         "types: {}\nbindings: {}\ndictionaries: {}\n",
         encoding="utf-8",
@@ -4699,7 +4710,7 @@ def test_run_direct_model_generation_merges_inspector_with_existing_governance(
         ),
         encoding="utf-8",
     )
-    (project_dir / "models" / "sales_result.yaml").write_text(
+    (project_dir / "mid" / "models" / "sales_result.yaml").write_text(
         yaml.safe_dump(
             {
                 "version": 2,
@@ -4711,7 +4722,7 @@ def test_run_direct_model_generation_merges_inspector_with_existing_governance(
         ),
         encoding="utf-8",
     )
-    (project_dir / "ddl" / "sales_result.sql").write_text(
+    (project_dir / "mid" / "ddl" / "sales_result.sql").write_text(
         """
         CREATE TABLE sales_result (
             stat_date DATE,
@@ -4720,7 +4731,7 @@ def test_run_direct_model_generation_merges_inspector_with_existing_governance(
         """,
         encoding="utf-8",
     )
-    (project_dir / "tasks" / "sales_result.sql").write_text(
+    (project_dir / "mid" / "tasks" / "sales_result.sql").write_text(
         """
         INSERT INTO sales_result
         SELECT stat_date, SUM(pay_amount) AS total_amount
@@ -4790,7 +4801,7 @@ def test_run_direct_model_generation_merges_inspector_with_existing_governance(
     )
 
     model = yaml.safe_load(
-        (project_dir / "models" / "sales_result.yaml").read_text(
+        (project_dir / "mid" / "models" / "sales_result.yaml").read_text(
             encoding="utf-8"
         )
     )
@@ -4810,8 +4821,8 @@ def test_run_direct_model_generation_keeps_summary_dws_from_inspector(
 
     project = "direct_model_writer_summary_dws"
     project_dir = tmp_path / project
-    (project_dir / "ddl").mkdir(parents=True)
-    (project_dir / "tasks").mkdir()
+    (project_dir / "mid" / "ddl").mkdir(parents=True)
+    (project_dir / "mid" / "tasks").mkdir()
     (tmp_path / "naming_config.yaml").write_text(
         "types: {}\nbindings: {}\ndictionaries: {}\n",
         encoding="utf-8",
@@ -4820,7 +4831,7 @@ def test_run_direct_model_generation_keeps_summary_dws_from_inspector(
         "version: 1\nproject: direct_model_writer_summary_dws\n",
         encoding="utf-8",
     )
-    (project_dir / "ddl" / "agent_summary.sql").write_text(
+    (project_dir / "mid" / "ddl" / "agent_summary.sql").write_text(
         """
         CREATE TABLE agent_summary (
             agent_id BIGINT,
@@ -4829,7 +4840,7 @@ def test_run_direct_model_generation_keeps_summary_dws_from_inspector(
         """,
         encoding="utf-8",
     )
-    (project_dir / "tasks" / "agent_summary.sql").write_text(
+    (project_dir / "mid" / "tasks" / "agent_summary.sql").write_text(
         """
         INSERT INTO agent_summary
         SELECT agent_id, COUNT(*) AS interaction_count
@@ -4900,7 +4911,7 @@ def test_run_direct_model_generation_keeps_summary_dws_from_inspector(
     )
 
     model = yaml.safe_load(
-        (project_dir / "models" / "agent_summary.yaml").read_text(
+        (project_dir / "mid" / "models" / "agent_summary.yaml").read_text(
             encoding="utf-8"
         )
     )
@@ -4916,8 +4927,8 @@ def test_run_direct_model_generation_keeps_aggregate_summary_dws_over_dim_inspec
 
     project = "direct_model_writer_summary_dim_guard"
     project_dir = tmp_path / project
-    (project_dir / "ddl").mkdir(parents=True)
-    (project_dir / "tasks").mkdir()
+    (project_dir / "mid" / "ddl").mkdir(parents=True)
+    (project_dir / "mid" / "tasks").mkdir()
     (tmp_path / "naming_config.yaml").write_text(
         "types: {}\nbindings: {}\ndictionaries: {}\n",
         encoding="utf-8",
@@ -4926,7 +4937,7 @@ def test_run_direct_model_generation_keeps_aggregate_summary_dws_over_dim_inspec
         "version: 1\nproject: direct_model_writer_summary_dim_guard\n",
         encoding="utf-8",
     )
-    (project_dir / "ddl" / "agent_summary.sql").write_text(
+    (project_dir / "mid" / "ddl" / "agent_summary.sql").write_text(
         """
         CREATE TABLE agent_summary (
             agent_id BIGINT,
@@ -4936,7 +4947,7 @@ def test_run_direct_model_generation_keeps_aggregate_summary_dws_over_dim_inspec
         """,
         encoding="utf-8",
     )
-    (project_dir / "tasks" / "agent_summary.sql").write_text(
+    (project_dir / "mid" / "tasks" / "agent_summary.sql").write_text(
         """
         INSERT INTO agent_summary
         SELECT agent_id,
@@ -5012,7 +5023,7 @@ def test_run_direct_model_generation_keeps_aggregate_summary_dws_over_dim_inspec
     )
 
     model = yaml.safe_load(
-        (project_dir / "models" / "agent_summary.yaml").read_text(
+        (project_dir / "mid" / "models" / "agent_summary.yaml").read_text(
             encoding="utf-8"
         )
     )
@@ -5042,8 +5053,8 @@ def test_run_direct_model_generation_keeps_aggregate_snapshot_dws_over_dwd_inspe
 
     project = "direct_model_writer_snapshot_dwd_guard"
     project_dir = tmp_path / project
-    (project_dir / "ddl").mkdir(parents=True)
-    (project_dir / "tasks").mkdir()
+    (project_dir / "mid" / "ddl").mkdir(parents=True)
+    (project_dir / "mid" / "tasks").mkdir()
     (tmp_path / "naming_config.yaml").write_text(
         "types: {}\nbindings: {}\ndictionaries: {}\n",
         encoding="utf-8",
@@ -5052,7 +5063,7 @@ def test_run_direct_model_generation_keeps_aggregate_snapshot_dws_over_dwd_inspe
         "version: 1\nproject: direct_model_writer_snapshot_dwd_guard\n",
         encoding="utf-8",
     )
-    (project_dir / "ddl" / "account_daily_snapshot.sql").write_text(
+    (project_dir / "mid" / "ddl" / "account_daily_snapshot.sql").write_text(
         """
         CREATE TABLE account_daily_snapshot (
             account_key CHAR(32),
@@ -5064,7 +5075,7 @@ def test_run_direct_model_generation_keeps_aggregate_snapshot_dws_over_dwd_inspe
         """,
         encoding="utf-8",
     )
-    (project_dir / "tasks" / "account_daily_snapshot.sql").write_text(
+    (project_dir / "mid" / "tasks" / "account_daily_snapshot.sql").write_text(
         """
         INSERT INTO account_daily_snapshot
         SELECT a.account_key,
@@ -5159,7 +5170,7 @@ def test_run_direct_model_generation_keeps_aggregate_snapshot_dws_over_dwd_inspe
     )
 
     model = yaml.safe_load(
-        (project_dir / "models" / "account_daily_snapshot.yaml").read_text(
+        (project_dir / "mid" / "models" / "account_daily_snapshot.yaml").read_text(
             encoding="utf-8"
         )
     )
@@ -5193,8 +5204,8 @@ def test_run_direct_model_generation_keeps_window_profile_dim_from_inspector(
 
     project = "direct_model_writer_window_profile_dim"
     project_dir = tmp_path / project
-    (project_dir / "ddl").mkdir(parents=True)
-    (project_dir / "tasks").mkdir()
+    (project_dir / "mid" / "ddl").mkdir(parents=True)
+    (project_dir / "mid" / "tasks").mkdir()
     (tmp_path / "naming_config.yaml").write_text(
         "types: {}\nbindings: {}\ndictionaries: {}\n",
         encoding="utf-8",
@@ -5203,7 +5214,7 @@ def test_run_direct_model_generation_keeps_window_profile_dim_from_inspector(
         "version: 1\nproject: direct_model_writer_window_profile_dim\n",
         encoding="utf-8",
     )
-    (project_dir / "ddl" / "customer_profile.sql").write_text(
+    (project_dir / "mid" / "ddl" / "customer_profile.sql").write_text(
         """
         CREATE TABLE customer_profile (
             customer_id BIGINT,
@@ -5215,7 +5226,7 @@ def test_run_direct_model_generation_keeps_window_profile_dim_from_inspector(
         """,
         encoding="utf-8",
     )
-    (project_dir / "tasks" / "customer_profile.sql").write_text(
+    (project_dir / "mid" / "tasks" / "customer_profile.sql").write_text(
         """
         INSERT INTO customer_profile
         SELECT customer_id, CAST(@etl_date AS DATE), customer_name, member_level
@@ -5300,7 +5311,7 @@ def test_run_direct_model_generation_keeps_window_profile_dim_from_inspector(
     )
 
     model = yaml.safe_load(
-        (project_dir / "models" / "customer_profile.yaml").read_text(
+        (project_dir / "mid" / "models" / "customer_profile.yaml").read_text(
             encoding="utf-8"
         )
     )
@@ -5329,8 +5340,8 @@ def test_run_direct_model_generation_fills_sparse_dim_fallback_metadata(
 
     project = "direct_model_writer_dim_fallback"
     project_dir = tmp_path / project
-    (project_dir / "ddl").mkdir(parents=True)
-    (project_dir / "tasks").mkdir()
+    (project_dir / "mid" / "ddl").mkdir(parents=True)
+    (project_dir / "mid" / "tasks").mkdir()
     (tmp_path / "naming_config.yaml").write_text(
         "types: {}\nbindings: {}\ndictionaries: {}\n",
         encoding="utf-8",
@@ -5339,7 +5350,7 @@ def test_run_direct_model_generation_fills_sparse_dim_fallback_metadata(
         "version: 1\nproject: direct_model_writer_dim_fallback\n",
         encoding="utf-8",
     )
-    (project_dir / "ddl" / "economic_indicators_profile.sql").write_text(
+    (project_dir / "mid" / "ddl" / "economic_indicators_profile.sql").write_text(
         """
         CREATE TABLE economic_indicators_profile (
             economic_indicator_key CHAR(32),
@@ -5351,7 +5362,7 @@ def test_run_direct_model_generation_fills_sparse_dim_fallback_metadata(
         """,
         encoding="utf-8",
     )
-    (project_dir / "tasks" / "economic_indicators_profile.sql").write_text(
+    (project_dir / "mid" / "tasks" / "economic_indicators_profile.sql").write_text(
         """
         INSERT INTO economic_indicators_profile
         SELECT economic_indicator_key, indicator_date, gdp_growth_rate,
@@ -5400,6 +5411,7 @@ def test_run_direct_model_generation_fills_sparse_dim_fallback_metadata(
     model = yaml.safe_load(
         (
             project_dir
+            / "mid"
             / "models"
             / "economic_indicators_profile.yaml"
         ).read_text(encoding="utf-8")
@@ -5427,8 +5439,8 @@ def test_run_direct_model_generation_keeps_event_detail_dwd_over_ads_inspector(
 
     project = "direct_model_writer_event_detail_guard"
     project_dir = tmp_path / project
-    (project_dir / "ddl").mkdir(parents=True)
-    (project_dir / "tasks").mkdir()
+    (project_dir / "mid" / "ddl").mkdir(parents=True)
+    (project_dir / "mid" / "tasks").mkdir()
     (tmp_path / "naming_config.yaml").write_text(
         "types: {}\nbindings: {}\ndictionaries: {}\n",
         encoding="utf-8",
@@ -5437,7 +5449,7 @@ def test_run_direct_model_generation_keeps_event_detail_dwd_over_ads_inspector(
         "version: 1\nproject: direct_model_writer_event_detail_guard\n",
         encoding="utf-8",
     )
-    (project_dir / "ddl" / "credit_applications.sql").write_text(
+    (project_dir / "mid" / "ddl" / "credit_applications.sql").write_text(
         """
         CREATE TABLE credit_applications (
             application_id BIGINT,
@@ -5447,7 +5459,7 @@ def test_run_direct_model_generation_keeps_event_detail_dwd_over_ads_inspector(
         """,
         encoding="utf-8",
     )
-    (project_dir / "tasks" / "credit_applications.sql").write_text(
+    (project_dir / "mid" / "tasks" / "credit_applications.sql").write_text(
         """
         INSERT INTO credit_applications
         SELECT application_id, customer_id, requested_amount
@@ -5524,7 +5536,7 @@ def test_run_direct_model_generation_keeps_event_detail_dwd_over_ads_inspector(
     )
 
     model = yaml.safe_load(
-        (project_dir / "models" / "credit_applications.yaml").read_text(
+        (project_dir / "mid" / "models" / "credit_applications.yaml").read_text(
             encoding="utf-8"
         )
     )
@@ -5540,8 +5552,8 @@ def test_run_direct_model_generation_syncs_dim_shape_after_layer_fix(
 
     project = "direct_model_writer_dim_shape_guard"
     project_dir = tmp_path / project
-    (project_dir / "ddl").mkdir(parents=True)
-    (project_dir / "tasks").mkdir()
+    (project_dir / "mid" / "ddl").mkdir(parents=True)
+    (project_dir / "mid" / "tasks").mkdir()
     (tmp_path / "naming_config.yaml").write_text(
         "types: {}\nbindings: {}\ndictionaries: {}\n",
         encoding="utf-8",
@@ -5550,7 +5562,7 @@ def test_run_direct_model_generation_syncs_dim_shape_after_layer_fix(
         "version: 1\nproject: direct_model_writer_dim_shape_guard\n",
         encoding="utf-8",
     )
-    (project_dir / "ddl" / "customer_segments_history_profile.sql").write_text(
+    (project_dir / "mid" / "ddl" / "customer_segments_history_profile.sql").write_text(
         """
         CREATE TABLE customer_segments_history_profile (
             segment_history_id BIGINT,
@@ -5561,7 +5573,7 @@ def test_run_direct_model_generation_syncs_dim_shape_after_layer_fix(
         """,
         encoding="utf-8",
     )
-    (project_dir / "tasks" / "customer_segments_history_profile.sql").write_text(
+    (project_dir / "mid" / "tasks" / "customer_segments_history_profile.sql").write_text(
         """
         INSERT INTO customer_segments_history_profile
         SELECT segment_history_id, customer_id, segment_name, effective_date
@@ -5642,6 +5654,7 @@ def test_run_direct_model_generation_syncs_dim_shape_after_layer_fix(
     model = yaml.safe_load(
         (
             project_dir
+            / "mid"
             / "models"
             / "customer_segments_history_profile.yaml"
         ).read_text(encoding="utf-8")
@@ -5771,7 +5784,7 @@ def test_run_direct_model_generation_skips_table_inspector_for_explicit_layer_me
 
     project = "direct_model_writer_table_inspector_layer_skip"
     project_dir = tmp_path / project
-    (project_dir / "ddl").mkdir(parents=True)
+    (project_dir / "mid" / "ddl").mkdir(parents=True)
     (tmp_path / "naming_config.yaml").write_text(
         "types: {}\nbindings: {}\ndictionaries: {}\n",
         encoding="utf-8",
@@ -5784,7 +5797,7 @@ def test_run_direct_model_generation_skips_table_inspector_for_explicit_layer_me
         ),
         encoding="utf-8",
     )
-    (project_dir / "ddl" / "dwd_order_detail.sql").write_text(
+    (project_dir / "mid" / "ddl" / "dwd_order_detail.sql").write_text(
         """
         CREATE TABLE dwd_order_detail (
             order_id BIGINT,
@@ -5821,7 +5834,7 @@ def test_run_direct_model_generation_skips_table_inspector_for_explicit_layer_me
     )
 
     model = yaml.safe_load(
-        (project_dir / "models" / "dwd_order_detail.yaml").read_text(
+        (project_dir / "mid" / "models" / "dwd_order_detail.yaml").read_text(
             encoding="utf-8"
         )
     )

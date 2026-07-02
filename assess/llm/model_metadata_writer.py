@@ -3952,7 +3952,7 @@ def run_direct_model_generation(
     if not dry_run:
         import config as _config
 
-        _config._model_metadata_cache.clear()
+        _config.clear_model_metadata_cache()
 
     changed_updates = [update for update in updates if update["changed"]]
     return {
