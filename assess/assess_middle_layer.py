@@ -7,6 +7,8 @@
     python assess/assess_middle_layer.py
     python assess/assess_middle_layer.py --project finance_analytics
     python assess/assess_middle_layer.py --output report.json
+    python assess/assess_middle_layer.py --project shop --refresh-lineage
+    python assess/assess_middle_layer.py --project shop --lineage-file /tmp/lineage_data.json
     python assess/assess_middle_layer.py --reuse-weight 0.3
     python assess/assess_middle_layer.py --reuse-weight 0.3 --depth-weight 0.2
 """
@@ -16,6 +18,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -48,8 +51,10 @@ from assess.scoring.config import DEFAULT_WEIGHTS, normalize_score_weights
 from config import (
     PROJECT_CONFIG,
     PROJECT_ROOT,
+    TEXT_ENCODING,
     assess_cache_path,
     assess_result_path,
+    lineage_data_path,
 )
 from lineage.table_graph import load_lineage_data
 
@@ -120,7 +125,11 @@ def assess(
     model_metadata = load_model_metadata(project)
     business_domain_config = get_business_domain_config(project)
 
-    data = lineage_data or load_lineage_data(project)
+    data = (
+        lineage_data
+        if lineage_data is not None
+        else load_lineage_data(project)
+    )
     project_dir = PROJECT_ROOT / PROJECT_CONFIG[project]["dir"]
     context = AssessmentContext.from_lineage_data(
         project=project,
@@ -242,6 +251,50 @@ def assess(
     return compact_assessment_result(result)
 
 
+def load_lineage_data_file(path: str) -> dict:
+    lineage_file = Path(path)
+    with open(lineage_file, encoding=TEXT_ENCODING) as f:
+        return json.load(f)
+
+
+def refresh_project_lineage(project: str, parallel: int = 1) -> None:
+    subprocess.run(
+        [
+            sys.executable,
+            str(_root / "lineage" / "lineage_extractor.py"),
+            "--project",
+            project,
+            "--parallel",
+            str(parallel),
+        ],
+        cwd=_root,
+        check=True,
+    )
+
+
+def is_missing_default_lineage_error(error: FileNotFoundError, project: str):
+    message = str(error)
+    default_path = lineage_data_path(project)
+    return (
+        f"未找到 {project} 的血缘数据文件" in message
+        or f"{project}/lineage/lineage_data.json" in message
+        or str(default_path) in message
+    )
+
+
+def missing_lineage_guidance(project: str) -> str:
+    default_path = lineage_data_path(project)
+    return (
+        f"错误: 未找到 {project} 的血缘数据文件: {default_path}\n"
+        "请先生成血缘数据，或指定已生成的临时血缘文件：\n"
+        f"  python lineage/lineage_extractor.py --project {project}\n"
+        f"  python assess/assess_middle_layer.py --project {project} "
+        "--refresh-lineage\n"
+        f"  python assess/assess_middle_layer.py --project {project} "
+        "--lineage-file /path/to/lineage_data.json\n"
+    )
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="数据集市中间层评估工具 (评分权重支持单独指定，最终自动归一化)"
@@ -255,6 +308,21 @@ def main():
     parser.add_argument(
         "--output",
         help="输出 JSON 文件路径 (默认 {project}/assess/assess_result.json)",
+    )
+    parser.add_argument(
+        "--lineage-file",
+        help="显式指定血缘 JSON 文件，替代默认 {project}/lineage/lineage_data.json",
+    )
+    parser.add_argument(
+        "--refresh-lineage",
+        action="store_true",
+        help="评分前先刷新默认 {project}/lineage/lineage_data.json",
+    )
+    parser.add_argument(
+        "--lineage-parallel",
+        type=int,
+        default=1,
+        help="刷新血缘时的 task 文件并行度，默认 1",
     )
     parser.add_argument(
         "--reuse-weight",
@@ -349,6 +417,10 @@ def main():
         "--code-quality", action="store_true", help="只输出代码质量维度"
     )
     args = parser.parse_args()
+    if args.lineage_file and args.refresh_lineage:
+        parser.error("--lineage-file 与 --refresh-lineage 不能同时使用")
+    if args.lineage_parallel < 1:
+        parser.error("--lineage-parallel 必须 >= 1")
 
     weights = dict(
         reuse=args.reuse_weight,
@@ -375,13 +447,43 @@ def main():
         if enabled:
             selected_dimensions.add(dimension)
 
-    result = assess(
-        args.project,
-        weights,
-        selected_dimensions=selected_dimensions,
-        disabled_rules=args.disable_rule,
-        only_rules=args.only_rule,
-    )
+    lineage_data = None
+    if args.lineage_file:
+        try:
+            lineage_data = load_lineage_data_file(args.lineage_file)
+        except FileNotFoundError:
+            parser.exit(
+                1,
+                f"错误: 指定的血缘数据文件不存在: {args.lineage_file}\n",
+            )
+        except json.JSONDecodeError as e:
+            parser.exit(
+                1,
+                f"错误: 指定的血缘数据文件不是合法 JSON: {args.lineage_file} "
+                f"({e})\n",
+            )
+    elif args.refresh_lineage:
+        try:
+            refresh_project_lineage(args.project, args.lineage_parallel)
+        except subprocess.CalledProcessError as e:
+            parser.exit(
+                e.returncode or 1,
+                f"错误: 刷新 {args.project} 血缘数据失败\n",
+            )
+
+    try:
+        result = assess(
+            args.project,
+            weights,
+            selected_dimensions=selected_dimensions,
+            disabled_rules=args.disable_rule,
+            only_rules=args.only_rule,
+            lineage_data=lineage_data,
+        )
+    except FileNotFoundError as e:
+        if is_missing_default_lineage_error(e, args.project):
+            parser.exit(1, missing_lineage_guidance(args.project))
+        raise
 
     print(generate_report(result, result["weights"], args.project))
 
