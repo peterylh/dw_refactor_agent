@@ -89,6 +89,7 @@ def _init_test_repo(tmp_path: Path) -> Path:
 
     _git(repo, "add", "-A")
     _git(repo, "commit", "-m", "initial commit")
+    _git(repo, "branch", "-M", "main")
     return repo
 
 
@@ -165,6 +166,54 @@ def test_git_no_changes(tmp_path):
         base_branch="main",
     )
     assert len(changes) == 0
+
+
+def test_git_default_project_scans_split_mart_ddl_dirs(tmp_path):
+    """默认 git 模式覆盖项目 mid/ddl 与 ads/ddl."""
+    repo = tmp_path / "repo"
+    repo.mkdir(parents=True)
+    _git(repo, "init")
+    _git(repo, "config", "user.email", "test@test.com")
+    _git(repo, "config", "user.name", "test")
+
+    mid_ddl = repo / "shop" / "mid" / "ddl"
+    ads_ddl = repo / "shop" / "ads" / "ddl"
+    mid_ddl.mkdir(parents=True)
+    ads_ddl.mkdir(parents=True)
+    (mid_ddl / "dwd_order.sql").write_text(
+        DDL_ORDER.replace("ods_order", "dwd_order")
+    )
+
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "initial commit")
+    _git(repo, "branch", "-M", "main")
+
+    (mid_ddl / "dwd_order.sql").write_text(
+        DDL_ORDER_MODIFIED.replace("ods_order", "dwd_order")
+    )
+    (ads_ddl / "ads_order_summary.sql").write_text(
+        """DROP TABLE IF EXISTS shop_dm.ads_order_summary;
+CREATE TABLE IF NOT EXISTS shop_dm.ads_order_summary (
+    order_date DATE NOT NULL COMMENT '日期',
+    order_count BIGINT NULL COMMENT '订单数'
+) ENGINE=OLAP DUPLICATE KEY(order_date) DISTRIBUTED BY HASH(order_date) BUCKETS 10
+PROPERTIES ("replication_num" = "1");
+"""
+    )
+
+    changes = derive_from_git(repo=repo)
+
+    assert {change.change_type for change in changes} == {"ALTER", "CREATE"}
+    assert any(
+        isinstance(change, AlterTable)
+        and change.table_name == "shop_dm.dwd_order"
+        for change in changes
+    )
+    assert any(
+        isinstance(change, CreateTable)
+        and change.table_def.short_name == "ads_order_summary"
+        for change in changes
+    )
 
 
 def test_git_rename_add_column(tmp_path):

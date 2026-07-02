@@ -15,6 +15,7 @@ DDL 变更自动推导工具。
     对比 Git 分支与工作区的 DDL 文件差异,自动推导变更:
     - 以 merge-base(当前分支与 main 的分叉点)为基线
     - 读取工作区文件为当前版本
+    - 默认读取项目 mid/ddl 与 ads/ddl
     - 推导结果同上
 """
 
@@ -27,7 +28,7 @@ import sys
 import uuid
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import List, Optional, Sequence, Tuple, Union
 
 _root = Path(__file__).resolve().parent.parent
 if str(_root) not in sys.path:
@@ -37,7 +38,7 @@ import sqlglot
 from sqlglot import exp
 from sqlglot.errors import ErrorLevel
 
-from config import TEXT_ENCODING
+from config import PROJECT_CONFIG, TEXT_ENCODING
 from doris_sql import (
     extract_doris_distribution_column,
     extract_doris_key,
@@ -401,18 +402,42 @@ def load_git_tables(repo: Path, ddl_dir_rel: str, ref: str) -> dict:
     return tables
 
 
+def _project_ddl_dir_rels(project: str) -> List[str]:
+    cfg = PROJECT_CONFIG.get(project)
+    if not cfg:
+        raise ValueError(f"未知项目: {project}")
+    project_dir = cfg["dir"]
+    return [
+        f"{project_dir}/mid/ddl",
+        f"{project_dir}/ads/ddl",
+    ]
+
+
+def _normalize_ddl_dir_rels(
+    ddl_dir_rel: Optional[Union[str, Path, Sequence[Union[str, Path]]]],
+    project: str,
+) -> List[str]:
+    if ddl_dir_rel is None:
+        return _project_ddl_dir_rels(project)
+    if isinstance(ddl_dir_rel, (str, Path)):
+        return [str(ddl_dir_rel)]
+    return [str(path) for path in ddl_dir_rel if str(path)]
+
+
 def derive_from_git(
-    ddl_dir_rel: str = "shop/ddl",
+    ddl_dir_rel: Optional[Union[str, Sequence[str]]] = None,
     repo: Optional[Path] = None,
     base_branch: str = "main",
+    project: str = "shop",
 ) -> List[DDLChange]:
     """
     对比 Git merge-base 与工作区的 DDL 差异,返回变更列表。
 
     参数:
-        ddl_dir_rel: DDL 目录在 repo 中的相对路径 (如 "shop/ddl")
+        ddl_dir_rel: DDL 目录在 repo 中的相对路径; 不传则按项目扫描 mid/ddl 与 ads/ddl
         repo:        Git 仓库根目录 (默认自动查找)
         base_branch: 基线分支 (默认 main)
+        project:     未指定 ddl_dir_rel 时使用的项目名 (默认 shop)
 
     返回:
         List[DDLChange]
@@ -420,8 +445,11 @@ def derive_from_git(
     if repo is None:
         repo = _find_git_root(Path.cwd())
     base_ref = _get_merge_base(repo, base_branch)
-    old_tables = load_git_tables(repo, ddl_dir_rel, base_ref)
-    new_tables = load_tables_from_dir(repo / ddl_dir_rel)
+    old_tables = {}
+    new_tables = {}
+    for rel_path in _normalize_ddl_dir_rels(ddl_dir_rel, project):
+        old_tables.update(load_git_tables(repo, rel_path, base_ref))
+        new_tables.update(load_tables_from_dir(repo / rel_path))
     return derive_ddl_changes(old_tables, new_tables)
 
 
@@ -848,11 +876,18 @@ def main():
     # ---- git 模式 (对比分支与工作区) ----
     git_p = sub.add_parser("git", help="对比 Git 分支与工作区的 DDL")
     git_p.add_argument(
-        "ddl_dir",
+        "ddl_dirs",
         type=str,
-        nargs="?",
-        default="shop/ddl",
-        help="DDL 目录相对路径 (默认 shop/ddl)",
+        nargs="*",
+        default=None,
+        help="DDL 目录相对路径; 不传则按项目扫描 mid/ddl 与 ads/ddl",
+    )
+    git_p.add_argument(
+        "--project",
+        type=str,
+        default="shop",
+        choices=sorted(PROJECT_CONFIG),
+        help="未指定 DDL 目录时使用的项目 (默认 shop)",
     )
     git_p.add_argument(
         "--base", type=str, default="main", help="基线分支 (默认 main)"
@@ -906,9 +941,13 @@ def main():
     if args.mode == "git":
         try:
             changes = derive_from_git(
-                ddl_dir_rel=args.ddl_dir,
+                ddl_dir_rel=args.ddl_dirs or None,
                 base_branch=args.base,
+                project=args.project,
             )
+        except ValueError as e:
+            print(f"错误: {e}")
+            return 1
         except FileNotFoundError as e:
             print(f"错误: {e}")
             return 1
