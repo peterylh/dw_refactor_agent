@@ -82,7 +82,7 @@ DDL_NON_COLUMN_PREFIXES = {
     "PROPERTIES",
     "UNIQUE",
 }
-DIRECT_MODEL_WRITE_SCOPES = {"all", "table", "business"}
+DIRECT_MODEL_WRITE_SCOPES = {"all", "table"}
 DIRECT_MATCH_STOPWORDS = {
     "and",
     "area",
@@ -278,6 +278,7 @@ def model_path_for_table(
     table_name: str,
     *,
     layer: str | None = None,
+    prefer_existing: bool = True,
 ) -> Path:
     """返回模型 YAML 路径。"""
     project_cfg = PROJECT_CONFIG[project]
@@ -290,10 +291,11 @@ def model_path_for_table(
         project_dir / "mid" / "models",
         project_dir / "ads" / "models",
     ]
-    for model_dir in model_dirs:
-        candidate = model_dir / filename
-        if candidate.exists():
-            return candidate
+    if prefer_existing:
+        for model_dir in model_dirs:
+            candidate = model_dir / filename
+            if candidate.exists():
+                return candidate
 
     role = asset_role_for_layer(layer)
     if role == "ods":
@@ -302,6 +304,24 @@ def model_path_for_table(
         role_dir = project_dir / role / "models"
         return role_dir / filename
     return project_dir / "mid" / "models" / filename
+
+
+def existing_model_paths_for_table(project: str, table_name: str) -> list[Path]:
+    project_cfg = PROJECT_CONFIG[project]
+    project_dir = PROJECT_ROOT / project_cfg["dir"]
+    filename = f"{table_name}.yaml"
+    catalog = str(project_cfg.get("catalog") or "internal")
+    database = str(project_cfg.get("db") or "")
+    model_dirs = [
+        project_dir / "ods" / "models" / catalog / database,
+        project_dir / "mid" / "models",
+        project_dir / "ads" / "models",
+    ]
+    return [
+        model_dir / filename
+        for model_dir in model_dirs
+        if (model_dir / filename).exists()
+    ]
 
 
 def metric_violations(result: TableInspectResult) -> list[dict[str, Any]]:
@@ -2624,11 +2644,21 @@ def _direct_infer_table_type(
     lineage_view: LineageView | None,
     table_inspector_layer_result: dict[str, Any] | None = None,
 ) -> str:
+    name = str(table_name or "").lower()
+    normalized_layer = str(layer or "").upper()
+    if normalized_layer == "ODS" or name.startswith("ods_"):
+        return "other"
+    if normalized_layer == "ADS" or name.startswith("ads_"):
+        return "other"
+    if normalized_layer == "DIM" or name.startswith("dim_"):
+        return "dimension"
+    if normalized_layer == "DWS":
+        return "fact"
+
     existing_type = str(existing.get("table_type") or "").strip().lower()
     if existing_type:
         return existing_type
 
-    name = str(table_name or "").lower()
     match_text = _direct_model_match_text(table_name, asset, lineage_view)
     lowered_match_text = match_text.lower()
     process_score = float(process_match.get("score") or 0)
@@ -2648,14 +2678,6 @@ def _direct_infer_table_type(
         for token in (" dimension", "维度", "实体", "属性")
     )
 
-    if layer == "ODS" or name.startswith("ods_"):
-        return "other"
-    if layer == "ADS" or name.startswith("ads_"):
-        return "other"
-    if layer == "DIM" or name.startswith("dim_"):
-        return "dimension"
-    if layer == "DWS":
-        return "fact"
     if _direct_table_inspector_layer_result_is_usable(
         table_inspector_layer_result
     ):
@@ -2664,7 +2686,7 @@ def _direct_infer_table_type(
         ).strip().lower()
         if inspected_table_type in (VALID_TABLE_TYPES - {"other"}):
             return inspected_table_type
-    if layer == "DWD" and _direct_has_event_detail_layer_signal(
+    if normalized_layer == "DWD" and _direct_has_event_detail_layer_signal(
         table_name,
         has_aggregate=bool(lineage_facts.get("has_aggregate")),
         process_score=process_score,
@@ -2677,9 +2699,9 @@ def _direct_infer_table_type(
         application_output_strength="",
     ):
         return "fact"
-    if layer == "DWD" and subject_score >= 2 and has_dimension_text:
+    if normalized_layer == "DWD" and subject_score >= 2 and has_dimension_text:
         return "dimension"
-    if layer == "DWD" and process_score >= 2 and (
+    if normalized_layer == "DWD" and process_score >= 2 and (
         has_metric_hints or lineage_facts.get("has_aggregate") or has_fact_text
     ):
         return "fact"
@@ -2689,7 +2711,7 @@ def _direct_infer_table_type(
         return "fact"
     if lineage_facts.get("has_aggregate"):
         return "fact"
-    return _infer_table_type(table_name, layer)
+    return _infer_table_type(table_name, normalized_layer)
 
 
 def _direct_existing_catalog_mapping(
@@ -3695,14 +3717,20 @@ def update_model_yaml_from_direct_generation(
 ) -> dict[str, Any]:
     write_scope = _validate_write_scope(write_scope)
     if write_scope not in DIRECT_MODEL_WRITE_SCOPES:
-        raise ValueError("generate-models 仅支持 write_scope=all/table/business")
+        raise ValueError("generate-models 仅支持 write_scope=all/table")
 
+    ignore_existing_model_files = base_existing is not None
     path = model_path_for_table(
         project,
         table_name,
         layer=mapping.get("layer"),
+        prefer_existing=not ignore_existing_model_files,
     )
-    existing = _existing_model_data(path)
+    existing = (
+        {}
+        if ignore_existing_model_files
+        else _existing_model_data(path)
+    )
     previous = dict(existing)
     payload_existing = existing if base_existing is None else dict(base_existing)
     payload_mapping = (
@@ -3763,6 +3791,10 @@ def update_model_yaml_from_direct_generation(
             yaml.safe_dump(updated, allow_unicode=True, sort_keys=False),
             encoding=TEXT_ENCODING,
         )
+        if ignore_existing_model_files:
+            for stale_path in existing_model_paths_for_table(project, table_name):
+                if stale_path != path:
+                    stale_path.unlink()
 
     business_changed = any(
         updated.get(key) != previous.get(key)
@@ -3887,7 +3919,7 @@ def run_direct_model_generation(
     """Generate model YAML from catalog, DDL, tasks, and lineage facts."""
     write_scope = _validate_write_scope(write_scope)
     if write_scope not in DIRECT_MODEL_WRITE_SCOPES:
-        raise ValueError("generate-models 仅支持 write_scope=all/table/business")
+        raise ValueError("generate-models 仅支持 write_scope=all/table")
     if infer_layer_with_llm and not api_key:
         raise ValueError("infer_layer_with_llm=True 时必须提供 api_key")
 
@@ -4585,6 +4617,8 @@ def main() -> None:
             overwrite=args.overwrite_catalog,
         )
     elif args.generate_models:
+        if args.write_scope == "business":
+            raise SystemExit("--write-scope business 需要配合 --from-catalog")
         api_key = ""
         if args.infer_layer_with_llm:
             api_key = os.environ.get("DEEPSEEK_API_KEY", "")

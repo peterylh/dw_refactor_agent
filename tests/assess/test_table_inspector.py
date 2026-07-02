@@ -69,7 +69,7 @@ def test_validate_response_contract_scenarios():
         _assert_validate_primary_entities_uses_inferred_dwd_for_cold_start,
         _assert_validate_candidate_layer_rejects_non_middle_layer,
         _assert_validate_metadata_quality_requires_dws_and_dim_semantics,
-        _assert_base_metric_relationship_validation_is_warning_not_blocking,
+        _assert_base_metric_relationship_validation_blocks_invalid_references,
         _assert_validate_columns_flags_unknown_duplicate_and_missing_fields,
         _assert_validate_columns_requires_all_dws_fact_fields,
         _assert_validate_metric_relationships_requires_derived_base_metric_in_upstream_atomic,
@@ -884,8 +884,8 @@ def _assert_validate_metadata_quality_requires_dws_and_dim_semantics():
     assert sparse_dim_result.status == "warning"
 
 
-def _assert_base_metric_relationship_validation_is_warning_not_blocking():
-    result = TableInspectResult(
+def _assert_base_metric_relationship_validation_blocks_invalid_references():
+    invalid_result = TableInspectResult(
         table_name="customer_monthly_summary",
         declared_layer="OTHER",
         inferred_layer="DWS",
@@ -896,7 +896,16 @@ def _assert_base_metric_relationship_validation_is_warning_not_blocking():
             "invalid_base_metrics": ["total_amount:transaction_amount"]
         },
     )
-    blocked = TableInspectResult(
+    missing_result = TableInspectResult(
+        table_name="customer_monthly_summary",
+        declared_layer="OTHER",
+        inferred_layer="DWS",
+        table_type="fact",
+        confidence=0.9,
+        reasoning_steps=["公共汇总表"],
+        validation={"missing_base_metrics": ["total_amount"]},
+    )
+    candidate_layer_result = TableInspectResult(
         table_name="customer_monthly_summary",
         declared_layer="OTHER",
         inferred_layer="ADS",
@@ -906,8 +915,9 @@ def _assert_base_metric_relationship_validation_is_warning_not_blocking():
         validation={"invalid_candidate_layers": ["ADS"]},
     )
 
-    assert result.status == "warning"
-    assert blocked.status == "blocked"
+    assert invalid_result.status == "blocked"
+    assert missing_result.status == "blocked"
+    assert candidate_layer_result.status == "blocked"
 
 
 def _assert_parse_response_preserves_entities_metadata():

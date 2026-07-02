@@ -3542,15 +3542,166 @@ def test_run_direct_model_generation_can_ignore_existing_model_metadata(
     assert result["ignore_existing_models"] is True
     assert update["assignment_source"] == "direct_catalog_match"
     assert update["assignment_reason"].startswith("semantic_subject_match")
-    assert update["previous_layer"] == "DWD"
+    assert update["previous_layer"] is None
     assert update["layer"] == "DIM"
-    assert update["previous_table_type"] == "fact"
+    assert update["previous_table_type"] is None
     assert update["table_type"] == "dimension"
     assert update["business_process"] is None
     assert update["semantic_subject"] == "CUST"
 
 
-def test_run_direct_model_generation_preserves_existing_governance_on_fallback(
+def test_run_direct_model_generation_ignore_existing_uses_inferred_layer_path(
+    tmp_path, monkeypatch
+):
+    project = "direct_model_writer_ignore_existing_path"
+    project_dir = tmp_path / project
+    (project_dir / "mid" / "ddl").mkdir(parents=True)
+    (project_dir / "ads" / "models").mkdir(parents=True)
+    (tmp_path / "naming_config.yaml").write_text(
+        "types: {}\nbindings: {}\ndictionaries: {}\n",
+        encoding="utf-8",
+    )
+    (project_dir / "business_semantics.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "version": 1,
+                "project": project,
+                "semantic_subjects": [
+                    {
+                        "code": "CUST",
+                        "name": "客户",
+                        "data_domain": "01",
+                        "business_area": "SHOP",
+                    }
+                ],
+            },
+            allow_unicode=True,
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    (project_dir / "mid" / "ddl" / "customer_profile.sql").write_text(
+        """
+        CREATE TABLE customer_profile (
+            customer_id BIGINT,
+            customer_name VARCHAR(64)
+        );
+        """,
+        encoding="utf-8",
+    )
+    stale_ads_path = project_dir / "ads" / "models" / "customer_profile.yaml"
+    stale_ads_path.write_text(
+        yaml.safe_dump(
+            {
+                "version": 2,
+                "name": "customer_profile",
+                "layer": "ADS",
+                "table_type": "other",
+            },
+            allow_unicode=True,
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    _configure_project_root(monkeypatch, tmp_path)
+    monkeypatch.setitem(
+        config.PROJECT_CONFIG,
+        project,
+        {
+            "dir": project,
+            "naming_config": "naming_config.yaml",
+        },
+    )
+
+    result = run_direct_model_generation(
+        project,
+        dry_run=False,
+        ignore_existing_models=True,
+    )
+
+    mid_model_path = project_dir / "mid" / "models" / "customer_profile.yaml"
+    update = result["model_updates"][0]
+    model = yaml.safe_load(mid_model_path.read_text(encoding="utf-8"))
+    assert update["path"] == str(mid_model_path)
+    assert model["layer"] == "DIM"
+    assert model["table_type"] == "dimension"
+    assert not stale_ads_path.exists()
+
+
+def test_run_direct_model_generation_keeps_layer_table_type_consistent(
+    tmp_path, monkeypatch
+):
+    project = "direct_model_writer_layer_type_consistency"
+    project_dir = tmp_path / project
+    (project_dir / "mid" / "ddl").mkdir(parents=True)
+    (project_dir / "mid" / "models").mkdir()
+    (tmp_path / "naming_config.yaml").write_text(
+        "types: {}\nbindings: {}\ndictionaries: {}\n",
+        encoding="utf-8",
+    )
+    (project_dir / "business_semantics.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "version": 1,
+                "project": project,
+                "semantic_subjects": [
+                    {
+                        "code": "CUST",
+                        "name": "客户",
+                        "data_domain": "01",
+                        "business_area": "SHOP",
+                    }
+                ],
+            },
+            allow_unicode=True,
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    (project_dir / "mid" / "ddl" / "customer_profile.sql").write_text(
+        """
+        CREATE TABLE customer_profile (
+            customer_id BIGINT,
+            customer_name VARCHAR(64)
+        );
+        """,
+        encoding="utf-8",
+    )
+    model_path = project_dir / "mid" / "models" / "customer_profile.yaml"
+    model_path.write_text(
+        yaml.safe_dump(
+            {
+                "version": 2,
+                "name": "customer_profile",
+                "layer": "DWD",
+                "table_type": "fact",
+                "business_process": "OLD_PROCESS",
+            },
+            allow_unicode=True,
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    _configure_project_root(monkeypatch, tmp_path)
+    monkeypatch.setitem(
+        config.PROJECT_CONFIG,
+        project,
+        {
+            "dir": project,
+            "naming_config": "naming_config.yaml",
+        },
+    )
+
+    run_direct_model_generation(project, dry_run=False)
+
+    model = yaml.safe_load(model_path.read_text(encoding="utf-8"))
+    assert model["layer"] == "DIM"
+    assert model["table_type"] == "dimension"
+    assert model["semantic_subject"] == "CUST"
+    assert "business_process" not in model
+
+
+def test_run_direct_model_generation_rejects_business_scope(
     tmp_path, monkeypatch
 ):
     project = "direct_model_writer_preserve_governance"
@@ -3637,14 +3788,15 @@ def test_run_direct_model_generation_preserves_existing_governance_on_fallback(
         },
     )
 
-    result = run_direct_model_generation(
-        project,
-        dry_run=True,
-        write_scope="business",
-    )
-
-    assert result["model_change_count"] == 0
-    assert result["model_updates"] == []
+    with pytest.raises(
+        ValueError,
+        match="generate-models 仅支持 write_scope=all/table",
+    ):
+        run_direct_model_generation(
+            project,
+            dry_run=True,
+            write_scope="business",
+        )
 
 
 def test_run_direct_model_generation_does_not_use_downstream_for_process_match(
@@ -4531,7 +4683,7 @@ def test_run_direct_model_generation_cold_start_inspects_prefixed_table_metadata
     assert update["metric_generation_source"] == "table_inspector"
 
 
-def test_run_direct_model_generation_preserves_existing_metrics_when_inspector_sparse(
+def test_run_direct_model_generation_ignores_existing_metrics_when_inspector_sparse(
     tmp_path, monkeypatch
 ):
     import assess.llm.model_metadata_writer as writer_module
@@ -4674,7 +4826,7 @@ def test_run_direct_model_generation_preserves_existing_metrics_when_inspector_s
         )
     )
     update = result["model_updates"][0]
-    assert model["atomic_metrics"] == ["sales_amt"]
+    assert "atomic_metrics" not in model
     assert update["removed_metric_count"] == 0
     assert update["metric_generation_source"] == ""
 

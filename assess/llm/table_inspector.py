@@ -44,15 +44,15 @@ VALIDATION_ERROR_KEYS = (
     "invalid_time_periods",
     "invalid_metric_expressions",
     "missing_primary_entities",
+    "missing_base_metrics",
+    "invalid_base_metrics",
+    "invalid_base_metric_tables",
     "invalid_candidate_layers",
     "invalid_dimension_table_type",
 )
 VALIDATION_WARNING_KEYS = (
     "missing_columns",
-    "missing_base_metrics",
     "missing_base_metric_tables",
-    "invalid_base_metrics",
-    "invalid_base_metric_tables",
     "ambiguous_base_metrics",
     "missing_dimension_entities",
     "missing_metric_metadata",
