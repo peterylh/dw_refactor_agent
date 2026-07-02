@@ -48,8 +48,8 @@ LLM 发现的原则：
 等价入口也可以使用：
 
 ```bash
-python -m assess.llm.model_metadata_writer --project shop --catalog-from-llm --dry-run --overwrite-catalog
-python -m assess.llm.model_metadata_writer --project shop --catalog-from-llm --overwrite-catalog
+python -m assess.llm.model_metadata_writer --project shop --mode catalog --llm --dry-run
+python -m assess.llm.model_metadata_writer --project shop --mode catalog --llm
 ```
 
 ### 3. 人工修订 catalog
@@ -64,11 +64,11 @@ python -m assess.llm.model_metadata_writer --project shop --catalog-from-llm --o
 不要在 catalog 中长期维护 `tables`。表到业务过程/语义主题的归属以
 模型 YAML 为准；catalog 只维护 code、名称、归属域、别名、说明等治理信息。
 
-### 4. 从 catalog 初始化或刷新 models
+### 4. 从 catalog 刷新 models
 
 ```bash
-python -m assess.llm.model_metadata_writer --project shop --from-catalog --write-scope business --dry-run
-python -m assess.llm.model_metadata_writer --project shop --from-catalog --write-scope business
+python -m assess.llm.model_metadata_writer --project shop --mode refresh --dry-run
+python -m assess.llm.model_metadata_writer --project shop --mode refresh
 ```
 
 这个命令不调用 LLM。它读取 `{project}/business_semantics.yaml`、
@@ -89,14 +89,25 @@ python -m assess.llm.model_metadata_writer --project shop --from-catalog --write
 
 如果某张表的 model 中还没有 `business_process` 或 `semantic_subject`，工具仍会为该表创建或保留基础 model 元数据，但不会凭表名生成业务过程。
 
-如果项目还没有可用的 `models/*.yaml`，可以使用直接生成模式。默认情况下它不调用 LLM，
-会读取 `{project}/business_semantics.yaml`、`ddl/*.sql`、`tasks/*.sql`，
-并尽量使用 `{project}/lineage/lineage_data.json` 的上下游和聚合事实，为缺失
-model 创建 YAML，并对缺失的 `business_process` / `semantic_subject` 做保守匹配：
+如果希望在刷新时重新调用 table_inspector，可以加 `--llm`：
 
 ```bash
-python -m assess.llm.model_metadata_writer --project shop --generate-models --dry-run
-python -m assess.llm.model_metadata_writer --project shop --generate-models
+python -m assess.llm.model_metadata_writer --project shop --mode refresh --llm --dry-run
+python -m assess.llm.model_metadata_writer --project shop --mode refresh --llm
+```
+
+该模式会基于 `business_semantics.yaml`、现有 models、DDL、任务 SQL 和 lineage 做表级巡检，刷新 model 的层级、表类型、业务语义、指标、entities 和 grain，并把巡检结果中稳定的业务过程/语义主题同步回 catalog。
+
+### 5. 直接生成 models
+
+如果项目还没有可用的 `models/*.yaml`，或希望重新生成所有模型元数据，可以使用直接生成模式。默认情况下它不调用 LLM，
+会读取 `{project}/business_semantics.yaml`、`ddl/*.sql`、`tasks/*.sql`，
+并尽量使用 `{project}/lineage/lineage_data.json` 的上下游和聚合事实，为项目表生成
+model YAML，并对 `business_process` / `semantic_subject` 做保守匹配：
+
+```bash
+python -m assess.llm.model_metadata_writer --project shop --mode generate --dry-run
+python -m assess.llm.model_metadata_writer --project shop --mode generate
 ```
 
 直接生成模式会写入或补齐：
@@ -107,48 +118,22 @@ python -m assess.llm.model_metadata_writer --project shop --generate-models
 
 默认规则路径不会识别指标分组，也不会替代 LLM 巡检；没有足够匹配依据的表只生成基础 model 元数据，并在结果 JSON 的 `assignment_source` / `assignment_reason` 中说明来源。
 
-如果需要冷启动时让 LLM 辅助分层并补齐模型细节，可加 `--infer-layer-with-llm`。该模式会先用确定性规则固定 ODS/ADS 边界层，再让 table_inspector 在 DWD/DWS/DIM 中裁决中间层；当 `--write-scope all` 时，还会把 table_inspector 返回的指标分组、entities 和 grain 写入可用的中间层模型。
+`generate` 会强制忽略现有 `models/*.yaml` 中的 `layer`、`table_type`、
+`business_process`、`semantic_subject` 或执行策略；实际写入时会先清空项目现有
+model YAML，再写入重新生成的结果。`--dry-run` 不删除文件，只在结果 JSON 中列出计划删除的文件。
 
-如果要验证“完全不依赖现有 models YAML”的纯生成效果，可加
-`--ignore-existing-models`。该模式不会把当前 `models/*.yaml` 中的
-`layer`、`table_type`、`business_process`、`semantic_subject` 或执行策略作为推断先验，
-只把现有文件作为 dry-run 对比或最终覆盖目标：
+如果需要冷启动时让 LLM 辅助分层并补齐模型细节，可加 `--llm`。该模式会先用确定性规则固定 ODS/ADS 边界层，再让 table_inspector 在 DWD/DWS/DIM 中裁决中间层，并把 table_inspector 返回的指标分组、entities 和 grain 写入可用的中间层模型：
 
 ```bash
-python -m assess.llm.model_metadata_writer --project shop --generate-models --ignore-existing-models --dry-run
+python -m assess.llm.model_metadata_writer --project shop --mode generate --llm --dry-run
+python -m assess.llm.model_metadata_writer --project shop --mode generate --llm
 ```
 
 直接生成里的确定性信号包含目录放置、表名前缀、常见英文数仓命名 token 和业务 catalog 匹配。中文或高度本地化命名项目更依赖 table_inspector 与 `business_semantics.yaml` 的质量。
 
-### 5. 用 LLM 补全模型细节
-
-表级 LLM 巡检用于补全和刷新更细的模型信息：
-
-```bash
-python -m assess.llm.model_metadata_writer --project shop --dry-run
-python -m assess.llm.model_metadata_writer --project shop
-```
-
-常用写入范围：
-
-```bash
-python -m assess.llm.model_metadata_writer --project shop --write-scope table
-python -m assess.llm.model_metadata_writer --project shop --write-scope metrics
-python -m assess.llm.model_metadata_writer --project shop --write-scope grain
-python -m assess.llm.model_metadata_writer --project shop --write-scope all
-```
-
-说明：
-
-- `table`: 回写 layer/table_type 及适用的业务域/板块。
-- `metrics`: 回写 atomic/derived/calculated 指标分组。
-- `grain`: 回写 entities/grain。
-- `all`: 同时回写上述内容。
-- `business`: 仅用于 `--from-catalog`，表示按 models 中已有业务 code 从 catalog 补齐治理信息，并刷新基础表元数据。
-
 ## 常见问题
 
-### `--from-catalog --write-scope business` 是什么？
+### `--mode refresh` 是什么？
 
 它是 catalog 与 models 的确定性对齐命令。它不做语义识别，也不调用 DeepSeek；前提是 catalog 已经由 LLM 或人工确认过，models 中的表级归属也已经存在或由 LLM 发现阶段写入。
 
@@ -160,7 +145,7 @@ python -m assess.llm.model_metadata_writer --project shop --write-scope all
 
 ### 已存在 `business_semantics.yaml` 时会怎样？
 
-默认不会覆盖。需要更新时使用 `--overwrite` 或 `--overwrite-catalog`，并通过 Git diff 审查结果。
+`--mode catalog` 在不加 `--llm` 时只会创建缺失的目录骨架，不会覆盖现有 catalog。需要重新从 LLM 巡检结果更新 catalog 时，使用 `--mode catalog --llm`，并通过 Git diff 审查结果。
 
 ### naming_config.yaml 和 catalog 的字典是什么关系？
 

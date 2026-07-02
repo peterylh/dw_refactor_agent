@@ -2119,19 +2119,26 @@ def test_model_metadata_writer_cli_defaults_output_to_project_assess_dir(
     )
     monkeypatch.setattr(
         writer_module,
-        "run_catalog_metadata_write",
+        "run_refresh_metadata",
         lambda *args, **kwargs: {
             "project": project,
-            "source": "catalog",
+            "source": "refresh",
             "inspected_table_count": 0,
             "model_change_count": 0,
             "model_update_count": 0,
+            "catalog_update": {"changed": False},
         },
     )
     monkeypatch.setattr(
         sys,
         "argv",
-        ["model_metadata_writer.py", "--project", project, "--from-catalog"],
+        [
+            "model_metadata_writer.py",
+            "--project",
+            project,
+            "--mode",
+            "refresh",
+        ],
     )
 
     writer_module.main()
@@ -2139,6 +2146,253 @@ def test_model_metadata_writer_cli_defaults_output_to_project_assess_dir(
     output_path = project_dir / "assess" / "model_metadata_result.json"
     assert output_path.exists()
     assert not (tool_dir / f"model_metadata_result_{project}.json").exists()
+
+
+def test_model_metadata_writer_cli_generate_replaces_existing_models(
+    monkeypatch,
+    tmp_path,
+):
+    import assess.llm.model_metadata_writer as writer_module
+
+    project = "shop"
+    project_dir = tmp_path / project
+    project_dir.mkdir()
+    _configure_project_root(monkeypatch, tmp_path)
+    monkeypatch.setitem(
+        config.PROJECT_CONFIG,
+        project,
+        {
+            "dir": project,
+        },
+    )
+    seen = {}
+
+    def fake_run_direct_model_generation(*args, **kwargs):
+        seen["args"] = args
+        seen["kwargs"] = kwargs
+        return {
+            "project": project,
+            "source": "direct_generation",
+            "write_scope": kwargs["write_scope"],
+            "ignore_existing_models": kwargs["ignore_existing_models"],
+            "infer_layer_with_llm": kwargs["infer_layer_with_llm"],
+            "replace_existing_models": kwargs["replace_existing_models"],
+            "catalog_update": None,
+            "planned_deleted_model_files": [],
+            "deleted_model_files": [],
+            "inspected_table_count": 0,
+            "model_change_count": 0,
+            "model_update_count": 0,
+            "assigned_business_process_count": 0,
+            "assigned_semantic_subject_count": 0,
+            "table_inspector_layer_inference_count": 0,
+            "table_inspector_layer_inference_attempt_count": 0,
+            "table_inspector_layer_inference_candidate_count": 0,
+            "warning_count": 0,
+        }
+
+    monkeypatch.setattr(
+        writer_module,
+        "run_direct_model_generation",
+        fake_run_direct_model_generation,
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "model_metadata_writer.py",
+            "--project",
+            project,
+            "--mode",
+            "generate",
+        ],
+    )
+
+    writer_module.main()
+
+    assert seen["args"] == (project,)
+    assert seen["kwargs"]["write_scope"] == "all"
+    assert seen["kwargs"]["ignore_existing_models"] is True
+    assert seen["kwargs"]["replace_existing_models"] is True
+    assert seen["kwargs"]["update_catalog"] is True
+    assert seen["kwargs"]["infer_layer_with_llm"] is False
+    assert (project_dir / "assess" / "model_metadata_result.json").exists()
+
+
+def test_model_metadata_writer_cli_refresh_defaults_to_business_scope(
+    monkeypatch,
+    tmp_path,
+):
+    import assess.llm.model_metadata_writer as writer_module
+
+    project = "shop"
+    project_dir = tmp_path / project
+    project_dir.mkdir()
+    _configure_project_root(monkeypatch, tmp_path)
+    monkeypatch.setitem(
+        config.PROJECT_CONFIG,
+        project,
+        {
+            "dir": project,
+        },
+    )
+    seen = {}
+
+    def fake_run_refresh_metadata(*args, **kwargs):
+        seen["args"] = args
+        seen["kwargs"] = kwargs
+        return {
+            "project": project,
+            "source": "refresh",
+            "write_scope": kwargs["write_scope"],
+            "llm": kwargs["llm"],
+            "catalog_update": {"changed": False},
+            "inspected_table_count": 0,
+            "model_change_count": 0,
+            "model_update_count": 0,
+        }
+
+    monkeypatch.setattr(
+        writer_module,
+        "run_refresh_metadata",
+        fake_run_refresh_metadata,
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "model_metadata_writer.py",
+            "--project",
+            project,
+            "--mode",
+            "refresh",
+        ],
+    )
+
+    writer_module.main()
+
+    assert seen["args"] == (project,)
+    assert seen["kwargs"]["llm"] is False
+    assert seen["kwargs"]["write_scope"] == "business"
+
+
+def test_model_metadata_writer_cli_catalog_mode_uses_catalog_backend(
+    monkeypatch,
+    tmp_path,
+):
+    import assess.llm.model_metadata_writer as writer_module
+
+    project = "shop"
+    project_dir = tmp_path / project
+    project_dir.mkdir()
+    _configure_project_root(monkeypatch, tmp_path)
+    monkeypatch.setitem(
+        config.PROJECT_CONFIG,
+        project,
+        {
+            "dir": project,
+        },
+    )
+    seen = {}
+
+    def fake_run_catalog_metadata(*args, **kwargs):
+        seen["args"] = args
+        seen["kwargs"] = kwargs
+        return {
+            "project": project,
+            "source": "catalog",
+            "path": str(project_dir / "business_semantics.yaml"),
+            "changed": False,
+            "updated": False,
+            "llm": kwargs["llm"],
+            "catalog": {
+                "business_processes": [],
+                "semantic_subjects": [],
+            },
+        }
+
+    monkeypatch.setattr(
+        writer_module,
+        "run_catalog_metadata",
+        fake_run_catalog_metadata,
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "model_metadata_writer.py",
+            "--project",
+            project,
+            "--mode",
+            "catalog",
+        ],
+    )
+
+    writer_module.main()
+
+    assert seen["args"] == (project,)
+    assert seen["kwargs"]["llm"] is False
+
+
+def test_model_metadata_writer_cli_catalog_llm_mode_uses_api_key(
+    monkeypatch,
+    tmp_path,
+):
+    import assess.llm.model_metadata_writer as writer_module
+
+    project = "shop"
+    project_dir = tmp_path / project
+    project_dir.mkdir()
+    _configure_project_root(monkeypatch, tmp_path)
+    monkeypatch.setitem(
+        config.PROJECT_CONFIG,
+        project,
+        {
+            "dir": project,
+        },
+    )
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
+    seen = {}
+
+    def fake_run_catalog_metadata(*args, **kwargs):
+        seen["args"] = args
+        seen["kwargs"] = kwargs
+        return {
+            "project": project,
+            "source": "catalog",
+            "path": str(project_dir / "business_semantics.yaml"),
+            "changed": True,
+            "updated": True,
+            "llm": kwargs["llm"],
+            "catalog": {
+                "business_processes": [{"code": "ORDER"}],
+                "semantic_subjects": [],
+            },
+        }
+
+    monkeypatch.setattr(
+        writer_module,
+        "run_catalog_metadata",
+        fake_run_catalog_metadata,
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "model_metadata_writer.py",
+            "--project",
+            project,
+            "--mode",
+            "catalog",
+            "--llm",
+        ],
+    )
+
+    writer_module.main()
+
+    assert seen["args"] == (project,)
+    assert seen["kwargs"]["llm"] is True
+    assert seen["kwargs"]["api_key"] == "test-key"
 
 
 def test_run_metadata_write_passes_parallelism(
@@ -2942,6 +3196,132 @@ def test_run_direct_model_generation_assigns_catalog_refs_from_assets(
     assert dim_model["table_type"] == "dimension"
     assert dim_model["semantic_subject"] == "STORE"
     assert dim_model["entities"][0]["key_columns"] == ["store_id"]
+
+
+def test_run_direct_model_generation_replace_existing_models_removes_stale_yaml(
+    tmp_path, monkeypatch
+):
+    project = "direct_model_writer_replace"
+    project_dir = tmp_path / project
+    (project_dir / "mid" / "ddl").mkdir(parents=True)
+    models_dir = project_dir / "mid" / "models"
+    models_dir.mkdir()
+    (tmp_path / "naming_config.yaml").write_text(
+        "types: {}\nbindings: {}\ndictionaries: {}\n",
+        encoding="utf-8",
+    )
+    (project_dir / "business_semantics.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "version": 1,
+                "project": project,
+                "business_processes": [],
+                "semantic_subjects": [],
+            },
+            allow_unicode=True,
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    stale_model = models_dir / "stale_model.yaml"
+    stale_model.write_text(
+        "version: 2\nname: stale_model\nlayer: DWD\n",
+        encoding="utf-8",
+    )
+    (project_dir / "mid" / "ddl" / "dwd_order_detail.sql").write_text(
+        """
+        CREATE TABLE dwd_order_detail (
+            order_id BIGINT,
+            pay_amount DECIMAL(12,2)
+        );
+        """,
+        encoding="utf-8",
+    )
+    _configure_project_root(monkeypatch, tmp_path)
+    monkeypatch.setitem(
+        config.PROJECT_CONFIG,
+        project,
+        {
+            "dir": project,
+            "naming_config": "naming_config.yaml",
+        },
+    )
+
+    result = run_direct_model_generation(
+        project,
+        dry_run=False,
+        ignore_existing_models=True,
+        replace_existing_models=True,
+        update_catalog=True,
+    )
+
+    assert stale_model.exists() is False
+    assert str(stale_model) in result["planned_deleted_model_files"]
+    assert str(stale_model) in result["deleted_model_files"]
+    assert (models_dir / "dwd_order_detail.yaml").exists()
+
+
+def test_run_direct_model_generation_replace_existing_models_dry_run_keeps_yaml(
+    tmp_path, monkeypatch
+):
+    project = "direct_model_writer_replace_dry_run"
+    project_dir = tmp_path / project
+    (project_dir / "mid" / "ddl").mkdir(parents=True)
+    models_dir = project_dir / "mid" / "models"
+    models_dir.mkdir()
+    (tmp_path / "naming_config.yaml").write_text(
+        "types: {}\nbindings: {}\ndictionaries: {}\n",
+        encoding="utf-8",
+    )
+    (project_dir / "business_semantics.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "version": 1,
+                "project": project,
+                "business_processes": [],
+                "semantic_subjects": [],
+            },
+            allow_unicode=True,
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    stale_model = models_dir / "stale_model.yaml"
+    stale_model.write_text(
+        "version: 2\nname: stale_model\nlayer: DWD\n",
+        encoding="utf-8",
+    )
+    (project_dir / "mid" / "ddl" / "dwd_order_detail.sql").write_text(
+        """
+        CREATE TABLE dwd_order_detail (
+            order_id BIGINT,
+            pay_amount DECIMAL(12,2)
+        );
+        """,
+        encoding="utf-8",
+    )
+    _configure_project_root(monkeypatch, tmp_path)
+    monkeypatch.setitem(
+        config.PROJECT_CONFIG,
+        project,
+        {
+            "dir": project,
+            "naming_config": "naming_config.yaml",
+        },
+    )
+
+    result = run_direct_model_generation(
+        project,
+        dry_run=True,
+        ignore_existing_models=True,
+        replace_existing_models=True,
+        update_catalog=True,
+    )
+
+    assert stale_model.exists() is True
+    assert str(stale_model) in result["planned_deleted_model_files"]
+    assert result["deleted_model_files"] == []
+    assert not (models_dir / "dwd_order_detail.yaml").exists()
 
 
 def test_run_direct_model_generation_keeps_ods_materialized_source(
@@ -3793,7 +4173,7 @@ def test_run_direct_model_generation_rejects_business_scope(
 
     with pytest.raises(
         ValueError,
-        match="generate-models 仅支持 write_scope=all/table",
+        match="generate mode 仅支持 write_scope=all/table",
     ):
         run_direct_model_generation(
             project,

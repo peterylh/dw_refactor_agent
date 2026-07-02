@@ -68,10 +68,10 @@ next to `ddl/`, `tasks/`, and `models/`. Shared helpers may still live under
 the `assess` package directory.
 
 The catalog is initialized by `assess/business_semantics_catalog.py --llm` or
-`python -m assess.llm.model_metadata_writer --catalog-from-llm` using table-level
-inspection contexts rather than raw full-project prompt dumps. Each context
-summarizes table name, layer hints, DDL columns and comments, keys, task SQL
-features, lineage, upstream/downstream tables, and any existing model/LLM
+`python -m assess.llm.model_metadata_writer --mode catalog --llm` using
+table-level inspection contexts rather than raw full-project prompt dumps. Each
+context summarizes table name, layer hints, DDL columns and comments, keys, task
+SQL features, lineage, upstream/downstream tables, and any existing model/LLM
 metadata.
 
 The discoverer may use LLM clustering to identify candidate data domains, business areas, business processes, and their mappings. If existing naming configuration or model metadata already defines business domains or areas, those codes should be treated as preferred anchors. The output is written directly to the working tree only when requested; review is done with Git.
@@ -85,8 +85,8 @@ proposal/accept workflow.
 Command shape:
 
 ```bash
-python -m assess.llm.model_metadata_writer --project shop --from-catalog --write-scope business --dry-run
-python -m assess.llm.model_metadata_writer --project shop --from-catalog --write-scope business
+python -m assess.llm.model_metadata_writer --project shop --mode refresh --dry-run
+python -m assess.llm.model_metadata_writer --project shop --mode refresh
 ```
 
 Initialization writes stable base metadata and catalog-backed business
@@ -121,7 +121,7 @@ Rules for writing model YAML:
 
 - Preserve unknown existing keys.
 - Keep stable key ordering to minimize Git diff noise.
-- Respect `--write-scope`.
+- Respect the write behavior selected by the active mode.
 - Avoid wholesale reformatting when only a subset of fields changes.
 - Emit a result JSON containing changed files, skipped tables, confidence, and validation warnings.
 
@@ -130,11 +130,11 @@ Rules for writing model YAML:
 After the catalog changes, refresh table-level metadata from the catalog:
 
 ```bash
-python -m assess.llm.model_metadata_writer --project shop --from-catalog --write-scope business --dry-run
-python -m assess.llm.model_metadata_writer --project shop --from-catalog --write-scope business
+python -m assess.llm.model_metadata_writer --project shop --mode refresh --dry-run
+python -m assess.llm.model_metadata_writer --project shop --mode refresh
 ```
 
-`--from-catalog` means the accepted catalog is the governed code dictionary.
+`--mode refresh` means the accepted catalog is the governed code dictionary.
 This path does not call LLM; table assignment is owned by `models/*.yaml`, and
 the catalog enriches existing `business_process` / `semantic_subject`
 references with domain and area metadata.
@@ -146,17 +146,17 @@ LLM classification is needed before or after this deterministic refresh when:
 - Catalog changes split or merge previous processes.
 - Program evidence has multiple plausible process candidates.
 
-Use `--catalog-from-llm` or `business_semantics_catalog.py --llm` for that
+Use `--mode catalog --llm` or `business_semantics_catalog.py --llm` for that
 discovery step, then review the catalog with Git before refreshing models.
 
-Suggested write scopes:
+Mode write behavior:
 
 ```text
-table      layer/table_type/description/config
-business   data_domain/business_area/business_process
-metrics    atomic_metrics/derived_metrics/calculated_metrics
-grain      entities/grain
-all        all writable metadata
+catalog          business_semantics.yaml only
+refresh          deterministic catalog-backed model metadata
+refresh --llm    all writable model metadata and catalog sync
+generate         clear and regenerate project model YAML files
+generate --llm   clear and regenerate model YAML files with table inspection
 ```
 
 ## Git Review Flow
@@ -165,7 +165,7 @@ Use Git as the review and accept mechanism:
 
 ```bash
 python assess/business_semantics_catalog.py --project shop --llm --overwrite
-python -m assess.llm.model_metadata_writer --project shop --from-catalog --write-scope business
+python -m assess.llm.model_metadata_writer --project shop --mode refresh
 git diff
 git add -p
 ```

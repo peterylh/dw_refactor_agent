@@ -44,6 +44,7 @@ from assess.project_facts.business_semantics import (
     _layer_from_table_name,
     _materialized_for_layer,
     _normalize_catalog_code,
+    business_semantics_path,
     catalog_mapping_for_model,
     load_business_semantics_catalog,
     write_initial_business_semantics_catalog,
@@ -57,6 +58,7 @@ from config import (
     assess_cache_path,
     asset_role_for_layer,
     get_business_domain_config,
+    iter_project_asset_files,
     load_model_metadata,
     model_metadata_result_path,
 )
@@ -324,6 +326,171 @@ def existing_model_paths_for_table(
         for model_dir in model_dirs
         if (model_dir / filename).exists()
     ]
+
+
+def project_model_yaml_paths(project: str) -> list[Path]:
+    """Return all model YAML files owned by the current project."""
+    return iter_project_asset_files(project, "models", "*.yaml")
+
+
+def delete_project_model_yaml_files(
+    project: str,
+    *,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    """Delete generated model YAML files for a cold-start rebuild."""
+    paths = project_model_yaml_paths(project)
+    deleted = []
+    if not dry_run:
+        for path in paths:
+            if not path.exists():
+                continue
+            path.unlink()
+            deleted.append(str(path))
+        if deleted:
+            import config as _config
+
+            _config.clear_model_metadata_cache()
+    return {
+        "planned_deleted_model_files": [str(path) for path in paths],
+        "deleted_model_files": deleted,
+    }
+
+
+def _entry_index(entries: Any) -> dict[str, dict[str, Any]]:
+    indexed = {}
+    for entry in entries or []:
+        if not isinstance(entry, dict):
+            continue
+        code = _normalize_catalog_code(entry.get("code"))
+        if not code:
+            continue
+        indexed[code] = dict(entry)
+    return indexed
+
+
+def _touch_catalog_entry(
+    entries_by_code: dict[str, dict[str, Any]],
+    *,
+    code: str,
+    data_domain: str = "",
+    business_area: str = "",
+    dimension_role: str = "",
+    dimension_content_type: str = "",
+) -> None:
+    normalized = _normalize_catalog_code(code)
+    if not normalized:
+        return
+    entry = entries_by_code.setdefault(
+        normalized,
+        {
+            "id": normalized,
+            "code": normalized,
+            "name": _display_name_from_code(normalized),
+        },
+    )
+    entry.setdefault("id", normalized)
+    entry["code"] = normalized
+    if not str(entry.get("name") or "").strip():
+        entry["name"] = _display_name_from_code(normalized)
+    for key, value in (
+        ("data_domain", data_domain),
+        ("business_area", business_area),
+        ("dimension_role", dimension_role),
+        ("dimension_content_type", dimension_content_type),
+    ):
+        text = str(value or "").strip()
+        if text and not str(entry.get(key) or "").strip():
+            entry[key] = text
+
+
+def sync_business_semantics_catalog_from_model_updates(
+    project: str,
+    model_updates: list[dict[str, Any]],
+    *,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    """Merge model-owned process/subject codes back into the catalog."""
+    catalog = load_business_semantics_catalog(project)
+    if not catalog:
+        raise FileNotFoundError(
+            f"未找到 {project}/business_semantics.yaml，请先初始化目录"
+        )
+
+    updated = dict(catalog)
+    process_by_code = _entry_index(updated.get("business_processes") or [])
+    subject_by_code = _entry_index(updated.get("semantic_subjects") or [])
+    for update in model_updates:
+        process_code = str(update.get("business_process") or "").strip()
+        if process_code:
+            _touch_catalog_entry(
+                process_by_code,
+                code=process_code,
+                data_domain=str(update.get("data_domain") or "").strip(),
+                business_area=str(update.get("business_area") or "").strip(),
+            )
+        subject_code = str(update.get("semantic_subject") or "").strip()
+        if subject_code:
+            _touch_catalog_entry(
+                subject_by_code,
+                code=subject_code,
+                data_domain=str(update.get("data_domain") or "").strip(),
+                business_area=str(update.get("business_area") or "").strip(),
+                dimension_role=str(update.get("dimension_role") or "").strip(),
+                dimension_content_type=str(
+                    update.get("dimension_content_type") or ""
+                ).strip(),
+            )
+
+    updated["business_processes"] = sorted(
+        process_by_code.values(),
+        key=lambda item: str(item.get("code") or ""),
+    )
+    updated["semantic_subjects"] = sorted(
+        subject_by_code.values(),
+        key=lambda item: str(item.get("code") or ""),
+    )
+    changed = updated != catalog
+    path = business_semantics_path(project)
+    if changed and not dry_run:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            yaml.safe_dump(updated, allow_unicode=True, sort_keys=False),
+            encoding=TEXT_ENCODING,
+        )
+        import config as _config
+
+        _config.clear_business_semantics_cache()
+        _config.clear_naming_config_cache()
+    return {
+        "project": project,
+        "path": str(path),
+        "changed": changed,
+        "updated": bool(changed and not dry_run),
+        "business_process_count": len(updated.get("business_processes") or []),
+        "semantic_subject_count": len(updated.get("semantic_subjects") or []),
+        "catalog": updated,
+    }
+
+
+def sync_business_semantics_catalog_from_models(
+    project: str,
+    *,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    """Refresh catalog process/subject dictionaries from existing models."""
+    model_updates = []
+    for table_name, metadata in sorted(load_model_metadata(project).items()):
+        if not isinstance(metadata, dict):
+            continue
+        update = dict(metadata)
+        update.setdefault("table", table_name)
+        model_updates.append(update)
+    return sync_business_semantics_catalog_from_model_updates(
+        project,
+        model_updates,
+        dry_run=dry_run,
+    )
 
 
 def metric_violations(result: TableInspectResult) -> list[dict[str, Any]]:
@@ -3562,7 +3729,7 @@ def update_model_yaml_from_catalog(
 ) -> dict[str, Any]:
     write_scope = _validate_write_scope(write_scope)
     if write_scope not in {"all", "table", "business"}:
-        raise ValueError("from-catalog 仅支持 write_scope=all/table/business")
+        raise ValueError("refresh mode 仅支持 write_scope=all/table/business")
 
     path = model_path_for_table(
         project,
@@ -3743,7 +3910,7 @@ def update_model_yaml_from_direct_generation(
 ) -> dict[str, Any]:
     write_scope = _validate_write_scope(write_scope)
     if write_scope not in DIRECT_MODEL_WRITE_SCOPES:
-        raise ValueError("generate-models 仅支持 write_scope=all/table")
+        raise ValueError("generate mode 仅支持 write_scope=all/table")
 
     ignore_existing_model_files = base_existing is not None
     path = model_path_for_table(
@@ -3934,6 +4101,8 @@ def run_direct_model_generation(
     write_scope: str = "all",
     ignore_existing_models: bool = False,
     infer_layer_with_llm: bool = False,
+    replace_existing_models: bool = False,
+    update_catalog: bool = False,
     api_key: str = "",
     model: str = "deepseek-v4-flash",
     base_url: str = "",
@@ -3946,7 +4115,7 @@ def run_direct_model_generation(
     """Generate model YAML from catalog, DDL, tasks, and lineage facts."""
     write_scope = _validate_write_scope(write_scope)
     if write_scope not in DIRECT_MODEL_WRITE_SCOPES:
-        raise ValueError("generate-models 仅支持 write_scope=all/table")
+        raise ValueError("generate mode 仅支持 write_scope=all/table")
     if infer_layer_with_llm and not api_key:
         raise ValueError("infer_layer_with_llm=True 时必须提供 api_key")
 
@@ -3985,6 +4154,15 @@ def run_direct_model_generation(
     table_assets: dict[str, dict[str, Any]] = {}
     existing_by_table: dict[str, dict[str, Any]] = {}
     mappings: dict[str, dict[str, Any]] = {}
+    replacement_delete_result = {
+        "planned_deleted_model_files": [],
+        "deleted_model_files": [],
+    }
+    if replace_existing_models:
+        replacement_delete_result = delete_project_model_yaml_files(
+            project,
+            dry_run=True,
+        )
     for table_name, asset in sorted(assets.items()):
         ddl = asset.get("ddl") or {}
         lineage_table = asset.get("lineage_table") or {}
@@ -4075,6 +4253,12 @@ def run_direct_model_generation(
         lineage_view,
     )
 
+    if replace_existing_models and not dry_run:
+        replacement_delete_result = delete_project_model_yaml_files(
+            project,
+            dry_run=False,
+        )
+
     for table_name, asset in sorted(table_assets.items()):
         mapping = mappings[table_name]
         updates.append(
@@ -4089,6 +4273,28 @@ def run_direct_model_generation(
                 base_existing={} if ignore_existing_models else None,
             )
         )
+    catalog_update = None
+    if update_catalog:
+        inspection_results = [
+            result.get("_inspection_result")
+            for result in table_inspector_layer_results.values()
+            if isinstance(result.get("_inspection_result"), TableInspectResult)
+        ]
+        if inspection_results:
+            catalog_update = write_initial_business_semantics_catalog(
+                project,
+                overwrite=True,
+                dry_run=dry_run,
+                inspection_results=inspection_results,
+            )
+        else:
+            catalog_update = (
+                sync_business_semantics_catalog_from_model_updates(
+                    project,
+                    updates,
+                    dry_run=dry_run,
+                )
+            )
     if not dry_run:
         import config as _config
 
@@ -4101,6 +4307,14 @@ def run_direct_model_generation(
         "write_scope": write_scope,
         "ignore_existing_models": ignore_existing_models,
         "infer_layer_with_llm": infer_layer_with_llm,
+        "replace_existing_models": replace_existing_models,
+        "catalog_update": catalog_update,
+        "planned_deleted_model_files": replacement_delete_result[
+            "planned_deleted_model_files"
+        ],
+        "deleted_model_files": replacement_delete_result[
+            "deleted_model_files"
+        ],
         "request_timeout": request_timeout if infer_layer_with_llm else 0,
         "catalog_path": str(
             PROJECT_ROOT
@@ -4163,7 +4377,7 @@ def run_catalog_metadata_write(
 ) -> dict[str, Any]:
     write_scope = _validate_write_scope(write_scope)
     if write_scope not in {"all", "table", "business"}:
-        raise ValueError("from-catalog 仅支持 write_scope=all/table/business")
+        raise ValueError("refresh mode 仅支持 write_scope=all/table/business")
 
     init_result = None
     if init_catalog:
@@ -4238,6 +4452,7 @@ def run_catalog_discovery(
     no_cache: bool = False,
     dry_run: bool = False,
     overwrite: bool = False,
+    update_models: bool = True,
     show_progress: bool = False,
 ) -> dict[str, Any]:
     """Use table-level LLM inspection results to initialize/update catalog."""
@@ -4289,20 +4504,21 @@ def run_catalog_discovery(
         inspection_results=results,
     )
     model_updates = []
-    for result in results:
-        mapping = catalog_discovery_model_mapping(result)
-        if not mapping:
-            continue
-        update = update_model_yaml_from_catalog(
-            project,
-            result.table_name,
-            mapping,
-            dry_run=dry_run,
-            write_scope="business",
-        )
-        if update["changed"]:
-            model_updates.append(update)
-    if not dry_run and model_updates:
+    if update_models:
+        for result in results:
+            mapping = catalog_discovery_model_mapping(result)
+            if not mapping:
+                continue
+            update = update_model_yaml_from_catalog(
+                project,
+                result.table_name,
+                mapping,
+                dry_run=dry_run,
+                write_scope="business",
+            )
+            if update["changed"]:
+                model_updates.append(update)
+    if update_models and not dry_run and model_updates:
         import config as _config
 
         _config.clear_model_metadata_cache()
@@ -4314,6 +4530,8 @@ def run_catalog_discovery(
         "changed": write_result["changed"],
         "updated": write_result["updated"],
         "catalog": write_result["catalog"],
+        "llm": True,
+        "update_models": update_models,
         "inspected_table_count": len(contexts),
         "dwd_table_count": len(dwd_contexts),
         "dws_table_count": len(dws_contexts),
@@ -4337,6 +4555,102 @@ def run_catalog_discovery(
         "model_change_count": len(model_updates),
         "tables": [result_for_report(result) for result in results],
     }
+
+
+def run_catalog_metadata(
+    project: str,
+    *,
+    llm: bool = False,
+    api_key: str = "",
+    model: str = "deepseek-v4-flash",
+    base_url: str = "",
+    max_retries: int = 1,
+    parallelism: int = 4,
+    request_timeout: int = 180,
+    no_cache: bool = False,
+    dry_run: bool = False,
+    show_progress: bool = False,
+) -> dict[str, Any]:
+    """Initialize or refresh the project business semantics catalog."""
+    if llm:
+        if not api_key:
+            raise ValueError("catalog --llm 时必须提供 api_key")
+        result = run_catalog_discovery(
+            project,
+            api_key=api_key,
+            model=model,
+            base_url=base_url,
+            max_retries=max_retries,
+            parallelism=parallelism,
+            request_timeout=request_timeout,
+            no_cache=no_cache,
+            dry_run=dry_run,
+            overwrite=True,
+            update_models=False,
+            show_progress=show_progress,
+        )
+        result["source"] = "catalog"
+        return result
+
+    result = write_initial_business_semantics_catalog(
+        project,
+        overwrite=False,
+        dry_run=dry_run,
+    )
+    result["source"] = "catalog"
+    result["llm"] = False
+    result["update_models"] = False
+    return result
+
+
+def run_refresh_metadata(
+    project: str,
+    *,
+    llm: bool = False,
+    api_key: str = "",
+    model: str = "deepseek-v4-flash",
+    base_url: str = "",
+    max_retries: int = 1,
+    parallelism: int = 4,
+    request_timeout: int = 180,
+    no_cache: bool = False,
+    dry_run: bool = False,
+    write_scope: str = "business",
+    show_progress: bool = False,
+) -> dict[str, Any]:
+    """Refresh existing metadata and keep the business catalog in sync."""
+    if llm:
+        if not api_key:
+            raise ValueError("refresh --llm 时必须提供 api_key")
+        return run_metadata_write(
+            project,
+            api_key=api_key,
+            model=model,
+            base_url=base_url,
+            max_retries=max_retries,
+            parallelism=parallelism,
+            request_timeout=request_timeout,
+            no_cache=no_cache,
+            dry_run=dry_run,
+            write_scope=write_scope,
+            show_progress=show_progress,
+            update_catalog=True,
+        )
+
+    catalog_update = sync_business_semantics_catalog_from_models(
+        project,
+        dry_run=dry_run,
+    )
+    result = run_catalog_metadata_write(
+        project,
+        dry_run=dry_run,
+        write_scope=write_scope,
+        init_catalog=False,
+    )
+    result["source"] = "refresh"
+    result["llm"] = False
+    result["catalog_update"] = catalog_update
+    return result
 
 
 def result_for_report(result: TableInspectResult) -> dict[str, Any]:
@@ -4404,6 +4718,13 @@ def build_progress_callback() -> Callable[[dict[str, Any]], None]:
     return callback
 
 
+def _deepseek_api_key_or_exit(message: str) -> str:
+    api_key = os.environ.get("DEEPSEEK_API_KEY")
+    if not api_key:
+        raise SystemExit(message)
+    return api_key
+
+
 def run_metadata_write(
     project: str,
     *,
@@ -4417,6 +4738,7 @@ def run_metadata_write(
     dry_run: bool = False,
     write_scope: str = "all",
     show_progress: bool = False,
+    update_catalog: bool = False,
 ) -> dict[str, Any]:
     """运行项目级 LLM 巡检与模型元数据回写。"""
     write_scope = _validate_write_scope(write_scope)
@@ -4464,10 +4786,21 @@ def run_metadata_write(
     yaml_updates, skipped_updates = _update_models_for_results(
         project, results, dry_run=dry_run, write_scope=write_scope
     )
+    catalog_update = None
+    if update_catalog:
+        catalog_update = write_initial_business_semantics_catalog(
+            project,
+            overwrite=True,
+            dry_run=dry_run,
+            inspection_results=results,
+        )
 
     return {
         "project": project,
+        "source": "refresh_llm",
         "write_scope": write_scope,
+        "llm": True,
+        "catalog_update": catalog_update,
         "inspected_table_count": len(contexts),
         "metric_table_count": len(metric_contexts),
         "metadata_only_table_count": len(metadata_only_contexts),
@@ -4521,6 +4854,15 @@ def main() -> None:
         help="项目名称",
     )
     parser.add_argument(
+        "--mode",
+        required=True,
+        choices=("catalog", "refresh", "generate"),
+        help=(
+            "metadata 工作模式: catalog=初始化/刷新业务语义目录, "
+            "refresh=基于现有 models 刷新, generate=清空并重建 models"
+        ),
+    )
+    parser.add_argument(
         "--output",
         help="输出 JSON 文件路径 (默认 {project}/assess/model_metadata_result.json)",
     )
@@ -4547,59 +4889,9 @@ def main() -> None:
         help="只输出巡检结果，不写入 models YAML",
     )
     parser.add_argument(
-        "--init-catalog",
+        "--llm",
         action="store_true",
-        help="按项目DDL初始化 business_semantics.yaml",
-    )
-    parser.add_argument(
-        "--catalog-from-llm",
-        action="store_true",
-        help="调用表级 LLM 巡检结果初始化/更新 business_semantics.yaml",
-    )
-    parser.add_argument(
-        "--overwrite-catalog",
-        action="store_true",
-        help="catalog-from-llm/init-catalog 时覆盖已存在目录",
-    )
-    parser.add_argument(
-        "--from-catalog",
-        action="store_true",
-        help="从 business_semantics.yaml 刷新/初始化 models",
-    )
-    parser.add_argument(
-        "--generate-models",
-        action="store_true",
-        help=(
-            "基于 business_semantics.yaml、DDL、task 和 lineage "
-            "直接生成/补齐 models YAML，默认不调用 LLM"
-        ),
-    )
-    parser.add_argument(
-        "--infer-layer-with-llm",
-        action="store_true",
-        help=(
-            "仅用于 --generate-models: 当没有现有 layer、表名前缀或 ODS/ADS "
-            "目录等明确分层信息时，调用 LLM 判断 layer"
-        ),
-    )
-    parser.add_argument(
-        "--ignore-existing-models",
-        action="store_true",
-        help=(
-            "仅用于 --generate-models: 不读取现有 models YAML 作为推断先验，"
-            "按 business_semantics、DDL、task 和 lineage 从零生成"
-        ),
-    )
-    parser.add_argument(
-        "--write-scope",
-        choices=sorted(WRITE_SCOPES),
-        default="all",
-        help=(
-            "models 回写范围: all=表信息+指标+entity/grain, "
-            "table=仅表级元数据, metrics=仅指标分组, "
-            "grain=仅entity/grain, "
-            "business=按models已有业务code从catalog补齐治理信息"
-        ),
+        help="允许当前 mode 调用 LLM/table_inspector 增强推断",
     )
     parser.add_argument(
         "--no-cache",
@@ -4620,14 +4912,15 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    if args.catalog_from_llm:
-        api_key = os.environ.get("DEEPSEEK_API_KEY")
-        if not api_key:
-            raise SystemExit(
-                "未提供 DEEPSEEK_API_KEY 环境变量，无法调用 DeepSeek API"
-            )
-        result = run_catalog_discovery(
+    api_key = ""
+    if args.llm:
+        api_key = _deepseek_api_key_or_exit(
+            "未提供 DEEPSEEK_API_KEY 环境变量，无法调用 LLM"
+        )
+    if args.mode == "catalog":
+        result = run_catalog_metadata(
             args.project,
+            llm=args.llm,
             api_key=api_key,
             model=args.model,
             base_url=args.base_url,
@@ -4636,31 +4929,32 @@ def main() -> None:
             request_timeout=args.request_timeout,
             no_cache=args.no_cache,
             dry_run=args.dry_run,
-            overwrite=args.overwrite_catalog,
             show_progress=not args.quiet,
         )
-    elif args.init_catalog and not args.from_catalog:
-        result = write_initial_business_semantics_catalog(
+    elif args.mode == "refresh":
+        result = run_refresh_metadata(
             args.project,
+            llm=args.llm,
+            api_key=api_key,
+            model=args.model,
+            base_url=args.base_url,
+            max_retries=args.max_retries,
+            parallelism=args.parallel,
+            request_timeout=args.request_timeout,
+            no_cache=args.no_cache,
             dry_run=args.dry_run,
-            overwrite=args.overwrite_catalog,
+            write_scope="all" if args.llm else "business",
+            show_progress=not args.quiet,
         )
-    elif args.generate_models:
-        if args.write_scope == "business":
-            raise SystemExit("--write-scope business 需要配合 --from-catalog")
-        api_key = ""
-        if args.infer_layer_with_llm:
-            api_key = os.environ.get("DEEPSEEK_API_KEY", "")
-            if not api_key:
-                raise SystemExit(
-                    "未提供 DEEPSEEK_API_KEY 环境变量，无法调用 LLM 推断 layer"
-                )
+    else:
         result = run_direct_model_generation(
             args.project,
             dry_run=args.dry_run,
-            write_scope=args.write_scope,
-            ignore_existing_models=args.ignore_existing_models,
-            infer_layer_with_llm=args.infer_layer_with_llm,
+            write_scope="all",
+            ignore_existing_models=True,
+            infer_layer_with_llm=args.llm,
+            replace_existing_models=True,
+            update_catalog=True,
             api_key=api_key,
             model=args.model,
             base_url=args.base_url,
@@ -4668,35 +4962,6 @@ def main() -> None:
             parallelism=args.parallel,
             request_timeout=args.request_timeout,
             no_cache=args.no_cache,
-            show_progress=not args.quiet,
-        )
-    elif args.from_catalog:
-        result = run_catalog_metadata_write(
-            args.project,
-            dry_run=args.dry_run,
-            write_scope=args.write_scope,
-            init_catalog=args.init_catalog,
-        )
-    else:
-        if args.write_scope == "business":
-            raise SystemExit("--write-scope business 需要配合 --from-catalog")
-        api_key = os.environ.get("DEEPSEEK_API_KEY")
-        if not api_key:
-            raise SystemExit(
-                "未提供 DEEPSEEK_API_KEY 环境变量，无法调用 DeepSeek API"
-            )
-
-        result = run_metadata_write(
-            args.project,
-            api_key=api_key,
-            model=args.model,
-            base_url=args.base_url,
-            max_retries=args.max_retries,
-            parallelism=args.parallel,
-            request_timeout=args.request_timeout,
-            no_cache=args.no_cache,
-            dry_run=args.dry_run,
-            write_scope=args.write_scope,
             show_progress=not args.quiet,
         )
 
@@ -4712,11 +4977,29 @@ def main() -> None:
     )
     print(f"结果已写入: {output_path}")
     if result.get("source") == "catalog":
+        catalog = result.get("catalog") or {}
         print(
-            "回写来源: catalog, "
+            "目录: {path}, "
+            "LLM: {llm}, "
+            "业务过程: {process_count}, 语义主题: {subject_count}, "
+            "已写入: {updated}".format(
+                path=result.get("path"),
+                llm=result.get("llm", False),
+                process_count=len(catalog.get("business_processes") or []),
+                subject_count=len(catalog.get("semantic_subjects") or []),
+                updated=result.get("updated"),
+            )
+        )
+        return
+    if result.get("source") == "refresh":
+        catalog_update = result.get("catalog_update") or {}
+        print(
+            "刷新: "
             "巡检表: {inspected_table_count}, "
-            "模型变更: {model_change_count}, 已写入: {model_update_count}".format(
-                **result
+            "模型变更: {model_change_count}, 已写入: {model_update_count}, "
+            "catalog变更: {catalog_changed}".format(
+                catalog_changed=catalog_update.get("changed", False),
+                **result,
             )
         )
         return
