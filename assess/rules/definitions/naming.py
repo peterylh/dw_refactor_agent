@@ -868,6 +868,9 @@ def _metric_rule_label_for_name(nc, rule_name: str) -> str:
 
 
 def _metric_name_diagnostic(metric_name: str, nc, rule_name: str) -> dict:
+    if hasattr(nc, "diagnose_metric_name"):
+        return nc.diagnose_metric_name(metric_name, rule_name=rule_name)
+
     attempts = []
     for rule_def in (getattr(nc, "metric_rules", {}) or {}).get(rule_name, []):
         kind = rule_def.get("kind")

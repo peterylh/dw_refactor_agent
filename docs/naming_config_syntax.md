@@ -274,6 +274,13 @@ python -c "from config import get_naming_config; import json; nc=get_naming_conf
 python -c "from config import get_naming_config; import json; nc=get_naming_config('shop'); print(json.dumps(nc.diagnose_column_name('customer_id'), ensure_ascii=False, indent=2))"
 ```
 
+指标诊断：
+
+```bash
+python -c "from config import get_naming_config; import json; nc=get_naming_config('shop'); print(json.dumps(nc.diagnose_metric_name('pay_amt', metric_kind='atomic'), ensure_ascii=False, indent=2))"
+python -c "from config import get_naming_config; import json; nc=get_naming_config('shop'); print(json.dumps(nc.diagnose_metric_name('7D_OLD_PAY_AMT', metric_kind='derived'), ensure_ascii=False, indent=2))"
+```
+
 ## 诊断输出字段
 
 诊断输出用于排查某个名称为什么没有匹配配置规则。它会透出：

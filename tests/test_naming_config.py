@@ -757,6 +757,62 @@ class TestNamingDiagnostics:
             },
         }
 
+    def test_metric_diagnostic_exposes_atomic_rule_failure(self):
+        nc = load_naming_config(config.NAMING_CONFIG_PATH)
+
+        diagnostic = nc.diagnose_metric_name(
+            "pay_amt",
+            metric_kind="atomic",
+        )
+
+        assert diagnostic["actual"] == "pay_amt"
+        assert diagnostic["metric_kind"] == "atomic"
+        assert diagnostic["rule_name"] == "atomic"
+        assert diagnostic["passed"] is False
+        attempt = diagnostic["attempts"][0]
+        assert attempt["rule"]["name"] == "atomic"
+        assert attempt["rule"]["description"] == (
+            "原子指标命名 {ACTION_VERB}_{MEASURE_NOUN}"
+        )
+        assert attempt["nodes"][0]["type"]["patterns"] == ["^[A-Z][A-Z0-9]*$"]
+        assert attempt["failure"]["code"] == "metric_sequence_mismatch"
+
+    def test_metric_diagnostic_exposes_derived_rule_match(self):
+        nc = load_naming_config(config.NAMING_CONFIG_PATH)
+
+        diagnostic = nc.diagnose_metric_name(
+            "7D_OLD_CHREM_PAY_AMT",
+            metric_kind="derived",
+        )
+
+        assert diagnostic["actual"] == "7D_OLD_CHREM_PAY_AMT"
+        assert diagnostic["metric_kind"] == "derived"
+        assert diagnostic["rule_name"] == "derived"
+        assert diagnostic["passed"] is True
+        assert diagnostic["attempts"][0]["matched_values"] == {
+            "METRIC_TIME_PERIOD": "7D",
+            "METRIC_MODIFIER": ["OLD", "CHREM"],
+            "ACTION_VERB": "PAY",
+            "MEASURE_NOUN": "AMT",
+        }
+
+    def test_metric_diagnostic_reports_unknown_rule(self):
+        nc = load_naming_config(config.NAMING_CONFIG_PATH)
+
+        diagnostic = nc.diagnose_metric_name("PAY_AMT", rule_name="missing")
+
+        assert diagnostic == {
+            "actual": "PAY_AMT",
+            "metric_kind": None,
+            "rule_name": "missing",
+            "passed": False,
+            "attempts": [],
+            "failure": {
+                "code": "unknown_metric_rule",
+                "actual": "missing",
+            },
+        }
+
 
 class TestTopLevelDetermineLayer:
     def test_prefers_model_layer(self, monkeypatch, tmp_path):
