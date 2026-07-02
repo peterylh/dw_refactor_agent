@@ -40,11 +40,12 @@ MIDDLE_LAYER_GROUPS = {"DWD", "DWS", "DIM"}
 
 
 def reset_config(project_root: Path) -> None:
+    config.core.PROJECT_ROOT = project_root
     config.PROJECT_ROOT = project_root
     writer.PROJECT_ROOT = project_root
-    config._naming_config_cache.clear()
-    config._model_metadata_cache.clear()
-    config._business_semantics_cache.clear()
+    config.clear_naming_config_cache()
+    config.clear_model_metadata_cache()
+    config.clear_business_semantics_cache()
 
 
 def strip_layer_prefix(name: str) -> str:
@@ -98,6 +99,8 @@ def rewrite_source_files(value: Any, source_mapping: dict[str, str]) -> Any:
 def model_paths(project: str) -> list[Path]:
     project_dir = REPO_ROOT / project
     paths = list((project_dir / "models").glob("*.yaml"))
+    paths += list((project_dir / "mid" / "models").glob("*.yaml"))
+    paths += list((project_dir / "ads" / "models").glob("*.yaml"))
     paths += list((project_dir / "ods" / "models").glob("*/*/*.yaml"))
     return sorted(paths)
 
@@ -105,8 +108,20 @@ def model_paths(project: str) -> list[Path]:
 def ddl_paths(project: str) -> list[Path]:
     project_dir = REPO_ROOT / project
     paths = list((project_dir / "ddl").glob("*.sql"))
+    paths += list((project_dir / "mid" / "ddl").glob("*.sql"))
+    paths += list((project_dir / "ads" / "ddl").glob("*.sql"))
     paths += list((project_dir / "ods" / "ddl").glob("*/*/*.sql"))
     return sorted(paths)
+
+
+def task_roots(project: str) -> list[Path]:
+    project_dir = REPO_ROOT / project
+    roots = [
+        project_dir / "tasks",
+        project_dir / "mid" / "tasks",
+        project_dir / "ads" / "tasks",
+    ]
+    return [root for root in roots if root.exists()]
 
 
 def load_expected(project: str) -> dict[str, dict[str, str]]:
@@ -145,8 +160,8 @@ def ddl_output_path(
     if group == "ods":
         return target_dir / "ods" / "ddl" / "internal" / "benchmark"
     if group == "ads":
-        return target_dir / "ddl" / "ads"
-    return target_dir / "ddl" / "middle"
+        return target_dir / "ads" / "ddl"
+    return target_dir / "mid" / "ddl"
 
 
 def task_output_path(
@@ -156,7 +171,9 @@ def task_output_path(
     rel_parent: Path,
 ) -> Path:
     group = table_group(table_name, expected)
-    return target_dir / "tasks" / group / rel_parent
+    if group == "ads":
+        return target_dir / "ads" / "tasks" / rel_parent
+    return target_dir / "mid" / "tasks" / rel_parent
 
 
 def write_fixed_layer_model_seed(
@@ -175,7 +192,7 @@ def write_fixed_layer_model_seed(
     if layer == "ODS":
         out_dir = target_dir / "ods" / "models" / "internal" / "benchmark"
     else:
-        out_dir = target_dir / "models"
+        out_dir = target_dir / "ads" / "models"
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / f"{table_name}.yaml").write_text(
         yaml.safe_dump(payload, allow_unicode=True, sort_keys=False),
@@ -267,12 +284,13 @@ def build_temp_project(
 ) -> tuple[Path, dict[str, str], dict[str, dict[str, str]]]:
     source_dir = REPO_ROOT / source_project
     target_dir = tmp_root / target_project
-    (target_dir / "ddl" / "ads").mkdir(parents=True)
-    (target_dir / "ddl" / "middle").mkdir(parents=True)
+    (target_dir / "ads" / "ddl").mkdir(parents=True)
+    (target_dir / "mid" / "ddl").mkdir(parents=True)
     (target_dir / "ods" / "ddl" / "internal" / "benchmark").mkdir(
         parents=True
     )
-    (target_dir / "tasks").mkdir()
+    (target_dir / "ads" / "tasks").mkdir(parents=True)
+    (target_dir / "mid" / "tasks").mkdir(parents=True)
     (target_dir / "lineage").mkdir()
     shutil.copy2(
         source_dir / "business_semantics.yaml",
@@ -298,36 +316,37 @@ def build_temp_project(
             sanitized_ddl,
             encoding="utf-8",
         )
-        if table_group(ddl_path.stem, expected) != "ods":
-            (target_dir / "ddl" / f"{new}.sql").write_text(
-                sanitized_ddl,
-                encoding="utf-8",
-            )
         write_fixed_layer_model_seed(target_dir, new, expected[ddl_path.stem])
 
     task_source_mapping: dict[str, str] = {}
-    for task_path in sorted((source_dir / "tasks").rglob("*.sql")):
-        old = task_path.stem
-        target_table = old
-        if old.endswith("_full_refresh") and old[: -len("_full_refresh")] in mapping:
-            target_table = old[: -len("_full_refresh")]
-            new = mapping[old[: -len("_full_refresh")]] + "_full_refresh"
-        elif old in mapping:
-            new = mapping[old]
-        else:
-            continue
-        rel_parent = task_path.parent.relative_to(source_dir / "tasks")
-        out_dir = task_output_path(target_dir, target_table, expected, rel_parent)
-        out_dir.mkdir(parents=True, exist_ok=True)
-        old_source_file = task_path.relative_to(source_dir / "tasks").as_posix()
-        new_source_file = (
-            out_dir.relative_to(target_dir / "tasks") / f"{new}.sql"
-        ).as_posix()
-        task_source_mapping[old_source_file] = new_source_file
-        (out_dir / f"{new}.sql").write_text(
-            sanitize_sql(task_path.read_text(encoding="utf-8"), mapping),
-            encoding="utf-8",
-        )
+    for task_root in task_roots(source_project):
+        for task_path in sorted(task_root.rglob("*.sql")):
+            old = task_path.stem
+            target_table = old
+            if (
+                old.endswith("_full_refresh")
+                and old[: -len("_full_refresh")] in mapping
+            ):
+                target_table = old[: -len("_full_refresh")]
+                new = mapping[old[: -len("_full_refresh")]] + "_full_refresh"
+            elif old in mapping:
+                new = mapping[old]
+            else:
+                continue
+            rel_parent = task_path.parent.relative_to(task_root)
+            out_dir = task_output_path(
+                target_dir, target_table, expected, rel_parent
+            )
+            out_dir.mkdir(parents=True, exist_ok=True)
+            old_source_file = task_path.relative_to(task_root).as_posix()
+            new_source_file = task_path.relative_to(task_root).with_name(
+                f"{new}.sql"
+            ).as_posix()
+            task_source_mapping[old_source_file] = new_source_file
+            (out_dir / f"{new}.sql").write_text(
+                sanitize_sql(task_path.read_text(encoding="utf-8"), mapping),
+                encoding="utf-8",
+            )
 
     lineage_path = source_dir / "lineage" / "lineage_data.json"
     if lineage_path.exists():
