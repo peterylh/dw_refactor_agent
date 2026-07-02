@@ -470,6 +470,152 @@ class NamingConfig:
     def match_metric_rule(self, name: str, rule_name: str) -> Optional[dict]:
         return self._match_metric_rule_impl(name, rule_name, ())
 
+    def _metric_rule_name_for_kind(
+        self,
+        metric_kind: str | None,
+    ) -> str | None:
+        if metric_kind is None:
+            return None
+        kind = str(metric_kind).strip()
+        if not kind:
+            return None
+        normalized = kind.lower()
+        aliases = {
+            "atomic": ("atomic", "atomic_metrics"),
+            "atomic_metrics": ("atomic_metrics", "atomic"),
+            "derived": ("derived", "derived_metrics"),
+            "derived_metrics": ("derived_metrics", "derived"),
+        }
+        for candidate in aliases.get(normalized, (kind, f"{kind}_metrics")):
+            if self.metric_rules.get(candidate):
+                return candidate
+        return None
+
+    def _metric_rule_label_for_name(self, rule_name: str) -> str:
+        return self.metric_rule_labels.get(rule_name, rule_name)
+
+    def _metric_node_expected(self, node: dict) -> dict:
+        expected = dict(node)
+        type_name = node.get("name") if node.get("kind") == "type" else ""
+        if type_name:
+            expected["type"] = self._type_def_info(type_name)
+        return expected
+
+    def diagnose_metric_name(
+        self,
+        name: str,
+        metric_kind: str | None = None,
+        rule_name: str | None = None,
+    ) -> dict:
+        metric_kind_text = (
+            str(metric_kind).strip() if metric_kind is not None else None
+        )
+        resolved_rule_name = (
+            str(rule_name).strip()
+            if rule_name
+            else self._metric_rule_name_for_kind(metric_kind_text)
+        )
+        if not resolved_rule_name:
+            return {
+                "actual": name,
+                "metric_kind": metric_kind_text,
+                "rule_name": None,
+                "passed": False,
+                "attempts": [],
+                "failure": {
+                    "code": "unknown_metric_kind",
+                    "actual": metric_kind_text,
+                },
+            }
+
+        attempts = []
+        for rule_def in self.metric_rules.get(resolved_rule_name, []):
+            kind = rule_def.get("kind")
+            if kind == "segments":
+                attempts.append(
+                    self.diagnose_segments(
+                        name,
+                        rule_def["template"],
+                        {
+                            "name": resolved_rule_name,
+                            "description": (
+                                self._metric_rule_label_for_name(
+                                    resolved_rule_name
+                                )
+                            ),
+                            "raw_expr": rule_def.get("raw_expr"),
+                            "constraints": {},
+                        },
+                    )
+                )
+                continue
+
+            if kind == "sequence":
+                matched = self._match_metric_sequence(
+                    name,
+                    rule_def["nodes"],
+                    (),
+                )
+                attempt = {
+                    "actual": name,
+                    "passed": matched is not None,
+                    "rule": {
+                        "name": resolved_rule_name,
+                        "description": self._metric_rule_label_for_name(
+                            resolved_rule_name
+                        ),
+                        "raw_expr": rule_def.get("raw_expr"),
+                        "constraints": {},
+                    },
+                    "nodes": [
+                        self._metric_node_expected(node)
+                        for node in rule_def.get("nodes") or []
+                    ],
+                }
+                if matched is not None:
+                    attempt["matched_values"] = matched
+                else:
+                    attempt["failure"] = {
+                        "code": "metric_sequence_mismatch",
+                        "expected": attempt["nodes"],
+                        "actual": name,
+                    }
+                attempts.append(attempt)
+                continue
+
+            attempts.append(
+                {
+                    "actual": name,
+                    "passed": False,
+                    "rule": {"name": resolved_rule_name},
+                    "failure": {
+                        "code": "unsupported_metric_rule_kind",
+                        "actual": kind,
+                    },
+                }
+            )
+
+        if not attempts:
+            return {
+                "actual": name,
+                "metric_kind": metric_kind_text,
+                "rule_name": resolved_rule_name,
+                "passed": False,
+                "attempts": [],
+                "failure": {
+                    "code": "unknown_metric_rule",
+                    "actual": resolved_rule_name,
+                },
+            }
+
+        return {
+            "actual": name,
+            "metric_kind": metric_kind_text,
+            "rule_name": resolved_rule_name,
+            "passed": any(attempt.get("passed") for attempt in attempts),
+            "attempts": attempts,
+        }
+
     def _type_def_info(self, type_name: str) -> dict:
         type_def = self.types.get(type_name)
         if not type_def:
