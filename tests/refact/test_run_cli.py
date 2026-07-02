@@ -5,6 +5,10 @@ import refact.run as run_cli
 from refact.session import create_run_manifest, write_manifest
 
 
+def _local_datetime(*args):
+    return datetime(*args).astimezone()
+
+
 def _write_json(path, data):
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2))
@@ -31,7 +35,7 @@ def test_start_creates_manifest_and_baseline_artifacts(tmp_path, monkeypatch):
     monkeypatch.setattr(
         run_cli,
         "_now",
-        lambda: datetime(2026, 6, 20, 7, 30, tzinfo=timezone.utc),
+        lambda: _local_datetime(2026, 6, 20, 7, 30),
     )
 
     exit_code = run_cli.main(

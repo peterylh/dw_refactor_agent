@@ -7,7 +7,7 @@ import argparse
 import json
 import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -33,7 +33,7 @@ from refact.verification_plan import build_verification_plan
 
 
 def _now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now().astimezone()
 
 
 def _write_json(path: Path, data: dict) -> None:
