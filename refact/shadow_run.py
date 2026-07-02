@@ -703,6 +703,28 @@ def _check_result(check: dict, status: str) -> dict:
     }
 
 
+def _rewrite_db_prefix(value: str, prod_db: str, qa_db: str) -> str:
+    return value.replace(f"{prod_db}.", f"{qa_db}.")
+
+
+def _qa_ddl_change(change: dict, prod_db: str, qa_db: str) -> dict:
+    result = dict(change)
+    if "sql" in result:
+        original_sql = result.get("original_sql", result.get("sql", ""))
+        result["sql"] = _rewrite_db_prefix(
+            result.get("sql", ""),
+            prod_db,
+            qa_db,
+        )
+        result["original_sql"] = original_sql
+
+    for key in ("table_name", "old_name", "new_name"):
+        if key in result and isinstance(result[key], str):
+            result[key] = _rewrite_db_prefix(result[key], prod_db, qa_db)
+
+    return result
+
+
 def _ddl_change_result(
     change: dict,
     status: str,
@@ -714,6 +736,8 @@ def _ddl_change_result(
         "status": status,
         "error": error,
     }
+    if "original_sql" in change:
+        result["original_sql"] = change.get("original_sql")
     for key in ("table_name", "old_name", "new_name"):
         if key in change:
             result[key] = change.get(key)
@@ -803,7 +827,11 @@ def _dry_run_phases(plan: dict) -> list[dict]:
     baseline_ddl = plan.get("baseline_ddl", {})
     ddl_changes = plan.get("ddl_changes", [])
     jobs_to_run = plan.get("jobs_to_run", [])
+    prod_db = plan["project_db"]
     qa_db = plan["qa_db"]
+    qa_ddl_changes = [
+        _qa_ddl_change(change, prod_db, qa_db) for change in ddl_changes
+    ]
 
     jobs = []
     for job in jobs_to_run:
@@ -837,7 +865,8 @@ def _dry_run_phases(plan: dict) -> list[dict]:
             "name": "apply_ddl_changes",
             "status": "dry_run",
             "ddl_changes": [
-                _ddl_change_result(change, "dry_run") for change in ddl_changes
+                _ddl_change_result(change, "dry_run")
+                for change in qa_ddl_changes
             ],
         },
         {
@@ -936,28 +965,28 @@ def execute_shadow_plan(plan: dict, *, dry_run: bool = False) -> dict:
         print(f"\n{'-' * 60}")
         print(f"Phase 2: 应用 DDL 变更 ({len(ddl_changes)} 条)")
         for change in ddl_changes:
-            sql = change.get("sql", "")
+            qa_change = _qa_ddl_change(change, prod_db, qa_db)
+            sql = qa_change.get("sql", "")
             if not sql.strip():
                 ddl_change_results.append(
-                    _ddl_change_result(change, "skipped")
+                    _ddl_change_result(qa_change, "skipped")
                 )
                 continue
-            sql_qa = sql.replace(f"{prod_db}.", f"{qa_db}.")
-            statements = _ddl_change_statements(sql_qa)
+            statements = _ddl_change_statements(sql)
             try:
                 for statement in statements:
                     _execute_ddl_statement(statement, qa_db)
                 print(
-                    f"  [{change.get('change_type')}] "
-                    f"{change.get('table_name', '?')}"
+                    f"  [{qa_change.get('change_type')}] "
+                    f"{qa_change.get('table_name', '?')}"
                 )
                 ddl_change_results.append(
-                    _ddl_change_result(change, "success")
+                    _ddl_change_result(qa_change, "success")
                 )
             except Exception as exc:
-                print(f"  [FAIL] {change.get('change_type')}: {exc}")
+                print(f"  [FAIL] {qa_change.get('change_type')}: {exc}")
                 ddl_change_results.append(
-                    _ddl_change_result(change, "failed", str(exc))
+                    _ddl_change_result(qa_change, "failed", str(exc))
                 )
                 ddl_phase["status"] = "failed"
                 phases.append(ddl_phase)
@@ -1082,8 +1111,11 @@ def _dry_run(plan: dict) -> None:
 
     print(f"\n--- Phase 2: DDL 变更 ({len(ddl_changes)} 条) ---")
     for change in ddl_changes:
-        name = change.get("table_name", change.get("old_name", "?"))
-        print(f"  [{change['change_type']}] {name}")
+        qa_change = _qa_ddl_change(change, prod_db, qa_db)
+        name = qa_change.get("table_name", qa_change.get("old_name", "?"))
+        print(f"  [{qa_change['change_type']}] {name}")
+        for statement in _ddl_change_statements(qa_change.get("sql", "")):
+            print(f"    {statement}")
 
     print(f"\n--- Phase 3: 作业 ({len(jobs_to_run)} 个) ---")
     recalculated = set()

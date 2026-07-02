@@ -281,7 +281,7 @@ def test_execute_shadow_plan_splits_rename_columns_and_waits(monkeypatch):
 
     monkeypatch.setattr("refact.shadow_run.run_sql", fake_run_sql)
 
-    execute_shadow_plan(plan)
+    result = execute_shadow_plan(plan)
 
     alter_calls = [sql for sql, _, _ in calls if sql.startswith("ALTER TABLE")]
     show_calls = [
@@ -298,6 +298,27 @@ def test_execute_shadow_plan_splits_rename_columns_and_waits(monkeypatch):
         ),
     ]
     assert len(show_calls) == 4
+    phase_by_name = {phase["name"]: phase for phase in result["phases"]}
+    assert phase_by_name["apply_ddl_changes"]["ddl_changes"] == [
+        {
+            "change_type": "ALTER",
+            "sql": (
+                "ALTER TABLE shop_dm_qa.dwd_order_detail "
+                "RENAME COLUMN unit_price price_unit; "
+                "ALTER TABLE shop_dm_qa.dwd_order_detail "
+                "RENAME COLUMN quantity item_quantity;"
+            ),
+            "original_sql": (
+                "ALTER TABLE shop_dm.dwd_order_detail "
+                "RENAME COLUMN unit_price price_unit; "
+                "ALTER TABLE shop_dm.dwd_order_detail "
+                "RENAME COLUMN quantity item_quantity;"
+            ),
+            "table_name": "shop_dm_qa.dwd_order_detail",
+            "status": "success",
+            "error": None,
+        }
+    ]
 
 
 def test_wait_for_table_alter_jobs_polls_until_finished(monkeypatch):
@@ -363,6 +384,37 @@ def test_dry_run_omits_where_for_unpartitioned_checks(capsys):
     assert "WHERE * = '*'" not in output
     assert "[count] shop_dm_qa.ads_sales_dashboard" in output
     assert "[row_compare] shop_dm_qa.ads_sales_dashboard" in output
+
+
+def test_dry_run_prints_qa_ddl_changes(capsys):
+    plan = {
+        "project": "shop",
+        "project_db": "shop_dm",
+        "qa_db": "shop_dm_qa",
+        "baseline_ddl": {},
+        "ddl_changes": [
+            {
+                "change_type": "ALTER",
+                "table_name": "shop_dm.dwd_order_detail",
+                "sql": (
+                    "ALTER TABLE shop_dm.dwd_order_detail "
+                    "ADD COLUMN amount DECIMAL(10,2);"
+                ),
+            }
+        ],
+        "partition_info": {},
+        "jobs_to_run": [],
+        "verification": {"checks": []},
+    }
+
+    execute_shadow_plan(plan, dry_run=True)
+
+    output = capsys.readouterr().out
+    assert "[ALTER] shop_dm_qa.dwd_order_detail" in output
+    assert (
+        "ALTER TABLE shop_dm_qa.dwd_order_detail "
+        "ADD COLUMN amount DECIMAL(10,2);"
+    ) in output
 
 
 def test_run_shadow_plan_executes_self_contained(tmp_path, monkeypatch):
@@ -590,10 +642,13 @@ def test_run_shadow_plan_dry_run_persists_phase_summary(tmp_path, monkeypatch):
         {
             "change_type": "RENAME",
             "sql": (
+                "ALTER TABLE shop_dm_qa.dwd_inventory RENAME M_SHOP_05_INV_DF;"
+            ),
+            "original_sql": (
                 "ALTER TABLE shop_dm.dwd_inventory RENAME M_SHOP_05_INV_DF;"
             ),
-            "old_name": "shop_dm.dwd_inventory",
-            "new_name": "shop_dm.M_SHOP_05_INV_DF",
+            "old_name": "shop_dm_qa.dwd_inventory",
+            "new_name": "shop_dm_qa.M_SHOP_05_INV_DF",
             "status": "dry_run",
             "error": None,
         }
