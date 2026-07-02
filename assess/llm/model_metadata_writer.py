@@ -65,6 +65,7 @@ from lineage.view import LineageView
 
 METRIC_LAYERS = {"DWD", "DWS"}
 WRITABLE_METADATA_LAYERS = {"DWD", "DWS", "DIM"}
+TABLE_INSPECTOR_LAYER_CANDIDATES = ("DWD", "DWS", "DIM")
 WRITE_SCOPES = {"all", "table", "metrics", "grain", "business"}
 DATA_DOMAIN_LAYERS = {"DWD"}
 BUSINESS_AREA_LAYERS = {"DWD", "DWS"}
@@ -870,10 +871,14 @@ def _canonical_entities_for_write(
 
     effective_layer = str(model_layer or result.declared_layer or "").upper()
     is_dimension_model = (
-        effective_layer == "DIM" or result.table_type == "dimension"
+        effective_layer == "DIM"
+        or (
+            effective_layer != "DWS"
+            and result.table_type == "dimension"
+        )
     )
 
-    if result.table_type == "fact" and not is_dimension_model:
+    if not is_dimension_model:
         if effective_layer == "DWD":
             canonical = []
             for entity in entities:
@@ -893,9 +898,6 @@ def _canonical_entities_for_write(
             item.pop("relationship", None)
             canonical.append(item)
         return _dedupe_entities(canonical)
-
-    if not is_dimension_model:
-        return _dedupe_entities(entities)
 
     primary = next(
         (
@@ -1643,7 +1645,6 @@ def _direct_has_aggregate_signals(
     return bool(
         re.search(r"\b(sum|count|avg|min|max)\s*\(", task_text, re.IGNORECASE)
         or re.search(r"\bgroup\s+by\b", task_text, re.IGNORECASE)
-        or re.search(r"\bover\s*\(", task_text, re.IGNORECASE)
     )
 
 
@@ -1791,6 +1792,50 @@ def _direct_has_source_layer_signal(
     return not upstream_tables
 
 
+def _direct_fixed_layer_signal(
+    *,
+    project: str,
+    table_name: str,
+    asset: dict[str, Any],
+    existing: dict[str, Any],
+    use_existing_model_metadata: bool,
+    lineage_view: LineageView | None,
+) -> str:
+    seed_layer = _direct_seed_layer(
+        table_name,
+        asset,
+        existing=existing,
+        use_existing_model_metadata=use_existing_model_metadata,
+    )
+    if seed_layer in {"ODS", "ADS"}:
+        return seed_layer
+
+    placement_layer = _direct_generation_layer_from_asset_placement(
+        project, asset
+    )
+    if placement_layer in {"ODS", "ADS"}:
+        return placement_layer
+    if _direct_has_source_layer_signal(table_name, asset, lineage_view):
+        return "ODS"
+
+    lineage_facts = (
+        lineage_view.lineage_facts_for_table(table_name)
+        if lineage_view
+        else {}
+    )
+    downstream_tables = (
+        lineage_view.downstream_tables(table_name) if lineage_view else set()
+    )
+    application_output_strength = _direct_application_output_signal_strength(
+        table_name,
+        asset,
+        _direct_model_match_text(table_name, asset, lineage_view),
+        has_aggregate=_direct_has_aggregate_signals(asset, lineage_facts),
+        downstream_tables=downstream_tables,
+    )
+    return "ADS" if application_output_strength == "strong" else ""
+
+
 def _direct_table_inspector_layer_result_is_usable(
     table_inspector_layer_result: dict[str, Any] | None,
 ) -> bool:
@@ -1799,6 +1844,81 @@ def _direct_table_inspector_layer_result_is_usable(
     if table_inspector_layer_result.get("status") not in {"passed", "warning"}:
         return False
     return float(table_inspector_layer_result.get("confidence") or 0) >= 0.5
+
+
+def _direct_table_inspector_has_aggregate_reason(
+    table_inspector_layer_result: dict[str, Any] | None,
+) -> bool:
+    if not table_inspector_layer_result:
+        return False
+    steps = table_inspector_layer_result.get("reasoning_steps") or []
+    text = "\n".join(
+        [str(table_inspector_layer_result.get("reason") or "")]
+        + [str(step) for step in steps]
+    ).lower()
+    if not text:
+        return False
+    sentences = [
+        sentence.strip()
+        for sentence in re.split(r"[\n。；;]+", text)
+        if sentence.strip()
+    ]
+    negative_pattern = re.compile(
+        r"(?:没有|无|未包含|不包含|不存在|未进行|非|不是|不符合)"
+        r".{0,20}(?:group\s*by|聚合|汇总)|"
+        r"(?:group\s*by|聚合|汇总).{0,20}"
+        r"(?:没有|无|未包含|不包含|不存在|未进行|非|不是|不符合)",
+        re.IGNORECASE,
+    )
+    positive_pattern = re.compile(
+        r"\bgroup\s+by\b|\b(sum|count|avg|min|max)\s*\(|聚合|汇总指标|汇总表",
+        re.IGNORECASE,
+    )
+    return any(
+        positive_pattern.search(sentence)
+        and not negative_pattern.search(sentence)
+        for sentence in sentences
+    )
+
+
+DIRECT_AGGREGATE_SUMMARY_NAME_TOKENS = {
+    "aggregate",
+    "aggregation",
+    "daily",
+    "day",
+    "effect",
+    "hourly",
+    "monthly",
+    "quarterly",
+    "snapshot",
+    "summary",
+    "weekly",
+    "yearly",
+}
+
+
+def _direct_has_aggregate_summary_name_signal(table_name: str) -> bool:
+    tokens = set(_split_identifier_tokens(table_name))
+    return bool(tokens & DIRECT_AGGREGATE_SUMMARY_NAME_TOKENS)
+
+
+def _direct_apply_aggregate_summary_guard(
+    table_name: str,
+    inspected_layer: str,
+    *,
+    has_aggregate: bool,
+) -> str:
+    """Do not let aggregate summary facts collapse into DIM/DWD metadata."""
+    layer = str(inspected_layer or "").upper()
+    if layer == "DIM" and has_aggregate:
+        return "DWS"
+    if (
+        layer == "DWD"
+        and has_aggregate
+        and _direct_has_aggregate_summary_name_signal(table_name)
+    ):
+        return "DWS"
+    return layer
 
 
 def _direct_infer_layer(
@@ -1874,6 +1994,16 @@ def _direct_infer_layer(
             table_inspector_layer_result.get("layer") or ""
         ).upper()
         if inspected_layer in VALID_LAYERS and inspected_layer != "OTHER":
+            inspected_layer = _direct_apply_aggregate_summary_guard(
+                table_name,
+                inspected_layer,
+                has_aggregate=(
+                    has_aggregate
+                    or _direct_table_inspector_has_aggregate_reason(
+                        table_inspector_layer_result
+                    )
+                ),
+            )
             if inspected_layer == "ADS" and _direct_has_event_detail_layer_signal(
                 table_name,
                 has_aggregate=has_aggregate,
@@ -1898,6 +2028,16 @@ def _direct_infer_layer(
             table_inspector_layer_result.get("layer") or ""
         ).upper()
         if inspected_layer in VALID_LAYERS:
+            inspected_layer = _direct_apply_aggregate_summary_guard(
+                table_name,
+                inspected_layer,
+                has_aggregate=(
+                    has_aggregate
+                    or _direct_table_inspector_has_aggregate_reason(
+                        table_inspector_layer_result
+                    )
+                ),
+            )
             if inspected_layer == "ADS" and _direct_has_event_detail_layer_signal(
                 table_name,
                 has_aggregate=has_aggregate,
@@ -1909,7 +2049,7 @@ def _direct_infer_layer(
                 return "DWD"
             return inspected_layer
 
-    if application_output_strength:
+    if application_output_strength == "strong":
         return "ADS"
 
     if _direct_has_dimension_layer_signal(
@@ -1984,7 +2124,17 @@ def _direct_table_inspector_candidate_reason(
     existing: dict[str, Any],
     use_existing_model_metadata: bool,
     cold_start_full_metadata: bool,
+    lineage_view: LineageView | None,
 ) -> str:
+    if _direct_fixed_layer_signal(
+        project=project,
+        table_name=table_name,
+        asset=asset,
+        existing=existing,
+        use_existing_model_metadata=use_existing_model_metadata,
+        lineage_view=lineage_view,
+    ):
+        return ""
     if cold_start_full_metadata:
         return "cold_start_full_metadata"
     if _direct_needs_table_inspector_layer_inference(
@@ -2005,7 +2155,18 @@ def _direct_table_inspector_skip_reason(
     asset: dict[str, Any],
     existing: dict[str, Any],
     use_existing_model_metadata: bool,
+    lineage_view: LineageView | None,
 ) -> str:
+    fixed_layer = _direct_fixed_layer_signal(
+        project=project,
+        table_name=table_name,
+        asset=asset,
+        existing=existing,
+        use_existing_model_metadata=use_existing_model_metadata,
+        lineage_view=lineage_view,
+    )
+    if fixed_layer:
+        return f"fixed_{fixed_layer.lower()}_layer_signal"
     seed_layer = _direct_seed_layer(
         table_name,
         asset,
@@ -2155,6 +2316,7 @@ def _direct_inspection_context(
     lineage_view: LineageView | None,
     depth_memo: dict[str, int],
     declared_layer: str = "OTHER",
+    candidate_layers: tuple[str, ...] = TABLE_INSPECTOR_LAYER_CANDIDATES,
 ) -> TableContext:
     upstream_tables = (
         sorted(lineage_view.upstream_tables(table_name))
@@ -2197,6 +2359,7 @@ def _direct_inspection_context(
         project_context=str(catalog.get("project_context") or "").strip(),
         business_domain_options=business_domain_options,
         business_semantics_options=_direct_business_semantics_options(catalog),
+        candidate_layers=candidate_layers,
     )
 
 
@@ -2345,6 +2508,7 @@ def _direct_infer_layers_with_table_inspector(
                 "table": table_name,
                 "message": result.get("reason")
                 or "Table inspector layer inference failed",
+                "validation": result.get("validation") or {},
             }
         )
     return layer_results, warnings
@@ -2427,6 +2591,10 @@ def _direct_infer_table_type(
         return "other"
     if layer == "ADS" or name.startswith("ads_"):
         return "other"
+    if layer == "DIM" or name.startswith("dim_"):
+        return "dimension"
+    if layer == "DWS":
+        return "fact"
     if _direct_table_inspector_layer_result_is_usable(
         table_inspector_layer_result
     ):
@@ -2435,9 +2603,18 @@ def _direct_infer_table_type(
         ).strip().lower()
         if inspected_table_type in (VALID_TABLE_TYPES - {"other"}):
             return inspected_table_type
-    if layer == "DIM" or name.startswith("dim_"):
-        return "dimension"
-    if layer == "DWS":
+    if layer == "DWD" and _direct_has_event_detail_layer_signal(
+        table_name,
+        has_aggregate=bool(lineage_facts.get("has_aggregate")),
+        process_score=process_score,
+        has_metric_hints=has_metric_hints,
+        upstream_tables=(
+            lineage_view.upstream_tables(table_name)
+            if lineage_view
+            else set()
+        ),
+        application_output_strength="",
+    ):
         return "fact"
     if layer == "DWD" and subject_score >= 2 and has_dimension_text:
         return "dimension"
@@ -2596,6 +2773,15 @@ def _direct_catalog_mapping_for_model(
     table_inspector_layer_result: dict[str, Any] | None = None,
     prefer_table_inspector_layer: bool = False,
 ) -> dict[str, Any]:
+    def finalize_mapping(mapping: dict[str, Any]) -> dict[str, Any]:
+        finalized = _direct_apply_table_inspector_metadata_mapping(
+            project=project,
+            mapping=mapping,
+            table_inspector_layer_result=table_inspector_layer_result,
+        )
+        _fill_dimension_fallback_metadata(finalized, asset)
+        return finalized
+
     if use_existing_model_metadata:
         existing_mapping = _direct_existing_catalog_mapping(
             catalog, table_name, existing
@@ -2607,11 +2793,7 @@ def _direct_catalog_mapping_for_model(
                 existing_mapping,
                 table_inspector_layer_result,
             )
-            return _direct_apply_table_inspector_metadata_mapping(
-                project=project,
-                mapping=existing_mapping,
-                table_inspector_layer_result=table_inspector_layer_result,
-            )
+            return finalize_mapping(existing_mapping)
 
     match_text = _direct_model_match_text(table_name, asset, lineage_view)
     seed_layer = _direct_seed_layer(
@@ -2707,11 +2889,7 @@ def _direct_catalog_mapping_for_model(
                 "assignment_score": subject_match["score"],
             }
         )
-        return _direct_apply_table_inspector_metadata_mapping(
-            project=project,
-            mapping=mapping,
-            table_inspector_layer_result=table_inspector_layer_result,
-        )
+        return finalize_mapping(mapping)
 
     if table_type == "fact" and process_match.get("score", 0) >= 2:
         process = process_match["entry"]
@@ -2727,11 +2905,7 @@ def _direct_catalog_mapping_for_model(
                 "assignment_score": process_match["score"],
             }
         )
-        return _direct_apply_table_inspector_metadata_mapping(
-            project=project,
-            mapping=mapping,
-            table_inspector_layer_result=table_inspector_layer_result,
-        )
+        return finalize_mapping(mapping)
 
     mapping.update(
         {
@@ -2743,11 +2917,7 @@ def _direct_catalog_mapping_for_model(
             ),
         }
     )
-    return _direct_apply_table_inspector_metadata_mapping(
-        project=project,
-        mapping=mapping,
-        table_inspector_layer_result=table_inspector_layer_result,
-    )
+    return finalize_mapping(mapping)
 
 
 def _apply_direct_lineage_business_process_propagation(
@@ -2818,6 +2988,113 @@ def _entry_display_name(entry: dict[str, Any], code: str) -> str:
     return str(entry.get("name") or "").strip() or _display_name_from_code(code)
 
 
+DIM_ENTITY_SUFFIX_TOKENS = {
+    "base",
+    "dim",
+    "dimension",
+    "history",
+    "info",
+    "master",
+    "profile",
+    "reference",
+    "snapshot",
+}
+
+
+def _strip_entity_key_suffix(value: str) -> str:
+    return re.sub(r"(?:_id|_key|_code|_no|_number)$", "", value.lower())
+
+
+def _singularize_entity_token(token: str) -> str:
+    if len(token) > 3 and token.endswith("ies"):
+        return token[:-3] + "y"
+    if len(token) > 3 and token.endswith("s") and not token.endswith("ss"):
+        return token[:-1]
+    return token
+
+
+def _fallback_entity_code_from_identifier(value: str) -> str:
+    stripped = _strip_entity_key_suffix(value)
+    tokens = [
+        _singularize_entity_token(token)
+        for token in _split_identifier_tokens(stripped)
+        if token not in DIM_ENTITY_SUFFIX_TOKENS
+    ]
+    if not tokens:
+        return ""
+    if tokens[0] in {"dwd", "dws", "ods", "ads"}:
+        tokens = tokens[1:]
+    if tokens and tokens[0] == "dim":
+        tokens = tokens[1:]
+    if not tokens:
+        return ""
+    return "_".join(tokens[:3]).upper()
+
+
+def _candidate_dimension_key_columns(asset: dict[str, Any]) -> list[str]:
+    ddl = asset.get("ddl") or {}
+    column_names = _asset_column_names(asset)
+    key_columns = [
+        str(column).strip()
+        for column in ddl.get("key_columns") or []
+        if str(column).strip()
+    ]
+    candidates = []
+    for column in key_columns + column_names:
+        column_lower = column.lower()
+        if column in candidates or _is_time_grain_key(column_lower):
+            continue
+        if (
+            column_lower.endswith(("_id", "_key", "_code", "_no", "_number"))
+            or column in key_columns
+        ):
+            candidates.append(column)
+    return candidates
+
+
+def _fallback_dimension_entity(
+    *,
+    table_name: str,
+    asset: dict[str, Any],
+    code: str = "",
+) -> dict[str, Any]:
+    keys = _candidate_dimension_key_columns(asset)
+    if not keys:
+        return {}
+    entity_code = (
+        _normalize_catalog_code(code)
+        or _fallback_entity_code_from_identifier(keys[0])
+        or _fallback_entity_code_from_identifier(table_name)
+    )
+    if not entity_code:
+        return {}
+    return {
+        "code": entity_code,
+        "type": "primary",
+        "name": _display_name_from_code(entity_code),
+        "key_columns": keys[:1],
+    }
+
+
+def _fill_dimension_fallback_metadata(
+    mapping: dict[str, Any],
+    asset: dict[str, Any],
+) -> None:
+    if str(mapping.get("layer") or "").upper() != "DIM":
+        return
+    if str(mapping.get("table_type") or "").lower() != "dimension":
+        return
+    fallback_entity = _fallback_dimension_entity(
+        table_name=str(mapping.get("table") or ""),
+        asset=asset,
+        code=str(mapping.get("semantic_subject") or ""),
+    )
+    if fallback_entity and not mapping.get("semantic_subject"):
+        mapping["semantic_subject"] = fallback_entity["code"]
+    mapping.setdefault("dimension_role", "BASE")
+    mapping.setdefault("dimension_content_type", "INFO")
+
+
 def _column_matches_entry(column_name: str, entry: dict[str, Any]) -> bool:
     column_tokens = set(_split_identifier_tokens(column_name))
     for signal in _catalog_entry_signals(entry):
@@ -2870,7 +3147,12 @@ def _direct_entities_for_model(
     if mapping.get("semantic_subject"):
         subject = _entry_by_code(subjects, mapping["semantic_subject"])
         if not subject:
-            return []
+            fallback = _fallback_dimension_entity(
+                table_name=str(mapping.get("table") or ""),
+                asset=asset,
+                code=str(mapping.get("semantic_subject") or ""),
+            )
+            return [fallback] if fallback else []
         code = str(subject.get("code") or "").strip()
         keys = _candidate_key_columns_for_entry(asset, subject)
         if not code or not keys:
@@ -2883,6 +3165,13 @@ def _direct_entities_for_model(
                 "key_columns": keys,
             }
         ]
+
+    if mapping.get("table_type") == "dimension":
+        fallback = _fallback_dimension_entity(
+            table_name=str(mapping.get("table") or ""),
+            asset=asset,
+        )
+        return [fallback] if fallback else []
 
     if mapping.get("table_type") != "fact":
         return []
@@ -3307,10 +3596,13 @@ def _apply_table_inspector_payload_to_direct_model(
             _effective_entities(result),
             model_layer=str(updated.get("layer") or ""),
         )
-        grain_metadata = _canonical_grain_for_write(
-            _effective_grain(result.grain),
-            entity_metadata,
-        )
+        if model_layer == "DIM":
+            grain_metadata = {}
+        else:
+            grain_metadata = _canonical_grain_for_write(
+                _effective_grain(result.grain),
+                entity_metadata,
+            )
         if entity_metadata:
             updated["entities"] = entity_metadata
         else:
@@ -3580,6 +3872,7 @@ def run_direct_model_generation(
                 existing=existing,
                 use_existing_model_metadata=not ignore_existing_models,
                 cold_start_full_metadata=cold_start_full_metadata,
+                lineage_view=lineage_view,
             )
             if reason:
                 llm_candidates[table_name] = asset
@@ -3593,6 +3886,7 @@ def run_direct_model_generation(
                 asset=asset,
                 existing=existing,
                 use_existing_model_metadata=not ignore_existing_models,
+                lineage_view=lineage_view,
             )
             table_inspector_skip_reasons[skip_reason] = (
                 table_inspector_skip_reasons.get(skip_reason, 0) + 1

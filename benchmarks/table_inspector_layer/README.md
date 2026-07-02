@@ -4,9 +4,10 @@ This benchmark validates cold-start direct model generation when table layer
 metadata is missing.
 
 It builds temporary copies of the demo projects, removes explicit layer hints
-from table names and SQL comments, runs `run_direct_model_generation` with
-`table_inspector` enabled, and compares generated layers against the original
-demo `models/*.yaml` metadata.
+from table names and SQL comments, separates source/application/middle-layer
+assets, runs `run_direct_model_generation` with `table_inspector` enabled for
+the middle-layer tables only, and compares generated layers against the
+original demo `models/*.yaml` metadata.
 
 ## Usage
 
@@ -30,22 +31,28 @@ layer result and YAML payload can both be reviewed.
 
 ## What It Checks
 
-- Cold-start mode: `ignore_existing_models=True` and `write_scope=all`.
-- All tables are sent to `table_inspector` when layer inference is enabled.
+- Cold-start-like mode: only ODS/ADS seed metadata is retained so those two
+  boundary layers are deterministic; DWD/DWS/DIM tables have no layer seed.
+- Temporary assets are split into ODS, ADS, and middle-layer directories. ODS
+  uses the normal `ods/ddl/internal/benchmark` placement, ADS gets minimal
+  seed model metadata, and middle-layer tables are the only LLM candidates.
 - Table prefixes such as `ods_`, `dwd_`, `dws_`, `ads_`, and `dim_` are removed
   in the temporary project.
 - SQL line comments, SQL `COMMENT` clauses, and direct layer words are stripped
   from the temporary DDL/tasks.
-- Final layer accuracy is compared with the source project model metadata.
+- Table inspector layer accuracy is measured over DWD/DWS/DIM only. Final
+  layer accuracy is still compared across all tables.
 - Metric/entity/grain counts are reported, including whether final ADS tables
   received metrics.
 - Generated YAML payloads are written to the temporary project for content
   review.
 
-## Latest Local Validation
+## Previous Local Validation
 
-The latest validation was run on 2026-07-01 with `mimo-v2.5-pro`,
-`parallel=4`, and `request_timeout=240`.
+The previous validation was run on 2026-07-01 with `mimo-v2.5-pro`,
+`parallel=4`, and `request_timeout=240`. It predates the ODS/ADS fixed-layer
+split, so its table inspector accuracy was measured with the older all-table
+candidate setup.
 
 | Project | Final Layer Accuracy | Table Inspector Accuracy | ADS | ODS | DWD | DWS | Metrics |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |

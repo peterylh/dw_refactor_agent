@@ -35,6 +35,8 @@ SQL_LINE_COMMENT_PATTERN = re.compile(r"(?m)^\s*--[^\n]*(?:\n|$)")
 SQL_COMMENT_CLAUSE_PATTERN = re.compile(
     r"\s+COMMENT\s+(?:'[^']*'|\"[^\"]*\")", re.IGNORECASE
 )
+FIXED_LAYER_GROUPS = {"ODS", "ADS"}
+MIDDLE_LAYER_GROUPS = {"DWD", "DWS", "DIM"}
 
 
 def reset_config(project_root: Path) -> None:
@@ -76,6 +78,23 @@ def sanitize_sql(text: str, mapping: dict[str, str]) -> str:
     return text.strip() + "\n"
 
 
+def rewrite_source_files(value: Any, source_mapping: dict[str, str]) -> Any:
+    if isinstance(value, dict):
+        return {
+            key: (
+                source_mapping.get(raw, raw)
+                if key in {"source_file", "source_path"} and isinstance(raw, str)
+                else rewrite_source_files(raw, source_mapping)
+            )
+            for key, raw in value.items()
+        }
+    if isinstance(value, list):
+        return [rewrite_source_files(item, source_mapping) for item in value]
+    if isinstance(value, str):
+        return source_mapping.get(value, value)
+    return value
+
+
 def model_paths(project: str) -> list[Path]:
     project_dir = REPO_ROOT / project
     paths = list((project_dir / "models").glob("*.yaml"))
@@ -100,6 +119,68 @@ def load_expected(project: str) -> dict[str, dict[str, str]]:
             "table_type": str(data.get("table_type") or "other"),
         }
     return expected
+
+
+def expected_layer(
+    table_name: str, expected: dict[str, dict[str, str]]
+) -> str:
+    return str(expected.get(table_name, {}).get("layer") or "OTHER").upper()
+
+
+def table_group(table_name: str, expected: dict[str, dict[str, str]]) -> str:
+    layer = expected_layer(table_name, expected)
+    if layer == "ODS":
+        return "ods"
+    if layer == "ADS":
+        return "ads"
+    return "middle"
+
+
+def ddl_output_path(
+    target_dir: Path,
+    table_name: str,
+    expected: dict[str, dict[str, str]],
+) -> Path:
+    group = table_group(table_name, expected)
+    if group == "ods":
+        return target_dir / "ods" / "ddl" / "internal" / "benchmark"
+    if group == "ads":
+        return target_dir / "ddl" / "ads"
+    return target_dir / "ddl" / "middle"
+
+
+def task_output_path(
+    target_dir: Path,
+    table_name: str,
+    expected: dict[str, dict[str, str]],
+    rel_parent: Path,
+) -> Path:
+    group = table_group(table_name, expected)
+    return target_dir / "tasks" / group / rel_parent
+
+
+def write_fixed_layer_model_seed(
+    target_dir: Path,
+    table_name: str,
+    metadata: dict[str, str],
+) -> None:
+    layer = str(metadata.get("layer") or "OTHER").upper()
+    if layer not in FIXED_LAYER_GROUPS:
+        return
+    payload = {
+        "name": table_name,
+        "layer": layer,
+        "table_type": str(metadata.get("table_type") or "other"),
+    }
+    if layer == "ODS":
+        out_dir = target_dir / "ods" / "models" / "internal" / "benchmark"
+    else:
+        out_dir = target_dir / "models"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / f"{table_name}.yaml").write_text(
+        yaml.safe_dump(payload, allow_unicode=True, sort_keys=False),
+        encoding="utf-8",
+    )
 
 
 def functional_name(
@@ -186,7 +267,11 @@ def build_temp_project(
 ) -> tuple[Path, dict[str, str], dict[str, dict[str, str]]]:
     source_dir = REPO_ROOT / source_project
     target_dir = tmp_root / target_project
-    (target_dir / "ddl").mkdir(parents=True)
+    (target_dir / "ddl" / "ads").mkdir(parents=True)
+    (target_dir / "ddl" / "middle").mkdir(parents=True)
+    (target_dir / "ods" / "ddl" / "internal" / "benchmark").mkdir(
+        parents=True
+    )
     (target_dir / "tasks").mkdir()
     (target_dir / "lineage").mkdir()
     shutil.copy2(
@@ -204,22 +289,41 @@ def build_temp_project(
 
     for ddl_path in ddl_paths(source_project):
         new = mapping[ddl_path.stem]
-        (target_dir / "ddl" / f"{new}.sql").write_text(
-            sanitize_sql(ddl_path.read_text(encoding="utf-8"), mapping),
+        out_dir = ddl_output_path(target_dir, ddl_path.stem, expected)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        sanitized_ddl = sanitize_sql(
+            ddl_path.read_text(encoding="utf-8"), mapping
+        )
+        (out_dir / f"{new}.sql").write_text(
+            sanitized_ddl,
             encoding="utf-8",
         )
+        if table_group(ddl_path.stem, expected) != "ods":
+            (target_dir / "ddl" / f"{new}.sql").write_text(
+                sanitized_ddl,
+                encoding="utf-8",
+            )
+        write_fixed_layer_model_seed(target_dir, new, expected[ddl_path.stem])
 
+    task_source_mapping: dict[str, str] = {}
     for task_path in sorted((source_dir / "tasks").rglob("*.sql")):
         old = task_path.stem
+        target_table = old
         if old.endswith("_full_refresh") and old[: -len("_full_refresh")] in mapping:
+            target_table = old[: -len("_full_refresh")]
             new = mapping[old[: -len("_full_refresh")]] + "_full_refresh"
         elif old in mapping:
             new = mapping[old]
         else:
             continue
         rel_parent = task_path.parent.relative_to(source_dir / "tasks")
-        out_dir = target_dir / "tasks" / rel_parent
+        out_dir = task_output_path(target_dir, target_table, expected, rel_parent)
         out_dir.mkdir(parents=True, exist_ok=True)
+        old_source_file = task_path.relative_to(source_dir / "tasks").as_posix()
+        new_source_file = (
+            out_dir.relative_to(target_dir / "tasks") / f"{new}.sql"
+        ).as_posix()
+        task_source_mapping[old_source_file] = new_source_file
         (out_dir / f"{new}.sql").write_text(
             sanitize_sql(task_path.read_text(encoding="utf-8"), mapping),
             encoding="utf-8",
@@ -228,11 +332,13 @@ def build_temp_project(
     lineage_path = source_dir / "lineage" / "lineage_data.json"
     if lineage_path.exists():
         data = json.loads(lineage_path.read_text(encoding="utf-8"))
+        data = rewrite_source_files(data, task_source_mapping)
         for table in data.get("tables") or []:
             old = str(table.get("name") or "")
             if old in mapping:
                 table["name"] = mapping[old]
-                table["layer"] = "OTHER"
+                layer = expected_layer(old, expected)
+                table["layer"] = layer if layer in FIXED_LAYER_GROUPS else "OTHER"
         raw = replace_table_refs(json.dumps(data, ensure_ascii=False), mapping)
         data = json.loads(raw)
     else:
@@ -249,8 +355,13 @@ def build_temp_project(
     }
     for new in mapping.values():
         if new not in existing_tables:
+            old = {value: key for key, value in mapping.items()}[new]
+            layer = expected_layer(old, expected)
             data.setdefault("tables", []).append(
-                {"name": new, "layer": "OTHER"}
+                {
+                    "name": new,
+                    "layer": layer if layer in FIXED_LAYER_GROUPS else "OTHER",
+                }
             )
     (target_dir / "lineage" / "lineage_data.json").write_text(
         json.dumps(data, ensure_ascii=False, indent=2),
@@ -278,18 +389,18 @@ def summarize_project(
     config.PROJECT_CONFIG[target_project] = {
         "dir": target_project,
         "catalog": "internal",
-        "db": config.PROJECT_CONFIG[source_project].get("db", ""),
+        "db": "benchmark",
         "naming_config": f"{target_project}/naming_config.yaml",
     }
     reset_config(tmp_root)
     print(
-        f"[{source_project}] calling table inspector for {len(mapping)} tables",
+        f"[{source_project}] calling table inspector for middle-layer tables",
         flush=True,
     )
     result = run_direct_model_generation(
         target_project,
         dry_run=False,
-        ignore_existing_models=True,
+        ignore_existing_models=False,
         infer_layer_with_llm=True,
         api_key=api_key,
         model=model,
@@ -317,17 +428,25 @@ def summarize_project(
         inspection = (cache.get(new) or {}).get("result") or {}
         reasoning_steps = inspection.get("reasoning_steps") or []
         update = updates_by_new.get(new) or {}
+        evaluation_group = (
+            "middle" if expected[old]["layer"] in MIDDLE_LAYER_GROUPS else "fixed"
+        )
         rows.append(
             {
                 "original_table": old,
                 "test_table": new,
                 "expected_layer": expected[old]["layer"],
                 "expected_table_type": expected[old]["table_type"],
-                "table_inspector_layer": str(
-                    inspection.get("layer")
-                    or inspection.get("inferred_layer")
-                    or "MISSING"
-                ).upper(),
+                "layer_evaluation_group": evaluation_group,
+                "table_inspector_layer": (
+                    str(
+                        inspection.get("layer")
+                        or inspection.get("inferred_layer")
+                        or "MISSING"
+                    ).upper()
+                    if evaluation_group == "middle"
+                    else "NOT_RUN"
+                ),
                 "table_inspector_confidence": inspection.get("confidence"),
                 "table_inspector_reason": inspection.get("reason")
                 or "；".join(str(step) for step in reasoning_steps[:3]),
@@ -346,9 +465,14 @@ def summarize_project(
         )
 
     table_count = len(rows)
+    inspector_rows = [
+        row
+        for row in rows
+        if row["expected_layer"] in MIDDLE_LAYER_GROUPS
+    ]
     table_inspector_correct = sum(
         row["table_inspector_layer"] == row["expected_layer"]
-        for row in rows
+        for row in inspector_rows
     )
     final_correct = sum(
         row["final_layer"] == row["expected_layer"] for row in rows
@@ -356,6 +480,7 @@ def summarize_project(
     by_expected = defaultdict(
         lambda: {
             "total": 0,
+            "table_inspector_evaluated": 0,
             "table_inspector_correct": 0,
             "final_correct": 0,
         }
@@ -367,23 +492,27 @@ def summarize_project(
     for row in rows:
         item = by_expected[row["expected_layer"]]
         item["total"] += 1
-        item["table_inspector_correct"] += int(
-            row["table_inspector_layer"] == row["expected_layer"]
-        )
+        if row["expected_layer"] in MIDDLE_LAYER_GROUPS:
+            item["table_inspector_evaluated"] += 1
+            item["table_inspector_correct"] += int(
+                row["table_inspector_layer"] == row["expected_layer"]
+            )
         item["final_correct"] += int(row["final_layer"] == row["expected_layer"])
-        confusion[(row["expected_layer"], row["table_inspector_layer"])] += 1
+        if row["expected_layer"] in MIDDLE_LAYER_GROUPS:
+            confusion[(row["expected_layer"], row["table_inspector_layer"])] += 1
         final_layer_counts[row["final_layer"]] += 1
         if row["final_layer"] == "ADS" and row["metric_count"]:
             final_ads_metric_tables.append(row)
-        if (
-            row["table_inspector_layer"] != row["expected_layer"]
-            or row["final_layer"] != row["expected_layer"]
-        ):
+        inspector_mismatch = (
+            row["expected_layer"] in MIDDLE_LAYER_GROUPS
+            and row["table_inspector_layer"] != row["expected_layer"]
+        )
+        if inspector_mismatch or row["final_layer"] != row["expected_layer"]:
             mismatches.append(row)
 
     print(
         f"[{source_project}] table_inspector="
-        f"{table_inspector_correct}/{table_count}, "
+        f"{table_inspector_correct}/{len(inspector_rows)}, "
         f"final={final_correct}/{table_count}, mismatches={len(mismatches)}",
         flush=True,
     )
@@ -404,9 +533,14 @@ def summarize_project(
         "table_inspector_used_count": result.get(
             "table_inspector_layer_inference_count"
         ),
+        "table_inspector_eval_count": len(inspector_rows),
+        "table_inspector_correct_count": table_inspector_correct,
         "table_inspector_accuracy": (
-            table_inspector_correct / table_count if table_count else 0
+            table_inspector_correct / len(inspector_rows)
+            if inspector_rows
+            else 0
         ),
+        "final_correct_count": final_correct,
         "final_accuracy": final_correct / table_count if table_count else 0,
         "by_expected_layer": dict(by_expected),
         "confusion": {
@@ -468,15 +602,14 @@ def main() -> None:
                 )
             )
         total = sum(summary["table_count"] for summary in summaries)
+        table_inspector_eval_count = sum(
+            summary["table_inspector_eval_count"] for summary in summaries
+        )
         table_inspector_correct = sum(
-            round(
-                summary["table_inspector_accuracy"] * summary["table_count"]
-            )
-            for summary in summaries
+            summary["table_inspector_correct_count"] for summary in summaries
         )
         final_correct = sum(
-            round(summary["final_accuracy"] * summary["table_count"])
-            for summary in summaries
+            summary["final_correct_count"] for summary in summaries
         )
         payload = {
             "model": args.model,
@@ -493,9 +626,14 @@ def main() -> None:
                 summary["table_inspector_used_count"]
                 for summary in summaries
             ),
+            "total_table_inspector_eval_count": table_inspector_eval_count,
+            "total_table_inspector_correct_count": table_inspector_correct,
             "combined_table_inspector_accuracy": (
-                table_inspector_correct / total if total else 0
+                table_inspector_correct / table_inspector_eval_count
+                if table_inspector_eval_count
+                else 0
             ),
+            "total_final_correct_count": final_correct,
             "combined_final_accuracy": final_correct / total if total else 0,
             "total_metric_count": sum(
                 summary["metric_count"] for summary in summaries

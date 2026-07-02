@@ -9,11 +9,14 @@ import pytest
 from assess.llm.table_inspector import (
     TableContext,
     TableInspector,
+    TableInspectResult,
     build_prompt,
     parse_response,
     result_to_cache_dict,
     result_to_dict,
+    validate_candidate_layer,
     validate_columns,
+    validate_metadata_quality,
     validate_metric_expressions,
     validate_metric_relationships,
     validate_primary_entities,
@@ -33,6 +36,7 @@ def test_build_prompt_scenarios():
     _assert_build_prompt_documents_business_metadata_scope()
     _assert_build_prompt_keeps_metric_expression_separate_from_grain()
     _assert_build_prompt_groups_metrics_from_inferred_layer()
+    _assert_build_prompt_limits_candidate_layers()
 
 
 def test_parse_response_metadata_scenarios():
@@ -47,6 +51,7 @@ def test_parse_response_metadata_scenarios():
         _assert_dict_to_result_normalizes_placeholder_empty_grain,
         _assert_parse_response_preserves_related_entities_metadata,
         _assert_parse_basic_response_shapes,
+        _assert_parse_response_repairs_unescaped_quotes_inside_string_values,
         _assert_parse_response_ignores_legacy_layer_reason_fields,
         _assert_parse_grouped_column_response,
         _assert_result_serialization_handles_system_fields,
@@ -62,6 +67,9 @@ def test_validate_response_contract_scenarios():
         _assert_validate_metric_expressions_flags_grain_text,
         _assert_validate_primary_entities_requires_dwd_fact_primary,
         _assert_validate_primary_entities_uses_inferred_dwd_for_cold_start,
+        _assert_validate_candidate_layer_rejects_non_middle_layer,
+        _assert_validate_metadata_quality_requires_dws_and_dim_semantics,
+        _assert_base_metric_relationship_validation_is_warning_not_blocking,
         _assert_validate_columns_flags_unknown_duplicate_and_missing_fields,
         _assert_validate_columns_requires_all_dws_fact_fields,
         _assert_validate_metric_relationships_requires_derived_base_metric_in_upstream_atomic,
@@ -209,6 +217,32 @@ def _assert_build_prompt_groups_metrics_from_inferred_layer():
     validation = validate_columns(result, {"store_id", "total_amt"})
 
     assert validation["missing_columns"] == ["store_id"]
+
+
+def _assert_build_prompt_limits_candidate_layers():
+    ctx = TableContext(
+        table_name="customer_monthly_summary",
+        layer="OTHER",
+        ddl=(
+            "CREATE TABLE customer_monthly_summary "
+            "(customer_id BIGINT, stat_month DATE, total_amount DECIMAL);"
+        ),
+        etl_sql=(
+            "INSERT INTO customer_monthly_summary "
+            "SELECT customer_id, stat_month, SUM(pay_amount) total_amount "
+            "FROM order_detail GROUP BY customer_id, stat_month;"
+        ),
+        upstream_tables=["order_detail"],
+        downstream_tables=[],
+        candidate_layers=("DWD", "DWS", "DIM"),
+    )
+
+    prompt = build_prompt(ctx)
+
+    assert "本轮候选层约束" in prompt
+    assert "只允许在 DWD, DWS, DIM 中选择 inferred_layer" in prompt
+    assert '"inferred_layer": "DWD|DWS|DIM"' in prompt
+    assert "不能把公共汇总表单独推到 ADS" in prompt
 
 
 def _assert_build_prompt_keeps_metadata_contracts_without_project_examples():
@@ -725,6 +759,123 @@ def _assert_validate_primary_entities_uses_inferred_dwd_for_cold_start():
     }
 
 
+def _assert_validate_candidate_layer_rejects_non_middle_layer():
+    result = parse_response(
+        "customer_monthly_summary",
+        {
+            "choices": [
+                {
+                    "message": {
+                        "content": json.dumps(
+                            {
+                                "inferred_layer": "ADS",
+                                "table_type": "fact",
+                                "confidence": 0.9,
+                            }
+                        )
+                    }
+                }
+            ]
+        },
+        declared_layer="OTHER",
+    )
+
+    validation = validate_candidate_layer(result, ("DWD", "DWS", "DIM"))
+
+    assert validation == {
+        "invalid_candidate_layers": [
+            "inferred_layer=ADS 不在候选层 DIM,DWD,DWS 中"
+        ]
+    }
+
+
+def _assert_validate_metadata_quality_requires_dws_and_dim_semantics():
+    dws_result = parse_response(
+        "agent_summary",
+        {
+            "choices": [
+                {
+                    "message": {
+                        "content": json.dumps(
+                            {
+                                "inferred_layer": "DWS",
+                                "table_type": "fact",
+                                "confidence": 0.9,
+                                "columns": {
+                                    "atomic_metrics": [],
+                                    "derived_metrics": [],
+                                    "calculated_metrics": [],
+                                    "dimensions": [],
+                                    "others": [],
+                                },
+                                "grain": {},
+                            }
+                        )
+                    }
+                }
+            ]
+        },
+        declared_layer="OTHER",
+    )
+    dim_result = parse_response(
+        "economic_indicators_profile",
+        {
+            "choices": [
+                {
+                    "message": {
+                        "content": json.dumps(
+                            {
+                                "inferred_layer": "DIM",
+                                "table_type": "fact",
+                                "confidence": 0.9,
+                                "entities": [],
+                            }
+                        )
+                    }
+                }
+            ]
+        },
+        declared_layer="OTHER",
+    )
+
+    assert validate_metadata_quality(dws_result) == {
+        "missing_metric_metadata": ["DWS fact必须至少返回一个指标字段"],
+        "missing_grain_metadata": ["DWS fact必须尽量返回表级grain"],
+    }
+    assert validate_metadata_quality(dim_result) == {
+        "invalid_dimension_table_type": ["DIM层模型的table_type必须为dimension"],
+        "missing_dimension_entities": [
+            "DIM/dimension模型必须尽量返回一个type=primary的entities项"
+        ],
+    }
+
+
+def _assert_base_metric_relationship_validation_is_warning_not_blocking():
+    result = TableInspectResult(
+        table_name="customer_monthly_summary",
+        declared_layer="OTHER",
+        inferred_layer="DWS",
+        table_type="fact",
+        confidence=0.9,
+        reasoning_steps=["公共汇总表"],
+        validation={
+            "invalid_base_metrics": ["total_amount:transaction_amount"]
+        },
+    )
+    blocked = TableInspectResult(
+        table_name="customer_monthly_summary",
+        declared_layer="OTHER",
+        inferred_layer="ADS",
+        table_type="fact",
+        confidence=0.9,
+        reasoning_steps=["越界层"],
+        validation={"invalid_candidate_layers": ["ADS"]},
+    )
+
+    assert result.status == "warning"
+    assert blocked.status == "blocked"
+
+
 def _assert_parse_response_preserves_entities_metadata():
     resp = {
         "choices": [
@@ -950,6 +1101,33 @@ def _assert_parse_basic_response_shapes():
         assert result.confidence == confidence
         if reason:
             assert reason in result.reasoning_steps[0]
+
+
+def _assert_parse_response_repairs_unescaped_quotes_inside_string_values():
+    content = (
+        '{"inferred_layer":"DIM","table_type":"dimension","confidence":0.91,'
+        '"reasoning_steps":["表名包含 "profile" 且是实体属性表"],'
+        '"dimension_role":"BASE","dimension_content_type":"INFO",'
+        '"entities":[{"code":"ECONOMIC_INDICATOR","type":"primary",'
+        '"key_columns":["economic_indicator_key"]}]}'
+    )
+    resp = {"choices": [{"message": {"content": content}}]}
+
+    result = parse_response("economic_indicators_profile", resp)
+
+    assert result.inferred_layer == "DIM"
+    assert result.table_type == "dimension"
+    assert result.confidence == 0.91
+    assert result.reasoning_steps == ['表名包含 "profile" 且是实体属性表']
+    assert result.dimension_role == "BASE"
+    assert result.dimension_content_type == "INFO"
+    assert result.entities == [
+        {
+            "code": "ECONOMIC_INDICATOR",
+            "type": "primary",
+            "key_columns": ["economic_indicator_key"],
+        }
+    ]
 
 
 def _assert_parse_response_ignores_legacy_layer_reason_fields():
@@ -2250,7 +2428,7 @@ def test_inspect_batch_runs_with_configured_parallelism(monkeypatch):
                                 "content": json.dumps(
                                     {
                                         "inferred_layer": "DWD",
-                                        "table_type": "dimension",
+                                        "table_type": "other",
                                         "confidence": 0.9,
                                         "reasoning_steps": ["api"],
                                         "columns": {

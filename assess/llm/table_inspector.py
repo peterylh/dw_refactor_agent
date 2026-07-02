@@ -24,7 +24,7 @@ from assess.project_facts.time_period import (
 )
 from config import TEXT_ENCODING
 
-PROMPT_VERSION = "table-inspector-v24"
+PROMPT_VERSION = "table-inspector-v25"
 DEFAULT_API_BASE_URL = "https://api.deepseek.com"
 VALID_LAYERS = {"ODS", "DWD", "DWS", "ADS", "DIM", "OTHER"}
 VALID_TABLE_TYPES = {"dimension", "fact", "other"}
@@ -41,16 +41,34 @@ COLUMN_GROUPS = (
 VALIDATION_ERROR_KEYS = (
     "unknown_columns",
     "duplicate_columns",
+    "invalid_time_periods",
+    "invalid_metric_expressions",
+    "missing_primary_entities",
+    "invalid_candidate_layers",
+    "invalid_dimension_table_type",
+    "missing_dimension_entities",
+    "missing_metric_metadata",
+    "missing_grain_metadata",
+)
+VALIDATION_WARNING_KEYS = (
+    "missing_columns",
     "missing_base_metrics",
     "missing_base_metric_tables",
     "invalid_base_metrics",
     "invalid_base_metric_tables",
     "ambiguous_base_metrics",
-    "invalid_time_periods",
-    "invalid_metric_expressions",
-    "missing_primary_entities",
 )
-VALIDATION_WARNING_KEYS = ("missing_columns",)
+
+
+def _normalized_candidate_layers(
+    layers: tuple[str, ...] | list[str],
+) -> tuple[str, ...]:
+    normalized = []
+    for layer in layers or ():
+        value = str(layer or "").strip().upper()
+        if value in VALID_LAYERS and value != "OTHER" and value not in normalized:
+            normalized.append(value)
+    return tuple(normalized)
 
 
 def _normalize_api_base_url(base_url: str) -> str:
@@ -154,7 +172,11 @@ class TableInspectResult:
 
 
 def build_prompt(ctx: TableContext) -> str:
-    prompt = f"""你是一位资深数据仓库架构师和指标治理专家。你的任务是根据给定的表结构、ETL 加工逻辑和血缘关系，完成一次统一巡检:
+    candidate_layers = _normalized_candidate_layers(ctx.candidate_layers)
+    candidate_layer_text = (
+        "|".join(candidate_layers) or "ODS|DWD|DWS|ADS|DIM|OTHER"
+    )
+    prompt = """你是一位资深数据仓库架构师和指标治理专家。你的任务是根据给定的表结构、ETL 加工逻辑和血缘关系，完成一次统一巡检:
 1. 客观推断这张表真实应该归属的数仓分层。
 2. 判断它的物理表类型（维度表/事实表/其他）。
 3. 识别 entities、grain 元数据候选。
@@ -167,6 +189,17 @@ def build_prompt(ctx: TableContext) -> str:
 - ADS (应用层): 面向最终报表、业务大屏、专题分析或运营看板的定制化数据，可能包含复杂的衍生指标；下游通常不再被其他数据表引用，但出度为 0 只是弱信号，不能覆盖 ETL、粒度和表语义证据。典型应用输出形态包括 TOPN/排名、ROI、RFM、预警、绩效看板、按人群/地域/分群的 by_* 分析表，以及没有明确周期复用语义的 summary 应用表。
 - DIM (公共维度表): 记录实体属性，主键通常为单一实体 ID，被其他宽表广泛 LEFT JOIN。
 
+"""
+    if candidate_layers:
+        prompt += f"""## 本轮候选层约束
+- 本轮只允许在 {", ".join(candidate_layers)} 中选择 inferred_layer，JSON 中不得返回 ODS、ADS 或 OTHER。
+- ODS 和 ADS 已由目录、配置或外部参数确定；本轮任务只判断中间层。
+- 如果表看起来贴源但不在 ODS 固定目录中，请根据粒度和实体语义在 DWD/DIM 中选择最合理的一层，不要返回 ODS。
+- 如果表看起来像应用输出但本轮候选层不包含 ADS，请先检查它是否是公共汇总口径；有 GROUP BY 且按实体/周期/公共维度沉淀的汇总事实表，应优先判为 DWS，即使下游引用数为 0。
+- 下游被引用次数为 0 在冷启动场景中只能作为弱信号，不能把公共汇总表单独推到 ADS。
+
+"""
+    prompt += f"""
 ## 表类型判定标准
 - dimension: 维度表。描述可被事实表引用的业务实体属性、层级、状态或主数据，缓慢变化，常常作为维表被 JOIN。
 - fact: 事实表或汇总事实表。记录业务事件/交易，或按公共维度汇总业务过程，包含可度量字段，通常有时间分区。
@@ -309,7 +342,7 @@ def build_prompt(ctx: TableContext) -> str:
 如果 inferred_layer 不是 DWD/DWS 或 table_type 不是 fact，columns 下五个数组都返回空数组。
 
 {{
-  "inferred_layer": "ODS|DWD|DWS|ADS|DIM|OTHER",
+  "inferred_layer": "{candidate_layer_text}",
   "table_type": "dimension|fact|other",
   "inferred_data_domain": "已确认数据域编号或新的大写下划线候选 code；不适用或不确定时为空字符串",
   "inferred_business_area": "已确认业务板块简写或新的大写下划线候选 code；不适用或不确定时为空字符串",
@@ -424,6 +457,11 @@ def build_retry_prompt(
 - invalid_time_periods 中列出的 time_period 必须改为 D/W/M/Q/Y/S 之一；不要返回中文、英文单词或 1d/1m 等写法。
 - invalid_metric_expressions 中列出的 expression 必须删除 GROUP BY、按...分组、by ... 等粒度说明，只保留指标计算公式。
 - missing_primary_entities 表示 DWD fact 缺少主实体；必须为当前事实行/事件/明细行补充至少一个 type=primary 的 entities 项。
+- invalid_candidate_layers 表示 inferred_layer 不在本轮候选层中；必须从本轮候选层中重选，不能返回 ODS/ADS/OTHER。
+- invalid_dimension_table_type 表示 DIM 层不能返回 fact/other；必须修正 table_type 或重判层级。
+- missing_dimension_entities 表示维度表缺少主实体；必须补充至少一个 type=primary 的 entities 项。
+- missing_metric_metadata 表示 DWS fact 缺少指标分组；必须把度量字段放入 atomic_metrics、derived_metrics 或 calculated_metrics。
+- missing_grain_metadata 表示 DWS fact 缺少表级 grain；必须补充 grain.entities、time_column 或 time_period 中可从 SQL/DDL 判断的部分。
 - 不要返回 Markdown，不要返回额外解释。
 """
     )
@@ -438,6 +476,78 @@ def _strip_markdown_json(content: str) -> str:
         if text.endswith("```"):
             text = text[:-3]
     return text.strip()
+
+
+def _extract_json_object(content: str) -> str:
+    text = content.strip()
+    start = text.find("{")
+    end = text.rfind("}")
+    if start < 0 or end <= start:
+        return text
+    return text[start : end + 1].strip()
+
+
+def _repair_unescaped_json_string_quotes(content: str) -> str:
+    repaired: list[str] = []
+    in_string = False
+    escaped = False
+    length = len(content)
+
+    for index, char in enumerate(content):
+        if escaped:
+            repaired.append(char)
+            escaped = False
+            continue
+
+        if char == "\\":
+            repaired.append(char)
+            if in_string:
+                escaped = True
+            continue
+
+        if char != '"':
+            repaired.append(char)
+            continue
+
+        if not in_string:
+            in_string = True
+            repaired.append(char)
+            continue
+
+        next_index = index + 1
+        while next_index < length and content[next_index].isspace():
+            next_index += 1
+        next_char = content[next_index] if next_index < length else ""
+        if next_char in {":", ",", "]", "}"} or next_char == "":
+            in_string = False
+            repaired.append(char)
+        else:
+            repaired.append('\\"')
+
+    return "".join(repaired)
+
+
+def _loads_llm_json(content: str) -> dict[str, Any]:
+    candidates = [content]
+    extracted = _extract_json_object(content)
+    if extracted != content:
+        candidates.append(extracted)
+
+    last_error: json.JSONDecodeError | None = None
+    for candidate in candidates:
+        for raw in (candidate, _repair_unescaped_json_string_quotes(candidate)):
+            try:
+                data = json.loads(raw)
+            except json.JSONDecodeError as exc:
+                last_error = exc
+                continue
+            if isinstance(data, dict):
+                return data
+            raise json.JSONDecodeError("JSON 顶层必须是对象", raw, 0)
+
+    if last_error is not None:
+        raise last_error
+    raise json.JSONDecodeError("未找到 JSON 对象", content, 0)
 
 
 def _safe_float(value: Any) -> float:
@@ -628,7 +738,7 @@ def parse_response(
     content = _strip_markdown_json(content)
 
     try:
-        data = json.loads(content)
+        data = _loads_llm_json(content)
         return TableInspectResult(
             table_name=table_name,
             declared_layer=str(declared_layer or ""),
@@ -760,6 +870,11 @@ def _normalize_validation(value: Any) -> dict[str, list[str]]:
         "invalid_time_periods",
         "invalid_metric_expressions",
         "missing_primary_entities",
+        "invalid_candidate_layers",
+        "invalid_dimension_table_type",
+        "missing_dimension_entities",
+        "missing_metric_metadata",
+        "missing_grain_metadata",
     ):
         raw_items = value.get(key, []) or []
         if isinstance(raw_items, list):
@@ -892,6 +1007,65 @@ def validate_primary_entities(
             "DWD fact必须返回至少一个type=primary的entities项"
         ]
     }
+
+
+def validate_candidate_layer(
+    result: TableInspectResult, candidate_layers: tuple[str, ...] | list[str]
+) -> dict[str, list[str]]:
+    """校验结果层级是否落在调用方限定的候选层内。"""
+    allowed = set(_normalized_candidate_layers(candidate_layers))
+    if not allowed or result.inferred_layer in allowed:
+        return {}
+    return {
+        "invalid_candidate_layers": [
+            (
+                f"inferred_layer={result.inferred_layer} 不在候选层 "
+                f"{','.join(sorted(allowed))} 中"
+            )
+        ]
+    }
+
+
+def validate_metadata_quality(
+    result: TableInspectResult,
+) -> dict[str, list[str]]:
+    """校验可写入模型 YAML 的关键语义元数据是否自洽。"""
+    validation: dict[str, list[str]] = {}
+    layer = str(result.inferred_layer or "").upper()
+    table_type = str(result.table_type or "").lower()
+    metric_names = _metric_names_from_items(
+        result.atomic_metrics
+        + result.derived_metrics
+        + result.calculated_metrics
+    )
+
+    if layer == "DWS" and table_type == "fact":
+        if not metric_names:
+            validation["missing_metric_metadata"] = [
+                "DWS fact必须至少返回一个指标字段"
+            ]
+        if not result.grain:
+            validation["missing_grain_metadata"] = [
+                "DWS fact必须尽量返回表级grain"
+            ]
+
+    if layer == "DIM" and table_type != "dimension":
+        validation["invalid_dimension_table_type"] = [
+            "DIM层模型的table_type必须为dimension"
+        ]
+
+    if layer == "DIM" or table_type == "dimension":
+        has_primary_entity = any(
+            str(entity.get("type") or "").strip().lower() == "primary"
+            for entity in result.entities
+            if isinstance(entity, dict)
+        )
+        if not has_primary_entity:
+            validation["missing_dimension_entities"] = [
+                "DIM/dimension模型必须尽量返回一个type=primary的entities项"
+            ]
+
+    return validation
 
 
 def _metric_names_from_items(raw_metrics: Any) -> list[str]:
@@ -1088,7 +1262,8 @@ class TableInspector:
             f"{ctx.depth_from_ods}|{ctx.upstream_metric_groups}|"
             f"{ctx.column_lineage}|{ctx.declared_data_domain}|"
             f"{ctx.declared_business_area}|{ctx.business_domain_options}|"
-            f"{ctx.business_semantics_options}|{ctx.project_context}"
+            f"{ctx.business_semantics_options}|{ctx.project_context}|"
+            f"{ctx.candidate_layers}"
         )
         return hashlib.sha256(content.encode(TEXT_ENCODING)).hexdigest()
 
@@ -1229,6 +1404,8 @@ class TableInspector:
                 validate_time_periods(result),
                 validate_metric_expressions(result),
                 validate_primary_entities(result),
+                validate_candidate_layer(result, ctx.candidate_layers),
+                validate_metadata_quality(result),
                 validate_metric_relationships(result, ctx),
             )
             if result.status == "passed" or attempt >= self.max_retries:
