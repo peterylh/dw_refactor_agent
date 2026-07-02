@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 
 from config import TEXT_ENCODING
@@ -25,8 +25,12 @@ def _artifact_paths() -> dict:
     }
 
 
-def _utc_now() -> datetime:
-    return datetime.now(timezone.utc)
+def _local_now() -> datetime:
+    return datetime.now().astimezone()
+
+
+def _as_local_time(value: datetime) -> datetime:
+    return value.astimezone()
 
 
 def create_run_manifest(
@@ -37,7 +41,7 @@ def create_run_manifest(
     git_info: dict | None = None,
 ) -> tuple[Path, dict]:
     """Create a run directory and return its manifest path and data."""
-    now = now or _utc_now()
+    now = _as_local_time(now or _local_now())
     root = Path(root)
     run_id = f"{now.strftime('%Y%m%d_%H%M%S')}_{project}"
     run_root = root / "refact" / "runs" / run_id
