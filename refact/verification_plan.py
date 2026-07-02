@@ -189,9 +189,15 @@ def build_verification_plan(
     affected_scope = _normalized_affected_scope(scope)
     assessment_tables = set(affected_scope["assessment_tables"])
     assessment_tasks = set(affected_scope["assessment_tasks"])
-    anchors = affected_scope["anchor_tables"]
-    downstream_tables = affected_scope["downstream_tables"]
     modified_jobs = _modified_jobs(change_analysis, assessment_tasks)
+    changed_ddl_tables = _changed_ddl_tables(change_analysis)
+    anchors, self_anchor_tables = _verification_anchor_tables(
+        affected_scope,
+        modified_jobs,
+        changed_ddl_tables,
+    )
+    affected_scope["anchor_tables"] = anchors
+    downstream_tables = affected_scope["downstream_tables"]
 
     sorted_jobs = _sort_jobs_for_execution(
         project,
@@ -247,6 +253,15 @@ def build_verification_plan(
                 check["partition_value"] = table_partition["value"]
             checks.append(check)
 
+    verification = _verification_metadata(
+        checks,
+        affected_scope,
+        jobs_to_run,
+        ddl_changes,
+        _ads_schema_change_tables(project, ddl_changes),
+        self_anchor_tables,
+    )
+
     return {
         "project": project,
         "project_db": cfg["db"],
@@ -259,7 +274,7 @@ def build_verification_plan(
         "ddl_changes": ddl_changes,
         "partition_info": partition_info,
         "jobs_to_run": jobs_to_run,
-        "verification": {"checks": checks},
+        "verification": verification,
     }
 
 
@@ -281,6 +296,108 @@ def _modified_jobs(
     if isinstance(changed_assets, dict) and "task_jobs" in changed_assets:
         return sorted(set(changed_assets.get("task_jobs") or []))
     return sorted(assessment_tasks)
+
+
+def _changed_ddl_tables(change_analysis: dict) -> set[str]:
+    changed_assets = change_analysis.get("changed_assets")
+    if not isinstance(changed_assets, dict):
+        return set()
+    return set(changed_assets.get("ddl_tables") or [])
+
+
+def _verification_anchor_tables(
+    affected_scope: dict,
+    modified_jobs: list[str],
+    changed_ddl_tables: set[str],
+) -> tuple[list[str], list[str]]:
+    anchors = set(affected_scope["anchor_tables"])
+    if anchors:
+        return sorted(anchors), []
+    direct_tables = set(affected_scope["direct_tables"])
+    modified_job_set = set(modified_jobs)
+    for table in direct_tables & modified_job_set:
+        if table not in changed_ddl_tables:
+            anchors.add(table)
+    sorted_anchors = sorted(anchors)
+    return sorted_anchors, sorted_anchors
+
+
+def _has_verification_work(
+    affected_scope: dict,
+    jobs_to_run: list[dict],
+    ddl_changes: list[dict],
+) -> bool:
+    return bool(
+        affected_scope.get("direct_tables")
+        or affected_scope.get("downstream_tables")
+        or affected_scope.get("assessment_tasks")
+        or jobs_to_run
+        or ddl_changes
+    )
+
+
+def _verification_metadata(
+    checks: list[dict],
+    affected_scope: dict,
+    jobs_to_run: list[dict],
+    ddl_changes: list[dict],
+    blocked_schema_tables: list[str],
+    self_anchor_tables: list[str],
+) -> dict:
+    verification = {"checks": checks}
+    if blocked_schema_tables:
+        verification["schema_anchor_status"] = "blocked"
+        verification["schema_anchor_reason"] = (
+            "ADS table definitions must remain unchanged during refactor "
+            "verification"
+        )
+        verification["blocked_schema_tables"] = blocked_schema_tables
+    if checks:
+        if self_anchor_tables:
+            verification["data_anchor_status"] = "self_anchor_warning"
+            verification["data_anchor_reason"] = (
+                "fallback self-anchor tables are used because no downstream "
+                "data anchor is available; compare can detect observed data "
+                "differences but does not prove SQL semantic equivalence"
+            )
+            verification["self_anchor_tables"] = self_anchor_tables
+            verification["warnings"] = [
+                {
+                    "type": "fallback_self_anchor",
+                    "tables": self_anchor_tables,
+                    "message": (
+                        "No downstream data anchor is available; using "
+                        "SQL-only changed terminal tables as fallback anchors. "
+                        "Passing compare does not prove SQL semantic "
+                        "equivalence."
+                    ),
+                }
+            ]
+            return verification
+        verification["data_anchor_status"] = "ready"
+        return verification
+    if _has_verification_work(affected_scope, jobs_to_run, ddl_changes):
+        verification["data_anchor_status"] = "none"
+        verification["data_anchor_reason"] = (
+            "no invariant downstream anchor tables; "
+            "terminal tables with schema changes or no declared invariant "
+            "require explicit manual verification"
+        )
+        return verification
+    verification["data_anchor_status"] = "not_required"
+    return verification
+
+
+def _ads_schema_change_tables(
+    project: str, ddl_changes: list[dict]
+) -> list[str]:
+    tables = set()
+    for change in ddl_changes:
+        for key in ("table_name", "old_name", "new_name"):
+            table = _short_name(change.get(key))
+            if table and config.determine_layer(table, project) == "ADS":
+                tables.add(table)
+    return sorted(tables)
 
 
 def _sort_jobs_for_execution(
