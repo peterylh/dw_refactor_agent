@@ -277,6 +277,7 @@ def test_update_model_yaml_write_scope_and_metric_scenarios(
         _assert_update_model_yaml_replaces_existing_metrics,
         _assert_update_model_yaml_replaces_legacy_metric_fields,
         _assert_update_model_yaml_removes_metrics_when_none_detected,
+        _assert_update_model_yaml_preserves_metrics_when_dws_metrics_missing,
         _assert_update_model_yaml_skips_blocked_results,
     ]
 
@@ -1923,6 +1924,52 @@ def _assert_update_model_yaml_removes_metrics_when_none_detected(
     assert saved["layer"] == "DIM"
     assert "metrics" not in saved
     assert "calculated_metrics" not in saved
+
+
+def _assert_update_model_yaml_preserves_metrics_when_dws_metrics_missing(
+    tmp_path, monkeypatch
+):
+    import assess.llm.model_metadata_writer as writer_module
+
+    project_root = tmp_path
+    models_dir = project_root / "demo" / "mid" / "models"
+    models_dir.mkdir(parents=True)
+    model_path = models_dir / "dws_sales_daily.yaml"
+    model_path.write_text(
+        yaml.safe_dump(
+            {
+                "version": 2,
+                "name": "dws_sales_daily",
+                "layer": "DWS",
+                "table_type": "fact",
+                "atomic_metrics": ["sales_amt"],
+            },
+            allow_unicode=True,
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(writer_module, "PROJECT_ROOT", project_root)
+    monkeypatch.setitem(writer_module.PROJECT_CONFIG, "demo", {"dir": "demo"})
+
+    sparse_result = TableInspectResult(
+        table_name="dws_sales_daily",
+        declared_layer="DWS",
+        inferred_layer="DWS",
+        table_type="fact",
+        confidence=0.9,
+        reasoning_steps=["公共汇总事实表"],
+        validation={
+            "missing_metric_metadata": ["DWS fact必须至少返回一个指标字段"]
+        },
+    )
+    update = update_model_yaml("demo", sparse_result)
+    saved = yaml.safe_load(model_path.read_text(encoding="utf-8"))
+
+    assert update["metric_count"] == 0
+    assert update["removed_metric_count"] == 0
+    assert update["metric_changed"] is False
+    assert saved["atomic_metrics"] == ["sales_amt"]
 
 
 def _assert_update_model_yaml_skips_blocked_results(tmp_path, monkeypatch):
@@ -4482,6 +4529,303 @@ def test_run_direct_model_generation_cold_start_inspects_prefixed_table_metadata
     assert model["business_process"] == "ORDER_TRANSACTION"
     assert update["metric_changed"] is True
     assert update["metric_generation_source"] == "table_inspector"
+
+
+def test_run_direct_model_generation_preserves_existing_metrics_when_inspector_sparse(
+    tmp_path, monkeypatch
+):
+    import assess.llm.model_metadata_writer as writer_module
+
+    project = "direct_model_writer_sparse_inspector_metrics"
+    project_dir = tmp_path / project
+    (project_dir / "mid" / "ddl").mkdir(parents=True)
+    (project_dir / "mid" / "tasks").mkdir()
+    (project_dir / "mid" / "models").mkdir()
+    (project_dir / "lineage").mkdir()
+    (tmp_path / "naming_config.yaml").write_text(
+        "types: {}\nbindings: {}\ndictionaries: {}\n",
+        encoding="utf-8",
+    )
+    (project_dir / "business_semantics.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "version": 1,
+                "project": project,
+                "business_processes": [
+                    {
+                        "code": "SALES_SUMMARY",
+                        "name": "Sales Summary",
+                        "business_area": "SHOP",
+                    }
+                ],
+            },
+            allow_unicode=True,
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    (project_dir / "mid" / "ddl" / "sales_daily.sql").write_text(
+        """
+        CREATE TABLE sales_daily (
+            store_id BIGINT,
+            stat_date DATE,
+            sales_amt DECIMAL(12,2)
+        );
+        """,
+        encoding="utf-8",
+    )
+    (project_dir / "mid" / "tasks" / "sales_daily.sql").write_text(
+        """
+        INSERT INTO sales_daily
+        SELECT store_id, stat_date, SUM(pay_amt) AS sales_amt
+        FROM order_detail
+        GROUP BY store_id, stat_date;
+        """,
+        encoding="utf-8",
+    )
+    (project_dir / "mid" / "models" / "sales_daily.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "version": 2,
+                "name": "sales_daily",
+                "layer": "DWS",
+                "table_type": "fact",
+                "business_area": "SHOP",
+                "business_process": "SALES_SUMMARY",
+                "atomic_metrics": ["sales_amt"],
+                "grain": {
+                    "entities": ["STORE"],
+                    "time_column": "stat_date",
+                    "time_period": "D",
+                },
+            },
+            allow_unicode=True,
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    (project_dir / "lineage" / "lineage_data.json").write_text(
+        json.dumps(
+            {
+                "tables": [{"name": "sales_daily"}],
+                "edges": [],
+                "indirect_edges": [],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    _configure_project_root(monkeypatch, tmp_path)
+    monkeypatch.setitem(
+        config.PROJECT_CONFIG,
+        project,
+        {
+            "dir": project,
+            "naming_config": "naming_config.yaml",
+        },
+    )
+
+    def fake_call_api(_self, _prompt):
+        content = {
+            "inferred_layer": "DWS",
+            "table_type": "fact",
+            "confidence": 0.9,
+            "reasoning_steps": ["公共汇总事实表，但未识别指标分组"],
+            "columns": {
+                "atomic_metrics": [],
+                "derived_metrics": [],
+                "calculated_metrics": [],
+                "dimensions": [],
+                "others": [],
+            },
+        }
+        return json.dumps(
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": json.dumps(
+                                content,
+                                ensure_ascii=False,
+                            )
+                        }
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        )
+
+    monkeypatch.setattr(writer_module.TableInspector, "_call_api", fake_call_api)
+
+    result = run_direct_model_generation(
+        project,
+        dry_run=False,
+        ignore_existing_models=True,
+        infer_layer_with_llm=True,
+        api_key="test",
+        model="fake-layer-model",
+        no_cache=True,
+        show_progress=False,
+    )
+
+    model = yaml.safe_load(
+        (project_dir / "mid" / "models" / "sales_daily.yaml").read_text(
+            encoding="utf-8"
+        )
+    )
+    update = result["model_updates"][0]
+    assert model["atomic_metrics"] == ["sales_amt"]
+    assert update["removed_metric_count"] == 0
+    assert update["metric_generation_source"] == ""
+
+
+def test_run_direct_model_generation_inspects_dws_seed_with_application_token(
+    tmp_path, monkeypatch
+):
+    import assess.llm.model_metadata_writer as writer_module
+
+    project = "direct_model_writer_dws_application_token"
+    project_dir = tmp_path / project
+    (project_dir / "mid" / "ddl").mkdir(parents=True)
+    (project_dir / "mid" / "tasks").mkdir()
+    (project_dir / "lineage").mkdir()
+    (tmp_path / "naming_config.yaml").write_text(
+        "types: {}\nbindings: {}\ndictionaries: {}\n",
+        encoding="utf-8",
+    )
+    (project_dir / "business_semantics.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "version": 1,
+                "project": project,
+                "business_processes": [
+                    {
+                        "code": "PRODUCT_SALES",
+                        "name": "Product Sales",
+                        "business_area": "SHOP",
+                    }
+                ],
+            },
+            allow_unicode=True,
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    (project_dir / "mid" / "ddl" / "dws_product_topn_daily.sql").write_text(
+        """
+        CREATE TABLE dws_product_topn_daily (
+            product_id BIGINT,
+            stat_date DATE,
+            sales_amt DECIMAL(12,2)
+        );
+        """,
+        encoding="utf-8",
+    )
+    (project_dir / "mid" / "tasks" / "dws_product_topn_daily.sql").write_text(
+        """
+        INSERT INTO dws_product_topn_daily
+        SELECT product_id, stat_date, SUM(pay_amt) AS sales_amt
+        FROM dwd_order_detail
+        GROUP BY product_id, stat_date;
+        """,
+        encoding="utf-8",
+    )
+    (project_dir / "lineage" / "lineage_data.json").write_text(
+        json.dumps(
+            {
+                "tables": [{"name": "dws_product_topn_daily"}],
+                "edges": [],
+                "indirect_edges": [],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    _configure_project_root(monkeypatch, tmp_path)
+    monkeypatch.setitem(
+        config.PROJECT_CONFIG,
+        project,
+        {
+            "dir": project,
+            "naming_config": "naming_config.yaml",
+        },
+    )
+    calls = []
+
+    def fake_call_api(_self, prompt):
+        calls.append(prompt)
+        content = {
+            "inferred_layer": "DWS",
+            "table_type": "fact",
+            "confidence": 0.92,
+            "reasoning_steps": ["按商品和日期汇总的公共指标事实表"],
+            "columns": {
+                "atomic_metrics": [
+                    {
+                        "name": "sales_amt",
+                        "business_process": "PRODUCT_SALES",
+                    }
+                ],
+                "derived_metrics": [],
+                "calculated_metrics": [],
+                "dimensions": [
+                    {"name": "product_id"},
+                    {"name": "stat_date"},
+                ],
+                "others": [],
+            },
+            "grain": {
+                "entities": ["PRODUCT"],
+                "time_column": "stat_date",
+                "time_period": "D",
+            },
+        }
+        return json.dumps(
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": json.dumps(
+                                content,
+                                ensure_ascii=False,
+                            )
+                        }
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        )
+
+    monkeypatch.setattr(writer_module.TableInspector, "_call_api", fake_call_api)
+
+    result = run_direct_model_generation(
+        project,
+        dry_run=False,
+        ignore_existing_models=True,
+        infer_layer_with_llm=True,
+        api_key="test",
+        model="fake-layer-model",
+        no_cache=True,
+        show_progress=False,
+    )
+
+    model = yaml.safe_load(
+        (
+            project_dir
+            / "mid"
+            / "models"
+            / "dws_product_topn_daily.yaml"
+        ).read_text(encoding="utf-8")
+    )
+    assert len(calls) == 1
+    assert result["table_inspector_layer_inference_candidates"] == [
+        {
+            "table": "dws_product_topn_daily",
+            "reason": "cold_start_full_metadata",
+        }
+    ]
+    assert model["layer"] == "DWS"
+    assert model["atomic_metrics"] == ["sales_amt"]
 
 
 def test_direct_application_output_signal_treats_alerts_as_ambiguous():

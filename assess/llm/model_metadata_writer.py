@@ -528,6 +528,30 @@ def _extract_existing_metric_groups(
     }
 
 
+def _has_validation_issue(result: TableInspectResult, key: str) -> bool:
+    return bool((result.validation or {}).get(key))
+
+
+def _should_preserve_metric_groups(result: TableInspectResult) -> bool:
+    """Keep existing metrics when LLM explicitly reports sparse DWS metrics."""
+    return _has_validation_issue(result, "missing_metric_metadata")
+
+
+def _copy_metric_fields(
+    target: dict[str, Any], source: dict[str, Any] | None
+) -> None:
+    if not isinstance(source, dict):
+        return
+    for key in (
+        "metrics",
+        "atomic_metrics",
+        "derived_metrics",
+        "calculated_metrics",
+    ):
+        if key in source:
+            target[key] = source[key]
+
+
 def _as_string_list(value: Any) -> list[str]:
     if isinstance(value, list):
         return [str(item).strip() for item in value if str(item).strip()]
@@ -1099,6 +1123,11 @@ def update_model_yaml(
     detected_metrics = (
         metric_names_for_model(result) if write_metric_groups else []
     )
+    preserve_metric_groups = (
+        write_metric_groups
+        and _should_preserve_metric_groups(result)
+        and not detected_metrics
+    )
 
     updated = dict(existing)
     previous_layer = existing.get("layer")
@@ -1174,7 +1203,7 @@ def update_model_yaml(
         else:
             updated.pop("calculated_metrics", None)
         updated.pop("metrics", None)
-    elif write_metric_groups:
+    elif write_metric_groups and not preserve_metric_groups:
         updated.pop("metrics", None)
         updated.pop("atomic_metrics", None)
         updated.pop("derived_metrics", None)
@@ -1236,8 +1265,10 @@ def update_model_yaml(
             != previous_dimension_content_type
         )
     )
-    metric_changed = write_metric_groups and (
-        has_existing_metric_fields or detected_groups != existing_groups
+    metric_changed = (
+        write_metric_groups
+        and not preserve_metric_groups
+        and (has_existing_metric_fields or detected_groups != existing_groups)
     )
     grain_changed = write_grain_metadata and (
         updated.get("grain") != previous_grain
@@ -1254,7 +1285,7 @@ def update_model_yaml(
 
     new_metric_count = 0
     removed_metric_count = 0
-    if write_metric_groups:
+    if write_metric_groups and not preserve_metric_groups:
         new_metric_count = len(
             [name for name in detected_metrics if name not in existing_metrics]
         )
@@ -1820,6 +1851,8 @@ def _direct_fixed_layer_signal(
         return placement_layer
     if _direct_has_source_layer_signal(table_name, asset, lineage_view):
         return "ODS"
+    if seed_layer in {"DWD", "DWS"}:
+        return ""
 
     lineage_facts = (
         lineage_view.lineage_facts_for_table(table_name)
@@ -3569,6 +3602,7 @@ def _apply_table_inspector_payload_to_direct_model(
     result: TableInspectResult | None,
     *,
     write_scope: str,
+    previous: dict[str, Any] | None = None,
 ) -> None:
     if (
         not isinstance(result, TableInspectResult)
@@ -3608,10 +3642,15 @@ def _apply_table_inspector_payload_to_direct_model(
                 else:
                     updated.pop(key, None)
         else:
-            updated.pop("atomic_metrics", None)
-            updated.pop("derived_metrics", None)
-            updated.pop("calculated_metrics", None)
-        updated.pop("metrics", None)
+            if _should_preserve_metric_groups(result):
+                _copy_metric_fields(updated, previous)
+            else:
+                updated.pop("atomic_metrics", None)
+                updated.pop("derived_metrics", None)
+                updated.pop("calculated_metrics", None)
+                updated.pop("metrics", None)
+        if not _should_preserve_metric_groups(result):
+            updated.pop("metrics", None)
     elif _validate_write_scope(write_scope) == "all":
         updated.pop("atomic_metrics", None)
         updated.pop("derived_metrics", None)
@@ -3710,6 +3749,7 @@ def update_model_yaml_from_direct_generation(
             updated,
             mapping.get("_table_inspector_result"),
             write_scope=write_scope,
+            previous=previous,
         )
 
     changed = updated != previous
@@ -3750,6 +3790,12 @@ def update_model_yaml_from_direct_generation(
     )
     detected_metrics = _extract_existing_metric_names(updated)
     previous_metrics = _extract_existing_metric_names(previous)
+    inspection_result = mapping.get("_table_inspector_result")
+    preserved_metric_groups = (
+        isinstance(inspection_result, TableInspectResult)
+        and _should_preserve_metric_groups(inspection_result)
+        and not metric_names_for_model(inspection_result)
+    )
     entity_count = len(
         normalize_entities(
             updated.get("entities"),
@@ -3758,15 +3804,16 @@ def update_model_yaml_from_direct_generation(
         )
     )
     has_grain = bool(_effective_grain(updated.get("grain")))
-    inspection_result = mapping.get("_table_inspector_result")
     metric_generation_source = ""
     if (
         isinstance(inspection_result, TableInspectResult)
         and inspection_result.status != "blocked"
         and float(inspection_result.confidence or 0) >= 0.5
+        and not preserved_metric_groups
         and str(updated.get("layer") or "").upper() in METRIC_LAYERS
         and str(updated.get("table_type") or "").lower() == "fact"
         and _validate_write_scope(write_scope) == "all"
+        and bool(metric_names_for_model(inspection_result))
     ):
         metric_generation_source = "table_inspector"
     return {
@@ -3783,10 +3830,14 @@ def update_model_yaml_from_direct_generation(
         "business_changed": business_changed,
         "metric_changed": metric_changed,
         "metric_count": len(detected_metrics),
-        "new_metric_count": len(
+        "new_metric_count": 0
+        if preserved_metric_groups
+        else len(
             [name for name in detected_metrics if name not in previous_metrics]
         ),
-        "removed_metric_count": len(
+        "removed_metric_count": 0
+        if preserved_metric_groups
+        else len(
             [name for name in previous_metrics if name not in detected_metrics]
         ),
         "grain_changed": grain_changed,
