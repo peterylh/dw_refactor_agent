@@ -84,7 +84,8 @@ def rewrite_source_files(value: Any, source_mapping: dict[str, str]) -> Any:
         return {
             key: (
                 source_mapping.get(raw, raw)
-                if key in {"source_file", "source_path"} and isinstance(raw, str)
+                if key in {"source_file", "source_path"}
+                and isinstance(raw, str)
                 else rewrite_source_files(raw, source_mapping)
             )
             for key, raw in value.items()
@@ -225,9 +226,7 @@ def build_temp_project(
     target_dir = tmp_root / target_project
     (target_dir / "ads" / "ddl").mkdir(parents=True)
     (target_dir / "mid" / "ddl").mkdir(parents=True)
-    (target_dir / "ods" / "ddl" / "internal" / "benchmark").mkdir(
-        parents=True
-    )
+    (target_dir / "ods" / "ddl" / "internal" / "benchmark").mkdir(parents=True)
     (target_dir / "ads" / "tasks").mkdir(parents=True)
     (target_dir / "mid" / "tasks").mkdir(parents=True)
     (target_dir / "lineage").mkdir()
@@ -235,7 +234,9 @@ def build_temp_project(
         source_dir / "business_semantics.yaml",
         target_dir / "business_semantics.yaml",
     )
-    shutil.copy2(source_dir / "naming_config.yaml", target_dir / "naming_config.yaml")
+    shutil.copy2(
+        source_dir / "naming_config.yaml", target_dir / "naming_config.yaml"
+    )
 
     expected = load_expected(source_project)
     used: set[str] = set()
@@ -278,9 +279,11 @@ def build_temp_project(
             )
             out_dir.mkdir(parents=True, exist_ok=True)
             old_source_file = task_path.relative_to(task_root).as_posix()
-            new_source_file = task_path.relative_to(task_root).with_name(
-                f"{new}.sql"
-            ).as_posix()
+            new_source_file = (
+                task_path.relative_to(task_root)
+                .with_name(f"{new}.sql")
+                .as_posix()
+            )
             task_source_mapping[old_source_file] = new_source_file
             (out_dir / f"{new}.sql").write_text(
                 sanitize_sql(task_path.read_text(encoding="utf-8"), mapping),
@@ -296,7 +299,9 @@ def build_temp_project(
             if old in mapping:
                 table["name"] = mapping[old]
                 layer = expected_layer(old, expected)
-                table["layer"] = layer if layer in FIXED_LAYER_GROUPS else "OTHER"
+                table["layer"] = (
+                    layer if layer in FIXED_LAYER_GROUPS else "OTHER"
+                )
         raw = replace_table_refs(json.dumps(data, ensure_ascii=False), mapping)
         data = json.loads(raw)
     else:
@@ -369,15 +374,15 @@ def summarize_project(
         no_cache=True,
         show_progress=True,
     )
-    cache_path = (
-        target_dir / "assess" / "cache" / "table_inspector_layer.json"
-    )
+    cache_path = target_dir / "assess" / "cache" / "table_inspector_layer.json"
     cache = (
         json.loads(cache_path.read_text(encoding="utf-8"))
         if cache_path.exists()
         else {}
     )
-    updates_by_new = {update["table"]: update for update in result["model_updates"]}
+    updates_by_new = {
+        update["table"]: update for update in result["model_updates"]
+    }
     reverse = {new: old for old, new in mapping.items()}
     rows = []
     for new, old in sorted(reverse.items(), key=lambda item: item[1]):
@@ -387,7 +392,9 @@ def summarize_project(
         reasoning_steps = inspection.get("reasoning_steps") or []
         update = updates_by_new.get(new) or {}
         evaluation_group = (
-            "middle" if expected[old]["layer"] in MIDDLE_LAYER_GROUPS else "fixed"
+            "middle"
+            if expected[old]["layer"] in MIDDLE_LAYER_GROUPS
+            else "fixed"
         )
         rows.append(
             {
@@ -424,9 +431,7 @@ def summarize_project(
 
     table_count = len(rows)
     inspector_rows = [
-        row
-        for row in rows
-        if row["expected_layer"] in MIDDLE_LAYER_GROUPS
+        row for row in rows if row["expected_layer"] in MIDDLE_LAYER_GROUPS
     ]
     table_inspector_correct = sum(
         row["table_inspector_layer"] == row["expected_layer"]
@@ -455,9 +460,13 @@ def summarize_project(
             item["table_inspector_correct"] += int(
                 row["table_inspector_layer"] == row["expected_layer"]
             )
-        item["final_correct"] += int(row["final_layer"] == row["expected_layer"])
+        item["final_correct"] += int(
+            row["final_layer"] == row["expected_layer"]
+        )
         if row["expected_layer"] in MIDDLE_LAYER_GROUPS:
-            confusion[(row["expected_layer"], row["table_inspector_layer"])] += 1
+            confusion[
+                (row["expected_layer"], row["table_inspector_layer"])
+            ] += 1
         final_layer_counts[row["final_layer"]] += 1
         if row["final_layer"] == "ADS" and row["metric_count"]:
             final_ads_metric_tables.append(row)
@@ -541,7 +550,9 @@ def main() -> None:
 
     original_config = dict(config.PROJECT_CONFIG)
     try:
-        tmp_root = Path(tempfile.mkdtemp(prefix="dw_full_table_inspector_layer_"))
+        tmp_root = Path(
+            tempfile.mkdtemp(prefix="dw_full_table_inspector_layer_")
+        )
         config.PROJECT_CONFIG.clear()
         config.PROJECT_CONFIG.update(original_config)
         summaries = []
@@ -581,8 +592,7 @@ def main() -> None:
                 for summary in summaries
             ),
             "total_table_inspector_used_count": sum(
-                summary["table_inspector_used_count"]
-                for summary in summaries
+                summary["table_inspector_used_count"] for summary in summaries
             ),
             "total_table_inspector_eval_count": table_inspector_eval_count,
             "total_table_inspector_correct_count": table_inspector_correct,
@@ -620,7 +630,9 @@ def main() -> None:
                     "combined_table_inspector_accuracy": payload[
                         "combined_table_inspector_accuracy"
                     ],
-                    "combined_final_accuracy": payload["combined_final_accuracy"],
+                    "combined_final_accuracy": payload[
+                        "combined_final_accuracy"
+                    ],
                 },
                 ensure_ascii=False,
                 indent=2,

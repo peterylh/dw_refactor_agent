@@ -2808,7 +2808,7 @@ def test_run_direct_model_generation_assigns_catalog_refs_from_assets(
                         "name": "促销活动",
                         "data_domain": "04",
                         "business_area": "SHOP",
-                    }
+                    },
                 ],
             },
             allow_unicode=True,
@@ -2905,9 +2905,7 @@ def test_run_direct_model_generation_assigns_catalog_refs_from_assets(
         (models_dir / "dwd_order_detail.yaml").read_text(encoding="utf-8")
     )
     dws_model = yaml.safe_load(
-        (models_dir / "dws_store_sales_daily.yaml").read_text(
-            encoding="utf-8"
-        )
+        (models_dir / "dws_store_sales_daily.yaml").read_text(encoding="utf-8")
     )
     dim_model = yaml.safe_load(
         (models_dir / "dim_store.yaml").read_text(encoding="utf-8")
@@ -2932,7 +2930,7 @@ def test_run_direct_model_generation_assigns_catalog_refs_from_assets(
             "type": "foreign",
             "name": "促销活动",
             "key_columns": ["promotion_id"],
-        }
+        },
     ]
     assert dws_model["business_process"] == "ORDER_DETAIL"
     assert dws_model["grain"] == {
@@ -3064,7 +3062,9 @@ def test_run_direct_model_generation_keeps_source_layer_over_table_inspector(
         prompts.append(prompt)
         raise AssertionError("ODS fixed layer should not call table_inspector")
 
-    monkeypatch.setattr(writer_module.TableInspector, "_call_api", fake_call_api)
+    monkeypatch.setattr(
+        writer_module.TableInspector, "_call_api", fake_call_api
+    )
 
     result = run_direct_model_generation(
         project,
@@ -3146,7 +3146,9 @@ def test_run_direct_model_generation_keeps_ads_placement_over_table_inspector(
         prompts.append(prompt)
         raise AssertionError("ADS placement should not call table_inspector")
 
-    monkeypatch.setattr(writer_module.TableInspector, "_call_api", fake_call_api)
+    monkeypatch.setattr(
+        writer_module.TableInspector, "_call_api", fake_call_api
+    )
 
     result = run_direct_model_generation(
         project,
@@ -3238,7 +3240,9 @@ def test_run_direct_model_generation_prefers_strong_ads_signal_over_inspector(
         """,
         encoding="utf-8",
     )
-    (project_dir / "mid" / "tasks" / "customer_monthly_summary.sql").write_text(
+    (
+        project_dir / "mid" / "tasks" / "customer_monthly_summary.sql"
+    ).write_text(
         """
         INSERT INTO customer_monthly_summary
         SELECT customer_id, stat_month, SUM(pay_amount) AS total_amount
@@ -3347,7 +3351,9 @@ def test_run_direct_model_generation_prefers_strong_ads_signal_over_inspector(
             ensure_ascii=False,
         )
 
-    monkeypatch.setattr(writer_module.TableInspector, "_call_api", fake_call_api)
+    monkeypatch.setattr(
+        writer_module.TableInspector, "_call_api", fake_call_api
+    )
 
     result = run_direct_model_generation(
         project,
@@ -3363,10 +3369,7 @@ def test_run_direct_model_generation_prefers_strong_ads_signal_over_inspector(
     models_dir = project_dir / "mid" / "models"
     ads_model = yaml.safe_load(
         (
-            project_dir
-            / "ads"
-            / "models"
-            / "customer_by_age_group.yaml"
+            project_dir / "ads" / "models" / "customer_by_age_group.yaml"
         ).read_text(encoding="utf-8")
     )
     dws_model = yaml.safe_load(
@@ -3856,7 +3859,9 @@ def test_run_direct_model_generation_does_not_use_downstream_for_process_match(
         """,
         encoding="utf-8",
     )
-    (project_dir / "mid" / "ddl" / "dws_promotion_effect_daily.sql").write_text(
+    (
+        project_dir / "mid" / "ddl" / "dws_promotion_effect_daily.sql"
+    ).write_text(
         """
         -- DWS 促销效果日汇总表
         CREATE TABLE dws_promotion_effect_daily (
@@ -3867,7 +3872,9 @@ def test_run_direct_model_generation_does_not_use_downstream_for_process_match(
         """,
         encoding="utf-8",
     )
-    (project_dir / "mid" / "tasks" / "dws_promotion_effect_daily.sql").write_text(
+    (
+        project_dir / "mid" / "tasks" / "dws_promotion_effect_daily.sql"
+    ).write_text(
         """
         INSERT INTO dws_promotion_effect_daily
         SELECT promotion_id, order_date AS stat_date, SUM(subtotal)
@@ -3920,7 +3927,9 @@ def test_run_direct_model_generation_does_not_use_downstream_for_process_match(
     )
 
     updates = {update["table"]: update for update in result["model_updates"]}
-    assert updates["dwd_order_detail"]["business_process"] == "ORDER_TRANSACTION"
+    assert (
+        updates["dwd_order_detail"]["business_process"] == "ORDER_TRANSACTION"
+    )
     assert updates["dwd_order_detail"]["data_domain"] == "04"
     assert updates["dws_promotion_effect_daily"]["business_process"] == (
         "PROMOTION_EFFECT"
@@ -4017,9 +4026,7 @@ def test_run_direct_model_generation_materialized_uses_target_task_pattern(
 
     models_dir = project_dir / "mid" / "models"
     dws_model = yaml.safe_load(
-        (models_dir / "dws_inventory_daily.yaml").read_text(
-            encoding="utf-8"
-        )
+        (models_dir / "dws_inventory_daily.yaml").read_text(encoding="utf-8")
     )
     ads_model = yaml.safe_load(
         (
@@ -4093,16 +4100,16 @@ def test_run_direct_model_generation_infers_ads_fact_from_task(
     )
     (project_dir / "lineage" / "lineage_data.json").write_text(
         json.dumps(
-                {
-                    "tables": [
-                        {"name": "dws_order_sales_daily", "layer": "DWS"},
-                        {"name": "ads_sales_dashboard", "layer": "ADS"},
-                    ],
-                    "edges": [
-                        {
-                            "source": "dws_order_sales_daily.sale_amount",
-                            "target": "ads_sales_dashboard.total_amount",
-                            "expression": "SUM(sale_amount)",
+            {
+                "tables": [
+                    {"name": "dws_order_sales_daily", "layer": "DWS"},
+                    {"name": "ads_sales_dashboard", "layer": "ADS"},
+                ],
+                "edges": [
+                    {
+                        "source": "dws_order_sales_daily.sale_amount",
+                        "target": "ads_sales_dashboard.total_amount",
+                        "expression": "SUM(sale_amount)",
                         "source_file": "ads_sales_dashboard.sql",
                     }
                 ],
@@ -4130,9 +4137,7 @@ def test_run_direct_model_generation_infers_ads_fact_from_task(
 
     models_dir = project_dir / "mid" / "models"
     dws_model = yaml.safe_load(
-        (models_dir / "dws_order_sales_daily.yaml").read_text(
-            encoding="utf-8"
-        )
+        (models_dir / "dws_order_sales_daily.yaml").read_text(encoding="utf-8")
     )
     ads_model = yaml.safe_load(
         (
@@ -4636,7 +4641,9 @@ def test_run_direct_model_generation_cold_start_inspects_prefixed_table_metadata
             ensure_ascii=False,
         )
 
-    monkeypatch.setattr(writer_module.TableInspector, "_call_api", fake_call_api)
+    monkeypatch.setattr(
+        writer_module.TableInspector, "_call_api", fake_call_api
+    )
 
     result = run_direct_model_generation(
         project,
@@ -4807,7 +4814,9 @@ def test_run_direct_model_generation_ignores_existing_metrics_when_inspector_spa
             ensure_ascii=False,
         )
 
-    monkeypatch.setattr(writer_module.TableInspector, "_call_api", fake_call_api)
+    monkeypatch.setattr(
+        writer_module.TableInspector, "_call_api", fake_call_api
+    )
 
     result = run_direct_model_generation(
         project,
@@ -4948,7 +4957,9 @@ def test_run_direct_model_generation_inspects_dws_seed_with_application_token(
             ensure_ascii=False,
         )
 
-    monkeypatch.setattr(writer_module.TableInspector, "_call_api", fake_call_api)
+    monkeypatch.setattr(
+        writer_module.TableInspector, "_call_api", fake_call_api
+    )
 
     result = run_direct_model_generation(
         project,
@@ -4963,10 +4974,7 @@ def test_run_direct_model_generation_inspects_dws_seed_with_application_token(
 
     model = yaml.safe_load(
         (
-            project_dir
-            / "mid"
-            / "models"
-            / "dws_product_topn_daily.yaml"
+            project_dir / "mid" / "models" / "dws_product_topn_daily.yaml"
         ).read_text(encoding="utf-8")
     )
     assert len(calls) == 1
@@ -5104,7 +5112,9 @@ def test_run_direct_model_generation_prefers_inspector_over_application_token(
             ensure_ascii=False,
         )
 
-    monkeypatch.setattr(writer_module.TableInspector, "_call_api", fake_call_api)
+    monkeypatch.setattr(
+        writer_module.TableInspector, "_call_api", fake_call_api
+    )
 
     run_direct_model_generation(
         project,
@@ -5118,9 +5128,9 @@ def test_run_direct_model_generation_prefers_inspector_over_application_token(
     )
 
     model = yaml.safe_load(
-        (project_dir / "mid" / "models" / "customer_rfm_events.yaml").read_text(
-            encoding="utf-8"
-        )
+        (
+            project_dir / "mid" / "models" / "customer_rfm_events.yaml"
+        ).read_text(encoding="utf-8")
     )
     assert model["layer"] == "DWD"
     assert model["atomic_metrics"] == ["event_amount"]
@@ -5211,7 +5221,9 @@ def test_run_direct_model_generation_uses_table_inspector_for_missing_layer_meta
             ensure_ascii=False,
         )
 
-    monkeypatch.setattr(writer_module.TableInspector, "_call_api", fake_call_api)
+    monkeypatch.setattr(
+        writer_module.TableInspector, "_call_api", fake_call_api
+    )
 
     result = run_direct_model_generation(
         project,
@@ -5359,7 +5371,9 @@ def test_run_direct_model_generation_merges_inspector_with_existing_governance(
             ensure_ascii=False,
         )
 
-    monkeypatch.setattr(writer_module.TableInspector, "_call_api", fake_call_api)
+    monkeypatch.setattr(
+        writer_module.TableInspector, "_call_api", fake_call_api
+    )
 
     result = run_direct_model_generation(
         project,
@@ -5469,7 +5483,9 @@ def test_run_direct_model_generation_keeps_summary_dws_from_inspector(
             ensure_ascii=False,
         )
 
-    monkeypatch.setattr(writer_module.TableInspector, "_call_api", fake_call_api)
+    monkeypatch.setattr(
+        writer_module.TableInspector, "_call_api", fake_call_api
+    )
 
     run_direct_model_generation(
         project,
@@ -5581,7 +5597,9 @@ def test_run_direct_model_generation_keeps_aggregate_summary_dws_over_dim_inspec
             ensure_ascii=False,
         )
 
-    monkeypatch.setattr(writer_module.TableInspector, "_call_api", fake_call_api)
+    monkeypatch.setattr(
+        writer_module.TableInspector, "_call_api", fake_call_api
+    )
 
     result = run_direct_model_generation(
         project,
@@ -5714,7 +5732,9 @@ def test_run_direct_model_generation_keeps_grouped_dedup_profile_dim(
             ensure_ascii=False,
         )
 
-    monkeypatch.setattr(writer_module.TableInspector, "_call_api", fake_call_api)
+    monkeypatch.setattr(
+        writer_module.TableInspector, "_call_api", fake_call_api
+    )
 
     result = run_direct_model_generation(
         project,
@@ -5740,7 +5760,9 @@ def test_run_direct_model_generation_keeps_grouped_dedup_profile_dim(
     assert model["dimension_content_type"] == "INFO"
     assert "atomic_metrics" not in model
     assert "grain" not in model
-    assert update["layer_assignment_source"] == "table_inspector_layer_inference"
+    assert (
+        update["layer_assignment_source"] == "table_inspector_layer_inference"
+    )
 
 
 def test_run_direct_model_generation_keeps_aggregate_snapshot_dws_over_dwd_inspector(
@@ -5853,7 +5875,9 @@ def test_run_direct_model_generation_keeps_aggregate_snapshot_dws_over_dwd_inspe
             ensure_ascii=False,
         )
 
-    monkeypatch.setattr(writer_module.TableInspector, "_call_api", fake_call_api)
+    monkeypatch.setattr(
+        writer_module.TableInspector, "_call_api", fake_call_api
+    )
 
     result = run_direct_model_generation(
         project,
@@ -5867,9 +5891,9 @@ def test_run_direct_model_generation_keeps_aggregate_snapshot_dws_over_dwd_inspe
     )
 
     model = yaml.safe_load(
-        (project_dir / "mid" / "models" / "account_daily_snapshot.yaml").read_text(
-            encoding="utf-8"
-        )
+        (
+            project_dir / "mid" / "models" / "account_daily_snapshot.yaml"
+        ).read_text(encoding="utf-8")
     )
     update = result["model_updates"][0]
     assert model["layer"] == "DWS"
@@ -5994,7 +6018,9 @@ def test_run_direct_model_generation_keeps_window_profile_dim_from_inspector(
             ensure_ascii=False,
         )
 
-    monkeypatch.setattr(writer_module.TableInspector, "_call_api", fake_call_api)
+    monkeypatch.setattr(
+        writer_module.TableInspector, "_call_api", fake_call_api
+    )
 
     result = run_direct_model_generation(
         project,
@@ -6027,7 +6053,9 @@ def test_run_direct_model_generation_keeps_window_profile_dim_from_inspector(
     ]
     assert "grain" not in model
     assert "atomic_metrics" not in model
-    assert update["layer_assignment_source"] == "table_inspector_layer_inference"
+    assert (
+        update["layer_assignment_source"] == "table_inspector_layer_inference"
+    )
 
 
 def test_run_direct_model_generation_fills_sparse_dim_fallback_metadata(
@@ -6047,7 +6075,9 @@ def test_run_direct_model_generation_fills_sparse_dim_fallback_metadata(
         "version: 1\nproject: direct_model_writer_dim_fallback\n",
         encoding="utf-8",
     )
-    (project_dir / "mid" / "ddl" / "economic_indicators_profile.sql").write_text(
+    (
+        project_dir / "mid" / "ddl" / "economic_indicators_profile.sql"
+    ).write_text(
         """
         CREATE TABLE economic_indicators_profile (
             economic_indicator_key CHAR(32),
@@ -6059,7 +6089,9 @@ def test_run_direct_model_generation_fills_sparse_dim_fallback_metadata(
         """,
         encoding="utf-8",
     )
-    (project_dir / "mid" / "tasks" / "economic_indicators_profile.sql").write_text(
+    (
+        project_dir / "mid" / "tasks" / "economic_indicators_profile.sql"
+    ).write_text(
         """
         INSERT INTO economic_indicators_profile
         SELECT economic_indicator_key, indicator_date, gdp_growth_rate,
@@ -6082,17 +6114,15 @@ def test_run_direct_model_generation_fills_sparse_dim_fallback_metadata(
         return json.dumps(
             {
                 "choices": [
-                    {
-                        "message": {
-                            "content": "DIM dimension, but not JSON"
-                        }
-                    }
+                    {"message": {"content": "DIM dimension, but not JSON"}}
                 ]
             },
             ensure_ascii=False,
         )
 
-    monkeypatch.setattr(writer_module.TableInspector, "_call_api", fake_call_api)
+    monkeypatch.setattr(
+        writer_module.TableInspector, "_call_api", fake_call_api
+    )
 
     run_direct_model_generation(
         project,
@@ -6107,10 +6137,7 @@ def test_run_direct_model_generation_fills_sparse_dim_fallback_metadata(
 
     model = yaml.safe_load(
         (
-            project_dir
-            / "mid"
-            / "models"
-            / "economic_indicators_profile.yaml"
+            project_dir / "mid" / "models" / "economic_indicators_profile.yaml"
         ).read_text(encoding="utf-8")
     )
     assert model["layer"] == "DIM"
@@ -6219,7 +6246,9 @@ def test_run_direct_model_generation_keeps_event_detail_dwd_over_ads_inspector(
             ensure_ascii=False,
         )
 
-    monkeypatch.setattr(writer_module.TableInspector, "_call_api", fake_call_api)
+    monkeypatch.setattr(
+        writer_module.TableInspector, "_call_api", fake_call_api
+    )
 
     run_direct_model_generation(
         project,
@@ -6233,9 +6262,9 @@ def test_run_direct_model_generation_keeps_event_detail_dwd_over_ads_inspector(
     )
 
     model = yaml.safe_load(
-        (project_dir / "mid" / "models" / "credit_applications.yaml").read_text(
-            encoding="utf-8"
-        )
+        (
+            project_dir / "mid" / "models" / "credit_applications.yaml"
+        ).read_text(encoding="utf-8")
     )
     assert model["layer"] == "DWD"
     assert model["table_type"] == "fact"
@@ -6259,7 +6288,9 @@ def test_run_direct_model_generation_syncs_dim_shape_after_layer_fix(
         "version: 1\nproject: direct_model_writer_dim_shape_guard\n",
         encoding="utf-8",
     )
-    (project_dir / "mid" / "ddl" / "customer_segments_history_profile.sql").write_text(
+    (
+        project_dir / "mid" / "ddl" / "customer_segments_history_profile.sql"
+    ).write_text(
         """
         CREATE TABLE customer_segments_history_profile (
             segment_history_id BIGINT,
@@ -6270,7 +6301,9 @@ def test_run_direct_model_generation_syncs_dim_shape_after_layer_fix(
         """,
         encoding="utf-8",
     )
-    (project_dir / "mid" / "tasks" / "customer_segments_history_profile.sql").write_text(
+    (
+        project_dir / "mid" / "tasks" / "customer_segments_history_profile.sql"
+    ).write_text(
         """
         INSERT INTO customer_segments_history_profile
         SELECT segment_history_id, customer_id, segment_name, effective_date
@@ -6335,7 +6368,9 @@ def test_run_direct_model_generation_syncs_dim_shape_after_layer_fix(
             ensure_ascii=False,
         )
 
-    monkeypatch.setattr(writer_module.TableInspector, "_call_api", fake_call_api)
+    monkeypatch.setattr(
+        writer_module.TableInspector, "_call_api", fake_call_api
+    )
 
     run_direct_model_generation(
         project,
@@ -6376,9 +6411,7 @@ def test_run_direct_model_generation_omits_ods_entities_from_inspector(
 
     project = "direct_model_writer_ods_entities"
     project_dir = tmp_path / project
-    (project_dir / "ods" / "ddl" / "internal" / "demo_dm").mkdir(
-        parents=True
-    )
+    (project_dir / "ods" / "ddl" / "internal" / "demo_dm").mkdir(parents=True)
     (tmp_path / "naming_config.yaml").write_text(
         "types: {}\nbindings: {}\ndictionaries: {}\n",
         encoding="utf-8",
@@ -6445,7 +6478,9 @@ def test_run_direct_model_generation_omits_ods_entities_from_inspector(
             ensure_ascii=False,
         )
 
-    monkeypatch.setattr(writer_module.TableInspector, "_call_api", fake_call_api)
+    monkeypatch.setattr(
+        writer_module.TableInspector, "_call_api", fake_call_api
+    )
 
     run_direct_model_generation(
         project,
@@ -6518,7 +6553,9 @@ def test_run_direct_model_generation_skips_table_inspector_for_explicit_layer_me
             "Table inspector should not be called for prefixed tables"
         )
 
-    monkeypatch.setattr(writer_module.TableInspector, "_call_api", fail_call_api)
+    monkeypatch.setattr(
+        writer_module.TableInspector, "_call_api", fail_call_api
+    )
 
     result = run_direct_model_generation(
         project,

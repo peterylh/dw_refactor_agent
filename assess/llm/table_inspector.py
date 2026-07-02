@@ -66,7 +66,11 @@ def _normalized_candidate_layers(
     normalized = []
     for layer in layers or ():
         value = str(layer or "").strip().upper()
-        if value in VALID_LAYERS and value != "OTHER" and value not in normalized:
+        if (
+            value in VALID_LAYERS
+            and value != "OTHER"
+            and value not in normalized
+        ):
             normalized.append(value)
     return tuple(normalized)
 
@@ -535,7 +539,10 @@ def _loads_llm_json(content: str) -> dict[str, Any]:
 
     last_error: json.JSONDecodeError | None = None
     for candidate in candidates:
-        for raw in (candidate, _repair_unescaped_json_string_quotes(candidate)):
+        for raw in (
+            candidate,
+            _repair_unescaped_json_string_quotes(candidate),
+        ):
             try:
                 data = json.loads(raw)
             except json.JSONDecodeError as exc:
@@ -931,12 +938,9 @@ def validate_columns(
         "missing_columns": [],
     }
     if (
-        (
-            result.declared_layer in METRIC_GROUPING_LAYERS
-            or result.inferred_layer in METRIC_GROUPING_LAYERS
-        )
-        and result.is_fact_table
-    ):
+        result.declared_layer in METRIC_GROUPING_LAYERS
+        or result.inferred_layer in METRIC_GROUPING_LAYERS
+    ) and result.is_fact_table:
         validation["missing_columns"] = sorted(ddl_columns - returned)
     return validation
 
@@ -991,8 +995,7 @@ def validate_primary_entities(
 ) -> dict[str, list[str]]:
     """校验事实明细表必须返回当前事实行主实体。"""
     if (
-        result.declared_layer != "DWD"
-        and result.inferred_layer != "DWD"
+        result.declared_layer != "DWD" and result.inferred_layer != "DWD"
     ) or not result.is_fact_table:
         return {}
     has_primary = any(
@@ -1323,11 +1326,12 @@ class TableInspector:
             except urllib.error.HTTPError as e:
                 body = e.read().decode(TEXT_ENCODING, errors="replace")
                 errors.append(
-                    RuntimeError(
-                        f"HTTP {e.code}: {body[:500] or e.reason}"
-                    )
+                    RuntimeError(f"HTTP {e.code}: {body[:500] or e.reason}")
                 )
-                if e.code not in {403, 404, 405, 501} or index == len(urls) - 1:
+                if (
+                    e.code not in {403, 404, 405, 501}
+                    or index == len(urls) - 1
+                ):
                     break
             except Exception as e:
                 errors.append(e)

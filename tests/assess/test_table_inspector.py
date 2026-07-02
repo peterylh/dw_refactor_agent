@@ -197,9 +197,7 @@ def _assert_build_prompt_groups_metrics_from_inferred_layer():
                                 "confidence": 0.9,
                                 "reasoning_steps": ["公共汇总事实"],
                                 "columns": {
-                                    "atomic_metrics": [
-                                        {"name": "total_amt"}
-                                    ],
+                                    "atomic_metrics": [{"name": "total_amt"}],
                                     "derived_metrics": [],
                                     "calculated_metrics": [],
                                     "dimensions": [],
@@ -866,7 +864,9 @@ def _assert_validate_metadata_quality_requires_dws_and_dim_semantics():
         "missing_grain_metadata": ["DWS fact必须尽量返回表级grain"],
     }
     assert dim_validation == {
-        "invalid_dimension_table_type": ["DIM层模型的table_type必须为dimension"],
+        "invalid_dimension_table_type": [
+            "DIM层模型的table_type必须为dimension"
+        ],
         "missing_dimension_entities": [
             "DIM/dimension模型必须尽量返回一个type=primary的entities项"
         ],

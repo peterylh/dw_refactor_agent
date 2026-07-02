@@ -306,7 +306,9 @@ def model_path_for_table(
     return project_dir / "mid" / "models" / filename
 
 
-def existing_model_paths_for_table(project: str, table_name: str) -> list[Path]:
+def existing_model_paths_for_table(
+    project: str, table_name: str
+) -> list[Path]:
     project_cfg = PROJECT_CONFIG[project]
     project_dir = PROJECT_ROOT / project_cfg["dir"]
     filename = f"{table_name}.yaml"
@@ -914,12 +916,8 @@ def _canonical_entities_for_write(
         return []
 
     effective_layer = str(model_layer or result.declared_layer or "").upper()
-    is_dimension_model = (
-        effective_layer == "DIM"
-        or (
-            effective_layer != "DWS"
-            and result.table_type == "dimension"
-        )
+    is_dimension_model = effective_layer == "DIM" or (
+        effective_layer != "DWS" and result.table_type == "dimension"
     )
 
     if not is_dimension_model:
@@ -1465,9 +1463,8 @@ def _direct_lineage_text(
 
 def _asset_column_names(asset: dict[str, Any]) -> list[str]:
     names = []
-    for column in (
-        ((asset.get("ddl") or {}).get("columns") or [])
-        + (asset.get("columns") or [])
+    for column in ((asset.get("ddl") or {}).get("columns") or []) + (
+        asset.get("columns") or []
     ):
         if not isinstance(column, dict):
             continue
@@ -1530,9 +1527,7 @@ def _catalog_string_values(value: Any) -> list[str]:
         return [str(item).strip() for item in value if str(item).strip()]
     if isinstance(value, dict):
         return [
-            str(item).strip()
-            for item in value.values()
-            if str(item).strip()
+            str(item).strip() for item in value.values() if str(item).strip()
         ]
     text = str(value or "").strip()
     return [text] if text else []
@@ -1607,11 +1602,15 @@ def _score_catalog_entry(
         for token in _split_identifier_tokens(signal):
             if _is_weak_match_token(token):
                 continue
-            if any(_is_match_token(table_token, token) for table_token in table_tokens):
+            if any(
+                _is_match_token(table_token, token)
+                for table_token in table_tokens
+            ):
                 score += 4.0
                 matches.append(token)
             elif any(
-                _is_match_token(full_token, token) for full_token in full_tokens
+                _is_match_token(full_token, token)
+                for full_token in full_tokens
             ):
                 score += 0.75
                 matches.append(token)
@@ -1647,7 +1646,9 @@ def _best_catalog_entry_match(
     return best
 
 
-def _catalog_entries(catalog: dict[str, Any], key: str) -> list[dict[str, Any]]:
+def _catalog_entries(
+    catalog: dict[str, Any], key: str
+) -> list[dict[str, Any]]:
     entries = catalog.get(key) or []
     return [dict(entry) for entry in entries if isinstance(entry, dict)]
 
@@ -1717,10 +1718,10 @@ def _direct_application_output_signal_strength(
     table_tokens = set(_split_identifier_tokens(table_name))
     if table_tokens & DIRECT_APPLICATION_OUTPUT_TOKENS:
         return "strong"
-    if (
-        {"metric", "snapshot"} <= table_tokens
-        and table_tokens & DIRECT_APPLICATION_REPORT_TOKENS
-    ):
+    if {
+        "metric",
+        "snapshot",
+    } <= table_tokens and table_tokens & DIRECT_APPLICATION_REPORT_TOKENS:
         return "strong"
     if table_tokens & DIRECT_AMBIGUOUS_APPLICATION_OUTPUT_TOKENS:
         if has_aggregate and not downstream_tables:
@@ -1731,9 +1732,8 @@ def _direct_application_output_signal_strength(
         return ""
     if "by" in table_tokens:
         return "strong"
-    if (
-        table_tokens & DIRECT_APPLICATION_SUMMARY_TOKENS
-        and not (table_tokens & DIRECT_APPLICATION_TIME_GRAIN_TOKENS)
+    if table_tokens & DIRECT_APPLICATION_SUMMARY_TOKENS and not (
+        table_tokens & DIRECT_APPLICATION_TIME_GRAIN_TOKENS
     ):
         return "weak"
     return ""
@@ -1771,14 +1771,16 @@ def _direct_has_dimension_layer_signal(
         return False
 
     name_tokens = set(_split_identifier_tokens(table_name))
-    if (
-        name_tokens & {"dimension", "entity", "master", "profile", "reference"}
-        and not (name_tokens & DIRECT_FACT_EVENT_NAME_TOKENS)
-    ):
+    if name_tokens & {
+        "dimension",
+        "entity",
+        "master",
+        "profile",
+        "reference",
+    } and not (name_tokens & DIRECT_FACT_EVENT_NAME_TOKENS):
         return True
-    if (
-        name_tokens & DIRECT_DIMENSION_NAME_TOKENS
-        and not (name_tokens & DIRECT_FACT_EVENT_NAME_TOKENS)
+    if name_tokens & DIRECT_DIMENSION_NAME_TOKENS and not (
+        name_tokens & DIRECT_FACT_EVENT_NAME_TOKENS
     ):
         return True
 
@@ -1964,7 +1966,9 @@ def _direct_table_inspector_has_metric_metadata(
     if not table_inspector_layer_result:
         return False
     try:
-        metric_count = int(table_inspector_layer_result.get("metric_count") or 0)
+        metric_count = int(
+            table_inspector_layer_result.get("metric_count") or 0
+        )
     except (TypeError, ValueError):
         metric_count = 0
     if metric_count > 0:
@@ -2055,10 +2059,11 @@ def _direct_infer_layer(
     if normalized_seed == "ADS":
         return "ADS"
 
-    if (
-        application_output_strength == "strong"
-        and normalized_seed not in {"ODS", "DWD", "DWS"}
-    ):
+    if application_output_strength == "strong" and normalized_seed not in {
+        "ODS",
+        "DWD",
+        "DWS",
+    }:
         return "ADS"
 
     if _direct_has_profile_dimension_signal(
@@ -2088,13 +2093,16 @@ def _direct_infer_layer(
                 ),
                 table_inspector_layer_result=table_inspector_layer_result,
             )
-            if inspected_layer == "ADS" and _direct_has_event_detail_layer_signal(
-                table_name,
-                has_aggregate=has_aggregate,
-                process_score=float(process_match.get("score") or 0),
-                has_metric_hints=_has_metric_column_hints(asset),
-                upstream_tables=upstream_tables,
-                application_output_strength=application_output_strength,
+            if (
+                inspected_layer == "ADS"
+                and _direct_has_event_detail_layer_signal(
+                    table_name,
+                    has_aggregate=has_aggregate,
+                    process_score=float(process_match.get("score") or 0),
+                    has_metric_hints=_has_metric_column_hints(asset),
+                    upstream_tables=upstream_tables,
+                    application_output_strength=application_output_strength,
+                )
             ):
                 return "DWD"
             return inspected_layer
@@ -2123,13 +2131,16 @@ def _direct_infer_layer(
                 ),
                 table_inspector_layer_result=table_inspector_layer_result,
             )
-            if inspected_layer == "ADS" and _direct_has_event_detail_layer_signal(
-                table_name,
-                has_aggregate=has_aggregate,
-                process_score=float(process_match.get("score") or 0),
-                has_metric_hints=_has_metric_column_hints(asset),
-                upstream_tables=upstream_tables,
-                application_output_strength=application_output_strength,
+            if (
+                inspected_layer == "ADS"
+                and _direct_has_event_detail_layer_signal(
+                    table_name,
+                    has_aggregate=has_aggregate,
+                    process_score=float(process_match.get("score") or 0),
+                    has_metric_hints=_has_metric_column_hints(asset),
+                    upstream_tables=upstream_tables,
+                    application_output_strength=application_output_strength,
+                )
             ):
                 return "DWD"
             return inspected_layer
@@ -2371,17 +2382,20 @@ def _direct_depth_from_ods(
         return 1
 
     visiting.add(table_name)
-    depth = min(
-        _direct_depth_from_ods(
-            project=project,
-            table_name=upstream,
-            table_assets=table_assets,
-            lineage_view=lineage_view,
-            memo=memo,
-            visiting=visiting,
+    depth = (
+        min(
+            _direct_depth_from_ods(
+                project=project,
+                table_name=upstream,
+                table_assets=table_assets,
+                lineage_view=lineage_view,
+                memo=memo,
+                visiting=visiting,
+            )
+            for upstream in upstream_tables
         )
-        for upstream in upstream_tables
-    ) + 1
+        + 1
+    )
     visiting.remove(table_name)
     memo[table_name] = depth
     return depth
@@ -2681,9 +2695,11 @@ def _direct_infer_table_type(
     if _direct_table_inspector_layer_result_is_usable(
         table_inspector_layer_result
     ):
-        inspected_table_type = str(
-            table_inspector_layer_result.get("table_type") or ""
-        ).strip().lower()
+        inspected_table_type = (
+            str(table_inspector_layer_result.get("table_type") or "")
+            .strip()
+            .lower()
+        )
         if inspected_table_type in (VALID_TABLE_TYPES - {"other"}):
             return inspected_table_type
     if normalized_layer == "DWD" and _direct_has_event_detail_layer_signal(
@@ -2692,17 +2708,21 @@ def _direct_infer_table_type(
         process_score=process_score,
         has_metric_hints=has_metric_hints,
         upstream_tables=(
-            lineage_view.upstream_tables(table_name)
-            if lineage_view
-            else set()
+            lineage_view.upstream_tables(table_name) if lineage_view else set()
         ),
         application_output_strength="",
     ):
         return "fact"
     if normalized_layer == "DWD" and subject_score >= 2 and has_dimension_text:
         return "dimension"
-    if normalized_layer == "DWD" and process_score >= 2 and (
-        has_metric_hints or lineage_facts.get("has_aggregate") or has_fact_text
+    if (
+        normalized_layer == "DWD"
+        and process_score >= 2
+        and (
+            has_metric_hints
+            or lineage_facts.get("has_aggregate")
+            or has_fact_text
+        )
     ):
         return "fact"
     if subject_score >= 2 and subject_score >= process_score + 2:
@@ -2957,7 +2977,9 @@ def _direct_catalog_mapping_for_model(
         mapping.update(
             {
                 "data_domain": str(subject.get("data_domain") or "").strip(),
-                "business_area": str(subject.get("business_area") or "").strip(),
+                "business_area": str(
+                    subject.get("business_area") or ""
+                ).strip(),
                 "semantic_subject": str(subject.get("code") or "").strip(),
                 "dimension_role": str(
                     subject.get("dimension_role") or "BASE"
@@ -2979,7 +3001,9 @@ def _direct_catalog_mapping_for_model(
         mapping.update(
             {
                 "data_domain": str(process.get("data_domain") or "").strip(),
-                "business_area": str(process.get("business_area") or "").strip(),
+                "business_area": str(
+                    process.get("business_area") or ""
+                ).strip(),
                 "business_process": str(process.get("code") or "").strip(),
                 "assignment_reason": (
                     "business_process_match:"
@@ -3068,7 +3092,9 @@ def _apply_direct_lineage_business_process_propagation(
 
 
 def _entry_display_name(entry: dict[str, Any], code: str) -> str:
-    return str(entry.get("name") or "").strip() or _display_name_from_code(code)
+    return str(entry.get("name") or "").strip() or _display_name_from_code(
+        code
+    )
 
 
 DIM_ENTITY_SUFFIX_TOKENS = {
@@ -3727,12 +3753,12 @@ def update_model_yaml_from_direct_generation(
         prefer_existing=not ignore_existing_model_files,
     )
     existing = (
-        {}
-        if ignore_existing_model_files
-        else _existing_model_data(path)
+        {} if ignore_existing_model_files else _existing_model_data(path)
     )
     previous = dict(existing)
-    payload_existing = existing if base_existing is None else dict(base_existing)
+    payload_existing = (
+        existing if base_existing is None else dict(base_existing)
+    )
     payload_mapping = (
         _direct_mapping_preserving_existing_governance(
             table_name=table_name,
@@ -3792,7 +3818,9 @@ def update_model_yaml_from_direct_generation(
             encoding=TEXT_ENCODING,
         )
         if ignore_existing_model_files:
-            for stale_path in existing_model_paths_for_table(project, table_name):
+            for stale_path in existing_model_paths_for_table(
+                project, table_name
+            ):
                 if stale_path != path:
                     stale_path.unlink()
 
@@ -3817,8 +3845,7 @@ def update_model_yaml_from_direct_generation(
         )
     )
     grain_changed = any(
-        updated.get(key) != previous.get(key)
-        for key in ("entities", "grain")
+        updated.get(key) != previous.get(key) for key in ("entities", "grain")
     )
     detected_metrics = _extract_existing_metric_names(updated)
     previous_metrics = _extract_existing_metric_names(previous)
@@ -3945,7 +3972,9 @@ def run_direct_model_generation(
             }
         )
     lineage_view = _lineage_view_for_direct_generation(project, lineage_data)
-    model_metadata = {} if ignore_existing_models else load_model_metadata(project)
+    model_metadata = (
+        {} if ignore_existing_models else load_model_metadata(project)
+    )
     assets = _direct_table_assets(
         project,
         lineage_data,

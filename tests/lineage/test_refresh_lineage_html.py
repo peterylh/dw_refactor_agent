@@ -305,9 +305,9 @@ def test_generate_jobs_default_project_tasks_ignore_root_and_include_mid_ads(
     monkeypatch.setattr(
         refresh_html,
         "determine_layer",
-        lambda table_name, project: "ADS"
-        if table_name.startswith("ads_")
-        else "DWD",
+        lambda table_name, project: (
+            "ADS" if table_name.startswith("ads_") else "DWD"
+        ),
     )
 
     jobs = refresh_html.generate_jobs(
