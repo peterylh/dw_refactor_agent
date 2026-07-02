@@ -14,6 +14,7 @@ from config import (
     get_business_domain_config,
     iter_project_asset_files,
     load_model_metadata,
+    task_path_for_job,
 )
 from lineage.view import LineageView
 
@@ -167,6 +168,15 @@ def _project_dir(project: str) -> Path:
     return Path(__file__).resolve().parent.parent / project
 
 
+def _first_project_asset_file(
+    project: str,
+    asset_kind: str,
+    filename: str,
+) -> Path | None:
+    files = iter_project_asset_files(project, asset_kind, filename)
+    return files[0] if files else None
+
+
 def build_contexts(
     project: str,
     lineage_data: dict,
@@ -175,11 +185,8 @@ def build_contexts(
     layers: set[str] | None = None,
 ) -> list[TableContext]:
     """为 DWD/DWS/DIM 层所有表构建分类上下文"""
-    project_dir = _project_dir(project)
-    if not ddl_dir:
-        ddl_dir = project_dir / "ddl"
-    if not tasks_dir:
-        tasks_dir = project_dir / "tasks"
+    use_project_asset_dirs = ddl_dir is None
+    use_project_task_dirs = tasks_dir is None
 
     lineage_view = LineageView.from_data(project, lineage_data)
     upstream, downstream = lineage_view.asset_table_graph()
@@ -226,18 +233,30 @@ def build_contexts(
             continue
 
         # Read DDL
-        ddl_path = ddl_dir / f"{short_name}.sql"
+        ddl_path = (
+            _first_project_asset_file(project, "ddl", f"{short_name}.sql")
+            if use_project_asset_dirs
+            else ddl_dir / f"{short_name}.sql"
+        )
         ddl_content = (
             ddl_path.read_text(encoding=TEXT_ENCODING)
-            if ddl_path.exists()
+            if ddl_path and ddl_path.exists()
             else ""
         )
 
         # Read ETL
-        task_path = tasks_dir / f"{short_name}.sql"
+        task_path = (
+            task_path_for_job(
+                project,
+                short_name,
+                include_full_refresh=False,
+            )
+            if use_project_task_dirs
+            else tasks_dir / f"{short_name}.sql"
+        )
         etl_content = (
             task_path.read_text(encoding=TEXT_ENCODING)
-            if task_path.exists()
+            if task_path and task_path.exists()
             else ""
         )
         upstream_tables = sorted(list(upstream.get(name, set())))

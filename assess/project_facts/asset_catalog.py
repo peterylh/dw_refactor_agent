@@ -147,15 +147,15 @@ def _expected_task_table(task_path: Path) -> str:
 
 def _asset_dirs(project_path: Path, asset_kind: str) -> list[Path]:
     dirs = []
-    root_dir = project_path / asset_kind
-    if root_dir.exists():
-        dirs.append(root_dir)
-
     ods_root = project_path / "ods" / asset_kind
     if ods_root.exists():
         dirs.extend(
             path for path in sorted(ods_root.glob("*/*")) if path.is_dir()
         )
+    for role_dir in ("mid", "ads"):
+        layer_dir = project_path / role_dir / asset_kind
+        if layer_dir.exists():
+            dirs.append(layer_dir)
     return dirs
 
 
@@ -257,7 +257,7 @@ def build_asset_catalog(
             )
         return assets[short_name]
 
-    tasks_dir = project_path / "tasks" if project_path else None
+    task_dirs = _asset_dirs(project_path, "tasks") if project_path else []
     task_table_facts_by_path = {}
     transient_targets_by_source_file = defaultdict(set)
     for source_file, names in _transient_targets_from_lineage_tables(
@@ -265,9 +265,9 @@ def build_asset_catalog(
     ).items():
         transient_targets_by_source_file[source_file].update(names)
 
-    if tasks_dir and tasks_dir.exists():
-        for task_path in sorted(tasks_dir.rglob("*.sql")):
-            relative_source = task_path.relative_to(tasks_dir).as_posix()
+    for task_dir in task_dirs:
+        for task_path in sorted(task_dir.rglob("*.sql")):
+            relative_source = task_path.relative_to(task_dir).as_posix()
             task_facts = _extract_task_table_facts(
                 task_path,
                 relative_source,
@@ -387,36 +387,45 @@ def build_asset_catalog(
                         asset["layer"] = str(metadata["layer"]).upper()
 
         task_facts = []
-        if tasks_dir.exists():
-            for task_path in sorted(tasks_dir.rglob("*.sql")):
-                expected = _expected_task_table(task_path)
-                outputs = task_table_facts_by_path[task_path]["output_tables"]
-                relative_source = task_path.relative_to(tasks_dir).as_posix()
-                fact = dict(
-                    path=task_path,
-                    file=_relative_asset_path(project_path, task_path),
-                    expected_table=expected,
-                    output_tables=outputs,
-                    transient_tables=task_table_facts_by_path[task_path][
-                        "transient_tables"
-                    ],
-                    lineage_targets=lineage_targets.get(
-                        relative_source,
-                        set(),
-                    ),
-                    is_full_refresh=(task_path.parent.name == "full_refresh"),
-                )
-                task_facts.append(fact)
-                linked_names = set(outputs)
-                if (
-                    not linked_names
-                    and not (
-                        task_table_facts_by_path[task_path]["transient_tables"]
+        if task_dirs:
+            for task_dir in task_dirs:
+                for task_path in sorted(task_dir.rglob("*.sql")):
+                    expected = _expected_task_table(task_path)
+                    outputs = task_table_facts_by_path[task_path][
+                        "output_tables"
+                    ]
+                    relative_source = task_path.relative_to(
+                        task_dir
+                    ).as_posix()
+                    fact = dict(
+                        path=task_path,
+                        file=_relative_asset_path(project_path, task_path),
+                        expected_table=expected,
+                        output_tables=outputs,
+                        transient_tables=task_table_facts_by_path[task_path][
+                            "transient_tables"
+                        ],
+                        lineage_targets=lineage_targets.get(
+                            relative_source,
+                            set(),
+                        ),
+                        is_full_refresh=(
+                            task_path.parent.name == "full_refresh"
+                        ),
                     )
-                ):
-                    linked_names.add(expected)
-                for table_name in linked_names:
-                    ensure_asset(table_name)["tasks"].append(fact)
+                    task_facts.append(fact)
+                    linked_names = set(outputs)
+                    if (
+                        not linked_names
+                        and not (
+                            task_table_facts_by_path[task_path][
+                                "transient_tables"
+                            ]
+                        )
+                    ):
+                        linked_names.add(expected)
+                    for table_name in linked_names:
+                        ensure_asset(table_name)["tasks"].append(fact)
         else:
             task_facts = []
     else:

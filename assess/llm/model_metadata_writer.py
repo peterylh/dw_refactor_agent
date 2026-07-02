@@ -51,6 +51,7 @@ from config import (
     PROJECT_ROOT,
     TEXT_ENCODING,
     assess_cache_path,
+    asset_role_for_layer,
     get_business_domain_config,
     load_model_metadata,
     model_metadata_result_path,
@@ -114,16 +115,23 @@ def model_path_for_table(
     filename = f"{table_name}.yaml"
     catalog = str(project_cfg.get("catalog") or "internal")
     database = str(project_cfg.get("db") or "")
-    ods_model_dir = project_dir / "ods" / "models" / catalog / database
+    model_dirs = [
+        project_dir / "ods" / "models" / catalog / database,
+        project_dir / "mid" / "models",
+        project_dir / "ads" / "models",
+    ]
+    for model_dir in model_dirs:
+        candidate = model_dir / filename
+        if candidate.exists():
+            return candidate
 
-    if str(layer or "").upper() == "ODS":
-        return ods_model_dir / filename
-
-    ods_model_path = ods_model_dir / filename
-    if ods_model_path.exists():
-        return ods_model_path
-
-    return project_dir / "models" / filename
+    role = asset_role_for_layer(layer)
+    if role == "ods":
+        return project_dir / "ods" / "models" / catalog / database / filename
+    if role in {"mid", "ads"}:
+        role_dir = project_dir / role / "models"
+        return role_dir / filename
+    return project_dir / "mid" / "models" / filename
 
 
 def metric_violations(result: TableInspectResult) -> list[dict[str, Any]]:

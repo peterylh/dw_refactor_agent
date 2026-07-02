@@ -1,7 +1,17 @@
 import re
 from pathlib import Path
 
+import config
+
 ROOT = Path(__file__).resolve().parent.parent
+
+
+def _shop_non_ods_ddls():
+    return [
+        path
+        for path in config.iter_project_asset_files("shop", "ddl", "*.sql")
+        if "ods" not in path.relative_to(ROOT / "shop").parts
+    ]
 
 
 def _split_top_level_csv(text):
@@ -82,7 +92,7 @@ def _partition_columns(sql_text):
 
 
 def test_shop_doris_key_columns_are_declared_prefixes():
-    for ddl_file in sorted((ROOT / "shop" / "ddl").glob("*.sql")):
+    for ddl_file in _shop_non_ods_ddls():
         sql_text = ddl_file.read_text(encoding="utf-8")
         columns = _column_names(_ddl_create_body(sql_text))
         key_columns = _key_columns(sql_text)
@@ -91,7 +101,7 @@ def test_shop_doris_key_columns_are_declared_prefixes():
 
 
 def test_shop_unique_key_partition_columns_are_key_columns():
-    for ddl_file in sorted((ROOT / "shop" / "ddl").glob("*.sql")):
+    for ddl_file in _shop_non_ods_ddls():
         sql_text = ddl_file.read_text(encoding="utf-8")
         if _key_type(sql_text) != "UNIQUE":
             continue

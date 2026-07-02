@@ -49,7 +49,7 @@ def _configure_project_root(monkeypatch, project_root):
 def isolated_writer_project(tmp_path, monkeypatch):
     project = "unit_writer"
     project_dir = tmp_path / project
-    models_dir = project_dir / "models"
+    models_dir = project_dir / "mid" / "models"
     models_dir.mkdir(parents=True)
     for table_name, layer in [
         ("dwd_customer", "DWD"),
@@ -335,7 +335,7 @@ def test_update_model_yaml_preserves_existing_metadata(tmp_path, monkeypatch):
     import assess.llm.model_metadata_writer as writer_module
 
     project_root = tmp_path
-    models_dir = project_root / "demo" / "models"
+    models_dir = project_root / "demo" / "mid" / "models"
     models_dir.mkdir(parents=True)
     model_path = models_dir / "dwd_order_detail.yaml"
     model_path.write_text(
@@ -374,13 +374,13 @@ def test_update_model_yaml_defaults_to_declared_layer(tmp_path, monkeypatch):
     import assess.llm.model_metadata_writer as writer_module
 
     project_root = tmp_path
-    (project_root / "demo" / "models").mkdir(parents=True)
+    (project_root / "demo" / "mid" / "models").mkdir(parents=True)
     monkeypatch.setattr(writer_module, "PROJECT_ROOT", project_root)
     monkeypatch.setitem(writer_module.PROJECT_CONFIG, "demo", {"dir": "demo"})
 
     update = update_model_yaml("demo", _sample_dws_result())
     model_path = (
-        project_root / "demo" / "models" / "dws_store_sales_daily.yaml"
+        project_root / "demo" / "mid" / "models" / "dws_store_sales_daily.yaml"
     )
     saved = yaml.safe_load(model_path.read_text(encoding="utf-8"))
 
@@ -404,7 +404,7 @@ def test_update_model_yaml_writes_llm_table_metadata(tmp_path, monkeypatch):
     import assess.llm.model_metadata_writer as writer_module
 
     project_root = tmp_path
-    models_dir = project_root / "demo" / "models"
+    models_dir = project_root / "demo" / "mid" / "models"
     models_dir.mkdir(parents=True)
     model_path = models_dir / "M_SHOP_06_STORE_DF.yaml"
     model_path.write_text(
@@ -458,7 +458,7 @@ def test_update_model_yaml_writes_dimension_classification_metadata(
     import assess.llm.model_metadata_writer as writer_module
 
     project_root = tmp_path
-    models_dir = project_root / "demo" / "models"
+    models_dir = project_root / "demo" / "mid" / "models"
     models_dir.mkdir(parents=True)
     model_path = models_dir / "DIM_BASE_STORE_INFO.yaml"
     model_path.write_text(
@@ -504,7 +504,7 @@ def test_update_model_yaml_removes_stale_dimension_classification_for_fact(
     import assess.llm.model_metadata_writer as writer_module
 
     project_root = tmp_path
-    models_dir = project_root / "demo" / "models"
+    models_dir = project_root / "demo" / "mid" / "models"
     models_dir.mkdir(parents=True)
     model_path = models_dir / "M_SHOP_04_ORDER_DI.yaml"
     model_path.write_text(
@@ -585,7 +585,7 @@ def test_update_model_yaml_keeps_existing_applicable_business_metadata(
     import assess.llm.model_metadata_writer as writer_module
 
     project_root = tmp_path
-    models_dir = project_root / "demo" / "models"
+    models_dir = project_root / "demo" / "mid" / "models"
     models_dir.mkdir(parents=True)
     model_path = models_dir / "dwd_order_detail.yaml"
     model_path.write_text(
@@ -634,7 +634,7 @@ def test_update_model_yaml_forces_dimension_layer_and_warns(
     import assess.llm.model_metadata_writer as writer_module
 
     project_root = tmp_path
-    models_dir = project_root / "demo" / "models"
+    models_dir = project_root / "demo" / "mid" / "models"
     models_dir.mkdir(parents=True)
     model_path = models_dir / "M_SHOP_06_STORE_DF.yaml"
     model_path.write_text(
@@ -685,7 +685,7 @@ def test_update_model_yaml_dry_run_reports_metadata_change(
     import assess.llm.model_metadata_writer as writer_module
 
     project_root = tmp_path
-    models_dir = project_root / "demo" / "models"
+    models_dir = project_root / "demo" / "mid" / "models"
     models_dir.mkdir(parents=True)
     model_path = models_dir / "M_SHOP_06_STORE_DF.yaml"
     model_path.write_text(
@@ -721,7 +721,7 @@ def test_update_model_yaml_table_scope_preserves_metrics(
     import assess.llm.model_metadata_writer as writer_module
 
     project_root = tmp_path
-    models_dir = project_root / "demo" / "models"
+    models_dir = project_root / "demo" / "mid" / "models"
     models_dir.mkdir(parents=True)
     model_path = models_dir / "dwd_order_detail.yaml"
     model_path.write_text(
@@ -763,7 +763,7 @@ def test_update_model_yaml_metrics_scope_preserves_table_info(
     import assess.llm.model_metadata_writer as writer_module
 
     project_root = tmp_path
-    models_dir = project_root / "demo" / "models"
+    models_dir = project_root / "demo" / "mid" / "models"
     models_dir.mkdir(parents=True)
     model_path = models_dir / "dwd_order_detail.yaml"
     model_path.write_text(
@@ -808,14 +808,16 @@ def test_update_model_yaml_metrics_scope_does_not_create_empty_model(
     import assess.llm.model_metadata_writer as writer_module
 
     project_root = tmp_path
-    (project_root / "demo" / "models").mkdir(parents=True)
+    (project_root / "demo" / "mid" / "models").mkdir(parents=True)
     monkeypatch.setattr(writer_module, "PROJECT_ROOT", project_root)
     monkeypatch.setitem(writer_module.PROJECT_CONFIG, "demo", {"dir": "demo"})
 
     update = update_model_yaml(
         "demo", _sample_dimension_result(), write_scope="metrics"
     )
-    model_path = project_root / "demo" / "models" / "M_SHOP_06_STORE_DF.yaml"
+    model_path = (
+        project_root / "demo" / "mid" / "models" / "M_SHOP_06_STORE_DF.yaml"
+    )
 
     assert update["changed"] is False
     assert update["updated"] is False
@@ -829,7 +831,7 @@ def test_update_model_yaml_grain_scope_writes_dws_grain_only(
     import assess.llm.model_metadata_writer as writer_module
 
     project_root = tmp_path
-    models_dir = project_root / "demo" / "models"
+    models_dir = project_root / "demo" / "mid" / "models"
     models_dir.mkdir(parents=True)
     model_path = models_dir / "dws_product_sales_daily.yaml"
     model_path.write_text(
@@ -900,7 +902,7 @@ def test_update_model_yaml_normalizes_time_period_aliases(
     import assess.llm.model_metadata_writer as writer_module
 
     project_root = tmp_path
-    models_dir = project_root / "demo" / "models"
+    models_dir = project_root / "demo" / "mid" / "models"
     models_dir.mkdir(parents=True)
     model_path = models_dir / "dws_category_sales_monthly.yaml"
     monkeypatch.setattr(writer_module, "PROJECT_ROOT", project_root)
@@ -955,7 +957,7 @@ def test_update_model_yaml_grain_scope_keeps_full_dws_grain_entities(
     import assess.llm.model_metadata_writer as writer_module
 
     project_root = tmp_path
-    models_dir = project_root / "demo" / "models"
+    models_dir = project_root / "demo" / "mid" / "models"
     models_dir.mkdir(parents=True)
     model_path = models_dir / "dws_product_store_sales_daily.yaml"
     monkeypatch.setattr(writer_module, "PROJECT_ROOT", project_root)
@@ -1010,7 +1012,7 @@ def test_update_model_yaml_grain_scope_writes_dimension_entity_only(
     import assess.llm.model_metadata_writer as writer_module
 
     project_root = tmp_path
-    models_dir = project_root / "demo" / "models"
+    models_dir = project_root / "demo" / "mid" / "models"
     models_dir.mkdir(parents=True)
     model_path = models_dir / "dwd_product.yaml"
     model_path.write_text(
@@ -1069,7 +1071,7 @@ def test_update_model_yaml_grain_scope_removes_placeholder_empty_grain(
     import assess.llm.model_metadata_writer as writer_module
 
     project_root = tmp_path
-    models_dir = project_root / "demo" / "models"
+    models_dir = project_root / "demo" / "mid" / "models"
     models_dir.mkdir(parents=True)
     model_path = models_dir / "dwd_customers.yaml"
     model_path.write_text(
@@ -1130,7 +1132,7 @@ def test_update_model_yaml_grain_scope_writes_dimension_related_entities(
     import assess.llm.model_metadata_writer as writer_module
 
     project_root = tmp_path
-    models_dir = project_root / "demo" / "models"
+    models_dir = project_root / "demo" / "mid" / "models"
     models_dir.mkdir(parents=True)
     model_path = models_dir / "dwd_product.yaml"
     model_path.write_text(
@@ -1210,7 +1212,7 @@ def test_update_model_yaml_grain_scope_migrates_legacy_entity_fields(
     import assess.llm.model_metadata_writer as writer_module
 
     project_root = tmp_path
-    models_dir = project_root / "demo" / "models"
+    models_dir = project_root / "demo" / "mid" / "models"
     models_dir.mkdir(parents=True)
     model_path = models_dir / "dwd_product.yaml"
     model_path.write_text(
@@ -1298,7 +1300,7 @@ def test_update_model_yaml_grain_scope_migrates_existing_legacy_without_result(
     import assess.llm.model_metadata_writer as writer_module
 
     project_root = tmp_path
-    models_dir = project_root / "demo" / "models"
+    models_dir = project_root / "demo" / "mid" / "models"
     models_dir.mkdir(parents=True)
     model_path = models_dir / "dim_indicator.yaml"
     model_path.write_text(
@@ -1350,7 +1352,7 @@ def test_update_model_yaml_grain_scope_canonicalizes_llm_entities(
     import assess.llm.model_metadata_writer as writer_module
 
     project_root = tmp_path
-    models_dir = project_root / "demo" / "models"
+    models_dir = project_root / "demo" / "mid" / "models"
     models_dir.mkdir(parents=True)
     model_path = models_dir / "dws_product_sales_daily.yaml"
     model_path.write_text(
@@ -1420,7 +1422,7 @@ def test_update_model_yaml_preserves_dwd_fact_primary_entity(
     import assess.llm.model_metadata_writer as writer_module
 
     project_root = tmp_path
-    models_dir = project_root / "demo" / "models"
+    models_dir = project_root / "demo" / "mid" / "models"
     models_dir.mkdir(parents=True)
     model_path = models_dir / "dwd_order_detail.yaml"
     model_path.write_text(
@@ -1487,7 +1489,7 @@ def test_update_model_yaml_grain_scope_treats_declared_dim_as_primary(
     import assess.llm.model_metadata_writer as writer_module
 
     project_root = tmp_path
-    models_dir = project_root / "demo" / "models"
+    models_dir = project_root / "demo" / "mid" / "models"
     models_dir.mkdir(parents=True)
     model_path = models_dir / "dim_agent.yaml"
     model_path.write_text(
@@ -1540,7 +1542,7 @@ def test_update_model_yaml_grain_scope_migrates_blocked_existing_metadata(
     import assess.llm.model_metadata_writer as writer_module
 
     project_root = tmp_path
-    models_dir = project_root / "demo" / "models"
+    models_dir = project_root / "demo" / "mid" / "models"
     models_dir.mkdir(parents=True)
     model_path = models_dir / "dws_marketing_campaigns.yaml"
     model_path.write_text(
@@ -1609,7 +1611,7 @@ def test_update_models_for_results_allows_blocked_schema_migration(
     import assess.llm.model_metadata_writer as writer_module
 
     project_root = tmp_path
-    models_dir = project_root / "demo" / "models"
+    models_dir = project_root / "demo" / "mid" / "models"
     models_dir.mkdir(parents=True)
     model_path = models_dir / "dws_marketing_campaigns.yaml"
     model_path.write_text(
@@ -1674,7 +1676,7 @@ def test_blocked_schema_migration_keeps_grain_entities_consistent(
     import assess.llm.model_metadata_writer as writer_module
 
     project_root = tmp_path
-    models_dir = project_root / "demo" / "models"
+    models_dir = project_root / "demo" / "mid" / "models"
     models_dir.mkdir(parents=True)
     model_path = models_dir / "dws_marketing_campaigns.yaml"
     model_path.write_text(
@@ -1734,7 +1736,7 @@ def test_update_model_yaml_replaces_existing_metrics(tmp_path, monkeypatch):
     import assess.llm.model_metadata_writer as writer_module
 
     project_root = tmp_path
-    models_dir = project_root / "demo" / "models"
+    models_dir = project_root / "demo" / "mid" / "models"
     models_dir.mkdir(parents=True)
     model_path = models_dir / "dwd_order_detail.yaml"
     model_path.write_text(
@@ -1771,7 +1773,7 @@ def test_update_model_yaml_replaces_legacy_metric_fields(
     import assess.llm.model_metadata_writer as writer_module
 
     project_root = tmp_path
-    models_dir = project_root / "demo" / "models"
+    models_dir = project_root / "demo" / "mid" / "models"
     models_dir.mkdir(parents=True)
     model_path = models_dir / "dwd_order_detail.yaml"
     model_path.write_text(
@@ -1808,7 +1810,7 @@ def test_update_model_yaml_removes_metrics_when_none_detected(
     import assess.llm.model_metadata_writer as writer_module
 
     project_root = tmp_path
-    models_dir = project_root / "demo" / "models"
+    models_dir = project_root / "demo" / "mid" / "models"
     models_dir.mkdir(parents=True)
     model_path = models_dir / "dwd_accounts.yaml"
     model_path.write_text(
@@ -1854,7 +1856,7 @@ def test_update_model_yaml_skips_blocked_results(tmp_path, monkeypatch):
     import assess.llm.model_metadata_writer as writer_module
 
     project_root = tmp_path
-    models_dir = project_root / "demo" / "models"
+    models_dir = project_root / "demo" / "mid" / "models"
     models_dir.mkdir(parents=True)
     model_path = models_dir / "dwd_order_detail.yaml"
     model_path.write_text(
@@ -2150,8 +2152,8 @@ def test_run_metadata_write_discovers_related_entity_from_dws_grain(
     import assess.llm.model_metadata_writer as writer_module
 
     project_dir = tmp_path / isolated_writer_project
-    models_dir = project_dir / "models"
-    ddl_dir = project_dir / "ddl"
+    models_dir = project_dir / "mid" / "models"
+    ddl_dir = project_dir / "mid" / "ddl"
     models_dir.mkdir(exist_ok=True)
     ddl_dir.mkdir()
     (models_dir / "dwd_product.yaml").write_text(
@@ -2363,8 +2365,8 @@ def test_run_catalog_discovery_writes_catalog_from_llm_results(
 
     project = "catalog_discovery"
     project_dir = tmp_path / project
-    (project_dir / "ddl").mkdir(parents=True)
-    models_dir = project_dir / "models"
+    (project_dir / "mid" / "ddl").mkdir(parents=True)
+    models_dir = project_dir / "mid" / "models"
     models_dir.mkdir()
     for table_name, layer in [
         ("dwd_customer", "DWD"),
@@ -2374,7 +2376,7 @@ def test_run_catalog_discovery_writes_catalog_from_llm_results(
             f"version: 2\nname: {table_name}\nlayer: {layer}\n",
             encoding="utf-8",
         )
-    (project_dir / "tasks").mkdir()
+    (project_dir / "mid" / "tasks").mkdir()
     (tmp_path / "naming_config.yaml").write_text(
         "types: {}\nbindings: {}\ndictionaries: {}\n",
         encoding="utf-8",
@@ -2467,12 +2469,12 @@ def test_run_catalog_discovery_writes_catalog_from_llm_results(
     assert result["model_update_count"] == 2
 
     fact_model = yaml.safe_load(
-        (project_dir / "models" / "dwd_order_detail.yaml").read_text(
+        (project_dir / "mid" / "models" / "dwd_order_detail.yaml").read_text(
             encoding="utf-8"
         )
     )
     dim_model = yaml.safe_load(
-        (project_dir / "models" / "dwd_customer.yaml").read_text(
+        (project_dir / "mid" / "models" / "dwd_customer.yaml").read_text(
             encoding="utf-8"
         )
     )
@@ -2485,7 +2487,7 @@ def test_run_catalog_metadata_write_initializes_models_without_llm(
 ):
     project = "catalog_writer"
     project_dir = tmp_path / project
-    (project_dir / "ddl").mkdir(parents=True)
+    (project_dir / "mid" / "ddl").mkdir(parents=True)
     (project_dir / "business_semantics.yaml").write_text(
         yaml.safe_dump(
             {
@@ -2520,7 +2522,7 @@ def test_run_catalog_metadata_write_initializes_models_without_llm(
         ),
         encoding="utf-8",
     )
-    (project_dir / "ddl" / "dwd_order_detail.sql").write_text(
+    (project_dir / "mid" / "ddl" / "dwd_order_detail.sql").write_text(
         """
         CREATE TABLE dwd_order_detail (
             order_id BIGINT,
@@ -2546,7 +2548,7 @@ def test_run_catalog_metadata_write_initializes_models_without_llm(
         write_scope="business",
     )
 
-    model_path = project_dir / "models" / "dwd_order_detail.yaml"
+    model_path = project_dir / "mid" / "models" / "dwd_order_detail.yaml"
     model = yaml.safe_load(model_path.read_text(encoding="utf-8"))
     assert result["source"] == "catalog"
     assert result["model_update_count"] == 1
@@ -2562,10 +2564,10 @@ def test_run_catalog_metadata_write_enriches_existing_model_business_codes(
 ):
     project = "catalog_writer_existing_refs"
     project_dir = tmp_path / project
-    (project_dir / "ddl").mkdir(parents=True)
-    models_dir = project_dir / "models"
+    (project_dir / "mid" / "ddl").mkdir(parents=True)
+    models_dir = project_dir / "mid" / "models"
     models_dir.mkdir()
-    (project_dir / "ddl" / "dwd_order_detail.sql").write_text(
+    (project_dir / "mid" / "ddl" / "dwd_order_detail.sql").write_text(
         """
         CREATE TABLE dwd_order_detail (
             order_id BIGINT,
@@ -2647,8 +2649,8 @@ def test_run_catalog_metadata_write_can_dry_run_with_init_catalog(
 ):
     project = "catalog_writer_dry_run"
     project_dir = tmp_path / project
-    (project_dir / "ddl").mkdir(parents=True)
-    (project_dir / "ddl" / "dwd_order_detail.sql").write_text(
+    (project_dir / "mid" / "ddl").mkdir(parents=True)
+    (project_dir / "mid" / "ddl" / "dwd_order_detail.sql").write_text(
         """
         CREATE TABLE dwd_order_detail (
             order_id BIGINT,
@@ -2681,7 +2683,9 @@ def test_run_catalog_metadata_write_can_dry_run_with_init_catalog(
     assert result["source"] == "catalog"
     assert result["model_change_count"] == 1
     assert not (project_dir / "business_semantics.yaml").exists()
-    assert not (project_dir / "models" / "dwd_order_detail.yaml").exists()
+    assert not (
+        project_dir / "mid" / "models" / "dwd_order_detail.yaml"
+    ).exists()
 
 
 def test_run_catalog_metadata_write_respects_business_metadata_layers(
@@ -2689,8 +2693,8 @@ def test_run_catalog_metadata_write_respects_business_metadata_layers(
 ):
     project = "catalog_writer_layers"
     project_dir = tmp_path / project
-    (project_dir / "ddl").mkdir(parents=True)
-    (project_dir / "ddl" / "dws_store_sales_daily.sql").write_text(
+    (project_dir / "mid" / "ddl").mkdir(parents=True)
+    (project_dir / "mid" / "ddl" / "dws_store_sales_daily.sql").write_text(
         """
         CREATE TABLE dws_store_sales_daily (
             store_id BIGINT,
@@ -2700,7 +2704,7 @@ def test_run_catalog_metadata_write_respects_business_metadata_layers(
         """,
         encoding="utf-8",
     )
-    (project_dir / "ddl" / "dim_store.sql").write_text(
+    (project_dir / "mid" / "ddl" / "dim_store.sql").write_text(
         """
         CREATE TABLE dim_store (
             store_id BIGINT,
@@ -2756,8 +2760,8 @@ def test_run_catalog_metadata_write_respects_business_metadata_layers(
         ),
         encoding="utf-8",
     )
-    (project_dir / "models").mkdir()
-    (project_dir / "models" / "dws_store_sales_daily.yaml").write_text(
+    (project_dir / "mid" / "models").mkdir()
+    (project_dir / "mid" / "models" / "dws_store_sales_daily.yaml").write_text(
         yaml.safe_dump(
             {
                 "version": 2,
@@ -2771,7 +2775,7 @@ def test_run_catalog_metadata_write_respects_business_metadata_layers(
         ),
         encoding="utf-8",
     )
-    (project_dir / "models" / "dim_store.yaml").write_text(
+    (project_dir / "mid" / "models" / "dim_store.yaml").write_text(
         yaml.safe_dump(
             {
                 "version": 2,
@@ -2798,12 +2802,14 @@ def test_run_catalog_metadata_write_respects_business_metadata_layers(
     run_catalog_metadata_write(project, dry_run=False, write_scope="business")
 
     dws_model = yaml.safe_load(
-        (project_dir / "models" / "dws_store_sales_daily.yaml").read_text(
-            encoding="utf-8"
-        )
+        (
+            project_dir / "mid" / "models" / "dws_store_sales_daily.yaml"
+        ).read_text(encoding="utf-8")
     )
     dim_model = yaml.safe_load(
-        (project_dir / "models" / "dim_store.yaml").read_text(encoding="utf-8")
+        (project_dir / "mid" / "models" / "dim_store.yaml").read_text(
+            encoding="utf-8"
+        )
     )
     assert "data_domain" not in dws_model
     assert dws_model["business_area"] == "SHOP"

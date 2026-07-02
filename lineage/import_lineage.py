@@ -23,6 +23,7 @@ from config import (
     PROJECT_CONFIG,
     TEXT_ENCODING,
     lineage_data_path,
+    task_path_for_source_file,
 )
 from lineage.identifiers import (
     column_ref_match_key,
@@ -186,11 +187,24 @@ def _typed_indirect_edges(
     return indirect_edges
 
 
-def _read_task_sql(tasks_dir: Path, source_file: str) -> str | None:
+def _read_task_sql(
+    tasks_dir: Path,
+    source_file: str,
+    *,
+    project: str | None = None,
+) -> str | None:
+    for role_dir in ("mid/tasks", "ads/tasks"):
+        candidate = tasks_dir / role_dir / source_file
+        if candidate.exists():
+            return candidate.read_text(encoding=TEXT_ENCODING)
     sql_file = tasks_dir / source_file
-    if not sql_file.exists():
-        return None
-    return sql_file.read_text(encoding=TEXT_ENCODING)
+    if sql_file.exists():
+        return sql_file.read_text(encoding=TEXT_ENCODING)
+    if project:
+        project_task = task_path_for_source_file(project, source_file)
+        if project_task:
+            return project_task.read_text(encoding=TEXT_ENCODING)
+    return None
 
 
 def _job_name(source_file: str) -> str:
@@ -265,6 +279,7 @@ def _build_job_rows(
     source_files: Sequence[str],
     tasks_dir: Path,
     *,
+    project: str,
     snapshot_id: int,
 ) -> tuple[list[tuple], dict[str, int]]:
     job_rows = []
@@ -277,7 +292,11 @@ def _build_job_rows(
                 _job_name(source_file),
                 source_file,
                 "SQL",
-                _read_task_sql(tasks_dir, source_file),
+                _read_task_sql(
+                    tasks_dir,
+                    source_file,
+                    project=project,
+                ),
             )
         )
         job_id_map[source_file] = job_id
@@ -526,6 +545,7 @@ def build_import_rows(
     rows.job_rows, job_id_map = _build_job_rows(
         source_files,
         Path(tasks_dir),
+        project=context.project,
         snapshot_id=context.snapshot_id,
     )
 
@@ -787,7 +807,7 @@ def import_lineage(
     """Load one project lineage JSON into its configured Doris lineage database."""
     cfg = PROJECT_CONFIG[project]
     env_config = DB_ENV_CONFIG[db_env]
-    tasks_dir = PROJECT_ROOT / cfg["dir"] / "tasks"
+    tasks_dir = PROJECT_ROOT / cfg["dir"]
     data = _load_lineage_json(lineage_file)
     current_snapshot_id = (
         snapshot_id if snapshot_id is not None else default_snapshot_id()

@@ -262,6 +262,71 @@ def test_generate_jobs_includes_full_refresh_tasks(tmp_path, monkeypatch):
     assert jobs[1]["target"] == "dwd_product"
 
 
+def test_generate_jobs_default_project_tasks_ignore_root_and_include_mid_ads(
+    tmp_path, monkeypatch
+):
+    project_dir = tmp_path / "demo_project"
+    root_tasks = project_dir / "tasks"
+    mid_tasks = project_dir / "mid" / "tasks"
+    ads_tasks = project_dir / "ads" / "tasks"
+    root_tasks.mkdir(parents=True)
+    mid_tasks.mkdir(parents=True)
+    ads_tasks.mkdir(parents=True)
+    (root_tasks / "legacy_job.sql").write_text(
+        "INSERT INTO demo_dm.legacy_job SELECT 1;",
+        encoding="utf-8",
+    )
+    (mid_tasks / "dwd_mid.sql").write_text(
+        "INSERT INTO demo_dm.dwd_mid SELECT 1;",
+        encoding="utf-8",
+    )
+    (ads_tasks / "ads_demo.sql").write_text(
+        "INSERT INTO demo_dm.ads_demo SELECT 1;",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(refresh_html, "PROJECT_DIR", tmp_path)
+    monkeypatch.setitem(
+        config.PROJECT_CONFIG,
+        "demo",
+        {
+            "dir": "demo_project",
+            "db": "demo_dm",
+        },
+    )
+    monkeypatch.setitem(
+        refresh_html.PROJECT_CONFIG,
+        "demo",
+        {
+            "dir": "demo_project",
+            "db": "demo_dm",
+        },
+    )
+    monkeypatch.setattr(
+        refresh_html,
+        "determine_layer",
+        lambda table_name, project: "ADS"
+        if table_name.startswith("ads_")
+        else "DWD",
+    )
+
+    jobs = refresh_html.generate_jobs(
+        {"edges": []},
+        tasks_dir=None,
+        current_db="demo_dm",
+        project="demo",
+    )
+
+    assert [job["id"] for job in jobs] == [
+        "dwd_mid",
+        "ads_demo",
+    ]
+    assert [job["file"] for job in jobs] == [
+        "dwd_mid.sql",
+        "ads_demo.sql",
+    ]
+
+
 def test_update_lineage_html_writes_new_output_from_template(tmp_path):
     template = tmp_path / "lineage.html"
     output = tmp_path / "lineage_finance_analytics.html"

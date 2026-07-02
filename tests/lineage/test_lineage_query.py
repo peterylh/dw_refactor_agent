@@ -11,7 +11,7 @@ from lineage.view import LineageView
 
 def configure_demo_project_layers(monkeypatch, tmp_path):
     project_dir = tmp_path / "demo_project"
-    models_dir = project_dir / "models"
+    models_dir = project_dir / "mid" / "models"
     models_dir.mkdir(parents=True)
     for table_name, layer in [
         ("ods_order", "ODS"),

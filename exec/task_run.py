@@ -34,6 +34,7 @@ from config import (
     get_model_names_by_layer,
     get_mysql_cmd,
     iter_project_asset_files,
+    iter_project_task_files,
     job_dag_path,
     lineage_data_path,
     load_model_metadata,
@@ -107,9 +108,8 @@ def _dag_needs_refresh_for_tasks(dag: JobDAG, task_names: set[str]) -> bool:
 
 
 def _get_task_files(project: str) -> dict[str, Path]:
-    tasks_dir = _root / PROJECT_CONFIG[project]["dir"] / "tasks"
     files = {}
-    for f in sorted(tasks_dir.glob("*.sql")):
+    for f in iter_project_task_files(project, include_full_refresh=False):
         if f.stem.endswith("_full_refresh"):
             continue
         files[f.stem] = f

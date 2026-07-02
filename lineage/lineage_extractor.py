@@ -29,11 +29,13 @@ from sqlglot.schema import MappingSchema, Schema
 from config import (
     PROJECT_CONFIG,
     TEXT_ENCODING,
+    iter_project_task_files,
     lineage_data_path,
     lineage_task_cache_path,
     ods_source_catalog_ddl_dialect,
-    project_dir,
+    project_asset_dirs,
     project_ods_asset_dirs,
+    task_source_file,
 )
 from config import determine_layer as determine_config_layer
 from doris_sql import normalize_create_table_for_sqlglot
@@ -2377,22 +2379,25 @@ def build_schema_from_ddl(
 def build_schema_from_project_ddl(project):
     cfg = PROJECT_CONFIG[project]
     schema = {}
-    root_dir = project_dir(project)
-    if not root_dir:
+    ods_dirs = set(project_ods_asset_dirs(project, "ddl"))
+    asset_dirs = project_asset_dirs(project, "ddl")
+    if not asset_dirs:
         return schema
 
-    root_ddl_dir = root_dir / "ddl"
-    _merge_schema(
-        schema,
-        build_schema_from_ddl(
-            root_ddl_dir,
-            dialect="doris",
-            default_catalog=cfg.get("catalog", "internal"),
-            default_db=cfg.get("db"),
-        ),
-    )
+    for ddl_dir in asset_dirs:
+        if ddl_dir in ods_dirs:
+            continue
+        _merge_schema(
+            schema,
+            build_schema_from_ddl(
+                ddl_dir,
+                dialect="doris",
+                default_catalog=cfg.get("catalog", "internal"),
+                default_db=cfg.get("db"),
+            ),
+        )
 
-    for ods_dir in project_ods_asset_dirs(project, "ddl"):
+    for ods_dir in ods_dirs:
         catalog = ods_dir.parent.name
         database = ods_dir.name
         _merge_schema(
@@ -3180,11 +3185,14 @@ def _task_failure_result(work_item, error, stage="worker"):
     }
 
 
-def _read_task_work_items(task_files, tasks_dir):
+def _read_task_work_items(task_files, tasks_dir, source_file_for_path=None):
     work_items = []
     for index, task_file in enumerate(task_files):
         task_path = Path(task_file)
-        source_file = task_path.relative_to(tasks_dir).as_posix()
+        if source_file_for_path:
+            source_file = source_file_for_path(task_path)
+        else:
+            source_file = task_path.relative_to(tasks_dir).as_posix()
         work_items.append(
             TaskWorkItem(
                 index=index,
@@ -3496,8 +3504,13 @@ def extract_lineage_from_task_files(
     progress_callback=None,
     previous_cache_file=None,
     cache_project=None,
+    source_file_for_path=None,
 ):
-    work_items = _read_task_work_items(task_files, tasks_dir)
+    work_items = _read_task_work_items(
+        task_files,
+        tasks_dir,
+        source_file_for_path=source_file_for_path,
+    )
     parallel = max(1, int(parallel or 1))
     cache_enabled = previous_cache_file is not None
     cache_project = cache_project or CURRENT_PROJECT
@@ -4348,7 +4361,6 @@ def main():
     _reset_stats()
     cfg = PROJECT_CONFIG[args.project]
     project_dir = Path(__file__).parent.parent / cfg["dir"]
-    tasks_dir = project_dir / "tasks"
     # 1. 构建 Schema
     schema = build_schema_from_project_ddl(args.project)
     table_count = schema_table_count(schema)
@@ -4357,10 +4369,7 @@ def main():
     # 2. 提取血缘
     all_lineage = []
     transient_tables = []
-    task_files = sorted(tasks_dir.glob("*.sql"))
-    full_refresh_dir = tasks_dir / "full_refresh"
-    if full_refresh_dir.exists():
-        task_files.extend(sorted(full_refresh_dir.glob("*.sql")))
+    task_files = iter_project_task_files(args.project)
 
     parallel = max(1, int(args.parallel or 1))
     print(f"Tasks: {len(task_files)} 个文件, 并行度: {parallel}")
@@ -4395,12 +4404,16 @@ def main():
 
     extraction_result = extract_lineage_from_task_files(
         task_files,
-        tasks_dir,
+        project_dir,
         schema,
         parallel=parallel,
         progress_callback=print_task_progress,
         previous_cache_file=cache_path,
         cache_project=CURRENT_PROJECT,
+        source_file_for_path=lambda path: task_source_file(
+            CURRENT_PROJECT,
+            path,
+        ),
     )
     all_lineage = extraction_result["lineage"]
     transient_tables = extraction_result["transient_tables"]

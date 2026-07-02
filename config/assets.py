@@ -12,6 +12,7 @@ import yaml
 from . import core
 
 _model_metadata_cache = {}
+_MID_LAYERS = {"DIM", "DWD", "DWS"}
 
 
 def clear_model_metadata_cache() -> None:
@@ -173,14 +174,56 @@ def project_ods_asset_dirs(project: str, asset_kind: str) -> list[Path]:
     return dirs
 
 
-def project_asset_dirs(project: str, asset_kind: str) -> list[Path]:
-    """Return project asset directories, including ODS-specific directories."""
+def asset_role_for_layer(layer: str | None) -> str:
+    """Return the project asset role for a declared model layer."""
+    normalized = str(layer or "").upper()
+    if normalized == "ODS":
+        return "ods"
+    if normalized == "ADS":
+        return "ads"
+    if normalized in _MID_LAYERS:
+        return "mid"
+    return "mid"
+
+
+def _project_role_asset_dir(
+    project: str,
+    role: str,
+    asset_kind: str,
+) -> Optional[Path]:
+    base_dir = project_dir(project)
+    if not base_dir:
+        return None
+    normalized_role = str(role or "").lower()
+    if normalized_role == "ods":
+        return project_ods_asset_dir(project, asset_kind)
+    if normalized_role in {"mid", "ads"}:
+        return base_dir / normalized_role / asset_kind
+    return None
+
+
+def _project_layer_asset_dirs(project: str, asset_kind: str) -> list[Path]:
     base_dir = project_dir(project)
     if not base_dir:
         return []
-    dirs = [base_dir / asset_kind]
+
+    dirs = []
+    for role_dir in ("mid", "ads"):
+        asset_dir = base_dir / role_dir / asset_kind
+        if asset_dir.exists():
+            dirs.append(asset_dir)
+    return dirs
+
+
+def project_asset_dirs(project: str, asset_kind: str) -> list[Path]:
+    """Return project asset directories in stable ODS/MID/ADS order."""
+    base_dir = project_dir(project)
+    if not base_dir:
+        return []
+    dirs = []
     for ods_dir in project_ods_asset_dirs(project, asset_kind):
         dirs.append(ods_dir)
+    dirs.extend(_project_layer_asset_dirs(project, asset_kind))
     return dirs
 
 
@@ -203,6 +246,90 @@ def iter_project_asset_files(
     return files
 
 
+def project_task_dirs(project: str) -> list[Path]:
+    """Return ETL task directories in stable MID/ADS order."""
+    return [
+        asset_dir
+        for asset_dir in project_asset_dirs(project, "tasks")
+        if asset_dir.exists()
+    ]
+
+
+def iter_project_task_files(
+    project: str,
+    *,
+    include_full_refresh: bool = True,
+) -> list[Path]:
+    """Return task SQL files, including full-refresh companions if requested."""
+    files: list[Path] = []
+    seen: set[Path] = set()
+    for task_dir in project_task_dirs(project):
+        candidates = sorted(task_dir.glob("*.sql"))
+        if include_full_refresh:
+            full_refresh_dir = task_dir / "full_refresh"
+            if full_refresh_dir.exists():
+                candidates.extend(sorted(full_refresh_dir.glob("*.sql")))
+        for task_path in candidates:
+            if task_path in seen:
+                continue
+            seen.add(task_path)
+            files.append(task_path)
+    return files
+
+
+def task_source_file(project: str, task_path: Path) -> str:
+    """Return the stable lineage source_file for a task path."""
+    path = Path(task_path)
+    for task_dir in project_task_dirs(project):
+        try:
+            return path.relative_to(task_dir).as_posix()
+        except ValueError:
+            continue
+    return path.name
+
+
+def task_path_for_source_file(
+    project: str, source_file: str
+) -> Optional[Path]:
+    """Return the task path for a lineage source_file value."""
+    normalized = str(source_file or "").replace("\\", "/").strip()
+    if not normalized:
+        return None
+    for task_dir in project_task_dirs(project):
+        candidate = task_dir / normalized
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def task_path_for_job(
+    project: str,
+    job_name: str,
+    *,
+    include_full_refresh: bool = True,
+) -> Optional[Path]:
+    """Return the SQL path for a job name across MID and ADS dirs."""
+    clean_job_name = str(job_name or "").strip()
+    if not clean_job_name:
+        return None
+
+    task_dirs = project_task_dirs(project)
+    candidates = [task_dir / f"{clean_job_name}.sql" for task_dir in task_dirs]
+    if include_full_refresh:
+        for task_dir in task_dirs:
+            full_dir = task_dir / "full_refresh"
+            candidates.extend(
+                [
+                    full_dir / f"{clean_job_name}_full_refresh.sql",
+                    full_dir / f"{clean_job_name}.sql",
+                ]
+            )
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return None
+
+
 def model_path_for_table(
     project: str,
     table_name: str,
@@ -213,16 +340,18 @@ def model_path_for_table(
     cfg = core.PROJECT_CONFIG[project]
     filename = f"{table_name}.yaml"
     normalized_layer = str(layer or "").upper()
-    if normalized_layer == "ODS":
-        ods_dir = project_ods_asset_dir(project, "models")
-        if ods_dir:
-            return ods_dir / filename
 
-    existing_ods_dir = project_ods_asset_dir(project, "models")
-    if existing_ods_dir and (existing_ods_dir / filename).exists():
-        return existing_ods_dir / filename
+    for model_dir in project_asset_dirs(project, "models"):
+        candidate = model_dir / filename
+        if candidate.exists():
+            return candidate
 
-    return core.PROJECT_ROOT / cfg["dir"] / "models" / filename
+    role = asset_role_for_layer(normalized_layer)
+    role_dir = _project_role_asset_dir(project, role, "models")
+    if role_dir:
+        return role_dir / filename
+
+    return core.PROJECT_ROOT / cfg["dir"] / "mid" / "models" / filename
 
 
 def load_model_metadata(project: str) -> dict:

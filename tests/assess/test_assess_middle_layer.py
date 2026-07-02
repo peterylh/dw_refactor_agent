@@ -123,7 +123,7 @@ def isolated_assess_project(tmp_path, monkeypatch):
 
     project = "unit_assess"
     project_dir = tmp_path / project
-    models_dir = project_dir / "models"
+    models_dir = project_dir / "mid" / "models"
     models_dir.mkdir(parents=True)
     for table_name, layer in [
         ("dwd_customer", "DWD"),
@@ -138,7 +138,7 @@ def isolated_assess_project(tmp_path, monkeypatch):
             ),
             encoding="utf-8",
         )
-    ddl_dir = project_dir / "ddl"
+    ddl_dir = project_dir / "mid" / "ddl"
     ddl_dir.mkdir()
     for table_name in [
         "dwd_customer",
@@ -1079,11 +1079,11 @@ def test_score_model_design_health_limits_business_checks_by_layer():
 
 def test_score_asset_completeness_classifies_missing_assets(tmp_path):
     project_dir = tmp_path / "demo"
-    (project_dir / "ddl").mkdir(parents=True)
-    (project_dir / "models").mkdir()
-    (project_dir / "tasks").mkdir()
+    (project_dir / "mid" / "ddl").mkdir(parents=True)
+    (project_dir / "mid" / "models").mkdir()
+    (project_dir / "mid" / "tasks").mkdir()
 
-    (project_dir / "ddl" / "dwd_orders.sql").write_text(
+    (project_dir / "mid" / "ddl" / "dwd_orders.sql").write_text(
         """
 CREATE TABLE demo.dwd_orders (
     order_id BIGINT
@@ -1093,11 +1093,11 @@ DISTRIBUTED BY HASH(order_id) BUCKETS 1;
 """,
         encoding="utf-8",
     )
-    (project_dir / "models" / "dws_orders.yaml").write_text(
+    (project_dir / "mid" / "models" / "dws_orders.yaml").write_text(
         "name: dws_orders\nlayer: DWS\n",
         encoding="utf-8",
     )
-    (project_dir / "tasks" / "dws_missing.sql").write_text(
+    (project_dir / "mid" / "tasks" / "dws_missing.sql").write_text(
         "INSERT INTO demo.dws_missing SELECT 1 AS order_id;",
         encoding="utf-8",
     )
@@ -1120,7 +1120,7 @@ DISTRIBUTED BY HASH(order_id) BUCKETS 1;
         ("dws_orders", "ASSET_MODEL_HAS_DDL"),
         ("dws_missing", "ASSET_TASK_OUTPUT_HAS_DDL"),
         ("dws_missing", "ASSET_TASK_OUTPUT_HAS_MODEL"),
-        ("tasks/dws_missing.sql", "ASSET_TASK_LINEAGE_MATCHES_OUTPUT"),
+        ("mid/tasks/dws_missing.sql", "ASSET_TASK_LINEAGE_MATCHES_OUTPUT"),
     }
     assert all(item["severity"] == "高" for item in result["issues"])
     assert all(
@@ -1147,11 +1147,11 @@ DISTRIBUTED BY HASH(order_id) BUCKETS 1;
 
 def test_score_asset_completeness_ignores_dropped_ctas_temp_tables(tmp_path):
     project_dir = tmp_path / "demo"
-    (project_dir / "ddl").mkdir(parents=True)
-    (project_dir / "models").mkdir()
-    (project_dir / "tasks").mkdir()
+    (project_dir / "mid" / "ddl").mkdir(parents=True)
+    (project_dir / "mid" / "models").mkdir()
+    (project_dir / "mid" / "tasks").mkdir()
 
-    (project_dir / "ddl" / "dws_orders.sql").write_text(
+    (project_dir / "mid" / "ddl" / "dws_orders.sql").write_text(
         """
 CREATE TABLE demo.dws_orders (
     order_id BIGINT,
@@ -1162,11 +1162,11 @@ DISTRIBUTED BY HASH(order_id) BUCKETS 1;
 """,
         encoding="utf-8",
     )
-    (project_dir / "models" / "dws_orders.yaml").write_text(
+    (project_dir / "mid" / "models" / "dws_orders.yaml").write_text(
         "name: dws_orders\nlayer: DWS\n",
         encoding="utf-8",
     )
-    (project_dir / "tasks" / "dws_orders.sql").write_text(
+    (project_dir / "mid" / "tasks" / "dws_orders.sql").write_text(
         """
 CREATE TABLE demo.tmp_orders_stage AS
 SELECT order_id, amount
@@ -1216,8 +1216,8 @@ DROP TABLE IF EXISTS demo.tmp_orders_stage;
 
 def test_assets_does_not_link_transient_only_task_as_asset(tmp_path):
     project_dir = tmp_path / "demo"
-    (project_dir / "tasks").mkdir(parents=True)
-    (project_dir / "tasks" / "tmp_orders_stage.sql").write_text(
+    (project_dir / "mid" / "tasks").mkdir(parents=True)
+    (project_dir / "mid" / "tasks" / "tmp_orders_stage.sql").write_text(
         """
 CREATE TABLE demo.tmp_orders_stage AS
 SELECT order_id, amount
@@ -1255,8 +1255,8 @@ DROP TABLE IF EXISTS demo.tmp_orders_stage;
 
 def test_assets_links_structured_edge_target_to_task(tmp_path):
     project_dir = tmp_path / "demo"
-    (project_dir / "tasks").mkdir(parents=True)
-    (project_dir / "tasks" / "dws_orders.sql").write_text(
+    (project_dir / "mid" / "tasks").mkdir(parents=True)
+    (project_dir / "mid" / "tasks" / "dws_orders.sql").write_text(
         "INSERT INTO demo.dws_orders SELECT 1 AS id;",
         encoding="utf-8",
     )
@@ -1280,10 +1280,10 @@ def test_assets_links_structured_edge_target_to_task(tmp_path):
 
 
 def _write_simple_table_assets(project_dir, table_names):
-    (project_dir / "ddl").mkdir(parents=True, exist_ok=True)
-    (project_dir / "models").mkdir(exist_ok=True)
+    (project_dir / "mid" / "ddl").mkdir(parents=True, exist_ok=True)
+    (project_dir / "mid" / "models").mkdir(exist_ok=True)
     for table_name in table_names:
-        (project_dir / "ddl" / f"{table_name}.sql").write_text(
+        (project_dir / "mid" / "ddl" / f"{table_name}.sql").write_text(
             f"""
 CREATE TABLE demo.{table_name} (
     id BIGINT
@@ -1293,7 +1293,7 @@ DISTRIBUTED BY HASH(id) BUCKETS 1;
 """,
             encoding="utf-8",
         )
-        (project_dir / "models" / f"{table_name}.yaml").write_text(
+        (project_dir / "mid" / "models" / f"{table_name}.yaml").write_text(
             f"name: {table_name}\nlayer: DWS\n",
             encoding="utf-8",
         )
@@ -1303,8 +1303,8 @@ def test_score_asset_completeness_flags_task_with_no_persistent_output(
     tmp_path,
 ):
     project_dir = tmp_path / "demo"
-    (project_dir / "tasks").mkdir(parents=True)
-    (project_dir / "tasks" / "tmp_orders_stage.sql").write_text(
+    (project_dir / "mid" / "tasks").mkdir(parents=True)
+    (project_dir / "mid" / "tasks" / "tmp_orders_stage.sql").write_text(
         """
 CREATE TABLE demo.tmp_orders_stage AS
 SELECT id
@@ -1329,15 +1329,17 @@ DROP TABLE IF EXISTS demo.tmp_orders_stage;
         result,
         "ASSET_TASK_SINGLE_OUTPUT",
     )[0]
-    assert task_output_check["target"]["name"] == "tasks/tmp_orders_stage.sql"
+    assert (
+        task_output_check["target"]["name"] == "mid/tasks/tmp_orders_stage.sql"
+    )
     assert task_output_check["actual"] == "实际产出=[]"
 
 
 def test_score_asset_completeness_flags_task_with_multiple_outputs(tmp_path):
     project_dir = tmp_path / "demo"
     _write_simple_table_assets(project_dir, ["dws_orders", "dws_order_extra"])
-    (project_dir / "tasks").mkdir(exist_ok=True)
-    (project_dir / "tasks" / "dws_orders.sql").write_text(
+    (project_dir / "mid" / "tasks").mkdir(exist_ok=True)
+    (project_dir / "mid" / "tasks" / "dws_orders.sql").write_text(
         """
 INSERT INTO demo.dws_orders SELECT 1 AS id;
 INSERT INTO demo.dws_order_extra SELECT 1 AS id;
@@ -1368,7 +1370,7 @@ INSERT INTO demo.dws_order_extra SELECT 1 AS id;
         result,
         "ASSET_TASK_SINGLE_OUTPUT",
     )[0]
-    assert task_output_check["target"]["name"] == "tasks/dws_orders.sql"
+    assert task_output_check["target"]["name"] == "mid/tasks/dws_orders.sql"
     assert task_output_check["actual"] == (
         "实际产出=['dws_order_extra', 'dws_orders']"
     )
@@ -1377,12 +1379,12 @@ INSERT INTO demo.dws_order_extra SELECT 1 AS id;
 def test_score_asset_completeness_flags_duplicate_table_writers(tmp_path):
     project_dir = tmp_path / "demo"
     _write_simple_table_assets(project_dir, ["dws_orders"])
-    (project_dir / "tasks").mkdir(exist_ok=True)
-    (project_dir / "tasks" / "dws_orders.sql").write_text(
+    (project_dir / "mid" / "tasks").mkdir(exist_ok=True)
+    (project_dir / "mid" / "tasks" / "dws_orders.sql").write_text(
         "INSERT INTO demo.dws_orders SELECT 1 AS id;",
         encoding="utf-8",
     )
-    (project_dir / "tasks" / "dws_orders_patch.sql").write_text(
+    (project_dir / "mid" / "tasks" / "dws_orders_patch.sql").write_text(
         "INSERT INTO demo.dws_orders SELECT 2 AS id;",
         encoding="utf-8",
     )
@@ -1406,7 +1408,7 @@ def test_score_asset_completeness_flags_duplicate_table_writers(tmp_path):
     )[0]
     assert writer_check["target"]["name"] == "dws_orders"
     assert writer_check["actual"] == (
-        "产出Task=['tasks/dws_orders.sql', 'tasks/dws_orders_patch.sql']"
+        "产出Task=['mid/tasks/dws_orders.sql', 'mid/tasks/dws_orders_patch.sql']"
     )
 
 
@@ -1415,13 +1417,17 @@ def test_score_asset_completeness_allows_full_refresh_companion_writer(
 ):
     project_dir = tmp_path / "demo"
     _write_simple_table_assets(project_dir, ["dws_orders"])
-    (project_dir / "tasks" / "full_refresh").mkdir(parents=True)
-    (project_dir / "tasks" / "dws_orders.sql").write_text(
+    (project_dir / "mid" / "tasks" / "full_refresh").mkdir(parents=True)
+    (project_dir / "mid" / "tasks" / "dws_orders.sql").write_text(
         "INSERT INTO demo.dws_orders SELECT 1 AS id;",
         encoding="utf-8",
     )
     (
-        project_dir / "tasks" / "full_refresh" / "dws_orders_full_refresh.sql"
+        project_dir
+        / "mid"
+        / "tasks"
+        / "full_refresh"
+        / "dws_orders_full_refresh.sql"
     ).write_text(
         "INSERT INTO demo.dws_orders SELECT 1 AS id;",
         encoding="utf-8",
@@ -1576,12 +1582,12 @@ def test_score_naming_conventions_does_not_expose_internal_violation_text():
 def test_score_naming_conventions_issues_include_related_files(tmp_path):
     nc = load_naming_config(PROJECT_ROOT / "naming_config.yaml")
     project_dir = tmp_path / "demo"
-    (project_dir / "ddl").mkdir(parents=True)
-    (project_dir / "models").mkdir()
-    (project_dir / "tasks").mkdir()
+    (project_dir / "mid" / "ddl").mkdir(parents=True)
+    (project_dir / "mid" / "models").mkdir()
+    (project_dir / "mid" / "tasks").mkdir()
 
     table_name = "dwd_customer"
-    (project_dir / "ddl" / f"{table_name}.sql").write_text(
+    (project_dir / "mid" / "ddl" / f"{table_name}.sql").write_text(
         f"""
 CREATE TABLE IF NOT EXISTS demo.{table_name} (
     customer_id BIGINT
@@ -1592,11 +1598,11 @@ PROPERTIES ("replication_num" = "1");
 """,
         encoding="utf-8",
     )
-    (project_dir / "models" / f"{table_name}.yaml").write_text(
+    (project_dir / "mid" / "models" / f"{table_name}.yaml").write_text(
         f"name: {table_name}\nlayer: DWD\n",
         encoding="utf-8",
     )
-    (project_dir / "tasks" / f"{table_name}.sql").write_text(
+    (project_dir / "mid" / "tasks" / f"{table_name}.sql").write_text(
         f"INSERT INTO demo.{table_name} SELECT 1 AS customer_id;",
         encoding="utf-8",
     )
@@ -1616,9 +1622,9 @@ PROPERTIES ("replication_num" = "1");
         if issue["rule_id"] == "NAMING_COLUMN_NAME"
     )
     assert column_issue["remediation"]["related_files"] == [
-        "demo/ddl/dwd_customer.sql",
-        "demo/tasks/dwd_customer.sql",
-        "demo/models/dwd_customer.yaml",
+        "demo/mid/ddl/dwd_customer.sql",
+        "demo/mid/tasks/dwd_customer.sql",
+        "demo/mid/models/dwd_customer.yaml",
     ]
 
 
@@ -1665,9 +1671,9 @@ def test_naming_checks_business_segments_against_valid_model_metadata(
 def test_score_naming_conventions_checks_project_file_names(tmp_path):
     nc = load_naming_config(PROJECT_ROOT / "naming_config.yaml")
     project_dir = tmp_path / "demo"
-    (project_dir / "ddl").mkdir(parents=True)
-    (project_dir / "models").mkdir()
-    (project_dir / "tasks").mkdir()
+    (project_dir / "mid" / "ddl").mkdir(parents=True)
+    (project_dir / "mid" / "models").mkdir()
+    (project_dir / "mid" / "tasks").mkdir()
 
     table_name = "M_WEMG_04_CHREM_DI"
     ddl = f"""
@@ -1678,11 +1684,11 @@ DUPLICATE KEY(ID)
 DISTRIBUTED BY HASH(ID) BUCKETS 1
 PROPERTIES ("replication_num" = "1");
 """
-    (project_dir / "ddl" / "wrong_ddl.sql").write_text(ddl)
-    (project_dir / "models" / "wrong_model.yaml").write_text(
+    (project_dir / "mid" / "ddl" / "wrong_ddl.sql").write_text(ddl)
+    (project_dir / "mid" / "models" / "wrong_model.yaml").write_text(
         f"name: {table_name}\nlayer: DWD\n"
     )
-    (project_dir / "tasks" / "wrong_task.sql").write_text(
+    (project_dir / "mid" / "tasks" / "wrong_task.sql").write_text(
         f"INSERT INTO demo.{table_name} SELECT 1 AS ID;"
     )
 
@@ -1837,7 +1843,7 @@ def test_score_naming_conventions_ignores_lineage_tables_when_project_dir_exists
 ):
     nc = load_naming_config(PROJECT_ROOT / "naming_config.yaml")
     project_dir = tmp_path / "demo"
-    (project_dir / "ddl").mkdir(parents=True)
+    (project_dir / "mid" / "ddl").mkdir(parents=True)
 
     result = score_naming_conventions(
         _context(

@@ -58,8 +58,12 @@ def _project_repo_root(repo_root: Path | None = None) -> Path:
     return Path(repo_root) if repo_root else config.PROJECT_ROOT
 
 
-def _project_ddl_rel(project: str) -> str:
-    return f"{config.PROJECT_CONFIG[project]['dir']}/ddl"
+def _project_ddl_rels(project: str) -> list[str]:
+    project_dir = config.PROJECT_CONFIG[project]["dir"]
+    return [
+        f"{project_dir}/mid/ddl",
+        f"{project_dir}/ads/ddl",
+    ]
 
 
 def load_baseline_ddl(
@@ -70,13 +74,16 @@ def load_baseline_ddl(
 ) -> dict:
     """Load project DDL text from a git base ref."""
     repo = _project_repo_root(repo_root)
-    ddl_rel = _project_ddl_rel(project)
-    baseline_ddl = {
-        table_name: strip_insert_data(content)
-        for table_name, content in load_git_ddl_texts(
-            repo, ddl_rel, base_ref
-        ).items()
-    }
+    baseline_ddl = {}
+    for ddl_rel in _project_ddl_rels(project):
+        baseline_ddl.update(
+            {
+                table_name: strip_insert_data(content)
+                for table_name, content in load_git_ddl_texts(
+                    repo, ddl_rel, base_ref
+                ).items()
+            }
+        )
     return dict(sorted(baseline_ddl.items()))
 
 
@@ -88,25 +95,17 @@ def derive_project_ddl_changes(
 ) -> list[dict]:
     """Derive DDL changes between a git base ref and the working tree."""
     repo = _project_repo_root(repo_root)
-    ddl_rel = _project_ddl_rel(project)
-    old_tables = load_git_tables(repo, ddl_rel, base_ref)
-    new_tables = load_tables_from_dir(repo / ddl_rel)
+    old_tables = {}
+    new_tables = {}
+    for ddl_rel in _project_ddl_rels(project):
+        old_tables.update(load_git_tables(repo, ddl_rel, base_ref))
+        new_tables.update(load_tables_from_dir(repo / ddl_rel))
     changes = derive_ddl_changes(old_tables, new_tables)
     return changes_to_json(changes)["changes"]
 
 
 def _task_path(project: str, job_name: str) -> Path | None:
-    cfg = config.PROJECT_CONFIG[project]
-    tasks_dir = config.PROJECT_ROOT / cfg["dir"] / "tasks"
-    candidates = [
-        tasks_dir / f"{job_name}.sql",
-        tasks_dir / "full_refresh" / f"{job_name}_full_refresh.sql",
-        tasks_dir / "full_refresh" / f"{job_name}.sql",
-    ]
-    for candidate in candidates:
-        if candidate.exists():
-            return candidate
-    return None
+    return config.task_path_for_job(project, job_name)
 
 
 def _relative(path: Path) -> str:

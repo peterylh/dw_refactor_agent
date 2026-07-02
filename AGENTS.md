@@ -64,7 +64,13 @@
 
 ### 表级模型元数据
 
-项目表元数据按表拆分存放在 `{project}/models/{table_name}.yaml`；ODS 表元数据可独立存放在 `{project}/ods/models/{catalog}/{database}/{table_name}.yaml`。元数据用于记录表所属层级、描述与物化方式等信息。
+项目表元数据按层级边界拆分存放：
+
+- ODS：`{project}/ods/models/{catalog}/{database}/{table_name}.yaml`
+- 中间层 DIM/DWD/DWS：`{project}/mid/models/{table_name}.yaml`
+- ADS：`{project}/ads/models/{table_name}.yaml`
+
+元数据用于记录表所属层级、描述与物化方式等信息。
 
 示例：
 
@@ -77,7 +83,7 @@ config:
   materialized: snapshot
 ```
 
-`task_run.py --full-refresh` 会优先读取 `models/*.yaml` 与 `ods/models/{catalog}/{database}/*.yaml` 中的 `config.materialized`，用于判断 `snapshot` / `full` / `incremental` 等执行策略。
+`task_run.py --full-refresh` 会优先读取 `ods/models/{catalog}/{database}/*.yaml`、`mid/models/*.yaml` 与 `ads/models/*.yaml` 中的 `config.materialized`，用于判断 `snapshot` / `full` / `incremental` 等执行策略。
 
 表层级以模型 YAML 中的 `layer` 为唯一权威来源；血缘与重构验证工具会读取该配置，不再通过表名前缀兜底推断层级。
 
@@ -87,17 +93,17 @@ config:
 
 ```bash
 # 默认（当天）
-mysql -h<host> -P<port> -u<user> -p<password> < shop/tasks/dwd_customer.sql
+mysql -h<host> -P<port> -u<user> -p<password> < shop/mid/tasks/dwd_customer.sql
 
 # 重跑历史某天
 mysql -h<host> -P<port> -u<user> -p<password> \
-  -e "SET @etl_date = '2025-01-01'; source shop/tasks/dwd_customer.sql;"
+  -e "SET @etl_date = '2025-01-01'; source shop/mid/tasks/dwd_customer.sql;"
 
 # shop 维表批量重跑
 for d in 2025-01-01 2025-01-02 2025-01-03; do
   for t in dwd_customer dwd_product dwd_store; do
     mysql -h<host> -P<port> -u<user> -p<password> \
-      -e "SET @etl_date = '$d'; source shop/tasks/${t}.sql;"
+      -e "SET @etl_date = '$d'; source shop/mid/tasks/${t}.sql;"
   done
 done
 ```
@@ -128,8 +134,8 @@ python exec/task_run.py --project finance_analytics --etl-dates 2025-01-15 --ref
 
 一键完成：
 
-1. 执行 `{project}/ddl/*.sql` 与 `{project}/ods/ddl/{catalog}/{database}/*.sql` 重建表
-2. 并行加载 `{project}/data/*.sql` 与 `{project}/ods/data/{catalog}/{database}/*.sql` ODS 初始化数据
+1. 执行 `{project}/ods/ddl/{catalog}/{database}/*.sql`、`{project}/mid/ddl/*.sql` 与 `{project}/ads/ddl/*.sql` 重建表
+2. 并行加载 `{project}/ods/data/{catalog}/{database}/*.sql` ODS 初始化数据
 3. 调用 `task_run.py` 按 DAG 执行作业
 
 支持参数：

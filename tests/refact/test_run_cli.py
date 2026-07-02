@@ -129,7 +129,7 @@ def test_analyze_refreshes_current_analysis_diff_and_plan(
     monkeypatch.setattr(
         run_cli,
         "changed_files_since_head",
-        lambda root, head, project_dir: ["shop/models/dwd_order.yaml"],
+        lambda root, head, project_dir: ["shop/mid/models/dwd_order.yaml"],
     )
     plan_calls = []
 

@@ -55,10 +55,10 @@ rg "<table_name>" <project>
 
 重点查看：
 
-- `{project}/ddl/{table_name}.sql`
+- `{project}/mid/ddl/{table_name}.sql`
 - 写入 `{table_name}` 的 task SQL
 - 读取 `{table_name}` 的下游 task SQL
-- `{project}/models/{table_name}.yaml`
+- `{project}/mid/models/{table_name}.yaml`
 - `{project}/data/`：仅 ODS 字段或初始化数据涉及该字段时
 
 检查常见字段写法：
@@ -74,7 +74,7 @@ rg "<table_name>" <project>
 
 ### 3. 修改 DDL
 
-在 `{project}/ddl/{table_name}.sql` 中：
+在 `{project}/mid/ddl/{table_name}.sql` 中：
 
 - 将字段定义名从 `{old_column}` 改为 `{new_column}`
 - 保留字段类型、注释、默认值、聚合模型属性、Doris 属性
@@ -114,7 +114,7 @@ rg "<table_name>" <project>
 
 models YAML 是项目的表级元数据源，不是普通文档。
 
-在 `{project}/models/{table_name}.yaml` 中，只更新真实引用旧字段的配置项，例如：
+在 `{project}/mid/models/{table_name}.yaml` 中，只更新真实引用旧字段的配置项，例如：
 
 - `atomic_metrics`
 - `derived_metrics`

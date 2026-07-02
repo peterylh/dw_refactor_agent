@@ -49,7 +49,7 @@ rg "<old_table>"
 
 ### 3. 修改 DDL
 
-如果存在 `{project}/ddl/{old_table}.sql`：
+如果存在 `{project}/mid/ddl/{old_table}.sql`：
 
 - 文件名改为 `{new_table}.sql`
 - `CREATE TABLE` 表名改为 `{new_table}`
@@ -59,7 +59,7 @@ rg "<old_table>"
 
 ### 4. 修改 ETL SQL
 
-如果存在 `{project}/tasks/{old_table}.sql`：
+如果存在 `{project}/mid/tasks/{old_table}.sql`：
 
 - 文件名改为 `{new_table}.sql`
 - `INSERT INTO old_table` 改为 `INSERT INTO new_table`
@@ -73,7 +73,7 @@ rg "<old_table>"
 
 models YAML 是项目的表级元数据源，不是普通文档。
 
-如果存在 `{project}/models/{old_table}.yaml`：
+如果存在 `{project}/mid/models/{old_table}.yaml`：
 
 - 文件名改为 `{new_table}.yaml`
 - YAML 内 `name: old_table` 改为 `name: new_table`

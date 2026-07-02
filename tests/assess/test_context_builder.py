@@ -209,6 +209,49 @@ def test_build_context_without_task(sample_lineage_data, tmp_path):
     assert ctx.downstream_tables == ["dws_store_sales_daily"]
 
 
+def test_build_contexts_reads_default_mid_asset_dirs(
+    sample_lineage_data,
+    tmp_path,
+    monkeypatch,
+):
+    project = "context_mid_assets"
+    project_dir = tmp_path / project
+    ddl_dir = project_dir / "mid" / "ddl"
+    tasks_dir = project_dir / "mid" / "tasks"
+    ddl_dir.mkdir(parents=True)
+    tasks_dir.mkdir(parents=True)
+    (ddl_dir / "dwd_order_detail.sql").write_text(
+        "CREATE TABLE dwd_order_detail (order_id BIGINT);",
+        encoding="utf-8",
+    )
+    (tasks_dir / "dwd_order_detail.sql").write_text(
+        "INSERT INTO dwd_order_detail SELECT order_id FROM ods_order;",
+        encoding="utf-8",
+    )
+    (tmp_path / "naming_config.yaml").write_text(
+        "types: {}\nbindings: {}\ndictionaries: {}\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setitem(
+        config.PROJECT_CONFIG,
+        project,
+        {
+            "dir": project,
+            "catalog": "internal",
+            "db": "demo_dm",
+        },
+    )
+
+    contexts = build_contexts(project, sample_lineage_data)
+    ctx = next(c for c in contexts if c.table_name == "dwd_order_detail")
+
+    assert ctx.ddl == "CREATE TABLE dwd_order_detail (order_id BIGINT);"
+    assert ctx.etl_sql == (
+        "INSERT INTO dwd_order_detail SELECT order_id FROM ods_order;"
+    )
+
+
 def test_build_contexts_includes_business_semantics_catalog_options(
     sample_lineage_data, tmp_path, monkeypatch
 ):

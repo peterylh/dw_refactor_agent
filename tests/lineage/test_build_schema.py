@@ -221,11 +221,11 @@ class TestBuildSchemaFromDdl:
         tmp_path,
     ):
         project_dir = tmp_path / "demo_project"
-        root_ddl = project_dir / "ddl"
+        mid_ddl = project_dir / "mid" / "ddl"
         hive_ods_ddl = project_dir / "ods" / "ddl" / "hive" / "source_db"
-        root_ddl.mkdir(parents=True)
+        mid_ddl.mkdir(parents=True)
         hive_ods_ddl.mkdir(parents=True)
-        (root_ddl / "dwd_customer.sql").write_text(
+        (mid_ddl / "dwd_customer.sql").write_text(
             """
             CREATE TABLE demo_dm.dwd_customer (
                 customer_id BIGINT

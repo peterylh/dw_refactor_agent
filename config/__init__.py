@@ -6,12 +6,14 @@ from . import core
 from .assets import (
     assess_cache_path,
     assess_result_path,
+    asset_role_for_layer,
     clear_model_metadata_cache,
     determine_layer,
     get_model_layer,
     get_model_metadata,
     get_model_names_by_layer,
     iter_project_asset_files,
+    iter_project_task_files,
     job_dag_path,
     layer_rank,
     lineage_data_path,
@@ -28,6 +30,10 @@ from .assets import (
     project_ods_asset_dir,
     project_ods_asset_dirs,
     project_ods_source_catalog_dialects,
+    project_task_dirs,
+    task_path_for_job,
+    task_path_for_source_file,
+    task_source_file,
 )
 from .naming import (
     LayerDef,
@@ -85,6 +91,7 @@ __all__ = [
     "TypeDef",
     "assess_cache_path",
     "assess_result_path",
+    "asset_role_for_layer",
     "business_semantics_path",
     "clear_business_semantics_cache",
     "clear_model_metadata_cache",
@@ -97,6 +104,7 @@ __all__ = [
     "get_mysql_cmd",
     "get_naming_config",
     "iter_project_asset_files",
+    "iter_project_task_files",
     "job_dag_path",
     "layer_rank",
     "lineage_data_path",
@@ -116,6 +124,10 @@ __all__ = [
     "project_ods_asset_dir",
     "project_ods_asset_dirs",
     "project_ods_source_catalog_dialects",
+    "project_task_dirs",
+    "task_path_for_job",
+    "task_path_for_source_file",
+    "task_source_file",
 ]
 
 

@@ -4,10 +4,17 @@ from refact.incremental_lineage import build_lineage_artifacts
 
 def _write_demo_project(root):
     project_dir = root / "demo"
-    (project_dir / "ddl").mkdir(parents=True)
-    (project_dir / "models").mkdir()
-    (project_dir / "tasks").mkdir()
-    (project_dir / "ddl" / "ods_order.sql").write_text(
+    ods_ddl_dir = project_dir / "ods" / "ddl" / "internal" / "demo_dm"
+    ods_model_dir = project_dir / "ods" / "models" / "internal" / "demo_dm"
+    mid_ddl_dir = project_dir / "mid" / "ddl"
+    mid_model_dir = project_dir / "mid" / "models"
+    mid_tasks_dir = project_dir / "mid" / "tasks"
+    ods_ddl_dir.mkdir(parents=True)
+    ods_model_dir.mkdir(parents=True)
+    mid_ddl_dir.mkdir(parents=True)
+    mid_model_dir.mkdir()
+    mid_tasks_dir.mkdir()
+    (ods_ddl_dir / "ods_order.sql").write_text(
         """
 CREATE TABLE demo_dm.ods_order (
   order_id BIGINT,
@@ -19,7 +26,7 @@ PROPERTIES ("replication_num" = "1");
 """,
         encoding="utf-8",
     )
-    (project_dir / "ddl" / "dwd_order.sql").write_text(
+    (mid_ddl_dir / "dwd_order.sql").write_text(
         """
 CREATE TABLE demo_dm.dwd_order (
   order_id BIGINT,
@@ -31,15 +38,15 @@ PROPERTIES ("replication_num" = "1");
 """,
         encoding="utf-8",
     )
-    (project_dir / "models" / "ods_order.yaml").write_text(
+    (ods_model_dir / "ods_order.yaml").write_text(
         "version: 2\nname: ods_order\nlayer: ODS\n",
         encoding="utf-8",
     )
-    (project_dir / "models" / "dwd_order.yaml").write_text(
+    (mid_model_dir / "dwd_order.yaml").write_text(
         "version: 2\nname: dwd_order\nlayer: DWD\n",
         encoding="utf-8",
     )
-    (project_dir / "tasks" / "dwd_order.sql").write_text(
+    (mid_tasks_dir / "dwd_order.sql").write_text(
         """
 INSERT INTO demo_dm.dwd_order (order_id, amount)
 SELECT order_id, amount
@@ -76,10 +83,19 @@ def test_build_lineage_artifacts_reuses_valid_task_cache(
     assert first["summary"]["reused_task_count"] == 0
     assert second["summary"]["computed_task_count"] == 0
     assert second["summary"]["reused_task_count"] == 1
+    assert second["cache"]["tasks"][0]["source_file"] == "dwd_order.sql"
     assert output_path.exists()
     assert cache_path.exists()
 
-    ddl_path = tmp_path / "demo" / "ddl" / "ods_order.sql"
+    ddl_path = (
+        tmp_path
+        / "demo"
+        / "ods"
+        / "ddl"
+        / "internal"
+        / "demo_dm"
+        / "ods_order.sql"
+    )
     ddl_path.write_text(
         ddl_path.read_text(encoding="utf-8").replace(
             "amount DECIMAL(10,2)",

@@ -7,8 +7,10 @@ from assess.rules.dimensions.task_sql_quality import score_code_quality
 
 def _catalog_for_task(tmp_path, task_name, sql):
     project_dir = tmp_path / "demo"
-    (project_dir / "tasks").mkdir(parents=True)
-    (project_dir / "tasks" / task_name).write_text(sql, encoding="utf-8")
+    (project_dir / "mid" / "tasks").mkdir(parents=True)
+    (project_dir / "mid" / "tasks" / task_name).write_text(
+        sql, encoding="utf-8"
+    )
     catalog = build_asset_catalog(
         [],
         None,
@@ -21,11 +23,13 @@ def _catalog_for_task(tmp_path, task_name, sql):
 
 def _catalog_for_task_and_ddl(tmp_path, task_name, sql, ddl_files):
     project_dir = tmp_path / "demo"
-    (project_dir / "tasks").mkdir(parents=True)
-    (project_dir / "ddl").mkdir(parents=True)
-    (project_dir / "tasks" / task_name).write_text(sql, encoding="utf-8")
+    (project_dir / "mid" / "tasks").mkdir(parents=True)
+    (project_dir / "mid" / "ddl").mkdir(parents=True)
+    (project_dir / "mid" / "tasks" / task_name).write_text(
+        sql, encoding="utf-8"
+    )
     for ddl_name, ddl_sql in ddl_files.items():
-        (project_dir / "ddl" / ddl_name).write_text(
+        (project_dir / "mid" / "ddl" / ddl_name).write_text(
             ddl_sql,
             encoding="utf-8",
         )
@@ -41,15 +45,15 @@ def _catalog_for_task_and_ddl(tmp_path, task_name, sql, ddl_files):
 
 def _catalog_for_tasks_and_ddl(tmp_path, task_sql_by_name, ddl_files=None):
     project_dir = tmp_path / "demo"
-    (project_dir / "tasks").mkdir(parents=True)
+    (project_dir / "mid" / "tasks").mkdir(parents=True)
     for task_name, sql in task_sql_by_name.items():
-        (project_dir / "tasks" / task_name).write_text(
+        (project_dir / "mid" / "tasks" / task_name).write_text(
             sql,
             encoding="utf-8",
         )
     for ddl_name, ddl_sql in (ddl_files or {}).items():
-        (project_dir / "ddl").mkdir(parents=True, exist_ok=True)
-        (project_dir / "ddl" / ddl_name).write_text(
+        (project_dir / "mid" / "ddl").mkdir(parents=True, exist_ok=True)
+        (project_dir / "mid" / "ddl" / ddl_name).write_text(
             ddl_sql,
             encoding="utf-8",
         )
@@ -210,7 +214,7 @@ FROM demo.tmp_sales_stage;
         "expected": "DROP IF EXISTS只能清理历史残留，CREATE后需在同一作业后续DROP",
         "actual": "CREATE之后未找到后续DROP清理",
         "evidence": {
-            "file": "demo/tasks/dws_sales.sql",
+            "file": "demo/mid/tasks/dws_sales.sql",
             "table": "tmp_sales_stage",
             "reason": "pre_drop_create_without_post_drop",
             "created_statement_index": 1,
@@ -261,11 +265,11 @@ FROM demo.tmp_sales_stage;
         "name": "tmp_sales_stage",
     }
     assert failed[0]["evidence"] == {
-        "file": "demo/tasks/build_tmp_sales.sql",
+        "file": "demo/mid/tasks/build_tmp_sales.sql",
         "table": "tmp_sales_stage",
         "reason": "pre_drop_create_without_post_drop",
-        "creator_task": "demo/tasks/build_tmp_sales.sql",
-        "reader_tasks": ["demo/tasks/dws_sales.sql"],
+        "creator_task": "demo/mid/tasks/build_tmp_sales.sql",
+        "reader_tasks": ["demo/mid/tasks/dws_sales.sql"],
         "created_statement_index": 1,
         "pre_drop_statement_indexes": [0],
         "post_create_drop_statement_indexes": [],
@@ -402,7 +406,7 @@ FROM internal.shop_dm.tmp_sales_stage;
     assert len(failed) == 1
     assert failed[0]["evidence"]["table"] == "tmp_sales_stage"
     assert failed[0]["evidence"]["reader_tasks"] == [
-        "demo/tasks/dws_sales.sql"
+        "demo/mid/tasks/dws_sales.sql"
     ]
     assert failed[0]["evidence"]["reason"] == (
         "pre_drop_create_without_post_drop"
@@ -517,13 +521,13 @@ FROM demo.dwd_sales;
         "rule_id": "CODE_NO_SELECT_STAR_IN_WRITE",
         "target": {
             "type": "task",
-            "name": "demo/tasks/dws_sales.sql",
+            "name": "demo/mid/tasks/dws_sales.sql",
         },
         "passed": False,
         "expected": "写入型语句显式列出字段",
         "actual": "写入 dws_sales 时使用 SELECT *",
         "evidence": {
-            "file": "demo/tasks/dws_sales.sql",
+            "file": "demo/mid/tasks/dws_sales.sql",
             "table": "dws_sales",
         },
         "message": "写入型语句使用SELECT *，请显式列出字段",
@@ -537,13 +541,13 @@ FROM demo.dwd_sales;
             "id": "code_quality.iss_001",
             "fingerprint": (
                 "code_quality|CODE_NO_SELECT_STAR_IN_WRITE|task|"
-                "demo/tasks/dws_sales.sql"
+                "demo/mid/tasks/dws_sales.sql"
             ),
             "severity": "高",
             "rule_id": "CODE_NO_SELECT_STAR_IN_WRITE",
             "target": {
                 "type": "task",
-                "name": "demo/tasks/dws_sales.sql",
+                "name": "demo/mid/tasks/dws_sales.sql",
             },
             "title": "写入型SQL使用SELECT *",
             "message": "写入型语句使用SELECT *，请显式列出字段",

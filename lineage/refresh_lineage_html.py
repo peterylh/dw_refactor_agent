@@ -21,10 +21,12 @@ from config import (
     PROJECT_CONFIG,
     TEXT_ENCODING,
     determine_layer,
+    iter_project_task_files,
     layer_rank,
     lineage_data_path,
     lineage_html_path,
     lineage_job_html_path,
+    task_source_file,
 )
 from lineage.identifiers import (
     canonical_qualified_identifier,
@@ -166,9 +168,24 @@ def generate_jobs(data, tasks_dir, current_db, job_logic=None, project="shop"):
         split_ref = split_column_ref(ref)
         return split_ref[0] if split_ref is not None else ""
 
-    for f in iter_task_sql_files(tasks_dir):
-        fname = f.relative_to(tasks_dir).as_posix()
-        job_id = f.with_suffix("").relative_to(tasks_dir).as_posix()
+    task_entries = []
+    if tasks_dir:
+        explicit_task_files = iter_task_sql_files(Path(tasks_dir))
+        task_entries = [
+            (
+                task_path,
+                task_path.relative_to(tasks_dir).as_posix(),
+            )
+            for task_path in explicit_task_files
+        ]
+    if not task_entries:
+        task_entries = [
+            (task_path, task_source_file(project, task_path))
+            for task_path in iter_project_task_files(project)
+        ]
+
+    for f, fname in task_entries:
+        job_id = str(Path(fname).with_suffix(""))
         edges = file_edges.get(fname, [])
 
         sources = set()
@@ -238,7 +255,7 @@ def get_project_context(project):
     return {
         "project": project,
         "current_db": project_cfg["db"],
-        "tasks_dir": PROJECT_DIR / project_cfg["dir"] / "tasks",
+        "tasks_dir": None,
         "job_logic": JOB_LOGIC_MAP.get(project, {}),
         "lineage_data_path": resolve_lineage_data_path(project),
         **paths,

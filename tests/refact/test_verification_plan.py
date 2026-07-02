@@ -32,18 +32,18 @@ def test_build_verification_plan_uses_baseline_ddl_changes_and_jobs(
     tmp_path, monkeypatch
 ):
     project_dir = tmp_path / "demo"
-    (project_dir / "ddl").mkdir(parents=True)
-    (project_dir / "models").mkdir()
-    (project_dir / "tasks").mkdir()
-    (project_dir / "ddl" / "dws_order.sql").write_text(
+    (project_dir / "mid" / "ddl").mkdir(parents=True)
+    (project_dir / "mid" / "models").mkdir()
+    (project_dir / "mid" / "tasks").mkdir()
+    (project_dir / "mid" / "ddl" / "dws_order.sql").write_text(
         "CREATE TABLE demo_dm.dws_order (order_id BIGINT) ENGINE=OLAP;",
         encoding="utf-8",
     )
-    (project_dir / "models" / "dws_order.yaml").write_text(
+    (project_dir / "mid" / "models" / "dws_order.yaml").write_text(
         "version: 2\nname: dws_order\nlayer: DWS\n",
         encoding="utf-8",
     )
-    (project_dir / "tasks" / "dws_order.sql").write_text(
+    (project_dir / "mid" / "tasks" / "dws_order.sql").write_text(
         "INSERT INTO demo_dm.dws_order SELECT @etl_date;",
         encoding="utf-8",
     )
@@ -129,7 +129,7 @@ def test_build_verification_plan_uses_baseline_ddl_changes_and_jobs(
     assert plan["jobs_to_run"] == [
         {
             "job": "dws_order",
-            "file": "demo/tasks/dws_order.sql",
+            "file": "demo/mid/tasks/dws_order.sql",
             "layer": "DWS",
             "target": "dws_order",
             "needs_etl_date": True,
@@ -148,10 +148,10 @@ def test_build_verification_plan_requires_lineage_when_jobs_exist(
     tmp_path, monkeypatch
 ):
     project_dir = tmp_path / "demo"
-    (project_dir / "ddl").mkdir(parents=True)
-    (project_dir / "models").mkdir()
-    (project_dir / "tasks").mkdir()
-    (project_dir / "tasks" / "dws_order.sql").write_text(
+    (project_dir / "mid" / "ddl").mkdir(parents=True)
+    (project_dir / "mid" / "models").mkdir()
+    (project_dir / "mid" / "tasks").mkdir()
+    (project_dir / "mid" / "tasks" / "dws_order.sql").write_text(
         "INSERT INTO demo_dm.dws_order SELECT 1;",
         encoding="utf-8",
     )
@@ -190,10 +190,10 @@ def test_build_verification_plan_preserves_empty_modified_jobs(
     tmp_path, monkeypatch
 ):
     project_dir = tmp_path / "demo"
-    (project_dir / "ddl").mkdir(parents=True)
-    (project_dir / "models").mkdir()
-    (project_dir / "tasks").mkdir()
-    (project_dir / "tasks" / "dws_order.sql").write_text(
+    (project_dir / "mid" / "ddl").mkdir(parents=True)
+    (project_dir / "mid" / "models").mkdir()
+    (project_dir / "mid" / "tasks").mkdir()
+    (project_dir / "mid" / "tasks" / "dws_order.sql").write_text(
         "INSERT INTO demo_dm.dws_order SELECT 1;",
         encoding="utf-8",
     )
@@ -237,18 +237,18 @@ def test_build_verification_plan_self_anchors_sql_only_task_without_downstream(
     tmp_path, monkeypatch
 ):
     project_dir = tmp_path / "demo"
-    (project_dir / "ddl").mkdir(parents=True)
-    (project_dir / "models").mkdir()
-    (project_dir / "tasks").mkdir()
-    (project_dir / "ddl" / "dws_terminal.sql").write_text(
+    (project_dir / "mid" / "ddl").mkdir(parents=True)
+    (project_dir / "mid" / "models").mkdir()
+    (project_dir / "mid" / "tasks").mkdir()
+    (project_dir / "mid" / "ddl" / "dws_terminal.sql").write_text(
         "CREATE TABLE demo_dm.dws_terminal (id BIGINT) ENGINE=OLAP;",
         encoding="utf-8",
     )
-    (project_dir / "models" / "dws_terminal.yaml").write_text(
+    (project_dir / "mid" / "models" / "dws_terminal.yaml").write_text(
         "version: 2\nname: dws_terminal\nlayer: DWS\n",
         encoding="utf-8",
     )
-    (project_dir / "tasks" / "dws_terminal.sql").write_text(
+    (project_dir / "mid" / "tasks" / "dws_terminal.sql").write_text(
         "INSERT INTO demo_dm.dws_terminal SELECT id FROM demo_dm.ods_order;",
         encoding="utf-8",
     )
@@ -313,22 +313,22 @@ def test_build_verification_plan_does_not_self_anchor_when_downstream_anchor_exi
     tmp_path, monkeypatch
 ):
     project_dir = tmp_path / "demo"
-    (project_dir / "ddl").mkdir(parents=True)
-    (project_dir / "models").mkdir()
-    (project_dir / "tasks").mkdir()
+    (project_dir / "mid" / "ddl").mkdir(parents=True)
+    (project_dir / "mid" / "models").mkdir()
+    (project_dir / "mid" / "tasks").mkdir()
     for table_name, layer in [
         ("dws_terminal", "DWS"),
         ("ads_final", "ADS"),
     ]:
-        (project_dir / "ddl" / f"{table_name}.sql").write_text(
+        (project_dir / "mid" / "ddl" / f"{table_name}.sql").write_text(
             f"CREATE TABLE demo_dm.{table_name} (id BIGINT) ENGINE=OLAP;",
             encoding="utf-8",
         )
-        (project_dir / "models" / f"{table_name}.yaml").write_text(
+        (project_dir / "mid" / "models" / f"{table_name}.yaml").write_text(
             f"version: 2\nname: {table_name}\nlayer: {layer}\n",
             encoding="utf-8",
         )
-        (project_dir / "tasks" / f"{table_name}.sql").write_text(
+        (project_dir / "mid" / "tasks" / f"{table_name}.sql").write_text(
             f"INSERT INTO demo_dm.{table_name} SELECT id FROM demo_dm.ods_order;",
             encoding="utf-8",
         )
@@ -380,21 +380,21 @@ def test_build_verification_plan_does_not_self_anchor_when_downstream_anchor_exi
 
 def test_build_verification_plan_blocks_ads_ddl_changes(tmp_path, monkeypatch):
     project_dir = tmp_path / "demo"
-    (project_dir / "ddl").mkdir(parents=True)
-    (project_dir / "models").mkdir()
-    (project_dir / "tasks").mkdir()
-    (project_dir / "ddl" / "ads_final.sql").write_text(
+    (project_dir / "mid" / "ddl").mkdir(parents=True)
+    (project_dir / "mid" / "models").mkdir()
+    (project_dir / "mid" / "tasks").mkdir()
+    (project_dir / "mid" / "ddl" / "ads_final.sql").write_text(
         (
             "CREATE TABLE demo_dm.ads_final "
             "(id BIGINT, amount DECIMAL(10,2)) ENGINE=OLAP;"
         ),
         encoding="utf-8",
     )
-    (project_dir / "models" / "ads_final.yaml").write_text(
+    (project_dir / "mid" / "models" / "ads_final.yaml").write_text(
         "version: 2\nname: ads_final\nlayer: ADS\n",
         encoding="utf-8",
     )
-    (project_dir / "tasks" / "ads_final.sql").write_text(
+    (project_dir / "mid" / "tasks" / "ads_final.sql").write_text(
         "INSERT INTO demo_dm.ads_final SELECT id, amount FROM demo_dm.dws_order;",
         encoding="utf-8",
     )
@@ -473,18 +473,18 @@ def test_build_verification_plan_marks_no_data_anchor_for_terminal_ddl_change(
     tmp_path, monkeypatch
 ):
     project_dir = tmp_path / "demo"
-    (project_dir / "ddl").mkdir(parents=True)
-    (project_dir / "models").mkdir()
-    (project_dir / "tasks").mkdir()
-    (project_dir / "ddl" / "dws_terminal.sql").write_text(
+    (project_dir / "mid" / "ddl").mkdir(parents=True)
+    (project_dir / "mid" / "models").mkdir()
+    (project_dir / "mid" / "tasks").mkdir()
+    (project_dir / "mid" / "ddl" / "dws_terminal.sql").write_text(
         "CREATE TABLE demo_dm.dws_terminal (id BIGINT) ENGINE=OLAP;",
         encoding="utf-8",
     )
-    (project_dir / "models" / "dws_terminal.yaml").write_text(
+    (project_dir / "mid" / "models" / "dws_terminal.yaml").write_text(
         "version: 2\nname: dws_terminal\nlayer: DWS\n",
         encoding="utf-8",
     )
-    (project_dir / "tasks" / "dws_terminal.sql").write_text(
+    (project_dir / "mid" / "tasks" / "dws_terminal.sql").write_text(
         "INSERT INTO demo_dm.dws_terminal SELECT id FROM demo_dm.ods_order;",
         encoding="utf-8",
     )
@@ -536,11 +536,11 @@ def test_build_verification_plan_rejects_cyclic_job_lineage(
     tmp_path, monkeypatch
 ):
     project_dir = tmp_path / "demo"
-    (project_dir / "ddl").mkdir(parents=True)
-    (project_dir / "models").mkdir()
-    (project_dir / "tasks").mkdir()
+    (project_dir / "mid" / "ddl").mkdir(parents=True)
+    (project_dir / "mid" / "models").mkdir()
+    (project_dir / "mid" / "tasks").mkdir()
     for table_name in ["dwd_order", "dws_order"]:
-        (project_dir / "tasks" / f"{table_name}.sql").write_text(
+        (project_dir / "mid" / "tasks" / f"{table_name}.sql").write_text(
             f"INSERT INTO demo_dm.{table_name} SELECT 1;",
             encoding="utf-8",
         )
@@ -589,10 +589,10 @@ def test_build_verification_plan_applies_manual_partition_to_checks(
     tmp_path, monkeypatch
 ):
     project_dir = tmp_path / "demo"
-    (project_dir / "ddl").mkdir(parents=True)
-    (project_dir / "models").mkdir()
-    (project_dir / "tasks").mkdir()
-    (project_dir / "tasks" / "dws_order.sql").write_text(
+    (project_dir / "mid" / "ddl").mkdir(parents=True)
+    (project_dir / "mid" / "models").mkdir()
+    (project_dir / "mid" / "tasks").mkdir()
+    (project_dir / "mid" / "tasks" / "dws_order.sql").write_text(
         "INSERT INTO demo_dm.dws_order SELECT @etl_date;",
         encoding="utf-8",
     )
@@ -678,23 +678,23 @@ def test_build_verification_plan_orders_jobs_topologically(
     tmp_path, monkeypatch
 ):
     project_dir = tmp_path / "demo"
-    (project_dir / "ddl").mkdir(parents=True)
-    (project_dir / "models").mkdir()
-    (project_dir / "tasks").mkdir()
+    (project_dir / "mid" / "ddl").mkdir(parents=True)
+    (project_dir / "mid" / "models").mkdir()
+    (project_dir / "mid" / "tasks").mkdir()
     for table_name, layer in [
         ("dwd_order", "DWD"),
         ("dws_order", "DWS"),
         ("ads_order", "ADS"),
     ]:
-        (project_dir / "ddl" / f"{table_name}.sql").write_text(
+        (project_dir / "mid" / "ddl" / f"{table_name}.sql").write_text(
             f"CREATE TABLE demo_dm.{table_name} (id BIGINT) ENGINE=OLAP;",
             encoding="utf-8",
         )
-        (project_dir / "models" / f"{table_name}.yaml").write_text(
+        (project_dir / "mid" / "models" / f"{table_name}.yaml").write_text(
             f"version: 2\nname: {table_name}\nlayer: {layer}\n",
             encoding="utf-8",
         )
-        (project_dir / "tasks" / f"{table_name}.sql").write_text(
+        (project_dir / "mid" / "tasks" / f"{table_name}.sql").write_text(
             f"INSERT INTO demo_dm.{table_name} SELECT 1;",
             encoding="utf-8",
         )
@@ -793,7 +793,44 @@ def test_load_baseline_ddl_reads_git_ref_and_strips_insert(monkeypatch):
     assert result == {
         "dwd_order": "CREATE TABLE demo_dm.dwd_order (id BIGINT) ENGINE=OLAP;"
     }
-    assert calls == [(Path("/repo"), "demo/ddl", "abc123")]
+    assert calls == [
+        (Path("/repo"), "demo/mid/ddl", "abc123"),
+        (Path("/repo"), "demo/ads/ddl", "abc123"),
+    ]
+
+
+def test_load_baseline_ddl_merges_mid_and_ads_git_dirs(monkeypatch):
+    def fake_load_git_ddl_texts(_repo, ddl_dir_rel, _ref):
+        if ddl_dir_rel.endswith("/mid/ddl"):
+            return {
+                "dwd_order": (
+                    "CREATE TABLE demo_dm.dwd_order (id BIGINT) ENGINE=OLAP;"
+                )
+            }
+        if ddl_dir_rel.endswith("/ads/ddl"):
+            return {
+                "ads_order": (
+                    "CREATE TABLE demo_dm.ads_order (id BIGINT) ENGINE=OLAP;"
+                )
+            }
+        return {}
+
+    monkeypatch.setitem(
+        config.PROJECT_CONFIG,
+        "demo",
+        {"dir": "demo", "db": "demo_dm", "qa_db": "demo_dm_qa"},
+    )
+    monkeypatch.setattr(
+        "refact.verification_plan.load_git_ddl_texts",
+        fake_load_git_ddl_texts,
+    )
+
+    result = load_baseline_ddl("demo", "abc123", repo_root="/repo")
+
+    assert result == {
+        "ads_order": "CREATE TABLE demo_dm.ads_order (id BIGINT) ENGINE=OLAP;",
+        "dwd_order": "CREATE TABLE demo_dm.dwd_order (id BIGINT) ENGINE=OLAP;",
+    }
 
 
 def test_parse_partition_col_from_ddl_and_get_partition_col():

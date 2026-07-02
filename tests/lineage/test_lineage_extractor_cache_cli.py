@@ -7,11 +7,13 @@ import lineage.lineage_extractor as lineage_extractor
 
 def _write_demo_project(root):
     project_dir = root / "demo"
-    ddl_dir = project_dir / "ddl"
-    tasks_dir = project_dir / "tasks"
-    ddl_dir.mkdir(parents=True)
+    ods_ddl_dir = project_dir / "ods" / "ddl" / "internal" / "demo_dm"
+    mid_ddl_dir = project_dir / "mid" / "ddl"
+    tasks_dir = project_dir / "mid" / "tasks"
+    ods_ddl_dir.mkdir(parents=True)
+    mid_ddl_dir.mkdir(parents=True)
     tasks_dir.mkdir(parents=True)
-    (ddl_dir / "ods_order.sql").write_text(
+    (ods_ddl_dir / "ods_order.sql").write_text(
         """
         CREATE TABLE demo_dm.ods_order (
             order_id BIGINT,
@@ -20,7 +22,7 @@ def _write_demo_project(root):
         """,
         encoding="utf-8",
     )
-    (ddl_dir / "dwd_order.sql").write_text(
+    (mid_ddl_dir / "dwd_order.sql").write_text(
         """
         CREATE TABLE demo_dm.dwd_order (
             order_id BIGINT,

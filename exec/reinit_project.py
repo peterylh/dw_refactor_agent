@@ -3,7 +3,7 @@
 数据重新初始化.
 
 流程:
-   1. 重建所有表 (执行 ddl/*.sql, DROP + CREATE)
+   1. 重建所有表 (执行 ODS/MID/ADS DDL, DROP + CREATE)
    2. 初始化 ODS 层数据
    3. 从 ODS 表自动发现分区日期, 确定 etl_dates
    4. 调用 task_run.py 按 DAG 拓扑重算上层表
@@ -116,7 +116,7 @@ def main():
 
     # ── Step 1: 重建所有表 ──
     print(f"\n{'=' * 60}")
-    print("Step 1: 重建所有表 (执行 ddl/*.sql)")
+    print("Step 1: 重建所有表 (执行 ODS/MID/ADS DDL)")
 
     ddl_files = _project_sql_files(project, "ddl")
     if not ddl_files:

@@ -34,9 +34,21 @@ def isolated_lineage_projects(tmp_path, monkeypatch):
         },
     }
     for project_name, tables in layer_map.items():
-        models_dir = tmp_path / project_name / "models"
-        models_dir.mkdir(parents=True)
         for table_name, layer in tables.items():
+            if layer == "ODS":
+                models_dir = (
+                    tmp_path
+                    / project_name
+                    / "ods"
+                    / "models"
+                    / "internal"
+                    / f"{project_name}_dm"
+                )
+            elif layer == "ADS":
+                models_dir = tmp_path / project_name / "ads" / "models"
+            else:
+                models_dir = tmp_path / project_name / "mid" / "models"
+            models_dir.mkdir(parents=True, exist_ok=True)
             (models_dir / f"{table_name}.yaml").write_text(
                 f"version: 2\nname: {table_name}\nlayer: {layer}\n",
                 encoding="utf-8",

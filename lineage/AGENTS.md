@@ -25,8 +25,9 @@
 
 ### lineage_extractor.py
 
-字段级血缘解析引擎。读取 `{project}/ddl/`、`{project}/ods/ddl/{catalog}/{database}/`
-建表 SQL 与 `{project}/tasks/` ETL SQL，输出：
+字段级血缘解析引擎。读取 `{project}/ods/ddl/{catalog}/{database}/`、
+`{project}/mid/ddl/`、`{project}/ads/ddl/` 建表 SQL，以及
+`{project}/mid/tasks/`、`{project}/ads/tasks/` ETL SQL，输出：
 
 - `{project}/lineage/lineage_data.json`
 - `{project}/lineage/task_lineage_cache.json`

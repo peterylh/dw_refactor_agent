@@ -18,12 +18,13 @@
 
 只修改数仓项目资产：
 
-- `{project}/ddl/`
-- `{project}/tasks/`
-- `{project}/models/`
-- `{project}/data/`：仅当 ODS 表、ODS 字段或初始化数据涉及本次变更时修改
+- `{project}/mid/ddl/`
+- `{project}/mid/tasks/`
+- `{project}/mid/models/`
+- `{project}/ads/tasks/`：仅当需要保持 ADS 输出不变而调整取数逻辑时修改
 
-只修改 DWS/DIM/DWD 表，不修改其他资产
+只修改 DWS/DIM/DWD 表结构；ODS 和 ADS 表结构默认保持不变。ADS SQL 可以重构，
+但不能改变 ADS 表字段、类型、分区、主键或输出语义。
 不要修改命名规范配置文件， 但是可以针对命名规范提出改进建议
 不要修改工具代码或测试代码， 但是可以报告问题
 - `lineage/`

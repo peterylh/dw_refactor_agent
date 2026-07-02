@@ -17,13 +17,8 @@ from lineage.task_cache import (
 
 def _task_files(project: str) -> tuple[Path, list[Path]]:
     cfg = config.PROJECT_CONFIG[project]
-    tasks_dir = config.PROJECT_ROOT / cfg["dir"] / "tasks"
-    task_files = []
-    if tasks_dir.exists():
-        task_files.extend(sorted(tasks_dir.glob("*.sql")))
-        full_refresh_dir = tasks_dir / "full_refresh"
-        if full_refresh_dir.exists():
-            task_files.extend(sorted(full_refresh_dir.glob("*.sql")))
+    tasks_dir = config.PROJECT_ROOT / cfg["dir"]
+    task_files = config.iter_project_task_files(project)
     return tasks_dir, task_files
 
 
@@ -56,7 +51,7 @@ def build_lineage_artifacts(
     extractor_hash = extractor._extractor_hash_for_cache()
 
     for index, task_file in enumerate(task_files):
-        source_file = task_file.relative_to(tasks_dir).as_posix()
+        source_file = config.task_source_file(project, task_file)
         sql_text = task_file.read_text(encoding=TEXT_ENCODING)
         work_item = extractor.TaskWorkItem(
             index=index,

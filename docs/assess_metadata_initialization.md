@@ -3,7 +3,9 @@
 本文说明 `assess` 相关元数据的初始化顺序、工具职责和常用命令。项目级元数据主要分两类：
 
 - `{project}/business_semantics.yaml`: 业务语义目录，维护数据域、业务板块、业务过程、语义主题。
-- `{project}/models/{table_name}.yaml`: 表级模型元数据，维护 layer、table_type、业务语义引用、entities、grain、metrics 和执行策略。ODS 表可独立存放在 `{project}/ods/models/{catalog}/{database}/{table_name}.yaml`。
+- `{project}/mid/models/{table_name}.yaml`: DIM/DWD/DWS 表级模型元数据，维护 layer、table_type、业务语义引用、entities、grain、metrics 和执行策略。
+- `{project}/ads/models/{table_name}.yaml`: ADS 表级模型元数据。
+- `{project}/ods/models/{catalog}/{database}/{table_name}.yaml`: ODS 表级模型元数据。
 
 推荐把这些文件作为项目资产放在 Git 中维护。工具直接写工作区，使用 `git diff` / `git add -p` 审查和接受变更。
 
@@ -69,7 +71,10 @@ python -m assess.llm.model_metadata_writer --project shop --from-catalog --write
 python -m assess.llm.model_metadata_writer --project shop --from-catalog --write-scope business
 ```
 
-这个命令不调用 LLM。它读取 `{project}/business_semantics.yaml`、`{project}/models/*.yaml` 和 `{project}/ods/models/{catalog}/{database}/*.yaml`，以 models 中已有的 `business_process` / `semantic_subject` 为表级归属事实，再从 catalog 补齐这些 code 对应的数据域和业务板块。
+这个命令不调用 LLM。它读取 `{project}/business_semantics.yaml`、
+`{project}/ods/models/{catalog}/{database}/*.yaml`、`{project}/mid/models/*.yaml`
+和 `{project}/ads/models/*.yaml`，以 models 中已有的 `business_process` /
+`semantic_subject` 为表级归属事实，再从 catalog 补齐这些 code 对应的数据域和业务板块。
 
 写入内容包括：
 

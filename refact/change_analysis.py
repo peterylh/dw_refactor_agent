@@ -19,6 +19,16 @@ def _task_job_name(path: str) -> str:
     return stem
 
 
+def _is_asset_path(parts: list[str], asset_kind: str) -> bool:
+    if len(parts) >= 5 and parts[0] == "ods" and parts[1] == asset_kind:
+        return True
+    return (
+        len(parts) >= 3
+        and parts[0] in {"mid", "ads"}
+        and (parts[1] == asset_kind)
+    )
+
+
 def classify_changed_assets(files: list[str], project_dir: str) -> dict:
     project_prefix = _normalize_path(project_dir).rstrip("/") + "/"
     ddl_tables = set()
@@ -40,16 +50,12 @@ def classify_changed_assets(files: list[str], project_dir: str) -> dict:
             continue
         rel_path = path[len(project_prefix) :]
         parts = rel_path.split("/")
-        if path.endswith(".sql") and (
-            (len(parts) >= 2 and parts[0] == "ddl")
-            or (len(parts) >= 5 and parts[0] == "ods" and parts[1] == "ddl")
-        ):
+        if path.endswith(".sql") and _is_asset_path(parts, "ddl"):
             ddl_tables.add(Path(path).stem)
-        elif len(parts) >= 2 and parts[0] == "tasks" and path.endswith(".sql"):
+        elif path.endswith(".sql") and _is_asset_path(parts, "tasks"):
             task_jobs.add(_task_job_name(path))
         elif path.endswith((".yaml", ".yml")) and (
-            (len(parts) >= 2 and parts[0] == "models")
-            or (len(parts) >= 5 and parts[0] == "ods" and parts[1] == "models")
+            _is_asset_path(parts, "models")
         ):
             model_tables.add(Path(path).stem)
 

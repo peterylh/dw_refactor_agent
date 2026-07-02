@@ -824,7 +824,7 @@ class TestNamingDiagnostics:
 
 class TestTopLevelDetermineLayer:
     def test_prefers_model_layer(self, monkeypatch, tmp_path):
-        models_dir = tmp_path / "demo_project" / "models"
+        models_dir = tmp_path / "demo_project" / "ads" / "models"
         models_dir.mkdir(parents=True)
         (models_dir / "legacy_name.yaml").write_text(
             "version: 2\nname: legacy_name\nlayer: ADS\n",
@@ -841,7 +841,7 @@ class TestTopLevelDetermineLayer:
 
     def test_no_prefix_fallback(self, tmp_path, monkeypatch):
         project = "unit_empty_layers"
-        (tmp_path / project / "models").mkdir(parents=True)
+        (tmp_path / project / "mid" / "models").mkdir(parents=True)
         monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
         monkeypatch.setitem(config.PROJECT_CONFIG, project, {"dir": project})
         config.clear_model_metadata_cache()

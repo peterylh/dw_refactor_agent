@@ -290,7 +290,7 @@ def test_snapshot_full_refresh_without_companion_keeps_static_table_static(
 
 def test_load_schema_reads_table_model_files(monkeypatch, tmp_path):
     project_dir = tmp_path / "demo_project"
-    models_dir = project_dir / "models"
+    models_dir = project_dir / "mid" / "models"
     models_dir.mkdir(parents=True)
     (models_dir / "dwd_customer.yaml").write_text(
         "version: 2\n"
@@ -325,7 +325,7 @@ def test_load_schema_reads_catalog_database_ods_models(
     tmp_path,
 ):
     project_dir = tmp_path / "demo_project"
-    models_dir = project_dir / "models"
+    models_dir = project_dir / "mid" / "models"
     ods_models_dir = project_dir / "ods" / "models" / "internal" / "demo_db"
     models_dir.mkdir(parents=True)
     ods_models_dir.mkdir(parents=True)
@@ -367,12 +367,71 @@ def test_load_schema_reads_catalog_database_ods_models(
     config.clear_model_metadata_cache()
 
 
+def test_get_task_files_reads_mid_and_ads_task_dirs(monkeypatch, tmp_path):
+    project_dir = tmp_path / "demo_project"
+    (project_dir / "tasks").mkdir(parents=True)
+    (project_dir / "mid" / "tasks").mkdir(parents=True)
+    (project_dir / "mid" / "tasks" / "full_refresh").mkdir(parents=True)
+    (project_dir / "ads" / "tasks").mkdir(parents=True)
+    (project_dir / "tasks" / "legacy_job.sql").write_text(
+        "",
+        encoding="utf-8",
+    )
+    (project_dir / "mid" / "tasks" / "dwd_customer.sql").write_text(
+        "",
+        encoding="utf-8",
+    )
+    (
+        project_dir
+        / "mid"
+        / "tasks"
+        / "full_refresh"
+        / "dwd_customer_full_refresh.sql"
+    ).write_text("", encoding="utf-8")
+    (project_dir / "ads" / "tasks" / "ads_customer.sql").write_text(
+        "",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(task_run, "_root", tmp_path)
+    monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setitem(
+        task_run.PROJECT_CONFIG,
+        "demo",
+        {
+            "dir": "demo_project",
+            "catalog": "internal",
+            "db": "demo_db",
+        },
+    )
+
+    task_files = task_run._get_task_files("demo")
+
+    assert sorted(task_files) == [
+        "ads_customer",
+        "dwd_customer",
+    ]
+    assert task_files["dwd_customer"] == (
+        project_dir / "mid" / "tasks" / "dwd_customer.sql"
+    )
+    assert task_run._get_full_refresh_path(
+        project_dir / "mid" / "tasks",
+        "dwd_customer",
+    ) == (
+        project_dir
+        / "mid"
+        / "tasks"
+        / "full_refresh"
+        / "dwd_customer_full_refresh.sql"
+    )
+
+
 def test_load_schema_cache_is_scoped_by_project(monkeypatch, tmp_path):
     for project, materialized in (
         ("shop_like", "snapshot"),
         ("finance_like", "full"),
     ):
-        models_dir = tmp_path / project / "models"
+        models_dir = tmp_path / project / "mid" / "models"
         models_dir.mkdir(parents=True)
         (models_dir / "same_name.yaml").write_text(
             "version: 2\n"
@@ -398,7 +457,7 @@ def test_load_partition_units_reads_catalog_database_ods_ddl(
     tmp_path,
 ):
     project_dir = tmp_path / "demo_project"
-    ddl_dir = project_dir / "ddl"
+    ddl_dir = project_dir / "mid" / "ddl"
     ods_ddl_dir = project_dir / "ods" / "ddl" / "internal" / "demo_db"
     ddl_dir.mkdir(parents=True)
     ods_ddl_dir.mkdir(parents=True)
@@ -432,9 +491,13 @@ def test_load_partition_units_reads_catalog_database_ods_ddl(
 
 
 def test_discover_ods_dates_uses_model_layer(monkeypatch, tmp_path):
-    models_dir = tmp_path / "demo_project" / "models"
+    models_dir = tmp_path / "demo_project" / "mid" / "models"
+    ods_models_dir = (
+        tmp_path / "demo_project" / "ods" / "models" / "internal" / "demo_db"
+    )
     models_dir.mkdir(parents=True)
-    (models_dir / "source_events.yaml").write_text(
+    ods_models_dir.mkdir(parents=True)
+    (ods_models_dir / "source_events.yaml").write_text(
         "version: 2\nname: source_events\nlayer: ODS\n",
         encoding="utf-8",
     )

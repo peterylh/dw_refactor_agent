@@ -1,11 +1,14 @@
-from pathlib import Path
+import config
 
-ROOT = Path(__file__).resolve().parent.parent
-SHOP_DDL_DIR = ROOT / "shop" / "ddl"
+SHOP_DIR = config.PROJECT_ROOT / "shop"
 
 
 def _shop_ddls():
-    return sorted(SHOP_DDL_DIR.glob("*.sql"))
+    return [
+        path
+        for path in config.iter_project_asset_files("shop", "ddl", "*.sql")
+        if "ods" not in path.relative_to(SHOP_DIR).parts
+    ]
 
 
 def test_shop_ddls_do_not_use_dynamic_partitions():

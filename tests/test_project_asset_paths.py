@@ -3,14 +3,17 @@ from pathlib import Path
 import config
 
 
-def test_iter_project_asset_files_includes_catalog_database_ods_dir(
+def test_iter_project_asset_files_ignores_root_and_includes_ods_dir(
     monkeypatch,
     tmp_path,
 ):
     project_dir = tmp_path / "demo_project"
     (project_dir / "ddl").mkdir(parents=True)
     (project_dir / "ods" / "ddl" / "internal" / "demo_dm").mkdir(parents=True)
-    (project_dir / "ddl" / "dwd_customer.sql").write_text("", encoding="utf-8")
+    (project_dir / "ddl" / "legacy_customer.sql").write_text(
+        "",
+        encoding="utf-8",
+    )
     (
         project_dir
         / "ods"
@@ -33,10 +36,7 @@ def test_iter_project_asset_files_includes_catalog_database_ods_dir(
 
     files = list(config.iter_project_asset_files("demo", "ddl", "*.sql"))
 
-    assert [path.name for path in files] == [
-        "dwd_customer.sql",
-        "ods_customer.sql",
-    ]
+    assert [path.name for path in files] == ["ods_customer.sql"]
 
 
 def test_iter_project_asset_files_includes_configured_ods_source_catalogs(
@@ -45,13 +45,18 @@ def test_iter_project_asset_files_includes_configured_ods_source_catalogs(
 ):
     project_dir = tmp_path / "demo_project"
     (project_dir / "ddl").mkdir(parents=True)
+    (project_dir / "mid" / "ddl").mkdir(parents=True)
     (project_dir / "ods" / "ddl" / "internal" / "demo_dm").mkdir(parents=True)
     (project_dir / "ods" / "ddl" / "hive" / "source_db").mkdir(parents=True)
     (project_dir / "ods" / "ddl" / "hive" / "ods_source").mkdir(parents=True)
     (project_dir / "ods" / "ddl" / "external" / "source_dm").mkdir(
         parents=True
     )
-    (project_dir / "ddl" / "dwd_customer.sql").write_text(
+    (project_dir / "ddl" / "legacy_customer.sql").write_text(
+        "",
+        encoding="utf-8",
+    )
+    (project_dir / "mid" / "ddl" / "dwd_customer.sql").write_text(
         "",
         encoding="utf-8",
     )
@@ -105,11 +110,11 @@ def test_iter_project_asset_files_includes_configured_ods_source_catalogs(
     files = list(config.iter_project_asset_files("demo", "ddl", "*.sql"))
 
     assert [path.name for path in files] == [
-        "dwd_customer.sql",
         "ods_customer.sql",
         "source_customer.sql",
         "tran_data_account.sql",
         "tran_data_menu.sql",
+        "dwd_customer.sql",
     ]
     assert config.project_ods_source_catalog_dialects("demo") == {
         "internal": "doris",
@@ -126,10 +131,15 @@ def test_load_model_metadata_reads_catalog_database_ods_models(
 ):
     project_dir = tmp_path / "demo_project"
     (project_dir / "models").mkdir(parents=True)
+    (project_dir / "mid" / "models").mkdir(parents=True)
     (project_dir / "ods" / "models" / "internal" / "demo_dm").mkdir(
         parents=True
     )
-    (project_dir / "models" / "dwd_customer.yaml").write_text(
+    (project_dir / "models" / "legacy_customer.yaml").write_text(
+        "version: 2\nname: legacy_customer\nlayer: DWD\n",
+        encoding="utf-8",
+    )
+    (project_dir / "mid" / "models" / "dwd_customer.yaml").write_text(
         "version: 2\nname: dwd_customer\nlayer: DWD\n",
         encoding="utf-8",
     )
@@ -262,3 +272,173 @@ def test_finance_analytics_ods_assets_are_under_catalog_database_dir():
     assert any(path.name == "ods_customers.sql" for path in ddl_files)
     assert any(path.name == "ods_customers.yaml" for path in model_files)
     assert any(path.name == "ods_customers.sql" for path in data_files)
+
+
+def test_project_layer_assets_are_under_mid_and_ads_dirs():
+    expectations = {
+        "shop": {
+            "mid": {"ddl": 15, "tasks": 20, "models": 15},
+            "ads": {"ddl": 6, "tasks": 6, "models": 6},
+        },
+        "finance_analytics": {
+            "mid": {"ddl": 38, "tasks": 38, "models": 38},
+            "ads": {"ddl": 4, "tasks": 4, "models": 4},
+        },
+    }
+
+    for project, role_expectations in expectations.items():
+        project_dir = config.PROJECT_ROOT / project
+        for asset_kind in ("ddl", "tasks", "models"):
+            root_files = [
+                path
+                for path in (project_dir / asset_kind).glob("*")
+                if path.is_file()
+            ]
+            assert root_files == []
+
+        for role, asset_counts in role_expectations.items():
+            for asset_kind, expected_count in asset_counts.items():
+                pattern = "*.yaml" if asset_kind == "models" else "*.sql"
+                files = list((project_dir / role / asset_kind).rglob(pattern))
+                assert len(files) == expected_count
+
+
+def test_iter_project_asset_files_includes_mid_and_ads_dirs(
+    monkeypatch,
+    tmp_path,
+):
+    project_dir = tmp_path / "demo_project"
+    (project_dir / "ddl").mkdir(parents=True)
+    (project_dir / "mid" / "ddl").mkdir(parents=True)
+    (project_dir / "ads" / "ddl").mkdir(parents=True)
+    (project_dir / "ods" / "ddl" / "internal" / "demo_dm").mkdir(parents=True)
+    (project_dir / "ddl" / "legacy_table.sql").write_text(
+        "",
+        encoding="utf-8",
+    )
+    (project_dir / "mid" / "ddl" / "dwd_customer.sql").write_text(
+        "",
+        encoding="utf-8",
+    )
+    (project_dir / "ads" / "ddl" / "ads_customer.sql").write_text(
+        "",
+        encoding="utf-8",
+    )
+    (
+        project_dir
+        / "ods"
+        / "ddl"
+        / "internal"
+        / "demo_dm"
+        / "ods_customer.sql"
+    ).write_text("", encoding="utf-8")
+
+    monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setitem(
+        config.PROJECT_CONFIG,
+        "demo",
+        {
+            "dir": "demo_project",
+            "catalog": "internal",
+            "db": "demo_dm",
+        },
+    )
+
+    files = config.iter_project_asset_files("demo", "ddl", "*.sql")
+
+    assert [path.relative_to(project_dir).as_posix() for path in files] == [
+        "ods/ddl/internal/demo_dm/ods_customer.sql",
+        "mid/ddl/dwd_customer.sql",
+        "ads/ddl/ads_customer.sql",
+    ]
+
+
+def test_task_helpers_discover_mid_and_ads_tasks(monkeypatch, tmp_path):
+    project_dir = tmp_path / "demo_project"
+    (project_dir / "tasks").mkdir(parents=True)
+    (project_dir / "mid" / "tasks" / "full_refresh").mkdir(parents=True)
+    (project_dir / "ads" / "tasks").mkdir(parents=True)
+    (project_dir / "tasks" / "legacy_job.sql").write_text(
+        "",
+        encoding="utf-8",
+    )
+    (project_dir / "mid" / "tasks" / "dwd_customer.sql").write_text(
+        "",
+        encoding="utf-8",
+    )
+    (
+        project_dir
+        / "mid"
+        / "tasks"
+        / "full_refresh"
+        / "dwd_customer_full_refresh.sql"
+    ).write_text("", encoding="utf-8")
+    (project_dir / "ads" / "tasks" / "ads_customer.sql").write_text(
+        "",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setitem(
+        config.PROJECT_CONFIG,
+        "demo",
+        {
+            "dir": "demo_project",
+            "catalog": "internal",
+            "db": "demo_dm",
+        },
+    )
+
+    files = config.iter_project_task_files("demo")
+    source_files = [config.task_source_file("demo", path) for path in files]
+
+    assert source_files == [
+        "dwd_customer.sql",
+        "full_refresh/dwd_customer_full_refresh.sql",
+        "ads_customer.sql",
+    ]
+    assert config.task_path_for_job("demo", "dwd_customer") == (
+        project_dir / "mid" / "tasks" / "dwd_customer.sql"
+    )
+    assert config.task_path_for_source_file(
+        "demo",
+        "full_refresh/dwd_customer_full_refresh.sql",
+    ) == (
+        project_dir
+        / "mid"
+        / "tasks"
+        / "full_refresh"
+        / "dwd_customer_full_refresh.sql"
+    )
+
+
+def test_model_path_for_table_routes_mid_and_ads_layers(
+    monkeypatch,
+    tmp_path,
+):
+    monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setitem(
+        config.PROJECT_CONFIG,
+        "demo",
+        {
+            "dir": "demo_project",
+            "catalog": "internal",
+            "db": "demo_dm",
+        },
+    )
+
+    assert config.model_path_for_table(
+        "demo",
+        "ads_customer",
+        layer="ADS",
+    ) == Path(tmp_path, "demo_project", "ads", "models", "ads_customer.yaml")
+    assert config.model_path_for_table(
+        "demo",
+        "dwd_customer",
+        layer="DWD",
+    ) == Path(tmp_path, "demo_project", "mid", "models", "dwd_customer.yaml")
+    assert config.model_path_for_table(
+        "demo",
+        "dim_customer",
+        layer="DIM",
+    ) == Path(tmp_path, "demo_project", "mid", "models", "dim_customer.yaml")

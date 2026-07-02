@@ -8,8 +8,10 @@ from config import (
     PROJECT_CONFIG,
     PROJECT_ROOT,
     get_business_domain_config,
+    iter_project_task_files,
     load_model_metadata,
     project_asset_dirs,
+    task_source_file,
 )
 from lineage.lineage_extractor import (
     build_lineage_output,
@@ -22,19 +24,14 @@ from lineage.sql_task_facts import extract_task_table_facts
 
 def _build_shop_lineage_from_sources():
     configure_project("shop")
-    project_dir = PROJECT_ROOT / PROJECT_CONFIG["shop"]["dir"]
-    tasks_dir = project_dir / "tasks"
     schema = build_schema_from_ddl(project_asset_dirs("shop", "ddl"))
 
     all_lineage = []
     transient_tables = []
-    task_files = sorted(tasks_dir.glob("*.sql"))
-    full_refresh_dir = tasks_dir / "full_refresh"
-    if full_refresh_dir.exists():
-        task_files.extend(sorted(full_refresh_dir.glob("*.sql")))
+    task_files = iter_project_task_files("shop")
 
     for task_path in task_files:
-        source_file = task_path.relative_to(tasks_dir).as_posix()
+        source_file = task_source_file("shop", task_path)
         sql_text = task_path.read_text(encoding="utf-8")
         task_facts = extract_task_table_facts(sql_text, source_file)
         transient_tables.extend(task_facts["transient_tables"])
