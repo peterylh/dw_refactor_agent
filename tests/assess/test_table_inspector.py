@@ -1,6 +1,7 @@
 import json
 import threading
 import time
+import urllib.error
 from unittest.mock import patch
 
 import pytest
@@ -8,11 +9,14 @@ import pytest
 from assess.llm.table_inspector import (
     TableContext,
     TableInspector,
+    TableInspectResult,
     build_prompt,
     parse_response,
     result_to_cache_dict,
     result_to_dict,
+    validate_candidate_layer,
     validate_columns,
+    validate_metadata_quality,
     validate_metric_expressions,
     validate_metric_relationships,
     validate_primary_entities,
@@ -31,6 +35,8 @@ def test_build_prompt_scenarios():
     _assert_build_prompt_includes_catalog_and_project_context_as_inputs()
     _assert_build_prompt_documents_business_metadata_scope()
     _assert_build_prompt_keeps_metric_expression_separate_from_grain()
+    _assert_build_prompt_groups_metrics_from_inferred_layer()
+    _assert_build_prompt_limits_candidate_layers()
 
 
 def test_parse_response_metadata_scenarios():
@@ -45,6 +51,8 @@ def test_parse_response_metadata_scenarios():
         _assert_dict_to_result_normalizes_placeholder_empty_grain,
         _assert_parse_response_preserves_related_entities_metadata,
         _assert_parse_basic_response_shapes,
+        _assert_parse_response_repairs_unescaped_quotes_inside_string_values,
+        _assert_parse_response_ignores_legacy_layer_reason_fields,
         _assert_parse_grouped_column_response,
         _assert_result_serialization_handles_system_fields,
     ]
@@ -58,6 +66,10 @@ def test_validate_response_contract_scenarios():
         _assert_validate_time_periods_flags_unrecognized_values,
         _assert_validate_metric_expressions_flags_grain_text,
         _assert_validate_primary_entities_requires_dwd_fact_primary,
+        _assert_validate_primary_entities_uses_inferred_dwd_for_cold_start,
+        _assert_validate_candidate_layer_rejects_non_middle_layer,
+        _assert_validate_metadata_quality_requires_dws_and_dim_semantics,
+        _assert_base_metric_relationship_validation_blocks_invalid_references,
         _assert_validate_columns_flags_unknown_duplicate_and_missing_fields,
         _assert_validate_columns_requires_all_dws_fact_fields,
         _assert_validate_metric_relationships_requires_derived_base_metric_in_upstream_atomic,
@@ -151,6 +163,84 @@ def _assert_build_prompt_omits_empty_etl_section():
 
     assert "dwd_customer" in prompt
     assert "## ETL 加工逻辑" not in prompt
+
+
+def _assert_build_prompt_groups_metrics_from_inferred_layer():
+    ctx = TableContext(
+        table_name="sales_daily",
+        layer="OTHER",
+        ddl="CREATE TABLE sales_daily (store_id BIGINT, total_amt DECIMAL);",
+        etl_sql=(
+            "INSERT INTO sales_daily SELECT store_id, SUM(pay_amt) total_amt "
+            "FROM order_detail GROUP BY store_id;"
+        ),
+        upstream_tables=["order_detail"],
+        downstream_tables=[],
+    )
+
+    prompt = build_prompt(ctx)
+
+    assert "冷启动时原始配置可能是 OTHER" in prompt
+    assert "inferred_layer 是 DWD 或 DWS" in prompt
+    assert "不要因为原始配置层级是 OTHER 而跳过指标字段分组" in prompt
+
+    result = parse_response(
+        "sales_daily",
+        {
+            "choices": [
+                {
+                    "message": {
+                        "content": json.dumps(
+                            {
+                                "inferred_layer": "DWS",
+                                "table_type": "fact",
+                                "confidence": 0.9,
+                                "reasoning_steps": ["公共汇总事实"],
+                                "columns": {
+                                    "atomic_metrics": [{"name": "total_amt"}],
+                                    "derived_metrics": [],
+                                    "calculated_metrics": [],
+                                    "dimensions": [],
+                                    "others": [],
+                                },
+                            }
+                        )
+                    }
+                }
+            ]
+        },
+        "OTHER",
+    )
+
+    validation = validate_columns(result, {"store_id", "total_amt"})
+
+    assert validation["missing_columns"] == ["store_id"]
+
+
+def _assert_build_prompt_limits_candidate_layers():
+    ctx = TableContext(
+        table_name="customer_monthly_summary",
+        layer="OTHER",
+        ddl=(
+            "CREATE TABLE customer_monthly_summary "
+            "(customer_id BIGINT, stat_month DATE, total_amount DECIMAL);"
+        ),
+        etl_sql=(
+            "INSERT INTO customer_monthly_summary "
+            "SELECT customer_id, stat_month, SUM(pay_amount) total_amount "
+            "FROM order_detail GROUP BY customer_id, stat_month;"
+        ),
+        upstream_tables=["order_detail"],
+        downstream_tables=[],
+        candidate_layers=("DWD", "DWS", "DIM"),
+    )
+
+    prompt = build_prompt(ctx)
+
+    assert "本轮候选层约束" in prompt
+    assert "只允许在 DWD, DWS, DIM 中选择 inferred_layer" in prompt
+    assert '"inferred_layer": "DWD|DWS|DIM"' in prompt
+    assert "不能把公共汇总表单独推到 ADS" in prompt
 
 
 def _assert_build_prompt_keeps_metadata_contracts_without_project_examples():
@@ -623,6 +713,213 @@ def _assert_validate_primary_entities_requires_dwd_fact_primary():
     }
 
 
+def _assert_validate_primary_entities_uses_inferred_dwd_for_cold_start():
+    result = parse_response(
+        "order_detail",
+        {
+            "choices": [
+                {
+                    "message": {
+                        "content": json.dumps(
+                            {
+                                "inferred_layer": "DWD",
+                                "table_type": "fact",
+                                "confidence": 0.9,
+                                "entities": [
+                                    {
+                                        "code": "CUSTOMER",
+                                        "type": "foreign",
+                                        "key_columns": ["customer_id"],
+                                    }
+                                ],
+                                "columns": {
+                                    "atomic_metrics": [],
+                                    "derived_metrics": [],
+                                    "calculated_metrics": [],
+                                    "dimensions": [{"name": "order_id"}],
+                                    "others": [],
+                                },
+                            }
+                        )
+                    }
+                }
+            ]
+        },
+        declared_layer="OTHER",
+    )
+
+    validation = validate_primary_entities(result)
+
+    assert validation == {
+        "missing_primary_entities": [
+            "DWD fact必须返回至少一个type=primary的entities项"
+        ]
+    }
+
+
+def _assert_validate_candidate_layer_rejects_non_middle_layer():
+    result = parse_response(
+        "customer_monthly_summary",
+        {
+            "choices": [
+                {
+                    "message": {
+                        "content": json.dumps(
+                            {
+                                "inferred_layer": "ADS",
+                                "table_type": "fact",
+                                "confidence": 0.9,
+                            }
+                        )
+                    }
+                }
+            ]
+        },
+        declared_layer="OTHER",
+    )
+
+    validation = validate_candidate_layer(result, ("DWD", "DWS", "DIM"))
+
+    assert validation == {
+        "invalid_candidate_layers": [
+            "inferred_layer=ADS 不在候选层 DIM,DWD,DWS 中"
+        ]
+    }
+
+
+def _assert_validate_metadata_quality_requires_dws_and_dim_semantics():
+    dws_result = parse_response(
+        "agent_summary",
+        {
+            "choices": [
+                {
+                    "message": {
+                        "content": json.dumps(
+                            {
+                                "inferred_layer": "DWS",
+                                "table_type": "fact",
+                                "confidence": 0.9,
+                                "columns": {
+                                    "atomic_metrics": [],
+                                    "derived_metrics": [],
+                                    "calculated_metrics": [],
+                                    "dimensions": [],
+                                    "others": [],
+                                },
+                                "grain": {},
+                            }
+                        )
+                    }
+                }
+            ]
+        },
+        declared_layer="OTHER",
+    )
+    dim_result = parse_response(
+        "economic_indicators_profile",
+        {
+            "choices": [
+                {
+                    "message": {
+                        "content": json.dumps(
+                            {
+                                "inferred_layer": "DIM",
+                                "table_type": "fact",
+                                "confidence": 0.9,
+                                "entities": [],
+                            }
+                        )
+                    }
+                }
+            ]
+        },
+        declared_layer="OTHER",
+    )
+    sparse_dim_result = parse_response(
+        "economic_indicators_profile",
+        {
+            "choices": [
+                {
+                    "message": {
+                        "content": json.dumps(
+                            {
+                                "inferred_layer": "DIM",
+                                "table_type": "dimension",
+                                "confidence": 0.9,
+                                "entities": [],
+                            }
+                        )
+                    }
+                }
+            ]
+        },
+        declared_layer="OTHER",
+    )
+
+    dws_validation = validate_metadata_quality(dws_result)
+    dim_validation = validate_metadata_quality(dim_result)
+    sparse_dim_validation = validate_metadata_quality(sparse_dim_result)
+    assert dws_validation == {
+        "missing_metric_metadata": ["DWS fact必须至少返回一个指标字段"],
+        "missing_grain_metadata": ["DWS fact必须尽量返回表级grain"],
+    }
+    assert dim_validation == {
+        "invalid_dimension_table_type": [
+            "DIM层模型的table_type必须为dimension"
+        ],
+        "missing_dimension_entities": [
+            "DIM/dimension模型必须尽量返回一个type=primary的entities项"
+        ],
+    }
+    assert sparse_dim_validation == {
+        "missing_dimension_entities": [
+            "DIM/dimension模型必须尽量返回一个type=primary的entities项"
+        ]
+    }
+    dws_result.validation = dws_validation
+    dim_result.validation = dim_validation
+    sparse_dim_result.validation = sparse_dim_validation
+    assert dws_result.status == "warning"
+    assert dim_result.status == "blocked"
+    assert sparse_dim_result.status == "warning"
+
+
+def _assert_base_metric_relationship_validation_blocks_invalid_references():
+    invalid_result = TableInspectResult(
+        table_name="customer_monthly_summary",
+        declared_layer="OTHER",
+        inferred_layer="DWS",
+        table_type="fact",
+        confidence=0.9,
+        reasoning_steps=["公共汇总表"],
+        validation={
+            "invalid_base_metrics": ["total_amount:transaction_amount"]
+        },
+    )
+    missing_result = TableInspectResult(
+        table_name="customer_monthly_summary",
+        declared_layer="OTHER",
+        inferred_layer="DWS",
+        table_type="fact",
+        confidence=0.9,
+        reasoning_steps=["公共汇总表"],
+        validation={"missing_base_metrics": ["total_amount"]},
+    )
+    candidate_layer_result = TableInspectResult(
+        table_name="customer_monthly_summary",
+        declared_layer="OTHER",
+        inferred_layer="ADS",
+        table_type="fact",
+        confidence=0.9,
+        reasoning_steps=["越界层"],
+        validation={"invalid_candidate_layers": ["ADS"]},
+    )
+
+    assert invalid_result.status == "blocked"
+    assert missing_result.status == "blocked"
+    assert candidate_layer_result.status == "blocked"
+
+
 def _assert_parse_response_preserves_entities_metadata():
     resp = {
         "choices": [
@@ -810,14 +1107,30 @@ def _assert_parse_basic_response_shapes():
     scenarios = [
         (
             "dwd_order",
-            '{"table_type": "fact", "confidence": 0.8, "reason": "test fact"}',
+            json.dumps(
+                {
+                    "inferred_layer": "DWD",
+                    "table_type": "fact",
+                    "confidence": 0.8,
+                    "reasoning_steps": ["test fact"],
+                }
+            ),
             "fact",
             0.8,
             None,
         ),
         (
             "t1",
-            '```json\n{"table_type": "dimension", "confidence": 0.9, "reason": "test"}\n```',
+            "```json\n"
+            + json.dumps(
+                {
+                    "inferred_layer": "DIM",
+                    "table_type": "dimension",
+                    "confidence": 0.9,
+                    "reasoning_steps": ["test"],
+                }
+            )
+            + "\n```",
             "dimension",
             0.9,
             None,
@@ -832,6 +1145,57 @@ def _assert_parse_basic_response_shapes():
         assert result.confidence == confidence
         if reason:
             assert reason in result.reasoning_steps[0]
+
+
+def _assert_parse_response_repairs_unescaped_quotes_inside_string_values():
+    content = (
+        '{"inferred_layer":"DIM","table_type":"dimension","confidence":0.91,'
+        '"reasoning_steps":["表名包含 "profile" 且是实体属性表"],'
+        '"dimension_role":"BASE","dimension_content_type":"INFO",'
+        '"entities":[{"code":"ECONOMIC_INDICATOR","type":"primary",'
+        '"key_columns":["economic_indicator_key"]}]}'
+    )
+    resp = {"choices": [{"message": {"content": content}}]}
+
+    result = parse_response("economic_indicators_profile", resp)
+
+    assert result.inferred_layer == "DIM"
+    assert result.table_type == "dimension"
+    assert result.confidence == 0.91
+    assert result.reasoning_steps == ['表名包含 "profile" 且是实体属性表']
+    assert result.dimension_role == "BASE"
+    assert result.dimension_content_type == "INFO"
+    assert result.entities == [
+        {
+            "code": "ECONOMIC_INDICATOR",
+            "type": "primary",
+            "key_columns": ["economic_indicator_key"],
+        }
+    ]
+
+
+def _assert_parse_response_ignores_legacy_layer_reason_fields():
+    resp = {
+        "choices": [
+            {
+                "message": {
+                    "content": json.dumps(
+                        {
+                            "layer": "DIM",
+                            "table_type": "dimension",
+                            "confidence": 0.9,
+                            "reason": "legacy response",
+                        }
+                    )
+                }
+            }
+        ]
+    }
+
+    result = parse_response("t1", resp)
+
+    assert result.inferred_layer == "OTHER"
+    assert result.reasoning_steps == []
 
 
 def _assert_parse_grouped_column_response():
@@ -1211,6 +1575,46 @@ def _assert_result_status_from_validation():
         "missing_columns": [],
     }
     assert result.status == "passed"
+
+
+def test_call_api_falls_back_to_v1_for_custom_base_url(monkeypatch):
+    calls = []
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self):
+            return b'{"choices": []}'
+
+    def fake_urlopen(req, timeout):
+        calls.append(req.full_url)
+        if len(calls) == 1:
+            raise urllib.error.HTTPError(
+                req.full_url,
+                404,
+                "not found",
+                {},
+                None,
+            )
+        return FakeResponse()
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+
+    inspector = TableInspector(
+        api_key="test",
+        cache_file=None,
+        base_url="https://api.example.com",
+    )
+
+    assert inspector._call_api("hello") == '{"choices": []}'
+    assert calls == [
+        "https://api.example.com/chat/completions",
+        "https://api.example.com/v1/chat/completions",
+    ]
 
 
 def test_inspect_preserves_llm_metric_groups(tmp_path, monkeypatch):
@@ -2068,7 +2472,7 @@ def test_inspect_batch_runs_with_configured_parallelism(monkeypatch):
                                 "content": json.dumps(
                                     {
                                         "inferred_layer": "DWD",
-                                        "table_type": "dimension",
+                                        "table_type": "other",
                                         "confidence": 0.9,
                                         "reasoning_steps": ["api"],
                                         "columns": {

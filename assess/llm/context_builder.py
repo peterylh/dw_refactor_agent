@@ -44,6 +44,7 @@ class TableContext:
     project_context: str = ""
     business_domain_options: dict = field(default_factory=dict)
     business_semantics_options: dict = field(default_factory=dict)
+    candidate_layers: tuple[str, ...] = ()
 
 
 def _metric_names(value) -> list[str]:
