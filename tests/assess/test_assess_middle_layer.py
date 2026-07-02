@@ -1,3 +1,4 @@
+import json
 import sys
 
 import pytest
@@ -530,6 +531,140 @@ def test_assess_cli_defaults_output_to_project_assess_dir(
     output_path = project_dir / "assess" / "assess_result.json"
     assert output_path.exists()
     assert not (tool_dir / f"assess_result_{project}.json").exists()
+
+
+def test_assess_cli_accepts_explicit_lineage_file(
+    monkeypatch,
+    tmp_path,
+):
+    import assess.assess_middle_layer as assess_module
+
+    project = "shop"
+    lineage_data = {"tables": [{"name": "dwd_order"}], "edges": []}
+    lineage_file = tmp_path / "lineage_data.json"
+    lineage_file.write_text(
+        json.dumps(lineage_data, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    output_path = tmp_path / "assess_result.json"
+    captured = {}
+
+    def fake_assess(*args, **kwargs):
+        captured["args"] = args
+        captured["kwargs"] = kwargs
+        return {
+            "project": project,
+            "weights": {},
+            "dimensions": {},
+        }
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "assess_middle_layer.py",
+            "--project",
+            project,
+            "--lineage-file",
+            str(lineage_file),
+            "--output",
+            str(output_path),
+        ],
+    )
+    monkeypatch.setattr(assess_module, "assess", fake_assess)
+    monkeypatch.setattr(
+        assess_module,
+        "generate_report",
+        lambda *args, **kwargs: "report",
+    )
+
+    assess_module.main()
+
+    assert captured["args"][0] == project
+    assert captured["kwargs"]["lineage_data"] == lineage_data
+    assert output_path.exists()
+
+
+def test_assess_cli_can_refresh_default_lineage_before_scoring(
+    monkeypatch,
+    tmp_path,
+):
+    import assess.assess_middle_layer as assess_module
+
+    project = "shop"
+    output_path = tmp_path / "assess_result.json"
+    refresh_calls = []
+
+    def fake_refresh(project_name, parallel):
+        refresh_calls.append((project_name, parallel))
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "assess_middle_layer.py",
+            "--project",
+            project,
+            "--refresh-lineage",
+            "--lineage-parallel",
+            "3",
+            "--output",
+            str(output_path),
+        ],
+    )
+    monkeypatch.setattr(
+        assess_module,
+        "refresh_project_lineage",
+        fake_refresh,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        assess_module,
+        "assess",
+        lambda *args, **kwargs: {
+            "project": project,
+            "weights": {},
+            "dimensions": {},
+        },
+    )
+    monkeypatch.setattr(
+        assess_module,
+        "generate_report",
+        lambda *args, **kwargs: "report",
+    )
+
+    assess_module.main()
+
+    assert refresh_calls == [(project, 3)]
+    assert output_path.exists()
+
+
+def test_assess_cli_missing_default_lineage_suggests_next_steps(
+    monkeypatch,
+    capsys,
+):
+    import assess.assess_middle_layer as assess_module
+
+    project = "shop"
+
+    def fake_assess(*args, **kwargs):
+        raise FileNotFoundError(
+            "未找到 shop 的血缘数据文件 (shop/lineage/lineage_data.json)"
+        )
+
+    monkeypatch.setattr(
+        sys, "argv", ["assess_middle_layer.py", "--project", project]
+    )
+    monkeypatch.setattr(assess_module, "assess", fake_assess)
+
+    with pytest.raises(SystemExit) as exc:
+        assess_module.main()
+
+    assert exc.value.code == 1
+    output = capsys.readouterr().err
+    assert "python lineage/lineage_extractor.py --project shop" in output
+    assert "--refresh-lineage" in output
+    assert "--lineage-file" in output
 
 
 def test_normalize_score_weights_supports_partial_override():
