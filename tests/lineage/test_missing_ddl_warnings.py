@@ -12,473 +12,374 @@ def _write_task(tmp_path, name, sql):
     return tasks_dir, task_file
 
 
-def test_extract_lineage_reports_tables_missing_from_schema_ddl(tmp_path):
-    tasks_dir, task_file = _write_task(
-        tmp_path,
-        "dwd_order.sql",
-        """
-        INSERT INTO shop_dm.dwd_order(order_id)
-        SELECT o.order_id
-        FROM shop_dm.ods_order o;
-        """,
-    )
-
-    result = extract_lineage_from_task_files([task_file], tasks_dir, schema={})
-
-    assert result["missing_ddl_tables"] == ["dwd_order", "ods_order"]
-    assert result["missing_source_ddl"] == ["ods_order"]
-    assert result["missing_target_ddl"] == ["dwd_order"]
-    assert result["task_results"][0]["missing_ddl_tables"] == [
-        "dwd_order",
-        "ods_order",
-    ]
-    assert result["task_results"][0]["missing_source_ddl"] == ["ods_order"]
-    assert result["task_results"][0]["missing_target_ddl"] == ["dwd_order"]
-
-
-def test_extract_lineage_missing_ddl_ignores_transient_tables(tmp_path):
-    tasks_dir, task_file = _write_task(
-        tmp_path,
-        "dws_orders.sql",
-        """
-        DROP TABLE IF EXISTS shop_dm.tmp_orders_stage;
-
-        CREATE TABLE shop_dm.tmp_orders_stage AS
-        SELECT order_id
-        FROM shop_dm.dwd_orders;
-
-        INSERT INTO shop_dm.dws_orders(order_id)
-        SELECT order_id
-        FROM shop_dm.tmp_orders_stage;
-
-        DROP TABLE IF EXISTS shop_dm.tmp_orders_stage;
-        """,
-    )
-    schema = {
-        "internal": {
-            "shop_dm": {
-                "dwd_orders": {"order_id": "BIGINT"},
-                "dws_orders": {"order_id": "BIGINT"},
-            }
-        }
-    }
-
-    result = extract_lineage_from_task_files([task_file], tasks_dir, schema)
-
-    assert result["missing_ddl_tables"] == []
-    assert result["task_results"][0]["missing_ddl_tables"] == []
-    assert result["task_results"][0]["missing_source_ddl"] == []
-    assert result["task_results"][0]["missing_target_ddl"] == []
-
-
-def test_extract_lineage_missing_ddl_ignores_case_variant_transient_drop(
-    tmp_path,
+def _assert_missing_result(
+    result,
+    expected_missing,
+    expected_sources=None,
+    expected_targets=None,
+    message=None,
 ):
-    tasks_dir, task_file = _write_task(
-        tmp_path,
-        "tmp_prod_mapping.sql",
-        """
-        DROP TABLE IF EXISTS tmp_trade_engine_prod_mapping_LV7to5 FORCE;
-
-        DROP TABLE IF EXISTS tmp_trade_engine_prod_mapping_LV7to5 FORCE;
-
-        CREATE TABLE IF NOT EXISTS tmp_trade_engine_prod_mapping_lv7to5
-        DISTRIBUTED BY RANDOM BUCKETS 15 AS
-        SELECT
-          t1.prod_id,
-          t1.prod_nm,
-          t1.prod_lvl,
-          t2.f_prod_id,
-          t2.f_prod_nm,
-          t2.f_prod_lvl
-        FROM i00_trade_engine_prod_mapping AS t1
-        LEFT JOIN i00_trade_engine_prod_mapping AS t2
-          ON t1.f_prod_id = t2.prod_id
-        WHERE
-          t1.prod_lvl = '7';
-        """,
+    expected_sources = (
+        expected_missing if expected_sources is None else (expected_sources)
     )
-    schema = {
-        "internal": {
-            "shop_dm": {
-                "i00_trade_engine_prod_mapping": {
-                    "prod_id": "BIGINT",
-                    "prod_nm": "STRING",
-                    "prod_lvl": "STRING",
-                    "f_prod_id": "BIGINT",
-                    "f_prod_nm": "STRING",
-                    "f_prod_lvl": "STRING",
-                },
-            }
-        }
-    }
-
-    result = extract_lineage_from_task_files([task_file], tasks_dir, schema)
-
-    assert result["missing_ddl_tables"] == []
-    assert result["task_results"][0]["missing_ddl_tables"] == []
-
-
-def test_extract_lineage_missing_ddl_ignores_commented_create_target(
-    tmp_path,
-):
-    tasks_dir, task_file = _write_task(
-        tmp_path,
-        "a_ibank.sql",
-        """
-        DROP TABLE IF EXISTS tmp_A_IBANK_CUST_IND_D__20260601_5_base FORCE;
-
-        CREATE TABLE IF NOT EXISTS tmp_A_IBANK_CUST_IND_D__20260601_5_base
-        /* 算收入 */ AS
-        SELECT order_id
-        FROM cdm.dwd_orders;
-        """,
-    )
-    schema = {
-        "internal": {
-            "cdm": {
-                "dwd_orders": {"order_id": "BIGINT"},
-            }
-        }
-    }
-
-    result = extract_lineage_from_task_files([task_file], tasks_dir, schema)
-
-    assert result["missing_ddl_tables"] == []
-    assert result["task_results"][0]["missing_ddl_tables"] == []
-
-
-def test_extract_lineage_missing_ddl_ignores_drop_only_table(tmp_path):
-    tasks_dir, task_file = _write_task(
-        tmp_path,
-        "regional_customer.sql",
-        """
-        DROP TABLE IF EXISTS tmp_R_YYGL_REGIONAL_CUSTOMER_04_20260602_0 FORCE;
-
-        /* CREATE TABLE tmp_R_YYGL_REGIONAL_CUSTOMER_04_20260602_0 AS
-        SELECT *
-        FROM ignored_source;
-        */
-
-        INSERT INTO r_yygl_regional_customer_04 (cust_id)
-        SELECT cust_id
-        FROM r_yygl_regional_customer_01;
-        """,
-    )
-    schema = {
-        "internal": {
-            "shop_dm": {
-                "r_yygl_regional_customer_01": {"cust_id": "BIGINT"},
-                "r_yygl_regional_customer_04": {"cust_id": "BIGINT"},
-            }
-        }
-    }
-
-    result = extract_lineage_from_task_files([task_file], tasks_dir, schema)
-
-    assert result["missing_ddl_tables"] == []
-    assert result["task_results"][0]["missing_ddl_tables"] == []
-
-
-def test_extract_lineage_missing_ddl_ignores_create_table_target(tmp_path):
-    tasks_dir, task_file = _write_task(
-        tmp_path,
-        "regional_customer.sql",
-        """
-        CREATE TABLE IF NOT EXISTS tmp_R_YYGL_REGIONAL_CUSTOMER_04_20260602_1
-        DISTRIBUTED BY RANDOM BUCKETS 15 AS
-        SELECT cust_id
-        FROM r_yygl_regional_customer_01;
-        """,
-    )
-    schema = {
-        "internal": {
-            "shop_dm": {
-                "r_yygl_regional_customer_01": {"cust_id": "BIGINT"},
-            }
-        }
-    }
-
-    result = extract_lineage_from_task_files([task_file], tasks_dir, schema)
-
-    assert result["missing_ddl_tables"] == []
-    assert result["task_results"][0]["missing_ddl_tables"] == []
-
-
-def test_extract_lineage_missing_ddl_ignores_table_created_in_same_task(
-    tmp_path,
-):
-    tasks_dir, task_file = _write_task(
-        tmp_path,
-        "regional_customer.sql",
-        """
-        CREATE TABLE IF NOT EXISTS tmp_R_YYGL_REGIONAL_CUSTOMER_04_20260602_1
-        DISTRIBUTED BY RANDOM BUCKETS 15 AS
-        SELECT cust_id
-        FROM r_yygl_regional_customer_01;
-
-        CREATE TABLE IF NOT EXISTS tmp_R_YYGL_REGIONAL_CUSTOMER_04_20260602_2
-        DISTRIBUTED BY RANDOM BUCKETS 15 AS
-        SELECT cust_id
-        FROM tmp_R_YYGL_REGIONAL_CUSTOMER_04_20260602_1;
-        """,
-    )
-    schema = {
-        "internal": {
-            "shop_dm": {
-                "r_yygl_regional_customer_01": {"cust_id": "BIGINT"},
-            }
-        }
-    }
-
-    result = extract_lineage_from_task_files([task_file], tasks_dir, schema)
-
-    assert result["missing_ddl_tables"] == []
-    assert result["task_results"][0]["missing_ddl_tables"] == []
-
-
-def test_extract_lineage_missing_ddl_reports_default_db_table_with_same_created_short_name(
-    tmp_path,
-):
-    tasks_dir, task_file = _write_task(
-        tmp_path,
-        "same_short_name.sql",
-        """
-        CREATE TABLE staging.tmp_orders AS
-        SELECT id
-        FROM staging.src_orders;
-
-        INSERT INTO target_db.target_orders(id)
-        SELECT id
-        FROM shop_dm.tmp_orders;
-        """,
-    )
-    schema = {
-        "internal": {
-            "staging": {"src_orders": {"id": "BIGINT"}},
-            "target_db": {"target_orders": {"id": "BIGINT"}},
-        }
-    }
-
-    result = extract_lineage_from_task_files([task_file], tasks_dir, schema)
-
-    assert result["missing_ddl_tables"] == ["tmp_orders"]
-    assert result["task_results"][0]["missing_ddl_tables"] == ["tmp_orders"]
-
-
-def test_extract_lineage_missing_ddl_reports_table_read_before_create(
-    tmp_path,
-):
-    tasks_dir, task_file = _write_task(
-        tmp_path,
-        "read_before_create.sql",
-        """
-        INSERT INTO shop_dm.target_orders(id)
-        SELECT id
-        FROM tmp_orders;
-
-        CREATE TABLE tmp_orders AS
-        SELECT id
-        FROM shop_dm.src_orders;
-        """,
-    )
-    schema = {
-        "internal": {
-            "shop_dm": {
-                "src_orders": {"id": "BIGINT"},
-                "target_orders": {"id": "BIGINT"},
-            }
-        }
-    }
-
-    result = extract_lineage_from_task_files([task_file], tasks_dir, schema)
-
-    assert result["missing_ddl_tables"] == ["tmp_orders"]
-    assert result["task_results"][0]["missing_ddl_tables"] == ["tmp_orders"]
-
-
-def test_extract_lineage_missing_ddl_still_reports_create_table_sources(
-    tmp_path,
-):
-    tasks_dir, task_file = _write_task(
-        tmp_path,
-        "regional_customer.sql",
-        """
-        CREATE TABLE IF NOT EXISTS tmp_R_YYGL_REGIONAL_CUSTOMER_04_20260602_1
-        DISTRIBUTED BY RANDOM BUCKETS 15 AS
-        SELECT cust_id
-        FROM r_yygl_regional_customer_01;
-        """,
+    expected_targets = (
+        expected_missing if expected_targets is None else (expected_targets)
     )
 
-    result = extract_lineage_from_task_files([task_file], tasks_dir, schema={})
-
-    assert result["missing_ddl_tables"] == ["r_yygl_regional_customer_01"]
-    assert result["missing_source_ddl"] == ["r_yygl_regional_customer_01"]
-    assert result["missing_target_ddl"] == []
-    assert result["task_results"][0]["missing_ddl_tables"] == [
-        "r_yygl_regional_customer_01",
-    ]
-    assert result["task_results"][0]["missing_source_ddl"] == [
-        "r_yygl_regional_customer_01",
-    ]
-    assert result["task_results"][0]["missing_target_ddl"] == []
-
-
-def test_extract_lineage_missing_ddl_reports_dml_target_separately(tmp_path):
-    tasks_dir, task_file = _write_task(
-        tmp_path,
-        "dwd_order.sql",
-        """
-        INSERT INTO dwd_order(order_id)
-        SELECT order_id
-        FROM ods_order;
-        """,
-    )
-    schema = {
-        "internal": {
-            "shop_dm": {
-                "ods_order": {"order_id": "BIGINT"},
-            }
-        }
-    }
-
-    result = extract_lineage_from_task_files([task_file], tasks_dir, schema)
-
-    assert result["missing_ddl_tables"] == ["dwd_order"]
-    assert result["missing_source_ddl"] == []
-    assert result["missing_target_ddl"] == ["dwd_order"]
-    assert result["task_results"][0]["missing_source_ddl"] == []
-    assert result["task_results"][0]["missing_target_ddl"] == ["dwd_order"]
+    assert result["missing_ddl_tables"] == expected_missing, message
+    assert result["missing_source_ddl"] == expected_sources, message
+    assert result["missing_target_ddl"] == expected_targets, message
+    assert result["task_results"][0]["missing_ddl_tables"] == (
+        expected_missing
+    ), message
+    assert result["task_results"][0]["missing_source_ddl"] == (
+        expected_sources
+    ), message
+    assert result["task_results"][0]["missing_target_ddl"] == (
+        expected_targets
+    ), message
 
 
-def test_extract_lineage_missing_ddl_reports_source_used_before_create(
-    tmp_path,
-):
-    tasks_dir, task_file = _write_task(
-        tmp_path,
-        "ads_orders.sql",
-        """
-        INSERT INTO ads_orders(order_id)
-        SELECT order_id
-        FROM tmp_orders;
-
-        CREATE TABLE tmp_orders AS
-        SELECT order_id
-        FROM ods_order;
-        """,
-    )
-    schema = {
-        "internal": {
-            "shop_dm": {
-                "ads_orders": {"order_id": "BIGINT"},
-                "ods_order": {"order_id": "BIGINT"},
-            }
-        }
-    }
-
-    result = extract_lineage_from_task_files([task_file], tasks_dir, schema)
-
-    assert result["missing_ddl_tables"] == ["tmp_orders"]
-    assert result["missing_source_ddl"] == ["tmp_orders"]
-    assert result["missing_target_ddl"] == []
-    assert result["task_results"][0]["missing_source_ddl"] == ["tmp_orders"]
-    assert result["task_results"][0]["missing_target_ddl"] == []
+def _shop_schema(tables):
+    return {"internal": {"shop_dm": tables}}
 
 
-def test_extract_lineage_missing_ddl_reports_source_after_drop(tmp_path):
-    tasks_dir, task_file = _write_task(
-        tmp_path,
-        "ads_orders.sql",
-        """
-        CREATE TABLE tmp_orders AS
-        SELECT order_id
-        FROM ods_order;
+def test_extract_lineage_ignores_non_persistent_or_declared_tables(tmp_path):
+    scenarios = [
+        (
+            "transient_created_and_dropped",
+            "dws_orders.sql",
+            """
+            DROP TABLE IF EXISTS shop_dm.tmp_orders_stage;
 
-        DROP TABLE tmp_orders;
-
-        INSERT INTO ads_orders(order_id)
-        SELECT order_id
-        FROM tmp_orders;
-        """,
-    )
-    schema = {
-        "internal": {
-            "shop_dm": {
-                "ads_orders": {"order_id": "BIGINT"},
-                "ods_order": {"order_id": "BIGINT"},
-            }
-        }
-    }
-
-    result = extract_lineage_from_task_files([task_file], tasks_dir, schema)
-
-    assert result["missing_ddl_tables"] == ["tmp_orders"]
-    assert result["missing_source_ddl"] == ["tmp_orders"]
-    assert result["missing_target_ddl"] == []
-    assert result["task_results"][0]["missing_source_ddl"] == ["tmp_orders"]
-    assert result["task_results"][0]["missing_target_ddl"] == []
-
-
-def test_extract_lineage_missing_ddl_keeps_same_short_name_databases_distinct(
-    tmp_path,
-):
-    tasks_dir, task_file = _write_task(
-        tmp_path,
-        "ads_orders.sql",
-        """
-        CREATE TABLE staging.tmp_orders AS
-        SELECT order_id
-        FROM ods_order;
-
-        INSERT INTO ads_orders(order_id)
-        SELECT order_id
-        FROM shop_dm.tmp_orders;
-        """,
-    )
-    schema = {
-        "internal": {
-            "shop_dm": {
-                "ads_orders": {"order_id": "BIGINT"},
-                "ods_order": {"order_id": "BIGINT"},
-            }
-        }
-    }
-
-    result = extract_lineage_from_task_files([task_file], tasks_dir, schema)
-
-    assert result["missing_ddl_tables"] == ["tmp_orders"]
-    assert result["missing_source_ddl"] == ["tmp_orders"]
-    assert result["missing_target_ddl"] == []
-
-
-def test_extract_lineage_missing_ddl_ignores_cte_names(tmp_path):
-    tasks_dir, task_file = _write_task(
-        tmp_path,
-        "dwd_order.sql",
-        """
-        INSERT INTO shop_dm.dwd_order(order_id)
-        WITH recent_orders AS (
+            CREATE TABLE shop_dm.tmp_orders_stage AS
             SELECT order_id
-            FROM shop_dm.ods_order
+            FROM shop_dm.dwd_orders;
+
+            INSERT INTO shop_dm.dws_orders(order_id)
+            SELECT order_id
+            FROM shop_dm.tmp_orders_stage;
+
+            DROP TABLE IF EXISTS shop_dm.tmp_orders_stage;
+            """,
+            _shop_schema(
+                {
+                    "dwd_orders": {"order_id": "BIGINT"},
+                    "dws_orders": {"order_id": "BIGINT"},
+                }
+            ),
+        ),
+        (
+            "case_variant_transient_drop",
+            "tmp_prod_mapping.sql",
+            """
+            DROP TABLE IF EXISTS tmp_trade_engine_prod_mapping_LV7to5 FORCE;
+
+            DROP TABLE IF EXISTS tmp_trade_engine_prod_mapping_LV7to5 FORCE;
+
+            CREATE TABLE IF NOT EXISTS tmp_trade_engine_prod_mapping_lv7to5
+            DISTRIBUTED BY RANDOM BUCKETS 15 AS
+            SELECT
+              t1.prod_id,
+              t1.prod_nm,
+              t1.prod_lvl,
+              t2.f_prod_id,
+              t2.f_prod_nm,
+              t2.f_prod_lvl
+            FROM i00_trade_engine_prod_mapping AS t1
+            LEFT JOIN i00_trade_engine_prod_mapping AS t2
+              ON t1.f_prod_id = t2.prod_id
+            WHERE
+              t1.prod_lvl = '7';
+            """,
+            _shop_schema(
+                {
+                    "i00_trade_engine_prod_mapping": {
+                        "prod_id": "BIGINT",
+                        "prod_nm": "STRING",
+                        "prod_lvl": "STRING",
+                        "f_prod_id": "BIGINT",
+                        "f_prod_nm": "STRING",
+                        "f_prod_lvl": "STRING",
+                    },
+                }
+            ),
+        ),
+        (
+            "commented_create_target",
+            "a_ibank.sql",
+            """
+            DROP TABLE IF EXISTS tmp_A_IBANK_CUST_IND_D__20260601_5_base FORCE;
+
+            CREATE TABLE IF NOT EXISTS tmp_A_IBANK_CUST_IND_D__20260601_5_base
+            /* 算收入 */ AS
+            SELECT order_id
+            FROM cdm.dwd_orders;
+            """,
+            {"internal": {"cdm": {"dwd_orders": {"order_id": "BIGINT"}}}},
+        ),
+        (
+            "drop_only_table",
+            "regional_customer.sql",
+            """
+            DROP TABLE IF EXISTS tmp_R_YYGL_REGIONAL_CUSTOMER_04_20260602_0 FORCE;
+
+            /* CREATE TABLE tmp_R_YYGL_REGIONAL_CUSTOMER_04_20260602_0 AS
+            SELECT *
+            FROM ignored_source;
+            */
+
+            INSERT INTO r_yygl_regional_customer_04 (cust_id)
+            SELECT cust_id
+            FROM r_yygl_regional_customer_01;
+            """,
+            _shop_schema(
+                {
+                    "r_yygl_regional_customer_01": {"cust_id": "BIGINT"},
+                    "r_yygl_regional_customer_04": {"cust_id": "BIGINT"},
+                }
+            ),
+        ),
+        (
+            "create_table_target",
+            "regional_customer.sql",
+            """
+            CREATE TABLE IF NOT EXISTS tmp_R_YYGL_REGIONAL_CUSTOMER_04_20260602_1
+            DISTRIBUTED BY RANDOM BUCKETS 15 AS
+            SELECT cust_id
+            FROM r_yygl_regional_customer_01;
+            """,
+            _shop_schema(
+                {"r_yygl_regional_customer_01": {"cust_id": "BIGINT"}}
+            ),
+        ),
+        (
+            "table_created_in_same_task",
+            "regional_customer.sql",
+            """
+            CREATE TABLE IF NOT EXISTS tmp_R_YYGL_REGIONAL_CUSTOMER_04_20260602_1
+            DISTRIBUTED BY RANDOM BUCKETS 15 AS
+            SELECT cust_id
+            FROM r_yygl_regional_customer_01;
+
+            CREATE TABLE IF NOT EXISTS tmp_R_YYGL_REGIONAL_CUSTOMER_04_20260602_2
+            DISTRIBUTED BY RANDOM BUCKETS 15 AS
+            SELECT cust_id
+            FROM tmp_R_YYGL_REGIONAL_CUSTOMER_04_20260602_1;
+            """,
+            _shop_schema(
+                {"r_yygl_regional_customer_01": {"cust_id": "BIGINT"}}
+            ),
+        ),
+        (
+            "cte_names",
+            "dwd_order.sql",
+            """
+            INSERT INTO shop_dm.dwd_order(order_id)
+            WITH recent_orders AS (
+                SELECT order_id
+                FROM shop_dm.ods_order
+            )
+            SELECT order_id
+            FROM recent_orders;
+            """,
+            _shop_schema(
+                {
+                    "dwd_order": {"order_id": "BIGINT"},
+                    "ods_order": {"order_id": "BIGINT"},
+                }
+            ),
+        ),
+    ]
+
+    for scenario_name, file_name, sql, schema in scenarios:
+        tasks_dir, task_file = _write_task(tmp_path, file_name, sql)
+        result = extract_lineage_from_task_files(
+            [task_file], tasks_dir, schema
         )
-        SELECT order_id
-        FROM recent_orders;
-        """,
-    )
-    schema = {
-        "internal": {
-            "shop_dm": {
-                "dwd_order": {"order_id": "BIGINT"},
-                "ods_order": {"order_id": "BIGINT"},
-            }
-        }
-    }
 
-    result = extract_lineage_from_task_files([task_file], tasks_dir, schema)
+        _assert_missing_result(result, [], [], [], scenario_name)
 
-    assert result["missing_ddl_tables"] == []
-    assert result["task_results"][0]["missing_ddl_tables"] == []
+
+def test_extract_lineage_reports_missing_ddl_by_statement_lifetime(tmp_path):
+    scenarios = [
+        (
+            "empty_schema",
+            "dwd_order.sql",
+            """
+            INSERT INTO shop_dm.dwd_order(order_id)
+            SELECT o.order_id
+            FROM shop_dm.ods_order o;
+            """,
+            {},
+            ["dwd_order", "ods_order"],
+            ["ods_order"],
+            ["dwd_order"],
+        ),
+        (
+            "default_db_table_with_same_created_short_name",
+            "same_short_name.sql",
+            """
+            CREATE TABLE staging.tmp_orders AS
+            SELECT id
+            FROM staging.src_orders;
+
+            INSERT INTO target_db.target_orders(id)
+            SELECT id
+            FROM shop_dm.tmp_orders;
+            """,
+            {
+                "internal": {
+                    "staging": {"src_orders": {"id": "BIGINT"}},
+                    "target_db": {"target_orders": {"id": "BIGINT"}},
+                }
+            },
+            ["tmp_orders"],
+            ["tmp_orders"],
+            [],
+        ),
+        (
+            "table_read_before_create",
+            "read_before_create.sql",
+            """
+            INSERT INTO shop_dm.target_orders(id)
+            SELECT id
+            FROM tmp_orders;
+
+            CREATE TABLE tmp_orders AS
+            SELECT id
+            FROM shop_dm.src_orders;
+            """,
+            _shop_schema(
+                {
+                    "src_orders": {"id": "BIGINT"},
+                    "target_orders": {"id": "BIGINT"},
+                }
+            ),
+            ["tmp_orders"],
+            ["tmp_orders"],
+            [],
+        ),
+        (
+            "create_table_source",
+            "regional_customer.sql",
+            """
+            CREATE TABLE IF NOT EXISTS tmp_R_YYGL_REGIONAL_CUSTOMER_04_20260602_1
+            DISTRIBUTED BY RANDOM BUCKETS 15 AS
+            SELECT cust_id
+            FROM r_yygl_regional_customer_01;
+            """,
+            {},
+            ["r_yygl_regional_customer_01"],
+            ["r_yygl_regional_customer_01"],
+            [],
+        ),
+        (
+            "dml_target",
+            "dwd_order.sql",
+            """
+            INSERT INTO dwd_order(order_id)
+            SELECT order_id
+            FROM ods_order;
+            """,
+            _shop_schema({"ods_order": {"order_id": "BIGINT"}}),
+            ["dwd_order"],
+            [],
+            ["dwd_order"],
+        ),
+        (
+            "source_used_before_create",
+            "ads_orders.sql",
+            """
+            INSERT INTO ads_orders(order_id)
+            SELECT order_id
+            FROM tmp_orders;
+
+            CREATE TABLE tmp_orders AS
+            SELECT order_id
+            FROM ods_order;
+            """,
+            _shop_schema(
+                {
+                    "ads_orders": {"order_id": "BIGINT"},
+                    "ods_order": {"order_id": "BIGINT"},
+                }
+            ),
+            ["tmp_orders"],
+            ["tmp_orders"],
+            [],
+        ),
+        (
+            "source_after_drop",
+            "ads_orders.sql",
+            """
+            CREATE TABLE tmp_orders AS
+            SELECT order_id
+            FROM ods_order;
+
+            DROP TABLE tmp_orders;
+
+            INSERT INTO ads_orders(order_id)
+            SELECT order_id
+            FROM tmp_orders;
+            """,
+            _shop_schema(
+                {
+                    "ads_orders": {"order_id": "BIGINT"},
+                    "ods_order": {"order_id": "BIGINT"},
+                }
+            ),
+            ["tmp_orders"],
+            ["tmp_orders"],
+            [],
+        ),
+        (
+            "same_short_name_databases_distinct",
+            "ads_orders.sql",
+            """
+            CREATE TABLE staging.tmp_orders AS
+            SELECT order_id
+            FROM ods_order;
+
+            INSERT INTO ads_orders(order_id)
+            SELECT order_id
+            FROM shop_dm.tmp_orders;
+            """,
+            _shop_schema(
+                {
+                    "ads_orders": {"order_id": "BIGINT"},
+                    "ods_order": {"order_id": "BIGINT"},
+                }
+            ),
+            ["tmp_orders"],
+            ["tmp_orders"],
+            [],
+        ),
+    ]
+
+    for (
+        scenario_name,
+        file_name,
+        sql,
+        schema,
+        expected_missing,
+        expected_sources,
+        expected_targets,
+    ) in scenarios:
+        tasks_dir, task_file = _write_task(tmp_path, file_name, sql)
+        result = extract_lineage_from_task_files(
+            [task_file], tasks_dir, schema
+        )
+
+        try:
+            _assert_missing_result(
+                result,
+                expected_missing,
+                expected_sources,
+                expected_targets,
+            )
+        except AssertionError as exc:
+            raise AssertionError(scenario_name) from exc
 
 
 def test_format_missing_ddl_warnings_includes_task_detail_and_summary():

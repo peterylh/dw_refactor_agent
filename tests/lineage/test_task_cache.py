@@ -78,7 +78,7 @@ def test_task_cache_key_changes_when_sql_schema_or_project_config_changes():
     )
 
 
-def test_load_task_cache_indexes_valid_entries_by_source_file(tmp_path):
+def test_task_cache_file_and_result_contract_scenarios(tmp_path):
     cache_path = tmp_path / "task_cache.json"
     cache_path.write_text(
         json.dumps(
@@ -101,8 +101,6 @@ def test_load_task_cache_indexes_valid_entries_by_source_file(tmp_path):
     assert load_task_cache(tmp_path / "missing.json") == {}
     assert load_task_cache(None) == {}
 
-
-def test_cache_entry_from_result_preserves_reusable_task_result_fields():
     result = {
         "source_file": "dwd_order.sql",
         "entries": [{"target": "demo_dm.dwd_order"}],

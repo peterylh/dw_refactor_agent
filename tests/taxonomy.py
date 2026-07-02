@@ -1,0 +1,80 @@
+"""Explicit pytest test-type taxonomy.
+
+The taxonomy is file-level on purpose: most legacy files group related
+scenarios, and pytest adds the type marker to every collected item from the
+file through tests/conftest.py.
+"""
+
+TEST_TYPE_MARKERS = frozenset(
+    {
+        "unit",
+        "scenario",
+        "guard",
+        "contract",
+    }
+)
+
+TEST_TYPE_DESCRIPTIONS = {
+    "unit": "Focused tests for pure functions or narrow module behavior.",
+    "scenario": "Workflow tests shaped around user-visible behavior.",
+    "guard": "Project-level rules that catch unsafe environmental drift.",
+    "contract": "Stable output schema, serialization, and payload contracts.",
+}
+
+TEST_TYPE_BY_FILE = {
+    "tests/assess/test_assess_middle_layer.py": "scenario",
+    "tests/assess/test_business_semantics_catalog.py": "scenario",
+    "tests/assess/test_code_quality.py": "unit",
+    "tests/assess/test_context_builder.py": "unit",
+    "tests/assess/test_model_design.py": "unit",
+    "tests/assess/test_model_metadata_writer.py": "scenario",
+    "tests/assess/test_report.py": "contract",
+    "tests/assess/test_result_model.py": "contract",
+    "tests/assess/test_rule_framework.py": "unit",
+    "tests/assess/test_scoped_assessment_plan.py": "unit",
+    "tests/assess/test_scoring_context_interface.py": "unit",
+    "tests/assess/test_shop_model_design_scenarios.py": "scenario",
+    "tests/assess/test_table_inspector.py": "unit",
+    "tests/benchmarks/test_lineage_extractor_benchmark_dataset.py": "guard",
+    "tests/ddl_deriver/test_ddl_deriver.py": "unit",
+    "tests/ddl_deriver/test_git_mode.py": "scenario",
+    "tests/lineage/test_asset_graph.py": "unit",
+    "tests/lineage/test_build_schema.py": "unit",
+    "tests/lineage/test_extract_lineage.py": "unit",
+    "tests/lineage/test_import_lineage.py": "scenario",
+    "tests/lineage/test_job_dag.py": "unit",
+    "tests/lineage/test_layer_function.py": "unit",
+    "tests/lineage/test_lineage_cli.py": "scenario",
+    "tests/lineage/test_lineage_ddl.py": "guard",
+    "tests/lineage/test_lineage_extraction_performance.py": "guard",
+    "tests/lineage/test_lineage_extractor_cache_cli.py": "scenario",
+    "tests/lineage/test_lineage_extractor_summary.py": "contract",
+    "tests/lineage/test_lineage_formatters.py": "contract",
+    "tests/lineage/test_lineage_output_metadata.py": "contract",
+    "tests/lineage/test_lineage_query.py": "contract",
+    "tests/lineage/test_lineage_view.py": "unit",
+    "tests/lineage/test_missing_ddl_warnings.py": "scenario",
+    "tests/lineage/test_project_lineage_defaults.py": "guard",
+    "tests/lineage/test_refresh_lineage_html.py": "scenario",
+    "tests/lineage/test_sql_task_facts.py": "unit",
+    "tests/lineage/test_task_cache.py": "unit",
+    "tests/lineage/test_trace_lineage.py": "unit",
+    "tests/lineage/test_update_to_select.py": "unit",
+    "tests/refact/test_change_analysis.py": "unit",
+    "tests/refact/test_compare.py": "scenario",
+    "tests/refact/test_incremental_lineage.py": "scenario",
+    "tests/refact/test_issue_diff.py": "unit",
+    "tests/refact/test_run_cli.py": "scenario",
+    "tests/refact/test_session.py": "contract",
+    "tests/refact/test_shadow_run.py": "scenario",
+    "tests/refact/test_verification_plan.py": "contract",
+    "tests/test_doris_ddl_validity.py": "guard",
+    "tests/test_naming_config.py": "unit",
+    "tests/test_project_asset_paths.py": "contract",
+    "tests/test_python37_compat.py": "guard",
+    "tests/test_reinit_project.py": "scenario",
+    "tests/test_shop_static_partitions.py": "guard",
+    "tests/test_task_run.py": "scenario",
+    "tests/test_taxonomy.py": "guard",
+    "tests/test_text_encoding_config.py": "guard",
+}

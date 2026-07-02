@@ -239,6 +239,73 @@ def _expected_pay_amt_1d_metric() -> dict:
     }
 
 
+def _run_isolated_writer_helper(tmp_path_factory, monkeypatch, helper):
+    with monkeypatch.context() as isolated_monkeypatch:
+        tmp_path = tmp_path_factory.mktemp(
+            helper.__name__.replace("_assert_", "")
+        )
+        helper(tmp_path, isolated_monkeypatch)
+
+
+def test_update_model_yaml_table_metadata_scenarios(
+    tmp_path_factory, monkeypatch
+):
+    helpers = [
+        _assert_update_model_yaml_preserves_existing_metadata,
+        _assert_update_model_yaml_defaults_to_declared_layer,
+        _assert_update_model_yaml_writes_llm_table_metadata,
+        _assert_update_model_yaml_writes_dimension_classification_metadata,
+        _assert_update_model_yaml_removes_stale_dimension_classification_for_fact,
+        _assert_update_model_yaml_keeps_existing_applicable_business_metadata,
+        _assert_update_model_yaml_forces_dimension_layer_and_warns,
+        _assert_update_model_yaml_dry_run_reports_metadata_change,
+    ]
+
+    for helper in helpers:
+        _run_isolated_writer_helper(tmp_path_factory, monkeypatch, helper)
+
+
+def test_update_model_yaml_write_scope_and_metric_scenarios(
+    tmp_path_factory, monkeypatch
+):
+    helpers = [
+        _assert_update_model_yaml_table_scope_preserves_metrics,
+        _assert_update_model_yaml_metrics_scope_preserves_table_info,
+        _assert_update_model_yaml_metrics_scope_does_not_create_empty_model,
+        _assert_update_model_yaml_replaces_existing_metrics,
+        _assert_update_model_yaml_replaces_legacy_metric_fields,
+        _assert_update_model_yaml_removes_metrics_when_none_detected,
+        _assert_update_model_yaml_skips_blocked_results,
+    ]
+
+    for helper in helpers:
+        _run_isolated_writer_helper(tmp_path_factory, monkeypatch, helper)
+
+
+def test_update_model_yaml_grain_entity_scenarios(
+    tmp_path_factory, monkeypatch
+):
+    helpers = [
+        _assert_update_model_yaml_grain_scope_writes_dws_grain_only,
+        _assert_update_model_yaml_normalizes_time_period_aliases,
+        _assert_update_model_yaml_grain_scope_keeps_full_dws_grain_entities,
+        _assert_update_model_yaml_grain_scope_writes_dimension_entity_only,
+        _assert_update_model_yaml_grain_scope_removes_placeholder_empty_grain,
+        _assert_update_model_yaml_grain_scope_writes_dimension_related_entities,
+        _assert_update_model_yaml_grain_scope_migrates_legacy_entity_fields,
+        _assert_update_model_yaml_grain_scope_migrates_existing_legacy_without_result,
+        _assert_update_model_yaml_grain_scope_canonicalizes_llm_entities,
+        _assert_update_model_yaml_preserves_dwd_fact_primary_entity,
+        _assert_update_model_yaml_grain_scope_treats_declared_dim_as_primary,
+        _assert_update_model_yaml_grain_scope_migrates_blocked_existing_metadata,
+        _assert_update_models_for_results_allows_blocked_schema_migration,
+        _assert_blocked_schema_migration_keeps_grain_entities_consistent,
+    ]
+
+    for helper in helpers:
+        _run_isolated_writer_helper(tmp_path_factory, monkeypatch, helper)
+
+
 def test_build_inspection_context_scope_scenarios(
     sample_lineage_data, isolated_writer_project
 ):
@@ -331,7 +398,9 @@ def test_metric_helper_scenarios():
     assert metric_violations(_sample_dws_result()) == []
 
 
-def test_update_model_yaml_preserves_existing_metadata(tmp_path, monkeypatch):
+def _assert_update_model_yaml_preserves_existing_metadata(
+    tmp_path, monkeypatch
+):
     import assess.llm.model_metadata_writer as writer_module
 
     project_root = tmp_path
@@ -370,7 +439,9 @@ def test_update_model_yaml_preserves_existing_metadata(tmp_path, monkeypatch):
     assert "metrics" not in saved
 
 
-def test_update_model_yaml_defaults_to_declared_layer(tmp_path, monkeypatch):
+def _assert_update_model_yaml_defaults_to_declared_layer(
+    tmp_path, monkeypatch
+):
     import assess.llm.model_metadata_writer as writer_module
 
     project_root = tmp_path
@@ -400,7 +471,7 @@ def test_update_model_yaml_defaults_to_declared_layer(tmp_path, monkeypatch):
     assert "atomic_metrics" not in saved
 
 
-def test_update_model_yaml_writes_llm_table_metadata(tmp_path, monkeypatch):
+def _assert_update_model_yaml_writes_llm_table_metadata(tmp_path, monkeypatch):
     import assess.llm.model_metadata_writer as writer_module
 
     project_root = tmp_path
@@ -452,7 +523,7 @@ def test_update_model_yaml_writes_llm_table_metadata(tmp_path, monkeypatch):
     assert "atomic_metrics" not in saved
 
 
-def test_update_model_yaml_writes_dimension_classification_metadata(
+def _assert_update_model_yaml_writes_dimension_classification_metadata(
     tmp_path, monkeypatch
 ):
     import assess.llm.model_metadata_writer as writer_module
@@ -498,7 +569,7 @@ def test_update_model_yaml_writes_dimension_classification_metadata(
     assert saved["dimension_content_type"] == "INFO"
 
 
-def test_update_model_yaml_removes_stale_dimension_classification_for_fact(
+def _assert_update_model_yaml_removes_stale_dimension_classification_for_fact(
     tmp_path, monkeypatch
 ):
     import assess.llm.model_metadata_writer as writer_module
@@ -579,7 +650,7 @@ def test_business_metadata_for_result_limits_fields_by_layer(monkeypatch):
     assert business_metadata_for_result("demo", dim_result) == {}
 
 
-def test_update_model_yaml_keeps_existing_applicable_business_metadata(
+def _assert_update_model_yaml_keeps_existing_applicable_business_metadata(
     tmp_path, monkeypatch
 ):
     import assess.llm.model_metadata_writer as writer_module
@@ -628,7 +699,7 @@ def test_update_model_yaml_keeps_existing_applicable_business_metadata(
     assert saved["business_area"] == "PAYM"
 
 
-def test_update_model_yaml_forces_dimension_layer_and_warns(
+def _assert_update_model_yaml_forces_dimension_layer_and_warns(
     tmp_path, monkeypatch
 ):
     import assess.llm.model_metadata_writer as writer_module
@@ -679,7 +750,7 @@ def test_result_for_report_includes_dimension_layer_warning():
     assert report["metadata_warnings"][0]["inferred_layer"] == "DWD"
 
 
-def test_update_model_yaml_dry_run_reports_metadata_change(
+def _assert_update_model_yaml_dry_run_reports_metadata_change(
     tmp_path, monkeypatch
 ):
     import assess.llm.model_metadata_writer as writer_module
@@ -715,7 +786,7 @@ def test_update_model_yaml_dry_run_reports_metadata_change(
     assert "table_type" not in saved
 
 
-def test_update_model_yaml_table_scope_preserves_metrics(
+def _assert_update_model_yaml_table_scope_preserves_metrics(
     tmp_path, monkeypatch
 ):
     import assess.llm.model_metadata_writer as writer_module
@@ -757,7 +828,7 @@ def test_update_model_yaml_table_scope_preserves_metrics(
     assert "atomic_metrics" not in saved
 
 
-def test_update_model_yaml_metrics_scope_preserves_table_info(
+def _assert_update_model_yaml_metrics_scope_preserves_table_info(
     tmp_path, monkeypatch
 ):
     import assess.llm.model_metadata_writer as writer_module
@@ -802,7 +873,7 @@ def test_update_model_yaml_metrics_scope_preserves_table_info(
     assert "metrics" not in saved
 
 
-def test_update_model_yaml_metrics_scope_does_not_create_empty_model(
+def _assert_update_model_yaml_metrics_scope_does_not_create_empty_model(
     tmp_path, monkeypatch
 ):
     import assess.llm.model_metadata_writer as writer_module
@@ -825,7 +896,7 @@ def test_update_model_yaml_metrics_scope_does_not_create_empty_model(
     assert not model_path.exists()
 
 
-def test_update_model_yaml_grain_scope_writes_dws_grain_only(
+def _assert_update_model_yaml_grain_scope_writes_dws_grain_only(
     tmp_path, monkeypatch
 ):
     import assess.llm.model_metadata_writer as writer_module
@@ -896,7 +967,7 @@ def test_update_model_yaml_grain_scope_writes_dws_grain_only(
     assert saved["derived_metrics"] == ["sale_quantity"]
 
 
-def test_update_model_yaml_normalizes_time_period_aliases(
+def _assert_update_model_yaml_normalizes_time_period_aliases(
     tmp_path, monkeypatch
 ):
     import assess.llm.model_metadata_writer as writer_module
@@ -951,7 +1022,7 @@ def test_update_model_yaml_normalizes_time_period_aliases(
     assert saved["grain"]["time_period"] == "M"
 
 
-def test_update_model_yaml_grain_scope_keeps_full_dws_grain_entities(
+def _assert_update_model_yaml_grain_scope_keeps_full_dws_grain_entities(
     tmp_path, monkeypatch
 ):
     import assess.llm.model_metadata_writer as writer_module
@@ -1006,7 +1077,7 @@ def test_update_model_yaml_grain_scope_keeps_full_dws_grain_entities(
     }
 
 
-def test_update_model_yaml_grain_scope_writes_dimension_entity_only(
+def _assert_update_model_yaml_grain_scope_writes_dimension_entity_only(
     tmp_path, monkeypatch
 ):
     import assess.llm.model_metadata_writer as writer_module
@@ -1065,7 +1136,7 @@ def test_update_model_yaml_grain_scope_writes_dimension_entity_only(
     assert saved["data_domain"] == "02"
 
 
-def test_update_model_yaml_grain_scope_removes_placeholder_empty_grain(
+def _assert_update_model_yaml_grain_scope_removes_placeholder_empty_grain(
     tmp_path, monkeypatch
 ):
     import assess.llm.model_metadata_writer as writer_module
@@ -1126,7 +1197,7 @@ def test_update_model_yaml_grain_scope_removes_placeholder_empty_grain(
     assert "grain" not in saved
 
 
-def test_update_model_yaml_grain_scope_writes_dimension_related_entities(
+def _assert_update_model_yaml_grain_scope_writes_dimension_related_entities(
     tmp_path, monkeypatch
 ):
     import assess.llm.model_metadata_writer as writer_module
@@ -1206,7 +1277,7 @@ def test_update_model_yaml_grain_scope_writes_dimension_related_entities(
     assert saved["table_type"] == "dimension"
 
 
-def test_update_model_yaml_grain_scope_migrates_legacy_entity_fields(
+def _assert_update_model_yaml_grain_scope_migrates_legacy_entity_fields(
     tmp_path, monkeypatch
 ):
     import assess.llm.model_metadata_writer as writer_module
@@ -1294,7 +1365,7 @@ def test_update_model_yaml_grain_scope_migrates_legacy_entity_fields(
     assert "related_entities" not in saved
 
 
-def test_update_model_yaml_grain_scope_migrates_existing_legacy_without_result(
+def _assert_update_model_yaml_grain_scope_migrates_existing_legacy_without_result(
     tmp_path, monkeypatch
 ):
     import assess.llm.model_metadata_writer as writer_module
@@ -1346,7 +1417,7 @@ def test_update_model_yaml_grain_scope_migrates_existing_legacy_without_result(
     assert "entity" not in saved
 
 
-def test_update_model_yaml_grain_scope_canonicalizes_llm_entities(
+def _assert_update_model_yaml_grain_scope_canonicalizes_llm_entities(
     tmp_path, monkeypatch
 ):
     import assess.llm.model_metadata_writer as writer_module
@@ -1416,7 +1487,7 @@ def test_update_model_yaml_grain_scope_canonicalizes_llm_entities(
     ]
 
 
-def test_update_model_yaml_preserves_dwd_fact_primary_entity(
+def _assert_update_model_yaml_preserves_dwd_fact_primary_entity(
     tmp_path, monkeypatch
 ):
     import assess.llm.model_metadata_writer as writer_module
@@ -1483,7 +1554,7 @@ def test_update_model_yaml_preserves_dwd_fact_primary_entity(
     ]
 
 
-def test_update_model_yaml_grain_scope_treats_declared_dim_as_primary(
+def _assert_update_model_yaml_grain_scope_treats_declared_dim_as_primary(
     tmp_path, monkeypatch
 ):
     import assess.llm.model_metadata_writer as writer_module
@@ -1536,7 +1607,7 @@ def test_update_model_yaml_grain_scope_treats_declared_dim_as_primary(
     ]
 
 
-def test_update_model_yaml_grain_scope_migrates_blocked_existing_metadata(
+def _assert_update_model_yaml_grain_scope_migrates_blocked_existing_metadata(
     tmp_path, monkeypatch
 ):
     import assess.llm.model_metadata_writer as writer_module
@@ -1605,7 +1676,7 @@ def test_update_model_yaml_grain_scope_migrates_blocked_existing_metadata(
     ]
 
 
-def test_update_models_for_results_allows_blocked_schema_migration(
+def _assert_update_models_for_results_allows_blocked_schema_migration(
     tmp_path, monkeypatch
 ):
     import assess.llm.model_metadata_writer as writer_module
@@ -1670,7 +1741,7 @@ def test_update_models_for_results_allows_blocked_schema_migration(
     ]
 
 
-def test_blocked_schema_migration_keeps_grain_entities_consistent(
+def _assert_blocked_schema_migration_keeps_grain_entities_consistent(
     tmp_path, monkeypatch
 ):
     import assess.llm.model_metadata_writer as writer_module
@@ -1732,7 +1803,7 @@ def test_blocked_schema_migration_keeps_grain_entities_consistent(
     ]
 
 
-def test_update_model_yaml_replaces_existing_metrics(tmp_path, monkeypatch):
+def _assert_update_model_yaml_replaces_existing_metrics(tmp_path, monkeypatch):
     import assess.llm.model_metadata_writer as writer_module
 
     project_root = tmp_path
@@ -1767,7 +1838,7 @@ def test_update_model_yaml_replaces_existing_metrics(tmp_path, monkeypatch):
     assert "metrics" not in saved
 
 
-def test_update_model_yaml_replaces_legacy_metric_fields(
+def _assert_update_model_yaml_replaces_legacy_metric_fields(
     tmp_path, monkeypatch
 ):
     import assess.llm.model_metadata_writer as writer_module
@@ -1804,7 +1875,7 @@ def test_update_model_yaml_replaces_legacy_metric_fields(
     assert "metrics" not in saved
 
 
-def test_update_model_yaml_removes_metrics_when_none_detected(
+def _assert_update_model_yaml_removes_metrics_when_none_detected(
     tmp_path, monkeypatch
 ):
     import assess.llm.model_metadata_writer as writer_module
@@ -1852,7 +1923,7 @@ def test_update_model_yaml_removes_metrics_when_none_detected(
     assert "calculated_metrics" not in saved
 
 
-def test_update_model_yaml_skips_blocked_results(tmp_path, monkeypatch):
+def _assert_update_model_yaml_skips_blocked_results(tmp_path, monkeypatch):
     import assess.llm.model_metadata_writer as writer_module
 
     project_root = tmp_path

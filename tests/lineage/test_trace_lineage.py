@@ -38,7 +38,7 @@ def _indirect_edges(entries):
 class TestExtractLeafEdges:
     """_extract_leaf_edges 依赖 sqlglot lineage() 输出的 Node 对象"""
 
-    def test_lineage_simple_select(self, schema_ods_order):
+    def test_lineage_node_extraction_scenarios(self, schema_ods_order):
         sql = "SELECT customer_id FROM shop_dm.ods_order"
         nodes = _lineage_nodes_for_select(
             sqlglot.parse_one(sql, dialect="doris"),
@@ -52,7 +52,6 @@ class TestExtractLeafEdges:
             ("ods_order", "customer_id", "target_tbl", "customer_id"),
         }
 
-    def test_lineage_with_alias(self, schema_ods_order):
         sql = "SELECT o.customer_id AS cid FROM shop_dm.ods_order o"
         nodes = _lineage_nodes_for_select(
             sqlglot.parse_one(sql, dialect="doris"),
@@ -62,48 +61,66 @@ class TestExtractLeafEdges:
 
 
 class TestTraceLineage:
-    def test_simple_select(self, schema_ods_order):
-        sql = "SELECT order_id, customer_id FROM shop_dm.ods_order"
-        entries = _trace_lineage(
-            "target_tbl",
-            sqlglot.parse_one(sql, dialect="doris"),
-            schema_ods_order,
-            "test.sql",
-        )
-        assert _direct_edges(entries) == {
-            ("ods_order", "order_id", "target_tbl", "order_id"),
-            ("ods_order", "customer_id", "target_tbl", "customer_id"),
-        }
+    def test_select_source_lineage_scenarios(self, schema_ods_order):
+        scenarios = [
+            (
+                "simple_select",
+                "SELECT order_id, customer_id FROM shop_dm.ods_order",
+                {
+                    ("ods_order", "order_id", "target_tbl", "order_id"),
+                    (
+                        "ods_order",
+                        "customer_id",
+                        "target_tbl",
+                        "customer_id",
+                    ),
+                },
+                set(),
+            ),
+            (
+                "expression",
+                "SELECT total_amount * 0.1 AS tax FROM shop_dm.ods_order",
+                {("ods_order", "total_amount", "target_tbl", "tax")},
+                set(),
+            ),
+            (
+                "where",
+                (
+                    "SELECT order_id, total_amount FROM shop_dm.ods_order "
+                    "WHERE store_id = 100"
+                ),
+                {
+                    ("ods_order", "order_id", "target_tbl", "order_id"),
+                    (
+                        "ods_order",
+                        "total_amount",
+                        "target_tbl",
+                        "total_amount",
+                    ),
+                },
+                {("ods_order", "store_id", "target_tbl", "WHERE")},
+            ),
+        ]
 
-    def test_select_with_expression(self, schema_ods_order):
-        sql = "SELECT total_amount * 0.1 AS tax FROM shop_dm.ods_order"
-        entries = _trace_lineage(
-            "target_tbl",
-            sqlglot.parse_one(sql, dialect="doris"),
-            schema_ods_order,
-            "test.sql",
-        )
-        assert _direct_edges(entries) == {
-            ("ods_order", "total_amount", "target_tbl", "tax"),
-        }
+        for (
+            scenario_name,
+            sql,
+            expected_direct,
+            expected_indirect,
+        ) in scenarios:
+            entries = _trace_lineage(
+                "target_tbl",
+                sqlglot.parse_one(sql, dialect="doris"),
+                schema_ods_order,
+                "test.sql",
+            )
 
-    def test_select_with_where(self, schema_ods_order):
-        sql = "SELECT order_id, total_amount FROM shop_dm.ods_order WHERE store_id = 100"
-        entries = _trace_lineage(
-            "target_tbl",
-            sqlglot.parse_one(sql, dialect="doris"),
-            schema_ods_order,
-            "test.sql",
-        )
-        assert _direct_edges(entries) == {
-            ("ods_order", "order_id", "target_tbl", "order_id"),
-            ("ods_order", "total_amount", "target_tbl", "total_amount"),
-        }
-        assert _indirect_edges(entries) == {
-            ("ods_order", "store_id", "target_tbl", "WHERE"),
-        }
+            assert _direct_edges(entries) == expected_direct, scenario_name
+            assert _indirect_edges(entries) == expected_indirect, scenario_name
 
-    def test_select_constant_no_lineage(self, schema_ods_order):
+    def test_select_constant_and_missing_source_scenarios(
+        self, schema_ods_order
+    ):
         sql = "SELECT 1 AS col, 'abc' AS col2"
         entries = _trace_lineage(
             "target_tbl",
@@ -135,9 +152,6 @@ class TestTraceLineage:
             },
         ]
 
-    def test_select_constant_emits_typed_literal_lineage(
-        self, schema_ods_order
-    ):
         sql = "SELECT 'ALL' AS channel_type"
         entries = _trace_lineage(
             "target_tbl",
@@ -160,7 +174,6 @@ class TestTraceLineage:
             }
         ]
 
-    def test_nonexistent_table(self, schema_ods_order):
         sql = "SELECT x FROM nonexistent_table"
         entries = _trace_lineage(
             "target_tbl",
@@ -172,7 +185,7 @@ class TestTraceLineage:
 
 
 class TestHandleInsert:
-    def test_insert_select_simple(self, schema_ods_order):
+    def test_handle_insert_scenarios(self, schema_ods_order):
         stmt = sqlglot.parse_one(
             "INSERT INTO shop_dm.dwd_order SELECT order_id, customer_id FROM shop_dm.ods_order",
             dialect="doris",
@@ -183,7 +196,6 @@ class TestHandleInsert:
             ("ods_order", "customer_id", "dwd_order", "customer_id"),
         }
 
-    def test_insert_values(self, schema_ods_order):
         stmt = sqlglot.parse_one(
             "INSERT INTO shop_dm.ods_order VALUES (1, 2, 3, '2025-01-01', 100.00, 0.00, 100.00, '微信', '已完成', NULL, NOW())",
             dialect="doris",
@@ -193,90 +205,124 @@ class TestHandleInsert:
 
 
 class TestExtractLineageFromSql:
-    def test_insert_select(self, schema_ods_order):
-        sql = "INSERT INTO shop_dm.dwd_order SELECT order_id, customer_id, total_amount FROM shop_dm.ods_order"
-        entries = extract_lineage_from_sql(sql, "test.sql", schema_ods_order)
-        assert _direct_edges(entries) == {
-            ("ods_order", "order_id", "dwd_order", "order_id"),
-            ("ods_order", "customer_id", "dwd_order", "customer_id"),
-            ("ods_order", "total_amount", "dwd_order", "total_amount"),
-        }
+    def test_extract_lineage_statement_scenarios(
+        self, schema_ods_order, schema_dwd_customer
+    ):
+        scenarios = [
+            (
+                "insert_select",
+                (
+                    "INSERT INTO shop_dm.dwd_order "
+                    "SELECT order_id, customer_id, total_amount "
+                    "FROM shop_dm.ods_order"
+                ),
+                schema_ods_order,
+                {
+                    ("ods_order", "order_id", "dwd_order", "order_id"),
+                    ("ods_order", "customer_id", "dwd_order", "customer_id"),
+                    ("ods_order", "total_amount", "dwd_order", "total_amount"),
+                },
+                set(),
+            ),
+            (
+                "insert_select_with_func",
+                (
+                    "INSERT INTO shop_dm.dwd_order "
+                    "SELECT order_id, NOW() AS etl_time "
+                    "FROM shop_dm.ods_order"
+                ),
+                schema_ods_order,
+                {
+                    ("ods_order", "order_id", "dwd_order", "order_id"),
+                    (None, None, "dwd_order", "etl_time"),
+                },
+                set(),
+            ),
+            (
+                "update",
+                (
+                    "UPDATE shop_dm.dwd_customer SET member_level = '金卡' "
+                    "WHERE customer_id = 100"
+                ),
+                schema_dwd_customer,
+                {(None, None, "dwd_customer", "member_level")},
+                {("dwd_customer", "customer_id", "dwd_customer", "WHERE")},
+            ),
+            (
+                "ctas",
+                (
+                    "CREATE TABLE shop_dm.ads_test AS "
+                    "SELECT order_id, total_amount FROM shop_dm.ods_order"
+                ),
+                schema_ods_order,
+                {
+                    ("ods_order", "order_id", "ads_test", "order_id"),
+                    ("ods_order", "total_amount", "ads_test", "total_amount"),
+                },
+                set(),
+            ),
+            (
+                "multiple_statements",
+                """
+                INSERT INTO t1 SELECT order_id FROM shop_dm.ods_order;
+                INSERT INTO t2 SELECT customer_id FROM shop_dm.ods_order;
+                """,
+                schema_ods_order,
+                {
+                    ("ods_order", "order_id", "t1", "order_id"),
+                    ("ods_order", "customer_id", "t2", "customer_id"),
+                },
+                set(),
+            ),
+        ]
 
-    def test_insert_select_with_func(self, schema_ods_order):
-        sql = "INSERT INTO shop_dm.dwd_order SELECT order_id, NOW() AS etl_time FROM shop_dm.ods_order"
+        for (
+            scenario_name,
+            sql,
+            schema,
+            expected_direct,
+            expected_indirect,
+        ) in scenarios:
+            entries = extract_lineage_from_sql(sql, "test.sql", schema)
+
+            assert _direct_edges(entries) == expected_direct, scenario_name
+            assert _indirect_edges(entries) == expected_indirect, scenario_name
+
+        sql = (
+            "INSERT INTO shop_dm.dwd_order "
+            "SELECT order_id, NOW() AS etl_time FROM shop_dm.ods_order"
+        )
         entries = extract_lineage_from_sql(sql, "test.sql", schema_ods_order)
-        assert _direct_edges(entries) == {
-            ("ods_order", "order_id", "dwd_order", "order_id"),
-            (None, None, "dwd_order", "etl_time"),
-        }
         etl_entry = next(
             e for e in entries if e["target_column"] == "etl_time"
         )
         assert etl_entry["source_type"] == "expression"
         assert etl_entry["source_expression"] == "NOW() AS etl_time"
 
-    def test_update(self, schema_dwd_customer):
-        sql = "UPDATE shop_dm.dwd_customer SET member_level = '金卡' WHERE customer_id = 100"
-        entries = extract_lineage_from_sql(
-            sql, "test.sql", schema_dwd_customer
-        )
-        assert _direct_edges(entries) == {
-            (None, None, "dwd_customer", "member_level"),
-        }
-        assert _indirect_edges(entries) == {
-            ("dwd_customer", "customer_id", "dwd_customer", "WHERE"),
-        }
+    def test_extract_lineage_ignores_unparseable_or_empty_sql(
+        self, schema_ods_order
+    ):
+        scenarios = [
+            ("malformed", "THIS IS NOT SQL $$$", "bad.sql"),
+            ("empty", "", "empty.sql"),
+            ("comment_only", "-- just a comment", "comment.sql"),
+        ]
 
-    def test_ctas(self, schema_ods_order):
-        sql = "CREATE TABLE shop_dm.ads_test AS SELECT order_id, total_amount FROM shop_dm.ods_order"
-        entries = extract_lineage_from_sql(sql, "test.sql", schema_ods_order)
-        assert _direct_edges(entries) == {
-            ("ods_order", "order_id", "ads_test", "order_id"),
-            ("ods_order", "total_amount", "ads_test", "total_amount"),
-        }
+        for scenario_name, sql, source_file in scenarios:
+            entries = extract_lineage_from_sql(
+                sql, source_file, schema_ods_order
+            )
+            assert entries == [], scenario_name
 
-    def test_multiple_statements(self, schema_ods_order):
-        sql = """
-        INSERT INTO t1 SELECT order_id FROM shop_dm.ods_order;
-        INSERT INTO t2 SELECT customer_id FROM shop_dm.ods_order;
-        """
-        entries = extract_lineage_from_sql(sql, "test.sql", schema_ods_order)
-        assert _direct_edges(entries) == {
-            ("ods_order", "order_id", "t1", "order_id"),
-            ("ods_order", "customer_id", "t2", "customer_id"),
-        }
-
-    def test_malformed_sql(self, schema_ods_order):
-        entries = extract_lineage_from_sql(
-            "THIS IS NOT SQL $$$", "bad.sql", schema_ods_order
-        )
-        assert entries == []
-
-    def test_empty_sql(self, schema_ods_order):
-        entries = extract_lineage_from_sql("", "empty.sql", schema_ods_order)
-        assert entries == []
-
-    def test_comment_only(self, schema_ods_order):
-        entries = extract_lineage_from_sql(
-            "-- just a comment", "comment.sql", schema_ods_order
-        )
-        assert entries == []
-
-    def test_source_file_in_entries(self, schema_ods_order):
+    def test_extract_lineage_entry_contract(self, schema_ods_order):
         sql = "INSERT INTO t SELECT order_id FROM shop_dm.ods_order"
         entries = extract_lineage_from_sql(
             sql, "my_task.sql", schema_ods_order
         )
         for e in entries:
             assert e["source_file"] == "my_task.sql"
-
-    def test_entry_keys(self, schema_ods_order):
-        sql = "INSERT INTO t SELECT order_id FROM shop_dm.ods_order"
-        entries = extract_lineage_from_sql(sql, "test.sql", schema_ods_order)
-        for e in entries:
             assert "source_table" in e
             assert "source_column" in e
             assert "target_table" in e
             assert "target_column" in e
             assert "expression" in e
-            assert "source_file" in e
