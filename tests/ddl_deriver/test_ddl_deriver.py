@@ -1,5 +1,7 @@
 """DDL 自动推导功能测试: 覆盖 5 类场景。"""
 
+import copy
+
 from ddl_deriver.ddl_deriver import (
     AlterTable,
     ColumnDef,
@@ -53,6 +55,10 @@ BASE_TABLES = {
 }
 
 
+def _base_table(name):
+    return copy.deepcopy(BASE_TABLES[name])
+
+
 DEMO_DDL = {
     "ods_customer": """\
 DROP TABLE IF EXISTS shop_dm.ods_customer;
@@ -96,15 +102,63 @@ def _write_demo_ddl_files(ddl_dir):
         (ddl_dir / f"{table_name}.sql").write_text(ddl, encoding="utf-8")
 
 
+def test_table_lifecycle_derivation_scenarios():
+    _assert_create_table()
+    _assert_drop_table()
+    _assert_rename_table()
+    _assert_rename_prefers_high_similarity()
+    _assert_rename_too_different_falls_back_to_drop_create()
+    _assert_batch_create_drop()
+    _assert_no_changes()
+    _assert_create_table_auto_uuid()
+
+
+def test_rename_with_followup_change_scenarios():
+    _assert_rename_add_column()
+    _assert_rename_drop_column()
+    _assert_rename_modify_column()
+    _assert_rename_table_with_rename_column()
+    _assert_rename_and_alter_same_table()
+    _assert_rename_by_uuid()
+    _assert_rename_by_uuid_with_alter()
+    _assert_rename_by_uuid_takes_precedence()
+    _assert_different_uuid_low_jaccard_not_rename()
+
+
+def test_alter_table_derivation_scenarios():
+    _assert_alter_add_column()
+    _assert_alter_drop_column()
+    _assert_alter_modify_column()
+    _assert_alter_modify_default()
+    _assert_alter_modify_comment()
+    _assert_alter_default_and_comment_and_type()
+    _assert_alter_mixed()
+    _assert_alter_rename_column()
+    _assert_alter_rename_prefers_matching_column_comments()
+    _assert_alter_rename_and_add_column()
+    _assert_alter_rename_no_false_positive()
+    _assert_alter_rename_skips_ambiguous_same_type_columns_without_semantics()
+
+
+def test_change_formatting_and_table_id_scenarios():
+    _assert_alter_rename_output_json()
+    _assert_format_changes()
+    _assert_changes_to_json()
+    _assert_both_empty()
+    _assert_extract_table_id()
+    _assert_inject_table_id()
+    _assert_generate_table_id_format()
+
+
 # ============================================================
 # 1. 新增表 (CREATE TABLE)
 # ============================================================
 
 
-def test_create_table():
+def _assert_create_table():
     old = {}
     new = {
-        "ods_customer": BASE_TABLES["ods_customer"],
+        "ods_customer": _base_table("ods_customer"),
     }
     changes = derive_ddl_changes(old, new)
     assert len(changes) == 1
@@ -117,9 +171,9 @@ def test_create_table():
 # ============================================================
 
 
-def test_drop_table():
+def _assert_drop_table():
     old = {
-        "ods_customer": BASE_TABLES["ods_customer"],
+        "ods_customer": _base_table("ods_customer"),
     }
     new = {}
     changes = derive_ddl_changes(old, new)
@@ -133,7 +187,7 @@ def test_drop_table():
 # ============================================================
 
 
-def test_rename_table():
+def _assert_rename_table():
     renamed = TableDef(
         full_name="shop_dm.ods_customer_v2",
         short_name="ods_customer_v2",
@@ -149,7 +203,7 @@ def test_rename_table():
         distribution_col="customer_id",
         raw_ddl="",
     )
-    old = {"ods_customer": BASE_TABLES["ods_customer"]}
+    old = {"ods_customer": _base_table("ods_customer")}
     new = {"ods_customer_v2": renamed}
     changes = derive_ddl_changes(old, new)
     assert len(changes) == 1
@@ -158,7 +212,7 @@ def test_rename_table():
     assert changes[0].new_name == "shop_dm.ods_customer_v2"
 
 
-def test_rename_prefers_high_similarity():
+def _assert_rename_prefers_high_similarity():
     """重命名检测: 结构差异大的不应匹配为 RENAME."""
     very_different = TableDef(
         full_name="shop_dm.ods_other",
@@ -169,7 +223,7 @@ def test_rename_prefers_high_similarity():
         distribution_col="id",
         raw_ddl="",
     )
-    old = {"ods_customer": BASE_TABLES["ods_customer"]}
+    old = {"ods_customer": _base_table("ods_customer")}
     new = {"ods_other": very_different}
     changes = derive_ddl_changes(old, new)
     assert len(changes) == 2
@@ -178,7 +232,7 @@ def test_rename_prefers_high_similarity():
     assert not any(isinstance(c, RenameTable) for c in changes)
 
 
-def test_rename_add_column():
+def _assert_rename_add_column():
     """RENAME + ADD COLUMN: 旧表重命名并新增列."""
     old_t = TableDef(
         full_name="shop_dm.ods_user_info",
@@ -222,7 +276,7 @@ def test_rename_add_column():
     assert changes[1].adds[0].name == "address"
 
 
-def test_rename_drop_column():
+def _assert_rename_drop_column():
     """RENAME + DROP COLUMN."""
     old_t = TableDef(
         full_name="shop_dm.ods_user_info",
@@ -262,7 +316,7 @@ def test_rename_drop_column():
     assert changes[1].drops[0].name == "status"
 
 
-def test_rename_modify_column():
+def _assert_rename_modify_column():
     """RENAME + MODIFY COLUMN: 当仅改类型的签名相似度低于阈值,退化 DROP+CREATE."""
     old_t = TableDef(
         full_name="shop_dm.ods_user_info",
@@ -300,7 +354,7 @@ def test_rename_modify_column():
     assert any(isinstance(c, CreateTable) for c in changes)
 
 
-def test_rename_too_different_falls_back_to_drop_create():
+def _assert_rename_too_different_falls_back_to_drop_create():
     """大规模结构变更,退化 DROP + CREATE 而非 RENAME."""
     old_t = TableDef(
         full_name="shop_dm.ods_user_info",
@@ -343,8 +397,8 @@ def test_rename_too_different_falls_back_to_drop_create():
 # ============================================================
 
 
-def test_alter_add_column():
-    old = {"ods_customer": BASE_TABLES["ods_customer"]}
+def _assert_alter_add_column():
+    old = {"ods_customer": _base_table("ods_customer")}
     new_t = TableDef(
         full_name="shop_dm.ods_customer",
         short_name="ods_customer",
@@ -371,8 +425,8 @@ def test_alter_add_column():
     assert len(changes[0].modifies) == 0
 
 
-def test_alter_drop_column():
-    old = {"ods_customer": BASE_TABLES["ods_customer"]}
+def _assert_alter_drop_column():
+    old = {"ods_customer": _base_table("ods_customer")}
     new_t = TableDef(
         full_name="shop_dm.ods_customer",
         short_name="ods_customer",
@@ -396,8 +450,8 @@ def test_alter_drop_column():
     assert len(changes[0].adds) == 0
 
 
-def test_alter_modify_column():
-    old = {"ods_customer": BASE_TABLES["ods_customer"]}
+def _assert_alter_modify_column():
+    old = {"ods_customer": _base_table("ods_customer")}
     new_t = TableDef(
         full_name="shop_dm.ods_customer",
         short_name="ods_customer",
@@ -424,7 +478,7 @@ def test_alter_modify_column():
     assert changes[0].modifies[0][1].data_type == "VARCHAR(128)"
 
 
-def test_alter_modify_default():
+def _assert_alter_modify_default():
     """ALTER TABLE: 仅修改列的默认值."""
     old_t = TableDef(
         full_name="shop_dm.ods_order",
@@ -455,7 +509,7 @@ def test_alter_modify_default():
     assert changes[0].modifies[0][0].name == "status"
 
 
-def test_alter_modify_comment():
+def _assert_alter_modify_comment():
     """ALTER TABLE: 仅修改列注释."""
     old_t = TableDef(
         full_name="shop_dm.ods_order",
@@ -484,7 +538,7 @@ def test_alter_modify_comment():
     assert changes[0].modifies[0][0].name == "order_id"
 
 
-def test_alter_default_and_comment_and_type():
+def _assert_alter_default_and_comment_and_type():
     """ALTER TABLE: 同时修改默认值+注释+类型."""
     old_t = TableDef(
         full_name="shop_dm.ods_product",
@@ -534,7 +588,7 @@ def test_alter_default_and_comment_and_type():
     assert "售价" in sql
 
 
-def test_batch_create_drop():
+def _assert_batch_create_drop():
     """批量: 同时 3 表新增 + 2 表删除 + 1 表修改,互不干扰."""
     # 各表用不同列名避免 rename 误匹配
     old_tables = {
@@ -621,7 +675,7 @@ def test_batch_create_drop():
     assert sum(1 for c in changes if c.change_type == "ALTER") == 1
 
 
-def test_alter_mixed():
+def _assert_alter_mixed():
     """增/删/改列同时发生."""
     old_t = TableDef(
         full_name="shop_dm.dwd_customer",
@@ -663,7 +717,7 @@ def test_alter_mixed():
     assert {old.name for old, new in a.modifies} == {"phone"}
 
 
-def test_alter_rename_column():
+def _assert_alter_rename_column():
     """ALTER TABLE: 列重命名 (data_type+nullable 相同 → RENAME COLUMN)."""
     old_t = TableDef(
         full_name="shop_dm.dwd_order_detail",
@@ -708,7 +762,7 @@ def test_alter_rename_column():
     assert "RENAME COLUMN unit_price price_unit" in sql
 
 
-def test_alter_rename_prefers_matching_column_comments():
+def _assert_alter_rename_prefers_matching_column_comments():
     """列同类型时, 应优先按注释语义匹配, 避免指标字段互换."""
     tid = generate_table_id()
     old_t = TableDef(
@@ -777,7 +831,7 @@ def test_alter_rename_prefers_matching_column_comments():
     assert "RENAME COLUMN order_count ORDER_CNT," not in sql
 
 
-def test_alter_rename_and_add_column():
+def _assert_alter_rename_and_add_column():
     """ALTER TABLE: 列重命名 + 新增另一列."""
     old_t = TableDef(
         full_name="shop_dm.dwd_order_detail",
@@ -823,7 +877,7 @@ def test_alter_rename_and_add_column():
     assert "ADD COLUMN discount" in sql
 
 
-def test_alter_rename_no_false_positive():
+def _assert_alter_rename_no_false_positive():
     """不同类型/可空性的 drop+add 不应误判为重命名."""
     old_t = TableDef(
         full_name="shop_dm.test",
@@ -858,7 +912,7 @@ def test_alter_rename_no_false_positive():
     assert a.adds[0].name == "new_col"
 
 
-def test_alter_rename_skips_ambiguous_same_type_columns_without_semantics():
+def _assert_alter_rename_skips_ambiguous_same_type_columns_without_semantics():
     """多个同类型字段缺少语义证据时, 不应任意推断 rename."""
     old_t = TableDef(
         full_name="shop_dm.test",
@@ -891,7 +945,7 @@ def test_alter_rename_skips_ambiguous_same_type_columns_without_semantics():
     assert {col.name for col in a.adds} == {"new_x", "new_y"}
 
 
-def test_rename_table_with_rename_column():
+def _assert_rename_table_with_rename_column():
     """RENAME TABLE + 列重命名同时发生 (通过 UUID 绑定)."""
     tid = generate_table_id()
     old_t = TableDef(
@@ -930,7 +984,7 @@ def test_rename_table_with_rename_column():
     assert len(a.drops) == 0
 
 
-def test_alter_rename_output_json():
+def _assert_alter_rename_output_json():
     """列重命名在 JSON 输出中的格式."""
     old_t = TableDef(
         full_name="shop_dm.test",
@@ -963,9 +1017,9 @@ def test_alter_rename_output_json():
 # ============================================================
 
 
-def test_no_changes():
-    old = {"ods_customer": BASE_TABLES["ods_customer"]}
-    new = {"ods_customer": BASE_TABLES["ods_customer"]}
+def _assert_no_changes():
+    old = {"ods_customer": _base_table("ods_customer")}
+    new = {"ods_customer": _base_table("ods_customer")}
     changes = derive_ddl_changes(old, new)
     assert len(changes) == 0
 
@@ -1004,8 +1058,8 @@ def test_from_fixture_ddl_single_change(tmp_path):
 # ============================================================
 
 
-def test_format_changes():
-    old = {"t": BASE_TABLES["ods_customer"]}
+def _assert_format_changes():
+    old = {"t": _base_table("ods_customer")}
     new = {}
     changes = derive_ddl_changes(old, new)
     sql = format_changes(changes)
@@ -1013,8 +1067,8 @@ def test_format_changes():
     assert "shop_dm.ods_customer" in sql
 
 
-def test_changes_to_json():
-    old = {"t": BASE_TABLES["ods_customer"]}
+def _assert_changes_to_json():
+    old = {"t": _base_table("ods_customer")}
     new = {}
     changes = derive_ddl_changes(old, new)
     result = changes_to_json(changes)
@@ -1028,20 +1082,21 @@ def test_changes_to_json():
 # ============================================================
 
 
-def test_both_empty():
+def _assert_both_empty():
     assert derive_ddl_changes({}, {}) == []
 
 
-def test_rename_and_alter_same_table():
+def _assert_rename_and_alter_same_table():
     """同名表修改 + 其他表重命名同时发生."""
     old = {
-        "ods_customer": BASE_TABLES["ods_customer"],
-        "ods_order": BASE_TABLES["ods_order"],
+        "ods_customer": _base_table("ods_customer"),
+        "ods_order": _base_table("ods_order"),
     }
+    base_customer = _base_table("ods_customer")
     new_customer = TableDef(
         full_name="shop_dm.ods_customer_v2",
         short_name="ods_customer_v2",
-        columns=BASE_TABLES["ods_customer"].columns.copy(),
+        columns=base_customer.columns.copy(),
         key_type="DUPLICATE",
         key_columns=["customer_id"],
         distribution_col="customer_id",
@@ -1098,7 +1153,7 @@ def test_parse_fixture_ddl_files(tmp_path):
 # ============================================================
 
 
-def test_extract_table_id():
+def _assert_extract_table_id():
     assert (
         extract_table_id(
             "-- table_id: a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d\nSELECT 1"
@@ -1108,7 +1163,7 @@ def test_extract_table_id():
     assert extract_table_id("SELECT 1") == ""
 
 
-def test_inject_table_id():
+def _assert_inject_table_id():
     tid = "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"
     text = "-- ODS 表\nCREATE TABLE t (id INT);"
     result = inject_table_id(text, tid)
@@ -1118,14 +1173,14 @@ def test_inject_table_id():
     assert result2.count("table_id") == 1
 
 
-def test_generate_table_id_format():
+def _assert_generate_table_id_format():
     tid = generate_table_id()
     parts = tid.split("-")
     assert len(parts) == 5
     assert len(parts[0]) == 8
 
 
-def test_rename_by_uuid():
+def _assert_rename_by_uuid():
     """相同 UUID + 不同表名 → 识别为 RENAME."""
     tid = generate_table_id()
     old_t = TableDef(
@@ -1163,7 +1218,7 @@ def test_rename_by_uuid():
     assert changes[0].new_name == "shop_dm.ods_customer"
 
 
-def test_rename_by_uuid_with_alter():
+def _assert_rename_by_uuid_with_alter():
     """相同 UUID + 列结构大改 → RENAME + ALTER,而非 DROP+CREATE."""
     tid = generate_table_id()
     old_t = TableDef(
@@ -1209,7 +1264,7 @@ def test_rename_by_uuid_with_alter():
     }
 
 
-def test_rename_by_uuid_takes_precedence():
+def _assert_rename_by_uuid_takes_precedence():
     """
     UUID 匹配优先于 Jaccard 相似度。
     即使另一个 rename 候选的结构相似度更高,UUID 匹配优先。
@@ -1271,7 +1326,7 @@ def test_rename_by_uuid_takes_precedence():
     assert rename_new_names == {"ods_new_a", "ods_new_b"}
 
 
-def test_different_uuid_low_jaccard_not_rename():
+def _assert_different_uuid_low_jaccard_not_rename():
     """不同 UUID + 低 Jaccard 相似度 → DROP + CREATE,不视为 RENAME."""
     old_t = TableDef(
         full_name="shop_dm.ods_order",
@@ -1304,7 +1359,7 @@ def test_different_uuid_low_jaccard_not_rename():
     assert not any(isinstance(c, RenameTable) for c in changes)
 
 
-def test_create_table_auto_uuid():
+def _assert_create_table_auto_uuid():
     """新表自动获得 table_id."""
     new_t = TableDef(
         full_name="shop_dm.ods_new_table",

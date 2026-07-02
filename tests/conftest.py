@@ -1,4 +1,23 @@
+from pathlib import Path
+
 import pytest
+
+from tests.taxonomy import TEST_TYPE_BY_FILE, TEST_TYPE_MARKERS
+
+
+def pytest_collection_modifyitems(config, items):
+    repo_root = Path(str(config.rootdir))
+    for item in items:
+        test_path = Path(str(item.fspath))
+        try:
+            rel_path = test_path.relative_to(repo_root).as_posix()
+        except ValueError:
+            continue
+
+        test_type = TEST_TYPE_BY_FILE.get(rel_path)
+        if test_type in TEST_TYPE_MARKERS:
+            item.add_marker(getattr(pytest.mark, test_type))
+
 
 DDL_CUSTOMER = """
 DROP TABLE IF EXISTS shop_dm.ods_customer;

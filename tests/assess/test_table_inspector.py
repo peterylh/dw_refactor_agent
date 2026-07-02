@@ -33,6 +33,77 @@ def test_build_prompt_scenarios():
     _assert_build_prompt_keeps_metric_expression_separate_from_grain()
 
 
+def test_parse_response_metadata_scenarios():
+    helpers = [
+        _assert_parse_dimension_response,
+        _assert_parse_response_preserves_dimension_classification_metadata,
+        _assert_parse_business_domain_response,
+        _assert_parse_response_preserves_entity_and_grain_metadata,
+        _assert_parse_response_normalizes_convertible_time_periods,
+        _assert_parse_response_preserves_entities_metadata,
+        _assert_parse_response_normalizes_placeholder_empty_grain,
+        _assert_dict_to_result_normalizes_placeholder_empty_grain,
+        _assert_parse_response_preserves_related_entities_metadata,
+        _assert_parse_basic_response_shapes,
+        _assert_parse_grouped_column_response,
+        _assert_result_serialization_handles_system_fields,
+    ]
+
+    for helper in helpers:
+        helper()
+
+
+def test_validate_response_contract_scenarios():
+    helpers = [
+        _assert_validate_time_periods_flags_unrecognized_values,
+        _assert_validate_metric_expressions_flags_grain_text,
+        _assert_validate_primary_entities_requires_dwd_fact_primary,
+        _assert_validate_columns_flags_unknown_duplicate_and_missing_fields,
+        _assert_validate_columns_requires_all_dws_fact_fields,
+        _assert_validate_metric_relationships_requires_derived_base_metric_in_upstream_atomic,
+        _assert_validate_metric_relationships_flags_ambiguous_unqualified_base_metric,
+        _assert_result_status_from_validation,
+    ]
+
+    for helper in helpers:
+        helper()
+
+
+def test_inspector_cache_and_progress_scenarios(tmp_path_factory, monkeypatch):
+    _assert_cache_hit_skips_api(tmp_path_factory.mktemp("cache_hit"))
+    with monkeypatch.context() as mp:
+        _assert_cache_miss_calls_api(tmp_path_factory.mktemp("cache_miss"), mp)
+    with monkeypatch.context() as mp:
+        _assert_progress_callback_reports_batch_events(
+            tmp_path_factory.mktemp("progress_batch"), mp
+        )
+    _assert_progress_callback_reports_cache_hit(
+        tmp_path_factory.mktemp("progress_cache")
+    )
+    _assert_cache_hash_includes_context_fields(
+        tmp_path_factory.mktemp("cache_hash")
+    )
+
+
+def test_inspector_retry_scenarios(tmp_path_factory, monkeypatch):
+    helpers = [
+        _assert_inspect_retries_validation_errors,
+        _assert_inspect_normalizes_convertible_time_periods_without_retry,
+        _assert_inspect_retries_unrecognized_time_periods,
+        _assert_inspect_retries_invalid_metric_expressions,
+        _assert_inspect_retries_missing_dwd_fact_primary_entity,
+    ]
+
+    for helper in helpers:
+        with monkeypatch.context() as mp:
+            helper(
+                tmp_path_factory.mktemp(
+                    helper.__name__.replace("_assert_", "")
+                ),
+                mp,
+            )
+
+
 def _assert_build_prompt_exposes_context_and_json_contract():
     ctx = TableContext(
         table_name="dwd_customer",
@@ -211,7 +282,7 @@ def _assert_build_prompt_keeps_metric_expression_separate_from_grain():
 # ============================================================
 
 
-def test_parse_dimension_response():
+def _assert_parse_dimension_response():
     resp = {
         "choices": [
             {
@@ -238,7 +309,7 @@ def test_parse_dimension_response():
     assert result.is_violating_declared_layer is True
 
 
-def test_parse_response_preserves_dimension_classification_metadata():
+def _assert_parse_response_preserves_dimension_classification_metadata():
     resp = {
         "choices": [
             {
@@ -270,7 +341,7 @@ def test_parse_response_preserves_dimension_classification_metadata():
     assert cached["dimension_content_type"] == "TAG"
 
 
-def test_parse_business_domain_response():
+def _assert_parse_business_domain_response():
     resp = {
         "choices": [
             {
@@ -302,7 +373,7 @@ def test_parse_business_domain_response():
     assert cached["inferred_business_area"] == "PAYM"
 
 
-def test_parse_response_preserves_entity_and_grain_metadata():
+def _assert_parse_response_preserves_entity_and_grain_metadata():
     resp = {
         "choices": [
             {
@@ -343,7 +414,7 @@ def test_parse_response_preserves_entity_and_grain_metadata():
     assert cached["grain"] == result.grain
 
 
-def test_parse_response_normalizes_convertible_time_periods():
+def _assert_parse_response_normalizes_convertible_time_periods():
     resp = {
         "choices": [
             {
@@ -391,7 +462,7 @@ def test_parse_response_normalizes_convertible_time_periods():
     assert validation == {}
 
 
-def test_validate_time_periods_flags_unrecognized_values():
+def _assert_validate_time_periods_flags_unrecognized_values():
     result = parse_response(
         "dws_category_sales_monthly",
         {
@@ -441,7 +512,7 @@ def test_validate_time_periods_flags_unrecognized_values():
     }
 
 
-def test_validate_metric_expressions_flags_grain_text():
+def _assert_validate_metric_expressions_flags_grain_text():
     result = parse_response(
         "dws_store_sales_daily",
         {
@@ -498,7 +569,7 @@ def test_validate_metric_expressions_flags_grain_text():
     }
 
 
-def test_validate_primary_entities_requires_dwd_fact_primary():
+def _assert_validate_primary_entities_requires_dwd_fact_primary():
     result = parse_response(
         "dwd_order_detail",
         {
@@ -552,7 +623,7 @@ def test_validate_primary_entities_requires_dwd_fact_primary():
     }
 
 
-def test_parse_response_preserves_entities_metadata():
+def _assert_parse_response_preserves_entities_metadata():
     resp = {
         "choices": [
             {
@@ -614,7 +685,7 @@ def test_parse_response_preserves_entities_metadata():
     assert cached["entities"] == result.entities
 
 
-def test_parse_response_normalizes_placeholder_empty_grain():
+def _assert_parse_response_normalizes_placeholder_empty_grain():
     resp = {
         "choices": [
             {
@@ -643,7 +714,7 @@ def test_parse_response_normalizes_placeholder_empty_grain():
     assert result.grain == {}
 
 
-def test_dict_to_result_normalizes_placeholder_empty_grain():
+def _assert_dict_to_result_normalizes_placeholder_empty_grain():
     payload = {
         "table_name": "dwd_customers",
         "declared_layer": "DWD",
@@ -666,7 +737,7 @@ def test_dict_to_result_normalizes_placeholder_empty_grain():
     assert result.grain == {}
 
 
-def test_parse_response_preserves_related_entities_metadata():
+def _assert_parse_response_preserves_related_entities_metadata():
     resp = {
         "choices": [
             {
@@ -735,7 +806,7 @@ def test_parse_response_preserves_related_entities_metadata():
     assert cached["related_entities"] == result.related_entities
 
 
-def test_parse_basic_response_shapes():
+def _assert_parse_basic_response_shapes():
     scenarios = [
         (
             "dwd_order",
@@ -763,7 +834,7 @@ def test_parse_basic_response_shapes():
             assert reason in result.reasoning_steps[0]
 
 
-def test_parse_grouped_column_response():
+def _assert_parse_grouped_column_response():
     resp = {
         "choices": [
             {
@@ -858,7 +929,7 @@ def test_parse_grouped_column_response():
     assert result.others[0]["role"] == "audit"
 
 
-def test_result_serialization_handles_system_fields():
+def _assert_result_serialization_handles_system_fields():
     resp = {
         "choices": [
             {
@@ -885,7 +956,7 @@ def test_result_serialization_handles_system_fields():
     assert "status" not in cached
 
 
-def test_validate_columns_flags_unknown_duplicate_and_missing_fields():
+def _assert_validate_columns_flags_unknown_duplicate_and_missing_fields():
     result = parse_response(
         "dwd_order_detail",
         {
@@ -923,7 +994,7 @@ def test_validate_columns_flags_unknown_duplicate_and_missing_fields():
     assert validation["missing_columns"] == ["etl_time"]
 
 
-def test_validate_columns_requires_all_dws_fact_fields():
+def _assert_validate_columns_requires_all_dws_fact_fields():
     result = parse_response(
         "dws_store_sales_daily",
         {
@@ -961,7 +1032,7 @@ def test_validate_columns_requires_all_dws_fact_fields():
     assert validation["missing_columns"] == ["etl_time", "stat_date"]
 
 
-def test_validate_metric_relationships_requires_derived_base_metric_in_upstream_atomic():
+def _assert_validate_metric_relationships_requires_derived_base_metric_in_upstream_atomic():
     result = parse_response(
         "dws_store_sales_daily",
         {
@@ -1046,7 +1117,7 @@ def test_validate_metric_relationships_requires_derived_base_metric_in_upstream_
     ]
 
 
-def test_validate_metric_relationships_flags_ambiguous_unqualified_base_metric():
+def _assert_validate_metric_relationships_flags_ambiguous_unqualified_base_metric():
     result = parse_response(
         "dws_sales_daily",
         {
@@ -1097,7 +1168,7 @@ def test_validate_metric_relationships_flags_ambiguous_unqualified_base_metric()
     assert validation.get("ambiguous_base_metrics") == ["sale_amount:subtotal"]
 
 
-def test_result_status_from_validation():
+def _assert_result_status_from_validation():
     result = parse_response(
         "dwd_order_detail",
         {
@@ -1223,7 +1294,7 @@ def test_inspect_preserves_llm_metric_groups(tmp_path, monkeypatch):
 # ============================================================
 
 
-def test_cache_hit_skips_api(tmp_path):
+def _assert_cache_hit_skips_api(tmp_path):
     cache_file = tmp_path / "cache.json"
     inspector = TableInspector(api_key="test", cache_file=cache_file)
 
@@ -1282,7 +1353,7 @@ def test_cache_hit_skips_api(tmp_path):
         assert res.reasoning_steps == ["cached"]
 
 
-def test_cache_miss_calls_api(tmp_path, monkeypatch):
+def _assert_cache_miss_calls_api(tmp_path, monkeypatch):
     cache_file = tmp_path / "cache.json"
     inspector = TableInspector(api_key="test", cache_file=cache_file)
 
@@ -1351,7 +1422,7 @@ def test_cache_miss_calls_api(tmp_path, monkeypatch):
     assert "is_violating_current_name" not in saved["t1"]["result"]
 
 
-def test_progress_callback_reports_batch_events(tmp_path, monkeypatch):
+def _assert_progress_callback_reports_batch_events(tmp_path, monkeypatch):
     inspector = TableInspector(
         api_key="test",
         cache_file=tmp_path / "cache.json",
@@ -1420,7 +1491,7 @@ def test_progress_callback_reports_batch_events(tmp_path, monkeypatch):
     assert events[-1]["atomic_metric_count"] == 1
 
 
-def test_progress_callback_reports_cache_hit(tmp_path):
+def _assert_progress_callback_reports_cache_hit(tmp_path):
     cache_file = tmp_path / "cache.json"
     inspector = TableInspector(api_key="test", cache_file=cache_file)
     ctx = TableContext(
@@ -1474,7 +1545,7 @@ def test_progress_callback_reports_cache_hit(tmp_path):
     ]
 
 
-def test_inspect_retries_validation_errors(tmp_path, monkeypatch):
+def _assert_inspect_retries_validation_errors(tmp_path, monkeypatch):
     cache_file = tmp_path / "cache.json"
     inspector = TableInspector(
         api_key="test", cache_file=cache_file, max_retries=1
@@ -1544,7 +1615,7 @@ def test_inspect_retries_validation_errors(tmp_path, monkeypatch):
     assert result.validation["unknown_columns"] == []
 
 
-def test_inspect_normalizes_convertible_time_periods_without_retry(
+def _assert_inspect_normalizes_convertible_time_periods_without_retry(
     tmp_path, monkeypatch
 ):
     cache_file = tmp_path / "cache.json"
@@ -1621,7 +1692,7 @@ def test_inspect_normalizes_convertible_time_periods_without_retry(
     assert result.derived_metrics[0]["time_period"] == "M"
 
 
-def test_inspect_retries_unrecognized_time_periods(tmp_path, monkeypatch):
+def _assert_inspect_retries_unrecognized_time_periods(tmp_path, monkeypatch):
     cache_file = tmp_path / "cache.json"
     inspector = TableInspector(
         api_key="test", cache_file=cache_file, max_retries=1
@@ -1726,7 +1797,7 @@ def test_inspect_retries_unrecognized_time_periods(tmp_path, monkeypatch):
     assert result.derived_metrics[0]["time_period"] == "M"
 
 
-def test_inspect_retries_invalid_metric_expressions(tmp_path, monkeypatch):
+def _assert_inspect_retries_invalid_metric_expressions(tmp_path, monkeypatch):
     cache_file = tmp_path / "cache.json"
     inspector = TableInspector(
         api_key="test", cache_file=cache_file, max_retries=1
@@ -1828,7 +1899,7 @@ def test_inspect_retries_invalid_metric_expressions(tmp_path, monkeypatch):
     assert result.derived_metrics[0]["expression"] == "SUM(subtotal)"
 
 
-def test_inspect_retries_missing_dwd_fact_primary_entity(
+def _assert_inspect_retries_missing_dwd_fact_primary_entity(
     tmp_path, monkeypatch
 ):
     cache_file = tmp_path / "cache.json"
@@ -1928,7 +1999,7 @@ def test_inspect_retries_missing_dwd_fact_primary_entity(
     assert result.entities[0]["type"] == "primary"
 
 
-def test_cache_hash_includes_context_fields(tmp_path):
+def _assert_cache_hash_includes_context_fields(tmp_path):
     inspector = TableInspector(
         api_key="test", cache_file=tmp_path / "cache.json"
     )

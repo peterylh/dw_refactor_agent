@@ -22,7 +22,7 @@ def _assert_before(order, *pairs):
         assert positions[source] < positions[target]
 
 
-def test_downstream_traversal_handles_branches_cycles_and_missing_seeds():
+def test_downstream_traversal_scenarios():
     dag = JobDAG(
         _edges(
             ("a", "b"),
@@ -39,8 +39,14 @@ def test_downstream_traversal_handles_branches_cycles_and_missing_seeds():
     assert dag.bfs_downstream({"missing"}) == set()
     assert dag.bfs_downstream(set()) == set()
 
+    dag = JobDAG(_edges(("DWD_Order_Detail", "DWS_Store_Sales_Daily")))
 
-def test_topological_sort_keeps_dependencies_before_dependents():
+    assert dag.bfs_downstream({"dwd_order_detail"}) == {
+        "DWS_Store_Sales_Daily"
+    }
+
+
+def test_topological_sort_scenarios():
     dag = JobDAG(
         _edges(
             ("ods_order", "dwd_order_detail"),
@@ -79,8 +85,6 @@ def test_topological_sort_keeps_dependencies_before_dependents():
         ("dws_product_sales_daily", "ads_sales_dashboard"),
     )
 
-
-def test_topological_sort_matches_requested_jobs_case_insensitively():
     dag = JobDAG(
         _edges(
             ("DWD_Order_Detail", "DWS_Store_Sales_Daily"),
@@ -102,37 +106,17 @@ def test_topological_sort_matches_requested_jobs_case_insensitively():
         "ads_sales_dashboard",
     ]
 
-
-def test_downstream_traversal_matches_seeds_case_insensitively():
-    dag = JobDAG(_edges(("DWD_Order_Detail", "DWS_Store_Sales_Daily")))
-
-    assert dag.bfs_downstream({"dwd_order_detail"}) == {
-        "DWS_Store_Sales_Daily"
-    }
-
-
-def test_topological_sort_ignores_edges_outside_requested_jobs():
     dag = JobDAG(_edges(("a", "b"), ("b", "c"), ("external", "sink")))
 
     order = dag.topological_sort({"a", "b", "c"})
 
     assert order == ["a", "b", "c"]
 
-
-@pytest.mark.parametrize(
-    "edges",
-    [
-        _edges(("a", "b"), ("b", "a")),
-    ],
-)
-def test_topological_sort_rejects_cycles(edges):
-    dag = JobDAG(edges)
+    dag = JobDAG(_edges(("a", "b"), ("b", "a")))
 
     with pytest.raises(ValueError, match="cycle"):
         dag.topological_sort({"a", "b", "c"})
 
-
-def test_self_references_are_not_dependencies():
     dag = JobDAG(_edges(("a", "a"), ("a", "b")))
 
     assert dag.bfs_downstream({"a"}) == {"b"}
@@ -147,8 +131,6 @@ def test_self_references_are_not_dependencies():
         }
     ]
 
-
-def test_topological_layers_group_parallel_jobs():
     dag = JobDAG(_edges(("a", "c"), ("b", "c"), ("c", "d")))
 
     layers = dag.topological_layers({"a", "b", "c", "d"})
