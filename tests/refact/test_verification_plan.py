@@ -252,7 +252,7 @@ def test_build_verification_plan_self_anchors_sql_only_task_without_downstream(
         "INSERT INTO demo_dm.dws_terminal SELECT id FROM demo_dm.ods_order;",
         encoding="utf-8",
     )
-    monkeypatch.setattr(config, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
     monkeypatch.setitem(
         config.PROJECT_CONFIG,
         "demo",
@@ -263,7 +263,7 @@ def test_build_verification_plan_self_anchors_sql_only_task_without_downstream(
             "catalog": "internal",
         },
     )
-    config._model_metadata_cache.clear()
+    config.clear_model_metadata_cache()
 
     plan = build_verification_plan(
         "demo",
@@ -306,7 +306,7 @@ def test_build_verification_plan_self_anchors_sql_only_task_without_downstream(
         {"table": "dws_terminal", "method": "row_compare"},
     ]
 
-    config._model_metadata_cache.clear()
+    config.clear_model_metadata_cache()
 
 
 def test_build_verification_plan_does_not_self_anchor_when_downstream_anchor_exists(
@@ -332,7 +332,7 @@ def test_build_verification_plan_does_not_self_anchor_when_downstream_anchor_exi
             f"INSERT INTO demo_dm.{table_name} SELECT id FROM demo_dm.ods_order;",
             encoding="utf-8",
         )
-    monkeypatch.setattr(config, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
     monkeypatch.setitem(
         config.PROJECT_CONFIG,
         "demo",
@@ -343,7 +343,7 @@ def test_build_verification_plan_does_not_self_anchor_when_downstream_anchor_exi
             "catalog": "internal",
         },
     )
-    config._model_metadata_cache.clear()
+    config.clear_model_metadata_cache()
 
     plan = build_verification_plan(
         "demo",
@@ -375,7 +375,7 @@ def test_build_verification_plan_does_not_self_anchor_when_downstream_anchor_exi
         {"table": "ads_final", "method": "row_compare"},
     ]
 
-    config._model_metadata_cache.clear()
+    config.clear_model_metadata_cache()
 
 
 def test_build_verification_plan_blocks_ads_ddl_changes(tmp_path, monkeypatch):
@@ -398,7 +398,7 @@ def test_build_verification_plan_blocks_ads_ddl_changes(tmp_path, monkeypatch):
         "INSERT INTO demo_dm.ads_final SELECT id, amount FROM demo_dm.dws_order;",
         encoding="utf-8",
     )
-    monkeypatch.setattr(config, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
     monkeypatch.setitem(
         config.PROJECT_CONFIG,
         "demo",
@@ -409,7 +409,7 @@ def test_build_verification_plan_blocks_ads_ddl_changes(tmp_path, monkeypatch):
             "catalog": "internal",
         },
     )
-    config._model_metadata_cache.clear()
+    config.clear_model_metadata_cache()
     monkeypatch.setattr(
         "refact.verification_plan.load_baseline_ddl",
         lambda project, base_ref, repo_root=None: {
@@ -466,7 +466,7 @@ def test_build_verification_plan_blocks_ads_ddl_changes(tmp_path, monkeypatch):
         in plan["verification"]["schema_anchor_reason"]
     )
 
-    config._model_metadata_cache.clear()
+    config.clear_model_metadata_cache()
 
 
 def test_build_verification_plan_marks_no_data_anchor_for_terminal_ddl_change(
@@ -488,7 +488,7 @@ def test_build_verification_plan_marks_no_data_anchor_for_terminal_ddl_change(
         "INSERT INTO demo_dm.dws_terminal SELECT id FROM demo_dm.ods_order;",
         encoding="utf-8",
     )
-    monkeypatch.setattr(config, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
     monkeypatch.setitem(
         config.PROJECT_CONFIG,
         "demo",
@@ -499,7 +499,7 @@ def test_build_verification_plan_marks_no_data_anchor_for_terminal_ddl_change(
             "catalog": "internal",
         },
     )
-    config._model_metadata_cache.clear()
+    config.clear_model_metadata_cache()
 
     plan = build_verification_plan(
         "demo",
@@ -529,7 +529,7 @@ def test_build_verification_plan_marks_no_data_anchor_for_terminal_ddl_change(
         "no invariant downstream" in plan["verification"]["data_anchor_reason"]
     )
 
-    config._model_metadata_cache.clear()
+    config.clear_model_metadata_cache()
 
 
 def test_build_verification_plan_rejects_cyclic_job_lineage(
