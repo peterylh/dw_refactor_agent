@@ -202,71 +202,10 @@ def write_fixed_layer_model_seed(
 
 def functional_name(
     table_name: str,
-    expected: dict[str, dict[str, str]],
+    _expected: dict[str, dict[str, str]],
     used: set[str],
 ) -> str:
-    base = strip_layer_prefix(table_name)
-    layer = expected.get(table_name, {}).get("layer") or "OTHER"
-    table_type = expected.get(table_name, {}).get("table_type") or ""
-    if layer == "ODS":
-        candidate = f"{base}_source"
-    elif layer == "DIM" or table_type == "dimension":
-        candidate = f"{base}_profile"
-    elif layer == "DWS":
-        if any(
-            token in base
-            for token in (
-                "summary",
-                "daily",
-                "monthly",
-                "snapshot",
-                "effect",
-            )
-        ):
-            candidate = base
-        else:
-            candidate = f"{base}_summary"
-    elif layer == "ADS":
-        if any(
-            token in base
-            for token in (
-                "dashboard",
-                "report",
-                "alert",
-                "topn",
-                "rfm",
-                "performance",
-                "roi",
-                "segment",
-                "geography",
-                "age_group",
-                "summary",
-            )
-        ):
-            candidate = base
-        else:
-            candidate = f"{base}_report"
-    elif layer == "DWD":
-        if any(
-            token in base
-            for token in (
-                "detail",
-                "events",
-                "transactions",
-                "payments",
-                "applications",
-                "alerts",
-                "reports",
-                "assessments",
-                "interactions",
-            )
-        ):
-            candidate = base
-        else:
-            candidate = f"{base}_detail"
-    else:
-        candidate = base
-
+    candidate = strip_layer_prefix(table_name)
     candidate = re.sub(r"__+", "_", candidate).strip("_") or table_name
     original = candidate
     index = 2

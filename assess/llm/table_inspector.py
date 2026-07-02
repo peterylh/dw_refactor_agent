@@ -46,9 +46,6 @@ VALIDATION_ERROR_KEYS = (
     "missing_primary_entities",
     "invalid_candidate_layers",
     "invalid_dimension_table_type",
-    "missing_dimension_entities",
-    "missing_metric_metadata",
-    "missing_grain_metadata",
 )
 VALIDATION_WARNING_KEYS = (
     "missing_columns",
@@ -57,6 +54,9 @@ VALIDATION_WARNING_KEYS = (
     "invalid_base_metrics",
     "invalid_base_metric_tables",
     "ambiguous_base_metrics",
+    "missing_dimension_entities",
+    "missing_metric_metadata",
+    "missing_grain_metadata",
 )
 
 
@@ -459,9 +459,9 @@ def build_retry_prompt(
 - missing_primary_entities 表示 DWD fact 缺少主实体；必须为当前事实行/事件/明细行补充至少一个 type=primary 的 entities 项。
 - invalid_candidate_layers 表示 inferred_layer 不在本轮候选层中；必须从本轮候选层中重选，不能返回 ODS/ADS/OTHER。
 - invalid_dimension_table_type 表示 DIM 层不能返回 fact/other；必须修正 table_type 或重判层级。
-- missing_dimension_entities 表示维度表缺少主实体；必须补充至少一个 type=primary 的 entities 项。
-- missing_metric_metadata 表示 DWS fact 缺少指标分组；必须把度量字段放入 atomic_metrics、derived_metrics 或 calculated_metrics。
-- missing_grain_metadata 表示 DWS fact 缺少表级 grain；必须补充 grain.entities、time_column 或 time_period 中可从 SQL/DDL 判断的部分。
+- missing_dimension_entities 表示维度表缺少主实体；如能判断，补充至少一个 type=primary 的 entities 项。
+- missing_metric_metadata 表示 DWS fact 缺少指标分组；如能判断，把度量字段放入 atomic_metrics、derived_metrics 或 calculated_metrics。
+- missing_grain_metadata 表示 DWS fact 缺少表级 grain；如能判断，补充 grain.entities、time_column 或 time_period 中可从 SQL/DDL 判断的部分。
 - 不要返回 Markdown，不要返回额外解释。
 """
     )
@@ -1295,6 +1295,7 @@ class TableInspector:
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {self.api_key}",
+            # Some OpenAI-compatible gateways reject urllib's default user agent.
             "User-Agent": "Mozilla/5.0",
             "Accept": "application/json",
         }
@@ -1332,10 +1333,7 @@ class TableInspector:
                 errors.append(e)
                 break
         last_error = errors[-1] if errors else RuntimeError("unknown error")
-        try:
-            raise RuntimeError(f"LLM API 调用失败: {last_error}") from last_error
-        finally:
-            errors.clear()
+        raise RuntimeError(f"LLM API 调用失败: {last_error}") from last_error
 
     def inspect(
         self,

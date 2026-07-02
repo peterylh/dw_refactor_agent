@@ -1629,8 +1629,11 @@ def _direct_generation_layer_from_asset_placement(
             parts = Path(path).relative_to(project_dir).parts
         except ValueError:
             continue
-        if len(parts) >= 2 and parts[0] == "ods" and parts[1] == expected_dir:
-            return "ODS"
+        if len(parts) >= 2 and parts[1] == expected_dir:
+            if parts[0] == "ods":
+                return "ODS"
+            if parts[0] == "ads":
+                return "ADS"
     return ""
 
 
@@ -1902,15 +1905,42 @@ def _direct_has_aggregate_summary_name_signal(table_name: str) -> bool:
     return bool(tokens & DIRECT_AGGREGATE_SUMMARY_NAME_TOKENS)
 
 
+def _direct_table_inspector_has_metric_metadata(
+    table_inspector_layer_result: dict[str, Any] | None,
+) -> bool:
+    if not table_inspector_layer_result:
+        return False
+    try:
+        metric_count = int(table_inspector_layer_result.get("metric_count") or 0)
+    except (TypeError, ValueError):
+        metric_count = 0
+    if metric_count > 0:
+        return True
+    result = table_inspector_layer_result.get("_inspection_result")
+    return isinstance(result, TableInspectResult) and bool(
+        metric_names_for_model(result)
+    )
+
+
 def _direct_apply_aggregate_summary_guard(
     table_name: str,
     inspected_layer: str,
     *,
     has_aggregate: bool,
+    table_inspector_layer_result: dict[str, Any] | None = None,
 ) -> str:
     """Do not let aggregate summary facts collapse into DIM/DWD metadata."""
     layer = str(inspected_layer or "").upper()
-    if layer == "DIM" and has_aggregate:
+    if (
+        layer == "DIM"
+        and has_aggregate
+        and (
+            _direct_has_aggregate_summary_name_signal(table_name)
+            or _direct_table_inspector_has_metric_metadata(
+                table_inspector_layer_result
+            )
+        )
+    ):
         return "DWS"
     if (
         layer == "DWD"
@@ -2003,6 +2033,7 @@ def _direct_infer_layer(
                         table_inspector_layer_result
                     )
                 ),
+                table_inspector_layer_result=table_inspector_layer_result,
             )
             if inspected_layer == "ADS" and _direct_has_event_detail_layer_signal(
                 table_name,
@@ -2037,6 +2068,7 @@ def _direct_infer_layer(
                         table_inspector_layer_result
                     )
                 ),
+                table_inspector_layer_result=table_inspector_layer_result,
             )
             if inspected_layer == "ADS" and _direct_has_event_detail_layer_signal(
                 table_name,
@@ -2063,10 +2095,6 @@ def _direct_infer_layer(
         return "DIM"
 
     if has_aggregate:
-        if downstream_tables:
-            return "DWS"
-        if upstream_tables:
-            return "ADS"
         return "DWS"
     if (
         float(process_match.get("score") or 0) >= 2
@@ -4438,7 +4466,7 @@ def main() -> None:
         "--infer-layer-with-llm",
         action="store_true",
         help=(
-            "仅用于 --generate-models: 当没有现有 layer、表名前缀或 ODS "
+            "仅用于 --generate-models: 当没有现有 layer、表名前缀或 ODS/ADS "
             "目录等明确分层信息时，调用 LLM 判断 layer"
         ),
     )

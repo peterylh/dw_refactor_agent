@@ -3053,6 +3053,82 @@ def test_run_direct_model_generation_keeps_source_layer_over_table_inspector(
     assert result["table_inspector_layer_inference_count"] == 0
 
 
+def test_run_direct_model_generation_keeps_ads_placement_over_table_inspector(
+    tmp_path, monkeypatch
+):
+    import assess.llm.model_metadata_writer as writer_module
+
+    project = "direct_model_writer_ads_placement_guard"
+    project_dir = tmp_path / project
+    ads_ddl_dir = project_dir / "ads" / "ddl"
+    ads_ddl_dir.mkdir(parents=True)
+    (tmp_path / "naming_config.yaml").write_text(
+        "types: {}\nbindings: {}\ndictionaries: {}\n",
+        encoding="utf-8",
+    )
+    (project_dir / "business_semantics.yaml").write_text(
+        yaml.safe_dump(
+            {"version": 1, "project": project},
+            allow_unicode=True,
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    (ads_ddl_dir / "customer_output.sql").write_text(
+        """
+        CREATE TABLE customer_output (
+            customer_id BIGINT,
+            stat_date DATE,
+            display_score DECIMAL(12,2)
+        );
+        """,
+        encoding="utf-8",
+    )
+    _configure_project_root(monkeypatch, tmp_path)
+    monkeypatch.setitem(
+        config.PROJECT_CONFIG,
+        project,
+        {
+            "dir": project,
+            "naming_config": "naming_config.yaml",
+        },
+    )
+    prompts = []
+
+    def fake_call_api(_self, prompt):
+        prompts.append(prompt)
+        raise AssertionError("ADS placement should not call table_inspector")
+
+    monkeypatch.setattr(writer_module.TableInspector, "_call_api", fake_call_api)
+
+    result = run_direct_model_generation(
+        project,
+        dry_run=False,
+        ignore_existing_models=True,
+        infer_layer_with_llm=True,
+        api_key="test",
+        model="fake-layer-model",
+        no_cache=True,
+        show_progress=False,
+    )
+
+    model = yaml.safe_load(
+        (project_dir / "ads" / "models" / "customer_output.yaml").read_text(
+            encoding="utf-8"
+        )
+    )
+    update = result["model_updates"][0]
+    assert prompts == []
+    assert model["layer"] == "ADS"
+    assert model["table_type"] == "other"
+    assert model["config"]["materialized"] == "full"
+    assert "atomic_metrics" not in model
+    assert "entities" not in model
+    assert update["layer_assignment_source"] == "direct_rule"
+    assert result["table_inspector_layer_inference_attempt_count"] == 0
+    assert result["table_inspector_layer_inference_count"] == 0
+
+
 def test_run_direct_model_generation_prefers_strong_ads_signal_over_inspector(
     tmp_path, monkeypatch
 ):
@@ -5044,6 +5120,131 @@ def test_run_direct_model_generation_keeps_aggregate_summary_dws_over_dim_inspec
     assert model["grain"] == {"entities": ["AGENT"]}
     assert "semantic_subject" not in model
     assert update["layer_assignment_source"] == "direct_rule"
+
+
+def test_run_direct_model_generation_keeps_grouped_dedup_profile_dim(
+    tmp_path, monkeypatch
+):
+    import assess.llm.model_metadata_writer as writer_module
+
+    project = "direct_model_writer_grouped_profile_dim"
+    project_dir = tmp_path / project
+    (project_dir / "mid" / "ddl").mkdir(parents=True)
+    (project_dir / "mid" / "tasks").mkdir()
+    (tmp_path / "naming_config.yaml").write_text(
+        "types: {}\nbindings: {}\ndictionaries: {}\n",
+        encoding="utf-8",
+    )
+    (project_dir / "business_semantics.yaml").write_text(
+        "version: 1\nproject: direct_model_writer_grouped_profile_dim\n",
+        encoding="utf-8",
+    )
+    (project_dir / "mid" / "ddl" / "customer_profile.sql").write_text(
+        """
+        CREATE TABLE customer_profile (
+            customer_id BIGINT,
+            last_seen_time DATETIME,
+            customer_name STRING,
+            member_level STRING
+        );
+        """,
+        encoding="utf-8",
+    )
+    (project_dir / "mid" / "tasks" / "customer_profile.sql").write_text(
+        """
+        INSERT INTO customer_profile
+        SELECT customer_id,
+               MAX(load_time) AS last_seen_time,
+               MAX(customer_name) AS customer_name,
+               MAX(member_level) AS member_level
+        FROM customer_source
+        GROUP BY customer_id;
+        """,
+        encoding="utf-8",
+    )
+    _configure_project_root(monkeypatch, tmp_path)
+    monkeypatch.setitem(
+        config.PROJECT_CONFIG,
+        project,
+        {
+            "dir": project,
+            "naming_config": "naming_config.yaml",
+        },
+    )
+
+    def fake_call_api(_self, _prompt):
+        content = {
+            "inferred_layer": "DIM",
+            "table_type": "dimension",
+            "confidence": 0.92,
+            "reasoning_steps": [
+                "GROUP BY用于按客户去重取最新属性，不是公共指标汇总"
+            ],
+            "dimension_role": "BASE",
+            "dimension_content_type": "INFO",
+            "columns": {
+                "atomic_metrics": [],
+                "derived_metrics": [],
+                "calculated_metrics": [],
+                "dimensions": [
+                    {"name": "customer_id"},
+                    {"name": "last_seen_time"},
+                    {"name": "customer_name"},
+                    {"name": "member_level"},
+                ],
+                "others": [],
+            },
+            "entities": [
+                {
+                    "code": "CUST",
+                    "type": "primary",
+                    "key_columns": ["customer_id"],
+                }
+            ],
+        }
+        return json.dumps(
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": json.dumps(
+                                content,
+                                ensure_ascii=False,
+                            )
+                        }
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        )
+
+    monkeypatch.setattr(writer_module.TableInspector, "_call_api", fake_call_api)
+
+    result = run_direct_model_generation(
+        project,
+        dry_run=False,
+        ignore_existing_models=True,
+        infer_layer_with_llm=True,
+        api_key="test",
+        model="fake-layer-model",
+        no_cache=True,
+        show_progress=False,
+    )
+
+    model = yaml.safe_load(
+        (project_dir / "mid" / "models" / "customer_profile.yaml").read_text(
+            encoding="utf-8"
+        )
+    )
+    update = result["model_updates"][0]
+    assert model["layer"] == "DIM"
+    assert model["table_type"] == "dimension"
+    assert model["semantic_subject"] == "CUST"
+    assert model["dimension_role"] == "BASE"
+    assert model["dimension_content_type"] == "INFO"
+    assert "atomic_metrics" not in model
+    assert "grain" not in model
+    assert update["layer_assignment_source"] == "table_inspector_layer_inference"
 
 
 def test_run_direct_model_generation_keeps_aggregate_snapshot_dws_over_dwd_inspector(

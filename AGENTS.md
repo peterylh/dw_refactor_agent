@@ -350,7 +350,7 @@ python -m assess.llm.model_metadata_writer --project shop --generate-models --dr
 python -m assess.llm.model_metadata_writer --project shop --generate-models
 ```
 
-`--generate-models` 不调用 LLM，会读取 `business_semantics.yaml`、DDL、task SQL 和 lineage 数据，创建/补齐 `models/*.yaml`。它会保守匹配缺失的 `business_process` / `semantic_subject`，写入基础表元数据、适用的 `data_domain` / `business_area`，并在 `--write-scope all` 下补齐可由 DDL/catalog 推断的初始 `entities` 和 DWS `grain`。无法匹配的表只生成基础 model 元数据，匹配来源写入结果 JSON 的 `assignment_source` / `assignment_reason`。
+`--generate-models` 默认不调用 LLM，会读取 `business_semantics.yaml`、DDL、task SQL 和 lineage 数据，创建/补齐 `models/*.yaml`。它会保守匹配缺失的 `business_process` / `semantic_subject`，写入基础表元数据、适用的 `data_domain` / `business_area`，并在 `--write-scope all` 下补齐可由 DDL/catalog 推断的初始 `entities` 和 DWS `grain`。无法匹配的表只生成基础 model 元数据，匹配来源写入结果 JSON 的 `assignment_source` / `assignment_reason`。需要冷启动时用 table_inspector 辅助分层和补齐指标/entities/grain 时，加 `--infer-layer-with-llm`；ODS/ADS 会优先由目录、前缀或现有边界信号固定，中间层只在 DWD/DWS/DIM 中裁决。确定性 token 主要覆盖常见英文数仓命名，中文或本地化命名项目更依赖 LLM 和业务 catalog。
 
 验证完全从 DDL/task/lineage/catalog 推断、且不使用当前 models YAML 作为先验时，使用 `--generate-models --ignore-existing-models --dry-run`。
 

@@ -837,17 +837,51 @@ def _assert_validate_metadata_quality_requires_dws_and_dim_semantics():
         },
         declared_layer="OTHER",
     )
+    sparse_dim_result = parse_response(
+        "economic_indicators_profile",
+        {
+            "choices": [
+                {
+                    "message": {
+                        "content": json.dumps(
+                            {
+                                "inferred_layer": "DIM",
+                                "table_type": "dimension",
+                                "confidence": 0.9,
+                                "entities": [],
+                            }
+                        )
+                    }
+                }
+            ]
+        },
+        declared_layer="OTHER",
+    )
 
-    assert validate_metadata_quality(dws_result) == {
+    dws_validation = validate_metadata_quality(dws_result)
+    dim_validation = validate_metadata_quality(dim_result)
+    sparse_dim_validation = validate_metadata_quality(sparse_dim_result)
+    assert dws_validation == {
         "missing_metric_metadata": ["DWS fact必须至少返回一个指标字段"],
         "missing_grain_metadata": ["DWS fact必须尽量返回表级grain"],
     }
-    assert validate_metadata_quality(dim_result) == {
+    assert dim_validation == {
         "invalid_dimension_table_type": ["DIM层模型的table_type必须为dimension"],
         "missing_dimension_entities": [
             "DIM/dimension模型必须尽量返回一个type=primary的entities项"
         ],
     }
+    assert sparse_dim_validation == {
+        "missing_dimension_entities": [
+            "DIM/dimension模型必须尽量返回一个type=primary的entities项"
+        ]
+    }
+    dws_result.validation = dws_validation
+    dim_result.validation = dim_validation
+    sparse_dim_result.validation = sparse_dim_validation
+    assert dws_result.status == "warning"
+    assert dim_result.status == "blocked"
+    assert sparse_dim_result.status == "warning"
 
 
 def _assert_base_metric_relationship_validation_is_warning_not_blocking():

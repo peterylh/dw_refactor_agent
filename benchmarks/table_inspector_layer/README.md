@@ -38,6 +38,9 @@ layer result and YAML payload can both be reviewed.
   seed model metadata, and middle-layer tables are the only LLM candidates.
 - Table prefixes such as `ods_`, `dwd_`, `dws_`, `ads_`, and `dim_` are removed
   in the temporary project.
+- The benchmark does not append synthetic layer-equivalent suffixes such as
+  `_profile`, `_summary`, `_detail`, `_report`, or `_source`; any remaining
+  words are inherited from the original functional table name.
 - SQL line comments, SQL `COMMENT` clauses, and direct layer words are stripped
   from the temporary DDL/tasks.
 - Table inspector layer accuracy is measured over DWD/DWS/DIM only. Final
@@ -47,32 +50,28 @@ layer result and YAML payload can both be reviewed.
 - Generated YAML payloads are written to the temporary project for content
   review.
 
-## Previous Local Validation
+## Interpreting Results
 
-The previous validation was run on 2026-07-01 with `mimo-v2.5-pro`,
-`parallel=4`, and `request_timeout=240`. It predates the ODS/ADS fixed-layer
-split, so its table inspector accuracy was measured with the older all-table
-candidate setup.
+The result is a project-specific regression signal for the two bundled demo
+warehouses. It should not be read as a general cold-start accuracy guarantee:
+the demo projects still carry their own functional naming vocabulary, and the
+deterministic rules intentionally use common English data-warehouse tokens when
+the project has no stronger metadata.
 
-| Project | Final Layer Accuracy | Table Inspector Accuracy | ADS | ODS | DWD | DWS | Metrics |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| `shop` | 26/29 (89.7%) | 20/29 changed | 7/8 | 8/8 | 3/3 | 5/6 | 25 |
-| `finance_analytics` | 55/59 (93.2%) | 51/59 (86.4%) | 4/4 | 17/17 | 15/18 | 3/3 | 99 |
+Use the JSON report for three separate checks:
 
-Key checks from this run:
-
-- No read timeouts with `request_timeout=240`.
-- ODS/source tables stayed final `ODS` in both projects.
-- Final ADS tables did not receive metric groups.
-- ADS recognition improved substantially after adding application-output
-  signals such as `topn`, `roi`, `rfm`, `alert`, `performance`, `by_*`, and
-  non-periodic `summary`.
+- `table_inspector_accuracy`: DWD/DWS/DIM layer decisions made by the LLM.
+- `final_accuracy`: full generated layer after deterministic ODS/ADS signals,
+  table inspector output, and fallback rules are combined.
+- The generated YAML files under `tmp_dir`: semantic quality of entities,
+  grain, metrics, and business assignments.
 
 Known residual risks:
 
-- Strong ADS signals can still over-correct event-grain DWD tables, especially
-  names containing `alert` or ROI-like derived fields without `GROUP BY`.
-- Some DWS periodic aggregate tables can still be pulled toward ADS if the LLM
-  treats zero downstream usage as application output.
+- Strong ADS signals can still over-correct event-grain DWD tables if a project
+  uses application-output words in detail table names.
+- English naming tokens improve deterministic cold-start behavior for these
+  demos, but Chinese or highly local naming vocabularies rely more heavily on
+  the LLM and business catalog.
 - Empty or weak `business_semantics.yaml` catalogs reduce business process and
   semantic subject assignment quality.
