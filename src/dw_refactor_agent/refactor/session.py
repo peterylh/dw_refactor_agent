@@ -6,15 +6,11 @@ import json
 from datetime import datetime
 from pathlib import Path
 
-from dw_refactor_agent.config import PROJECT_CONFIG, TEXT_ENCODING
+from dw_refactor_agent.config import TEXT_ENCODING, refactor_runs_dir
 
 
 def _refactor_runs_root(root: Path, project: str) -> Path:
-    root = Path(root)
-    cfg = PROJECT_CONFIG.get(project)
-    if not cfg:
-        raise KeyError(f"未知项目: {project}")
-    return root / cfg["dir"] / "artifacts" / "refactor_runs"
+    return refactor_runs_dir(project, root=Path(root))
 
 
 def _artifact_paths() -> dict:

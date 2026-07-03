@@ -6,32 +6,17 @@ __pycache__/
 .coverage
 coverage.xml
 htmlcov/
+build/
+dist/
+*.egg-info/
 .cache/
 .conda-pkgs/
 .conda-py37/
 Makefile.local
 dbenv.md
 logs/
-refact/refact_metadata.json
-refact/verify_result.json
-assess/cache/
-assess/llm/cache/
-assess/assess_result_*.json
-assess/metric_result_*.json
-
-# 生成的血缘与 DAG 产物
-lineage/*.html
-lineage/lineage_data*.json
-lineage/job_dag_*.json
 
 # 项目级生成产物
-*/lineage/lineage_data*.json
-*/lineage/job_dag*.json
-*/lineage/task_lineage_cache*.json
-*/lineage/*.html
-*/assess/assess_result.json
-*/assess/model_metadata_result.json
-*/assess/cache/
 warehouses/*/artifacts/lineage/lineage_data*.json
 warehouses/*/artifacts/lineage/job_dag*.json
 warehouses/*/artifacts/lineage/task_lineage_cache*.json

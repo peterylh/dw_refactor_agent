@@ -183,6 +183,10 @@ python warehouses/finance_analytics/generate_ods_data.py
 
 `src/dw_refactor_agent/refactor/` 提供完整的数仓重构验证工具链，当前脚本基于 `PROJECT_CONFIG` 工作，可用于 `shop`、`finance_analytics`。
 
+本次布局迁移后，旧路径下创建的 refactor run 基线不再适用于
+`warehouses/{project}/...` 新资产路径。合并该结构变更后，在途 run 应重新执行
+`python -m dw_refactor_agent.refactor.run start --project <project>` 固化新基线。
+
 ### 工作流
 
 ```bash

@@ -27,6 +27,14 @@ def project_dir(project: str) -> Optional[Path]:
     return core.PROJECT_ROOT / cfg["dir"]
 
 
+def project_dir_from_root(project: str, root: Path) -> Optional[Path]:
+    """Return the data mart project directory under an explicit repo root."""
+    cfg = core.PROJECT_CONFIG.get(project)
+    if not cfg:
+        return None
+    return Path(root) / cfg["dir"]
+
+
 def project_artifact_dir(project: str, *parts: str) -> Optional[Path]:
     """Return a project-level generated-artifact directory."""
     base_dir = project_dir(project)
@@ -101,12 +109,16 @@ def assess_cache_path(project: str, filename: str) -> Path:
     return cache_dir / filename
 
 
-def refactor_runs_dir(project: str) -> Path:
+def refactor_runs_dir(project: str, root: Path | None = None) -> Path:
     """Return the default refactor run directory for a warehouse project."""
-    run_dir = project_artifact_dir(project, "refactor_runs")
-    if run_dir is None:
+    base_dir = (
+        project_dir_from_root(project, root)
+        if root is not None
+        else project_dir(project)
+    )
+    if base_dir is None:
         raise KeyError(f"未知项目: {project}")
-    return run_dir
+    return base_dir / "artifacts" / "refactor_runs"
 
 
 def project_ods_asset_dir(project: str, asset_kind: str) -> Optional[Path]:

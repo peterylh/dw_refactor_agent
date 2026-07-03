@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-import dw_refactor_agent.refactor.session as session_module
+from dw_refactor_agent.config import core as config_core
 from dw_refactor_agent.refactor.session import (
     artifact_path,
     create_run_manifest,
@@ -79,7 +79,7 @@ def test_create_run_manifest_uses_configured_project_dir(
     tmp_path,
 ):
     monkeypatch.setitem(
-        session_module.PROJECT_CONFIG,
+        config_core.PROJECT_CONFIG,
         "demo",
         {"dir": "warehouses/custom_demo"},
     )

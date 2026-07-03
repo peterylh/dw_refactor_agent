@@ -134,7 +134,7 @@ Expected: pass.
 Create `tests/refact/test_issue_diff.py`:
 
 ```python
-from refact.issue_diff import diff_assess_results
+from dw_refactor_agent.refactor.issue_diff import diff_assess_results
 
 
 def _issue(fp, title):
@@ -174,7 +174,7 @@ def test_diff_assess_results_classifies_fixed_remaining_and_new():
 
 Run: `make test PYTEST_ARGS="tests/refact/test_issue_diff.py -q"`
 
-Expected: fail because `refact.issue_diff` does not exist.
+Expected: fail because `dw_refactor_agent.refactor.issue_diff` does not exist.
 
 - [ ] **Step 3: Implement diff**
 

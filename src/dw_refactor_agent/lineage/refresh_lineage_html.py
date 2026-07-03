@@ -37,8 +37,6 @@ from dw_refactor_agent.lineage.identifiers import (
 
 LINEAGE_DIR = Path(__file__).parent
 
-PROJECT_DIR = Path(__file__).resolve().parents[3]
-
 JOB_LOGIC_MAP = {
     "shop": {
         "dwd_customer": "清洗客户数据 → 划分年龄段 → 补全缺失值",

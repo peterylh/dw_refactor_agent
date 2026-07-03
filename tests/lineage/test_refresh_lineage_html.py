@@ -300,7 +300,6 @@ def test_generate_jobs_default_project_tasks_ignore_root_and_include_mid_ads(
         encoding="utf-8",
     )
     monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
-    monkeypatch.setattr(refresh_html, "PROJECT_DIR", tmp_path)
     monkeypatch.setitem(
         config.PROJECT_CONFIG,
         "demo",

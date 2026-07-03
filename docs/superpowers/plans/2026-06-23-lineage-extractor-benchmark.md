@@ -2,11 +2,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build a standalone, deterministic benchmark suite for `lineage/lineage_extractor.py` with small, medium, and large synthetic datasets.
+**Goal:** Build a standalone, deterministic benchmark suite for `src/dw_refactor_agent/lineage/lineage_extractor.py` with small, medium, and large synthetic datasets.
 
 **Architecture:** Add a focused `benchmarks/lineage_extractor` package. `dataset.py` generates deterministic DDL and task SQL into a temporary synthetic project, while `run.py` times schema build, cold extraction, warm-cache extraction, and output assembly using existing lineage extractor APIs. Functional tests stay outside `tests/lineage` and validate only structural generation behavior.
 
-**Tech Stack:** Python 3.7 standard library, existing `sqlglot`, existing `lineage.lineage_extractor`, Makefile target using the configured `$(PYTHON)`.
+**Tech Stack:** Python 3.7 standard library, existing `sqlglot`, existing `dw_refactor_agent.lineage.lineage_extractor`, Makefile target using the configured `$(PYTHON)`.
 
 ---
 
@@ -27,7 +27,7 @@ from benchmarks.lineage_extractor.dataset import (
     PROFILES,
     generate_dataset,
 )
-from lineage.lineage_extractor import (
+from dw_refactor_agent.lineage.lineage_extractor import (
     build_schema_from_texts,
     extract_lineage_from_task_files,
 )
