@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from config import BUSINESS_SEMANTICS_FILE_NAMES
+
 DEFAULT_DIMENSIONS = [
     "reuse",
     "depth",
@@ -23,7 +25,6 @@ FULL_CHANGE_TYPES_BY_DIMENSION = {
     "naming": {"business_semantics", "naming_config"},
     "metadata_health": {"business_semantics", "naming_config"},
 }
-
 
 def _sorted(values) -> list[str]:
     return sorted(str(value) for value in values if str(value or "").strip())
@@ -52,13 +53,14 @@ def changed_types_for_analysis(
     if changed_assets.get("model_tables"):
         changed_types.add("model")
 
-    project_business_semantics = f"{project}/business_semantics.yaml"
     for file_name in changed_assets.get("config_files") or []:
         normalized = str(file_name or "").replace("\\", "/")
         if normalized == "naming_config.yaml":
             changed_types.add("naming_config")
-        elif normalized == project_business_semantics or normalized.endswith(
-            "/business_semantics.yaml"
+        elif any(
+            normalized == f"{project}/{catalog_file}"
+            or normalized.endswith(f"/{catalog_file}")
+            for catalog_file in BUSINESS_SEMANTICS_FILE_NAMES.values()
         ):
             changed_types.add("business_semantics")
         elif normalized:

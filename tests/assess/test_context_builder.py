@@ -269,13 +269,24 @@ def test_build_contexts_includes_business_semantics_catalog_options(
         "types: {}\nbindings: {}\ndictionaries: {}\n",
         encoding="utf-8",
     )
-    (project_dir / "business_semantics.yaml").write_text(
+    (project_dir / "business_taxonomy.yaml").write_text(
         yaml.safe_dump(
             {
                 "version": 1,
                 "project": project,
                 "data_domains": [],
                 "business_areas": [],
+            },
+            allow_unicode=True,
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    (project_dir / "business_processes.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "version": 1,
+                "project": project,
                 "business_processes": [
                     {
                         "code": "ORDER_TRANSACTION",
@@ -283,6 +294,17 @@ def test_build_contexts_includes_business_semantics_catalog_options(
                         "tables": ["dwd_order_detail"],
                     }
                 ],
+            },
+            allow_unicode=True,
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    (project_dir / "semantic_subjects.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "version": 1,
+                "project": project,
                 "semantic_subjects": [
                     {
                         "code": "CUSTOMER",
@@ -343,7 +365,7 @@ def test_build_contexts_includes_project_context_from_business_semantics(
         "types: {}\nbindings: {}\ndictionaries: {}\n",
         encoding="utf-8",
     )
-    (project_dir / "business_semantics.yaml").write_text(
+    (project_dir / "business_taxonomy.yaml").write_text(
         yaml.safe_dump(
             {
                 "version": 1,

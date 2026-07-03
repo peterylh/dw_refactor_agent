@@ -17,7 +17,7 @@ def test_classify_changed_assets_groups_project_files():
             "shop/models/dwd_order.yaml",
             "shop/mid/models/dwd_inventory.yaml",
             "shop/ads/models/ads_order.yaml",
-            "shop/business_semantics.yaml",
+            "shop/business_processes.yaml",
             "naming_config.yaml",
             "README.md",
         ],
@@ -28,7 +28,10 @@ def test_classify_changed_assets_groups_project_files():
         "ddl_tables": ["ads_order", "dwd_inventory"],
         "task_jobs": ["ads_order", "dwd_order", "dws_order"],
         "model_tables": ["ads_order", "dwd_inventory"],
-        "config_files": ["naming_config.yaml", "shop/business_semantics.yaml"],
+        "config_files": [
+            "naming_config.yaml",
+            "shop/business_processes.yaml",
+        ],
     }
 
 

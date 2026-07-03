@@ -286,17 +286,18 @@ python assess/assess_middle_layer.py --llm --no-cache
 
 ### 业务语义目录与 models 初始化
 
-业务语义目录默认放在项目目录下：
+业务语义目录默认拆分放在项目目录下：
 
-- `shop/business_semantics.yaml`
-- `finance_analytics/business_semantics.yaml`
+- `{project}/business_taxonomy.yaml`
+- `{project}/business_processes.yaml`
+- `{project}/semantic_subjects.yaml`
 
 目录包含：
 
-- `data_domains`：数据域，通常数量较少，建议人工稳定维护
-- `business_areas`：业务板块
-- `business_processes`：事实表/汇总事实表对应的可度量业务过程
-- `semantic_subjects`：维度/实体属性表的语义主题，通常对应维表主实体
+- `business_taxonomy.yaml` 中的 `data_domains`：数据域，通常数量较少，建议人工稳定维护
+- `business_taxonomy.yaml` 中的 `business_areas`：业务板块，建议人工稳定维护
+- `business_processes.yaml` 中的 `business_processes`：事实表/汇总事实表对应的可度量业务过程
+- `semantic_subjects.yaml` 中的 `semantic_subjects`：维度/实体属性表的语义主题，通常对应维表主实体
 
 无 LLM 初始化只生成目录骨架和可用字典，不再根据表名硬猜业务过程：
 
@@ -321,8 +322,8 @@ python -m assess.llm.model_metadata_writer --project shop --catalog-from-llm --o
 
 LLM 目录发现会先做表级巡检，再将 fact 表指标字段中的
 `business_process` 聚类为 `business_processes`，将 dimension 表主实体聚类为
-`semantic_subjects`。未提供数据域/业务板块字典时，LLM 可以生成候选 code，
-后续由用户在 catalog 中人工修订。表级归属会写入模型 YAML，
+`semantic_subjects`。数据域/业务板块只从人工 taxonomy 读取；未命中时不写入
+人工主数据。表级归属会写入模型 YAML，
 catalog 不长期维护 `tables`。
 
 从已确认 catalog 初始化或刷新 models：

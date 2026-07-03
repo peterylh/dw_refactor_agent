@@ -5,6 +5,7 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
+from config import BUSINESS_SEMANTICS_FILE_NAMES
 from lineage.asset_graph import build_asset_table_graph
 
 
@@ -43,7 +44,10 @@ def classify_changed_assets(files: list[str], project_dir: str) -> dict:
         if path == "naming_config.yaml":
             config_files.add(path)
             continue
-        if path == f"{project_prefix}business_semantics.yaml":
+        if any(
+            path == f"{project_prefix}{file_name}"
+            for file_name in BUSINESS_SEMANTICS_FILE_NAMES.values()
+        ):
             config_files.add(path)
             continue
         if not path.startswith(project_prefix):
@@ -143,7 +147,10 @@ def build_change_analysis(
     config_files = set(changed_assets["config_files"])
     if "naming_config.yaml" in config_files:
         global_dimensions.append("naming")
-    if f"{project}/business_semantics.yaml" in config_files:
+    if any(
+        f"{project}/{file_name}" in config_files
+        for file_name in BUSINESS_SEMANTICS_FILE_NAMES.values()
+    ):
         global_dimensions.extend(["metadata_health", "naming"])
     global_dimensions = sorted(set(global_dimensions))
 

@@ -45,14 +45,22 @@ from .naming import (
     naming_config_path,
 )
 from .semantics import (
-    BUSINESS_SEMANTICS_FILE_NAME,
+    BUSINESS_PROCESSES_FILE_NAME,
+    BUSINESS_SEMANTICS_FILE_NAMES,
+    BUSINESS_TAXONOMY_FILE_NAME,
+    SEMANTIC_SUBJECTS_FILE_NAME,
     BusinessAreaDef,
     BusinessDomainConfig,
     DomainDef,
-    business_semantics_path,
+    business_processes_path,
+    business_semantics_dir,
+    business_semantics_paths,
+    business_taxonomy_path,
     clear_business_semantics_cache,
     get_business_domain_config,
     load_business_semantics_catalog,
+    load_business_semantics_catalog_from_dir,
+    semantic_subjects_path,
 )
 
 _CORE_EXPORTS = {
@@ -71,7 +79,10 @@ _CORE_EXPORTS = {
 }
 
 __all__ = [
-    "BUSINESS_SEMANTICS_FILE_NAME",
+    "BUSINESS_PROCESSES_FILE_NAME",
+    "BUSINESS_SEMANTICS_FILE_NAMES",
+    "BUSINESS_TAXONOMY_FILE_NAME",
+    "SEMANTIC_SUBJECTS_FILE_NAME",
     "BusinessAreaDef",
     "BusinessDomainConfig",
     "DB_ENV_CONFIG",
@@ -92,7 +103,10 @@ __all__ = [
     "assess_cache_path",
     "assess_result_path",
     "asset_role_for_layer",
-    "business_semantics_path",
+    "business_processes_path",
+    "business_semantics_dir",
+    "business_semantics_paths",
+    "business_taxonomy_path",
     "clear_business_semantics_cache",
     "clear_model_metadata_cache",
     "clear_naming_config_cache",
@@ -112,6 +126,7 @@ __all__ = [
     "lineage_job_html_path",
     "lineage_task_cache_path",
     "load_business_semantics_catalog",
+    "load_business_semantics_catalog_from_dir",
     "load_model_metadata",
     "load_naming_config",
     "model_metadata_result_path",
@@ -125,6 +140,7 @@ __all__ = [
     "project_ods_asset_dirs",
     "project_ods_source_catalog_dialects",
     "project_task_dirs",
+    "semantic_subjects_path",
     "task_path_for_job",
     "task_path_for_source_file",
     "task_source_file",

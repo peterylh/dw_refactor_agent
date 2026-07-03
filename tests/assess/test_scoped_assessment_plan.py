@@ -189,7 +189,7 @@ def test_build_scoped_assessment_plan_marks_global_config_dimensions_full():
             "model_tables": [],
             "config_files": [
                 "naming_config.yaml",
-                "shop/business_semantics.yaml",
+                "shop/semantic_subjects.yaml",
             ],
         },
         "affected_scope": {

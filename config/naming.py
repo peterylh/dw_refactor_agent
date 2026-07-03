@@ -11,10 +11,10 @@ import yaml
 
 from . import core
 from .semantics import (
-    BUSINESS_SEMANTICS_FILE_NAME,
     business_domain_config_from_dictionaries,
     business_semantics_dictionaries,
     load_business_semantics_catalog,
+    load_business_semantics_catalog_from_dir,
 )
 
 
@@ -1680,66 +1680,24 @@ def _dictionary_allow_values(
     return values
 
 
-def _dictionary_identity(entry: dict, fields: tuple[str, ...]) -> str:
-    for field_name in fields:
-        value = str(entry.get(field_name) or "").strip()
-        if value:
-            return value
-    return ""
-
-
-def _merge_dictionary_entries(
-    raw_dictionary,
-    incoming_entries: list[dict],
-    *,
-    identity_fields: tuple[str, ...],
-):
-    if not incoming_entries:
-        return raw_dictionary
-
-    merged = dict(raw_dictionary) if isinstance(raw_dictionary, dict) else {}
-    values = [
-        dict(entry)
-        for entry in _dictionary_entries(raw_dictionary)
-        if isinstance(entry, dict)
-    ]
-    index = {
-        _dictionary_identity(entry, identity_fields): position
-        for position, entry in enumerate(values)
-        if _dictionary_identity(entry, identity_fields)
-    }
-    for entry in incoming_entries:
-        item = dict(entry)
-        identity = _dictionary_identity(item, identity_fields)
-        if identity and identity in index:
-            values[index[identity]].update(item)
-        else:
-            if identity:
-                index[identity] = len(values)
-            values.append(item)
-
-    merged["values"] = values
-    return merged
-
-
 def _merge_naming_dictionaries(
     raw_dictionaries: dict,
     extra_dictionaries: dict | None = None,
+    *,
+    allow_business_dictionaries: bool = False,
 ) -> dict:
     merged = dict(raw_dictionaries or {})
+    merged.pop("data_domains", None)
+    merged.pop("business_areas", None)
     extra = extra_dictionaries or {}
-    if extra.get("data_domains"):
-        merged["data_domains"] = _merge_dictionary_entries(
-            merged.get("data_domains"),
-            _dictionary_entries(extra.get("data_domains")),
-            identity_fields=("id", "code", "name"),
-        )
-    if extra.get("business_areas"):
-        merged["business_areas"] = _merge_dictionary_entries(
-            merged.get("business_areas"),
-            _dictionary_entries(extra.get("business_areas")),
-            identity_fields=("code", "id", "name"),
-        )
+    if allow_business_dictionaries and "data_domains" in extra:
+        merged["data_domains"] = {
+            "values": _dictionary_entries(extra.get("data_domains"))
+        }
+    if allow_business_dictionaries and "business_areas" in extra:
+        merged["business_areas"] = {
+            "values": _dictionary_entries(extra.get("business_areas"))
+        }
     for name, dictionary in extra.items():
         if name in {"data_domains", "business_areas"}:
             continue
@@ -1748,19 +1706,20 @@ def _merge_naming_dictionaries(
 
 
 def _business_semantics_dictionaries_for_naming_path(path: Path) -> dict:
-    catalog_path = path.parent / BUSINESS_SEMANTICS_FILE_NAME
-    if not catalog_path.exists():
-        return {}
-    raw = (
-        yaml.safe_load(catalog_path.read_text(encoding=core.TEXT_ENCODING))
-        or {}
+    dictionaries = business_semantics_dictionaries(
+        load_business_semantics_catalog_from_dir(path.parent)
     )
-    return business_semantics_dictionaries(
-        raw if isinstance(raw, dict) else {}
-    )
+    dictionaries.setdefault("data_domains", {"values": []})
+    dictionaries.setdefault("business_areas", {"values": []})
+    return dictionaries
 
 
-def load_naming_config(path=None, extra_dictionaries: dict | None = None):
+def load_naming_config(
+    path=None,
+    extra_dictionaries: dict | None = None,
+    *,
+    _allow_business_dictionaries: bool = False,
+):
     path = Path(path) if path else naming_config_path()
     with open(path, encoding=core.TEXT_ENCODING) as f:
         raw = yaml.safe_load(f) or {}
@@ -1768,9 +1727,11 @@ def load_naming_config(path=None, extra_dictionaries: dict | None = None):
         extra_dictionaries = _business_semantics_dictionaries_for_naming_path(
             path
         )
+        _allow_business_dictionaries = True
     raw_dictionaries = _merge_naming_dictionaries(
         raw.get("dictionaries", {}) or {},
         extra_dictionaries,
+        allow_business_dictionaries=_allow_business_dictionaries,
     )
     types = {}
     for name, cfg in raw.get("types", {}).items():
@@ -1952,8 +1913,11 @@ def get_naming_config(project: str = None) -> NamingConfig:
             extra_dictionaries = business_semantics_dictionaries(
                 load_business_semantics_catalog(project)
             )
+            extra_dictionaries.setdefault("data_domains", {"values": []})
+            extra_dictionaries.setdefault("business_areas", {"values": []})
         _naming_config_cache[key] = load_naming_config(
             core.PROJECT_ROOT / cfg_file,
             extra_dictionaries=extra_dictionaries,
+            _allow_business_dictionaries=True,
         )
     return _naming_config_cache[key]
