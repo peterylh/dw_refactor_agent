@@ -31,8 +31,9 @@ layer result and YAML payload can both be reviewed.
 
 ## What It Checks
 
-- Cold-start-like mode: only ODS/ADS seed metadata is retained so those two
-  boundary layers are deterministic; DWD/DWS/DIM tables have no layer seed.
+- Cold-start mode: existing model YAML is not used as seed metadata. ODS and
+  ADS boundary layers stay deterministic from asset placement, while
+  DWD/DWS/DIM tables are the only LLM layer candidates.
 - Temporary assets are split into ODS, ADS, and middle-layer directories. ODS
   uses the normal `ods/ddl/internal/benchmark` placement, ADS gets minimal
   seed model metadata, and middle-layer tables are the only LLM candidates.

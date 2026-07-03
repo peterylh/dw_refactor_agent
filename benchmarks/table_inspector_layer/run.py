@@ -363,8 +363,7 @@ def summarize_project(
     result = run_direct_model_generation(
         target_project,
         dry_run=False,
-        ignore_existing_models=False,
-        infer_layer_with_llm=True,
+        llm=True,
         api_key=api_key,
         model=model,
         base_url=base_url,

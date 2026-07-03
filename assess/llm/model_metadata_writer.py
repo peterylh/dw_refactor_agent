@@ -3912,16 +3912,14 @@ def update_model_yaml_from_direct_generation(
     if write_scope not in DIRECT_MODEL_WRITE_SCOPES:
         raise ValueError("generate mode 仅支持 write_scope=all/table")
 
-    ignore_existing_model_files = base_existing is not None
+    use_base_existing_override = base_existing is not None
     path = model_path_for_table(
         project,
         table_name,
         layer=mapping.get("layer"),
-        prefer_existing=not ignore_existing_model_files,
+        prefer_existing=not use_base_existing_override,
     )
-    existing = (
-        {} if ignore_existing_model_files else _existing_model_data(path)
-    )
+    existing = {} if use_base_existing_override else _existing_model_data(path)
     previous = dict(existing)
     payload_existing = (
         existing if base_existing is None else dict(base_existing)
@@ -3984,7 +3982,7 @@ def update_model_yaml_from_direct_generation(
             yaml.safe_dump(updated, allow_unicode=True, sort_keys=False),
             encoding=TEXT_ENCODING,
         )
-        if ignore_existing_model_files:
+        if use_base_existing_override:
             for stale_path in existing_model_paths_for_table(
                 project, table_name
             ):
@@ -4099,8 +4097,7 @@ def run_direct_model_generation(
     *,
     dry_run: bool = False,
     write_scope: str = "all",
-    ignore_existing_models: bool = False,
-    infer_layer_with_llm: bool = False,
+    llm: bool = False,
     replace_existing_models: bool = False,
     update_catalog: bool = False,
     api_key: str = "",
@@ -4116,8 +4113,8 @@ def run_direct_model_generation(
     write_scope = _validate_write_scope(write_scope)
     if write_scope not in DIRECT_MODEL_WRITE_SCOPES:
         raise ValueError("generate mode 仅支持 write_scope=all/table")
-    if infer_layer_with_llm and not api_key:
-        raise ValueError("infer_layer_with_llm=True 时必须提供 api_key")
+    if llm and not api_key:
+        raise ValueError("generate --llm 时必须提供 api_key")
 
     catalog = load_business_semantics_catalog(project)
     if not catalog:
@@ -4126,9 +4123,7 @@ def run_direct_model_generation(
         )
 
     lineage_data, warnings = _load_lineage_data_for_direct_generation(project)
-    if ignore_existing_models and not _direct_catalog_has_business_entries(
-        catalog
-    ):
+    if not _direct_catalog_has_business_entries(catalog):
         warnings.append(
             {
                 "type": "business_semantics_catalog_empty",
@@ -4141,14 +4136,12 @@ def run_direct_model_generation(
             }
         )
     lineage_view = _lineage_view_for_direct_generation(project, lineage_data)
-    model_metadata = (
-        {} if ignore_existing_models else load_model_metadata(project)
-    )
+    model_metadata: dict[str, dict[str, Any]] = {}
     assets = _direct_table_assets(
         project,
         lineage_data,
         model_metadata=model_metadata,
-        include_model_files=not ignore_existing_models,
+        include_model_files=False,
     )
     updates = []
     table_assets: dict[str, dict[str, Any]] = {}
@@ -4176,10 +4169,8 @@ def run_direct_model_generation(
     table_inspector_layer_results: dict[str, dict[str, Any]] = {}
     table_inspector_candidate_details: list[dict[str, str]] = []
     table_inspector_skip_reasons: dict[str, int] = {}
-    if infer_layer_with_llm:
-        cold_start_full_metadata = (
-            ignore_existing_models and write_scope == "all"
-        )
+    if llm:
+        cold_start_full_metadata = write_scope == "all"
         llm_candidates = {}
         for table_name, asset in sorted(table_assets.items()):
             existing = existing_by_table.get(table_name, {})
@@ -4188,7 +4179,7 @@ def run_direct_model_generation(
                 table_name=table_name,
                 asset=asset,
                 existing=existing,
-                use_existing_model_metadata=not ignore_existing_models,
+                use_existing_model_metadata=False,
                 cold_start_full_metadata=cold_start_full_metadata,
                 lineage_view=lineage_view,
             )
@@ -4203,7 +4194,7 @@ def run_direct_model_generation(
                 table_name=table_name,
                 asset=asset,
                 existing=existing,
-                use_existing_model_metadata=not ignore_existing_models,
+                use_existing_model_metadata=False,
                 lineage_view=lineage_view,
             )
             table_inspector_skip_reasons[skip_reason] = (
@@ -4218,7 +4209,7 @@ def run_direct_model_generation(
             table_assets=llm_candidates,
             all_table_assets=table_assets,
             existing_by_table=existing_by_table,
-            use_existing_model_metadata=not ignore_existing_models,
+            use_existing_model_metadata=False,
             lineage_view=lineage_view,
             api_key=api_key,
             model=model,
@@ -4240,11 +4231,11 @@ def run_direct_model_generation(
             asset,
             existing=existing,
             lineage_view=lineage_view,
-            use_existing_model_metadata=not ignore_existing_models,
+            use_existing_model_metadata=False,
             table_inspector_layer_result=table_inspector_layer_results.get(
                 table_name
             ),
-            prefer_table_inspector_layer=ignore_existing_models,
+            prefer_table_inspector_layer=True,
         )
 
     _apply_direct_lineage_business_process_propagation(
@@ -4270,7 +4261,7 @@ def run_direct_model_generation(
                 asset=asset,
                 dry_run=dry_run,
                 write_scope=write_scope,
-                base_existing={} if ignore_existing_models else None,
+                base_existing={},
             )
         )
     catalog_update = None
@@ -4305,8 +4296,7 @@ def run_direct_model_generation(
         "project": project,
         "source": "direct_generation",
         "write_scope": write_scope,
-        "ignore_existing_models": ignore_existing_models,
-        "infer_layer_with_llm": infer_layer_with_llm,
+        "llm": llm,
         "replace_existing_models": replace_existing_models,
         "catalog_update": catalog_update,
         "planned_deleted_model_files": replacement_delete_result[
@@ -4315,7 +4305,7 @@ def run_direct_model_generation(
         "deleted_model_files": replacement_delete_result[
             "deleted_model_files"
         ],
-        "request_timeout": request_timeout if infer_layer_with_llm else 0,
+        "request_timeout": request_timeout if llm else 0,
         "catalog_path": str(
             PROJECT_ROOT
             / PROJECT_CONFIG[project]["dir"]
@@ -4452,7 +4442,7 @@ def run_catalog_discovery(
     no_cache: bool = False,
     dry_run: bool = False,
     overwrite: bool = False,
-    update_models: bool = True,
+    update_models: bool = False,
     show_progress: bool = False,
 ) -> dict[str, Any]:
     """Use table-level LLM inspection results to initialize/update catalog."""
@@ -4951,8 +4941,7 @@ def main() -> None:
             args.project,
             dry_run=args.dry_run,
             write_scope="all",
-            ignore_existing_models=True,
-            infer_layer_with_llm=args.llm,
+            llm=args.llm,
             replace_existing_models=True,
             update_catalog=True,
             api_key=api_key,

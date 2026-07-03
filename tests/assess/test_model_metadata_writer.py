@@ -2162,10 +2162,9 @@ def test_model_metadata_writer_cli_defaults_output_to_project_assess_dir(
             "run_direct_model_generation",
             {
                 "write_scope": "all",
-                "ignore_existing_models": True,
+                "llm": False,
                 "replace_existing_models": True,
                 "update_catalog": True,
-                "infer_layer_with_llm": False,
             },
         ),
         (
@@ -2216,8 +2215,7 @@ def test_model_metadata_writer_cli_modes_dispatch_to_expected_backend(
                 "project": project,
                 "source": "direct_generation",
                 "write_scope": kwargs["write_scope"],
-                "ignore_existing_models": kwargs["ignore_existing_models"],
-                "infer_layer_with_llm": kwargs["infer_layer_with_llm"],
+                "llm": kwargs["llm"],
                 "replace_existing_models": kwargs["replace_existing_models"],
                 "catalog_update": None,
                 "planned_deleted_model_files": [],
@@ -2607,7 +2605,7 @@ def test_run_metadata_write_skips_blocked_model_updates(
     assert result["skipped_model_updates"][0]["reason"] == "validation_blocked"
 
 
-def test_run_catalog_discovery_writes_catalog_from_llm_results(
+def test_run_catalog_discovery_writes_catalog_only_by_default(
     tmp_path, monkeypatch, sample_lineage_data
 ):
     import assess.llm.model_metadata_writer as writer_module
@@ -2715,7 +2713,8 @@ def test_run_catalog_discovery_writes_catalog_from_llm_results(
     assert "tables" not in catalog["business_processes"][0]
     assert catalog["semantic_subjects"][0]["code"] == "CUSTOMER"
     assert "tables" not in catalog["semantic_subjects"][0]
-    assert result["model_update_count"] == 2
+    assert result["update_models"] is False
+    assert result["model_update_count"] == 0
 
     fact_model = yaml.safe_load(
         (project_dir / "mid" / "models" / "dwd_order_detail.yaml").read_text(
@@ -2727,8 +2726,8 @@ def test_run_catalog_discovery_writes_catalog_from_llm_results(
             encoding="utf-8"
         )
     )
-    assert fact_model["business_process"] == "ORDER_TRANSACTION"
-    assert dim_model["semantic_subject"] == "CUSTOMER"
+    assert "business_process" not in fact_model
+    assert "semantic_subject" not in dim_model
 
 
 def test_run_catalog_metadata_write_initializes_models_without_llm(
@@ -3126,7 +3125,6 @@ def test_run_direct_model_generation_replace_existing_models_handles_dry_run(
     result = run_direct_model_generation(
         project,
         dry_run=dry_run,
-        ignore_existing_models=True,
         replace_existing_models=True,
         update_catalog=True,
     )
@@ -3266,8 +3264,7 @@ def test_run_direct_model_generation_keeps_source_layer_over_table_inspector(
     result = run_direct_model_generation(
         project,
         dry_run=False,
-        ignore_existing_models=True,
-        infer_layer_with_llm=True,
+        llm=True,
         api_key="test",
         model="fake-layer-model",
         no_cache=True,
@@ -3350,8 +3347,7 @@ def test_run_direct_model_generation_keeps_ads_placement_over_table_inspector(
     result = run_direct_model_generation(
         project,
         dry_run=False,
-        ignore_existing_models=True,
-        infer_layer_with_llm=True,
+        llm=True,
         api_key="test",
         model="fake-layer-model",
         no_cache=True,
@@ -3555,8 +3551,7 @@ def test_run_direct_model_generation_prefers_strong_ads_signal_over_inspector(
     result = run_direct_model_generation(
         project,
         dry_run=False,
-        ignore_existing_models=True,
-        infer_layer_with_llm=True,
+        llm=True,
         api_key="test",
         model="fake-layer-model",
         no_cache=True,
@@ -3652,16 +3647,16 @@ def test_run_direct_model_generation_reports_documentation_changes(
     assert update["table"] == "ods_customer"
     assert update["changed"] is True
     assert update["documentation_changed"] is True
-    assert update["config_changed"] is False
-    assert update["metadata_changed"] is False
+    assert update["config_changed"] is True
+    assert update["metadata_changed"] is True
     assert update["business_changed"] is False
     assert update["grain_changed"] is False
 
 
-def test_run_direct_model_generation_can_ignore_existing_model_metadata(
+def test_run_direct_model_generation_defaults_to_cold_start_metadata(
     tmp_path, monkeypatch
 ):
-    project = "direct_model_writer_ignore_existing"
+    project = "direct_model_writer_cold_start"
     project_dir = tmp_path / project
     (project_dir / "mid" / "ddl").mkdir(parents=True)
     (project_dir / "mid" / "models").mkdir()
@@ -3735,11 +3730,10 @@ def test_run_direct_model_generation_can_ignore_existing_model_metadata(
     result = run_direct_model_generation(
         project,
         dry_run=True,
-        ignore_existing_models=True,
     )
 
     update = result["model_updates"][0]
-    assert result["ignore_existing_models"] is True
+    assert result["llm"] is False
     assert update["assignment_source"] == "direct_catalog_match"
     assert update["assignment_reason"].startswith("semantic_subject_match")
     assert update["previous_layer"] is None
@@ -3750,10 +3744,10 @@ def test_run_direct_model_generation_can_ignore_existing_model_metadata(
     assert update["semantic_subject"] == "CUST"
 
 
-def test_run_direct_model_generation_ignore_existing_uses_inferred_layer_path(
+def test_run_direct_model_generation_cold_start_uses_inferred_layer_path(
     tmp_path, monkeypatch
 ):
-    project = "direct_model_writer_ignore_existing_path"
+    project = "direct_model_writer_cold_start_path"
     project_dir = tmp_path / project
     (project_dir / "mid" / "ddl").mkdir(parents=True)
     (project_dir / "ads" / "models").mkdir(parents=True)
@@ -3816,7 +3810,6 @@ def test_run_direct_model_generation_ignore_existing_uses_inferred_layer_path(
     result = run_direct_model_generation(
         project,
         dry_run=False,
-        ignore_existing_models=True,
     )
 
     mid_model_path = project_dir / "mid" / "models" / "customer_profile.yaml"
@@ -4120,7 +4113,6 @@ def test_run_direct_model_generation_does_not_use_downstream_for_process_match(
     result = run_direct_model_generation(
         project,
         dry_run=True,
-        ignore_existing_models=True,
     )
 
     updates = {update["table"]: update for update in result["model_updates"]}
@@ -4218,7 +4210,6 @@ def test_run_direct_model_generation_materialized_uses_target_task_pattern(
     result = run_direct_model_generation(
         project,
         dry_run=False,
-        ignore_existing_models=True,
     )
 
     models_dir = project_dir / "mid" / "models"
@@ -4230,7 +4221,7 @@ def test_run_direct_model_generation_materialized_uses_target_task_pattern(
             project_dir / "ads" / "models" / "ads_sales_dashboard.yaml"
         ).read_text(encoding="utf-8")
     )
-    assert result["ignore_existing_models"] is True
+    assert result["llm"] is False
     assert dws_model["config"]["materialized"] == "incremental"
     assert ads_model["config"]["materialized"] == "full"
 
@@ -4329,7 +4320,6 @@ def test_run_direct_model_generation_infers_ads_fact_from_task(
     result = run_direct_model_generation(
         project,
         dry_run=False,
-        ignore_existing_models=True,
     )
 
     models_dir = project_dir / "mid" / "models"
@@ -4523,7 +4513,6 @@ def test_run_direct_model_generation_infers_layers_without_model_or_prefix_metad
     result = run_direct_model_generation(
         project,
         dry_run=False,
-        ignore_existing_models=True,
     )
 
     models_dir = project_dir / "mid" / "models"
@@ -4686,7 +4675,6 @@ def test_run_direct_model_generation_propagates_business_process_fixpoint(
     result = run_direct_model_generation(
         project,
         dry_run=False,
-        ignore_existing_models=True,
     )
 
     models_dir = project_dir / "mid" / "models"
@@ -4845,8 +4833,7 @@ def test_run_direct_model_generation_cold_start_inspects_prefixed_table_metadata
     result = run_direct_model_generation(
         project,
         dry_run=False,
-        ignore_existing_models=True,
-        infer_layer_with_llm=True,
+        llm=True,
         api_key="test",
         model="fake-layer-model",
         request_timeout=240,
@@ -5018,8 +5005,7 @@ def test_run_direct_model_generation_ignores_existing_metrics_when_inspector_spa
     result = run_direct_model_generation(
         project,
         dry_run=False,
-        ignore_existing_models=True,
-        infer_layer_with_llm=True,
+        llm=True,
         api_key="test",
         model="fake-layer-model",
         no_cache=True,
@@ -5149,8 +5135,7 @@ def test_run_direct_model_generation_prefers_inspector_over_application_token(
     run_direct_model_generation(
         project,
         dry_run=False,
-        ignore_existing_models=True,
-        infer_layer_with_llm=True,
+        llm=True,
         api_key="test",
         model="fake-layer-model",
         no_cache=True,
@@ -5166,7 +5151,7 @@ def test_run_direct_model_generation_prefers_inspector_over_application_token(
     assert model["atomic_metrics"] == ["event_amount"]
 
 
-def test_run_direct_model_generation_merges_inspector_with_existing_governance(
+def test_run_direct_model_generation_matches_catalog_governance_with_inspector(
     tmp_path, monkeypatch
 ):
     import assess.llm.model_metadata_writer as writer_module
@@ -5281,8 +5266,7 @@ def test_run_direct_model_generation_merges_inspector_with_existing_governance(
     result = run_direct_model_generation(
         project,
         dry_run=False,
-        ignore_existing_models=False,
-        infer_layer_with_llm=True,
+        llm=True,
         api_key="test",
         model="fake-layer-model",
         no_cache=True,
@@ -5299,7 +5283,7 @@ def test_run_direct_model_generation_merges_inspector_with_existing_governance(
     assert model["table_type"] == "fact"
     assert model["business_process"] == "SALES_ANALYSIS"
     assert model["atomic_metrics"] == ["total_amount"]
-    assert update["assignment_source"] == "existing_business_process"
+    assert update["assignment_source"] == "direct_catalog_match"
     assert update["metric_generation_source"] == "table_inspector"
 
 
@@ -5393,8 +5377,7 @@ def test_run_direct_model_generation_keeps_summary_dws_from_inspector(
     run_direct_model_generation(
         project,
         dry_run=False,
-        ignore_existing_models=True,
-        infer_layer_with_llm=True,
+        llm=True,
         api_key="test",
         model="fake-layer-model",
         no_cache=True,
@@ -5507,8 +5490,7 @@ def test_run_direct_model_generation_keeps_aggregate_summary_dws_over_dim_inspec
     result = run_direct_model_generation(
         project,
         dry_run=False,
-        ignore_existing_models=True,
-        infer_layer_with_llm=True,
+        llm=True,
         api_key="test",
         model="fake-layer-model",
         no_cache=True,
@@ -5642,8 +5624,7 @@ def test_run_direct_model_generation_keeps_grouped_dedup_profile_dim(
     result = run_direct_model_generation(
         project,
         dry_run=False,
-        ignore_existing_models=True,
-        infer_layer_with_llm=True,
+        llm=True,
         api_key="test",
         model="fake-layer-model",
         no_cache=True,
@@ -5785,8 +5766,7 @@ def test_run_direct_model_generation_keeps_aggregate_snapshot_dws_over_dwd_inspe
     result = run_direct_model_generation(
         project,
         dry_run=False,
-        ignore_existing_models=True,
-        infer_layer_with_llm=True,
+        llm=True,
         api_key="test",
         model="fake-layer-model",
         no_cache=True,
@@ -5928,8 +5908,7 @@ def test_run_direct_model_generation_keeps_window_profile_dim_from_inspector(
     result = run_direct_model_generation(
         project,
         dry_run=False,
-        ignore_existing_models=True,
-        infer_layer_with_llm=True,
+        llm=True,
         api_key="test",
         model="fake-layer-model",
         no_cache=True,
@@ -6030,8 +6009,7 @@ def test_run_direct_model_generation_fills_sparse_dim_fallback_metadata(
     run_direct_model_generation(
         project,
         dry_run=False,
-        ignore_existing_models=True,
-        infer_layer_with_llm=True,
+        llm=True,
         api_key="test",
         model="fake-layer-model",
         no_cache=True,
@@ -6156,8 +6134,7 @@ def test_run_direct_model_generation_keeps_event_detail_dwd_over_ads_inspector(
     run_direct_model_generation(
         project,
         dry_run=False,
-        ignore_existing_models=True,
-        infer_layer_with_llm=True,
+        llm=True,
         api_key="test",
         model="fake-layer-model",
         no_cache=True,
@@ -6278,8 +6255,7 @@ def test_run_direct_model_generation_syncs_dim_shape_after_layer_fix(
     run_direct_model_generation(
         project,
         dry_run=False,
-        ignore_existing_models=True,
-        infer_layer_with_llm=True,
+        llm=True,
         api_key="test",
         model="fake-layer-model",
         no_cache=True,
@@ -6388,8 +6364,7 @@ def test_run_direct_model_generation_omits_ods_entities_from_inspector(
     run_direct_model_generation(
         project,
         dry_run=False,
-        ignore_existing_models=True,
-        infer_layer_with_llm=True,
+        llm=True,
         api_key="test",
         model="fake-layer-model",
         no_cache=True,
@@ -6412,7 +6387,7 @@ def test_run_direct_model_generation_omits_ods_entities_from_inspector(
     assert "grain" not in model
 
 
-def test_run_direct_model_generation_skips_table_inspector_for_explicit_layer_metadata(
+def test_run_direct_model_generation_inspects_prefixed_table_in_cold_start(
     tmp_path, monkeypatch
 ):
     import assess.llm.model_metadata_writer as writer_module
@@ -6463,7 +6438,7 @@ def test_run_direct_model_generation_skips_table_inspector_for_explicit_layer_me
     result = run_direct_model_generation(
         project,
         dry_run=False,
-        infer_layer_with_llm=True,
+        llm=True,
         api_key="test",
         model="fake-layer-model",
         no_cache=True,
@@ -6475,7 +6450,7 @@ def test_run_direct_model_generation_skips_table_inspector_for_explicit_layer_me
             encoding="utf-8"
         )
     )
-    assert result["table_inspector_layer_inference_attempt_count"] == 0
+    assert result["table_inspector_layer_inference_attempt_count"] == 1
     assert result["table_inspector_layer_inference_count"] == 0
     assert model["layer"] == "DWD"
 

@@ -81,6 +81,7 @@ def main() -> None:
             no_cache=args.no_cache,
             dry_run=args.dry_run,
             overwrite=args.overwrite,
+            update_models=False,
             show_progress=not args.quiet,
         )
     else:
