@@ -111,6 +111,18 @@ def _has_any_items(mapping: dict, keys: tuple[str, ...]) -> bool:
     return any(bool(mapping.get(key)) for key in keys)
 
 
+def _plan_scope(plan: dict) -> dict:
+    return plan.get("scope") or plan.get("affected_scope") or {}
+
+
+def _plan_changes(plan: dict) -> dict:
+    if plan.get("changes"):
+        return plan.get("changes") or {}
+    return {
+        "modified_jobs": plan.get("modified_jobs") or [],
+    }
+
+
 def _change_analysis_has_work(change_analysis: dict) -> bool:
     changed_assets = change_analysis.get("changed_assets") or {}
     affected_scope = change_analysis.get("affected_scope") or {}
@@ -140,14 +152,18 @@ def _change_analysis_has_work(change_analysis: dict) -> bool:
 
 
 def _verification_plan_has_work(plan: dict) -> bool:
-    affected_scope = plan.get("affected_scope") or {}
+    scope = _plan_scope(plan)
+    changes = _plan_changes(plan)
     return bool(
-        plan.get("modified_jobs")
+        _has_any_items(
+            changes,
+            ("modified_jobs", "ddl_tables", "model_tables", "config_files"),
+        )
         or plan.get("anchors")
         or plan.get("ddl_changes")
         or plan.get("jobs_to_run")
         or _has_any_items(
-            affected_scope,
+            scope,
             (
                 "direct_tables",
                 "downstream_tables",

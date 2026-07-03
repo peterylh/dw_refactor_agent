@@ -78,13 +78,19 @@ def test_build_verification_plan_uses_baseline_ddl_changes_and_jobs(
     )
 
     change_analysis = {
+        "changed_assets": {
+            "task_jobs": ["dws_order"],
+            "ddl_tables": ["dws_order"],
+            "model_tables": ["dws_order"],
+            "config_files": ["demo/naming_config.yaml"],
+        },
         "affected_scope": {
             "direct_tables": ["dwd_order"],
             "downstream_tables": ["ads_order"],
             "assessment_tables": ["dws_order"],
             "assessment_tasks": ["dws_order"],
             "anchor_tables": ["dws_order"],
-        }
+        },
     }
 
     plan = build_verification_plan(
@@ -105,7 +111,17 @@ def test_build_verification_plan_uses_baseline_ddl_changes_and_jobs(
     assert plan["project"] == "demo"
     assert plan["project_db"] == "demo_dm"
     assert plan["qa_db"] == "demo_dm_qa"
-    assert plan["affected_scope"] == {
+    assert "affected_scope" not in plan
+    assert "modified_jobs" not in plan
+    assert "downstream_tables" not in plan
+    assert "anchors" not in plan
+    assert plan["changes"] == {
+        "modified_jobs": ["dws_order"],
+        "ddl_tables": ["dws_order"],
+        "model_tables": ["dws_order"],
+        "config_files": ["demo/naming_config.yaml"],
+    }
+    assert plan["scope"] == {
         "direct_tables": ["dwd_order"],
         "downstream_tables": ["ads_order"],
         "assessment_tables": ["dws_order"],
@@ -113,9 +129,6 @@ def test_build_verification_plan_uses_baseline_ddl_changes_and_jobs(
         "anchor_tables": ["dws_order"],
         "global_dimensions": [],
     }
-    assert plan["anchors"] == ["dws_order"]
-    assert plan["downstream_tables"] == ["ads_order"]
-    assert plan["modified_jobs"] == ["dws_order"]
     assert plan["baseline_ddl"] == {
         "dws_order": "CREATE TABLE demo_dm.dws_order (order_id BIGINT) ENGINE=OLAP;"
     }
@@ -132,7 +145,6 @@ def test_build_verification_plan_uses_baseline_ddl_changes_and_jobs(
             "file": "demo/mid/tasks/dws_order.sql",
             "layer": "DWS",
             "target": "dws_order",
-            "needs_etl_date": True,
         }
     ]
     assert "checks" not in plan
@@ -229,7 +241,7 @@ def test_build_verification_plan_preserves_empty_modified_jobs(
         },
     )
 
-    assert plan["modified_jobs"] == []
+    assert plan["changes"]["modified_jobs"] == []
     assert [job["job"] for job in plan["jobs_to_run"]] == ["dws_order"]
 
 
@@ -286,11 +298,19 @@ def test_build_verification_plan_self_anchors_sql_only_task_without_downstream(
         },
     )
 
-    assert plan["anchors"] == ["dws_terminal"]
+    assert plan["scope"]["anchor_tables"] == ["dws_terminal"]
     assert plan["verification"]["data_anchor_status"] == "self_anchor_warning"
     assert plan["verification"]["self_anchor_tables"] == ["dws_terminal"]
     assert "fallback self-anchor" in plan["verification"]["data_anchor_reason"]
     assert plan["verification"]["warnings"] == [
+        {
+            "type": "full_table_compare",
+            "tables": ["dws_terminal"],
+            "message": (
+                "No grain/refresh time metadata is configured; full-table "
+                "compare will be used."
+            ),
+        },
         {
             "type": "fallback_self_anchor",
             "tables": ["dws_terminal"],
@@ -299,7 +319,7 @@ def test_build_verification_plan_self_anchors_sql_only_task_without_downstream(
                 "changed terminal tables as fallback anchors. Passing compare "
                 "does not prove SQL semantic equivalence."
             ),
-        }
+        },
     ]
     assert plan["verification"]["checks"] == [
         {"table": "dws_terminal", "method": "count"},
@@ -367,7 +387,7 @@ def test_build_verification_plan_does_not_self_anchor_when_downstream_anchor_exi
         },
     )
 
-    assert plan["anchors"] == ["ads_final"]
+    assert plan["scope"]["anchor_tables"] == ["ads_final"]
     assert plan["verification"]["data_anchor_status"] == "ready"
     assert "self_anchor_tables" not in plan["verification"]
     assert plan["verification"]["checks"] == [
@@ -458,7 +478,7 @@ def test_build_verification_plan_blocks_ads_ddl_changes(tmp_path, monkeypatch):
         },
     )
 
-    assert plan["anchors"] == []
+    assert plan["scope"]["anchor_tables"] == []
     assert plan["verification"]["schema_anchor_status"] == "blocked"
     assert plan["verification"]["blocked_schema_tables"] == ["ads_final"]
     assert (
@@ -522,7 +542,7 @@ def test_build_verification_plan_marks_no_data_anchor_for_terminal_ddl_change(
         },
     )
 
-    assert plan["anchors"] == []
+    assert plan["scope"]["anchor_tables"] == []
     assert plan["verification"]["checks"] == []
     assert plan["verification"]["data_anchor_status"] == "none"
     assert (
@@ -647,31 +667,487 @@ PROPERTIES ("replication_num" = "1");"""
         partition="2025-01-15",
     )
 
-    assert plan["partition_info"] == {
-        "partition": "2025-01-15",
-        "etl_date": "2025-01-15",
-        "per_table": {
-            "dws_order": {
-                "partition_col": "stat_date",
-                "value": "2025-01-15",
-            }
-        },
-    }
+    assert "partition_info" not in plan
+    assert plan["verification"]["compare_anchors"] == {"dws_order": {}}
     assert "checks" not in plan
     assert plan["verification"]["checks"] == [
-        {
-            "table": "dws_order",
-            "method": "count",
-            "partition_col": "stat_date",
-            "partition_value": "2025-01-15",
-        },
-        {
-            "table": "dws_order",
-            "method": "row_compare",
-            "partition_col": "stat_date",
-            "partition_value": "2025-01-15",
-        },
+        {"table": "dws_order", "method": "count"},
+        {"table": "dws_order", "method": "row_compare"},
     ]
+    assert plan["verification"]["warnings"] == [
+        {
+            "type": "full_table_compare",
+            "tables": ["dws_order"],
+            "message": (
+                "No grain/refresh time metadata is configured; full-table "
+                "compare will be used."
+            ),
+        }
+    ]
+
+
+def test_build_verification_plan_uses_model_grain_for_compare_and_execution_values(
+    tmp_path, monkeypatch
+):
+    project_dir = tmp_path / "demo"
+    (project_dir / "mid" / "ddl").mkdir(parents=True)
+    (project_dir / "mid" / "models").mkdir()
+    (project_dir / "mid" / "tasks").mkdir()
+    (project_dir / "ads" / "ddl").mkdir(parents=True)
+    (project_dir / "ads" / "models").mkdir()
+    (project_dir / "ads" / "tasks").mkdir()
+    (project_dir / "mid" / "models" / "dws_store_sales_daily.yaml").write_text(
+        """version: 2
+name: dws_store_sales_daily
+layer: DWS
+grain:
+  time_column: stat_date
+  time_period: D
+""",
+        encoding="utf-8",
+    )
+    (project_dir / "ads" / "models" / "ads_store_performance.yaml").write_text(
+        """version: 2
+name: ads_store_performance
+layer: ADS
+grain:
+  time_column: stat_month_date
+  time_period: M
+""",
+        encoding="utf-8",
+    )
+    (project_dir / "mid" / "tasks" / "dws_store_sales_daily.sql").write_text(
+        "INSERT INTO demo_dm.dws_store_sales_daily SELECT @etl_date;",
+        encoding="utf-8",
+    )
+    (project_dir / "ads" / "tasks" / "ads_store_performance.sql").write_text(
+        "INSERT INTO demo_dm.ads_store_performance SELECT @etl_date;",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setitem(
+        config.PROJECT_CONFIG,
+        "demo",
+        {
+            "dir": "demo",
+            "db": "demo_dm",
+            "qa_db": "demo_dm_qa",
+            "catalog": "internal",
+            "verification": {
+                "default_refresh_parameter": "etl_date",
+                "week_start": "MON",
+            },
+        },
+    )
+    config.clear_model_metadata_cache()
+
+    plan = build_verification_plan(
+        "demo",
+        {
+            "affected_scope": {
+                "assessment_tables": [
+                    "dws_store_sales_daily",
+                    "ads_store_performance",
+                ],
+                "assessment_tasks": [
+                    "dws_store_sales_daily",
+                    "ads_store_performance",
+                ],
+                "anchor_tables": ["ads_store_performance"],
+            }
+        },
+        lineage_data={
+            "edges": [
+                {
+                    "source": {
+                        "type": "column",
+                        "id": "dws_store_sales_daily.store_id",
+                    },
+                    "target": {
+                        "type": "column",
+                        "id": "ads_store_performance.store_id",
+                    },
+                }
+            ]
+        },
+        partition="2024-06-15",
+    )
+
+    assert "partition_info" not in plan
+    assert plan["verification"]["compare_anchors"] == {
+        "ads_store_performance": {
+            "time_column": "stat_month_date",
+            "time_period": "M",
+            "anchor_time_value": "2024-06-01",
+        }
+    }
+    assert plan["verification"]["checks"] == [
+        {"table": "ads_store_performance", "method": "count"},
+        {"table": "ads_store_performance", "method": "row_compare"},
+    ]
+    jobs = {job["job"]: job for job in plan["jobs_to_run"]}
+    assert jobs["dws_store_sales_daily"]["refresh_parameter"] == "etl_date"
+    assert jobs["dws_store_sales_daily"]["refresh_time_period"] == "D"
+    assert jobs["dws_store_sales_daily"]["execution_values"][0] == "2024-06-01"
+    assert (
+        jobs["dws_store_sales_daily"]["execution_values"][-1] == "2024-06-30"
+    )
+    assert len(jobs["dws_store_sales_daily"]["execution_values"]) == 30
+    assert jobs["ads_store_performance"]["execution_values"] == ["2024-06-01"]
+    assert "needs_etl_date" not in jobs["dws_store_sales_daily"]
+
+    config.clear_model_metadata_cache()
+
+
+def test_build_verification_plan_warns_full_table_compare_without_grain(
+    tmp_path, monkeypatch
+):
+    project_dir = tmp_path / "demo"
+    (project_dir / "ads" / "models").mkdir(parents=True)
+    (project_dir / "ads" / "tasks").mkdir()
+    (project_dir / "ads" / "models" / "ads_dashboard.yaml").write_text(
+        "version: 2\nname: ads_dashboard\nlayer: ADS\n",
+        encoding="utf-8",
+    )
+    (project_dir / "ads" / "tasks" / "ads_dashboard.sql").write_text(
+        "INSERT INTO demo_dm.ads_dashboard SELECT 1;",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setitem(
+        config.PROJECT_CONFIG,
+        "demo",
+        {
+            "dir": "demo",
+            "db": "demo_dm",
+            "qa_db": "demo_dm_qa",
+            "catalog": "internal",
+        },
+    )
+    config.clear_model_metadata_cache()
+
+    plan = build_verification_plan(
+        "demo",
+        {
+            "affected_scope": {
+                "assessment_tables": ["ads_dashboard"],
+                "assessment_tasks": ["ads_dashboard"],
+                "anchor_tables": ["ads_dashboard"],
+            }
+        },
+        lineage_data={
+            "edges": [
+                {
+                    "source": {"type": "column", "id": "ods_order.id"},
+                    "target": {"type": "column", "id": "ads_dashboard.id"},
+                }
+            ]
+        },
+        partition="2024-06-15",
+    )
+
+    assert plan["verification"]["data_anchor_status"] == "ready"
+    assert plan["verification"]["compare_anchors"] == {"ads_dashboard": {}}
+    assert plan["verification"]["warnings"] == [
+        {
+            "type": "full_table_compare",
+            "tables": ["ads_dashboard"],
+            "message": (
+                "No grain/refresh time metadata is configured; full-table "
+                "compare will be used."
+            ),
+        }
+    ]
+    assert plan["verification"]["checks"] == [
+        {"table": "ads_dashboard", "method": "count"},
+        {"table": "ads_dashboard", "method": "row_compare"},
+    ]
+
+    config.clear_model_metadata_cache()
+
+
+def test_build_verification_plan_treats_entity_only_grain_as_full_table_compare(
+    tmp_path, monkeypatch
+):
+    project_dir = tmp_path / "demo"
+    (project_dir / "ads" / "models").mkdir(parents=True)
+    (project_dir / "ads" / "tasks").mkdir()
+    (project_dir / "ads" / "models" / "ads_dashboard.yaml").write_text(
+        """version: 2
+name: ads_dashboard
+layer: ADS
+grain:
+  entities:
+  - STORE
+""",
+        encoding="utf-8",
+    )
+    (project_dir / "ads" / "tasks" / "ads_dashboard.sql").write_text(
+        "INSERT INTO demo_dm.ads_dashboard SELECT 1;",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setitem(
+        config.PROJECT_CONFIG,
+        "demo",
+        {
+            "dir": "demo",
+            "db": "demo_dm",
+            "qa_db": "demo_dm_qa",
+            "catalog": "internal",
+            "verification": {"default_refresh_parameter": "etl_date"},
+        },
+    )
+    config.clear_model_metadata_cache()
+
+    plan = build_verification_plan(
+        "demo",
+        {
+            "affected_scope": {
+                "assessment_tables": ["ads_dashboard"],
+                "assessment_tasks": ["ads_dashboard"],
+                "anchor_tables": ["ads_dashboard"],
+            }
+        },
+        lineage_data={
+            "edges": [
+                {
+                    "source": {"type": "column", "id": "ods_order.id"},
+                    "target": {"type": "column", "id": "ads_dashboard.id"},
+                }
+            ]
+        },
+        partition="2024-06-15",
+    )
+
+    assert plan["verification"]["data_anchor_status"] == "ready"
+    assert plan["verification"]["compare_anchors"] == {"ads_dashboard": {}}
+    assert plan["verification"]["warnings"] == [
+        {
+            "type": "full_table_compare",
+            "tables": ["ads_dashboard"],
+            "message": (
+                "No grain/refresh time metadata is configured; full-table "
+                "compare will be used."
+            ),
+        }
+    ]
+
+    config.clear_model_metadata_cache()
+
+
+def test_build_verification_plan_warns_full_table_compare_without_anchor_value(
+    tmp_path, monkeypatch
+):
+    project_dir = tmp_path / "demo"
+    (project_dir / "ads" / "models").mkdir(parents=True)
+    (project_dir / "ads" / "tasks").mkdir()
+    (project_dir / "ads" / "models" / "ads_dashboard.yaml").write_text(
+        """version: 2
+name: ads_dashboard
+layer: ADS
+grain:
+  time_column: stat_date
+  time_period: D
+""",
+        encoding="utf-8",
+    )
+    (project_dir / "ads" / "tasks" / "ads_dashboard.sql").write_text(
+        "INSERT INTO demo_dm.ads_dashboard SELECT @etl_date;",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setitem(
+        config.PROJECT_CONFIG,
+        "demo",
+        {
+            "dir": "demo",
+            "db": "demo_dm",
+            "qa_db": "demo_dm_qa",
+            "catalog": "internal",
+            "verification": {
+                "default_refresh_parameter": "etl_date",
+                "week_start": "MON",
+            },
+        },
+    )
+    config.clear_model_metadata_cache()
+
+    plan = build_verification_plan(
+        "demo",
+        {
+            "affected_scope": {
+                "assessment_tables": ["ads_dashboard"],
+                "assessment_tasks": ["ads_dashboard"],
+                "anchor_tables": ["ads_dashboard"],
+            }
+        },
+        lineage_data={
+            "edges": [
+                {
+                    "source": {"type": "column", "id": "ods_order.id"},
+                    "target": {"type": "column", "id": "ads_dashboard.id"},
+                }
+            ]
+        },
+    )
+
+    assert plan["verification"]["data_anchor_status"] == "ready"
+    assert plan["verification"]["compare_anchors"] == {
+        "ads_dashboard": {
+            "time_column": "stat_date",
+            "time_period": "D",
+        }
+    }
+    assert plan["verification"]["warnings"] == [
+        {
+            "type": "full_table_compare",
+            "tables": ["ads_dashboard"],
+            "message": (
+                "No anchor time value is provided; full-table compare will "
+                "be used."
+            ),
+        }
+    ]
+
+    config.clear_model_metadata_cache()
+
+
+def test_build_verification_plan_blocks_partial_grain_metadata(
+    tmp_path, monkeypatch
+):
+    project_dir = tmp_path / "demo"
+    (project_dir / "ads" / "models").mkdir(parents=True)
+    (project_dir / "ads" / "tasks").mkdir()
+    (project_dir / "ads" / "models" / "ads_order.yaml").write_text(
+        """version: 2
+name: ads_order
+layer: ADS
+grain:
+  time_column: stat_date
+""",
+        encoding="utf-8",
+    )
+    (project_dir / "ads" / "tasks" / "ads_order.sql").write_text(
+        "INSERT INTO demo_dm.ads_order SELECT @etl_date;",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setitem(
+        config.PROJECT_CONFIG,
+        "demo",
+        {
+            "dir": "demo",
+            "db": "demo_dm",
+            "qa_db": "demo_dm_qa",
+            "catalog": "internal",
+            "verification": {"default_refresh_parameter": "etl_date"},
+        },
+    )
+    config.clear_model_metadata_cache()
+
+    plan = build_verification_plan(
+        "demo",
+        {
+            "affected_scope": {
+                "assessment_tables": ["ads_order"],
+                "assessment_tasks": ["ads_order"],
+                "anchor_tables": ["ads_order"],
+            }
+        },
+        lineage_data={
+            "edges": [
+                {
+                    "source": {"type": "column", "id": "ods_order.id"},
+                    "target": {"type": "column", "id": "ads_order.id"},
+                }
+            ]
+        },
+        partition="2024-06-15",
+    )
+
+    assert plan["verification"]["data_anchor_status"] == "blocked"
+    assert plan["verification"]["metadata_errors"] == [
+        {
+            "table": "ads_order",
+            "field": "grain",
+            "message": (
+                "grain.time_column and grain.time_period must be configured "
+                "together"
+            ),
+        }
+    ]
+    assert plan["verification"]["checks"] == []
+
+    config.clear_model_metadata_cache()
+
+
+def test_build_verification_plan_blocks_week_grain_without_week_start(
+    tmp_path, monkeypatch
+):
+    project_dir = tmp_path / "demo"
+    (project_dir / "ads" / "models").mkdir(parents=True)
+    (project_dir / "ads" / "tasks").mkdir()
+    (project_dir / "ads" / "models" / "ads_weekly.yaml").write_text(
+        """version: 2
+name: ads_weekly
+layer: ADS
+grain:
+  time_column: stat_week_date
+  time_period: W
+""",
+        encoding="utf-8",
+    )
+    (project_dir / "ads" / "tasks" / "ads_weekly.sql").write_text(
+        "INSERT INTO demo_dm.ads_weekly SELECT @etl_date;",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setitem(
+        config.PROJECT_CONFIG,
+        "demo",
+        {
+            "dir": "demo",
+            "db": "demo_dm",
+            "qa_db": "demo_dm_qa",
+            "catalog": "internal",
+            "verification": {"default_refresh_parameter": "etl_date"},
+        },
+    )
+    config.clear_model_metadata_cache()
+
+    plan = build_verification_plan(
+        "demo",
+        {
+            "affected_scope": {
+                "assessment_tables": ["ads_weekly"],
+                "assessment_tasks": ["ads_weekly"],
+                "anchor_tables": ["ads_weekly"],
+            }
+        },
+        lineage_data={
+            "edges": [
+                {
+                    "source": {"type": "column", "id": "ods_order.id"},
+                    "target": {"type": "column", "id": "ads_weekly.id"},
+                }
+            ]
+        },
+    )
+
+    assert plan["verification"]["data_anchor_status"] == "blocked"
+    assert plan["verification"]["metadata_errors"] == [
+        {
+            "table": "ads_weekly",
+            "field": "week_start",
+            "message": (
+                "project verification.week_start is required for W periods"
+            ),
+        }
+    ]
+    assert plan["verification"]["checks"] == []
+
+    config.clear_model_metadata_cache()
 
 
 def test_build_verification_plan_orders_jobs_topologically(

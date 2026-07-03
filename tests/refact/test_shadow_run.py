@@ -386,6 +386,25 @@ def test_dry_run_omits_where_for_unpartitioned_checks(capsys):
     assert "[row_compare] shop_dm_qa.ads_sales_dashboard" in output
 
 
+def test_dry_run_prints_anchor_tables_from_scope(capsys):
+    plan = {
+        "project": "shop",
+        "project_db": "shop_dm",
+        "qa_db": "shop_dm_qa",
+        "scope": {"anchor_tables": ["ads_store_performance"]},
+        "baseline_ddl": {},
+        "ddl_changes": [],
+        "jobs_to_run": [],
+        "verification": {"checks": []},
+    }
+
+    execute_shadow_plan(plan, dry_run=True)
+
+    output = capsys.readouterr().out
+    assert "锚点: ['ads_store_performance']" in output
+    assert "无锚点表且无校验配置" not in output
+
+
 def test_dry_run_prints_qa_ddl_changes(capsys):
     plan = {
         "project": "shop",
@@ -471,7 +490,6 @@ def test_run_shadow_plan_executes_self_contained(tmp_path, monkeypatch):
             "file": "shop/tasks/dwd_order_detail.sql",
             "layer": "DWD",
             "target": "dwd_order_detail",
-            "needs_etl_date": False,
             "status": "success",
             "error": None,
         }
@@ -541,7 +559,6 @@ def test_run_shadow_plan_persists_failed_job_result(tmp_path, monkeypatch):
             "file": "shop/tasks/dwd_order_detail.sql",
             "layer": "DWD",
             "target": "dwd_order_detail",
-            "needs_etl_date": False,
             "status": "failed",
             "error": "insert failed",
         }
@@ -673,3 +690,51 @@ def test_run_shadow_plan_dry_run_persists_phase_summary(tmp_path, monkeypatch):
         },
     ]
     assert json.loads(output_path.read_text(encoding="utf-8")) == result
+
+
+def test_execute_shadow_plan_runs_job_once_per_execution_value(
+    tmp_path, monkeypatch
+):
+    task_path = tmp_path / "shop" / "mid" / "tasks" / "dws_order.sql"
+    task_path.parent.mkdir(parents=True)
+    task_path.write_text(
+        "INSERT INTO shop_dm.dws_order SELECT @etl_date;",
+        encoding="utf-8",
+    )
+    plan = {
+        "project": "shop",
+        "project_db": "shop_dm",
+        "qa_db": "shop_dm_qa",
+        "baseline_ddl": {},
+        "ddl_changes": [],
+        "jobs_to_run": [
+            {
+                "job": "dws_order",
+                "file": "shop/mid/tasks/dws_order.sql",
+                "layer": "DWS",
+                "target": "dws_order",
+                "refresh_parameter": "etl_date",
+                "refresh_time_period": "D",
+                "execution_values": ["2024-06-01", "2024-06-02"],
+            }
+        ],
+        "verification": {"checks": []},
+    }
+    executed_texts = []
+
+    monkeypatch.setattr("refact.shadow_run._project_root", lambda: tmp_path)
+    monkeypatch.setattr(
+        "refact.shadow_run.run_sql", lambda *args, **kwargs: ""
+    )
+    monkeypatch.setattr(
+        "refact.shadow_run.run_sql_text",
+        lambda sql_text, db="", qa=False: executed_texts.append(sql_text)
+        or "",
+    )
+
+    result = execute_shadow_plan(plan)
+
+    assert result["status"] == "completed"
+    assert len(executed_texts) == 2
+    assert executed_texts[0].startswith("SET @etl_date = '2024-06-01';\n")
+    assert executed_texts[1].startswith("SET @etl_date = '2024-06-02';\n")

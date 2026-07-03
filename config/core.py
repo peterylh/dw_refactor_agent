@@ -32,6 +32,10 @@ PROJECT_CONFIG = {
         "qa_db": "shop_dm_qa",
         "lineage_db": "shop_lineage",
         "naming_config": "shop/naming_config.yaml",
+        "verification": {
+            "default_refresh_parameter": "etl_date",
+            "week_start": "MON",
+        },
         "ods_source_catalog_dialects": {
             "internal": "doris",
         },
@@ -43,6 +47,10 @@ PROJECT_CONFIG = {
         "qa_db": "finance_analytics_dm_qa",
         "lineage_db": "finance_analytics_lineage",
         "naming_config": "finance_analytics/naming_config.yaml",
+        "verification": {
+            "default_refresh_parameter": "etl_date",
+            "week_start": "MON",
+        },
         "ods_source_catalog_dialects": {
             "internal": "doris",
         },

@@ -204,13 +204,16 @@ python refact/run.py compare --manifest refact/runs/<run_id>/manifest.json --met
 
 输出的 `verification/plan.json` 包含：
 
+- `changes`：本次变更入口，例如 `modified_jobs`、`ddl_tables`、`model_tables`
+  与 `config_files`
+- `scope`：由变更入口推导出的验证范围，例如 `direct_tables`、`downstream_tables`、
+  `assessment_tables`、`assessment_tasks` 与 `anchor_tables`
 - `baseline_ddl`：merge-base 的完整 DDL（已剥离 INSERT）
 - `ddl_changes`：由 `ddl_deriver` 推导的 DDL 变更
-- `modified_jobs` / `downstream_tables`：波及范围
-- `anchors`：验证锚点
-- `partition_info`：手工指定的验证分区信息，默认可为空
 - `jobs_to_run`：按拓扑排序后的待执行作业
-- `verification.checks`：自动配置的校验项
+- `verification.compare_anchors`：compare 使用的锚点输入，包含锚点表的时间列、
+  时间粒度与锚点时间值；缺少合理时间粒度时会降级为全表 compare 并输出 warning
+- `verification.checks`：自动配置的校验项，仅包含表名与校验方法
 
 ### shadow_run.py
 
