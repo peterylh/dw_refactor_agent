@@ -1073,9 +1073,12 @@ def execute_shadow_plan(plan: dict, *, dry_run: bool = False) -> dict:
         print(f"\n  --- {idx}/{len(jobs_to_run)}: [{layer}] {job_name} ---")
         file_path = root / job_file
         if not file_path.exists():
-            print(f"  [SKIP] 文件不存在: {file_path}")
-            job_results.append(_job_result(job, "skipped", "文件不存在"))
-            continue
+            error = f"文件不存在: {file_path}"
+            print(f"  [FAIL] {error}")
+            job_results.append(_job_result(job, "failed", error))
+            job_phase["status"] = "failed"
+            phases.append(job_phase)
+            return _failed_shadow_result(plan, phases)
 
         sql_text = file_path.read_text(encoding=TEXT_ENCODING)
         rewritten = rewrite_sql(sql_text, prod_db, qa_db, recalculated)

@@ -62,6 +62,62 @@ def test_start_creates_manifest_and_baseline_artifacts(tmp_path, monkeypatch):
     assert (run_root / "baseline" / "assess_result.json").exists()
 
 
+def test_start_loads_project_choices_from_target_root(tmp_path, monkeypatch):
+    warehouse_dir = tmp_path / "warehouses" / "demo"
+    warehouse_dir.mkdir(parents=True)
+    (warehouse_dir / "warehouse.yaml").write_text(
+        "\n".join(
+            [
+                "name: demo",
+                "database: demo_dm",
+                "qa_database: demo_dm_qa",
+                "lineage_database: demo_lineage",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    def fake_lineage(
+        project, output_path, cache_path, previous_cache_path=None
+    ):
+        _write_json(output_path, {"tables": [], "edges": []})
+        _write_json(cache_path, {"project": project, "tasks": []})
+        return {"lineage": {"tables": [], "edges": []}}
+
+    def fake_assess(project, **kwargs):
+        return {"project": project, "overall_score": 100.0, "dimensions": {}}
+
+    monkeypatch.setattr(run_cli, "build_lineage_artifacts", fake_lineage)
+    monkeypatch.setattr(run_cli, "assess", fake_assess)
+    monkeypatch.setattr(
+        run_cli,
+        "_git_info",
+        lambda _root: {"branch": "main", "head": "abc123", "dirty": False},
+    )
+    monkeypatch.setattr(
+        run_cli,
+        "_now",
+        lambda: _local_datetime(2026, 6, 20, 7, 30),
+    )
+
+    exit_code = run_cli.main(
+        ["start", "--project", "demo", "--root", str(tmp_path)]
+    )
+
+    assert exit_code == 0
+    run_root = (
+        tmp_path
+        / "warehouses"
+        / "demo"
+        / "artifacts"
+        / "refactor_runs"
+        / "20260620_073000_demo"
+    )
+    assert (run_root / "manifest.json").exists()
+    manifest = json.loads((run_root / "manifest.json").read_text())
+    assert manifest["project"] == "demo"
+
+
 def test_analyze_refreshes_current_analysis_diff_and_plan(
     tmp_path, monkeypatch
 ):
@@ -391,7 +447,16 @@ def test_shadow_run_and_compare_delegate_to_plan_handlers(
     calls = []
 
     def fake_shadow(plan, output, dry_run=False):
-        calls.append(("shadow", plan, output, dry_run))
+        calls.append(
+            (
+                "shadow",
+                plan,
+                output,
+                dry_run,
+                run_cli.config.PROJECT_ROOT,
+                run_cli.shadow_run_module.PROJECT_ROOT,
+            )
+        )
         _write_json(output, {"ok": True})
         return {"ok": True}
 
@@ -408,6 +473,8 @@ def test_shadow_run_and_compare_delegate_to_plan_handlers(
 
     assert calls[0][0] == "shadow"
     assert calls[0][1] == plan_path
+    assert calls[0][4] == tmp_path.resolve()
+    assert calls[0][5] == tmp_path.resolve()
     assert calls[1][0] == "compare"
     assert calls[1][1] == plan_path
 

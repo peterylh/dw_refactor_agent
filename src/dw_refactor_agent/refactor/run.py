@@ -20,6 +20,7 @@ import dw_refactor_agent.assessment.assess_middle_layer as assess_module
 import dw_refactor_agent.config as config
 import dw_refactor_agent.lineage.lineage_extractor as lineage_extractor_module
 import dw_refactor_agent.refactor.change_analysis as change_analysis_module
+import dw_refactor_agent.refactor.shadow_run as shadow_run_module
 from dw_refactor_agent.assessment.assess_middle_layer import assess
 from dw_refactor_agent.config import TEXT_ENCODING
 from dw_refactor_agent.config import core as config_core
@@ -138,6 +139,7 @@ def _project_root_context(root: Path):
 
         _set_attr(states, assess_module, "PROJECT_ROOT", root)
         _set_attr(states, assess_module, "PROJECT_CONFIG", project_config)
+        _set_attr(states, shadow_run_module, "PROJECT_ROOT", root)
 
         _clear_config_caches()
         yield root
@@ -302,6 +304,9 @@ def _mark_assessment_no_changes(assess_result: dict) -> dict:
 def _start(args) -> int:
     root = Path(args.root).expanduser().resolve()
     with _project_root_context(root) as repo_root:
+        if args.project not in config.PROJECT_CONFIG:
+            choices = ", ".join(sorted(config.PROJECT_CONFIG)) or "(none)"
+            raise SystemExit(f"未知项目: {args.project}; 可选项目: {choices}")
         manifest_path, manifest = create_run_manifest(
             repo_root,
             args.project,
@@ -417,11 +422,14 @@ def _analyze(args) -> int:
 
 def _shadow_run(args) -> int:
     manifest_path = Path(args.manifest)
-    result = run_shadow_plan(
-        artifact_path(manifest_path, "verification_plan"),
-        artifact_path(manifest_path, "shadow_run_result"),
-        dry_run=args.dry_run,
-    )
+    manifest = load_manifest(manifest_path)
+    repo_root = _root_from_manifest(manifest, manifest_path)
+    with _project_root_context(repo_root):
+        result = run_shadow_plan(
+            artifact_path(manifest_path, "verification_plan"),
+            artifact_path(manifest_path, "shadow_run_result"),
+            dry_run=args.dry_run,
+        )
     return 1 if result.get("status") == "failed" else 0
 
 
@@ -445,7 +453,6 @@ def build_parser() -> argparse.ArgumentParser:
     start.add_argument(
         "--project",
         required=True,
-        choices=list(config.PROJECT_CONFIG.keys()),
     )
     start.add_argument("--root", default=str(config.PROJECT_ROOT))
     start.set_defaults(func=_start)

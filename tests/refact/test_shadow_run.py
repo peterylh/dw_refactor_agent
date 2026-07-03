@@ -591,6 +591,45 @@ def test_run_shadow_plan_persists_failed_job_result(tmp_path, monkeypatch):
     assert json.loads(output_path.read_text(encoding="utf-8")) == result
 
 
+def test_execute_shadow_plan_fails_when_job_file_is_missing(
+    tmp_path, monkeypatch
+):
+    plan = {
+        "project": "shop",
+        "project_db": "shop_dm",
+        "qa_db": "shop_dm_qa",
+        "baseline_ddl": {},
+        "ddl_changes": [],
+        "partition_info": {},
+        "jobs_to_run": [
+            {
+                "job": "dwd_order_detail",
+                "file": "warehouses/shop/mid/tasks/dwd_order_detail.sql",
+                "layer": "DWD",
+            }
+        ],
+        "verification": {"checks": []},
+    }
+
+    monkeypatch.setattr(
+        "dw_refactor_agent.refactor.shadow_run._project_root", lambda: tmp_path
+    )
+    monkeypatch.setattr(
+        "dw_refactor_agent.refactor.shadow_run.run_sql",
+        lambda sql, db="", qa=False: "",
+    )
+
+    result = execute_shadow_plan(plan)
+
+    assert result["status"] == "failed"
+    assert result["summary"]["failed_job_count"] == 1
+    phase_by_name = {phase["name"]: phase for phase in result["phases"]}
+    assert phase_by_name["run_jobs"]["status"] == "failed"
+    job_result = phase_by_name["run_jobs"]["jobs"][0]
+    assert job_result["status"] == "failed"
+    assert "文件不存在" in job_result["error"]
+
+
 def test_shadow_run_cli_returns_nonzero_for_failed_result(
     tmp_path, monkeypatch
 ):
