@@ -1,6 +1,6 @@
 # Assess 评分标准
 
-本文总结 `assess/assess_middle_layer.py` 当前使用的评分维度、默认权重和各维度打分口径。这里描述的是实现现状，后续调整评分逻辑时应同步更新本文。
+本文总结 `dw_refactor_agent.assessment.assess_middle_layer` 当前使用的评分维度、默认权重和各维度打分口径。这里描述的是实现现状，后续调整评分逻辑时应同步更新本文。
 
 新增或调整规则时，规则引擎与规则实现边界参见
 [Assess 规则引擎设计原则](assess_rule_design.md)。
@@ -25,7 +25,7 @@
 overall_score = sum(维度权重 * 维度得分) / 选中维度权重之和
 ```
 
-默认权重来自 `assess/scoring/config.py` 的 `DEFAULT_WEIGHTS`。CLI 支持用 `--reuse-weight`、`--depth-weight`、`--model-design-weight`、`--naming-weight`、`--asset-completeness-weight`、`--metadata-health-weight`、`--code-quality-weight` 覆盖；覆盖后会自动归一化。
+默认权重来自 `dw_refactor_agent.assessment.scoring.config` 的 `DEFAULT_WEIGHTS`。CLI 支持用 `--reuse-weight`、`--depth-weight`、`--model-design-weight`、`--naming-weight`、`--asset-completeness-weight`、`--metadata-health-weight`、`--code-quality-weight` 覆盖；覆盖后会自动归一化。
 
 当只选择部分维度运行时，整体评分只使用被选中的维度及其权重。默认 JSON 以 `issues` 为诊断入口，不输出规则内部 `checks` 明细；失败检查中的必要证据会精简后写入对应 issue 的 `diagnostic`。
 

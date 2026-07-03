@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Lineage Jobs</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 24px; color: #1f2937; }
+    table { border-collapse: collapse; width: 100%; }
+    th, td { border-bottom: 1px solid #e5e7eb; padding: 8px; text-align: left; }
+    th { background: #f9fafb; }
+    code { background: #f3f4f6; padding: 2px 4px; border-radius: 4px; }
+  </style>
+</head>
+<body>
+  <h1>Lineage Jobs</h1>
+  <p id="summary"></p>
+  <table>
+    <thead>
+      <tr>
+        <th>Job</th>
+        <th>Layer</th>
+        <th>Source</th>
+        <th>Target</th>
+      </tr>
+    </thead>
+    <tbody id="jobs"></tbody>
+  </table>
+  <script>
+    const LD = {};
+    const JOBS = [];
+
+    document.getElementById("summary").textContent =
+      `${(LD.tables || []).length} tables, ${(LD.edges || []).length} edges, ${JOBS.length} jobs`;
+
+    document.getElementById("jobs").innerHTML = JOBS.map((job) => `
+      <tr>
+        <td><code>${job.name || job.id || ""}</code></td>
+        <td>${job.layer || ""}</td>
+        <td>${(job.source || []).join(", ")}</td>
+        <td><code>${job.target || ""}</code></td>
+      </tr>
+    `).join("");
+  </script>
+</body>
+</html>

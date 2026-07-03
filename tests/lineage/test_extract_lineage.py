@@ -1,6 +1,6 @@
 import sqlglot
 
-from lineage.lineage_extractor import (
+from dw_refactor_agent.lineage.lineage_extractor import (
     _created_table_columns_from_schema,
     build_lineage_output,
     build_schema_from_texts,

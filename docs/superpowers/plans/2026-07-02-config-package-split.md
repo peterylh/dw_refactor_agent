@@ -40,11 +40,11 @@
 ### Task 3: Remove Root Config Module and Verify
 
 **Files:**
-- Delete: `config.py`
-- Modify: remaining imports in `assess/`, `lineage/`, `refact/`, `exec/`, `benchmarks/`, `tests/`.
+- Delete: legacy root config module.
+- Modify: remaining imports in `src/dw_refactor_agent/`, `benchmarks/`, and `tests/`.
 
-- [x] Remove all production `import config` / `from config import ...` references.
+- [x] Remove all production legacy config imports.
 - [x] Remove or update tests that directly touch old private cache names.
-- [x] Run `rg "import config|from config import|config\\."` and handle remaining code references.
+- [x] Search for legacy config imports and handle remaining code references.
 - [x] Run `make test`.
 - [x] Review the final diff for conceptual boundaries, stale imports, and behavior risks.

@@ -1,17 +1,5 @@
-import importlib.util
-from pathlib import Path
-
-import config
-
-MODULE_PATH = (
-    Path(__file__).resolve().parent.parent / "exec" / "reinit_project.py"
-)
-SPEC = importlib.util.spec_from_file_location(
-    "reinit_project_module", MODULE_PATH
-)
-reinit_project = importlib.util.module_from_spec(SPEC)
-assert SPEC.loader is not None
-SPEC.loader.exec_module(reinit_project)
+import dw_refactor_agent.config as config
+from dw_refactor_agent.execution import reinit_project
 
 
 def test_get_etl_date_partitions_uses_model_layer(monkeypatch, tmp_path):
@@ -80,8 +68,6 @@ def test_project_sql_files_ignore_root_and_include_ods_mid_ads_assets(
     (ods_ddl_dir / "ods_customer.sql").write_text("", encoding="utf-8")
     (mid_ddl_dir / "dws_customer.sql").write_text("", encoding="utf-8")
     (ads_ddl_dir / "ads_customer.sql").write_text("", encoding="utf-8")
-
-    monkeypatch.setattr(reinit_project, "_root", tmp_path)
     monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
     monkeypatch.setitem(
         reinit_project.PROJECT_CONFIG,

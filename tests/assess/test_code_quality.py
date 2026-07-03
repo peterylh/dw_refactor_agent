@@ -1,8 +1,12 @@
-import assess.rules.definitions.task_sql_quality as task_sql_quality_defs
-import assess.rules.dimensions.task_sql_quality as task_sql_quality_dimension
-from assess.assessment_context import AssessmentContext
-from assess.project_facts.asset_catalog import build_asset_catalog
-from assess.rules.dimensions.task_sql_quality import score_code_quality
+import dw_refactor_agent.assessment.rules.definitions.task_sql_quality as task_sql_quality_defs
+import dw_refactor_agent.assessment.rules.dimensions.task_sql_quality as task_sql_quality_dimension
+from dw_refactor_agent.assessment.assessment_context import AssessmentContext
+from dw_refactor_agent.assessment.project_facts.asset_catalog import (
+    build_asset_catalog,
+)
+from dw_refactor_agent.assessment.rules.dimensions.task_sql_quality import (
+    score_code_quality,
+)
 
 
 def _catalog_for_task(tmp_path, task_name, sql):

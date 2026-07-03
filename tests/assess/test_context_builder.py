@@ -1,9 +1,9 @@
 import pytest
 import yaml
 
-import assess.llm.context_builder as context_builder_module
-import config
-from assess.llm.context_builder import (
+import dw_refactor_agent.assessment.llm.context_builder as context_builder_module
+import dw_refactor_agent.config as config
+from dw_refactor_agent.assessment.llm.context_builder import (
     build_contexts,
     extract_column_lineage,
     extract_dependencies,

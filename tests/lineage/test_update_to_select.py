@@ -3,7 +3,7 @@ from __future__ import annotations
 import sqlglot
 from sqlglot import exp
 
-from lineage.lineage_extractor import update_to_select
+from dw_refactor_agent.lineage.lineage_extractor import update_to_select
 
 
 def _convert(sql: str) -> exp.Select:

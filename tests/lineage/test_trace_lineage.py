@@ -1,6 +1,6 @@
 import sqlglot
 
-from lineage.lineage_extractor import (
+from dw_refactor_agent.lineage.lineage_extractor import (
     _extract_leaf_edges,
     _handle_insert,
     _lineage_nodes_for_select,

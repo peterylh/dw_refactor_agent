@@ -22,17 +22,24 @@
 
 根 `AGENTS.md` 只保留高层模块地图，细节优先放到对应目录的专属文档或代码附近。
 
-- `shop/`、`finance_analytics/`：项目数据仓库资产，包含 DDL、ODS 资产、任务 SQL 与
+- `warehouses/shop/`、`warehouses/finance_analytics/`：项目数据仓库资产，包含 DDL、ODS 资产、任务 SQL 与
   表级模型 YAML。
-- `lineage/`：字段级血缘抽取、查询、导入、HTML 刷新、作业 DAG 与 lineage 库 DDL。
-- `assess/`：中间层质量评估、LLM 表巡检、业务语义目录、表元数据与指标分组回写。
-- `refact/`：数仓重构验证入口、增量血缘分析、旁路执行与结果对比。
-- `exec/`：项目重建、ODS 初始化与 ETL DAG 执行。
-- `ddl_deriver/`：DDL 变更自动推导工具。
+- `src/dw_refactor_agent/lineage/`：字段级血缘抽取、查询、导入、HTML 刷新、作业 DAG 与 lineage 库 DDL。
+- `src/dw_refactor_agent/assessment/`：中间层质量评估、LLM 表巡检、业务语义目录、表元数据与指标分组回写。
+- `src/dw_refactor_agent/refactor/`：数仓重构验证入口、增量血缘分析、旁路执行与结果对比。
+- `src/dw_refactor_agent/execution/`：项目重建、ODS 初始化与 ETL DAG 执行。
+- `src/dw_refactor_agent/ddl_deriver/`：DDL 变更自动推导工具。
 - `tests/`：单元测试与集成测试；血缘相关测试在 `tests/lineage/`。
 - `benchmarks/`：本地性能基准；血缘抽取基准在 `benchmarks/lineage_extractor/`。
 - `docs/refactor_guides/`：常见数仓资产重构操作指南。
-- `config/`、`naming_config.yaml`：项目路径、库名、命名规范等共享配置。
+- `warehouses/{project}/warehouse.yaml`：项目目录、库名、血缘库、命名配置和 ODS dialect 等项目配置来源。
+- `src/dw_refactor_agent/config/`、`naming_config.yaml`：配置加载、路径解析、命名规范等共享代码与全局默认配置。
+
+本地直接从源码运行 CLI 时，先执行 `pip install -e .`，或为单次命令加
+`PYTHONPATH=src`。Makefile 已统一设置 `PYTHONPATH=src`。
+如果使用普通安装包并在仓库根以外运行命令，需要设置
+`DW_REFACTOR_AGENT_ROOT=/path/to/dw_refactor_agent`，让配置加载器找到
+`warehouses/`。
 
 ## 数仓资产重构指南
 
@@ -44,21 +51,21 @@
 
 ## 血缘与 DAG 工具
 
-修改 `lineage/`、项目目录下的 `{project}/lineage/` 产物生成逻辑、血缘导入/查询或 DAG
-相关逻辑时，先阅读 `lineage/AGENTS.md`。
+修改 `src/dw_refactor_agent/lineage/`、项目目录下的 `warehouses/{project}/artifacts/lineage/` 产物生成逻辑、血缘导入/查询或 DAG
+相关逻辑时，先阅读 `src/dw_refactor_agent/lineage/AGENTS.md`。
 
 血缘相关 SQL 标识符匹配默认大小写不敏感：表名、字段名、catalog、database/schema
 在解析、查找、比较、追踪时应使用统一 canonical/casefold key；用户可见输出和 SQL
 表达式可按现有逻辑保留展示大小写。
 
-详细参数、路径规则和示例命令集中维护在 `lineage/AGENTS.md`。根目录只保留入口索引：
+详细参数、路径规则和示例命令集中维护在 `src/dw_refactor_agent/lineage/AGENTS.md`。根目录只保留入口索引：
 
-- `lineage/lineage_extractor.py`：字段级 SQL 血缘抽取，生成 `{project}/lineage/lineage_data.json` 与 task 缓存。
-- `lineage/import_lineage.py`：将本地血缘 JSON 快照化导入 Doris lineage 库。
-- `lineage/lineage_cli.py`：读取本地血缘 JSON 做表级/字段级查询和 HTML 子图导出。
-- `lineage/refresh_lineage_html.py`：刷新项目目录下的字段血缘与作业血缘 HTML。
-- `lineage/job_dag.py`：基于血缘边生成可序列化作业 DAG，供执行与重构验证复用。
-- `lineage/ddl/`：维护 lineage 库快照表和核心元数据表 DDL。
+- `dw_refactor_agent.lineage.lineage_extractor`：字段级 SQL 血缘抽取，生成 `warehouses/{project}/artifacts/lineage/lineage_data.json` 与 task 缓存。
+- `dw_refactor_agent.lineage.import_lineage`：将本地血缘 JSON 快照化导入 Doris lineage 库。
+- `dw_refactor_agent.lineage.lineage_cli`：读取本地血缘 JSON 做表级/字段级查询和 HTML 子图导出。
+- `dw_refactor_agent.lineage.refresh_lineage_html`：刷新项目目录下的字段血缘与作业血缘 HTML。
+- `dw_refactor_agent.lineage.job_dag`：基于血缘边生成可序列化作业 DAG，供执行与重构验证复用。
+- `src/dw_refactor_agent/lineage/ddl/`：维护 lineage 库快照表和核心元数据表 DDL。
 
 ## ETL 执行与初始化
 
@@ -66,9 +73,9 @@
 
 项目表元数据按层级边界拆分存放：
 
-- ODS：`{project}/ods/models/{catalog}/{database}/{table_name}.yaml`
-- 中间层 DIM/DWD/DWS：`{project}/mid/models/{table_name}.yaml`
-- ADS：`{project}/ads/models/{table_name}.yaml`
+- ODS：`warehouses/{project}/ods/models/{catalog}/{database}/{table_name}.yaml`
+- 中间层 DIM/DWD/DWS：`warehouses/{project}/mid/models/{table_name}.yaml`
+- ADS：`warehouses/{project}/ads/models/{table_name}.yaml`
 
 元数据用于记录表所属层级、描述与物化方式等信息。
 
@@ -93,17 +100,17 @@ config:
 
 ```bash
 # 默认（当天）
-mysql -h<host> -P<port> -u<user> -p<password> < shop/mid/tasks/dwd_customer.sql
+mysql -h<host> -P<port> -u<user> -p<password> < warehouses/shop/mid/tasks/dwd_customer.sql
 
 # 重跑历史某天
 mysql -h<host> -P<port> -u<user> -p<password> \
-  -e "SET @etl_date = '2025-01-01'; source shop/mid/tasks/dwd_customer.sql;"
+  -e "SET @etl_date = '2025-01-01'; source warehouses/shop/mid/tasks/dwd_customer.sql;"
 
 # shop 维表批量重跑
 for d in 2025-01-01 2025-01-02 2025-01-03; do
   for t in dwd_customer dwd_product dwd_store; do
     mysql -h<host> -P<port> -u<user> -p<password> \
-      -e "SET @etl_date = '$d'; source shop/mid/tasks/${t}.sql;"
+      -e "SET @etl_date = '$d'; source warehouses/shop/mid/tasks/${t}.sql;"
   done
 done
 ```
@@ -124,18 +131,18 @@ done
 
 ```bash
 # shop 全量刷新
-python exec/task_run.py --project shop --full-refresh
+python -m dw_refactor_agent.execution.task_run --project shop --full-refresh
 
 # finance_analytics 重新生成 DAG 后执行
-python exec/task_run.py --project finance_analytics --etl-dates 2025-01-15 --refresh-dag
+python -m dw_refactor_agent.execution.task_run --project finance_analytics --etl-dates 2025-01-15 --refresh-dag
 ```
 
 ### reinit_project.py
 
 一键完成：
 
-1. 执行 `{project}/ods/ddl/{catalog}/{database}/*.sql`、`{project}/mid/ddl/*.sql` 与 `{project}/ads/ddl/*.sql` 重建表
-2. 并行加载 `{project}/ods/data/{catalog}/{database}/*.sql` ODS 初始化数据
+1. 执行 `warehouses/{project}/ods/ddl/{catalog}/{database}/*.sql`、`warehouses/{project}/mid/ddl/*.sql` 与 `warehouses/{project}/ads/ddl/*.sql` 重建表
+2. 并行加载 `warehouses/{project}/ods/data/{catalog}/{database}/*.sql` ODS 初始化数据
 3. 调用 `task_run.py` 按 DAG 执行作业
 
 支持参数：
@@ -150,52 +157,56 @@ python exec/task_run.py --project finance_analytics --etl-dates 2025-01-15 --ref
 
 ```bash
 # shop 重新初始化
-python exec/reinit_project.py --project shop
+python -m dw_refactor_agent.execution.reinit_project --project shop
 
 # finance_analytics 测试环境重算
-python exec/reinit_project.py --project finance_analytics --db-env test --etl-dates 2025-01-15
+python -m dw_refactor_agent.execution.reinit_project --project finance_analytics --db-env test --etl-dates 2025-01-15
 
 # shop 并行全刷
-python exec/reinit_project.py --project shop --full-refresh --parallel 4
+python -m dw_refactor_agent.execution.reinit_project --project shop --full-refresh --parallel 4
 ```
 
 ## finance_analytics 转换与造数
 
 ### generate_ods_data.py
 
-生成 `finance_analytics/ods/data/internal/finance_analytics_dm/*.sql`
+生成 `warehouses/finance_analytics/ods/data/internal/finance_analytics_dm/*.sql`
 的 ODS 初始化数据，内置固定随机种子，便于复现。
 
 直接运行：
 
 ```bash
-python finance_analytics/generate_ods_data.py
+python warehouses/finance_analytics/generate_ods_data.py
 ```
 
-## 重构验证工具 (refact/)
+## 重构验证工具 (refactor)
 
-`refact/` 提供完整的数仓重构验证工具链，当前脚本基于 `PROJECT_CONFIG` 工作，可用于 `shop`、`finance_analytics`。
+`src/dw_refactor_agent/refactor/` 提供完整的数仓重构验证工具链，当前脚本基于 `PROJECT_CONFIG` 工作，可用于 `shop`、`finance_analytics`。
+
+本次布局迁移后，旧路径下创建的 refactor run 基线不再适用于
+`warehouses/{project}/...` 新资产路径。合并该结构变更后，在途 run 应重新执行
+`python -m dw_refactor_agent.refactor.run start --project <project>` 固化新基线。
 
 ### 工作流
 
 ```bash
 # 1. 固化重构基线
-python refact/run.py start --project shop
+python -m dw_refactor_agent.refactor.run start --project shop
 
 # 2. 基于当前修改刷新血缘、评估与验证计划
-python refact/run.py analyze --manifest refact/runs/<run_id>/manifest.json
+python -m dw_refactor_agent.refactor.run analyze --manifest warehouses/<project>/artifacts/refactor_runs/<run_id>/manifest.json
 
 # 可选：手工指定验证分区
-python refact/run.py analyze --manifest refact/runs/<run_id>/manifest.json --partition 2025-01-15
+python -m dw_refactor_agent.refactor.run analyze --manifest warehouses/<project>/artifacts/refactor_runs/<run_id>/manifest.json --partition 2025-01-15
 
 # 3. 预览旁路执行计划
-python refact/run.py shadow-run --manifest refact/runs/<run_id>/manifest.json --dry-run
+python -m dw_refactor_agent.refactor.run shadow-run --manifest warehouses/<project>/artifacts/refactor_runs/<run_id>/manifest.json --dry-run
 
 # 4. 执行旁路验证
-python refact/run.py shadow-run --manifest refact/runs/<run_id>/manifest.json
+python -m dw_refactor_agent.refactor.run shadow-run --manifest warehouses/<project>/artifacts/refactor_runs/<run_id>/manifest.json
 
 # 5. 对比生产与验证库结果
-python refact/run.py compare --manifest refact/runs/<run_id>/manifest.json --method all
+python -m dw_refactor_agent.refactor.run compare --manifest warehouses/<project>/artifacts/refactor_runs/<run_id>/manifest.json --method all
 ```
 
 ### run.py analyze
@@ -204,13 +215,16 @@ python refact/run.py compare --manifest refact/runs/<run_id>/manifest.json --met
 
 输出的 `verification/plan.json` 包含：
 
+- `changes`：本次变更入口，例如 `modified_jobs`、`ddl_tables`、`model_tables`
+  与 `config_files`
+- `scope`：由变更入口推导出的验证范围，例如 `direct_tables`、`downstream_tables`、
+  `assessment_tables`、`assessment_tasks` 与 `anchor_tables`
 - `baseline_ddl`：merge-base 的完整 DDL（已剥离 INSERT）
 - `ddl_changes`：由 `ddl_deriver` 推导的 DDL 变更
-- `modified_jobs` / `downstream_tables`：波及范围
-- `anchors`：验证锚点
-- `partition_info`：手工指定的验证分区信息，默认可为空
 - `jobs_to_run`：按拓扑排序后的待执行作业
-- `verification.checks`：自动配置的校验项
+- `verification.compare_anchors`：compare 使用的锚点输入，包含锚点表的时间列、
+  时间粒度与锚点时间值；缺少合理时间粒度时会降级为全表 compare 并输出 warning
+- `verification.checks`：自动配置的校验项，仅包含表名与校验方法
 
 ### shadow_run.py
 
@@ -230,10 +244,10 @@ python refact/run.py compare --manifest refact/runs/<run_id>/manifest.json --met
 示例：
 
 ```bash
-python refact/run.py compare --manifest refact/runs/<run_id>/manifest.json
-python refact/run.py compare --manifest refact/runs/<run_id>/manifest.json --method count
-python refact/run.py compare --manifest refact/runs/<run_id>/manifest.json --method row_compare --sample 1000
-python refact/run.py compare --manifest refact/runs/<run_id>/manifest.json --precision 0.001
+python -m dw_refactor_agent.refactor.run compare --manifest warehouses/<project>/artifacts/refactor_runs/<run_id>/manifest.json
+python -m dw_refactor_agent.refactor.run compare --manifest warehouses/<project>/artifacts/refactor_runs/<run_id>/manifest.json --method count
+python -m dw_refactor_agent.refactor.run compare --manifest warehouses/<project>/artifacts/refactor_runs/<run_id>/manifest.json --method row_compare --sample 1000
+python -m dw_refactor_agent.refactor.run compare --manifest warehouses/<project>/artifacts/refactor_runs/<run_id>/manifest.json --precision 0.001
 ```
 
 支持校验方法：
@@ -241,12 +255,12 @@ python refact/run.py compare --manifest refact/runs/<run_id>/manifest.json --pre
 - `count`：行数对比
 - `row_compare`：逐行逐列对比，支持 `--sample` 与 `--precision`
 
-## 数据集市评估工具 (assess/)
+## 数据集市评估工具 (assessment)
 
 元数据初始化、catalog 发现、models 刷新等完整流程参见
 [docs/assess_metadata_initialization.md](docs/assess_metadata_initialization.md)。
 
-`assess/assess_middle_layer.py` 用于评估中间层质量，当前 CLI 支持：
+`dw_refactor_agent.assessment.assess_middle_layer` 用于评估中间层质量，当前 CLI 支持：
 
 - `shop`
 - `finance_analytics`
@@ -260,18 +274,18 @@ python refact/run.py compare --manifest refact/runs/<run_id>/manifest.json --pre
 示例：
 
 ```bash
-python assess/assess_middle_layer.py
-python assess/assess_middle_layer.py --project finance_analytics
-python assess/assess_middle_layer.py --output report.json
-python assess/assess_middle_layer.py --reuse-weight 0.3 --depth-weight 0.2
-python assess/assess_middle_layer.py --llm
-python assess/assess_middle_layer.py --llm --no-cache
+python -m dw_refactor_agent.assessment.assess_middle_layer
+python -m dw_refactor_agent.assessment.assess_middle_layer --project finance_analytics
+python -m dw_refactor_agent.assessment.assess_middle_layer --output report.json
+python -m dw_refactor_agent.assessment.assess_middle_layer --reuse-weight 0.3 --depth-weight 0.2
+python -m dw_refactor_agent.assessment.assess_middle_layer --llm
+python -m dw_refactor_agent.assessment.assess_middle_layer --llm --no-cache
 ```
 
 参数说明：
 
 - `--llm`：调用 DeepSeek API 进行智能分层检测
-- `--no-cache`：忽略 `{project}/assess/cache/` 下的 LLM 缓存，强制重新调用
+- `--no-cache`：忽略 `warehouses/{project}/artifacts/assessment/cache/` 下的 LLM 缓存，强制重新调用
 
 ### 评估维度
 
@@ -282,15 +296,15 @@ python assess/assess_middle_layer.py --llm --no-cache
 | 依赖健康度 | 25% | 检测跨层依赖、跳层依赖、反向依赖等问题 |
 | 命名规范 | 25% | 表名/字段名是否符合配置化命名规范 |
 
-结果输出到 `{project}/assess/assess_result.json`。
+结果输出到 `warehouses/{project}/artifacts/assessment/assess_result.json`。
 
 ### 业务语义目录与 models 初始化
 
 业务语义目录默认拆分放在项目目录下：
 
-- `{project}/business_taxonomy.yaml`
-- `{project}/business_processes.yaml`
-- `{project}/semantic_subjects.yaml`
+- `warehouses/{project}/business_taxonomy.yaml`
+- `warehouses/{project}/business_processes.yaml`
+- `warehouses/{project}/semantic_subjects.yaml`
 
 目录包含：
 
@@ -302,22 +316,22 @@ python assess/assess_middle_layer.py --llm --no-cache
 无 LLM 初始化只生成目录骨架和可用字典，不再根据表名硬猜业务过程：
 
 ```bash
-python assess/business_semantics_catalog.py --project shop --dry-run
-python assess/business_semantics_catalog.py --project shop
+python -m dw_refactor_agent.assessment.business_semantics_catalog --project shop --dry-run
+python -m dw_refactor_agent.assessment.business_semantics_catalog --project shop
 ```
 
 使用 LLM 初始化或更新目录：
 
 ```bash
-python assess/business_semantics_catalog.py --project shop --llm --dry-run --overwrite
-python assess/business_semantics_catalog.py --project shop --llm --overwrite
+python -m dw_refactor_agent.assessment.business_semantics_catalog --project shop --llm --dry-run --overwrite
+python -m dw_refactor_agent.assessment.business_semantics_catalog --project shop --llm --overwrite
 ```
 
 等价入口：
 
 ```bash
-python -m assess.llm.model_metadata_writer --project shop --catalog-from-llm --dry-run --overwrite-catalog
-python -m assess.llm.model_metadata_writer --project shop --catalog-from-llm --overwrite-catalog
+python -m dw_refactor_agent.assessment.llm.model_metadata_writer --project shop --catalog-from-llm --dry-run --overwrite-catalog
+python -m dw_refactor_agent.assessment.llm.model_metadata_writer --project shop --catalog-from-llm --overwrite-catalog
 ```
 
 LLM 目录发现会先做表级巡检，再将 fact 表指标字段中的
@@ -329,8 +343,8 @@ catalog 不长期维护 `tables`。
 从已确认 catalog 初始化或刷新 models：
 
 ```bash
-python -m assess.llm.model_metadata_writer --project shop --from-catalog --write-scope business --dry-run
-python -m assess.llm.model_metadata_writer --project shop --from-catalog --write-scope business
+python -m dw_refactor_agent.assessment.llm.model_metadata_writer --project shop --from-catalog --write-scope business --dry-run
+python -m dw_refactor_agent.assessment.llm.model_metadata_writer --project shop --from-catalog --write-scope business
 ```
 
 `--from-catalog --write-scope business` 不调用 LLM。表到业务过程/语义主题的归属以
@@ -346,9 +360,9 @@ python -m assess.llm.model_metadata_writer --project shop --from-catalog --write
 
 ### 指标识别与回写
 
-`assess/llm/table_inspector.py` 是基础表巡检能力，用于单次 DeepSeek 调用中完成表级分层、表类型判断和字段分组。
+`dw_refactor_agent.assessment.llm.table_inspector` 是基础表巡检能力，用于单次 DeepSeek 调用中完成表级分层、表类型判断和字段分组。
 
-`assess/llm/model_metadata_writer.py` 用于扫描项目 DWD/DWS/DIM 层表，复用 `assess/llm/table_inspector.py` 的巡检结果，将 LLM 推断的表级元数据与事实表指标分组回写到 models。
+`dw_refactor_agent.assessment.llm.model_metadata_writer` 用于扫描项目 DWD/DWS/DIM 层表，复用 `table_inspector` 的巡检结果，将 LLM 推断的表级元数据与事实表指标分组回写到 models。
 
 巡检与回写逻辑：
 
@@ -369,31 +383,31 @@ python -m assess.llm.model_metadata_writer --project shop --from-catalog --write
 
 ```bash
 # 只预览巡检与回写结果，不写模型 YAML
-python -m assess.llm.model_metadata_writer --project shop --dry-run
+python -m dw_refactor_agent.assessment.llm.model_metadata_writer --project shop --dry-run
 
 # 巡检 finance_analytics 并回写 models/*.yaml
-python -m assess.llm.model_metadata_writer --project finance_analytics
+python -m dw_refactor_agent.assessment.llm.model_metadata_writer --project finance_analytics
 
 # 只回写表信息 layer/table_type
-python -m assess.llm.model_metadata_writer --project shop --write-scope table
+python -m dw_refactor_agent.assessment.llm.model_metadata_writer --project shop --write-scope table
 
 # 只回写指标分组
-python -m assess.llm.model_metadata_writer --project shop --write-scope metrics
+python -m dw_refactor_agent.assessment.llm.model_metadata_writer --project shop --write-scope metrics
 
 # 只回写 entities/grain
-python -m assess.llm.model_metadata_writer --project shop --write-scope grain
+python -m dw_refactor_agent.assessment.llm.model_metadata_writer --project shop --write-scope grain
 
 # 从已确认 catalog 同步业务语义和基础模型元数据，不调用 LLM
-python -m assess.llm.model_metadata_writer --project shop --from-catalog --write-scope business
+python -m dw_refactor_agent.assessment.llm.model_metadata_writer --project shop --from-catalog --write-scope business
 
 # 忽略缓存，强制重新调用 DeepSeek
-python -m assess.llm.model_metadata_writer --project shop --no-cache
+python -m dw_refactor_agent.assessment.llm.model_metadata_writer --project shop --no-cache
 
 # LLM 返回校验失败时最多重试 2 次
-python -m assess.llm.model_metadata_writer --project shop --max-retries 2
+python -m dw_refactor_agent.assessment.llm.model_metadata_writer --project shop --max-retries 2
 ```
 
-默认输出到 `{project}/assess/model_metadata_result.json`。
+默认输出到 `warehouses/{project}/artifacts/assessment/model_metadata_result.json`。
 
 
 ## 本地测试环境
@@ -422,12 +436,12 @@ make test PYTHON=/absolute/path/to/python
 
 ## Git Commit 规范
 
-参见 [commit_message.md](./commit_message.md)。
+参见 [docs/development/commit_message.md](docs/development/commit_message.md)。
 
 ## Python 编码规范
 
-参见 [python_coding_standards.md](./python_coding_standards.md)。
+参见 [docs/development/python_coding_standards.md](docs/development/python_coding_standards.md)。
 
 ## SQL 数据开发规范
 
-参见 [sql_dev_standards.md](./sql_dev_standards.md)。
+参见 [docs/development/sql_dev_standards.md](docs/development/sql_dev_standards.md)。

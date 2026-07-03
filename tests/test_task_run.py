@@ -1,14 +1,9 @@
-import importlib.util
+import json
+import os
 import subprocess
-from pathlib import Path
 
-import config
-
-MODULE_PATH = Path(__file__).resolve().parent.parent / "exec" / "task_run.py"
-SPEC = importlib.util.spec_from_file_location("task_run_module", MODULE_PATH)
-task_run = importlib.util.module_from_spec(SPEC)
-assert SPEC.loader is not None
-SPEC.loader.exec_module(task_run)
+import dw_refactor_agent.config as config
+from dw_refactor_agent.execution import task_run
 
 
 def _completed(stdout: str = "", stderr: str = "", returncode: int = 0):
@@ -304,8 +299,6 @@ def test_load_schema_reads_table_model_files(monkeypatch, tmp_path):
         "version: 2\nlayer: ADS\nconfig:\n  materialized: full\n",
         encoding="utf-8",
     )
-
-    monkeypatch.setattr(task_run, "_root", tmp_path)
     monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
     monkeypatch.setitem(
         task_run.PROJECT_CONFIG, "demo", {"dir": "demo_project"}
@@ -345,8 +338,6 @@ def test_load_schema_reads_catalog_database_ods_models(
         "  materialized: source\n",
         encoding="utf-8",
     )
-
-    monkeypatch.setattr(task_run, "_root", tmp_path)
     monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
     monkeypatch.setitem(
         task_run.PROJECT_CONFIG,
@@ -365,6 +356,39 @@ def test_load_schema_reads_catalog_database_ods_models(
         "ods_customer": "source",
     }
     config.clear_model_metadata_cache()
+
+
+def test_build_job_dag_refreshes_lineage_with_src_pythonpath(
+    monkeypatch, tmp_path
+):
+    lineage_path = tmp_path / "lineage_data.json"
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append((cmd, kwargs))
+        lineage_path.write_text(
+            json.dumps({"tables": [], "edges": []}),
+            encoding="utf-8",
+        )
+        return _completed()
+
+    monkeypatch.setattr(
+        task_run, "_resolve_lineage_data_file", lambda _: lineage_path
+    )
+    monkeypatch.setattr(task_run.subprocess, "run", fake_run)
+
+    dag = task_run._build_job_dag("shop")
+
+    assert dag._edges == []
+    cmd, kwargs = calls[0]
+    assert cmd[:3] == [
+        os.sys.executable,
+        "-m",
+        "dw_refactor_agent.lineage.lineage_extractor",
+    ]
+    assert str(config.SRC_ROOT) in kwargs["env"]["PYTHONPATH"].split(
+        os.pathsep
+    )
 
 
 def test_get_task_files_reads_mid_and_ads_task_dirs(monkeypatch, tmp_path):
@@ -392,8 +416,6 @@ def test_get_task_files_reads_mid_and_ads_task_dirs(monkeypatch, tmp_path):
         "",
         encoding="utf-8",
     )
-
-    monkeypatch.setattr(task_run, "_root", tmp_path)
     monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
     monkeypatch.setitem(
         task_run.PROJECT_CONFIG,
@@ -441,8 +463,6 @@ def test_load_schema_cache_is_scoped_by_project(monkeypatch, tmp_path):
             encoding="utf-8",
         )
         monkeypatch.setitem(task_run.PROJECT_CONFIG, project, {"dir": project})
-
-    monkeypatch.setattr(task_run, "_root", tmp_path)
     monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
     task_run._SCHEMA_CONFIG_CACHE.clear()
     config.clear_model_metadata_cache()
@@ -471,8 +491,6 @@ def test_load_partition_units_reads_catalog_database_ods_ddl(
         'PROPERTIES ("dynamic_partition.time_unit" = "DAY");',
         encoding="utf-8",
     )
-
-    monkeypatch.setattr(task_run, "_root", tmp_path)
     monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
     monkeypatch.setitem(
         task_run.PROJECT_CONFIG,
@@ -537,7 +555,7 @@ def test_discover_ods_dates_uses_model_layer(monkeypatch, tmp_path):
 
 def test_build_job_dag_accepts_structured_lineage_edges(monkeypatch, tmp_path):
     project_dir = tmp_path / "demo_project"
-    lineage_dir = project_dir / "lineage"
+    lineage_dir = project_dir / "artifacts" / "lineage"
     lineage_dir.mkdir(parents=True)
     (lineage_dir / "lineage_data.json").write_text(
         """
@@ -565,7 +583,6 @@ def test_build_job_dag_accepts_structured_lineage_edges(monkeypatch, tmp_path):
         """,
         encoding="utf-8",
     )
-    monkeypatch.setattr(task_run, "_root", tmp_path)
     monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
     monkeypatch.setitem(
         config.PROJECT_CONFIG,
@@ -587,7 +604,7 @@ def test_task_run_resolvers_ignore_old_lineage_artifact_paths(
     monkeypatch, tmp_path
 ):
     project_dir = tmp_path / "demo_project"
-    (project_dir / "lineage").mkdir(parents=True)
+    (project_dir / "artifacts" / "lineage").mkdir(parents=True)
     old_lineage_dir = tmp_path / "lineage"
     old_lineage_dir.mkdir()
     (old_lineage_dir / "lineage_data_demo.json").write_text(
@@ -598,7 +615,6 @@ def test_task_run_resolvers_ignore_old_lineage_artifact_paths(
         "{}",
         encoding="utf-8",
     )
-    monkeypatch.setattr(task_run, "_root", tmp_path)
     monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
     monkeypatch.setitem(
         config.PROJECT_CONFIG,
@@ -609,16 +625,16 @@ def test_task_run_resolvers_ignore_old_lineage_artifact_paths(
     )
 
     assert task_run._resolve_lineage_data_file("demo") == (
-        project_dir / "lineage" / "lineage_data.json"
+        project_dir / "artifacts" / "lineage" / "lineage_data.json"
     )
     assert task_run._resolve_job_dag_file("demo") == (
-        project_dir / "lineage" / "job_dag.json"
+        project_dir / "artifacts" / "lineage" / "job_dag.json"
     )
 
 
 def test_build_job_dag_collapses_transient_tables(monkeypatch, tmp_path):
     project_dir = tmp_path / "demo_project"
-    lineage_dir = project_dir / "lineage"
+    lineage_dir = project_dir / "artifacts" / "lineage"
     lineage_dir.mkdir(parents=True)
     (lineage_dir / "lineage_data.json").write_text(
         """
@@ -642,7 +658,6 @@ def test_build_job_dag_collapses_transient_tables(monkeypatch, tmp_path):
         """,
         encoding="utf-8",
     )
-    monkeypatch.setattr(task_run, "_root", tmp_path)
     monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
     monkeypatch.setitem(
         config.PROJECT_CONFIG,

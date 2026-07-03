@@ -3,7 +3,7 @@
 import subprocess
 from pathlib import Path
 
-from ddl_deriver.ddl_deriver import (
+from dw_refactor_agent.ddl_deriver.ddl_deriver import (
     AlterTable,
     CreateTable,
     DropTable,
@@ -176,8 +176,8 @@ def test_git_default_project_scans_split_mart_ddl_dirs(tmp_path):
     _git(repo, "config", "user.email", "test@test.com")
     _git(repo, "config", "user.name", "test")
 
-    mid_ddl = repo / "shop" / "mid" / "ddl"
-    ads_ddl = repo / "shop" / "ads" / "ddl"
+    mid_ddl = repo / "warehouses" / "shop" / "mid" / "ddl"
+    ads_ddl = repo / "warehouses" / "shop" / "ads" / "ddl"
     mid_ddl.mkdir(parents=True)
     ads_ddl.mkdir(parents=True)
     (mid_ddl / "dwd_order.sql").write_text(

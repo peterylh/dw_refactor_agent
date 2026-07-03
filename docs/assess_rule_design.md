@@ -87,7 +87,7 @@ def evaluate(self, target: dict, rule_context: dict) -> dict | None:
 新增一条规则时，优先按以下顺序处理：
 
 1. 在对应维度的规则定义文件中新增 `AssessRule` 子类。
-2. 在 `assess/scoring/config.py` 中新增规则元信息。
+2. 在 `src/dw_refactor_agent/assessment/scoring/config.py` 中新增规则元信息。
 3. 将规则类加入该维度的 `*_RULE_CLASSES` 列表。
 4. 如果现有 target 或 `rule_context` 已能提供所需事实，只改规则本身。
 5. 如果缺少的是通用事实，优先在维度 scorer 中加入通用 context key 或懒加载 getter。

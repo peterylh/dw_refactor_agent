@@ -1,8 +1,8 @@
 import yaml
 
-import config
-from assess.llm.table_inspector import TableInspectResult
-from assess.project_facts.business_semantics import (
+import dw_refactor_agent.config as config
+from dw_refactor_agent.assessment.llm.table_inspector import TableInspectResult
+from dw_refactor_agent.assessment.project_facts.business_semantics import (
     build_business_semantics_catalog_from_inspection,
     build_initial_business_semantics_catalog,
     business_processes_path,

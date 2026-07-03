@@ -1,4 +1,4 @@
-from lineage.view import LineageView
+from dw_refactor_agent.lineage.view import LineageView
 
 
 def test_lineage_view_reuses_indexed_column_lineage():

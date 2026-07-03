@@ -44,22 +44,22 @@
 先搜索字段名：
 
 ```bash
-rg "<old_column>" <project>
+rg "<old_column>" warehouses/<project>
 ```
 
 再结合表名搜索：
 
 ```bash
-rg "<table_name>" <project>
+rg "<table_name>" warehouses/<project>
 ```
 
 重点查看：
 
-- `{project}/mid/ddl/{table_name}.sql`
+- `warehouses/{project}/mid/ddl/{table_name}.sql`
 - 写入 `{table_name}` 的 task SQL
 - 读取 `{table_name}` 的下游 task SQL
-- `{project}/mid/models/{table_name}.yaml`
-- `{project}/data/`：仅 ODS 字段或初始化数据涉及该字段时
+- `warehouses/{project}/mid/models/{table_name}.yaml`
+- `warehouses/{project}/ods/data/`：仅 ODS 字段或初始化数据涉及该字段时
 
 检查常见字段写法：
 
@@ -74,7 +74,7 @@ rg "<table_name>" <project>
 
 ### 3. 修改 DDL
 
-在 `{project}/mid/ddl/{table_name}.sql` 中：
+在 `warehouses/{project}/mid/ddl/{table_name}.sql` 中：
 
 - 将字段定义名从 `{old_column}` 改为 `{new_column}`
 - 保留字段类型、注释、默认值、聚合模型属性、Doris 属性
@@ -114,7 +114,7 @@ rg "<table_name>" <project>
 
 models YAML 是项目的表级元数据源，不是普通文档。
 
-在 `{project}/mid/models/{table_name}.yaml` 中，只更新真实引用旧字段的配置项，例如：
+在 `warehouses/{project}/mid/models/{table_name}.yaml` 中，只更新真实引用旧字段的配置项，例如：
 
 - `atomic_metrics`
 - `derived_metrics`
@@ -135,7 +135,7 @@ models YAML 是项目的表级元数据源，不是普通文档。
 
 ### 7. 修改初始化数据
 
-只有当重命名的是 ODS 字段，或 `{project}/data/` 中明确引用旧字段时，才修改初始化数据 SQL。
+只有当重命名的是 ODS 字段，或 `warehouses/{project}/ods/data/` 中明确引用旧字段时，才修改初始化数据 SQL。
 
 不要为了 DWD/DWS/ADS 字段重命名去改无关 ODS 初始化数据。
 
@@ -144,13 +144,13 @@ models YAML 是项目的表级元数据源，不是普通文档。
 修改完成后运行：
 
 ```bash
-rg "<old_column>" <project>
+rg "<old_column>" warehouses/<project>
 ```
 
 同时按表名复核：
 
 ```bash
-rg "<table_name>" <project>
+rg "<table_name>" warehouses/<project>
 ```
 
 按照 [通用规则](common.md) 判断残留是否需要处理。
@@ -165,6 +165,6 @@ rg "<table_name>" <project>
 - models YAML 中真实字段引用已更新
 - 原有 models 表级元数据未丢失
 - 初始化数据仅在确实涉及 ODS 字段时更新
-- `rg "<old_column>" <project>` 中没有未处理的真实字段引用
-- `lineage_extractor.py --project <project>` 可正常解析
+- `rg "<old_column>" warehouses/<project>` 中没有未处理的真实字段引用
+- `PYTHONPATH=src python -m dw_refactor_agent.lineage.lineage_extractor --project <project>` 可正常解析
 - 未默认修改工具代码、测试代码、HTML、lineage JSON、DAG JSON

@@ -4,7 +4,8 @@ from datetime import datetime, timezone
 
 import pytest
 
-from refact.session import (
+from dw_refactor_agent.config import core as config_core
+from dw_refactor_agent.refactor.session import (
     artifact_path,
     create_run_manifest,
     load_manifest,
@@ -50,10 +51,17 @@ def test_create_run_manifest_writes_expected_layout(tmp_path):
     )
 
     assert manifest_path == (
-        tmp_path / "refact" / "runs" / "20260620_073000_shop" / "manifest.json"
+        tmp_path
+        / "warehouses"
+        / "shop"
+        / "artifacts"
+        / "refactor_runs"
+        / "20260620_073000_shop"
+        / "manifest.json"
     )
     assert manifest["run_id"] == "20260620_073000_shop"
     assert manifest["project"] == "shop"
+    assert manifest["root"] == str(tmp_path.resolve())
     assert manifest["base_git"] == {
         "branch": "main",
         "head": "abc1234",
@@ -64,6 +72,34 @@ def test_create_run_manifest_writes_expected_layout(tmp_path):
 
     assert artifact_path(manifest_path, "baseline_lineage") == (
         manifest_path.parent / "baseline" / "lineage_data.json"
+    )
+
+
+def test_create_run_manifest_uses_configured_project_dir(
+    monkeypatch,
+    tmp_path,
+):
+    monkeypatch.setitem(
+        config_core.PROJECT_CONFIG,
+        "demo",
+        {"dir": "warehouses/custom_demo"},
+    )
+
+    manifest_path, _manifest = create_run_manifest(
+        tmp_path,
+        "demo",
+        now=_local_datetime(2026, 6, 20, 7, 30),
+        git_info={},
+    )
+
+    assert manifest_path == (
+        tmp_path
+        / "warehouses"
+        / "custom_demo"
+        / "artifacts"
+        / "refactor_runs"
+        / "20260620_073000_demo"
+        / "manifest.json"
     )
 
 
@@ -81,7 +117,13 @@ def test_create_run_manifest_uses_local_time_for_names_and_metadata(
     )
 
     assert manifest_path == (
-        tmp_path / "refact" / "runs" / "20260701_102242_shop" / "manifest.json"
+        tmp_path
+        / "warehouses"
+        / "shop"
+        / "artifacts"
+        / "refactor_runs"
+        / "20260701_102242_shop"
+        / "manifest.json"
     )
     assert manifest["run_id"] == "20260701_102242_shop"
     assert manifest["created_at"] == "2026-07-01T10:22:42.539505+08:00"

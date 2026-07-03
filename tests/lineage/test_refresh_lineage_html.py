@@ -3,7 +3,7 @@ import re
 import sys
 import types
 
-import config
+import dw_refactor_agent.config as config
 
 try:
     import sqlglot  # noqa: F401
@@ -66,14 +66,14 @@ except ModuleNotFoundError:
     fake_yaml.safe_load = lambda _: {}
     sys.modules["yaml"] = fake_yaml
 
-import lineage.refresh_lineage_html as refresh_html
+import dw_refactor_agent.lineage.refresh_lineage_html as refresh_html
 
 
 def test_resolve_lineage_data_path_prefers_project_artifact(
     monkeypatch, tmp_path
 ):
     project_dir = tmp_path / "demo_project"
-    project_lineage_dir = project_dir / "lineage"
+    project_lineage_dir = project_dir / "artifacts" / "lineage"
     project_lineage_dir.mkdir(parents=True)
     project_file = project_lineage_dir / "lineage_data.json"
     project_file.write_text('{"source": "project"}', encoding="utf-8")
@@ -124,7 +124,11 @@ def test_resolve_lineage_data_path_ignores_old_project_file(
     old_file.write_text('{"source": "old"}', encoding="utf-8")
 
     assert refresh_html.resolve_lineage_data_path("demo") == (
-        tmp_path / "demo_project" / "lineage" / "lineage_data.json"
+        tmp_path
+        / "demo_project"
+        / "artifacts"
+        / "lineage"
+        / "lineage_data.json"
     )
 
 
@@ -155,8 +159,19 @@ def test_resolve_output_paths_uses_project_artifact_dir(monkeypatch, tmp_path):
     assert (
         paths["lineage_template"] == refresh_html.LINEAGE_DIR / "lineage.html"
     )
-    assert paths["job_output"] == project_dir / "lineage" / "lineage_job.html"
-    assert paths["lineage_output"] == project_dir / "lineage" / "lineage.html"
+    assert paths["job_output"] == (
+        project_dir / "artifacts" / "lineage" / "lineage_job.html"
+    )
+    assert paths["lineage_output"] == (
+        project_dir / "artifacts" / "lineage" / "lineage.html"
+    )
+
+
+def test_packaged_html_templates_exist():
+    paths = refresh_html.resolve_output_paths("shop")
+
+    assert paths["job_template"].exists()
+    assert paths["lineage_template"].exists()
 
 
 def test_generate_jobs_strips_project_db_and_defaults_logic(
@@ -285,7 +300,6 @@ def test_generate_jobs_default_project_tasks_ignore_root_and_include_mid_ads(
         encoding="utf-8",
     )
     monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
-    monkeypatch.setattr(refresh_html, "PROJECT_DIR", tmp_path)
     monkeypatch.setitem(
         config.PROJECT_CONFIG,
         "demo",
@@ -305,9 +319,9 @@ def test_generate_jobs_default_project_tasks_ignore_root_and_include_mid_ads(
     monkeypatch.setattr(
         refresh_html,
         "determine_layer",
-        lambda table_name, project: "ADS"
-        if table_name.startswith("ads_")
-        else "DWD",
+        lambda table_name, project: (
+            "ADS" if table_name.startswith("ads_") else "DWD"
+        ),
     )
 
     jobs = refresh_html.generate_jobs(

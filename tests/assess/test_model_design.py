@@ -1,8 +1,10 @@
-from assess.assessment_context import AssessmentContext
-from assess.rules.definitions.model_design import (
+from dw_refactor_agent.assessment.assessment_context import AssessmentContext
+from dw_refactor_agent.assessment.rules.definitions.model_design import (
     extract_model_design_sql_facts,
 )
-from assess.rules.dimensions.model_design import score_model_design_health
+from dw_refactor_agent.assessment.rules.dimensions.model_design import (
+    score_model_design_health,
+)
 
 
 def _models_from_tables(tables):

@@ -29,7 +29,7 @@ def _key_columns(sql: str) -> list[str]:
 
 
 def test_lineage_ddl_key_columns_are_schema_prefixes():
-    ddl_dir = Path("lineage/ddl")
+    ddl_dir = Path("src/dw_refactor_agent/lineage/ddl")
 
     for ddl_file in sorted(ddl_dir.glob("*.sql")):
         sql = ddl_file.read_text(encoding="utf-8")

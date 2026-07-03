@@ -2,8 +2,8 @@ import json
 
 import pytest
 
-import config
-from lineage.formatters import (
+import dw_refactor_agent.config as config
+from dw_refactor_agent.lineage.formatters import (
     format_column_json,
     format_column_text,
     format_table_dot,
@@ -11,7 +11,10 @@ from lineage.formatters import (
     format_table_json,
     format_table_text,
 )
-from lineage.query import build_column_lineage, build_table_subgraph
+from dw_refactor_agent.lineage.query import (
+    build_column_lineage,
+    build_table_subgraph,
+)
 from tests.lineage.test_lineage_query import (
     _demo_view,
     configure_demo_project_layers,

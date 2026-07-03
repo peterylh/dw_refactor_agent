@@ -49,6 +49,7 @@ appears first on `PATH`, which may be Homebrew Python or another global
 installation. The project entrypoints use `python -m pytest` through the
 selected interpreter instead.
 
-The Makefile runs tests with an empty `PYTHONPATH=` so editable or local
-checkouts such as `/Users/yulihua/Projects/sqlglot` do not shadow the pinned
-package.
+The Makefile runs repository commands with `PYTHONPATH=src` so the local
+`dw_refactor_agent` package is importable under the `src/` layout. Avoid adding
+unrelated local checkouts such as `/Users/yulihua/Projects/sqlglot` to
+`PYTHONPATH`; they can still shadow pinned dependencies.
