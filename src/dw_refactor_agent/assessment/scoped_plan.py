@@ -61,7 +61,9 @@ def changed_types_for_analysis(
     if changed_assets.get("model_tables"):
         changed_types.add("model")
 
-    project_business_semantics = f"{project}/business_semantics.yaml"
+    project_business_semantics = (
+        f"warehouses/{project}/business_semantics.yaml"
+    )
     for file_name in changed_assets.get("config_files") or []:
         normalized = str(file_name or "").replace("\\", "/")
         if normalized == "naming_config.yaml":

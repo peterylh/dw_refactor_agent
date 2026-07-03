@@ -61,6 +61,7 @@ def test_create_run_manifest_writes_expected_layout(tmp_path):
     )
     assert manifest["run_id"] == "20260620_073000_shop"
     assert manifest["project"] == "shop"
+    assert manifest["root"] == str(tmp_path.resolve())
     assert manifest["base_git"] == {
         "branch": "main",
         "head": "abc1234",

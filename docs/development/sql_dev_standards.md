@@ -53,7 +53,7 @@ PROPERTIES ("replication_num" = "1");
 - 枚举值在 COMMENT 中列出可选值（如 `COMMENT '状态: 已完成/已取消'`）
 - 数据类型优先级：`BIGINT` > `DECIMAL(12,2)` > `DATE/DATETIME` > `VARCHAR(n)`
 - 金额统一 `DECIMAL(12,2) DEFAULT '0.00'`
-- ODS 初始化数据单独放 `{project}/ods/data/{catalog}/{database}/` 目录，DDL 文件只含结构
+- ODS 初始化数据单独放 `warehouses/{project}/ods/data/{catalog}/{database}/` 目录，DDL 文件只含结构
 
 
 

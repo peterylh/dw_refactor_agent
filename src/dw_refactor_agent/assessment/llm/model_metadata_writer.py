@@ -1401,7 +1401,7 @@ def run_catalog_metadata_write(
     )
     if not catalog:
         raise FileNotFoundError(
-            f"未找到 {project}/business_semantics.yaml，请先初始化目录"
+            f"未找到 warehouses/{project}/business_semantics.yaml，请先初始化目录"
         )
 
     updates = []

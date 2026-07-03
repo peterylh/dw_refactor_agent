@@ -7,6 +7,7 @@ import argparse
 import json
 import subprocess
 import sys
+from contextlib import contextmanager
 from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
@@ -15,9 +16,13 @@ _src_root = Path(__file__).resolve().parents[2]
 if str(_src_root) not in sys.path:
     sys.path.insert(0, str(_src_root))
 
+import dw_refactor_agent.assessment.assess_middle_layer as assess_module
 import dw_refactor_agent.config as config
+import dw_refactor_agent.lineage.lineage_extractor as lineage_extractor_module
+import dw_refactor_agent.refactor.change_analysis as change_analysis_module
 from dw_refactor_agent.assessment.assess_middle_layer import assess
-from dw_refactor_agent.config import PROJECT_CONFIG, TEXT_ENCODING
+from dw_refactor_agent.config import TEXT_ENCODING
+from dw_refactor_agent.config import core as config_core
 from dw_refactor_agent.refactor.change_analysis import (
     build_change_analysis,
     changed_files_since_head,
@@ -42,6 +47,7 @@ NO_CHANGES_SCORE_REASON = (
     "No relevant file, lineage, DDL, or job changes were detected; scoped "
     "assessment score is not applicable."
 )
+_MISSING = object()
 
 
 def _now() -> datetime:
@@ -80,7 +86,76 @@ def _git_info(root: Path) -> dict:
 
 
 def _project_dir(project: str) -> str:
-    return PROJECT_CONFIG[project]["dir"]
+    return config.PROJECT_CONFIG[project]["dir"]
+
+
+def _remember_attr(states: list[tuple[object, str, object]], module, name):
+    states.append((module, name, module.__dict__.get(name, _MISSING)))
+
+
+def _set_attr(states: list[tuple[object, str, object]], module, name, value):
+    _remember_attr(states, module, name)
+    setattr(module, name, value)
+
+
+def _restore_attrs(states: list[tuple[object, str, object]]) -> None:
+    for module, name, old_value in reversed(states):
+        if old_value is _MISSING:
+            module.__dict__.pop(name, None)
+        else:
+            setattr(module, name, old_value)
+
+
+def _clear_config_caches() -> None:
+    config.clear_model_metadata_cache()
+    config.clear_naming_config_cache()
+    config.clear_business_semantics_cache()
+
+
+@contextmanager
+def _project_root_context(root: Path):
+    """Temporarily run refactor workflow helpers against one repo root."""
+    root = Path(root).resolve()
+    project_config = config_core.load_project_config(root)
+    if not project_config:
+        project_config = config_core.PROJECT_CONFIG
+
+    states = []
+    try:
+        _set_attr(states, config_core, "PROJECT_ROOT", root)
+        _set_attr(states, config_core, "WAREHOUSES_ROOT", root / "warehouses")
+        _set_attr(states, config_core, "PROJECT_CONFIG", project_config)
+        _set_attr(states, config_core, "PROJECT_MAP", project_config)
+
+        for module in (config,):
+            _set_attr(states, module, "PROJECT_ROOT", root)
+            _set_attr(states, module, "WAREHOUSES_ROOT", root / "warehouses")
+            _set_attr(states, module, "PROJECT_CONFIG", project_config)
+            _set_attr(states, module, "PROJECT_MAP", project_config)
+
+        for module in (lineage_extractor_module, change_analysis_module):
+            _set_attr(states, module, "PROJECT_CONFIG", project_config)
+
+        _set_attr(states, assess_module, "PROJECT_ROOT", root)
+        _set_attr(states, assess_module, "PROJECT_CONFIG", project_config)
+
+        _clear_config_caches()
+        yield root
+    finally:
+        _restore_attrs(states)
+        _clear_config_caches()
+
+
+def _root_from_manifest(manifest: dict, manifest_path: Path) -> Path:
+    raw_root = str(manifest.get("root") or "").strip()
+    if raw_root:
+        return Path(raw_root).expanduser().resolve()
+
+    resolved_manifest = Path(manifest_path).resolve()
+    for parent in resolved_manifest.parents:
+        if (parent / "warehouses").exists():
+            return parent
+    return config.PROJECT_ROOT
 
 
 def _short_name(name: str) -> str:
@@ -209,26 +284,29 @@ def _mark_assessment_no_changes(assess_result: dict) -> dict:
 
 
 def _start(args) -> int:
-    root = Path(args.root)
-    manifest_path, manifest = create_run_manifest(
-        root,
-        args.project,
-        now=_now(),
-        git_info=_git_info(root),
-    )
-    write_manifest(manifest_path, manifest)
-    lineage_path = artifact_path(manifest_path, "baseline_lineage")
-    cache_path = artifact_path(manifest_path, "baseline_task_cache")
-    lineage_result = build_lineage_artifacts(
-        args.project,
-        lineage_path,
-        cache_path,
-    )
-    assess_result = assess(
-        args.project,
-        lineage_data=lineage_result["lineage"],
-    )
-    _write_json(artifact_path(manifest_path, "baseline_assess"), assess_result)
+    root = Path(args.root).expanduser().resolve()
+    with _project_root_context(root) as repo_root:
+        manifest_path, manifest = create_run_manifest(
+            repo_root,
+            args.project,
+            now=_now(),
+            git_info=_git_info(repo_root),
+        )
+        write_manifest(manifest_path, manifest)
+        lineage_path = artifact_path(manifest_path, "baseline_lineage")
+        cache_path = artifact_path(manifest_path, "baseline_task_cache")
+        lineage_result = build_lineage_artifacts(
+            args.project,
+            lineage_path,
+            cache_path,
+        )
+        assess_result = assess(
+            args.project,
+            lineage_data=lineage_result["lineage"],
+        )
+        _write_json(
+            artifact_path(manifest_path, "baseline_assess"), assess_result
+        )
     print(f"Run manifest: {manifest_path}")
     return 0
 
@@ -244,74 +322,78 @@ def _analyze(args) -> int:
     manifest_path = Path(args.manifest)
     manifest = load_manifest(manifest_path)
     project = manifest["project"]
+    repo_root = _root_from_manifest(manifest, manifest_path)
 
-    current_lineage_path = artifact_path(manifest_path, "current_lineage")
-    current_cache_path = artifact_path(manifest_path, "current_task_cache")
-    lineage_result = build_lineage_artifacts(
-        project,
-        current_lineage_path,
-        current_cache_path,
-        previous_cache_path=_previous_cache_path(manifest_path),
-    )
+    with _project_root_context(repo_root) as repo_root:
+        current_lineage_path = artifact_path(manifest_path, "current_lineage")
+        current_cache_path = artifact_path(manifest_path, "current_task_cache")
+        lineage_result = build_lineage_artifacts(
+            project,
+            current_lineage_path,
+            current_cache_path,
+            previous_cache_path=_previous_cache_path(manifest_path),
+        )
 
-    baseline_lineage = _read_json(
-        artifact_path(manifest_path, "baseline_lineage")
-    )
-    current_lineage = lineage_result["lineage"]
-    changed_files = changed_files_since_head(
-        config.PROJECT_ROOT,
-        manifest.get("base_git", {}).get("head", "HEAD"),
-        _project_dir(project),
-    )
-    change_analysis = build_change_analysis(
-        project,
-        baseline_lineage,
-        current_lineage,
-        changed_files,
-    )
-    _write_json(
-        artifact_path(manifest_path, "change_analysis"),
-        change_analysis,
-    )
+        baseline_lineage = _read_json(
+            artifact_path(manifest_path, "baseline_lineage")
+        )
+        current_lineage = lineage_result["lineage"]
+        changed_files = changed_files_since_head(
+            repo_root,
+            manifest.get("base_git", {}).get("head", "HEAD"),
+            _project_dir(project),
+        )
+        change_analysis = build_change_analysis(
+            project,
+            baseline_lineage,
+            current_lineage,
+            changed_files,
+        )
+        _write_json(
+            artifact_path(manifest_path, "change_analysis"),
+            change_analysis,
+        )
 
-    plan = build_verification_plan(
-        project,
-        change_analysis,
-        base_ref=manifest.get("base_git", {}).get("head"),
-        repo_root=config.PROJECT_ROOT,
-        lineage_data=current_lineage,
-        partition=args.partition,
-    )
-    change_analysis = _with_rename_mapping(
-        change_analysis,
-        plan.get("ddl_changes") or [],
-    )
-    _write_json(
-        artifact_path(manifest_path, "change_analysis"),
-        change_analysis,
-    )
+        plan = build_verification_plan(
+            project,
+            change_analysis,
+            base_ref=manifest.get("base_git", {}).get("head"),
+            repo_root=repo_root,
+            lineage_data=current_lineage,
+            partition=args.partition,
+        )
+        change_analysis = _with_rename_mapping(
+            change_analysis,
+            plan.get("ddl_changes") or [],
+        )
+        _write_json(
+            artifact_path(manifest_path, "change_analysis"),
+            change_analysis,
+        )
 
-    current_assess = assess(
-        project,
-        lineage_data=current_lineage,
-        change_analysis=change_analysis,
-    )
-    if _has_no_refactor_changes(change_analysis, plan):
-        current_assess = _mark_assessment_no_changes(current_assess)
-    _write_json(artifact_path(manifest_path, "current_assess"), current_assess)
-    _write_json(artifact_path(manifest_path, "verification_plan"), plan)
+        current_assess = assess(
+            project,
+            lineage_data=current_lineage,
+            change_analysis=change_analysis,
+        )
+        if _has_no_refactor_changes(change_analysis, plan):
+            current_assess = _mark_assessment_no_changes(current_assess)
+        _write_json(
+            artifact_path(manifest_path, "current_assess"), current_assess
+        )
+        _write_json(artifact_path(manifest_path, "verification_plan"), plan)
 
-    baseline_assess = _read_json(
-        artifact_path(manifest_path, "baseline_assess")
-    )
-    issue_diff = diff_assess_results(
-        baseline_assess,
-        current_assess,
-        scope_plan=current_assess.get("scope_plan"),
-        change_analysis=change_analysis,
-        verification_plan=plan,
-    )
-    _write_json(artifact_path(manifest_path, "issue_diff"), issue_diff)
+        baseline_assess = _read_json(
+            artifact_path(manifest_path, "baseline_assess")
+        )
+        issue_diff = diff_assess_results(
+            baseline_assess,
+            current_assess,
+            scope_plan=current_assess.get("scope_plan"),
+            change_analysis=change_analysis,
+            verification_plan=plan,
+        )
+        _write_json(artifact_path(manifest_path, "issue_diff"), issue_diff)
 
     print(f"Analyze complete: {manifest_path}")
     return 0
@@ -347,7 +429,7 @@ def build_parser() -> argparse.ArgumentParser:
     start.add_argument(
         "--project",
         required=True,
-        choices=list(PROJECT_CONFIG.keys()),
+        choices=list(config.PROJECT_CONFIG.keys()),
     )
     start.add_argument("--root", default=str(config.PROJECT_ROOT))
     start.set_defaults(func=_start)

@@ -65,7 +65,7 @@ BUSINESS_AREA_CODE:
 
 项目级 `business_semantics.yaml` 中的 `data_domains` 和 `business_areas`
 会在加载命名配置时合并进 `dictionaries`。因此业务域/板块主数据应优先维护在
-`{project}/business_semantics.yaml`，`naming_config.yaml` 只需要通过
+`warehouses/{project}/business_semantics.yaml`，`naming_config.yaml` 只需要通过
 `dictionary` 引用这些字典。
 
 ## rule expr 语义

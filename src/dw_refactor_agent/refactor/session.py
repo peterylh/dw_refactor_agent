@@ -46,7 +46,7 @@ def create_run_manifest(
 ) -> tuple[Path, dict]:
     """Create a run directory and return its manifest path and data."""
     now = _as_local_time(now or _local_now())
-    root = Path(root)
+    root = Path(root).resolve()
     run_id = f"{now.strftime('%Y%m%d_%H%M%S')}_{project}"
     run_root = _refactor_runs_root(root, project) / run_id
     for dirname in ("baseline", "current", "analysis", "verification"):
@@ -55,6 +55,7 @@ def create_run_manifest(
     manifest = {
         "run_id": run_id,
         "project": project,
+        "root": str(root),
         "created_at": now.isoformat(),
         "base_git": git_info or {},
         "artifacts": _artifact_paths(),

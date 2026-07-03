@@ -55,6 +55,8 @@ def test_start_creates_manifest_and_baseline_artifacts(tmp_path, monkeypatch):
         / "20260620_073000_shop"
     )
     assert (run_root / "manifest.json").exists()
+    manifest = json.loads((run_root / "manifest.json").read_text())
+    assert manifest["root"] == str(tmp_path.resolve())
     assert (run_root / "baseline" / "lineage_data.json").exists()
     assert (run_root / "baseline" / "task_lineage_cache.json").exists()
     assert (run_root / "baseline" / "assess_result.json").exists()
@@ -136,12 +138,23 @@ def test_analyze_refreshes_current_analysis_diff_and_plan(
 
     monkeypatch.setattr(run_cli, "build_lineage_artifacts", fake_lineage)
     monkeypatch.setattr(run_cli, "assess", fake_assess)
+
+    diff_calls = []
+
+    def fake_changed_files(root, head, project_dir):
+        diff_calls.append(
+            {
+                "root": root,
+                "head": head,
+                "project_dir": project_dir,
+            }
+        )
+        return ["warehouses/shop/mid/models/dwd_order.yaml"]
+
     monkeypatch.setattr(
         run_cli,
         "changed_files_since_head",
-        lambda root, head, project_dir: [
-            "warehouses/shop/mid/models/dwd_order.yaml"
-        ],
+        fake_changed_files,
     )
     plan_calls = []
 
@@ -156,6 +169,7 @@ def test_analyze_refreshes_current_analysis_diff_and_plan(
         plan_calls.append(
             {
                 "base_ref": base_ref,
+                "repo_root": repo_root,
                 "lineage_data": lineage_data,
                 "partition": partition,
             }
@@ -206,9 +220,17 @@ def test_analyze_refreshes_current_analysis_diff_and_plan(
         "model_tables"
     ] == ["dwd_order"]
     assert (run_root / "verification" / "plan.json").exists()
+    assert diff_calls == [
+        {
+            "root": tmp_path.resolve(),
+            "head": "abc123",
+            "project_dir": "warehouses/shop",
+        }
+    ]
     assert plan_calls == [
         {
             "base_ref": "abc123",
+            "repo_root": tmp_path.resolve(),
             "lineage_data": {"tables": [], "edges": []},
             "partition": "2025-01-15",
         }
