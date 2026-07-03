@@ -432,12 +432,12 @@ make test PYTHON=/absolute/path/to/python
 
 ## Git Commit 规范
 
-参见 [commit_message.md](./commit_message.md)。
+参见 [docs/development/commit_message.md](docs/development/commit_message.md)。
 
 ## Python 编码规范
 
-参见 [python_coding_standards.md](./python_coding_standards.md)。
+参见 [docs/development/python_coding_standards.md](docs/development/python_coding_standards.md)。
 
 ## SQL 数据开发规范
 
-参见 [sql_dev_standards.md](./sql_dev_standards.md)。
+参见 [docs/development/sql_dev_standards.md](docs/development/sql_dev_standards.md)。
