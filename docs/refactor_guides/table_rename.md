@@ -120,5 +120,5 @@ rg "<old_table>"
 - models YAML 文件名和 `name` 已更新
 - 原有 models 元数据未丢失
 - `rg "<old_table>"` 中没有未处理的真实表引用
-- `lineage_extractor.py --project <project>` 可正常解析
+- `PYTHONPATH=src python -m dw_refactor_agent.lineage.lineage_extractor --project <project>` 可正常解析
 - 未默认修改工具代码、测试代码、HTML、lineage JSON、DAG JSON

@@ -9,7 +9,7 @@
 # 先确保 lineage_data.json 是最新的
 cd /path/to/project
 PYTHONPATH=src python -m dw_refactor_agent.lineage.lineage_extractor --project shop
-python3 refresh_lineage_html.py
+PYTHONPATH=src python -m dw_refactor_agent.lineage.refresh_lineage_html --project shop
 PYTHONPATH=src python -m dw_refactor_agent.lineage.import_lineage --project shop
 # 再用 agent 做 QA
 ```
@@ -76,12 +76,12 @@ PYTHONPATH=src python -m dw_refactor_agent.lineage.import_lineage --project shop
 - `warehouses/shop/artifacts/lineage/lineage_data.json` — 血缘数据
 - `warehouses/shop/{mid,ads}/tasks/**/*.sql` — 各任务 SQL
 - `warehouses/shop/{ods,mid,ads}/ddl/**/*.sql` — DDL 定义
-- Doris 数据库 `lineage`（`src/dw_refactor_agent/lineage/import_lineage.py` 定义的目标库）
+- Doris 数据库由 `warehouses/shop/warehouse.yaml` 的 `lineage_database` 配置决定，导入逻辑读取 `PROJECT_CONFIG["shop"]["lineage_db"]`
 
 前置条件：已运行 `PYTHONPATH=src python -m dw_refactor_agent.lineage.import_lineage --project shop` 将数据导入 Doris。
 
 #### C1. Doris 连接可用
-能通过 pymysql 连接到 Doris（host: 172.16.0.90, port: 9030, database: lineage）。
+能通过 pymysql 连接到 Doris。host/port 来自 `src/dw_refactor_agent/config/core.py` 的 `DB_ENV_CONFIG`，database 来自项目 `warehouse.yaml` 的 `lineage_database`。
 
 #### C2. 字段级血缘数量一致
 `column_lineage` 表中的记录数应与 `lineage_data.json` 中的 edges 数一致。
@@ -132,7 +132,7 @@ PYTHONPATH=src python -m dw_refactor_agent.lineage.import_lineage --project shop
       "id": "C1",
       "name": "Doris 连接可用",
       "status": "FAIL",
-      "details": "无法连接 Doris: (2003, \"Can't connect to MySQL server on '172.16.0.90:9030' (60)\")",
+      "details": "无法连接 Doris: (2003, \"Can't connect to MySQL server on '<host>:<port>' (60)\")",
       "suggestion": "请确认 Doris 服务是否运行，网络是否可达。运行 PYTHONPATH=src python -m dw_refactor_agent.lineage.import_lineage --project shop 重新导入。"
     },
     {
@@ -158,7 +158,7 @@ PYTHONPATH=src python -m dw_refactor_agent.lineage.import_lineage --project shop
 
 其他 Agent 可以根据报告中的 `results[].suggestion` 来修复问题：
 
-- **B 类问题** → 运行 `python3 refresh_lineage_html.py` 重新注入数据，或手动修改 HTML
+- **B 类问题** → 运行 `PYTHONPATH=src python -m dw_refactor_agent.lineage.refresh_lineage_html --project shop` 重新注入数据，或手动修改 HTML
 - **C 类问题** → 运行 `PYTHONPATH=src python -m dw_refactor_agent.lineage.import_lineage --project shop` 重新导入，或检查 Doris 连接配置
 
 ## 依赖
@@ -169,4 +169,4 @@ PYTHONPATH=src python -m dw_refactor_agent.lineage.import_lineage --project shop
 - `warehouses/shop/{ods,mid,ads}/ddl/**/*.sql`（DDL）
 - `warehouses/shop/artifacts/lineage/lineage_job.html`（HTML 可视化）
 - `warehouses/shop/artifacts/lineage/lineage.html`（HTML 可视化）
-- Doris 数据库 `lineage`（host: 172.16.0.90:9030）
+- Doris 数据库连接配置来自 `src/dw_refactor_agent/config/core.py` 的 `DB_ENV_CONFIG`，目标库来自 `warehouses/shop/warehouse.yaml` 的 `lineage_database`

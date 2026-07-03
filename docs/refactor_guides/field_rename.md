@@ -166,5 +166,5 @@ rg "<table_name>" warehouses/<project>
 - 原有 models 表级元数据未丢失
 - 初始化数据仅在确实涉及 ODS 字段时更新
 - `rg "<old_column>" warehouses/<project>` 中没有未处理的真实字段引用
-- `lineage_extractor.py --project <project>` 可正常解析
+- `PYTHONPATH=src python -m dw_refactor_agent.lineage.lineage_extractor --project <project>` 可正常解析
 - 未默认修改工具代码、测试代码、HTML、lineage JSON、DAG JSON
