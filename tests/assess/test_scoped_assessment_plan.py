@@ -1,3 +1,4 @@
+import dw_refactor_agent.assessment.scoped_plan as scoped_plan
 from dw_refactor_agent.assessment.assessment_context import AssessmentContext
 from dw_refactor_agent.assessment.scoped_plan import (
     build_scoped_assessment_plan,
@@ -233,6 +234,36 @@ def test_changed_types_ignore_root_default_naming_config():
         )
         == set()
     )
+
+
+def test_changed_types_uses_configured_project_dir_for_business_semantics(
+    monkeypatch,
+):
+    monkeypatch.setitem(
+        scoped_plan.config.PROJECT_CONFIG,
+        "demo",
+        {"dir": "warehouses/custom_demo"},
+    )
+
+    assert changed_types_for_analysis(
+        "demo",
+        {
+            "changed_assets": {
+                "config_files": [
+                    "warehouses/custom_demo/business_semantics.yaml"
+                ],
+            }
+        },
+    ) == {"business_semantics"}
+    changed_types = changed_types_for_analysis(
+        "demo",
+        {
+            "changed_assets": {
+                "config_files": ["warehouses/other/business_semantics.yaml"],
+            }
+        },
+    )
+    assert changed_types == {"config"}
 
 
 def test_build_scoped_assessment_plan_marks_warehouse_config_full():

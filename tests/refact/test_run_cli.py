@@ -17,7 +17,25 @@ def _write_json(path, data):
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2))
 
 
+def _write_warehouse_config(root, project="shop"):
+    warehouse_dir = root / "warehouses" / project
+    warehouse_dir.mkdir(parents=True)
+    (warehouse_dir / "warehouse.yaml").write_text(
+        "\n".join(
+            [
+                f"name: {project}",
+                f"database: {project}_dm",
+                f"qa_database: {project}_dm_qa",
+                f"lineage_database: {project}_lineage",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+
 def test_start_creates_manifest_and_baseline_artifacts(tmp_path, monkeypatch):
+    _write_warehouse_config(tmp_path)
+
     def fake_lineage(
         project, output_path, cache_path, previous_cache_path=None
     ):
@@ -63,19 +81,7 @@ def test_start_creates_manifest_and_baseline_artifacts(tmp_path, monkeypatch):
 
 
 def test_start_loads_project_choices_from_target_root(tmp_path, monkeypatch):
-    warehouse_dir = tmp_path / "warehouses" / "demo"
-    warehouse_dir.mkdir(parents=True)
-    (warehouse_dir / "warehouse.yaml").write_text(
-        "\n".join(
-            [
-                "name: demo",
-                "database: demo_dm",
-                "qa_database: demo_dm_qa",
-                "lineage_database: demo_lineage",
-            ]
-        ),
-        encoding="utf-8",
-    )
+    _write_warehouse_config(tmp_path, "demo")
 
     def fake_lineage(
         project, output_path, cache_path, previous_cache_path=None
@@ -118,9 +124,22 @@ def test_start_loads_project_choices_from_target_root(tmp_path, monkeypatch):
     assert manifest["project"] == "demo"
 
 
+def test_start_rejects_root_without_warehouse_config(tmp_path):
+    root = tmp_path / "empty-root"
+    root.mkdir()
+
+    try:
+        run_cli.main(["start", "--project", "shop", "--root", str(root)])
+    except SystemExit as exc:
+        assert "缺少 warehouses 目录" in str(exc)
+    else:
+        raise AssertionError("start should reject a root without warehouses/")
+
+
 def test_analyze_refreshes_current_analysis_diff_and_plan(
     tmp_path, monkeypatch
 ):
+    _write_warehouse_config(tmp_path)
     manifest_path, manifest = create_run_manifest(
         tmp_path,
         "shop",
@@ -296,6 +315,7 @@ def test_analyze_refreshes_current_analysis_diff_and_plan(
 def test_analyze_marks_empty_diff_assessment_not_applicable(
     tmp_path, monkeypatch
 ):
+    _write_warehouse_config(tmp_path)
     manifest_path, manifest = create_run_manifest(
         tmp_path,
         "shop",
@@ -435,6 +455,7 @@ def test_check_subcommand_is_removed():
 def test_shadow_run_and_compare_delegate_to_plan_handlers(
     tmp_path, monkeypatch
 ):
+    _write_warehouse_config(tmp_path)
     manifest_path, manifest = create_run_manifest(
         tmp_path,
         "shop",
@@ -480,6 +501,7 @@ def test_shadow_run_and_compare_delegate_to_plan_handlers(
 
 
 def test_shadow_run_cli_reports_handler_failure(tmp_path, monkeypatch):
+    _write_warehouse_config(tmp_path)
     manifest_path, manifest = create_run_manifest(
         tmp_path,
         "shop",

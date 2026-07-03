@@ -119,7 +119,15 @@ def _project_root_context(root: Path):
     root = Path(root).resolve()
     project_config = config_core.load_project_config(root)
     if not project_config:
-        project_config = config_core.PROJECT_CONFIG
+        warehouses_root = root / "warehouses"
+        if not root.exists():
+            raise SystemExit(f"项目根目录不存在: {root}")
+        if not warehouses_root.exists():
+            raise SystemExit(f"项目根目录缺少 warehouses 目录: {root}")
+        raise SystemExit(
+            "项目根目录未找到任何 warehouse.yaml: "
+            f"{warehouses_root}/*/warehouse.yaml"
+        )
 
     states = []
     try:

@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import dw_refactor_agent.config as config
+
 DEFAULT_DIMENSIONS = [
     "reuse",
     "depth",
@@ -48,6 +50,12 @@ def _short_task_name(task: dict) -> str:
     return file_name
 
 
+def _project_business_semantics_path(project: str) -> str:
+    project_cfg = config.PROJECT_CONFIG.get(project) or {}
+    project_dir = str(project_cfg.get("dir") or f"warehouses/{project}")
+    return f"{project_dir.rstrip('/')}/business_semantics.yaml"
+
+
 def changed_types_for_analysis(
     project: str, change_analysis: dict
 ) -> set[str]:
@@ -61,18 +69,14 @@ def changed_types_for_analysis(
     if changed_assets.get("model_tables"):
         changed_types.add("model")
 
-    project_business_semantics = (
-        f"warehouses/{project}/business_semantics.yaml"
-    )
+    project_business_semantics = _project_business_semantics_path(project)
     for file_name in changed_assets.get("config_files") or []:
         normalized = str(file_name or "").replace("\\", "/")
         if normalized == "naming_config.yaml":
             continue
         if normalized.endswith("/naming_config.yaml"):
             changed_types.add("naming_config")
-        elif normalized == project_business_semantics or normalized.endswith(
-            "/business_semantics.yaml"
-        ):
+        elif normalized == project_business_semantics:
             changed_types.add("business_semantics")
         elif normalized.endswith("/warehouse.yaml"):
             changed_types.add("warehouse_config")
