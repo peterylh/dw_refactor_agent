@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import date, timedelta
 from pathlib import Path
 
 import dw_refactor_agent.config as config
@@ -15,6 +16,17 @@ from dw_refactor_agent.ddl_deriver.ddl_deriver import (
 )
 from dw_refactor_agent.lineage.job_dag import asset_job_dag_from_lineage
 from dw_refactor_agent.sql.doris import extract_doris_partition_column
+
+SUPPORTED_TIME_PERIODS = {"D", "W", "M"}
+WEEKDAY_INDEX = {
+    "MON": 0,
+    "TUE": 1,
+    "WED": 2,
+    "THU": 3,
+    "FRI": 4,
+    "SAT": 5,
+    "SUN": 6,
+}
 
 
 def strip_insert_data(sql_text: str) -> str:
@@ -119,13 +131,11 @@ def _job_entry(project: str, job_name: str) -> dict | None:
     task_path = _task_path(project, job_name)
     if not task_path:
         return None
-    sql_text = task_path.read_text(encoding=TEXT_ENCODING)
     return {
         "job": job_name,
         "file": _relative(task_path),
         "layer": config.determine_layer(job_name, project),
         "target": job_name,
-        "needs_etl_date": "@etl_date" in sql_text,
     }
 
 
@@ -174,19 +184,24 @@ def build_verification_plan(
     partition: str | None = None,
 ) -> dict:
     cfg = config.PROJECT_CONFIG[project]
-    scope = change_analysis.get("affected_scope") or {}
-    affected_scope = _normalized_affected_scope(scope)
-    assessment_tables = set(affected_scope["assessment_tables"])
-    assessment_tasks = set(affected_scope["assessment_tasks"])
+    metadata_errors = []
+    raw_scope = (
+        change_analysis.get("scope")
+        or change_analysis.get("affected_scope")
+        or {}
+    )
+    scope = _normalized_scope(raw_scope)
+    assessment_tables = set(scope["assessment_tables"])
+    assessment_tasks = set(scope["assessment_tasks"])
     modified_jobs = _modified_jobs(change_analysis, assessment_tasks)
     changed_ddl_tables = _changed_ddl_tables(change_analysis)
     anchors, self_anchor_tables = _verification_anchor_tables(
-        affected_scope,
+        scope,
         modified_jobs,
         changed_ddl_tables,
     )
-    affected_scope["anchor_tables"] = anchors
-    downstream_tables = affected_scope["downstream_tables"]
+    scope["anchor_tables"] = anchors
+    changes = _plan_changes(change_analysis, modified_jobs)
 
     sorted_jobs = _sort_jobs_for_execution(
         project,
@@ -226,48 +241,52 @@ def build_verification_plan(
         ddl_changes = []
         baseline_ddl = _current_ddl_by_table(project, assessment_tables)
 
-    partition_info = _build_partition_info(
-        partition,
-        anchors,
-        baseline_ddl,
+    compare_anchors, anchor_windows, verification_warnings = (
+        _build_compare_anchors(
+            project,
+            anchors,
+            partition,
+            metadata_errors,
+        )
+    )
+    _apply_refresh_metadata(
+        project,
+        jobs_to_run,
+        anchor_windows,
+        metadata_errors,
     )
 
     checks = []
     for table in anchors:
-        table_partition = partition_info.get("per_table", {}).get(table)
         for method in ("count", "row_compare"):
-            check = {"table": table, "method": method}
-            if table_partition:
-                check["partition_col"] = table_partition["partition_col"]
-                check["partition_value"] = table_partition["value"]
-            checks.append(check)
+            checks.append({"table": table, "method": method})
 
     verification = _verification_metadata(
-        checks,
-        affected_scope,
+        [] if metadata_errors else checks,
+        scope,
         jobs_to_run,
         ddl_changes,
         _ads_schema_change_tables(project, ddl_changes),
         self_anchor_tables,
+        compare_anchors,
+        verification_warnings,
+        metadata_errors,
     )
 
     return {
         "project": project,
         "project_db": cfg["db"],
         "qa_db": cfg["qa_db"],
-        "affected_scope": affected_scope,
-        "modified_jobs": modified_jobs,
-        "downstream_tables": downstream_tables,
-        "anchors": anchors,
+        "changes": changes,
+        "scope": scope,
         "baseline_ddl": dict(sorted(baseline_ddl.items())),
         "ddl_changes": ddl_changes,
-        "partition_info": partition_info,
         "jobs_to_run": jobs_to_run,
         "verification": verification,
     }
 
 
-def _normalized_affected_scope(scope: dict) -> dict:
+def _normalized_scope(scope: dict) -> dict:
     return {
         "direct_tables": sorted(set(scope.get("direct_tables") or [])),
         "downstream_tables": sorted(set(scope.get("downstream_tables") or [])),
@@ -285,6 +304,22 @@ def _modified_jobs(
     if isinstance(changed_assets, dict) and "task_jobs" in changed_assets:
         return sorted(set(changed_assets.get("task_jobs") or []))
     return sorted(assessment_tasks)
+
+
+def _changed_asset_list(change_analysis: dict, key: str) -> list[str]:
+    changed_assets = change_analysis.get("changed_assets")
+    if not isinstance(changed_assets, dict):
+        return []
+    return sorted(set(changed_assets.get(key) or []))
+
+
+def _plan_changes(change_analysis: dict, modified_jobs: list[str]) -> dict:
+    return {
+        "modified_jobs": sorted(set(modified_jobs or [])),
+        "ddl_tables": _changed_asset_list(change_analysis, "ddl_tables"),
+        "model_tables": _changed_asset_list(change_analysis, "model_tables"),
+        "config_files": _changed_asset_list(change_analysis, "config_files"),
+    }
 
 
 def _changed_ddl_tables(change_analysis: dict) -> set[str]:
@@ -325,6 +360,338 @@ def _has_verification_work(
     )
 
 
+def _validation_error(table: str, field: str, message: str) -> dict:
+    return {"table": table, "field": field, "message": message}
+
+
+def _add_validation_error(
+    metadata_errors: list[dict], table: str, field: str, message: str
+) -> None:
+    error = _validation_error(table, field, message)
+    if error not in metadata_errors:
+        metadata_errors.append(error)
+
+
+def _project_verification_config(project: str) -> dict:
+    return dict(
+        config.PROJECT_CONFIG.get(project, {}).get("verification") or {}
+    )
+
+
+def _time_period(value) -> str:
+    return str(value or "").strip().upper()
+
+
+def _table_grain_metadata(
+    project: str,
+    table: str,
+    metadata_errors: list[dict],
+) -> dict | None:
+    metadata = config.get_model_metadata(table, project) or {}
+    grain = metadata.get("grain")
+    if not isinstance(grain, dict) or not grain:
+        return None
+
+    time_column = grain.get("time_column")
+    period = _time_period(grain.get("time_period"))
+    if not time_column and not period:
+        return None
+    if bool(time_column) != bool(period):
+        _add_validation_error(
+            metadata_errors,
+            table,
+            "grain",
+            (
+                "grain.time_column and grain.time_period must be "
+                "configured together"
+            ),
+        )
+        return None
+    if period and period not in SUPPORTED_TIME_PERIODS:
+        _add_validation_error(
+            metadata_errors,
+            table,
+            "grain.time_period",
+            "grain.time_period must be one of D, W, M",
+        )
+        return None
+    if (
+        period == "W"
+        and _week_start_index(project, table, metadata_errors) is None
+    ):
+        return None
+    return {"time_column": str(time_column), "time_period": period}
+
+
+def _table_refresh_metadata(
+    project: str,
+    table: str,
+    grain: dict,
+    metadata_errors: list[dict],
+) -> dict | None:
+    metadata = config.get_model_metadata(table, project) or {}
+    refresh = metadata.get("refresh")
+    if isinstance(refresh, dict) and refresh:
+        parameter = refresh.get("parameter")
+        period = _time_period(refresh.get("time_period"))
+        if bool(parameter) != bool(period):
+            _add_validation_error(
+                metadata_errors,
+                table,
+                "refresh",
+                (
+                    "refresh.parameter and refresh.time_period must be "
+                    "configured together"
+                ),
+            )
+            return None
+        if period not in SUPPORTED_TIME_PERIODS:
+            _add_validation_error(
+                metadata_errors,
+                table,
+                "refresh.time_period",
+                "refresh.time_period must be one of D, W, M",
+            )
+            return None
+        if (
+            period == "W"
+            and _week_start_index(project, table, metadata_errors) is None
+        ):
+            return None
+        return {"parameter": str(parameter), "time_period": period}
+
+    parameter = _project_verification_config(project).get(
+        "default_refresh_parameter"
+    )
+    if not parameter:
+        _add_validation_error(
+            metadata_errors,
+            table,
+            "refresh.parameter",
+            (
+                "refresh.parameter is missing and project "
+                "verification.default_refresh_parameter is not configured"
+            ),
+        )
+        return None
+    return {
+        "parameter": str(parameter),
+        "time_period": grain["time_period"],
+    }
+
+
+def _parse_anchor_date(value: str, table: str, metadata_errors: list[dict]):
+    try:
+        return date.fromisoformat(str(value))
+    except ValueError:
+        _add_validation_error(
+            metadata_errors,
+            table,
+            "anchor_time_value",
+            "anchor time value must be an ISO date",
+        )
+        return None
+
+
+def _week_start_index(
+    project: str,
+    table: str,
+    metadata_errors: list[dict],
+) -> int | None:
+    week_start = str(
+        _project_verification_config(project).get("week_start") or ""
+    ).upper()
+    if week_start not in WEEKDAY_INDEX:
+        _add_validation_error(
+            metadata_errors,
+            table,
+            "week_start",
+            "project verification.week_start is required for W periods",
+        )
+        return None
+    return WEEKDAY_INDEX[week_start]
+
+
+def _period_start(
+    value: date,
+    period: str,
+    project: str,
+    table: str,
+    metadata_errors: list[dict],
+) -> date | None:
+    if period == "D":
+        return value
+    if period == "M":
+        return value.replace(day=1)
+    if period == "W":
+        week_start = _week_start_index(project, table, metadata_errors)
+        if week_start is None:
+            return None
+        delta = (value.weekday() - week_start) % 7
+        return value - timedelta(days=delta)
+    return None
+
+
+def _add_month(value: date) -> date:
+    if value.month == 12:
+        return value.replace(year=value.year + 1, month=1, day=1)
+    return value.replace(month=value.month + 1, day=1)
+
+
+def _period_end_exclusive(start: date, period: str) -> date:
+    if period == "D":
+        return start + timedelta(days=1)
+    if period == "W":
+        return start + timedelta(days=7)
+    return _add_month(start)
+
+
+def _period_values_for_window(
+    window: dict,
+    period: str,
+    project: str,
+) -> list[str]:
+    start = window["start"]
+    end = window["end_exclusive"]
+    values = []
+    current = start
+    if period == "W":
+        errors = []
+        current = _period_start(start, "W", project, "", errors) or start
+    elif period == "M":
+        current = start.replace(day=1)
+
+    while current < end:
+        values.append(current.isoformat())
+        if period == "D":
+            current += timedelta(days=1)
+        elif period == "W":
+            current += timedelta(days=7)
+        else:
+            current = _add_month(current)
+    return values
+
+
+def _execution_values(
+    windows: list[dict],
+    refresh_period: str,
+    project: str,
+) -> list[str]:
+    values = set()
+    for window in windows:
+        values.update(
+            _period_values_for_window(window, refresh_period, project)
+        )
+    return sorted(values)
+
+
+def _build_compare_anchors(
+    project: str,
+    anchors: list[str],
+    anchor_value: str | None,
+    metadata_errors: list[dict],
+) -> tuple[dict, list[dict], list[dict]]:
+    compare_anchors = {}
+    windows = []
+    full_table_tables = []
+    no_anchor_value_tables = []
+
+    for table in anchors:
+        before_error_count = len(metadata_errors)
+        grain = _table_grain_metadata(project, table, metadata_errors)
+        if len(metadata_errors) > before_error_count:
+            continue
+        if not grain:
+            compare_anchors[table] = {}
+            full_table_tables.append(table)
+            continue
+
+        anchor = dict(grain)
+        if not anchor_value:
+            no_anchor_value_tables.append(table)
+        else:
+            parsed = _parse_anchor_date(anchor_value, table, metadata_errors)
+            if parsed:
+                start = _period_start(
+                    parsed,
+                    grain["time_period"],
+                    project,
+                    table,
+                    metadata_errors,
+                )
+                if start:
+                    anchor["anchor_time_value"] = start.isoformat()
+                    windows.append(
+                        {
+                            "table": table,
+                            "time_period": grain["time_period"],
+                            "start": start,
+                            "end_exclusive": _period_end_exclusive(
+                                start,
+                                grain["time_period"],
+                            ),
+                        }
+                    )
+        compare_anchors[table] = anchor
+
+    warnings = []
+    if full_table_tables:
+        warnings.append(
+            {
+                "type": "full_table_compare",
+                "tables": sorted(full_table_tables),
+                "message": (
+                    "No grain/refresh time metadata is configured; "
+                    "full-table compare will be used."
+                ),
+            }
+        )
+    if no_anchor_value_tables:
+        warnings.append(
+            {
+                "type": "full_table_compare",
+                "tables": sorted(no_anchor_value_tables),
+                "message": (
+                    "No anchor time value is provided; full-table compare "
+                    "will be used."
+                ),
+            }
+        )
+    return compare_anchors, windows, warnings
+
+
+def _apply_refresh_metadata(
+    project: str,
+    jobs_to_run: list[dict],
+    anchor_windows: list[dict],
+    metadata_errors: list[dict],
+) -> None:
+    for job in jobs_to_run:
+        table = job.get("target") or job.get("job")
+        before_error_count = len(metadata_errors)
+        grain = _table_grain_metadata(project, table, metadata_errors)
+        if len(metadata_errors) > before_error_count or not grain:
+            continue
+
+        refresh = _table_refresh_metadata(
+            project,
+            table,
+            grain,
+            metadata_errors,
+        )
+        if not refresh:
+            continue
+        job["refresh_parameter"] = refresh["parameter"]
+        job["refresh_time_period"] = refresh["time_period"]
+        values = _execution_values(
+            anchor_windows,
+            refresh["time_period"],
+            project,
+        )
+        if values:
+            job["execution_values"] = values
+
+
 def _verification_metadata(
     checks: list[dict],
     affected_scope: dict,
@@ -332,8 +699,14 @@ def _verification_metadata(
     ddl_changes: list[dict],
     blocked_schema_tables: list[str],
     self_anchor_tables: list[str],
+    compare_anchors: dict | None = None,
+    warnings: list[dict] | None = None,
+    metadata_errors: list[dict] | None = None,
 ) -> dict:
     verification = {"checks": checks}
+    if compare_anchors is not None:
+        verification["compare_anchors"] = compare_anchors
+    combined_warnings = list(warnings or [])
     if blocked_schema_tables:
         verification["schema_anchor_status"] = "blocked"
         verification["schema_anchor_reason"] = (
@@ -341,6 +714,15 @@ def _verification_metadata(
             "verification"
         )
         verification["blocked_schema_tables"] = blocked_schema_tables
+    if metadata_errors:
+        verification["data_anchor_status"] = "blocked"
+        verification["data_anchor_reason"] = (
+            "verification time metadata is incomplete or invalid"
+        )
+        verification["metadata_errors"] = metadata_errors
+        if combined_warnings:
+            verification["warnings"] = combined_warnings
+        return verification
     if checks:
         if self_anchor_tables:
             verification["data_anchor_status"] = "self_anchor_warning"
@@ -350,7 +732,7 @@ def _verification_metadata(
                 "differences but does not prove SQL semantic equivalence"
             )
             verification["self_anchor_tables"] = self_anchor_tables
-            verification["warnings"] = [
+            combined_warnings.append(
                 {
                     "type": "fallback_self_anchor",
                     "tables": self_anchor_tables,
@@ -361,9 +743,12 @@ def _verification_metadata(
                         "equivalence."
                     ),
                 }
-            ]
+            )
+            verification["warnings"] = combined_warnings
             return verification
         verification["data_anchor_status"] = "ready"
+        if combined_warnings:
+            verification["warnings"] = combined_warnings
         return verification
     if _has_verification_work(affected_scope, jobs_to_run, ddl_changes):
         verification["data_anchor_status"] = "none"
@@ -372,8 +757,12 @@ def _verification_metadata(
             "terminal tables with schema changes or no declared invariant "
             "require explicit manual verification"
         )
+        if combined_warnings:
+            verification["warnings"] = combined_warnings
         return verification
     verification["data_anchor_status"] = "not_required"
+    if combined_warnings:
+        verification["warnings"] = combined_warnings
     return verification
 
 
@@ -400,25 +789,3 @@ def _sort_jobs_for_execution(
     if not lineage_data or not lineage_data.get("edges"):
         raise ValueError("lineage data is required to sort jobs_to_run")
     return asset_job_dag_from_lineage(lineage_data).topological_sort(set(jobs))
-
-
-def _build_partition_info(
-    partition: str | None,
-    anchors: list[str],
-    baseline_ddl: dict,
-) -> dict:
-    if not partition:
-        return {}
-    per_table = {}
-    for table in anchors:
-        partition_col = get_partition_col(table, baseline_ddl)
-        if partition_col:
-            per_table[table] = {
-                "partition_col": partition_col,
-                "value": partition,
-            }
-    return {
-        "partition": partition,
-        "etl_date": partition,
-        "per_table": per_table,
-    }

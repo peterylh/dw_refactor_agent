@@ -109,7 +109,11 @@ def load_warehouse_config(
             f"ods_source_catalog_dialects 必须是 mapping: {warehouse_file}"
         )
 
-    return {
+    raw_verification = data.get("verification") or {}
+    if not isinstance(raw_verification, dict):
+        raise ValueError(f"verification 必须是 mapping: {warehouse_file}")
+
+    config = {
         "dir": _warehouse_relative_path(warehouse_dir, data.get("dir"), root),
         "catalog": catalog,
         "db": str(data.get("db") or data.get("database") or ""),
@@ -128,6 +132,9 @@ def load_warehouse_config(
             if str(raw_catalog or "").strip()
         },
     }
+    if raw_verification:
+        config["verification"] = dict(raw_verification)
+    return config
 
 
 def load_project_config(root: Path | None = None) -> dict[str, dict]:

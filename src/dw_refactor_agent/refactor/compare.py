@@ -41,6 +41,23 @@ def get_pymysql_conn(db_name: str, qa: bool = False):
     )
 
 
+def _check_with_compare_anchor(check: dict, verification: dict) -> dict:
+    if check.get("partition_col") or check.get("partition_value") is not None:
+        return dict(check)
+
+    table = check.get("table")
+    anchor = (verification.get("compare_anchors") or {}).get(table) or {}
+    time_column = anchor.get("time_column")
+    anchor_value = anchor.get("anchor_time_value")
+    if not time_column or anchor_value is None:
+        return dict(check)
+
+    resolved = dict(check)
+    resolved["partition_col"] = time_column
+    resolved["partition_value"] = anchor_value
+    return resolved
+
+
 def check_count(prod_conn, qa_conn, check: dict, precision: float) -> dict:
     """Compare COUNT(*) between production and QA."""
     table = check["table"]
@@ -203,9 +220,22 @@ def run_checks(
             "reason": reason,
             "results": [],
         }
+    if verification.get("data_anchor_status") == "blocked":
+        reason = verification.get("data_anchor_reason") or (
+            "verification plan has blocked data anchor changes"
+        )
+        print(f"数据锚点校验被阻断: {reason}")
+        return {
+            "all_pass": False,
+            "status": "data_anchor_blocked",
+            "reason": reason,
+            "results": [],
+        }
 
     filtered = [
-        check for check in checks if method in ("all", check["method"])
+        _check_with_compare_anchor(check, verification)
+        for check in checks
+        if method in ("all", check["method"])
     ]
     if not filtered:
         if not checks and verification.get("data_anchor_status") == "none":

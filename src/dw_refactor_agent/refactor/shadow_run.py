@@ -695,6 +695,33 @@ def rewrite_sql(
     return "".join(parts)
 
 
+def _check_with_compare_anchor(check: dict, verification: dict) -> dict:
+    if check.get("partition_col") or check.get("partition_value") is not None:
+        return dict(check)
+    anchor = (verification.get("compare_anchors") or {}).get(
+        check.get("table")
+    ) or {}
+    time_column = anchor.get("time_column")
+    anchor_value = anchor.get("anchor_time_value")
+    if not time_column or anchor_value is None:
+        return dict(check)
+    resolved = dict(check)
+    resolved["partition_col"] = time_column
+    resolved["partition_value"] = anchor_value
+    return resolved
+
+
+def _plan_scope(plan: dict) -> dict:
+    return plan.get("scope") or plan.get("affected_scope") or {}
+
+
+def _plan_anchor_tables(plan: dict) -> list:
+    anchors = plan.get("anchors")
+    if anchors is not None:
+        return list(anchors)
+    return list((_plan_scope(plan).get("anchor_tables") or []))
+
+
 def _check_result(check: dict, status: str) -> dict:
     return {
         "table": check.get("table"),
@@ -752,24 +779,54 @@ def _job_result(
     error: str | None = None,
 ) -> dict:
     job_name = job.get("job")
-    return {
+    result = {
         "job": job_name,
         "file": job.get("file"),
         "layer": job.get("layer", "?"),
         "target": job.get("target") or job_name,
-        "needs_etl_date": bool(job.get("needs_etl_date", False)),
         "status": status,
         "error": error,
     }
+    for key in (
+        "refresh_parameter",
+        "refresh_time_period",
+        "execution_values",
+    ):
+        if key in job:
+            result[key] = job.get(key)
+    if "needs_etl_date" in job:
+        result["needs_etl_date"] = bool(job.get("needs_etl_date", False))
+    return result
 
 
 def _compare_phase(plan: dict, status: str = "not_run") -> dict:
-    checks = plan.get("verification", {}).get("checks", [])
+    verification = plan.get("verification", {})
+    checks = [
+        _check_with_compare_anchor(check, verification)
+        for check in verification.get("checks", [])
+    ]
     return {
         "name": "compare",
         "status": status,
         "checks": [_check_result(check, status) for check in checks],
     }
+
+
+def _job_execution_values(job: dict, legacy_etl_date: str | None) -> list:
+    values = job.get("execution_values")
+    if values:
+        return list(values)
+    if job.get("needs_etl_date") and legacy_etl_date:
+        return [legacy_etl_date]
+    return [None]
+
+
+def _job_refresh_parameter(job: dict) -> str | None:
+    if job.get("refresh_parameter"):
+        return job.get("refresh_parameter")
+    if job.get("needs_etl_date"):
+        return "etl_date"
+    return None
 
 
 def _result_summary(plan: dict, phases: list[dict]) -> dict:
@@ -891,14 +948,14 @@ def execute_shadow_plan(plan: dict, *, dry_run: bool = False) -> dict:
 
     prod_db = plan["project_db"]
     qa_db = plan["qa_db"]
-    etl_date = plan.get("partition_info", {}).get("etl_date")
+    legacy_etl_date = plan.get("partition_info", {}).get("etl_date")
     baseline_ddl = plan.get("baseline_ddl", {})
     ddl_changes = plan.get("ddl_changes", [])
     jobs_to_run = plan.get("jobs_to_run", [])
     phases = []
 
     checks = plan.get("verification", {}).get("checks", [])
-    if not plan.get("anchors") and not checks:
+    if not _plan_anchor_tables(plan) and not checks:
         print("  警告: 无锚点表且无校验配置")
         print("    作业会正常执行，但 compare 阶段没有表可对比校验")
         print("    如果只是想确认作业不报错，可继续执行\n")
@@ -1010,7 +1067,8 @@ def execute_shadow_plan(plan: dict, *, dry_run: bool = False) -> dict:
         job_name = job["job"]
         job_file = job["file"]
         layer = job.get("layer", "?")
-        needs_etl_date = job.get("needs_etl_date", False)
+        refresh_parameter = _job_refresh_parameter(job)
+        execution_values = _job_execution_values(job, legacy_etl_date)
 
         print(f"\n  --- {idx}/{len(jobs_to_run)}: [{layer}] {job_name} ---")
         file_path = root / job_file
@@ -1022,11 +1080,14 @@ def execute_shadow_plan(plan: dict, *, dry_run: bool = False) -> dict:
         sql_text = file_path.read_text(encoding=TEXT_ENCODING)
         rewritten = rewrite_sql(sql_text, prod_db, qa_db, recalculated)
 
-        if needs_etl_date and etl_date:
-            rewritten = f"SET @etl_date = '{etl_date}';\n" + rewritten
-
         try:
-            run_sql_text(rewritten, qa_db, qa=True)
+            for execution_value in execution_values:
+                sql_to_run = rewritten
+                if refresh_parameter and execution_value:
+                    sql_to_run = (
+                        f"SET @{refresh_parameter} = '{execution_value}';\n"
+                    ) + rewritten
+                run_sql_text(sql_to_run, qa_db, qa=True)
             print(f"  + {qa_db}.{job_name}")
             job_results.append(_job_result(job, "success"))
         except Exception as exc:
@@ -1080,7 +1141,7 @@ def run_shadow_plan(
 def _dry_run(plan: dict) -> None:
     qa_db = plan["qa_db"]
     prod_db = plan["project_db"]
-    etl_date = plan.get("partition_info", {}).get("etl_date")
+    legacy_etl_date = plan.get("partition_info", {}).get("etl_date")
     baseline_ddl = plan.get("baseline_ddl", {})
     ddl_changes = plan.get("ddl_changes", [])
     jobs_to_run = plan.get("jobs_to_run", [])
@@ -1095,11 +1156,27 @@ def _dry_run(plan: dict) -> None:
         merge_base = str(git_info.get("merge_base") or "")
         print(f"  基线: {merge_base[:12]}...")
     print(f"  生产库: {prod_db} -> 验证库: {qa_db}")
-    print(f"  锚点: {plan.get('anchors', [])}")
-    partition_info = plan.get("partition_info", {})
-    print(f"  分区: {partition_info.get('partition', 'N/A')}")
+    print(f"  锚点: {_plan_anchor_tables(plan)}")
+    verification = plan.get("verification", {})
+    compare_anchors = verification.get("compare_anchors") or {}
+    if compare_anchors:
+        for table in sorted(compare_anchors):
+            anchor = compare_anchors[table] or {}
+            time_column = anchor.get("time_column")
+            anchor_value = anchor.get("anchor_time_value")
+            time_period = anchor.get("time_period")
+            if time_column and anchor_value:
+                print(
+                    f"  对比范围: {table} "
+                    f"WHERE {time_column} = '{anchor_value}' ({time_period})"
+                )
+            else:
+                print(f"  对比范围: {table} 全表")
+    else:
+        partition_info = plan.get("partition_info", {})
+        print(f"  分区: {partition_info.get('partition', 'N/A')}")
     checks = plan.get("verification", {}).get("checks", [])
-    if not plan.get("anchors") and not checks:
+    if not _plan_anchor_tables(plan) and not checks:
         print()
         print("  警告: 无锚点表且无校验配置，compare 阶段没有表可对比校验")
 
@@ -1134,10 +1211,12 @@ def _dry_run(plan: dict) -> None:
 
         sql_text = file_path.read_text(encoding=TEXT_ENCODING)
         rewritten = rewrite_sql(sql_text, prod_db, qa_db, recalculated)
-        needs_etl_date = job.get("needs_etl_date", False)
+        refresh_parameter = _job_refresh_parameter(job)
+        execution_values = _job_execution_values(job, legacy_etl_date)
 
-        if needs_etl_date and etl_date:
-            print(f"    SET @etl_date = '{etl_date}';")
+        for execution_value in execution_values:
+            if refresh_parameter and execution_value:
+                print(f"    SET @{refresh_parameter} = '{execution_value}';")
 
         for line in rewritten.splitlines()[:8]:
             print(f"    {line}")
@@ -1149,7 +1228,9 @@ def _dry_run(plan: dict) -> None:
 
     if checks:
         print(f"\n--- 校验检查 ({len(checks)} 项) ---")
-        for check in checks:
+        verification = plan.get("verification", {})
+        for raw_check in checks:
+            check = _check_with_compare_anchor(raw_check, verification)
             line = f"  [{check['method']}] {qa_db}.{check['table']}"
             partition_col = check.get("partition_col")
             partition_value = check.get("partition_value")

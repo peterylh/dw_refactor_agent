@@ -311,7 +311,13 @@ def test_analyze_marks_empty_diff_assessment_not_applicable(
             "project": project,
             "project_db": "shop_dm",
             "qa_db": "shop_dm_qa",
-            "affected_scope": {
+            "changes": {
+                "modified_jobs": [],
+                "ddl_tables": [],
+                "model_tables": [],
+                "config_files": [],
+            },
+            "scope": {
                 "direct_tables": [],
                 "downstream_tables": [],
                 "anchor_tables": [],
@@ -319,12 +325,8 @@ def test_analyze_marks_empty_diff_assessment_not_applicable(
                 "assessment_tasks": [],
                 "global_dimensions": [],
             },
-            "modified_jobs": [],
-            "downstream_tables": [],
-            "anchors": [],
             "baseline_ddl": {},
             "ddl_changes": [],
-            "partition_info": {},
             "jobs_to_run": [],
             "verification": {
                 "checks": [],

@@ -5,3 +5,6 @@ table_type: other
 description: 门店绩效评估
 config:
   materialized: incremental
+grain:
+  time_column: stat_month_date
+  time_period: M

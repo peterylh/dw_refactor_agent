@@ -4,6 +4,9 @@ database: shop_dm
 qa_database: shop_dm_qa
 lineage_database: shop_lineage
 naming_config: naming_config.yaml
+verification:
+  default_refresh_parameter: etl_date
+  week_start: MON
 default_dialect: doris
 ods_source_catalog_dialects:
   internal: doris
