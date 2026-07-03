@@ -1,5 +1,7 @@
-import config
-from refact.incremental_lineage import build_lineage_artifacts
+import dw_refactor_agent.config as config
+from dw_refactor_agent.refactor.incremental_lineage import (
+    build_lineage_artifacts,
+)
 
 
 def _write_demo_project(root):

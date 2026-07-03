@@ -3,8 +3,8 @@
 import pytest
 import yaml
 
-import config
-from config import (
+import dw_refactor_agent.config as config
+from dw_refactor_agent.config import (
     LayerDef,
     NamingConfig,
     TypeDef,
@@ -12,7 +12,7 @@ from config import (
     layer_rank,
     load_naming_config,
 )
-from config.naming import (
+from dw_refactor_agent.config.naming import (
     _parse_rule_expression,
     _parse_segments,
     _parse_template,
@@ -1017,7 +1017,7 @@ bindings:
 # Enterprise V2 Naming Tests
 # ============================================================
 
-from config import PROJECT_ROOT, get_naming_config
+from dw_refactor_agent.config import PROJECT_ROOT, get_naming_config
 
 
 class TestJoinExpressionSyntax:

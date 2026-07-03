@@ -9,7 +9,7 @@ RUFF_PACKAGE ?= ruff==0.12.0
 PYTEST_COV_PACKAGES ?= pytest-cov==4.1.0 coverage[toml]==6.5.0
 PYTHON ?= conda run -n $(CONDA_ENV) python
 PYTEST_ARGS ?= -q -m "not api"
-COVERAGE_ARGS ?= --cov=config --cov=lineage --cov=assess --cov=ddl_deriver --cov=refact --cov=exec --cov-report=term-missing --cov-report=xml
+COVERAGE_ARGS ?= --cov=dw_refactor_agent --cov-report=term-missing --cov-report=xml
 REQUIRED_PYTHON_VERSION ?= 3.7
 REQUIRED_PYTHON_MODULES ?= yaml sqlglot pymysql pytest ruff
 
@@ -34,14 +34,14 @@ doctor:
 	@$(PYTHON) -c "import importlib.util, sys; expected=tuple(map(int, '$(REQUIRED_PYTHON_VERSION)'.split('.'))); missing=[m for m in '$(REQUIRED_PYTHON_MODULES)'.split() if importlib.util.find_spec(m) is None]; print('python:', sys.executable); print('version:', sys.version.split()[0]); print('expected:', '$(REQUIRED_PYTHON_VERSION)'); print('modules:', 'ok' if not missing else 'missing ' + ', '.join(missing)); raise SystemExit(0 if sys.version_info[:2] == expected and not missing else 1)"
 
 lint: doctor
-	PYTHONPATH= $(PYTHON) -m ruff check .
-	PYTHONPATH= $(PYTHON) -m ruff format --check .
+	PYTHONPATH=src $(PYTHON) -m ruff check .
+	PYTHONPATH=src $(PYTHON) -m ruff format --check .
 
 test: lint
-	PYTHONPATH= $(PYTHON) -m pytest $(PYTEST_ARGS)
+	PYTHONPATH=src $(PYTHON) -m pytest $(PYTEST_ARGS)
 
 test-cov: lint
-	PYTHONPATH= $(PYTHON) -m pytest $(PYTEST_ARGS) $(COVERAGE_ARGS)
+	PYTHONPATH=src $(PYTHON) -m pytest $(PYTEST_ARGS) $(COVERAGE_ARGS)
 
 benchmark-lineage: doctor
-	PYTHONPATH= $(PYTHON) benchmarks/lineage_extractor/run.py --size medium
+	PYTHONPATH=src $(PYTHON) benchmarks/lineage_extractor/run.py --size medium

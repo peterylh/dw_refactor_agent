@@ -1,10 +1,14 @@
 import copy
 
-from assess.assessment_context import AssessmentContext
-from assess.project_facts.asset_catalog import build_asset_catalog
-from assess.rules.dimensions.model_design import score_model_design_health
-from assess.scoring.config import MODEL_DESIGN_RULES
-from config import (
+from dw_refactor_agent.assessment.assessment_context import AssessmentContext
+from dw_refactor_agent.assessment.project_facts.asset_catalog import (
+    build_asset_catalog,
+)
+from dw_refactor_agent.assessment.rules.dimensions.model_design import (
+    score_model_design_health,
+)
+from dw_refactor_agent.assessment.scoring.config import MODEL_DESIGN_RULES
+from dw_refactor_agent.config import (
     PROJECT_CONFIG,
     PROJECT_ROOT,
     get_business_domain_config,
@@ -13,13 +17,13 @@ from config import (
     project_asset_dirs,
     task_source_file,
 )
-from lineage.lineage_extractor import (
+from dw_refactor_agent.lineage.lineage_extractor import (
     build_lineage_output,
     build_schema_from_ddl,
     configure_project,
     extract_lineage_from_sql,
 )
-from lineage.sql_task_facts import extract_task_table_facts
+from dw_refactor_agent.lineage.sql_task_facts import extract_task_table_facts
 
 
 def _build_shop_lineage_from_sources():

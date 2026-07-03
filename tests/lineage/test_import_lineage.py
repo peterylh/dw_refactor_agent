@@ -1,6 +1,6 @@
 import importlib
 
-import config
+import dw_refactor_agent.config as config
 
 
 def _demo_snapshot():
@@ -49,13 +49,17 @@ def _demo_snapshot():
 
 
 def test_import_lineage_module_is_safe_to_import():
-    module = importlib.import_module("lineage.import_lineage")
+    module = importlib.import_module(
+        "dw_refactor_agent.lineage.import_lineage"
+    )
 
     assert callable(module.build_parser)
 
 
 def test_parser_accepts_test_db_env():
-    module = importlib.import_module("lineage.import_lineage")
+    module = importlib.import_module(
+        "dw_refactor_agent.lineage.import_lineage"
+    )
 
     args = module.build_parser().parse_args(
         ["--project", "shop", "--db-env", "test"]
@@ -67,9 +71,11 @@ def test_parser_accepts_test_db_env():
 def test_default_lineage_file_ignores_old_tool_directory_file(
     monkeypatch, tmp_path
 ):
-    module = importlib.import_module("lineage.import_lineage")
+    module = importlib.import_module(
+        "dw_refactor_agent.lineage.import_lineage"
+    )
     project_dir = tmp_path / "demo_project"
-    (project_dir / "lineage").mkdir(parents=True)
+    (project_dir / "artifacts" / "lineage").mkdir(parents=True)
     old_lineage_dir = tmp_path / "lineage"
     old_lineage_dir.mkdir()
     (old_lineage_dir / "lineage_data_demo.json").write_text(
@@ -87,12 +93,14 @@ def test_default_lineage_file_ignores_old_tool_directory_file(
     )
 
     assert module._lineage_file("demo", None) == (
-        project_dir / "lineage" / "lineage_data.json"
+        project_dir / "artifacts" / "lineage" / "lineage_data.json"
     )
 
 
 def test_open_connection_uses_selected_db_env(monkeypatch):
-    module = importlib.import_module("lineage.import_lineage")
+    module = importlib.import_module(
+        "dw_refactor_agent.lineage.import_lineage"
+    )
     calls = []
 
     def fake_connect(**kwargs):
@@ -116,7 +124,9 @@ def test_open_connection_uses_selected_db_env(monkeypatch):
 
 
 def test_build_import_rows_normalizes_snapshot_for_database(tmp_path):
-    module = importlib.import_module("lineage.import_lineage")
+    module = importlib.import_module(
+        "dw_refactor_agent.lineage.import_lineage"
+    )
     tasks_dir = tmp_path / "tasks"
     tasks_dir.mkdir()
     (tasks_dir / "dwd_order_detail.sql").write_text(
@@ -191,7 +201,9 @@ def test_build_import_rows_normalizes_snapshot_for_database(tmp_path):
 
 
 def test_build_import_rows_matches_mixed_case_edge_refs_to_metadata(tmp_path):
-    module = importlib.import_module("lineage.import_lineage")
+    module = importlib.import_module(
+        "dw_refactor_agent.lineage.import_lineage"
+    )
     tasks_dir = tmp_path / "tasks"
     tasks_dir.mkdir()
     (tasks_dir / "dwd_order_detail.sql").write_text("", encoding="utf-8")
@@ -224,7 +236,9 @@ def test_build_import_rows_matches_mixed_case_edge_refs_to_metadata(tmp_path):
 
 
 def test_bulk_insert_uses_executemany_in_chunks():
-    module = importlib.import_module("lineage.import_lineage")
+    module = importlib.import_module(
+        "dw_refactor_agent.lineage.import_lineage"
+    )
 
     class RecordingCursor:
         def __init__(self):
@@ -255,7 +269,9 @@ def test_bulk_insert_uses_executemany_in_chunks():
 
 
 def test_delete_snapshot_rows_does_not_truncate_whole_lineage_database():
-    module = importlib.import_module("lineage.import_lineage")
+    module = importlib.import_module(
+        "dw_refactor_agent.lineage.import_lineage"
+    )
 
     class RecordingCursor:
         def __init__(self):
@@ -281,7 +297,9 @@ def test_delete_snapshot_rows_does_not_truncate_whole_lineage_database():
 
 
 def test_migrate_lineage_schema_drops_legacy_table_layer_column():
-    module = importlib.import_module("lineage.import_lineage")
+    module = importlib.import_module(
+        "dw_refactor_agent.lineage.import_lineage"
+    )
 
     class RecordingCursor:
         def __init__(self):
@@ -309,7 +327,9 @@ def test_migrate_lineage_schema_drops_legacy_table_layer_column():
 
 
 def test_migrate_lineage_schema_leaves_current_table_info_schema():
-    module = importlib.import_module("lineage.import_lineage")
+    module = importlib.import_module(
+        "dw_refactor_agent.lineage.import_lineage"
+    )
 
     class RecordingCursor:
         def __init__(self):

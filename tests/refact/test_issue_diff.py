@@ -1,4 +1,4 @@
-from refact.issue_diff import diff_assess_results
+from dw_refactor_agent.refactor.issue_diff import diff_assess_results
 
 
 def _issue(fingerprint, title):
@@ -169,23 +169,23 @@ def test_diff_assess_results_filters_task_path_by_job_name():
                     {
                         "fingerprint": (
                             "code_quality|CODE_FILTER|task|"
-                            "shop/tasks/dwd_inventory.sql"
+                            "warehouses/shop/mid/tasks/dwd_inventory.sql"
                         ),
                         "title": "wrapped filter",
                         "target": {
                             "type": "task",
-                            "name": "shop/tasks/dwd_inventory.sql",
+                            "name": "warehouses/shop/mid/tasks/dwd_inventory.sql",
                         },
                     },
                     {
                         "fingerprint": (
                             "code_quality|CODE_FILTER|task|"
-                            "shop/tasks/dwd_customer.sql"
+                            "warehouses/shop/mid/tasks/dwd_customer.sql"
                         ),
                         "title": "customer wrapped filter",
                         "target": {
                             "type": "task",
-                            "name": "shop/tasks/dwd_customer.sql",
+                            "name": "warehouses/shop/mid/tasks/dwd_customer.sql",
                         },
                     },
                 ],
@@ -220,7 +220,7 @@ def test_diff_assess_results_filters_task_path_by_job_name():
     assert result["summary"]["baseline_scoped_issue_count"] == 1
     assert result["summary"]["fixed_count"] == 1
     assert [issue["fingerprint"] for issue in result["fixed_issues"]] == [
-        "code_quality|CODE_FILTER|task|shop/tasks/dwd_inventory.sql"
+        "code_quality|CODE_FILTER|task|warehouses/shop/mid/tasks/dwd_inventory.sql"
     ]
 
 
@@ -272,12 +272,12 @@ def test_diff_assess_results_treats_table_rename_issues_as_remaining():
                     {
                         "fingerprint": (
                             "code_quality|CODE_SELECT_STAR|task|"
-                            "shop/tasks/dwd_customer.sql"
+                            "warehouses/shop/mid/tasks/dwd_customer.sql"
                         ),
                         "title": "select star",
                         "target": {
                             "type": "task",
-                            "name": "shop/tasks/dwd_customer.sql",
+                            "name": "warehouses/shop/mid/tasks/dwd_customer.sql",
                         },
                     },
                 ],
@@ -328,12 +328,12 @@ def test_diff_assess_results_treats_table_rename_issues_as_remaining():
                     {
                         "fingerprint": (
                             "code_quality|CODE_SELECT_STAR|task|"
-                            f"shop/tasks/{current_table}.sql"
+                            f"warehouses/shop/mid/tasks/{current_table}.sql"
                         ),
                         "title": "select star",
                         "target": {
                             "type": "task",
-                            "name": f"shop/tasks/{current_table}.sql",
+                            "name": f"warehouses/shop/mid/tasks/{current_table}.sql",
                         },
                     },
                 ],
@@ -364,7 +364,7 @@ def test_diff_assess_results_treats_table_rename_issues_as_remaining():
     ]
     assert [issue["fingerprint"] for issue in result["remaining_issues"]] == [
         "code_quality|CODE_SELECT_STAR|task|"
-        "shop/tasks/DIM_BASE_CUST_PROFILE_INFO.sql",
+        "warehouses/shop/mid/tasks/DIM_BASE_CUST_PROFILE_INFO.sql",
         (
             "model_design|MODEL_DATE_PARTITION_USES_DATA_DT|"
             "table|DIM_BASE_CUST_PROFILE_INFO"

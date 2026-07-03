@@ -32,3 +32,12 @@ lineage/job_dag_*.json
 */assess/assess_result.json
 */assess/model_metadata_result.json
 */assess/cache/
+warehouses/*/artifacts/lineage/lineage_data*.json
+warehouses/*/artifacts/lineage/job_dag*.json
+warehouses/*/artifacts/lineage/task_lineage_cache*.json
+warehouses/*/artifacts/lineage/*.html
+warehouses/*/artifacts/assessment/assess_result.json
+warehouses/*/artifacts/assessment/model_metadata_result.json
+warehouses/*/artifacts/assessment/cache/
+warehouses/*/artifacts/refactor_runs/*
+!warehouses/*/artifacts/refactor_runs/.gitkeep

@@ -1,7 +1,13 @@
-from assess.assessment_context import AssessmentContext
-from assess.rules.dimensions.depth import score_lineage_depth
-from assess.rules.dimensions.model_design import score_model_design_health
-from assess.rules.dimensions.reuse import score_reusability
+from dw_refactor_agent.assessment.assessment_context import AssessmentContext
+from dw_refactor_agent.assessment.rules.dimensions.depth import (
+    score_lineage_depth,
+)
+from dw_refactor_agent.assessment.rules.dimensions.model_design import (
+    score_model_design_health,
+)
+from dw_refactor_agent.assessment.rules.dimensions.reuse import (
+    score_reusability,
+)
 
 
 class _RawTable:

@@ -58,17 +58,18 @@ Default path:
 Examples:
 
 ```text
-shop/business_semantics.yaml
-finance_analytics/business_semantics.yaml
+warehouses/shop/business_semantics.yaml
+warehouses/finance_analytics/business_semantics.yaml
 ```
 
 The catalog belongs with the warehouse project assets so it can be maintained
 next to `ddl/`, `tasks/`, and `models/`. Shared helpers may still live under
-`assess/project_facts`, but generated project catalogs should not default to
+`src/dw_refactor_agent/assessment/project_facts`, but generated project catalogs should not default to
 the `assess` package directory.
 
-The catalog is initialized by `assess/business_semantics_catalog.py --llm` or
-`python -m assess.llm.model_metadata_writer --catalog-from-llm` using table-level
+The catalog is initialized by
+`python -m dw_refactor_agent.assessment.business_semantics_catalog --llm` or
+`python -m dw_refactor_agent.assessment.llm.model_metadata_writer --catalog-from-llm` using table-level
 inspection contexts rather than raw full-project prompt dumps. Each context
 summarizes table name, layer hints, DDL columns and comments, keys, task SQL
 features, lineage, upstream/downstream tables, and any existing model/LLM
@@ -85,8 +86,8 @@ proposal/accept workflow.
 Command shape:
 
 ```bash
-python -m assess.llm.model_metadata_writer --project shop --from-catalog --write-scope business --dry-run
-python -m assess.llm.model_metadata_writer --project shop --from-catalog --write-scope business
+PYTHONPATH=src python -m dw_refactor_agent.assessment.llm.model_metadata_writer --project shop --from-catalog --write-scope business --dry-run
+PYTHONPATH=src python -m dw_refactor_agent.assessment.llm.model_metadata_writer --project shop --from-catalog --write-scope business
 ```
 
 Initialization writes stable base metadata and catalog-backed business
@@ -130,8 +131,8 @@ Rules for writing model YAML:
 After the catalog changes, refresh table-level metadata from the catalog:
 
 ```bash
-python -m assess.llm.model_metadata_writer --project shop --from-catalog --write-scope business --dry-run
-python -m assess.llm.model_metadata_writer --project shop --from-catalog --write-scope business
+PYTHONPATH=src python -m dw_refactor_agent.assessment.llm.model_metadata_writer --project shop --from-catalog --write-scope business --dry-run
+PYTHONPATH=src python -m dw_refactor_agent.assessment.llm.model_metadata_writer --project shop --from-catalog --write-scope business
 ```
 
 `--from-catalog` means the accepted catalog is the governed code dictionary.
@@ -146,8 +147,9 @@ LLM classification is needed before or after this deterministic refresh when:
 - Catalog changes split or merge previous processes.
 - Program evidence has multiple plausible process candidates.
 
-Use `--catalog-from-llm` or `business_semantics_catalog.py --llm` for that
-discovery step, then review the catalog with Git before refreshing models.
+Use `--catalog-from-llm` or
+`python -m dw_refactor_agent.assessment.business_semantics_catalog --llm` for
+that discovery step, then review the catalog with Git before refreshing models.
 
 Suggested write scopes:
 
@@ -164,8 +166,8 @@ all        all writable metadata
 Use Git as the review and accept mechanism:
 
 ```bash
-python assess/business_semantics_catalog.py --project shop --llm --overwrite
-python -m assess.llm.model_metadata_writer --project shop --from-catalog --write-scope business
+PYTHONPATH=src python -m dw_refactor_agent.assessment.business_semantics_catalog --project shop --llm --overwrite
+PYTHONPATH=src python -m dw_refactor_agent.assessment.llm.model_metadata_writer --project shop --from-catalog --write-scope business
 git diff
 git add -p
 ```
@@ -191,9 +193,9 @@ Compatibility:
 CLI dimension selection should be generalized. If no dimension flags are provided, run the default full assessment for compatibility. If one or more dimension flags are provided, only run those dimensions:
 
 ```bash
-python assess/assess_middle_layer.py --project shop --model-design
-python assess/assess_middle_layer.py --project shop --model-design --metadata-health
-python assess/assess_middle_layer.py --project shop
+PYTHONPATH=src python -m dw_refactor_agent.assessment.assess_middle_layer --project shop --model-design
+PYTHONPATH=src python -m dw_refactor_agent.assessment.assess_middle_layer --project shop --model-design --metadata-health
+PYTHONPATH=src python -m dw_refactor_agent.assessment.assess_middle_layer --project shop
 ```
 
 `model_design` rule categories:

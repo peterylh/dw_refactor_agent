@@ -25,10 +25,10 @@ echo "${DEEPSEEK_API_KEY:+DEEPSEEK_API_KEY 已设置}"
 2. 执行assess_middle_layer检测脚本
 
 ```bash
-python assess/assess_middle_layer.py --project {shop|olist} [--llm] [--no-cache]
+PYTHONPATH=src python -m dw_refactor_agent.assessment.assess_middle_layer --project {shop|finance_analytics} [--llm] [--no-cache]
 ```
 
-- 结果写入 `assess/assess_result_{project}.json`
+- 结果写入 `warehouses/{project}/artifacts/assessment/assess_result.json`
 - `--llm` 参数可启用 LLM 智能分层巡检（如果运行环境用 `DEEPSEEK_API_KEY` 环境变量，则加上--llm）。LLM 会对每张 DWD/DWS 表推断真实层级和表类型(dimension/fact)，检测出的更多违规（分层错配、维度表位置不当）
 - `--no-cache` 可强制重新调用LLM API。 LLM 调用代价大，尽量不要使用no-cache,除非你知道 cache 不是最新的
 
@@ -129,5 +129,4 @@ python assess/assess_middle_layer.py --project {shop|olist} [--llm] [--no-cache]
 - 跳过中间层违规 → 将聚合逻辑下沉至 DWS 层
 - 少量字段命名不合规 → 补充 `naming_config.yaml` 后缀或 `common_columns`
 - LLM 置信度 < 0.8 的分类结果 → 人工复核
-
 

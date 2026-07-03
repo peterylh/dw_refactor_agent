@@ -265,20 +265,20 @@ dwd_customer
 查看某个项目的结构化诊断：
 
 ```bash
-python -c "from config import get_naming_config; import json; nc=get_naming_config('shop'); print(json.dumps(nc.diagnose_table_name('dwd_customer', {'name': 'dwd_customer', 'layer': 'DWD'}), ensure_ascii=False, indent=2))"
+PYTHONPATH=src python -c "from dw_refactor_agent.config import get_naming_config; import json; nc=get_naming_config('shop'); print(json.dumps(nc.diagnose_table_name('dwd_customer', {'name': 'dwd_customer', 'layer': 'DWD'}), ensure_ascii=False, indent=2))"
 ```
 
 字段诊断：
 
 ```bash
-python -c "from config import get_naming_config; import json; nc=get_naming_config('shop'); print(json.dumps(nc.diagnose_column_name('customer_id'), ensure_ascii=False, indent=2))"
+PYTHONPATH=src python -c "from dw_refactor_agent.config import get_naming_config; import json; nc=get_naming_config('shop'); print(json.dumps(nc.diagnose_column_name('customer_id'), ensure_ascii=False, indent=2))"
 ```
 
 指标诊断：
 
 ```bash
-python -c "from config import get_naming_config; import json; nc=get_naming_config('shop'); print(json.dumps(nc.diagnose_metric_name('pay_amt', metric_kind='atomic'), ensure_ascii=False, indent=2))"
-python -c "from config import get_naming_config; import json; nc=get_naming_config('shop'); print(json.dumps(nc.diagnose_metric_name('7D_OLD_PAY_AMT', metric_kind='derived'), ensure_ascii=False, indent=2))"
+PYTHONPATH=src python -c "from dw_refactor_agent.config import get_naming_config; import json; nc=get_naming_config('shop'); print(json.dumps(nc.diagnose_metric_name('pay_amt', metric_kind='atomic'), ensure_ascii=False, indent=2))"
+PYTHONPATH=src python -c "from dw_refactor_agent.config import get_naming_config; import json; nc=get_naming_config('shop'); print(json.dumps(nc.diagnose_metric_name('7D_OLD_PAY_AMT', metric_kind='derived'), ensure_ascii=False, indent=2))"
 ```
 
 ## 诊断输出字段

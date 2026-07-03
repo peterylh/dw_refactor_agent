@@ -6,9 +6,9 @@ import subprocess
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
-from config import get_mysql_cmd
-from ddl_deriver.ddl_deriver import (
+sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
+from dw_refactor_agent.config import get_mysql_cmd
+from dw_refactor_agent.ddl_deriver.ddl_deriver import (
     changes_to_json,
     derive_ddl_changes,
     load_tables_from_dir,
@@ -45,7 +45,7 @@ def run_doris_file(sql_path, db=None):
 
 
 # Step 0: new_dir was prepared by previous script
-old_dir = Path("shop/ddl")
+old_dir = Path("warehouses/shop/mid/ddl")
 new_dir = Path("/tmp/ddl_new_verify")
 assert new_dir.exists(), "Run the prep script first"
 

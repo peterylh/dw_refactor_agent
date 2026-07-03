@@ -8,7 +8,7 @@ from benchmarks.lineage_extractor.dataset import (
     generate_dataset,
 )
 from benchmarks.lineage_extractor.run import run_benchmark
-from lineage.lineage_extractor import (
+from dw_refactor_agent.lineage.lineage_extractor import (
     build_schema_from_texts,
     extract_lineage_from_task_files,
 )

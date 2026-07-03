@@ -8,7 +8,7 @@
 ```bash
 # 先确保 lineage_data.json 是最新的
 cd /path/to/project
-python3 lineage_extractor.py
+PYTHONPATH=src python -m dw_refactor_agent.lineage.lineage_extractor --project shop
 # 再用 agent 做 QA
 ```
 
@@ -17,9 +17,9 @@ python3 lineage_extractor.py
 ### A. 血缘正确性检查
 
 文件清单：
-- `shop/lineage_data.json` — 血缘数据
-- `shop/tasks/*.sql` — 各任务 SQL
-- `shop/ddl/*.sql` — DDL 定义
+- `warehouses/shop/artifacts/lineage/lineage_data.json` — 血缘数据
+- `warehouses/shop/{mid,ads}/tasks/**/*.sql` — 各任务 SQL
+- `warehouses/shop/{ods,mid,ads}/ddl/**/*.sql` — DDL 定义
 
 #### A1. 无断连节点
 lineage_data.json 中每条 edge 的 source 和 target 必须在 nodes 中存在。
@@ -83,7 +83,7 @@ ODS 层是贴源层，不应有数据流入。如果某条 edge 的 target 是 o
       "name": "INSERT 血缘追踪正确",
       "status": "FAIL",
       "details": "ads_customer_rfm.sql: customer_segment 缺少 CASE WHEN 表达式中 f_score 的依赖",
-      "suggestion": "检查 lineage_extractor.py 的 _walk_leaf 函数，确认 Window/Case 中的列引用被正确展开。ADS→ADS 的自引用 UPDATE 可能覆盖了 case 分支的依赖。"
+      "suggestion": "检查 src/dw_refactor_agent/lineage/lineage_extractor.py 的 _walk_leaf 函数，确认 Window/Case 中的列引用被正确展开。ADS→ADS 的自引用 UPDATE 可能覆盖了 case 分支的依赖。"
     }
   ]
 }
@@ -102,11 +102,11 @@ ODS 层是贴源层，不应有数据流入。如果某条 edge 的 target 是 o
 
 其他 Agent 可以根据报告中的 `results[].suggestion` 来修复问题：
 
-- **A 类问题** → 修改 `lineage_extractor.py` 中对应处理逻辑
+- **A 类问题** → 修改 `src/dw_refactor_agent/lineage/lineage_extractor.py` 中对应处理逻辑
 
 ## 依赖
 
 - `python3` + `sqlglot`（用于重新解析 SQL 验证）
-- `shop/lineage_data.json`（血缘数据）
-- `shop/tasks/*.sql`（任务 SQL）
-- `shop/ddl/*.sql`（DDL）
+- `warehouses/shop/artifacts/lineage/lineage_data.json`（血缘数据）
+- `warehouses/shop/{mid,ads}/tasks/**/*.sql`（任务 SQL）
+- `warehouses/shop/{ods,mid,ads}/ddl/**/*.sql`（DDL）

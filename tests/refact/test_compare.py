@@ -1,6 +1,10 @@
 import json
 
-from refact.compare import compare_shadow_results, fmt_val, run_checks
+from dw_refactor_agent.refactor.compare import (
+    compare_shadow_results,
+    fmt_val,
+    run_checks,
+)
 
 
 class FakeCursor:
@@ -52,7 +56,9 @@ def test_run_checks_compares_count_self_contained(monkeypatch):
     def fake_conn(db_name, qa=False):
         return qa_conn if qa else prod_conn
 
-    monkeypatch.setattr("refact.compare.get_pymysql_conn", fake_conn)
+    monkeypatch.setattr(
+        "dw_refactor_agent.refactor.compare.get_pymysql_conn", fake_conn
+    )
 
     result = run_checks(
         {
@@ -76,7 +82,9 @@ def test_run_checks_short_circuit_scenarios(monkeypatch):
     def fail_if_called(db_name, qa=False):
         raise AssertionError("short-circuit plans should not open connections")
 
-    monkeypatch.setattr("refact.compare.get_pymysql_conn", fail_if_called)
+    monkeypatch.setattr(
+        "dw_refactor_agent.refactor.compare.get_pymysql_conn", fail_if_called
+    )
 
     scenarios = [
         (
@@ -163,7 +171,9 @@ def test_compare_shadow_results_writes_compare_output(tmp_path, monkeypatch):
             "precision": precision,
         }
 
-    monkeypatch.setattr("refact.compare.run_checks", fake_run_checks)
+    monkeypatch.setattr(
+        "dw_refactor_agent.refactor.compare.run_checks", fake_run_checks
+    )
 
     result = compare_shadow_results(
         plan_path,

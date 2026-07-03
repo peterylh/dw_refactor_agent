@@ -1,5 +1,5 @@
-import config
-from lineage.lineage_extractor import (
+import dw_refactor_agent.config as config
+from dw_refactor_agent.lineage.lineage_extractor import (
     _schema_columns_for_table,
     _schema_has_column,
     build_schema_from_ddl,

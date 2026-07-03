@@ -1,5 +1,8 @@
-from assess.assessment_context import AssessmentContext
-from assess.scoped_plan import build_scoped_assessment_plan
+from dw_refactor_agent.assessment.assessment_context import AssessmentContext
+from dw_refactor_agent.assessment.scoped_plan import (
+    build_scoped_assessment_plan,
+    changed_types_for_analysis,
+)
 
 
 def _context():
@@ -188,8 +191,8 @@ def test_build_scoped_assessment_plan_marks_global_config_dimensions_full():
             "task_jobs": [],
             "model_tables": [],
             "config_files": [
-                "naming_config.yaml",
-                "shop/business_semantics.yaml",
+                "warehouses/shop/naming_config.yaml",
+                "warehouses/shop/business_semantics.yaml",
             ],
         },
         "affected_scope": {
@@ -216,3 +219,65 @@ def test_build_scoped_assessment_plan_marks_global_config_dimensions_full():
     assert plan["dimensions"]["naming"]["mode"] == "full"
     assert plan["dimensions"]["metadata_health"]["mode"] == "full"
     assert plan["dimensions"]["code_quality"]["mode"] == "scoped"
+
+
+def test_changed_types_ignore_root_default_naming_config():
+    assert (
+        changed_types_for_analysis(
+            "shop",
+            {
+                "changed_assets": {
+                    "config_files": ["naming_config.yaml"],
+                }
+            },
+        )
+        == set()
+    )
+
+
+def test_build_scoped_assessment_plan_marks_warehouse_config_full():
+    change_analysis = {
+        "changed_assets": {
+            "ddl_tables": [],
+            "task_jobs": [],
+            "model_tables": [],
+            "config_files": ["warehouses/shop/warehouse.yaml"],
+        },
+        "affected_scope": {
+            "direct_tables": [],
+            "downstream_tables": [],
+            "anchor_tables": [],
+            "assessment_tables": [],
+            "assessment_tasks": [],
+            "global_dimensions": [
+                "asset_completeness",
+                "code_quality",
+                "depth",
+                "metadata_health",
+                "model_design",
+                "naming",
+                "reuse",
+            ],
+        },
+        "lineage_diff": {
+            "added_edges": [],
+            "removed_edges": [],
+            "changed_tables": [],
+        },
+    }
+
+    plan = build_scoped_assessment_plan("shop", change_analysis, _context())
+
+    assert plan["changed_types"] == ["warehouse_config"]
+    assert {
+        name: dimension["mode"]
+        for name, dimension in plan["dimensions"].items()
+    } == {
+        "reuse": "full",
+        "depth": "full",
+        "model_design": "full",
+        "naming": "full",
+        "asset_completeness": "full",
+        "metadata_health": "full",
+        "code_quality": "full",
+    }

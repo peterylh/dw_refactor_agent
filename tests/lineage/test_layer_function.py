@@ -2,9 +2,9 @@ import pytest
 import sqlglot
 from sqlglot import exp
 
-import config
-import lineage.lineage_extractor as lineage_extractor
-from lineage.lineage_extractor import (
+import dw_refactor_agent.config as config
+import dw_refactor_agent.lineage.lineage_extractor as lineage_extractor
+from dw_refactor_agent.lineage.lineage_extractor import (
     _table_name,
     configure_project,
     determine_layer,

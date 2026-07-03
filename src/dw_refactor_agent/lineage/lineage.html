@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Column Lineage</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 24px; color: #1f2937; }
+    pre { background: #f9fafb; border: 1px solid #e5e7eb; padding: 16px; overflow: auto; }
+  </style>
+</head>
+<body>
+  <h1>Column Lineage</h1>
+  <p id="summary"></p>
+  <pre id="payload"></pre>
+  <script>
+    const LINEAGE_DATA = {};
+
+    document.getElementById("summary").textContent =
+      `${(LINEAGE_DATA.tables || []).length} tables, ${(LINEAGE_DATA.edges || []).length} edges`;
+    document.getElementById("payload").textContent =
+      JSON.stringify(LINEAGE_DATA, null, 2);
+  </script>
+</body>
+</html>

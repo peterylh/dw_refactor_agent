@@ -1,8 +1,8 @@
 import ast
 from pathlib import Path
 
-import config
-from refact.verification_plan import (
+import dw_refactor_agent.config as config
+from dw_refactor_agent.refactor.verification_plan import (
     build_verification_plan,
     get_partition_col,
     load_baseline_ddl,
@@ -12,14 +12,20 @@ from refact.verification_plan import (
 
 
 def test_verification_plan_uses_public_ddl_deriver_api():
-    source_path = Path(__file__).parents[2] / "refact" / "verification_plan.py"
+    source_path = (
+        Path(__file__).parents[2]
+        / "src"
+        / "dw_refactor_agent"
+        / "refactor"
+        / "verification_plan.py"
+    )
     tree = ast.parse(source_path.read_text(encoding="utf-8"))
 
     private_imports = []
     for node in ast.walk(tree):
         if not isinstance(node, ast.ImportFrom):
             continue
-        if node.module != "ddl_deriver.ddl_deriver":
+        if node.module != "dw_refactor_agent.ddl_deriver.ddl_deriver":
             continue
         private_imports.extend(
             alias.name for alias in node.names if alias.name.startswith("_")
@@ -61,13 +67,13 @@ def test_build_verification_plan_uses_baseline_ddl_changes_and_jobs(
     config.clear_model_metadata_cache()
 
     monkeypatch.setattr(
-        "refact.verification_plan.load_baseline_ddl",
+        "dw_refactor_agent.refactor.verification_plan.load_baseline_ddl",
         lambda project, base_ref, repo_root=None: {
             "dws_order": "CREATE TABLE demo_dm.dws_order (order_id BIGINT) ENGINE=OLAP;\nINSERT INTO demo_dm.dws_order VALUES (1);"
         },
     )
     monkeypatch.setattr(
-        "refact.verification_plan.derive_project_ddl_changes",
+        "dw_refactor_agent.refactor.verification_plan.derive_project_ddl_changes",
         lambda project, base_ref, repo_root=None: [
             {
                 "change_type": "ALTER",
@@ -411,7 +417,7 @@ def test_build_verification_plan_blocks_ads_ddl_changes(tmp_path, monkeypatch):
     )
     config.clear_model_metadata_cache()
     monkeypatch.setattr(
-        "refact.verification_plan.load_baseline_ddl",
+        "dw_refactor_agent.refactor.verification_plan.load_baseline_ddl",
         lambda project, base_ref, repo_root=None: {
             "ads_final": (
                 "CREATE TABLE demo_dm.ads_final (id BIGINT) ENGINE=OLAP;"
@@ -419,7 +425,7 @@ def test_build_verification_plan_blocks_ads_ddl_changes(tmp_path, monkeypatch):
         },
     )
     monkeypatch.setattr(
-        "refact.verification_plan.derive_project_ddl_changes",
+        "dw_refactor_agent.refactor.verification_plan.derive_project_ddl_changes",
         lambda project, base_ref, repo_root=None: [
             {
                 "change_type": "ALTER",
@@ -608,7 +614,7 @@ def test_build_verification_plan_applies_manual_partition_to_checks(
         },
     )
     monkeypatch.setattr(
-        "refact.verification_plan.load_baseline_ddl",
+        "dw_refactor_agent.refactor.verification_plan.load_baseline_ddl",
         lambda project, base_ref, repo_root=None: {
             "dws_order": """CREATE TABLE demo_dm.dws_order (
   stat_date DATE NOT NULL
@@ -621,7 +627,7 @@ PROPERTIES ("replication_num" = "1");"""
         },
     )
     monkeypatch.setattr(
-        "refact.verification_plan.derive_project_ddl_changes",
+        "dw_refactor_agent.refactor.verification_plan.derive_project_ddl_changes",
         lambda project, base_ref, repo_root=None: [],
     )
 
@@ -784,7 +790,7 @@ def test_load_baseline_ddl_reads_git_ref_and_strips_insert(monkeypatch):
         {"dir": "demo", "db": "demo_dm", "qa_db": "demo_dm_qa"},
     )
     monkeypatch.setattr(
-        "refact.verification_plan.load_git_ddl_texts",
+        "dw_refactor_agent.refactor.verification_plan.load_git_ddl_texts",
         fake_load_git_ddl_texts,
     )
 
@@ -821,7 +827,7 @@ def test_load_baseline_ddl_merges_mid_and_ads_git_dirs(monkeypatch):
         {"dir": "demo", "db": "demo_dm", "qa_db": "demo_dm_qa"},
     )
     monkeypatch.setattr(
-        "refact.verification_plan.load_git_ddl_texts",
+        "dw_refactor_agent.refactor.verification_plan.load_git_ddl_texts",
         fake_load_git_ddl_texts,
     )
 

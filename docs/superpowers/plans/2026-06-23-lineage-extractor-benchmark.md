@@ -314,9 +314,9 @@ from pathlib import Path
 
 import sqlglot
 
-import config
 from benchmarks.lineage_extractor.dataset import PROFILES, generate_dataset
-import lineage.lineage_extractor as lineage_extractor
+import dw_refactor_agent.config as config
+import dw_refactor_agent.lineage.lineage_extractor as lineage_extractor
 
 
 def run_benchmark(

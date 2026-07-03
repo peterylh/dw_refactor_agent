@@ -2,7 +2,10 @@ import json
 
 import pytest
 
-from lineage.job_dag import JobDAG, asset_job_dag_from_lineage
+from dw_refactor_agent.lineage.job_dag import (
+    JobDAG,
+    asset_job_dag_from_lineage,
+)
 
 
 def _edges(*pairs):

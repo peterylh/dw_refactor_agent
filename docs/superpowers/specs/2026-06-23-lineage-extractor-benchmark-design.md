@@ -3,7 +3,7 @@
 ## Goal
 
 Provide a standard, repeatable performance benchmark suite for
-`lineage/lineage_extractor.py`. The suite should exercise a realistic number
+`dw_refactor_agent.lineage.lineage_extractor`. The suite should exercise a realistic number
 of tables, task files, columns, joins, filters, aggregations, CTEs, and layered
 warehouse dependencies without polluting the existing `shop` or
 `finance_analytics` assets.
@@ -16,8 +16,8 @@ test suite under `tests/lineage`.
 - Do not add runtime-sensitive performance thresholds to the default test
   command.
 - Do not require Doris, MySQL, network access, or external services.
-- Do not write generated benchmark assets into `shop/` or
-  `finance_analytics/`.
+- Do not write generated benchmark assets into `warehouses/shop/` or
+  `warehouses/finance_analytics/`.
 - Do not make `tests/lineage` responsible for performance measurement.
 
 ## Location

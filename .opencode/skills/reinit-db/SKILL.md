@@ -22,31 +22,31 @@ description: |
 ## 执行
 
 ```bash
-python exec/reinit_project.py --project shop --etl-dates 2025-01-01 2025-01-02 2025-01-03
+PYTHONPATH=src python -m dw_refactor_agent.execution.reinit_project --project shop --etl-dates 2025-01-01 2025-01-02 2025-01-03
 ```
 
 ## 自定义日期
 
 ```bash
 # 单日
-python exec/reinit_project.py --project shop --etl-dates 2025-01-01
+PYTHONPATH=src python -m dw_refactor_agent.execution.reinit_project --project shop --etl-dates 2025-01-01
 
 # 自动发现（从 ODS 表 create_time 推导）
-python exec/reinit_project.py --project shop
+PYTHONPATH=src python -m dw_refactor_agent.execution.reinit_project --project shop
 ```
 
 ## 流程说明
 
 1. **清空**: 按 ads → dws → dwd → ods 顺序 TRUNCATE 所有表
-2. **ODS 初始化**: 执行 `shop/data/ods_*.sql` 灌入 ODS 层
+2. **ODS 初始化**: 执行 `warehouses/shop/ods/data/internal/shop_dm/ods_*.sql` 灌入 ODS 层
 3. **ETL 日期确定**: 按传入的 `--etl-dates` 或自动从 ODS 发现
-4. **作业执行**: 调用 `exec/task_run.py` 按 DAG 拓扑依次执行 DWD → DWS → ADS
+4. **作业执行**: 调用 `src/dw_refactor_agent/execution/task_run.py` 按 DAG 拓扑依次执行 DWD → DWS → ADS
 
 ## 相关文件
 
 | 文件 | 说明 |
 |------|------|
-| `exec/reinit_project.py` | 主入口，清空 + 初始化 + 调度 |
-| `exec/task_run.py` | DAG 拓扑执行器 |
-| `shop/data/` | ODS 层初始化 SQL |
-| `shop/tasks/` | ETL 加工作业 SQL |
+| `src/dw_refactor_agent/execution/reinit_project.py` | 主入口，清空 + 初始化 + 调度 |
+| `src/dw_refactor_agent/execution/task_run.py` | DAG 拓扑执行器 |
+| `warehouses/shop/ods/data/internal/shop_dm/` | ODS 层初始化 SQL |
+| `warehouses/shop/{mid,ads}/tasks/` | ETL 加工作业 SQL |

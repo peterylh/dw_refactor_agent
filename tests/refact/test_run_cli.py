@@ -1,8 +1,11 @@
 import json
 from datetime import datetime, timezone
 
-import refact.run as run_cli
-from refact.session import create_run_manifest, write_manifest
+import dw_refactor_agent.refactor.run as run_cli
+from dw_refactor_agent.refactor.session import (
+    create_run_manifest,
+    write_manifest,
+)
 
 
 def _local_datetime(*args):
@@ -43,7 +46,14 @@ def test_start_creates_manifest_and_baseline_artifacts(tmp_path, monkeypatch):
     )
 
     assert exit_code == 0
-    run_root = tmp_path / "refact" / "runs" / "20260620_073000_shop"
+    run_root = (
+        tmp_path
+        / "warehouses"
+        / "shop"
+        / "artifacts"
+        / "refactor_runs"
+        / "20260620_073000_shop"
+    )
     assert (run_root / "manifest.json").exists()
     assert (run_root / "baseline" / "lineage_data.json").exists()
     assert (run_root / "baseline" / "task_lineage_cache.json").exists()
@@ -129,7 +139,9 @@ def test_analyze_refreshes_current_analysis_diff_and_plan(
     monkeypatch.setattr(
         run_cli,
         "changed_files_since_head",
-        lambda root, head, project_dir: ["shop/mid/models/dwd_order.yaml"],
+        lambda root, head, project_dir: [
+            "warehouses/shop/mid/models/dwd_order.yaml"
+        ],
     )
     plan_calls = []
 
@@ -189,6 +201,9 @@ def test_analyze_refreshes_current_analysis_diff_and_plan(
     assert issue_diff["summary"]["new_count"] == 0
     assert assess_calls[0]["change_analysis"]["affected_scope"][
         "assessment_tables"
+    ] == ["dwd_order"]
+    assert assess_calls[0]["change_analysis"]["changed_assets"][
+        "model_tables"
     ] == ["dwd_order"]
     assert (run_root / "verification" / "plan.json").exists()
     assert plan_calls == [

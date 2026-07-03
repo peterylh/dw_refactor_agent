@@ -8,9 +8,9 @@
 ```bash
 # 先确保 lineage_data.json 是最新的
 cd /path/to/project
-python3 lineage_extractor.py
+PYTHONPATH=src python -m dw_refactor_agent.lineage.lineage_extractor --project shop
 python3 refresh_lineage_html.py
-python3 import_lineage.py
+PYTHONPATH=src python -m dw_refactor_agent.lineage.import_lineage --project shop
 # 再用 agent 做 QA
 ```
 
@@ -19,9 +19,9 @@ python3 import_lineage.py
 ### B. HTML 界面检查
 
 文件清单：
-- `shop/lineage_job.html` — 作业级 + 字段级双视图
-- `shop/lineage.html` — 字段级视图
-- `shop/lineage_data.json` — 数据源
+- `warehouses/shop/artifacts/lineage/lineage_job.html` — 作业级 + 字段级双视图
+- `warehouses/shop/artifacts/lineage/lineage.html` — 字段级视图
+- `warehouses/shop/artifacts/lineage/lineage_data.json` — 数据源
 
 #### B1. HTML 包含正确的数据
 - `lineage_job.html` 中的 `const LD` 数据必须与 `lineage_data.json` 一致
@@ -73,12 +73,12 @@ python3 import_lineage.py
 ### C. Doris 数据库检查
 
 文件清单：
-- `shop/lineage_data.json` — 血缘数据
-- `shop/tasks/*.sql` — 各任务 SQL
-- `shop/ddl/*.sql` — DDL 定义
-- Doris 数据库 `lineage`（`import_lineage.py` 定义的目标库）
+- `warehouses/shop/artifacts/lineage/lineage_data.json` — 血缘数据
+- `warehouses/shop/{mid,ads}/tasks/**/*.sql` — 各任务 SQL
+- `warehouses/shop/{ods,mid,ads}/ddl/**/*.sql` — DDL 定义
+- Doris 数据库 `lineage`（`src/dw_refactor_agent/lineage/import_lineage.py` 定义的目标库）
 
-前置条件：已运行 `python3 import_lineage.py` 将数据导入 Doris。
+前置条件：已运行 `PYTHONPATH=src python -m dw_refactor_agent.lineage.import_lineage --project shop` 将数据导入 Doris。
 
 #### C1. Doris 连接可用
 能通过 pymysql 连接到 Doris（host: 172.16.0.90, port: 9030, database: lineage）。
@@ -90,12 +90,12 @@ python3 import_lineage.py
 `table_lineage` 表中的关系数应与从 edges 推导出的唯一 (source_table, target_table) 对数量一致。
 
 #### C4. 作业覆盖完整
-`job` 表中的记录应覆盖 `shop/tasks/` 目录下所有 SQL 文件。每个 SQL 文件应有且仅有一条 job 记录。
+`job` 表中的记录应覆盖 `warehouses/shop/{mid,ads}/tasks/` 目录下所有 SQL 文件。每个 SQL 文件应有且仅有一条 job 记录。
 
 #### C5. 列元数据覆盖 DDL
 - `table_info` 中的表应覆盖所有有 DDL 定义且被任务引用的表
 - `column_info` 中的列应覆盖 `lineage_data.json` 中 tables 下的所有 columns
-- `column_info` 中的 data_type 不应为 `UNKNOWN`（`lineage_extractor.py` 的默认值，应该在导入 Doris 前已被 DDL 类型覆盖）
+- `column_info` 中的 data_type 不应为 `UNKNOWN`（`src/dw_refactor_agent/lineage/lineage_extractor.py` 的默认值，应该在导入 Doris 前已被 DDL 类型覆盖）
 
 #### C6. 字段级血缘引用有效
 `column_lineage` 中的所有 `source_column_id` 和 `target_column_id` 必须在 `column_info` 中存在。不允许有悬挂引用。
@@ -133,7 +133,7 @@ python3 import_lineage.py
       "name": "Doris 连接可用",
       "status": "FAIL",
       "details": "无法连接 Doris: (2003, \"Can't connect to MySQL server on '172.16.0.90:9030' (60)\")",
-      "suggestion": "请确认 Doris 服务是否运行，网络是否可达。运行 python3 import_lineage.py 重新导入。"
+      "suggestion": "请确认 Doris 服务是否运行，网络是否可达。运行 PYTHONPATH=src python -m dw_refactor_agent.lineage.import_lineage --project shop 重新导入。"
     },
     {
       "id": "C2",
@@ -159,14 +159,14 @@ python3 import_lineage.py
 其他 Agent 可以根据报告中的 `results[].suggestion` 来修复问题：
 
 - **B 类问题** → 运行 `python3 refresh_lineage_html.py` 重新注入数据，或手动修改 HTML
-- **C 类问题** → 运行 `python3 import_lineage.py` 重新导入，或检查 Doris 连接配置
+- **C 类问题** → 运行 `PYTHONPATH=src python -m dw_refactor_agent.lineage.import_lineage --project shop` 重新导入，或检查 Doris 连接配置
 
 ## 依赖
 
 - `python3` + `pymysql`（用于连接 Doris）
-- `shop/lineage_data.json`（血缘数据）
-- `shop/tasks/*.sql`（任务 SQL）
-- `shop/ddl/*.sql`（DDL）
-- `shop/lineage_job.html`（HTML 可视化）
-- `shop/lineage.html`（HTML 可视化）
+- `warehouses/shop/artifacts/lineage/lineage_data.json`（血缘数据）
+- `warehouses/shop/{mid,ads}/tasks/**/*.sql`（任务 SQL）
+- `warehouses/shop/{ods,mid,ads}/ddl/**/*.sql`（DDL）
+- `warehouses/shop/artifacts/lineage/lineage_job.html`（HTML 可视化）
+- `warehouses/shop/artifacts/lineage/lineage.html`（HTML 可视化）
 - Doris 数据库 `lineage`（host: 172.16.0.90:9030）

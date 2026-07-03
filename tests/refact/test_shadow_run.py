@@ -6,7 +6,7 @@ import sqlglot
 from sqlglot import exp
 from sqlglot.errors import ErrorLevel
 
-from refact.shadow_run import (
+from dw_refactor_agent.refactor.shadow_run import (
     ShadowRunSqlError,
     _ddl_change_statements,
     _get_dml_target,
@@ -279,7 +279,9 @@ def test_execute_shadow_plan_splits_rename_columns_and_waits(monkeypatch):
         calls.append((sql, db, qa))
         return ""
 
-    monkeypatch.setattr("refact.shadow_run.run_sql", fake_run_sql)
+    monkeypatch.setattr(
+        "dw_refactor_agent.refactor.shadow_run.run_sql", fake_run_sql
+    )
 
     result = execute_shadow_plan(plan)
 
@@ -339,8 +341,12 @@ def test_wait_for_table_alter_jobs_polls_until_finished(monkeypatch):
         calls.append((sql, db, qa))
         return outputs.pop(0)
 
-    monkeypatch.setattr("refact.shadow_run.run_sql", fake_run_sql)
-    monkeypatch.setattr("refact.shadow_run.time.sleep", lambda _: None)
+    monkeypatch.setattr(
+        "dw_refactor_agent.refactor.shadow_run.run_sql", fake_run_sql
+    )
+    monkeypatch.setattr(
+        "dw_refactor_agent.refactor.shadow_run.time.sleep", lambda _: None
+    )
 
     _wait_for_table_alter_jobs(
         "shop_dm_qa",
@@ -418,7 +424,14 @@ def test_dry_run_prints_qa_ddl_changes(capsys):
 
 
 def test_run_shadow_plan_executes_self_contained(tmp_path, monkeypatch):
-    job_file = tmp_path / "shop" / "tasks" / "dwd_order_detail.sql"
+    job_file = (
+        tmp_path
+        / "warehouses"
+        / "shop"
+        / "mid"
+        / "tasks"
+        / "dwd_order_detail.sql"
+    )
     job_file.parent.mkdir(parents=True)
     job_file.write_text(
         "INSERT INTO shop_dm.dwd_order_detail SELECT * FROM shop_dm.ods_order",
@@ -438,7 +451,7 @@ def test_run_shadow_plan_executes_self_contained(tmp_path, monkeypatch):
             "jobs_to_run": [
                 {
                     "job": "dwd_order_detail",
-                    "file": "shop/tasks/dwd_order_detail.sql",
+                    "file": "warehouses/shop/mid/tasks/dwd_order_detail.sql",
                     "layer": "DWD",
                 }
             ],
@@ -447,13 +460,15 @@ def test_run_shadow_plan_executes_self_contained(tmp_path, monkeypatch):
     )
     calls = []
 
-    monkeypatch.setattr("refact.shadow_run._project_root", lambda: tmp_path)
     monkeypatch.setattr(
-        "refact.shadow_run.run_sql",
+        "dw_refactor_agent.refactor.shadow_run._project_root", lambda: tmp_path
+    )
+    monkeypatch.setattr(
+        "dw_refactor_agent.refactor.shadow_run.run_sql",
         lambda sql, db="", qa=False: calls.append(("sql", sql, db, qa)),
     )
     monkeypatch.setattr(
-        "refact.shadow_run.run_sql_text",
+        "dw_refactor_agent.refactor.shadow_run.run_sql_text",
         lambda sql, db="", qa=False: calls.append(("text", sql, db, qa)),
     )
 
@@ -468,7 +483,7 @@ def test_run_shadow_plan_executes_self_contained(tmp_path, monkeypatch):
     assert phase_by_name["run_jobs"]["jobs"] == [
         {
             "job": "dwd_order_detail",
-            "file": "shop/tasks/dwd_order_detail.sql",
+            "file": "warehouses/shop/mid/tasks/dwd_order_detail.sql",
             "layer": "DWD",
             "target": "dwd_order_detail",
             "needs_etl_date": False,
@@ -486,7 +501,14 @@ def test_run_shadow_plan_executes_self_contained(tmp_path, monkeypatch):
 
 
 def test_run_shadow_plan_persists_failed_job_result(tmp_path, monkeypatch):
-    job_file = tmp_path / "shop" / "tasks" / "dwd_order_detail.sql"
+    job_file = (
+        tmp_path
+        / "warehouses"
+        / "shop"
+        / "mid"
+        / "tasks"
+        / "dwd_order_detail.sql"
+    )
     job_file.parent.mkdir(parents=True)
     job_file.write_text(
         "INSERT INTO shop_dm.dwd_order_detail SELECT * FROM shop_dm.ods_order",
@@ -506,7 +528,7 @@ def test_run_shadow_plan_persists_failed_job_result(tmp_path, monkeypatch):
             "jobs_to_run": [
                 {
                     "job": "dwd_order_detail",
-                    "file": "shop/tasks/dwd_order_detail.sql",
+                    "file": "warehouses/shop/mid/tasks/dwd_order_detail.sql",
                     "layer": "DWD",
                 }
             ],
@@ -516,13 +538,15 @@ def test_run_shadow_plan_persists_failed_job_result(tmp_path, monkeypatch):
         },
     )
 
-    monkeypatch.setattr("refact.shadow_run._project_root", lambda: tmp_path)
     monkeypatch.setattr(
-        "refact.shadow_run.run_sql",
+        "dw_refactor_agent.refactor.shadow_run._project_root", lambda: tmp_path
+    )
+    monkeypatch.setattr(
+        "dw_refactor_agent.refactor.shadow_run.run_sql",
         lambda sql, db="", qa=False: "",
     )
     monkeypatch.setattr(
-        "refact.shadow_run.run_sql_text",
+        "dw_refactor_agent.refactor.shadow_run.run_sql_text",
         lambda sql, db="", qa=False: (_ for _ in ()).throw(
             ShadowRunSqlError("insert failed")
         ),
@@ -538,7 +562,7 @@ def test_run_shadow_plan_persists_failed_job_result(tmp_path, monkeypatch):
     assert phase_by_name["run_jobs"]["jobs"] == [
         {
             "job": "dwd_order_detail",
-            "file": "shop/tasks/dwd_order_detail.sql",
+            "file": "warehouses/shop/mid/tasks/dwd_order_detail.sql",
             "layer": "DWD",
             "target": "dwd_order_detail",
             "needs_etl_date": False,
@@ -558,7 +582,7 @@ def test_shadow_run_cli_returns_nonzero_for_failed_result(
     _write_json(plan_path, {"project": "shop"})
 
     monkeypatch.setattr(
-        "refact.shadow_run.run_shadow_plan",
+        "dw_refactor_agent.refactor.shadow_run.run_shadow_plan",
         lambda plan, output, dry_run=False: {"status": "failed"},
     )
 
@@ -566,7 +590,14 @@ def test_shadow_run_cli_returns_nonzero_for_failed_result(
 
 
 def test_run_shadow_plan_dry_run_persists_phase_summary(tmp_path, monkeypatch):
-    job_file = tmp_path / "shop" / "tasks" / "M_SHOP_05_INV_DF.sql"
+    job_file = (
+        tmp_path
+        / "warehouses"
+        / "shop"
+        / "mid"
+        / "tasks"
+        / "M_SHOP_05_INV_DF.sql"
+    )
     job_file.parent.mkdir(parents=True)
     job_file.write_text(
         (
@@ -600,7 +631,7 @@ def test_run_shadow_plan_dry_run_persists_phase_summary(tmp_path, monkeypatch):
         "jobs_to_run": [
             {
                 "job": "M_SHOP_05_INV_DF",
-                "file": "shop/tasks/M_SHOP_05_INV_DF.sql",
+                "file": "warehouses/shop/mid/tasks/M_SHOP_05_INV_DF.sql",
                 "layer": "DWD",
                 "target": "M_SHOP_05_INV_DF",
                 "needs_etl_date": True,
@@ -615,7 +646,9 @@ def test_run_shadow_plan_dry_run_persists_phase_summary(tmp_path, monkeypatch):
     }
     _write_json(plan_path, plan)
 
-    monkeypatch.setattr("refact.shadow_run._project_root", lambda: tmp_path)
+    monkeypatch.setattr(
+        "dw_refactor_agent.refactor.shadow_run._project_root", lambda: tmp_path
+    )
 
     result = run_shadow_plan(plan_path, output_path, dry_run=True)
 
