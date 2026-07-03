@@ -1,11 +1,19 @@
-from assess.assessment_context import AssessmentContext
-from assess.project_facts.asset_catalog import build_asset_catalog
-from assess.rules import RuleRunner, RuleSelection, rule_specs_by_id
-from assess.rules.definitions.task_sql_quality import CODE_RULE_NO_SELECT_STAR
-from assess.rules.dimensions.task_sql_quality import (
+from dw_refactor_agent.assessment.assessment_context import AssessmentContext
+from dw_refactor_agent.assessment.project_facts.asset_catalog import (
+    build_asset_catalog,
+)
+from dw_refactor_agent.assessment.rules import (
+    RuleRunner,
+    RuleSelection,
+    rule_specs_by_id,
+)
+from dw_refactor_agent.assessment.rules.definitions.task_sql_quality import (
+    CODE_RULE_NO_SELECT_STAR,
+)
+from dw_refactor_agent.assessment.rules.dimensions.task_sql_quality import (
     score_code_quality,
 )
-from assess.rules.engine.base import AssessRule
+from dw_refactor_agent.assessment.rules.engine.base import AssessRule
 
 
 def _catalog_for_task(tmp_path, task_name, sql):

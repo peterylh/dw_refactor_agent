@@ -1,9 +1,9 @@
-from lineage.asset_graph import (
+from dw_refactor_agent.lineage.asset_graph import (
     build_asset_column_lineage,
     build_asset_self_edges,
     build_asset_table_graph,
 )
-from lineage.table_graph import (
+from dw_refactor_agent.lineage.table_graph import (
     build_table_edge_source_files,
     build_table_graph,
     collect_table_self_edges,

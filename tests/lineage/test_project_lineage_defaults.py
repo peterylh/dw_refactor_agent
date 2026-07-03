@@ -2,8 +2,8 @@ import json
 
 import pytest
 
-import config
-from lineage import store, table_graph
+import dw_refactor_agent.config as config
+from dw_refactor_agent.lineage import store, table_graph
 
 
 def _configure_project(monkeypatch, tmp_path):

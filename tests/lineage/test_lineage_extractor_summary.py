@@ -1,4 +1,4 @@
-import lineage.lineage_extractor as lineage_extractor
+import dw_refactor_agent.lineage.lineage_extractor as lineage_extractor
 
 
 def test_format_layer_statistics_summarizes_without_table_names(monkeypatch):

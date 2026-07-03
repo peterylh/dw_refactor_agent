@@ -1,8 +1,11 @@
 import json
 from datetime import datetime, timezone
 
-import refact.run as run_cli
-from refact.session import create_run_manifest, write_manifest
+import dw_refactor_agent.refactor.run as run_cli
+from dw_refactor_agent.refactor.session import (
+    create_run_manifest,
+    write_manifest,
+)
 
 
 def _local_datetime(*args):
@@ -14,7 +17,25 @@ def _write_json(path, data):
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2))
 
 
+def _write_warehouse_config(root, project="shop"):
+    warehouse_dir = root / "warehouses" / project
+    warehouse_dir.mkdir(parents=True)
+    (warehouse_dir / "warehouse.yaml").write_text(
+        "\n".join(
+            [
+                f"name: {project}",
+                f"database: {project}_dm",
+                f"qa_database: {project}_dm_qa",
+                f"lineage_database: {project}_lineage",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+
 def test_start_creates_manifest_and_baseline_artifacts(tmp_path, monkeypatch):
+    _write_warehouse_config(tmp_path)
+
     def fake_lineage(
         project, output_path, cache_path, previous_cache_path=None
     ):
@@ -43,16 +64,82 @@ def test_start_creates_manifest_and_baseline_artifacts(tmp_path, monkeypatch):
     )
 
     assert exit_code == 0
-    run_root = tmp_path / "refact" / "runs" / "20260620_073000_shop"
+    run_root = (
+        tmp_path
+        / "warehouses"
+        / "shop"
+        / "artifacts"
+        / "refactor_runs"
+        / "20260620_073000_shop"
+    )
     assert (run_root / "manifest.json").exists()
+    manifest = json.loads((run_root / "manifest.json").read_text())
+    assert manifest["root"] == str(tmp_path.resolve())
     assert (run_root / "baseline" / "lineage_data.json").exists()
     assert (run_root / "baseline" / "task_lineage_cache.json").exists()
     assert (run_root / "baseline" / "assess_result.json").exists()
 
 
+def test_start_loads_project_choices_from_target_root(tmp_path, monkeypatch):
+    _write_warehouse_config(tmp_path, "demo")
+
+    def fake_lineage(
+        project, output_path, cache_path, previous_cache_path=None
+    ):
+        _write_json(output_path, {"tables": [], "edges": []})
+        _write_json(cache_path, {"project": project, "tasks": []})
+        return {"lineage": {"tables": [], "edges": []}}
+
+    def fake_assess(project, **kwargs):
+        return {"project": project, "overall_score": 100.0, "dimensions": {}}
+
+    monkeypatch.setattr(run_cli, "build_lineage_artifacts", fake_lineage)
+    monkeypatch.setattr(run_cli, "assess", fake_assess)
+    monkeypatch.setattr(
+        run_cli,
+        "_git_info",
+        lambda _root: {"branch": "main", "head": "abc123", "dirty": False},
+    )
+    monkeypatch.setattr(
+        run_cli,
+        "_now",
+        lambda: _local_datetime(2026, 6, 20, 7, 30),
+    )
+
+    exit_code = run_cli.main(
+        ["start", "--project", "demo", "--root", str(tmp_path)]
+    )
+
+    assert exit_code == 0
+    run_root = (
+        tmp_path
+        / "warehouses"
+        / "demo"
+        / "artifacts"
+        / "refactor_runs"
+        / "20260620_073000_demo"
+    )
+    assert (run_root / "manifest.json").exists()
+    manifest = json.loads((run_root / "manifest.json").read_text())
+    assert manifest["project"] == "demo"
+
+
+def test_start_rejects_root_without_warehouse_config(tmp_path):
+    root = tmp_path / "empty-root"
+    root.mkdir()
+
+    try:
+        run_cli.main(["start", "--project", "shop", "--root", str(root)])
+    except SystemExit as exc:
+        assert "缺少 warehouses 目录" in str(exc)
+    else:
+        raise AssertionError("start should reject a root without warehouses/")
+
+
 def test_analyze_refreshes_current_analysis_diff_and_plan(
     tmp_path, monkeypatch
 ):
+    _write_warehouse_config(tmp_path)
     manifest_path, manifest = create_run_manifest(
         tmp_path,
         "shop",
@@ -126,10 +213,23 @@ def test_analyze_refreshes_current_analysis_diff_and_plan(
 
     monkeypatch.setattr(run_cli, "build_lineage_artifacts", fake_lineage)
     monkeypatch.setattr(run_cli, "assess", fake_assess)
+
+    diff_calls = []
+
+    def fake_changed_files(root, head, project_dir):
+        diff_calls.append(
+            {
+                "root": root,
+                "head": head,
+                "project_dir": project_dir,
+            }
+        )
+        return ["warehouses/shop/mid/models/dwd_order.yaml"]
+
     monkeypatch.setattr(
         run_cli,
         "changed_files_since_head",
-        lambda root, head, project_dir: ["shop/mid/models/dwd_order.yaml"],
+        fake_changed_files,
     )
     plan_calls = []
 
@@ -144,6 +244,7 @@ def test_analyze_refreshes_current_analysis_diff_and_plan(
         plan_calls.append(
             {
                 "base_ref": base_ref,
+                "repo_root": repo_root,
                 "lineage_data": lineage_data,
                 "partition": partition,
             }
@@ -190,10 +291,21 @@ def test_analyze_refreshes_current_analysis_diff_and_plan(
     assert assess_calls[0]["change_analysis"]["affected_scope"][
         "assessment_tables"
     ] == ["dwd_order"]
+    assert assess_calls[0]["change_analysis"]["changed_assets"][
+        "model_tables"
+    ] == ["dwd_order"]
     assert (run_root / "verification" / "plan.json").exists()
+    assert diff_calls == [
+        {
+            "root": tmp_path.resolve(),
+            "head": "abc123",
+            "project_dir": "warehouses/shop",
+        }
+    ]
     assert plan_calls == [
         {
             "base_ref": "abc123",
+            "repo_root": tmp_path.resolve(),
             "lineage_data": {"tables": [], "edges": []},
             "partition": "2025-01-15",
         }
@@ -203,6 +315,7 @@ def test_analyze_refreshes_current_analysis_diff_and_plan(
 def test_analyze_marks_empty_diff_assessment_not_applicable(
     tmp_path, monkeypatch
 ):
+    _write_warehouse_config(tmp_path)
     manifest_path, manifest = create_run_manifest(
         tmp_path,
         "shop",
@@ -342,6 +455,7 @@ def test_check_subcommand_is_removed():
 def test_shadow_run_and_compare_delegate_to_plan_handlers(
     tmp_path, monkeypatch
 ):
+    _write_warehouse_config(tmp_path)
     manifest_path, manifest = create_run_manifest(
         tmp_path,
         "shop",
@@ -354,7 +468,16 @@ def test_shadow_run_and_compare_delegate_to_plan_handlers(
     calls = []
 
     def fake_shadow(plan, output, dry_run=False):
-        calls.append(("shadow", plan, output, dry_run))
+        calls.append(
+            (
+                "shadow",
+                plan,
+                output,
+                dry_run,
+                run_cli.config.PROJECT_ROOT,
+                run_cli.shadow_run_module.PROJECT_ROOT,
+            )
+        )
         _write_json(output, {"ok": True})
         return {"ok": True}
 
@@ -371,11 +494,14 @@ def test_shadow_run_and_compare_delegate_to_plan_handlers(
 
     assert calls[0][0] == "shadow"
     assert calls[0][1] == plan_path
+    assert calls[0][4] == tmp_path.resolve()
+    assert calls[0][5] == tmp_path.resolve()
     assert calls[1][0] == "compare"
     assert calls[1][1] == plan_path
 
 
 def test_shadow_run_cli_reports_handler_failure(tmp_path, monkeypatch):
+    _write_warehouse_config(tmp_path)
     manifest_path, manifest = create_run_manifest(
         tmp_path,
         "shop",

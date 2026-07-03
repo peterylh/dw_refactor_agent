@@ -3,8 +3,8 @@ import types
 
 import sqlglot
 
-import lineage.lineage_extractor as lineage_extractor
-from lineage.lineage_extractor import build_schema_from_texts
+import dw_refactor_agent.lineage.lineage_extractor as lineage_extractor
+from dw_refactor_agent.lineage.lineage_extractor import build_schema_from_texts
 
 
 def _schema_table_count(schema):

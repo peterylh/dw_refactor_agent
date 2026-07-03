@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 import pytest
 
-from assess.llm.table_inspector import (
+from dw_refactor_agent.assessment.llm.table_inspector import (
     TableContext,
     TableInspector,
     build_prompt,
@@ -730,7 +730,7 @@ def _assert_dict_to_result_normalizes_placeholder_empty_grain():
         },
     }
 
-    from assess.llm.table_inspector import dict_to_result
+    from dw_refactor_agent.assessment.llm.table_inspector import dict_to_result
 
     result = dict_to_result(payload)
 

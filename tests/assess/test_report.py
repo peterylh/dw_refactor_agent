@@ -1,6 +1,6 @@
 import unicodedata
 
-from assess.report import _fmt_table
+from dw_refactor_agent.assessment.report import _fmt_table
 
 
 def _display_width(text):

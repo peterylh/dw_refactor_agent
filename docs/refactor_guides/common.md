@@ -18,32 +18,32 @@
 
 只修改数仓项目资产：
 
-- `{project}/mid/ddl/`
-- `{project}/mid/tasks/`
-- `{project}/mid/models/`
-- `{project}/ads/tasks/`：仅当需要保持 ADS 输出不变而调整取数逻辑时修改
+- `warehouses/{project}/mid/ddl/`
+- `warehouses/{project}/mid/tasks/`
+- `warehouses/{project}/mid/models/`
+- `warehouses/{project}/ads/tasks/`：仅当需要保持 ADS 输出不变而调整取数逻辑时修改
 
 只修改 DWS/DIM/DWD 表结构；ODS 和 ADS 表结构默认保持不变。ADS SQL 可以重构，
 但不能改变 ADS 表字段、类型、分区、主键或输出语义。
 不要修改命名规范配置文件， 但是可以针对命名规范提出改进建议
 不要修改工具代码或测试代码， 但是可以报告问题
-- `lineage/`
-- `exec/`
-- `refact/`
-- `assess/`
-- `ddl_deriver/`
+- `src/dw_refactor_agent/lineage/`
+- `src/dw_refactor_agent/execution/`
+- `src/dw_refactor_agent/refactor/`
+- `src/dw_refactor_agent/assessment/`
+- `src/dw_refactor_agent/ddl_deriver/`
 - `tests/`
 
 ## 默认不提交的派生文件
 
 数仓资产重构默认不更新以下生成物：
 
-- `{project}/lineage/lineage_data.json`
-- `{project}/lineage/job_dag.json`
-- `{project}/lineage/*.html`
-- `{project}/assess/*.json`
-- `{project}/assess/cache/`
-- `refact/runs/`
+- `warehouses/{project}/artifacts/lineage/lineage_data.json`
+- `warehouses/{project}/artifacts/lineage/job_dag.json`
+- `warehouses/{project}/artifacts/lineage/*.html`
+- `warehouses/{project}/artifacts/assessment/*.json`
+- `warehouses/{project}/artifacts/assessment/cache/`
+- `warehouses/<project>/artifacts/refactor_runs/`
 
 除非用户明确要求更新这些派生结果。
 
@@ -64,7 +64,7 @@
 默认验证：
 
 ```bash
-python lineage/lineage_extractor.py --project <project>
+python -m dw_refactor_agent.lineage.lineage_extractor --project <project>
 ```
 
 这个命令用于验证 SQL 和 models 能被项目血缘解析器识别。
@@ -86,7 +86,7 @@ make test
 不要默认运行：
 
 ```bash
-python lineage/refresh_lineage_html.py --project <project>
+python -m dw_refactor_agent.lineage.refresh_lineage_html --project <project>
 ```
 
 原因：刷新 HTML 是可视化生成操作，不是数仓资产重构的必要步骤。
@@ -94,7 +94,7 @@ python lineage/refresh_lineage_html.py --project <project>
 不要默认运行：
 
 ```bash
-python exec/task_run.py --project <project> --db-env test
+python -m dw_refactor_agent.execution.task_run --project <project> --db-env test
 ```
 
 原因：`--db-env test` 是在测试库真实执行任务，不是 dry-run。只有用户明确要求执行数据验证时才运行。
@@ -104,17 +104,17 @@ python exec/task_run.py --project <project> --db-env test
 用户明确要求更新可视化时，才执行：
 
 ```bash
-python lineage/refresh_lineage_html.py --project <project>
+python -m dw_refactor_agent.lineage.refresh_lineage_html --project <project>
 ```
 
 用户明确要求真实执行测试库任务时，才执行：
 
 ```bash
-python exec/task_run.py --project <project> --db-env test --job-list <job_name>
+python -m dw_refactor_agent.execution.task_run --project <project> --db-env test --job-list <job_name>
 ```
 
 如果需要预览重构验证计划，应使用重构验证工具的 dry-run：
 
 ```bash
-python refact/run.py shadow-run --manifest refact/runs/<run_id>/manifest.json --dry-run
+python -m dw_refactor_agent.refactor.run shadow-run --manifest warehouses/<project>/artifacts/refactor_runs/<run_id>/manifest.json --dry-run
 ```

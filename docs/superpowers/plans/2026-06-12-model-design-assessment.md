@@ -4,27 +4,31 @@
 
 **Goal:** Add the first implementation slice for model design assessment: dimension selection, `architecture` to `model_design` compatibility, layer boundary checks, and fact grain clarity checks.
 
-**Architecture:** Add a new focused `assess.scoring.model_design` module that preserves existing architecture dependency behavior and extends it with SQL/model metadata checks. Keep `assess.scoring.architecture` as a compatibility wrapper. Update `assess_middle_layer` to run selected dimensions and expose `--model-design` while keeping `--architecture` as an alias.
+**Architecture:** Add focused model-design rules under
+`dw_refactor_agent.assessment.rules.dimensions.model_design` and extend them
+with SQL/model metadata checks. Update `assess_middle_layer` to run selected
+dimensions and expose `--model-design` while keeping `--architecture` as an
+alias.
 
-**Tech Stack:** Python, pytest, sqlglot, existing `assess.result_model` check/issue helpers, existing asset catalog and model metadata loaders.
+**Tech Stack:** Python, pytest, sqlglot, existing
+`dw_refactor_agent.assessment.result_model` check/issue helpers, existing asset
+catalog and model metadata loaders.
 
 ---
 
 ## File Structure
 
-- Create `assess/scoring/model_design.py`: owns model design scoring, architecture dependency checks, layer boundary checks, and grain clarity checks.
-- Modify `assess/scoring/architecture.py`: compatibility wrapper exporting `score_architecture_health` from the new module.
-- Modify `assess/scoring/config.py`: add model design rule metadata and keep architecture rule aliases.
-- Modify `assess/assess_middle_layer.py`: add dimension selection, `--model-design`, `--architecture` alias, and output key `model_design`.
+- Create `src/dw_refactor_agent/assessment/rules/dimensions/model_design.py`: owns model design scoring, architecture dependency checks, layer boundary checks, and grain clarity checks.
+- Modify `src/dw_refactor_agent/assessment/scoring/config.py`: add model design rule metadata and keep architecture rule aliases.
+- Modify `src/dw_refactor_agent/assessment/assess_middle_layer.py`: add dimension selection, `--model-design`, `--architecture` alias, and output key `model_design`.
 - Modify `tests/assess/test_assess_middle_layer.py`: update architecture assertions, add dimension selection tests.
 - Create `tests/assess/test_model_design.py`: focused tests for layer boundary and grain rules.
 
 ## Task 1: Add Model Design Module With Existing Architecture Behavior
 
 **Files:**
-- Create: `assess/scoring/model_design.py`
-- Modify: `assess/scoring/architecture.py`
-- Modify: `assess/scoring/config.py`
+- Create: `src/dw_refactor_agent/assessment/rules/dimensions/model_design.py`
+- Modify: `src/dw_refactor_agent/assessment/scoring/config.py`
 - Test: `tests/assess/test_model_design.py`
 
 - [x] **Step 1: Write failing compatibility test**
@@ -32,8 +36,9 @@
 Add this test to `tests/assess/test_model_design.py`:
 
 ```python
-from assess.scoring.architecture import score_architecture_health
-from assess.scoring.model_design import score_model_design_health
+from dw_refactor_agent.assessment.rules.dimensions.model_design import (
+    score_model_design_health,
+)
 
 
 def _rule_ids(result):
@@ -51,11 +56,8 @@ def test_architecture_wrapper_uses_model_design_dimension():
         "source_file": "ads_sales.sql",
     }]
 
-    wrapped = score_architecture_health(tables, edges, [])
     direct = score_model_design_health(tables, edges, [])
 
-    assert wrapped["score"] == direct["score"]
-    assert _rule_ids(wrapped) == {"ARCH_SKIP_LAYER_DEPENDENCY"}
     assert _rule_ids(direct) == {"ARCH_SKIP_LAYER_DEPENDENCY"}
 ```
 
@@ -67,11 +69,11 @@ Run:
 pytest tests/assess/test_model_design.py::test_architecture_wrapper_uses_model_design_dimension -q
 ```
 
-Expected: FAIL because `assess.scoring.model_design` does not exist.
+Expected: FAIL because `dw_refactor_agent.assessment.rules.dimensions.model_design` does not exist.
 
 - [x] **Step 3: Implement compatibility module**
 
-Move the scoring implementation from `assess/scoring/architecture.py` into `assess/scoring/model_design.py` with the public name:
+Move the scoring implementation from `src/dw_refactor_agent/assessment/rules/dimensions/model_design.py` into `src/dw_refactor_agent/assessment/rules/dimensions/model_design.py` with the public name:
 
 ```python
 def score_model_design_health(
@@ -88,12 +90,12 @@ def score_model_design_health(
 
 Keep existing rule ids for migrated dependency and LLM checks in this task.
 
-Replace `assess/scoring/architecture.py` with:
+Replace `src/dw_refactor_agent/assessment/rules/dimensions/model_design.py` with:
 
 ```python
 """Compatibility wrapper for model design scoring."""
 
-from assess.scoring.model_design import score_model_design_health
+from dw_refactor_agent.assessment.rules.dimensions.model_design import score_model_design_health
 
 
 def score_architecture_health(*args, **kwargs) -> dict:
@@ -114,7 +116,7 @@ Expected: compatibility test passes. Existing tests may still fail later where t
 ## Task 2: Add SQL Fact Extraction For Layer Boundary And Grain Checks
 
 **Files:**
-- Modify: `assess/scoring/model_design.py`
+- Modify: `src/dw_refactor_agent/assessment/rules/dimensions/model_design.py`
 - Test: `tests/assess/test_model_design.py`
 
 - [x] **Step 1: Write failing tests for SQL facts**
@@ -122,7 +124,7 @@ Expected: compatibility test passes. Existing tests may still fail later where t
 Add tests:
 
 ```python
-from assess.scoring.model_design import extract_model_design_sql_facts
+from dw_refactor_agent.assessment.rules.dimensions.model_design import extract_model_design_sql_facts
 
 
 def test_extract_model_design_sql_facts_detects_group_by_and_aggregates():
@@ -168,7 +170,7 @@ Expected: FAIL because `extract_model_design_sql_facts` is not defined.
 
 - [x] **Step 3: Implement SQL facts helper**
 
-Implement `extract_model_design_sql_facts(sql_text: str) -> dict` in `assess/scoring/model_design.py` using `sqlglot.parse(..., dialect="doris")` first and regex fallback second. Return:
+Implement `extract_model_design_sql_facts(sql_text: str) -> dict` in `src/dw_refactor_agent/assessment/rules/dimensions/model_design.py` using `sqlglot.parse(..., dialect="doris")` first and regex fallback second. Return:
 
 ```python
 {
@@ -194,8 +196,8 @@ Expected: PASS.
 ## Task 3: Add Layer Boundary And Grain Clarity Rules
 
 **Files:**
-- Modify: `assess/scoring/config.py`
-- Modify: `assess/scoring/model_design.py`
+- Modify: `src/dw_refactor_agent/assessment/scoring/config.py`
+- Modify: `src/dw_refactor_agent/assessment/rules/dimensions/model_design.py`
 - Test: `tests/assess/test_model_design.py`
 
 - [x] **Step 1: Write failing tests for model design checks**
@@ -278,7 +280,7 @@ Expected: FAIL because the rule ids do not exist.
 
 - [x] **Step 3: Add rule metadata**
 
-Add to `assess/scoring/config.py`:
+Add to `src/dw_refactor_agent/assessment/scoring/config.py`:
 
 ```python
 MODEL_DESIGN_RULES = {
@@ -316,7 +318,7 @@ Expected: PASS.
 ## Task 4: Wire `model_design` Into Assessment And CLI Dimension Selection
 
 **Files:**
-- Modify: `assess/assess_middle_layer.py`
+- Modify: `src/dw_refactor_agent/assessment/assess_middle_layer.py`
 - Modify: `tests/assess/test_assess_middle_layer.py`
 
 - [x] **Step 1: Write failing tests for output key and selected dimensions**
@@ -326,7 +328,7 @@ Add or update tests:
 ```python
 def test_assess_outputs_model_design_dimension(monkeypatch, sample_lineage_data):
     monkeypatch.setattr(
-        "assess.assess_middle_layer.load_lineage_data",
+        "dw_refactor_agent.assessment.assess_middle_layer.load_lineage_data",
         lambda project: sample_lineage_data,
     )
 
@@ -338,7 +340,7 @@ def test_assess_outputs_model_design_dimension(monkeypatch, sample_lineage_data)
 
 def test_assess_can_run_selected_model_design_only(monkeypatch, sample_lineage_data):
     monkeypatch.setattr(
-        "assess.assess_middle_layer.load_lineage_data",
+        "dw_refactor_agent.assessment.assess_middle_layer.load_lineage_data",
         lambda project: sample_lineage_data,
     )
 
@@ -359,7 +361,7 @@ Expected: FAIL because `assess` does not accept `selected_dimensions` and still 
 
 - [x] **Step 3: Update assessment wiring**
 
-In `assess/assess_middle_layer.py`:
+In `src/dw_refactor_agent/assessment/assess_middle_layer.py`:
 
 - import `score_model_design_health`.
 - build `asset_catalog` before scoring model design.
@@ -429,16 +431,15 @@ git diff --stat
 git status --short --branch
 ```
 
-Expected: Changed files are limited to scoring, assessment CLI, tests, and plan docs. Existing unrelated `assess/model_metadata_result_finance_analytics.json` remains unstaged unless the user asks otherwise.
+Expected: Changed files are limited to scoring, assessment CLI, tests, and plan docs. Existing unrelated `warehouses/finance_analytics/artifacts/assessment/model_metadata_result.json` remains unstaged unless the user asks otherwise.
 
 - [x] **Step 4: Commit implementation**
 
 Run:
 
 ```bash
-git add assess/scoring/model_design.py assess/scoring/architecture.py assess/scoring/config.py assess/assess_middle_layer.py tests/assess/test_model_design.py tests/assess/test_assess_middle_layer.py docs/superpowers/plans/2026-06-12-model-design-assessment.md
+git add src/dw_refactor_agent/assessment/rules/dimensions/model_design.py src/dw_refactor_agent/assessment/rules/dimensions/model_design.py src/dw_refactor_agent/assessment/scoring/config.py src/dw_refactor_agent/assessment/assess_middle_layer.py tests/assess/test_model_design.py tests/assess/test_assess_middle_layer.py docs/superpowers/plans/2026-06-12-model-design-assessment.md
 git commit -m "feat(assess): add model design assessment checks"
 ```
 
 Expected: Commit succeeds.
-

@@ -1,0 +1,12 @@
+name: finance_analytics
+catalog: internal
+database: finance_analytics_dm
+qa_database: finance_analytics_dm_qa
+lineage_database: finance_analytics_lineage
+naming_config: naming_config.yaml
+verification:
+  default_refresh_parameter: etl_date
+  week_start: MON
+default_dialect: doris
+ods_source_catalog_dialects:
+  internal: doris

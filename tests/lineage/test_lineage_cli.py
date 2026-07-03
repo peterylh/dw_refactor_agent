@@ -2,8 +2,8 @@ import json
 
 import pytest
 
-import config
-from lineage.lineage_cli import main
+import dw_refactor_agent.config as config
+from dw_refactor_agent.lineage.lineage_cli import main
 from tests.lineage.test_lineage_query import (
     _demo_view,
     configure_demo_project_layers,
@@ -28,7 +28,7 @@ def _write_demo_lineage(tmp_path):
 
 def _write_demo_project_lineage(tmp_path, monkeypatch):
     project_dir = tmp_path / "demo_project"
-    lineage_dir = project_dir / "lineage"
+    lineage_dir = project_dir / "artifacts" / "lineage"
     lineage_dir.mkdir(parents=True)
     path = lineage_dir / "lineage_data.json"
     path.write_text(

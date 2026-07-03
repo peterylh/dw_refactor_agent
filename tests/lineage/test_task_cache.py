@@ -3,8 +3,8 @@ from __future__ import annotations
 import inspect
 import json
 
-import lineage.task_cache as task_cache
-from lineage.task_cache import (
+import dw_refactor_agent.lineage.task_cache as task_cache
+from dw_refactor_agent.lineage.task_cache import (
     TaskCacheMetadata,
     cache_entry_from_result,
     load_task_cache,

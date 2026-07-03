@@ -2,10 +2,10 @@
 
 本文说明 `assess` 相关元数据的初始化顺序、工具职责和常用命令。项目级元数据主要分两类：
 
-- `{project}/business_semantics.yaml`: 业务语义目录，维护数据域、业务板块、业务过程、语义主题。
-- `{project}/mid/models/{table_name}.yaml`: DIM/DWD/DWS 表级模型元数据，维护 layer、table_type、业务语义引用、entities、grain、metrics 和执行策略。
-- `{project}/ads/models/{table_name}.yaml`: ADS 表级模型元数据。
-- `{project}/ods/models/{catalog}/{database}/{table_name}.yaml`: ODS 表级模型元数据。
+- `warehouses/{project}/business_semantics.yaml`: 业务语义目录，维护数据域、业务板块、业务过程、语义主题。
+- `warehouses/{project}/mid/models/{table_name}.yaml`: DIM/DWD/DWS 表级模型元数据，维护 layer、table_type、业务语义引用、entities、grain、metrics 和执行策略。
+- `warehouses/{project}/ads/models/{table_name}.yaml`: ADS 表级模型元数据。
+- `warehouses/{project}/ods/models/{catalog}/{database}/{table_name}.yaml`: ODS 表级模型元数据。
 
 推荐把这些文件作为项目资产放在 Git 中维护。工具直接写工作区，使用 `git diff` / `git add -p` 审查和接受变更。
 
@@ -16,25 +16,25 @@
 表级 LLM 巡检和目录发现会使用 DDL、任务 SQL、上下游、字段血缘和已有模型元数据。
 
 ```bash
-python lineage/lineage_extractor.py --project shop
+python -m dw_refactor_agent.lineage.lineage_extractor --project shop
 ```
 
-默认输出到 `{project}/lineage/lineage_data.json`。
+默认输出到 `warehouses/{project}/artifacts/lineage/lineage_data.json`。
 
 ### 2. 初始化或更新业务语义目录
 
 无 LLM 的初始化只创建目录骨架，并从命名配置或已有 catalog 合并数据域、业务板块字典；不会再根据表名硬猜业务过程。
 
 ```bash
-python assess/business_semantics_catalog.py --project shop --dry-run
-python assess/business_semantics_catalog.py --project shop
+python -m dw_refactor_agent.assessment.business_semantics_catalog --project shop --dry-run
+python -m dw_refactor_agent.assessment.business_semantics_catalog --project shop
 ```
 
 使用 LLM 时，工具会先做表级巡检，再从巡检结果聚类生成 catalog：
 
 ```bash
-python assess/business_semantics_catalog.py --project shop --llm --dry-run --overwrite
-python assess/business_semantics_catalog.py --project shop --llm --overwrite
+python -m dw_refactor_agent.assessment.business_semantics_catalog --project shop --llm --dry-run --overwrite
+python -m dw_refactor_agent.assessment.business_semantics_catalog --project shop --llm --overwrite
 ```
 
 LLM 发现的原则：
@@ -48,8 +48,8 @@ LLM 发现的原则：
 等价入口也可以使用：
 
 ```bash
-python -m assess.llm.model_metadata_writer --project shop --catalog-from-llm --dry-run --overwrite-catalog
-python -m assess.llm.model_metadata_writer --project shop --catalog-from-llm --overwrite-catalog
+python -m dw_refactor_agent.assessment.llm.model_metadata_writer --project shop --catalog-from-llm --dry-run --overwrite-catalog
+python -m dw_refactor_agent.assessment.llm.model_metadata_writer --project shop --catalog-from-llm --overwrite-catalog
 ```
 
 ### 3. 人工修订 catalog
@@ -67,13 +67,13 @@ python -m assess.llm.model_metadata_writer --project shop --catalog-from-llm --o
 ### 4. 从 catalog 初始化或刷新 models
 
 ```bash
-python -m assess.llm.model_metadata_writer --project shop --from-catalog --write-scope business --dry-run
-python -m assess.llm.model_metadata_writer --project shop --from-catalog --write-scope business
+python -m dw_refactor_agent.assessment.llm.model_metadata_writer --project shop --from-catalog --write-scope business --dry-run
+python -m dw_refactor_agent.assessment.llm.model_metadata_writer --project shop --from-catalog --write-scope business
 ```
 
-这个命令不调用 LLM。它读取 `{project}/business_semantics.yaml`、
-`{project}/ods/models/{catalog}/{database}/*.yaml`、`{project}/mid/models/*.yaml`
-和 `{project}/ads/models/*.yaml`，以 models 中已有的 `business_process` /
+这个命令不调用 LLM。它读取 `warehouses/{project}/business_semantics.yaml`、
+`warehouses/{project}/ods/models/{catalog}/{database}/*.yaml`、`warehouses/{project}/mid/models/*.yaml`
+和 `warehouses/{project}/ads/models/*.yaml`，以 models 中已有的 `business_process` /
 `semantic_subject` 为表级归属事实，再从 catalog 补齐这些 code 对应的数据域和业务板块。
 
 写入内容包括：
@@ -94,17 +94,17 @@ python -m assess.llm.model_metadata_writer --project shop --from-catalog --write
 表级 LLM 巡检用于补全和刷新更细的模型信息：
 
 ```bash
-python -m assess.llm.model_metadata_writer --project shop --dry-run
-python -m assess.llm.model_metadata_writer --project shop
+python -m dw_refactor_agent.assessment.llm.model_metadata_writer --project shop --dry-run
+python -m dw_refactor_agent.assessment.llm.model_metadata_writer --project shop
 ```
 
 常用写入范围：
 
 ```bash
-python -m assess.llm.model_metadata_writer --project shop --write-scope table
-python -m assess.llm.model_metadata_writer --project shop --write-scope metrics
-python -m assess.llm.model_metadata_writer --project shop --write-scope grain
-python -m assess.llm.model_metadata_writer --project shop --write-scope all
+python -m dw_refactor_agent.assessment.llm.model_metadata_writer --project shop --write-scope table
+python -m dw_refactor_agent.assessment.llm.model_metadata_writer --project shop --write-scope metrics
+python -m dw_refactor_agent.assessment.llm.model_metadata_writer --project shop --write-scope grain
+python -m dw_refactor_agent.assessment.llm.model_metadata_writer --project shop --write-scope all
 ```
 
 说明：
@@ -142,7 +142,7 @@ catalog 是治理层，应该先由 LLM 初始化，再人工修订确认。mode
 ## 常用检查命令
 
 ```bash
-python assess/assess_middle_layer.py --project shop --model-design
-python assess/assess_middle_layer.py --project shop
+python -m dw_refactor_agent.assessment.assess_middle_layer --project shop --model-design
+python -m dw_refactor_agent.assessment.assess_middle_layer --project shop
 make test
 ```

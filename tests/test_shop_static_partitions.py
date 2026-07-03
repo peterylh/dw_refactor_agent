@@ -1,6 +1,6 @@
-import config
+import dw_refactor_agent.config as config
 
-SHOP_DIR = config.PROJECT_ROOT / "shop"
+SHOP_DIR = config.project_dir("shop")
 
 
 def _shop_ddls():

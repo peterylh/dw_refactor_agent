@@ -12,11 +12,14 @@ from pathlib import Path
 import sqlglot
 
 _ROOT = Path(__file__).resolve().parents[2]
+_SRC_ROOT = _ROOT / "src"
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
+if str(_SRC_ROOT) not in sys.path:
+    sys.path.insert(0, str(_SRC_ROOT))
 
-import config
-import lineage.lineage_extractor as lineage_extractor
+import dw_refactor_agent.config as config
+import dw_refactor_agent.lineage.lineage_extractor as lineage_extractor
 from benchmarks.lineage_extractor.dataset import (
     CATALOG,
     COMPLEXITIES,

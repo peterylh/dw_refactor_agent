@@ -1,4 +1,4 @@
-from lineage.lineage_extractor import (
+from dw_refactor_agent.lineage.lineage_extractor import (
     extract_lineage_from_task_files,
     format_missing_ddl_warnings,
 )

@@ -1,15 +1,10 @@
 import ast
 
-import config
+import dw_refactor_agent.config as config
 
 PRODUCTION_PATHS = [
-    "assess",
-    "ddl_deriver",
-    "exec",
-    "finance_analytics",
-    "lineage",
-    "refact",
-    "config",
+    "src/dw_refactor_agent",
+    "warehouses/finance_analytics/generate_ods_data.py",
 ]
 
 
