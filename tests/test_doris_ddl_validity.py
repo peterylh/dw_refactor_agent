@@ -1,7 +1,7 @@
 import re
 from pathlib import Path
 
-import config
+import dw_refactor_agent.config as config
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -10,7 +10,7 @@ def _shop_non_ods_ddls():
     return [
         path
         for path in config.iter_project_asset_files("shop", "ddl", "*.sql")
-        if "ods" not in path.relative_to(ROOT / "shop").parts
+        if "ods" not in path.relative_to(config.project_dir("shop")).parts
     ]
 
 

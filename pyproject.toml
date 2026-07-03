@@ -1,3 +1,26 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dw-refactor-agent"
+version = "0.1.0"
+description = "Data warehouse lineage, assessment, and refactor verification toolkit."
+requires-python = ">=3.7"
+dependencies = [
+    "PyYAML>=6",
+    "pymysql",
+    "requests",
+    "sqlglot==26.9.0",
+    "typing_extensions",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"dw_refactor_agent.lineage" = ["ddl/*.sql", "*.html"]
+
 [tool.ruff]
 target-version = "py37"
 line-length = 79

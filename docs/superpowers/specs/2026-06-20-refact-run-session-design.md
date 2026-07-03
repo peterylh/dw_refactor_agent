@@ -15,11 +15,11 @@ separate artifacts whose lifecycles are explicit.
 Use one entrypoint:
 
 ```bash
-python refact/run.py start --project shop
-python refact/run.py analyze --manifest refact/runs/<run_id>/manifest.json
-python refact/run.py analyze --manifest refact/runs/<run_id>/manifest.json --partition 2025-01-15
-python refact/run.py shadow-run --manifest refact/runs/<run_id>/manifest.json
-python refact/run.py compare --manifest refact/runs/<run_id>/manifest.json
+PYTHONPATH=src python -m dw_refactor_agent.refactor.run start --project shop
+PYTHONPATH=src python -m dw_refactor_agent.refactor.run analyze --manifest warehouses/shop/artifacts/refactor_runs/<run_id>/manifest.json
+PYTHONPATH=src python -m dw_refactor_agent.refactor.run analyze --manifest warehouses/shop/artifacts/refactor_runs/<run_id>/manifest.json --partition 2025-01-15
+PYTHONPATH=src python -m dw_refactor_agent.refactor.run shadow-run --manifest warehouses/shop/artifacts/refactor_runs/<run_id>/manifest.json
+PYTHONPATH=src python -m dw_refactor_agent.refactor.run compare --manifest warehouses/shop/artifacts/refactor_runs/<run_id>/manifest.json
 ```
 
 Responsibilities:
@@ -39,7 +39,7 @@ Responsibilities:
 Each run owns all generated artifacts under:
 
 ```text
-refact/runs/<run_id>/
+warehouses/{project}/artifacts/refactor_runs/<run_id>/
   manifest.json
 
   baseline/
@@ -199,8 +199,8 @@ by issue fingerprint.
 ```json
 {
   "summary": {
-    "baseline_issue_count": 8,
-    "current_issue_count": 3,
+    "baseline_scoped_issue_count": 8,
+    "current_scoped_issue_count": 3,
     "fixed_count": 6,
     "remaining_count": 2,
     "new_count": 1
@@ -244,22 +244,25 @@ with methods such as `count` and `row_compare`.
 Implementation should keep CLIs thin:
 
 ```text
-refact/run.py                 # subcommand entrypoint
-refact/session.py             # manifest and run-directory lifecycle
-refact/incremental_lineage.py # refactor run lineage artifact builder
-refact/change_analysis.py     # changed assets, scope, lineage diff
-refact/scoped_assess.py       # scoped assess execution
-refact/issue_diff.py          # fingerprint-based issue diff
-refact/verification_plan.py   # build verification/plan.json
-refact/shadow_run.py          # QA bypass execution
-refact/compare.py             # production vs QA comparison
-lineage/task_cache.py         # reusable task cache key and cache helpers
+src/dw_refactor_agent/refactor/run.py                 # subcommand entrypoint
+src/dw_refactor_agent/refactor/session.py             # manifest and run-directory lifecycle
+src/dw_refactor_agent/refactor/incremental_lineage.py # refactor run lineage artifact builder
+src/dw_refactor_agent/refactor/change_analysis.py     # changed assets, scope, lineage diff
+src/dw_refactor_agent/assessment/scoped_plan.py       # scoped assess planning
+src/dw_refactor_agent/refactor/issue_diff.py          # fingerprint-based issue diff
+src/dw_refactor_agent/refactor/verification_plan.py   # build verification/plan.json
+src/dw_refactor_agent/refactor/shadow_run.py          # QA bypass execution
+src/dw_refactor_agent/refactor/compare.py             # production vs QA comparison
+src/dw_refactor_agent/lineage/task_cache.py           # reusable task cache key and cache helpers
 ```
 
-Existing logic from `lineage.lineage_extractor` and
-`assess.assess_middle_layer` should be reused behind these boundaries where
-practical. Shadow execution and production-vs-QA comparison live directly in
-`refact/shadow_run.py` and `refact/compare.py`; there should not be separate
+Existing logic from `dw_refactor_agent.lineage.lineage_extractor` and
+`dw_refactor_agent.assessment.assess_middle_layer` should be reused behind these
+boundaries where practical. Shadow execution and production-vs-QA comparison
+live directly in `dw_refactor_agent.refactor.shadow_run` and
+`dw_refactor_agent.refactor.compare`; there should not be separate
 `verify_run` or `verify_check` core modules. Refactor-specific baseline/current
-artifact paths stay in `refact/incremental_lineage.py`, while task-level lineage
-cache fingerprints and cache entry helpers live under `lineage/task_cache.py`.
+artifact paths stay in
+`src/dw_refactor_agent/refactor/incremental_lineage.py`, while task-level
+lineage cache fingerprints and cache entry helpers live under
+`src/dw_refactor_agent/lineage/task_cache.py`.

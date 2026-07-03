@@ -2,7 +2,7 @@
 
 import copy
 
-from ddl_deriver.ddl_deriver import (
+from dw_refactor_agent.ddl_deriver.ddl_deriver import (
     AlterTable,
     ColumnDef,
     CreateTable,

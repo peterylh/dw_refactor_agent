@@ -1,22 +1,32 @@
+import json
+import os
 import sys
 
 import pytest
 import yaml
 
-import config
-from assess.assess_middle_layer import assess
-from assess.assessment_context import AssessmentContext
-from assess.llm.table_inspector import TableInspectResult
-from assess.project_facts.asset_catalog import build_asset_catalog
-from assess.report import generate_report
-from assess.rules.dimensions.asset_completeness import (
+import dw_refactor_agent.config as config
+from dw_refactor_agent.assessment.assess_middle_layer import assess
+from dw_refactor_agent.assessment.assessment_context import AssessmentContext
+from dw_refactor_agent.assessment.llm.table_inspector import TableInspectResult
+from dw_refactor_agent.assessment.project_facts.asset_catalog import (
+    build_asset_catalog,
+)
+from dw_refactor_agent.assessment.report import generate_report
+from dw_refactor_agent.assessment.rules.dimensions.asset_completeness import (
     score_asset_completeness,
 )
-from assess.rules.dimensions.metadata_health import score_metadata_health
-from assess.rules.dimensions.model_design import score_model_design_health
-from assess.rules.dimensions.naming import score_naming_conventions
-from assess.scoring.config import normalize_score_weights
-from config import (
+from dw_refactor_agent.assessment.rules.dimensions.metadata_health import (
+    score_metadata_health,
+)
+from dw_refactor_agent.assessment.rules.dimensions.model_design import (
+    score_model_design_health,
+)
+from dw_refactor_agent.assessment.rules.dimensions.naming import (
+    score_naming_conventions,
+)
+from dw_refactor_agent.assessment.scoring.config import normalize_score_weights
+from dw_refactor_agent.config import (
     PROJECT_ROOT,
     BusinessAreaDef,
     BusinessDomainConfig,
@@ -119,7 +129,7 @@ def _business_naming_config(tmp_path):
 
 @pytest.fixture
 def isolated_assess_project(tmp_path, monkeypatch):
-    import assess.assess_middle_layer as assess_module
+    import dw_refactor_agent.assessment.assess_middle_layer as assess_module
 
     project = "unit_assess"
     project_dir = tmp_path / project
@@ -183,7 +193,7 @@ def test_assess_returns_dimension_check_issue_model(
     monkeypatch, sample_lineage_data, isolated_assess_project
 ):
     monkeypatch.setattr(
-        "assess.assess_middle_layer.load_lineage_data",
+        "dw_refactor_agent.assessment.assess_middle_layer.load_lineage_data",
         lambda project: sample_lineage_data,
     )
 
@@ -233,7 +243,7 @@ def test_assess_omits_checks_from_default_output(
         }
     ]
     monkeypatch.setattr(
-        "assess.assess_middle_layer.load_lineage_data",
+        "dw_refactor_agent.assessment.assess_middle_layer.load_lineage_data",
         lambda project: data,
     )
 
@@ -250,7 +260,7 @@ def test_assess_can_run_selected_model_design_only(
     monkeypatch, sample_lineage_data, isolated_assess_project
 ):
     monkeypatch.setattr(
-        "assess.assess_middle_layer.load_lineage_data",
+        "dw_refactor_agent.assessment.assess_middle_layer.load_lineage_data",
         lambda project: sample_lineage_data,
     )
 
@@ -272,7 +282,7 @@ def test_assess_builds_one_context_with_derived_lineage_for_scoring_modules(
     monkeypatch, sample_lineage_data, isolated_assess_project
 ):
     monkeypatch.setattr(
-        "assess.assess_middle_layer.load_lineage_data",
+        "dw_refactor_agent.assessment.assess_middle_layer.load_lineage_data",
         lambda project: sample_lineage_data,
     )
     captured = {}
@@ -307,31 +317,31 @@ def test_assess_builds_one_context_with_derived_lineage_for_scoring_modules(
         return dimension("model_design")
 
     monkeypatch.setattr(
-        "assess.assess_middle_layer.score_reusability",
+        "dw_refactor_agent.assessment.assess_middle_layer.score_reusability",
         remember_context("reuse_context"),
     )
     monkeypatch.setattr(
-        "assess.assess_middle_layer.score_lineage_depth",
+        "dw_refactor_agent.assessment.assess_middle_layer.score_lineage_depth",
         fake_depth_score,
     )
     monkeypatch.setattr(
-        "assess.assess_middle_layer.score_model_design_health",
+        "dw_refactor_agent.assessment.assess_middle_layer.score_model_design_health",
         fake_model_design_score,
     )
     monkeypatch.setattr(
-        "assess.assess_middle_layer.score_asset_completeness",
+        "dw_refactor_agent.assessment.assess_middle_layer.score_asset_completeness",
         remember_context("asset_completeness_context"),
     )
     monkeypatch.setattr(
-        "assess.assess_middle_layer.score_code_quality",
+        "dw_refactor_agent.assessment.assess_middle_layer.score_code_quality",
         remember_context("code_quality_context"),
     )
     monkeypatch.setattr(
-        "assess.assess_middle_layer.score_metadata_health",
+        "dw_refactor_agent.assessment.assess_middle_layer.score_metadata_health",
         remember_context("metadata_health_context"),
     )
     monkeypatch.setattr(
-        "assess.assess_middle_layer.score_naming_conventions",
+        "dw_refactor_agent.assessment.assess_middle_layer.score_naming_conventions",
         remember_context("naming_context"),
     )
 
@@ -369,7 +379,7 @@ def test_assess_builds_scope_plan_and_passes_dimension_scopes(
     monkeypatch, sample_lineage_data, isolated_assess_project
 ):
     monkeypatch.setattr(
-        "assess.assess_middle_layer.load_lineage_data",
+        "dw_refactor_agent.assessment.assess_middle_layer.load_lineage_data",
         lambda project: sample_lineage_data,
     )
     captured = {}
@@ -394,31 +404,31 @@ def test_assess_builds_scope_plan_and_passes_dimension_scopes(
         return dimension("model_design")
 
     monkeypatch.setattr(
-        "assess.assess_middle_layer.score_reusability",
+        "dw_refactor_agent.assessment.assess_middle_layer.score_reusability",
         remember_scope("reuse"),
     )
     monkeypatch.setattr(
-        "assess.assess_middle_layer.score_lineage_depth",
+        "dw_refactor_agent.assessment.assess_middle_layer.score_lineage_depth",
         remember_scope("depth"),
     )
     monkeypatch.setattr(
-        "assess.assess_middle_layer.score_model_design_health",
+        "dw_refactor_agent.assessment.assess_middle_layer.score_model_design_health",
         fake_model_design_score,
     )
     monkeypatch.setattr(
-        "assess.assess_middle_layer.score_asset_completeness",
+        "dw_refactor_agent.assessment.assess_middle_layer.score_asset_completeness",
         remember_scope("asset_completeness"),
     )
     monkeypatch.setattr(
-        "assess.assess_middle_layer.score_code_quality",
+        "dw_refactor_agent.assessment.assess_middle_layer.score_code_quality",
         remember_scope("code_quality"),
     )
     monkeypatch.setattr(
-        "assess.assess_middle_layer.score_metadata_health",
+        "dw_refactor_agent.assessment.assess_middle_layer.score_metadata_health",
         remember_scope("metadata_health"),
     )
     monkeypatch.setattr(
-        "assess.assess_middle_layer.score_naming_conventions",
+        "dw_refactor_agent.assessment.assess_middle_layer.score_naming_conventions",
         remember_scope("naming"),
     )
     change_analysis = {
@@ -466,7 +476,7 @@ def test_generate_report_reads_dimension_issues(
     monkeypatch, sample_lineage_data, isolated_assess_project
 ):
     monkeypatch.setattr(
-        "assess.assess_middle_layer.load_lineage_data",
+        "dw_refactor_agent.assessment.assess_middle_layer.load_lineage_data",
         lambda project: sample_lineage_data,
     )
 
@@ -485,7 +495,7 @@ def test_assess_cli_defaults_output_to_project_assess_dir(
     monkeypatch,
     tmp_path,
 ):
-    import assess.assess_middle_layer as assess_module
+    import dw_refactor_agent.assessment.assess_middle_layer as assess_module
 
     project = "shop"
     project_dir = tmp_path / "shop"
@@ -527,9 +537,173 @@ def test_assess_cli_defaults_output_to_project_assess_dir(
 
     assess_module.main()
 
-    output_path = project_dir / "assess" / "assess_result.json"
+    output_path = (
+        project_dir / "artifacts" / "assessment" / "assess_result.json"
+    )
     assert output_path.exists()
     assert not (tool_dir / f"assess_result_{project}.json").exists()
+
+
+def test_assess_cli_accepts_explicit_lineage_file(
+    monkeypatch,
+    tmp_path,
+):
+    import dw_refactor_agent.assessment.assess_middle_layer as assess_module
+
+    project = "shop"
+    lineage_data = {"tables": [{"name": "dwd_order"}], "edges": []}
+    lineage_file = tmp_path / "lineage_data.json"
+    lineage_file.write_text(
+        json.dumps(lineage_data, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    output_path = tmp_path / "assess_result.json"
+    captured = {}
+
+    def fake_assess(*args, **kwargs):
+        captured["args"] = args
+        captured["kwargs"] = kwargs
+        return {
+            "project": project,
+            "weights": {},
+            "dimensions": {},
+        }
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "assess_middle_layer.py",
+            "--project",
+            project,
+            "--lineage-file",
+            str(lineage_file),
+            "--output",
+            str(output_path),
+        ],
+    )
+    monkeypatch.setattr(assess_module, "assess", fake_assess)
+    monkeypatch.setattr(
+        assess_module,
+        "generate_report",
+        lambda *args, **kwargs: "report",
+    )
+
+    assess_module.main()
+
+    assert captured["args"][0] == project
+    assert captured["kwargs"]["lineage_data"] == lineage_data
+    assert output_path.exists()
+
+
+def test_assess_cli_can_refresh_default_lineage_before_scoring(
+    monkeypatch,
+    tmp_path,
+):
+    import dw_refactor_agent.assessment.assess_middle_layer as assess_module
+
+    project = "shop"
+    output_path = tmp_path / "assess_result.json"
+    refresh_calls = []
+
+    def fake_refresh(project_name, parallel):
+        refresh_calls.append((project_name, parallel))
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "assess_middle_layer.py",
+            "--project",
+            project,
+            "--refresh-lineage",
+            "--lineage-parallel",
+            "3",
+            "--output",
+            str(output_path),
+        ],
+    )
+    monkeypatch.setattr(
+        assess_module,
+        "refresh_project_lineage",
+        fake_refresh,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        assess_module,
+        "assess",
+        lambda *args, **kwargs: {
+            "project": project,
+            "weights": {},
+            "dimensions": {},
+        },
+    )
+    monkeypatch.setattr(
+        assess_module,
+        "generate_report",
+        lambda *args, **kwargs: "report",
+    )
+
+    assess_module.main()
+
+    assert refresh_calls == [(project, 3)]
+    assert output_path.exists()
+
+
+def test_assess_cli_missing_default_lineage_suggests_next_steps(
+    monkeypatch,
+    capsys,
+):
+    import dw_refactor_agent.assessment.assess_middle_layer as assess_module
+
+    project = "shop"
+
+    def fake_assess(*args, **kwargs):
+        raise FileNotFoundError(
+            "未找到 shop 的血缘数据文件 "
+            "(warehouses/shop/artifacts/lineage/lineage_data.json)"
+        )
+
+    monkeypatch.setattr(
+        sys, "argv", ["assess_middle_layer.py", "--project", project]
+    )
+    monkeypatch.setattr(assess_module, "assess", fake_assess)
+
+    with pytest.raises(SystemExit) as exc:
+        assess_module.main()
+
+    assert exc.value.code == 1
+    output = capsys.readouterr().err
+    assert (
+        "python -m dw_refactor_agent.lineage.lineage_extractor --project shop"
+        in output
+    )
+    assert "--refresh-lineage" in output
+    assert "--lineage-file" in output
+
+
+def test_refresh_project_lineage_sets_src_pythonpath(monkeypatch):
+    import dw_refactor_agent.assessment.assess_middle_layer as assess_module
+
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append((cmd, kwargs))
+
+    monkeypatch.setattr(assess_module.subprocess, "run", fake_run)
+
+    assess_module.refresh_project_lineage("shop", parallel=2)
+
+    cmd, kwargs = calls[0]
+    assert cmd[:3] == [
+        sys.executable,
+        "-m",
+        "dw_refactor_agent.lineage.lineage_extractor",
+    ]
+    assert kwargs["cwd"] == assess_module.PROJECT_ROOT
+    assert str(config.SRC_ROOT) in kwargs["env"]["PYTHONPATH"].split(
+        os.pathsep
+    )
 
 
 def test_normalize_score_weights_supports_partial_override():
@@ -876,7 +1050,9 @@ def test_score_metadata_health_requires_dim_semantic_subject():
 
 
 def test_score_metadata_health_requires_dws_grain_entities_from_models():
-    nc = load_naming_config(PROJECT_ROOT / "shop/naming_config.yaml")
+    nc = load_naming_config(
+        PROJECT_ROOT / "warehouses" / "shop" / "naming_config.yaml"
+    )
     result = score_metadata_health(
         _context(
             [{"name": "I_SHOP_PROD_SALE_DS", "layer": "DWS", "columns": []}],
@@ -1750,7 +1926,9 @@ def test_score_naming_conventions_checks_atomic_and_derived_metrics():
 
 
 def test_score_naming_conventions_checks_dws_and_dim_entity_alignment():
-    nc = load_naming_config(PROJECT_ROOT / "shop/naming_config.yaml")
+    nc = load_naming_config(
+        PROJECT_ROOT / "warehouses" / "shop" / "naming_config.yaml"
+    )
 
     dws_result = score_naming_conventions(
         _context(
@@ -1803,7 +1981,9 @@ def test_score_naming_conventions_checks_dws_and_dim_entity_alignment():
 
 
 def test_score_naming_conventions_checks_dim_classification_alignment():
-    nc = load_naming_config(PROJECT_ROOT / "shop/naming_config.yaml")
+    nc = load_naming_config(
+        PROJECT_ROOT / "warehouses" / "shop" / "naming_config.yaml"
+    )
 
     result = score_naming_conventions(
         _context(

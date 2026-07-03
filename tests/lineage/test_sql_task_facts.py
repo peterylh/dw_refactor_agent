@@ -1,5 +1,5 @@
-import lineage.sql_task_facts as sql_task_facts
-from lineage.sql_task_facts import extract_task_table_facts
+import dw_refactor_agent.lineage.sql_task_facts as sql_task_facts
+from dw_refactor_agent.lineage.sql_task_facts import extract_task_table_facts
 
 
 def test_extract_task_table_facts_transient_lifecycle_scenarios():

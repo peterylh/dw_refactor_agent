@@ -54,8 +54,8 @@ Expected: failures mention missing prompt strings, missing result attributes, ol
 
 **Files:**
 - Modify: `naming_config.yaml`
-- Modify: `shop/naming_config.yaml`
-- Modify: `finance_analytics/naming_config.yaml`
+- Modify: `warehouses/shop/naming_config.yaml`
+- Modify: `warehouses/finance_analytics/naming_config.yaml`
 - Modify: `tests/test_naming_config.py`
 
 - [x] Rename `DIM_SCOPE` to `DIM_ROLE`.

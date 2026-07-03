@@ -9,15 +9,10 @@ import pytest
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 PROJECT_CODE_DIRS = (
-    "config",
-    "assess",
-    "ddl_deriver",
-    "exec",
-    "finance_analytics",
-    "lineage",
-    "refact",
+    "src/dw_refactor_agent",
+    "warehouses/finance_analytics",
 )
-ROOT_MODULES = ("doris_sql.py",)
+ROOT_MODULES = ()
 
 
 def _project_python_files():
@@ -45,6 +40,10 @@ def test_project_modules_import_under_python37_with_released_sqlglot():
         import sqlglot
         import sys
 
+        src_root = Path.cwd() / "src"
+        if str(src_root) not in sys.path:
+            sys.path.insert(0, str(src_root))
+
         sqlglot_path = Path(sqlglot.__file__).resolve()
         if sqlglot.__version__ != "26.9.0":
             raise AssertionError(
@@ -62,11 +61,13 @@ def test_project_modules_import_under_python37_with_released_sqlglot():
             path = Path(raw_path)
             try:
                 rel = path.relative_to(Path.cwd())
-                if rel.parts[0] == "config":
+                if rel.parts[:2] == ("src", "dw_refactor_agent"):
                     if path.name == "__init__.py":
-                        module_name = ".".join(rel.parts[:-1])
+                        module_name = ".".join(rel.parts[1:-1])
                     else:
-                        module_name = ".".join(rel.with_suffix("").parts)
+                        module_name = ".".join(
+                            rel.with_suffix("").parts[1:]
+                        )
                     importlib.import_module(module_name)
                 else:
                     module_name = "compat_" + re.sub(r"[^0-9A-Za-z_]", "_", str(path))

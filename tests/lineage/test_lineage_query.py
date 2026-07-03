@@ -1,12 +1,12 @@
 import pytest
 
-import config
-from lineage.query import (
+import dw_refactor_agent.config as config
+from dw_refactor_agent.lineage.query import (
     build_column_lineage,
     build_project_stats,
     build_table_subgraph,
 )
-from lineage.view import LineageView
+from dw_refactor_agent.lineage.view import LineageView
 
 
 def configure_demo_project_layers(monkeypatch, tmp_path):

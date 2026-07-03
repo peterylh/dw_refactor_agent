@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This benchmark measures `lineage/lineage_extractor.py` on deterministic
+This benchmark measures `dw_refactor_agent.lineage.lineage_extractor` on deterministic
 synthetic warehouse assets. It is intended for local performance comparison
 before and after extractor changes, especially changes involving SQL parsing,
 schema lookup, field-level lineage extraction, task parallelism, or task cache
@@ -52,10 +52,10 @@ make benchmark-lineage
 Run specific profiles directly:
 
 ```bash
-PYTHONPATH= conda run -n dw-refactor-py37 python benchmarks/lineage_extractor/run.py --size small
-PYTHONPATH= conda run -n dw-refactor-py37 python benchmarks/lineage_extractor/run.py --size medium --complexity high
-PYTHONPATH= conda run -n dw-refactor-py37 python benchmarks/lineage_extractor/run.py --size medium --repeat 3 --output benchmark.json
-PYTHONPATH= conda run -n dw-refactor-py37 python benchmarks/lineage_extractor/run.py --size large --complexity stress --parallel 4 --keep-assets
+PYTHONPATH=src conda run -n dw-refactor-py37 python benchmarks/lineage_extractor/run.py --size small
+PYTHONPATH=src conda run -n dw-refactor-py37 python benchmarks/lineage_extractor/run.py --size medium --complexity high
+PYTHONPATH=src conda run -n dw-refactor-py37 python benchmarks/lineage_extractor/run.py --size medium --repeat 3 --output benchmark.json
+PYTHONPATH=src conda run -n dw-refactor-py37 python benchmarks/lineage_extractor/run.py --size large --complexity stress --parallel 4 --keep-assets
 ```
 
 Use `--keep-assets` when debugging generated SQL. The runner prints the asset
@@ -67,7 +67,7 @@ Profiling is optional and disabled by default. Use it when elapsed time changes
 and you need to locate the bottleneck:
 
 ```bash
-PYTHONPATH= conda run -n dw-refactor-py37 python benchmarks/lineage_extractor/run.py \
+PYTHONPATH=src conda run -n dw-refactor-py37 python benchmarks/lineage_extractor/run.py \
   --size large \
   --complexity stress \
   --profile cprofile \

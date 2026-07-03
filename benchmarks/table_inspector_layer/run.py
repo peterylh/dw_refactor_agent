@@ -15,12 +15,13 @@ from typing import Any
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
+SRC_ROOT = REPO_ROOT / "src"
+if str(SRC_ROOT) not in sys.path:
+    sys.path.insert(0, str(SRC_ROOT))
 
-import assess.llm.model_metadata_writer as writer  # noqa: E402
-import config  # noqa: E402
-from assess.llm.model_metadata_writer import (
+import dw_refactor_agent.assessment.llm.model_metadata_writer as writer  # noqa: E402
+import dw_refactor_agent.config as config  # noqa: E402
+from dw_refactor_agent.assessment.llm.model_metadata_writer import (
     run_direct_model_generation,  # noqa: E402
 )
 

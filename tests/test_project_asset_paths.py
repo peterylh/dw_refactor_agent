@@ -1,6 +1,80 @@
 from pathlib import Path
 
-import config
+import dw_refactor_agent.config as config
+
+
+def test_project_config_is_loaded_from_warehouse_yaml():
+    shop = config.PROJECT_CONFIG["shop"]
+
+    assert shop["dir"] == "warehouses/shop"
+    assert shop["db"] == "shop_dm"
+    assert shop["qa_db"] == "shop_dm_qa"
+    assert shop["lineage_db"] == "shop_lineage"
+    assert shop["naming_config"] == "warehouses/shop/naming_config.yaml"
+    assert shop["ods_source_catalog_dialects"] == {"internal": "doris"}
+
+
+def test_load_project_config_maps_warehouse_yaml_to_runtime_shape(tmp_path):
+    warehouse_dir = tmp_path / "warehouses" / "demo"
+    warehouse_dir.mkdir(parents=True)
+    (warehouse_dir / "warehouse.yaml").write_text(
+        "\n".join(
+            [
+                "name: demo",
+                "catalog: internal",
+                "database: demo_dm",
+                "qa_database: demo_dm_qa",
+                "lineage_database: demo_lineage",
+                "naming_config: config/naming.yaml",
+                "default_dialect: doris",
+                "ods_source_catalog_dialects:",
+                "  internal: doris",
+                "  hive: hive",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    project_config = config.load_project_config(tmp_path)
+
+    assert project_config == {
+        "demo": {
+            "dir": "warehouses/demo",
+            "catalog": "internal",
+            "db": "demo_dm",
+            "qa_db": "demo_dm_qa",
+            "lineage_db": "demo_lineage",
+            "naming_config": "warehouses/demo/config/naming.yaml",
+            "ods_source_catalog_dialects": {
+                "internal": "doris",
+                "hive": "hive",
+            },
+        }
+    }
+
+
+def test_resolve_project_root_prefers_env_then_warehouse_cwd(tmp_path):
+    env_root = tmp_path / "env_root"
+    cwd_root = tmp_path / "cwd_root"
+    env_root.mkdir()
+    (cwd_root / "warehouses").mkdir(parents=True)
+
+    assert (
+        config.resolve_project_root(
+            default_root=tmp_path / "site_packages",
+            cwd=cwd_root,
+            env={},
+        )
+        == cwd_root
+    )
+    assert (
+        config.resolve_project_root(
+            default_root=tmp_path / "site_packages",
+            cwd=cwd_root,
+            env={config.PROJECT_ROOT_ENV: str(env_root)},
+        )
+        == env_root.resolve()
+    )
 
 
 def test_iter_project_asset_files_ignores_root_and_includes_ods_dir(
@@ -215,37 +289,42 @@ def test_project_artifact_paths_are_project_scoped(monkeypatch, tmp_path):
     assert config.project_artifact_dir("demo", "lineage") == Path(
         tmp_path,
         "demo_project",
+        "artifacts",
         "lineage",
     )
     assert config.lineage_data_path("demo") == Path(
         tmp_path,
         "demo_project",
+        "artifacts",
         "lineage",
         "lineage_data.json",
     )
     assert config.job_dag_path("demo") == Path(
         tmp_path,
         "demo_project",
+        "artifacts",
         "lineage",
         "job_dag.json",
     )
     assert config.lineage_task_cache_path("demo") == Path(
         tmp_path,
         "demo_project",
+        "artifacts",
         "lineage",
         "task_lineage_cache.json",
     )
     assert config.assess_cache_path("demo", "inspect.json") == Path(
         tmp_path,
         "demo_project",
-        "assess",
+        "artifacts",
+        "assessment",
         "cache",
         "inspect.json",
     )
 
 
 def test_finance_analytics_ods_assets_are_under_catalog_database_dir():
-    project_dir = config.PROJECT_ROOT / "finance_analytics"
+    project_dir = config.project_dir("finance_analytics")
     ods_root = project_dir / "ods"
     ods_dirs = {
         "ddl": ods_root / "ddl" / "internal" / "finance_analytics_dm",
@@ -287,7 +366,7 @@ def test_project_layer_assets_are_under_mid_and_ads_dirs():
     }
 
     for project, role_expectations in expectations.items():
-        project_dir = config.PROJECT_ROOT / project
+        project_dir = config.project_dir(project)
         for asset_kind in ("ddl", "tasks", "models"):
             root_files = [
                 path

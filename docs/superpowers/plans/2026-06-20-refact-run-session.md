@@ -2,33 +2,33 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build the `refact/run.py` workflow for refactor sessions with baseline/current artifacts, comparable assess issues, scoped change analysis, incremental lineage cache reuse, and shadow-run/compare commands.
+**Goal:** Build the `src/dw_refactor_agent/refactor/run.py` workflow for refactor sessions with baseline/current artifacts, comparable assess issues, scoped change analysis, incremental lineage cache reuse, and shadow-run/compare commands.
 
-**Architecture:** Keep `refact/run.py` as a thin subcommand entrypoint and move behavior into focused modules. Reuse the existing lineage extractor and assess runner. Keep shadow execution in `refact/shadow_run.py` and production-vs-QA comparison in `refact/compare.py` rather than routing through separate verify modules. Make generated files deterministic so tests can assert exact manifests, fingerprints, issue diffs, and cache behavior.
+**Architecture:** Keep `src/dw_refactor_agent/refactor/run.py` as a thin subcommand entrypoint and move behavior into focused modules. Reuse the existing lineage extractor and assess runner. Keep shadow execution in `src/dw_refactor_agent/refactor/shadow_run.py` and production-vs-QA comparison in `src/dw_refactor_agent/refactor/compare.py` rather than routing through separate verify modules. Make generated files deterministic so tests can assert exact manifests, fingerprints, issue diffs, and cache behavior.
 
-**Tech Stack:** Python 3.7, stdlib `argparse/json/hashlib/datetime/pathlib/subprocess`, existing `lineage.lineage_extractor`, existing `assess.assess_middle_layer`, `pytest`, `make test`.
+**Tech Stack:** Python 3.7, stdlib `argparse/json/hashlib/datetime/pathlib/subprocess`, existing `dw_refactor_agent.lineage.lineage_extractor`, existing `dw_refactor_agent.assessment.assess_middle_layer`, `pytest`, `make test`.
 
 ---
 
 ## File Structure
 
-- Modify `assess/result_model.py`: add stable issue fingerprints to `issues`.
-- Modify `assess/assess_middle_layer.py`: allow callers to pass explicit lineage data and output-scoping metadata.
-- Create `refact/session.py`: create/load run directories and manifests.
-- Create `refact/issue_diff.py`: compare baseline/current `assess_result.json` by issue fingerprint.
-- Create `lineage/task_cache.py`: provide reusable task cache key and cache entry helpers.
-- Create `refact/incremental_lineage.py`: build full lineage artifacts under a run directory using the shared task cache helpers.
-- Create `refact/change_analysis.py`: compute changed files/assets, affected scope, and lineage edge diff.
-- Create `refact/verification_plan.py`: build `verification/plan.json` from change analysis and current project state.
-- Create `refact/run.py`: expose `start`, `analyze`, `shadow-run`, and `compare`.
-- Create `refact/shadow_run.py`: execute or dry-run a validation plan against QA.
-- Create `refact/compare.py`: compare production and QA results for a validation plan.
+- Modify `src/dw_refactor_agent/assessment/result_model.py`: add stable issue fingerprints to `issues`.
+- Modify `src/dw_refactor_agent/assessment/assess_middle_layer.py`: allow callers to pass explicit lineage data and output-scoping metadata.
+- Create `src/dw_refactor_agent/refactor/session.py`: create/load run directories and manifests.
+- Create `src/dw_refactor_agent/refactor/issue_diff.py`: compare baseline/current `assess_result.json` by issue fingerprint.
+- Create `src/dw_refactor_agent/lineage/task_cache.py`: provide reusable task cache key and cache entry helpers.
+- Create `src/dw_refactor_agent/refactor/incremental_lineage.py`: build full lineage artifacts under a run directory using the shared task cache helpers.
+- Create `src/dw_refactor_agent/refactor/change_analysis.py`: compute changed files/assets, affected scope, and lineage edge diff.
+- Create `src/dw_refactor_agent/refactor/verification_plan.py`: build `verification/plan.json` from change analysis and current project state.
+- Create `src/dw_refactor_agent/refactor/run.py`: expose `start`, `analyze`, `shadow-run`, and `compare`.
+- Create `src/dw_refactor_agent/refactor/shadow_run.py`: execute or dry-run a validation plan against QA.
+- Create `src/dw_refactor_agent/refactor/compare.py`: compare production and QA results for a validation plan.
 - Add tests under `tests/assess/`, `tests/lineage/`, and `tests/refact/`.
 
 ## Task 1: Comparable Assess Issues
 
 **Files:**
-- Modify: `assess/result_model.py`
+- Modify: `src/dw_refactor_agent/assessment/result_model.py`
 - Test: `tests/assess/test_result_model.py`
 
 - [ ] **Step 1: Write failing tests**
@@ -36,7 +36,7 @@
 Add `tests/assess/test_result_model.py`:
 
 ```python
-from assess.result_model import finalize_dimension, make_check
+from dw_refactor_agent.assessment.result_model import finalize_dimension, make_check
 
 
 def test_finalize_dimension_adds_stable_issue_fingerprint():
@@ -96,7 +96,7 @@ Expected: fail because `fingerprint` and `fingerprint_discriminator` are not imp
 
 - [ ] **Step 3: Implement fingerprints**
 
-In `assess/result_model.py`, add `fingerprint_discriminator: str = ""` to
+In `src/dw_refactor_agent/assessment/result_model.py`, add `fingerprint_discriminator: str = ""` to
 `make_check(...)`. Store it as an internal `_fingerprint_discriminator` key when provided.
 Add a helper:
 
@@ -126,7 +126,7 @@ Expected: pass.
 ## Task 2: Issue Diff
 
 **Files:**
-- Create: `refact/issue_diff.py`
+- Create: `src/dw_refactor_agent/refactor/issue_diff.py`
 - Test: `tests/refact/test_issue_diff.py`
 
 - [ ] **Step 1: Write failing tests**
@@ -134,7 +134,7 @@ Expected: pass.
 Create `tests/refact/test_issue_diff.py`:
 
 ```python
-from refact.issue_diff import diff_assess_results
+from dw_refactor_agent.refactor.issue_diff import diff_assess_results
 
 
 def _issue(fp, title):
@@ -158,8 +158,8 @@ def test_diff_assess_results_classifies_fixed_remaining_and_new():
     result = diff_assess_results(baseline, current)
 
     assert result["summary"] == {
-        "baseline_issue_count": 2,
-        "current_issue_count": 2,
+        "baseline_scoped_issue_count": 2,
+        "current_scoped_issue_count": 2,
         "fixed_count": 1,
         "remaining_count": 1,
         "new_count": 1,
@@ -174,11 +174,11 @@ def test_diff_assess_results_classifies_fixed_remaining_and_new():
 
 Run: `make test PYTEST_ARGS="tests/refact/test_issue_diff.py -q"`
 
-Expected: fail because `refact.issue_diff` does not exist.
+Expected: fail because `dw_refactor_agent.refactor.issue_diff` does not exist.
 
 - [ ] **Step 3: Implement diff**
 
-Create `refact/issue_diff.py` with:
+Create `src/dw_refactor_agent/refactor/issue_diff.py` with:
 
 ```python
 from __future__ import annotations
@@ -216,8 +216,8 @@ def diff_assess_results(baseline: dict, current: dict) -> dict:
 
     return {
         "summary": {
-            "baseline_issue_count": len(baseline_issues),
-            "current_issue_count": len(current_issues),
+            "baseline_scoped_issue_count": len(baseline_issues),
+            "current_scoped_issue_count": len(current_issues),
             "fixed_count": len(fixed),
             "remaining_count": len(remaining),
             "new_count": len(new),
@@ -238,7 +238,7 @@ Expected: pass.
 ## Task 3: Session Manifest
 
 **Files:**
-- Create: `refact/session.py`
+- Create: `src/dw_refactor_agent/refactor/session.py`
 - Test: `tests/refact/test_session.py`
 
 - [ ] **Step 1: Write failing tests**
@@ -259,7 +259,8 @@ def artifact_path(manifest_path: Path, artifact_key: str) -> Path
 ```
 
 `create_run_manifest` must create `baseline`, `current`, `analysis`, and
-`verification` directories under `refact/runs/<run_id>`.
+`verification` directories under
+`warehouses/{project}/artifacts/refactor_runs/<run_id>`.
 
 - [ ] **Step 3: Run tests**
 
@@ -270,8 +271,8 @@ Expected: pass.
 ## Task 4: Incremental Lineage Cache
 
 **Files:**
-- Create: `lineage/task_cache.py`
-- Create: `refact/incremental_lineage.py`
+- Create: `src/dw_refactor_agent/lineage/task_cache.py`
+- Create: `src/dw_refactor_agent/refactor/incremental_lineage.py`
 - Test: `tests/lineage/test_task_cache.py`
 - Test: `tests/refact/test_incremental_lineage.py`
 
@@ -279,7 +280,7 @@ Expected: pass.
 
 Use a temp project with one DDL and one task. Assert that the first build writes
 a cache entry, the second build reuses it, and changing DDL invalidates the task
-by changing the schema slice hash. Add direct `lineage/task_cache.py` tests for
+by changing the schema slice hash. Add direct `src/dw_refactor_agent/lineage/task_cache.py` tests for
 stable cache key behavior, cache loading, and cache entry serialization.
 
 - [ ] **Step 2: Implement cache helpers and lineage builder**
@@ -295,14 +296,14 @@ def build_lineage_artifacts(project: str, output_path: Path, cache_path: Path, p
 
 Internally reuse:
 
-- `lineage.lineage_extractor.configure_project`
+- `dw_refactor_agent.lineage.lineage_extractor.configure_project`
 - `project_asset_dirs`
 - `build_schema_from_ddl`
 - `extract_lineage_from_task_files`
 - `build_lineage_output`
 
-`lineage/task_cache.py` owns cache keys and entry serialization.
-`refact/incremental_lineage.py` owns refactor run artifact paths and uses those
+`src/dw_refactor_agent/lineage/task_cache.py` owns cache keys and entry serialization.
+`src/dw_refactor_agent/refactor/incremental_lineage.py` owns refactor run artifact paths and uses those
 helpers while building baseline/current lineage outputs.
 
 - [ ] **Step 3: Run tests**
@@ -314,8 +315,8 @@ Expected: pass.
 ## Task 5: Change Analysis and Verification Plan
 
 **Files:**
-- Create: `refact/change_analysis.py`
-- Create: `refact/verification_plan.py`
+- Create: `src/dw_refactor_agent/refactor/change_analysis.py`
+- Create: `src/dw_refactor_agent/refactor/verification_plan.py`
 - Test: `tests/refact/test_change_analysis.py`
 - Test: `tests/refact/test_verification_plan.py`
 
@@ -358,7 +359,7 @@ Expected: pass.
 ## Task 6: Run CLI
 
 **Files:**
-- Create: `refact/run.py`
+- Create: `src/dw_refactor_agent/refactor/run.py`
 - Test: `tests/refact/test_run_cli.py`
 
 - [ ] **Step 1: Write failing tests**
@@ -395,8 +396,8 @@ Expected: pass.
 ## Task 7: Shadow Run and Compare Wrappers
 
 **Files:**
-- Create: `refact/shadow_run.py`
-- Create: `refact/compare.py`
+- Create: `src/dw_refactor_agent/refactor/shadow_run.py`
+- Create: `src/dw_refactor_agent/refactor/compare.py`
 - Test: `tests/refact/test_shadow_run.py`
 - Test: `tests/refact/test_compare.py`
 

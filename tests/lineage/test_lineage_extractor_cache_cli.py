@@ -1,8 +1,8 @@
 import json
 import sys
 
-import config
-import lineage.lineage_extractor as lineage_extractor
+import dw_refactor_agent.config as config
+import dw_refactor_agent.lineage.lineage_extractor as lineage_extractor
 
 
 def _write_demo_project(root):
@@ -83,7 +83,9 @@ def test_full_extraction_reuses_default_task_cache(
 
     lineage_extractor.main()
 
-    cache_path = project_dir / "lineage" / "task_lineage_cache.json"
+    cache_path = (
+        project_dir / "artifacts" / "lineage" / "task_lineage_cache.json"
+    )
     assert cache_path.exists()
     cache = json.loads(cache_path.read_text(encoding="utf-8"))
     assert [entry["source_file"] for entry in cache["tasks"]] == [
@@ -125,7 +127,9 @@ def test_full_extraction_writes_custom_output_and_cache(tmp_path, monkeypatch):
 
     lineage_extractor.main()
 
-    default_output_path = project_dir / "lineage" / "lineage_data.json"
+    default_output_path = (
+        project_dir / "artifacts" / "lineage" / "lineage_data.json"
+    )
     assert output_path.exists()
     assert cache_path.exists()
     assert not default_output_path.exists()

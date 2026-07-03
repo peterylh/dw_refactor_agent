@@ -1,4 +1,4 @@
-from lineage.lineage_extractor import build_lineage_output
+from dw_refactor_agent.lineage.lineage_extractor import build_lineage_output
 
 
 class CountingSchema(dict):

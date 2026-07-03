@@ -1,4 +1,4 @@
-from assess.result_model import (
+from dw_refactor_agent.assessment.result_model import (
     compact_assessment_result,
     finalize_dimension,
     make_check,
@@ -257,7 +257,7 @@ def test_compact_assessment_result_keeps_raw_diagnostic_inside_evidence():
         make_check(
             rule_id="MODEL_SQL_PARSEABLE",
             target_type="task",
-            target="shop/tasks/dwd_order_detail.sql",
+            target="warehouses/shop/mid/tasks/dwd_order_detail.sql",
             passed=False,
             expected="SQL可以解析",
             actual="SQL解析失败",
