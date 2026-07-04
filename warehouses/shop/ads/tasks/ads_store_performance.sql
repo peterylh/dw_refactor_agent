@@ -25,7 +25,9 @@ WITH store_monthly AS (
         SUM(ssd.customer_count) AS customer_count,
         ROUND(SUM(ssd.payment_amount) / NULLIF(SUM(ssd.order_count), 0), 2) AS avg_order_amount
     FROM shop_dm.dws_store_sales_daily ssd
-    LEFT JOIN shop_dm.dwd_store s ON ssd.store_id = s.store_id
+    LEFT JOIN shop_dm.dwd_store s
+        ON ssd.store_id = s.store_id
+        AND s.snapshot_date = DATE(ssd.stat_date)
     WHERE IF(@full_refresh = 1, 1=1, DATE_FORMAT(ssd.stat_date, '%Y-%m') = DATE_FORMAT(@etl_date, '%Y-%m'))
     GROUP BY ssd.store_id, DATE_FORMAT(ssd.stat_date, '%Y-%m')
 )
