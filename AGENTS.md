@@ -224,7 +224,8 @@ python -m dw_refactor_agent.refactor.run compare --manifest warehouses/<project>
 - `jobs_to_run`：按拓扑排序后的待执行作业
 - `verification.compare_anchors`：compare 使用的锚点输入，包含锚点表的时间列、
   时间粒度与锚点时间值；缺少合理时间粒度时会降级为全表 compare 并输出 warning
-- `verification.checks`：自动配置的校验项，仅包含表名与校验方法
+- `verification.checks`：自动配置的校验项，包含表名、校验方法；`row_compare`
+  会在配置了排除列时写入最终生效的 `exclude_columns`
 
 ### shadow_run.py
 
@@ -253,7 +254,28 @@ python -m dw_refactor_agent.refactor.run compare --manifest warehouses/<project>
 支持校验方法：
 
 - `count`：行数对比
-- `row_compare`：逐行逐列对比，支持 `--sample` 与 `--precision`
+- `row_compare`：逐行逐列对比，支持 `--sample` 与 `--precision`；
+  运行时字段可通过 `warehouses/{project}/warehouse.yaml` 配置排除
+
+`row_compare` 默认从验证计划中的 `exclude_columns` 读取排除列。旧 plan
+没有该字段时，compare 运行时默认忽略 `etl_time`，避免加工时间导致天然不一致。
+新 plan 推荐在项目 `warehouse.yaml` 中显式配置：
+
+```yaml
+verification:
+  row_compare:
+    exclude_columns:
+      - etl_time
+    tables:
+      dws_order_detail:
+        exclude_columns:
+          - etl_time
+          - update_time
+      ads_full_audit:
+        exclude_columns: []
+```
+
+表级 `exclude_columns` 覆盖项目级配置；表级空列表表示该表全列比较，不忽略任何列。
 
 ## 数据集市评估工具 (assessment)
 

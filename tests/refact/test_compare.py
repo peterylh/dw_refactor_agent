@@ -1,6 +1,7 @@
 import json
 
 from dw_refactor_agent.refactor.compare import (
+    check_row_compare,
     compare_shadow_results,
     fmt_val,
     run_checks,
@@ -117,6 +118,117 @@ def test_run_checks_uses_compare_anchor_for_partition_filter(monkeypatch):
         "WHERE stat_month_date = '2024-06-01'"
     ]
     assert qa_cursor.executed == prod_cursor.executed
+
+
+def test_row_compare_excludes_configured_columns_case_insensitively():
+    prod_cursor = FakeCursor(
+        [
+            [("order_id",), ("amount",), ("etl_time",)],
+            [(1, 10, "2026-07-04 10:00:00")],
+        ]
+    )
+    qa_cursor = FakeCursor(
+        [
+            [(1, 10, "2026-07-04 10:05:00")],
+        ]
+    )
+    prod_conn = FakeConn([prod_cursor])
+    qa_conn = FakeConn([qa_cursor])
+
+    result = check_row_compare(
+        prod_conn,
+        qa_conn,
+        {
+            "table": "dws_order",
+            "method": "row_compare",
+            "exclude_columns": ["ETL_TIME"],
+        },
+        sample=0,
+        precision=0.01,
+    )
+
+    assert result["match"] is True
+    assert result["compared_columns"] == ["order_id", "amount"]
+    assert result["ignored_columns"] == ["etl_time"]
+    assert prod_cursor.executed == [
+        "DESC dws_order",
+        "SELECT order_id, amount FROM dws_order ORDER BY order_id, amount ",
+    ]
+    assert qa_cursor.executed == [
+        "SELECT order_id, amount FROM dws_order ORDER BY order_id, amount ",
+    ]
+
+
+def test_row_compare_defaults_to_ignore_etl_time_for_legacy_checks():
+    prod_cursor = FakeCursor(
+        [
+            [("order_id",), ("amount",), ("etl_time",)],
+            [(1, 10, "2026-07-04 10:00:00")],
+        ]
+    )
+    qa_cursor = FakeCursor(
+        [
+            [(1, 10, "2026-07-04 10:05:00")],
+        ]
+    )
+    prod_conn = FakeConn([prod_cursor])
+    qa_conn = FakeConn([qa_cursor])
+
+    result = check_row_compare(
+        prod_conn,
+        qa_conn,
+        {"table": "dws_order", "method": "row_compare"},
+        sample=0,
+        precision=0.01,
+    )
+
+    assert result["match"] is True
+    assert result["compared_columns"] == ["order_id", "amount"]
+    assert result["ignored_columns"] == ["etl_time"]
+
+
+def test_row_compare_empty_exclude_columns_compares_all_columns():
+    prod_cursor = FakeCursor(
+        [
+            [("order_id",), ("amount",), ("etl_time",)],
+            [(1, 10, "2026-07-04 10:00:00")],
+        ]
+    )
+    qa_cursor = FakeCursor(
+        [
+            [(1, 10, "2026-07-04 10:05:00")],
+        ]
+    )
+    prod_conn = FakeConn([prod_cursor])
+    qa_conn = FakeConn([qa_cursor])
+
+    result = check_row_compare(
+        prod_conn,
+        qa_conn,
+        {
+            "table": "dws_order",
+            "method": "row_compare",
+            "exclude_columns": [],
+        },
+        sample=0,
+        precision=0.01,
+    )
+
+    assert result["match"] is False
+    assert result["compared_columns"] == ["order_id", "amount", "etl_time"]
+    assert result["ignored_columns"] == []
+    assert result["detail"] == [
+        {
+            "row": 0,
+            "diffs": [
+                {
+                    "col": "etl_time",
+                    "prod": "2026-07-04 10:00:00",
+                    "qa": "2026-07-04 10:05:00",
+                }
+            ],
+        }
+    ]
 
 
 def test_run_checks_short_circuit_scenarios(monkeypatch):

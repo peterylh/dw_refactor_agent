@@ -22,6 +22,8 @@ from dw_refactor_agent.config import (
     TEXT_ENCODING,
 )
 
+DEFAULT_ROW_COMPARE_EXCLUDE_COLUMNS = ["etl_time"]
+
 
 def fmt_val(value):
     if value is None:
@@ -29,6 +31,37 @@ def fmt_val(value):
     if isinstance(value, float):
         return f"{value:.6f}"
     return str(value)
+
+
+def _exclude_columns_for_check(check: dict) -> list[str]:
+    raw_columns = (
+        check.get("exclude_columns")
+        if "exclude_columns" in check
+        else DEFAULT_ROW_COMPARE_EXCLUDE_COLUMNS
+    )
+    if raw_columns is None:
+        return []
+    if isinstance(raw_columns, str):
+        raw_columns = [raw_columns]
+    return [
+        str(column).strip() for column in raw_columns if str(column).strip()
+    ]
+
+
+def _row_compare_columns(
+    all_cols: list[str], check: dict
+) -> tuple[list, list]:
+    excluded = {
+        column.casefold() for column in _exclude_columns_for_check(check)
+    }
+    compared_cols = []
+    ignored_cols = []
+    for column in all_cols:
+        if str(column).casefold() in excluded:
+            ignored_cols.append(column)
+        else:
+            compared_cols.append(column)
+    return compared_cols, ignored_cols
 
 
 def get_pymysql_conn(db_name: str, qa: bool = False):
@@ -112,10 +145,30 @@ def check_row_compare(
     if not all_cols:
         cursor_prod.close()
         cursor_qa.close()
-        return {"table": table, "method": "row_compare", "error": "无列信息"}
+        return {
+            "table": table,
+            "method": "row_compare",
+            "error": "无列信息",
+            "match": False,
+            "compared_columns": [],
+            "ignored_columns": [],
+        }
 
-    col_list = ", ".join(all_cols)
-    order_cols = ", ".join(all_cols[: min(3, len(all_cols))])
+    compared_cols, ignored_cols = _row_compare_columns(all_cols, check)
+    if not compared_cols:
+        cursor_prod.close()
+        cursor_qa.close()
+        return {
+            "table": table,
+            "method": "row_compare",
+            "error": "无可比较列",
+            "match": False,
+            "compared_columns": [],
+            "ignored_columns": ignored_cols,
+        }
+
+    col_list = ", ".join(compared_cols)
+    order_cols = ", ".join(compared_cols[: min(3, len(compared_cols))])
     limit_sql = f"LIMIT {sample}" if sample else ""
     where_sql = (
         f"WHERE {partition_col} = '{partition_value}' "
@@ -146,7 +199,7 @@ def check_row_compare(
         prod_row = prod_rows[idx]
         qa_row = qa_rows[idx]
         row_diffs = []
-        for col_idx, col in enumerate(all_cols):
+        for col_idx, col in enumerate(compared_cols):
             prod_value = prod_row[col_idx]
             qa_value = qa_row[col_idx]
             if prod_value == qa_value:
@@ -175,6 +228,8 @@ def check_row_compare(
         f"  ROW:  PROD={len(prod_rows)}  QA={len(qa_rows)}  "
         f"差异={len(mismatches)}{sample_note}  {status}"
     )
+    if ignored_cols:
+        print(f"  忽略列: {', '.join(ignored_cols)}")
 
     if mismatches:
         for mismatch in mismatches[:5]:
@@ -193,6 +248,8 @@ def check_row_compare(
         "sampled": sample,
         "mismatches": len(mismatches),
         "match": match,
+        "compared_columns": compared_cols,
+        "ignored_columns": ignored_cols,
         "detail": mismatches[:20] if mismatches else [],
     }
 
