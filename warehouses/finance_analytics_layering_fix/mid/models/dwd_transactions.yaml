@@ -1,0 +1,42 @@
+version: 2
+name: dwd_transactions
+layer: DWD
+table_type: fact
+config:
+  materialized: full
+atomic_metrics:
+- amount
+- transaction_count
+- debit_count
+- credit_count
+calculated_metrics:
+- amount_abs
+- fraud_score
+- merchant_risk_score
+- velocity_24h
+- amount_deviation_score
+- processing_time_ms
+data_domain: '04'
+business_area: PAYM
+entities:
+- code: TRANSACTION
+  type: primary
+  name: 交易
+  key_columns:
+  - transaction_id
+- code: ACCOUNT
+  type: foreign
+  name: 账户
+  key_columns:
+  - account_id
+- code: CUST
+  type: foreign
+  name: 客户
+  key_columns:
+  - customer_id
+- code: MERCHANT
+  type: foreign
+  name: 商户
+  key_columns:
+  - merchant_id
+business_process: TRANSACTION_ACTIVITY

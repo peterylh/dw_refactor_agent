@@ -1,0 +1,29 @@
+version: 2
+name: dwd_order_summary_bad
+layer: DWS
+table_type: fact
+description: 订单粒度销售汇总，按订单聚合明细金额和件数
+config:
+  materialized: incremental
+atomic_metrics:
+- item_count
+entities:
+- code: ORDER
+  type: foreign
+  name: 订单
+  key_columns:
+  - order_id
+business_process: ORDER_TRANSACTION
+derived_metrics:
+- name: total_amount
+  base_metric: subtotal
+  base_metric_table: dwd_order_detail
+  time_period: D
+  expression: SUM(oi.subtotal)
+  aggregation: SUM
+business_area: SHOP
+grain:
+  entities:
+  - ORDER
+  time_column: order_date
+  time_period: D

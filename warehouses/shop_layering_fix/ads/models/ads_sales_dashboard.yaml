@@ -1,0 +1,7 @@
+version: 2
+name: ads_sales_dashboard
+layer: ADS
+table_type: other
+description: 销售驾驶舱全量汇总
+config:
+  materialized: full

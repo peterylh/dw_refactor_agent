@@ -1,0 +1,6 @@
+version: 2
+name: ods_economic_indicators
+layer: ODS
+table_type: other
+config:
+  materialized: source

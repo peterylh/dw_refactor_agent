@@ -1,0 +1,15 @@
+version: 2
+name: dim_customer
+layer: DIM
+table_type: dimension
+config:
+  materialized: full
+entities:
+- code: CUST
+  type: primary
+  name: 客户
+  key_columns:
+  - customer_key
+dimension_role: BASE
+dimension_content_type: INFO
+semantic_subject: CUST

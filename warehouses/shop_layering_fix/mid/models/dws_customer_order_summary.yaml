@@ -1,0 +1,38 @@
+version: 2
+name: dws_customer_order_summary
+layer: DWS
+table_type: fact
+business_area: SHOP
+description: 客户订单汇总
+config:
+  materialized: incremental
+derived_metrics:
+- name: total_amount
+  base_metric: subtotal
+  base_metric_table: dwd_order_detail
+  time_period: D
+  expression: SUM(subtotal)
+  aggregation: SUM
+- name: total_discount
+  base_metric: discount
+  base_metric_table: dwd_order_detail
+  time_period: D
+  expression: SUM(discount)
+  aggregation: SUM
+calculated_metrics:
+- payment_amount
+- avg_order_amount
+atomic_metrics:
+- order_count
+grain:
+  entities:
+  - CUST
+  time_column: stat_date
+  time_period: D
+entities:
+- code: CUST
+  type: foreign
+  name: 客户
+  key_columns:
+  - customer_id
+business_process: ORDER_TRANSACTION

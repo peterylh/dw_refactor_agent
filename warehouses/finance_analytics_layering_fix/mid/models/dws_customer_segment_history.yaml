@@ -1,0 +1,27 @@
+version: 2
+name: dws_customer_segment_history
+layer: DWD
+table_type: fact
+config:
+  materialized: full
+atomic_metrics:
+- total_accounts
+- total_balance
+- products_held
+- branch_visits_last_90d
+- online_logins_last_90d
+- segment_change_count
+business_area: CLNT
+entities:
+- code: CUSTOMER_SEGMENT_CHANGE
+  type: primary
+  name: 客户分层变更
+  key_columns:
+  - segment_history_id
+- code: CUST
+  type: foreign
+  name: 客户
+  key_columns:
+  - customer_key
+data_domain: '01'
+business_process: CUSTOMER_SEGMENT_CHANGE

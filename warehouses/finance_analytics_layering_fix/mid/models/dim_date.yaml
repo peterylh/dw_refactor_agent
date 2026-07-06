@@ -1,0 +1,15 @@
+version: 2
+name: dim_date
+layer: DIM
+table_type: dimension
+config:
+  materialized: full
+semantic_subject: DATE
+entities:
+- code: DATE
+  type: primary
+  name: 日期
+  key_columns:
+  - date_key
+dimension_role: BASE
+dimension_content_type: INFO

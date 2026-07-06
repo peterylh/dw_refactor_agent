@@ -1,0 +1,43 @@
+version: 2
+name: dwd_order_detail
+layer: DWD
+table_type: fact
+data_domain: '04'
+business_area: SHOP
+description: 订单明细事实表
+config:
+  materialized: incremental
+atomic_metrics:
+- quantity
+- discount
+- subtotal
+calculated_metrics:
+- gross_profit
+entities:
+- code: ORDER_ITEM
+  type: primary
+  name: 订单明细
+  key_columns:
+  - order_id
+  - order_item_id
+- code: CUST
+  type: foreign
+  name: 客户
+  key_columns:
+  - customer_id
+- code: PROD
+  type: foreign
+  name: 商品
+  key_columns:
+  - product_id
+- code: STORE
+  type: foreign
+  name: 门店
+  key_columns:
+  - store_id
+- code: PROMOTION
+  type: foreign
+  name: 促销活动
+  key_columns:
+  - promotion_id
+business_process: ORDER_TRANSACTION

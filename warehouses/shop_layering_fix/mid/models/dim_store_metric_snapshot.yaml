@@ -1,0 +1,27 @@
+version: 2
+name: dim_store_metric_snapshot
+layer: DWS
+table_type: fact
+description: 门店日指标快照，按门店和日期沉淀订单数指标
+config:
+  materialized: snapshot
+entities:
+- code: STORE
+  type: foreign
+  name: 门店
+  key_columns:
+  - store_id
+business_area: SHOP
+business_process: ORDER_TRANSACTION
+derived_metrics:
+- name: store_order_count
+  base_metric: order_count
+  base_metric_table: dws_store_sales_daily
+  time_period: D
+  expression: COALESCE(ss.order_count, 0)
+  aggregation: SUM
+grain:
+  entities:
+  - STORE
+  time_column: snapshot_date
+  time_period: D

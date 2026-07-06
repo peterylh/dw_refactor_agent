@@ -1,0 +1,6 @@
+version: 2
+name: ads_customer_by_segment
+layer: ADS
+table_type: other
+config:
+  materialized: full

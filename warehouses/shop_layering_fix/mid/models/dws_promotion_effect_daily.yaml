@@ -1,0 +1,42 @@
+version: 2
+name: dws_promotion_effect_daily
+layer: DWS
+table_type: fact
+business_area: SHOP
+description: 促销效果日汇总
+config:
+  materialized: incremental
+atomic_metrics:
+- order_count
+- customer_count
+derived_metrics:
+- name: sale_quantity
+  base_metric: quantity
+  base_metric_table: dwd_order_detail
+  time_period: D
+  expression: SUM(quantity)
+  aggregation: SUM
+- name: sale_amount
+  base_metric: subtotal
+  base_metric_table: dwd_order_detail
+  time_period: D
+  expression: SUM(subtotal)
+  aggregation: SUM
+- name: discount_amount
+  base_metric: discount
+  base_metric_table: dwd_order_detail
+  time_period: D
+  expression: SUM(discount)
+  aggregation: SUM
+grain:
+  entities:
+  - PROMOTION
+  time_column: stat_date
+  time_period: D
+entities:
+- code: PROMOTION
+  type: foreign
+  name: 促销活动
+  key_columns:
+  - promotion_id
+business_process: PROMOTION_EFFECT

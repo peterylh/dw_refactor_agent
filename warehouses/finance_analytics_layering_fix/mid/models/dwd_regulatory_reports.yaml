@@ -1,0 +1,33 @@
+version: 2
+name: dwd_regulatory_reports
+layer: DWD
+table_type: fact
+config:
+  materialized: full
+atomic_metrics:
+- amount_reported
+- penalty_amount
+data_domain: 09
+business_area: RISK
+entities:
+- code: REGULATORY_REPORT
+  type: primary
+  name: 监管报告
+  key_columns:
+  - report_id
+- code: CUST
+  type: foreign
+  name: 客户
+  key_columns:
+  - customer_id
+- code: ACCOUNT
+  type: foreign
+  name: 账户
+  key_columns:
+  - account_id
+- code: TRANSACTION
+  type: foreign
+  name: 交易
+  key_columns:
+  - transaction_id
+business_process: REGULATORY_REPORTING

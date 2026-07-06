@@ -1,0 +1,6 @@
+version: 2
+name: ods_regulatory_reports
+layer: ODS
+table_type: other
+config:
+  materialized: source

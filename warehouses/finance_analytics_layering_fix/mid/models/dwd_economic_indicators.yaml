@@ -1,0 +1,14 @@
+version: 2
+name: dwd_economic_indicators
+layer: DWD
+table_type: other
+config:
+  materialized: full
+entities:
+- code: ECON_INDICATOR
+  type: primary
+  name: 经济指标
+  key_columns:
+  - date
+data_domain: '99'
+business_area: FMAN

@@ -1,0 +1,66 @@
+version: 2
+name: dws_account_daily_snapshot
+layer: DWS
+table_type: fact
+config:
+  materialized: full
+atomic_metrics:
+- current_balance
+- available_balance
+- credit_limit
+- active_account_count
+- closed_account_count
+- dormant_account_count
+- past_due_count
+- near_limit_count
+- account_count
+derived_metrics:
+- name: daily_transaction_count
+  base_metric: transaction_count
+  base_metric_table: dwd_transactions
+  time_period: D
+  expression: COUNT(*)
+  aggregation: COUNT
+- name: daily_transaction_amount
+  base_metric: amount
+  base_metric_table: dwd_transactions
+  time_period: D
+  expression: SUM(amount)
+  aggregation: SUM
+- name: daily_debit_count
+  base_metric: debit_count
+  base_metric_table: dwd_transactions
+  time_period: D
+  expression: SUM(CASE WHEN amount < 0 THEN 1 ELSE 0 END)
+  aggregation: SUM
+- name: daily_credit_count
+  base_metric: credit_count
+  base_metric_table: dwd_transactions
+  time_period: D
+  expression: SUM(CASE WHEN amount > 0 THEN 1 ELSE 0 END)
+  aggregation: SUM
+calculated_metrics:
+- credit_utilization_pct
+business_area: DPST
+grain:
+  entities:
+  - ACCOUNT
+  time_column: snapshot_date
+  time_period: D
+entities:
+- code: ACCOUNT
+  type: foreign
+  name: 账户
+  key_columns:
+  - account_key
+- code: CUST
+  type: foreign
+  name: 客户
+  key_columns:
+  - customer_key
+- code: PROD
+  type: foreign
+  name: 产品
+  key_columns:
+  - product_key
+business_process: ACCOUNT_DAILY_SNAPSHOT

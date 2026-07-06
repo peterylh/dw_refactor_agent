@@ -1,0 +1,35 @@
+version: 2
+name: dws_fraud_alerts
+layer: DWD
+table_type: fact
+config:
+  materialized: full
+atomic_metrics:
+- amount_recovered
+- alert_count
+calculated_metrics:
+- resolution_days
+business_area: PAYM
+entities:
+- code: FRAUD_ALERT
+  type: primary
+  name: 欺诈告警
+  key_columns:
+  - alert_id
+- code: TRANSACTION
+  type: foreign
+  name: 交易
+  key_columns:
+  - transaction_key
+- code: CUST
+  type: foreign
+  name: 客户
+  key_columns:
+  - customer_key
+- code: ACCOUNT
+  type: foreign
+  name: 账户
+  key_columns:
+  - account_key
+data_domain: 09
+business_process: FRAUD_ALERT

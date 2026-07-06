@@ -1,0 +1,14 @@
+version: 2
+name: dwd_merchants
+layer: DWD
+table_type: other
+config:
+  materialized: full
+entities:
+- code: MERCHANT
+  type: primary
+  name: 商户
+  key_columns:
+  - merchant_id
+data_domain: '99'
+business_area: ACQR

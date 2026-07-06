@@ -1,0 +1,30 @@
+version: 2
+name: dws_customer_interactions
+layer: DWD
+table_type: fact
+config:
+  materialized: full
+atomic_metrics:
+- duration_minutes
+- interaction_count
+business_area: CLNT
+entities:
+- code: CUSTOMER_INTERACTION
+  type: primary
+  name: 客户互动
+  key_columns:
+  - interaction_id
+- code: CUST
+  type: foreign
+  name: 客户
+  key_columns:
+  - customer_key
+- code: AGENT
+  type: foreign
+  name: 坐席
+  key_columns:
+  - agent_id
+data_domain: '01'
+calculated_metrics:
+- sentiment_score
+business_process: CUSTOMER_INTERACTION

@@ -1,0 +1,14 @@
+version: 2
+name: dwd_customer_segments_history
+layer: DWD
+table_type: other
+config:
+  materialized: full
+entities:
+- code: CUST
+  type: primary
+  name: 客户
+  key_columns:
+  - customer_id
+data_domain: '01'
+business_area: CLNT
