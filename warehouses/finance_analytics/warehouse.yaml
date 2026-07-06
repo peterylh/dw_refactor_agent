@@ -7,6 +7,9 @@ naming_config: naming_config.yaml
 verification:
   default_refresh_parameter: etl_date
   week_start: MON
+  row_compare:
+    exclude_columns:
+      - etl_time
 default_dialect: doris
 ods_source_catalog_dialects:
   internal: doris

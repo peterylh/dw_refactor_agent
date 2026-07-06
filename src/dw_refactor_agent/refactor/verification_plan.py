@@ -259,7 +259,12 @@ def build_verification_plan(
     checks = []
     for table in anchors:
         for method in ("count", "row_compare"):
-            checks.append({"table": table, "method": method})
+            check = {"table": table, "method": method}
+            if method == "row_compare":
+                exclude_columns = _row_compare_exclude_columns(project, table)
+                if exclude_columns is not None:
+                    check["exclude_columns"] = exclude_columns
+            checks.append(check)
 
     verification = _verification_metadata(
         [] if metadata_errors else checks,
@@ -376,6 +381,60 @@ def _project_verification_config(project: str) -> dict:
     return dict(
         config.PROJECT_CONFIG.get(project, {}).get("verification") or {}
     )
+
+
+def _column_list(value, field_path: str) -> list[str]:
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise ValueError(f"{field_path} must be a list")
+    return [str(item).strip() for item in value if str(item).strip()]
+
+
+def _row_compare_exclude_columns(project: str, table: str) -> list[str] | None:
+    verification = _project_verification_config(project)
+    row_compare = verification.get("row_compare")
+    if row_compare is None:
+        return None
+    if not isinstance(row_compare, dict):
+        raise ValueError("verification.row_compare must be a mapping")
+
+    tables = row_compare.get("tables", {})
+    if tables is None:
+        tables = {}
+    if not isinstance(tables, dict):
+        raise ValueError("verification.row_compare.tables must be a mapping")
+
+    table_key = None
+    table_config = None
+    table_lookup = str(table).casefold()
+    for raw_key, raw_value in tables.items():
+        if str(raw_key).casefold() == table_lookup:
+            table_key = raw_key
+            table_config = raw_value
+            break
+
+    if table_config is not None:
+        if not isinstance(table_config, dict):
+            raise ValueError(
+                f"verification.row_compare.tables.{table_key} "
+                "must be a mapping"
+            )
+        if "exclude_columns" in table_config:
+            return _column_list(
+                table_config.get("exclude_columns"),
+                (
+                    "verification.row_compare.tables."
+                    f"{table_key}.exclude_columns"
+                ),
+            )
+
+    if "exclude_columns" in row_compare:
+        return _column_list(
+            row_compare.get("exclude_columns"),
+            "verification.row_compare.exclude_columns",
+        )
+    return None
 
 
 def _time_period(value) -> str:

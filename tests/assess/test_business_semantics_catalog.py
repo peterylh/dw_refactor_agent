@@ -152,16 +152,6 @@ def test_business_semantics_catalog_defaults_to_project_dir(
     assert catalog["semantic_subjects"] == []
 
 
-def test_build_initial_catalog_uses_project_tables(tmp_path, monkeypatch):
-    project = _configure_catalog_project(monkeypatch, tmp_path)
-
-    catalog = build_initial_business_semantics_catalog(project)
-
-    assert "mappings" not in catalog
-    assert catalog["business_processes"] == []
-    assert catalog["semantic_subjects"] == []
-
-
 def test_build_initial_catalog_does_not_fallback_to_naming_dictionaries(
     tmp_path, monkeypatch
 ):
@@ -208,24 +198,6 @@ def test_build_initial_catalog_does_not_fallback_to_naming_dictionaries(
     assert catalog["data_domains"] == []
     assert catalog["business_areas"] == []
     assert config.get_business_domain_config(project) is None
-
-
-def test_write_initial_catalog_backfills_missing_split_files(
-    tmp_path, monkeypatch
-):
-    project = _configure_catalog_project(monkeypatch, tmp_path)
-    project_dir = tmp_path / project
-
-    result = write_initial_business_semantics_catalog(project)
-
-    assert result["changed"] is True
-    assert result["written_names"] == [
-        "business_processes",
-        "semantic_subjects",
-    ]
-    assert (project_dir / "business_processes.yaml").exists()
-    assert (project_dir / "semantic_subjects.yaml").exists()
-    assert result["catalog"]["data_domains"][0]["id"] == "04"
 
 
 def test_write_initial_catalog_overwrite_keeps_project_context(
@@ -279,7 +251,7 @@ def test_build_catalog_from_inspection_clusters_llm_processes_and_subjects(
         table_type="fact",
         confidence=0.91,
         reasoning_steps=["明细事实"],
-        inferred_data_domain="04",
+        inferred_data_domain="4",
         inferred_business_area="SHOP",
         columns={
             "atomic_metrics": [
@@ -334,41 +306,6 @@ def test_build_catalog_from_inspection_clusters_llm_processes_and_subjects(
             "business_area": "SHOP",
         }
     ]
-
-
-def test_build_catalog_from_inspection_matches_unpadded_domain_id(
-    tmp_path, monkeypatch
-):
-    project = _configure_catalog_project(monkeypatch, tmp_path)
-    result = TableInspectResult(
-        table_name="dwd_transaction_detail",
-        declared_layer="DWD",
-        inferred_layer="DWD",
-        table_type="fact",
-        confidence=0.91,
-        reasoning_steps=[],
-        inferred_data_domain="4",
-        inferred_business_area="SHOP",
-        columns={
-            "atomic_metrics": [
-                {
-                    "name": "pay_amount",
-                    "business_process": "ORDER_TRANSACTION",
-                }
-            ],
-            "derived_metrics": [],
-            "calculated_metrics": [],
-            "dimensions": [],
-            "others": [],
-        },
-    )
-
-    catalog = build_business_semantics_catalog_from_inspection(
-        project,
-        [result],
-    )
-
-    assert catalog["business_processes"][0]["data_domain"] == "04"
 
 
 def test_catalog_builder_does_not_turn_dimension_process_into_business_process(
@@ -494,6 +431,152 @@ def test_write_initial_catalog_keeps_existing_without_overwrite(
     assert result["catalog"]["business_processes"][0]["code"] == "MANUAL"
 
 
+def test_write_initial_catalog_removes_legacy_business_semantics_file(
+    tmp_path, monkeypatch
+):
+    project = _configure_catalog_project(monkeypatch, tmp_path)
+    project_dir = tmp_path / project
+    _write_split_catalog(
+        project_dir,
+        project,
+        {
+            "version": 1,
+            "data_domains": [],
+            "business_areas": [],
+            "business_processes": [],
+            "semantic_subjects": [],
+        },
+    )
+    legacy_path = project_dir / "business_semantics.yaml"
+    legacy_path.write_text(
+        "version: 1\nbusiness_processes: []\n",
+        encoding="utf-8",
+    )
+
+    result = write_initial_business_semantics_catalog(project)
+
+    assert result["written_names"] == []
+    assert not legacy_path.exists()
+
+
+def _write_legacy_business_semantics_file(
+    project_dir,
+    project,
+    *,
+    context="旧目录背景",
+    data_domain=None,
+    business_area=None,
+):
+    legacy_path = project_dir / "business_semantics.yaml"
+    legacy_path.write_text(
+        yaml.safe_dump(
+            {
+                "version": 1,
+                "project": project,
+                "source": "legacy",
+                "project_context": context,
+                "data_domains": [
+                    data_domain
+                    or {"id": "04", "code": "TRAN", "name": "交易域"}
+                ],
+                "business_areas": [
+                    business_area
+                    or {"id": "SHOP", "code": "SHOP", "name": "零售业务"}
+                ],
+                "business_processes": [
+                    {"code": "ORDER_DETAIL", "name": "订单明细"}
+                ],
+                "semantic_subjects": [
+                    {"code": "CUSTOMER", "name": "客户"}
+                ],
+            },
+            allow_unicode=True,
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    return legacy_path
+
+
+def test_write_initial_catalog_migrates_legacy_business_semantics_file(
+    tmp_path, monkeypatch
+):
+    project = "unit_catalog_legacy_only"
+    project_dir = tmp_path / project
+    project_dir.mkdir()
+    (tmp_path / "naming_config.yaml").write_text(
+        "types: {}\nbindings: {}\ndictionaries: {}\n",
+        encoding="utf-8",
+    )
+    legacy_path = _write_legacy_business_semantics_file(
+        project_dir,
+        project,
+    )
+    monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setitem(
+        config.PROJECT_CONFIG,
+        project,
+        {"dir": project, "naming_config": "naming_config.yaml"},
+    )
+    config.clear_business_semantics_cache()
+    config.clear_naming_config_cache()
+
+    result = write_initial_business_semantics_catalog(project)
+
+    assert result["written_names"] == [
+        "business_processes",
+        "semantic_subjects",
+        "taxonomy",
+    ]
+    assert not legacy_path.exists()
+
+    taxonomy = yaml.safe_load(
+        (project_dir / "business_taxonomy.yaml").read_text(encoding="utf-8")
+    )
+    processes = yaml.safe_load(
+        (project_dir / "business_processes.yaml").read_text(encoding="utf-8")
+    )
+    subjects = yaml.safe_load(
+        (project_dir / "semantic_subjects.yaml").read_text(encoding="utf-8")
+    )
+    assert taxonomy["project_context"] == "旧目录背景"
+    assert taxonomy["data_domains"][0]["id"] == "04"
+    assert processes["business_processes"][0]["code"] == "ORDER_DETAIL"
+    assert subjects["semantic_subjects"][0]["code"] == "CUSTOMER"
+
+    project = _configure_catalog_project(monkeypatch, tmp_path)
+    project_dir = tmp_path / project
+    legacy_path = _write_legacy_business_semantics_file(
+        project_dir,
+        project,
+        context="legacy context",
+        data_domain={"id": "99", "code": "OLD", "name": "旧域"},
+        business_area={"id": "OLD", "code": "OLD", "name": "旧业务"},
+    )
+
+    result = write_initial_business_semantics_catalog(project)
+
+    assert result["written_names"] == [
+        "business_processes",
+        "semantic_subjects",
+    ]
+    assert not legacy_path.exists()
+
+    taxonomy = yaml.safe_load(
+        (project_dir / "business_taxonomy.yaml").read_text(encoding="utf-8")
+    )
+    processes = yaml.safe_load(
+        (project_dir / "business_processes.yaml").read_text(encoding="utf-8")
+    )
+    subjects = yaml.safe_load(
+        (project_dir / "semantic_subjects.yaml").read_text(encoding="utf-8")
+    )
+    assert taxonomy["data_domains"][0]["id"] == "04"
+    assert "project_context" not in taxonomy
+    assert processes["business_processes"][0]["code"] == "ORDER_DETAIL"
+    assert subjects["semantic_subjects"][0]["code"] == "CUSTOMER"
+
+
 def test_get_business_domain_config_prefers_project_catalog(
     tmp_path, monkeypatch
 ):
@@ -526,3 +609,27 @@ def test_get_business_domain_config_prefers_project_catalog(
 
     assert business_config.normalize_domain("CUST") == "88"
     assert business_config.normalize_business_area("CRM") == "CRM"
+
+    _write_split_catalog(
+        tmp_path / project,
+        project,
+        {
+            "version": 1,
+            "data_domains": [
+                {
+                    "id": "88",
+                    "code": "CUST",
+                    "name": "客户域",
+                }
+            ],
+            "business_areas": [],
+            "business_processes": [],
+            "semantic_subjects": [],
+        },
+    )
+    config.clear_business_semantics_cache()
+
+    business_config = config.get_business_domain_config(project)
+
+    assert business_config.normalize_domain("CUST") == "88"
+    assert business_config.business_area_codes == []

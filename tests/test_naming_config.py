@@ -1524,7 +1524,7 @@ class TestGetNamingConfigByProject:
             is None
         )
 
-    def test_direct_load_naming_config_extra_dictionaries_do_not_keep_raw_business_dictionaries(
+    def test_direct_load_naming_config_extra_dictionaries_ignore_business_dictionaries(
         self, tmp_path
     ):
         cfg_path = _write_legacy_business_dictionary_config(tmp_path)
@@ -1534,23 +1534,7 @@ class TestGetNamingConfigByProject:
             extra_dictionaries={
                 "source_systems": {
                     "values": [{"code": "ERP", "name": "ERP"}]
-                }
-            },
-        )
-
-        assert nc.dictionaries["source_systems"]["values"][0]["code"] == "ERP"
-        _assert_business_dictionary_fallback_disabled(
-            nc, keep_empty_business_keys=False
-        )
-
-    def test_direct_load_naming_config_extra_business_dictionaries_are_ignored(
-        self, tmp_path
-    ):
-        cfg_path = _write_legacy_business_dictionary_config(tmp_path)
-
-        nc = load_naming_config(
-            cfg_path,
-            extra_dictionaries={
+                },
                 "data_domains": {
                     "values": [{"id": "04", "code": "TRAN", "name": "交易域"}]
                 },
@@ -1562,6 +1546,7 @@ class TestGetNamingConfigByProject:
             },
         )
 
+        assert nc.dictionaries["source_systems"]["values"][0]["code"] == "ERP"
         _assert_business_dictionary_fallback_disabled(
             nc, keep_empty_business_keys=False
         )

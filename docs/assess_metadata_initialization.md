@@ -84,8 +84,9 @@ python -m dw_refactor_agent.assessment.llm.model_metadata_writer --project shop 
 - 写入或刷新 `version`、`name`、`layer`、`table_type`、`config.materialized`。
 - 对 DWD 写入 `data_domain`。
 - 对 DWD/DWS 写入 `business_area`。
-- 对 fact 表保留已有 `business_process`。
-- 对 dimension 表保留已有 `semantic_subject`，并移除不适用的 `business_process`。
+- 对 fact 表保留 catalog 中存在的已有 `business_process`，并清理 stale code。
+- 对 dimension 表保留 catalog 中存在的已有 `semantic_subject`，并移除不适用或 stale 的 `business_process`。
+- 对还没有 `business_process` / `semantic_subject` 归属的模型，保留仍在 taxonomy 中的已有 `data_domain` / `business_area`。
 
 它不会识别指标，不会重算 entities/grain，不会根据 catalog 反向给表分配业务过程，也不会改 DDL、任务 SQL、表名或文件名。
 

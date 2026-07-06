@@ -1,6 +1,7 @@
 import json
 
 from dw_refactor_agent.refactor.compare import (
+    check_row_compare,
     compare_shadow_results,
     fmt_val,
     run_checks,
@@ -117,6 +118,47 @@ def test_run_checks_uses_compare_anchor_for_partition_filter(monkeypatch):
         "WHERE stat_month_date = '2024-06-01'"
     ]
     assert qa_cursor.executed == prod_cursor.executed
+
+
+def test_row_compare_excludes_configured_columns_and_handles_missing_columns():
+    prod_cursor = FakeCursor(
+        [
+            [("order_id",), ("amount",), ("etl_time",)],
+            [(1, 10)],
+        ]
+    )
+    qa_cursor = FakeCursor([[(1, 10)]])
+
+    result = check_row_compare(
+        FakeConn([prod_cursor]),
+        FakeConn([qa_cursor]),
+        {
+            "table": "dws_order",
+            "method": "row_compare",
+            "exclude_columns": ["ETL_TIME"],
+        },
+        sample=0,
+        precision=0.01,
+    )
+
+    assert result["match"] is True
+    assert result["compared_columns"] == ["order_id", "amount"]
+    assert result["ignored_columns"] == ["etl_time"]
+    assert prod_cursor.executed == [
+        "DESC dws_order",
+        "SELECT order_id, amount FROM dws_order ORDER BY order_id, amount ",
+    ]
+
+    missing_columns = check_row_compare(
+        FakeConn([FakeCursor([[]])]),
+        FakeConn([FakeCursor([])]),
+        {"table": "empty_table", "method": "row_compare"},
+        sample=0,
+        precision=0.01,
+    )
+
+    assert missing_columns["match"] is False
+    assert missing_columns["error"] == "无列信息"
 
 
 def test_run_checks_short_circuit_scenarios(monkeypatch):

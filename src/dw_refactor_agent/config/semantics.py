@@ -196,11 +196,11 @@ def business_domain_config_from_dictionaries(
 ) -> Optional[BusinessDomainConfig]:
     raw_domains = (raw_dictionaries or {}).get("data_domains")
     raw_areas = (raw_dictionaries or {}).get("business_areas")
-    if not raw_domains or not raw_areas:
+    if not raw_domains and not raw_areas:
         return None
     domains = _load_domain_defs(raw_domains)
     business_areas = _load_business_area_defs(raw_areas)
-    if not domains or not business_areas:
+    if not domains and not business_areas:
         return None
     return BusinessDomainConfig(domains=domains, business_areas=business_areas)
 
@@ -296,7 +296,7 @@ def business_domain_config_from_semantics_catalog(
         return None
     domains = _load_domain_defs(catalog.get("data_domains"))
     business_areas = _load_business_area_defs(catalog.get("business_areas"))
-    if not domains or not business_areas:
+    if not domains and not business_areas:
         return None
     return BusinessDomainConfig(domains=domains, business_areas=business_areas)
 

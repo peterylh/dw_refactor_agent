@@ -1295,7 +1295,7 @@ def _catalog_model_payload(
         updated["business_area"] = business_area
     else:
         updated.pop("business_area", None)
-    if semantic_subject:
+    if table_type == "dimension" and semantic_subject:
         updated["semantic_subject"] = semantic_subject
         updated.pop("business_process", None)
     elif table_type == "fact":

@@ -224,7 +224,9 @@ python -m dw_refactor_agent.refactor.run compare --manifest warehouses/<project>
 - `jobs_to_run`：按拓扑排序后的待执行作业
 - `verification.compare_anchors`：compare 使用的锚点输入，包含锚点表的时间列、
   时间粒度与锚点时间值；缺少合理时间粒度时会降级为全表 compare 并输出 warning
-- `verification.checks`：自动配置的校验项，仅包含表名与校验方法
+- `verification.checks`：自动配置的校验项，包含表名与校验方法；`row_compare`
+  可包含由 `verification.row_compare.exclude_columns` 或表级 override 透传的
+  `exclude_columns`
 
 ### shadow_run.py
 
@@ -253,7 +255,9 @@ python -m dw_refactor_agent.refactor.run compare --manifest warehouses/<project>
 支持校验方法：
 
 - `count`：行数对比
-- `row_compare`：逐行逐列对比，支持 `--sample` 与 `--precision`
+- `row_compare`：逐行逐列对比，支持 `--sample` 与 `--precision`；默认忽略
+  `etl_time`，也可通过 `warehouse.yaml` 的
+  `verification.row_compare.exclude_columns` 或表级配置覆盖
 
 ## 数据集市评估工具 (assessment)
 
@@ -352,9 +356,9 @@ python -m dw_refactor_agent.assessment.llm.model_metadata_writer --project shop 
 
 - 缺失的 model 文件会被创建
 - 写入或刷新 `version`、`name`、`layer`、`table_type`、`config.materialized`
-- 对已有 `business_process` 的 DWD fact，从 catalog 补齐 `data_domain`
-- 对已有 `business_process` 的 DWD/DWS fact，从 catalog 补齐 `business_area`
-- 对已有 `semantic_subject` 的 dimension 表，保留 subject code，并移除不适用的 `business_process`
+- 对 catalog 中存在的已有 `business_process`，从 catalog 补齐适用的 `data_domain` / `business_area`
+- 对 catalog 中存在的已有 `semantic_subject`，保留 subject code，并移除不适用或 stale 的 `business_process`
+- 对还没有 `business_process` / `semantic_subject` 归属的模型，保留仍在 taxonomy 中的已有 `data_domain` / `business_area`
 
 这个命令不会识别指标、不会刷新 entities/grain，不会根据 catalog 反向给表分配业务过程，也不会改 DDL、任务 SQL、表名或文件名。LLM 目录发现阶段识别出的表归属会直接写入 models，而不是长期写在 catalog 中。
 

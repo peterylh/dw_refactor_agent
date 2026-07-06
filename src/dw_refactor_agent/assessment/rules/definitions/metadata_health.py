@@ -362,6 +362,8 @@ class MetadataDataDomainValidRule(_MetadataHealthRule):
             return None
         metadata = target["metadata"]
         business_domain_config = rule_context["business_domain_config"]
+        if not business_domain_config.domains:
+            return None
         nc = rule_context["naming_config"]
         raw_domain = metadata.get("data_domain")
         normalized_domain = business_domain_config.normalize_domain(raw_domain)
@@ -406,6 +408,8 @@ class MetadataBusinessAreaValidRule(_MetadataHealthRule):
             return None
         metadata = target["metadata"]
         business_domain_config = rule_context["business_domain_config"]
+        if not business_domain_config.business_areas:
+            return None
         nc = rule_context["naming_config"]
         raw_area = metadata.get("business_area")
         normalized_area = business_domain_config.normalize_business_area(

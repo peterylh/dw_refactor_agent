@@ -62,6 +62,16 @@ def test_build_verification_plan_uses_baseline_ddl_changes_and_jobs(
             "db": "demo_dm",
             "qa_db": "demo_dm_qa",
             "catalog": "internal",
+            "verification": {
+                "row_compare": {
+                    "exclude_columns": ["etl_time"],
+                    "tables": {
+                        "dws_order": {
+                            "exclude_columns": ["etl_time", "update_time"]
+                        }
+                    },
+                }
+            },
         },
     )
     config.clear_model_metadata_cache()
@@ -156,7 +166,11 @@ def test_build_verification_plan_uses_baseline_ddl_changes_and_jobs(
     assert "checks" not in plan
     assert plan["verification"]["checks"] == [
         {"table": "dws_order", "method": "count"},
-        {"table": "dws_order", "method": "row_compare"},
+        {
+            "table": "dws_order",
+            "method": "row_compare",
+            "exclude_columns": ["etl_time", "update_time"],
+        },
     ]
 
     config.clear_model_metadata_cache()
