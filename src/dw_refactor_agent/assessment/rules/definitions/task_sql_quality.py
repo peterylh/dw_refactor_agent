@@ -494,7 +494,11 @@ def _display_file_path(project_dir: Path | None, file_path: Path) -> str:
 
 def _parse_statements(sql: str) -> list:
     try:
-        return sqlglot.parse(sql, dialect="doris")
+        return [
+            statement
+            for statement in sqlglot.parse(sql, dialect="doris")
+            if isinstance(statement, exp.Expression)
+        ]
     except Exception:
         return []
 

@@ -94,6 +94,24 @@ def test_shop_ads_store_performance_join_covers_store_snapshot_key():
     assert issues == []
 
 
+def test_parse_statements_filters_pure_comments():
+    assert task_sql_quality_defs._parse_statements("-- only comment\n") == []
+    assert task_sql_quality_defs._parse_statements("/* only comment */") == []
+
+
+def test_score_code_quality_accepts_comment_only_task(tmp_path):
+    context = _catalog_for_task(
+        tmp_path,
+        "comment_only.sql",
+        "-- only comment\n",
+    )
+
+    result = score_code_quality(context)
+
+    assert result["score"] == 100.0
+    assert result["issues"] == []
+
+
 def test_score_code_quality_accepts_named_and_dropped_temp_table(tmp_path):
     context = _catalog_for_task(
         tmp_path,
