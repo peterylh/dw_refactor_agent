@@ -231,6 +231,19 @@ def test_row_compare_empty_exclude_columns_compares_all_columns():
     ]
 
 
+def test_row_compare_missing_columns_returns_failed_result():
+    result = check_row_compare(
+        FakeConn([FakeCursor([[]])]),
+        FakeConn([FakeCursor([])]),
+        {"table": "empty_table", "method": "row_compare"},
+        sample=0,
+        precision=0.01,
+    )
+
+    assert result["match"] is False
+    assert result["error"] == "无列信息"
+
+
 def test_run_checks_short_circuit_scenarios(monkeypatch):
     def fail_if_called(db_name, qa=False):
         raise AssertionError("short-circuit plans should not open connections")

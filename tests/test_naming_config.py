@@ -56,32 +56,95 @@ def _write_dictionary_naming_config(tmp_path, filename, *, domains, areas):
     return cfg_path
 
 
+def _write_business_taxonomy(tmp_path, project, *, domains, areas):
+    project_dir = tmp_path / project
+    project_dir.mkdir(exist_ok=True)
+    (project_dir / "business_taxonomy.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "version": 1,
+                "project": project,
+                "data_domains": [
+                    {"id": domain_id, "code": code, "name": code}
+                    for domain_id, code in domains
+                ],
+                "business_areas": [
+                    {"id": f"{index:02d}", "code": code, "name": code}
+                    for index, code in enumerate(areas, start=1)
+                ],
+            },
+            allow_unicode=True,
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+
+def _write_legacy_business_dictionary_config(tmp_path):
+    return _write_dictionary_naming_config(
+        tmp_path,
+        "naming_config.yaml",
+        domains=[("04", "TRAN")],
+        areas=["PAYM"],
+    )
+
+
+def _assert_business_dictionary_fallback_disabled(
+    nc, *, keep_empty_business_keys=True
+):
+    assert nc.types["BUSINESS_AREA_CODE"].allow == []
+    assert nc.types["DATA_DOMAIN_ID"].allow == []
+    if keep_empty_business_keys:
+        assert nc.dictionaries["business_areas"]["values"] == []
+        assert nc.dictionaries["data_domains"]["values"] == []
+    else:
+        assert "business_areas" not in nc.dictionaries
+        assert "data_domains" not in nc.dictionaries
+    assert nc.business_domain_config is None
+
+
 @pytest.fixture
 def isolated_project_naming_configs(tmp_path, monkeypatch):
+    shop_domains = [
+        ("01", "CUST"),
+        ("02", "PROD"),
+        ("03", "STOR"),
+        ("04", "ORDR"),
+        ("05", "INVT"),
+        ("06", "PROM"),
+        ("99", "OTHR"),
+    ]
+    finance_domains = [
+        ("01", "CUST"),
+        ("04", "TRAN"),
+        ("10", "MKTG"),
+        ("99", "OTHR"),
+    ]
+    shop_areas = ["SHOP"]
+    finance_areas = ["LOAN", "PAYM", "CLNT", "OTHR"]
     shop_cfg = _write_dictionary_naming_config(
         tmp_path,
         "unit_shop_naming.yaml",
-        domains=[
-            ("01", "CUST"),
-            ("02", "PROD"),
-            ("03", "STOR"),
-            ("04", "ORDR"),
-            ("05", "INVT"),
-            ("06", "PROM"),
-            ("99", "OTHR"),
-        ],
-        areas=["SHOP"],
+        domains=shop_domains,
+        areas=shop_areas,
     )
     finance_cfg = _write_dictionary_naming_config(
         tmp_path,
         "unit_finance_naming.yaml",
-        domains=[
-            ("01", "CUST"),
-            ("04", "TRAN"),
-            ("10", "MKTG"),
-            ("99", "OTHR"),
-        ],
-        areas=["LOAN", "PAYM", "CLNT", "OTHR"],
+        domains=finance_domains,
+        areas=finance_areas,
+    )
+    _write_business_taxonomy(
+        tmp_path,
+        "unit_shop",
+        domains=shop_domains,
+        areas=shop_areas,
+    )
+    _write_business_taxonomy(
+        tmp_path,
+        "unit_finance",
+        domains=finance_domains,
+        areas=finance_areas,
     )
     monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
     monkeypatch.setitem(
@@ -1357,7 +1420,7 @@ class TestGetNamingConfigByProject:
             yaml.safe_dump(raw, allow_unicode=True, sort_keys=False),
             encoding="utf-8",
         )
-        (project_dir / "business_semantics.yaml").write_text(
+        (project_dir / "business_taxonomy.yaml").write_text(
             yaml.safe_dump(
                 {
                     "version": 1,
@@ -1376,8 +1439,6 @@ class TestGetNamingConfigByProject:
                             "name": "零售业务",
                         }
                     ],
-                    "business_processes": [],
-                    "semantic_subjects": [],
                 },
                 allow_unicode=True,
                 sort_keys=False,
@@ -1415,6 +1476,77 @@ class TestGetNamingConfigByProject:
                 nc.layers["DWD"].templates[0],
             )
             is None
+        )
+
+    def test_project_naming_dictionary_does_not_fallback_without_taxonomy(
+        self, tmp_path, monkeypatch
+    ):
+        project = "unit_catalog_naming_no_taxonomy"
+        project_dir = tmp_path / project
+        project_dir.mkdir()
+        cfg_path = _write_legacy_business_dictionary_config(tmp_path)
+        monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
+        monkeypatch.setitem(
+            config.PROJECT_CONFIG,
+            project,
+            {
+                "dir": project,
+                "naming_config": cfg_path.name,
+            },
+        )
+        config.clear_naming_config_cache()
+        config.clear_business_semantics_cache()
+
+        nc = get_naming_config(project)
+
+        _assert_business_dictionary_fallback_disabled(nc)
+        assert (
+            nc._match_segments(
+                "M_PAYM_04_ORDER_DI",
+                nc.layers["DWD"].templates[0],
+            )
+            is None
+        )
+
+    def test_direct_load_naming_config_does_not_use_business_dictionaries_without_taxonomy(
+        self, tmp_path
+    ):
+        cfg_path = _write_legacy_business_dictionary_config(tmp_path)
+
+        nc = load_naming_config(cfg_path)
+
+        _assert_business_dictionary_fallback_disabled(nc)
+        assert (
+            nc._match_segments(
+                "M_PAYM_04_ORDER_DI",
+                nc.layers["DWD"].templates[0],
+            )
+            is None
+        )
+
+    def test_direct_load_naming_config_extra_dictionaries_ignore_business_dictionaries(
+        self, tmp_path
+    ):
+        cfg_path = _write_legacy_business_dictionary_config(tmp_path)
+
+        nc = load_naming_config(
+            cfg_path,
+            extra_dictionaries={
+                "source_systems": {"values": [{"code": "ERP", "name": "ERP"}]},
+                "data_domains": {
+                    "values": [{"id": "04", "code": "TRAN", "name": "交易域"}]
+                },
+                "business_areas": {
+                    "values": [
+                        {"id": "04", "code": "PAYM", "name": "支付结算"}
+                    ]
+                },
+            },
+        )
+
+        assert nc.dictionaries["source_systems"]["values"][0]["code"] == "ERP"
+        _assert_business_dictionary_fallback_disabled(
+            nc, keep_empty_business_keys=False
         )
 
     def test_load_business_domain_config_for_finance_project(

@@ -2,7 +2,9 @@
 
 本文说明 `assess` 相关元数据的初始化顺序、工具职责和常用命令。项目级元数据主要分两类：
 
-- `warehouses/{project}/business_semantics.yaml`: 业务语义目录，维护数据域、业务板块、业务过程、语义主题。
+- `warehouses/{project}/business_taxonomy.yaml`: 人工维护的数据域、业务板块和项目上下文。
+- `warehouses/{project}/business_processes.yaml`: LLM 发现并经人工确认的业务过程。
+- `warehouses/{project}/semantic_subjects.yaml`: LLM 发现并经人工确认的语义主题。
 - `warehouses/{project}/mid/models/{table_name}.yaml`: DIM/DWD/DWS 表级模型元数据，维护 layer、table_type、业务语义引用、entities、grain、metrics 和执行策略。
 - `warehouses/{project}/ads/models/{table_name}.yaml`: ADS 表级模型元数据。
 - `warehouses/{project}/ods/models/{catalog}/{database}/{table_name}.yaml`: ODS 表级模型元数据。
@@ -23,7 +25,10 @@ python -m dw_refactor_agent.lineage.lineage_extractor --project shop
 
 ### 2. 初始化或更新业务语义目录
 
-无 LLM 的初始化只创建目录骨架，并从命名配置或已有 catalog 合并数据域、业务板块字典；不会再根据表名硬猜业务过程。
+无 LLM 的初始化只创建目录骨架，并仅从已有 `business_taxonomy.yaml` 保留数据域、业务板块字典；不会再从 `naming_config.yaml` 合并这些主数据，也不会再根据表名硬猜业务过程。
+
+如果项目目录仍有旧版 `business_semantics.yaml`，初始化会把它作为迁移来源，并在非 dry-run 写入完成后删除旧文件。partial-split
+场景下只回填缺失的拆分文件；已存在的 `business_taxonomy.yaml` 为准，旧文件中的 taxonomy 段和 `project_context` 不会覆盖或合并进去。
 
 ```bash
 python -m dw_refactor_agent.assessment.business_semantics_catalog --project shop --dry-run
@@ -41,7 +46,7 @@ LLM 发现的原则：
 
 - fact 表从指标字段的 `business_process` 归并到 `business_processes`。
 - dimension 表从 primary entity 归并到 `semantic_subjects`。
-- 未提供数据域/业务板块字典时，可生成候选 code，后续由人工修订。
+- 数据域/业务板块只从人工维护的 taxonomy 读取；未命中时不写入人工主数据。
 - 不把维度主题、实体管理、运营管理类表强行写成业务过程。
 - 表级归属会写入模型 YAML；catalog 不长期维护 `tables`。
 
@@ -56,10 +61,10 @@ python -m dw_refactor_agent.assessment.llm.model_metadata_writer --project shop 
 
 检查并修订：
 
-- `data_domains`: 数据域，通常数量较少，可以由用户稳定维护。
-- `business_areas`: 业务板块。
-- `business_processes`: 严格业务过程，应对应可度量事件、活动或汇总事实。
-- `semantic_subjects`: 维度/实体属性表的语义主题，通常对应维表主实体。
+- `business_taxonomy.yaml` 中的 `data_domains`: 数据域，通常数量较少，可以由用户稳定维护。
+- `business_taxonomy.yaml` 中的 `business_areas`: 业务板块。
+- `business_processes.yaml` 中的 `business_processes`: 严格业务过程，应对应可度量事件、活动或汇总事实。
+- `semantic_subjects.yaml` 中的 `semantic_subjects`: 维度/实体属性表的语义主题，通常对应维表主实体。
 
 不要在 catalog 中长期维护 `tables`。表到业务过程/语义主题的归属以
 模型 YAML 为准；catalog 只维护 code、名称、归属域、别名、说明等治理信息。
@@ -71,7 +76,7 @@ python -m dw_refactor_agent.assessment.llm.model_metadata_writer --project shop 
 python -m dw_refactor_agent.assessment.llm.model_metadata_writer --project shop --from-catalog --write-scope business
 ```
 
-这个命令不调用 LLM。它读取 `warehouses/{project}/business_semantics.yaml`、
+这个命令不调用 LLM。它读取项目业务语义目录三份 YAML、
 `warehouses/{project}/ods/models/{catalog}/{database}/*.yaml`、`warehouses/{project}/mid/models/*.yaml`
 和 `warehouses/{project}/ads/models/*.yaml`，以 models 中已有的 `business_process` /
 `semantic_subject` 为表级归属事实，再从 catalog 补齐这些 code 对应的数据域和业务板块。
@@ -82,8 +87,10 @@ python -m dw_refactor_agent.assessment.llm.model_metadata_writer --project shop 
 - 写入或刷新 `version`、`name`、`layer`、`table_type`、`config.materialized`。
 - 对 DWD 写入 `data_domain`。
 - 对 DWD/DWS 写入 `business_area`。
-- 对 fact 表保留已有 `business_process`。
-- 对 dimension 表保留已有 `semantic_subject`，并移除不适用的 `business_process`。
+- 对 fact 表保留 catalog 中存在的已有 `business_process`，并清理 stale code。
+- 对 dimension 表保留 catalog 中存在的已有 `semantic_subject`，并移除不适用或 stale 的 `business_process`。
+- 清理 stale `business_process` / `semantic_subject` 时，保留仍在 taxonomy 中的已有 `data_domain` / `business_area`。
+- 对还没有 `business_process` / `semantic_subject` 归属的模型，保留仍在 taxonomy 中的已有 `data_domain` / `business_area`。
 
 它不会识别指标，不会重算 entities/grain，不会根据 catalog 反向给表分配业务过程，也不会改 DDL、任务 SQL、表名或文件名。
 
@@ -127,13 +134,13 @@ python -m dw_refactor_agent.assessment.llm.model_metadata_writer --project shop 
 - 新项目还没有模型 YAML，需要先按 DDL 和 catalog 创建基础 model 文件。
 - catalog 的 process/subject 所属域或板块调整后，需要刷新 models 中的业务语义字段。
 
-### 已存在 `business_semantics.yaml` 时会怎样？
+### 已存在业务语义目录时会怎样？
 
 默认不会覆盖。需要更新时使用 `--overwrite` 或 `--overwrite-catalog`，并通过 Git diff 审查结果。
 
 ### naming_config.yaml 和 catalog 的字典是什么关系？
 
-`naming_config.yaml` 不再维护 `data_domains` 和 `business_areas` 的主数据。项目 catalog 中的 `data_domains` / `business_areas` 会合并进命名配置，供命名校验读取。
+`naming_config.yaml` 不再维护 `data_domains` 和 `business_areas` 的主数据。项目 `business_taxonomy.yaml` 中的 `data_domains` / `business_areas` 会合并进命名配置，供命名校验读取。
 
 ### 目录发现和模型刷新为什么分两步？
 

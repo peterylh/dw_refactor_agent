@@ -93,22 +93,7 @@ def _business_naming_config(tmp_path):
     raw = yaml.safe_load(
         (PROJECT_ROOT / "naming_config.yaml").read_text(encoding="utf-8")
     )
-    raw["dictionaries"] = {
-        "data_domains": {
-            "values": [
-                {"id": "04", "code": "TRAN", "name": "交易域"},
-                {"id": "10", "code": "MKTG", "name": "营销域"},
-                {"id": "99", "code": "OTHR", "name": "其它"},
-            ]
-        },
-        "business_areas": {
-            "values": [
-                {"id": "04", "code": "PAYM", "name": "支付结算"},
-                {"id": "13", "code": "CLNT", "name": "客户经营"},
-                {"id": "99", "code": "OTHR", "name": "其它"},
-            ]
-        },
-    }
+    raw.pop("dictionaries", None)
     raw["types"]["BUSINESS_AREA_CODE"]["allow"] = {
         "dictionary": "business_areas",
         "value_field": "code",
@@ -122,6 +107,27 @@ def _business_naming_config(tmp_path):
     cfg_path = tmp_path / "business_naming.yaml"
     cfg_path.write_text(
         yaml.safe_dump(raw, allow_unicode=True, sort_keys=False),
+        encoding="utf-8",
+    )
+    (tmp_path / "business_taxonomy.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "version": 1,
+                "project": "unit_assess",
+                "data_domains": [
+                    {"id": "04", "code": "TRAN", "name": "交易域"},
+                    {"id": "10", "code": "MKTG", "name": "营销域"},
+                    {"id": "99", "code": "OTHR", "name": "其它"},
+                ],
+                "business_areas": [
+                    {"id": "04", "code": "PAYM", "name": "支付结算"},
+                    {"id": "13", "code": "CLNT", "name": "客户经营"},
+                    {"id": "99", "code": "OTHR", "name": "其它"},
+                ],
+            },
+            allow_unicode=True,
+            sort_keys=False,
+        ),
         encoding="utf-8",
     )
     return load_naming_config(cfg_path)

@@ -13,4 +13,3 @@ entities:
   name: 门店
   key_columns:
   - store_id
-semantic_subject: STOR

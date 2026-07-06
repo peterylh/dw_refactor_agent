@@ -193,7 +193,7 @@ def test_build_scoped_assessment_plan_marks_global_config_dimensions_full():
             "model_tables": [],
             "config_files": [
                 "warehouses/shop/naming_config.yaml",
-                "warehouses/shop/business_semantics.yaml",
+                "warehouses/shop/semantic_subjects.yaml",
             ],
         },
         "affected_scope": {
@@ -250,7 +250,7 @@ def test_changed_types_uses_configured_project_dir_for_business_semantics(
         {
             "changed_assets": {
                 "config_files": [
-                    "warehouses/custom_demo/business_semantics.yaml"
+                    "warehouses/custom_demo/semantic_subjects.yaml"
                 ],
             }
         },
@@ -259,7 +259,7 @@ def test_changed_types_uses_configured_project_dir_for_business_semantics(
         "demo",
         {
             "changed_assets": {
-                "config_files": ["warehouses/other/business_semantics.yaml"],
+                "config_files": ["warehouses/other/semantic_subjects.yaml"],
             }
         },
     )

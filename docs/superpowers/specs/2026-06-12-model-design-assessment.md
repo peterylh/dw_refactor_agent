@@ -26,40 +26,43 @@ The implementation should remain Git-native. Tools write deterministic, reviewab
 
 Introduce a project-level catalog as the single source of truth for business semantics:
 
+`business_taxonomy.yaml` is the only source for human-maintained data
+domains and business areas:
+
 ```yaml
 version: 1
 project: shop
 data_domains:
-  SALE:
-    name: 销售
-    business_areas: [ORDER]
+  - id: "04"
+    code: ORDR
+    name: 订单域
 business_areas:
-  ORDER:
-    name: 订单
-    data_domain: SALE
-    business_processes: [order_sale]
-business_processes:
-  order_sale:
-    name: 订单销售
-    business_area: ORDER
-    data_domain: SALE
-    aliases: [order, sale, order_sale]
-    event_key_hints: [order_id, order_item_id]
-    measure_hints: [sale_amount, quantity]
-    source_table_hints: [ods_order, ods_order_item, dwd_order_detail]
+  - id: SHOP
+    code: SHOP
+    name: 零售业务
 ```
 
-Default path:
+`business_processes.yaml` and `semantic_subjects.yaml` hold LLM-discovered
+processes and subjects. Their `data_domain` / `business_area` values are only
+used when the same codes are confirmed by `business_taxonomy.yaml`.
+
+Default paths:
 
 ```text
-{project_dir}/business_semantics.yaml
+{project_dir}/business_taxonomy.yaml
+{project_dir}/business_processes.yaml
+{project_dir}/semantic_subjects.yaml
 ```
 
 Examples:
 
 ```text
-warehouses/shop/business_semantics.yaml
-warehouses/finance_analytics/business_semantics.yaml
+warehouses/shop/business_taxonomy.yaml
+warehouses/shop/business_processes.yaml
+warehouses/shop/semantic_subjects.yaml
+warehouses/finance_analytics/business_taxonomy.yaml
+warehouses/finance_analytics/business_processes.yaml
+warehouses/finance_analytics/semantic_subjects.yaml
 ```
 
 The catalog belongs with the warehouse project assets so it can be maintained
@@ -75,7 +78,11 @@ summarizes table name, layer hints, DDL columns and comments, keys, task SQL
 features, lineage, upstream/downstream tables, and any existing model/LLM
 metadata.
 
-The discoverer may use LLM clustering to identify candidate data domains, business areas, business processes, and their mappings. If existing naming configuration or model metadata already defines business domains or areas, those codes should be treated as preferred anchors. The output is written directly to the working tree only when requested; review is done with Git.
+The discoverer may use LLM clustering to identify candidate business processes,
+semantic subjects, and their table assignments. Data domains and business
+areas are governed anchors from `business_taxonomy.yaml`; naming configuration
+does not define or backfill those master data values. The output is written
+directly to the working tree only when requested; review is done with Git.
 
 ## Models Initialization
 

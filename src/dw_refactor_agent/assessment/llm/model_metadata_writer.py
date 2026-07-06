@@ -60,6 +60,7 @@ from dw_refactor_agent.config import (
     TEXT_ENCODING,
     assess_cache_path,
     asset_role_for_layer,
+    business_semantics_paths,
     get_business_domain_config,
     load_model_metadata,
     model_metadata_result_path,
@@ -637,6 +638,62 @@ def business_metadata_for_result(
     return metadata
 
 
+def _existing_data_domain_for_write(
+    business_config,
+    value: Any,
+) -> str:
+    if not business_config:
+        return ""
+    normalized = business_config.normalize_domain(value)
+    return normalized if business_config.is_valid_domain(normalized) else ""
+
+
+def _existing_business_area_for_write(
+    business_config,
+    value: Any,
+) -> str:
+    if not business_config:
+        return ""
+    normalized = business_config.normalize_business_area(value)
+    return (
+        normalized
+        if business_config.is_valid_business_area(normalized)
+        else ""
+    )
+
+
+def _clean_existing_business_metadata_for_layer(
+    project: str,
+    metadata: dict[str, Any],
+    layer: str,
+) -> None:
+    business_config = get_business_domain_config(project)
+    applied_layer = str(layer or "").upper()
+    if applied_layer in DATA_DOMAIN_LAYERS:
+        data_domain = _existing_data_domain_for_write(
+            business_config,
+            metadata.get("data_domain"),
+        )
+        if data_domain:
+            metadata["data_domain"] = data_domain
+        else:
+            metadata.pop("data_domain", None)
+    else:
+        metadata.pop("data_domain", None)
+
+    if applied_layer in BUSINESS_AREA_LAYERS:
+        business_area = _existing_business_area_for_write(
+            business_config,
+            metadata.get("business_area"),
+        )
+        if business_area:
+            metadata["business_area"] = business_area
+        else:
+            metadata.pop("business_area", None)
+    else:
+        metadata.pop("business_area", None)
+
+
 def should_write_metric_groups(
     result: TableInspectResult, write_scope: str = "all"
 ) -> bool:
@@ -885,6 +942,11 @@ def update_model_yaml(
                 updated["grain"] = grain_metadata
             else:
                 updated.pop("grain", None)
+            _clean_existing_business_metadata_for_layer(
+                project,
+                updated,
+                updated.get("layer") or layer_for_model(result),
+            )
             changed = updated != existing
             if not dry_run and changed:
                 path.parent.mkdir(parents=True, exist_ok=True)
@@ -966,24 +1028,46 @@ def update_model_yaml(
         applied_layer = layer_for_model(result)
         updated["layer"] = applied_layer
         updated["table_type"] = result.table_type
-        if get_business_domain_config(project):
+        business_config = get_business_domain_config(project)
+        business_metadata = {}
+        if business_config:
             business_metadata = business_metadata_for_result(
                 project,
                 result,
                 applied_layer,
             )
-            if applied_layer in DATA_DOMAIN_LAYERS:
-                if "data_domain" in business_metadata:
-                    updated["data_domain"] = business_metadata["data_domain"]
+        if applied_layer in DATA_DOMAIN_LAYERS:
+            if "data_domain" in business_metadata:
+                updated["data_domain"] = business_metadata["data_domain"]
+            elif business_config:
+                existing_data_domain = _existing_data_domain_for_write(
+                    business_config,
+                    updated.get("data_domain"),
+                )
+                if existing_data_domain:
+                    updated["data_domain"] = existing_data_domain
+                else:
+                    updated.pop("data_domain", None)
             else:
                 updated.pop("data_domain", None)
-            if applied_layer in BUSINESS_AREA_LAYERS:
-                if "business_area" in business_metadata:
-                    updated["business_area"] = business_metadata[
-                        "business_area"
-                    ]
+        else:
+            updated.pop("data_domain", None)
+        if applied_layer in BUSINESS_AREA_LAYERS:
+            if "business_area" in business_metadata:
+                updated["business_area"] = business_metadata["business_area"]
+            elif business_config:
+                existing_business_area = _existing_business_area_for_write(
+                    business_config,
+                    updated.get("business_area"),
+                )
+                if existing_business_area:
+                    updated["business_area"] = existing_business_area
+                else:
+                    updated.pop("business_area", None)
             else:
                 updated.pop("business_area", None)
+        else:
+            updated.pop("business_area", None)
         if applied_layer == "DIM":
             if result.dimension_role:
                 updated["dimension_role"] = result.dimension_role
@@ -1060,6 +1144,15 @@ def update_model_yaml(
             updated["grain"] = grain_metadata
         else:
             updated.pop("grain", None)
+
+    if should_write_base_fields:
+        _clean_existing_business_metadata_for_layer(
+            project,
+            updated,
+            updated.get("layer")
+            or existing.get("layer")
+            or layer_for_model(result),
+        )
 
     changed = updated != existing
     metadata_changed = write_table_metadata and (
@@ -1192,14 +1285,21 @@ def _catalog_model_payload(
         updated["business_area"] = business_area
     else:
         updated.pop("business_area", None)
-    if semantic_subject:
+    if table_type == "dimension" and semantic_subject:
         updated["semantic_subject"] = semantic_subject
         updated.pop("business_process", None)
-    elif table_type == "fact" and business_process:
-        updated["business_process"] = business_process
+    elif table_type == "fact":
+        if business_process:
+            updated["business_process"] = business_process
+        else:
+            updated.pop("business_process", None)
         updated.pop("semantic_subject", None)
     elif table_type == "dimension":
         updated.pop("business_process", None)
+        updated.pop("semantic_subject", None)
+    else:
+        updated.pop("business_process", None)
+        updated.pop("semantic_subject", None)
 
     if layer == "DIM":
         dimension_role = (
@@ -1232,6 +1332,33 @@ def _business_processes_from_result(result: TableInspectResult) -> list[str]:
     return codes
 
 
+def _existing_catalog_assignment(
+    *,
+    catalog: dict[str, Any],
+    table_name: str,
+    existing_metadata: dict[str, Any] | None,
+    field: str,
+) -> dict[str, Any]:
+    existing_mapping = catalog_mapping_for_model(
+        catalog,
+        table_name,
+        existing_metadata or {},
+    )
+    if not existing_mapping.get(field):
+        return {}
+    return {
+        key: value
+        for key, value in existing_mapping.items()
+        if key
+        in {
+            "data_domain",
+            "business_area",
+            "business_process",
+            "semantic_subject",
+        }
+    }
+
+
 def _semantic_subject_from_result(result: TableInspectResult) -> str:
     entities = normalize_entities(
         result.entities,
@@ -1251,28 +1378,56 @@ def _semantic_subject_from_result(result: TableInspectResult) -> str:
     return _normalize_catalog_code((primary or {}).get("code"))
 
 
+def _catalog_has_code(catalog: dict[str, Any], key: str, code: str) -> bool:
+    wanted = _normalize_catalog_code(code)
+    if not wanted:
+        return False
+    for entry in catalog.get(key) or []:
+        if not isinstance(entry, dict):
+            continue
+        if _normalize_catalog_code(entry.get("code")) == wanted:
+            return True
+    return False
+
+
 def catalog_discovery_model_mapping(
+    project: str,
     result: TableInspectResult,
+    catalog: dict[str, Any] | None = None,
+    existing_metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Return model metadata assignment discovered by table-level LLM."""
     if result.status == "blocked":
         return {}
 
     layer = layer_for_model(result)
+    catalog = catalog or {}
     mapping: dict[str, Any] = {
         "table": result.table_name,
         "layer": layer,
         "table_type": result.table_type,
-        "data_domain": result.inferred_data_domain,
-        "business_area": result.inferred_business_area,
         "materialized": _materialized_for_layer(
             result.declared_layer or layer
         ),
     }
+    mapping.update(business_metadata_for_result(project, result, layer))
     if result.table_type == "dimension":
         semantic_subject = _semantic_subject_from_result(result)
-        if semantic_subject:
+        if _catalog_has_code(
+            catalog,
+            "semantic_subjects",
+            semantic_subject,
+        ):
             mapping["semantic_subject"] = semantic_subject
+        else:
+            mapping.update(
+                _existing_catalog_assignment(
+                    catalog=catalog,
+                    table_name=result.table_name,
+                    existing_metadata=existing_metadata,
+                    field="semantic_subject",
+                )
+            )
         if result.dimension_role:
             mapping["dimension_role"] = result.dimension_role
         if result.dimension_content_type:
@@ -1281,8 +1436,21 @@ def catalog_discovery_model_mapping(
 
     if result.table_type == "fact":
         processes = _business_processes_from_result(result)
-        if len(processes) == 1:
+        if len(processes) == 1 and _catalog_has_code(
+            catalog,
+            "business_processes",
+            processes[0],
+        ):
             mapping["business_process"] = processes[0]
+        else:
+            mapping.update(
+                _existing_catalog_assignment(
+                    catalog=catalog,
+                    table_name=result.table_name,
+                    existing_metadata=existing_metadata,
+                    field="business_process",
+                )
+            )
         return mapping
 
     return mapping
@@ -1318,6 +1486,10 @@ def update_model_yaml_from_catalog(
             "business_area",
             "business_process",
             "semantic_subject",
+        ):
+            if key not in previous:
+                updated.pop(key, None)
+        for key in (
             "dimension_role",
             "dimension_content_type",
         ):
@@ -1401,7 +1573,7 @@ def run_catalog_metadata_write(
     )
     if not catalog:
         raise FileNotFoundError(
-            f"未找到 warehouses/{project}/business_semantics.yaml，请先初始化目录"
+            f"未找到 {project} 业务语义目录，请先初始化三份 catalog YAML"
         )
 
     updates = []
@@ -1433,11 +1605,11 @@ def run_catalog_metadata_write(
         "project": project,
         "source": "catalog",
         "write_scope": write_scope,
-        "catalog_path": str(
-            PROJECT_ROOT
-            / PROJECT_CONFIG[project]["dir"]
-            / "business_semantics.yaml"
-        ),
+        "paths": {
+            name: str(path)
+            for name, path in business_semantics_paths(project).items()
+        },
+        "written_names": (init_result or {}).get("written_names") or [],
         "inspected_table_count": len(updates),
         "model_updates": changed_updates,
         "model_update_count": len(
@@ -1502,8 +1674,15 @@ def run_catalog_discovery(
         inspection_results=results,
     )
     model_updates = []
+    discovered_catalog = write_result.get("catalog") or {}
+    model_metadata = load_model_metadata(project)
     for result in results:
-        mapping = catalog_discovery_model_mapping(result)
+        mapping = catalog_discovery_model_mapping(
+            project,
+            result,
+            discovered_catalog,
+            model_metadata.get(result.table_name, {}),
+        )
         if not mapping:
             continue
         update = update_model_yaml_from_catalog(
@@ -1524,6 +1703,8 @@ def run_catalog_discovery(
         "project": project,
         "source": "llm_catalog_discovery",
         "path": write_result["path"],
+        "paths": write_result.get("paths") or {},
+        "written_names": write_result.get("written_names") or [],
         "changed": write_result["changed"],
         "updated": write_result["updated"],
         "catalog": write_result["catalog"],
@@ -1746,12 +1927,12 @@ def main() -> None:
     parser.add_argument(
         "--init-catalog",
         action="store_true",
-        help="按项目DDL初始化 business_semantics.yaml",
+        help="按项目DDL初始化业务语义目录",
     )
     parser.add_argument(
         "--catalog-from-llm",
         action="store_true",
-        help="调用表级 LLM 巡检结果初始化/更新 business_semantics.yaml",
+        help="调用表级 LLM 巡检结果初始化/更新业务过程和语义主题目录",
     )
     parser.add_argument(
         "--overwrite-catalog",
@@ -1761,7 +1942,7 @@ def main() -> None:
     parser.add_argument(
         "--from-catalog",
         action="store_true",
-        help="从 business_semantics.yaml 刷新/初始化 models",
+        help="从业务语义目录刷新/初始化 models",
     )
     parser.add_argument(
         "--write-scope",
@@ -1850,30 +2031,64 @@ def main() -> None:
     )
     print(f"结果已写入: {output_path}")
     if result.get("source") == "catalog":
+        paths = (
+            ", ".join(
+                str(path) for path in (result.get("paths") or {}).values()
+            )
+            or "-"
+        )
+        written_names = ", ".join(result.get("written_names") or []) or "-"
         print(
             "回写来源: catalog, "
+            "目录文件: {paths}, 本次写入目录: {written_names}, "
             "巡检表: {inspected_table_count}, "
             "模型变更: {model_change_count}, 已写入: {model_update_count}".format(
-                **result
+                paths=paths,
+                written_names=written_names,
+                inspected_table_count=result.get("inspected_table_count", 0),
+                model_change_count=result.get("model_change_count", 0),
+                model_update_count=result.get("model_update_count", 0),
             )
         )
         return
     if result.get("source") == "llm_catalog_discovery":
+        paths = (
+            ", ".join(
+                str(path) for path in (result.get("paths") or {}).values()
+            )
+            or "-"
+        )
+        written_names = ", ".join(result.get("written_names") or []) or "-"
         print(
-            "目录发现: {path}, "
+            "目录发现: {path}, 文件: {paths}, 本次写入: {written_names}, "
             "巡检表: {inspected_table_count}, "
             "业务过程: {business_process_count}, "
             "语义主题: {semantic_subject_count}, 已写入: {updated}".format(
-                **result
+                paths=paths,
+                written_names=written_names,
+                path=result.get("path"),
+                inspected_table_count=result.get("inspected_table_count", 0),
+                business_process_count=result.get("business_process_count", 0),
+                semantic_subject_count=result.get("semantic_subject_count", 0),
+                updated=result.get("updated"),
             )
         )
         return
     if "catalog" in result:
         catalog = result.get("catalog") or {}
+        paths = (
+            ", ".join(
+                str(path) for path in (result.get("paths") or {}).values()
+            )
+            or "-"
+        )
+        written_names = ", ".join(result.get("written_names") or []) or "-"
         print(
-            "目录初始化: {path}, "
+            "目录初始化: {path}, 文件: {paths}, 本次写入: {written_names}, "
             "业务过程: {process_count}, 语义主题: {subject_count}, 已写入: {updated}".format(
                 path=result.get("path"),
+                paths=paths,
+                written_names=written_names,
                 process_count=len(catalog.get("business_processes") or []),
                 subject_count=len(catalog.get("semantic_subjects") or []),
                 updated=result.get("updated"),

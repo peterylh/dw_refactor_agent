@@ -5,7 +5,10 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-from dw_refactor_agent.config import PROJECT_CONFIG
+from dw_refactor_agent.config import (
+    BUSINESS_SEMANTICS_FILE_NAMES,
+    PROJECT_CONFIG,
+)
 from dw_refactor_agent.lineage.asset_graph import build_asset_table_graph
 
 PROJECT_CONFIG_GLOBAL_DIMENSIONS = [
@@ -80,7 +83,8 @@ def _project_config_files(project_or_dir: str) -> set[str]:
     for project_dir in _project_dir_candidates(project_or_dir):
         files.add(f"{project_dir}/warehouse.yaml")
         files.add(f"{project_dir}/naming_config.yaml")
-        files.add(f"{project_dir}/business_semantics.yaml")
+        for file_name in BUSINESS_SEMANTICS_FILE_NAMES.values():
+            files.add(f"{project_dir}/{file_name}")
     return files
 
 
@@ -205,7 +209,10 @@ def build_change_analysis(
         global_dimensions.extend(PROJECT_CONFIG_GLOBAL_DIMENSIONS)
     if any(path.endswith("naming_config.yaml") for path in config_files):
         global_dimensions.append("naming")
-    if any(path.endswith("business_semantics.yaml") for path in config_files):
+    business_semantics_names = set(BUSINESS_SEMANTICS_FILE_NAMES.values())
+    if any(
+        Path(path).name in business_semantics_names for path in config_files
+    ):
         global_dimensions.extend(["metadata_health", "naming"])
     global_dimensions = sorted(set(global_dimensions))
 

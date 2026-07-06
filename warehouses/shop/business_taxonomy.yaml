@@ -1,6 +1,5 @@
 version: 1
 project: shop
-source: llm_round2
 project_context: |
   shop 是一个零售门店经营分析数据集市，覆盖订单销售、商品经营、客户复购、门店经营、库存管理和促销效果分析。
   核心维度实体包括客户、商品、门店和促销活动；订单、订单明细、库存快照和促销参与记录是主要事实来源。
@@ -41,40 +40,3 @@ business_areas:
   code: SHOP
   name: 门店零售
   description: 覆盖 shop 集市的门店零售经营、销售、库存、客户、商品和促销分析场景。
-business_processes:
-- code: INVENTORY_MANAGEMENT
-  name: 库存管理
-  data_domain: '05'
-  business_area: SHOP
-  source: llm_round2
-- code: ORDER_TRANSACTION
-  name: 订单交易
-  data_domain: '04'
-  business_area: SHOP
-  source: llm_round2
-- code: PROMOTION_EFFECT
-  name: 促销效果
-  data_domain: '06'
-  business_area: SHOP
-  source: llm_round2
-semantic_subjects:
-- code: CUST
-  name: 客户
-  data_domain: '01'
-  business_area: SHOP
-  source: llm_round2
-- code: PROD
-  name: 商品
-  data_domain: '02'
-  business_area: SHOP
-  source: llm_round2
-- code: PROMOTION
-  name: 促销活动
-  data_domain: '06'
-  business_area: SHOP
-  source: llm_round2
-- code: STORE
-  name: 门店
-  data_domain: '03'
-  business_area: SHOP
-  source: llm_round2

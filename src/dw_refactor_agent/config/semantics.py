@@ -12,7 +12,15 @@ import yaml
 
 from . import core
 
-BUSINESS_SEMANTICS_FILE_NAME = "business_semantics.yaml"
+BUSINESS_TAXONOMY_FILE_NAME = "business_taxonomy.yaml"
+BUSINESS_PROCESSES_FILE_NAME = "business_processes.yaml"
+SEMANTIC_SUBJECTS_FILE_NAME = "semantic_subjects.yaml"
+
+BUSINESS_SEMANTICS_FILE_NAMES = {
+    "taxonomy": BUSINESS_TAXONOMY_FILE_NAME,
+    "business_processes": BUSINESS_PROCESSES_FILE_NAME,
+    "semantic_subjects": SEMANTIC_SUBJECTS_FILE_NAME,
+}
 
 _business_semantics_cache = {}
 
@@ -188,37 +196,97 @@ def business_domain_config_from_dictionaries(
 ) -> Optional[BusinessDomainConfig]:
     raw_domains = (raw_dictionaries or {}).get("data_domains")
     raw_areas = (raw_dictionaries or {}).get("business_areas")
-    if not raw_domains or not raw_areas:
+    if not raw_domains and not raw_areas:
         return None
     domains = _load_domain_defs(raw_domains)
     business_areas = _load_business_area_defs(raw_areas)
-    if not domains or not business_areas:
+    if not domains and not business_areas:
         return None
     return BusinessDomainConfig(domains=domains, business_areas=business_areas)
 
 
-def business_semantics_path(project: str) -> Optional[Path]:
+def business_semantics_dir(project: str) -> Optional[Path]:
     cfg = core.PROJECT_CONFIG.get(project)
     if not cfg:
         return None
-    return core.PROJECT_ROOT / cfg["dir"] / BUSINESS_SEMANTICS_FILE_NAME
+    return core.PROJECT_ROOT / cfg["dir"]
+
+
+def business_semantics_paths(project: str) -> dict[str, Path]:
+    directory = business_semantics_dir(project)
+    if not directory:
+        return {}
+    return {
+        name: directory / file_name
+        for name, file_name in BUSINESS_SEMANTICS_FILE_NAMES.items()
+    }
+
+
+def business_taxonomy_path(project: str) -> Optional[Path]:
+    return business_semantics_paths(project).get("taxonomy")
+
+
+def business_processes_path(project: str) -> Optional[Path]:
+    return business_semantics_paths(project).get("business_processes")
+
+
+def semantic_subjects_path(project: str) -> Optional[Path]:
+    return business_semantics_paths(project).get("semantic_subjects")
+
+
+def _load_yaml_mapping(path: Path) -> dict:
+    if not path.exists():
+        return {}
+    raw = yaml.safe_load(path.read_text(encoding=core.TEXT_ENCODING)) or {}
+    return raw if isinstance(raw, dict) else {}
+
+
+def load_business_semantics_catalog_from_dir(
+    directory: Path,
+    *,
+    project: Optional[str] = None,
+) -> dict:
+    directory = Path(directory)
+    taxonomy = _load_yaml_mapping(directory / BUSINESS_TAXONOMY_FILE_NAME)
+    processes = _load_yaml_mapping(directory / BUSINESS_PROCESSES_FILE_NAME)
+    subjects = _load_yaml_mapping(directory / SEMANTIC_SUBJECTS_FILE_NAME)
+
+    if not taxonomy and not processes and not subjects:
+        return {}
+
+    catalog = {
+        "version": taxonomy.get("version")
+        or processes.get("version")
+        or subjects.get("version"),
+        "project": taxonomy.get("project")
+        or processes.get("project")
+        or subjects.get("project")
+        or project,
+        "data_domains": taxonomy.get("data_domains") or [],
+        "business_areas": taxonomy.get("business_areas") or [],
+        "business_processes": processes.get("business_processes") or [],
+        "semantic_subjects": subjects.get("semantic_subjects") or [],
+    }
+    for key in ("source", "project_context"):
+        value = taxonomy.get(key)
+        if value:
+            catalog[key] = value
+    return {key: value for key, value in catalog.items() if value is not None}
 
 
 def load_business_semantics_catalog(project: str) -> dict:
-    path = business_semantics_path(project)
-    if not path:
+    directory = business_semantics_dir(project)
+    if not directory:
         return {}
-    cache_key = f"{project}:{path}"
+    cache_key = f"{project}:{directory}"
     if cache_key in _business_semantics_cache:
         return _business_semantics_cache[cache_key]
-    if not path.exists():
-        _business_semantics_cache[cache_key] = {}
-        return {}
-    raw = yaml.safe_load(path.read_text(encoding=core.TEXT_ENCODING)) or {}
-    if not isinstance(raw, dict):
-        raw = {}
-    _business_semantics_cache[cache_key] = raw
-    return raw
+    catalog = load_business_semantics_catalog_from_dir(
+        directory,
+        project=project,
+    )
+    _business_semantics_cache[cache_key] = catalog
+    return catalog
 
 
 def business_domain_config_from_semantics_catalog(
@@ -228,7 +296,7 @@ def business_domain_config_from_semantics_catalog(
         return None
     domains = _load_domain_defs(catalog.get("data_domains"))
     business_areas = _load_business_area_defs(catalog.get("business_areas"))
-    if not domains or not business_areas:
+    if not domains and not business_areas:
         return None
     return BusinessDomainConfig(domains=domains, business_areas=business_areas)
 
@@ -237,11 +305,9 @@ def get_business_domain_config(
     project: str = None,
 ) -> Optional[BusinessDomainConfig]:
     if project:
-        catalog_config = business_domain_config_from_semantics_catalog(
+        return business_domain_config_from_semantics_catalog(
             load_business_semantics_catalog(project)
         )
-        if catalog_config:
-            return catalog_config
 
     from .naming import get_naming_config
 

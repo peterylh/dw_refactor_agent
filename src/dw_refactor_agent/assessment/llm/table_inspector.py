@@ -247,12 +247,11 @@ def build_prompt(ctx: TableContext) -> str:
 
 """
     else:
-        prompt += """## 数据域与业务板块候选
-未提供数据域与业务板块字典，本轮允许进行轻量发现:
+        prompt += """## 数据域与业务板块字典
+未提供数据域与业务板块字典，本轮不进行数据域或业务板块发现:
 - 数据域只适用于 DWD 层。当前表若不是 DWD，inferred_data_domain 必须返回空字符串。
 - 业务板块只适用于 DWD 和 DWS 层。当前表若不是 DWD/DWS，inferred_business_area 必须返回空字符串。
-- 若当前表语义明确，可以返回新的大写下划线候选 code；不确定时返回空字符串。
-- 候选 code 应表达业务域或板块语义，不要照抄表名，不要填管理/运营这类泛化词。
+- 未提供已确认字典时，inferred_data_domain 和 inferred_business_area 都必须返回空字符串。
 
 """
     if ctx.business_semantics_options:
@@ -292,8 +291,8 @@ def build_prompt(ctx: TableContext) -> str:
 {{
   "inferred_layer": "ODS|DWD|DWS|ADS|DIM|OTHER",
   "table_type": "dimension|fact|other",
-  "inferred_data_domain": "已确认数据域编号或新的大写下划线候选 code；不适用或不确定时为空字符串",
-  "inferred_business_area": "已确认业务板块简写或新的大写下划线候选 code；不适用或不确定时为空字符串",
+  "inferred_data_domain": "已确认数据域编号；未提供字典、不适用或不确定时为空字符串",
+  "inferred_business_area": "已确认业务板块简写；未提供字典、不适用或不确定时为空字符串",
   "dimension_role": "BASE|ADDT",
   "dimension_content_type": "INFO|TAG|TREE",
   "entities": [

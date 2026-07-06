@@ -322,19 +322,24 @@ python -m dw_refactor_agent.assessment.assess_middle_layer --llm --no-cache
 
 ### 业务语义目录与 models 初始化
 
-业务语义目录默认放在项目目录下：
+业务语义目录默认拆分放在项目目录下：
 
-- `warehouses/shop/business_semantics.yaml`
-- `warehouses/finance_analytics/business_semantics.yaml`
+- `warehouses/{project}/business_taxonomy.yaml`
+- `warehouses/{project}/business_processes.yaml`
+- `warehouses/{project}/semantic_subjects.yaml`
 
 目录包含：
 
-- `data_domains`：数据域，通常数量较少，建议人工稳定维护
-- `business_areas`：业务板块
-- `business_processes`：事实表/汇总事实表对应的可度量业务过程
-- `semantic_subjects`：维度/实体属性表的语义主题，通常对应维表主实体
+- `business_taxonomy.yaml` 中的 `data_domains`：数据域，通常数量较少，建议人工稳定维护
+- `business_taxonomy.yaml` 中的 `business_areas`：业务板块，建议人工稳定维护
+- `business_processes.yaml` 中的 `business_processes`：事实表/汇总事实表对应的可度量业务过程
+- `semantic_subjects.yaml` 中的 `semantic_subjects`：维度/实体属性表的语义主题，通常对应维表主实体
 
-无 LLM 初始化只生成目录骨架和可用字典，不再根据表名硬猜业务过程：
+无 LLM 初始化只生成目录骨架和可用字典，不再根据表名硬猜业务过程。若项目目录仍有旧版
+`business_semantics.yaml`，初始化会将其作为迁移来源，并在非 dry-run 写入完成后删除旧文件；partial-split
+时只回填缺失的拆分文件，已存在 `business_taxonomy.yaml` 的 taxonomy 段和 `project_context` 不会被旧文件覆盖或合并。
+
+命令示例：
 
 ```bash
 python -m dw_refactor_agent.assessment.business_semantics_catalog --project shop --dry-run
@@ -357,8 +362,8 @@ python -m dw_refactor_agent.assessment.llm.model_metadata_writer --project shop 
 
 LLM 目录发现会先做表级巡检，再将 fact 表指标字段中的
 `business_process` 聚类为 `business_processes`，将 dimension 表主实体聚类为
-`semantic_subjects`。未提供数据域/业务板块字典时，LLM 可以生成候选 code，
-后续由用户在 catalog 中人工修订。表级归属会写入模型 YAML，
+`semantic_subjects`。数据域/业务板块只从人工 taxonomy 读取；未命中时不写入
+人工主数据。表级归属会写入模型 YAML，
 catalog 不长期维护 `tables`。
 
 从已确认 catalog 初始化或刷新 models：
@@ -373,9 +378,10 @@ python -m dw_refactor_agent.assessment.llm.model_metadata_writer --project shop 
 
 - 缺失的 model 文件会被创建
 - 写入或刷新 `version`、`name`、`layer`、`table_type`、`config.materialized`
-- 对已有 `business_process` 的 DWD fact，从 catalog 补齐 `data_domain`
-- 对已有 `business_process` 的 DWD/DWS fact，从 catalog 补齐 `business_area`
-- 对已有 `semantic_subject` 的 dimension 表，保留 subject code，并移除不适用的 `business_process`
+- 对 catalog 中存在的已有 `business_process`，从 catalog 补齐适用的 `data_domain` / `business_area`
+- 对 catalog 中存在的已有 `semantic_subject`，保留 subject code，并移除不适用或 stale 的 `business_process`
+- 清理 stale `business_process` / `semantic_subject` 时，保留仍在 taxonomy 中的已有 `data_domain` / `business_area`
+- 对还没有 `business_process` / `semantic_subject` 归属的模型，保留仍在 taxonomy 中的已有 `data_domain` / `business_area`
 
 这个命令不会识别指标、不会刷新 entities/grain，不会根据 catalog 反向给表分配业务过程，也不会改 DDL、任务 SQL、表名或文件名。LLM 目录发现阶段识别出的表归属会直接写入 models，而不是长期写在 catalog 中。
 

@@ -1,0 +1,23 @@
+version: 1
+project: shop
+semantic_subjects:
+- code: CUST
+  name: 客户
+  data_domain: '01'
+  business_area: SHOP
+  source: llm_round2
+- code: PROD
+  name: 商品
+  data_domain: '02'
+  business_area: SHOP
+  source: llm_round2
+- code: PROMOTION
+  name: 促销活动
+  data_domain: '06'
+  business_area: SHOP
+  source: llm_round2
+- code: STORE
+  name: 门店
+  data_domain: '03'
+  business_area: SHOP
+  source: llm_round2

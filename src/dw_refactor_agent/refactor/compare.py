@@ -50,7 +50,7 @@ def _exclude_columns_for_check(check: dict) -> list[str]:
 
 def _row_compare_columns(
     all_cols: list[str], check: dict
-) -> tuple[list, list]:
+) -> tuple[list[str], list[str]]:
     excluded = {
         column.casefold() for column in _exclude_columns_for_check(check)
     }

@@ -24,9 +24,7 @@ from dw_refactor_agent.config import (  # noqa: E402
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="初始化项目 business_semantics.yaml 业务语义目录"
-    )
+    parser = argparse.ArgumentParser(description="初始化项目业务语义目录")
     parser.add_argument(
         "--project",
         default="shop",
@@ -36,7 +34,7 @@ def main() -> None:
     parser.add_argument(
         "--overwrite",
         action="store_true",
-        help="覆盖已存在的 business_semantics.yaml",
+        help="覆盖已存在的业务语义目录文件",
     )
     parser.add_argument(
         "--llm",
@@ -98,10 +96,16 @@ def main() -> None:
             encoding=TEXT_ENCODING,
         )
     catalog = result.get("catalog") or {}
+    written_names = ", ".join(result.get("written_names") or []) or "-"
     print(
-        "目录: {path}, 来源: {source}, 业务过程: {process_count}, "
-        "语义主题: {subject_count}, 已写入: {updated}".format(
+        "目录: {path}, 文件: {paths}, 本次写入: {written_names}, 来源: {source}, 业务过程: "
+        "{process_count}, 语义主题: {subject_count}, 已写入: {updated}".format(
             path=result["path"],
+            paths=", ".join(
+                str(path) for path in (result.get("paths") or {}).values()
+            )
+            or "-",
+            written_names=written_names,
             source=result.get("source", "programmatic"),
             process_count=len(catalog.get("business_processes") or []),
             subject_count=len(catalog.get("semantic_subjects") or []),
