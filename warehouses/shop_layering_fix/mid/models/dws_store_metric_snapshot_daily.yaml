@@ -1,0 +1,28 @@
+version: 2
+name: dws_store_metric_snapshot_daily
+layer: DWS
+table_type: fact
+business_area: SHOP
+description: 门店日指标快照，补充门店名称与订单数指标
+config:
+  materialized: snapshot
+derived_metrics:
+- name: store_order_count
+  base_metric: order_count
+  base_metric_table: dws_store_sales_daily
+  time_period: D
+  expression: order_count
+  aggregation: SUM
+grain:
+  entities:
+  - STORE
+  time_column: stat_date
+  time_period: D
+entities:
+- code: STORE
+  type: foreign
+  name: 门店
+  key_columns:
+  - store_id
+business_process: ORDER_TRANSACTION
+data_domain: '03'

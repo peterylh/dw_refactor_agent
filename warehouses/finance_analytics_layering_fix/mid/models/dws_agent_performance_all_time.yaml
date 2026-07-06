@@ -1,0 +1,41 @@
+version: 2
+name: dws_agent_performance_all_time
+layer: DWS
+table_type: fact
+description: 坐席全历史累计绩效汇总，as_of_date 表示来源交互数据截至日期
+config:
+  materialized: full
+entities:
+- code: AGENT
+  type: primary
+  name: 坐席
+  key_columns:
+  - agent_key
+business_area: CLNT
+atomic_metrics:
+- total_interactions
+derived_metrics:
+- name: avg_interaction_duration
+  base_metric: duration_minutes
+  base_metric_table: dwd_customer_interactions
+  expression: AVG(duration_minutes)
+  aggregation: AVG
+- name: avg_satisfaction_rating
+  base_metric: satisfaction_rating
+  base_metric_table: dwd_customer_interactions
+  expression: AVG(satisfaction_rating)
+  aggregation: AVG
+- name: avg_sentiment_score
+  base_metric: sentiment_score
+  base_metric_table: dwd_customer_interactions
+  expression: AVG(sentiment_score)
+  aggregation: AVG
+calculated_metrics:
+- resolution_rate
+- escalation_rate
+grain:
+  entities:
+  - AGENT
+  time_column: as_of_date
+  time_period: S
+  cumulative: true

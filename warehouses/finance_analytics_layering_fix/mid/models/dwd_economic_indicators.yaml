@@ -1,0 +1,12 @@
+version: 2
+name: dwd_economic_indicators
+layer: DWD
+table_type: other
+config:
+  materialized: full
+entities:
+- code: DATE
+  type: primary
+  name: 日期
+  key_columns:
+  - date

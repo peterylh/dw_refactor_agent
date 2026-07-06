@@ -1,0 +1,12 @@
+version: 2
+name: dwd_products
+layer: DWD
+table_type: other
+config:
+  materialized: full
+entities:
+- code: PROD
+  type: primary
+  name: 产品
+  key_columns:
+  - product_id

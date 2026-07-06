@@ -1,0 +1,42 @@
+version: 1
+project: shop_layering_fix
+project_context: |
+  shop 是一个零售门店经营分析数据集市，覆盖订单销售、商品经营、客户复购、门店经营、库存管理和促销效果分析。
+  核心维度实体包括客户、商品、门店和促销活动；订单、订单明细、库存快照和促销参与记录是主要事实来源。
+  订单交易是销售分析的核心业务过程，库存管理和促销效果是围绕商品与门店经营的辅助业务过程。
+  DWD 层应保留交易、库存、活动等明细粒度，DWS 层沉淀按日期、商品、门店、客户或促销活动汇总的可复用指标。
+  销售额、订单数、销售件数、折扣金额、库存数量和毛利等通常是基础或可汇总指标；客单价、复购率、动销率、转化率等通常是基于基础指标计算得到的衍生指标。
+data_domains:
+- id: '01'
+  code: CUST
+  name: 客户域
+  description: 客户资料、会员画像、客户分层、客户订单偏好等数据。
+- id: '02'
+  code: PROD
+  name: 商品域
+  description: 商品、品类、品牌、价格、成本、上下架和商品属性等数据。
+- id: '03'
+  code: STOR
+  name: 门店域
+  description: 门店基础信息、区域、等级、营业状态和门店经营属性等数据。
+- id: '04'
+  code: ORDR
+  name: 订单交易域
+  description: 订单、订单明细、销售交易、支付金额、折扣和毛利等数据。
+- id: '05'
+  code: INVT
+  name: 库存域
+  description: 库存数量、库存快照、补货时间、缺货和库存状态等数据。
+- id: '06'
+  code: PROM
+  name: 促销域
+  description: 促销活动、活动类型、优惠规则、促销商品和活动效果等数据。
+- id: '99'
+  code: OTHR
+  name: 其它
+  description: 无法明确归属到上述数据域，或模型核心内容跨域且无明显主归属时使用。
+business_areas:
+- id: '01'
+  code: SHOP
+  name: 门店零售
+  description: 覆盖 shop 集市的门店零售经营、销售、库存、客户、商品和促销分析场景。

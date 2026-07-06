@@ -1,0 +1,16 @@
+version: 2
+name: dim_promotion
+layer: DIM
+table_type: dimension
+description: 促销活动每日快照
+config:
+  materialized: snapshot
+entities:
+- code: PROMOTION
+  type: primary
+  name: 促销活动
+  key_columns:
+  - promotion_id
+semantic_subject: PROMOTION
+dimension_role: BASE
+dimension_content_type: INFO

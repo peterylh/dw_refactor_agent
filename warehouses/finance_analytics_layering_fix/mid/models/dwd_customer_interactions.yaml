@@ -1,0 +1,28 @@
+version: 2
+name: dwd_customer_interactions
+layer: DWD
+table_type: fact
+config:
+  materialized: full
+atomic_metrics:
+- duration_minutes
+data_domain: '01'
+business_area: CLNT
+entities:
+- code: ICTN
+  type: foreign
+  name: 交互事件
+  key_columns:
+  - interaction_id
+- code: CUST
+  type: foreign
+  name: 客户
+  key_columns:
+  - customer_id
+- code: AGNT
+  type: foreign
+  name: 坐席
+  key_columns:
+  - agent_id
+calculated_metrics:
+- sentiment_score

@@ -1,0 +1,41 @@
+version: 2
+name: dws_product_sales_daily
+layer: DWS
+table_type: fact
+business_area: SHOP
+description: 商品日销售汇总
+config:
+  materialized: incremental
+atomic_metrics:
+- order_count
+derived_metrics:
+- name: sale_quantity
+  base_metric: quantity
+  base_metric_table: dwd_order_detail
+  time_period: D
+  expression: SUM(quantity)
+  aggregation: SUM
+- name: sale_amount
+  base_metric: subtotal
+  base_metric_table: dwd_order_detail
+  time_period: D
+  expression: SUM(subtotal)
+  aggregation: SUM
+- name: discount_amount
+  base_metric: discount
+  base_metric_table: dwd_order_detail
+  time_period: D
+  expression: SUM(discount)
+  aggregation: SUM
+grain:
+  entities:
+  - PROD
+  time_column: stat_date
+  time_period: D
+entities:
+- code: PROD
+  type: foreign
+  name: 商品
+  key_columns:
+  - product_id
+business_process: ORDER_TRANSACTION

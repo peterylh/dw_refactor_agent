@@ -1,0 +1,6 @@
+version: 2
+name: ods_risk_assessments
+layer: ODS
+table_type: other
+config:
+  materialized: source

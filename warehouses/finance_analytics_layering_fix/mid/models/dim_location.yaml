@@ -1,0 +1,14 @@
+version: 2
+name: dim_location
+layer: DIM
+table_type: dimension
+config:
+  materialized: full
+entities:
+- code: LOC
+  type: primary
+  name: 位置
+  key_columns:
+  - location_key
+dimension_role: BASE
+dimension_content_type: INFO

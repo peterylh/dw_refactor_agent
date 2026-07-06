@@ -1,0 +1,29 @@
+version: 2
+name: dwd_risk_assessments
+layer: DWD
+table_type: fact
+config:
+  materialized: full
+calculated_metrics:
+- risk_score
+- credit_risk
+- fraud_risk
+- aml_risk
+data_domain: 09
+business_area: LOAN
+entities:
+- code: ASSESSMENT
+  type: foreign
+  name: 风险评估
+  key_columns:
+  - assessment_id
+- code: CUSTOMER
+  type: foreign
+  name: 客户
+  key_columns:
+  - customer_id
+- code: ASSESSOR
+  type: foreign
+  name: 评估人
+  key_columns:
+  - assessor_id

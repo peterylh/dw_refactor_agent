@@ -1,0 +1,16 @@
+version: 2
+name: dim_customer
+layer: DIM
+table_type: dimension
+description: 客户每日快照
+config:
+  materialized: snapshot
+entities:
+- code: CUST
+  type: primary
+  name: 客户
+  key_columns:
+  - customer_id
+semantic_subject: CUST
+dimension_role: BASE
+dimension_content_type: INFO

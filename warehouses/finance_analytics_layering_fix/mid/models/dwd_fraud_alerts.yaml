@@ -1,0 +1,34 @@
+version: 2
+name: dwd_fraud_alerts
+layer: DWD
+table_type: fact
+config:
+  materialized: full
+atomic_metrics:
+- amount_recovered
+- recovered_amount
+calculated_metrics:
+- resolution_days
+data_domain: 09
+business_area: PAYM
+entities:
+- code: ALERT
+  type: foreign
+  name: 欺诈告警
+  key_columns:
+  - alert_id
+- code: TRAN
+  type: foreign
+  name: 交易
+  key_columns:
+  - transaction_id
+- code: CUST
+  type: foreign
+  name: 客户
+  key_columns:
+  - customer_id
+- code: ACCT
+  type: foreign
+  name: 账户
+  key_columns:
+  - account_id

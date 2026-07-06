@@ -1,0 +1,30 @@
+version: 2
+name: dwd_credit_applications
+layer: DWD
+table_type: fact
+config:
+  materialized: full
+atomic_metrics:
+- requested_amount
+- approved_amount
+calculated_metrics:
+- processing_days
+- amount_difference
+data_domain: 09
+business_area: LOAN
+entities:
+- code: APPL
+  type: foreign
+  name: 贷款申请
+  key_columns:
+  - application_id
+- code: CUST
+  type: foreign
+  name: 客户
+  key_columns:
+  - customer_id
+- code: PROD
+  type: foreign
+  name: 金融产品
+  key_columns:
+  - product_id

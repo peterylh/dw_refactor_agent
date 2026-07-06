@@ -1,0 +1,22 @@
+version: 2
+name: dim_product
+layer: DIM
+table_type: dimension
+config:
+  materialized: full
+entities:
+- code: PROD
+  type: primary
+  name: 产品
+  key_columns:
+  - product_key
+- code: PROD_NATURAL
+  type: foreign
+  name: 产品自然键
+  key_columns:
+  - product_natural_key
+  relationship:
+    type: one_to_one
+    from_entity: PROD
+dimension_role: BASE
+dimension_content_type: INFO

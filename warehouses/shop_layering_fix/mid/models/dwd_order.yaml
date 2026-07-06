@@ -1,0 +1,24 @@
+version: 2
+name: dwd_order
+layer: DWD
+table_type: fact
+business_area: SHOP
+description: 订单头事实表，按订单粒度沉淀订单级指标
+config:
+  materialized: incremental
+atomic_metrics:
+- item_count
+- total_amount
+entities:
+- code: ORDER
+  type: primary
+  name: 订单
+  key_columns:
+  - order_id
+business_process: ORDER_TRANSACTION
+data_domain: '04'
+grain:
+  entities:
+  - ORDER
+  time_column: order_date
+  time_period: D

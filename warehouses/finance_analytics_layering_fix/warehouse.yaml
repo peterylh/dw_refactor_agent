@@ -1,0 +1,15 @@
+name: finance_analytics_layering_fix
+catalog: internal
+database: finance_analytics_layering_fix_dm
+qa_database: finance_analytics_layering_fix_dm_qa
+lineage_database: finance_analytics_layering_fix_lineage
+naming_config: naming_config.yaml
+verification:
+  default_refresh_parameter: etl_date
+  week_start: MON
+  row_compare:
+    exclude_columns:
+      - etl_time
+default_dialect: doris
+ods_source_catalog_dialects:
+  internal: doris
