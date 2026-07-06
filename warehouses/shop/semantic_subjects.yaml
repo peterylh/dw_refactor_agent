@@ -1,6 +1,5 @@
 version: 1
 project: shop
-source: llm_round2
 semantic_subjects:
 - code: CUST
   name: 客户

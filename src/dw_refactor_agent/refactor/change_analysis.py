@@ -210,7 +210,9 @@ def build_change_analysis(
     if any(path.endswith("naming_config.yaml") for path in config_files):
         global_dimensions.append("naming")
     business_semantics_names = set(BUSINESS_SEMANTICS_FILE_NAMES.values())
-    if any(Path(path).name in business_semantics_names for path in config_files):
+    if any(
+        Path(path).name in business_semantics_names for path in config_files
+    ):
         global_dimensions.extend(["metadata_health", "naming"])
     global_dimensions = sorted(set(global_dimensions))
 

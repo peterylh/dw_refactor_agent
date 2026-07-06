@@ -35,6 +35,7 @@ FULL_CHANGE_TYPES_BY_DIMENSION = {
     "code_quality": {"warehouse_config"},
 }
 
+
 def _sorted(values) -> list[str]:
     return sorted(str(value) for value in values if str(value or "").strip())
 

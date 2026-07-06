@@ -645,11 +645,7 @@ def _existing_data_domain_for_write(
     if not business_config:
         return ""
     normalized = business_config.normalize_domain(value)
-    return (
-        normalized
-        if business_config.is_valid_domain(normalized)
-        else ""
-    )
+    return normalized if business_config.is_valid_domain(normalized) else ""
 
 
 def _existing_business_area_for_write(
@@ -1040,16 +1036,10 @@ def update_model_yaml(
                 result,
                 applied_layer,
             )
-        has_inferred_data_domain = bool(
-            str(result.inferred_data_domain or "").strip()
-        )
-        has_inferred_business_area = bool(
-            str(result.inferred_business_area or "").strip()
-        )
         if applied_layer in DATA_DOMAIN_LAYERS:
             if "data_domain" in business_metadata:
                 updated["data_domain"] = business_metadata["data_domain"]
-            elif business_config and not has_inferred_data_domain:
+            elif business_config:
                 existing_data_domain = _existing_data_domain_for_write(
                     business_config,
                     updated.get("data_domain"),
@@ -1058,14 +1048,14 @@ def update_model_yaml(
                     updated["data_domain"] = existing_data_domain
                 else:
                     updated.pop("data_domain", None)
-            elif not business_config or has_inferred_data_domain:
+            else:
                 updated.pop("data_domain", None)
         else:
             updated.pop("data_domain", None)
         if applied_layer in BUSINESS_AREA_LAYERS:
             if "business_area" in business_metadata:
                 updated["business_area"] = business_metadata["business_area"]
-            elif business_config and not has_inferred_business_area:
+            elif business_config:
                 existing_business_area = _existing_business_area_for_write(
                     business_config,
                     updated.get("business_area"),
@@ -1074,7 +1064,7 @@ def update_model_yaml(
                     updated["business_area"] = existing_business_area
                 else:
                     updated.pop("business_area", None)
-            elif not business_config or has_inferred_business_area:
+            else:
                 updated.pop("business_area", None)
         else:
             updated.pop("business_area", None)
@@ -2041,9 +2031,12 @@ def main() -> None:
     )
     print(f"结果已写入: {output_path}")
     if result.get("source") == "catalog":
-        paths = ", ".join(
-            str(path) for path in (result.get("paths") or {}).values()
-        ) or "-"
+        paths = (
+            ", ".join(
+                str(path) for path in (result.get("paths") or {}).values()
+            )
+            or "-"
+        )
         written_names = ", ".join(result.get("written_names") or []) or "-"
         print(
             "回写来源: catalog, "
@@ -2059,9 +2052,12 @@ def main() -> None:
         )
         return
     if result.get("source") == "llm_catalog_discovery":
-        paths = ", ".join(
-            str(path) for path in (result.get("paths") or {}).values()
-        ) or "-"
+        paths = (
+            ", ".join(
+                str(path) for path in (result.get("paths") or {}).values()
+            )
+            or "-"
+        )
         written_names = ", ".join(result.get("written_names") or []) or "-"
         print(
             "目录发现: {path}, 文件: {paths}, 本次写入: {written_names}, "
@@ -2072,21 +2068,20 @@ def main() -> None:
                 written_names=written_names,
                 path=result.get("path"),
                 inspected_table_count=result.get("inspected_table_count", 0),
-                business_process_count=result.get(
-                    "business_process_count", 0
-                ),
-                semantic_subject_count=result.get(
-                    "semantic_subject_count", 0
-                ),
+                business_process_count=result.get("business_process_count", 0),
+                semantic_subject_count=result.get("semantic_subject_count", 0),
                 updated=result.get("updated"),
             )
         )
         return
     if "catalog" in result:
         catalog = result.get("catalog") or {}
-        paths = ", ".join(
-            str(path) for path in (result.get("paths") or {}).values()
-        ) or "-"
+        paths = (
+            ", ".join(
+                str(path) for path in (result.get("paths") or {}).values()
+            )
+            or "-"
+        )
         written_names = ", ".join(result.get("written_names") or []) or "-"
         print(
             "目录初始化: {path}, 文件: {paths}, 本次写入: {written_names}, "

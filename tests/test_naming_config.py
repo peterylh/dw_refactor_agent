@@ -1532,9 +1532,7 @@ class TestGetNamingConfigByProject:
         nc = load_naming_config(
             cfg_path,
             extra_dictionaries={
-                "source_systems": {
-                    "values": [{"code": "ERP", "name": "ERP"}]
-                },
+                "source_systems": {"values": [{"code": "ERP", "name": "ERP"}]},
                 "data_domains": {
                     "values": [{"id": "04", "code": "TRAN", "name": "交易域"}]
                 },

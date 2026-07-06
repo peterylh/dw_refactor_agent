@@ -102,9 +102,7 @@ def _write_split_catalog(project_dir, project, catalog):
             {
                 "version": catalog.get("version", 1),
                 "project": project,
-                "business_processes": catalog.get(
-                    "business_processes", []
-                ),
+                "business_processes": catalog.get("business_processes", []),
             },
             allow_unicode=True,
             sort_keys=False,
@@ -135,9 +133,18 @@ def test_business_semantics_catalog_defaults_to_project_dir(
     catalog_dir = tmp_path / project
     paths = business_semantics_paths(project)
     assert business_semantics_dir(project) == catalog_dir
-    assert business_taxonomy_path(project) == catalog_dir / "business_taxonomy.yaml"
-    assert business_processes_path(project) == catalog_dir / "business_processes.yaml"
-    assert semantic_subjects_path(project) == catalog_dir / "semantic_subjects.yaml"
+    assert (
+        business_taxonomy_path(project)
+        == catalog_dir / "business_taxonomy.yaml"
+    )
+    assert (
+        business_processes_path(project)
+        == catalog_dir / "business_processes.yaml"
+    )
+    assert (
+        semantic_subjects_path(project)
+        == catalog_dir / "semantic_subjects.yaml"
+    )
     assert result["path"] == str(catalog_dir)
     assert paths["taxonomy"].exists()
     assert paths["business_processes"].exists()
@@ -212,18 +219,12 @@ def test_write_initial_catalog_overwrite_keeps_project_context(
             "version": 1,
             "source": "manual",
             "project_context": "人工维护的业务背景",
-            "data_domains": [
-                {"id": "04", "code": "TRAN", "name": "交易域"}
-            ],
+            "data_domains": [{"id": "04", "code": "TRAN", "name": "交易域"}],
             "business_areas": [
                 {"id": "SHOP", "code": "SHOP", "name": "零售业务"}
             ],
-            "business_processes": [
-                {"code": "OLD_PROCESS", "name": "旧过程"}
-            ],
-            "semantic_subjects": [
-                {"code": "OLD_SUBJECT", "name": "旧主题"}
-            ],
+            "business_processes": [{"code": "OLD_PROCESS", "name": "旧过程"}],
+            "semantic_subjects": [{"code": "OLD_SUBJECT", "name": "旧主题"}],
         },
     )
 
@@ -486,9 +487,7 @@ def _write_legacy_business_semantics_file(
                 "business_processes": [
                     {"code": "ORDER_DETAIL", "name": "订单明细"}
                 ],
-                "semantic_subjects": [
-                    {"code": "CUSTOMER", "name": "客户"}
-                ],
+                "semantic_subjects": [{"code": "CUSTOMER", "name": "客户"}],
             },
             allow_unicode=True,
             sort_keys=False,

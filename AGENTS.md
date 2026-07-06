@@ -335,7 +335,11 @@ python -m dw_refactor_agent.assessment.assess_middle_layer --llm --no-cache
 - `business_processes.yaml` 中的 `business_processes`：事实表/汇总事实表对应的可度量业务过程
 - `semantic_subjects.yaml` 中的 `semantic_subjects`：维度/实体属性表的语义主题，通常对应维表主实体
 
-无 LLM 初始化只生成目录骨架和可用字典，不再根据表名硬猜业务过程：
+无 LLM 初始化只生成目录骨架和可用字典，不再根据表名硬猜业务过程。若项目目录仍有旧版
+`business_semantics.yaml`，初始化会将其作为迁移来源，并在非 dry-run 写入完成后删除旧文件；partial-split
+时只回填缺失的拆分文件，已存在 `business_taxonomy.yaml` 的 taxonomy 段和 `project_context` 不会被旧文件覆盖或合并。
+
+命令示例：
 
 ```bash
 python -m dw_refactor_agent.assessment.business_semantics_catalog --project shop --dry-run
@@ -376,6 +380,7 @@ python -m dw_refactor_agent.assessment.llm.model_metadata_writer --project shop 
 - 写入或刷新 `version`、`name`、`layer`、`table_type`、`config.materialized`
 - 对 catalog 中存在的已有 `business_process`，从 catalog 补齐适用的 `data_domain` / `business_area`
 - 对 catalog 中存在的已有 `semantic_subject`，保留 subject code，并移除不适用或 stale 的 `business_process`
+- 清理 stale `business_process` / `semantic_subject` 时，保留仍在 taxonomy 中的已有 `data_domain` / `business_area`
 - 对还没有 `business_process` / `semantic_subject` 归属的模型，保留仍在 taxonomy 中的已有 `data_domain` / `business_area`
 
 这个命令不会识别指标、不会刷新 entities/grain，不会根据 catalog 反向给表分配业务过程，也不会改 DDL、任务 SQL、表名或文件名。LLM 目录发现阶段识别出的表归属会直接写入 models，而不是长期写在 catalog 中。

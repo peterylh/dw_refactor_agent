@@ -27,6 +27,9 @@ python -m dw_refactor_agent.lineage.lineage_extractor --project shop
 
 无 LLM 的初始化只创建目录骨架，并仅从已有 `business_taxonomy.yaml` 保留数据域、业务板块字典；不会再从 `naming_config.yaml` 合并这些主数据，也不会再根据表名硬猜业务过程。
 
+如果项目目录仍有旧版 `business_semantics.yaml`，初始化会把它作为迁移来源，并在非 dry-run 写入完成后删除旧文件。partial-split
+场景下只回填缺失的拆分文件；已存在的 `business_taxonomy.yaml` 为准，旧文件中的 taxonomy 段和 `project_context` 不会覆盖或合并进去。
+
 ```bash
 python -m dw_refactor_agent.assessment.business_semantics_catalog --project shop --dry-run
 python -m dw_refactor_agent.assessment.business_semantics_catalog --project shop
@@ -86,6 +89,7 @@ python -m dw_refactor_agent.assessment.llm.model_metadata_writer --project shop 
 - 对 DWD/DWS 写入 `business_area`。
 - 对 fact 表保留 catalog 中存在的已有 `business_process`，并清理 stale code。
 - 对 dimension 表保留 catalog 中存在的已有 `semantic_subject`，并移除不适用或 stale 的 `business_process`。
+- 清理 stale `business_process` / `semantic_subject` 时，保留仍在 taxonomy 中的已有 `data_domain` / `business_area`。
 - 对还没有 `business_process` / `semantic_subject` 归属的模型，保留仍在 taxonomy 中的已有 `data_domain` / `business_area`。
 
 它不会识别指标，不会重算 entities/grain，不会根据 catalog 反向给表分配业务过程，也不会改 DDL、任务 SQL、表名或文件名。

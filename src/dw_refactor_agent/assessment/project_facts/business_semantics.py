@@ -311,7 +311,9 @@ def _dictionary_value(
         }
         if not candidates & ids:
             continue
-        selected = entry.get(value_field) or entry.get("id") or entry.get("code")
+        selected = (
+            entry.get(value_field) or entry.get("id") or entry.get("code")
+        )
         return str(selected or "").strip()
     return ""
 
@@ -481,9 +483,7 @@ def _split_catalog_payloads(
     taxonomy["business_areas"] = catalog.get("business_areas") or []
 
     processes = _base_catalog_file_payload(catalog)
-    processes["business_processes"] = (
-        catalog.get("business_processes") or []
-    )
+    processes["business_processes"] = catalog.get("business_processes") or []
 
     subjects = _base_catalog_file_payload(catalog)
     subjects["semantic_subjects"] = catalog.get("semantic_subjects") or []
@@ -589,7 +589,9 @@ def write_initial_business_semantics_catalog(
     )
     payloads = _split_catalog_payloads(candidate_catalog)
     legacy_path = directory / LEGACY_BUSINESS_SEMANTICS_FILE_NAME
-    legacy_paths_to_remove = [str(legacy_path)] if legacy_path.is_file() else []
+    legacy_paths_to_remove = (
+        [str(legacy_path)] if legacy_path.is_file() else []
+    )
     removed_legacy_paths: list[str] = []
     changed = bool(write_names or legacy_paths_to_remove)
     if changed and not dry_run:
@@ -735,7 +737,11 @@ def catalog_mapping_for_model(
             semantic_subject,
         )
         if not subject:
-            return {"table": short_name}
+            mapping = {"table": short_name}
+            mapping.update(
+                _existing_catalog_taxonomy_metadata(catalog, metadata)
+            )
+            return mapping
         mapping = {
             "table": short_name,
             "layer": layer,
@@ -755,7 +761,11 @@ def catalog_mapping_for_model(
             business_process,
         )
         if not process:
-            return {"table": short_name}
+            mapping = {"table": short_name}
+            mapping.update(
+                _existing_catalog_taxonomy_metadata(catalog, metadata)
+            )
+            return mapping
         mapping = {
             "table": short_name,
             "layer": layer,

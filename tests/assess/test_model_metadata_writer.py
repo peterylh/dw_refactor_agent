@@ -75,9 +75,7 @@ def _write_split_catalog(project_dir, project, catalog):
             {
                 "version": catalog.get("version", 1),
                 "project": project,
-                "business_processes": catalog.get(
-                    "business_processes", []
-                ),
+                "business_processes": catalog.get("business_processes", []),
             },
             allow_unicode=True,
             sort_keys=False,
@@ -481,7 +479,7 @@ def test_update_model_yaml_table_metadata_scenarios(
         _assert_update_model_yaml_keeps_existing_applicable_business_metadata,
         _assert_update_model_yaml_removes_existing_business_metadata_not_in_taxonomy,
         _assert_update_model_yaml_removes_business_metadata_without_taxonomy,
-        _assert_update_model_yaml_removes_invalid_business_metadata,
+        _assert_update_model_yaml_keeps_existing_business_metadata_when_inferred_code_invalid,
         _assert_update_model_yaml_forces_dimension_layer_and_warns,
         _assert_update_model_yaml_dry_run_reports_metadata_change,
     ]
@@ -1024,18 +1022,55 @@ def _assert_update_model_yaml_removes_business_metadata_without_taxonomy(
     )
 
 
-def _assert_update_model_yaml_removes_invalid_business_metadata(
+def _assert_update_model_yaml_keeps_existing_business_metadata_when_inferred_code_invalid(
     tmp_path, monkeypatch
 ):
-    _assert_update_model_yaml_removes_business_metadata(
-        tmp_path,
-        monkeypatch,
-        {"data_domain": "04", "business_area": "PAYM"},
-        result_overrides={
-            "inferred_data_domain": "UNKNOWN",
-            "inferred_business_area": "BAD",
-        },
+    import dw_refactor_agent.assessment.llm.model_metadata_writer as writer_module
+
+    project_root = tmp_path
+    models_dir = project_root / "demo" / "mid" / "models"
+    models_dir.mkdir(parents=True)
+    model_path = models_dir / "dwd_order_detail.yaml"
+    model_path.write_text(
+        yaml.safe_dump(
+            {
+                "version": 2,
+                "name": "dwd_order_detail",
+                "layer": "DWD",
+                "table_type": "fact",
+                "data_domain": "04",
+                "business_area": "PAYM",
+            },
+            allow_unicode=True,
+            sort_keys=False,
+        ),
+        encoding="utf-8",
     )
+    monkeypatch.setattr(writer_module, "PROJECT_ROOT", project_root)
+    monkeypatch.setitem(writer_module.PROJECT_CONFIG, "demo", {"dir": "demo"})
+    monkeypatch.setattr(
+        writer_module,
+        "get_business_domain_config",
+        lambda project: _business_domain_config(),
+    )
+    result = TableInspectResult(
+        table_name="dwd_order_detail",
+        declared_layer="DWD",
+        inferred_layer="DWD",
+        table_type="fact",
+        confidence=0.9,
+        reasoning_steps=[],
+        inferred_data_domain="UNKNOWN",
+        inferred_business_area="BAD",
+    )
+
+    update = update_model_yaml("demo", result)
+    saved = yaml.safe_load(model_path.read_text(encoding="utf-8"))
+
+    assert update["data_domain"] == "04"
+    assert update["business_area"] == "PAYM"
+    assert saved["data_domain"] == "04"
+    assert saved["business_area"] == "PAYM"
 
 
 def _assert_update_model_yaml_forces_dimension_layer_and_warns(
@@ -3166,8 +3201,10 @@ def test_run_catalog_metadata_write_removes_stale_business_codes(
             "dim_customer": {
                 "version": 2,
                 "name": "dim_customer",
-                "layer": "DIM",
+                "layer": "DWD",
                 "table_type": "dimension",
+                "data_domain": "04",
+                "business_area": "SHOP",
                 "semantic_subject": "STALE_SUBJECT",
                 "business_process": "STALE_PROCESS",
             },
@@ -3186,10 +3223,12 @@ def test_run_catalog_metadata_write_removes_stale_business_codes(
         (models_dir / "dim_customer.yaml").read_text(encoding="utf-8")
     )
     assert result["model_update_count"] == 2
-    assert "data_domain" not in fact_model
-    assert "business_area" not in fact_model
+    assert fact_model["data_domain"] == "04"
+    assert fact_model["business_area"] == "SHOP"
     assert "business_process" not in fact_model
     assert "semantic_subject" not in fact_model
+    assert dim_model["data_domain"] == "04"
+    assert dim_model["business_area"] == "SHOP"
     assert "business_process" not in dim_model
     assert "semantic_subject" not in dim_model
 
