@@ -7,6 +7,7 @@ from dw_refactor_agent.assessment.project_facts.asset_catalog import (
 from dw_refactor_agent.assessment.rules.dimensions.task_sql_quality import (
     score_code_quality,
 )
+from dw_refactor_agent.config import PROJECT_CONFIG, PROJECT_ROOT
 
 
 def _catalog_for_task(tmp_path, task_name, sql):
@@ -73,6 +74,42 @@ def _catalog_for_tasks_and_ddl(tmp_path, task_sql_by_name, ddl_files=None):
 
 def _issue_rule_ids(result):
     return {issue["rule_id"] for issue in result["issues"]}
+
+
+def test_shop_ads_store_performance_join_covers_store_snapshot_key():
+    project_dir = PROJECT_ROOT / PROJECT_CONFIG["shop"]["dir"]
+    catalog = build_asset_catalog(
+        [],
+        None,
+        project_dir,
+        edges=[],
+        indirect_edges=[],
+    )
+    sql = (
+        project_dir / "ads" / "tasks" / "ads_store_performance.sql"
+    ).read_text(encoding="utf-8")
+
+    issues = task_sql_quality_defs._scan_join_before_aggregation(sql, catalog)
+
+    assert issues == []
+
+
+def test_parse_statements_filters_pure_comments():
+    assert task_sql_quality_defs._parse_statements("-- only comment\n") == []
+    assert task_sql_quality_defs._parse_statements("/* only comment */") == []
+
+
+def test_score_code_quality_accepts_comment_only_task(tmp_path):
+    context = _catalog_for_task(
+        tmp_path,
+        "comment_only.sql",
+        "-- only comment\n",
+    )
+
+    result = score_code_quality(context)
+
+    assert result["score"] == 100.0
+    assert result["issues"] == []
 
 
 def test_score_code_quality_accepts_named_and_dropped_temp_table(tmp_path):

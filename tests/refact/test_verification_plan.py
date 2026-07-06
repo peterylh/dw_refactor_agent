@@ -176,6 +176,78 @@ def test_build_verification_plan_uses_baseline_ddl_changes_and_jobs(
     config.clear_model_metadata_cache()
 
 
+def test_build_verification_plan_writes_row_compare_exclude_columns_from_config(
+    tmp_path, monkeypatch
+):
+    project_dir = tmp_path / "demo"
+    (project_dir / "mid" / "ddl").mkdir(parents=True)
+    (project_dir / "mid" / "models").mkdir()
+    monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setitem(
+        config.PROJECT_CONFIG,
+        "demo",
+        {
+            "dir": "demo",
+            "db": "demo_dm",
+            "qa_db": "demo_dm_qa",
+            "catalog": "internal",
+            "verification": {
+                "row_compare": {
+                    "exclude_columns": ["etl_time"],
+                    "tables": {
+                        "dws_order": {
+                            "exclude_columns": ["etl_time", "update_time"]
+                        },
+                        "ads_full_audit": {"exclude_columns": []},
+                    },
+                }
+            },
+        },
+    )
+    config.clear_model_metadata_cache()
+
+    plan = build_verification_plan(
+        "demo",
+        {
+            "affected_scope": {
+                "assessment_tables": [
+                    "ads_full_audit",
+                    "dws_customer",
+                    "dws_order",
+                ],
+                "anchor_tables": [
+                    "ads_full_audit",
+                    "dws_customer",
+                    "dws_order",
+                ],
+            }
+        },
+    )
+
+    assert plan["verification"]["checks"] == [
+        {"table": "ads_full_audit", "method": "count"},
+        {
+            "table": "ads_full_audit",
+            "method": "row_compare",
+            "exclude_columns": [],
+        },
+        {"table": "dws_customer", "method": "count"},
+        {
+            "table": "dws_customer",
+            "method": "row_compare",
+            "exclude_columns": ["etl_time"],
+        },
+        {"table": "dws_order", "method": "count"},
+        {
+            "table": "dws_order",
+            "method": "row_compare",
+            "exclude_columns": ["etl_time", "update_time"],
+        },
+    ]
+
+    config.clear_model_metadata_cache()
+
+
 def test_build_verification_plan_requires_lineage_when_jobs_exist(
     tmp_path, monkeypatch
 ):
