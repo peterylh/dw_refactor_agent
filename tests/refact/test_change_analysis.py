@@ -21,7 +21,7 @@ def test_classify_changed_assets_groups_project_files():
             "warehouses/shop/mid/models/dwd_inventory.yaml",
             "warehouses/shop/ads/models/ads_order.yaml",
             "warehouses/shop/warehouse.yaml",
-            "warehouses/shop/business_semantics.yaml",
+            "warehouses/shop/business_processes.yaml",
             "warehouses/shop/naming_config.yaml",
             "naming_config.yaml",
             "README.md",
@@ -34,7 +34,7 @@ def test_classify_changed_assets_groups_project_files():
         "task_jobs": ["ads_order", "dwd_order", "dws_order"],
         "model_tables": ["ads_order", "dwd_inventory"],
         "config_files": [
-            "warehouses/shop/business_semantics.yaml",
+            "warehouses/shop/business_processes.yaml",
             "warehouses/shop/naming_config.yaml",
             "warehouses/shop/warehouse.yaml",
         ],
@@ -128,8 +128,8 @@ def test_changed_files_since_head_filters_to_project_warehouse(tmp_path):
         "version: 2\n",
         encoding="utf-8",
     )
-    (tmp_path / "warehouses/shop/business_semantics.yaml").write_text(
-        "domains: []\n",
+    (tmp_path / "warehouses/shop/business_processes.yaml").write_text(
+        "business_processes: []\n",
         encoding="utf-8",
     )
     (tmp_path / "warehouses/finance_analytics/warehouse.yaml").write_text(
@@ -146,7 +146,7 @@ def test_changed_files_since_head_filters_to_project_warehouse(tmp_path):
         "HEAD",
         "warehouses/shop",
     ) == [
-        "warehouses/shop/business_semantics.yaml",
+        "warehouses/shop/business_processes.yaml",
         "warehouses/shop/naming_config.yaml",
         "warehouses/shop/warehouse.yaml",
     ]

@@ -2713,14 +2713,24 @@ def test_run_catalog_discovery_writes_catalog_only_by_default(
         overwrite=True,
     )
 
-    catalog_path = project_dir / "business_semantics.yaml"
-    catalog = yaml.safe_load(catalog_path.read_text(encoding="utf-8"))
+    processes_catalog = yaml.safe_load(
+        (project_dir / "business_processes.yaml").read_text(
+            encoding="utf-8"
+        )
+    )
+    subjects_catalog = yaml.safe_load(
+        (project_dir / "semantic_subjects.yaml").read_text(encoding="utf-8")
+    )
     assert result["source"] == "llm_catalog_discovery"
     assert result["updated"] is True
-    assert catalog["business_processes"][0]["code"] == "ORDER_TRANSACTION"
-    assert "tables" not in catalog["business_processes"][0]
-    assert catalog["semantic_subjects"][0]["code"] == "CUSTOMER"
-    assert "tables" not in catalog["semantic_subjects"][0]
+    assert result["paths"]["taxonomy"].endswith("business_taxonomy.yaml")
+    assert (
+        processes_catalog["business_processes"][0]["code"]
+        == "ORDER_TRANSACTION"
+    )
+    assert "tables" not in processes_catalog["business_processes"][0]
+    assert subjects_catalog["semantic_subjects"][0]["code"] == "CUSTOMER"
+    assert "tables" not in subjects_catalog["semantic_subjects"][0]
     assert result["update_models"] is False
     assert result["model_update_count"] == 0
 

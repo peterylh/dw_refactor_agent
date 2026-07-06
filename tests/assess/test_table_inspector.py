@@ -310,7 +310,7 @@ def _assert_build_prompt_includes_catalog_and_project_context_as_inputs():
 
 def _assert_build_prompt_documents_business_metadata_scope():
     scenarios = [
-        ("DWD", "数据域与业务板块候选"),
+        ("DWD", "未提供已确认字典时"),
         ("DIM", "数据域与业务板块字典"),
     ]
     for layer, expected_section in scenarios:

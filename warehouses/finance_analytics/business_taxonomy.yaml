@@ -1,0 +1,114 @@
+version: 1
+project: finance_analytics
+project_context: |
+  finance_analytics 是一个银行与金融经营分析数据集市，覆盖客户经营、账户与交易、贷款申请与还款、营销活动、风险评估、反欺诈告警、监管报送和网点/渠道运营分析。
+  核心维度实体包括客户、账户、金融产品、商户、营销活动、机构/网点/ATM、客户经理或坐席、日期以及宏观经济指标。
+  核心事实来源包括账户交易、账户事件、贷款申请、贷款还款、客户互动、客户分层历史、营销活动触达与响应、风险评估、欺诈告警和监管报送记录。
+  DWD 层应保留业务事件或快照明细粒度，DWS 层沉淀按日期、客户、账户、产品、商户、渠道、机构、营销活动或风险类别汇总的可复用指标。
+  交易金额、账户余额、申请金额、还款金额、逾期天数、互动次数、告警数量、风险评分和监管报送数量等通常是基础或可汇总指标；风险等级、高价值标识、金额偏离评分、欺诈评分、响应率和转化率等通常是规则、模型或多指标组合形成的衍生指标。
+data_domains:
+- id: '01'
+  code: CUST
+  name: 用户域
+  description: 客户基本信息、客户关系、客户分层、客户画像等数据。
+- id: '02'
+  code: AGRE
+  name: 协议域
+  description: 账户、合同、签约信息、产品协议、费率、期限等数据。
+- id: '03'
+  code: PROD
+  name: 产品域
+  description: 存款、贷款、理财、信用卡、基金、保险等产品定义数据。
+- id: '04'
+  code: TRAN
+  name: 交易域
+  description: 存取款、转账、支付、消费、还款、冲正等交易数据。
+- id: '05'
+  code: CHNL
+  name: 渠道域
+  description: 柜面、手机银行、网银、ATM、智能机具、第三方渠道等数据。
+- id: '06'
+  code: ORGN
+  name: 机构域
+  description: 总行、分行、支行、网点、部门、机构层级等数据。
+- id: '07'
+  code: OPER
+  name: 员工域
+  description: 员工信息、岗位、权限、绩效、营销人员等数据。
+- id: '08'
+  code: FINA
+  name: 财务域
+  description: 总账、明细账、收入、成本、利润、计提、税务等财务数据。
+- id: '09'
+  code: RISK
+  name: 风险域
+  description: 信用风险、市场风险、操作风险、反欺诈、合规、审计等数据。
+- id: '10'
+  code: MKTG
+  name: 营销域
+  description: 营销活动、策划、执行效果评估等数据。
+- id: '99'
+  code: OTHR
+  name: 其它
+  description: 无法明确归属到上述数据域，或模型核心内容跨域且无明显主归属时使用。
+business_areas:
+- id: '01'
+  code: LOAN
+  name: 贷款业务
+  description: 个人贷款、对公贷款、小微贷款、贸易融资、垫款、不良处置等全流程。
+- id: '02'
+  code: DPST
+  name: 存款业务
+  description: 活期、定期、大额存单、结构性存款、通知存款和账户管理。
+- id: '03'
+  code: FRTN
+  name: 财富业务
+  description: 理财、基金、保险、信托、贵金属等客户资产保值增值业务。
+- id: '04'
+  code: PAYM
+  name: 支付结算
+  description: 转账、汇款、清算、账户结算、支付通道和手续费。
+- id: '05'
+  code: GUAR
+  name: 担保承诺
+  description: 保函、信用证、贷款承诺、信贷证明、履约担保等信用类中间业务。
+- id: '06'
+  code: BILL
+  name: 票据业务
+  description: 商业汇票承兑、贴现、转贴现、再贴现、票据池、票据质押融资。
+- id: '07'
+  code: AGEN
+  name: 代理业务
+  description: 代收代付、代发工资、保管箱、代理非金融类业务。
+- id: '08'
+  code: ACQR
+  name: 收单业务
+  description: 商户收单、POS 收单、二维码收单、线上支付网关等。
+- id: '09'
+  code: CHNL
+  name: 渠道业务
+  description: 手机银行、网上银行、小程序、开放平台等电子渠道与线上服务。
+- id: '10'
+  code: CRDT
+  name: 贷记业务
+  description: 信用卡发卡、账户、额度、消费、分期、还款、催收、积分和权益管理。
+- id: '11'
+  code: FORX
+  name: 跨境业务
+  description: 国际结算、结售汇、外汇交易、跨境人民币、外汇存贷款。
+- id: '12'
+  code: ASTM
+  name: 资管业务
+  description: 债券、证券、基金、衍生品、自营投资、同业和资产管理业务。
+- id: '13'
+  code: CLNT
+  name: 客户经营
+  description: 客户分层、积分权益、会员体系、营销活动、新客获取、存量提升、流失挽回。
+- id: '14'
+  code: FMAN
+  name: 财务管理
+  description: 总账、FTP、成本分摊、预算、盈利分析、ALM、资本、税务和管理会计报告。
+- id: '99'
+  code: OTHR
+  name: 其它
+  description: 无法明确归属到上述业务板块，或模型主要服务场景不确定时使用。

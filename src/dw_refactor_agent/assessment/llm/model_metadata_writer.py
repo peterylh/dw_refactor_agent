@@ -48,7 +48,6 @@ from dw_refactor_agent.assessment.project_facts.business_semantics import (
     _layer_from_table_name,
     _materialized_for_layer,
     _normalize_catalog_code,
-    business_semantics_path,
     catalog_mapping_for_model,
     load_business_semantics_catalog,
     write_initial_business_semantics_catalog,
@@ -65,6 +64,7 @@ from dw_refactor_agent.config import (
     TEXT_ENCODING,
     assess_cache_path,
     asset_role_for_layer,
+    business_semantics_paths,
     get_business_domain_config,
     iter_project_asset_files,
     load_model_metadata,
@@ -422,7 +422,7 @@ def sync_business_semantics_catalog_from_model_updates(
     catalog = load_business_semantics_catalog(project)
     if not catalog:
         raise FileNotFoundError(
-            f"未找到 {project}/business_semantics.yaml，请先初始化目录"
+            f"未找到 {project} 业务语义目录，请先初始化三份 catalog YAML"
         )
 
     updated = dict(catalog)
@@ -459,20 +459,48 @@ def sync_business_semantics_catalog_from_model_updates(
         key=lambda item: str(item.get("code") or ""),
     )
     changed = updated != catalog
-    path = business_semantics_path(project)
+    paths = business_semantics_paths(project)
+    path_payloads = {
+        "taxonomy": {
+            "version": updated.get("version", 1),
+            "project": project,
+            "data_domains": updated.get("data_domains") or [],
+            "business_areas": updated.get("business_areas") or [],
+        },
+        "business_processes": {
+            "version": updated.get("version", 1),
+            "project": project,
+            "business_processes": updated.get("business_processes") or [],
+        },
+        "semantic_subjects": {
+            "version": updated.get("version", 1),
+            "project": project,
+            "semantic_subjects": updated.get("semantic_subjects") or [],
+        },
+    }
+    for key in ("source", "project_context"):
+        if updated.get(key):
+            path_payloads["taxonomy"][key] = updated[key]
     if changed and not dry_run:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(
-            yaml.safe_dump(updated, allow_unicode=True, sort_keys=False),
-            encoding=TEXT_ENCODING,
-        )
+        for name, path in paths.items():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(
+                yaml.safe_dump(
+                    path_payloads[name],
+                    allow_unicode=True,
+                    sort_keys=False,
+                ),
+                encoding=TEXT_ENCODING,
+            )
         import dw_refactor_agent.config as _config
 
         _config.clear_business_semantics_cache()
         _config.clear_naming_config_cache()
     return {
         "project": project,
-        "path": str(path),
+        "path": str(paths["taxonomy"].parent),
+        "paths": {name: str(path) for name, path in paths.items()},
+        "written_names": sorted(paths) if changed else [],
         "changed": changed,
         "updated": bool(changed and not dry_run),
         "business_process_count": len(updated.get("business_processes") or []),
@@ -3599,14 +3627,21 @@ def _catalog_model_payload(
         updated["business_area"] = business_area
     else:
         updated.pop("business_area", None)
-    if semantic_subject:
+    if table_type == "dimension" and semantic_subject:
         updated["semantic_subject"] = semantic_subject
         updated.pop("business_process", None)
-    elif table_type == "fact" and business_process:
-        updated["business_process"] = business_process
+    elif table_type == "fact":
+        if business_process:
+            updated["business_process"] = business_process
+        else:
+            updated.pop("business_process", None)
         updated.pop("semantic_subject", None)
     elif table_type == "dimension":
         updated.pop("business_process", None)
+        updated.pop("semantic_subject", None)
+    else:
+        updated.pop("business_process", None)
+        updated.pop("semantic_subject", None)
 
     if layer == "DIM":
         dimension_role = (
@@ -3671,6 +3706,33 @@ def _business_processes_from_result(result: TableInspectResult) -> list[str]:
     return codes
 
 
+def _existing_catalog_assignment(
+    *,
+    catalog: dict[str, Any],
+    table_name: str,
+    existing_metadata: dict[str, Any] | None,
+    field: str,
+) -> dict[str, Any]:
+    existing_mapping = catalog_mapping_for_model(
+        catalog,
+        table_name,
+        existing_metadata or {},
+    )
+    if not existing_mapping.get(field):
+        return {}
+    return {
+        key: value
+        for key, value in existing_mapping.items()
+        if key
+        in {
+            "data_domain",
+            "business_area",
+            "business_process",
+            "semantic_subject",
+        }
+    }
+
+
 def _semantic_subject_from_result(result: TableInspectResult) -> str:
     entities = normalize_entities(
         result.entities,
@@ -3690,28 +3752,56 @@ def _semantic_subject_from_result(result: TableInspectResult) -> str:
     return _normalize_catalog_code((primary or {}).get("code"))
 
 
+def _catalog_has_code(catalog: dict[str, Any], key: str, code: str) -> bool:
+    wanted = _normalize_catalog_code(code)
+    if not wanted:
+        return False
+    for entry in catalog.get(key) or []:
+        if not isinstance(entry, dict):
+            continue
+        if _normalize_catalog_code(entry.get("code")) == wanted:
+            return True
+    return False
+
+
 def catalog_discovery_model_mapping(
+    project: str,
     result: TableInspectResult,
+    catalog: dict[str, Any] | None = None,
+    existing_metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Return model metadata assignment discovered by table-level LLM."""
     if result.status == "blocked":
         return {}
 
     layer = layer_for_model(result)
+    catalog = catalog or {}
     mapping: dict[str, Any] = {
         "table": result.table_name,
         "layer": layer,
         "table_type": result.table_type,
-        "data_domain": result.inferred_data_domain,
-        "business_area": result.inferred_business_area,
         "materialized": _materialized_for_layer(
             result.declared_layer or layer
         ),
     }
+    mapping.update(business_metadata_for_result(project, result, layer))
     if result.table_type == "dimension":
         semantic_subject = _semantic_subject_from_result(result)
-        if semantic_subject:
+        if _catalog_has_code(
+            catalog,
+            "semantic_subjects",
+            semantic_subject,
+        ):
             mapping["semantic_subject"] = semantic_subject
+        else:
+            mapping.update(
+                _existing_catalog_assignment(
+                    catalog=catalog,
+                    table_name=result.table_name,
+                    existing_metadata=existing_metadata,
+                    field="semantic_subject",
+                )
+            )
         if result.dimension_role:
             mapping["dimension_role"] = result.dimension_role
         if result.dimension_content_type:
@@ -3720,8 +3810,21 @@ def catalog_discovery_model_mapping(
 
     if result.table_type == "fact":
         processes = _business_processes_from_result(result)
-        if len(processes) == 1:
+        if len(processes) == 1 and _catalog_has_code(
+            catalog,
+            "business_processes",
+            processes[0],
+        ):
             mapping["business_process"] = processes[0]
+        else:
+            mapping.update(
+                _existing_catalog_assignment(
+                    catalog=catalog,
+                    table_name=result.table_name,
+                    existing_metadata=existing_metadata,
+                    field="business_process",
+                )
+            )
         return mapping
 
     return mapping
@@ -4127,7 +4230,7 @@ def run_direct_model_generation(
     catalog = load_business_semantics_catalog(project)
     if not catalog:
         raise FileNotFoundError(
-            f"未找到 {project}/business_semantics.yaml，请先初始化目录"
+            f"未找到 {project} 业务语义目录，请先初始化三份 catalog YAML"
         )
 
     lineage_data, warnings = _load_lineage_data_for_direct_generation(project)
@@ -4137,7 +4240,7 @@ def run_direct_model_generation(
                 "type": "business_semantics_catalog_empty",
                 "severity": "degraded",
                 "message": (
-                    "business_semantics.yaml 未配置 business_processes 或 "
+                    "业务语义目录未配置 business_processes 或 "
                     "semantic_subjects；冷启动业务域、业务板块、业务过程和"
                     "语义主题归属会明显降级"
                 ),
@@ -4314,11 +4417,11 @@ def run_direct_model_generation(
             "deleted_model_files"
         ],
         "request_timeout": request_timeout if llm else 0,
-        "catalog_path": str(
-            PROJECT_ROOT
-            / PROJECT_CONFIG[project]["dir"]
-            / "business_semantics.yaml"
-        ),
+        "path": str(PROJECT_ROOT / PROJECT_CONFIG[project]["dir"]),
+        "paths": {
+            name: str(path)
+            for name, path in business_semantics_paths(project).items()
+        },
         "warning_count": len(warnings),
         "warnings": warnings,
         "inspected_table_count": len(updates),
@@ -4392,7 +4495,7 @@ def run_catalog_metadata_write(
     )
     if not catalog:
         raise FileNotFoundError(
-            f"未找到 warehouses/{project}/business_semantics.yaml，请先初始化目录"
+            f"未找到 {project} 业务语义目录，请先初始化三份 catalog YAML"
         )
 
     updates = []
@@ -4424,11 +4527,11 @@ def run_catalog_metadata_write(
         "project": project,
         "source": "catalog",
         "write_scope": write_scope,
-        "catalog_path": str(
-            PROJECT_ROOT
-            / PROJECT_CONFIG[project]["dir"]
-            / "business_semantics.yaml"
-        ),
+        "paths": {
+            name: str(path)
+            for name, path in business_semantics_paths(project).items()
+        },
+        "written_names": (init_result or {}).get("written_names") or [],
         "inspected_table_count": len(updates),
         "model_updates": changed_updates,
         "model_update_count": len(
@@ -4503,8 +4606,15 @@ def run_catalog_discovery(
     )
     model_updates = []
     if update_models:
+        discovered_catalog = write_result.get("catalog") or {}
+        model_metadata = load_model_metadata(project)
         for result in results:
-            mapping = catalog_discovery_model_mapping(result)
+            mapping = catalog_discovery_model_mapping(
+                project,
+                result,
+                discovered_catalog,
+                model_metadata.get(result.table_name, {}),
+            )
             if not mapping:
                 continue
             update = update_model_yaml_from_catalog(
@@ -4525,6 +4635,8 @@ def run_catalog_discovery(
         "project": project,
         "source": "llm_catalog_discovery",
         "path": write_result["path"],
+        "paths": write_result.get("paths") or {},
+        "written_names": write_result.get("written_names") or [],
         "changed": write_result["changed"],
         "updated": write_result["updated"],
         "catalog": write_result["catalog"],
@@ -4975,12 +5087,21 @@ def main() -> None:
     print(f"结果已写入: {output_path}")
     if result.get("source") == "catalog":
         catalog = result.get("catalog") or {}
+        paths = (
+            ", ".join(
+                str(path) for path in (result.get("paths") or {}).values()
+            )
+            or str(result.get("path") or "-")
+        )
+        written_names = ", ".join(result.get("written_names") or []) or "-"
         print(
-            "目录: {path}, "
+            "目录: {paths}, "
+            "本次写入: {written_names}, "
             "LLM: {llm}, "
             "业务过程: {process_count}, 语义主题: {subject_count}, "
             "已写入: {updated}".format(
-                path=result.get("path"),
+                paths=paths,
+                written_names=written_names,
                 llm=result.get("llm", False),
                 process_count=len(catalog.get("business_processes") or []),
                 subject_count=len(catalog.get("semantic_subjects") or []),
