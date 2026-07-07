@@ -13,13 +13,8 @@ entities:
   - store_id
 business_area: SHOP
 business_process: ORDER_TRANSACTION
-derived_metrics:
-- name: store_order_count
-  base_metric: order_count
-  base_metric_table: dws_store_sales_daily
-  time_period: D
-  expression: COALESCE(ss.order_count, 0)
-  aggregation: PASSTHROUGH
+atomic_metrics:
+- store_order_count
 grain:
   entities:
   - STORE
