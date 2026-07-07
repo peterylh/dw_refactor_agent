@@ -71,9 +71,9 @@ next to `ddl/`, `tasks/`, and `models/`. Shared helpers may still live under
 the `assess` package directory.
 
 The catalog is initialized by
-`python -m dw_refactor_agent.assessment.business_semantics_catalog --llm` or
-`python -m dw_refactor_agent.assessment.llm.model_metadata_writer --catalog-from-llm` using table-level
-inspection contexts rather than raw full-project prompt dumps. Each context
+`python -m dw_refactor_agent.assessment.business_semantics_catalog --llm` using table-level
+inspection contexts rather than raw full-project prompt dumps. `model_metadata_writer`
+is reserved for model refresh and generation. Each context
 summarizes table name, layer hints, DDL columns and comments, keys, task SQL
 features, lineage, upstream/downstream tables, and any existing model/LLM
 metadata.
@@ -93,8 +93,8 @@ proposal/accept workflow.
 Command shape:
 
 ```bash
-PYTHONPATH=src python -m dw_refactor_agent.assessment.llm.model_metadata_writer --project shop --from-catalog --write-scope business --dry-run
-PYTHONPATH=src python -m dw_refactor_agent.assessment.llm.model_metadata_writer --project shop --from-catalog --write-scope business
+PYTHONPATH=src python -m dw_refactor_agent.assessment.llm.model_metadata_writer --project shop --mode generate --dry-run
+PYTHONPATH=src python -m dw_refactor_agent.assessment.llm.model_metadata_writer --project shop --mode generate
 ```
 
 Initialization writes stable base metadata and catalog-backed business
@@ -129,7 +129,8 @@ Rules for writing model YAML:
 
 - Preserve unknown existing keys.
 - Keep stable key ordering to minimize Git diff noise.
-- Respect `--write-scope`.
+- Keep function-level write-scope support for internal callers; the CLI exposes
+  only `--mode refresh|generate`.
 - Avoid wholesale reformatting when only a subset of fields changes.
 - Emit a result JSON containing changed files, skipped tables, confidence, and validation warnings.
 
@@ -138,11 +139,11 @@ Rules for writing model YAML:
 After the catalog changes, refresh table-level metadata from the catalog:
 
 ```bash
-PYTHONPATH=src python -m dw_refactor_agent.assessment.llm.model_metadata_writer --project shop --from-catalog --write-scope business --dry-run
-PYTHONPATH=src python -m dw_refactor_agent.assessment.llm.model_metadata_writer --project shop --from-catalog --write-scope business
+PYTHONPATH=src python -m dw_refactor_agent.assessment.llm.model_metadata_writer --project shop --mode refresh --dry-run
+PYTHONPATH=src python -m dw_refactor_agent.assessment.llm.model_metadata_writer --project shop --mode refresh
 ```
 
-`--from-catalog` means the accepted catalog is the governed code dictionary.
+`--mode refresh` without `--llm` means the accepted catalog is the governed code dictionary.
 This path does not call LLM; table assignment is owned by `models/*.yaml`, and
 the catalog enriches existing `business_process` / `semantic_subject`
 references with domain and area metadata.
@@ -154,7 +155,7 @@ LLM classification is needed before or after this deterministic refresh when:
 - Catalog changes split or merge previous processes.
 - Program evidence has multiple plausible process candidates.
 
-Use `--catalog-from-llm` or
+Use
 `python -m dw_refactor_agent.assessment.business_semantics_catalog --llm` for
 that discovery step, then review the catalog with Git before refreshing models.
 
@@ -174,7 +175,7 @@ Use Git as the review and accept mechanism:
 
 ```bash
 PYTHONPATH=src python -m dw_refactor_agent.assessment.business_semantics_catalog --project shop --llm --overwrite
-PYTHONPATH=src python -m dw_refactor_agent.assessment.llm.model_metadata_writer --project shop --from-catalog --write-scope business
+PYTHONPATH=src python -m dw_refactor_agent.assessment.llm.model_metadata_writer --project shop --mode refresh
 git diff
 git add -p
 ```

@@ -87,29 +87,84 @@ DDL_NON_COLUMN_PREFIXES = {
 }
 
 
+def _new_table_inspector(
+    api_key: str,
+    *,
+    model: str,
+    base_url: str | None = None,
+    cache_file: Path | None = None,
+    max_retries: int = 1,
+    parallelism: int = 2,
+    request_timeout: int = 60,
+) -> TableInspector:
+    kwargs: dict[str, Any] = {
+        "model": model,
+        "cache_file": cache_file,
+        "max_retries": max_retries,
+        "parallelism": parallelism,
+        "request_timeout": request_timeout,
+    }
+    if base_url:
+        kwargs["base_url"] = base_url
+    try:
+        return TableInspector(api_key, **kwargs)
+    except TypeError as exc:
+        if "unexpected keyword argument" not in str(exc):
+            raise
+        kwargs.pop("base_url", None)
+        kwargs.pop("request_timeout", None)
+        return TableInspector(api_key, **kwargs)
+
+
 def build_inspection_contexts(
-    project: str, lineage_data: dict[str, Any]
+    project: str,
+    lineage_data: dict[str, Any],
+    *,
+    model_metadata: dict[str, dict[str, Any]] | None = None,
+    metric_groups: dict[str, dict[str, list[str]]] | None = None,
 ) -> list[TableContext]:
     """构建需要 LLM 巡检并回写模型元数据的表上下文。"""
     return build_contexts(
         project,
         lineage_data,
         layers=WRITABLE_METADATA_LAYERS,
+        model_metadata=model_metadata,
+        metric_groups=metric_groups,
     )
 
 
 def build_dwd_contexts(
-    project: str, lineage_data: dict[str, Any]
+    project: str,
+    lineage_data: dict[str, Any],
+    *,
+    model_metadata: dict[str, dict[str, Any]] | None = None,
+    metric_groups: dict[str, dict[str, list[str]]] | None = None,
 ) -> list[TableContext]:
     """构建项目 DWD 层表的识别上下文。"""
-    return build_contexts(project, lineage_data, layers={"DWD"})
+    return build_contexts(
+        project,
+        lineage_data,
+        layers={"DWD"},
+        model_metadata=model_metadata,
+        metric_groups=metric_groups,
+    )
 
 
 def build_metric_contexts(
-    project: str, lineage_data: dict[str, Any]
+    project: str,
+    lineage_data: dict[str, Any],
+    *,
+    model_metadata: dict[str, dict[str, Any]] | None = None,
+    metric_groups: dict[str, dict[str, list[str]]] | None = None,
 ) -> list[TableContext]:
     """构建项目指标识别上下文，覆盖 DWD 与 DWS。"""
-    return build_contexts(project, lineage_data, layers=METRIC_LAYERS)
+    return build_contexts(
+        project,
+        lineage_data,
+        layers=METRIC_LAYERS,
+        model_metadata=model_metadata,
+        metric_groups=metric_groups,
+    )
 
 
 def model_path_for_table(
@@ -267,13 +322,23 @@ def _update_models_for_results(
     *,
     dry_run: bool,
     write_scope: str,
+    existing_model_metadata: dict[str, dict[str, Any]] | None = None,
+    model_paths: dict[str, Path] | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     write_scope = _validate_write_scope(write_scope)
     yaml_updates = []
     skipped_updates = []
     for result in results:
+        existing_model = None
+        if existing_model_metadata is not None:
+            existing_model = existing_model_metadata.get(result.table_name)
         update = update_model_yaml(
-            project, result, dry_run=dry_run, write_scope=write_scope
+            project,
+            result,
+            dry_run=dry_run,
+            write_scope=write_scope,
+            existing_model=existing_model,
+            path=(model_paths or {}).get(result.table_name),
         )
         if result.status == "blocked":
             if update["changed"]:
@@ -893,12 +958,15 @@ def update_model_yaml(
     *,
     dry_run: bool = False,
     write_scope: str = "all",
+    existing_model: dict[str, Any] | None = None,
+    path: Path | None = None,
 ) -> dict[str, Any]:
     """将单表 LLM 巡检元数据和指标名覆盖写入 models/{table}.yaml。"""
     write_scope = _validate_write_scope(write_scope)
-    path = model_path_for_table(project, result.table_name)
-    existing = {}
-    if path.exists():
+    if path is None:
+        path = model_path_for_table(project, result.table_name)
+    existing = dict(existing_model) if existing_model is not None else {}
+    if existing_model is None and path.exists():
         existing = yaml.safe_load(path.read_text(encoding=TEXT_ENCODING)) or {}
     if not isinstance(existing, dict):
         existing = {}
@@ -1234,6 +1302,309 @@ def _catalog_table_assets(project: str) -> dict[str, dict[str, Any]]:
     )
 
 
+def _project_dir(project: str) -> Path:
+    project_cfg = PROJECT_CONFIG[project]
+    return PROJECT_ROOT / project_cfg["dir"]
+
+
+def _model_roots(project: str) -> list[Path]:
+    project_cfg = PROJECT_CONFIG[project]
+    project_dir = _project_dir(project)
+    catalog = str(project_cfg.get("catalog") or "internal")
+    database = str(project_cfg.get("db") or "")
+    return [
+        project_dir / "ods" / "models" / catalog / database,
+        project_dir / "mid" / "models",
+        project_dir / "ads" / "models",
+    ]
+
+
+def _model_files(project: str) -> list[Path]:
+    files: list[Path] = []
+    for root in _model_roots(project):
+        if root.exists():
+            files.extend(sorted(root.rglob("*.yaml")))
+    return sorted(files)
+
+
+def _generated_model_path_for_table(
+    project: str,
+    table_name: str,
+    layer: str | None,
+) -> Path:
+    project_cfg = PROJECT_CONFIG[project]
+    project_dir = _project_dir(project)
+    catalog = str(project_cfg.get("catalog") or "internal")
+    database = str(project_cfg.get("db") or "")
+    filename = f"{table_name}.yaml"
+    role = asset_role_for_layer(layer)
+    if role == "ods":
+        return project_dir / "ods" / "models" / catalog / database / filename
+    if role in {"mid", "ads"}:
+        return project_dir / role / "models" / filename
+    return project_dir / "mid" / "models" / filename
+
+
+def _direct_generation_table_assets(project: str) -> dict[str, dict[str, Any]]:
+    return (
+        build_asset_catalog(
+            [],
+            {},
+            _project_dir(project),
+        ).get("tables")
+        or {}
+    )
+
+
+def _ensure_direct_generation_catalog(
+    project: str,
+    *,
+    dry_run: bool,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    init_result = write_initial_business_semantics_catalog(
+        project,
+        overwrite=False,
+        dry_run=dry_run,
+    )
+    written_names = sorted(init_result.get("written_names") or [])
+    catalog = init_result.get("catalog") or load_business_semantics_catalog(
+        project
+    )
+    report = {
+        "catalog_initialized": bool(written_names),
+        "catalog_init_written_names": [] if dry_run else written_names,
+        "planned_catalog_written_names": written_names if dry_run else [],
+    }
+    return catalog, report
+
+
+def _direct_generation_mapping(
+    catalog: dict[str, Any],
+    table_name: str,
+) -> dict[str, Any]:
+    mapping = catalog_mapping_for_model(catalog, table_name, {})
+    layer = str(
+        mapping.get("layer") or _layer_from_table_name(table_name)
+    ).upper()
+    table_type = str(
+        mapping.get("table_type") or _infer_table_type(table_name, layer)
+    ).strip()
+    materialized = str(
+        mapping.get("materialized") or _materialized_for_layer(layer)
+    ).strip()
+    mapping.update(
+        {
+            "table": table_name,
+            "layer": layer,
+            "table_type": table_type or "other",
+            "materialized": materialized,
+        }
+    )
+    return mapping
+
+
+def _write_direct_generated_model(
+    project: str,
+    table_name: str,
+    mapping: dict[str, Any],
+    *,
+    dry_run: bool,
+    ignore_existing: bool,
+    write_scope: str,
+) -> dict[str, Any]:
+    write_scope = _validate_write_scope(write_scope)
+    if write_scope not in {"all", "table", "business"}:
+        raise ValueError("generate 仅支持 write_scope=all/table/business")
+
+    path = _generated_model_path_for_table(
+        project,
+        table_name,
+        mapping.get("layer"),
+    )
+    existing = {} if ignore_existing else _existing_model_data(path)
+    previous = dict(existing)
+    updated = _catalog_model_payload(
+        table_name=table_name,
+        existing=existing,
+        mapping=mapping,
+    )
+    changed = updated != previous
+    if changed and not dry_run:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            yaml.safe_dump(updated, allow_unicode=True, sort_keys=False),
+            encoding=TEXT_ENCODING,
+        )
+
+    business_changed = any(
+        updated.get(key) != previous.get(key)
+        for key in (
+            "data_domain",
+            "business_area",
+            "business_process",
+            "semantic_subject",
+            "dimension_role",
+            "dimension_content_type",
+        )
+    )
+    return {
+        "table": table_name,
+        "path": str(path),
+        "status": "passed",
+        "changed": changed,
+        "metadata_changed": any(
+            updated.get(key) != previous.get(key)
+            for key in ("layer", "table_type")
+        ),
+        "business_changed": business_changed,
+        "metric_changed": False,
+        "grain_changed": False,
+        "updated": bool(changed and not dry_run),
+        "write_scope": write_scope,
+        "source": "direct_generation",
+        "previous_layer": previous.get("layer"),
+        "layer": updated.get("layer"),
+        "previous_table_type": previous.get("table_type"),
+        "table_type": updated.get("table_type"),
+        "previous_data_domain": previous.get("data_domain"),
+        "data_domain": updated.get("data_domain"),
+        "previous_business_area": previous.get("business_area"),
+        "business_area": updated.get("business_area"),
+        "business_process": updated.get("business_process"),
+        "semantic_subject": updated.get("semantic_subject"),
+        "dimension_role": updated.get("dimension_role"),
+        "dimension_content_type": updated.get("dimension_content_type"),
+    }
+
+
+def run_direct_model_generation(
+    project: str,
+    *,
+    api_key: str | None = None,
+    model: str = "deepseek-v4-flash",
+    base_url: str | None = None,
+    max_retries: int = 1,
+    parallelism: int = 2,
+    request_timeout: int = 60,
+    no_cache: bool = False,
+    dry_run: bool = False,
+    write_scope: str = "all",
+    update_catalog: bool = True,
+    replace_existing_models: bool = True,
+    show_progress: bool = False,
+) -> dict[str, Any]:
+    write_scope = _validate_write_scope(write_scope)
+    if write_scope not in {"all", "table", "business"}:
+        raise ValueError("generate 仅支持 write_scope=all/table/business")
+
+    # Reserved for future semantic catalog generation; PR1A only ensures skeleton files.
+    catalog, catalog_report = _ensure_direct_generation_catalog(
+        project,
+        dry_run=dry_run,
+    )
+    model_files = _model_files(project)
+    planned_deleted_model_files = (
+        [str(path) for path in model_files] if replace_existing_models else []
+    )
+    deleted_model_files: list[str] = []
+    if replace_existing_models and not dry_run:
+        for path in model_files:
+            path.unlink()
+            deleted_model_files.append(str(path))
+        import dw_refactor_agent.config as _config
+
+        _config.clear_model_metadata_cache()
+
+    base_model_updates = []
+    model_updates = []
+    generated_model_metadata: dict[str, dict[str, Any]] = {}
+    generated_model_paths: dict[str, Path] = {}
+    for table_name, asset in sorted(
+        _direct_generation_table_assets(project).items()
+    ):
+        ddl = asset.get("ddl") or {}
+        if not ddl.get("exists"):
+            continue
+        mapping = _direct_generation_mapping(catalog, table_name)
+        generated_model_paths[table_name] = _generated_model_path_for_table(
+            project,
+            table_name,
+            mapping.get("layer"),
+        )
+        generated_model_metadata[table_name] = _catalog_model_payload(
+            table_name=table_name,
+            existing=(
+                {}
+                if replace_existing_models
+                else _existing_model_data(generated_model_paths[table_name])
+            ),
+            mapping=mapping,
+        )
+        update = _write_direct_generated_model(
+            project,
+            table_name,
+            mapping,
+            dry_run=dry_run,
+            ignore_existing=replace_existing_models,
+            write_scope=write_scope,
+        )
+        base_model_updates.append(update)
+        model_updates.append(update)
+
+    llm_result: dict[str, Any] | None = None
+    if api_key:
+        import dw_refactor_agent.config as _config
+
+        _config.clear_model_metadata_cache()
+        llm_result = run_metadata_write(
+            project,
+            api_key=api_key,
+            model=model,
+            base_url=base_url,
+            max_retries=max_retries,
+            parallelism=parallelism,
+            request_timeout=request_timeout,
+            no_cache=no_cache,
+            dry_run=dry_run,
+            write_scope=write_scope,
+            show_progress=show_progress,
+            model_metadata=(
+                generated_model_metadata if replace_existing_models else None
+            ),
+            metric_groups={} if replace_existing_models else None,
+            model_paths=generated_model_paths
+            if replace_existing_models
+            else None,
+        )
+        model_updates.extend(llm_result.get("model_updates") or [])
+
+    if not dry_run:
+        import dw_refactor_agent.config as _config
+
+        _config.clear_model_metadata_cache()
+
+    changed_updates = [update for update in model_updates if update["changed"]]
+    result = {
+        "project": project,
+        "source": "direct_model_generation",
+        "mode": "generate",
+        "write_scope": write_scope,
+        "update_catalog": update_catalog,
+        "replace_existing_models": replace_existing_models,
+        "planned_deleted_model_files": planned_deleted_model_files,
+        "deleted_model_files": deleted_model_files,
+        "generated_model_count": len(base_model_updates),
+        "model_updates": changed_updates,
+        "model_update_count": len(
+            [update for update in changed_updates if update.get("updated")]
+        ),
+        "model_change_count": len(changed_updates),
+        "llm_result": llm_result,
+    }
+    result.update(catalog_report)
+    return result
+
+
 def _existing_model_data(path: Path) -> dict[str, Any]:
     if not path.exists():
         return {}
@@ -1466,7 +1837,7 @@ def update_model_yaml_from_catalog(
 ) -> dict[str, Any]:
     write_scope = _validate_write_scope(write_scope)
     if write_scope not in {"all", "table", "business"}:
-        raise ValueError("from-catalog 仅支持 write_scope=all/table/business")
+        raise ValueError("catalog 回写仅支持 write_scope=all/table/business")
 
     path = model_path_for_table(
         project,
@@ -1556,7 +1927,7 @@ def run_catalog_metadata_write(
 ) -> dict[str, Any]:
     write_scope = _validate_write_scope(write_scope)
     if write_scope not in {"all", "table", "business"}:
-        raise ValueError("from-catalog 仅支持 write_scope=all/table/business")
+        raise ValueError("catalog 回写仅支持 write_scope=all/table/business")
 
     init_result = None
     if init_catalog:
@@ -1624,8 +1995,10 @@ def run_catalog_discovery(
     *,
     api_key: str,
     model: str = "deepseek-v4-flash",
+    base_url: str | None = None,
     max_retries: int = 1,
     parallelism: int = 2,
+    request_timeout: int = 60,
     no_cache: bool = False,
     dry_run: bool = False,
     overwrite: bool = False,
@@ -1644,12 +2017,14 @@ def run_catalog_discovery(
     if no_cache and cache_file.exists():
         cache_file.unlink()
 
-    inspector = TableInspector(
+    inspector = _new_table_inspector(
         api_key=api_key,
         model=model,
+        base_url=base_url,
         cache_file=cache_file,
         max_retries=max_retries,
         parallelism=parallelism,
+        request_timeout=request_timeout,
     )
     if show_progress:
         inspector.progress_callback = build_progress_callback()
@@ -1803,17 +2178,27 @@ def run_metadata_write(
     *,
     api_key: str,
     model: str = "deepseek-v4-flash",
+    base_url: str | None = None,
     max_retries: int = 1,
     parallelism: int = 2,
+    request_timeout: int = 60,
     no_cache: bool = False,
     dry_run: bool = False,
     write_scope: str = "all",
     show_progress: bool = False,
+    model_metadata: dict[str, dict[str, Any]] | None = None,
+    metric_groups: dict[str, dict[str, list[str]]] | None = None,
+    model_paths: dict[str, Path] | None = None,
 ) -> dict[str, Any]:
     """运行项目级 LLM 巡检与模型元数据回写。"""
     write_scope = _validate_write_scope(write_scope)
     data = load_lineage_data(project)
-    contexts = build_inspection_contexts(project, data)
+    contexts = build_inspection_contexts(
+        project,
+        data,
+        model_metadata=model_metadata,
+        metric_groups=metric_groups,
+    )
     metric_contexts = [ctx for ctx in contexts if ctx.layer in METRIC_LAYERS]
     dwd_contexts = [ctx for ctx in metric_contexts if ctx.layer == "DWD"]
     dws_contexts = [ctx for ctx in metric_contexts if ctx.layer == "DWS"]
@@ -1824,12 +2209,14 @@ def run_metadata_write(
     if no_cache and cache_file.exists():
         cache_file.unlink()
 
-    inspector = TableInspector(
+    inspector = _new_table_inspector(
         api_key=api_key,
         model=model,
+        base_url=base_url,
         cache_file=cache_file,
         max_retries=max_retries,
         parallelism=parallelism,
+        request_timeout=request_timeout,
     )
     if show_progress:
         inspector.progress_callback = build_progress_callback()
@@ -1848,7 +2235,12 @@ def run_metadata_write(
     contexts_by_name = {ctx.table_name: ctx for ctx in contexts}
     enrich_results_with_related_entities(results, contexts_by_name)
     yaml_updates, skipped_updates = _update_models_for_results(
-        project, results, dry_run=dry_run, write_scope=write_scope
+        project,
+        results,
+        dry_run=dry_run,
+        write_scope=write_scope,
+        existing_model_metadata=model_metadata,
+        model_paths=model_paths,
     )
 
     return {
@@ -1911,7 +2303,22 @@ def main() -> None:
         help="输出 JSON 文件路径 (默认 warehouses/{project}/artifacts/assessment/model_metadata_result.json)",
     )
     parser.add_argument(
+        "--mode",
+        choices=("refresh", "generate"),
+        default="refresh",
+        help="运行模式: refresh=刷新现有 models, generate=冷启动重建 models",
+    )
+    parser.add_argument(
+        "--llm",
+        action="store_true",
+        help="调用表级 LLM 巡检补全模型元数据",
+    )
+    parser.add_argument(
         "--model", default="deepseek-v4-flash", help="DeepSeek 模型名称"
+    )
+    parser.add_argument(
+        "--base-url",
+        help="DeepSeek/OpenAI-compatible chat completions API 地址",
     )
     parser.add_argument(
         "--max-retries",
@@ -1925,37 +2332,6 @@ def main() -> None:
         help="只输出巡检结果，不写入 models YAML",
     )
     parser.add_argument(
-        "--init-catalog",
-        action="store_true",
-        help="按项目DDL初始化业务语义目录",
-    )
-    parser.add_argument(
-        "--catalog-from-llm",
-        action="store_true",
-        help="调用表级 LLM 巡检结果初始化/更新业务过程和语义主题目录",
-    )
-    parser.add_argument(
-        "--overwrite-catalog",
-        action="store_true",
-        help="catalog-from-llm/init-catalog 时覆盖已存在目录",
-    )
-    parser.add_argument(
-        "--from-catalog",
-        action="store_true",
-        help="从业务语义目录刷新/初始化 models",
-    )
-    parser.add_argument(
-        "--write-scope",
-        choices=sorted(WRITE_SCOPES),
-        default="all",
-        help=(
-            "models 回写范围: all=表信息+指标+entity/grain, "
-            "table=仅表级元数据, metrics=仅指标分组, "
-            "grain=仅entity/grain, "
-            "business=按models已有业务code从catalog补齐治理信息"
-        ),
-    )
-    parser.add_argument(
         "--no-cache",
         action="store_true",
         help="忽略本地缓存，强制重新调用 API",
@@ -1964,43 +2340,24 @@ def main() -> None:
         "--parallel", type=int, default=2, help="LLM 并发调用数，默认 2"
     )
     parser.add_argument(
+        "--request-timeout",
+        type=int,
+        default=60,
+        help="单次 LLM 请求超时时间（秒）",
+    )
+    parser.add_argument(
         "--quiet", action="store_true", help="不打印单表巡检进度"
     )
     args = parser.parse_args()
 
-    if args.catalog_from_llm:
-        api_key = os.environ.get("DEEPSEEK_API_KEY")
-        if not api_key:
-            raise SystemExit(
-                "未提供 DEEPSEEK_API_KEY 环境变量，无法调用 DeepSeek API"
-            )
-        result = run_catalog_discovery(
-            args.project,
-            api_key=api_key,
-            model=args.model,
-            max_retries=args.max_retries,
-            parallelism=args.parallel,
-            no_cache=args.no_cache,
-            dry_run=args.dry_run,
-            overwrite=args.overwrite_catalog,
-            show_progress=not args.quiet,
-        )
-    elif args.init_catalog and not args.from_catalog:
-        result = write_initial_business_semantics_catalog(
-            args.project,
-            dry_run=args.dry_run,
-            overwrite=args.overwrite_catalog,
-        )
-    elif args.from_catalog:
+    if args.mode == "refresh" and not args.llm:
         result = run_catalog_metadata_write(
             args.project,
             dry_run=args.dry_run,
-            write_scope=args.write_scope,
-            init_catalog=args.init_catalog,
+            write_scope="business",
+            init_catalog=False,
         )
-    else:
-        if args.write_scope == "business":
-            raise SystemExit("--write-scope business 需要配合 --from-catalog")
+    elif args.mode == "refresh":
         api_key = os.environ.get("DEEPSEEK_API_KEY")
         if not api_key:
             raise SystemExit(
@@ -2011,11 +2368,36 @@ def main() -> None:
             args.project,
             api_key=api_key,
             model=args.model,
+            base_url=args.base_url,
             max_retries=args.max_retries,
             parallelism=args.parallel,
+            request_timeout=args.request_timeout,
             no_cache=args.no_cache,
             dry_run=args.dry_run,
-            write_scope=args.write_scope,
+            write_scope="all",
+            show_progress=not args.quiet,
+        )
+    else:
+        api_key = None
+        if args.llm:
+            api_key = os.environ.get("DEEPSEEK_API_KEY")
+            if not api_key:
+                raise SystemExit(
+                    "未提供 DEEPSEEK_API_KEY 环境变量，无法调用 DeepSeek API"
+                )
+        result = run_direct_model_generation(
+            args.project,
+            api_key=api_key,
+            model=args.model,
+            base_url=args.base_url,
+            max_retries=args.max_retries,
+            parallelism=args.parallel,
+            request_timeout=args.request_timeout,
+            no_cache=args.no_cache,
+            dry_run=args.dry_run,
+            write_scope="all",
+            update_catalog=True,
+            replace_existing_models=True,
             show_progress=not args.quiet,
         )
 
@@ -2071,6 +2453,28 @@ def main() -> None:
                 business_process_count=result.get("business_process_count", 0),
                 semantic_subject_count=result.get("semantic_subject_count", 0),
                 updated=result.get("updated"),
+            )
+        )
+        return
+    if result.get("source") == "direct_model_generation":
+        planned_catalog = (
+            ", ".join(result.get("planned_catalog_written_names") or []) or "-"
+        )
+        written_catalog = (
+            ", ".join(result.get("catalog_init_written_names") or []) or "-"
+        )
+        print(
+            "冷启动生成: planned_catalog={planned_catalog}, "
+            "written_catalog={written_catalog}, "
+            "计划删除模型: {planned_delete_count}, "
+            "模型变更: {model_change_count}, 已写入: {model_update_count}".format(
+                planned_catalog=planned_catalog,
+                written_catalog=written_catalog,
+                planned_delete_count=len(
+                    result.get("planned_deleted_model_files") or []
+                ),
+                model_change_count=result.get("model_change_count", 0),
+                model_update_count=result.get("model_update_count", 0),
             )
         )
         return

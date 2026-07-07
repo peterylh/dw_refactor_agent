@@ -1011,6 +1011,7 @@ class TableInspector:
         api_key: str,
         *,
         model: str = "deepseek-v4-flash",
+        base_url: str | None = None,
         cache_file: Path = None,
         max_retries: int = 1,
         parallelism: int = 2,
@@ -1018,6 +1019,10 @@ class TableInspector:
     ):
         self.api_key = api_key
         self.model = model
+        self.base_url = (
+            str(base_url or "").strip()
+            or "https://api.deepseek.com/chat/completions"
+        )
         self.cache_file = cache_file
         self.max_retries = max(0, int(max_retries))
         self.parallelism = max(1, int(parallelism))
@@ -1083,7 +1088,6 @@ class TableInspector:
             return
 
     def _call_api(self, prompt: str) -> str:
-        url = "https://api.deepseek.com/chat/completions"
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {self.api_key}",
@@ -1095,7 +1099,7 @@ class TableInspector:
         }
 
         req = urllib.request.Request(
-            url,
+            self.base_url,
             data=json.dumps(data).encode(TEXT_ENCODING),
             headers=headers,
             method="POST",

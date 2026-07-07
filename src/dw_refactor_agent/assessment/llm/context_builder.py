@@ -183,6 +183,8 @@ def build_contexts(
     ddl_dir: Path = None,
     tasks_dir: Path = None,
     layers: set[str] | None = None,
+    model_metadata: dict | None = None,
+    metric_groups: dict[str, dict[str, list[str]]] | None = None,
 ) -> list[TableContext]:
     """为 DWD/DWS/DIM 层所有表构建分类上下文"""
     use_project_asset_dirs = ddl_dir is None
@@ -191,8 +193,16 @@ def build_contexts(
     lineage_view = LineageView.from_data(project, lineage_data)
     upstream, downstream = lineage_view.asset_table_graph()
     target_layers = set(layers or ("DWD", "DWS", "DIM"))
-    metric_groups = _load_model_metric_groups(project)
-    model_metadata = load_model_metadata(project)
+    metric_groups = (
+        metric_groups
+        if metric_groups is not None
+        else _load_model_metric_groups(project)
+    )
+    model_metadata = (
+        model_metadata
+        if model_metadata is not None
+        else load_model_metadata(project)
+    )
     business_domain_config = get_business_domain_config(project)
     business_domain_options = (
         business_domain_config.prompt_options()

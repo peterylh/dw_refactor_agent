@@ -50,13 +50,6 @@ LLM 发现的原则：
 - 不把维度主题、实体管理、运营管理类表强行写成业务过程。
 - 表级归属会写入模型 YAML；catalog 不长期维护 `tables`。
 
-等价入口也可以使用：
-
-```bash
-python -m dw_refactor_agent.assessment.llm.model_metadata_writer --project shop --catalog-from-llm --dry-run --overwrite-catalog
-python -m dw_refactor_agent.assessment.llm.model_metadata_writer --project shop --catalog-from-llm --overwrite-catalog
-```
-
 ### 3. 人工修订 catalog
 
 检查并修订：
@@ -69,11 +62,11 @@ python -m dw_refactor_agent.assessment.llm.model_metadata_writer --project shop 
 不要在 catalog 中长期维护 `tables`。表到业务过程/语义主题的归属以
 模型 YAML 为准；catalog 只维护 code、名称、归属域、别名、说明等治理信息。
 
-### 4. 从 catalog 初始化或刷新 models
+### 4. 从 catalog 刷新 models
 
 ```bash
-python -m dw_refactor_agent.assessment.llm.model_metadata_writer --project shop --from-catalog --write-scope business --dry-run
-python -m dw_refactor_agent.assessment.llm.model_metadata_writer --project shop --from-catalog --write-scope business
+python -m dw_refactor_agent.assessment.llm.model_metadata_writer --project shop --mode refresh --dry-run
+python -m dw_refactor_agent.assessment.llm.model_metadata_writer --project shop --mode refresh
 ```
 
 这个命令不调用 LLM。它读取项目业务语义目录三份 YAML、
@@ -96,47 +89,56 @@ python -m dw_refactor_agent.assessment.llm.model_metadata_writer --project shop 
 
 如果某张表的 model 中还没有 `business_process` 或 `semantic_subject`，工具仍会为该表创建或保留基础 model 元数据，但不会凭表名生成业务过程。
 
-### 5. 用 LLM 补全模型细节
+### 5. 冷启动生成 models
+
+冷启动入口统一使用 `--mode generate`。执行前不需要手工创建三份 split catalog YAML：如果缺少
+`business_taxonomy.yaml`、`business_processes.yaml` 或 `semantic_subjects.yaml`，`generate` 会自动补齐目录骨架。
+
+```bash
+python -m dw_refactor_agent.assessment.llm.model_metadata_writer --project shop --mode generate --dry-run
+python -m dw_refactor_agent.assessment.llm.model_metadata_writer --project shop --mode generate --llm --dry-run
+python -m dw_refactor_agent.assessment.llm.model_metadata_writer --project shop --mode generate
+```
+
+`generate --dry-run` 不写 catalog、不写 model 文件、不删除旧 models；结果 JSON 会通过
+`planned_catalog_written_names` 和 `planned_deleted_model_files` 报告计划写入或删除的文件，并使用内存中的 catalog skeleton 继续模拟生成。
+加 `--llm` 时，dry-run 会基于内存中的冷启动基础 models 构建巡检上下文，不读取当前磁盘上的旧 model 作为分层先验。
+正式执行时会先替换当前项目 models，再根据 DDL、catalog 与表名生成基础模型 YAML。
+
+只想维护业务语义目录时，使用独立入口：
+
+```bash
+python -m dw_refactor_agent.assessment.business_semantics_catalog --project shop --dry-run
+python -m dw_refactor_agent.assessment.business_semantics_catalog --project shop
+```
+
+### 6. 用 LLM 补全模型细节
 
 表级 LLM 巡检用于补全和刷新更细的模型信息：
 
 ```bash
-python -m dw_refactor_agent.assessment.llm.model_metadata_writer --project shop --dry-run
-python -m dw_refactor_agent.assessment.llm.model_metadata_writer --project shop
+python -m dw_refactor_agent.assessment.llm.model_metadata_writer --project shop --mode refresh --llm --dry-run
+python -m dw_refactor_agent.assessment.llm.model_metadata_writer --project shop --mode refresh --llm
 ```
 
-常用写入范围：
-
-```bash
-python -m dw_refactor_agent.assessment.llm.model_metadata_writer --project shop --write-scope table
-python -m dw_refactor_agent.assessment.llm.model_metadata_writer --project shop --write-scope metrics
-python -m dw_refactor_agent.assessment.llm.model_metadata_writer --project shop --write-scope grain
-python -m dw_refactor_agent.assessment.llm.model_metadata_writer --project shop --write-scope all
-```
-
-说明：
-
-- `table`: 回写 layer/table_type 及适用的业务域/板块。
-- `metrics`: 回写 atomic/derived/calculated 指标分组。
-- `grain`: 回写 entities/grain。
-- `all`: 同时回写上述内容。
-- `business`: 仅用于 `--from-catalog`，表示按 models 中已有业务 code 从 catalog 补齐治理信息，并刷新基础表元数据。
+`refresh --llm` 固定刷新表信息、指标、entities/grain 等全部模型字段；不再从 CLI 暴露
+`--write-scope`。冷启动时也可以使用 `--mode generate --llm`，先生成基础 models，再补全 LLM 元数据。
 
 ## 常见问题
 
-### `--from-catalog --write-scope business` 是什么？
+### `--mode refresh` 是什么？
 
-它是 catalog 与 models 的确定性对齐命令。它不做语义识别，也不调用 DeepSeek；前提是 catalog 已经由 LLM 或人工确认过，models 中的表级归属也已经存在或由 LLM 发现阶段写入。
+它是 catalog 与 models 的确定性对齐命令。默认不做语义识别，也不调用 DeepSeek；前提是 catalog 已经由 LLM 或人工确认过，models 中的表级归属也已经存在或由 LLM 发现阶段写入。
 
 典型用途：
 
 - catalog 已经修订完，需要根据 models 里的 `business_process` / `semantic_subject` 补齐 `data_domain` / `business_area`。
-- 新项目还没有模型 YAML，需要先按 DDL 和 catalog 创建基础 model 文件。
+- 新项目还没有模型 YAML，需要先用 `--mode generate` 按 DDL 和 catalog 创建基础 model 文件。
 - catalog 的 process/subject 所属域或板块调整后，需要刷新 models 中的业务语义字段。
 
 ### 已存在业务语义目录时会怎样？
 
-默认不会覆盖。需要更新时使用 `--overwrite` 或 `--overwrite-catalog`，并通过 Git diff 审查结果。
+业务语义目录默认不会覆盖。需要更新时在 `assessment.business_semantics_catalog` 使用 `--overwrite`，并通过 Git diff 审查结果。`model_metadata_writer --mode generate` 只会自动补齐缺失的 split catalog 文件。
 
 ### naming_config.yaml 和 catalog 的字典是什么关系？
 
