@@ -16,6 +16,7 @@ import os
 import re
 import sys
 import threading
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Callable
 
@@ -28,6 +29,12 @@ if str(_src_root) not in sys.path:
 from dw_refactor_agent.assessment.llm.context_builder import (
     TableContext,
     build_contexts,
+)
+from dw_refactor_agent.assessment.llm.layer_resolution import (
+    LayerResolution,
+    LayerResolutionInput,
+    LayerResolutionPolicy,
+    resolve_layer,
 )
 from dw_refactor_agent.assessment.llm.table_inspector import (
     TableInspector,
@@ -68,6 +75,7 @@ from dw_refactor_agent.config import (
 from dw_refactor_agent.lineage.table_graph import load_lineage_data
 
 METRIC_LAYERS = {"DWD", "DWS"}
+# ODS/ADS are fixed asset boundaries and should not enter table_inspector.
 WRITABLE_METADATA_LAYERS = {"DWD", "DWS", "DIM"}
 WRITE_SCOPES = {"all", "table", "metrics", "grain", "business"}
 DATA_DOMAIN_LAYERS = {"DWD"}
@@ -324,6 +332,7 @@ def _update_models_for_results(
     write_scope: str,
     existing_model_metadata: dict[str, dict[str, Any]] | None = None,
     model_paths: dict[str, Path] | None = None,
+    resolution_policy: LayerResolutionPolicy | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     write_scope = _validate_write_scope(write_scope)
     yaml_updates = []
@@ -339,6 +348,7 @@ def _update_models_for_results(
             write_scope=write_scope,
             existing_model=existing_model,
             path=(model_paths or {}).get(result.table_name),
+            resolution_policy=resolution_policy,
         )
         if result.status == "blocked":
             if update["changed"]:
@@ -347,13 +357,20 @@ def _update_models_for_results(
                 skipped_updates.append(
                     {
                         "table": result.table_name,
-                        "path": str(
-                            model_path_for_table(project, result.table_name)
+                        "path": update.get(
+                            "path",
+                            str(
+                                model_path_for_table(
+                                    project,
+                                    result.table_name,
+                                )
+                            ),
                         ),
                         "status": result.status,
                         "validation": result.validation,
                         "updated": False,
                         "reason": "validation_blocked",
+                        "warnings": update.get("warnings", []),
                         "write_scope": write_scope,
                     }
                 )
@@ -629,22 +646,68 @@ def enrich_results_with_related_entities(
             )
 
 
-def layer_for_model(result: TableInspectResult) -> str:
-    """返回应写入模型 YAML 的层级。维度表强制归入 DIM。"""
-    if result.table_type == "dimension":
-        return "DIM"
-    inferred = str(result.inferred_layer or "").strip().upper()
-    if inferred and inferred != "OTHER":
-        return inferred
-    declared = str(result.declared_layer or "").strip().upper()
-    return declared or "OTHER"
-
-
-def metadata_warnings_for_result(
+def _layer_resolution_for_model(
     result: TableInspectResult,
+    *,
+    existing_model: dict[str, Any] | None = None,
+    policy: LayerResolutionPolicy | None = None,
+) -> LayerResolution:
+    existing_model = existing_model or {}
+    policy = policy or LayerResolutionPolicy(mode="refresh")
+    declared_layer = str(
+        result.declared_layer or existing_model.get("layer") or ""
+    ).strip()
+    declared_table_type = _table_type_prior_for_model(
+        result.table_name,
+        declared_layer,
+        existing_model,
+    )
+    return resolve_layer(
+        LayerResolutionInput(
+            table_name=result.table_name,
+            declared_layer=declared_layer,
+            declared_table_type=declared_table_type,
+            fallback_layer=str(existing_model.get("layer") or declared_layer),
+            fallback_table_type=declared_table_type,
+            inspection_result=result,
+            policy=policy,
+        )
+    )
+
+
+def _table_type_prior_for_model(
+    table_name: str,
+    declared_layer: str,
+    existing_model: dict[str, Any],
+) -> str:
+    existing_type = str(existing_model.get("table_type") or "").strip()
+    if existing_type:
+        return existing_type
+    layer = str(declared_layer or existing_model.get("layer") or "").upper()
+    return _infer_table_type(table_name, layer)
+
+
+def layer_for_model(
+    result: TableInspectResult,
+    *,
+    existing_model: dict[str, Any] | None = None,
+    policy: LayerResolutionPolicy | None = None,
+) -> str:
+    """返回应写入模型 YAML 的层级。维度表强制归入 DIM。"""
+    return _layer_resolution_for_model(
+        result,
+        existing_model=existing_model,
+        policy=policy,
+    ).applied_layer
+
+
+def _dimension_warnings_for_resolution(
+    result: TableInspectResult,
+    resolution: LayerResolution,
 ) -> list[dict[str, Any]]:
-    """返回模型元数据回写层面的警告。"""
     if result.table_type != "dimension":
+        return []
+    if resolution.applied_layer != "DIM":
         return []
     inferred = str(result.inferred_layer or "").strip().upper()
     if inferred in ("", "DIM"):
@@ -661,6 +724,32 @@ def metadata_warnings_for_result(
             "applied_layer": "DIM",
         }
     ]
+
+
+def warnings_for_resolution(
+    result: TableInspectResult,
+    resolution: LayerResolution,
+) -> list[dict[str, Any]]:
+    """返回 resolver 和模型元数据回写层面的警告。"""
+    return list(resolution.warnings) + _dimension_warnings_for_resolution(
+        result,
+        resolution,
+    )
+
+
+def metadata_warnings_for_result(
+    result: TableInspectResult,
+    *,
+    existing_model: dict[str, Any] | None = None,
+    policy: LayerResolutionPolicy | None = None,
+) -> list[dict[str, Any]]:
+    """返回模型元数据回写层面的警告。"""
+    resolution = _layer_resolution_for_model(
+        result,
+        existing_model=existing_model,
+        policy=policy,
+    )
+    return warnings_for_resolution(result, resolution)
 
 
 def _validate_write_scope(write_scope: str) -> str:
@@ -825,16 +914,20 @@ def _canonical_entities_for_write(
     entities: list[dict[str, Any]],
     *,
     model_layer: str = "",
+    model_table_type: str = "",
 ) -> list[dict[str, Any]]:
     if not entities:
         return []
 
     effective_layer = str(model_layer or result.declared_layer or "").upper()
+    effective_table_type = str(
+        model_table_type or result.table_type or ""
+    ).lower()
     is_dimension_model = (
-        effective_layer == "DIM" or result.table_type == "dimension"
+        effective_layer == "DIM" or effective_table_type == "dimension"
     )
 
-    if result.table_type == "fact" and not is_dimension_model:
+    if effective_table_type == "fact" and not is_dimension_model:
         if effective_layer == "DWD":
             canonical = []
             for entity in entities:
@@ -960,6 +1053,7 @@ def update_model_yaml(
     write_scope: str = "all",
     existing_model: dict[str, Any] | None = None,
     path: Path | None = None,
+    resolution_policy: LayerResolutionPolicy | None = None,
 ) -> dict[str, Any]:
     """将单表 LLM 巡检元数据和指标名覆盖写入 models/{table}.yaml。"""
     write_scope = _validate_write_scope(write_scope)
@@ -970,6 +1064,12 @@ def update_model_yaml(
         existing = yaml.safe_load(path.read_text(encoding=TEXT_ENCODING)) or {}
     if not isinstance(existing, dict):
         existing = {}
+    resolution = _layer_resolution_for_model(
+        result,
+        existing_model=existing,
+        policy=resolution_policy,
+    )
+    resolution_warnings = warnings_for_resolution(result, resolution)
 
     if result.status == "blocked":
         can_migrate_grain = write_scope in {"all", "grain"} and any(
@@ -991,7 +1091,12 @@ def update_model_yaml(
                     existing.get("entity"),
                     existing.get("related_entities"),
                 ),
-                model_layer=str(existing.get("layer") or ""),
+                model_layer=str(
+                    updated.get("layer")
+                    or existing.get("layer")
+                    or resolution.applied_layer
+                ),
+                model_table_type=resolution.table_type,
             )
             grain_metadata = _effective_grain(
                 result.grain or existing.get("grain")
@@ -1013,7 +1118,7 @@ def update_model_yaml(
             _clean_existing_business_metadata_for_layer(
                 project,
                 updated,
-                updated.get("layer") or layer_for_model(result),
+                updated.get("layer") or resolution.applied_layer,
             )
             changed = updated != existing
             if not dry_run and changed:
@@ -1037,7 +1142,7 @@ def update_model_yaml(
                 "grain_changed": changed,
                 "updated": bool(changed and not dry_run),
                 "reason": "validation_blocked_schema_migration",
-                "warnings": [],
+                "warnings": resolution_warnings,
                 "write_scope": write_scope,
             }
         return {
@@ -1053,7 +1158,7 @@ def update_model_yaml(
             "grain_changed": False,
             "updated": False,
             "reason": "validation_blocked",
-            "warnings": [],
+            "warnings": resolution_warnings,
             "write_scope": write_scope,
         }
 
@@ -1093,9 +1198,9 @@ def update_model_yaml(
         updated.setdefault("version", 2)
         updated.setdefault("name", result.table_name)
     if write_table_metadata:
-        applied_layer = layer_for_model(result)
+        applied_layer = resolution.applied_layer
         updated["layer"] = applied_layer
-        updated["table_type"] = result.table_type
+        updated["table_type"] = resolution.table_type
         business_config = get_business_domain_config(project)
         business_metadata = {}
         if business_config:
@@ -1195,7 +1300,12 @@ def update_model_yaml(
             existing.get("entity"),
             existing.get("related_entities"),
         ),
-        model_layer=str(existing.get("layer") or ""),
+        model_layer=str(
+            updated.get("layer")
+            or existing.get("layer")
+            or resolution.applied_layer
+        ),
+        model_table_type=resolution.table_type,
     )
     grain_metadata = _canonical_grain_for_write(
         grain_metadata,
@@ -1219,7 +1329,7 @@ def update_model_yaml(
             updated,
             updated.get("layer")
             or existing.get("layer")
-            or layer_for_model(result),
+            or resolution.applied_layer,
         )
 
     changed = updated != existing
@@ -1279,7 +1389,7 @@ def update_model_yaml(
         "dimension_role": updated.get("dimension_role"),
         "previous_dimension_content_type": previous_dimension_content_type,
         "dimension_content_type": updated.get("dimension_content_type"),
-        "warnings": metadata_warnings_for_result(result),
+        "warnings": resolution_warnings,
         "write_scope": write_scope,
         "metric_count": len(detected_metrics),
         "new_metric_count": new_metric_count,
@@ -1389,6 +1499,21 @@ def _direct_generation_mapping(
     table_type = str(
         mapping.get("table_type") or _infer_table_type(table_name, layer)
     ).strip()
+    resolution = resolve_layer(
+        LayerResolutionInput(
+            table_name=table_name,
+            fallback_layer=layer,
+            fallback_table_type=table_type,
+            policy=LayerResolutionPolicy(
+                mode="generate",
+                candidate_layers=("DWD", "DWS", "DIM"),
+                fixed_layer=layer if layer in {"ODS", "ADS"} else "",
+                fallback_source="direct_rule",
+            ),
+        )
+    )
+    layer = resolution.applied_layer
+    table_type = resolution.table_type
     materialized = str(
         mapping.get("materialized") or _materialized_for_layer(layer)
     ).strip()
@@ -1575,6 +1700,11 @@ def run_direct_model_generation(
             model_paths=generated_model_paths
             if replace_existing_models
             else None,
+            resolution_policy=LayerResolutionPolicy(
+                mode="generate",
+                candidate_layers=("DWD", "DWS", "DIM"),
+                fallback_source="direct_rule",
+            ),
         )
         model_updates.extend(llm_result.get("model_updates") or [])
 
@@ -1771,18 +1901,23 @@ def catalog_discovery_model_mapping(
     if result.status == "blocked":
         return {}
 
-    layer = layer_for_model(result)
+    resolution = _layer_resolution_for_model(
+        result,
+        existing_model=existing_metadata,
+    )
+    layer = resolution.applied_layer
+    table_type = resolution.table_type
     catalog = catalog or {}
     mapping: dict[str, Any] = {
         "table": result.table_name,
         "layer": layer,
-        "table_type": result.table_type,
+        "table_type": table_type,
         "materialized": _materialized_for_layer(
             result.declared_layer or layer
         ),
     }
     mapping.update(business_metadata_for_result(project, result, layer))
-    if result.table_type == "dimension":
+    if table_type == "dimension":
         semantic_subject = _semantic_subject_from_result(result)
         if _catalog_has_code(
             catalog,
@@ -1805,7 +1940,7 @@ def catalog_discovery_model_mapping(
             mapping["dimension_content_type"] = result.dimension_content_type
         return mapping
 
-    if result.table_type == "fact":
+    if table_type == "fact":
         processes = _business_processes_from_result(result)
         if len(processes) == 1 and _catalog_has_code(
             catalog,
@@ -1825,6 +1960,26 @@ def catalog_discovery_model_mapping(
         return mapping
 
     return mapping
+
+
+def _resolved_results_for_catalog_discovery(
+    results: list[TableInspectResult],
+    model_metadata: dict[str, dict[str, Any]],
+) -> list[TableInspectResult]:
+    resolved = []
+    for result in results:
+        resolution = _layer_resolution_for_model(
+            result,
+            existing_model=model_metadata.get(result.table_name, {}),
+        )
+        resolved.append(
+            replace(
+                result,
+                inferred_layer=resolution.applied_layer,
+                table_type=resolution.table_type,
+            )
+        )
+    return resolved
 
 
 def update_model_yaml_from_catalog(
@@ -2041,16 +2196,20 @@ def run_catalog_discovery(
     results = dwd_results + dws_results + metadata_only_results
     contexts_by_name = {ctx.table_name: ctx for ctx in contexts}
     enrich_results_with_related_entities(results, contexts_by_name)
+    model_metadata = load_model_metadata(project)
+    resolved_results = _resolved_results_for_catalog_discovery(
+        results,
+        model_metadata,
+    )
 
     write_result = write_initial_business_semantics_catalog(
         project,
         overwrite=overwrite,
         dry_run=dry_run,
-        inspection_results=results,
+        inspection_results=resolved_results,
     )
     model_updates = []
     discovered_catalog = write_result.get("catalog") or {}
-    model_metadata = load_model_metadata(project)
     for result in results:
         mapping = catalog_discovery_model_mapping(
             project,
@@ -2108,11 +2267,20 @@ def run_catalog_discovery(
     }
 
 
-def result_for_report(result: TableInspectResult) -> dict[str, Any]:
+def result_for_report(
+    result: TableInspectResult,
+    *,
+    existing_model: dict[str, Any] | None = None,
+    resolution_policy: LayerResolutionPolicy | None = None,
+) -> dict[str, Any]:
     """生成模型元数据回写报告中的单表结果。"""
     data = inspect_result_to_dict(result)
     data["violations"] = metric_violations(result)
-    data["metadata_warnings"] = metadata_warnings_for_result(result)
+    data["metadata_warnings"] = metadata_warnings_for_result(
+        result,
+        existing_model=existing_model,
+        policy=resolution_policy,
+    )
     return data
 
 
@@ -2189,6 +2357,7 @@ def run_metadata_write(
     model_metadata: dict[str, dict[str, Any]] | None = None,
     metric_groups: dict[str, dict[str, list[str]]] | None = None,
     model_paths: dict[str, Path] | None = None,
+    resolution_policy: LayerResolutionPolicy | None = None,
 ) -> dict[str, Any]:
     """运行项目级 LLM 巡检与模型元数据回写。"""
     write_scope = _validate_write_scope(write_scope)
@@ -2234,6 +2403,11 @@ def run_metadata_write(
     results = dwd_results + dws_results + metadata_only_results
     contexts_by_name = {ctx.table_name: ctx for ctx in contexts}
     enrich_results_with_related_entities(results, contexts_by_name)
+    report_model_metadata = (
+        model_metadata
+        if model_metadata is not None
+        else load_model_metadata(project)
+    )
     yaml_updates, skipped_updates = _update_models_for_results(
         project,
         results,
@@ -2241,7 +2415,18 @@ def run_metadata_write(
         write_scope=write_scope,
         existing_model_metadata=model_metadata,
         model_paths=model_paths,
+        resolution_policy=resolution_policy,
     )
+    reports = [
+        result_for_report(
+            result,
+            existing_model=(report_model_metadata or {}).get(
+                result.table_name
+            ),
+            resolution_policy=resolution_policy,
+        )
+        for result in results
+    ]
 
     return {
         "project": project,
@@ -2256,8 +2441,8 @@ def run_metadata_write(
         "passed_table_count": sum(1 for r in results if r.status == "passed"),
         "warning_table_count": sum(
             1
-            for r in results
-            if r.status == "warning" or metadata_warnings_for_result(r)
+            for result, report in zip(results, reports)
+            if result.status == "warning" or report.get("metadata_warnings")
         ),
         "blocked_table_count": sum(
             1 for r in results if r.status == "blocked"
@@ -2276,9 +2461,9 @@ def run_metadata_write(
         ),
         "non_atomic_metric_violation_count": _violation_count(results),
         "metadata_warning_count": sum(
-            len(metadata_warnings_for_result(r)) for r in results
+            len(report.get("metadata_warnings") or []) for report in reports
         ),
-        "tables": [result_for_report(r) for r in results],
+        "tables": reports,
         "model_updates": yaml_updates,
         "model_update_count": len(
             [update for update in yaml_updates if update.get("updated")]

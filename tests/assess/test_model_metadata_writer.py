@@ -13,9 +13,9 @@ from dw_refactor_agent.assessment.llm.model_metadata_writer import (
     metric_names_for_model,
     metric_violations,
     result_for_report,
-    run_direct_model_generation,
     run_catalog_discovery,
     run_catalog_metadata_write,
+    run_direct_model_generation,
     run_metadata_write,
     update_model_yaml,
 )
@@ -567,6 +567,55 @@ def test_build_inspection_context_scope_scenarios(
         "dwd_customer",
         "dwd_order_detail",
         "dws_store_sales_daily",
+        "dim_store",
+    }
+
+
+def test_build_inspection_contexts_skip_fixed_ods_ads_boundaries(
+    isolated_writer_project,
+):
+    lineage_data = {
+        "tables": [
+            {
+                "name": "ods_customer",
+                "full_name": "shop_dm.ods_customer",
+                "columns": [{"name": "customer_id", "type": "BIGINT"}],
+            },
+            {
+                "name": "dwd_order_detail",
+                "full_name": "shop_dm.dwd_order_detail",
+                "columns": [{"name": "order_id", "type": "BIGINT"}],
+            },
+            {
+                "name": "dim_store",
+                "full_name": "shop_dm.dim_store",
+                "columns": [{"name": "store_id", "type": "BIGINT"}],
+            },
+            {
+                "name": "ads_sales_dashboard",
+                "full_name": "shop_dm.ads_sales_dashboard",
+                "columns": [{"name": "store_id", "type": "BIGINT"}],
+            },
+        ],
+        "edges": [],
+        "indirect_edges": [],
+    }
+    generated_model_metadata = {
+        "ods_customer": {"layer": "ODS", "table_type": "other"},
+        "dwd_order_detail": {"layer": "DWD", "table_type": "fact"},
+        "dim_store": {"layer": "DIM", "table_type": "dimension"},
+        "ads_sales_dashboard": {"layer": "ADS", "table_type": "fact"},
+    }
+
+    contexts = build_inspection_contexts(
+        isolated_writer_project,
+        lineage_data,
+        model_metadata=generated_model_metadata,
+        metric_groups={},
+    )
+
+    assert {ctx.table_name for ctx in contexts} == {
+        "dwd_order_detail",
         "dim_store",
     }
 
@@ -1123,6 +1172,154 @@ def test_result_for_report_includes_dimension_layer_warning():
 
     assert report["metadata_warnings"][0]["type"] == "dimension_layer_override"
     assert report["metadata_warnings"][0]["inferred_layer"] == "DWD"
+
+
+@pytest.mark.parametrize(
+    ("existing_layer", "existing_type", "result_layer", "result_type"),
+    [
+        ("DWD", "fact", "OTHER", "dimension"),
+        ("DIM", "dimension", "DWD", "fact"),
+    ],
+)
+def test_update_model_yaml_uses_resolved_metadata_for_entities(
+    tmp_path,
+    monkeypatch,
+    existing_layer,
+    existing_type,
+    result_layer,
+    result_type,
+):
+    table_name = "dwd_order_detail"
+    project_dir = _write_catalog_project(
+        tmp_path,
+        monkeypatch,
+        "demo",
+        models={
+            table_name: {
+                "version": 2,
+                "name": table_name,
+                "layer": existing_layer,
+                "table_type": existing_type,
+            }
+        },
+    )
+    model_path = project_dir / "mid" / "models" / f"{table_name}.yaml"
+
+    update = update_model_yaml(
+        "demo",
+        TableInspectResult(
+            table_name=table_name,
+            declared_layer=existing_layer,
+            inferred_layer=result_layer,
+            table_type=result_type,
+            confidence=0.9,
+            reasoning_steps=[],
+            entities=[
+                {
+                    "code": "ORDER",
+                    "type": "primary",
+                    "key_columns": ["order_id"],
+                },
+                {
+                    "code": "CUST",
+                    "type": "foreign",
+                    "key_columns": ["customer_id"],
+                    "relationship": {
+                        "type": "many_to_one",
+                        "from_entity": "ORDER",
+                    },
+                },
+            ],
+        ),
+        write_scope="all",
+    )
+    saved = yaml.safe_load(model_path.read_text(encoding="utf-8"))
+
+    assert update["layer"] == "DWD"
+    assert update["table_type"] == "fact"
+    if result_layer == "OTHER":
+        assert update["warnings"][0]["type"] == "llm_layer_fallback"
+    assert saved["layer"] == "DWD"
+    assert saved["table_type"] == "fact"
+    assert saved["entities"] == [
+        {
+            "code": "ORDER",
+            "type": "primary",
+            "key_columns": ["order_id"],
+        },
+        {
+            "code": "CUST",
+            "type": "foreign",
+            "key_columns": ["customer_id"],
+        },
+    ]
+    assert "layer_score" not in saved
+
+
+def test_update_model_yaml_missing_table_type_uses_code_prior_on_fallback(
+    tmp_path,
+    monkeypatch,
+):
+    table_name = "dwd_order_detail"
+    project_dir = _write_catalog_project(
+        tmp_path,
+        monkeypatch,
+        "demo",
+        models={
+            table_name: {
+                "version": 2,
+                "name": table_name,
+                "layer": "DWD",
+            }
+        },
+    )
+    model_path = project_dir / "mid" / "models" / f"{table_name}.yaml"
+
+    update = update_model_yaml(
+        "demo",
+        TableInspectResult(
+            table_name=table_name,
+            declared_layer="DWD",
+            inferred_layer="OTHER",
+            table_type="dimension",
+            confidence=0.9,
+            reasoning_steps=[],
+            entities=[
+                {
+                    "code": "ORDER",
+                    "type": "primary",
+                    "key_columns": ["order_id"],
+                },
+                {
+                    "code": "CUST",
+                    "type": "foreign",
+                    "key_columns": ["customer_id"],
+                },
+            ],
+        ),
+        write_scope="all",
+    )
+    saved = yaml.safe_load(model_path.read_text(encoding="utf-8"))
+
+    assert update["layer"] == "DWD"
+    assert update["table_type"] == "other"
+    assert update["warnings"][0]["type"] == "llm_layer_fallback"
+    assert update["warnings"][0]["prior_layer"] == "DWD"
+    assert saved["layer"] == "DWD"
+    assert saved["table_type"] == "other"
+    assert saved["entities"] == [
+        {
+            "code": "ORDER",
+            "type": "primary",
+            "key_columns": ["order_id"],
+        },
+        {
+            "code": "CUST",
+            "type": "foreign",
+            "key_columns": ["customer_id"],
+        },
+    ]
+    assert "layer_score" not in saved
 
 
 def _assert_update_model_yaml_dry_run_reports_metadata_change(
@@ -2939,6 +3136,43 @@ def test_catalog_discovery_keeps_existing_assignment_when_llm_incomplete():
     assert mapping["business_area"] == "SHOP"
 
 
+def test_catalog_discovery_mapping_uses_resolved_table_type():
+    import dw_refactor_agent.assessment.llm.model_metadata_writer as writer_module
+
+    result = TableInspectResult(
+        table_name="dwd_order_detail",
+        declared_layer="DWD",
+        inferred_layer="OTHER",
+        table_type="dimension",
+        confidence=0.9,
+        reasoning_steps=[],
+        entities=[
+            {
+                "code": "ORDER",
+                "type": "primary",
+                "key_columns": ["order_id"],
+            }
+        ],
+    )
+
+    mapping = writer_module.catalog_discovery_model_mapping(
+        "demo",
+        result,
+        _catalog_payload(subjects=[_customer_subject()]),
+        {
+            "layer": "DWD",
+            "table_type": "fact",
+            "business_process": "ORDER_DETAIL",
+        },
+    )
+
+    assert mapping["layer"] == "DWD"
+    assert mapping["table_type"] == "fact"
+    assert "semantic_subject" not in mapping
+    assert "dimension_role" not in mapping
+    assert "dimension_content_type" not in mapping
+
+
 def test_run_metadata_write_passes_parallelism(
     monkeypatch, sample_lineage_data, isolated_writer_project
 ):
@@ -2967,8 +3201,52 @@ def test_run_metadata_write_passes_parallelism(
     assert seen["parallelism"] == 4
 
 
-def test_run_metadata_write_counts_dimension_layer_warnings(
-    monkeypatch, sample_lineage_data, isolated_writer_project
+@pytest.mark.parametrize(
+    (
+        "customer_payload",
+        "expected_warning_type",
+        "expected_warning_fields",
+        "model_metadata",
+    ),
+    [
+        (
+            {"inferred_layer": "DWD", "table_type": "dimension"},
+            "dimension_layer_override",
+            {"applied_layer": "DIM"},
+            None,
+        ),
+        (
+            {"inferred_layer": "OTHER", "table_type": "dimension"},
+            "llm_layer_fallback",
+            {"prior_layer": "DWD"},
+            {
+                "dwd_customer": {
+                    "name": "dwd_customer",
+                    "layer": "DWD",
+                    "table_type": "fact",
+                },
+                "dwd_order_detail": {
+                    "name": "dwd_order_detail",
+                    "layer": "DWD",
+                    "table_type": "fact",
+                },
+                "dws_store_sales_daily": {
+                    "name": "dws_store_sales_daily",
+                    "layer": "DWS",
+                    "table_type": "fact",
+                },
+            },
+        ),
+    ],
+)
+def test_run_metadata_write_counts_metadata_warnings(
+    monkeypatch,
+    sample_lineage_data,
+    isolated_writer_project,
+    customer_payload,
+    expected_warning_type,
+    expected_warning_fields,
+    model_metadata,
 ):
     import dw_refactor_agent.assessment.llm.model_metadata_writer as writer_module
 
@@ -2983,8 +3261,8 @@ def test_run_metadata_write_counts_dimension_layer_warnings(
                 TableInspectResult(
                     table_name=ctx.table_name,
                     declared_layer=ctx.layer,
-                    inferred_layer="DWD",
-                    table_type="dimension",
+                    inferred_layer=customer_payload["inferred_layer"],
+                    table_type=customer_payload["table_type"],
                     confidence=0.9,
                     reasoning_steps=[],
                 )
@@ -3005,8 +3283,11 @@ def test_run_metadata_write_counts_dimension_layer_warnings(
     )
     monkeypatch.setattr(writer_module, "TableInspector", FakeInspector)
 
+    kwargs = {"model_metadata": model_metadata, "metric_groups": {}}
+    if model_metadata is None:
+        kwargs = {}
     result = run_metadata_write(
-        isolated_writer_project, api_key="test", dry_run=True
+        isolated_writer_project, api_key="test", dry_run=True, **kwargs
     )
     customer_report = next(
         table
@@ -3016,7 +3297,11 @@ def test_run_metadata_write_counts_dimension_layer_warnings(
 
     assert result["metadata_warning_count"] == 1
     assert result["warning_table_count"] == 1
-    assert customer_report["metadata_warnings"][0]["applied_layer"] == "DIM"
+    assert customer_report["metadata_warnings"][0]["type"] == (
+        expected_warning_type
+    )
+    for field, expected in expected_warning_fields.items():
+        assert customer_report["metadata_warnings"][0][field] == expected
 
 
 def test_run_metadata_write_passes_dwd_metric_groups_to_dws(
@@ -3231,6 +3516,8 @@ def test_run_metadata_write_skips_blocked_model_updates(
     import dw_refactor_agent.assessment.llm.model_metadata_writer as writer_module
 
     blocked = _sample_fact_result()
+    blocked.inferred_layer = "OTHER"
+    blocked.table_type = "dimension"
     blocked.validation = {
         "unknown_columns": ["ghost_amt"],
         "duplicate_columns": [],
@@ -3274,6 +3561,9 @@ def test_run_metadata_write_skips_blocked_model_updates(
     assert result["model_updates"][0]["updated"] is False
     assert result["skipped_model_updates"][0]["table"] == "dwd_order_detail"
     assert result["skipped_model_updates"][0]["reason"] == "validation_blocked"
+    assert result["skipped_model_updates"][0]["warnings"][0]["type"] == (
+        "llm_layer_fallback"
+    )
 
 
 def test_run_catalog_discovery_writes_catalog_from_llm_results(
@@ -3401,6 +3691,98 @@ def test_run_catalog_discovery_writes_catalog_from_llm_results(
     assert fact_model["business_process"] == "ORDER_TRANSACTION"
     assert dim_model["semantic_subject"] == "CUSTOMER"
     assert result["paths"]["taxonomy"].endswith("business_taxonomy.yaml")
+
+
+def test_run_catalog_discovery_uses_resolved_results_for_catalog(
+    tmp_path, monkeypatch, sample_lineage_data
+):
+    import dw_refactor_agent.assessment.llm.model_metadata_writer as writer_module
+
+    project = "catalog_discovery_resolved_catalog"
+    project_dir = tmp_path / project
+    (project_dir / "mid" / "ddl").mkdir(parents=True)
+    models_dir = project_dir / "mid" / "models"
+    models_dir.mkdir()
+    (models_dir / "dwd_order_detail.yaml").write_text(
+        "\n".join(
+            [
+                "version: 2",
+                "name: dwd_order_detail",
+                "layer: DWD",
+                "table_type: fact",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (project_dir / "mid" / "tasks").mkdir()
+    (tmp_path / "naming_config.yaml").write_text(
+        "types: {}\nbindings: {}\ndictionaries: {}\n",
+        encoding="utf-8",
+    )
+    _write_split_catalog(project_dir, project, _catalog_payload())
+    _configure_project_root(monkeypatch, tmp_path)
+    monkeypatch.setitem(
+        config.PROJECT_CONFIG,
+        project,
+        {
+            "dir": project,
+            "naming_config": "naming_config.yaml",
+        },
+    )
+    lineage_data = {
+        "tables": [
+            table
+            for table in sample_lineage_data["tables"]
+            if table["name"] == "dwd_order_detail"
+        ],
+        "edges": [],
+        "indirect_edges": [],
+    }
+    monkeypatch.setattr(
+        writer_module,
+        "load_lineage_data",
+        lambda _project: lineage_data,
+    )
+
+    class FakeInspector:
+        def __init__(
+            self, api_key, *, model, cache_file, max_retries, parallelism
+        ):
+            pass
+
+        def inspect_batch(self, contexts):
+            return [
+                TableInspectResult(
+                    table_name=ctx.table_name,
+                    declared_layer=ctx.layer,
+                    inferred_layer="OTHER",
+                    table_type="dimension",
+                    confidence=0.9,
+                    reasoning_steps=[],
+                    entities=[
+                        {
+                            "code": "ORDER",
+                            "type": "primary",
+                            "key_columns": ["order_id"],
+                        }
+                    ],
+                )
+                for ctx in contexts
+            ]
+
+    monkeypatch.setattr(writer_module, "TableInspector", FakeInspector)
+
+    result = run_catalog_discovery(
+        project,
+        api_key="test",
+        dry_run=False,
+        overwrite=True,
+    )
+    catalog = config.load_business_semantics_catalog(project)
+
+    assert result["catalog"]["semantic_subjects"] == []
+    assert catalog["semantic_subjects"] == []
 
 
 def test_run_catalog_discovery_does_not_write_unknown_domain_or_area(
