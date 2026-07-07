@@ -19,7 +19,7 @@ derived_metrics:
   base_metric_table: dws_store_sales_daily
   time_period: D
   expression: COALESCE(ss.order_count, 0)
-  aggregation: SUM
+  aggregation: PASSTHROUGH
 grain:
   entities:
   - STORE

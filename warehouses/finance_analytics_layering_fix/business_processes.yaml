@@ -38,7 +38,7 @@ business_processes:
   source: manual_fixture
 - code: FRAUD_ALERT
   name: 欺诈告警
-  data_domain: 09
+  data_domain: '09'
   business_area: PAYM
   source: manual_fixture
 - code: LOAN_PAYMENT
@@ -53,12 +53,12 @@ business_processes:
   source: manual_fixture
 - code: REGULATORY_REPORTING
   name: 监管报送
-  data_domain: 09
+  data_domain: '09'
   business_area: RISK
   source: manual_fixture
 - code: RISK_ASSESSMENT
   name: 风险评估
-  data_domain: 09
+  data_domain: '09'
   business_area: RISK
   source: manual_fixture
 - code: TRANSACTION_ACTIVITY

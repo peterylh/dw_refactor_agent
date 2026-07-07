@@ -6,6 +6,7 @@ config:
   materialized: full
 atomic_metrics:
 - duration_minutes
+- sentiment_score
 - interaction_count
 business_area: CLNT
 entities:
@@ -25,6 +26,4 @@ entities:
   key_columns:
   - agent_id
 data_domain: '01'
-calculated_metrics:
-- sentiment_score
 business_process: CUSTOMER_INTERACTION

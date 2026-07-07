@@ -7,6 +7,7 @@ config:
   materialized: incremental
 atomic_metrics:
 - item_count
+- total_amount
 entities:
 - code: ORDER
   type: foreign
@@ -14,13 +15,6 @@ entities:
   key_columns:
   - order_id
 business_process: ORDER_TRANSACTION
-derived_metrics:
-- name: total_amount
-  base_metric: subtotal
-  base_metric_table: dwd_order_detail
-  time_period: D
-  expression: SUM(oi.subtotal)
-  aggregation: SUM
 business_area: SHOP
 grain:
   entities:

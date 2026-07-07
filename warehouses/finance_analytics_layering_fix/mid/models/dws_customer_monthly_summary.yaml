@@ -5,24 +5,6 @@ table_type: fact
 config:
   materialized: full
 derived_metrics:
-- name: fraud_transaction_count
-  base_metric: transaction_count
-  base_metric_table: dwd_transactions
-  time_period: M
-  expression: SUM(CASE WHEN is_fraud THEN 1 ELSE 0 END)
-  aggregation: SUM
-- name: international_transaction_count
-  base_metric: transaction_count
-  base_metric_table: dwd_transactions
-  time_period: M
-  expression: SUM(CASE WHEN is_international THEN 1 ELSE 0 END)
-  aggregation: SUM
-- name: past_due_account_count
-  base_metric: active_account_count
-  base_metric_table: dwd_accounts
-  time_period: M
-  expression: SUM(CASE WHEN is_past_due THEN 1 ELSE 0 END)
-  aggregation: SUM
 - name: total_balance
   base_metric: current_balance
   base_metric_table: dwd_accounts
@@ -45,6 +27,9 @@ atomic_metrics:
 - unique_merchants
 - unique_categories
 - active_account_count
+- fraud_transaction_count
+- international_transaction_count
+- past_due_account_count
 - customer_count
 business_area: CLNT
 grain:

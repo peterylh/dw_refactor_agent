@@ -6,7 +6,6 @@ config:
   materialized: full
 atomic_metrics:
 - current_balance
-- active_account_count
 entities:
 - code: ACCOUNT
   type: primary

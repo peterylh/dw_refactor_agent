@@ -1,4 +1,15 @@
+# BENCHMARK FIXTURE ONLY.
+# This warehouse copy is used as YAML metadata gold labels for the
+# table_inspector_layer cold-start benchmark. Do not run task_run,
+# reinit_project, import_lineage, or refactor execution commands against it:
+# SQL/DDL/task files are copied byte-for-byte from warehouses/finance_analytics
+# and still reference the source Doris databases.
 name: finance_analytics_layering_fix
+fixture:
+  source_project: finance_analytics
+  purpose: table_inspector_layer_benchmark_gold_labels
+  execution: disabled
+  warning: Do not execute this project; metadata fixture only.
 catalog: internal
 database: finance_analytics_dm
 qa_database: finance_analytics_dm_qa
