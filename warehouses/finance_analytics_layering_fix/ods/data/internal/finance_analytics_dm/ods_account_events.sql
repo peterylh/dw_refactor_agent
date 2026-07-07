@@ -1,0 +1,20 @@
+INSERT INTO finance_analytics_dm.ods_account_events (event_id, account_id, customer_id, product_id, event_date, event_type, event_category, old_value, new_value, triggered_by, channel, processed_by, notes, is_reversible, requires_approval, approval_status, load_time)
+VALUES
+(1, 1, 1, 1, '2025-01-02 11:00:00', 'Dormancy Warning', 'Fee Related', '1000', '1500', 'Risk Management', 'Branch', 'EMP0001', 'Event for account 1', FALSE, FALSE, NULL, '2025-01-15 09:00:00'),
+(2, 2, 2, 2, '2025-01-03 11:00:00', 'Dormancy Warning', 'Fee Related', '1000', '1500', 'System Automated', 'Branch', 'EMP0002', 'Event for account 2', TRUE, FALSE, NULL, '2025-01-15 09:00:00'),
+(3, 3, 2, 4, '2025-01-04 11:00:00', 'Credit Limit Increased', 'Activity Status', '1000', '1500', 'System Automated', 'Online', 'EMP0003', 'Event for account 3', FALSE, TRUE, 'Approved', '2025-01-15 09:00:00'),
+(4, 4, 3, 3, '2025-01-05 11:00:00', 'Dormancy Warning', 'Fee Related', '1000', '1500', 'Risk Management', 'Branch', 'EMP0004', 'Event for account 4', TRUE, FALSE, NULL, '2025-01-15 09:00:00'),
+(5, 5, 4, 4, '2025-01-06 11:00:00', 'Fees Waived', 'Account Setup', '1000', '1500', 'Risk Management', 'System', 'EMP0005', 'Event for account 5', FALSE, FALSE, NULL, '2025-01-15 09:00:00'),
+(6, 6, 4, 6, '2025-01-07 11:00:00', 'Fees Waived', 'Account Setup', '1000', '1500', 'Risk Management', 'Online', 'EMP0006', 'Event for account 6', TRUE, TRUE, 'Rejected', '2025-01-15 09:00:00'),
+(7, 7, 5, 5, '2025-01-08 11:00:00', 'Dormancy Warning', 'Fee Related', '1000', '1500', 'Customer Request', 'Branch', 'EMP0007', 'Event for account 7', FALSE, FALSE, NULL, '2025-01-15 09:00:00'),
+(8, 8, 6, 6, '2025-01-09 11:00:00', 'Credit Limit Increased', 'Terms Change', '1000', '1500', 'Risk Management', 'Branch', 'EMP0008', 'Event for account 8', TRUE, FALSE, NULL, '2025-01-15 09:00:00'),
+(9, 9, 6, 2, '2025-01-10 11:00:00', 'Credit Limit Increased', 'Account Setup', '1000', '1500', 'Risk Management', 'Online', 'EMP0009', 'Event for account 9', FALSE, TRUE, 'Pending', '2025-01-15 09:00:00'),
+(10, 10, 7, 1, '2025-01-01 11:00:00', 'Dormancy Warning', 'Account Setup', '1000', '1500', 'Risk Management', 'Branch', 'EMP0010', 'Event for account 10', TRUE, FALSE, NULL, '2025-01-15 09:00:00'),
+(11, 11, 8, 2, '2025-01-02 11:00:00', 'Credit Limit Increased', 'Account Setup', '1000', '1500', 'System Automated', 'Branch', 'EMP0011', 'Event for account 11', FALSE, FALSE, NULL, '2025-01-15 09:00:00'),
+(12, 12, 8, 4, '2025-01-03 11:00:00', 'Dormancy Warning', 'Terms Change', '1000', '1500', 'Customer Request', 'Mobile', 'EMP0012', 'Event for account 12', TRUE, TRUE, 'Rejected', '2025-01-15 09:00:00'),
+(13, 13, 9, 3, '2025-01-04 11:00:00', 'Fees Waived', 'Fee Related', '1000', '1500', 'Customer Request', 'Branch', 'EMP0013', 'Event for account 13', FALSE, FALSE, NULL, '2025-01-15 09:00:00'),
+(14, 14, 10, 4, '2025-01-05 11:00:00', 'Dormancy Warning', 'Fee Related', '1000', '1500', 'Risk Management', 'Branch', 'EMP0014', 'Event for account 14', TRUE, FALSE, NULL, '2025-01-15 09:00:00'),
+(15, 15, 10, 6, '2025-01-06 11:00:00', 'Account Opened', 'Activity Status', '1000', '1500', 'Customer Request', 'Mobile', 'EMP0015', 'Event for account 15', FALSE, TRUE, 'Approved', '2025-01-15 09:00:00'),
+(16, 16, 11, 5, '2025-01-07 11:00:00', 'Dormancy Warning', 'Fee Related', '1000', '1500', 'Customer Request', 'System', 'EMP0016', 'Event for account 16', TRUE, FALSE, NULL, '2025-01-15 09:00:00'),
+(17, 17, 12, 6, '2025-01-08 11:00:00', 'Account Opened', 'Fee Related', '1000', '1500', 'Risk Management', 'Online', 'EMP0017', 'Event for account 17', FALSE, FALSE, NULL, '2025-01-15 09:00:00'),
+(18, 18, 12, 2, '2025-01-09 11:00:00', 'Dormancy Warning', 'Fee Related', '1000', '1500', 'Risk Management', 'Branch', 'EMP0018', 'Event for account 18', TRUE, TRUE, 'Rejected', '2025-01-15 09:00:00');

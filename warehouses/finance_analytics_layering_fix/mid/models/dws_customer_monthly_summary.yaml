@@ -1,0 +1,46 @@
+version: 2
+name: dws_customer_monthly_summary
+layer: DWS
+table_type: fact
+config:
+  materialized: full
+derived_metrics:
+- name: total_balance
+  base_metric: current_balance
+  base_metric_table: dwd_accounts
+  time_period: M
+  expression: SUM(current_balance)
+  aggregation: SUM
+- name: avg_balance
+  base_metric: current_balance
+  base_metric_table: dwd_accounts
+  time_period: M
+  expression: AVG(current_balance)
+  aggregation: AVG
+calculated_metrics:
+- total_transaction_volume
+- avg_transaction_amount
+- fraud_amount
+- fraud_rate_pct
+atomic_metrics:
+- transaction_count
+- unique_merchants
+- unique_categories
+- active_account_count
+- fraud_transaction_count
+- international_transaction_count
+- past_due_account_count
+- customer_count
+business_area: CLNT
+grain:
+  entities:
+  - CUST
+  time_column: year_month
+  time_period: M
+entities:
+- code: CUST
+  type: foreign
+  name: 客户
+  key_columns:
+  - customer_key
+business_process: CUSTOMER_MONTHLY_SUMMARY

@@ -1,0 +1,18 @@
+version: 1
+project: shop_layering_fix
+business_processes:
+- code: INVENTORY_MANAGEMENT
+  name: 库存管理
+  data_domain: '05'
+  business_area: SHOP
+  source: llm_round2
+- code: ORDER_TRANSACTION
+  name: 订单交易
+  data_domain: '04'
+  business_area: SHOP
+  source: llm_round2
+- code: PROMOTION_EFFECT
+  name: 促销效果
+  data_domain: '06'
+  business_area: SHOP
+  source: llm_round2

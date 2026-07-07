@@ -1,0 +1,247 @@
+types:
+  BUSINESS_AREA_CODE:
+    label: 业务板块简写
+    desc: >-
+      业务板块是从业务经营和管理场景出发，对模型服务对象进行的业务分类，
+      用于支撑业务线分析、经营管理、指标归口和数据应用建设。每个适用模型
+      必须且只能归属一个业务板块。业务板块的判断依据是模型主要支撑的业务
+      流程、经营场景或分析用途。finance_analytics 中仅 DWD 和 DWS 层划分
+      业务板块；不确定时可选择“其它”。
+    allow:
+      dictionary: business_areas
+      value_field: code
+
+  DATA_DOMAIN_ID:
+    label: 数据域编号
+    desc: >-
+      数据域是从数据资产主题出发，对模型进行的主归属分类，用于明确模型的
+      数据管理边界、责任主体、标准体系和治理规则。每个适用模型必须且只能
+      归属一个数据域。数据域的判断依据是模型的核心实体、核心事实或主要数据
+      内容。finance_analytics 中仅 DWD 层划分数据域；不确定时可选择“其它”。
+    allow:
+      dictionary: data_domains
+      value_field: id
+
+  BIZ_PROCESS:
+    label: 业务过程
+    patterns:
+      - "^[A-Z][A-Z0-9]*$"
+
+  ACTION_VERB:
+    label: 动作动词
+    desc: 原子指标动作动词，如 PAY=支付、APPLY=申请
+    patterns:
+      - "^[A-Z][A-Z0-9]*$"
+
+  MODEL_ENTITY:
+    label: 当前模型主实体简写
+    desc: DIM 表名中的实体段，必须来自当前模型 primary entities.code
+    patterns:
+      - "^[A-Z][A-Z0-9]*$"
+    values_from:
+      scope: current_model
+      paths:
+        - entities.code
+        - entity.code
+
+  GRAIN_ENTITY:
+    label: 当前模型粒度实体简写
+    desc: DWS 表名中的实体段，必须来自当前模型 grain.entities 引用的 entities.code
+    patterns:
+      - "^[A-Z][A-Z0-9]*$"
+    values_from:
+      scope: current_model
+      paths:
+        - grain.entities
+
+  COLUMN_IDENTIFIER:
+    label: 字段标识符
+    desc: 大写字段标识符，长度小于16
+    patterns:
+      - "^[A-Z][A-Z0-9_]{0,14}$"
+
+  MEASURE_NOUN:
+    label: 度量名词
+    desc: 原子指标度量名词字典
+    allow:
+      - AMT
+      - CNT
+      - BAL
+      - QTY
+      - NUM
+      - PRICE
+      - COST
+      - RATE
+      - RATIO
+      - PCT
+      - IDX
+      - SCORE
+      - DAYS
+      - TIMES
+      - FEE
+      - TAX
+      - PROFIT
+      - LOSS
+      - INCOME
+      - REVENUE
+      - LIMIT
+      - POINT
+      - VALUE
+
+  METRICS_DESC:
+    label: 核心指标描述
+    desc: 核心指标描述
+    patterns:
+      - "^[A-Z][A-Z0-9_]*$"
+
+  TIME_PERIOD:
+    label: 时间周期
+    allow:
+      - D
+      - W
+      - M
+      - Q
+      - Y
+      - S
+
+  METRIC_TIME_PERIOD:
+    label: 指标时间周期
+    desc: 派生指标时间周期，如 D(日)、MTD(月初至今)、7D(近7日)、L1M(上个月)
+    allow:
+      - D
+      - W
+      - M
+      - Q
+      - Y
+      - TD
+      - MTD
+      - QTD
+      - YTD
+    patterns:
+      - "^(?:L?[1-9][0-9]*(?:D|W|M|Q|Y))$"
+
+  METRIC_MODIFIER:
+    label: 指标修饰词
+    desc: 来自维度属性的业务限定，3~8 字符英文缩写
+    patterns:
+      - "^(?=.{3,8}$)[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)*$"
+
+  DWD_GRANULARITY:
+    label: DWD 粒度后缀
+    desc: I=事务增量, F=周期快照, A=累积快照
+    allow:
+      - I
+      - F
+      - A
+
+  DWS_GRANULARITY:
+    label: DWS 粒度后缀
+    desc: S=明细汇总, F=快照, A=累积
+    allow:
+      - S
+      - F
+      - A
+
+  ADS_PREFIX:
+    label: ADS 应用前缀
+    patterns:
+      - "^A[0-9]+$"
+
+  ADS_TOPIC:
+    label: ADS 主题
+    patterns:
+      - "^[A-Z][A-Z0-9]*$"
+
+  ADS_GRANULARITY:
+    label: ADS 粒度后缀
+    allow:
+      - S
+      - F
+      - A
+
+  DIM_ROLE:
+    label: 维度建设角色
+    allow:
+      - BASE
+      - ADDT
+
+  DIM_DESC:
+    label: 维度描述
+    desc: 维度描述
+    patterns:
+      - "^[A-Z][A-Z0-9_]*$"
+
+  DIM_CONTENT_TYPE:
+    label: 维表内容形态
+    allow:
+      - TAG
+      - INFO
+      - TREE
+
+rules:
+  TABLE_DWD:
+    desc: DWD 明细层表命名
+    expr: ["_", M, "$BUSINESS_AREA_CODE", "$DATA_DOMAIN_ID", "$BIZ_PROCESS", ["", "$TIME_PERIOD", "$DWD_GRANULARITY"]]
+    constraints:
+      max_length: 30
+
+  TABLE_DWS:
+    desc: DWS 汇总层表命名， 当超过两个实体粒度时，仅选择两个主要粒度
+    expr: ["_", I, "$BUSINESS_AREA_CODE", "$GRAIN_ENTITY{1,2}", "$METRICS_DESC", ["", "$TIME_PERIOD", "$DWS_GRANULARITY"]]
+    constraints:
+      max_length: 30
+
+  TABLE_ADS:
+    desc: ADS 应用层表命名
+    expr: ["_", "$ADS_PREFIX", "$ADS_TOPIC", ["", "$TIME_PERIOD", "$ADS_GRANULARITY"]]
+    constraints:
+      max_length: 30
+
+  TABLE_DIM:
+    desc: 普通维度表命名
+    expr: ["_", DIM, "$DIM_ROLE", "$MODEL_ENTITY", "$DIM_DESC", "$DIM_CONTENT_TYPE"]
+    constraints:
+      max_length: 30
+
+  TABLE_DIM_PM:
+    desc: 参数/码表维度命名
+    expr: ["_", DIM, PM, "$DIM_DESC"]
+    constraints:
+      max_length: 30
+
+  COLUMN_DEFAULT:
+    desc: 默认字段命名大写标识符，长度小于16
+    expr: "$COLUMN_IDENTIFIER"
+
+  ATOMIC_METRIC:
+    desc: 原子指标命名 {ACTION_VERB}_{MEASURE_NOUN}
+    expr: ["_", "$ACTION_VERB", "$MEASURE_NOUN"]
+
+  DERIVED_METRIC:
+    desc: 派生指标命名 {TIME_PERIOD}_{MODIFIER...}_{ATOMIC_METRIC}
+    expr: ["_", "$METRIC_TIME_PERIOD", "$METRIC_MODIFIER{1,}", "@ATOMIC_METRIC"]
+
+bindings:
+  table:
+    DWD:
+      - "@TABLE_DWD"
+    DWS:
+      - "@TABLE_DWS"
+    ADS:
+      - "@TABLE_ADS"
+    DIM:
+      - "@TABLE_DIM"
+      - "@TABLE_DIM_PM"
+
+  column:
+    allow:
+      - ETL_TIME
+      - SNAPSHOT_DATE
+      - CREATE_TIME
+      - UPDATE_TIME
+    rules:
+      - "@COLUMN_DEFAULT"
+
+  metric:
+    atomic: "@ATOMIC_METRIC"
+    derived: "@DERIVED_METRIC"

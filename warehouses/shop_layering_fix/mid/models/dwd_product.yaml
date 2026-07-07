@@ -1,0 +1,24 @@
+version: 2
+name: dwd_product
+layer: DIM
+table_type: dimension
+description: 商品每日快照
+config:
+  materialized: snapshot
+entities:
+- code: PROD
+  type: primary
+  name: 商品
+  key_columns:
+  - product_id
+- code: CATEGORY
+  type: foreign
+  name: 品类
+  key_columns:
+  - category_id
+  relationship:
+    type: many_to_one
+    from_entity: PROD
+semantic_subject: PROD
+dimension_role: BASE
+dimension_content_type: INFO

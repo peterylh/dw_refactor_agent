@@ -1,0 +1,15 @@
+version: 2
+name: dim_merchant
+layer: DIM
+table_type: dimension
+config:
+  materialized: full
+entities:
+- code: MERCHANT
+  type: primary
+  name: 商户
+  key_columns:
+  - merchant_key
+dimension_role: BASE
+dimension_content_type: INFO
+semantic_subject: MERCHANT

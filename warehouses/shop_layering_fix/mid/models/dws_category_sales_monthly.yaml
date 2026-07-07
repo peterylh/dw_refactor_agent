@@ -1,0 +1,35 @@
+version: 2
+name: dws_category_sales_monthly
+layer: DWS
+table_type: fact
+description: 品类月度销售汇总
+config:
+  materialized: incremental
+derived_metrics:
+- name: sale_quantity
+  base_metric: quantity
+  base_metric_table: dwd_order_detail
+  time_period: M
+  expression: SUM(quantity)
+  aggregation: SUM
+- name: sale_amount
+  base_metric: subtotal
+  base_metric_table: dwd_order_detail
+  time_period: M
+  expression: SUM(subtotal)
+  aggregation: SUM
+atomic_metrics:
+- order_count
+entities:
+- code: CATEGORY
+  type: foreign
+  name: 品类
+  key_columns:
+  - category_id
+business_process: ORDER_TRANSACTION
+business_area: SHOP
+grain:
+  entities:
+  - CATEGORY
+  time_column: stat_month_date
+  time_period: M

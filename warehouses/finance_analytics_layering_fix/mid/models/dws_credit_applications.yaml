@@ -1,0 +1,33 @@
+version: 2
+name: dws_credit_applications
+layer: DWD
+table_type: fact
+config:
+  materialized: full
+atomic_metrics:
+- requested_amount
+- approved_amount
+- application_count
+calculated_metrics:
+- processing_days
+- amount_difference
+- approval_probability_score
+business_area: LOAN
+entities:
+- code: CREDIT_APPLICATION
+  type: primary
+  name: 授信申请
+  key_columns:
+  - application_id
+- code: CUST
+  type: foreign
+  name: 客户
+  key_columns:
+  - customer_key
+- code: PROD
+  type: foreign
+  name: 产品
+  key_columns:
+  - product_key
+data_domain: '09'
+business_process: CREDIT_APPLICATION

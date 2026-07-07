@@ -1,0 +1,15 @@
+version: 2
+name: dim_campaign
+layer: DIM
+table_type: dimension
+config:
+  materialized: full
+entities:
+- code: CAMPAIGN
+  type: primary
+  name: 营销活动
+  key_columns:
+  - campaign_key
+dimension_role: BASE
+dimension_content_type: INFO
+semantic_subject: CAMPAIGN

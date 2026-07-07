@@ -1,0 +1,36 @@
+version: 2
+name: dws_account_events
+layer: DWD
+table_type: fact
+config:
+  materialized: full
+atomic_metrics:
+- event_count
+- old_value
+- new_value
+calculated_metrics:
+- value_change
+business_area: DPST
+entities:
+- code: ACCOUNT_EVENT
+  type: primary
+  name: 账户事件
+  key_columns:
+  - event_id
+- code: ACCOUNT
+  type: foreign
+  name: 账户
+  key_columns:
+  - account_key
+- code: CUST
+  type: foreign
+  name: 客户
+  key_columns:
+  - customer_key
+- code: PROD
+  type: foreign
+  name: 产品
+  key_columns:
+  - product_key
+data_domain: '02'
+business_process: ACCOUNT_EVENT

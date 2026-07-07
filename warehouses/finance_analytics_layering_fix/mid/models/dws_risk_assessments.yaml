@@ -1,0 +1,30 @@
+version: 2
+name: dws_risk_assessments
+layer: DWD
+table_type: fact
+config:
+  materialized: full
+atomic_metrics:
+- assessment_count
+calculated_metrics:
+- risk_score
+- credit_risk_score
+- fraud_risk_score
+- aml_risk_score
+- days_until_review
+- kyc_age_days
+- high_risk_customer_flag
+business_area: RISK
+entities:
+- code: RISK_ASSESSMENT
+  type: primary
+  name: 风险评估
+  key_columns:
+  - assessment_id
+- code: CUST
+  type: foreign
+  name: 客户
+  key_columns:
+  - customer_key
+data_domain: 09
+business_process: RISK_ASSESSMENT

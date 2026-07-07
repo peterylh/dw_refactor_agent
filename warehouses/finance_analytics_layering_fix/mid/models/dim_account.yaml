@@ -1,0 +1,31 @@
+version: 2
+name: dim_account
+layer: DIM
+table_type: dimension
+config:
+  materialized: full
+entities:
+- code: ACCOUNT
+  type: primary
+  name: 账户
+  key_columns:
+  - account_key
+- code: CUST
+  type: foreign
+  name: 客户
+  key_columns:
+  - customer_id
+  relationship:
+    type: many_to_one
+    from_entity: ACCOUNT
+- code: PROD
+  type: foreign
+  name: 产品
+  key_columns:
+  - product_id
+  relationship:
+    type: many_to_one
+    from_entity: ACCOUNT
+dimension_role: BASE
+dimension_content_type: INFO
+semantic_subject: ACCOUNT

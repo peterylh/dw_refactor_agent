@@ -1,0 +1,34 @@
+version: 2
+name: dws_loan_payments
+layer: DWD
+table_type: fact
+config:
+  materialized: full
+atomic_metrics:
+- scheduled_amount
+- actual_amount
+- late_fee
+- days_late
+- payment_count
+calculated_metrics:
+- amount_difference
+- outstanding_balance
+business_area: LOAN
+entities:
+- code: LOAN_PAYMENT
+  type: primary
+  name: 贷款还款
+  key_columns:
+  - payment_id
+- code: ACCOUNT
+  type: foreign
+  name: 账户
+  key_columns:
+  - account_key
+- code: CUST
+  type: foreign
+  name: 客户
+  key_columns:
+  - customer_key
+data_domain: '04'
+business_process: LOAN_PAYMENT

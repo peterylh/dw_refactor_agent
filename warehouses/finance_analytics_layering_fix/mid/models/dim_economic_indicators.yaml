@@ -1,0 +1,15 @@
+version: 2
+name: dim_economic_indicators
+layer: DIM
+table_type: dimension
+config:
+  materialized: full
+entities:
+- code: ECON_INDICATOR
+  type: primary
+  name: 经济指标
+  key_columns:
+  - economic_indicator_key
+dimension_role: BASE
+dimension_content_type: INFO
+semantic_subject: ECON_INDICATOR

@@ -1,0 +1,26 @@
+version: 2
+name: dwd_marketing_campaigns
+layer: DWD
+table_type: fact
+config:
+  materialized: full
+atomic_metrics:
+- budget
+- impressions
+- clicks
+- conversions
+calculated_metrics:
+- campaign_duration_days
+- click_through_rate
+- conversion_rate
+- cost_per_acquisition
+- roi
+entities:
+- code: CAMPAIGN
+  type: primary
+  name: 营销活动
+  key_columns:
+  - campaign_id
+data_domain: '10'
+business_area: CLNT
+business_process: MARKETING_CAMPAIGN_PERFORMANCE
