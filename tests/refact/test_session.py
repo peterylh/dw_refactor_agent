@@ -73,6 +73,15 @@ def test_create_run_manifest_writes_expected_layout(tmp_path):
     assert artifact_path(manifest_path, "baseline_lineage") == (
         manifest_path.parent / "baseline" / "lineage_data.json"
     )
+    assert manifest["artifacts"]["baseline_full_assess"] == (
+        "baseline/assess_result.json"
+    )
+    assert manifest["artifacts"]["current_scoped_assess"] == (
+        "current/assess_result.json"
+    )
+    assert manifest["artifacts"]["scoped_issue_diff"] == (
+        "analysis/issue_diff.json"
+    )
 
 
 def test_create_run_manifest_uses_configured_project_dir(

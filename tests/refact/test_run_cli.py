@@ -78,6 +78,12 @@ def test_start_creates_manifest_and_baseline_artifacts(tmp_path, monkeypatch):
     assert (run_root / "baseline" / "lineage_data.json").exists()
     assert (run_root / "baseline" / "task_lineage_cache.json").exists()
     assert (run_root / "baseline" / "assess_result.json").exists()
+    baseline_assess = json.loads(
+        (run_root / "baseline" / "assess_result.json").read_text()
+    )
+    assert baseline_assess["assessment_mode"] == "full"
+    assert baseline_assess["score_semantics"] == "project_global"
+    assert baseline_assess["scope"] == {"type": "project"}
 
 
 def test_start_loads_project_choices_from_target_root(tmp_path, monkeypatch):
@@ -253,6 +259,9 @@ def test_analyze_refreshes_current_analysis_diff_and_plan(
             "project": project,
             "project_db": "shop_dm",
             "qa_db": "shop_dm_qa",
+            "scope": {
+                "assessment_tables": ["dwd_order"],
+            },
             "baseline_ddl": {},
             "ddl_changes": [
                 {
@@ -282,12 +291,38 @@ def test_analyze_refreshes_current_analysis_diff_and_plan(
     assert (run_root / "current" / "lineage_data.json").exists()
     assert (run_root / "current" / "assess_result.json").exists()
     assert (run_root / "analysis" / "change_analysis.json").exists()
+    manifest_after_analyze = json.loads(
+        (run_root / "manifest.json").read_text()
+    )
+    assert manifest_after_analyze["artifacts"]["baseline_full_assess"] == (
+        "baseline/assess_result.json"
+    )
+    assert manifest_after_analyze["artifacts"]["current_scoped_assess"] == (
+        "current/assess_result.json"
+    )
+    current_assess = json.loads(
+        (run_root / "current" / "assess_result.json").read_text()
+    )
+    assert current_assess["assessment_mode"] == "scoped"
+    assert current_assess["score_semantics"] == "scope_local"
+    assert current_assess["scope"] == {
+        "type": "refactor_scope",
+        "tables": ["dwd_order"],
+        "tasks": ["dwd_order"],
+    }
     issue_diff = json.loads(
         (run_root / "analysis" / "issue_diff.json").read_text()
     )
     assert issue_diff["summary"]["fixed_count"] == 0
     assert issue_diff["summary"]["remaining_count"] == 1
     assert issue_diff["summary"]["new_count"] == 0
+    assert issue_diff["scope_score"]["assessment_mode"] == "scoped"
+    assert issue_diff["scope_score"]["score_semantics"] == "scope_local"
+    assert issue_diff["scope_score"]["scope"] == {
+        "type": "refactor_scope",
+        "tables": ["dwd_order"],
+        "tasks": ["dwd_order"],
+    }
     assert assess_calls[0]["change_analysis"]["affected_scope"][
         "assessment_tables"
     ] == ["dwd_order"]

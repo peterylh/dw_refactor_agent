@@ -316,6 +316,7 @@ def _score_summary(assess_result: dict) -> dict:
         "assessment_mode",
         "score_semantics",
         "status_reason",
+        "scope",
     ):
         if key in assess_result:
             result[key] = assess_result[key]
