@@ -33,3 +33,8 @@ grain:
   - CATEGORY
   time_column: stat_month_date
   time_period: M
+execution:
+  slice:
+    param: etl_date
+    column: stat_month_date
+    period: M

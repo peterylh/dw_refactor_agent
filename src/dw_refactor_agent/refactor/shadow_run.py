@@ -21,6 +21,9 @@ from sqlglot.errors import ErrorLevel
 from sqlglot.tokens import Tokenizer, TokenType
 
 from dw_refactor_agent.config import PROJECT_ROOT, TEXT_ENCODING, get_mysql_cmd
+from dw_refactor_agent.execution.model_config import ExecutionConfigError
+from dw_refactor_agent.execution.planner import ExecutionPlanner
+from dw_refactor_agent.execution.sql_executor import ShadowSqlExecutor
 from dw_refactor_agent.sql.doris import extract_create_table_name
 
 FINAL_ALTER_JOB_STATES = {"FINISHED", "CANCELLED"}
@@ -381,6 +384,8 @@ def _get_dml_target(stmt):
             if isinstance(table, exp.Table):
                 return table.name
     elif isinstance(stmt, exp.Create):
+        if isinstance(stmt.this, exp.Table):
+            return stmt.this.name
         if isinstance(stmt.this, exp.Schema) and isinstance(
             stmt.this.this, exp.Table
         ):
@@ -787,11 +792,7 @@ def _job_result(
         "status": status,
         "error": error,
     }
-    for key in (
-        "refresh_parameter",
-        "refresh_time_period",
-        "execution_values",
-    ):
+    for key in ("execution_values",):
         if key in job:
             result[key] = job.get(key)
     if "needs_etl_date" in job:
@@ -812,21 +813,25 @@ def _compare_phase(plan: dict, status: str = "not_run") -> dict:
     }
 
 
-def _job_execution_values(job: dict, legacy_etl_date: str | None) -> list:
-    values = job.get("execution_values")
-    if values:
-        return list(values)
-    if job.get("needs_etl_date") and legacy_etl_date:
-        return [legacy_etl_date]
-    return [None]
+def _shadow_driver_values(jobs: list[dict]) -> list[str | None]:
+    values = []
+    seen = set()
+    for job in jobs:
+        for value in job.get("execution_values") or []:
+            item = str(value)
+            if item in seen:
+                continue
+            seen.add(item)
+            values.append(item)
+    return sorted(values) if values else [None]
 
 
-def _job_refresh_parameter(job: dict) -> str | None:
-    if job.get("refresh_parameter"):
-        return job.get("refresh_parameter")
-    if job.get("needs_etl_date"):
-        return "etl_date"
-    return None
+def _job_for_driver_value(job: dict, driver_value: str | None) -> dict:
+    if driver_value is None:
+        return dict(job)
+    planned = dict(job)
+    planned["execution_values"] = [driver_value]
+    return planned
 
 
 def _result_summary(plan: dict, phases: list[dict]) -> dict:
@@ -948,7 +953,6 @@ def execute_shadow_plan(plan: dict, *, dry_run: bool = False) -> dict:
 
     prod_db = plan["project_db"]
     qa_db = plan["qa_db"]
-    legacy_etl_date = plan.get("partition_info", {}).get("etl_date")
     baseline_ddl = plan.get("baseline_ddl", {})
     ddl_changes = plan.get("ddl_changes", [])
     jobs_to_run = plan.get("jobs_to_run", [])
@@ -1056,6 +1060,7 @@ def execute_shadow_plan(plan: dict, *, dry_run: bool = False) -> dict:
     print(f"Phase 3: 执行作业 ({len(jobs_to_run)} 个)")
     recalculated = set()
     root = _project_root()
+    planner = ExecutionPlanner(plan["project"], project_root=root)
     job_results = []
     job_phase = {
         "name": "run_jobs",
@@ -1063,44 +1068,63 @@ def execute_shadow_plan(plan: dict, *, dry_run: bool = False) -> dict:
         "jobs": job_results,
     }
 
-    for idx, job in enumerate(jobs_to_run, 1):
-        job_name = job["job"]
-        job_file = job["file"]
-        layer = job.get("layer", "?")
-        refresh_parameter = _job_refresh_parameter(job)
-        execution_values = _job_execution_values(job, legacy_etl_date)
+    executor = ShadowSqlExecutor(
+        prod_db=prod_db,
+        qa_db=qa_db,
+        recalculated=recalculated,
+        rewrite_sql=rewrite_sql,
+        run_sql_text=run_sql_text,
+    )
+    driver_values = _shadow_driver_values(jobs_to_run)
+    for driver_idx, driver_value in enumerate(driver_values, 1):
+        if driver_value is not None:
+            print(
+                f"\n  === replay slice {driver_idx}/{len(driver_values)}: "
+                f"{driver_value} ==="
+            )
+        for idx, job in enumerate(jobs_to_run, 1):
+            job_name = job["job"]
+            job_file = job["file"]
+            layer = job.get("layer", "?")
+            planned_job = _job_for_driver_value(job, driver_value)
 
-        print(f"\n  --- {idx}/{len(jobs_to_run)}: [{layer}] {job_name} ---")
-        file_path = root / job_file
-        if not file_path.exists():
-            error = f"文件不存在: {file_path}"
-            print(f"  [FAIL] {error}")
-            job_results.append(_job_result(job, "failed", error))
-            job_phase["status"] = "failed"
-            phases.append(job_phase)
-            return _failed_shadow_result(plan, phases)
+            print(
+                f"\n  --- {idx}/{len(jobs_to_run)}: [{layer}] {job_name} ---"
+            )
+            file_path = root / job_file
+            if not file_path.exists():
+                error = f"文件不存在: {file_path}"
+                print(f"  [FAIL] {error}")
+                job_results.append(_job_result(job, "failed", error))
+                job_phase["status"] = "failed"
+                phases.append(job_phase)
+                return _failed_shadow_result(plan, phases)
 
-        sql_text = file_path.read_text(encoding=TEXT_ENCODING)
-        rewritten = rewrite_sql(sql_text, prod_db, qa_db, recalculated)
+            try:
+                invocations = planner.plan_shadow_job(
+                    planned_job,
+                    project_root=root,
+                )
+            except ExecutionConfigError as exc:
+                print(f"  [FAIL] {job_name}: {exc}")
+                job_results.append(_job_result(job, "failed", str(exc)))
+                job_phase["status"] = "failed"
+                phases.append(job_phase)
+                return _failed_shadow_result(plan, phases)
 
-        try:
-            for execution_value in execution_values:
-                sql_to_run = rewritten
-                if refresh_parameter and execution_value:
-                    sql_to_run = (
-                        f"SET @{refresh_parameter} = '{execution_value}';\n"
-                    ) + rewritten
-                run_sql_text(sql_to_run, qa_db, qa=True)
-            print(f"  + {qa_db}.{job_name}")
-            job_results.append(_job_result(job, "success"))
-        except Exception as exc:
-            print(f"  [FAIL] {job_name}: {exc}")
-            job_results.append(_job_result(job, "failed", str(exc)))
-            job_phase["status"] = "failed"
-            phases.append(job_phase)
-            return _failed_shadow_result(plan, phases)
+            try:
+                for invocation in invocations:
+                    executor.execute(invocation)
+                print(f"  + {qa_db}.{job_name}")
+            except Exception as exc:
+                print(f"  [FAIL] {job_name}: {exc}")
+                job_results.append(_job_result(job, "failed", str(exc)))
+                job_phase["status"] = "failed"
+                phases.append(job_phase)
+                return _failed_shadow_result(plan, phases)
 
-        recalculated.add(job_name)
+            recalculated.add(job_name)
+    job_results.extend(_job_result(job, "success") for job in jobs_to_run)
     phases.append(job_phase)
     phases.append(_compare_phase(plan))
 
@@ -1144,11 +1168,11 @@ def run_shadow_plan(
 def _dry_run(plan: dict) -> None:
     qa_db = plan["qa_db"]
     prod_db = plan["project_db"]
-    legacy_etl_date = plan.get("partition_info", {}).get("etl_date")
     baseline_ddl = plan.get("baseline_ddl", {})
     ddl_changes = plan.get("ddl_changes", [])
     jobs_to_run = plan.get("jobs_to_run", [])
     root = _project_root()
+    planner = ExecutionPlanner(plan["project"], project_root=root)
 
     print(f"{'=' * 60}")
     print("=== SHADOW RUN DRY RUN ===")
@@ -1201,33 +1225,55 @@ def _dry_run(plan: dict) -> None:
 
     print(f"\n--- Phase 3: 作业 ({len(jobs_to_run)} 个) ---")
     recalculated = set()
-    for idx, job in enumerate(jobs_to_run, 1):
-        job_name = job["job"]
-        layer = job.get("layer", "?")
-        job_file = job["file"]
-        file_path = root / job_file
+    executor = ShadowSqlExecutor(
+        prod_db=prod_db,
+        qa_db=qa_db,
+        recalculated=recalculated,
+        rewrite_sql=rewrite_sql,
+        run_sql_text=run_sql_text,
+    )
+    driver_values = _shadow_driver_values(jobs_to_run)
+    for driver_idx, driver_value in enumerate(driver_values, 1):
+        if driver_value is not None:
+            print(
+                f"\n  === replay slice {driver_idx}/{len(driver_values)}: "
+                f"{driver_value} ==="
+            )
+        for idx, job in enumerate(jobs_to_run, 1):
+            job_name = job["job"]
+            layer = job.get("layer", "?")
+            job_file = job["file"]
+            file_path = root / job_file
+            planned_job = _job_for_driver_value(job, driver_value)
 
-        print(f"\n  {idx}/{len(jobs_to_run)}: [{layer}] {job_name}")
-        if not file_path.exists():
-            print("    [SKIP] 文件不存在")
-            continue
+            print(f"\n  {idx}/{len(jobs_to_run)}: [{layer}] {job_name}")
+            if not file_path.exists():
+                print("    [SKIP] 文件不存在")
+                continue
 
-        sql_text = file_path.read_text(encoding=TEXT_ENCODING)
-        rewritten = rewrite_sql(sql_text, prod_db, qa_db, recalculated)
-        refresh_parameter = _job_refresh_parameter(job)
-        execution_values = _job_execution_values(job, legacy_etl_date)
+            try:
+                invocations = planner.plan_shadow_job(
+                    planned_job,
+                    project_root=root,
+                )
+            except ExecutionConfigError as exc:
+                print(f"    [FAIL] {exc}")
+                continue
 
-        for execution_value in execution_values:
-            if refresh_parameter and execution_value:
-                print(f"    SET @{refresh_parameter} = '{execution_value}';")
+            for invocation in invocations:
+                print(
+                    f"    strategy={invocation.strategy}, "
+                    f"full_refresh={int(invocation.full_refresh)}, "
+                    f"sql={invocation.sql_path}"
+                )
+                rendered = executor.render(invocation)
+                for line in rendered.splitlines()[:8]:
+                    print(f"    {line}")
+                total = len(rendered.splitlines())
+                if total > 8:
+                    print(f"    ... ({total} 行)")
 
-        for line in rewritten.splitlines()[:8]:
-            print(f"    {line}")
-        total = len(rewritten.splitlines())
-        if total > 8:
-            print(f"    ... ({total} 行)")
-
-        recalculated.add(job_name)
+            recalculated.add(job_name)
 
     if checks:
         print(f"\n--- 校验检查 ({len(checks)} 项) ---")

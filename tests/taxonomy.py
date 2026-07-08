@@ -70,6 +70,7 @@ TEST_TYPE_BY_FILE = {
     "tests/refact/test_shadow_run.py": "scenario",
     "tests/refact/test_verification_plan.py": "contract",
     "tests/test_doris_ddl_validity.py": "guard",
+    "tests/test_execution_planner.py": "unit",
     "tests/test_naming_config.py": "unit",
     "tests/test_project_asset_paths.py": "contract",
     "tests/test_python37_compat.py": "guard",

@@ -147,7 +147,7 @@ score = 通过检查数 / 总检查数 * 100
 | 检查项 | 口径 |
 | --- | --- |
 | DDL 表存在 Model | 每张 DDL 表应有对应 `models/{table}.yaml`。 |
-| 需执行 DDL 表存在 Task | 非 ODS 且非 `config.materialized: source` 的表，应有产出该表的 Task。 |
+| 需执行 DDL 表存在 Task | 非 ODS 表应有产出该表的 Task。 |
 | Model 存在 DDL | 每个 Model 应有对应 DDL 表。 |
 | Task 有且只有一个产出表 | 每个 Task 必须解析出且只解析出一个持久目标表。 |
 | Task 产出表存在 DDL | 每个 Task 产出目标必须有 DDL。 |

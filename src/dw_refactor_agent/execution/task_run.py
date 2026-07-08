@@ -20,8 +20,6 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from pathlib import Path
 
-import yaml
-
 _src_root = Path(__file__).resolve().parents[2]
 if str(_src_root) not in sys.path:
     sys.path.insert(0, str(_src_root))
@@ -40,6 +38,11 @@ from dw_refactor_agent.config import (
     load_model_metadata,
     python_module_env,
 )
+from dw_refactor_agent.execution.invocation import TaskInvocation
+from dw_refactor_agent.execution.model_config import ExecutionConfigError
+from dw_refactor_agent.execution.planner import ExecutionPlanner
+from dw_refactor_agent.execution.sql_executor import DirectSqlExecutor
+from dw_refactor_agent.execution.thread_pool import shutdown_executor
 from dw_refactor_agent.lineage.job_dag import (
     JobDAG,
     asset_job_dag_from_lineage,
@@ -52,17 +55,48 @@ _TIME_UNIT_RE = re.compile(
 _TABLE_PARTITION_UNITS: dict[str, str] | None = None
 _TABLE_PARTITIONED_CACHE: dict[tuple[str, str], bool] = {}
 _TABLE_DYNAMIC_PARTITION_CACHE: dict[tuple[str, str], bool] = {}
-_SCHEMA_CONFIG_CACHE: dict[str, dict[str, str]] = {}
+_SLICE_PERIOD_TO_PARTITION_UNIT = {
+    "D": "DAY",
+    "M": "MONTH",
+    "W": "WEEK",
+    "H": "HOUR",
+}
 
 
 def _load_partition_units(project: str) -> dict[str, str]:
-    """从 DDL 文件中读取每张表的 dynamic_partition.time_unit."""
+    """读取每张表的分区时间单位，优先使用显式执行切片配置."""
     units: dict[str, str] = {}
     for f in iter_project_asset_files(project, "ddl", "*.sql"):
         m = _TIME_UNIT_RE.search(f.read_text(encoding=TEXT_ENCODING))
         if m:
             units[f.stem] = m.group(1).upper()
+
+    project_execution = (PROJECT_CONFIG.get(project) or {}).get("execution")
+    if not isinstance(project_execution, dict):
+        project_execution = {}
+    default_unit = _partition_unit_from_slice(
+        project_execution.get("default_slice")
+    )
+    if default_unit:
+        for job_name in _get_task_files(project):
+            units[job_name] = default_unit
+
+    for job_name, metadata in load_model_metadata(project).items():
+        raw_execution = metadata.get("execution") or {}
+        if not isinstance(raw_execution, dict):
+            continue
+        unit = _partition_unit_from_slice(raw_execution.get("slice"))
+        if unit:
+            units[job_name] = unit
     return units
+
+
+def _partition_unit_from_slice(value) -> str | None:
+    if not isinstance(value, dict):
+        return None
+    return _SLICE_PERIOD_TO_PARTITION_UNIT.get(
+        str(value.get("period") or "").strip().upper()
+    )
 
 
 def _build_job_dag(project: str) -> JobDAG:
@@ -120,14 +154,6 @@ def _get_task_files(project: str) -> dict[str, Path]:
             continue
         files[f.stem] = f
     return files
-
-
-def _get_full_refresh_path(task_dir: Path, job_name: str) -> Path | None:
-    full_dir = task_dir / "full_refresh"
-    if not full_dir.exists():
-        return None
-    companion = full_dir / f"{job_name}_full_refresh.sql"
-    return companion if companion.exists() else None
 
 
 def _is_partitioned_table(
@@ -197,7 +223,8 @@ def _ensure_partition(
         db_name, table_name, mysql_cmd
     )
 
-    dt = datetime.strptime(etl_date, "%Y-%m-%d").date()
+    raw_dt = datetime.strptime(etl_date[:10], "%Y-%m-%d")
+    dt = raw_dt.date()
     full_name = f"{db_name}.{table_name}"
 
     time_unit = (
@@ -212,6 +239,14 @@ def _ensure_partition(
             day=1
         )
         next_val = next_month.strftime("%Y-%m-%d")
+    elif time_unit == "WEEK":
+        week_start = dt - timedelta(days=dt.weekday())
+        p_name = f"p{week_start.strftime('%Y%m%d')}"
+        next_val = (week_start + timedelta(days=7)).strftime("%Y-%m-%d")
+    elif time_unit == "HOUR":
+        hour_dt = raw_dt
+        p_name = f"p{hour_dt.strftime('%Y%m%d%H')}"
+        next_val = (hour_dt + timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S")
     else:
         p_name = f"p{dt.strftime('%Y%m%d')}"
         next_val = (dt + timedelta(days=1)).strftime("%Y-%m-%d")
@@ -249,62 +284,16 @@ def _run_job(
     sql_file: Path,
     mysql_cmd: list[str],
     db_name: str,
+    planner: ExecutionPlanner,
 ) -> None:
-    _ensure_partition(db_name, job_name, etl_date, mysql_cmd)
-    sql_text = sql_file.read_text(encoding=TEXT_ENCODING)
-    full_sql = (
-        f"SET @etl_date = '{etl_date}';\nSET @full_refresh = 0;\n{sql_text}"
-    )
-    r = subprocess.run(
-        mysql_cmd + [db_name],
-        input=full_sql,
-        capture_output=True,
-        text=True,
-        timeout=600,
-    )
-    if r.returncode != 0:
-        raise RuntimeError(f"[{job_name}] [FAIL]\n  {r.stderr.strip()}")
-    print(f"  [{job_name}] [OK]")
-
-
-def _load_schema(project: str) -> dict:
-    """加载表级模型配置, 兼容旧 schema.yaml."""
-    global _SCHEMA_CONFIG_CACHE
-    if project in _SCHEMA_CONFIG_CACHE:
-        return _SCHEMA_CONFIG_CACHE[project]
-
-    project_dir = PROJECT_ROOT / PROJECT_CONFIG[project]["dir"]
-    model_metadata = load_model_metadata(project)
-    if model_metadata:
-        config = {}
-        for name, raw in sorted(model_metadata.items()):
-            if not isinstance(raw, dict):
-                continue
-            mat = raw.get("config", {}).get("materialized", "incremental")
-            config[name] = mat
-        _SCHEMA_CONFIG_CACHE[project] = config
-        print(f"  加载 models/: {len(config)} 个模型")
-        return config
-
-    schema_path = project_dir / "schema.yaml"
-    if not schema_path.exists():
-        print("  未找到 models/ 或 schema.yaml, 使用默认配置 (incremental)")
-        _SCHEMA_CONFIG_CACHE[project] = {}
-        return {}
-    with open(schema_path, encoding=TEXT_ENCODING) as f:
-        raw = yaml.safe_load(f) or {}
-    config = {}
-    for model in raw.get("models", []):
-        name = model["name"]
-        mat = model.get("config", {}).get("materialized", "incremental")
-        config[name] = mat
-    _SCHEMA_CONFIG_CACHE[project] = config
-    print(f"  加载 schema.yaml: {len(config)} 个模型")
-    return config
-
-
-def _get_materialized(schema: dict, job_name: str) -> str:
-    return schema.get(job_name, "incremental")
+    spec = planner.task_spec(job_name, sql_file)
+    for invocation in planner.plan_regular_run(spec, [etl_date]):
+        _execute_invocation(
+            invocation,
+            mysql_cmd,
+            db_name,
+            full_refresh_dates=[etl_date],
+        )
 
 
 def _ensure_full_refresh_partitions(
@@ -364,107 +353,84 @@ def _run_job_full_refresh(
     sql_file: Path,
     mysql_cmd: list[str],
     db_name: str,
-    schema: dict,
+    planner: ExecutionPlanner,
     all_dates: list[str],
 ) -> None:
     """全量刷新模式下的作业执行."""
-    materialized = _get_materialized(schema, job_name)
-    task_dir = sql_file.parent
-
-    if materialized == "snapshot":
-        companion = _get_full_refresh_path(task_dir, job_name)
-        if companion:
-            _ensure_full_refresh_partitions(
-                db_name, job_name, all_dates, mysql_cmd
-            )
-            sql_text = companion.read_text(encoding=TEXT_ENCODING)
-            full_sql = f"SET @full_refresh = 1;\n{sql_text}"
-            r = subprocess.run(
-                mysql_cmd + [db_name],
-                input=full_sql,
-                capture_output=True,
-                text=True,
-                timeout=600,
-            )
-            if r.returncode != 0:
-                raise RuntimeError(
-                    f"[{job_name}] [FAIL]\n  {r.stderr.strip()}"
-                )
-            print(f"  [{job_name}] [OK] (full-refresh companion)")
-            return
-        print(
-            f"  [{job_name}] 未找到伴生文件, 按逐日模式执行 ({len(all_dates)} 个日期)"
-        )
-        if _is_partitioned_table(db_name, job_name, mysql_cmd):
-            is_dynamic_partition = _is_dynamic_partition_table(
-                db_name, job_name, mysql_cmd
-            )
-
-            # 清理可能存在的宽分区 (来自 previous full-refresh run)
-            def run(sql):
-                return subprocess.run(
-                    mysql_cmd + [db_name],
-                    input=sql,
-                    capture_output=True,
-                    text=True,
-                    timeout=30,
-                )
-
-            run(
-                f"ALTER TABLE {db_name}.{job_name} DROP PARTITION IF EXISTS p_full;"
-            )
-            if is_dynamic_partition:
-                run(
-                    f"ALTER TABLE {db_name}.{job_name} SET ('dynamic_partition.enable' = 'true');"
-                )
-        for etl_date in all_dates:
-            _ensure_partition(db_name, job_name, etl_date, mysql_cmd)
-            sql_text = sql_file.read_text(encoding=TEXT_ENCODING)
-            full_sql = f"SET @etl_date = '{etl_date}';\nSET @full_refresh = 0;\n{sql_text}"
-            r = subprocess.run(
-                mysql_cmd + [db_name],
-                input=full_sql,
-                capture_output=True,
-                text=True,
-                timeout=600,
-            )
-            if r.returncode != 0:
-                raise RuntimeError(
-                    f"[{job_name}] [FAIL] (date={etl_date})\n  {r.stderr.strip()}"
-                )
-            print(f"  [{job_name}] [OK] (date={etl_date})")
+    spec = planner.task_spec(job_name, sql_file)
+    invocations = planner.plan_full_refresh(spec, all_dates)
+    if not invocations:
+        print(f"  [{job_name}] 跳过 — 无可执行切片")
         return
 
-    _ensure_full_refresh_partitions(db_name, job_name, all_dates, mysql_cmd)
-
-    if materialized == "full":
-        sql_text = sql_file.read_text(encoding=TEXT_ENCODING)
-        full_sql = f"SET @full_refresh = 1;\n{sql_text}"
-        r = subprocess.run(
-            mysql_cmd + [db_name],
-            input=full_sql,
-            capture_output=True,
-            text=True,
-            timeout=600,
+    for invocation in invocations:
+        _execute_invocation(
+            invocation,
+            mysql_cmd,
+            db_name,
+            full_refresh_dates=all_dates,
         )
-        if r.returncode != 0:
-            raise RuntimeError(f"[{job_name}] [FAIL]\n  {r.stderr.strip()}")
-        print(f"  [{job_name}] [OK] (full-refresh)")
+
+
+def _partition_date(value: str) -> str | None:
+    match = re.match(r"^\d{4}-\d{2}-\d{2}", str(value or ""))
+    return match.group(0) if match else None
+
+
+def _prepare_invocation_partitions(
+    invocation: TaskInvocation,
+    db_name: str,
+    mysql_cmd: list[str],
+    full_refresh_dates: list[str],
+) -> None:
+    if invocation.full_refresh:
+        _ensure_full_refresh_partitions(
+            db_name,
+            invocation.job_name,
+            full_refresh_dates,
+            mysql_cmd,
+        )
         return
 
-    # incremental: run with @full_refresh=1
-    sql_text = sql_file.read_text(encoding=TEXT_ENCODING)
-    full_sql = f"SET @full_refresh = 1; SET @etl_date = CURDATE();\n{sql_text}"
-    r = subprocess.run(
-        mysql_cmd + [db_name],
-        input=full_sql,
-        capture_output=True,
-        text=True,
-        timeout=600,
+    for value in invocation.params.values():
+        partition_date = _partition_date(value)
+        if partition_date:
+            _ensure_partition(
+                db_name,
+                invocation.job_name,
+                partition_date,
+                mysql_cmd,
+            )
+
+
+def _execute_invocation(
+    invocation: TaskInvocation,
+    mysql_cmd: list[str],
+    db_name: str,
+    *,
+    full_refresh_dates: list[str],
+) -> None:
+    executor = DirectSqlExecutor(
+        mysql_cmd,
+        db_name,
+        before_execute=lambda item: _prepare_invocation_partitions(
+            item,
+            db_name,
+            mysql_cmd,
+            full_refresh_dates,
+        ),
     )
-    if r.returncode != 0:
-        raise RuntimeError(f"[{job_name}] [FAIL]\n  {r.stderr.strip()}")
-    print(f"  [{job_name}] [OK] (full-refresh)")
+    executor.execute(invocation)
+    value_text = ""
+    if invocation.params:
+        value_text = " " + ", ".join(
+            f"{key}={value}" for key, value in invocation.params.items()
+        )
+    print(
+        f"  [{invocation.job_name}] [OK] "
+        f"({invocation.strategy}, full_refresh={int(invocation.full_refresh)}"
+        f"{value_text})"
+    )
 
 
 def _discover_ods_dates(
@@ -503,6 +469,20 @@ def _discover_ods_dates(
     return sorted(all_dates)
 
 
+def _resolve_full_refresh_dates(
+    project: str,
+    db_name: str,
+    mysql_cmd: list[str],
+    etl_dates: list[str] | None,
+) -> list[str]:
+    """Resolve slice values used by full-refresh planning."""
+    if etl_dates:
+        print("使用指定日期切片...")
+        return list(dict.fromkeys(etl_dates))
+    print("发现 ODS 日期分区...")
+    return _discover_ods_dates(project, db_name, mysql_cmd)
+
+
 def _run_parallel(
     etl_date: str,
     job_set: set,
@@ -512,6 +492,7 @@ def _run_parallel(
     mysql_cmd: list[str],
     db_name: str,
     parallel: int,
+    planner: ExecutionPlanner,
 ) -> None:
     deg = dict(in_degree)
     lock = threading.Lock()
@@ -551,6 +532,7 @@ def _run_parallel(
             task_files[job_name],
             mysql_cmd,
             db_name,
+            planner,
         )
         fut.add_done_callback(lambda f, j=job_name: on_complete(j, f))
 
@@ -564,7 +546,7 @@ def _run_parallel(
                 break
             all_done.wait(timeout=1.0)
     finally:
-        executor.shutdown(wait=False, cancel_futures=True)
+        shutdown_executor(executor)
     if failed.is_set():
         sys.exit(1)
 
@@ -614,8 +596,10 @@ def main():
                 print(f"错误: 日期格式无效 '{d}', 需要 YYYY-MM-DD")
                 sys.exit(1)
     else:
-        if args.etl_dates:
-            print("提示: --full-refresh 模式下忽略 --etl-dates")
+        for d in args.etl_dates or []:
+            if not _DATE_RE.match(d):
+                print(f"错误: 日期格式无效 '{d}', 需要 YYYY-MM-DD")
+                sys.exit(1)
 
     task_files = _get_task_files(project)
     task_names = set(task_files.keys())
@@ -664,14 +648,18 @@ def main():
     in_degree, adj = dag.compute_in_degree(job_set)
 
     mysql_cmd = get_mysql_cmd(env)
+    planner = ExecutionPlanner(project)
 
     if args.full_refresh:
         print(f"\n{'=' * 60}")
         print("全量刷新模式 (按 DAG 拓扑执行)")
         print(f"{'=' * 60}")
-        schema = _load_schema(project)
-        print("发现 ODS 日期分区...")
-        all_dates = _discover_ods_dates(project, db_name, mysql_cmd)
+        all_dates = _resolve_full_refresh_dates(
+            project,
+            db_name,
+            mysql_cmd,
+            args.etl_dates,
+        )
         print(f"  {len(all_dates)} 个日期")
         for job_name in exec_order:
             try:
@@ -680,10 +668,14 @@ def main():
                     task_files[job_name],
                     mysql_cmd,
                     db_name,
-                    schema,
+                    planner,
                     all_dates,
                 )
-            except (subprocess.TimeoutExpired, RuntimeError) as e:
+            except (
+                subprocess.TimeoutExpired,
+                RuntimeError,
+                ExecutionConfigError,
+            ) as e:
                 print(f"  {e}")
                 sys.exit(1)
         print(f"\n{'=' * 60}")
@@ -703,8 +695,13 @@ def main():
                         task_files[job_name],
                         mysql_cmd,
                         db_name,
+                        planner,
                     )
-                except (subprocess.TimeoutExpired, RuntimeError) as e:
+                except (
+                    subprocess.TimeoutExpired,
+                    RuntimeError,
+                    ExecutionConfigError,
+                ) as e:
                     print(f"  {e}")
                     sys.exit(1)
         else:
@@ -717,6 +714,7 @@ def main():
                 mysql_cmd,
                 db_name,
                 parallel,
+                planner,
             )
 
     total_jobs = len(exec_order) * len(args.etl_dates)

@@ -35,6 +35,7 @@ from dw_refactor_agent.config import (
     iter_project_asset_files,
     python_module_env,
 )
+from dw_refactor_agent.execution.thread_pool import shutdown_executor
 
 
 def run_sql(sql_text: str, db: str, env_cmd: list[str]) -> str:
@@ -77,6 +78,22 @@ def get_etl_date_partitions(
 
 def _project_sql_files(project: str, asset_kind: str) -> list[Path]:
     return iter_project_asset_files(project, asset_kind, "*.sql")
+
+
+def _task_run_command(project: str, db_env: str, parallel: int) -> list[str]:
+    return [
+        sys.executable,
+        "-u",
+        "-m",
+        "dw_refactor_agent.execution.task_run",
+        "--project",
+        project,
+        "--db-env",
+        db_env,
+        "--refresh-dag",
+        "--parallel",
+        str(parallel),
+    ]
 
 
 def main():
@@ -170,7 +187,7 @@ def main():
                         break
                     print(f"  [ODS INIT] {f.name}")
             finally:
-                executor.shutdown(wait=False, cancel_futures=True)
+                shutdown_executor(executor)
             if ods_error:
                 print(f"  {ods_error}")
                 sys.exit(1)
@@ -178,18 +195,7 @@ def main():
         print(f"  {project} 项目无 ODS 初始化 SQL, 请手动导入 ODS 数据")
 
     # ── Step 3: 确定 ETL 日期 ──
-    cmd = [
-        sys.executable,
-        "-m",
-        "dw_refactor_agent.execution.task_run",
-        "--project",
-        project,
-        "--db-env",
-        args.db_env,
-        "--refresh-dag",
-        "--parallel",
-        str(parallel),
-    ]
+    cmd = _task_run_command(project, args.db_env, parallel)
 
     if args.full_refresh:
         print(f"\n{'=' * 60}")

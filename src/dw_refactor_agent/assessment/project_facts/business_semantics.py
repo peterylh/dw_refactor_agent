@@ -135,8 +135,6 @@ def _infer_table_type(table_name: str, layer: str) -> str:
 
 
 def _materialized_for_layer(layer: str) -> str:
-    if layer == "ODS":
-        return "source"
     if layer in {"DWD", "DWS"}:
         return "incremental"
     return "full"

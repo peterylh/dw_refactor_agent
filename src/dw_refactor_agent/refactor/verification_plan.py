@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date, datetime, time, timedelta
 from pathlib import Path
 
 import dw_refactor_agent.config as config
@@ -14,10 +14,14 @@ from dw_refactor_agent.ddl_deriver.ddl_deriver import (
     load_git_tables,
     load_tables_from_dir,
 )
+from dw_refactor_agent.execution.model_config import (
+    ExecutionConfigError,
+    slice_config_from_mapping,
+)
 from dw_refactor_agent.lineage.job_dag import asset_job_dag_from_lineage
 from dw_refactor_agent.sql.doris import extract_doris_partition_column
 
-SUPPORTED_TIME_PERIODS = {"D", "W", "M"}
+SUPPORTED_TIME_PERIODS = {"D", "W", "M", "H"}
 WEEKDAY_INDEX = {
     "MON": 0,
     "TUE": 1,
@@ -249,7 +253,7 @@ def build_verification_plan(
             metadata_errors,
         )
     )
-    _apply_refresh_metadata(
+    _apply_execution_values(
         project,
         jobs_to_run,
         anchor_windows,
@@ -441,107 +445,77 @@ def _time_period(value) -> str:
     return str(value or "").strip().upper()
 
 
-def _table_grain_metadata(
+def _table_execution_slice_metadata(
     project: str,
     table: str,
     metadata_errors: list[dict],
 ) -> dict | None:
     metadata = config.get_model_metadata(table, project) or {}
-    grain = metadata.get("grain")
-    if not isinstance(grain, dict) or not grain:
-        return None
+    raw_execution = metadata.get("execution") or {}
+    if not isinstance(raw_execution, dict):
+        raw_execution = {}
+    project_execution = (config.PROJECT_CONFIG.get(project) or {}).get(
+        "execution"
+    ) or {}
+    if not isinstance(project_execution, dict):
+        project_execution = {}
 
-    time_column = grain.get("time_column")
-    period = _time_period(grain.get("time_period"))
-    if not time_column and not period:
-        return None
-    if bool(time_column) != bool(period):
+    try:
+        slice_config = slice_config_from_mapping(
+            table,
+            raw_execution.get("slice"),
+            label="execution.slice",
+        )
+        if slice_config is None:
+            slice_config = slice_config_from_mapping(
+                table,
+                project_execution.get("default_slice"),
+                label="execution.default_slice",
+            )
+    except ExecutionConfigError as exc:
         _add_validation_error(
             metadata_errors,
             table,
-            "grain",
-            (
-                "grain.time_column and grain.time_period must be "
-                "configured together"
-            ),
+            "execution.slice",
+            str(exc),
         )
         return None
-    if period and period not in SUPPORTED_TIME_PERIODS:
+
+    if slice_config is None:
+        return None
+
+    period = _time_period(slice_config.period)
+    if period not in SUPPORTED_TIME_PERIODS:
         _add_validation_error(
             metadata_errors,
             table,
-            "grain.time_period",
-            "grain.time_period must be one of D, W, M",
+            "execution.slice.period",
+            "execution.slice.period must be one of D, W, M, H",
         )
         return None
     if (
         period == "W"
-        and _week_start_index(project, table, metadata_errors) is None
+        and _week_start_index(
+            project,
+            table,
+            metadata_errors,
+        )
+        is None
     ):
         return None
-    return {"time_column": str(time_column), "time_period": period}
-
-
-def _table_refresh_metadata(
-    project: str,
-    table: str,
-    grain: dict,
-    metadata_errors: list[dict],
-) -> dict | None:
-    metadata = config.get_model_metadata(table, project) or {}
-    refresh = metadata.get("refresh")
-    if isinstance(refresh, dict) and refresh:
-        parameter = refresh.get("parameter")
-        period = _time_period(refresh.get("time_period"))
-        if bool(parameter) != bool(period):
-            _add_validation_error(
-                metadata_errors,
-                table,
-                "refresh",
-                (
-                    "refresh.parameter and refresh.time_period must be "
-                    "configured together"
-                ),
-            )
-            return None
-        if period not in SUPPORTED_TIME_PERIODS:
-            _add_validation_error(
-                metadata_errors,
-                table,
-                "refresh.time_period",
-                "refresh.time_period must be one of D, W, M",
-            )
-            return None
-        if (
-            period == "W"
-            and _week_start_index(project, table, metadata_errors) is None
-        ):
-            return None
-        return {"parameter": str(parameter), "time_period": period}
-
-    parameter = _project_verification_config(project).get(
-        "default_refresh_parameter"
-    )
-    if not parameter:
-        _add_validation_error(
-            metadata_errors,
-            table,
-            "refresh.parameter",
-            (
-                "refresh.parameter is missing and project "
-                "verification.default_refresh_parameter is not configured"
-            ),
-        )
-        return None
     return {
-        "parameter": str(parameter),
-        "time_period": grain["time_period"],
+        "param": slice_config.param,
+        "time_column": slice_config.column,
+        "time_period": period,
     }
 
 
 def _parse_anchor_date(value: str, table: str, metadata_errors: list[dict]):
     try:
-        return date.fromisoformat(str(value))
+        text = str(value).strip()
+        if " " in text or "T" in text:
+            return datetime.fromisoformat(text)
+        return date.fromisoformat(text)
     except ValueError:
         _add_validation_error(
             metadata_errors,
@@ -572,12 +546,18 @@ def _week_start_index(
 
 
 def _period_start(
-    value: date,
+    value,
     period: str,
     project: str,
     table: str,
     metadata_errors: list[dict],
-) -> date | None:
+) -> date | datetime | None:
+    if period == "H":
+        if isinstance(value, datetime):
+            return value.replace(minute=0, second=0, microsecond=0)
+        return datetime.combine(value, time.min)
+    if isinstance(value, datetime):
+        value = value.date()
     if period == "D":
         return value
     if period == "M":
@@ -597,12 +577,41 @@ def _add_month(value: date) -> date:
     return value.replace(month=value.month + 1, day=1)
 
 
-def _period_end_exclusive(start: date, period: str) -> date:
+def _period_end_exclusive(start, period: str):
+    if period == "H":
+        return start + timedelta(hours=1)
     if period == "D":
         return start + timedelta(days=1)
     if period == "W":
         return start + timedelta(days=7)
     return _add_month(start)
+
+
+def _as_datetime(value) -> datetime:
+    if isinstance(value, datetime):
+        return value
+    return datetime.combine(value, time.min)
+
+
+def _date_floor(value) -> date:
+    if isinstance(value, datetime):
+        return value.date()
+    return value
+
+
+def _date_ceiling(value) -> date:
+    if not isinstance(value, datetime):
+        return value
+    value_date = value.date()
+    if value.time() == time.min:
+        return value_date
+    return value_date + timedelta(days=1)
+
+
+def _format_period_value(value, period: str) -> str:
+    if period == "H":
+        return _as_datetime(value).strftime("%Y-%m-%d %H:00:00")
+    return _date_floor(value).isoformat()
 
 
 def _period_values_for_window(
@@ -613,19 +622,27 @@ def _period_values_for_window(
     start = window["start"]
     end = window["end_exclusive"]
     values = []
-    current = start
+    if period == "H":
+        current = _as_datetime(start)
+        end = _as_datetime(end)
+    else:
+        current = _date_floor(start)
+        end = _date_ceiling(end)
+
     if period == "W":
         errors = []
         current = _period_start(start, "W", project, "", errors) or start
     elif period == "M":
-        current = start.replace(day=1)
+        current = _date_floor(start).replace(day=1)
 
     while current < end:
-        values.append(current.isoformat())
+        values.append(_format_period_value(current, period))
         if period == "D":
             current += timedelta(days=1)
         elif period == "W":
             current += timedelta(days=7)
+        elif period == "H":
+            current += timedelta(hours=1)
         else:
             current = _add_month(current)
     return values
@@ -657,15 +674,22 @@ def _build_compare_anchors(
 
     for table in anchors:
         before_error_count = len(metadata_errors)
-        grain = _table_grain_metadata(project, table, metadata_errors)
+        slice_metadata = _table_execution_slice_metadata(
+            project,
+            table,
+            metadata_errors,
+        )
         if len(metadata_errors) > before_error_count:
             continue
-        if not grain:
+        if not slice_metadata:
             compare_anchors[table] = {}
             full_table_tables.append(table)
             continue
 
-        anchor = dict(grain)
+        anchor = {
+            "time_column": slice_metadata["time_column"],
+            "time_period": slice_metadata["time_period"],
+        }
         if not anchor_value:
             no_anchor_value_tables.append(table)
         else:
@@ -673,21 +697,24 @@ def _build_compare_anchors(
             if parsed:
                 start = _period_start(
                     parsed,
-                    grain["time_period"],
+                    slice_metadata["time_period"],
                     project,
                     table,
                     metadata_errors,
                 )
                 if start:
-                    anchor["anchor_time_value"] = start.isoformat()
+                    anchor["anchor_time_value"] = _format_period_value(
+                        start,
+                        slice_metadata["time_period"],
+                    )
                     windows.append(
                         {
                             "table": table,
-                            "time_period": grain["time_period"],
+                            "time_period": slice_metadata["time_period"],
                             "start": start,
                             "end_exclusive": _period_end_exclusive(
                                 start,
-                                grain["time_period"],
+                                slice_metadata["time_period"],
                             ),
                         }
                     )
@@ -700,7 +727,7 @@ def _build_compare_anchors(
                 "type": "full_table_compare",
                 "tables": sorted(full_table_tables),
                 "message": (
-                    "No grain/refresh time metadata is configured; "
+                    "No execution slice metadata is configured; "
                     "full-table compare will be used."
                 ),
             }
@@ -719,7 +746,7 @@ def _build_compare_anchors(
     return compare_anchors, windows, warnings
 
 
-def _apply_refresh_metadata(
+def _apply_execution_values(
     project: str,
     jobs_to_run: list[dict],
     anchor_windows: list[dict],
@@ -728,23 +755,16 @@ def _apply_refresh_metadata(
     for job in jobs_to_run:
         table = job.get("target") or job.get("job")
         before_error_count = len(metadata_errors)
-        grain = _table_grain_metadata(project, table, metadata_errors)
-        if len(metadata_errors) > before_error_count or not grain:
-            continue
-
-        refresh = _table_refresh_metadata(
+        slice_metadata = _table_execution_slice_metadata(
             project,
             table,
-            grain,
             metadata_errors,
         )
-        if not refresh:
+        if len(metadata_errors) > before_error_count or not slice_metadata:
             continue
-        job["refresh_parameter"] = refresh["parameter"]
-        job["refresh_time_period"] = refresh["time_period"]
         values = _execution_values(
             anchor_windows,
-            refresh["time_period"],
+            slice_metadata["time_period"],
             project,
         )
         if values:

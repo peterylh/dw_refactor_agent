@@ -147,10 +147,11 @@ def isolated_assess_project(tmp_path, monkeypatch):
         ("dws_store_sales_daily", "DWS"),
         ("ads_sales_dashboard", "ADS"),
     ]:
+        materialized = "full" if layer == "ADS" else "incremental"
         (models_dir / f"{table_name}.yaml").write_text(
             (
                 f"version: 2\nname: {table_name}\nlayer: {layer}\n"
-                "config:\n  materialized: source\n"
+                f"config:\n  materialized: {materialized}\n"
             ),
             encoding="utf-8",
         )
@@ -166,6 +167,23 @@ def isolated_assess_project(tmp_path, monkeypatch):
             f"CREATE TABLE {table_name} (id BIGINT);",
             encoding="utf-8",
         )
+    mid_tasks_dir = project_dir / "mid" / "tasks"
+    ads_tasks_dir = project_dir / "ads" / "tasks"
+    mid_tasks_dir.mkdir(parents=True)
+    ads_tasks_dir.mkdir(parents=True)
+    for table_name in [
+        "dwd_customer",
+        "dwd_order_detail",
+        "dws_store_sales_daily",
+    ]:
+        (mid_tasks_dir / f"{table_name}.sql").write_text(
+            f"INSERT INTO {table_name} SELECT 1;",
+            encoding="utf-8",
+        )
+    (ads_tasks_dir / "ads_sales_dashboard.sql").write_text(
+        "INSERT INTO ads_sales_dashboard SELECT 1;",
+        encoding="utf-8",
+    )
     (tmp_path / "naming_config.yaml").write_text(
         (PROJECT_ROOT / "naming_config.yaml").read_text(encoding="utf-8"),
         encoding="utf-8",
@@ -355,6 +373,7 @@ def test_assess_builds_one_context_with_derived_lineage_for_scoring_modules(
 
     assert captured["depth_upstream_map"] == {
         "dwd_customer": {"ods_customer"},
+        "dwd_order_detail": {"ods_order"},
         "dws_store_sales_daily": {"dwd_order_detail"},
         "ads_sales_dashboard": {"dwd_customer"},
     }
@@ -366,6 +385,7 @@ def test_assess_builds_one_context_with_derived_lineage_for_scoring_modules(
     }
     assert captured["model_table_edges"] == {
         ("ods_customer", "dwd_customer"): {"dwd_customer.sql"},
+        ("ods_order", "dwd_order_detail"): {"dwd_order_detail.sql"},
         ("dwd_order_detail", "dws_store_sales_daily"): {
             "dws_store_sales_daily.sql"
         },

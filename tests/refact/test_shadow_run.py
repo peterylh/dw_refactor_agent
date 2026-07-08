@@ -217,6 +217,23 @@ def test_rewrite_sql_preserves_non_table_sql_text():
     assert "'shop_dm.dwd_customer should stay literal'" in rewritten
 
 
+def test_rewrite_sql_maps_create_table_like_target_to_qa():
+    sql = (
+        "CREATE TABLE IF NOT EXISTS shop_dm.stage_store_sales_daily "
+        "LIKE shop_dm.dws_store_sales_daily;"
+    )
+
+    rewritten = rewrite_sql(
+        sql,
+        "shop_dm",
+        "shop_dm_qa",
+        {"dws_store_sales_daily"},
+    )
+
+    assert "shop_dm_qa.stage_store_sales_daily" in rewritten
+    assert "LIKE shop_dm_qa.dws_store_sales_daily" in rewritten
+
+
 def test_rewrite_sql_text_empty():
     assert rewrite_sql("", "shop_dm", "shop_dm_qa", set()) == ""
 
@@ -785,8 +802,6 @@ def test_execute_shadow_plan_runs_job_once_per_execution_value(
                 "file": "shop/mid/tasks/dws_order.sql",
                 "layer": "DWS",
                 "target": "dws_order",
-                "refresh_parameter": "etl_date",
-                "refresh_time_period": "D",
                 "execution_values": ["2024-06-01", "2024-06-02"],
             }
         ],
@@ -814,4 +829,64 @@ def test_execute_shadow_plan_runs_job_once_per_execution_value(
     assert result["status"] == "completed"
     assert len(executed_texts) == 2
     assert executed_texts[0].startswith("SET @etl_date = '2024-06-01';\n")
+    assert executed_texts[1].startswith("SET @etl_date = '2024-06-02';\n")
+
+
+def test_execute_shadow_plan_replays_jobs_by_driver_slice(
+    tmp_path, monkeypatch
+):
+    first_task = tmp_path / "shop" / "mid" / "tasks" / "dwd_order.sql"
+    second_task = tmp_path / "shop" / "mid" / "tasks" / "dws_order.sql"
+    first_task.parent.mkdir(parents=True)
+    first_task.write_text(
+        "INSERT INTO shop_dm.dwd_order SELECT @etl_date;",
+        encoding="utf-8",
+    )
+    second_task.write_text(
+        "INSERT INTO shop_dm.dws_order SELECT @etl_date;",
+        encoding="utf-8",
+    )
+    plan = {
+        "project": "shop",
+        "project_db": "shop_dm",
+        "qa_db": "shop_dm_qa",
+        "baseline_ddl": {},
+        "ddl_changes": [],
+        "jobs_to_run": [
+            {
+                "job": "dwd_order",
+                "file": "shop/mid/tasks/dwd_order.sql",
+                "layer": "DWD",
+                "execution_values": ["2024-06-02"],
+            },
+            {
+                "job": "dws_order",
+                "file": "shop/mid/tasks/dws_order.sql",
+                "layer": "DWS",
+            },
+        ],
+        "verification": {"checks": []},
+    }
+    executed_texts = []
+
+    monkeypatch.setattr(
+        "dw_refactor_agent.refactor.shadow_run._project_root",
+        lambda: tmp_path,
+    )
+    monkeypatch.setattr(
+        "dw_refactor_agent.refactor.shadow_run.run_sql",
+        lambda *args, **kwargs: "",
+    )
+    monkeypatch.setattr(
+        "dw_refactor_agent.refactor.shadow_run.run_sql_text",
+        lambda sql_text, db="", qa=False: (
+            executed_texts.append(sql_text) or ""
+        ),
+    )
+
+    result = execute_shadow_plan(plan)
+
+    assert result["status"] == "completed"
+    assert len(executed_texts) == 2
+    assert executed_texts[0].startswith("SET @etl_date = '2024-06-02';\n")
     assert executed_texts[1].startswith("SET @etl_date = '2024-06-02';\n")

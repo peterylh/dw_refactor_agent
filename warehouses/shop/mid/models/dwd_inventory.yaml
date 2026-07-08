@@ -6,7 +6,12 @@ data_domain: '05'
 business_area: SHOP
 description: 库存每日快照
 config:
-  materialized: snapshot
+  materialized: incremental
+execution:
+  slice:
+    param: etl_date
+    column: snapshot_date
+    period: D
 atomic_metrics:
 - quantity
 entities:

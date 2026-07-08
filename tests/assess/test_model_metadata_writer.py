@@ -522,7 +522,7 @@ def test_update_model_yaml_grain_entity_scenarios(
 ):
     helpers = [
         _assert_update_model_yaml_grain_scope_writes_dws_grain_only,
-        _assert_update_model_yaml_normalizes_time_period_aliases,
+        _assert_update_model_yaml_normalizes_time_period_values,
         _assert_update_model_yaml_grain_scope_keeps_full_dws_grain_entities,
         _assert_update_model_yaml_grain_scope_writes_dimension_entity_only,
         _assert_update_model_yaml_grain_scope_removes_placeholder_empty_grain,
@@ -989,7 +989,7 @@ def _assert_update_model_yaml_writes_llm_table_metadata(tmp_path, monkeypatch):
     assert "data_domain" not in saved
     assert "business_area" not in saved
     assert saved["description"] == "门店每日快照"
-    assert saved["config"]["materialized"] == "snapshot"
+    assert saved["config"]["materialized"] == "incremental"
     assert "atomic_metrics" not in saved
 
 
@@ -1740,7 +1740,7 @@ def _assert_update_model_yaml_grain_scope_writes_dws_grain_only(
     assert saved["derived_metrics"] == ["sale_quantity"]
 
 
-def _assert_update_model_yaml_normalizes_time_period_aliases(
+def _assert_update_model_yaml_normalizes_time_period_values(
     tmp_path, monkeypatch
 ):
     import dw_refactor_agent.assessment.llm.model_metadata_writer as writer_module

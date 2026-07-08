@@ -192,6 +192,12 @@ def sample_lineage_data():
                 "source_file": "dwd_customer.sql",
             },
             {
+                "source": "ods_order.order_id",
+                "target": "dwd_order_detail.order_id",
+                "expression": "order_id",
+                "source_file": "dwd_order_detail.sql",
+            },
+            {
                 "source": "dwd_order_detail.order_id",
                 "target": "dws_store_sales_daily.order_count",
                 "expression": "COUNT(DISTINCT order_id)",

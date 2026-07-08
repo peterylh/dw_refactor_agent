@@ -5,3 +5,9 @@ table_type: other
 description: 库存预警分析
 config:
   materialized: incremental
+  full_refresh_strategy: companion
+execution:
+  slice:
+    param: etl_date
+    column: stat_date
+    period: D

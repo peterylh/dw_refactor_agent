@@ -87,10 +87,15 @@ name: dwd_customer
 layer: DWD
 description: 客户每日快照
 config:
-  materialized: snapshot
+  materialized: incremental
+execution:
+  slice:
+    param: etl_date
+    column: snapshot_date
+    period: D
 ```
 
-`task_run.py --full-refresh` 会优先读取 `ods/models/{catalog}/{database}/*.yaml`、`mid/models/*.yaml` 与 `ads/models/*.yaml` 中的 `config.materialized`，用于判断 `snapshot` / `full` / `incremental` 等执行策略。
+`task_run.py --full-refresh` 会优先读取 `ods/models/{catalog}/{database}/*.yaml`、`mid/models/*.yaml` 与 `ads/models/*.yaml` 中的 `config.materialized` 与 `config.full_refresh_strategy`，用于判断 `incremental` / `full` 与 `replay_slices` / `companion` / `legacy_full_refresh` / `replace_all` 等执行策略。
 
 表层级以模型 YAML 中的 `layer` 为唯一权威来源；血缘与重构验证工具会读取该配置，不再通过表名前缀兜底推断层级。
 

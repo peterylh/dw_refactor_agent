@@ -66,6 +66,7 @@ def _with_model_rule_scenarios(lineage_data: dict, model_metadata: dict):
             "layer": "DWD",
             "table_type": "fact",
             "business_process": "ORDER_TRANSACTION",
+            "grain": {},
             "atomic_metrics": [
                 {
                     "name": "order_count",

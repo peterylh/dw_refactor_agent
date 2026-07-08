@@ -5,6 +5,11 @@ table_type: fact
 description: DWD anti-pattern fixture with aggregation
 config:
   materialized: incremental
+execution:
+  slice:
+    param: etl_date
+    column: order_date
+    period: D
 atomic_metrics:
 - item_count
 entities:

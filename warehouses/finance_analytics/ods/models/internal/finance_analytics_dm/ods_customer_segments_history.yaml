@@ -3,4 +3,4 @@ name: ods_customer_segments_history
 layer: ODS
 table_type: other
 config:
-  materialized: source
+  materialized: full

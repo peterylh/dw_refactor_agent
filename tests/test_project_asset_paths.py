@@ -357,7 +357,7 @@ def test_project_layer_assets_are_under_mid_and_ads_dirs():
     expectations = {
         "shop": {
             "mid": {"ddl": 15, "tasks": 20, "models": 15},
-            "ads": {"ddl": 6, "tasks": 6, "models": 6},
+            "ads": {"ddl": 6, "tasks": 7, "models": 6},
         },
         "finance_analytics": {
             "mid": {"ddl": 38, "tasks": 38, "models": 38},

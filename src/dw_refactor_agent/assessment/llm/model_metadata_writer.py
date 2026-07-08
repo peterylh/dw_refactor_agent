@@ -1291,6 +1291,19 @@ def update_model_yaml(
             updated.pop("dimension_role", None)
             updated.pop("dimension_content_type", None)
 
+    if should_write_base_fields and (
+        "config" in updated or write_table_metadata
+    ):
+        materialized_layer = str(
+            updated.get("layer") or result.declared_layer or ""
+        ).upper()
+        config_payload = dict(updated.get("config") or {})
+        config_payload["materialized"] = _materialized_for_write(
+            config_payload.get("materialized"),
+            materialized_layer,
+        )
+        updated["config"] = config_payload
+
     if write_metric_groups and detected_metrics:
         if detected_groups["atomic_metrics"]:
             updated["atomic_metrics"] = detected_groups["atomic_metrics"]
@@ -2111,6 +2124,15 @@ def _existing_model_data(path: Path) -> dict[str, Any]:
     return raw if isinstance(raw, dict) else {}
 
 
+def _materialized_for_write(value: Any, layer: str) -> str:
+    materialized = str(value or "").strip().lower()
+    if materialized in {"incremental", "full"}:
+        return materialized
+    if materialized == "snapshot":
+        return "incremental"
+    return _materialized_for_layer(layer)
+
+
 def _catalog_model_payload(
     *,
     table_name: str,
@@ -2127,11 +2149,12 @@ def _catalog_model_payload(
         or existing.get("table_type")
         or _infer_table_type(table_name, layer)
     ).strip()
-    materialized = str(
+    materialized = _materialized_for_write(
         (existing.get("config") or {}).get("materialized")
         or mapping.get("materialized")
-        or _materialized_for_layer(layer)
-    ).strip()
+        or "",
+        layer,
+    )
 
     updated = dict(existing)
     updated.setdefault("version", 2)

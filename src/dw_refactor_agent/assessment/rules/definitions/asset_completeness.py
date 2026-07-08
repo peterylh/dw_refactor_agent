@@ -210,10 +210,5 @@ ASSET_COMPLETENESS_RULE_CLASSES = [
 
 
 def _asset_requires_task(asset: dict) -> bool:
-    model = asset.get("model") or {}
-    metadata = model.get("metadata") or {}
     layer = str(asset.get("layer") or "OTHER").upper()
-    materialized = str(
-        (metadata.get("config") or {}).get("materialized") or ""
-    ).lower()
-    return layer != "ODS" and materialized != "source"
+    return layer != "ODS"

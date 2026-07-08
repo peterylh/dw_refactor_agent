@@ -5,11 +5,15 @@ qa_database: finance_analytics_dm_qa
 lineage_database: finance_analytics_lineage
 naming_config: naming_config.yaml
 verification:
-  default_refresh_parameter: etl_date
   week_start: MON
   row_compare:
     exclude_columns:
       - etl_time
+execution:
+  default_slice:
+    param: etl_date
+    column: stat_date
+    period: D
 default_dialect: doris
 ods_source_catalog_dialects:
   internal: doris

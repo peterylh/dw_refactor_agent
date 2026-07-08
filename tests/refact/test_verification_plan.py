@@ -399,7 +399,7 @@ def test_build_verification_plan_self_anchors_sql_only_task_without_downstream(
             "type": "full_table_compare",
             "tables": ["dws_terminal"],
             "message": (
-                "No grain/refresh time metadata is configured; full-table "
+                "No execution slice metadata is configured; full-table "
                 "compare will be used."
             ),
         },
@@ -771,14 +771,211 @@ PROPERTIES ("replication_num" = "1");"""
             "type": "full_table_compare",
             "tables": ["dws_order"],
             "message": (
-                "No grain/refresh time metadata is configured; full-table "
+                "No execution slice metadata is configured; full-table "
                 "compare will be used."
             ),
         }
     ]
 
 
-def test_build_verification_plan_uses_model_grain_for_compare_and_execution_values(
+def test_build_verification_plan_uses_execution_slice_for_compare_and_values(
+    tmp_path, monkeypatch
+):
+    project_dir = tmp_path / "demo"
+    (project_dir / "mid" / "tasks").mkdir(parents=True)
+    (project_dir / "mid" / "models").mkdir()
+    (project_dir / "ads" / "tasks").mkdir(parents=True)
+    (project_dir / "ads" / "models").mkdir()
+    (project_dir / "warehouse.yaml").write_text(
+        """name: demo
+catalog: internal
+database: demo_dm
+qa_database: demo_dm_qa
+execution:
+  default_slice:
+    param: etl_date
+    column: stat_date
+    period: D
+""",
+        encoding="utf-8",
+    )
+    (project_dir / "mid" / "models" / "dws_store_sales_daily.yaml").write_text(
+        """version: 2
+name: dws_store_sales_daily
+layer: DWS
+config:
+  materialized: incremental
+""",
+        encoding="utf-8",
+    )
+    (project_dir / "ads" / "models" / "ads_store_performance.yaml").write_text(
+        """version: 2
+name: ads_store_performance
+layer: ADS
+config:
+  materialized: incremental
+execution:
+  slice:
+    param: etl_month
+    column: stat_month_date
+    period: M
+""",
+        encoding="utf-8",
+    )
+    (project_dir / "mid" / "tasks" / "dws_store_sales_daily.sql").write_text(
+        "INSERT INTO demo_dm.dws_store_sales_daily SELECT @etl_date;",
+        encoding="utf-8",
+    )
+    (project_dir / "ads" / "tasks" / "ads_store_performance.sql").write_text(
+        "INSERT INTO demo_dm.ads_store_performance SELECT @etl_month;",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setitem(
+        config.PROJECT_CONFIG,
+        "demo",
+        config.core.load_warehouse_config(
+            project_dir / "warehouse.yaml",
+            project_root=tmp_path,
+        ),
+    )
+    config.clear_model_metadata_cache()
+
+    plan = build_verification_plan(
+        "demo",
+        {
+            "affected_scope": {
+                "assessment_tables": [
+                    "dws_store_sales_daily",
+                    "ads_store_performance",
+                ],
+                "assessment_tasks": [
+                    "dws_store_sales_daily",
+                    "ads_store_performance",
+                ],
+                "anchor_tables": ["ads_store_performance"],
+            }
+        },
+        lineage_data={
+            "edges": [
+                {
+                    "source": {
+                        "type": "column",
+                        "id": "dws_store_sales_daily.store_id",
+                    },
+                    "target": {
+                        "type": "column",
+                        "id": "ads_store_performance.store_id",
+                    },
+                }
+            ]
+        },
+        partition="2024-06-15",
+    )
+
+    assert plan["verification"]["compare_anchors"] == {
+        "ads_store_performance": {
+            "time_column": "stat_month_date",
+            "time_period": "M",
+            "anchor_time_value": "2024-06-01",
+        }
+    }
+    jobs = {job["job"]: job for job in plan["jobs_to_run"]}
+    assert jobs["dws_store_sales_daily"]["execution_values"][0] == "2024-06-01"
+    assert (
+        jobs["dws_store_sales_daily"]["execution_values"][-1] == "2024-06-30"
+    )
+    assert len(jobs["dws_store_sales_daily"]["execution_values"]) == 30
+    assert jobs["ads_store_performance"]["execution_values"] == ["2024-06-01"]
+    assert "refresh_parameter" not in jobs["dws_store_sales_daily"]
+    assert "refresh_time_period" not in jobs["dws_store_sales_daily"]
+
+    config.clear_model_metadata_cache()
+
+
+def test_build_verification_plan_supports_hour_execution_slice(
+    tmp_path, monkeypatch
+):
+    project_dir = tmp_path / "demo"
+    (project_dir / "ads" / "models").mkdir(parents=True)
+    (project_dir / "ads" / "tasks").mkdir()
+    (project_dir / "warehouse.yaml").write_text(
+        """name: demo
+catalog: internal
+database: demo_dm
+qa_database: demo_dm_qa
+execution:
+  default_slice:
+    param: etl_hour
+    column: stat_hour
+    period: H
+""",
+        encoding="utf-8",
+    )
+    (project_dir / "ads" / "models" / "ads_hourly.yaml").write_text(
+        """version: 2
+name: ads_hourly
+layer: ADS
+config:
+  materialized: incremental
+""",
+        encoding="utf-8",
+    )
+    (project_dir / "ads" / "tasks" / "ads_hourly.sql").write_text(
+        "INSERT INTO demo_dm.ads_hourly SELECT @etl_hour;",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setitem(
+        config.PROJECT_CONFIG,
+        "demo",
+        config.core.load_warehouse_config(
+            project_dir / "warehouse.yaml",
+            project_root=tmp_path,
+        ),
+    )
+    config.clear_model_metadata_cache()
+
+    plan = build_verification_plan(
+        "demo",
+        {
+            "affected_scope": {
+                "assessment_tables": ["ads_hourly"],
+                "assessment_tasks": ["ads_hourly"],
+                "anchor_tables": ["ads_hourly"],
+            }
+        },
+        lineage_data={
+            "edges": [
+                {
+                    "source": {
+                        "type": "column",
+                        "id": "ods_event.event_time",
+                    },
+                    "target": {
+                        "type": "column",
+                        "id": "ads_hourly.stat_hour",
+                    },
+                }
+            ]
+        },
+        partition="2024-06-01 03:20:00",
+    )
+
+    assert plan["verification"]["compare_anchors"] == {
+        "ads_hourly": {
+            "time_column": "stat_hour",
+            "time_period": "H",
+            "anchor_time_value": "2024-06-01 03:00:00",
+        }
+    }
+    jobs = {job["job"]: job for job in plan["jobs_to_run"]}
+    assert jobs["ads_hourly"]["execution_values"] == ["2024-06-01 03:00:00"]
+
+    config.clear_model_metadata_cache()
+
+
+def test_build_verification_plan_ignores_grain_for_compare_slice(
     tmp_path, monkeypatch
 ):
     project_dir = tmp_path / "demo"
@@ -826,7 +1023,6 @@ grain:
             "qa_db": "demo_dm_qa",
             "catalog": "internal",
             "verification": {
-                "default_refresh_parameter": "etl_date",
                 "week_start": "MON",
             },
         },
@@ -867,31 +1063,33 @@ grain:
 
     assert "partition_info" not in plan
     assert plan["verification"]["compare_anchors"] == {
-        "ads_store_performance": {
-            "time_column": "stat_month_date",
-            "time_period": "M",
-            "anchor_time_value": "2024-06-01",
-        }
+        "ads_store_performance": {}
     }
     assert plan["verification"]["checks"] == [
         {"table": "ads_store_performance", "method": "count"},
         {"table": "ads_store_performance", "method": "row_compare"},
     ]
+    assert plan["verification"]["warnings"] == [
+        {
+            "type": "full_table_compare",
+            "tables": ["ads_store_performance"],
+            "message": (
+                "No execution slice metadata is configured; full-table "
+                "compare will be used."
+            ),
+        }
+    ]
     jobs = {job["job"]: job for job in plan["jobs_to_run"]}
-    assert jobs["dws_store_sales_daily"]["refresh_parameter"] == "etl_date"
-    assert jobs["dws_store_sales_daily"]["refresh_time_period"] == "D"
-    assert jobs["dws_store_sales_daily"]["execution_values"][0] == "2024-06-01"
-    assert (
-        jobs["dws_store_sales_daily"]["execution_values"][-1] == "2024-06-30"
-    )
-    assert len(jobs["dws_store_sales_daily"]["execution_values"]) == 30
-    assert jobs["ads_store_performance"]["execution_values"] == ["2024-06-01"]
+    assert "refresh_parameter" not in jobs["dws_store_sales_daily"]
+    assert "refresh_time_period" not in jobs["dws_store_sales_daily"]
+    assert "execution_values" not in jobs["dws_store_sales_daily"]
+    assert "execution_values" not in jobs["ads_store_performance"]
     assert "needs_etl_date" not in jobs["dws_store_sales_daily"]
 
     config.clear_model_metadata_cache()
 
 
-def test_build_verification_plan_warns_full_table_compare_without_grain(
+def test_build_verification_plan_warns_full_table_compare_without_execution_slice(
     tmp_path, monkeypatch
 ):
     project_dir = tmp_path / "demo"
@@ -945,7 +1143,7 @@ def test_build_verification_plan_warns_full_table_compare_without_grain(
             "type": "full_table_compare",
             "tables": ["ads_dashboard"],
             "message": (
-                "No grain/refresh time metadata is configured; full-table "
+                "No execution slice metadata is configured; full-table "
                 "compare will be used."
             ),
         }
@@ -987,7 +1185,6 @@ grain:
             "db": "demo_dm",
             "qa_db": "demo_dm_qa",
             "catalog": "internal",
-            "verification": {"default_refresh_parameter": "etl_date"},
         },
     )
     config.clear_model_metadata_cache()
@@ -1019,7 +1216,7 @@ grain:
             "type": "full_table_compare",
             "tables": ["ads_dashboard"],
             "message": (
-                "No grain/refresh time metadata is configured; full-table "
+                "No execution slice metadata is configured; full-table "
                 "compare will be used."
             ),
         }
@@ -1038,9 +1235,11 @@ def test_build_verification_plan_warns_full_table_compare_without_anchor_value(
         """version: 2
 name: ads_dashboard
 layer: ADS
-grain:
-  time_column: stat_date
-  time_period: D
+execution:
+  slice:
+    param: etl_date
+    column: stat_date
+    period: D
 """,
         encoding="utf-8",
     )
@@ -1058,7 +1257,6 @@ grain:
             "qa_db": "demo_dm_qa",
             "catalog": "internal",
             "verification": {
-                "default_refresh_parameter": "etl_date",
                 "week_start": "MON",
             },
         },
@@ -1105,7 +1303,7 @@ grain:
     config.clear_model_metadata_cache()
 
 
-def test_build_verification_plan_blocks_partial_grain_metadata(
+def test_build_verification_plan_blocks_partial_execution_slice_metadata(
     tmp_path, monkeypatch
 ):
     project_dir = tmp_path / "demo"
@@ -1115,8 +1313,10 @@ def test_build_verification_plan_blocks_partial_grain_metadata(
         """version: 2
 name: ads_order
 layer: ADS
-grain:
-  time_column: stat_date
+execution:
+  slice:
+    param: etl_date
+    column: stat_date
 """,
         encoding="utf-8",
     )
@@ -1133,7 +1333,6 @@ grain:
             "db": "demo_dm",
             "qa_db": "demo_dm_qa",
             "catalog": "internal",
-            "verification": {"default_refresh_parameter": "etl_date"},
         },
     )
     config.clear_model_metadata_cache()
@@ -1162,10 +1361,10 @@ grain:
     assert plan["verification"]["metadata_errors"] == [
         {
             "table": "ads_order",
-            "field": "grain",
+            "field": "execution.slice",
             "message": (
-                "grain.time_column and grain.time_period must be configured "
-                "together"
+                "[ads_order] execution.slice requires param, column, and "
+                "period"
             ),
         }
     ]
@@ -1174,7 +1373,7 @@ grain:
     config.clear_model_metadata_cache()
 
 
-def test_build_verification_plan_blocks_week_grain_without_week_start(
+def test_build_verification_plan_blocks_week_execution_slice_without_week_start(
     tmp_path, monkeypatch
 ):
     project_dir = tmp_path / "demo"
@@ -1184,9 +1383,11 @@ def test_build_verification_plan_blocks_week_grain_without_week_start(
         """version: 2
 name: ads_weekly
 layer: ADS
-grain:
-  time_column: stat_week_date
-  time_period: W
+execution:
+  slice:
+    param: etl_week
+    column: stat_week_date
+    period: W
 """,
         encoding="utf-8",
     )
@@ -1203,7 +1404,6 @@ grain:
             "db": "demo_dm",
             "qa_db": "demo_dm_qa",
             "catalog": "internal",
-            "verification": {"default_refresh_parameter": "etl_date"},
         },
     )
     config.clear_model_metadata_cache()

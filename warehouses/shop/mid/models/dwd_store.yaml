@@ -4,7 +4,12 @@ layer: DIM
 table_type: dimension
 description: 门店每日快照
 config:
-  materialized: snapshot
+  materialized: incremental
+execution:
+  slice:
+    param: etl_date
+    column: snapshot_date
+    period: D
 entities:
 - code: STORE
   type: primary
