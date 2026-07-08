@@ -1225,7 +1225,7 @@ grain:
     config.clear_model_metadata_cache()
 
 
-def test_build_verification_plan_warns_full_table_compare_without_anchor_value(
+def test_build_verification_plan_requires_partition_for_incremental_jobs(
     tmp_path, monkeypatch
 ):
     project_dir = tmp_path / "demo"
@@ -1263,42 +1263,38 @@ execution:
     )
     config.clear_model_metadata_cache()
 
-    plan = build_verification_plan(
-        "demo",
-        {
-            "affected_scope": {
-                "assessment_tables": ["ads_dashboard"],
-                "assessment_tasks": ["ads_dashboard"],
-                "anchor_tables": ["ads_dashboard"],
-            }
-        },
-        lineage_data={
-            "edges": [
-                {
-                    "source": {"type": "column", "id": "ods_order.id"},
-                    "target": {"type": "column", "id": "ads_dashboard.id"},
+    try:
+        build_verification_plan(
+            "demo",
+            {
+                "affected_scope": {
+                    "assessment_tables": ["ads_dashboard"],
+                    "assessment_tasks": ["ads_dashboard"],
+                    "anchor_tables": ["ads_dashboard"],
                 }
-            ]
-        },
-    )
-
-    assert plan["verification"]["data_anchor_status"] == "ready"
-    assert plan["verification"]["compare_anchors"] == {
-        "ads_dashboard": {
-            "time_column": "stat_date",
-            "time_period": "D",
-        }
-    }
-    assert plan["verification"]["warnings"] == [
-        {
-            "type": "full_table_compare",
-            "tables": ["ads_dashboard"],
-            "message": (
-                "No anchor time value is provided; full-table compare will "
-                "be used."
-            ),
-        }
-    ]
+            },
+            lineage_data={
+                "edges": [
+                    {
+                        "source": {
+                            "type": "column",
+                            "id": "ods_order.id",
+                        },
+                        "target": {
+                            "type": "column",
+                            "id": "ads_dashboard.id",
+                        },
+                    }
+                ]
+            },
+        )
+    except ValueError as exc:
+        assert "--partition" in str(exc)
+        assert "ads_dashboard" in str(exc)
+    else:
+        raise AssertionError(
+            "incremental refactor jobs should require --partition"
+        )
 
     config.clear_model_metadata_cache()
 

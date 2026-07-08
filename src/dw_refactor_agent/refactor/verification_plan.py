@@ -253,6 +253,20 @@ def build_verification_plan(
             metadata_errors,
         )
     )
+    if not partition:
+        partition_required_jobs = _partition_required_jobs(
+            project,
+            jobs_to_run,
+            metadata_errors,
+        )
+        if partition_required_jobs:
+            job_list = ", ".join(partition_required_jobs)
+            raise ValueError(
+                "refactor analyze requires --partition for incremental jobs "
+                f"with execution slices: {job_list}. Pass an explicit "
+                "partition value so shadow-run can inject deterministic "
+                "execution parameters."
+            )
     _apply_execution_values(
         project,
         jobs_to_run,
@@ -508,6 +522,37 @@ def _table_execution_slice_metadata(
         "time_column": slice_config.column,
         "time_period": period,
     }
+
+
+def _is_incremental_model(project: str, table: str) -> bool:
+    metadata = config.get_model_metadata(table, project) or {}
+    raw_config = metadata.get("config") or {}
+    if not isinstance(raw_config, dict):
+        raw_config = {}
+    materialized = str(raw_config.get("materialized") or "incremental").strip()
+    return materialized.lower() != "full"
+
+
+def _partition_required_jobs(
+    project: str,
+    jobs_to_run: list[dict],
+    metadata_errors: list[dict],
+) -> list[str]:
+    jobs = []
+    for job in jobs_to_run:
+        table = job.get("target") or job.get("job")
+        if not table or not _is_incremental_model(project, table):
+            continue
+        before_error_count = len(metadata_errors)
+        slice_metadata = _table_execution_slice_metadata(
+            project,
+            table,
+            metadata_errors,
+        )
+        if len(metadata_errors) > before_error_count or not slice_metadata:
+            continue
+        jobs.append(str(job.get("job") or table))
+    return sorted(set(jobs))
 
 
 def _parse_anchor_date(value: str, table: str, metadata_errors: list[dict]):
