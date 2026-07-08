@@ -699,11 +699,21 @@ def test_build_generate_plan_uses_direct_rule_policy(tmp_path):
             },
         ),
         (
+            catalog_plan_for_refresh,
+            {"llm": True},
+            {
+                "ensure_skeleton": True,
+                "merge_llm_discoveries": True,
+                "write_business_assignments": True,
+                "overwrite_discovered_catalog": False,
+            },
+        ),
+        (
             catalog_plan_for_generate,
             {"llm": True},
             {
                 "ensure_skeleton": True,
-                "merge_llm_discoveries": False,
+                "merge_llm_discoveries": True,
                 "write_business_assignments": True,
                 "overwrite_discovered_catalog": False,
             },
@@ -3019,6 +3029,7 @@ def test_model_metadata_writer_cli_dispatches_refresh_and_generate_modes(
     writer_module.main()
     assert calls[-1][0] == "refresh_llm"
     assert calls[-1][2]["write_scope"] == "all"
+    assert calls[-1][2]["update_catalog"] is True
 
     monkeypatch.setattr(
         sys,
@@ -3754,6 +3765,169 @@ def test_run_generate_model_metadata_llm_catalog_merge_keeps_taxonomy_manual(
             "name": "Event Completion",
             "data_domain": "",
             "business_area": "",
+        }
+    ]
+
+
+def _refresh_catalog_models(*table_names):
+    return {
+        table_name: {
+            "version": 2,
+            "name": table_name,
+            "layer": "DIM" if table_name.startswith("dim_") else "DWD",
+            "table_type": (
+                "dimension" if table_name.startswith("dim_") else "fact"
+            ),
+        }
+        for table_name in table_names
+    }
+
+
+def test_run_metadata_write_llm_dry_run_plans_catalog_merge_and_skeleton(
+    tmp_path, monkeypatch
+):
+    import dw_refactor_agent.assessment.llm.model_metadata_writer as writer_module
+
+    project = "refresh_llm_catalog_dry_run"
+    project_dir = _write_catalog_project(
+        tmp_path,
+        monkeypatch,
+        project,
+        catalog=None,
+        ddl_tables=["dwd_order_detail", "dim_customer"],
+        models=_refresh_catalog_models("dwd_order_detail", "dim_customer"),
+    )
+    _install_generate_catalog_fake_inspector(
+        monkeypatch,
+        writer_module,
+        table_names=["dwd_order_detail", "dim_customer"],
+        result_factory=_generate_catalog_result_for_context,
+    )
+
+    result = run_metadata_write(
+        project,
+        api_key="test",
+        dry_run=True,
+    )
+    planned_codes = {
+        update["code"] for update in result["planned_catalog_updates"]
+    }
+
+    assert result["catalog_initialized"] is True
+    assert result["planned_catalog_written_names"] == [
+        "business_processes",
+        "semantic_subjects",
+        "taxonomy",
+    ]
+    assert result["catalog_change_count"] == 2
+    assert result["catalog_update"]["updated"] is False
+    assert result["catalog_update"]["planned_written_names"] == [
+        "business_processes",
+        "semantic_subjects",
+        "taxonomy",
+    ]
+    assert planned_codes == {"ORDER_TRANSACTION", "CUSTOMER"}
+    assert not (project_dir / "business_taxonomy.yaml").exists()
+    assert not (project_dir / "business_processes.yaml").exists()
+    assert not (project_dir / "semantic_subjects.yaml").exists()
+
+    disabled = run_metadata_write(
+        project,
+        api_key="test",
+        dry_run=False,
+        update_catalog=False,
+    )
+
+    assert disabled["catalog_initialized"] is False
+    assert disabled["catalog_update"] is None
+    assert disabled["catalog_change_count"] == 0
+    assert disabled["planned_catalog_updates"] == []
+    assert not (project_dir / "business_taxonomy.yaml").exists()
+    assert not (project_dir / "business_processes.yaml").exists()
+    assert not (project_dir / "semantic_subjects.yaml").exists()
+
+
+def test_run_metadata_write_llm_writes_catalog_merge_without_expanding_taxonomy(
+    tmp_path, monkeypatch
+):
+    import dw_refactor_agent.assessment.llm.model_metadata_writer as writer_module
+
+    project = "refresh_llm_catalog_write"
+    project_dir = _write_catalog_project(
+        tmp_path,
+        monkeypatch,
+        project,
+        catalog=_catalog_payload(),
+        ddl_tables=["dwd_order_detail", "dwd_event_detail", "dim_customer"],
+        models=_refresh_catalog_models(
+            "dwd_order_detail",
+            "dwd_event_detail",
+            "dim_customer",
+        ),
+    )
+
+    def result_factory(ctx):
+        if ctx.table_name == "dwd_order_detail":
+            result = _generate_catalog_fact_result(ctx)
+            result.inferred_data_domain = "LLM_DOMAIN"
+            result.inferred_business_area = "LLM_AREA"
+            return result
+        if ctx.table_name == "dwd_event_detail":
+            result = _generate_catalog_fact_result(
+                ctx,
+                validation={"unknown_columns": ["ghost_metric"]},
+            )
+            result.columns["atomic_metrics"][0]["business_process"] = (
+                "EVENT_COMPLETION"
+            )
+            return result
+        if ctx.table_name == "dim_customer":
+            return _generate_catalog_dimension_result(ctx)
+        return None
+
+    _install_generate_catalog_fake_inspector(
+        monkeypatch,
+        writer_module,
+        table_names=["dwd_order_detail", "dwd_event_detail", "dim_customer"],
+        result_factory=result_factory,
+    )
+
+    result = run_metadata_write(
+        project,
+        api_key="test",
+        dry_run=False,
+    )
+    taxonomy = yaml.safe_load(
+        (project_dir / "business_taxonomy.yaml").read_text(encoding="utf-8")
+    )
+    catalog = config.load_business_semantics_catalog(project)
+
+    assert result["catalog_change_count"] == 2
+    assert result["catalog_update"]["updated"] is True
+    assert result["catalog_update"]["written_names"] == [
+        "business_processes",
+        "semantic_subjects",
+    ]
+    assert taxonomy["data_domains"] == [
+        {"id": "04", "code": "TRAN", "name": "交易域"}
+    ]
+    assert taxonomy["business_areas"] == [
+        {"id": "SHOP", "code": "SHOP", "name": "零售业务"}
+    ]
+    assert catalog["business_processes"] == [
+        {
+            "code": "ORDER_TRANSACTION",
+            "name": "Order Transaction",
+            "data_domain": "",
+            "business_area": "",
+        }
+    ]
+    assert catalog["semantic_subjects"] == [
+        {
+            "code": "CUSTOMER",
+            "name": "客户",
+            "data_domain": "04",
+            "business_area": "SHOP",
         }
     ]
 

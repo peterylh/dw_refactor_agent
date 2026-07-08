@@ -1521,7 +1521,7 @@ def _generate_model_table_assets(project: str) -> dict[str, dict[str, Any]]:
     )
 
 
-def _ensure_generate_metadata_catalog(
+def _ensure_metadata_catalog_skeleton(
     project: str,
     *,
     dry_run: bool,
@@ -1550,7 +1550,7 @@ def _generate_metadata_catalog_for_plan(
     update_catalog: bool,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     if update_catalog:
-        return _ensure_generate_metadata_catalog(project, dry_run=dry_run)
+        return _ensure_metadata_catalog_skeleton(project, dry_run=dry_run)
 
     catalog = load_business_semantics_catalog(project)
     if not catalog:
@@ -1624,19 +1624,14 @@ def _empty_catalog_update_report() -> dict[str, Any]:
     }
 
 
-def _resolved_catalog_results_from_llm_result(
-    llm_result: dict[str, Any],
+def _resolved_catalog_results_from_inspection_results(
+    results: list[TableInspectResult],
     *,
     model_metadata: dict[str, dict[str, Any]],
     resolution_policy: LayerResolutionPolicy,
 ) -> list[TableInspectResult]:
     resolved_results = []
-    for item in llm_result.get("tables") or []:
-        if not isinstance(item, dict):
-            continue
-        if str(item.get("status") or "").strip().lower() == "blocked":
-            continue
-        result = inspect_dict_to_result(item)
+    for result in results or []:
         if result.status == "blocked":
             continue
         resolution = _layer_resolution_for_model(
@@ -1655,23 +1650,51 @@ def _resolved_catalog_results_from_llm_result(
     return resolved_results
 
 
-def _merge_generate_llm_catalog(
+def _resolved_catalog_results_from_llm_result(
+    llm_result: dict[str, Any],
+    *,
+    model_metadata: dict[str, dict[str, Any]],
+    resolution_policy: LayerResolutionPolicy,
+) -> list[TableInspectResult]:
+    results = []
+    for item in llm_result.get("tables") or []:
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("status") or "").strip().lower() == "blocked":
+            continue
+        results.append(inspect_dict_to_result(item))
+    return _resolved_catalog_results_from_inspection_results(
+        results,
+        model_metadata=model_metadata,
+        resolution_policy=resolution_policy,
+    )
+
+
+def _merge_llm_catalog_discoveries(
     project: str,
     *,
     llm_result: dict[str, Any] | None,
+    inspection_results: list[TableInspectResult] | None = None,
     base_catalog: dict[str, Any],
     model_metadata: dict[str, dict[str, Any]],
     resolution_policy: LayerResolutionPolicy,
     dry_run: bool,
 ) -> dict[str, Any]:
-    if not llm_result:
+    if inspection_results is None and not llm_result:
         return _empty_catalog_update_report()
 
-    catalog_results = _resolved_catalog_results_from_llm_result(
-        llm_result,
-        model_metadata=model_metadata,
-        resolution_policy=resolution_policy,
-    )
+    if inspection_results is not None:
+        catalog_results = _resolved_catalog_results_from_inspection_results(
+            inspection_results,
+            model_metadata=model_metadata,
+            resolution_policy=resolution_policy,
+        )
+    else:
+        catalog_results = _resolved_catalog_results_from_llm_result(
+            llm_result or {},
+            model_metadata=model_metadata,
+            resolution_policy=resolution_policy,
+        )
     candidate_catalog = build_business_semantics_catalog_from_inspection(
         project,
         catalog_results,
@@ -2105,13 +2128,14 @@ def run_generate_model_metadata(
             model_paths=generate_plan.write_targets.model_paths,
             resolution_policy=generate_plan.resolution_policy,
             include_model_metadata=True,
+            update_catalog=False,
         )
         final_model_metadata = _final_model_metadata_with_refinements(
             generate_plan.base_model_metadata,
             llm_result,
         )
         if update_catalog:
-            catalog_update_report = _merge_generate_llm_catalog(
+            catalog_update_report = _merge_llm_catalog_discoveries(
                 project,
                 llm_result=llm_result,
                 base_catalog=catalog,
@@ -2787,6 +2811,7 @@ def _metadata_flow_plan_for_write(
     project: str,
     *,
     write_scope: str,
+    update_catalog: bool,
     model_metadata: dict[str, dict[str, Any]] | None,
     metric_groups: dict[str, dict[str, list[str]]] | None,
     model_paths: dict[str, Path] | None,
@@ -2798,6 +2823,10 @@ def _metadata_flow_plan_for_write(
         and resolution_policy is None
     ):
         plan = build_refresh_plan(project, write_scope=write_scope)
+        plan = replace(
+            plan,
+            catalog_plan=catalog_plan_for_refresh(llm=update_catalog),
+        )
         if metric_groups is not None:
             plan = replace(plan, metric_groups=dict(metric_groups))
         return plan
@@ -2810,9 +2839,9 @@ def _metadata_flow_plan_for_write(
         else "declared"
     )
     catalog_plan = (
-        catalog_plan_for_generate(llm=True)
+        catalog_plan_for_generate(llm=update_catalog)
         if mode == "generate"
-        else catalog_plan_for_refresh(llm=True)
+        else catalog_plan_for_refresh(llm=update_catalog)
     )
     return MetadataFlowPlan(
         mode=mode,
@@ -2850,17 +2879,32 @@ def run_metadata_write(
     model_paths: dict[str, Path] | None = None,
     resolution_policy: LayerResolutionPolicy | None = None,
     include_model_metadata: bool = False,
+    update_catalog: bool = True,
 ) -> dict[str, Any]:
     """运行项目级 LLM 巡检与模型元数据回写。"""
     write_scope = _validate_write_scope(write_scope)
     plan = _metadata_flow_plan_for_write(
         project,
         write_scope=write_scope,
+        update_catalog=update_catalog,
         model_metadata=model_metadata,
         metric_groups=metric_groups,
         model_paths=model_paths,
         resolution_policy=resolution_policy,
     )
+    if plan.catalog_plan.ensure_skeleton:
+        base_catalog, catalog_report = _ensure_metadata_catalog_skeleton(
+            project,
+            dry_run=dry_run,
+        )
+    else:
+        base_catalog = load_business_semantics_catalog(project)
+        catalog_report = {
+            "catalog_initialized": False,
+            "catalog_init_written_names": [],
+            "planned_catalog_written_names": [],
+        }
+    catalog_update_report = _empty_catalog_update_report()
     data = load_lineage_data(project)
     cache_file = assess_cache_path(project, "inspect.json")
     if no_cache and cache_file.exists():
@@ -2911,8 +2955,18 @@ def run_metadata_write(
         )
         for result in results
     ]
+    if plan.catalog_plan.merge_llm_discoveries:
+        catalog_update_report = _merge_llm_catalog_discoveries(
+            project,
+            llm_result=None,
+            inspection_results=results,
+            base_catalog=base_catalog,
+            model_metadata=plan.base_model_metadata,
+            resolution_policy=plan.resolution_policy,
+            dry_run=dry_run,
+        )
 
-    return {
+    result = {
         "project": project,
         "write_scope": plan.write_scope,
         "inspected_table_count": len(contexts),
@@ -2955,6 +3009,9 @@ def run_metadata_write(
         "model_change_count": len(yaml_updates),
         "skipped_model_updates": skipped_updates,
     }
+    result.update(catalog_report)
+    result.update(catalog_update_report)
+    return result
 
 
 def main() -> None:
@@ -3045,6 +3102,7 @@ def main() -> None:
             dry_run=args.dry_run,
             write_scope="all",
             show_progress=not args.quiet,
+            update_catalog=True,
         )
     else:
         api_key = None
