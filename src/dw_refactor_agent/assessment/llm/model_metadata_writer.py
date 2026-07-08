@@ -1708,14 +1708,60 @@ def _merge_generate_llm_catalog(
     }
 
 
+def _asset_role_from_generate_asset(
+    project: str,
+    asset: dict[str, Any],
+) -> str:
+    ddl = asset.get("ddl") or {}
+    ddl_path = ddl.get("path")
+    if not ddl_path:
+        return ""
+    try:
+        parts = Path(ddl_path).relative_to(_project_dir(project)).parts
+    except ValueError:
+        return ""
+    if (
+        len(parts) >= 2
+        and parts[1] == "ddl"
+        and parts[0]
+        in {
+            "ods",
+            "mid",
+            "ads",
+        }
+    ):
+        return parts[0]
+    return ""
+
+
+def _generate_asset_role_layer(asset_role: str) -> str:
+    if asset_role == "ods":
+        return "ODS"
+    if asset_role == "ads":
+        return "ADS"
+    if asset_role == "mid":
+        return "DWD"
+    return ""
+
+
 def _generate_model_mapping(
     catalog: dict[str, Any],
     table_name: str,
+    *,
+    asset_role: str = "",
 ) -> dict[str, Any]:
     mapping = catalog_mapping_for_model(catalog, table_name, {})
-    layer = str(
-        mapping.get("layer") or _layer_from_table_name(table_name)
-    ).upper()
+    asset_layer = _generate_asset_role_layer(asset_role)
+    mapped_layer = str(mapping.get("layer") or "").upper()
+    name_layer = _layer_from_table_name(table_name)
+    if mapped_layer == "OTHER":
+        mapped_layer = ""
+    if name_layer == "OTHER":
+        name_layer = ""
+    if asset_layer in {"ODS", "ADS"}:
+        layer = asset_layer
+    else:
+        layer = mapped_layer or name_layer or asset_layer or "OTHER"
     table_type = str(
         mapping.get("table_type") or _infer_table_type(table_name, layer)
     ).strip()
@@ -1824,7 +1870,11 @@ def plan_generate_model_metadata(
         ddl = asset.get("ddl") or {}
         if not ddl.get("exists"):
             continue
-        mapping = _generate_model_mapping(catalog, table_name)
+        mapping = _generate_model_mapping(
+            catalog,
+            table_name,
+            asset_role=_asset_role_from_generate_asset(project, asset),
+        )
         path = _generated_model_path_for_table(
             project,
             table_name,

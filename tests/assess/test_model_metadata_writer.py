@@ -3290,6 +3290,66 @@ def test_run_generate_model_metadata_missing_catalog_writes_skeleton_and_models(
     assert model["config"]["materialized"] == "incremental"
 
 
+def test_run_generate_model_metadata_uses_asset_role_for_prefixless_base(
+    tmp_path, monkeypatch
+):
+    project = "generate_metadata_asset_role"
+    project_dir = tmp_path / project
+    (project_dir / "ods" / "ddl" / "internal" / "demo_dm").mkdir(parents=True)
+    (project_dir / "mid" / "ddl").mkdir(parents=True)
+    (project_dir / "ads" / "ddl").mkdir(parents=True)
+    (
+        project_dir
+        / "ods"
+        / "ddl"
+        / "internal"
+        / "demo_dm"
+        / "order_event.sql"
+    ).write_text(
+        "CREATE TABLE order_event (id BIGINT);\n",
+        encoding="utf-8",
+    )
+    (project_dir / "mid" / "ddl" / "order_detail.sql").write_text(
+        "CREATE TABLE order_detail (id BIGINT);\n",
+        encoding="utf-8",
+    )
+    (project_dir / "ads" / "ddl" / "order_dashboard.sql").write_text(
+        "CREATE TABLE order_dashboard (id BIGINT);\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "naming_config.yaml").write_text(
+        "types: {}\nbindings: {}\ndictionaries: {}\n",
+        encoding="utf-8",
+    )
+    _configure_project_root(monkeypatch, tmp_path)
+    monkeypatch.setitem(
+        config.PROJECT_CONFIG,
+        project,
+        {
+            "dir": project,
+            "catalog": "internal",
+            "db": "demo_dm",
+            "naming_config": "naming_config.yaml",
+        },
+    )
+
+    result = run_generate_model_metadata(project, dry_run=True)
+    updates = {update["table"]: update for update in result["model_updates"]}
+
+    assert updates["order_event"]["layer"] == "ODS"
+    assert updates["order_detail"]["layer"] == "DWD"
+    assert updates["order_dashboard"]["layer"] == "ADS"
+    assert (
+        "/ods/models/internal/demo_dm/order_event.yaml"
+        in updates["order_event"]["path"]
+    )
+    assert "/mid/models/order_detail.yaml" in updates["order_detail"]["path"]
+    assert (
+        "/ads/models/order_dashboard.yaml"
+        in updates["order_dashboard"]["path"]
+    )
+
+
 def _write_taxonomy_only(project_dir, project):
     project_dir.mkdir(parents=True, exist_ok=True)
     (project_dir / "business_taxonomy.yaml").write_text(

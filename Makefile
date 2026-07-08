@@ -1,4 +1,4 @@
-.PHONY: install-hooks env-create env-update doctor lint test test-cov benchmark-lineage
+.PHONY: install-hooks env-create env-update doctor lint test test-cov benchmark-lineage benchmark-generate-llm
 
 CONDA_ENV ?= dw-refactor-py37
 CONDA_SUBDIR ?=
@@ -12,6 +12,13 @@ PYTEST_ARGS ?= -q -m "not api"
 COVERAGE_ARGS ?= --cov=dw_refactor_agent --cov-report=term-missing --cov-report=xml
 REQUIRED_PYTHON_VERSION ?= 3.7
 REQUIRED_PYTHON_MODULES ?= yaml sqlglot pymysql pytest ruff
+BENCHMARK_GENERATE_LLM_PROJECTS ?= shop finance_analytics
+BENCHMARK_GENERATE_LLM_MODEL ?= deepseek-v4-pro
+BENCHMARK_GENERATE_LLM_BASE_URL ?= https://api.deepseek.com
+BENCHMARK_GENERATE_LLM_PARALLEL ?= 4
+BENCHMARK_GENERATE_LLM_MAX_RETRIES ?= 1
+BENCHMARK_GENERATE_LLM_REQUEST_TIMEOUT ?= 240
+BENCHMARK_GENERATE_LLM_OUTPUT ?= /tmp/generate_llm_cold_start_benchmark.json
 
 -include Makefile.local
 
@@ -45,3 +52,6 @@ test-cov: lint
 
 benchmark-lineage: doctor
 	PYTHONPATH=src $(PYTHON) benchmarks/lineage_extractor/run.py --size medium
+
+benchmark-generate-llm: doctor
+	PYTHONPATH=src $(PYTHON) benchmarks/table_inspector_layer/run.py --projects $(BENCHMARK_GENERATE_LLM_PROJECTS) --model $(BENCHMARK_GENERATE_LLM_MODEL) --base-url $(BENCHMARK_GENERATE_LLM_BASE_URL) --parallel $(BENCHMARK_GENERATE_LLM_PARALLEL) --max-retries $(BENCHMARK_GENERATE_LLM_MAX_RETRIES) --request-timeout $(BENCHMARK_GENERATE_LLM_REQUEST_TIMEOUT) --output $(BENCHMARK_GENERATE_LLM_OUTPUT)
