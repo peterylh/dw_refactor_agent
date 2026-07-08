@@ -271,6 +271,43 @@ def test_rewrite_sql_maps_create_table_like_target_to_qa():
     assert "LIKE shop_dm_qa.dws_store_sales_daily" in rewritten
 
 
+def test_rewrite_sql_maps_project_ddl_targets_to_qa():
+    sql = """
+    DROP TABLE IF EXISTS shop_dm.tmp_store_sales_daily;
+    CREATE TABLE IF NOT EXISTS shop_dm.tmp_store_sales_daily
+    LIKE shop_dm.dws_store_sales_daily;
+    CREATE TEMPORARY TABLE shop_dm.tmp_session_sales
+    LIKE shop_dm.dws_store_sales_daily;
+    TRUNCATE TABLE shop_dm.tmp_store_sales_daily;
+    ALTER TABLE shop_dm.tmp_store_sales_daily ADD COLUMN c1 INT;
+    """
+
+    rewritten = rewrite_sql(sql, "shop_dm", "shop_dm_qa", set())
+
+    assert "DROP TABLE IF EXISTS shop_dm_qa.tmp_store_sales_daily" in rewritten
+    assert (
+        "CREATE TABLE IF NOT EXISTS shop_dm_qa.tmp_store_sales_daily"
+        in rewritten
+    )
+    assert "CREATE TEMPORARY TABLE shop_dm_qa.tmp_session_sales" in rewritten
+    assert "TRUNCATE TABLE shop_dm_qa.tmp_store_sales_daily" in rewritten
+    assert (
+        "ALTER TABLE shop_dm_qa.tmp_store_sales_daily ADD COLUMN c1 INT"
+        in rewritten
+    )
+    assert "shop_dm.tmp_store_sales_daily" not in rewritten
+    assert "shop_dm.tmp_session_sales" not in rewritten
+
+
+def test_rewrite_sql_keeps_non_project_ddl_targets_in_place():
+    sql = "DROP TABLE IF EXISTS other_db.tmp_x;"
+
+    rewritten = rewrite_sql(sql, "shop_dm", "shop_dm_qa", set())
+
+    assert "DROP TABLE IF EXISTS other_db.tmp_x" in rewritten
+    assert "shop_dm_qa.tmp_x" not in rewritten
+
+
 def test_rewrite_sql_text_empty():
     assert rewrite_sql("", "shop_dm", "shop_dm_qa", set()) == ""
 
@@ -815,6 +852,62 @@ def test_run_shadow_plan_dry_run_persists_phase_summary(tmp_path, monkeypatch):
     assert phase_by_name["run_jobs"]["jobs"][0]["job"] == "M_SHOP_05_INV_DF"
     assert phase_by_name["run_jobs"]["jobs"][0]["status"] == "dry_run"
     assert json.loads(output_path.read_text(encoding="utf-8")) == result
+
+
+def test_run_shadow_plan_dry_run_prints_rewritten_task_ddl_targets(
+    tmp_path, monkeypatch, capsys
+):
+    job_file = (
+        tmp_path
+        / "warehouses"
+        / "shop"
+        / "mid"
+        / "tasks"
+        / "dws_store_sales_daily.sql"
+    )
+    job_file.parent.mkdir(parents=True)
+    job_file.write_text(
+        (
+            "DROP TABLE IF EXISTS shop_dm.tmp_shadow_test;\n"
+            "CREATE TABLE IF NOT EXISTS shop_dm.tmp_shadow_test "
+            "LIKE shop_dm.dws_store_sales_daily;"
+        ),
+        encoding="utf-8",
+    )
+    plan_path = tmp_path / "verification" / "plan.json"
+    output_path = tmp_path / "verification" / "shadow_run_result.json"
+    _write_json(
+        plan_path,
+        {
+            "project": "shop",
+            "project_db": "shop_dm",
+            "qa_db": "shop_dm_qa",
+            "baseline_ddl": {},
+            "ddl_changes": [],
+            "partition_info": {},
+            "jobs_to_run": [
+                {
+                    "job": "dws_store_sales_daily",
+                    "file": (
+                        "warehouses/shop/mid/tasks/dws_store_sales_daily.sql"
+                    ),
+                    "layer": "DWS",
+                    "execution_values": ["2025-01-15"],
+                }
+            ],
+            "verification": {"checks": []},
+        },
+    )
+
+    monkeypatch.setattr(
+        "dw_refactor_agent.refactor.shadow_run._project_root", lambda: tmp_path
+    )
+
+    run_shadow_plan(plan_path, output_path, dry_run=True)
+
+    stdout = capsys.readouterr().out
+    assert "shop_dm.tmp_shadow_test" not in stdout
+    assert "shop_dm_qa.tmp_shadow_test" in stdout
 
 
 def test_execute_shadow_plan_runs_job_once_per_execution_value(
