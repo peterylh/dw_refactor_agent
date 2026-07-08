@@ -515,6 +515,10 @@ def test_run_shadow_plan_executes_self_contained(tmp_path, monkeypatch):
     assert result["job_count"] == 1
     assert result["summary"]["job_count"] == 1
     assert result["summary"]["failed_job_count"] == 0
+    assert "check_count" not in result["summary"]
+    assert "failed_check_count" not in result["summary"]
+    phase_names = [phase["name"] for phase in result["phases"]]
+    assert "compare" not in phase_names
     phase_by_name = {phase["name"]: phase for phase in result["phases"]}
     assert phase_by_name["run_jobs"]["jobs"] == [
         {
@@ -526,11 +530,6 @@ def test_run_shadow_plan_executes_self_contained(tmp_path, monkeypatch):
             "error": None,
         }
     ]
-    assert phase_by_name["compare"] == {
-        "name": "compare",
-        "status": "not_run",
-        "checks": [],
-    }
     assert any(call[0] == "text" for call in calls)
     assert json.loads(output_path.read_text(encoding="utf-8")) == result
 
@@ -592,6 +591,8 @@ def test_run_shadow_plan_persists_failed_job_result(tmp_path, monkeypatch):
     assert result["status"] == "failed"
     assert result["mode"] == "execute"
     assert result["summary"]["failed_job_count"] == 1
+    phase_names = [phase["name"] for phase in result["phases"]]
+    assert "compare" not in phase_names
     phase_by_name = {phase["name"]: phase for phase in result["phases"]}
     assert phase_by_name["run_jobs"]["status"] == "failed"
     assert phase_by_name["run_jobs"]["jobs"] == [
@@ -604,7 +605,6 @@ def test_run_shadow_plan_persists_failed_job_result(tmp_path, monkeypatch):
             "error": "insert failed",
         }
     ]
-    assert phase_by_name["compare"]["status"] == "not_run"
     assert json.loads(output_path.read_text(encoding="utf-8")) == result
 
 
@@ -640,6 +640,8 @@ def test_execute_shadow_plan_fails_when_job_file_is_missing(
 
     assert result["status"] == "failed"
     assert result["summary"]["failed_job_count"] == 1
+    phase_names = [phase["name"] for phase in result["phases"]]
+    assert "compare" not in phase_names
     phase_by_name = {phase["name"]: phase for phase in result["phases"]}
     assert phase_by_name["run_jobs"]["status"] == "failed"
     job_result = phase_by_name["run_jobs"]["jobs"][0]
@@ -731,11 +733,16 @@ def test_run_shadow_plan_dry_run_persists_phase_summary(tmp_path, monkeypatch):
         "baseline_table_count": 1,
         "ddl_change_count": 1,
         "job_count": 1,
-        "check_count": 2,
         "failed_job_count": 0,
         "failed_ddl_change_count": 0,
-        "failed_check_count": 0,
     }
+    phase_names = [phase["name"] for phase in result["phases"]]
+    assert phase_names == [
+        "reset_qa_db",
+        "create_baseline_tables",
+        "apply_ddl_changes",
+        "run_jobs",
+    ]
     phase_by_name = {phase["name"]: phase for phase in result["phases"]}
     assert phase_by_name["reset_qa_db"]["actions"] == [
         "DROP DATABASE IF EXISTS shop_dm_qa",
@@ -761,23 +768,6 @@ def test_run_shadow_plan_dry_run_persists_phase_summary(tmp_path, monkeypatch):
     ]
     assert phase_by_name["run_jobs"]["jobs"][0]["job"] == "M_SHOP_05_INV_DF"
     assert phase_by_name["run_jobs"]["jobs"][0]["status"] == "dry_run"
-    assert phase_by_name["compare"]["status"] == "not_run"
-    assert phase_by_name["compare"]["checks"] == [
-        {
-            "table": "dws_inventory_daily",
-            "method": "count",
-            "status": "not_run",
-            "partition_col": None,
-            "partition_value": None,
-        },
-        {
-            "table": "dws_inventory_daily",
-            "method": "row_compare",
-            "status": "not_run",
-            "partition_col": None,
-            "partition_value": None,
-        },
-    ]
     assert json.loads(output_path.read_text(encoding="utf-8")) == result
 
 

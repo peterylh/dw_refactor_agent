@@ -727,16 +727,6 @@ def _plan_anchor_tables(plan: dict) -> list:
     return list((_plan_scope(plan).get("anchor_tables") or []))
 
 
-def _check_result(check: dict, status: str) -> dict:
-    return {
-        "table": check.get("table"),
-        "method": check.get("method"),
-        "status": status,
-        "partition_col": check.get("partition_col"),
-        "partition_value": check.get("partition_value"),
-    }
-
-
 def _rewrite_db_prefix(value: str, prod_db: str, qa_db: str) -> str:
     return value.replace(f"{prod_db}.", f"{qa_db}.")
 
@@ -800,19 +790,6 @@ def _job_result(
     return result
 
 
-def _compare_phase(plan: dict, status: str = "not_run") -> dict:
-    verification = plan.get("verification", {})
-    checks = [
-        _check_with_compare_anchor(check, verification)
-        for check in verification.get("checks", [])
-    ]
-    return {
-        "name": "compare",
-        "status": status,
-        "checks": [_check_result(check, status) for check in checks],
-    }
-
-
 def _shadow_driver_values(jobs: list[dict]) -> list[str | None]:
     values = []
     seen = set()
@@ -840,12 +817,10 @@ def _result_summary(plan: dict, phases: list[dict]) -> dict:
         "ddl_changes", []
     )
     jobs = phase_by_name.get("run_jobs", {}).get("jobs", [])
-    checks = phase_by_name.get("compare", {}).get("checks", [])
     return {
         "baseline_table_count": len(plan.get("baseline_ddl", {})),
         "ddl_change_count": len(plan.get("ddl_changes", [])),
         "job_count": len(plan.get("jobs_to_run", [])),
-        "check_count": len(plan.get("verification", {}).get("checks", [])),
         "failed_job_count": sum(
             1 for job in jobs if job.get("status") == "failed"
         ),
@@ -853,9 +828,6 @@ def _result_summary(plan: dict, phases: list[dict]) -> dict:
             1
             for ddl_change in ddl_changes
             if ddl_change.get("status") == "failed"
-        ),
-        "failed_check_count": sum(
-            1 for check in checks if check.get("status") == "failed"
         ),
     }
 
@@ -876,8 +848,6 @@ def _shadow_result(
 
 
 def _failed_shadow_result(plan: dict, phases: list[dict]) -> dict:
-    if not any(phase.get("name") == "compare" for phase in phases):
-        phases.append(_compare_phase(plan))
     return _shadow_result(
         plan,
         mode="execute",
@@ -938,7 +908,6 @@ def _dry_run_phases(plan: dict) -> list[dict]:
             "status": "dry_run",
             "jobs": jobs,
         },
-        _compare_phase(plan),
     ]
 
 
@@ -961,7 +930,7 @@ def execute_shadow_plan(plan: dict, *, dry_run: bool = False) -> dict:
     checks = plan.get("verification", {}).get("checks", [])
     if not _plan_anchor_tables(plan) and not checks:
         print("  警告: 无锚点表且无校验配置")
-        print("    作业会正常执行，但 compare 阶段没有表可对比校验")
+        print("    作业会正常执行，但后续 compare 命令没有表可对比校验")
         print("    如果只是想确认作业不报错，可继续执行\n")
 
     print("=" * 60)
@@ -1126,7 +1095,6 @@ def execute_shadow_plan(plan: dict, *, dry_run: bool = False) -> dict:
             recalculated.add(job_name)
     job_results.extend(_job_result(job, "success") for job in jobs_to_run)
     phases.append(job_phase)
-    phases.append(_compare_phase(plan))
 
     print(f"\n{'=' * 60}")
     print(
@@ -1205,7 +1173,9 @@ def _dry_run(plan: dict) -> None:
     checks = plan.get("verification", {}).get("checks", [])
     if not _plan_anchor_tables(plan) and not checks:
         print()
-        print("  警告: 无锚点表且无校验配置，compare 阶段没有表可对比校验")
+        print(
+            "  警告: 无锚点表且无校验配置，后续 compare 命令没有表可对比校验"
+        )
 
     print("\n--- Phase 0: 重置验证库 ---")
     print(f"  DROP DATABASE IF EXISTS {qa_db}")
