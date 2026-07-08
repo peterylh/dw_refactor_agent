@@ -39,7 +39,12 @@ from dw_refactor_agent.assessment.llm.layer_resolution import (
 from dw_refactor_agent.assessment.llm.metadata_flow import (
     METRIC_LAYERS,
     WRITABLE_METADATA_LAYERS,
+    MetadataFlowPlan,
+    MetadataWriteTargets,
     build_generate_plan,
+    build_refresh_plan,
+    catalog_plan_for_generate,
+    catalog_plan_for_refresh,
     run_inspection_pipeline,
 )
 from dw_refactor_agent.assessment.llm.table_inspector import (
@@ -367,6 +372,27 @@ def _update_models_for_results(
         if update["changed"]:
             yaml_updates.append(update)
     return yaml_updates, skipped_updates
+
+
+def write_model_updates_from_plan(
+    project: str,
+    results: list[TableInspectResult],
+    plan: MetadataFlowPlan,
+    *,
+    dry_run: bool,
+    use_plan_existing_metadata: bool = True,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    return _update_models_for_results(
+        project,
+        results,
+        dry_run=dry_run,
+        write_scope=plan.write_scope,
+        existing_model_metadata=(
+            plan.base_model_metadata if use_plan_existing_metadata else None
+        ),
+        model_paths=plan.write_targets.model_paths,
+        resolution_policy=plan.resolution_policy,
+    )
 
 
 def _violation_count(
@@ -2340,6 +2366,55 @@ def build_progress_callback() -> Callable[[dict[str, Any]], None]:
     return callback
 
 
+def _metadata_flow_plan_for_write(
+    project: str,
+    *,
+    write_scope: str,
+    model_metadata: dict[str, dict[str, Any]] | None,
+    metric_groups: dict[str, dict[str, list[str]]] | None,
+    model_paths: dict[str, Path] | None,
+    resolution_policy: LayerResolutionPolicy | None,
+) -> MetadataFlowPlan:
+    if (
+        model_metadata is None
+        and model_paths is None
+        and resolution_policy is None
+    ):
+        plan = build_refresh_plan(project, write_scope=write_scope)
+        if metric_groups is not None:
+            plan = replace(plan, metric_groups=dict(metric_groups))
+        return plan
+
+    policy = resolution_policy or LayerResolutionPolicy(mode="refresh")
+    mode = policy.mode
+    prior_source = (
+        "direct_rule"
+        if policy.fallback_source == "direct_rule"
+        else "declared"
+    )
+    catalog_plan = (
+        catalog_plan_for_generate(llm=True)
+        if mode == "generate"
+        else catalog_plan_for_refresh(llm=True)
+    )
+    return MetadataFlowPlan(
+        mode=mode,
+        prior_source=prior_source,
+        write_scope=write_scope,
+        base_model_metadata=dict(
+            model_metadata
+            if model_metadata is not None
+            else load_model_metadata(project)
+        ),
+        metric_groups=dict(metric_groups or {}),
+        write_targets=MetadataWriteTargets(
+            model_paths=dict(model_paths or {})
+        ),
+        resolution_policy=policy,
+        catalog_plan=catalog_plan,
+    )
+
+
 def run_metadata_write(
     project: str,
     *,
@@ -2360,6 +2435,14 @@ def run_metadata_write(
 ) -> dict[str, Any]:
     """运行项目级 LLM 巡检与模型元数据回写。"""
     write_scope = _validate_write_scope(write_scope)
+    plan = _metadata_flow_plan_for_write(
+        project,
+        write_scope=write_scope,
+        model_metadata=model_metadata,
+        metric_groups=metric_groups,
+        model_paths=model_paths,
+        resolution_policy=resolution_policy,
+    )
     data = load_lineage_data(project)
     cache_file = assess_cache_path(project, "inspect.json")
     if no_cache and cache_file.exists():
@@ -2383,41 +2466,36 @@ def run_metadata_write(
         inspector,
         metric_group_builder=metric_groups_for_model,
         result_enricher=enrich_results_with_related_entities,
-        base_model_metadata=model_metadata,
-        metric_groups=metric_groups,
+        base_model_metadata=plan.base_model_metadata,
+        metric_groups=plan.metric_groups
+        if metric_groups is not None
+        else None,
     )
     contexts = inspection.contexts
     metric_contexts = inspection.metric_contexts
     metadata_only_contexts = inspection.metadata_only_contexts
     results = inspection.results
-    report_model_metadata = (
-        model_metadata
-        if model_metadata is not None
-        else load_model_metadata(project)
-    )
-    yaml_updates, skipped_updates = _update_models_for_results(
+    yaml_updates, skipped_updates = write_model_updates_from_plan(
         project,
         results,
+        plan,
         dry_run=dry_run,
-        write_scope=write_scope,
-        existing_model_metadata=model_metadata,
-        model_paths=model_paths,
-        resolution_policy=resolution_policy,
+        use_plan_existing_metadata=model_metadata is not None,
     )
     reports = [
         result_for_report(
             result,
-            existing_model=(report_model_metadata or {}).get(
+            existing_model=(plan.base_model_metadata or {}).get(
                 result.table_name
             ),
-            resolution_policy=resolution_policy,
+            resolution_policy=plan.resolution_policy,
         )
         for result in results
     ]
 
     return {
         "project": project,
-        "write_scope": write_scope,
+        "write_scope": plan.write_scope,
         "inspected_table_count": len(contexts),
         "metric_table_count": len(metric_contexts),
         "metadata_only_table_count": len(metadata_only_contexts),

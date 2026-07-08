@@ -4,9 +4,15 @@ import pytest
 import yaml
 
 import dw_refactor_agent.config as config
+from dw_refactor_agent.assessment.llm.layer_resolution import (
+    LayerResolutionPolicy,
+)
 from dw_refactor_agent.assessment.llm.metadata_flow import (
     build_generate_plan,
     build_refresh_plan,
+    catalog_plan_for_discovery,
+    catalog_plan_for_generate,
+    catalog_plan_for_refresh,
 )
 from dw_refactor_agent.assessment.llm.model_metadata_writer import (
     build_dwd_contexts,
@@ -22,6 +28,7 @@ from dw_refactor_agent.assessment.llm.model_metadata_writer import (
     run_direct_model_generation,
     run_metadata_write,
     update_model_yaml,
+    write_model_updates_from_plan,
 )
 from dw_refactor_agent.assessment.llm.table_inspector import TableInspectResult
 from dw_refactor_agent.config import (
@@ -676,6 +683,123 @@ def test_build_generate_plan_uses_direct_rule_policy(tmp_path):
     assert plan.catalog_plan.ensure_skeleton is True
     assert plan.catalog_plan.merge_llm_discoveries is False
     assert plan.catalog_plan.write_business_assignments is True
+
+
+def test_catalog_plan_for_refresh_no_llm_semantics():
+    plan = catalog_plan_for_refresh(llm=False)
+
+    assert plan.ensure_skeleton is False
+    assert plan.merge_llm_discoveries is False
+    assert plan.write_business_assignments is True
+    assert plan.overwrite_discovered_catalog is False
+
+
+def test_catalog_plan_for_generate_llm_semantics():
+    plan = catalog_plan_for_generate(llm=True)
+
+    assert plan.ensure_skeleton is True
+    assert plan.merge_llm_discoveries is False
+    assert plan.write_business_assignments is True
+    assert plan.overwrite_discovered_catalog is False
+
+
+def test_catalog_plan_for_discovery_overwrite_semantics():
+    plan = catalog_plan_for_discovery(overwrite=True)
+
+    assert plan.ensure_skeleton is False
+    assert plan.merge_llm_discoveries is True
+    assert plan.write_business_assignments is True
+    assert plan.overwrite_discovered_catalog is True
+
+
+def test_write_model_updates_from_plan_uses_plan_model_paths(
+    tmp_path, monkeypatch
+):
+    project = "plan_model_paths"
+    _write_catalog_project(
+        tmp_path,
+        monkeypatch,
+        project,
+        ddl_tables=["dwd_order_detail"],
+    )
+    model_path = tmp_path / "custom_models" / "dwd_order_detail.yaml"
+    plan = build_generate_plan(
+        project,
+        write_scope="table",
+        base_model_metadata={
+            "dwd_order_detail": {
+                "layer": "DWD",
+                "table_type": "fact",
+            }
+        },
+        model_paths={"dwd_order_detail": model_path},
+        planned_deleted_model_files=[],
+        replace_existing_models=True,
+    )
+
+    yaml_updates, skipped_updates = write_model_updates_from_plan(
+        project,
+        [_sample_fact_result()],
+        plan,
+        dry_run=False,
+    )
+    saved = yaml.safe_load(model_path.read_text(encoding="utf-8"))
+
+    assert skipped_updates == []
+    assert yaml_updates[0]["path"] == str(model_path)
+    assert saved["layer"] == "DWD"
+    assert saved["table_type"] == "fact"
+    assert not (
+        tmp_path / project / "mid" / "models" / "dwd_order_detail.yaml"
+    ).exists()
+
+
+def test_write_model_updates_from_plan_uses_plan_resolution_policy(
+    tmp_path, monkeypatch
+):
+    project = "plan_resolution_policy"
+    _write_catalog_project(
+        tmp_path,
+        monkeypatch,
+        project,
+        ddl_tables=["dwd_order_detail"],
+    )
+    model_path = tmp_path / "models" / "dwd_order_detail.yaml"
+    plan = build_generate_plan(
+        project,
+        write_scope="table",
+        base_model_metadata={
+            "dwd_order_detail": {
+                "layer": "DWD",
+                "table_type": "fact",
+            }
+        },
+        model_paths={"dwd_order_detail": model_path},
+        planned_deleted_model_files=[],
+        replace_existing_models=True,
+    )
+    result = TableInspectResult(
+        table_name="dwd_order_detail",
+        declared_layer="DWD",
+        inferred_layer="ADS",
+        table_type="dimension",
+        confidence=0.9,
+        reasoning_steps=[],
+    )
+
+    yaml_updates, skipped_updates = write_model_updates_from_plan(
+        project,
+        [result],
+        plan,
+        dry_run=False,
+    )
+    saved = yaml.safe_load(model_path.read_text(encoding="utf-8"))
+
+    assert skipped_updates == []
+    assert yaml_updates[0]["warnings"][0]["type"] == "llm_layer_fallback"
+    assert yaml_updates[0]["warnings"][0]["prior_source"] == "direct_rule"
+    assert saved["layer"] == "DWD"
+    assert saved["table_type"] == "fact"
 
 
 def test_metric_helper_scenarios():
@@ -2688,7 +2812,10 @@ def test_run_metadata_write_reuses_table_inspector(
     assert result["model_change_count"] == len(result["model_updates"])
     assert len(pipeline_calls) == 1
     assert pipeline_calls[0]["project"] == isolated_writer_project
-    assert pipeline_calls[0]["base_model_metadata"] is None
+    assert (
+        pipeline_calls[0]["base_model_metadata"]["dwd_customer"]["layer"]
+        == "DWD"
+    )
     assert pipeline_calls[0]["metric_groups"] is None
     assert created_cache_files[0] == config.assess_cache_path(
         isolated_writer_project, "inspect.json"
@@ -2700,6 +2827,72 @@ def test_run_metadata_write_reuses_table_inspector(
         "dws_store_sales_daily"
     )
     assert result["skipped_model_updates"] == []
+
+
+def test_run_metadata_write_default_refresh_reads_raw_yaml_for_writes(
+    tmp_path,
+    monkeypatch,
+):
+    import dw_refactor_agent.assessment.llm.model_metadata_writer as writer_module
+
+    project = "refresh_raw_yaml"
+    project_dir = _write_catalog_project(
+        tmp_path,
+        monkeypatch,
+        project,
+        ddl_tables=["dwd_order_detail"],
+        models={
+            "dwd_order_detail": {
+                "version": 2,
+                "layer": "DWD",
+                "table_type": "fact",
+            }
+        },
+    )
+    model_path = project_dir / "mid" / "models" / "dwd_order_detail.yaml"
+    lineage_data = {
+        "tables": [
+            {
+                "name": "dwd_order_detail",
+                "full_name": "demo.dwd_order_detail",
+                "columns": [{"name": "order_id", "type": "BIGINT"}],
+            }
+        ],
+        "edges": [],
+        "indirect_edges": [],
+    }
+
+    class FakeInspector:
+        def __init__(
+            self, api_key, *, model, cache_file, max_retries, parallelism
+        ):
+            pass
+
+        def inspect_batch(self, contexts):
+            return [
+                TableInspectResult(
+                    table_name=ctx.table_name,
+                    declared_layer=ctx.layer,
+                    inferred_layer=ctx.layer,
+                    table_type="fact",
+                    confidence=0.9,
+                    reasoning_steps=[],
+                )
+                for ctx in contexts
+            ]
+
+    monkeypatch.setattr(
+        writer_module, "load_lineage_data", lambda project: lineage_data
+    )
+    monkeypatch.setattr(writer_module, "TableInspector", FakeInspector)
+
+    result = run_metadata_write(project, api_key="test", dry_run=False)
+    saved = yaml.safe_load(model_path.read_text(encoding="utf-8"))
+
+    assert result["model_updates"][0]["table"] == "dwd_order_detail"
+    assert result["model_updates"][0]["changed"] is True
+    assert result["model_updates"][0]["updated"] is True
+    assert saved["name"] == "dwd_order_detail"
 
 
 def test_model_metadata_writer_cli_dispatches_refresh_and_generate_modes(
@@ -3380,6 +3573,92 @@ def test_run_metadata_write_counts_metadata_warnings(
     )
     for field, expected in expected_warning_fields.items():
         assert customer_report["metadata_warnings"][0][field] == expected
+
+
+def test_run_metadata_write_report_uses_plan_prior(
+    monkeypatch,
+    sample_lineage_data,
+    isolated_writer_project,
+):
+    import dw_refactor_agent.assessment.llm.model_metadata_writer as writer_module
+
+    model_metadata = {
+        "dwd_customer": {
+            "name": "dwd_customer",
+            "layer": "DWD",
+            "table_type": "fact",
+        },
+        "dwd_order_detail": {
+            "name": "dwd_order_detail",
+            "layer": "DWD",
+            "table_type": "fact",
+        },
+        "dws_store_sales_daily": {
+            "name": "dws_store_sales_daily",
+            "layer": "DWS",
+            "table_type": "fact",
+        },
+    }
+
+    class FakeInspector:
+        def __init__(
+            self, api_key, *, model, cache_file, max_retries, parallelism
+        ):
+            pass
+
+        def inspect_batch(self, contexts):
+            results = []
+            for ctx in contexts:
+                if ctx.table_name == "dwd_customer":
+                    results.append(
+                        TableInspectResult(
+                            table_name=ctx.table_name,
+                            declared_layer="",
+                            inferred_layer="OTHER",
+                            table_type="dimension",
+                            confidence=0.9,
+                            reasoning_steps=[],
+                        )
+                    )
+                else:
+                    results.append(
+                        TableInspectResult(
+                            table_name=ctx.table_name,
+                            declared_layer=ctx.layer,
+                            inferred_layer=ctx.layer,
+                            table_type="fact",
+                            confidence=0.9,
+                            reasoning_steps=[],
+                        )
+                    )
+            return results
+
+    monkeypatch.setattr(
+        writer_module, "load_lineage_data", lambda project: sample_lineage_data
+    )
+    monkeypatch.setattr(writer_module, "TableInspector", FakeInspector)
+
+    result = run_metadata_write(
+        isolated_writer_project,
+        api_key="test",
+        dry_run=True,
+        model_metadata=model_metadata,
+        metric_groups={},
+        resolution_policy=LayerResolutionPolicy(mode="refresh"),
+    )
+    customer_report = next(
+        table
+        for table in result["tables"]
+        if table["table_name"] == "dwd_customer"
+    )
+
+    assert customer_report["metadata_warnings"][0]["type"] == (
+        "llm_layer_fallback"
+    )
+    assert customer_report["metadata_warnings"][0]["prior_layer"] == "DWD"
+    assert customer_report["metadata_warnings"][0]["prior_source"] == (
+        "declared"
+    )
 
 
 def test_run_metadata_write_passes_dwd_metric_groups_to_dws(

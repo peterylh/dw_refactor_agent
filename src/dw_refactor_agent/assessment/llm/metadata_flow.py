@@ -53,6 +53,35 @@ class MetadataFlowPlan:
     catalog_plan: MetadataCatalogPlan
 
 
+def catalog_plan_for_refresh(llm: bool) -> MetadataCatalogPlan:
+    _ = llm
+    return MetadataCatalogPlan(
+        ensure_skeleton=False,
+        merge_llm_discoveries=False,
+        write_business_assignments=True,
+        overwrite_discovered_catalog=False,
+    )
+
+
+def catalog_plan_for_generate(llm: bool) -> MetadataCatalogPlan:
+    _ = llm
+    return MetadataCatalogPlan(
+        ensure_skeleton=True,
+        merge_llm_discoveries=False,
+        write_business_assignments=True,
+        overwrite_discovered_catalog=False,
+    )
+
+
+def catalog_plan_for_discovery(overwrite: bool) -> MetadataCatalogPlan:
+    return MetadataCatalogPlan(
+        ensure_skeleton=False,
+        merge_llm_discoveries=True,
+        write_business_assignments=True,
+        overwrite_discovered_catalog=overwrite,
+    )
+
+
 @dataclass(frozen=True)
 class InspectionResultBundle:
     contexts: List[TableContext]
@@ -85,12 +114,7 @@ def build_refresh_plan(project: str, *, write_scope: str) -> MetadataFlowPlan:
         metric_groups={},
         write_targets=MetadataWriteTargets(),
         resolution_policy=LayerResolutionPolicy(mode="refresh"),
-        catalog_plan=MetadataCatalogPlan(
-            ensure_skeleton=False,
-            merge_llm_discoveries=False,
-            write_business_assignments=True,
-            overwrite_discovered_catalog=False,
-        ),
+        catalog_plan=catalog_plan_for_refresh(llm=False),
     )
 
 
@@ -119,12 +143,7 @@ def build_generate_plan(
             candidate_layers=("DWD", "DWS", "DIM"),
             fallback_source="direct_rule",
         ),
-        catalog_plan=MetadataCatalogPlan(
-            ensure_skeleton=True,
-            merge_llm_discoveries=False,
-            write_business_assignments=True,
-            overwrite_discovered_catalog=False,
-        ),
+        catalog_plan=catalog_plan_for_generate(llm=False),
     )
 
 
