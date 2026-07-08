@@ -365,8 +365,8 @@ def _execute_ddl_statement(statement: str, qa_db: str) -> None:
         known_job_ids_by_ref[(db_name, table_name)] = _job_ids(jobs)
 
 
-def _get_dml_target(stmt):
-    """Return the DML target table name without database prefix."""
+def _get_statement_target_table(stmt):
+    """Return the statement target table name without database prefix."""
     if isinstance(stmt, exp.Insert):
         target = stmt.this
         if isinstance(target, exp.Table):
@@ -390,10 +390,18 @@ def _get_dml_target(stmt):
             stmt.this.this, exp.Table
         ):
             return stmt.this.this.name
+    elif isinstance(stmt, (exp.Drop, exp.Alter)):
+        if isinstance(stmt.this, exp.Table):
+            return stmt.this.name
     elif isinstance(stmt, exp.Command) and str(stmt.this).upper() == "CREATE":
         table_name = extract_create_table_name(stmt.sql(dialect="doris"))
         return table_name.split(".")[-1] if table_name else None
     return None
+
+
+def _get_dml_target(stmt):
+    """Backward-compatible alias for statement target detection."""
+    return _get_statement_target_table(stmt)
 
 
 def _statement_ranges(sql_text: str) -> list[tuple[int, int]]:
@@ -527,11 +535,11 @@ def _unqualified_table_dbs(
     prod_db: str,
     qa_db: str,
     recalculated: set,
-    dml_target: str | None,
+    statement_target: str | None,
 ) -> dict[str, str]:
     cte_names = _cte_names(stmt)
     recalculated_names = {name.casefold() for name in recalculated}
-    target_name = dml_target.casefold() if dml_target else ""
+    target_name = statement_target.casefold() if statement_target else ""
     table_dbs = {}
 
     for table in stmt.find_all(exp.Table):
@@ -657,15 +665,15 @@ def _rewrite_statement_sql(
         return sql_text
 
     table_names = set(recalculated)
-    dml_target = _get_dml_target(stmt)
-    if dml_target:
-        table_names.add(dml_target)
+    statement_target = _get_statement_target_table(stmt)
+    if statement_target:
+        table_names.add(statement_target)
 
     rewritten = _rewrite_qualified_table_dbs(
         sql_text, prod_db, qa_db, table_names
     )
     table_dbs = _unqualified_table_dbs(
-        stmt, prod_db, qa_db, recalculated, dml_target
+        stmt, prod_db, qa_db, recalculated, statement_target
     )
     return _rewrite_unqualified_table_dbs(rewritten, table_dbs)
 
