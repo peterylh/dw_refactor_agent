@@ -68,6 +68,82 @@ def _read_json(path: Path) -> dict:
     return json.loads(Path(path).read_text(encoding=TEXT_ENCODING))
 
 
+def _sorted_nonempty_strings(values) -> list[str]:
+    return sorted(
+        {str(value).strip() for value in values or [] if str(value).strip()}
+    )
+
+
+def _scope_values(scope: dict | None, *keys: str) -> list[str]:
+    scope = scope or {}
+    for key in keys:
+        values = _sorted_nonempty_strings(scope.get(key))
+        if values:
+            return values
+    return []
+
+
+def _first_scope_values(
+    scopes: list[dict | None],
+    *keys: str,
+) -> list[str]:
+    for scope in scopes:
+        values = _scope_values(scope, *keys)
+        if values:
+            return values
+    return []
+
+
+def _refactor_scope_metadata(
+    assess_result: dict,
+    change_analysis: dict | None,
+    plan: dict | None,
+) -> dict:
+    scope_plan = assess_result.get("scope_plan") or {}
+    scope_sources = [
+        (plan or {}).get("scope"),
+        (change_analysis or {}).get("affected_scope"),
+        scope_plan.get("base_scope"),
+    ]
+    return {
+        "type": "refactor_scope",
+        "tables": _first_scope_values(
+            scope_sources,
+            "assessment_tables",
+            "tables",
+        ),
+        "tasks": _first_scope_values(
+            scope_sources,
+            "assessment_tasks",
+            "tasks",
+        ),
+    }
+
+
+def _mark_assessment_full(assess_result: dict) -> dict:
+    marked = deepcopy(assess_result)
+    marked["assessment_mode"] = "full"
+    marked["score_semantics"] = "project_global"
+    marked["scope"] = {"type": "project"}
+    return marked
+
+
+def _mark_assessment_scoped(
+    assess_result: dict,
+    change_analysis: dict | None,
+    plan: dict | None,
+) -> dict:
+    marked = deepcopy(assess_result)
+    marked["assessment_mode"] = "scoped"
+    marked["score_semantics"] = "scope_local"
+    marked["scope"] = _refactor_scope_metadata(
+        marked,
+        change_analysis,
+        plan,
+    )
+    return marked
+
+
 def _git_cmd(root: Path, *args: str) -> str:
     result = subprocess.run(
         ["git", *args],
@@ -333,6 +409,7 @@ def _start(args) -> int:
             args.project,
             lineage_data=lineage_result["lineage"],
         )
+        assess_result = _mark_assessment_full(assess_result)
         _write_json(
             artifact_path(manifest_path, "baseline_assess"), assess_result
         )
@@ -407,6 +484,11 @@ def _analyze(args) -> int:
             project,
             lineage_data=current_lineage,
             change_analysis=change_analysis,
+        )
+        current_assess = _mark_assessment_scoped(
+            current_assess,
+            change_analysis,
+            plan,
         )
         if _has_no_refactor_changes(change_analysis, plan):
             current_assess = _mark_assessment_no_changes(current_assess)
