@@ -138,6 +138,8 @@ def test_alter_table_derivation_scenarios():
     _assert_alter_rename_and_add_column()
     _assert_alter_rename_no_false_positive()
     _assert_alter_rename_skips_ambiguous_same_type_columns_without_semantics()
+    _assert_alter_case_only_rename_uses_temporary_column()
+    _assert_alter_case_only_rename_avoids_temporary_column_collision()
 
 
 def test_change_formatting_and_table_id_scenarios():
@@ -760,6 +762,7 @@ def _assert_alter_rename_column():
     assert len(a.modifies) == 0
     sql = a.to_sql()
     assert "RENAME COLUMN unit_price price_unit" in sql
+    assert "__tmp_" not in sql
 
 
 def _assert_alter_rename_prefers_matching_column_comments():
@@ -875,6 +878,98 @@ def _assert_alter_rename_and_add_column():
     sql = a.to_sql()
     assert "RENAME COLUMN unit_price price_unit" in sql
     assert "ADD COLUMN discount" in sql
+
+
+def _assert_alter_case_only_rename_uses_temporary_column():
+    """大小写-only 列重命名应拆成 Doris 可执行的两步."""
+    old_t = TableDef(
+        full_name="shop_dm.t1",
+        short_name="t1",
+        columns=[
+            ColumnDef("store_id", "BIGINT"),
+            ColumnDef("amount", "DECIMAL(10,2)"),
+        ],
+        key_type="DUPLICATE",
+        key_columns=["store_id"],
+        distribution_col="store_id",
+    )
+    new_t = TableDef(
+        full_name="shop_dm.t1",
+        short_name="t1",
+        columns=[
+            ColumnDef("STORE_ID", "BIGINT"),
+            ColumnDef("amount", "DECIMAL(10,2)"),
+        ],
+        key_type="DUPLICATE",
+        key_columns=["STORE_ID"],
+        distribution_col="STORE_ID",
+    )
+
+    changes = derive_ddl_changes({"t1": old_t}, {"t1": new_t})
+
+    assert len(changes) == 1
+    a = changes[0]
+    assert isinstance(a, AlterTable)
+    assert a.renames == [("store_id", "STORE_ID")]
+    sql = a.to_sql()
+    assert "RENAME COLUMN store_id STORE_ID" not in sql
+    assert "RENAME COLUMN store_id __tmp_STORE_ID;" in sql
+    assert "RENAME COLUMN __tmp_STORE_ID STORE_ID;" in sql
+
+    result = changes_to_json(changes)
+    entry = result["changes"][0]
+    assert entry["renames"] == [{"old": "store_id", "new": "STORE_ID"}]
+    assert entry["case_only_renames"] == [
+        {
+            "old": "store_id",
+            "new": "STORE_ID",
+            "temporary": "__tmp_STORE_ID",
+            "steps": [
+                {"old": "store_id", "new": "__tmp_STORE_ID"},
+                {"old": "__tmp_STORE_ID", "new": "STORE_ID"},
+            ],
+        }
+    ]
+
+
+def _assert_alter_case_only_rename_avoids_temporary_column_collision():
+    """临时列名与现有列冲突时应继续追加后缀."""
+    old_t = TableDef(
+        full_name="shop_dm.t1",
+        short_name="t1",
+        columns=[
+            ColumnDef("store_id", "BIGINT"),
+            ColumnDef("__tmp_STORE_ID", "VARCHAR(32)"),
+            ColumnDef("amount", "DECIMAL(10,2)"),
+        ],
+        key_type="DUPLICATE",
+        key_columns=["store_id"],
+        distribution_col="store_id",
+    )
+    new_t = TableDef(
+        full_name="shop_dm.t1",
+        short_name="t1",
+        columns=[
+            ColumnDef("STORE_ID", "BIGINT"),
+            ColumnDef("__tmp_STORE_ID", "VARCHAR(32)"),
+            ColumnDef("amount", "DECIMAL(10,2)"),
+        ],
+        key_type="DUPLICATE",
+        key_columns=["STORE_ID"],
+        distribution_col="STORE_ID",
+    )
+
+    changes = derive_ddl_changes({"t1": old_t}, {"t1": new_t})
+
+    assert len(changes) == 1
+    a = changes[0]
+    assert isinstance(a, AlterTable)
+    sql = a.to_sql()
+    assert "RENAME COLUMN store_id __tmp_STORE_ID;" not in sql
+    assert "RENAME COLUMN store_id __tmp_STORE_ID_1;" in sql
+    assert "RENAME COLUMN __tmp_STORE_ID_1 STORE_ID;" in sql
+    entry = changes_to_json(changes)["changes"][0]
+    assert entry["case_only_renames"][0]["temporary"] == "__tmp_STORE_ID_1"
 
 
 def _assert_alter_rename_no_false_positive():

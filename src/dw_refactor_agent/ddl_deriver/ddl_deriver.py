@@ -153,6 +153,7 @@ class AlterTable(DDLChange):
     renames: List[Tuple[str, str]] = field(
         default_factory=list
     )  # (old_name, new_name)
+    case_only_renames: List[dict] = field(default_factory=list)
 
     def __init__(
         self,
@@ -163,6 +164,7 @@ class AlterTable(DDLChange):
         drops=None,
         modifies=None,
         renames=None,
+        case_only_renames=None,
     ):
         super().__init__("ALTER")
         self.table_name = table_name
@@ -172,6 +174,7 @@ class AlterTable(DDLChange):
         self.drops = drops or []
         self.modifies = modifies or []
         self.renames = renames or []
+        self.case_only_renames = case_only_renames or []
 
     def to_sql(self) -> str:
         statements = []
@@ -184,10 +187,13 @@ class AlterTable(DDLChange):
                 f"ALTER TABLE {self.table_name}\n    {alter_body};"
             )
         for old_name, new_name in self.renames:
-            statements.append(
-                f"ALTER TABLE {self.table_name}\n"
-                f"    RENAME COLUMN {old_name} {new_name};"
-            )
+            for step_old, step_new in _rename_sql_steps(
+                old_name, new_name, self.case_only_renames
+            ):
+                statements.append(
+                    f"ALTER TABLE {self.table_name}\n"
+                    f"    RENAME COLUMN {step_old} {step_new};"
+                )
         post_rename_parts = []
         for col in self.adds:
             nullable = "NULL" if col.nullable else "NOT NULL"
@@ -517,6 +523,62 @@ def _column_rename_scores(
     return ranking_score, score
 
 
+def _is_case_only_rename(old_name: str, new_name: str) -> bool:
+    return old_name.casefold() == new_name.casefold() and old_name != new_name
+
+
+def _unique_case_only_temporary_name(target_name: str, used_names: set) -> str:
+    base = f"__tmp_{target_name}"
+    candidate = base
+    suffix = 1
+    while candidate.casefold() in used_names:
+        candidate = f"{base}_{suffix}"
+        suffix += 1
+    used_names.add(candidate.casefold())
+    return candidate
+
+
+def _case_only_rename_plans(
+    renames: List[Tuple[str, str]], old: TableDef, new: TableDef
+) -> List[dict]:
+    used_names = {col.name.casefold() for col in old.columns}
+    used_names.update(col.name.casefold() for col in new.columns)
+    plans = []
+    for old_name, new_name in renames:
+        if not _is_case_only_rename(old_name, new_name):
+            continue
+        temporary = _unique_case_only_temporary_name(new_name, used_names)
+        plans.append(
+            {
+                "old": old_name,
+                "new": new_name,
+                "temporary": temporary,
+                "steps": [
+                    {"old": old_name, "new": temporary},
+                    {"old": temporary, "new": new_name},
+                ],
+            }
+        )
+    return plans
+
+
+def _rename_sql_steps(
+    old_name: str, new_name: str, case_only_renames: List[dict]
+) -> List[Tuple[str, str]]:
+    for rename in case_only_renames:
+        if rename.get("old") != old_name or rename.get("new") != new_name:
+            continue
+        steps = []
+        for step in rename.get("steps") or []:
+            step_old = step.get("old")
+            step_new = step.get("new")
+            if step_old and step_new:
+                steps.append((step_old, step_new))
+        if steps:
+            return steps
+    return [(old_name, new_name)]
+
+
 def _derive_column_renames(
     dropped: List[ColumnDef],
     added: List[ColumnDef],
@@ -736,6 +798,7 @@ def _derive_alter_columns(old: TableDef, new: TableDef) -> dict:
 def alter_to_change(
     name: str, old: TableDef, new: TableDef, alters: dict
 ) -> AlterTable:
+    renames = alters.get("renames", [])
     return AlterTable(
         table_name=old.full_name,
         old_def=old,
@@ -743,7 +806,8 @@ def alter_to_change(
         adds=alters["adds"],
         drops=alters["drops"],
         modifies=alters["modifies"],
-        renames=alters.get("renames", []),
+        renames=renames,
+        case_only_renames=_case_only_rename_plans(renames, old, new),
     )
 
 
@@ -767,6 +831,14 @@ def format_changes(changes: List[DDLChange]) -> str:
             if ch.renames:
                 lines.append(
                     f"--   重命名列: {', '.join(f'{o}→{n}' for o, n in ch.renames)}"
+                )
+            if ch.case_only_renames:
+                lines.append(
+                    "--   大小写-only 重命名拆分: "
+                    + ", ".join(
+                        f"{r['old']}→{r['temporary']}→{r['new']}"
+                        for r in ch.case_only_renames
+                    )
                 )
             if ch.drops:
                 lines.append(
@@ -803,6 +875,8 @@ def changes_to_json(changes: List[DDLChange]) -> dict:
             entry["adds"] = [asdict(c) for c in ch.adds]
             entry["drops"] = [asdict(c) for c in ch.drops]
             entry["renames"] = [{"old": o, "new": n} for o, n in ch.renames]
+            if ch.case_only_renames:
+                entry["case_only_renames"] = ch.case_only_renames
             entry["modifies"] = [
                 {"old": asdict(o), "new": asdict(n)} for o, n in ch.modifies
             ]

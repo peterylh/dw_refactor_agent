@@ -408,9 +408,129 @@ def test_execute_shadow_plan_splits_rename_columns_and_waits(monkeypatch):
                 "RENAME COLUMN quantity item_quantity;"
             ),
             "table_name": "shop_dm_qa.dwd_order_detail",
+            "statements": [
+                {
+                    "sql": (
+                        "ALTER TABLE shop_dm_qa.dwd_order_detail "
+                        "RENAME COLUMN unit_price price_unit;"
+                    ),
+                    "status": "success",
+                    "error": None,
+                },
+                {
+                    "sql": (
+                        "ALTER TABLE shop_dm_qa.dwd_order_detail "
+                        "RENAME COLUMN quantity item_quantity;"
+                    ),
+                    "status": "success",
+                    "error": None,
+                },
+            ],
             "status": "success",
             "error": None,
         }
+    ]
+
+
+def test_execute_shadow_plan_runs_case_only_rename_steps_in_order(monkeypatch):
+    plan = {
+        "project": "shop",
+        "project_db": "shop_dm",
+        "qa_db": "shop_dm_qa",
+        "baseline_ddl": {},
+        "ddl_changes": [
+            {
+                "change_type": "ALTER",
+                "table_name": "shop_dm.dws_store_sales_daily",
+                "sql": (
+                    "ALTER TABLE shop_dm.dws_store_sales_daily "
+                    "RENAME COLUMN store_id __tmp_STORE_ID; "
+                    "ALTER TABLE shop_dm.dws_store_sales_daily "
+                    "RENAME COLUMN __tmp_STORE_ID STORE_ID;"
+                ),
+                "renames": [{"old": "store_id", "new": "STORE_ID"}],
+                "case_only_renames": [
+                    {
+                        "old": "store_id",
+                        "new": "STORE_ID",
+                        "temporary": "__tmp_STORE_ID",
+                        "steps": [
+                            {"old": "store_id", "new": "__tmp_STORE_ID"},
+                            {"old": "__tmp_STORE_ID", "new": "STORE_ID"},
+                        ],
+                    }
+                ],
+            }
+        ],
+        "partition_info": {},
+        "jobs_to_run": [],
+        "verification": {"checks": []},
+    }
+    calls = []
+
+    def fake_run_sql(sql, db="", qa=False):
+        calls.append((sql, db, qa))
+        return ""
+
+    monkeypatch.setattr(
+        "dw_refactor_agent.refactor.shadow_run.run_sql", fake_run_sql
+    )
+
+    result = execute_shadow_plan(plan)
+
+    alter_calls = [sql for sql, _, _ in calls if sql.startswith("ALTER TABLE")]
+    show_calls = [
+        sql for sql, _, _ in calls if sql.startswith("SHOW ALTER TABLE COLUMN")
+    ]
+    assert alter_calls == [
+        (
+            "ALTER TABLE shop_dm_qa.dws_store_sales_daily "
+            "RENAME COLUMN store_id __tmp_STORE_ID;"
+        ),
+        (
+            "ALTER TABLE shop_dm_qa.dws_store_sales_daily "
+            "RENAME COLUMN __tmp_STORE_ID STORE_ID;"
+        ),
+    ]
+    assert len(show_calls) == 4
+    phase_by_name = {phase["name"]: phase for phase in result["phases"]}
+    ddl_result = phase_by_name["apply_ddl_changes"]["ddl_changes"][0]
+    assert ddl_result["status"] == "success"
+    assert ddl_result["sql"] == (
+        "ALTER TABLE shop_dm_qa.dws_store_sales_daily "
+        "RENAME COLUMN store_id __tmp_STORE_ID; "
+        "ALTER TABLE shop_dm_qa.dws_store_sales_daily "
+        "RENAME COLUMN __tmp_STORE_ID STORE_ID;"
+    )
+    assert ddl_result["renames"] == [{"old": "store_id", "new": "STORE_ID"}]
+    assert ddl_result["case_only_renames"] == [
+        {
+            "old": "store_id",
+            "new": "STORE_ID",
+            "temporary": "__tmp_STORE_ID",
+            "steps": [
+                {"old": "store_id", "new": "__tmp_STORE_ID"},
+                {"old": "__tmp_STORE_ID", "new": "STORE_ID"},
+            ],
+        }
+    ]
+    assert ddl_result["statements"] == [
+        {
+            "sql": (
+                "ALTER TABLE shop_dm_qa.dws_store_sales_daily "
+                "RENAME COLUMN store_id __tmp_STORE_ID;"
+            ),
+            "status": "success",
+            "error": None,
+        },
+        {
+            "sql": (
+                "ALTER TABLE shop_dm_qa.dws_store_sales_daily "
+                "RENAME COLUMN __tmp_STORE_ID STORE_ID;"
+            ),
+            "status": "success",
+            "error": None,
+        },
     ]
 
 

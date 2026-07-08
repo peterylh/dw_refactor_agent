@@ -761,6 +761,8 @@ def _ddl_change_result(
     change: dict,
     status: str,
     error: str | None = None,
+    *,
+    statement_results: list[dict] | None = None,
 ) -> dict:
     result = {
         "change_type": change.get("change_type"),
@@ -773,7 +775,20 @@ def _ddl_change_result(
     for key in ("table_name", "old_name", "new_name"):
         if key in change:
             result[key] = change.get(key)
+    for key in ("renames", "case_only_renames"):
+        if key in change:
+            result[key] = change.get(key)
+    if statement_results is not None:
+        result["statements"] = statement_results
     return result
+
+
+def _ddl_statement_result(
+    sql: str,
+    status: str,
+    error: str | None = None,
+) -> dict:
+    return {"sql": sql, "status": status, "error": error}
 
 
 def _job_result(
@@ -1085,20 +1100,52 @@ def execute_shadow_plan(plan: dict, *, dry_run: bool = False) -> dict:
                 )
                 continue
             statements = _ddl_change_statements(sql)
+            statement_results = []
             try:
                 for statement in statements:
-                    _execute_ddl_statement(statement, qa_db)
+                    try:
+                        _execute_ddl_statement(statement, qa_db)
+                    except Exception as exc:
+                        statement_results.append(
+                            _ddl_statement_result(
+                                statement,
+                                "failed",
+                                str(exc),
+                            )
+                        )
+                        raise
+                    statement_results.append(
+                        _ddl_statement_result(statement, "success")
+                    )
                 print(
                     f"  [{qa_change.get('change_type')}] "
                     f"{qa_change.get('table_name', '?')}"
                 )
                 ddl_change_results.append(
-                    _ddl_change_result(qa_change, "success")
+                    _ddl_change_result(
+                        qa_change,
+                        "success",
+                        statement_results=(
+                            statement_results
+                            if len(statement_results) > 1
+                            else None
+                        ),
+                    )
                 )
             except Exception as exc:
                 print(f"  [FAIL] {qa_change.get('change_type')}: {exc}")
                 ddl_change_results.append(
-                    _ddl_change_result(qa_change, "failed", str(exc))
+                    _ddl_change_result(
+                        qa_change,
+                        "failed",
+                        str(exc),
+                        statement_results=(
+                            statement_results
+                            if len(statements) > 1
+                            or len(statement_results) > 1
+                            else None
+                        ),
+                    )
                 )
                 ddl_phase["status"] = "failed"
                 phases.append(ddl_phase)
