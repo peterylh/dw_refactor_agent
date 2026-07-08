@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
 
 import sqlglot
 from sqlglot import exp
@@ -16,6 +17,23 @@ from dw_refactor_agent.refactor.shadow_run import (
     rewrite_sql,
     run_shadow_plan,
 )
+
+TIMING_KEYS = {"started_at", "finished_at", "duration_ms"}
+
+
+def _without_timing(result: dict) -> dict:
+    return {
+        key: value for key, value in result.items() if key not in TIMING_KEYS
+    }
+
+
+def _assert_timing(result: dict) -> None:
+    assert set(result) >= TIMING_KEYS
+    assert isinstance(result["duration_ms"], int)
+    assert result["duration_ms"] >= 0
+    started_at = datetime.fromisoformat(result["started_at"])
+    finished_at = datetime.fromisoformat(result["finished_at"])
+    assert finished_at >= started_at
 
 
 def _parse_one(sql: str):
@@ -712,22 +730,26 @@ def test_run_shadow_plan_executes_self_contained(tmp_path, monkeypatch):
     assert result["summary"]["failed_job_count"] == 0
     assert "check_count" not in result["summary"]
     assert "failed_check_count" not in result["summary"]
+    _assert_timing(result)
     phase_names = [phase["name"] for phase in result["phases"]]
     assert "compare" not in phase_names
     phase_by_name = {phase["name"]: phase for phase in result["phases"]}
-    assert phase_by_name["run_jobs"]["jobs"] == [
-        {
-            "job": "dwd_order_detail",
-            "file": "warehouses/shop/mid/tasks/dwd_order_detail.sql",
-            "layer": "DWD",
-            "target": "dwd_order_detail",
-            "status": "success",
-            "error": None,
-            "execution_values": ["2025-01-15"],
-            "actual_execution_values": ["2025-01-15"],
-            "invocation_count": 1,
-        }
-    ]
+    for phase in phase_by_name.values():
+        _assert_timing(phase)
+    job_result = phase_by_name["run_jobs"]["jobs"][0]
+    _assert_timing(job_result)
+    assert "invocations" not in job_result
+    assert _without_timing(job_result) == {
+        "job": "dwd_order_detail",
+        "file": "warehouses/shop/mid/tasks/dwd_order_detail.sql",
+        "layer": "DWD",
+        "target": "dwd_order_detail",
+        "status": "success",
+        "error": None,
+        "execution_values": ["2025-01-15"],
+        "actual_execution_values": ["2025-01-15"],
+        "invocation_count": 1,
+    }
     assert any(call[0] == "text" for call in calls)
     assert json.loads(output_path.read_text(encoding="utf-8")) == result
 
@@ -790,23 +812,90 @@ def test_run_shadow_plan_persists_failed_job_result(tmp_path, monkeypatch):
     assert result["status"] == "failed"
     assert result["mode"] == "execute"
     assert result["summary"]["failed_job_count"] == 1
+    _assert_timing(result)
     phase_names = [phase["name"] for phase in result["phases"]]
     assert "compare" not in phase_names
     phase_by_name = {phase["name"]: phase for phase in result["phases"]}
+    for phase in phase_by_name.values():
+        _assert_timing(phase)
     assert phase_by_name["run_jobs"]["status"] == "failed"
-    assert phase_by_name["run_jobs"]["jobs"] == [
+    job_result = phase_by_name["run_jobs"]["jobs"][0]
+    _assert_timing(job_result)
+    assert _without_timing(job_result) == {
+        "job": "dwd_order_detail",
+        "file": "warehouses/shop/mid/tasks/dwd_order_detail.sql",
+        "layer": "DWD",
+        "target": "dwd_order_detail",
+        "status": "failed",
+        "error": "insert failed",
+        "execution_values": ["2025-01-15"],
+        "actual_execution_values": ["2025-01-15"],
+        "invocation_count": 1,
+    }
+    assert json.loads(output_path.read_text(encoding="utf-8")) == result
+
+
+def test_run_shadow_plan_timing_detail_records_invocation_timings(
+    tmp_path, monkeypatch
+):
+    job_file = (
+        tmp_path / "warehouses" / "shop" / "mid" / "tasks" / "dws_order.sql"
+    )
+    job_file.parent.mkdir(parents=True)
+    job_file.write_text(
+        "INSERT INTO shop_dm.dws_order SELECT @etl_date;",
+        encoding="utf-8",
+    )
+    plan_path = tmp_path / "verification" / "plan.json"
+    output_path = tmp_path / "verification" / "shadow_run_result.json"
+    _write_json(
+        plan_path,
         {
-            "job": "dwd_order_detail",
-            "file": "warehouses/shop/mid/tasks/dwd_order_detail.sql",
-            "layer": "DWD",
-            "target": "dwd_order_detail",
-            "status": "failed",
-            "error": "insert failed",
-            "execution_values": ["2025-01-15"],
-            "actual_execution_values": ["2025-01-15"],
-            "invocation_count": 1,
-        }
+            "project": "shop",
+            "project_db": "shop_dm",
+            "qa_db": "shop_dm_qa",
+            "baseline_ddl": {},
+            "ddl_changes": [],
+            "partition_info": {},
+            "jobs_to_run": [
+                {
+                    "job": "dws_order",
+                    "file": "warehouses/shop/mid/tasks/dws_order.sql",
+                    "layer": "DWS",
+                    "execution_values": ["2024-06-01", "2024-06-02"],
+                }
+            ],
+            "verification": {"checks": []},
+        },
+    )
+
+    monkeypatch.setattr(
+        "dw_refactor_agent.refactor.shadow_run._project_root", lambda: tmp_path
+    )
+    monkeypatch.setattr(
+        "dw_refactor_agent.refactor.shadow_run.run_sql",
+        lambda sql, db="", qa=False: "",
+    )
+    monkeypatch.setattr(
+        "dw_refactor_agent.refactor.shadow_run.run_sql_text",
+        lambda sql, db="", qa=False: "",
+    )
+
+    result = run_shadow_plan(plan_path, output_path, timing_detail=True)
+
+    phase_by_name = {phase["name"]: phase for phase in result["phases"]}
+    job_result = phase_by_name["run_jobs"]["jobs"][0]
+    invocations = job_result["invocations"]
+    assert [item["execution_value"] for item in invocations] == [
+        "2024-06-01",
+        "2024-06-02",
     ]
+    assert [item["status"] for item in invocations] == [
+        "success",
+        "success",
+    ]
+    for invocation in invocations:
+        _assert_timing(invocation)
     assert json.loads(output_path.read_text(encoding="utf-8")) == result
 
 
@@ -860,10 +949,44 @@ def test_shadow_run_cli_returns_nonzero_for_failed_result(
 
     monkeypatch.setattr(
         "dw_refactor_agent.refactor.shadow_run.run_shadow_plan",
-        lambda plan, output, dry_run=False: {"status": "failed"},
+        lambda plan, output, dry_run=False, timing_detail=False: {
+            "status": "failed",
+            "timing_detail": timing_detail,
+        },
     )
 
     assert main(["--plan", str(plan_path), "--output", str(output_path)]) == 1
+
+
+def test_shadow_run_cli_passes_timing_detail_flag(tmp_path, monkeypatch):
+    plan_path = tmp_path / "verification" / "plan.json"
+    output_path = tmp_path / "verification" / "shadow_run_result.json"
+    _write_json(plan_path, {"project": "shop"})
+    calls = []
+
+    def fake_run_shadow_plan(plan, output, dry_run=False, timing_detail=False):
+        calls.append((plan, output, dry_run, timing_detail))
+        return {"status": "completed"}
+
+    monkeypatch.setattr(
+        "dw_refactor_agent.refactor.shadow_run.run_shadow_plan",
+        fake_run_shadow_plan,
+    )
+
+    assert (
+        main(
+            [
+                "--plan",
+                str(plan_path),
+                "--output",
+                str(output_path),
+                "--timing-detail",
+            ]
+        )
+        == 0
+    )
+
+    assert calls == [(plan_path, output_path, False, True)]
 
 
 def test_run_shadow_plan_dry_run_persists_phase_summary(tmp_path, monkeypatch):
