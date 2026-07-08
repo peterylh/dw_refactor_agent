@@ -104,7 +104,7 @@ DDL_NON_COLUMN_PREFIXES = {
 
 
 @dataclass
-class BaseModelPlan:
+class GenerateModelMetadataPlan:
     model_metadata: dict[str, dict[str, Any]]
     model_paths: dict[str, Path]
     model_updates: list[dict[str, Any]]
@@ -1492,7 +1492,7 @@ def _generated_model_path_for_table(
     return project_dir / "mid" / "models" / filename
 
 
-def _direct_generation_table_assets(project: str) -> dict[str, dict[str, Any]]:
+def _generate_model_table_assets(project: str) -> dict[str, dict[str, Any]]:
     return (
         build_asset_catalog(
             [],
@@ -1503,7 +1503,7 @@ def _direct_generation_table_assets(project: str) -> dict[str, dict[str, Any]]:
     )
 
 
-def _ensure_direct_generation_catalog(
+def _ensure_generate_metadata_catalog(
     project: str,
     *,
     dry_run: bool,
@@ -1525,7 +1525,7 @@ def _ensure_direct_generation_catalog(
     return catalog, report
 
 
-def _direct_generation_mapping(
+def _generate_model_mapping(
     catalog: dict[str, Any],
     table_name: str,
 ) -> dict[str, Any]:
@@ -1565,7 +1565,7 @@ def _direct_generation_mapping(
     return mapping
 
 
-def _direct_model_update_payload(
+def _generate_model_update_payload(
     *,
     table_name: str,
     path: Path,
@@ -1617,13 +1617,13 @@ def _direct_model_update_payload(
     }
 
 
-def plan_direct_generated_models(
+def plan_generate_model_metadata(
     project: str,
     catalog: dict[str, Any],
     *,
     replace_existing_models: bool,
     write_scope: str,
-) -> BaseModelPlan:
+) -> GenerateModelMetadataPlan:
     write_scope = _validate_write_scope(write_scope)
     if write_scope not in {"all", "table", "business"}:
         raise ValueError("generate 仅支持 write_scope=all/table/business")
@@ -1636,12 +1636,12 @@ def plan_direct_generated_models(
     model_paths: dict[str, Path] = {}
     model_updates = []
     for table_name, asset in sorted(
-        _direct_generation_table_assets(project).items()
+        _generate_model_table_assets(project).items()
     ):
         ddl = asset.get("ddl") or {}
         if not ddl.get("exists"):
             continue
-        mapping = _direct_generation_mapping(catalog, table_name)
+        mapping = _generate_model_mapping(catalog, table_name)
         path = _generated_model_path_for_table(
             project,
             table_name,
@@ -1658,7 +1658,7 @@ def plan_direct_generated_models(
         model_metadata[table_name] = updated
         model_paths[table_name] = path
         model_updates.append(
-            _direct_model_update_payload(
+            _generate_model_update_payload(
                 table_name=table_name,
                 path=path,
                 previous=dict(existing),
@@ -1667,7 +1667,7 @@ def plan_direct_generated_models(
                 write_scope=write_scope,
             )
         )
-    return BaseModelPlan(
+    return GenerateModelMetadataPlan(
         model_metadata=model_metadata,
         model_paths=model_paths,
         model_updates=model_updates,
@@ -1675,7 +1675,7 @@ def plan_direct_generated_models(
     )
 
 
-def write_planned_models(
+def _write_generated_model_metadata(
     project: str,
     plan: MetadataFlowPlan,
     final_model_metadata: dict[str, dict[str, Any]],
@@ -1708,7 +1708,7 @@ def write_planned_models(
                 metadata.get("layer"),
             )
         previous = {} if delete_existing else _existing_model_data(path)
-        update = _direct_model_update_payload(
+        update = _generate_model_update_payload(
             table_name=table_name,
             path=path,
             previous=dict(previous),
@@ -1808,81 +1808,7 @@ def _strip_internal_model_metadata(result: dict[str, Any] | None) -> None:
             update.pop("model_metadata", None)
 
 
-def _write_direct_generated_model(
-    project: str,
-    table_name: str,
-    mapping: dict[str, Any],
-    *,
-    dry_run: bool,
-    ignore_existing: bool,
-    write_scope: str,
-) -> dict[str, Any]:
-    write_scope = _validate_write_scope(write_scope)
-    if write_scope not in {"all", "table", "business"}:
-        raise ValueError("generate 仅支持 write_scope=all/table/business")
-
-    path = _generated_model_path_for_table(
-        project,
-        table_name,
-        mapping.get("layer"),
-    )
-    existing = {} if ignore_existing else _existing_model_data(path)
-    previous = dict(existing)
-    updated = _catalog_model_payload(
-        table_name=table_name,
-        existing=existing,
-        mapping=mapping,
-    )
-    changed = updated != previous
-    if changed and not dry_run:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(
-            yaml.safe_dump(updated, allow_unicode=True, sort_keys=False),
-            encoding=TEXT_ENCODING,
-        )
-
-    business_changed = any(
-        updated.get(key) != previous.get(key)
-        for key in (
-            "data_domain",
-            "business_area",
-            "business_process",
-            "semantic_subject",
-            "dimension_role",
-            "dimension_content_type",
-        )
-    )
-    return {
-        "table": table_name,
-        "path": str(path),
-        "status": "passed",
-        "changed": changed,
-        "metadata_changed": any(
-            updated.get(key) != previous.get(key)
-            for key in ("layer", "table_type")
-        ),
-        "business_changed": business_changed,
-        "metric_changed": False,
-        "grain_changed": False,
-        "updated": bool(changed and not dry_run),
-        "write_scope": write_scope,
-        "source": "direct_generation",
-        "previous_layer": previous.get("layer"),
-        "layer": updated.get("layer"),
-        "previous_table_type": previous.get("table_type"),
-        "table_type": updated.get("table_type"),
-        "previous_data_domain": previous.get("data_domain"),
-        "data_domain": updated.get("data_domain"),
-        "previous_business_area": previous.get("business_area"),
-        "business_area": updated.get("business_area"),
-        "business_process": updated.get("business_process"),
-        "semantic_subject": updated.get("semantic_subject"),
-        "dimension_role": updated.get("dimension_role"),
-        "dimension_content_type": updated.get("dimension_content_type"),
-    }
-
-
-def run_direct_model_generation(
+def run_generate_model_metadata(
     project: str,
     *,
     api_key: str | None = None,
@@ -1903,11 +1829,11 @@ def run_direct_model_generation(
         raise ValueError("generate 仅支持 write_scope=all/table/business")
 
     # Reserved for future semantic catalog generation; PR1A only ensures skeleton files.
-    catalog, catalog_report = _ensure_direct_generation_catalog(
+    catalog, catalog_report = _ensure_generate_metadata_catalog(
         project,
         dry_run=dry_run,
     )
-    base_plan = plan_direct_generated_models(
+    base_plan = plan_generate_model_metadata(
         project,
         catalog,
         replace_existing_models=replace_existing_models,
@@ -1953,7 +1879,7 @@ def run_direct_model_generation(
         _strip_internal_model_metadata(llm_result)
 
     refinement_updates = (llm_result or {}).get("model_updates") or []
-    model_updates, deleted_model_files = write_planned_models(
+    model_updates, deleted_model_files = _write_generated_model_metadata(
         project,
         generate_plan,
         final_model_metadata,
@@ -1990,6 +1916,11 @@ def run_direct_model_generation(
     }
     result.update(catalog_report)
     return result
+
+
+def run_direct_model_generation(*args: Any, **kwargs: Any) -> dict[str, Any]:
+    """Backward-compatible alias; new code should use generate naming."""
+    return run_generate_model_metadata(*args, **kwargs)
 
 
 def _existing_model_data(path: Path) -> dict[str, Any]:
@@ -2869,7 +2800,7 @@ def main() -> None:
                 raise SystemExit(
                     "未提供 DEEPSEEK_API_KEY 环境变量，无法调用 DeepSeek API"
                 )
-        result = run_direct_model_generation(
+        result = run_generate_model_metadata(
             args.project,
             api_key=api_key,
             model=args.model,

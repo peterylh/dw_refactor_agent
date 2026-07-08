@@ -86,80 +86,76 @@ def test_llm_dimension_candidate_applies_dim_layer(payload, expected_prior):
     assert resolution.layer_score is None
 
 
-def test_unusable_llm_layer_falls_back_to_declared_prior():
-    resolution = resolve_layer(
-        LayerResolutionInput(
-            table_name="dwd_order_detail",
-            declared_layer="DWD",
-            declared_table_type="fact",
-            fallback_layer="DWS",
-            fallback_table_type="dimension",
-            inspection_result=_inspect_result(
+@pytest.mark.parametrize(
+    ("payload", "expected_inferred", "expected_source"),
+    [
+        (
+            LayerResolutionInput(
                 table_name="dwd_order_detail",
-                inferred_layer="OTHER",
-                table_type="dimension",
+                declared_layer="DWD",
+                declared_table_type="fact",
+                fallback_layer="DWS",
+                fallback_table_type="dimension",
+                inspection_result=_inspect_result(
+                    table_name="dwd_order_detail",
+                    inferred_layer="OTHER",
+                    table_type="dimension",
+                ),
+                policy=LayerResolutionPolicy(
+                    mode="refresh",
+                    fallback_source="declared",
+                ),
             ),
-            policy=LayerResolutionPolicy(
-                mode="refresh",
-                fallback_source="declared",
+            "OTHER",
+            "declared",
+        ),
+        (
+            LayerResolutionInput(
+                table_name="dwd_order_detail",
+                fallback_layer="DWD",
+                fallback_table_type="fact",
+                inspection_result=_inspect_result(
+                    table_name="dwd_order_detail",
+                    inferred_layer="ADS",
+                    table_type="fact",
+                ),
+                policy=LayerResolutionPolicy(
+                    mode="generate",
+                    candidate_layers=("DWD", "DWS", "DIM"),
+                    fallback_source="direct_rule",
+                ),
             ),
-        )
-    )
+            "ADS",
+            "direct_rule",
+        ),
+        (
+            LayerResolutionInput(
+                table_name="dwd_order_detail",
+                declared_layer="DWD",
+                declared_table_type="fact",
+                inspection_result=_inspect_result(
+                    table_name="dwd_order_detail",
+                    inferred_layer="ADS",
+                    table_type="fact",
+                ),
+                policy=LayerResolutionPolicy(mode="refresh"),
+            ),
+            "ADS",
+            "declared",
+        ),
+    ],
+)
+def test_unusable_llm_layer_falls_back_to_prior(
+    payload, expected_inferred, expected_source
+):
+    resolution = resolve_layer(payload)
 
-    assert resolution.inferred_layer == "OTHER"
+    assert resolution.inferred_layer == expected_inferred
     assert resolution.applied_layer == "DWD"
     assert resolution.table_type == "fact"
-    assert resolution.source == "declared"
-    assert resolution.warnings[0]["type"] == "llm_layer_fallback"
-
-
-def test_out_of_candidate_llm_layer_falls_back_to_prior():
-    resolution = resolve_layer(
-        LayerResolutionInput(
-            table_name="dwd_order_detail",
-            fallback_layer="DWD",
-            fallback_table_type="fact",
-            inspection_result=_inspect_result(
-                table_name="dwd_order_detail",
-                inferred_layer="ADS",
-                table_type="fact",
-            ),
-            policy=LayerResolutionPolicy(
-                mode="generate",
-                candidate_layers=("DWD", "DWS", "DIM"),
-                fallback_source="direct_rule",
-            ),
-        )
-    )
-
-    assert resolution.inferred_layer == "ADS"
-    assert resolution.applied_layer == "DWD"
-    assert resolution.table_type == "fact"
-    assert resolution.source == "direct_rule"
+    assert resolution.source == expected_source
     assert resolution.warnings[0]["type"] == "llm_layer_fallback"
     assert resolution.warnings[0]["candidate_layers"] == ("DWD", "DWS", "DIM")
-
-
-def test_refresh_default_policy_rejects_fixed_boundary_llm_candidate():
-    resolution = resolve_layer(
-        LayerResolutionInput(
-            table_name="dwd_order_detail",
-            declared_layer="DWD",
-            declared_table_type="fact",
-            inspection_result=_inspect_result(
-                table_name="dwd_order_detail",
-                inferred_layer="ADS",
-                table_type="fact",
-            ),
-            policy=LayerResolutionPolicy(mode="refresh"),
-        )
-    )
-
-    assert resolution.inferred_layer == "ADS"
-    assert resolution.applied_layer == "DWD"
-    assert resolution.table_type == "fact"
-    assert resolution.source == "declared"
-    assert resolution.warnings[0]["type"] == "llm_layer_fallback"
 
 
 @pytest.mark.parametrize(

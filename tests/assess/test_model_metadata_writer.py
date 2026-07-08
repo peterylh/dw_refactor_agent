@@ -25,7 +25,7 @@ from dw_refactor_agent.assessment.llm.model_metadata_writer import (
     result_for_report,
     run_catalog_discovery,
     run_catalog_metadata_write,
-    run_direct_model_generation,
+    run_generate_model_metadata,
     run_metadata_write,
     update_model_yaml,
     write_model_updates_from_plan,
@@ -685,31 +685,46 @@ def test_build_generate_plan_uses_direct_rule_policy(tmp_path):
     assert plan.catalog_plan.write_business_assignments is True
 
 
-def test_catalog_plan_for_refresh_no_llm_semantics():
-    plan = catalog_plan_for_refresh(llm=False)
+@pytest.mark.parametrize(
+    ("factory", "kwargs", "expected"),
+    [
+        (
+            catalog_plan_for_refresh,
+            {"llm": False},
+            {
+                "ensure_skeleton": False,
+                "merge_llm_discoveries": False,
+                "write_business_assignments": True,
+                "overwrite_discovered_catalog": False,
+            },
+        ),
+        (
+            catalog_plan_for_generate,
+            {"llm": True},
+            {
+                "ensure_skeleton": True,
+                "merge_llm_discoveries": False,
+                "write_business_assignments": True,
+                "overwrite_discovered_catalog": False,
+            },
+        ),
+        (
+            catalog_plan_for_discovery,
+            {"overwrite": True},
+            {
+                "ensure_skeleton": False,
+                "merge_llm_discoveries": True,
+                "write_business_assignments": True,
+                "overwrite_discovered_catalog": True,
+            },
+        ),
+    ],
+)
+def test_catalog_plan_semantics(factory, kwargs, expected):
+    plan = factory(**kwargs)
 
-    assert plan.ensure_skeleton is False
-    assert plan.merge_llm_discoveries is False
-    assert plan.write_business_assignments is True
-    assert plan.overwrite_discovered_catalog is False
-
-
-def test_catalog_plan_for_generate_llm_semantics():
-    plan = catalog_plan_for_generate(llm=True)
-
-    assert plan.ensure_skeleton is True
-    assert plan.merge_llm_discoveries is False
-    assert plan.write_business_assignments is True
-    assert plan.overwrite_discovered_catalog is False
-
-
-def test_catalog_plan_for_discovery_overwrite_semantics():
-    plan = catalog_plan_for_discovery(overwrite=True)
-
-    assert plan.ensure_skeleton is False
-    assert plan.merge_llm_discoveries is True
-    assert plan.write_business_assignments is True
-    assert plan.overwrite_discovered_catalog is True
+    for field, value in expected.items():
+        assert getattr(plan, field) is value
 
 
 def test_write_model_updates_from_plan_uses_plan_model_paths(
@@ -2968,7 +2983,7 @@ def test_model_metadata_writer_cli_dispatches_refresh_and_generate_modes(
     )
     monkeypatch.setattr(
         writer_module,
-        "run_direct_model_generation",
+        "run_generate_model_metadata",
         fake_generate,
     )
     monkeypatch.setattr(
@@ -3097,10 +3112,33 @@ def test_model_metadata_writer_cli_rejects_catalog_mode(
     assert exc_info.value.code == 2
 
 
-def test_run_direct_model_generation_dry_run_missing_catalog_uses_in_memory_skeleton(
+def test_run_direct_model_generation_delegates_to_generate_entrypoint(
+    monkeypatch,
+):
+    import dw_refactor_agent.assessment.llm.model_metadata_writer as writer_module
+
+    calls = []
+
+    def fake_generate(*args, **kwargs):
+        calls.append((args, kwargs))
+        return {"source": "direct_model_generation"}
+
+    monkeypatch.setattr(
+        writer_module,
+        "run_generate_model_metadata",
+        fake_generate,
+    )
+
+    result = writer_module.run_direct_model_generation("demo", dry_run=True)
+
+    assert result == {"source": "direct_model_generation"}
+    assert calls == [(("demo",), {"dry_run": True})]
+
+
+def test_run_generate_model_metadata_dry_run_missing_catalog_uses_in_memory_skeleton(
     tmp_path, monkeypatch
 ):
-    project = "direct_generate_dry_run"
+    project = "generate_metadata_dry_run"
     project_dir = _write_catalog_project(
         tmp_path,
         monkeypatch,
@@ -3117,7 +3155,7 @@ def test_run_direct_model_generation_dry_run_missing_catalog_uses_in_memory_skel
     )
     existing_model = project_dir / "mid" / "models" / "dwd_existing.yaml"
 
-    result = run_direct_model_generation(project, dry_run=True)
+    result = run_generate_model_metadata(project, dry_run=True)
 
     assert result["catalog_initialized"] is True
     assert result["catalog_init_written_names"] == []
@@ -3138,12 +3176,12 @@ def test_run_direct_model_generation_dry_run_missing_catalog_uses_in_memory_skel
     ).exists()
 
 
-def test_run_direct_model_generation_dry_run_llm_uses_generated_model_baseline(
+def test_run_generate_model_metadata_dry_run_llm_uses_generated_model_baseline(
     tmp_path, monkeypatch
 ):
     import dw_refactor_agent.assessment.llm.model_metadata_writer as writer_module
 
-    project = "direct_generate_dry_run_llm"
+    project = "generate_metadata_dry_run_llm"
     project_dir = _write_catalog_project(
         tmp_path,
         monkeypatch,
@@ -3202,7 +3240,7 @@ def test_run_direct_model_generation_dry_run_llm_uses_generated_model_baseline(
     )
     monkeypatch.setattr(writer_module, "TableInspector", FakeInspector)
 
-    result = run_direct_model_generation(
+    result = run_generate_model_metadata(
         project,
         api_key="test",
         dry_run=True,
@@ -3219,10 +3257,10 @@ def test_run_direct_model_generation_dry_run_llm_uses_generated_model_baseline(
     assert saved["layer"] == "DWS"
 
 
-def test_run_direct_model_generation_missing_catalog_writes_skeleton_and_models(
+def test_run_generate_model_metadata_missing_catalog_writes_skeleton_and_models(
     tmp_path, monkeypatch
 ):
-    project = "direct_generate_write"
+    project = "generate_metadata_write"
     project_dir = _write_catalog_project(
         tmp_path,
         monkeypatch,
@@ -3231,7 +3269,7 @@ def test_run_direct_model_generation_missing_catalog_writes_skeleton_and_models(
         ddl_tables=["dwd_order_detail"],
     )
 
-    result = run_direct_model_generation(project, dry_run=False)
+    result = run_generate_model_metadata(project, dry_run=False)
 
     assert result["catalog_initialized"] is True
     assert result["catalog_init_written_names"] == [
@@ -3273,10 +3311,10 @@ def _write_taxonomy_only(project_dir, project):
     )
 
 
-def test_run_direct_model_generation_partial_catalog_dry_run_plans_missing_splits(
+def test_run_generate_model_metadata_partial_catalog_dry_run_plans_missing_splits(
     tmp_path, monkeypatch
 ):
-    project = "direct_generate_partial_dry_run"
+    project = "generate_metadata_partial_dry_run"
     project_dir = _write_catalog_project(
         tmp_path,
         monkeypatch,
@@ -3287,7 +3325,7 @@ def test_run_direct_model_generation_partial_catalog_dry_run_plans_missing_split
     _write_taxonomy_only(project_dir, project)
     config.clear_business_semantics_cache()
 
-    result = run_direct_model_generation(project, dry_run=True)
+    result = run_generate_model_metadata(project, dry_run=True)
 
     assert result["catalog_initialized"] is True
     assert result["planned_catalog_written_names"] == [
@@ -3300,10 +3338,10 @@ def test_run_direct_model_generation_partial_catalog_dry_run_plans_missing_split
     assert not (project_dir / "semantic_subjects.yaml").exists()
 
 
-def test_run_direct_model_generation_partial_catalog_writes_missing_splits(
+def test_run_generate_model_metadata_partial_catalog_writes_missing_splits(
     tmp_path, monkeypatch
 ):
-    project = "direct_generate_partial_write"
+    project = "generate_metadata_partial_write"
     project_dir = _write_catalog_project(
         tmp_path,
         monkeypatch,
@@ -3314,7 +3352,7 @@ def test_run_direct_model_generation_partial_catalog_writes_missing_splits(
     _write_taxonomy_only(project_dir, project)
     config.clear_business_semantics_cache()
 
-    result = run_direct_model_generation(project, dry_run=False)
+    result = run_generate_model_metadata(project, dry_run=False)
 
     assert result["catalog_initialized"] is True
     assert result["catalog_init_written_names"] == [
@@ -3326,10 +3364,10 @@ def test_run_direct_model_generation_partial_catalog_writes_missing_splits(
     assert (project_dir / "semantic_subjects.yaml").exists()
 
 
-def test_run_direct_model_generation_complete_catalog_does_not_reinitialize(
+def test_run_generate_model_metadata_complete_catalog_does_not_reinitialize(
     tmp_path, monkeypatch
 ):
-    project = "direct_generate_complete_catalog"
+    project = "generate_metadata_complete_catalog"
     _write_catalog_project(
         tmp_path,
         monkeypatch,
@@ -3338,7 +3376,7 @@ def test_run_direct_model_generation_complete_catalog_does_not_reinitialize(
         ddl_tables=["dwd_order_detail"],
     )
 
-    result = run_direct_model_generation(project, dry_run=True)
+    result = run_generate_model_metadata(project, dry_run=True)
 
     assert result["catalog_initialized"] is False
     assert result["catalog_init_written_names"] == []
@@ -3463,7 +3501,7 @@ def test_generate_single_writer_pass_keeps_base_model_when_llm_blocked(
     )
     monkeypatch.setattr(writer_module, "TableInspector", FakeInspector)
 
-    result = run_direct_model_generation(
+    result = run_generate_model_metadata(
         project,
         api_key="test",
         dry_run=False,
@@ -3527,7 +3565,7 @@ def test_generate_single_writer_pass_keeps_ods_ads_base_models(
     )
     monkeypatch.setattr(writer_module, "TableInspector", FakeInspector)
 
-    result = run_direct_model_generation(
+    result = run_generate_model_metadata(
         project,
         api_key="test",
         dry_run=False,
@@ -3566,7 +3604,7 @@ def test_generate_single_writer_pass_dry_run_does_not_delete_or_write(
     )
     existing_model = project_dir / "mid" / "models" / "dwd_existing.yaml"
 
-    result = run_direct_model_generation(project, dry_run=True)
+    result = run_generate_model_metadata(project, dry_run=True)
 
     assert result["model_change_count"] == 1
     assert result["model_update_count"] == 0
@@ -3575,6 +3613,13 @@ def test_generate_single_writer_pass_dry_run_does_not_delete_or_write(
         project_dir / "mid" / "models" / "dwd_order_detail.yaml"
     ).exists()
     assert result["deleted_model_files"] == []
+    assert result["flow"] == {
+        "mode": "generate",
+        "prior_source": "direct_rule",
+        "llm_enabled": False,
+        "base_model_count": 1,
+        "final_model_count": 1,
+    }
 
 
 def test_generate_single_writer_pass_deletes_then_writes_final_models(
@@ -3623,7 +3668,7 @@ def test_generate_single_writer_pass_deletes_then_writes_final_models(
     )
     monkeypatch.setattr(writer_module, "TableInspector", FakeInspector)
 
-    result = run_direct_model_generation(
+    result = run_generate_model_metadata(
         project,
         api_key="test",
         dry_run=False,
@@ -3635,65 +3680,6 @@ def test_generate_single_writer_pass_deletes_then_writes_final_models(
     assert saved["table_type"] == "dimension"
     assert saved["dimension_role"] == "BASE"
     assert result["model_updates"][0]["updated"] is True
-
-
-def test_generate_single_writer_pass_reports_llm_metric_changes(
-    tmp_path, monkeypatch
-):
-    import dw_refactor_agent.assessment.llm.model_metadata_writer as writer_module
-
-    project = "generate_single_writer_metric_report"
-    project_dir = _write_single_writer_project(tmp_path, monkeypatch, project)
-    model_path = project_dir / "mid" / "models" / "dwd_order_detail.yaml"
-
-    class FakeInspector:
-        def __init__(self, api_key, **kwargs):
-            pass
-
-        def inspect_batch(self, contexts):
-            return [
-                TableInspectResult(
-                    table_name=ctx.table_name,
-                    declared_layer=ctx.layer,
-                    inferred_layer="DWD",
-                    table_type="fact",
-                    confidence=0.9,
-                    reasoning_steps=[],
-                    columns={
-                        "atomic_metrics": [{"name": "pay_amount"}],
-                        "derived_metrics": [],
-                        "calculated_metrics": [],
-                        "dimensions": [],
-                        "others": [],
-                    },
-                )
-                for ctx in contexts
-            ]
-
-    monkeypatch.setattr(
-        writer_module,
-        "load_lineage_data",
-        lambda _project: _lineage_for_tables("dwd_order_detail"),
-    )
-    monkeypatch.setattr(writer_module, "TableInspector", FakeInspector)
-
-    result = run_direct_model_generation(
-        project,
-        api_key="test",
-        dry_run=False,
-    )
-    update = result["model_updates"][0]
-    saved = yaml.safe_load(model_path.read_text(encoding="utf-8"))
-
-    assert result["llm_result"]["model_updates"][0]["metric_changed"] is True
-    assert update["source"] == "llm_refinement"
-    assert update["metric_changed"] is True
-    assert update["metric_count"] == 1
-    assert update["new_metric_count"] == 1
-    assert update["removed_metric_count"] == 0
-    assert update["grain_changed"] is False
-    assert update["updated"] is True
-    assert saved["atomic_metrics"] == ["pay_amount"]
 
 
 def test_generate_single_writer_pass_reports_final_metadata_changes_for_llm_refinement(
@@ -3749,7 +3735,7 @@ def test_generate_single_writer_pass_reports_final_metadata_changes_for_llm_refi
     )
     monkeypatch.setattr(writer_module, "TableInspector", FakeInspector)
 
-    result = run_direct_model_generation(
+    result = run_generate_model_metadata(
         project,
         api_key="test",
         dry_run=False,
@@ -3758,75 +3744,21 @@ def test_generate_single_writer_pass_reports_final_metadata_changes_for_llm_refi
     update = result["model_updates"][0]
     saved = yaml.safe_load(model_path.read_text(encoding="utf-8"))
 
+    assert result["inspection_result"] == result["llm_result"]
+    assert "model_metadata" not in llm_update
     assert llm_update["metadata_changed"] is False
     assert llm_update["metric_changed"] is True
     assert update["source"] == "llm_refinement"
     assert update["metadata_changed"] is True
     assert update["metric_changed"] is True
+    assert update["metric_count"] == 1
+    assert update["new_metric_count"] == 1
+    assert update["removed_metric_count"] == 0
+    assert update["grain_changed"] is False
     assert update["updated"] is True
     assert saved["layer"] == "DWS"
     assert saved["table_type"] == "fact"
     assert saved["atomic_metrics"] == ["order_count"]
-
-
-def test_generate_single_writer_pass_preserves_llm_result_compat_field(
-    tmp_path, monkeypatch
-):
-    import dw_refactor_agent.assessment.llm.model_metadata_writer as writer_module
-
-    project = "generate_single_writer_llm_result"
-    _write_single_writer_project(tmp_path, monkeypatch, project)
-
-    class FakeInspector:
-        def __init__(self, api_key, **kwargs):
-            pass
-
-        def inspect_batch(self, contexts):
-            return [
-                TableInspectResult(
-                    table_name=ctx.table_name,
-                    declared_layer=ctx.layer,
-                    inferred_layer=ctx.layer,
-                    table_type="fact",
-                    confidence=0.9,
-                    reasoning_steps=[],
-                )
-                for ctx in contexts
-            ]
-
-    monkeypatch.setattr(
-        writer_module,
-        "load_lineage_data",
-        lambda _project: _lineage_for_tables("dwd_order_detail"),
-    )
-    monkeypatch.setattr(writer_module, "TableInspector", FakeInspector)
-
-    result = run_direct_model_generation(
-        project,
-        api_key="test",
-        dry_run=True,
-    )
-
-    assert result["llm_result"] is not None
-    assert result["inspection_result"] == result["llm_result"]
-    assert "model_metadata" not in result["llm_result"]["model_updates"][0]
-
-
-def test_generate_single_writer_pass_reports_unified_flow_fields(
-    tmp_path, monkeypatch
-):
-    project = "generate_single_writer_flow"
-    _write_single_writer_project(tmp_path, monkeypatch, project)
-
-    result = run_direct_model_generation(project, dry_run=True)
-
-    assert result["flow"] == {
-        "mode": "generate",
-        "prior_source": "direct_rule",
-        "llm_enabled": False,
-        "base_model_count": 1,
-        "final_model_count": 1,
-    }
 
 
 def test_catalog_discovery_keeps_existing_assignment_when_llm_incomplete():
