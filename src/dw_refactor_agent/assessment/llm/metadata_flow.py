@@ -54,20 +54,18 @@ class MetadataFlowPlan:
 
 
 def catalog_plan_for_refresh(llm: bool) -> MetadataCatalogPlan:
-    _ = llm
     return MetadataCatalogPlan(
-        ensure_skeleton=False,
-        merge_llm_discoveries=False,
+        ensure_skeleton=llm,
+        merge_llm_discoveries=llm,
         write_business_assignments=True,
         overwrite_discovered_catalog=False,
     )
 
 
 def catalog_plan_for_generate(llm: bool) -> MetadataCatalogPlan:
-    _ = llm
     return MetadataCatalogPlan(
         ensure_skeleton=True,
-        merge_llm_discoveries=False,
+        merge_llm_discoveries=llm,
         write_business_assignments=True,
         overwrite_discovered_catalog=False,
     )
