@@ -383,14 +383,17 @@ def _analyze(args) -> int:
             change_analysis,
         )
 
-        plan = build_verification_plan(
-            project,
-            change_analysis,
-            base_ref=manifest.get("base_git", {}).get("head"),
-            repo_root=repo_root,
-            lineage_data=current_lineage,
-            partition=args.partition,
-        )
+        try:
+            plan = build_verification_plan(
+                project,
+                change_analysis,
+                base_ref=manifest.get("base_git", {}).get("head"),
+                repo_root=repo_root,
+                lineage_data=current_lineage,
+                partition=args.partition,
+            )
+        except ValueError as exc:
+            raise SystemExit(str(exc)) from None
         change_analysis = _with_rename_mapping(
             change_analysis,
             plan.get("ddl_changes") or [],

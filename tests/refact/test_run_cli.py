@@ -312,6 +312,69 @@ def test_analyze_refreshes_current_analysis_diff_and_plan(
     ]
 
 
+def test_analyze_reports_partition_requirement_cleanly(tmp_path, monkeypatch):
+    _write_warehouse_config(tmp_path)
+    manifest_path, manifest = create_run_manifest(
+        tmp_path,
+        "shop",
+        now=datetime(2026, 6, 20, 7, 30, tzinfo=timezone.utc),
+        git_info={"branch": "main", "head": "abc123", "dirty": False},
+    )
+    write_manifest(manifest_path, manifest)
+    run_root = manifest_path.parent
+    _write_json(
+        run_root / "baseline" / "lineage_data.json",
+        {"tables": [], "edges": []},
+    )
+    _write_json(
+        run_root / "baseline" / "assess_result.json",
+        {"project": "shop", "overall_score": 50.0, "dimensions": {}},
+    )
+    _write_json(run_root / "baseline" / "task_lineage_cache.json", {})
+
+    def fake_lineage(
+        project, output_path, cache_path, previous_cache_path=None
+    ):
+        _write_json(output_path, {"tables": [], "edges": []})
+        _write_json(cache_path, {"project": project, "tasks": []})
+        return {"lineage": {"tables": [], "edges": []}}
+
+    def fake_plan(
+        project,
+        analysis,
+        base_ref=None,
+        repo_root=None,
+        lineage_data=None,
+        partition=None,
+    ):
+        raise ValueError(
+            "refactor analyze requires --partition for incremental jobs "
+            "with execution slices: ads_dashboard"
+        )
+
+    monkeypatch.setattr(run_cli, "build_lineage_artifacts", fake_lineage)
+    monkeypatch.setattr(run_cli, "changed_files_since_head", lambda *args: [])
+    monkeypatch.setattr(run_cli, "build_verification_plan", fake_plan)
+    monkeypatch.setattr(
+        run_cli,
+        "assess",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("assess should not run after plan validation fails")
+        ),
+    )
+
+    try:
+        run_cli.main(["analyze", "--manifest", str(manifest_path)])
+    except SystemExit as exc:
+        assert "--partition" in str(exc)
+        assert "ads_dashboard" in str(exc)
+    else:
+        raise AssertionError("analyze should exit with a clean error")
+
+    assert not (run_root / "verification" / "plan.json").exists()
+    assert not (run_root / "current" / "assess_result.json").exists()
+
+
 def test_analyze_marks_empty_diff_assessment_not_applicable(
     tmp_path, monkeypatch
 ):
