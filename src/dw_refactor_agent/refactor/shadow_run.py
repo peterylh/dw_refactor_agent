@@ -782,6 +782,9 @@ def _job_result(
     job: dict,
     status: str,
     error: str | None = None,
+    *,
+    actual_execution_values: list[str] | None = None,
+    invocation_count: int | None = None,
 ) -> dict:
     job_name = job.get("job")
     result = {
@@ -795,6 +798,10 @@ def _job_result(
     for key in ("execution_values",):
         if key in job:
             result[key] = job.get(key)
+    if actual_execution_values is not None:
+        result["actual_execution_values"] = list(actual_execution_values)
+    if invocation_count is not None:
+        result["invocation_count"] = invocation_count
     if "needs_etl_date" in job:
         result["needs_etl_date"] = bool(job.get("needs_etl_date", False))
     return result
@@ -813,17 +820,38 @@ def _compare_phase(plan: dict, status: str = "not_run") -> dict:
     }
 
 
-def _shadow_driver_values(jobs: list[dict]) -> list[str | None]:
-    values = []
+def _execution_value_strings(values) -> list[str]:
+    result = []
     seen = set()
-    for job in jobs:
-        for value in job.get("execution_values") or []:
-            item = str(value)
-            if item in seen:
-                continue
-            seen.add(item)
-            values.append(item)
-    return sorted(values) if values else [None]
+    for value in values or []:
+        item = str(value)
+        if item in seen:
+            continue
+        seen.add(item)
+        result.append(item)
+    return sorted(result)
+
+
+def _job_driver_values(job: dict, spec) -> list[str | None]:
+    if spec.materialized == "full" or not spec.slice_param:
+        return [None]
+    values = _execution_value_strings(job.get("execution_values"))
+    if values:
+        return values
+    job_name = job.get("job") or spec.job_name
+    raise ExecutionConfigError(
+        f"[{job_name}] shadow-run requires execution_values "
+        "for sliced incremental jobs"
+    )
+
+
+def _append_actual_execution_value(
+    actual_execution_values: list[str],
+    driver_value: str | None,
+) -> None:
+    if driver_value is None or driver_value in actual_execution_values:
+        return
+    actual_execution_values.append(driver_value)
 
 
 def _job_for_driver_value(job: dict, driver_value: str | None) -> dict:
@@ -893,6 +921,7 @@ def _dry_run_phases(plan: dict) -> list[dict]:
     jobs_to_run = plan.get("jobs_to_run", [])
     prod_db = plan["project_db"]
     qa_db = plan["qa_db"]
+    planner = ExecutionPlanner(plan["project"], project_root=root)
     qa_ddl_changes = [
         _qa_ddl_change(change, prod_db, qa_db) for change in ddl_changes
     ]
@@ -900,13 +929,54 @@ def _dry_run_phases(plan: dict) -> list[dict]:
     jobs = []
     for job in jobs_to_run:
         file_path = root / job["file"]
-        jobs.append(
-            _job_result(
-                job,
-                "dry_run" if file_path.exists() else "skipped",
-                None if file_path.exists() else "文件不存在",
+        actual_values = []
+        invocation_count = 0
+        if not file_path.exists():
+            jobs.append(
+                _job_result(
+                    job,
+                    "skipped",
+                    "文件不存在",
+                    actual_execution_values=actual_values,
+                    invocation_count=invocation_count,
+                )
             )
-        )
+            continue
+        try:
+            spec = planner.task_spec(job["job"], file_path)
+            driver_values = _job_driver_values(job, spec)
+            for driver_value in driver_values:
+                planned_job = _job_for_driver_value(job, driver_value)
+                invocations = planner.plan_shadow_job(
+                    planned_job,
+                    project_root=root,
+                )
+                if invocations:
+                    _append_actual_execution_value(actual_values, driver_value)
+                    invocation_count += len(invocations)
+            jobs.append(
+                _job_result(
+                    job,
+                    "dry_run",
+                    actual_execution_values=actual_values,
+                    invocation_count=invocation_count,
+                )
+            )
+        except ExecutionConfigError as exc:
+            jobs.append(
+                _job_result(
+                    job,
+                    "failed",
+                    str(exc),
+                    actual_execution_values=actual_values,
+                    invocation_count=invocation_count,
+                )
+            )
+    job_phase_status = (
+        "failed"
+        if any(job.get("status") == "failed" for job in jobs)
+        else "dry_run"
+    )
 
     return [
         {
@@ -935,7 +1005,7 @@ def _dry_run_phases(plan: dict) -> list[dict]:
         },
         {
             "name": "run_jobs",
-            "status": "dry_run",
+            "status": job_phase_status,
             "jobs": jobs,
         },
         _compare_phase(plan),
@@ -947,8 +1017,10 @@ def execute_shadow_plan(plan: dict, *, dry_run: bool = False) -> dict:
     if dry_run:
         _dry_run(plan)
         phases = _dry_run_phases(plan)
+        summary = _result_summary(plan, phases)
+        status = "failed" if summary["failed_job_count"] else "dry_run"
         return _shadow_result(
-            plan, mode="dry_run", status="dry_run", phases=phases
+            plan, mode="dry_run", status=status, phases=phases
         )
 
     prod_db = plan["project_db"]
@@ -1075,30 +1147,57 @@ def execute_shadow_plan(plan: dict, *, dry_run: bool = False) -> dict:
         rewrite_sql=rewrite_sql,
         run_sql_text=run_sql_text,
     )
-    driver_values = _shadow_driver_values(jobs_to_run)
-    for driver_idx, driver_value in enumerate(driver_values, 1):
-        if driver_value is not None:
-            print(
-                f"\n  === replay slice {driver_idx}/{len(driver_values)}: "
-                f"{driver_value} ==="
-            )
-        for idx, job in enumerate(jobs_to_run, 1):
-            job_name = job["job"]
-            job_file = job["file"]
-            layer = job.get("layer", "?")
-            planned_job = _job_for_driver_value(job, driver_value)
+    for idx, job in enumerate(jobs_to_run, 1):
+        job_name = job["job"]
+        job_file = job["file"]
+        layer = job.get("layer", "?")
+        actual_values = []
+        invocation_count = 0
 
-            print(
-                f"\n  --- {idx}/{len(jobs_to_run)}: [{layer}] {job_name} ---"
+        print(f"\n  --- {idx}/{len(jobs_to_run)}: [{layer}] {job_name} ---")
+        file_path = root / job_file
+        if not file_path.exists():
+            error = f"文件不存在: {file_path}"
+            print(f"  [FAIL] {error}")
+            job_results.append(
+                _job_result(
+                    job,
+                    "failed",
+                    error,
+                    actual_execution_values=actual_values,
+                    invocation_count=invocation_count,
+                )
             )
-            file_path = root / job_file
-            if not file_path.exists():
-                error = f"文件不存在: {file_path}"
-                print(f"  [FAIL] {error}")
-                job_results.append(_job_result(job, "failed", error))
-                job_phase["status"] = "failed"
-                phases.append(job_phase)
-                return _failed_shadow_result(plan, phases)
+            job_phase["status"] = "failed"
+            phases.append(job_phase)
+            return _failed_shadow_result(plan, phases)
+
+        try:
+            spec = planner.task_spec(job_name, file_path)
+            driver_values = _job_driver_values(job, spec)
+        except ExecutionConfigError as exc:
+            print(f"  [FAIL] {job_name}: {exc}")
+            job_results.append(
+                _job_result(
+                    job,
+                    "failed",
+                    str(exc),
+                    actual_execution_values=actual_values,
+                    invocation_count=invocation_count,
+                )
+            )
+            job_phase["status"] = "failed"
+            phases.append(job_phase)
+            return _failed_shadow_result(plan, phases)
+
+        for driver_idx, driver_value in enumerate(driver_values, 1):
+            if driver_value is not None:
+                print(
+                    f"\n  === replay slice "
+                    f"{driver_idx}/{len(driver_values)}: "
+                    f"{driver_value} ==="
+                )
+            planned_job = _job_for_driver_value(job, driver_value)
 
             try:
                 invocations = planner.plan_shadow_job(
@@ -1107,24 +1206,50 @@ def execute_shadow_plan(plan: dict, *, dry_run: bool = False) -> dict:
                 )
             except ExecutionConfigError as exc:
                 print(f"  [FAIL] {job_name}: {exc}")
-                job_results.append(_job_result(job, "failed", str(exc)))
+                job_results.append(
+                    _job_result(
+                        job,
+                        "failed",
+                        str(exc),
+                        actual_execution_values=actual_values,
+                        invocation_count=invocation_count,
+                    )
+                )
                 job_phase["status"] = "failed"
                 phases.append(job_phase)
                 return _failed_shadow_result(plan, phases)
 
             try:
                 for invocation in invocations:
+                    _append_actual_execution_value(actual_values, driver_value)
+                    invocation_count += 1
                     executor.execute(invocation)
                 print(f"  + {qa_db}.{job_name}")
             except Exception as exc:
                 print(f"  [FAIL] {job_name}: {exc}")
-                job_results.append(_job_result(job, "failed", str(exc)))
+                job_results.append(
+                    _job_result(
+                        job,
+                        "failed",
+                        str(exc),
+                        actual_execution_values=actual_values,
+                        invocation_count=invocation_count,
+                    )
+                )
                 job_phase["status"] = "failed"
                 phases.append(job_phase)
                 return _failed_shadow_result(plan, phases)
 
             recalculated.add(job_name)
-    job_results.extend(_job_result(job, "success") for job in jobs_to_run)
+
+        job_results.append(
+            _job_result(
+                job,
+                "success",
+                actual_execution_values=actual_values,
+                invocation_count=invocation_count,
+            )
+        )
     phases.append(job_phase)
     phases.append(_compare_phase(plan))
 
@@ -1232,24 +1357,32 @@ def _dry_run(plan: dict) -> None:
         rewrite_sql=rewrite_sql,
         run_sql_text=run_sql_text,
     )
-    driver_values = _shadow_driver_values(jobs_to_run)
-    for driver_idx, driver_value in enumerate(driver_values, 1):
-        if driver_value is not None:
-            print(
-                f"\n  === replay slice {driver_idx}/{len(driver_values)}: "
-                f"{driver_value} ==="
-            )
-        for idx, job in enumerate(jobs_to_run, 1):
-            job_name = job["job"]
-            layer = job.get("layer", "?")
-            job_file = job["file"]
-            file_path = root / job_file
-            planned_job = _job_for_driver_value(job, driver_value)
+    for idx, job in enumerate(jobs_to_run, 1):
+        job_name = job["job"]
+        layer = job.get("layer", "?")
+        job_file = job["file"]
+        file_path = root / job_file
 
-            print(f"\n  {idx}/{len(jobs_to_run)}: [{layer}] {job_name}")
-            if not file_path.exists():
-                print("    [SKIP] 文件不存在")
-                continue
+        print(f"\n  {idx}/{len(jobs_to_run)}: [{layer}] {job_name}")
+        if not file_path.exists():
+            print("    [SKIP] 文件不存在")
+            continue
+
+        try:
+            spec = planner.task_spec(job_name, file_path)
+            driver_values = _job_driver_values(job, spec)
+        except ExecutionConfigError as exc:
+            print(f"    [FAIL] {exc}")
+            continue
+
+        for driver_idx, driver_value in enumerate(driver_values, 1):
+            if driver_value is not None:
+                print(
+                    f"\n    === replay slice "
+                    f"{driver_idx}/{len(driver_values)}: "
+                    f"{driver_value} ==="
+                )
+            planned_job = _job_for_driver_value(job, driver_value)
 
             try:
                 invocations = planner.plan_shadow_job(

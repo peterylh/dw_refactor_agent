@@ -42,6 +42,43 @@ def _write_json(path, data):
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2))
 
 
+def _write_shadow_project(tmp_path, project: str) -> None:
+    project_dir = tmp_path / "warehouses" / project
+    project_dir.mkdir(parents=True, exist_ok=True)
+    (project_dir / "warehouse.yaml").write_text(
+        f"""name: {project}
+catalog: internal
+database: shadow_dm
+qa_database: shadow_dm_qa
+""",
+        encoding="utf-8",
+    )
+
+
+def _write_shadow_job(
+    tmp_path,
+    project: str,
+    asset_dir: str,
+    job_name: str,
+    *,
+    model_yaml: str,
+    task_sql: str,
+) -> None:
+    project_dir = tmp_path / "warehouses" / project
+    model_dir = project_dir / asset_dir / "models"
+    task_dir = project_dir / asset_dir / "tasks"
+    model_dir.mkdir(parents=True, exist_ok=True)
+    task_dir.mkdir(parents=True, exist_ok=True)
+    (model_dir / f"{job_name}.yaml").write_text(
+        model_yaml,
+        encoding="utf-8",
+    )
+    (task_dir / f"{job_name}.sql").write_text(
+        task_sql,
+        encoding="utf-8",
+    )
+
+
 def test_get_dml_target_recognizes_statement_targets():
     scenarios = [
         (
@@ -489,6 +526,7 @@ def test_run_shadow_plan_executes_self_contained(tmp_path, monkeypatch):
                     "job": "dwd_order_detail",
                     "file": "warehouses/shop/mid/tasks/dwd_order_detail.sql",
                     "layer": "DWD",
+                    "execution_values": ["2025-01-15"],
                 }
             ],
             "verification": {"checks": []},
@@ -524,6 +562,9 @@ def test_run_shadow_plan_executes_self_contained(tmp_path, monkeypatch):
             "target": "dwd_order_detail",
             "status": "success",
             "error": None,
+            "execution_values": ["2025-01-15"],
+            "actual_execution_values": ["2025-01-15"],
+            "invocation_count": 1,
         }
     ]
     assert phase_by_name["compare"] == {
@@ -565,6 +606,7 @@ def test_run_shadow_plan_persists_failed_job_result(tmp_path, monkeypatch):
                     "job": "dwd_order_detail",
                     "file": "warehouses/shop/mid/tasks/dwd_order_detail.sql",
                     "layer": "DWD",
+                    "execution_values": ["2025-01-15"],
                 }
             ],
             "verification": {
@@ -602,6 +644,9 @@ def test_run_shadow_plan_persists_failed_job_result(tmp_path, monkeypatch):
             "target": "dwd_order_detail",
             "status": "failed",
             "error": "insert failed",
+            "execution_values": ["2025-01-15"],
+            "actual_execution_values": ["2025-01-15"],
+            "invocation_count": 1,
         }
     ]
     assert phase_by_name["compare"]["status"] == "not_run"
@@ -708,6 +753,7 @@ def test_run_shadow_plan_dry_run_persists_phase_summary(tmp_path, monkeypatch):
                 "layer": "DWD",
                 "target": "M_SHOP_05_INV_DF",
                 "needs_etl_date": True,
+                "execution_values": ["2025-01-15"],
             }
         ],
         "verification": {
@@ -832,36 +878,206 @@ def test_execute_shadow_plan_runs_job_once_per_execution_value(
     assert executed_texts[1].startswith("SET @etl_date = '2024-06-02';\n")
 
 
-def test_execute_shadow_plan_replays_jobs_by_driver_slice(
+def test_execute_shadow_plan_uses_job_execution_values_and_records_actuals(
     tmp_path, monkeypatch
 ):
-    first_task = tmp_path / "shop" / "mid" / "tasks" / "dwd_order.sql"
-    second_task = tmp_path / "shop" / "mid" / "tasks" / "dws_order.sql"
-    first_task.parent.mkdir(parents=True)
-    first_task.write_text(
-        "INSERT INTO shop_dm.dwd_order SELECT @etl_date;",
-        encoding="utf-8",
+    project = "shadow_driver_values"
+    _write_shadow_project(tmp_path, project)
+    _write_shadow_job(
+        tmp_path,
+        project,
+        "mid",
+        "dws_store_sales_daily",
+        model_yaml="""version: 2
+name: dws_store_sales_daily
+layer: DWS
+config:
+  materialized: incremental
+execution:
+  slice:
+    param: etl_date
+    column: stat_date
+    period: D
+""",
+        task_sql=(
+            "INSERT INTO shadow_dm.dws_store_sales_daily SELECT @etl_date;"
+        ),
     )
-    second_task.write_text(
-        "INSERT INTO shop_dm.dws_order SELECT @etl_date;",
-        encoding="utf-8",
+    _write_shadow_job(
+        tmp_path,
+        project,
+        "ads",
+        "ads_store_performance",
+        model_yaml="""version: 2
+name: ads_store_performance
+layer: ADS
+config:
+  materialized: incremental
+execution:
+  slice:
+    param: etl_date
+    column: stat_month_date
+    period: M
+""",
+        task_sql=(
+            "INSERT INTO shadow_dm.ads_store_performance SELECT @etl_date;"
+        ),
+    )
+    _write_shadow_job(
+        tmp_path,
+        project,
+        "ads",
+        "ads_sales_dashboard",
+        model_yaml="""version: 2
+name: ads_sales_dashboard
+layer: ADS
+config:
+  materialized: full
+""",
+        task_sql="INSERT INTO shadow_dm.ads_sales_dashboard SELECT 1;",
     )
     plan = {
-        "project": "shop",
-        "project_db": "shop_dm",
-        "qa_db": "shop_dm_qa",
+        "project": project,
+        "project_db": "shadow_dm",
+        "qa_db": "shadow_dm_qa",
         "baseline_ddl": {},
         "ddl_changes": [],
         "jobs_to_run": [
             {
-                "job": "dwd_order",
-                "file": "shop/mid/tasks/dwd_order.sql",
-                "layer": "DWD",
-                "execution_values": ["2024-06-02"],
+                "job": "dws_store_sales_daily",
+                "file": (
+                    "warehouses/shadow_driver_values/mid/tasks/"
+                    "dws_store_sales_daily.sql"
+                ),
+                "layer": "DWS",
+                "execution_values": ["2024-06-01", "2024-06-02"],
             },
             {
+                "job": "ads_store_performance",
+                "file": (
+                    "warehouses/shadow_driver_values/ads/tasks/"
+                    "ads_store_performance.sql"
+                ),
+                "layer": "ADS",
+                "execution_values": ["2024-06-01"],
+            },
+            {
+                "job": "ads_sales_dashboard",
+                "file": (
+                    "warehouses/shadow_driver_values/ads/tasks/"
+                    "ads_sales_dashboard.sql"
+                ),
+                "layer": "ADS",
+            },
+        ],
+        "verification": {"checks": []},
+    }
+    executed_texts = []
+
+    monkeypatch.setattr(
+        "dw_refactor_agent.refactor.shadow_run._project_root",
+        lambda: tmp_path,
+    )
+    monkeypatch.setattr(
+        "dw_refactor_agent.refactor.shadow_run.run_sql",
+        lambda *args, **kwargs: "",
+    )
+    monkeypatch.setattr(
+        "dw_refactor_agent.refactor.shadow_run.run_sql_text",
+        lambda sql_text, db="", qa=False: (
+            executed_texts.append(sql_text) or ""
+        ),
+    )
+
+    result = execute_shadow_plan(plan)
+    dry_run_result = execute_shadow_plan(plan, dry_run=True)
+
+    assert result["status"] == "completed"
+    assert len(executed_texts) == 4
+    assert executed_texts[0].startswith("SET @etl_date = '2024-06-01';\n")
+    assert (
+        "INSERT INTO shadow_dm_qa.dws_store_sales_daily" in executed_texts[0]
+    )
+    assert executed_texts[1].startswith("SET @etl_date = '2024-06-02';\n")
+    assert (
+        "INSERT INTO shadow_dm_qa.dws_store_sales_daily" in executed_texts[1]
+    )
+    assert executed_texts[2].startswith("SET @etl_date = '2024-06-01';\n")
+    assert (
+        "INSERT INTO shadow_dm_qa.ads_store_performance" in executed_texts[2]
+    )
+    assert "2024-06-02" not in executed_texts[2]
+    assert executed_texts[3].startswith("SET @full_refresh = 1;\n")
+    assert "INSERT INTO shadow_dm_qa.ads_sales_dashboard" in executed_texts[3]
+
+    phase_by_name = {phase["name"]: phase for phase in result["phases"]}
+    jobs = {job["job"]: job for job in phase_by_name["run_jobs"]["jobs"]}
+    assert jobs["dws_store_sales_daily"]["actual_execution_values"] == [
+        "2024-06-01",
+        "2024-06-02",
+    ]
+    assert jobs["dws_store_sales_daily"]["invocation_count"] == 2
+    assert jobs["ads_store_performance"]["actual_execution_values"] == [
+        "2024-06-01"
+    ]
+    assert jobs["ads_store_performance"]["invocation_count"] == 1
+    assert jobs["ads_sales_dashboard"]["actual_execution_values"] == []
+    assert jobs["ads_sales_dashboard"]["invocation_count"] == 1
+
+    assert dry_run_result["status"] == "dry_run"
+    dry_run_phase_by_name = {
+        phase["name"]: phase for phase in dry_run_result["phases"]
+    }
+    dry_run_jobs = {
+        job["job"]: job for job in dry_run_phase_by_name["run_jobs"]["jobs"]
+    }
+    assert dry_run_jobs["dws_store_sales_daily"][
+        "actual_execution_values"
+    ] == ["2024-06-01", "2024-06-02"]
+    assert dry_run_jobs["dws_store_sales_daily"]["invocation_count"] == 2
+    assert dry_run_jobs["ads_store_performance"][
+        "actual_execution_values"
+    ] == ["2024-06-01"]
+    assert dry_run_jobs["ads_store_performance"]["invocation_count"] == 1
+    assert dry_run_jobs["ads_sales_dashboard"]["actual_execution_values"] == []
+    assert dry_run_jobs["ads_sales_dashboard"]["invocation_count"] == 1
+
+
+def test_execute_shadow_plan_fails_sliced_job_without_execution_values(
+    tmp_path, monkeypatch
+):
+    project = "shadow_missing_values"
+    _write_shadow_project(tmp_path, project)
+    _write_shadow_job(
+        tmp_path,
+        project,
+        "mid",
+        "dws_order",
+        model_yaml="""version: 2
+name: dws_order
+layer: DWS
+config:
+  materialized: incremental
+execution:
+  slice:
+    param: etl_date
+    column: stat_date
+    period: D
+""",
+        task_sql="INSERT INTO shadow_dm.dws_order SELECT @etl_date;",
+    )
+    plan = {
+        "project": project,
+        "project_db": "shadow_dm",
+        "qa_db": "shadow_dm_qa",
+        "baseline_ddl": {},
+        "ddl_changes": [],
+        "jobs_to_run": [
+            {
                 "job": "dws_order",
-                "file": "shop/mid/tasks/dws_order.sql",
+                "file": (
+                    "warehouses/shadow_missing_values/mid/tasks/dws_order.sql"
+                ),
                 "layer": "DWS",
             },
         ],
@@ -885,8 +1101,24 @@ def test_execute_shadow_plan_replays_jobs_by_driver_slice(
     )
 
     result = execute_shadow_plan(plan)
+    dry_run_result = execute_shadow_plan(plan, dry_run=True)
 
-    assert result["status"] == "completed"
-    assert len(executed_texts) == 2
-    assert executed_texts[0].startswith("SET @etl_date = '2024-06-02';\n")
-    assert executed_texts[1].startswith("SET @etl_date = '2024-06-02';\n")
+    assert result["status"] == "failed"
+    assert executed_texts == []
+    phase_by_name = {phase["name"]: phase for phase in result["phases"]}
+    job_result = phase_by_name["run_jobs"]["jobs"][0]
+    assert job_result["status"] == "failed"
+    assert "requires execution_values" in job_result["error"]
+    assert job_result["actual_execution_values"] == []
+    assert job_result["invocation_count"] == 0
+
+    assert dry_run_result["status"] == "failed"
+    assert dry_run_result["mode"] == "dry_run"
+    dry_run_phase_by_name = {
+        phase["name"]: phase for phase in dry_run_result["phases"]
+    }
+    dry_run_job_result = dry_run_phase_by_name["run_jobs"]["jobs"][0]
+    assert dry_run_job_result["status"] == "failed"
+    assert "requires execution_values" in dry_run_job_result["error"]
+    assert dry_run_job_result["actual_execution_values"] == []
+    assert dry_run_job_result["invocation_count"] == 0
