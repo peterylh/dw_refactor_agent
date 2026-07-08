@@ -9,6 +9,7 @@ import re
 import subprocess
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 _src_root = Path(__file__).resolve().parents[2]
@@ -50,6 +51,29 @@ class ShadowRunSqlError(RuntimeError):
 
 def _project_root() -> Path:
     return PROJECT_ROOT
+
+
+def _now_iso() -> str:
+    return (
+        datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
+    )
+
+
+def _start_timing() -> dict:
+    return {
+        "started_at": _now_iso(),
+        "monotonic_start": time.monotonic(),
+    }
+
+
+def _finish_timing(result: dict, timing: dict) -> dict:
+    result["started_at"] = timing["started_at"]
+    result["finished_at"] = _now_iso()
+    elapsed_ms = int(
+        round((time.monotonic() - timing["monotonic_start"]) * 1000)
+    )
+    result["duration_ms"] = max(0, elapsed_ms)
+    return result
 
 
 def _sql_error_message(result: subprocess.CompletedProcess) -> str:
@@ -798,6 +822,7 @@ def _job_result(
     *,
     actual_execution_values: list[str] | None = None,
     invocation_count: int | None = None,
+    invocations: list[dict] | None = None,
 ) -> dict:
     job_name = job.get("job")
     result = {
@@ -815,9 +840,23 @@ def _job_result(
         result["actual_execution_values"] = list(actual_execution_values)
     if invocation_count is not None:
         result["invocation_count"] = invocation_count
+    if invocations is not None:
+        result["invocations"] = invocations
     if "needs_etl_date" in job:
         result["needs_etl_date"] = bool(job.get("needs_etl_date", False))
     return result
+
+
+def _invocation_result(
+    driver_value: str | None,
+    status: str,
+    error: str | None = None,
+) -> dict:
+    return {
+        "execution_value": driver_value,
+        "status": status,
+        "error": error,
+    }
 
 
 def _execution_value_strings(values) -> list[str]:
@@ -907,7 +946,7 @@ def _failed_shadow_result(plan: dict, phases: list[dict]) -> dict:
     )
 
 
-def _dry_run_phases(plan: dict) -> list[dict]:
+def _dry_run_phases(plan: dict, *, timing_detail: bool = False) -> list[dict]:
     root = _project_root()
     baseline_ddl = plan.get("baseline_ddl", {})
     ddl_changes = plan.get("ddl_changes", [])
@@ -919,59 +958,8 @@ def _dry_run_phases(plan: dict) -> list[dict]:
         _qa_ddl_change(change, prod_db, qa_db) for change in ddl_changes
     ]
 
-    jobs = []
-    for job in jobs_to_run:
-        file_path = root / job["file"]
-        actual_values = []
-        invocation_count = 0
-        if not file_path.exists():
-            jobs.append(
-                _job_result(
-                    job,
-                    "skipped",
-                    "文件不存在",
-                    actual_execution_values=actual_values,
-                    invocation_count=invocation_count,
-                )
-            )
-            continue
-        try:
-            spec = planner.task_spec(job["job"], file_path)
-            driver_values = _job_driver_values(job, spec)
-            for driver_value in driver_values:
-                planned_job = _job_for_driver_value(job, driver_value)
-                invocations = planner.plan_shadow_job(
-                    planned_job,
-                    project_root=root,
-                )
-                if invocations:
-                    _append_actual_execution_value(actual_values, driver_value)
-                    invocation_count += len(invocations)
-            jobs.append(
-                _job_result(
-                    job,
-                    "dry_run",
-                    actual_execution_values=actual_values,
-                    invocation_count=invocation_count,
-                )
-            )
-        except ExecutionConfigError as exc:
-            jobs.append(
-                _job_result(
-                    job,
-                    "failed",
-                    str(exc),
-                    actual_execution_values=actual_values,
-                    invocation_count=invocation_count,
-                )
-            )
-    job_phase_status = (
-        "failed"
-        if any(job.get("status") == "failed" for job in jobs)
-        else "dry_run"
-    )
-
-    return [
+    reset_timer = _start_timing()
+    reset_phase = _finish_timing(
         {
             "name": "reset_qa_db",
             "status": "dry_run",
@@ -980,6 +968,10 @@ def _dry_run_phases(plan: dict) -> list[dict]:
                 f"CREATE DATABASE {qa_db}",
             ],
         },
+        reset_timer,
+    )
+    create_timer = _start_timing()
+    create_phase = _finish_timing(
         {
             "name": "create_baseline_tables",
             "status": "dry_run",
@@ -988,6 +980,10 @@ def _dry_run_phases(plan: dict) -> list[dict]:
                 for table_name in sorted(baseline_ddl)
             ],
         },
+        create_timer,
+    )
+    ddl_timer = _start_timing()
+    ddl_phase = _finish_timing(
         {
             "name": "apply_ddl_changes",
             "status": "dry_run",
@@ -996,23 +992,116 @@ def _dry_run_phases(plan: dict) -> list[dict]:
                 for change in qa_ddl_changes
             ],
         },
+        ddl_timer,
+    )
+
+    job_phase_timer = _start_timing()
+    jobs = []
+    for job in jobs_to_run:
+        job_timer = _start_timing()
+        file_path = root / job["file"]
+        actual_values = []
+        invocation_count = 0
+        invocation_results = [] if timing_detail else None
+        if not file_path.exists():
+            jobs.append(
+                _finish_timing(
+                    _job_result(
+                        job,
+                        "skipped",
+                        "文件不存在",
+                        actual_execution_values=actual_values,
+                        invocation_count=invocation_count,
+                        invocations=invocation_results,
+                    ),
+                    job_timer,
+                )
+            )
+            continue
+        try:
+            spec = planner.task_spec(job["job"], file_path)
+            driver_values = _job_driver_values(job, spec)
+            for driver_value in driver_values:
+                planned_job = _job_for_driver_value(job, driver_value)
+                planned_invocations = planner.plan_shadow_job(
+                    planned_job,
+                    project_root=root,
+                )
+                if planned_invocations:
+                    _append_actual_execution_value(actual_values, driver_value)
+                    invocation_count += len(planned_invocations)
+                    if invocation_results is not None:
+                        for _ in planned_invocations:
+                            invocation_timer = _start_timing()
+                            invocation_results.append(
+                                _finish_timing(
+                                    _invocation_result(
+                                        driver_value,
+                                        "dry_run",
+                                    ),
+                                    invocation_timer,
+                                )
+                            )
+            jobs.append(
+                _finish_timing(
+                    _job_result(
+                        job,
+                        "dry_run",
+                        actual_execution_values=actual_values,
+                        invocation_count=invocation_count,
+                        invocations=invocation_results,
+                    ),
+                    job_timer,
+                )
+            )
+        except ExecutionConfigError as exc:
+            jobs.append(
+                _finish_timing(
+                    _job_result(
+                        job,
+                        "failed",
+                        str(exc),
+                        actual_execution_values=actual_values,
+                        invocation_count=invocation_count,
+                        invocations=invocation_results,
+                    ),
+                    job_timer,
+                )
+            )
+    job_phase_status = (
+        "failed"
+        if any(job.get("status") == "failed" for job in jobs)
+        else "dry_run"
+    )
+
+    job_phase = _finish_timing(
         {
             "name": "run_jobs",
             "status": job_phase_status,
             "jobs": jobs,
         },
-    ]
+        job_phase_timer,
+    )
+
+    return [reset_phase, create_phase, ddl_phase, job_phase]
 
 
-def execute_shadow_plan(plan: dict, *, dry_run: bool = False) -> dict:
+def execute_shadow_plan(
+    plan: dict, *, dry_run: bool = False, timing_detail: bool = False
+) -> dict:
     """Execute or preview a shadow-run validation plan."""
+    result_timer = _start_timing()
+
+    def finish_result(result: dict) -> dict:
+        return _finish_timing(result, result_timer)
+
     if dry_run:
         _dry_run(plan)
-        phases = _dry_run_phases(plan)
+        phases = _dry_run_phases(plan, timing_detail=timing_detail)
         summary = _result_summary(plan, phases)
         status = "failed" if summary["failed_job_count"] else "dry_run"
-        return _shadow_result(
-            plan, mode="dry_run", status=status, phases=phases
+        return finish_result(
+            _shadow_result(plan, mode="dry_run", status=status, phases=phases)
         )
 
     prod_db = plan["project_db"]
@@ -1030,6 +1119,7 @@ def execute_shadow_plan(plan: dict, *, dry_run: bool = False) -> dict:
 
     print("=" * 60)
     print(f"Phase 0: 重置验证数据库 {qa_db}")
+    reset_timer = _start_timing()
     reset_phase = {
         "name": "reset_qa_db",
         "status": "success",
@@ -1049,13 +1139,16 @@ def execute_shadow_plan(plan: dict, *, dry_run: bool = False) -> dict:
         print(f"  [FAIL] 重置验证数据库失败: {exc}")
         reset_phase["status"] = "failed"
         reset_phase["error"] = str(exc)
+        _finish_timing(reset_phase, reset_timer)
         phases.append(reset_phase)
-        return _failed_shadow_result(plan, phases)
+        return finish_result(_failed_shadow_result(plan, phases))
     print(f"  {qa_db} 已重建")
+    _finish_timing(reset_phase, reset_timer)
     phases.append(reset_phase)
 
     print(f"\n{'=' * 60}")
     print(f"Phase 1: 基线建表 ({len(baseline_ddl)} 张)")
+    create_timer = _start_timing()
     table_results = []
     create_phase = {
         "name": "create_baseline_tables",
@@ -1078,11 +1171,14 @@ def execute_shadow_plan(plan: dict, *, dry_run: bool = False) -> dict:
                 {"table": table_name, "status": "failed", "error": str(exc)}
             )
             create_phase["status"] = "failed"
+            _finish_timing(create_phase, create_timer)
             phases.append(create_phase)
-            return _failed_shadow_result(plan, phases)
+            return finish_result(_failed_shadow_result(plan, phases))
+    _finish_timing(create_phase, create_timer)
     phases.append(create_phase)
 
     ddl_change_results = []
+    ddl_timer = _start_timing()
     ddl_phase = {
         "name": "apply_ddl_changes",
         "status": "success",
@@ -1148,12 +1244,15 @@ def execute_shadow_plan(plan: dict, *, dry_run: bool = False) -> dict:
                     )
                 )
                 ddl_phase["status"] = "failed"
+                _finish_timing(ddl_phase, ddl_timer)
                 phases.append(ddl_phase)
-                return _failed_shadow_result(plan, phases)
+                return finish_result(_failed_shadow_result(plan, phases))
+    _finish_timing(ddl_phase, ddl_timer)
     phases.append(ddl_phase)
 
     print(f"\n{'=' * 60}")
     print(f"Phase 3: 执行作业 ({len(jobs_to_run)} 个)")
+    job_phase_timer = _start_timing()
     recalculated = set()
     root = _project_root()
     planner = ExecutionPlanner(plan["project"], project_root=root)
@@ -1177,6 +1276,8 @@ def execute_shadow_plan(plan: dict, *, dry_run: bool = False) -> dict:
         layer = job.get("layer", "?")
         actual_values = []
         invocation_count = 0
+        invocation_results = [] if timing_detail else None
+        job_timer = _start_timing()
 
         print(f"\n  --- {idx}/{len(jobs_to_run)}: [{layer}] {job_name} ---")
         file_path = root / job_file
@@ -1184,17 +1285,22 @@ def execute_shadow_plan(plan: dict, *, dry_run: bool = False) -> dict:
             error = f"文件不存在: {file_path}"
             print(f"  [FAIL] {error}")
             job_results.append(
-                _job_result(
-                    job,
-                    "failed",
-                    error,
-                    actual_execution_values=actual_values,
-                    invocation_count=invocation_count,
+                _finish_timing(
+                    _job_result(
+                        job,
+                        "failed",
+                        error,
+                        actual_execution_values=actual_values,
+                        invocation_count=invocation_count,
+                        invocations=invocation_results,
+                    ),
+                    job_timer,
                 )
             )
             job_phase["status"] = "failed"
+            _finish_timing(job_phase, job_phase_timer)
             phases.append(job_phase)
-            return _failed_shadow_result(plan, phases)
+            return finish_result(_failed_shadow_result(plan, phases))
 
         try:
             spec = planner.task_spec(job_name, file_path)
@@ -1202,17 +1308,22 @@ def execute_shadow_plan(plan: dict, *, dry_run: bool = False) -> dict:
         except ExecutionConfigError as exc:
             print(f"  [FAIL] {job_name}: {exc}")
             job_results.append(
-                _job_result(
-                    job,
-                    "failed",
-                    str(exc),
-                    actual_execution_values=actual_values,
-                    invocation_count=invocation_count,
+                _finish_timing(
+                    _job_result(
+                        job,
+                        "failed",
+                        str(exc),
+                        actual_execution_values=actual_values,
+                        invocation_count=invocation_count,
+                        invocations=invocation_results,
+                    ),
+                    job_timer,
                 )
             )
             job_phase["status"] = "failed"
+            _finish_timing(job_phase, job_phase_timer)
             phases.append(job_phase)
-            return _failed_shadow_result(plan, phases)
+            return finish_result(_failed_shadow_result(plan, phases))
 
         for driver_idx, driver_value in enumerate(driver_values, 1):
             if driver_value is not None:
@@ -1231,60 +1342,99 @@ def execute_shadow_plan(plan: dict, *, dry_run: bool = False) -> dict:
             except ExecutionConfigError as exc:
                 print(f"  [FAIL] {job_name}: {exc}")
                 job_results.append(
-                    _job_result(
-                        job,
-                        "failed",
-                        str(exc),
-                        actual_execution_values=actual_values,
-                        invocation_count=invocation_count,
+                    _finish_timing(
+                        _job_result(
+                            job,
+                            "failed",
+                            str(exc),
+                            actual_execution_values=actual_values,
+                            invocation_count=invocation_count,
+                            invocations=invocation_results,
+                        ),
+                        job_timer,
                     )
                 )
                 job_phase["status"] = "failed"
+                _finish_timing(job_phase, job_phase_timer)
                 phases.append(job_phase)
-                return _failed_shadow_result(plan, phases)
+                return finish_result(_failed_shadow_result(plan, phases))
 
             try:
                 for invocation in invocations:
                     _append_actual_execution_value(actual_values, driver_value)
                     invocation_count += 1
-                    executor.execute(invocation)
+                    invocation_timer = _start_timing()
+                    try:
+                        executor.execute(invocation)
+                    except Exception as exc:
+                        if invocation_results is not None:
+                            invocation_results.append(
+                                _finish_timing(
+                                    _invocation_result(
+                                        driver_value,
+                                        "failed",
+                                        str(exc),
+                                    ),
+                                    invocation_timer,
+                                )
+                            )
+                        raise
+                    if invocation_results is not None:
+                        invocation_results.append(
+                            _finish_timing(
+                                _invocation_result(driver_value, "success"),
+                                invocation_timer,
+                            )
+                        )
                 print(f"  + {qa_db}.{job_name}")
             except Exception as exc:
                 print(f"  [FAIL] {job_name}: {exc}")
                 job_results.append(
-                    _job_result(
-                        job,
-                        "failed",
-                        str(exc),
-                        actual_execution_values=actual_values,
-                        invocation_count=invocation_count,
+                    _finish_timing(
+                        _job_result(
+                            job,
+                            "failed",
+                            str(exc),
+                            actual_execution_values=actual_values,
+                            invocation_count=invocation_count,
+                            invocations=invocation_results,
+                        ),
+                        job_timer,
                     )
                 )
                 job_phase["status"] = "failed"
+                _finish_timing(job_phase, job_phase_timer)
                 phases.append(job_phase)
-                return _failed_shadow_result(plan, phases)
+                return finish_result(_failed_shadow_result(plan, phases))
 
             recalculated.add(job_name)
 
         job_results.append(
-            _job_result(
-                job,
-                "success",
-                actual_execution_values=actual_values,
-                invocation_count=invocation_count,
+            _finish_timing(
+                _job_result(
+                    job,
+                    "success",
+                    actual_execution_values=actual_values,
+                    invocation_count=invocation_count,
+                    invocations=invocation_results,
+                ),
+                job_timer,
             )
         )
+    _finish_timing(job_phase, job_phase_timer)
     phases.append(job_phase)
 
     print(f"\n{'=' * 60}")
     print(
         f"Shadow run 完成! 共执行 {len(jobs_to_run)} 个作业, 目标库: {qa_db}"
     )
-    return _shadow_result(
-        plan,
-        mode="execute",
-        status="completed",
-        phases=phases,
+    return finish_result(
+        _shadow_result(
+            plan,
+            mode="execute",
+            status="completed",
+            phases=phases,
+        )
     )
 
 
@@ -1293,12 +1443,15 @@ def run_shadow_plan(
     output_path: Path,
     *,
     dry_run: bool = False,
+    timing_detail: bool = False,
 ) -> dict:
     """Run or dry-run a validation plan and write the execution result."""
     plan_path = Path(plan_path)
     output_path = Path(output_path)
     plan = json.loads(plan_path.read_text(encoding=TEXT_ENCODING))
-    result = execute_shadow_plan(plan, dry_run=dry_run)
+    result = execute_shadow_plan(
+        plan, dry_run=dry_run, timing_detail=timing_detail
+    )
     result.update(
         {
             "plan": str(plan_path),
@@ -1459,6 +1612,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--dry-run", action="store_true", help="只输出执行计划，不连接数据库"
     )
+    parser.add_argument(
+        "--timing-detail",
+        "--profile",
+        action="store_true",
+        dest="timing_detail",
+        help="记录每次 job invocation/slice 的耗时明细",
+    )
     return parser
 
 
@@ -1471,7 +1631,12 @@ def main(argv: list[str] | None = None) -> int:
         if args.output
         else plan_path.parent / "shadow_run_result.json"
     )
-    result = run_shadow_plan(plan_path, output_path, dry_run=args.dry_run)
+    result = run_shadow_plan(
+        plan_path,
+        output_path,
+        dry_run=args.dry_run,
+        timing_detail=args.timing_detail,
+    )
     return 1 if result.get("status") == "failed" else 0
 
 

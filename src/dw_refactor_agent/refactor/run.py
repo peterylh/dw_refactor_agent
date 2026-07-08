@@ -440,6 +440,7 @@ def _shadow_run(args) -> int:
             artifact_path(manifest_path, "verification_plan"),
             artifact_path(manifest_path, "shadow_run_result"),
             dry_run=args.dry_run,
+            timing_detail=args.timing_detail,
         )
     return 1 if result.get("status") == "failed" else 0
 
@@ -483,6 +484,13 @@ def build_parser() -> argparse.ArgumentParser:
     shadow = subparsers.add_parser("shadow-run", help="run QA shadow plan")
     shadow.add_argument("--manifest", required=True)
     shadow.add_argument("--dry-run", action="store_true")
+    shadow.add_argument(
+        "--timing-detail",
+        "--profile",
+        action="store_true",
+        dest="timing_detail",
+        help="record per-invocation timing details in shadow_run_result.json",
+    )
     shadow.set_defaults(func=_shadow_run)
 
     compare = subparsers.add_parser("compare", help="compare prod and QA")
