@@ -3345,6 +3345,490 @@ def test_run_direct_model_generation_complete_catalog_does_not_reinitialize(
     assert result["planned_catalog_written_names"] == []
 
 
+def _write_single_writer_project(
+    tmp_path,
+    monkeypatch,
+    project,
+    *,
+    mid_tables=("dwd_order_detail",),
+    include_ods_ads=False,
+    existing_models=None,
+):
+    project_dir = tmp_path / project
+    mid_ddl_dir = project_dir / "mid" / "ddl"
+    mid_ddl_dir.mkdir(parents=True, exist_ok=True)
+    for table_name in mid_tables:
+        (mid_ddl_dir / f"{table_name}.sql").write_text(
+            f"CREATE TABLE {table_name} (id BIGINT);\n",
+            encoding="utf-8",
+        )
+    if include_ods_ads:
+        ods_ddl_dir = (
+            project_dir / "ods" / "ddl" / "internal" / "single_writer_dm"
+        )
+        ods_ddl_dir.mkdir(parents=True, exist_ok=True)
+        (ods_ddl_dir / "ods_customer.sql").write_text(
+            "CREATE TABLE ods_customer (id BIGINT);\n",
+            encoding="utf-8",
+        )
+        ads_ddl_dir = project_dir / "ads" / "ddl"
+        ads_ddl_dir.mkdir(parents=True, exist_ok=True)
+        (ads_ddl_dir / "ads_sales_dashboard.sql").write_text(
+            "CREATE TABLE ads_sales_dashboard (id BIGINT);\n",
+            encoding="utf-8",
+        )
+    for table_name, payload in (existing_models or {}).items():
+        model_dir = project_dir / "mid" / "models"
+        model_dir.mkdir(parents=True, exist_ok=True)
+        (model_dir / f"{table_name}.yaml").write_text(
+            yaml.safe_dump(payload, allow_unicode=True, sort_keys=False),
+            encoding="utf-8",
+        )
+    _write_split_catalog(project_dir, project, _catalog_payload())
+    (tmp_path / "naming_config.yaml").write_text(
+        "types: {}\nbindings: {}\ndictionaries: {}\n",
+        encoding="utf-8",
+    )
+    _configure_project_root(monkeypatch, tmp_path)
+    monkeypatch.setitem(
+        config.PROJECT_CONFIG,
+        project,
+        {
+            "dir": project,
+            "catalog": "internal",
+            "db": "single_writer_dm",
+            "naming_config": "naming_config.yaml",
+        },
+    )
+    return project_dir
+
+
+def _lineage_for_tables(*table_names):
+    return {
+        "tables": [
+            {
+                "name": table_name,
+                "full_name": f"demo.{table_name}",
+                "columns": [{"name": "id", "type": "BIGINT"}],
+            }
+            for table_name in table_names
+        ],
+        "edges": [],
+        "indirect_edges": [],
+    }
+
+
+def test_generate_single_writer_pass_keeps_base_model_when_llm_blocked(
+    tmp_path, monkeypatch
+):
+    import dw_refactor_agent.assessment.llm.model_metadata_writer as writer_module
+
+    project = "generate_single_writer_blocked"
+    project_dir = _write_single_writer_project(
+        tmp_path,
+        monkeypatch,
+        project,
+        existing_models={
+            "dwd_order_detail": {
+                "version": 2,
+                "name": "dwd_order_detail",
+                "layer": "DWS",
+                "table_type": "fact",
+            }
+        },
+    )
+
+    class FakeInspector:
+        def __init__(self, api_key, **kwargs):
+            pass
+
+        def inspect_batch(self, contexts):
+            return [
+                TableInspectResult(
+                    table_name=ctx.table_name,
+                    declared_layer=ctx.layer,
+                    inferred_layer="OTHER",
+                    table_type="dimension",
+                    validation={"unknown_columns": ["ghost_id"]},
+                    confidence=0.2,
+                    reasoning_steps=[],
+                )
+                for ctx in contexts
+            ]
+
+    monkeypatch.setattr(
+        writer_module,
+        "load_lineage_data",
+        lambda _project: _lineage_for_tables("dwd_order_detail"),
+    )
+    monkeypatch.setattr(writer_module, "TableInspector", FakeInspector)
+
+    result = run_direct_model_generation(
+        project,
+        api_key="test",
+        dry_run=False,
+    )
+    saved = yaml.safe_load(
+        (project_dir / "mid" / "models" / "dwd_order_detail.yaml").read_text(
+            encoding="utf-8"
+        )
+    )
+
+    assert result["llm_result"]["blocked_table_count"] == 1
+    assert result["llm_result"]["skipped_model_updates"][0]["reason"] == (
+        "validation_blocked"
+    )
+    assert saved["layer"] == "DWD"
+    assert saved["table_type"] == "other"
+    assert "atomic_metrics" not in saved
+
+
+def test_generate_single_writer_pass_keeps_ods_ads_base_models(
+    tmp_path, monkeypatch
+):
+    import dw_refactor_agent.assessment.llm.model_metadata_writer as writer_module
+
+    project = "generate_single_writer_boundaries"
+    project_dir = _write_single_writer_project(
+        tmp_path,
+        monkeypatch,
+        project,
+        mid_tables=("dwd_order_detail",),
+        include_ods_ads=True,
+    )
+    seen_contexts = []
+
+    class FakeInspector:
+        def __init__(self, api_key, **kwargs):
+            pass
+
+        def inspect_batch(self, contexts):
+            seen_contexts.extend(contexts)
+            return [
+                TableInspectResult(
+                    table_name=ctx.table_name,
+                    declared_layer=ctx.layer,
+                    inferred_layer="DWD",
+                    table_type="fact",
+                    confidence=0.9,
+                    reasoning_steps=[],
+                )
+                for ctx in contexts
+            ]
+
+    monkeypatch.setattr(
+        writer_module,
+        "load_lineage_data",
+        lambda _project: _lineage_for_tables(
+            "ods_customer",
+            "dwd_order_detail",
+            "ads_sales_dashboard",
+        ),
+    )
+    monkeypatch.setattr(writer_module, "TableInspector", FakeInspector)
+
+    result = run_direct_model_generation(
+        project,
+        api_key="test",
+        dry_run=False,
+    )
+
+    assert {ctx.table_name for ctx in seen_contexts} == {"dwd_order_detail"}
+    assert result["generated_model_count"] == 3
+    assert (
+        project_dir
+        / "ods"
+        / "models"
+        / "internal"
+        / "single_writer_dm"
+        / "ods_customer.yaml"
+    ).exists()
+    assert (
+        project_dir / "ads" / "models" / "ads_sales_dashboard.yaml"
+    ).exists()
+
+
+def test_generate_single_writer_pass_dry_run_does_not_delete_or_write(
+    tmp_path, monkeypatch
+):
+    project = "generate_single_writer_dry_run"
+    project_dir = _write_single_writer_project(
+        tmp_path,
+        monkeypatch,
+        project,
+        existing_models={
+            "dwd_existing": {
+                "version": 2,
+                "name": "dwd_existing",
+                "layer": "DWD",
+            }
+        },
+    )
+    existing_model = project_dir / "mid" / "models" / "dwd_existing.yaml"
+
+    result = run_direct_model_generation(project, dry_run=True)
+
+    assert result["model_change_count"] == 1
+    assert result["model_update_count"] == 0
+    assert existing_model.exists()
+    assert not (
+        project_dir / "mid" / "models" / "dwd_order_detail.yaml"
+    ).exists()
+    assert result["deleted_model_files"] == []
+
+
+def test_generate_single_writer_pass_deletes_then_writes_final_models(
+    tmp_path, monkeypatch
+):
+    import dw_refactor_agent.assessment.llm.model_metadata_writer as writer_module
+
+    project = "generate_single_writer_final"
+    project_dir = _write_single_writer_project(
+        tmp_path,
+        monkeypatch,
+        project,
+        existing_models={
+            "dwd_order_detail": {
+                "version": 2,
+                "name": "dwd_order_detail",
+                "layer": "DWS",
+                "table_type": "fact",
+            }
+        },
+    )
+    model_path = project_dir / "mid" / "models" / "dwd_order_detail.yaml"
+
+    class FakeInspector:
+        def __init__(self, api_key, **kwargs):
+            pass
+
+        def inspect_batch(self, contexts):
+            return [
+                TableInspectResult(
+                    table_name=ctx.table_name,
+                    declared_layer=ctx.layer,
+                    inferred_layer="DWD",
+                    table_type="dimension",
+                    dimension_role="BASE",
+                    confidence=0.9,
+                    reasoning_steps=[],
+                )
+                for ctx in contexts
+            ]
+
+    monkeypatch.setattr(
+        writer_module,
+        "load_lineage_data",
+        lambda _project: _lineage_for_tables("dwd_order_detail"),
+    )
+    monkeypatch.setattr(writer_module, "TableInspector", FakeInspector)
+
+    result = run_direct_model_generation(
+        project,
+        api_key="test",
+        dry_run=False,
+    )
+    saved = yaml.safe_load(model_path.read_text(encoding="utf-8"))
+
+    assert str(model_path) in result["deleted_model_files"]
+    assert saved["layer"] == "DIM"
+    assert saved["table_type"] == "dimension"
+    assert saved["dimension_role"] == "BASE"
+    assert result["model_updates"][0]["updated"] is True
+
+
+def test_generate_single_writer_pass_reports_llm_metric_changes(
+    tmp_path, monkeypatch
+):
+    import dw_refactor_agent.assessment.llm.model_metadata_writer as writer_module
+
+    project = "generate_single_writer_metric_report"
+    project_dir = _write_single_writer_project(tmp_path, monkeypatch, project)
+    model_path = project_dir / "mid" / "models" / "dwd_order_detail.yaml"
+
+    class FakeInspector:
+        def __init__(self, api_key, **kwargs):
+            pass
+
+        def inspect_batch(self, contexts):
+            return [
+                TableInspectResult(
+                    table_name=ctx.table_name,
+                    declared_layer=ctx.layer,
+                    inferred_layer="DWD",
+                    table_type="fact",
+                    confidence=0.9,
+                    reasoning_steps=[],
+                    columns={
+                        "atomic_metrics": [{"name": "pay_amount"}],
+                        "derived_metrics": [],
+                        "calculated_metrics": [],
+                        "dimensions": [],
+                        "others": [],
+                    },
+                )
+                for ctx in contexts
+            ]
+
+    monkeypatch.setattr(
+        writer_module,
+        "load_lineage_data",
+        lambda _project: _lineage_for_tables("dwd_order_detail"),
+    )
+    monkeypatch.setattr(writer_module, "TableInspector", FakeInspector)
+
+    result = run_direct_model_generation(
+        project,
+        api_key="test",
+        dry_run=False,
+    )
+    update = result["model_updates"][0]
+    saved = yaml.safe_load(model_path.read_text(encoding="utf-8"))
+
+    assert result["llm_result"]["model_updates"][0]["metric_changed"] is True
+    assert update["source"] == "llm_refinement"
+    assert update["metric_changed"] is True
+    assert update["metric_count"] == 1
+    assert update["new_metric_count"] == 1
+    assert update["removed_metric_count"] == 0
+    assert update["grain_changed"] is False
+    assert update["updated"] is True
+    assert saved["atomic_metrics"] == ["pay_amount"]
+
+
+def test_generate_single_writer_pass_reports_final_metadata_changes_for_llm_refinement(
+    tmp_path, monkeypatch
+):
+    import dw_refactor_agent.assessment.llm.model_metadata_writer as writer_module
+
+    project = "generate_single_writer_final_metadata_report"
+    project_dir = _write_single_writer_project(
+        tmp_path,
+        monkeypatch,
+        project,
+        mid_tables=("dws_order_summary",),
+        existing_models={
+            "dws_order_summary": {
+                "version": 2,
+                "name": "dws_order_summary",
+                "layer": "DWS",
+                "table_type": "fact",
+            }
+        },
+    )
+    model_path = project_dir / "mid" / "models" / "dws_order_summary.yaml"
+
+    class FakeInspector:
+        def __init__(self, api_key, **kwargs):
+            pass
+
+        def inspect_batch(self, contexts):
+            return [
+                TableInspectResult(
+                    table_name=ctx.table_name,
+                    declared_layer=ctx.layer,
+                    inferred_layer="DWS",
+                    table_type="fact",
+                    confidence=0.9,
+                    reasoning_steps=[],
+                    columns={
+                        "atomic_metrics": [{"name": "order_count"}],
+                        "derived_metrics": [],
+                        "calculated_metrics": [],
+                        "dimensions": [],
+                        "others": [],
+                    },
+                )
+                for ctx in contexts
+            ]
+
+    monkeypatch.setattr(
+        writer_module,
+        "load_lineage_data",
+        lambda _project: _lineage_for_tables("dws_order_summary"),
+    )
+    monkeypatch.setattr(writer_module, "TableInspector", FakeInspector)
+
+    result = run_direct_model_generation(
+        project,
+        api_key="test",
+        dry_run=False,
+    )
+    llm_update = result["llm_result"]["model_updates"][0]
+    update = result["model_updates"][0]
+    saved = yaml.safe_load(model_path.read_text(encoding="utf-8"))
+
+    assert llm_update["metadata_changed"] is False
+    assert llm_update["metric_changed"] is True
+    assert update["source"] == "llm_refinement"
+    assert update["metadata_changed"] is True
+    assert update["metric_changed"] is True
+    assert update["updated"] is True
+    assert saved["layer"] == "DWS"
+    assert saved["table_type"] == "fact"
+    assert saved["atomic_metrics"] == ["order_count"]
+
+
+def test_generate_single_writer_pass_preserves_llm_result_compat_field(
+    tmp_path, monkeypatch
+):
+    import dw_refactor_agent.assessment.llm.model_metadata_writer as writer_module
+
+    project = "generate_single_writer_llm_result"
+    _write_single_writer_project(tmp_path, monkeypatch, project)
+
+    class FakeInspector:
+        def __init__(self, api_key, **kwargs):
+            pass
+
+        def inspect_batch(self, contexts):
+            return [
+                TableInspectResult(
+                    table_name=ctx.table_name,
+                    declared_layer=ctx.layer,
+                    inferred_layer=ctx.layer,
+                    table_type="fact",
+                    confidence=0.9,
+                    reasoning_steps=[],
+                )
+                for ctx in contexts
+            ]
+
+    monkeypatch.setattr(
+        writer_module,
+        "load_lineage_data",
+        lambda _project: _lineage_for_tables("dwd_order_detail"),
+    )
+    monkeypatch.setattr(writer_module, "TableInspector", FakeInspector)
+
+    result = run_direct_model_generation(
+        project,
+        api_key="test",
+        dry_run=True,
+    )
+
+    assert result["llm_result"] is not None
+    assert result["inspection_result"] == result["llm_result"]
+    assert "model_metadata" not in result["llm_result"]["model_updates"][0]
+
+
+def test_generate_single_writer_pass_reports_unified_flow_fields(
+    tmp_path, monkeypatch
+):
+    project = "generate_single_writer_flow"
+    _write_single_writer_project(tmp_path, monkeypatch, project)
+
+    result = run_direct_model_generation(project, dry_run=True)
+
+    assert result["flow"] == {
+        "mode": "generate",
+        "prior_source": "direct_rule",
+        "llm_enabled": False,
+        "base_model_count": 1,
+        "final_model_count": 1,
+    }
+
+
 def test_catalog_discovery_keeps_existing_assignment_when_llm_incomplete():
     import dw_refactor_agent.assessment.llm.model_metadata_writer as writer_module
 

@@ -16,7 +16,7 @@ import os
 import re
 import sys
 import threading
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Callable
 
@@ -101,6 +101,14 @@ DDL_NON_COLUMN_PREFIXES = {
     "PROPERTIES",
     "UNIQUE",
 }
+
+
+@dataclass
+class BaseModelPlan:
+    model_metadata: dict[str, dict[str, Any]]
+    model_paths: dict[str, Path]
+    model_updates: list[dict[str, Any]]
+    planned_deleted_model_files: list[str]
 
 
 def _new_table_inspector(
@@ -327,6 +335,7 @@ def _update_models_for_results(
     existing_model_metadata: dict[str, dict[str, Any]] | None = None,
     model_paths: dict[str, Path] | None = None,
     resolution_policy: LayerResolutionPolicy | None = None,
+    include_model_metadata: bool = False,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     write_scope = _validate_write_scope(write_scope)
     yaml_updates = []
@@ -343,6 +352,7 @@ def _update_models_for_results(
             existing_model=existing_model,
             path=(model_paths or {}).get(result.table_name),
             resolution_policy=resolution_policy,
+            include_model_metadata=include_model_metadata,
         )
         if result.status == "blocked":
             if update["changed"]:
@@ -381,6 +391,7 @@ def write_model_updates_from_plan(
     *,
     dry_run: bool,
     use_plan_existing_metadata: bool = True,
+    include_model_metadata: bool = False,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     return _update_models_for_results(
         project,
@@ -392,6 +403,7 @@ def write_model_updates_from_plan(
         ),
         model_paths=plan.write_targets.model_paths,
         resolution_policy=plan.resolution_policy,
+        include_model_metadata=include_model_metadata,
     )
 
 
@@ -1069,6 +1081,7 @@ def update_model_yaml(
     existing_model: dict[str, Any] | None = None,
     path: Path | None = None,
     resolution_policy: LayerResolutionPolicy | None = None,
+    include_model_metadata: bool = False,
 ) -> dict[str, Any]:
     """将单表 LLM 巡检元数据和指标名覆盖写入 models/{table}.yaml。"""
     write_scope = _validate_write_scope(write_scope)
@@ -1144,7 +1157,7 @@ def update_model_yaml(
                     ),
                     encoding=TEXT_ENCODING,
                 )
-            return {
+            update = {
                 "table": result.table_name,
                 "path": str(path),
                 "status": result.status,
@@ -1160,7 +1173,10 @@ def update_model_yaml(
                 "warnings": resolution_warnings,
                 "write_scope": write_scope,
             }
-        return {
+            if include_model_metadata:
+                update["model_metadata"] = updated
+            return update
+        update = {
             "table": result.table_name,
             "path": str(path),
             "status": result.status,
@@ -1176,6 +1192,9 @@ def update_model_yaml(
             "warnings": resolution_warnings,
             "write_scope": write_scope,
         }
+        if include_model_metadata:
+            update["model_metadata"] = existing
+        return update
 
     existing_metrics = _extract_existing_metric_names(existing)
     existing_groups = _extract_existing_metric_groups(existing)
@@ -1385,7 +1404,7 @@ def update_model_yaml(
             [name for name in existing_metrics if name not in detected_metrics]
         )
 
-    return {
+    update = {
         "table": result.table_name,
         "path": str(path),
         "status": result.status,
@@ -1412,6 +1431,9 @@ def update_model_yaml(
         "grain_changed": grain_changed,
         "updated": bool(changed and not dry_run),
     }
+    if include_model_metadata:
+        update["model_metadata"] = updated
+    return update
 
 
 def _catalog_table_assets(project: str) -> dict[str, dict[str, Any]]:
@@ -1543,6 +1565,249 @@ def _direct_generation_mapping(
     return mapping
 
 
+def _direct_model_update_payload(
+    *,
+    table_name: str,
+    path: Path,
+    previous: dict[str, Any],
+    updated: dict[str, Any],
+    dry_run: bool,
+    write_scope: str,
+    source: str = "direct_generation",
+) -> dict[str, Any]:
+    business_changed = any(
+        updated.get(key) != previous.get(key)
+        for key in (
+            "data_domain",
+            "business_area",
+            "business_process",
+            "semantic_subject",
+            "dimension_role",
+            "dimension_content_type",
+        )
+    )
+    changed = updated != previous
+    return {
+        "table": table_name,
+        "path": str(path),
+        "status": "passed",
+        "changed": changed,
+        "metadata_changed": any(
+            updated.get(key) != previous.get(key)
+            for key in ("layer", "table_type")
+        ),
+        "business_changed": business_changed,
+        "metric_changed": False,
+        "grain_changed": False,
+        "updated": bool(changed and not dry_run),
+        "write_scope": write_scope,
+        "source": source,
+        "previous_layer": previous.get("layer"),
+        "layer": updated.get("layer"),
+        "previous_table_type": previous.get("table_type"),
+        "table_type": updated.get("table_type"),
+        "previous_data_domain": previous.get("data_domain"),
+        "data_domain": updated.get("data_domain"),
+        "previous_business_area": previous.get("business_area"),
+        "business_area": updated.get("business_area"),
+        "business_process": updated.get("business_process"),
+        "semantic_subject": updated.get("semantic_subject"),
+        "dimension_role": updated.get("dimension_role"),
+        "dimension_content_type": updated.get("dimension_content_type"),
+    }
+
+
+def plan_direct_generated_models(
+    project: str,
+    catalog: dict[str, Any],
+    *,
+    replace_existing_models: bool,
+    write_scope: str,
+) -> BaseModelPlan:
+    write_scope = _validate_write_scope(write_scope)
+    if write_scope not in {"all", "table", "business"}:
+        raise ValueError("generate 仅支持 write_scope=all/table/business")
+
+    model_files = _model_files(project)
+    planned_deleted_model_files = (
+        [str(path) for path in model_files] if replace_existing_models else []
+    )
+    model_metadata: dict[str, dict[str, Any]] = {}
+    model_paths: dict[str, Path] = {}
+    model_updates = []
+    for table_name, asset in sorted(
+        _direct_generation_table_assets(project).items()
+    ):
+        ddl = asset.get("ddl") or {}
+        if not ddl.get("exists"):
+            continue
+        mapping = _direct_generation_mapping(catalog, table_name)
+        path = _generated_model_path_for_table(
+            project,
+            table_name,
+            mapping.get("layer"),
+        )
+        existing = (
+            {} if replace_existing_models else _existing_model_data(path)
+        )
+        updated = _catalog_model_payload(
+            table_name=table_name,
+            existing=existing,
+            mapping=mapping,
+        )
+        model_metadata[table_name] = updated
+        model_paths[table_name] = path
+        model_updates.append(
+            _direct_model_update_payload(
+                table_name=table_name,
+                path=path,
+                previous=dict(existing),
+                updated=updated,
+                dry_run=True,
+                write_scope=write_scope,
+            )
+        )
+    return BaseModelPlan(
+        model_metadata=model_metadata,
+        model_paths=model_paths,
+        model_updates=model_updates,
+        planned_deleted_model_files=planned_deleted_model_files,
+    )
+
+
+def write_planned_models(
+    project: str,
+    plan: MetadataFlowPlan,
+    final_model_metadata: dict[str, dict[str, Any]],
+    *,
+    dry_run: bool,
+    delete_existing: bool,
+    refinement_updates: list[dict[str, Any]] | None = None,
+) -> tuple[list[dict[str, Any]], list[str]]:
+    deleted_model_files: list[str] = []
+    if delete_existing and not dry_run:
+        for path in _model_files(project):
+            path.unlink()
+            deleted_model_files.append(str(path))
+        import dw_refactor_agent.config as _config
+
+        _config.clear_model_metadata_cache()
+
+    refinements_by_table = {
+        str(update.get("table") or ""): update
+        for update in refinement_updates or []
+        if isinstance(update, dict) and str(update.get("table") or "")
+    }
+    model_updates = []
+    for table_name, metadata in sorted(final_model_metadata.items()):
+        path = plan.write_targets.model_paths.get(table_name)
+        if path is None:
+            path = _generated_model_path_for_table(
+                project,
+                table_name,
+                metadata.get("layer"),
+            )
+        previous = {} if delete_existing else _existing_model_data(path)
+        update = _direct_model_update_payload(
+            table_name=table_name,
+            path=path,
+            previous=dict(previous),
+            updated=metadata,
+            dry_run=dry_run,
+            write_scope=plan.write_scope,
+        )
+        if table_name in refinements_by_table:
+            update = _merge_final_update_with_refinement(
+                update,
+                refinements_by_table[table_name],
+            )
+        if update["changed"] and not dry_run:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(
+                yaml.safe_dump(
+                    metadata,
+                    allow_unicode=True,
+                    sort_keys=False,
+                ),
+                encoding=TEXT_ENCODING,
+            )
+        model_updates.append(update)
+
+    if not dry_run:
+        import dw_refactor_agent.config as _config
+
+        _config.clear_model_metadata_cache()
+
+    return model_updates, deleted_model_files
+
+
+def _merge_final_update_with_refinement(
+    final_update: dict[str, Any],
+    refinement_update: dict[str, Any],
+) -> dict[str, Any]:
+    merged = dict(refinement_update)
+    merged.pop("model_metadata", None)
+    merged["path"] = final_update.get("path")
+    merged["changed"] = bool(
+        final_update.get("changed") or refinement_update.get("changed")
+    )
+    merged["metadata_changed"] = bool(
+        final_update.get("metadata_changed")
+        or refinement_update.get("metadata_changed")
+    )
+    merged["business_changed"] = bool(
+        final_update.get("business_changed")
+        or refinement_update.get("business_changed")
+    )
+    merged["updated"] = final_update.get("updated", False)
+    merged["source"] = "llm_refinement"
+    for key in (
+        "write_scope",
+        "layer",
+        "table_type",
+        "data_domain",
+        "business_area",
+        "business_process",
+        "semantic_subject",
+        "dimension_role",
+        "dimension_content_type",
+    ):
+        if key in final_update:
+            merged[key] = final_update[key]
+    return merged
+
+
+def _final_model_metadata_with_refinements(
+    base_model_metadata: dict[str, dict[str, Any]],
+    llm_result: dict[str, Any],
+) -> dict[str, dict[str, Any]]:
+    final_model_metadata = {
+        table_name: dict(metadata)
+        for table_name, metadata in base_model_metadata.items()
+    }
+    for update in llm_result.get("model_updates") or []:
+        table_name = str(update.get("table") or "").strip()
+        if not table_name:
+            continue
+        refined_metadata = update.get("model_metadata")
+        if not isinstance(refined_metadata, dict):
+            continue
+        if update.get("status") == "blocked" and update.get("reason") != (
+            "validation_blocked_schema_migration"
+        ):
+            continue
+        final_model_metadata[table_name] = dict(refined_metadata)
+    return final_model_metadata
+
+
+def _strip_internal_model_metadata(result: dict[str, Any] | None) -> None:
+    if not result:
+        return
+    for update in result.get("model_updates") or []:
+        if isinstance(update, dict):
+            update.pop("model_metadata", None)
+
+
 def _write_direct_generated_model(
     project: str,
     table_name: str,
@@ -1642,68 +1907,27 @@ def run_direct_model_generation(
         project,
         dry_run=dry_run,
     )
-    model_files = _model_files(project)
-    planned_deleted_model_files = (
-        [str(path) for path in model_files] if replace_existing_models else []
+    base_plan = plan_direct_generated_models(
+        project,
+        catalog,
+        replace_existing_models=replace_existing_models,
+        write_scope=write_scope,
     )
-    deleted_model_files: list[str] = []
-    if replace_existing_models and not dry_run:
-        for path in model_files:
-            path.unlink()
-            deleted_model_files.append(str(path))
-        import dw_refactor_agent.config as _config
-
-        _config.clear_model_metadata_cache()
-
-    base_model_updates = []
-    model_updates = []
-    generated_model_metadata: dict[str, dict[str, Any]] = {}
-    generated_model_paths: dict[str, Path] = {}
-    for table_name, asset in sorted(
-        _direct_generation_table_assets(project).items()
-    ):
-        ddl = asset.get("ddl") or {}
-        if not ddl.get("exists"):
-            continue
-        mapping = _direct_generation_mapping(catalog, table_name)
-        generated_model_paths[table_name] = _generated_model_path_for_table(
-            project,
-            table_name,
-            mapping.get("layer"),
-        )
-        generated_model_metadata[table_name] = _catalog_model_payload(
-            table_name=table_name,
-            existing=(
-                {}
-                if replace_existing_models
-                else _existing_model_data(generated_model_paths[table_name])
-            ),
-            mapping=mapping,
-        )
-        update = _write_direct_generated_model(
-            project,
-            table_name,
-            mapping,
-            dry_run=dry_run,
-            ignore_existing=replace_existing_models,
-            write_scope=write_scope,
-        )
-        base_model_updates.append(update)
-        model_updates.append(update)
 
     generate_plan = build_generate_plan(
         project,
         write_scope=write_scope,
-        base_model_metadata=generated_model_metadata,
-        model_paths=generated_model_paths,
-        planned_deleted_model_files=planned_deleted_model_files,
+        base_model_metadata=base_plan.model_metadata,
+        model_paths=base_plan.model_paths,
+        planned_deleted_model_files=base_plan.planned_deleted_model_files,
         replace_existing_models=replace_existing_models,
     )
     llm_result: dict[str, Any] | None = None
+    final_model_metadata = {
+        table_name: dict(metadata)
+        for table_name, metadata in generate_plan.base_model_metadata.items()
+    }
     if api_key:
-        import dw_refactor_agent.config as _config
-
-        _config.clear_model_metadata_cache()
         llm_result = run_metadata_write(
             project,
             api_key=api_key,
@@ -1713,30 +1937,30 @@ def run_direct_model_generation(
             parallelism=parallelism,
             request_timeout=request_timeout,
             no_cache=no_cache,
-            dry_run=dry_run,
+            dry_run=True,
             write_scope=write_scope,
             show_progress=show_progress,
-            model_metadata=(
-                generate_plan.base_model_metadata
-                if replace_existing_models
-                else None
-            ),
-            metric_groups=(
-                generate_plan.metric_groups
-                if replace_existing_models
-                else None
-            ),
-            model_paths=generate_plan.write_targets.model_paths
-            if replace_existing_models
-            else None,
+            model_metadata=generate_plan.base_model_metadata,
+            metric_groups=generate_plan.metric_groups,
+            model_paths=generate_plan.write_targets.model_paths,
             resolution_policy=generate_plan.resolution_policy,
+            include_model_metadata=True,
         )
-        model_updates.extend(llm_result.get("model_updates") or [])
+        final_model_metadata = _final_model_metadata_with_refinements(
+            generate_plan.base_model_metadata,
+            llm_result,
+        )
+        _strip_internal_model_metadata(llm_result)
 
-    if not dry_run:
-        import dw_refactor_agent.config as _config
-
-        _config.clear_model_metadata_cache()
+    refinement_updates = (llm_result or {}).get("model_updates") or []
+    model_updates, deleted_model_files = write_planned_models(
+        project,
+        generate_plan,
+        final_model_metadata,
+        dry_run=dry_run,
+        delete_existing=replace_existing_models,
+        refinement_updates=refinement_updates,
+    )
 
     changed_updates = [update for update in model_updates if update["changed"]]
     result = {
@@ -1746,15 +1970,23 @@ def run_direct_model_generation(
         "write_scope": write_scope,
         "update_catalog": update_catalog,
         "replace_existing_models": replace_existing_models,
-        "planned_deleted_model_files": planned_deleted_model_files,
+        "planned_deleted_model_files": base_plan.planned_deleted_model_files,
         "deleted_model_files": deleted_model_files,
-        "generated_model_count": len(base_model_updates),
+        "generated_model_count": len(base_plan.model_updates),
         "model_updates": changed_updates,
         "model_update_count": len(
             [update for update in changed_updates if update.get("updated")]
         ),
         "model_change_count": len(changed_updates),
         "llm_result": llm_result,
+        "inspection_result": llm_result,
+        "flow": {
+            "mode": "generate",
+            "prior_source": "direct_rule",
+            "llm_enabled": bool(api_key),
+            "base_model_count": len(base_plan.model_metadata),
+            "final_model_count": len(final_model_metadata),
+        },
     }
     result.update(catalog_report)
     return result
@@ -2432,6 +2664,7 @@ def run_metadata_write(
     metric_groups: dict[str, dict[str, list[str]]] | None = None,
     model_paths: dict[str, Path] | None = None,
     resolution_policy: LayerResolutionPolicy | None = None,
+    include_model_metadata: bool = False,
 ) -> dict[str, Any]:
     """运行项目级 LLM 巡检与模型元数据回写。"""
     write_scope = _validate_write_scope(write_scope)
@@ -2481,6 +2714,7 @@ def run_metadata_write(
         plan,
         dry_run=dry_run,
         use_plan_existing_metadata=model_metadata is not None,
+        include_model_metadata=include_model_metadata,
     )
     reports = [
         result_for_report(
