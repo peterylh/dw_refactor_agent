@@ -36,6 +36,7 @@ TEST_TYPE_BY_FILE = {
     "tests/assess/test_scoring_context_interface.py": "unit",
     "tests/assess/test_shop_model_design_scenarios.py": "scenario",
     "tests/assess/test_table_inspector.py": "unit",
+    "tests/benchmarks/test_generate_llm_benchmark.py": "guard",
     "tests/benchmarks/test_lineage_extractor_benchmark_dataset.py": "guard",
     "tests/ddl_deriver/test_ddl_deriver.py": "unit",
     "tests/ddl_deriver/test_git_mode.py": "scenario",
