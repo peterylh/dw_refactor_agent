@@ -199,10 +199,11 @@ python warehouses/finance_analytics/generate_ods_data.py
 python -m dw_refactor_agent.refactor.run start --project shop
 
 # 2. 基于当前修改刷新血缘、评估与验证计划
-python -m dw_refactor_agent.refactor.run analyze --manifest warehouses/<project>/artifacts/refactor_runs/<run_id>/manifest.json
-
-# 可选：手工指定验证分区
+# 若验证范围包含 sliced incremental 作业，必须指定验证分区
 python -m dw_refactor_agent.refactor.run analyze --manifest warehouses/<project>/artifacts/refactor_runs/<run_id>/manifest.json --partition 2025-01-15
+
+# 仅当验证计划不包含 sliced incremental 作业时，才可省略 --partition
+python -m dw_refactor_agent.refactor.run analyze --manifest warehouses/<project>/artifacts/refactor_runs/<run_id>/manifest.json
 
 # 3. 预览旁路执行计划
 python -m dw_refactor_agent.refactor.run shadow-run --manifest warehouses/<project>/artifacts/refactor_runs/<run_id>/manifest.json --dry-run
@@ -226,7 +227,9 @@ python -m dw_refactor_agent.refactor.run compare --manifest warehouses/<project>
   `assessment_tables`、`assessment_tasks` 与 `anchor_tables`
 - `baseline_ddl`：merge-base 的完整 DDL（已剥离 INSERT）
 - `ddl_changes`：由 `ddl_deriver` 推导的 DDL 变更
-- `jobs_to_run`：按拓扑排序后的待执行作业
+- `jobs_to_run`：按拓扑排序后的待执行作业；对配置了 `execution.slice`
+  或项目 `execution.default_slice` 的增量作业，`analyze --partition` 会写入
+  `execution_values`，供 shadow-run 逐分区重放
 - `verification.compare_anchors`：compare 使用的锚点输入，包含锚点表的时间列、
   时间粒度与锚点时间值；缺少合理时间粒度时会降级为全表 compare 并输出 warning
 - `verification.checks`：自动配置的校验项，包含表名、校验方法；`row_compare`
@@ -242,6 +245,11 @@ python -m dw_refactor_agent.refactor.run compare --manifest warehouses/<project>
 4. **Phase 3 - 执行作业**：按依赖顺序在 QA 库运行改写后的 SQL
 
 关键策略：作业读取生产库中的 ODS / 未变更中间表，以及已在 QA 侧重算出的中间结果；写入目标统一指向 `{project}_dm_qa`，从而做到 **不复制生产数据，仅重算必要链路**。
+
+对 sliced incremental 作业，shadow-run 要求 `jobs_to_run[].execution_values`
+已存在；通常需要先执行带 `--partition` 的 `analyze`。未提供验证分区时，
+compare 可能降级为全表对比，但 shadow-run 不会默认使用当天日期或全局 driver
+value 兜底。
 
 ### compare.py
 

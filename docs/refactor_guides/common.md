@@ -118,3 +118,14 @@ python -m dw_refactor_agent.execution.task_run --project <project> --db-env test
 ```bash
 python -m dw_refactor_agent.refactor.run shadow-run --manifest warehouses/<project>/artifacts/refactor_runs/<run_id>/manifest.json --dry-run
 ```
+
+预览前应先确认 `analyze` 是否需要指定验证分区。若验证计划包含配置了
+`execution.slice` 或项目 `execution.default_slice` 的增量作业，必须先用
+`--partition` 生成 `jobs_to_run[].execution_values`：
+
+```bash
+python -m dw_refactor_agent.refactor.run analyze --manifest warehouses/<project>/artifacts/refactor_runs/<run_id>/manifest.json --partition 2025-01-15
+```
+
+没有 `execution_values` 的 sliced incremental 作业会在 shadow-run dry-run
+或真实执行阶段失败；工具不会默认使用当天日期或全局 driver value 兜底。
