@@ -4,6 +4,10 @@ import pytest
 import yaml
 
 import dw_refactor_agent.config as config
+from dw_refactor_agent.assessment.llm.metadata_flow import (
+    build_generate_plan,
+    build_refresh_plan,
+)
 from dw_refactor_agent.assessment.llm.model_metadata_writer import (
     build_dwd_contexts,
     build_inspection_contexts,
@@ -618,6 +622,60 @@ def test_build_inspection_contexts_skip_fixed_ods_ads_boundaries(
         "dwd_order_detail",
         "dim_store",
     }
+
+
+def test_build_refresh_plan_uses_declared_policy(isolated_writer_project):
+    plan = build_refresh_plan(isolated_writer_project, write_scope="metrics")
+
+    assert plan.mode == "refresh"
+    assert plan.prior_source == "declared"
+    assert plan.write_scope == "metrics"
+    assert plan.base_model_metadata["dwd_customer"]["layer"] == "DWD"
+    assert plan.metric_groups == {}
+    assert plan.write_targets.model_paths == {}
+    assert plan.write_targets.replace_existing_models is False
+    assert plan.write_targets.planned_deleted_model_files == ()
+    assert plan.resolution_policy.mode == "refresh"
+    assert plan.resolution_policy.fallback_source == "declared"
+    assert plan.catalog_plan.ensure_skeleton is False
+    assert plan.catalog_plan.merge_llm_discoveries is False
+    assert plan.catalog_plan.write_business_assignments is True
+
+
+def test_build_generate_plan_uses_direct_rule_policy(tmp_path):
+    model_path = tmp_path / "dwd_order_detail.yaml"
+    base_metadata = {
+        "dwd_order_detail": {
+            "layer": "DWD",
+            "table_type": "fact",
+        }
+    }
+
+    plan = build_generate_plan(
+        "demo",
+        write_scope="business",
+        base_model_metadata=base_metadata,
+        model_paths={"dwd_order_detail": model_path},
+        planned_deleted_model_files=["old_model.yaml"],
+        replace_existing_models=True,
+    )
+
+    assert plan.mode == "generate"
+    assert plan.prior_source == "direct_rule"
+    assert plan.write_scope == "business"
+    assert plan.base_model_metadata == base_metadata
+    assert plan.metric_groups == {}
+    assert plan.write_targets.model_paths["dwd_order_detail"] == model_path
+    assert plan.write_targets.replace_existing_models is True
+    assert plan.write_targets.planned_deleted_model_files == (
+        "old_model.yaml",
+    )
+    assert plan.resolution_policy.mode == "generate"
+    assert plan.resolution_policy.fallback_source == "direct_rule"
+    assert plan.resolution_policy.candidate_layers == ("DWD", "DWS", "DIM")
+    assert plan.catalog_plan.ensure_skeleton is True
+    assert plan.catalog_plan.merge_llm_discoveries is False
+    assert plan.catalog_plan.write_business_assignments is True
 
 
 def test_metric_helper_scenarios():
@@ -2586,6 +2644,22 @@ def test_run_metadata_write_reuses_table_inspector(
         writer_module, "load_lineage_data", lambda project: sample_lineage_data
     )
     monkeypatch.setattr(writer_module, "TableInspector", FakeInspector)
+    original_pipeline = writer_module.run_inspection_pipeline
+    pipeline_calls = []
+
+    def tracking_pipeline(*args, **kwargs):
+        pipeline_calls.append(
+            {
+                "project": args[0],
+                "base_model_metadata": kwargs.get("base_model_metadata"),
+                "metric_groups": kwargs.get("metric_groups"),
+            }
+        )
+        return original_pipeline(*args, **kwargs)
+
+    monkeypatch.setattr(
+        writer_module, "run_inspection_pipeline", tracking_pipeline
+    )
 
     result = run_metadata_write(
         isolated_writer_project, api_key="test", dry_run=True
@@ -2612,6 +2686,10 @@ def test_run_metadata_write_reuses_table_inspector(
     assert result["non_atomic_metric_violation_count"] == 2
     assert result["model_update_count"] == 0
     assert result["model_change_count"] == len(result["model_updates"])
+    assert len(pipeline_calls) == 1
+    assert pipeline_calls[0]["project"] == isolated_writer_project
+    assert pipeline_calls[0]["base_model_metadata"] is None
+    assert pipeline_calls[0]["metric_groups"] is None
     assert created_cache_files[0] == config.assess_cache_path(
         isolated_writer_project, "inspect.json"
     )
@@ -3772,6 +3850,16 @@ def test_run_catalog_discovery_uses_resolved_results_for_catalog(
             ]
 
     monkeypatch.setattr(writer_module, "TableInspector", FakeInspector)
+    original_pipeline = writer_module.run_inspection_pipeline
+    pipeline_calls = []
+
+    def tracking_pipeline(*args, **kwargs):
+        pipeline_calls.append({"project": args[0], "kwargs": kwargs})
+        return original_pipeline(*args, **kwargs)
+
+    monkeypatch.setattr(
+        writer_module, "run_inspection_pipeline", tracking_pipeline
+    )
 
     result = run_catalog_discovery(
         project,
@@ -3783,6 +3871,8 @@ def test_run_catalog_discovery_uses_resolved_results_for_catalog(
 
     assert result["catalog"]["semantic_subjects"] == []
     assert catalog["semantic_subjects"] == []
+    assert len(pipeline_calls) == 1
+    assert pipeline_calls[0]["project"] == project
 
 
 def test_run_catalog_discovery_does_not_write_unknown_domain_or_area(

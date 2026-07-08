@@ -36,6 +36,12 @@ from dw_refactor_agent.assessment.llm.layer_resolution import (
     LayerResolutionPolicy,
     resolve_layer,
 )
+from dw_refactor_agent.assessment.llm.metadata_flow import (
+    METRIC_LAYERS,
+    WRITABLE_METADATA_LAYERS,
+    build_generate_plan,
+    run_inspection_pipeline,
+)
 from dw_refactor_agent.assessment.llm.table_inspector import (
     TableInspector,
     TableInspectResult,
@@ -74,9 +80,6 @@ from dw_refactor_agent.config import (
 )
 from dw_refactor_agent.lineage.table_graph import load_lineage_data
 
-METRIC_LAYERS = {"DWD", "DWS"}
-# ODS/ADS are fixed asset boundaries and should not enter table_inspector.
-WRITABLE_METADATA_LAYERS = {"DWD", "DWS", "DIM"}
 WRITE_SCOPES = {"all", "table", "metrics", "grain", "business"}
 DATA_DOMAIN_LAYERS = {"DWD"}
 BUSINESS_AREA_LAYERS = {"DWD", "DWS"}
@@ -308,20 +311,6 @@ def metric_groups_for_model(
         "derived_metrics": _derived_metrics_for_model(result.derived_metrics),
         "calculated_metrics": _metric_names(result.calculated_metrics),
     }
-
-
-def _merge_detected_upstream_metric_groups(
-    contexts: list[TableContext],
-    detected_groups: dict[str, dict[str, list[str]]],
-) -> None:
-    """将本轮已识别的上游指标分组注入下游上下文。"""
-    for ctx in contexts:
-        upstream_metric_groups = dict(ctx.upstream_metric_groups)
-        for upstream_table in ctx.upstream_tables:
-            groups = detected_groups.get(upstream_table)
-            if groups and any(groups.values()):
-                upstream_metric_groups[upstream_table] = groups
-        ctx.upstream_metric_groups = upstream_metric_groups
 
 
 def _update_models_for_results(
@@ -1676,6 +1665,14 @@ def run_direct_model_generation(
         base_model_updates.append(update)
         model_updates.append(update)
 
+    generate_plan = build_generate_plan(
+        project,
+        write_scope=write_scope,
+        base_model_metadata=generated_model_metadata,
+        model_paths=generated_model_paths,
+        planned_deleted_model_files=planned_deleted_model_files,
+        replace_existing_models=replace_existing_models,
+    )
     llm_result: dict[str, Any] | None = None
     if api_key:
         import dw_refactor_agent.config as _config
@@ -1694,17 +1691,19 @@ def run_direct_model_generation(
             write_scope=write_scope,
             show_progress=show_progress,
             model_metadata=(
-                generated_model_metadata if replace_existing_models else None
+                generate_plan.base_model_metadata
+                if replace_existing_models
+                else None
             ),
-            metric_groups={} if replace_existing_models else None,
-            model_paths=generated_model_paths
+            metric_groups=(
+                generate_plan.metric_groups
+                if replace_existing_models
+                else None
+            ),
+            model_paths=generate_plan.write_targets.model_paths
             if replace_existing_models
             else None,
-            resolution_policy=LayerResolutionPolicy(
-                mode="generate",
-                candidate_layers=("DWD", "DWS", "DIM"),
-                fallback_source="direct_rule",
-            ),
+            resolution_policy=generate_plan.resolution_policy,
         )
         model_updates.extend(llm_result.get("model_updates") or [])
 
@@ -2161,13 +2160,6 @@ def run_catalog_discovery(
 ) -> dict[str, Any]:
     """Use table-level LLM inspection results to initialize/update catalog."""
     data = load_lineage_data(project)
-    contexts = build_inspection_contexts(project, data)
-    metric_contexts = [ctx for ctx in contexts if ctx.layer in METRIC_LAYERS]
-    dwd_contexts = [ctx for ctx in metric_contexts if ctx.layer == "DWD"]
-    dws_contexts = [ctx for ctx in metric_contexts if ctx.layer == "DWS"]
-    metadata_only_contexts = [
-        ctx for ctx in contexts if ctx.layer not in METRIC_LAYERS
-    ]
     cache_file = assess_cache_path(project, "inspect.json")
     if no_cache and cache_file.exists():
         cache_file.unlink()
@@ -2184,18 +2176,18 @@ def run_catalog_discovery(
     if show_progress:
         inspector.progress_callback = build_progress_callback()
 
-    dwd_results = inspector.inspect_batch(dwd_contexts)
-    detected_groups = {
-        result.table_name: metric_groups_for_model(result)
-        for result in dwd_results
-        if result.status != "blocked"
-    }
-    _merge_detected_upstream_metric_groups(dws_contexts, detected_groups)
-    dws_results = inspector.inspect_batch(dws_contexts)
-    metadata_only_results = inspector.inspect_batch(metadata_only_contexts)
-    results = dwd_results + dws_results + metadata_only_results
-    contexts_by_name = {ctx.table_name: ctx for ctx in contexts}
-    enrich_results_with_related_entities(results, contexts_by_name)
+    inspection = run_inspection_pipeline(
+        project,
+        data,
+        inspector,
+        metric_group_builder=metric_groups_for_model,
+        result_enricher=enrich_results_with_related_entities,
+    )
+    contexts = inspection.contexts
+    dwd_contexts = inspection.dwd_contexts
+    dws_contexts = inspection.dws_contexts
+    metadata_only_contexts = inspection.metadata_only_contexts
+    results = inspection.results
     model_metadata = load_model_metadata(project)
     resolved_results = _resolved_results_for_catalog_discovery(
         results,
@@ -2210,10 +2202,17 @@ def run_catalog_discovery(
     )
     model_updates = []
     discovered_catalog = write_result.get("catalog") or {}
+    resolved_results_by_table = {
+        result.table_name: result for result in resolved_results
+    }
     for result in results:
+        resolved_result = resolved_results_by_table.get(
+            result.table_name,
+            result,
+        )
         mapping = catalog_discovery_model_mapping(
             project,
-            result,
+            resolved_result,
             discovered_catalog,
             model_metadata.get(result.table_name, {}),
         )
@@ -2362,18 +2361,6 @@ def run_metadata_write(
     """运行项目级 LLM 巡检与模型元数据回写。"""
     write_scope = _validate_write_scope(write_scope)
     data = load_lineage_data(project)
-    contexts = build_inspection_contexts(
-        project,
-        data,
-        model_metadata=model_metadata,
-        metric_groups=metric_groups,
-    )
-    metric_contexts = [ctx for ctx in contexts if ctx.layer in METRIC_LAYERS]
-    dwd_contexts = [ctx for ctx in metric_contexts if ctx.layer == "DWD"]
-    dws_contexts = [ctx for ctx in metric_contexts if ctx.layer == "DWS"]
-    metadata_only_contexts = [
-        ctx for ctx in contexts if ctx.layer not in METRIC_LAYERS
-    ]
     cache_file = assess_cache_path(project, "inspect.json")
     if no_cache and cache_file.exists():
         cache_file.unlink()
@@ -2389,20 +2376,20 @@ def run_metadata_write(
     )
     if show_progress:
         inspector.progress_callback = build_progress_callback()
-    dwd_results = inspector.inspect_batch(dwd_contexts)
 
-    detected_groups = {
-        result.table_name: metric_groups_for_model(result)
-        for result in dwd_results
-        if result.status != "blocked"
-    }
-    _merge_detected_upstream_metric_groups(dws_contexts, detected_groups)
-    dws_results = inspector.inspect_batch(dws_contexts)
-
-    metadata_only_results = inspector.inspect_batch(metadata_only_contexts)
-    results = dwd_results + dws_results + metadata_only_results
-    contexts_by_name = {ctx.table_name: ctx for ctx in contexts}
-    enrich_results_with_related_entities(results, contexts_by_name)
+    inspection = run_inspection_pipeline(
+        project,
+        data,
+        inspector,
+        metric_group_builder=metric_groups_for_model,
+        result_enricher=enrich_results_with_related_entities,
+        base_model_metadata=model_metadata,
+        metric_groups=metric_groups,
+    )
+    contexts = inspection.contexts
+    metric_contexts = inspection.metric_contexts
+    metadata_only_contexts = inspection.metadata_only_contexts
+    results = inspection.results
     report_model_metadata = (
         model_metadata
         if model_metadata is not None

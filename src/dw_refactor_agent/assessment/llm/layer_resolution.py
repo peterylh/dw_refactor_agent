@@ -11,7 +11,9 @@ fallback. Evidence scoring is intentionally left as a future extension point.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any
+
+from typing_extensions import Literal
 
 from dw_refactor_agent.assessment.llm.table_inspector import (
     TableInspectResult,
