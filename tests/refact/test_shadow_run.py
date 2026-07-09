@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import threading
+import time
 from datetime import datetime
 
 import sqlglot
@@ -949,9 +951,16 @@ def test_shadow_run_cli_returns_nonzero_for_failed_result(
 
     monkeypatch.setattr(
         "dw_refactor_agent.refactor.shadow_run.run_shadow_plan",
-        lambda plan, output, dry_run=False, timing_detail=False: {
+        lambda plan,
+        output,
+        dry_run=False,
+        timing_detail=False,
+        parallel=1,
+        batch_size=1: {
             "status": "failed",
             "timing_detail": timing_detail,
+            "parallel": parallel,
+            "batch_size": batch_size,
         },
     )
 
@@ -964,8 +973,17 @@ def test_shadow_run_cli_passes_timing_detail_flag(tmp_path, monkeypatch):
     _write_json(plan_path, {"project": "shop"})
     calls = []
 
-    def fake_run_shadow_plan(plan, output, dry_run=False, timing_detail=False):
-        calls.append((plan, output, dry_run, timing_detail))
+    def fake_run_shadow_plan(
+        plan,
+        output,
+        dry_run=False,
+        timing_detail=False,
+        parallel=1,
+        batch_size=1,
+    ):
+        calls.append(
+            (plan, output, dry_run, timing_detail, parallel, batch_size)
+        )
         return {"status": "completed"}
 
     monkeypatch.setattr(
@@ -986,7 +1004,7 @@ def test_shadow_run_cli_passes_timing_detail_flag(tmp_path, monkeypatch):
         == 0
     )
 
-    assert calls == [(plan_path, output_path, False, True)]
+    assert calls == [(plan_path, output_path, False, True, 1, 1)]
 
 
 def test_run_shadow_plan_dry_run_persists_phase_summary(tmp_path, monkeypatch):
@@ -1159,7 +1177,7 @@ def test_execute_shadow_plan_runs_job_once_per_execution_value(
     task_path = tmp_path / "shop" / "mid" / "tasks" / "dws_order.sql"
     task_path.parent.mkdir(parents=True)
     task_path.write_text(
-        "INSERT INTO shop_dm.dws_order SELECT @etl_date;",
+        "INSERT INTO shop_dm.dws_order SELECT @etl_date",
         encoding="utf-8",
     )
     plan = {
@@ -1202,6 +1220,143 @@ def test_execute_shadow_plan_runs_job_once_per_execution_value(
     assert len(executed_texts) == 2
     assert executed_texts[0].startswith("SET @etl_date = '2024-06-01';\n")
     assert executed_texts[1].startswith("SET @etl_date = '2024-06-02';\n")
+
+
+def test_execute_shadow_plan_batches_slices_for_same_job(
+    tmp_path, monkeypatch
+):
+    task_path = tmp_path / "shop" / "mid" / "tasks" / "dws_order.sql"
+    task_path.parent.mkdir(parents=True)
+    task_path.write_text(
+        "INSERT INTO shop_dm.dws_order SELECT @etl_date;",
+        encoding="utf-8",
+    )
+    plan = {
+        "project": "shop",
+        "project_db": "shop_dm",
+        "qa_db": "shop_dm_qa",
+        "baseline_ddl": {},
+        "ddl_changes": [],
+        "jobs_to_run": [
+            {
+                "job": "dws_order",
+                "file": "shop/mid/tasks/dws_order.sql",
+                "layer": "DWS",
+                "target": "dws_order",
+                "execution_values": [
+                    "2024-06-01",
+                    "2024-06-02",
+                    "2024-06-03",
+                ],
+            }
+        ],
+        "verification": {"checks": []},
+    }
+    executed_texts = []
+
+    monkeypatch.setattr(
+        "dw_refactor_agent.refactor.shadow_run._project_root",
+        lambda: tmp_path,
+    )
+    monkeypatch.setattr(
+        "dw_refactor_agent.refactor.shadow_run.run_sql",
+        lambda *args, **kwargs: "",
+    )
+    monkeypatch.setattr(
+        "dw_refactor_agent.refactor.shadow_run.run_sql_text",
+        lambda sql_text, db="", qa=False: (
+            executed_texts.append(sql_text) or ""
+        ),
+    )
+
+    result = execute_shadow_plan(plan, batch_size=2)
+
+    assert result["status"] == "completed"
+    assert len(executed_texts) == 2
+    assert "SET @etl_date = '2024-06-01';" in executed_texts[0]
+    assert "SET @etl_date = '2024-06-02';" in executed_texts[0]
+    assert "SET @etl_date = '2024-06-03';" not in executed_texts[0]
+    assert (
+        "INSERT INTO shop_dm_qa.dws_order SELECT @etl_date;\n"
+        "SET @etl_date = '2024-06-02';"
+    ) in executed_texts[0]
+    assert "SET @etl_date = '2024-06-03';" in executed_texts[1]
+
+    phase_by_name = {phase["name"]: phase for phase in result["phases"]}
+    job_result = phase_by_name["run_jobs"]["jobs"][0]
+    assert job_result["invocation_count"] == 3
+    assert job_result["batch_count"] == 2
+    assert job_result["parallelism"] == 1
+    assert job_result["batch_size"] == 2
+
+
+def test_execute_shadow_plan_runs_same_job_slice_batches_in_parallel(
+    tmp_path, monkeypatch
+):
+    task_path = tmp_path / "shop" / "mid" / "tasks" / "dws_order.sql"
+    task_path.parent.mkdir(parents=True)
+    task_path.write_text(
+        "INSERT INTO shop_dm.dws_order SELECT @etl_date;",
+        encoding="utf-8",
+    )
+    plan = {
+        "project": "shop",
+        "project_db": "shop_dm",
+        "qa_db": "shop_dm_qa",
+        "baseline_ddl": {},
+        "ddl_changes": [],
+        "jobs_to_run": [
+            {
+                "job": "dws_order",
+                "file": "shop/mid/tasks/dws_order.sql",
+                "layer": "DWS",
+                "target": "dws_order",
+                "execution_values": [
+                    "2024-06-01",
+                    "2024-06-02",
+                    "2024-06-03",
+                ],
+            }
+        ],
+        "verification": {"checks": []},
+    }
+    lock = threading.Lock()
+    active = 0
+    max_active = 0
+
+    def fake_run_sql_text(sql_text, db="", qa=False):
+        nonlocal active, max_active
+        with lock:
+            active += 1
+            max_active = max(max_active, active)
+        time.sleep(0.05)
+        with lock:
+            active -= 1
+        return ""
+
+    monkeypatch.setattr(
+        "dw_refactor_agent.refactor.shadow_run._project_root",
+        lambda: tmp_path,
+    )
+    monkeypatch.setattr(
+        "dw_refactor_agent.refactor.shadow_run.run_sql",
+        lambda *args, **kwargs: "",
+    )
+    monkeypatch.setattr(
+        "dw_refactor_agent.refactor.shadow_run.run_sql_text",
+        fake_run_sql_text,
+    )
+
+    result = execute_shadow_plan(plan, parallel=2)
+
+    phase_by_name = {phase["name"]: phase for phase in result["phases"]}
+    job_result = phase_by_name["run_jobs"]["jobs"][0]
+    assert result["status"] == "completed"
+    assert max_active == 2
+    assert job_result["invocation_count"] == 3
+    assert job_result["batch_count"] == 3
+    assert job_result["parallelism"] == 2
+    assert job_result["batch_size"] == 1
 
 
 def test_execute_shadow_plan_logs_sql_progress_for_each_slice(
