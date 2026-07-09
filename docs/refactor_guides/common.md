@@ -129,3 +129,13 @@ python -m dw_refactor_agent.refactor.run analyze --manifest warehouses/<project>
 
 没有 `execution_values` 的 sliced incremental 作业会在 shadow-run dry-run
 或真实执行阶段失败；工具不会默认使用当天日期或全局 driver value 兜底。
+
+sliced job 较多时，可显式开启同一 job 内的切片并行和 mysql 会话批量复用：
+
+```bash
+python -m dw_refactor_agent.refactor.run shadow-run --manifest warehouses/<project>/artifacts/refactor_runs/<run_id>/manifest.json --parallel 4 --batch-size 2
+```
+
+`--parallel` 只控制同一 job 的 slice batch 并行度，`--batch-size` 控制每个
+mysql 会话中串联执行的 slice 数。job 与 job 之间仍按验证计划中的拓扑顺序执行，
+不启用 DAG ready jobs 并行。默认均为 `1`，保持串行兼容行为。

@@ -9,6 +9,7 @@ import re
 import subprocess
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -25,6 +26,7 @@ from dw_refactor_agent.config import PROJECT_ROOT, TEXT_ENCODING, get_mysql_cmd
 from dw_refactor_agent.execution.model_config import ExecutionConfigError
 from dw_refactor_agent.execution.planner import ExecutionPlanner
 from dw_refactor_agent.execution.sql_executor import ShadowSqlExecutor
+from dw_refactor_agent.execution.thread_pool import shutdown_executor
 from dw_refactor_agent.sql.doris import extract_create_table_name
 
 FINAL_ALTER_JOB_STATES = {"FINISHED", "CANCELLED"}
@@ -47,6 +49,14 @@ TABLE_RENAME_RE = re.compile(
 
 class ShadowRunSqlError(RuntimeError):
     """Raised when a SQL command fails during shadow-run execution."""
+
+
+class ShadowRunBatchError(ShadowRunSqlError):
+    """Raised when a batch fails after collecting invocation details."""
+
+    def __init__(self, message: str, invocations: list[dict]):
+        super().__init__(message)
+        self.invocations = invocations
 
 
 def _project_root() -> Path:
@@ -833,6 +843,9 @@ def _job_result(
     *,
     actual_execution_values: list[str] | None = None,
     invocation_count: int | None = None,
+    batch_count: int | None = None,
+    parallelism: int | None = None,
+    batch_size: int | None = None,
     invocations: list[dict] | None = None,
 ) -> dict:
     job_name = job.get("job")
@@ -851,6 +864,12 @@ def _job_result(
         result["actual_execution_values"] = list(actual_execution_values)
     if invocation_count is not None:
         result["invocation_count"] = invocation_count
+    if batch_count is not None:
+        result["batch_count"] = batch_count
+    if parallelism is not None:
+        result["parallelism"] = parallelism
+    if batch_size is not None:
+        result["batch_size"] = batch_size
     if invocations is not None:
         result["invocations"] = invocations
     if "needs_etl_date" in job:
@@ -912,6 +931,61 @@ def _job_for_driver_value(job: dict, driver_value: str | None) -> dict:
     return planned
 
 
+def _chunked(items: list, size: int) -> list[list]:
+    return [
+        items[index : index + size] for index in range(0, len(items), size)
+    ]
+
+
+def _include_batch_fields(parallel: int, batch_size: int) -> bool:
+    return parallel > 1 or batch_size > 1
+
+
+def _job_batch_kwargs(
+    invocation_count: int,
+    parallel: int,
+    batch_size: int,
+) -> dict:
+    if not _include_batch_fields(parallel, batch_size):
+        return {}
+    batch_count = (
+        (invocation_count + batch_size - 1) // batch_size
+        if invocation_count
+        else 0
+    )
+    return {
+        "batch_count": batch_count,
+        "parallelism": parallel,
+        "batch_size": batch_size,
+    }
+
+
+def _effective_parallel(parallel: int) -> int:
+    return max(1, int(parallel or 1))
+
+
+def _effective_batch_size(batch_size: int) -> int:
+    return max(1, int(batch_size or 1))
+
+
+def _batch_driver_values(
+    batch: list[tuple[str | None, object]],
+) -> list[str | None]:
+    values = []
+    for driver_value, _invocation in batch:
+        if driver_value is None or driver_value in values:
+            continue
+        values.append(driver_value)
+    return values
+
+
+def _execute_invocation_batch(
+    executor: ShadowSqlExecutor,
+    batch: list[tuple[str | None, object]],
+) -> None:
+    executor.execute_batch([invocation for _driver_value, invocation in batch])
+
+
 def _result_summary(plan: dict, phases: list[dict]) -> dict:
     phase_by_name = {phase.get("name"): phase for phase in phases}
     ddl_changes = phase_by_name.get("apply_ddl_changes", {}).get(
@@ -957,7 +1031,13 @@ def _failed_shadow_result(plan: dict, phases: list[dict]) -> dict:
     )
 
 
-def _dry_run_phases(plan: dict, *, timing_detail: bool = False) -> list[dict]:
+def _dry_run_phases(
+    plan: dict,
+    *,
+    timing_detail: bool = False,
+    parallel: int = 1,
+    batch_size: int = 1,
+) -> list[dict]:
     root = _project_root()
     baseline_ddl = plan.get("baseline_ddl", {})
     ddl_changes = plan.get("ddl_changes", [])
@@ -1024,6 +1104,11 @@ def _dry_run_phases(plan: dict, *, timing_detail: bool = False) -> list[dict]:
                         actual_execution_values=actual_values,
                         invocation_count=invocation_count,
                         invocations=invocation_results,
+                        **_job_batch_kwargs(
+                            invocation_count,
+                            parallel,
+                            batch_size,
+                        ),
                     ),
                     job_timer,
                 )
@@ -1061,6 +1146,11 @@ def _dry_run_phases(plan: dict, *, timing_detail: bool = False) -> list[dict]:
                         actual_execution_values=actual_values,
                         invocation_count=invocation_count,
                         invocations=invocation_results,
+                        **_job_batch_kwargs(
+                            invocation_count,
+                            parallel,
+                            batch_size,
+                        ),
                     ),
                     job_timer,
                 )
@@ -1075,6 +1165,11 @@ def _dry_run_phases(plan: dict, *, timing_detail: bool = False) -> list[dict]:
                         actual_execution_values=actual_values,
                         invocation_count=invocation_count,
                         invocations=invocation_results,
+                        **_job_batch_kwargs(
+                            invocation_count,
+                            parallel,
+                            batch_size,
+                        ),
                     ),
                     job_timer,
                 )
@@ -1098,17 +1193,29 @@ def _dry_run_phases(plan: dict, *, timing_detail: bool = False) -> list[dict]:
 
 
 def execute_shadow_plan(
-    plan: dict, *, dry_run: bool = False, timing_detail: bool = False
+    plan: dict,
+    *,
+    dry_run: bool = False,
+    timing_detail: bool = False,
+    parallel: int = 1,
+    batch_size: int = 1,
 ) -> dict:
     """Execute or preview a shadow-run validation plan."""
     result_timer = _start_timing()
+    parallel = _effective_parallel(parallel)
+    batch_size = _effective_batch_size(batch_size)
 
     def finish_result(result: dict) -> dict:
         return _finish_timing(result, result_timer)
 
     if dry_run:
         _dry_run(plan)
-        phases = _dry_run_phases(plan, timing_detail=timing_detail)
+        phases = _dry_run_phases(
+            plan,
+            timing_detail=timing_detail,
+            parallel=parallel,
+            batch_size=batch_size,
+        )
         summary = _result_summary(plan, phases)
         status = "failed" if summary["failed_job_count"] else "dry_run"
         return finish_result(
@@ -1338,6 +1445,7 @@ def execute_shadow_plan(
             phases.append(job_phase)
             return finish_result(_failed_shadow_result(plan, phases))
 
+        planned_invocations = []
         for driver_idx, driver_value in enumerate(driver_values, 1):
             if driver_value is not None:
                 _log(
@@ -1367,6 +1475,11 @@ def execute_shadow_plan(
                             actual_execution_values=actual_values,
                             invocation_count=invocation_count,
                             invocations=invocation_results,
+                            **_job_batch_kwargs(
+                                invocation_count,
+                                parallel,
+                                batch_size,
+                            ),
                         ),
                         job_timer,
                     )
@@ -1376,64 +1489,120 @@ def execute_shadow_plan(
                 phases.append(job_phase)
                 return finish_result(_failed_shadow_result(plan, phases))
 
+            for invocation in invocations:
+                planned_invocations.append((driver_value, invocation))
+
+        batches = _chunked(planned_invocations, batch_size)
+        invocation_count = len(planned_invocations)
+        batch_count = len(batches)
+        for driver_value, _invocation in planned_invocations:
+            _append_actual_execution_value(actual_values, driver_value)
+
+        def execute_batch(batch):
+            batch_timer = _start_timing()
+            for _batch_driver_value, batch_invocation in batch:
+                sql_path = _display_path(batch_invocation.sql_path, root)
+                _log(f"    SQL start: {sql_path}")
             try:
-                for invocation in invocations:
-                    _append_actual_execution_value(actual_values, driver_value)
-                    invocation_count += 1
-                    invocation_timer = _start_timing()
-                    sql_path = _display_path(invocation.sql_path, root)
-                    _log(f"    SQL start: {sql_path}")
-                    try:
-                        executor.execute(invocation)
-                    except Exception as exc:
-                        failed_invocation = _finish_timing(
-                            _invocation_result(
-                                driver_value,
-                                "failed",
-                                str(exc),
-                            ),
-                            invocation_timer,
-                        )
-                        _log(
-                            f"    SQL fail: {sql_path} "
-                            f"duration={failed_invocation['duration_ms']}ms "
-                            f"error={exc}"
-                        )
-                        if invocation_results is not None:
-                            invocation_results.append(failed_invocation)
-                        raise
-                    success_invocation = _finish_timing(
-                        _invocation_result(driver_value, "success"),
-                        invocation_timer,
-                    )
-                    _log(
-                        f"    SQL done: {sql_path} "
-                        f"duration={success_invocation['duration_ms']}ms"
-                    )
-                    if invocation_results is not None:
-                        invocation_results.append(success_invocation)
-                _log(f"  + {qa_db}.{job_name}")
+                _execute_invocation_batch(executor, batch)
             except Exception as exc:
-                _log(f"  [FAIL] {job_name}: {exc}")
-                job_results.append(
-                    _finish_timing(
-                        _job_result(
-                            job,
+                failed_invocations = []
+                for batch_driver_value, batch_invocation in batch:
+                    sql_path = _display_path(batch_invocation.sql_path, root)
+                    failed_invocation = _finish_timing(
+                        _invocation_result(
+                            batch_driver_value,
                             "failed",
                             str(exc),
-                            actual_execution_values=actual_values,
-                            invocation_count=invocation_count,
-                            invocations=invocation_results,
                         ),
-                        job_timer,
+                        dict(batch_timer),
                     )
+                    _log(
+                        f"    SQL fail: {sql_path} "
+                        f"duration={failed_invocation['duration_ms']}ms "
+                        f"error={exc}"
+                    )
+                    failed_invocations.append(failed_invocation)
+                raise ShadowRunBatchError(
+                    str(exc),
+                    failed_invocations,
+                ) from exc
+            success_invocations = []
+            for batch_driver_value, batch_invocation in batch:
+                sql_path = _display_path(batch_invocation.sql_path, root)
+                success_invocation = _finish_timing(
+                    _invocation_result(batch_driver_value, "success"),
+                    dict(batch_timer),
                 )
-                job_phase["status"] = "failed"
-                _finish_timing(job_phase, job_phase_timer)
-                phases.append(job_phase)
-                return finish_result(_failed_shadow_result(plan, phases))
+                _log(
+                    f"    SQL done: {sql_path} "
+                    f"duration={success_invocation['duration_ms']}ms"
+                )
+                success_invocations.append(success_invocation)
+            return {
+                "driver_values": _batch_driver_values(batch),
+                "invocations": success_invocations,
+            }
 
-            recalculated.add(job_name)
+        try:
+            if parallel == 1 or batch_count <= 1:
+                batch_results = [execute_batch(batch) for batch in batches]
+            else:
+                batch_results = []
+                executor_pool = ThreadPoolExecutor(
+                    max_workers=min(parallel, batch_count)
+                )
+                try:
+                    future_to_index = {
+                        executor_pool.submit(execute_batch, batch): index
+                        for index, batch in enumerate(batches)
+                    }
+                    indexed_results = []
+                    for future in as_completed(future_to_index):
+                        indexed_results.append(
+                            (future_to_index[future], future.result())
+                        )
+                    batch_results = [
+                        result for _index, result in sorted(indexed_results)
+                    ]
+                finally:
+                    shutdown_executor(executor_pool)
+
+            for batch_result in batch_results:
+                if invocation_results is not None:
+                    invocation_results.extend(batch_result["invocations"])
+            _log(f"  + {qa_db}.{job_name}")
+        except Exception as exc:
+            _log(f"  [FAIL] {job_name}: {exc}")
+            if invocation_results is not None and isinstance(
+                exc,
+                ShadowRunBatchError,
+            ):
+                invocation_results.extend(exc.invocations)
+            job_results.append(
+                _finish_timing(
+                    _job_result(
+                        job,
+                        "failed",
+                        str(exc),
+                        actual_execution_values=actual_values,
+                        invocation_count=invocation_count,
+                        invocations=invocation_results,
+                        **_job_batch_kwargs(
+                            invocation_count,
+                            parallel,
+                            batch_size,
+                        ),
+                    ),
+                    job_timer,
+                )
+            )
+            job_phase["status"] = "failed"
+            _finish_timing(job_phase, job_phase_timer)
+            phases.append(job_phase)
+            return finish_result(_failed_shadow_result(plan, phases))
+
+        recalculated.add(job_name)
 
         job_results.append(
             _finish_timing(
@@ -1443,6 +1612,11 @@ def execute_shadow_plan(
                     actual_execution_values=actual_values,
                     invocation_count=invocation_count,
                     invocations=invocation_results,
+                    **_job_batch_kwargs(
+                        invocation_count,
+                        parallel,
+                        batch_size,
+                    ),
                 ),
                 job_timer,
             )
@@ -1469,13 +1643,19 @@ def run_shadow_plan(
     *,
     dry_run: bool = False,
     timing_detail: bool = False,
+    parallel: int = 1,
+    batch_size: int = 1,
 ) -> dict:
     """Run or dry-run a validation plan and write the execution result."""
     plan_path = Path(plan_path)
     output_path = Path(output_path)
     plan = json.loads(plan_path.read_text(encoding=TEXT_ENCODING))
     result = execute_shadow_plan(
-        plan, dry_run=dry_run, timing_detail=timing_detail
+        plan,
+        dry_run=dry_run,
+        timing_detail=timing_detail,
+        parallel=parallel,
+        batch_size=batch_size,
     )
     result.update(
         {
@@ -1644,6 +1824,18 @@ def build_parser() -> argparse.ArgumentParser:
         dest="timing_detail",
         help="记录每次 job invocation/slice 的耗时明细",
     )
+    parser.add_argument(
+        "--parallel",
+        type=int,
+        default=1,
+        help="同一 job 内 slice batch 并行度, 默认 1",
+    )
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=1,
+        help="每个 mysql 会话批量执行的 slice 数, 默认 1",
+    )
     return parser
 
 
@@ -1661,6 +1853,8 @@ def main(argv: list[str] | None = None) -> int:
         output_path,
         dry_run=args.dry_run,
         timing_detail=args.timing_detail,
+        parallel=args.parallel,
+        batch_size=args.batch_size,
     )
     return 1 if result.get("status") == "failed" else 0
 
