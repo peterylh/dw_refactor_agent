@@ -579,7 +579,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--parallel",
         type=int,
         default=1,
-        help="same-job slice batch parallelism, default 1",
+        help="global shadow-run mysql concurrency, default 1",
     )
     shadow.add_argument(
         "--batch-size",

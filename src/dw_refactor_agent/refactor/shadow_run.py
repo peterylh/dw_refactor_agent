@@ -8,8 +8,14 @@ import json
 import re
 import subprocess
 import sys
+import threading
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import (
+    FIRST_COMPLETED,
+    ThreadPoolExecutor,
+    as_completed,
+    wait,
+)
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -22,11 +28,13 @@ from sqlglot import exp
 from sqlglot.errors import ErrorLevel
 from sqlglot.tokens import Tokenizer, TokenType
 
+import dw_refactor_agent.config as config
 from dw_refactor_agent.config import PROJECT_ROOT, TEXT_ENCODING, get_mysql_cmd
 from dw_refactor_agent.execution.model_config import ExecutionConfigError
 from dw_refactor_agent.execution.planner import ExecutionPlanner
 from dw_refactor_agent.execution.sql_executor import ShadowSqlExecutor
 from dw_refactor_agent.execution.thread_pool import shutdown_executor
+from dw_refactor_agent.lineage.job_dag import JobDAG
 from dw_refactor_agent.sql.doris import extract_create_table_name
 
 FINAL_ALTER_JOB_STATES = {"FINISHED", "CANCELLED"}
@@ -986,6 +994,485 @@ def _execute_invocation_batch(
     executor.execute_batch([invocation for _driver_value, invocation in batch])
 
 
+def _job_dag_artifact_path(project: str, root: Path) -> Path:
+    cfg = config.core.PROJECT_CONFIG.get(project)
+    if cfg and cfg.get("dir"):
+        project_dir = Path(cfg["dir"])
+        if not project_dir.is_absolute():
+            project_dir = Path(root) / project_dir
+    else:
+        project_dir = Path(root) / "warehouses" / project
+    return project_dir / "artifacts" / "lineage" / "job_dag.json"
+
+
+def _serial_job_dependencies(
+    jobs_to_run: list[dict],
+) -> tuple[dict[str, int], dict[str, list[str]]]:
+    job_names = [job["job"] for job in jobs_to_run]
+    in_degree = dict.fromkeys(job_names, 0)
+    adj = {job_name: [] for job_name in job_names}
+    for upstream, downstream in zip(job_names, job_names[1:]):
+        adj[upstream].append(downstream)
+        in_degree[downstream] += 1
+    return in_degree, adj
+
+
+def _job_dependencies_from_plan(
+    plan: dict,
+    root: Path,
+) -> tuple[dict[str, int], dict[str, list[str]], str, list[str]]:
+    jobs_to_run = plan.get("jobs_to_run", [])
+    job_names = [job["job"] for job in jobs_to_run]
+    job_set = set(job_names)
+    if len(job_names) <= 1:
+        return (
+            dict.fromkeys(job_names, 0),
+            {job_name: [] for job_name in job_names},
+            "trivial",
+            [],
+        )
+
+    job_dependencies = plan.get("job_dependencies")
+    if isinstance(job_dependencies, dict):
+        in_degree = dict.fromkeys(job_names, 0)
+        adj = {job_name: [] for job_name in job_names}
+        for downstream, upstreams in job_dependencies.items():
+            if downstream not in job_set:
+                continue
+            for upstream in upstreams or []:
+                if upstream not in job_set:
+                    continue
+                adj[upstream].append(downstream)
+                in_degree[downstream] += 1
+        return in_degree, adj, "plan", []
+
+    dag_path = _job_dag_artifact_path(str(plan.get("project") or ""), root)
+    if dag_path.exists():
+        dag = JobDAG.load(dag_path)
+        in_degree, adj = dag.compute_in_degree(job_set)
+        return in_degree, adj, "lineage_dag", []
+
+    in_degree, adj = _serial_job_dependencies(jobs_to_run)
+    warning = (
+        f"job DAG artifact not found: {dag_path}; "
+        "falling back to serial jobs_to_run order"
+    )
+    return in_degree, adj, "serial_fallback", [warning]
+
+
+def _skipped_shadow_job_result(
+    job: dict,
+    reason: str,
+    *,
+    parallel: int,
+    batch_size: int,
+    timing_detail: bool,
+) -> dict:
+    timer = _start_timing()
+    invocation_results = [] if timing_detail else None
+    return _finish_timing(
+        _job_result(
+            job,
+            "skipped",
+            reason,
+            actual_execution_values=[],
+            invocation_count=0,
+            invocations=invocation_results,
+            **_job_batch_kwargs(0, parallel, batch_size),
+        ),
+        timer,
+    )
+
+
+def _execute_shadow_job(
+    job: dict,
+    *,
+    job_index: int,
+    job_count: int,
+    root: Path,
+    planner: ExecutionPlanner,
+    prod_db: str,
+    qa_db: str,
+    recalculated: set,
+    recalculated_lock: threading.Lock,
+    batch_semaphore: threading.Semaphore,
+    parallel: int,
+    batch_size: int,
+    timing_detail: bool,
+) -> dict:
+    job_name = job["job"]
+    job_file = job["file"]
+    layer = job.get("layer", "?")
+    actual_values = []
+    invocation_count = 0
+    invocation_results = [] if timing_detail else None
+    job_timer = _start_timing()
+
+    _log(f"\n  --- {job_index}/{job_count}: [{layer}] {job_name} ---")
+    file_path = root / job_file
+    if not file_path.exists():
+        error = f"文件不存在: {file_path}"
+        _log(f"  [FAIL] {error}")
+        return _finish_timing(
+            _job_result(
+                job,
+                "failed",
+                error,
+                actual_execution_values=actual_values,
+                invocation_count=invocation_count,
+                invocations=invocation_results,
+                **_job_batch_kwargs(invocation_count, parallel, batch_size),
+            ),
+            job_timer,
+        )
+
+    try:
+        spec = planner.task_spec(job_name, file_path)
+        driver_values = _job_driver_values(job, spec)
+    except ExecutionConfigError as exc:
+        _log(f"  [FAIL] {job_name}: {exc}")
+        return _finish_timing(
+            _job_result(
+                job,
+                "failed",
+                str(exc),
+                actual_execution_values=actual_values,
+                invocation_count=invocation_count,
+                invocations=invocation_results,
+                **_job_batch_kwargs(invocation_count, parallel, batch_size),
+            ),
+            job_timer,
+        )
+
+    planned_invocations = []
+    for driver_idx, driver_value in enumerate(driver_values, 1):
+        if driver_value is not None:
+            _log(
+                f"\n  === replay slice "
+                f"{driver_idx}/{len(driver_values)}: "
+                f"{driver_value} ==="
+            )
+            _log(
+                f"  slice {driver_idx}/{len(driver_values)}: "
+                f"{spec.slice_param or 'execution_value'}={driver_value}"
+            )
+        planned_job = _job_for_driver_value(job, driver_value)
+
+        try:
+            invocations = planner.plan_shadow_job(
+                planned_job,
+                project_root=root,
+            )
+        except ExecutionConfigError as exc:
+            _log(f"  [FAIL] {job_name}: {exc}")
+            return _finish_timing(
+                _job_result(
+                    job,
+                    "failed",
+                    str(exc),
+                    actual_execution_values=actual_values,
+                    invocation_count=invocation_count,
+                    invocations=invocation_results,
+                    **_job_batch_kwargs(
+                        invocation_count,
+                        parallel,
+                        batch_size,
+                    ),
+                ),
+                job_timer,
+            )
+
+        for invocation in invocations:
+            planned_invocations.append((driver_value, invocation))
+
+    batches = _chunked(planned_invocations, batch_size)
+    invocation_count = len(planned_invocations)
+    batch_count = len(batches)
+    for driver_value, _invocation in planned_invocations:
+        _append_actual_execution_value(actual_values, driver_value)
+
+    def execute_batch(batch):
+        batch_timer = _start_timing()
+        for _batch_driver_value, batch_invocation in batch:
+            sql_path = _display_path(batch_invocation.sql_path, root)
+            _log(f"    SQL start: {sql_path}")
+        batch_semaphore.acquire()
+        try:
+            with recalculated_lock:
+                recalculated_snapshot = set(recalculated)
+            executor = ShadowSqlExecutor(
+                prod_db=prod_db,
+                qa_db=qa_db,
+                recalculated=recalculated_snapshot,
+                rewrite_sql=rewrite_sql,
+                run_sql_text=run_sql_text,
+            )
+            _execute_invocation_batch(executor, batch)
+        except Exception as exc:
+            failed_invocations = []
+            for batch_driver_value, batch_invocation in batch:
+                sql_path = _display_path(batch_invocation.sql_path, root)
+                failed_invocation = _finish_timing(
+                    _invocation_result(
+                        batch_driver_value,
+                        "failed",
+                        str(exc),
+                    ),
+                    dict(batch_timer),
+                )
+                _log(
+                    f"    SQL fail: {sql_path} "
+                    f"duration={failed_invocation['duration_ms']}ms "
+                    f"error={exc}"
+                )
+                failed_invocations.append(failed_invocation)
+            raise ShadowRunBatchError(
+                str(exc),
+                failed_invocations,
+            ) from exc
+        finally:
+            batch_semaphore.release()
+        success_invocations = []
+        for batch_driver_value, batch_invocation in batch:
+            sql_path = _display_path(batch_invocation.sql_path, root)
+            success_invocation = _finish_timing(
+                _invocation_result(batch_driver_value, "success"),
+                dict(batch_timer),
+            )
+            _log(
+                f"    SQL done: {sql_path} "
+                f"duration={success_invocation['duration_ms']}ms"
+            )
+            success_invocations.append(success_invocation)
+        return {
+            "driver_values": _batch_driver_values(batch),
+            "invocations": success_invocations,
+        }
+
+    try:
+        if parallel == 1 or batch_count <= 1:
+            batch_results = [execute_batch(batch) for batch in batches]
+        else:
+            executor_pool = ThreadPoolExecutor(
+                max_workers=min(parallel, batch_count)
+            )
+            try:
+                future_to_index = {
+                    executor_pool.submit(execute_batch, batch): index
+                    for index, batch in enumerate(batches)
+                }
+                indexed_results = []
+                for future in as_completed(future_to_index):
+                    indexed_results.append(
+                        (future_to_index[future], future.result())
+                    )
+                batch_results = [
+                    result for _index, result in sorted(indexed_results)
+                ]
+            finally:
+                shutdown_executor(executor_pool)
+
+        for batch_result in batch_results:
+            if invocation_results is not None:
+                invocation_results.extend(batch_result["invocations"])
+        _log(f"  + {qa_db}.{job_name}")
+    except Exception as exc:
+        _log(f"  [FAIL] {job_name}: {exc}")
+        if invocation_results is not None and isinstance(
+            exc,
+            ShadowRunBatchError,
+        ):
+            invocation_results.extend(exc.invocations)
+        return _finish_timing(
+            _job_result(
+                job,
+                "failed",
+                str(exc),
+                actual_execution_values=actual_values,
+                invocation_count=invocation_count,
+                invocations=invocation_results,
+                **_job_batch_kwargs(invocation_count, parallel, batch_size),
+            ),
+            job_timer,
+        )
+
+    with recalculated_lock:
+        recalculated.add(job_name)
+
+    return _finish_timing(
+        _job_result(
+            job,
+            "success",
+            actual_execution_values=actual_values,
+            invocation_count=invocation_count,
+            invocations=invocation_results,
+            **_job_batch_kwargs(invocation_count, parallel, batch_size),
+        ),
+        job_timer,
+    )
+
+
+def _run_shadow_jobs(
+    plan: dict,
+    *,
+    root: Path,
+    prod_db: str,
+    qa_db: str,
+    planner: ExecutionPlanner,
+    parallel: int,
+    batch_size: int,
+    timing_detail: bool,
+) -> dict:
+    jobs_to_run = plan.get("jobs_to_run", [])
+    job_phase_timer = _start_timing()
+    job_count = len(jobs_to_run)
+    job_results_by_name = {}
+    phase = {
+        "name": "run_jobs",
+        "status": "success",
+        "jobs": [],
+        "parallelism": parallel,
+    }
+    if job_count == 0:
+        phase["scheduler"] = "empty"
+        _finish_timing(phase, job_phase_timer)
+        return phase
+
+    recalculated = set()
+    recalculated_lock = threading.Lock()
+    batch_semaphore = threading.Semaphore(parallel)
+    in_degree, adj, scheduler, warnings = _job_dependencies_from_plan(
+        plan,
+        root,
+    )
+    job_by_name = {job["job"]: job for job in jobs_to_run}
+    index_by_name = {
+        job["job"]: index for index, job in enumerate(jobs_to_run, 1)
+    }
+    remaining = set(job_by_name)
+    ready = sorted(
+        [
+            job_name
+            for job_name in remaining
+            if in_degree.get(job_name, 0) == 0
+        ],
+        key=lambda job_name: index_by_name[job_name],
+    )
+    running = {}
+    failed = False
+
+    phase["scheduler"] = scheduler
+    if warnings:
+        phase["warnings"] = list(warnings)
+        for warning in warnings:
+            _log(f"  警告: {warning}")
+
+    def submit_job(executor_pool, job_name: str) -> None:
+        remaining.remove(job_name)
+        future = executor_pool.submit(
+            _execute_shadow_job,
+            job_by_name[job_name],
+            job_index=index_by_name[job_name],
+            job_count=job_count,
+            root=root,
+            planner=planner,
+            prod_db=prod_db,
+            qa_db=qa_db,
+            recalculated=recalculated,
+            recalculated_lock=recalculated_lock,
+            batch_semaphore=batch_semaphore,
+            parallel=parallel,
+            batch_size=batch_size,
+            timing_detail=timing_detail,
+        )
+        running[future] = job_name
+
+    executor_pool = ThreadPoolExecutor(max_workers=min(parallel, job_count))
+    try:
+        while ready or running:
+            while ready and not failed:
+                submit_job(executor_pool, ready.pop(0))
+            if not running:
+                break
+            done, _pending = wait(
+                list(running),
+                return_when=FIRST_COMPLETED,
+            )
+            for future in done:
+                job_name = running.pop(future)
+                try:
+                    job_result = future.result()
+                except Exception as exc:
+                    job_result = _finish_timing(
+                        _job_result(
+                            job_by_name[job_name],
+                            "failed",
+                            str(exc),
+                            actual_execution_values=[],
+                            invocation_count=0,
+                            **_job_batch_kwargs(0, parallel, batch_size),
+                        ),
+                        _start_timing(),
+                    )
+                job_results_by_name[job_name] = job_result
+                if job_result.get("status") != "success":
+                    failed = True
+                    phase["status"] = "failed"
+                    continue
+                if failed:
+                    continue
+                for downstream in sorted(
+                    adj.get(job_name, []),
+                    key=lambda item: index_by_name.get(item, 0),
+                ):
+                    in_degree[downstream] -= 1
+                    if in_degree[downstream] == 0 and downstream in remaining:
+                        ready.append(downstream)
+                ready.sort(key=lambda item: index_by_name[item])
+    finally:
+        shutdown_executor(executor_pool)
+
+    if remaining and not failed:
+        failed = True
+        phase["status"] = "failed"
+        skip_reason = "job dependency cycle or unsatisfied dependency"
+        for job_name in sorted(
+            remaining, key=lambda item: index_by_name[item]
+        ):
+            job_results_by_name[job_name] = _skipped_shadow_job_result(
+                job_by_name[job_name],
+                skip_reason,
+                parallel=parallel,
+                batch_size=batch_size,
+                timing_detail=timing_detail,
+            )
+
+    if failed:
+        skip_reason = "upstream job failed"
+        for job_name in sorted(
+            remaining, key=lambda item: index_by_name[item]
+        ):
+            if job_name in job_results_by_name:
+                continue
+            job_results_by_name[job_name] = _skipped_shadow_job_result(
+                job_by_name[job_name],
+                skip_reason,
+                parallel=parallel,
+                batch_size=batch_size,
+                timing_detail=timing_detail,
+            )
+
+    phase["jobs"] = [
+        job_results_by_name[job["job"]]
+        for job in jobs_to_run
+        if job["job"] in job_results_by_name
+    ]
+    if any(job.get("status") == "failed" for job in phase["jobs"]):
+        phase["status"] = "failed"
+    _finish_timing(phase, job_phase_timer)
+    return phase
+
+
 def _result_summary(plan: dict, phases: list[dict]) -> dict:
     phase_by_name = {phase.get("name"): phase for phase in phases}
     ddl_changes = phase_by_name.get("apply_ddl_changes", {}).get(
@@ -1372,258 +1859,22 @@ def execute_shadow_plan(
 
     _log(f"\n{'=' * 60}")
     _log(f"Phase 3: 执行作业 ({len(jobs_to_run)} 个)")
-    job_phase_timer = _start_timing()
-    recalculated = set()
     root = _project_root()
     planner = ExecutionPlanner(plan["project"], project_root=root)
-    job_results = []
-    job_phase = {
-        "name": "run_jobs",
-        "status": "success",
-        "jobs": job_results,
-    }
-
-    executor = ShadowSqlExecutor(
+    job_phase = _run_shadow_jobs(
+        plan,
+        root=root,
         prod_db=prod_db,
         qa_db=qa_db,
-        recalculated=recalculated,
-        rewrite_sql=rewrite_sql,
-        run_sql_text=run_sql_text,
+        planner=planner,
+        parallel=parallel,
+        batch_size=batch_size,
+        timing_detail=timing_detail,
     )
-    for idx, job in enumerate(jobs_to_run, 1):
-        job_name = job["job"]
-        job_file = job["file"]
-        layer = job.get("layer", "?")
-        actual_values = []
-        invocation_count = 0
-        invocation_results = [] if timing_detail else None
-        job_timer = _start_timing()
-
-        _log(f"\n  --- {idx}/{len(jobs_to_run)}: [{layer}] {job_name} ---")
-        file_path = root / job_file
-        if not file_path.exists():
-            error = f"文件不存在: {file_path}"
-            _log(f"  [FAIL] {error}")
-            job_results.append(
-                _finish_timing(
-                    _job_result(
-                        job,
-                        "failed",
-                        error,
-                        actual_execution_values=actual_values,
-                        invocation_count=invocation_count,
-                        invocations=invocation_results,
-                    ),
-                    job_timer,
-                )
-            )
-            job_phase["status"] = "failed"
-            _finish_timing(job_phase, job_phase_timer)
-            phases.append(job_phase)
-            return finish_result(_failed_shadow_result(plan, phases))
-
-        try:
-            spec = planner.task_spec(job_name, file_path)
-            driver_values = _job_driver_values(job, spec)
-        except ExecutionConfigError as exc:
-            _log(f"  [FAIL] {job_name}: {exc}")
-            job_results.append(
-                _finish_timing(
-                    _job_result(
-                        job,
-                        "failed",
-                        str(exc),
-                        actual_execution_values=actual_values,
-                        invocation_count=invocation_count,
-                        invocations=invocation_results,
-                    ),
-                    job_timer,
-                )
-            )
-            job_phase["status"] = "failed"
-            _finish_timing(job_phase, job_phase_timer)
-            phases.append(job_phase)
-            return finish_result(_failed_shadow_result(plan, phases))
-
-        planned_invocations = []
-        for driver_idx, driver_value in enumerate(driver_values, 1):
-            if driver_value is not None:
-                _log(
-                    f"\n  === replay slice "
-                    f"{driver_idx}/{len(driver_values)}: "
-                    f"{driver_value} ==="
-                )
-                _log(
-                    f"  slice {driver_idx}/{len(driver_values)}: "
-                    f"{spec.slice_param or 'execution_value'}={driver_value}"
-                )
-            planned_job = _job_for_driver_value(job, driver_value)
-
-            try:
-                invocations = planner.plan_shadow_job(
-                    planned_job,
-                    project_root=root,
-                )
-            except ExecutionConfigError as exc:
-                _log(f"  [FAIL] {job_name}: {exc}")
-                job_results.append(
-                    _finish_timing(
-                        _job_result(
-                            job,
-                            "failed",
-                            str(exc),
-                            actual_execution_values=actual_values,
-                            invocation_count=invocation_count,
-                            invocations=invocation_results,
-                            **_job_batch_kwargs(
-                                invocation_count,
-                                parallel,
-                                batch_size,
-                            ),
-                        ),
-                        job_timer,
-                    )
-                )
-                job_phase["status"] = "failed"
-                _finish_timing(job_phase, job_phase_timer)
-                phases.append(job_phase)
-                return finish_result(_failed_shadow_result(plan, phases))
-
-            for invocation in invocations:
-                planned_invocations.append((driver_value, invocation))
-
-        batches = _chunked(planned_invocations, batch_size)
-        invocation_count = len(planned_invocations)
-        batch_count = len(batches)
-        for driver_value, _invocation in planned_invocations:
-            _append_actual_execution_value(actual_values, driver_value)
-
-        def execute_batch(batch):
-            batch_timer = _start_timing()
-            for _batch_driver_value, batch_invocation in batch:
-                sql_path = _display_path(batch_invocation.sql_path, root)
-                _log(f"    SQL start: {sql_path}")
-            try:
-                _execute_invocation_batch(executor, batch)
-            except Exception as exc:
-                failed_invocations = []
-                for batch_driver_value, batch_invocation in batch:
-                    sql_path = _display_path(batch_invocation.sql_path, root)
-                    failed_invocation = _finish_timing(
-                        _invocation_result(
-                            batch_driver_value,
-                            "failed",
-                            str(exc),
-                        ),
-                        dict(batch_timer),
-                    )
-                    _log(
-                        f"    SQL fail: {sql_path} "
-                        f"duration={failed_invocation['duration_ms']}ms "
-                        f"error={exc}"
-                    )
-                    failed_invocations.append(failed_invocation)
-                raise ShadowRunBatchError(
-                    str(exc),
-                    failed_invocations,
-                ) from exc
-            success_invocations = []
-            for batch_driver_value, batch_invocation in batch:
-                sql_path = _display_path(batch_invocation.sql_path, root)
-                success_invocation = _finish_timing(
-                    _invocation_result(batch_driver_value, "success"),
-                    dict(batch_timer),
-                )
-                _log(
-                    f"    SQL done: {sql_path} "
-                    f"duration={success_invocation['duration_ms']}ms"
-                )
-                success_invocations.append(success_invocation)
-            return {
-                "driver_values": _batch_driver_values(batch),
-                "invocations": success_invocations,
-            }
-
-        try:
-            if parallel == 1 or batch_count <= 1:
-                batch_results = [execute_batch(batch) for batch in batches]
-            else:
-                batch_results = []
-                executor_pool = ThreadPoolExecutor(
-                    max_workers=min(parallel, batch_count)
-                )
-                try:
-                    future_to_index = {
-                        executor_pool.submit(execute_batch, batch): index
-                        for index, batch in enumerate(batches)
-                    }
-                    indexed_results = []
-                    for future in as_completed(future_to_index):
-                        indexed_results.append(
-                            (future_to_index[future], future.result())
-                        )
-                    batch_results = [
-                        result for _index, result in sorted(indexed_results)
-                    ]
-                finally:
-                    shutdown_executor(executor_pool)
-
-            for batch_result in batch_results:
-                if invocation_results is not None:
-                    invocation_results.extend(batch_result["invocations"])
-            _log(f"  + {qa_db}.{job_name}")
-        except Exception as exc:
-            _log(f"  [FAIL] {job_name}: {exc}")
-            if invocation_results is not None and isinstance(
-                exc,
-                ShadowRunBatchError,
-            ):
-                invocation_results.extend(exc.invocations)
-            job_results.append(
-                _finish_timing(
-                    _job_result(
-                        job,
-                        "failed",
-                        str(exc),
-                        actual_execution_values=actual_values,
-                        invocation_count=invocation_count,
-                        invocations=invocation_results,
-                        **_job_batch_kwargs(
-                            invocation_count,
-                            parallel,
-                            batch_size,
-                        ),
-                    ),
-                    job_timer,
-                )
-            )
-            job_phase["status"] = "failed"
-            _finish_timing(job_phase, job_phase_timer)
-            phases.append(job_phase)
-            return finish_result(_failed_shadow_result(plan, phases))
-
-        recalculated.add(job_name)
-
-        job_results.append(
-            _finish_timing(
-                _job_result(
-                    job,
-                    "success",
-                    actual_execution_values=actual_values,
-                    invocation_count=invocation_count,
-                    invocations=invocation_results,
-                    **_job_batch_kwargs(
-                        invocation_count,
-                        parallel,
-                        batch_size,
-                    ),
-                ),
-                job_timer,
-            )
-        )
-    _finish_timing(job_phase, job_phase_timer)
     _log(f"Phase 3 完成 duration={job_phase['duration_ms']}ms")
     phases.append(job_phase)
+    if job_phase.get("status") == "failed":
+        return finish_result(_failed_shadow_result(plan, phases))
 
     _log(f"\n{'=' * 60}")
     _log(f"Shadow run 完成! 共执行 {len(jobs_to_run)} 个作业, 目标库: {qa_db}")
@@ -1828,7 +2079,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--parallel",
         type=int,
         default=1,
-        help="同一 job 内 slice batch 并行度, 默认 1",
+        help="shadow-run 全局 mysql 并发度, 默认 1",
     )
     parser.add_argument(
         "--batch-size",
