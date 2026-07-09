@@ -50,6 +50,7 @@ from dw_refactor_agent.assessment.llm.metadata_flow import (
 from dw_refactor_agent.assessment.llm.table_inspector import (
     TableInspector,
     TableInspectResult,
+    normalize_chat_completions_url,
 )
 from dw_refactor_agent.assessment.llm.table_inspector import (
     dict_to_result as inspect_dict_to_result,
@@ -93,6 +94,13 @@ from dw_refactor_agent.lineage.table_graph import load_lineage_data
 WRITE_SCOPES = {"all", "table", "metrics", "grain", "business"}
 DATA_DOMAIN_LAYERS = {"DWD"}
 BUSINESS_AREA_LAYERS = {"DWD", "DWS"}
+CONTEXT_HINTS_KEY = "context_hints"
+DWD_INTERMEDIATE_DOWNSTREAM_MODEL_HINT = "dwd_intermediate_downstream_model"
+DWD_FACT_FROM_DWD_SOURCE_HINT = "dwd_fact_from_dwd_source"
+DIM_SURROGATE_FROM_DWD_SOURCE_HINT = "dim_surrogate_from_dwd_source"
+DWS_REUSABLE_SNAPSHOT_HINT = "dws_reusable_snapshot"
+DWS_ENTITY_METRIC_SUMMARY_HINT = "dws_entity_metric_summary"
+DIM_ENTITY_SNAPSHOT_HINT = "dim_entity_snapshot"
 DDL_NON_COLUMN_PREFIXES = {
     "AGGREGATE",
     "CREATE",
@@ -134,7 +142,7 @@ def _new_table_inspector(
         "request_timeout": request_timeout,
     }
     if base_url:
-        kwargs["base_url"] = base_url
+        kwargs["base_url"] = normalize_chat_completions_url(base_url)
     try:
         return TableInspector(api_key, **kwargs)
     except TypeError as exc:
@@ -654,16 +662,264 @@ def discover_related_entities_from_grain(
     return discovered
 
 
+def _numeric_suffix_base(table_name: str) -> tuple[str, str]:
+    match = re.match(r"^(.*)_([0-9]+)$", str(table_name or ""))
+    if not match:
+        return str(table_name or ""), ""
+    return match.group(1), match.group(2)
+
+
+def _singularize_token(token: str) -> str:
+    if len(token) > 3 and token.endswith("ies"):
+        return f"{token[:-3]}y"
+    if len(token) > 2 and token.endswith("s"):
+        return token[:-1]
+    return token
+
+
+def _canonical_entity_name(table_name: str) -> str:
+    base, _suffix = _numeric_suffix_base(table_name)
+    tokens = [
+        _singularize_token(token)
+        for token in re.split(r"[^a-zA-Z0-9]+", base.lower())
+        if token
+    ]
+    return "_".join(tokens)
+
+
+def _looks_like_downstream_model(
+    current_table: str,
+    downstream_table: str,
+) -> bool:
+    _base, suffix = _numeric_suffix_base(current_table)
+    if not suffix:
+        return False
+    current = _canonical_entity_name(current_table)
+    downstream = _canonical_entity_name(downstream_table)
+    if not current or not downstream:
+        return False
+    return downstream == current or downstream in current
+
+
+def _looks_like_same_entity_table(left: str, right: str) -> bool:
+    left_entity = _canonical_entity_name(left)
+    right_entity = _canonical_entity_name(right)
+    return bool(
+        left_entity
+        and right_entity
+        and (left_entity == right_entity or left_entity in right_entity)
+    )
+
+
+def _surrogate_key_columns(context: TableContext) -> set[str]:
+    text = f"{context.ddl}\n{context.etl_sql}"
+    return {
+        match.group(1).lower()
+        for match in re.finditer(
+            r"\b([a-zA-Z_][a-zA-Z0-9_]*_key)\b",
+            text,
+            flags=re.IGNORECASE,
+        )
+        if match.group(1).lower() not in {"primary_key", "foreign_key"}
+        and not match.group(1).lower().endswith("_natural_key")
+    }
+
+
+def _has_group_by(sql: str) -> bool:
+    return bool(re.search(r"\bGROUP\s+BY\b", sql or "", flags=re.IGNORECASE))
+
+
+def _combined_context_text(context: TableContext) -> str:
+    return f"{context.table_name}\n{context.ddl}\n{context.etl_sql}".lower()
+
+
+def _has_fact_metric_signal(context: TableContext) -> bool:
+    text = _combined_context_text(context)
+    return any(
+        token in text
+        for token in (
+            "_amount",
+            "_balance",
+            "_count",
+            "_flag",
+            "_pct",
+            "_rate",
+            "_score",
+            "avg_",
+            "count(",
+            "days_in_",
+            "lifetime_value",
+            "logins",
+            "sum(",
+            "total_",
+            "visits",
+        )
+    )
+
+
+def _has_business_event_measure_signal(context: TableContext) -> bool:
+    text = _combined_context_text(context)
+    return any(
+        token in text
+        for token in (
+            "_balance",
+            "_count",
+            "_flag",
+            "_qty",
+            "balance",
+            "count(",
+            "quantity",
+            "sum(",
+            "total_",
+        )
+    )
+
+
+def _has_same_entity_dwd_upstream(
+    result: TableInspectResult,
+    context: TableContext,
+) -> bool:
+    return any(
+        str(context.upstream_table_layers.get(upstream_table) or "").upper()
+        == "DWD"
+        and _looks_like_same_entity_table(result.table_name, upstream_table)
+        for upstream_table in context.upstream_tables
+    )
+
+
+def _looks_like_dim_surrogate_from_dwd_source(
+    result: TableInspectResult,
+    context: TableContext,
+) -> bool:
+    if _has_group_by(context.etl_sql):
+        return False
+    if len(_surrogate_key_columns(context)) != 1:
+        return False
+    if not context.upstream_tables:
+        return False
+    return _has_same_entity_dwd_upstream(result, context)
+
+
+def _looks_like_dwd_fact_from_dwd_source(
+    result: TableInspectResult,
+    context: TableContext,
+) -> bool:
+    if _looks_like_dim_surrogate_from_dwd_source(result, context):
+        return False
+    if not _has_same_entity_dwd_upstream(result, context):
+        return False
+    return _has_fact_metric_signal(context)
+
+
+def _looks_like_dws_entity_metric_summary(context: TableContext) -> bool:
+    return _has_group_by(context.etl_sql) and _has_fact_metric_signal(context)
+
+
+def _looks_like_dws_reusable_snapshot(
+    context: TableContext,
+) -> bool:
+    table_name = context.table_name.lower()
+    if not any(
+        token in table_name
+        for token in ("daily", "monthly", "snapshot", "metric")
+    ):
+        return False
+    if not _has_fact_metric_signal(context):
+        return False
+    sql = context.etl_sql.lower()
+    if _has_group_by(sql):
+        return True
+    return bool(
+        re.search(
+            r"\bjoin\b[^\n;]*\b[a-zA-Z0-9_]*(daily|summary|snapshot|metric)",
+            sql,
+            flags=re.IGNORECASE,
+        )
+    )
+
+
+def _looks_like_dim_entity_snapshot(
+    result: TableInspectResult,
+    context: TableContext,
+) -> bool:
+    if _has_group_by(context.etl_sql):
+        return False
+    _base, suffix = _numeric_suffix_base(result.table_name)
+    if not suffix:
+        return False
+    text = _combined_context_text(context)
+    if "snapshot_date" not in text:
+        return False
+    return not _has_business_event_measure_signal(context)
+
+
+def _append_context_hint(result: TableInspectResult, hint: str) -> None:
+    hints = list(result.validation.get(CONTEXT_HINTS_KEY) or [])
+    if hint not in hints:
+        hints.append(hint)
+    result.validation[CONTEXT_HINTS_KEY] = hints
+
+
+def _apply_layer_context_hints(
+    result: TableInspectResult,
+    context: TableContext | None,
+) -> None:
+    if context is None:
+        return
+    context_layer = str(context.layer or "").upper()
+    if (
+        context_layer == "DWD"
+        and result.inferred_layer == "DWD"
+        and result.table_type == "fact"
+        and _looks_like_dim_surrogate_from_dwd_source(result, context)
+    ):
+        _append_context_hint(result, DIM_SURROGATE_FROM_DWD_SOURCE_HINT)
+    if (
+        context_layer == "DWD"
+        and result.inferred_layer == "DWD"
+        and result.table_type == "fact"
+        and _looks_like_dws_reusable_snapshot(context)
+    ):
+        _append_context_hint(result, DWS_REUSABLE_SNAPSHOT_HINT)
+    if (
+        context_layer == "DWD"
+        and result.inferred_layer == "DWD"
+        and result.table_type in {"fact", "other"}
+        and _looks_like_dim_entity_snapshot(result, context)
+    ):
+        _append_context_hint(result, DIM_ENTITY_SNAPSHOT_HINT)
+    if context_layer != "DWD":
+        return
+    if result.table_type != "dimension":
+        return
+    if result.inferred_layer == "DIM" and _looks_like_dws_entity_metric_summary(
+        context
+    ):
+        _append_context_hint(result, DWS_ENTITY_METRIC_SUMMARY_HINT)
+    if any(
+        _looks_like_downstream_model(result.table_name, downstream_table)
+        for downstream_table in context.downstream_tables
+    ):
+        _append_context_hint(result, DWD_INTERMEDIATE_DOWNSTREAM_MODEL_HINT)
+    if result.inferred_layer == "DIM" and _looks_like_dwd_fact_from_dwd_source(
+        result,
+        context,
+    ):
+        _append_context_hint(result, DWD_FACT_FROM_DWD_SOURCE_HINT)
+
+
 def enrich_results_with_related_entities(
     results: list[TableInspectResult], contexts: dict[str, TableContext]
 ) -> None:
     grain_entity_index = _build_grain_entity_index(results)
-    if not grain_entity_index:
-        return
     for result in results:
+        context = contexts.get(result.table_name)
+        _apply_layer_context_hints(result, context)
+        if not grain_entity_index:
+            continue
         discovered = discover_related_entities_from_grain(
             result,
-            contexts.get(result.table_name),
+            context,
             grain_entity_index,
         )
         if discovered:
@@ -3094,7 +3350,7 @@ def main() -> None:
             args.project,
             api_key=api_key,
             model=args.model,
-            base_url=args.base_url,
+            base_url=normalize_chat_completions_url(args.base_url),
             max_retries=args.max_retries,
             parallelism=args.parallel,
             request_timeout=args.request_timeout,
@@ -3116,7 +3372,7 @@ def main() -> None:
             args.project,
             api_key=api_key,
             model=args.model,
-            base_url=args.base_url,
+            base_url=normalize_chat_completions_url(args.base_url),
             max_retries=args.max_retries,
             parallelism=args.parallel,
             request_timeout=args.request_timeout,

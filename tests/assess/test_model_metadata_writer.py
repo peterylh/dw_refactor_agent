@@ -4,6 +4,7 @@ import pytest
 import yaml
 
 import dw_refactor_agent.config as config
+from dw_refactor_agent.assessment.llm.context_builder import TableContext
 from dw_refactor_agent.assessment.llm.layer_resolution import (
     LayerResolutionPolicy,
 )
@@ -19,6 +20,7 @@ from dw_refactor_agent.assessment.llm.model_metadata_writer import (
     build_inspection_contexts,
     build_metric_contexts,
     business_metadata_for_result,
+    enrich_results_with_related_entities,
     metric_groups_for_model,
     metric_names_for_model,
     metric_violations,
@@ -821,10 +823,11 @@ def test_write_model_updates_from_plan_uses_plan_resolution_policy(
     saved = yaml.safe_load(model_path.read_text(encoding="utf-8"))
 
     assert skipped_updates == []
-    assert yaml_updates[0]["warnings"][0]["type"] == "llm_layer_fallback"
-    assert yaml_updates[0]["warnings"][0]["prior_source"] == "direct_rule"
-    assert saved["layer"] == "DWD"
-    assert saved["table_type"] == "fact"
+    assert yaml_updates[0]["warnings"][0]["type"] == (
+        "llm_boundary_candidate_remapped"
+    )
+    assert saved["layer"] == "DIM"
+    assert saved["table_type"] == "dimension"
 
 
 def test_metric_helper_scenarios():
@@ -3062,7 +3065,7 @@ def test_model_metadata_writer_cli_dispatches_refresh_and_generate_modes(
             "--llm",
             "--dry-run",
             "--base-url",
-            "https://example.test/chat/completions",
+            "https://api.deepseek.com",
             "--max-retries",
             "3",
             "--parallel",
@@ -3078,7 +3081,7 @@ def test_model_metadata_writer_cli_dispatches_refresh_and_generate_modes(
     assert calls[-1][0] == "generate"
     assert calls[-1][2]["api_key"] == "test"
     assert calls[-1][2]["base_url"] == (
-        "https://example.test/chat/completions"
+        "https://api.deepseek.com/chat/completions"
     )
     assert calls[-1][2]["max_retries"] == 3
     assert calls[-1][2]["parallelism"] == 4
@@ -4669,6 +4672,278 @@ def test_run_metadata_write_passes_dwd_metric_groups_to_dws(
         "derived_metrics": [_expected_pay_amt_1d_metric()],
         "calculated_metrics": ["gross_profit"],
     }
+
+
+def test_enrich_results_marks_layer_context_hints():
+    dwd_intermediate = TableInspectResult(
+        table_name="products_2",
+        declared_layer="DWD",
+        inferred_layer="DIM",
+        table_type="dimension",
+        confidence=0.9,
+        reasoning_steps=[],
+    )
+    dwd_dimension_intermediate = TableInspectResult(
+        table_name="atm_locations_2",
+        declared_layer="DWD",
+        inferred_layer="DWD",
+        table_type="dimension",
+        confidence=0.9,
+        reasoning_steps=[],
+    )
+    dwd_fact_from_source = TableInspectResult(
+        table_name="customer_segment_history",
+        declared_layer="DWD",
+        inferred_layer="DIM",
+        table_type="dimension",
+        confidence=0.9,
+        reasoning_steps=[],
+    )
+    surrogate_dim = TableInspectResult(
+        table_name="economic_indicators_2",
+        declared_layer="DWD",
+        inferred_layer="DWD",
+        table_type="fact",
+        confidence=0.9,
+        reasoning_steps=[],
+    )
+    dws_snapshot = TableInspectResult(
+        table_name="account_daily_snapshot",
+        declared_layer="DWD",
+        inferred_layer="DWD",
+        table_type="fact",
+        confidence=0.9,
+        reasoning_steps=[],
+    )
+    dws_entity_metric = TableInspectResult(
+        table_name="agent",
+        declared_layer="DWD",
+        inferred_layer="DIM",
+        table_type="dimension",
+        confidence=0.9,
+        reasoning_steps=[],
+    )
+    dim_entity_snapshot = TableInspectResult(
+        table_name="promotion_2",
+        declared_layer="DWD",
+        inferred_layer="DWD",
+        table_type="other",
+        confidence=0.9,
+        reasoning_steps=[],
+    )
+    conformed_dim = TableInspectResult(
+        table_name="account",
+        declared_layer="DWD",
+        inferred_layer="DIM",
+        table_type="dimension",
+        confidence=0.9,
+        reasoning_steps=[],
+    )
+    plain_summary = TableInspectResult(
+        table_name="customer_summary",
+        declared_layer="DWD",
+        inferred_layer="DWD",
+        table_type="fact",
+        confidence=0.9,
+        reasoning_steps=[],
+    )
+
+    contexts = {
+        "products_2": TableContext(
+            table_name="products_2",
+            layer="DWD",
+            ddl="CREATE TABLE products_2 (product_id BIGINT);",
+            etl_sql="INSERT INTO products_2 SELECT product_id FROM products;",
+            upstream_tables=["products"],
+            downstream_tables=["product"],
+            downstream_table_layers={"product": "DIM"},
+        ),
+        "atm_locations_2": TableContext(
+            table_name="atm_locations_2",
+            layer="DWD",
+            ddl="CREATE TABLE atm_locations_2 (atm_id BIGINT);",
+            etl_sql=(
+                "INSERT INTO atm_locations_2 "
+                "SELECT atm_id FROM atm_locations;"
+            ),
+            upstream_tables=["atm_locations"],
+            downstream_tables=["location"],
+            downstream_table_layers={"location": "DIM"},
+        ),
+        "customer_segment_history": TableContext(
+            table_name="customer_segment_history",
+            layer="DWD",
+            ddl=(
+                "CREATE TABLE customer_segment_history ("
+                "segment_history_key CHAR(32), customer_key CHAR(32), "
+                "total_balance DECIMAL(18,2), segment_change_count BIGINT"
+                ");"
+            ),
+            etl_sql=(
+                "INSERT INTO customer_segment_history "
+                "SELECT MD5(CAST(segment_history_id AS STRING)) "
+                "AS segment_history_key, total_balance, "
+                "1 AS segment_change_count "
+                "FROM customer_segments_history_2;"
+            ),
+            upstream_tables=["customer_segments_history_2"],
+            upstream_table_layers={"customer_segments_history_2": "DWD"},
+            downstream_tables=[],
+        ),
+        "economic_indicators_2": TableContext(
+            table_name="economic_indicators_2",
+            layer="DWD",
+            ddl=(
+                "CREATE TABLE economic_indicators_2 ("
+                "economic_indicator_key CHAR(32), indicator_date DATE"
+                ") DUPLICATE KEY(economic_indicator_key);"
+            ),
+            etl_sql=(
+                "INSERT INTO economic_indicators_2 "
+                "SELECT MD5(CAST(date AS STRING)) AS economic_indicator_key, "
+                "date AS indicator_date FROM economic_indicators_3;"
+            ),
+            upstream_tables=["economic_indicators_3"],
+            upstream_table_layers={"economic_indicators_3": "DWD"},
+            downstream_tables=[],
+        ),
+        "account_daily_snapshot": TableContext(
+            table_name="account_daily_snapshot",
+            layer="DWD",
+            ddl=(
+                "CREATE TABLE account_daily_snapshot ("
+                "account_key CHAR(32), snapshot_date DATE, "
+                "daily_transaction_count BIGINT"
+                ");"
+            ),
+            etl_sql=(
+                "INSERT INTO account_daily_snapshot "
+                "SELECT a.account_key, tx.daily_transaction_count "
+                "FROM accounts_2 a LEFT JOIN ("
+                "SELECT account_id, COUNT(*) AS daily_transaction_count "
+                "FROM transactions_2 GROUP BY account_id"
+                ") tx ON a.account_id = tx.account_id;"
+            ),
+            upstream_tables=["accounts_2", "transactions_2"],
+            upstream_table_layers={
+                "accounts_2": "DWD",
+                "transactions_2": "DWD",
+            },
+            downstream_tables=[],
+        ),
+        "agent": TableContext(
+            table_name="agent",
+            layer="DWD",
+            ddl=(
+                "CREATE TABLE agent ("
+                "agent_key CHAR(32), total_interactions BIGINT, "
+                "avg_satisfaction_rating DECIMAL(5,2)"
+                ");"
+            ),
+            etl_sql=(
+                "INSERT INTO agent "
+                "SELECT agent_id, COUNT(*) AS total_interactions, "
+                "AVG(satisfaction_rating) AS avg_satisfaction_rating "
+                "FROM customer_interactions_2 GROUP BY agent_id;"
+            ),
+            upstream_tables=["customer_interactions_2"],
+            upstream_table_layers={"customer_interactions_2": "DWD"},
+            downstream_tables=[],
+        ),
+        "promotion_2": TableContext(
+            table_name="promotion_2",
+            layer="DWD",
+            ddl=(
+                "CREATE TABLE promotion_2 ("
+                "promotion_id BIGINT, snapshot_date DATE, "
+                "discount_rate DECIMAL(5,2), min_amount DECIMAL(12,2)"
+                ");"
+            ),
+            etl_sql=(
+                "INSERT INTO promotion_2 "
+                "SELECT promotion_id, snapshot_date, discount_rate, min_amount "
+                "FROM promotion;"
+            ),
+            upstream_tables=["promotion"],
+            downstream_tables=["promotion_effect_daily"],
+        ),
+        "account": TableContext(
+            table_name="account",
+            layer="DWD",
+            ddl=(
+                "CREATE TABLE account ("
+                "account_key CHAR(32), account_natural_key BIGINT, "
+                "current_balance DECIMAL(18,2)"
+                ");"
+            ),
+            etl_sql=(
+                "INSERT INTO account "
+                "SELECT MD5(CAST(account_id AS STRING)) AS account_key, "
+                "account_id AS account_natural_key, current_balance "
+                "FROM accounts_2;"
+            ),
+            upstream_tables=["accounts_2"],
+            upstream_table_layers={"accounts_2": "DWD"},
+            downstream_tables=[],
+        ),
+        "customer_summary": TableContext(
+            table_name="customer_summary",
+            layer="DWD",
+            ddl=(
+                "CREATE TABLE customer_summary ("
+                "customer_key CHAR(32), total_amount DECIMAL(18,2)"
+                ") DUPLICATE KEY(customer_key);"
+            ),
+            etl_sql=(
+                "INSERT INTO customer_summary "
+                "SELECT MD5(CAST(customer_id AS STRING)) AS customer_key, "
+                "SUM(amount) AS total_amount FROM transactions_3 "
+                "GROUP BY customer_id;"
+            ),
+            upstream_tables=["transactions_3"],
+            upstream_table_layers={"transactions_3": "DWD"},
+            downstream_tables=[],
+        ),
+    }
+
+    enrich_results_with_related_entities(
+        [
+            dwd_intermediate,
+            dwd_dimension_intermediate,
+            dwd_fact_from_source,
+            surrogate_dim,
+            dws_snapshot,
+            dws_entity_metric,
+            dim_entity_snapshot,
+            conformed_dim,
+            plain_summary,
+        ],
+        contexts,
+    )
+
+    assert dwd_intermediate.validation["context_hints"] == [
+        "dwd_intermediate_downstream_model"
+    ]
+    assert dwd_dimension_intermediate.validation["context_hints"] == [
+        "dwd_intermediate_downstream_model"
+    ]
+    assert dwd_fact_from_source.validation["context_hints"] == [
+        "dwd_fact_from_dwd_source"
+    ]
+    assert surrogate_dim.validation["context_hints"] == [
+        "dim_surrogate_from_dwd_source"
+    ]
+    assert dws_snapshot.validation["context_hints"] == [
+        "dws_reusable_snapshot"
+    ]
+    assert dws_entity_metric.validation["context_hints"] == [
+        "dws_entity_metric_summary"
+    ]
+    assert dim_entity_snapshot.validation["context_hints"] == [
+        "dim_entity_snapshot"
+    ]
+    assert "context_hints" not in conformed_dim.validation
+    assert "context_hints" not in plain_summary.validation
 
 
 def test_run_metadata_write_discovers_related_entity_from_dws_grain(

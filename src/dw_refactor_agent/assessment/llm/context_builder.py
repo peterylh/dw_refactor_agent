@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -20,6 +22,10 @@ from dw_refactor_agent.lineage.view import LineageView
 
 DATA_DOMAIN_LAYERS = {"DWD"}
 BUSINESS_AREA_LAYERS = {"DWD", "DWS"}
+SQL_TABLE_REF_PATTERN = re.compile(
+    r"\b(?:FROM|JOIN|UPDATE|INTO)\s+([`\"A-Za-z0-9_.]+)",
+    re.IGNORECASE,
+)
 
 
 def _short_table_name(table_name: str) -> str:
@@ -34,6 +40,8 @@ class TableContext:
     etl_sql: str
     upstream_tables: list[str]
     downstream_tables: list[str]
+    upstream_table_layers: dict[str, str] = field(default_factory=dict)
+    downstream_table_layers: dict[str, str] = field(default_factory=dict)
     depth_from_ods: int = 0
     upstream_metric_groups: dict[str, dict[str, list[str]]] = field(
         default_factory=dict
@@ -161,6 +169,104 @@ def extract_column_lineage(lineage_data: dict, table_name: str) -> list[dict]:
     )
 
 
+def _has_graph_edges(upstream: dict, downstream: dict) -> bool:
+    return any(upstream.values()) or any(downstream.values())
+
+
+def _task_target_name(path: Path, known_names: set[str]) -> str:
+    stem = path.stem
+    suffix = "_full_refresh"
+    if stem.endswith(suffix) and stem[: -len(suffix)] in known_names:
+        return stem[: -len(suffix)]
+    return stem
+
+
+def _short_sql_identifier(value: str) -> str:
+    text = str(value or "").strip().strip("`").strip('"')
+    return text.split(".")[-1]
+
+
+def _sql_table_refs(sql_text: str, known_names: set[str]) -> set[str]:
+    refs = set()
+    for match in SQL_TABLE_REF_PATTERN.finditer(sql_text):
+        table_name = _short_sql_identifier(match.group(1))
+        if table_name in known_names:
+            refs.add(table_name)
+    return refs
+
+
+def _sql_task_dependency_graph(
+    project: str,
+    *,
+    lineage_data: dict,
+    tasks_dir: Path | None,
+    use_project_task_dirs: bool,
+) -> tuple[dict[str, set[str]], dict[str, set[str]]]:
+    """Infer a coarse table graph from task SQL when lineage edges are absent."""
+    short_to_asset = {
+        _short_table_name(str(table.get("name") or "")): str(
+            table.get("name") or ""
+        )
+        for table in lineage_data.get("tables", [])
+        if table.get("name")
+    }
+    known_names = set(short_to_asset)
+    if not known_names:
+        return {}, {}
+
+    if use_project_task_dirs:
+        task_paths = list(iter_project_asset_files(project, "tasks", "*.sql"))
+    elif tasks_dir and tasks_dir.exists():
+        task_paths = sorted(tasks_dir.rglob("*.sql"))
+    else:
+        task_paths = []
+
+    upstream: dict[str, set[str]] = defaultdict(set)
+    downstream: dict[str, set[str]] = defaultdict(set)
+
+    for task_path in task_paths:
+        target_short = _task_target_name(task_path, known_names)
+        if target_short not in known_names:
+            continue
+        try:
+            sql_text = task_path.read_text(encoding=TEXT_ENCODING)
+        except OSError:
+            continue
+        target_asset = short_to_asset[target_short]
+        for source_short in _sql_table_refs(sql_text, known_names):
+            if source_short == target_short:
+                continue
+            source_asset = short_to_asset[source_short]
+            upstream[target_asset].add(source_asset)
+            downstream[source_asset].add(target_asset)
+
+    return dict(upstream), dict(downstream)
+
+
+def _merge_graph(
+    base_upstream: dict,
+    base_downstream: dict,
+    extra_upstream: dict,
+    extra_downstream: dict,
+) -> tuple[dict, dict]:
+    upstream = defaultdict(set)
+    downstream = defaultdict(set)
+    for target, sources in base_upstream.items():
+        upstream[target].update(sources)
+    for source, targets in base_downstream.items():
+        downstream[source].update(targets)
+    for target, sources in extra_upstream.items():
+        upstream[target].update(sources)
+    for source, targets in extra_downstream.items():
+        downstream[source].update(targets)
+    return dict(upstream), dict(downstream)
+
+
+def _layer_for_context_table(table_name: str, model_metadata: dict) -> str:
+    metadata = model_metadata.get(_short_table_name(table_name), {})
+    return str(metadata.get("layer") or "OTHER").upper()
+
+
 def _project_dir(project: str) -> Path:
     project_cfg = config.PROJECT_CONFIG.get(project) or {}
     if project_cfg.get("dir"):
@@ -192,6 +298,19 @@ def build_contexts(
 
     lineage_view = LineageView.from_data(project, lineage_data)
     upstream, downstream = lineage_view.asset_table_graph()
+    if not _has_graph_edges(upstream, downstream):
+        sql_upstream, sql_downstream = _sql_task_dependency_graph(
+            project,
+            lineage_data=lineage_data,
+            tasks_dir=tasks_dir,
+            use_project_task_dirs=use_project_task_dirs,
+        )
+        upstream, downstream = _merge_graph(
+            upstream,
+            downstream,
+            sql_upstream,
+            sql_downstream,
+        )
     target_layers = set(layers or ("DWD", "DWS", "DIM"))
     metric_groups = (
         metric_groups
@@ -270,6 +389,7 @@ def build_contexts(
             else ""
         )
         upstream_tables = sorted(list(upstream.get(name, set())))
+        downstream_tables = sorted(list(downstream.get(name, set())))
         upstream_metric_groups = {
             upstream_table: metric_groups[upstream_table]
             for upstream_table in upstream_tables
@@ -283,7 +403,21 @@ def build_contexts(
                 ddl=ddl_content,
                 etl_sql=etl_content,
                 upstream_tables=upstream_tables,
-                downstream_tables=sorted(list(downstream.get(name, set()))),
+                downstream_tables=downstream_tables,
+                upstream_table_layers={
+                    table_name: _layer_for_context_table(
+                        table_name,
+                        model_metadata,
+                    )
+                    for table_name in upstream_tables
+                },
+                downstream_table_layers={
+                    table_name: _layer_for_context_table(
+                        table_name,
+                        model_metadata,
+                    )
+                    for table_name in downstream_tables
+                },
                 depth_from_ods=get_depth_from_ods(name),
                 upstream_metric_groups=upstream_metric_groups,
                 column_lineage=(lineage_view.column_lineage_for_table(name)),

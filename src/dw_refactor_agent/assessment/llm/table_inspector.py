@@ -9,6 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
+from urllib.parse import urlparse
 
 from dw_refactor_agent.assessment.llm.context_builder import TableContext
 from dw_refactor_agent.assessment.project_facts.entity_metadata import (
@@ -22,7 +23,7 @@ from dw_refactor_agent.assessment.project_facts.time_period import (
 )
 from dw_refactor_agent.config import TEXT_ENCODING
 
-PROMPT_VERSION = "table-inspector-v24"
+PROMPT_VERSION = "table-inspector-v26"
 VALID_LAYERS = {"ODS", "DWD", "DWS", "ADS", "DIM", "OTHER"}
 VALID_TABLE_TYPES = {"dimension", "fact", "other"}
 VALID_DIMENSION_ROLES = {"BASE", "ADDT"}
@@ -48,10 +49,41 @@ VALIDATION_ERROR_KEYS = (
     "missing_primary_entities",
 )
 VALIDATION_WARNING_KEYS = ("missing_columns",)
+DEFAULT_DEEPSEEK_CHAT_COMPLETIONS_URL = (
+    "https://api.deepseek.com/chat/completions"
+)
+
+
+def normalize_chat_completions_url(base_url: str | None) -> str:
+    """Normalize root API URLs to the chat completions endpoint."""
+    value = str(base_url or "").strip().rstrip("/")
+    if not value:
+        return DEFAULT_DEEPSEEK_CHAT_COMPLETIONS_URL
+    parsed = urlparse(value)
+    if (
+        parsed.scheme in {"http", "https"}
+        and parsed.netloc == "api.deepseek.com"
+        and parsed.path in {"", "/", "/v1"}
+    ):
+        return "https://api.deepseek.com/chat/completions"
+    return value
 
 
 def _empty_columns() -> dict[str, list[dict[str, Any]]]:
     return {group: [] for group in COLUMN_GROUPS}
+
+
+def _format_layered_tables(
+    tables: list[str],
+    layers: dict[str, str],
+) -> str:
+    if not tables:
+        return "无"
+    rendered = []
+    for table in tables:
+        layer = str(layers.get(table) or "").strip().upper()
+        rendered.append(f"{table}({layer})" if layer else table)
+    return ", ".join(rendered)
 
 
 @dataclass
@@ -145,13 +177,22 @@ def build_prompt(ctx: TableContext) -> str:
 - ODS (贴源层): 直接同步业务库，通常不含复杂的转化逻辑，数据粒度与源库完全一致。
 - DWD (明细宽表层): 对 ODS 进行数据清洗、维度退化(多表 JOIN 拉宽)，但**保持事务明细粒度，严禁包含聚合(GROUP BY)操作**。
 - DWS (汇总层): 包含明确的聚合操作(GROUP BY/SUM/COUNT)，用于计算公共维度下的周期性指标，具备**被多个下游复用**的特征。
-- ADS (应用层): 面向最终报表或业务大屏的定制化数据，可能包含复杂的衍生指标，最明显的特征是**下游通常不再被其他数据表引用 (出度为 0)**。
+- ADS (应用层): 面向最终报表或业务大屏的定制化数据，可能包含复杂的衍生指标。出度为 0 只能作为弱证据；如果血缘不完整、当前表位于中间层候选目录，或 ETL 显示其仍是公共明细/汇总资产，不得仅凭下游为空判为 ADS。
 - DIM (公共维度表): 记录实体属性，主键通常为单一实体 ID，被其他宽表广泛 LEFT JOIN。
 
 ## 表类型判定标准
 - dimension: 维度表。描述可被事实表引用的业务实体属性、层级、状态或主数据，缓慢变化，常常作为维表被 JOIN。
 - fact: 事实表或汇总事实表。记录业务事件/交易，或按公共维度汇总业务过程，包含可度量字段，通常有时间分区。
 - other: 其他类型。
+
+## 中间层候选与边界层规则
+- 当前巡检对象通常来自 DWD/DWS/DIM 可写模型候选；ODS 和 ADS 多数情况下由资产目录边界固定，不应参与中间层 LLM 裁决。
+- 如果原始配置层级是 DWD、DWS 或 DIM，且没有明确的 ads 资产目录、应用报表命名或最终看板用途证据，请优先在 DWD/DWS/DIM 中选择。
+- 对含 GROUP BY/SUM/COUNT/COUNT DISTINCT 或从上游汇总指标透传并形成公共粒度 grain 的中间层事实表，应优先考虑 DWS；不要因为下游引用数为 0 直接改判 ADS。
+- 对保留单一 ODS 源行粒度、主要做清洗/标准化/类型转换的实体属性表，应区分“DWD 清洗实体表”和“DIM 公共维表”。只有当它承担公共维度边界、稳定主数据/快照或明确可被事实表复用时，才判为 DIM；若已有单独的维度/主题表承接公共实体，当前清洗表更可能是 DWD/other。
+- 如果当前表从 ODS 或清洗源读取，保留一行一个业务对象/事件/评估/分层变更的粒度，并且下游还有同实体的规范化模型或汇总模型，则当前表通常是 DWD 清洗/明细增强层，不要仅因字段像属性表或标签表就判为 DIM。
+- 无 GROUP BY 且没有把多行压缩为公共汇总粒度的活动、风险、分层历史、经济指标清洗增强表，即使包含率值、评分、标签、预算、点击、转化等指标/属性，也更可能是 DWD fact/other；DWS 需要明确的公共汇总粒度或可复用聚合语义。
+- 由上游 DWD 清洗表生成、带 surrogate key（如 *_key）且作为日期、地点、产品、客户、经济指标等参考/维度上下文的规范化表，可以判为 DIM；数值型宏观指标/指数如果作为分析上下文而非业务事件，也可属于 DIM/reference。
 
 ## 维表分类标准
 当 table_type=dimension 或 inferred_layer=DIM 时，必须额外判断维表内容形态和维表建设角色。
@@ -269,8 +310,8 @@ def build_prompt(ctx: TableContext) -> str:
         prompt += f"## ETL 加工逻辑\n{ctx.etl_sql}\n\n"
 
     prompt += f"""## 血缘关系
-上游表: {", ".join(ctx.upstream_tables) if ctx.upstream_tables else "无"}
-下游表: {", ".join(ctx.downstream_tables) if ctx.downstream_tables else "无"}
+上游表: {_format_layered_tables(ctx.upstream_tables, ctx.upstream_table_layers)}
+下游表: {_format_layered_tables(ctx.downstream_tables, ctx.downstream_table_layers)}
 
 ## 字段级血缘
 {json.dumps(ctx.column_lineage, ensure_ascii=False, indent=2) if ctx.column_lineage else "无"}
@@ -280,7 +321,7 @@ def build_prompt(ctx: TableContext) -> str:
 
 ## 思考步骤
 1. 首先分析 ETL_SQL 中是否包含 GROUP BY 等聚合操作，如果有，排除 DWD 和 ODS。
-2. 观察下游被引用次数。如果为 0，大概率是 ADS；如果 > 1，倾向于 DWS 或 DWD。
+2. 观察下游被引用次数。下游为 0 只是弱 ADS 证据，尤其在血缘可能不完整或当前表来自中间层候选时，必须结合 ETL 聚合、粒度和表用途判断；如果 > 1，倾向于 DWS 或 DWD。
 3. 判断是否为 dimension（主键是否为实体属性）。
 4. 如果原始配置层级是 DWD 或 DWS 且表类型为 fact，再按字段语义、DDL 注释、ETL 表达式和业务过程分组。
 
@@ -852,7 +893,7 @@ def validate_primary_entities(
     result: TableInspectResult,
 ) -> dict[str, list[str]]:
     """校验事实明细表必须返回当前事实行主实体。"""
-    if result.declared_layer != "DWD" or not result.is_fact_table:
+    if result.inferred_layer != "DWD" or not result.is_fact_table:
         return {}
     has_primary = any(
         str(entity.get("type") or "").strip().lower() == "primary"
@@ -1019,10 +1060,7 @@ class TableInspector:
     ):
         self.api_key = api_key
         self.model = model
-        self.base_url = (
-            str(base_url or "").strip()
-            or "https://api.deepseek.com/chat/completions"
-        )
+        self.base_url = normalize_chat_completions_url(base_url)
         self.cache_file = cache_file
         self.max_retries = max(0, int(max_retries))
         self.parallelism = max(1, int(parallelism))

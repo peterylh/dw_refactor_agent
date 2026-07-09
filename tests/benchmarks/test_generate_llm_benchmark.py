@@ -337,7 +337,7 @@ def test_run_benchmark_prefixless_mid_assets_enter_llm_contexts(
         projects=["demo"],
         api_key="fake-key",
         model="fake-model",
-        base_url="https://example.test",
+        base_url="https://api.deepseek.com",
         parallelism=1,
         max_retries=1,
         request_timeout=5,
@@ -347,6 +347,7 @@ def test_run_benchmark_prefixless_mid_assets_enter_llm_contexts(
     )
 
     assert report["benchmark"] == "generate_llm_cold_start"
+    assert report["base_url"] == "https://api.deepseek.com/chat/completions"
     assert "combined_final_accuracy" not in report
     assert report["combined_llm_middle_accuracy"] == 1.0
     assert report["total_catalog_change_count"] == 2

@@ -209,6 +209,70 @@ def test_build_context_without_task(sample_lineage_data, tmp_path):
     assert ctx.downstream_tables == ["dws_store_sales_daily"]
 
 
+def test_build_contexts_falls_back_to_task_sql_graph_when_lineage_empty(
+    tmp_path,
+):
+    ddl_dir = tmp_path / "ddl"
+    tasks_dir = tmp_path / "tasks"
+    ddl_dir.mkdir()
+    tasks_dir.mkdir()
+    lineage_data = {
+        "tables": [
+            {"name": "ods_order"},
+            {"name": "dwd_order_clean"},
+            {"name": "dws_order_daily"},
+            {"name": "dim_customer"},
+            {"name": "order"},
+        ],
+        "edges": [],
+        "indirect_edges": [],
+    }
+    metadata = {
+        "dwd_order_clean": {"name": "dwd_order_clean", "layer": "DWD"},
+        "dws_order_daily": {"name": "dws_order_daily", "layer": "DWS"},
+        "dim_customer": {"name": "dim_customer", "layer": "DIM"},
+    }
+
+    (tasks_dir / "dwd_order_clean.sql").write_text(
+        "INSERT INTO dwd_order_clean SELECT * FROM ods_order;",
+        encoding="utf-8",
+    )
+    (tasks_dir / "dws_order_daily.sql").write_text(
+        "INSERT INTO dws_order_daily "
+        "SELECT order_date, COUNT(*) FROM dwd_order_clean GROUP BY order_date;",
+        encoding="utf-8",
+    )
+    (tasks_dir / "dim_customer.sql").write_text(
+        "INSERT INTO dim_customer "
+        "SELECT customer_id FROM dwd_order_clean ORDER BY customer_id;",
+        encoding="utf-8",
+    )
+
+    contexts = build_contexts(
+        "test_proj",
+        lineage_data,
+        ddl_dir,
+        tasks_dir,
+        model_metadata=metadata,
+    )
+    by_name = {ctx.table_name: ctx for ctx in contexts}
+
+    assert by_name["dwd_order_clean"].upstream_tables == ["ods_order"]
+    assert by_name["dwd_order_clean"].downstream_tables == [
+        "dim_customer",
+        "dws_order_daily",
+    ]
+    assert by_name["dwd_order_clean"].downstream_table_layers == {
+        "dim_customer": "DIM",
+        "dws_order_daily": "DWS",
+    }
+    assert by_name["dws_order_daily"].upstream_tables == ["dwd_order_clean"]
+    assert by_name["dws_order_daily"].upstream_table_layers == {
+        "dwd_order_clean": "DWD"
+    }
+    assert "order" not in by_name["dim_customer"].upstream_tables
+
+
 def test_build_contexts_reads_default_mid_asset_dirs(
     sample_lineage_data,
     tmp_path,

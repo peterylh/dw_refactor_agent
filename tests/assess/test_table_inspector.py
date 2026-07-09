@@ -9,6 +9,7 @@ from dw_refactor_agent.assessment.llm.table_inspector import (
     TableContext,
     TableInspector,
     build_prompt,
+    normalize_chat_completions_url,
     parse_response,
     result_to_cache_dict,
     result_to_dict,
@@ -31,6 +32,22 @@ def test_build_prompt_scenarios():
     _assert_build_prompt_includes_catalog_and_project_context_as_inputs()
     _assert_build_prompt_documents_business_metadata_scope()
     _assert_build_prompt_keeps_metric_expression_separate_from_grain()
+    _assert_build_prompt_weakens_empty_downstream_ads_signal()
+
+
+def test_normalize_chat_completions_url():
+    assert normalize_chat_completions_url(None) == (
+        "https://api.deepseek.com/chat/completions"
+    )
+    assert normalize_chat_completions_url("https://api.deepseek.com") == (
+        "https://api.deepseek.com/chat/completions"
+    )
+    assert normalize_chat_completions_url("https://api.deepseek.com/v1") == (
+        "https://api.deepseek.com/chat/completions"
+    )
+    assert normalize_chat_completions_url(
+        "https://example.test/chat/completions"
+    ) == "https://example.test/chat/completions"
 
 
 def test_parse_response_metadata_scenarios():
@@ -58,6 +75,7 @@ def test_validate_response_contract_scenarios():
         _assert_validate_time_periods_flags_unrecognized_values,
         _assert_validate_metric_expressions_flags_grain_text,
         _assert_validate_primary_entities_requires_dwd_fact_primary,
+        _assert_validate_primary_entities_uses_inferred_dwd_layer,
         _assert_validate_columns_flags_unknown_duplicate_and_missing_fields,
         _assert_validate_columns_requires_all_dws_fact_fields,
         _assert_validate_metric_relationships_requires_derived_base_metric_in_upstream_atomic,
@@ -275,6 +293,33 @@ def _assert_build_prompt_keeps_metric_expression_separate_from_grain():
     assert "time_period 只允许 D/W/M/Q/Y/S" in prompt
     assert "不得返回中文" in prompt
     assert "SUM(discount) GROUP BY store_id, order_date" not in prompt
+
+
+def _assert_build_prompt_weakens_empty_downstream_ads_signal():
+    ctx = TableContext(
+        table_name="inventory_daily",
+        layer="DWD",
+        ddl="CREATE TABLE inventory_daily (product_id BIGINT);",
+        etl_sql=(
+            "INSERT INTO inventory_daily "
+            "SELECT product_id, SUM(quantity) AS quantity "
+            "FROM inventory GROUP BY product_id;"
+        ),
+        upstream_tables=["inventory"],
+        downstream_tables=[],
+        upstream_table_layers={"inventory": "ODS"},
+    )
+
+    prompt = build_prompt(ctx)
+
+    assert "inventory(ODS)" in prompt
+    assert "出度为 0 只能作为弱证据" in prompt
+    assert "不得仅凭下游为空判为 ADS" in prompt
+    assert "优先在 DWD/DWS/DIM 中选择" in prompt
+    assert "当前清洗表更可能是 DWD/other" in prompt
+    assert "同实体的规范化模型或汇总模型" in prompt
+    assert "没有把多行压缩为公共汇总粒度" in prompt
+    assert "数值型宏观指标/指数" in prompt
 
 
 # ============================================================
@@ -621,6 +666,50 @@ def _assert_validate_primary_entities_requires_dwd_fact_primary():
             "DWD fact必须返回至少一个type=primary的entities项"
         ]
     }
+
+
+def _assert_validate_primary_entities_uses_inferred_dwd_layer():
+    for inferred_layer in ("DWS", "ADS"):
+        result = parse_response(
+            "inventory_daily",
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": json.dumps(
+                                {
+                                    "inferred_layer": inferred_layer,
+                                    "table_type": "fact",
+                                    "confidence": 0.9,
+                                    "entities": [
+                                        {
+                                            "code": "PROD",
+                                            "type": "foreign",
+                                            "key_columns": ["product_id"],
+                                        }
+                                    ],
+                                    "grain": {
+                                        "entities": ["PROD"],
+                                        "time_column": "stat_date",
+                                        "time_period": "D",
+                                    },
+                                    "columns": {
+                                        "atomic_metrics": [],
+                                        "derived_metrics": [],
+                                        "calculated_metrics": [],
+                                        "dimensions": [],
+                                        "others": [],
+                                    },
+                                }
+                            )
+                        }
+                    }
+                ]
+            },
+            declared_layer="DWD",
+        )
+
+        assert validate_primary_entities(result) == {}
 
 
 def _assert_parse_response_preserves_entities_metadata():

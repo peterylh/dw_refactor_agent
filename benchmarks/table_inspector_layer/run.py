@@ -22,6 +22,10 @@ if str(REPO_ROOT) not in sys.path:
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
+from dw_refactor_agent.assessment.llm.table_inspector import (  # noqa: E402
+    normalize_chat_completions_url,
+)
+
 DEFAULT_PROJECTS = ("shop", "finance_analytics")
 DEFAULT_MODEL = "deepseek-v4-pro"
 DEFAULT_BASE_URL = "https://api.deepseek.com"
@@ -963,6 +967,7 @@ def run_benchmark(
             "DEEPSEEK_API_KEY is required for generate --llm benchmark "
             "unless api_key is injected by a test"
         )
+    base_url = normalize_chat_completions_url(base_url)
 
     runtime_config, runtime_writer = _runtime_modules()
     if metadata_runner is None:
