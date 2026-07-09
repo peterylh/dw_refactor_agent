@@ -57,6 +57,16 @@ ASSET_RULE_TASK_SINGLE_OUTPUT = "Task有且只有一个产出表"
 ASSET_RULE_TABLE_SINGLE_WRITER = "目标表有且只有一个产出Task"
 ASSET_RULE_TASK_LINEAGE = "Task血缘目标与实际产出一致"
 METADATA_HEALTH_RULES = {
+    "METADATA_MODEL_LAYER_MATCHES_ASSET_PATH": rule_meta(
+        name="model.layer匹配资产路径角色",
+        severity=SEVERITY_HIGH,
+        title="Model层级与资产路径不一致",
+        remediation_summary=(
+            "将模型YAML移到匹配的资产目录，或修正models YAML中的layer"
+        ),
+        strategy="align_model_layer_with_asset_path",
+        edit_scope=["models"],
+    ),
     "METADATA_DIM_HAS_PRIMARY_ENTITY": rule_meta(
         name="entities.primary.code已配置",
         severity=SEVERITY_HIGH,

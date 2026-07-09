@@ -1475,6 +1475,110 @@ def test_score_metadata_health_checks_business_dictionary_metadata(tmp_path):
     }
 
 
+def test_score_metadata_health_validates_model_layer_matches_asset_path(
+    tmp_path,
+):
+    project_dir = tmp_path / "demo"
+    (project_dir / "ods" / "models" / "internal" / "demo_dm").mkdir(
+        parents=True
+    )
+    (project_dir / "mid" / "models").mkdir(parents=True)
+    (project_dir / "ads" / "models").mkdir(parents=True)
+
+    model_files = {
+        "ods_bad": (
+            project_dir
+            / "ods"
+            / "models"
+            / "internal"
+            / "demo_dm"
+            / "ods_bad.yaml"
+        ),
+        "mid_good": project_dir / "mid" / "models" / "mid_good.yaml",
+        "mid_bad": project_dir / "mid" / "models" / "mid_bad.yaml",
+        "ads_bad": project_dir / "ads" / "models" / "ads_bad.yaml",
+    }
+    model_files["ods_bad"].write_text(
+        "name: ods_bad\nlayer: DWD\n",
+        encoding="utf-8",
+    )
+    model_files["mid_good"].write_text(
+        "name: mid_good\nlayer: DIM\n",
+        encoding="utf-8",
+    )
+    model_files["mid_bad"].write_text(
+        "name: mid_bad\nlayer: ADS\n",
+        encoding="utf-8",
+    )
+    model_files["ads_bad"].write_text(
+        "name: ads_bad\nlayer: DWS\n",
+        encoding="utf-8",
+    )
+    models = {
+        table_name: {
+            "name": table_name,
+            "layer": yaml.safe_load(path.read_text(encoding="utf-8"))["layer"],
+        }
+        for table_name, path in model_files.items()
+    }
+    models["mid_good"].update(
+        {
+            "table_type": "dimension",
+            "semantic_subject": "GOOD",
+            "entities": [
+                {
+                    "code": "GOOD",
+                    "type": "primary",
+                    "key_columns": ["good_id"],
+                }
+            ],
+        }
+    )
+    models["ads_bad"].update(
+        {
+            "table_type": "fact",
+            "entities": [
+                {
+                    "code": "BAD",
+                    "type": "foreign",
+                    "key_columns": ["bad_id"],
+                }
+            ],
+            "grain": {"entities": ["BAD"], "time_column": "stat_date"},
+        }
+    )
+
+    result = score_metadata_health(
+        _context(models=models, project_dir=project_dir)
+    )
+
+    layer_checks = _checks_by_rule(
+        result,
+        "METADATA_MODEL_LAYER_MATCHES_ASSET_PATH",
+    )
+    assert {
+        check["target"]["name"]: check["passed"] for check in layer_checks
+    } == {
+        "demo/ods/models/internal/demo_dm/ods_bad.yaml": False,
+        "demo/mid/models/mid_good.yaml": True,
+        "demo/mid/models/mid_bad.yaml": False,
+        "demo/ads/models/ads_bad.yaml": False,
+    }
+    failed_checks = [check for check in layer_checks if not check["passed"]]
+    assert {
+        check["evidence"]["asset_role"]: check["evidence"]["expected_layers"]
+        for check in failed_checks
+    } == {
+        "ods": ["ODS"],
+        "mid": ["DIM", "DWD", "DWS"],
+        "ads": ["ADS"],
+    }
+    assert _issue_rule_ids(result) == {
+        "METADATA_MODEL_LAYER_MATCHES_ASSET_PATH"
+    }
+    assert all(issue["severity"] == "高" for issue in result["issues"])
+
+
 def test_score_model_design_health_penalizes_declared_table_type_mismatch(
     sample_lineage_data,
 ):

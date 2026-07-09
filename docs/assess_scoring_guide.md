@@ -171,6 +171,7 @@ score = 通过检查数 / 总检查数 * 100
 
 | 检查项 | 适用范围 | 口径 |
 | --- | --- | --- |
+| Model 路径层级 | 有 model 文件路径 | `ods/models` 只能声明 ODS，`mid/models` 只能声明 DIM/DWD/DWS，`ads/models` 只能声明 ADS。 |
 | DIM 主实体 | DIM | 必须配置 `entities.primary.code`。 |
 | DIM 语义主题 | DIM | `semantic_subject` 必须等于主实体 code。 |
 | 实体键字段存在 | 有表字段信息且 entity 配置 `key_columns` | `entities[*].key_columns` 必须存在于表字段中。 |
