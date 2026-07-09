@@ -1204,6 +1204,56 @@ def test_execute_shadow_plan_runs_job_once_per_execution_value(
     assert executed_texts[1].startswith("SET @etl_date = '2024-06-02';\n")
 
 
+def test_execute_shadow_plan_logs_sql_progress_for_each_slice(
+    tmp_path, monkeypatch, capsys
+):
+    task_path = tmp_path / "shop" / "mid" / "tasks" / "dws_order.sql"
+    task_path.parent.mkdir(parents=True)
+    task_path.write_text(
+        "INSERT INTO shop_dm.dws_order SELECT @etl_date;",
+        encoding="utf-8",
+    )
+    plan = {
+        "project": "shop",
+        "project_db": "shop_dm",
+        "qa_db": "shop_dm_qa",
+        "baseline_ddl": {},
+        "ddl_changes": [],
+        "jobs_to_run": [
+            {
+                "job": "dws_order",
+                "file": "shop/mid/tasks/dws_order.sql",
+                "layer": "DWS",
+                "target": "dws_order",
+                "execution_values": ["2024-06-01", "2024-06-02"],
+            }
+        ],
+        "verification": {"checks": []},
+    }
+
+    monkeypatch.setattr(
+        "dw_refactor_agent.refactor.shadow_run._project_root",
+        lambda: tmp_path,
+    )
+    monkeypatch.setattr(
+        "dw_refactor_agent.refactor.shadow_run.run_sql",
+        lambda *args, **kwargs: "",
+    )
+    monkeypatch.setattr(
+        "dw_refactor_agent.refactor.shadow_run.run_sql_text",
+        lambda *args, **kwargs: "",
+    )
+
+    result = execute_shadow_plan(plan)
+
+    stdout = capsys.readouterr().out
+    assert result["status"] == "completed"
+    assert "slice 1/2: etl_date=2024-06-01" in stdout
+    assert "slice 2/2: etl_date=2024-06-02" in stdout
+    assert "SQL start: shop/mid/tasks/dws_order.sql" in stdout
+    assert "SQL done: shop/mid/tasks/dws_order.sql duration=" in stdout
+
+
 def test_execute_shadow_plan_uses_job_execution_values_and_records_actuals(
     tmp_path, monkeypatch
 ):
