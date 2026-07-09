@@ -17,7 +17,6 @@ import subprocess
 import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timedelta
 from pathlib import Path
 
 _src_root = Path(__file__).resolve().parents[2]
@@ -31,11 +30,9 @@ from dw_refactor_agent.config import (
     TEXT_ENCODING,
     get_model_names_by_layer,
     get_mysql_cmd,
-    iter_project_asset_files,
     iter_project_task_files,
     job_dag_path,
     lineage_data_path,
-    load_model_metadata,
     python_module_env,
 )
 from dw_refactor_agent.execution.invocation import TaskInvocation
@@ -49,54 +46,6 @@ from dw_refactor_agent.lineage.job_dag import (
 )
 
 _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
-_TIME_UNIT_RE = re.compile(
-    r'"dynamic_partition\.time_unit"\s*=\s*"(\w+)"', re.IGNORECASE
-)
-_TABLE_PARTITION_UNITS: dict[str, str] | None = None
-_TABLE_PARTITIONED_CACHE: dict[tuple[str, str], bool] = {}
-_TABLE_DYNAMIC_PARTITION_CACHE: dict[tuple[str, str], bool] = {}
-_SLICE_PERIOD_TO_PARTITION_UNIT = {
-    "D": "DAY",
-    "M": "MONTH",
-    "W": "WEEK",
-    "H": "HOUR",
-}
-
-
-def _load_partition_units(project: str) -> dict[str, str]:
-    """读取每张表的分区时间单位，优先使用显式执行切片配置."""
-    units: dict[str, str] = {}
-    for f in iter_project_asset_files(project, "ddl", "*.sql"):
-        m = _TIME_UNIT_RE.search(f.read_text(encoding=TEXT_ENCODING))
-        if m:
-            units[f.stem] = m.group(1).upper()
-
-    project_execution = (PROJECT_CONFIG.get(project) or {}).get("execution")
-    if not isinstance(project_execution, dict):
-        project_execution = {}
-    default_unit = _partition_unit_from_slice(
-        project_execution.get("default_slice")
-    )
-    if default_unit:
-        for job_name in _get_task_files(project):
-            units[job_name] = default_unit
-
-    for job_name, metadata in load_model_metadata(project).items():
-        raw_execution = metadata.get("execution") or {}
-        if not isinstance(raw_execution, dict):
-            continue
-        unit = _partition_unit_from_slice(raw_execution.get("slice"))
-        if unit:
-            units[job_name] = unit
-    return units
-
-
-def _partition_unit_from_slice(value) -> str | None:
-    if not isinstance(value, dict):
-        return None
-    return _SLICE_PERIOD_TO_PARTITION_UNIT.get(
-        str(value.get("period") or "").strip().upper()
-    )
 
 
 def _build_job_dag(project: str) -> JobDAG:
@@ -156,128 +105,6 @@ def _get_task_files(project: str) -> dict[str, Path]:
     return files
 
 
-def _is_partitioned_table(
-    db_name: str, table_name: str, mysql_cmd: list[str]
-) -> bool:
-    """检查目标表是否为分区表，结果按库表缓存。"""
-    cache_key = (db_name, table_name)
-    if cache_key in _TABLE_PARTITIONED_CACHE:
-        return _TABLE_PARTITIONED_CACHE[cache_key]
-
-    full_name = f"{db_name}.{table_name}"
-    r = subprocess.run(
-        mysql_cmd + [db_name],
-        input=f"SHOW CREATE TABLE {full_name};",
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-    if r.returncode != 0:
-        raise RuntimeError(
-            f"[{table_name}] [SHOW CREATE FAIL]\n  {r.stderr.strip()}"
-        )
-
-    is_partitioned = "PARTITION BY" in r.stdout.upper()
-    _TABLE_PARTITIONED_CACHE[cache_key] = is_partitioned
-    _TABLE_DYNAMIC_PARTITION_CACHE[cache_key] = (
-        "DYNAMIC_PARTITION.ENABLE" in r.stdout.upper()
-    )
-    return is_partitioned
-
-
-def _is_dynamic_partition_table(
-    db_name: str, table_name: str, mysql_cmd: list[str]
-) -> bool:
-    """检查目标表是否配置了 Doris 动态分区。"""
-    cache_key = (db_name, table_name)
-    if cache_key in _TABLE_DYNAMIC_PARTITION_CACHE:
-        return _TABLE_DYNAMIC_PARTITION_CACHE[cache_key]
-
-    full_name = f"{db_name}.{table_name}"
-    r = subprocess.run(
-        mysql_cmd + [db_name],
-        input=f"SHOW CREATE TABLE {full_name};",
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-    if r.returncode != 0:
-        raise RuntimeError(
-            f"[{table_name}] [SHOW CREATE FAIL]\n  {r.stderr.strip()}"
-        )
-
-    upper_ddl = r.stdout.upper()
-    _TABLE_PARTITIONED_CACHE[cache_key] = "PARTITION BY" in upper_ddl
-    _TABLE_DYNAMIC_PARTITION_CACHE[cache_key] = (
-        "DYNAMIC_PARTITION.ENABLE" in upper_ddl
-    )
-    return _TABLE_DYNAMIC_PARTITION_CACHE[cache_key]
-
-
-def _ensure_partition(
-    db_name: str, table_name: str, etl_date: str, mysql_cmd: list[str]
-) -> None:
-    if not _is_partitioned_table(db_name, table_name, mysql_cmd):
-        return
-    is_dynamic_partition = _is_dynamic_partition_table(
-        db_name, table_name, mysql_cmd
-    )
-
-    raw_dt = datetime.strptime(etl_date[:10], "%Y-%m-%d")
-    dt = raw_dt.date()
-    full_name = f"{db_name}.{table_name}"
-
-    time_unit = (
-        _TABLE_PARTITION_UNITS.get(table_name, "DAY")
-        if _TABLE_PARTITION_UNITS
-        else "DAY"
-    )
-    if time_unit == "MONTH":
-        p_name = f"p{dt.strftime('%Y%m')}"
-        month_start = dt.replace(day=1)
-        next_month = (month_start.replace(day=28) + timedelta(days=4)).replace(
-            day=1
-        )
-        next_val = next_month.strftime("%Y-%m-%d")
-    elif time_unit == "WEEK":
-        week_start = dt - timedelta(days=dt.weekday())
-        p_name = f"p{week_start.strftime('%Y%m%d')}"
-        next_val = (week_start + timedelta(days=7)).strftime("%Y-%m-%d")
-    elif time_unit == "HOUR":
-        hour_dt = raw_dt
-        p_name = f"p{hour_dt.strftime('%Y%m%d%H')}"
-        next_val = (hour_dt + timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S")
-    else:
-        p_name = f"p{dt.strftime('%Y%m%d')}"
-        next_val = (dt + timedelta(days=1)).strftime("%Y-%m-%d")
-
-    def run(sql):
-        return subprocess.run(
-            mysql_cmd + [db_name],
-            input=sql,
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-
-    if is_dynamic_partition:
-        run(
-            f"ALTER TABLE {full_name} SET ('dynamic_partition.enable' = 'false');"
-        )
-    run(f"ALTER TABLE {full_name} DROP PARTITION IF EXISTS {p_name};")
-    r = run(
-        f'ALTER TABLE {full_name} ADD PARTITION {p_name} VALUES LESS THAN ("{next_val}");'
-    )
-    if is_dynamic_partition:
-        run(
-            f"ALTER TABLE {full_name} SET ('dynamic_partition.enable' = 'true');"
-        )
-    if r.returncode != 0:
-        stderr = r.stderr.strip()
-        if "already exists" not in stderr.lower():
-            print(f"  [{table_name}] [PARTITION WARN] {stderr}")
-
-
 def _run_job(
     etl_date: str,
     job_name: str,
@@ -292,60 +119,7 @@ def _run_job(
             invocation,
             mysql_cmd,
             db_name,
-            full_refresh_dates=[etl_date],
         )
-
-
-def _ensure_full_refresh_partitions(
-    db_name: str, table_name: str, all_dates: list[str], mysql_cmd: list[str]
-) -> None:
-    """为全量刷新模式重建分区: 清除所有旧分区, 建单个覆盖全 ODS 范围的分区."""
-    if not _is_partitioned_table(db_name, table_name, mysql_cmd):
-        return
-    is_dynamic_partition = _is_dynamic_partition_table(
-        db_name, table_name, mysql_cmd
-    )
-
-    full_name = f"{db_name}.{table_name}"
-
-    # 动态表重建静态验证分区前先停用调度；静态表不写动态属性。
-    def run(sql):
-        return subprocess.run(
-            mysql_cmd + [db_name],
-            input=sql,
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-
-    if is_dynamic_partition:
-        run(
-            f"ALTER TABLE {full_name} SET ('dynamic_partition.enable' = 'false');"
-        )
-
-    # 查询当前分区列表, 全部 DROP
-    r = run("SHOW PARTITIONS FROM " + full_name)
-    pnames = []
-    for line in r.stdout.strip().split("\n")[1:]:
-        parts = line.split("\t")
-        if len(parts) >= 2:
-            pnames.append(parts[1].strip())
-    for p in pnames:
-        run(f"ALTER TABLE {full_name} DROP PARTITION IF EXISTS {p};")
-
-    # 3) 添加单个覆盖全日期范围的分区 (ODS max + 1, 兼顾 CURDATE 场景)
-    if not all_dates:
-        print(f"  [{table_name}] 跳过分区 — ODS 无数据")
-        return
-    last_dt = max(
-        datetime.strptime(all_dates[-1], "%Y-%m-%d"),
-        datetime.now(),
-    ) + timedelta(days=1)
-    r = run(
-        f'ALTER TABLE {full_name} ADD PARTITION p_full VALUES LESS THAN ("{last_dt.strftime("%Y-%m-%d")}");'
-    )
-    if r.returncode != 0 and "Unknown table" not in r.stderr:
-        print(f"  [{table_name}] [PARTITION WARN] {r.stderr.strip()}")
 
 
 def _run_job_full_refresh(
@@ -368,58 +142,15 @@ def _run_job_full_refresh(
             invocation,
             mysql_cmd,
             db_name,
-            full_refresh_dates=all_dates,
         )
-
-
-def _partition_date(value: str) -> str | None:
-    match = re.match(r"^\d{4}-\d{2}-\d{2}", str(value or ""))
-    return match.group(0) if match else None
-
-
-def _prepare_invocation_partitions(
-    invocation: TaskInvocation,
-    db_name: str,
-    mysql_cmd: list[str],
-    full_refresh_dates: list[str],
-) -> None:
-    if invocation.full_refresh:
-        _ensure_full_refresh_partitions(
-            db_name,
-            invocation.job_name,
-            full_refresh_dates,
-            mysql_cmd,
-        )
-        return
-
-    for value in invocation.params.values():
-        partition_date = _partition_date(value)
-        if partition_date:
-            _ensure_partition(
-                db_name,
-                invocation.job_name,
-                partition_date,
-                mysql_cmd,
-            )
 
 
 def _execute_invocation(
     invocation: TaskInvocation,
     mysql_cmd: list[str],
     db_name: str,
-    *,
-    full_refresh_dates: list[str],
 ) -> None:
-    executor = DirectSqlExecutor(
-        mysql_cmd,
-        db_name,
-        before_execute=lambda item: _prepare_invocation_partitions(
-            item,
-            db_name,
-            mysql_cmd,
-            full_refresh_dates,
-        ),
-    )
+    executor = DirectSqlExecutor(mysql_cmd, db_name)
     executor.execute(invocation)
     value_text = ""
     if invocation.params:
@@ -584,9 +315,6 @@ def main():
     if parallel < 1:
         print("错误: --parallel 必须 >= 1")
         sys.exit(1)
-
-    global _TABLE_PARTITION_UNITS
-    _TABLE_PARTITION_UNITS = _load_partition_units(project)
 
     if not args.full_refresh:
         if not args.etl_dates:
