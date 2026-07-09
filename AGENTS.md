@@ -450,6 +450,8 @@ python -m dw_refactor_agent.assessment.llm.model_metadata_writer --project shop 
 项目默认使用名为 `dw-refactor-py37` 的 conda 环境运行本地开发检查。主工作区与
 git worktree 都应使用同一个命名环境，避免因为 worktree 路径不同而误用 Homebrew
 Python 或其他全局解释器。
+Makefile 默认通过 conda 运行时的 `CONDA_PREFIX/bin/python` 执行命令，避免
+`PATH` 中的 pyenv shim、Homebrew Python 等抢先匹配 `python`。
 
 ```bash
 # 首次创建环境
@@ -466,6 +468,12 @@ make test
 
 ```bash
 make test PYTHON=/absolute/path/to/python
+```
+
+如需使用其他已存在的命名 conda 环境，优先指定环境名：
+
+```bash
+make test CONDA_ENV=my-py37-env
 ```
 
 

@@ -31,17 +31,36 @@ Run tests with the Python 3.7 environment:
 make test
 ```
 
+By default, the Makefile runs commands through the named conda environment and
+then executes `$CONDA_PREFIX/bin/python` inside that environment. This keeps the
+default portable across machines with different conda install paths, while
+avoiding `PATH` shadowing from tools such as pyenv shims or Homebrew Python.
+
 Check the interpreter and required modules without running the full suite:
 
 ```bash
 make doctor
 ```
 
-If you need to use a different already-created environment, override the
-interpreter explicitly:
+If you need to use a different named conda environment, override the environment
+name:
+
+```bash
+make test CONDA_ENV=my-py37-env
+```
+
+If you need to use a non-conda interpreter or a specific already-created Python,
+override the interpreter explicitly:
 
 ```bash
 make test PYTHON=/absolute/path/to/python
+```
+
+If your shell has unrelated conda variables active while using a non-conda
+interpreter, disable the conda prefix check:
+
+```bash
+make test PYTHON=/absolute/path/to/python EXPECTED_CONDA_ENV=
 ```
 
 Do not run bare `pytest` in this repository. `pytest` uses whichever executable
