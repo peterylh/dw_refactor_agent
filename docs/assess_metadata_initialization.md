@@ -77,7 +77,7 @@ python -m dw_refactor_agent.assessment.llm.model_metadata_writer --project shop 
 写入内容包括：
 
 - 对缺失的 model 文件创建基础 YAML。
-- 写入或刷新 `version`、`name`、`layer`、`table_type`、`config.materialized`。
+- 写入或刷新 `version`、`name`、`layer`、`table_type`、`execution.materialized`。
 - 对 DWD 写入 `data_domain`。
 - 对 DWD/DWS 写入 `business_area`。
 - 对 fact 表保留 catalog 中存在的已有 `business_process`，并清理 stale code。

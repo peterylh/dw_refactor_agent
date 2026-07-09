@@ -89,7 +89,7 @@ def test_snapshot_materialized_is_rejected(monkeypatch, tmp_path):
     sql_path, _ = _write_demo_project(
         monkeypatch,
         tmp_path,
-        model_config="config:\n  materialized: snapshot\n",
+        model_config="execution:\n  materialized: snapshot\n",
     )
 
     planner = ExecutionPlanner("demo")
@@ -105,6 +105,21 @@ def test_snapshot_materialized_is_rejected(monkeypatch, tmp_path):
     assert "snapshot_date" in message
 
 
+def test_config_materialized_is_rejected(monkeypatch, tmp_path):
+    sql_path, _ = _write_demo_project(
+        monkeypatch,
+        tmp_path,
+        model_config="config:\n  materialized: full\n",
+    )
+    planner = ExecutionPlanner("demo")
+
+    with pytest.raises(ExecutionConfigError) as exc:
+        planner.task_spec("dwd_orders", sql_path)
+
+    assert "config.materialized is no longer supported" in str(exc.value)
+    assert "execution.materialized" in str(exc.value)
+
+
 def test_incremental_defaults_to_replay_slices_with_full_refresh_zero(
     monkeypatch,
     tmp_path,
@@ -112,7 +127,7 @@ def test_incremental_defaults_to_replay_slices_with_full_refresh_zero(
     sql_path, _ = _write_demo_project(
         monkeypatch,
         tmp_path,
-        model_config="config:\n  materialized: incremental\n",
+        model_config="execution:\n  materialized: incremental\n",
     )
     planner = ExecutionPlanner("demo")
 
@@ -139,7 +154,7 @@ def test_companion_uses_companion_sql_and_full_refresh_one(
         monkeypatch,
         tmp_path,
         model_config=(
-            "config:\n"
+            "execution:\n"
             "  materialized: incremental\n"
             "  full_refresh_strategy: companion\n"
         ),
@@ -170,7 +185,7 @@ def test_legacy_full_refresh_runs_normal_sql_once_with_full_refresh_one(
         monkeypatch,
         tmp_path,
         model_config=(
-            "config:\n"
+            "execution:\n"
             "  materialized: incremental\n"
             "  full_refresh_strategy: legacy_full_refresh\n"
         ),
@@ -197,7 +212,7 @@ def test_full_defaults_to_replace_all_with_full_refresh_one(
     sql_path, _ = _write_demo_project(
         monkeypatch,
         tmp_path,
-        model_config="config:\n  materialized: full\n",
+        model_config="execution:\n  materialized: full\n",
     )
     planner = ExecutionPlanner("demo")
 
@@ -220,9 +235,8 @@ def test_model_slice_overrides_project_default_slice(monkeypatch, tmp_path):
         monkeypatch,
         tmp_path,
         model_config=(
-            "config:\n"
-            "  materialized: incremental\n"
             "execution:\n"
+            "  materialized: incremental\n"
             "  slice:\n"
             "    param: etl_month\n"
             "    column: stat_month_date\n"
@@ -248,7 +262,7 @@ def test_incremental_replay_slices_requires_slice_config(
     sql_path, _ = _write_demo_project(
         monkeypatch,
         tmp_path,
-        model_config="config:\n  materialized: incremental\n",
+        model_config="execution:\n  materialized: incremental\n",
         warehouse_execution="",
     )
     planner = ExecutionPlanner("demo")
@@ -261,7 +275,7 @@ def test_task_and_shadow_planning_match_for_same_job(monkeypatch, tmp_path):
     sql_path, _ = _write_demo_project(
         monkeypatch,
         tmp_path,
-        model_config="config:\n  materialized: incremental\n",
+        model_config="execution:\n  materialized: incremental\n",
     )
     planner = ExecutionPlanner("demo")
     spec = planner.task_spec("dwd_orders", sql_path)
@@ -287,7 +301,7 @@ def test_shadow_job_missing_values_does_not_infer_slice_value(
     sql_path, _ = _write_demo_project(
         monkeypatch,
         tmp_path,
-        model_config="config:\n  materialized: incremental\n",
+        model_config="execution:\n  materialized: incremental\n",
     )
     planner = ExecutionPlanner("demo")
     shadow_job = {

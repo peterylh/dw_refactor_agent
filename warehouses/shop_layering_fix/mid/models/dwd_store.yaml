@@ -3,8 +3,8 @@ name: dwd_store
 layer: DIM
 table_type: dimension
 description: 门店每日快照
-config:
-  materialized: snapshot
+execution:
+  materialized: incremental
 entities:
 - code: STORE
   type: primary

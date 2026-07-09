@@ -2,7 +2,7 @@ version: 2
 name: dwd_merchants
 layer: DWD
 table_type: other
-config:
+execution:
   materialized: full
 entities:
 - code: MERCHANT

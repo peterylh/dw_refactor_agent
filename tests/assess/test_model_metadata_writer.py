@@ -894,7 +894,7 @@ def _assert_update_model_yaml_preserves_existing_metadata(
                 "name": "dwd_order_detail",
                 "layer": "DWD",
                 "description": "订单明细事实表",
-                "config": {
+                "execution": {
                     "materialized": "incremental",
                 },
             },
@@ -912,7 +912,8 @@ def _assert_update_model_yaml_preserves_existing_metadata(
     assert update["metric_count"] == 3
     assert update["new_metric_count"] == 3
     assert saved["description"] == "订单明细事实表"
-    assert saved["config"]["materialized"] == "incremental"
+    assert saved["execution"]["materialized"] == "incremental"
+    assert "config" not in saved
     assert saved["atomic_metrics"] == ["pay_amt"]
     assert saved["derived_metrics"] == [_expected_pay_amt_1d_metric()]
     assert saved["calculated_metrics"] == ["gross_profit"]
@@ -967,8 +968,8 @@ def _assert_update_model_yaml_writes_llm_table_metadata(tmp_path, monkeypatch):
                 "data_domain": "06",
                 "business_area": "CHNL",
                 "description": "门店每日快照",
-                "config": {
-                    "materialized": "snapshot",
+                "execution": {
+                    "materialized": "incremental",
                 },
             },
             allow_unicode=True,
@@ -999,7 +1000,8 @@ def _assert_update_model_yaml_writes_llm_table_metadata(tmp_path, monkeypatch):
     assert "data_domain" not in saved
     assert "business_area" not in saved
     assert saved["description"] == "门店每日快照"
-    assert saved["config"]["materialized"] == "incremental"
+    assert saved["execution"]["materialized"] == "incremental"
+    assert "config" not in saved
     assert "atomic_metrics" not in saved
 
 
@@ -3298,7 +3300,8 @@ def test_run_generate_model_metadata_missing_catalog_writes_skeleton_and_models(
     assert result["model_update_count"] == 1
     assert model["name"] == "dwd_order_detail"
     assert model["layer"] == "DWD"
-    assert model["config"]["materialized"] == "incremental"
+    assert model["execution"]["materialized"] == "incremental"
+    assert "config" not in model
 
 
 def test_run_generate_model_metadata_uses_asset_role_for_prefixless_base(

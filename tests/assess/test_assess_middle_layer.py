@@ -151,7 +151,7 @@ def isolated_assess_project(tmp_path, monkeypatch):
         (models_dir / f"{table_name}.yaml").write_text(
             (
                 f"version: 2\nname: {table_name}\nlayer: {layer}\n"
-                f"config:\n  materialized: {materialized}\n"
+                f"execution:\n  materialized: {materialized}\n"
             ),
             encoding="utf-8",
         )

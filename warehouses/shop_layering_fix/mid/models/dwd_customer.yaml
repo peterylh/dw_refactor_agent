@@ -3,8 +3,8 @@ name: dwd_customer
 layer: DIM
 table_type: dimension
 description: 客户每日快照
-config:
-  materialized: snapshot
+execution:
+  materialized: incremental
 entities:
 - code: CUST
   type: primary

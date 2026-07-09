@@ -129,7 +129,7 @@ models YAML 是项目的表级元数据源，不是普通文档。
 - `name`
 - `layer`
 - `description`
-- `config.materialized`
+- `execution.materialized`
 - `table_type`
 - 其他未涉及本字段的配置
 

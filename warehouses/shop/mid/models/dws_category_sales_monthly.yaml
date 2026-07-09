@@ -3,8 +3,12 @@ name: dws_category_sales_monthly
 layer: DWS
 table_type: fact
 description: 品类月度销售汇总
-config:
+execution:
   materialized: incremental
+  slice:
+    param: etl_date
+    column: stat_month_date
+    period: M
 derived_metrics:
 - name: sale_quantity
   base_metric: quantity
@@ -33,8 +37,3 @@ grain:
   - CATEGORY
   time_column: stat_month_date
   time_period: M
-execution:
-  slice:
-    param: etl_date
-    column: stat_month_date
-    period: M

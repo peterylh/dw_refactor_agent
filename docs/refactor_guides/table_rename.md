@@ -80,7 +80,7 @@ models YAML 是项目的表级元数据源，不是普通文档。
 - 保留原有：
   - `layer`
   - `description`
-  - `config.materialized`
+  - `execution.materialized`
   - `table_type`
   - `atomic_metrics`
   - `derived_metrics`
@@ -91,7 +91,7 @@ models YAML 是项目的表级元数据源，不是普通文档。
 原因：
 
 - 表层级以 `models/*.yaml` 中的 `layer` 为权威来源
-- `task_run.py --full-refresh` 会读取 `config.materialized`
+- `task_run.py --full-refresh` 会读取 `execution.materialized`
 - 血缘、重构验证、评估工具会依赖 models 元数据
 
 ### 6. 修改初始化数据

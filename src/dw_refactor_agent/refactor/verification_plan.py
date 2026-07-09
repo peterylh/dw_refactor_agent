@@ -16,6 +16,7 @@ from dw_refactor_agent.ddl_deriver.ddl_deriver import (
 )
 from dw_refactor_agent.execution.model_config import (
     ExecutionConfigError,
+    execution_config_for_model,
     slice_config_from_mapping,
 )
 from dw_refactor_agent.lineage.job_dag import asset_job_dag_from_lineage
@@ -526,10 +527,10 @@ def _table_execution_slice_metadata(
 
 def _is_incremental_model(project: str, table: str) -> bool:
     metadata = config.get_model_metadata(table, project) or {}
-    raw_config = metadata.get("config") or {}
-    if not isinstance(raw_config, dict):
-        raw_config = {}
-    materialized = str(raw_config.get("materialized") or "incremental").strip()
+    raw_execution = execution_config_for_model(table, metadata)
+    materialized = str(
+        raw_execution.get("materialized") or "incremental"
+    ).strip()
     return materialized.lower() != "full"
 
 

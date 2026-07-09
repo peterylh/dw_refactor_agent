@@ -86,16 +86,15 @@ version: 2
 name: dwd_customer
 layer: DWD
 description: 客户每日快照
-config:
-  materialized: incremental
 execution:
+  materialized: incremental
   slice:
     param: etl_date
     column: snapshot_date
     period: D
 ```
 
-`task_run.py --full-refresh` 会优先读取 `ods/models/{catalog}/{database}/*.yaml`、`mid/models/*.yaml` 与 `ads/models/*.yaml` 中的 `config.materialized` 与 `config.full_refresh_strategy`，用于判断 `incremental` / `full` 与 `replay_slices` / `companion` / `legacy_full_refresh` / `replace_all` 等执行策略。
+`task_run.py --full-refresh` 会读取 `ods/models/{catalog}/{database}/*.yaml`、`mid/models/*.yaml` 与 `ads/models/*.yaml` 中的 `execution.materialized` 与 `execution.full_refresh_strategy`，用于判断 `incremental` / `full` 与 `replay_slices` / `companion` / `legacy_full_refresh` / `replace_all` 等执行策略。旧的 `config.materialized` 与 `config.full_refresh_strategy` 不再支持。
 
 表层级以模型 YAML 中的 `layer` 为唯一权威来源；血缘与重构验证工具会读取该配置，不再通过表名前缀兜底推断层级。
 
@@ -385,7 +384,7 @@ python -m dw_refactor_agent.assessment.llm.model_metadata_writer --project shop 
 项目模型 YAML 为准；catalog 只作为 code 字典和治理目录，用于校验并补齐模型中的业务域/板块信息：
 
 - 缺失的 model 文件会被创建
-- 写入或刷新 `version`、`name`、`layer`、`table_type`、`config.materialized`
+- 写入或刷新 `version`、`name`、`layer`、`table_type`、`execution.materialized`
 - 对 catalog 中存在的已有 `business_process`，从 catalog 补齐适用的 `data_domain` / `business_area`
 - 对 catalog 中存在的已有 `semantic_subject`，保留 subject code，并移除不适用或 stale 的 `business_process`
 - 清理 stale `business_process` / `semantic_subject` 时，保留仍在 taxonomy 中的已有 `data_domain` / `business_area`

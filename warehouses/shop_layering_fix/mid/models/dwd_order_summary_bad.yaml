@@ -3,7 +3,7 @@ name: dwd_order_summary_bad
 layer: DWS
 table_type: fact
 description: 订单粒度销售汇总，按订单聚合明细金额和件数
-config:
+execution:
   materialized: incremental
 atomic_metrics:
 - item_count

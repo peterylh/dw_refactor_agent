@@ -59,6 +59,17 @@ def _now_iso() -> str:
     )
 
 
+def _log(message: str = "") -> None:
+    print(message, flush=True)
+
+
+def _display_path(path: Path, root: Path) -> str:
+    try:
+        return str(path.relative_to(root))
+    except ValueError:
+        return str(path)
+
+
 def _start_timing() -> dict:
     return {
         "started_at": _now_iso(),
@@ -1113,12 +1124,12 @@ def execute_shadow_plan(
 
     checks = plan.get("verification", {}).get("checks", [])
     if not _plan_anchor_tables(plan) and not checks:
-        print("  警告: 无锚点表且无校验配置")
-        print("    作业会正常执行，但后续 compare 命令没有表可对比校验")
-        print("    如果只是想确认作业不报错，可继续执行\n")
+        _log("  警告: 无锚点表且无校验配置")
+        _log("    作业会正常执行，但后续 compare 命令没有表可对比校验")
+        _log("    如果只是想确认作业不报错，可继续执行\n")
 
-    print("=" * 60)
-    print(f"Phase 0: 重置验证数据库 {qa_db}")
+    _log("=" * 60)
+    _log(f"Phase 0: 重置验证数据库 {qa_db}")
     reset_timer = _start_timing()
     reset_phase = {
         "name": "reset_qa_db",
@@ -1136,18 +1147,18 @@ def execute_shadow_plan(
         )
         run_sql(f"CREATE DATABASE {qa_db}", "information_schema", qa=True)
     except Exception as exc:
-        print(f"  [FAIL] 重置验证数据库失败: {exc}")
+        _log(f"  [FAIL] 重置验证数据库失败: {exc}")
         reset_phase["status"] = "failed"
         reset_phase["error"] = str(exc)
         _finish_timing(reset_phase, reset_timer)
         phases.append(reset_phase)
         return finish_result(_failed_shadow_result(plan, phases))
-    print(f"  {qa_db} 已重建")
     _finish_timing(reset_phase, reset_timer)
+    _log(f"  {qa_db} 已重建 duration={reset_phase['duration_ms']}ms")
     phases.append(reset_phase)
 
-    print(f"\n{'=' * 60}")
-    print(f"Phase 1: 基线建表 ({len(baseline_ddl)} 张)")
+    _log(f"\n{'=' * 60}")
+    _log(f"Phase 1: 基线建表 ({len(baseline_ddl)} 张)")
     create_timer = _start_timing()
     table_results = []
     create_phase = {
@@ -1163,10 +1174,10 @@ def execute_shadow_plan(
         ddl_qa = ddl_raw.replace(f"{prod_db}.", f"{qa_db}.")
         try:
             run_sql(ddl_qa, qa_db, qa=True)
-            print(f"  [CREATE] {qa_db}.{table_name}")
+            _log(f"  [CREATE] {qa_db}.{table_name}")
             table_results.append({"table": table_name, "status": "success"})
         except Exception as exc:
-            print(f"  [FAIL] {qa_db}.{table_name}: {exc}")
+            _log(f"  [FAIL] {qa_db}.{table_name}: {exc}")
             table_results.append(
                 {"table": table_name, "status": "failed", "error": str(exc)}
             )
@@ -1175,6 +1186,7 @@ def execute_shadow_plan(
             phases.append(create_phase)
             return finish_result(_failed_shadow_result(plan, phases))
     _finish_timing(create_phase, create_timer)
+    _log(f"Phase 1 完成 duration={create_phase['duration_ms']}ms")
     phases.append(create_phase)
 
     ddl_change_results = []
@@ -1185,8 +1197,8 @@ def execute_shadow_plan(
         "ddl_changes": ddl_change_results,
     }
     if ddl_changes:
-        print(f"\n{'-' * 60}")
-        print(f"Phase 2: 应用 DDL 变更 ({len(ddl_changes)} 条)")
+        _log(f"\n{'-' * 60}")
+        _log(f"Phase 2: 应用 DDL 变更 ({len(ddl_changes)} 条)")
         for change in ddl_changes:
             qa_change = _qa_ddl_change(change, prod_db, qa_db)
             sql = qa_change.get("sql", "")
@@ -1213,7 +1225,7 @@ def execute_shadow_plan(
                     statement_results.append(
                         _ddl_statement_result(statement, "success")
                     )
-                print(
+                _log(
                     f"  [{qa_change.get('change_type')}] "
                     f"{qa_change.get('table_name', '?')}"
                 )
@@ -1229,7 +1241,7 @@ def execute_shadow_plan(
                     )
                 )
             except Exception as exc:
-                print(f"  [FAIL] {qa_change.get('change_type')}: {exc}")
+                _log(f"  [FAIL] {qa_change.get('change_type')}: {exc}")
                 ddl_change_results.append(
                     _ddl_change_result(
                         qa_change,
@@ -1248,10 +1260,11 @@ def execute_shadow_plan(
                 phases.append(ddl_phase)
                 return finish_result(_failed_shadow_result(plan, phases))
     _finish_timing(ddl_phase, ddl_timer)
+    _log(f"Phase 2 完成 duration={ddl_phase['duration_ms']}ms")
     phases.append(ddl_phase)
 
-    print(f"\n{'=' * 60}")
-    print(f"Phase 3: 执行作业 ({len(jobs_to_run)} 个)")
+    _log(f"\n{'=' * 60}")
+    _log(f"Phase 3: 执行作业 ({len(jobs_to_run)} 个)")
     job_phase_timer = _start_timing()
     recalculated = set()
     root = _project_root()
@@ -1279,11 +1292,11 @@ def execute_shadow_plan(
         invocation_results = [] if timing_detail else None
         job_timer = _start_timing()
 
-        print(f"\n  --- {idx}/{len(jobs_to_run)}: [{layer}] {job_name} ---")
+        _log(f"\n  --- {idx}/{len(jobs_to_run)}: [{layer}] {job_name} ---")
         file_path = root / job_file
         if not file_path.exists():
             error = f"文件不存在: {file_path}"
-            print(f"  [FAIL] {error}")
+            _log(f"  [FAIL] {error}")
             job_results.append(
                 _finish_timing(
                     _job_result(
@@ -1306,7 +1319,7 @@ def execute_shadow_plan(
             spec = planner.task_spec(job_name, file_path)
             driver_values = _job_driver_values(job, spec)
         except ExecutionConfigError as exc:
-            print(f"  [FAIL] {job_name}: {exc}")
+            _log(f"  [FAIL] {job_name}: {exc}")
             job_results.append(
                 _finish_timing(
                     _job_result(
@@ -1327,10 +1340,14 @@ def execute_shadow_plan(
 
         for driver_idx, driver_value in enumerate(driver_values, 1):
             if driver_value is not None:
-                print(
+                _log(
                     f"\n  === replay slice "
                     f"{driver_idx}/{len(driver_values)}: "
                     f"{driver_value} ==="
+                )
+                _log(
+                    f"  slice {driver_idx}/{len(driver_values)}: "
+                    f"{spec.slice_param or 'execution_value'}={driver_value}"
                 )
             planned_job = _job_for_driver_value(job, driver_value)
 
@@ -1340,7 +1357,7 @@ def execute_shadow_plan(
                     project_root=root,
                 )
             except ExecutionConfigError as exc:
-                print(f"  [FAIL] {job_name}: {exc}")
+                _log(f"  [FAIL] {job_name}: {exc}")
                 job_results.append(
                     _finish_timing(
                         _job_result(
@@ -1364,31 +1381,40 @@ def execute_shadow_plan(
                     _append_actual_execution_value(actual_values, driver_value)
                     invocation_count += 1
                     invocation_timer = _start_timing()
+                    sql_path = _display_path(invocation.sql_path, root)
+                    _log(f"    SQL start: {sql_path}")
                     try:
                         executor.execute(invocation)
                     except Exception as exc:
-                        if invocation_results is not None:
-                            invocation_results.append(
-                                _finish_timing(
-                                    _invocation_result(
-                                        driver_value,
-                                        "failed",
-                                        str(exc),
-                                    ),
-                                    invocation_timer,
-                                )
-                            )
-                        raise
-                    if invocation_results is not None:
-                        invocation_results.append(
-                            _finish_timing(
-                                _invocation_result(driver_value, "success"),
-                                invocation_timer,
-                            )
+                        failed_invocation = _finish_timing(
+                            _invocation_result(
+                                driver_value,
+                                "failed",
+                                str(exc),
+                            ),
+                            invocation_timer,
                         )
-                print(f"  + {qa_db}.{job_name}")
+                        _log(
+                            f"    SQL fail: {sql_path} "
+                            f"duration={failed_invocation['duration_ms']}ms "
+                            f"error={exc}"
+                        )
+                        if invocation_results is not None:
+                            invocation_results.append(failed_invocation)
+                        raise
+                    success_invocation = _finish_timing(
+                        _invocation_result(driver_value, "success"),
+                        invocation_timer,
+                    )
+                    _log(
+                        f"    SQL done: {sql_path} "
+                        f"duration={success_invocation['duration_ms']}ms"
+                    )
+                    if invocation_results is not None:
+                        invocation_results.append(success_invocation)
+                _log(f"  + {qa_db}.{job_name}")
             except Exception as exc:
-                print(f"  [FAIL] {job_name}: {exc}")
+                _log(f"  [FAIL] {job_name}: {exc}")
                 job_results.append(
                     _finish_timing(
                         _job_result(
@@ -1422,12 +1448,11 @@ def execute_shadow_plan(
             )
         )
     _finish_timing(job_phase, job_phase_timer)
+    _log(f"Phase 3 完成 duration={job_phase['duration_ms']}ms")
     phases.append(job_phase)
 
-    print(f"\n{'=' * 60}")
-    print(
-        f"Shadow run 完成! 共执行 {len(jobs_to_run)} 个作业, 目标库: {qa_db}"
-    )
+    _log(f"\n{'=' * 60}")
+    _log(f"Shadow run 完成! 共执行 {len(jobs_to_run)} 个作业, 目标库: {qa_db}")
     return finish_result(
         _shadow_result(
             plan,

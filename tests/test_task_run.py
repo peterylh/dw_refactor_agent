@@ -21,7 +21,7 @@ def _write_execution_project(
     tmp_path,
     *,
     job_name="dwd_customer",
-    model_config="config:\n  materialized: incremental\n",
+    model_config="execution:\n  materialized: incremental\n",
     companion=False,
 ):
     project_dir = tmp_path / "demo_project"
@@ -110,7 +110,7 @@ def test_companion_full_refresh_runs_companion_with_full_refresh_one(
         monkeypatch,
         tmp_path,
         model_config=(
-            "config:\n"
+            "execution:\n"
             "  materialized: incremental\n"
             "  full_refresh_strategy: companion\n"
         ),

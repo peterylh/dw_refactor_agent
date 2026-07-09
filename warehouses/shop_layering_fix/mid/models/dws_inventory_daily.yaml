@@ -4,7 +4,7 @@ layer: DWS
 table_type: fact
 business_area: SHOP
 description: 库存日汇总
-config:
+execution:
   materialized: incremental
 calculated_metrics:
 - stock_status
