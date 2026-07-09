@@ -803,7 +803,7 @@ execution:
         """version: 2
 name: dws_store_sales_daily
 layer: DWS
-config:
+execution:
   materialized: incremental
 """,
         encoding="utf-8",
@@ -812,9 +812,8 @@ config:
         """version: 2
 name: ads_store_performance
 layer: ADS
-config:
-  materialized: incremental
 execution:
+  materialized: incremental
   slice:
     param: etl_month
     column: stat_month_date
@@ -916,7 +915,7 @@ execution:
         """version: 2
 name: ads_hourly
 layer: ADS
-config:
+execution:
   materialized: incremental
 """,
         encoding="utf-8",

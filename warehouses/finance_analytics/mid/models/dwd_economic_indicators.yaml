@@ -2,7 +2,7 @@ version: 2
 name: dwd_economic_indicators
 layer: DIM
 table_type: dimension
-config:
+execution:
   materialized: full
 dimension_role: BASE
 dimension_content_type: INFO

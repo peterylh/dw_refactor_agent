@@ -2,7 +2,7 @@ version: 2
 name: dim_campaign
 layer: DIM
 table_type: dimension
-config:
+execution:
   materialized: full
 entities:
 - code: CAMPAIGN

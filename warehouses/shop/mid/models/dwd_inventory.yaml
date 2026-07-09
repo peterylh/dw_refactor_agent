@@ -5,9 +5,8 @@ table_type: fact
 data_domain: '05'
 business_area: SHOP
 description: 库存每日快照
-config:
-  materialized: incremental
 execution:
+  materialized: incremental
   slice:
     param: etl_date
     column: snapshot_date

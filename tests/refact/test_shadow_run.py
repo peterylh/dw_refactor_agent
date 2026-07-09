@@ -1217,9 +1217,8 @@ def test_execute_shadow_plan_uses_job_execution_values_and_records_actuals(
         model_yaml="""version: 2
 name: dws_store_sales_daily
 layer: DWS
-config:
-  materialized: incremental
 execution:
+  materialized: incremental
   slice:
     param: etl_date
     column: stat_date
@@ -1237,9 +1236,8 @@ execution:
         model_yaml="""version: 2
 name: ads_store_performance
 layer: ADS
-config:
-  materialized: incremental
 execution:
+  materialized: incremental
   slice:
     param: etl_date
     column: stat_month_date
@@ -1257,7 +1255,7 @@ execution:
         model_yaml="""version: 2
 name: ads_sales_dashboard
 layer: ADS
-config:
+execution:
   materialized: full
 """,
         task_sql="INSERT INTO shadow_dm.ads_sales_dashboard SELECT 1;",
@@ -1382,9 +1380,8 @@ def test_execute_shadow_plan_fails_sliced_job_without_execution_values(
         model_yaml="""version: 2
 name: dws_order
 layer: DWS
-config:
-  materialized: incremental
 execution:
+  materialized: incremental
   slice:
     param: etl_date
     column: stat_date

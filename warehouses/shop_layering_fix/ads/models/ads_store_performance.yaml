@@ -3,7 +3,7 @@ name: ads_store_performance
 layer: ADS
 table_type: other
 description: 门店绩效评估
-config:
+execution:
   materialized: incremental
 grain:
   time_column: stat_month_date

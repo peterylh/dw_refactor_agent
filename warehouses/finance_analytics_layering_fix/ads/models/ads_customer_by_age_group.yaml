@@ -2,5 +2,5 @@ version: 2
 name: ads_customer_by_age_group
 layer: ADS
 table_type: other
-config:
+execution:
   materialized: full

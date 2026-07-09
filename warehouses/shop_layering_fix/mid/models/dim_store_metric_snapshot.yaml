@@ -3,8 +3,8 @@ name: dim_store_metric_snapshot
 layer: DWS
 table_type: fact
 description: 门店日指标快照，按门店和日期沉淀订单数指标
-config:
-  materialized: snapshot
+execution:
+  materialized: incremental
 entities:
 - code: STORE
   type: foreign

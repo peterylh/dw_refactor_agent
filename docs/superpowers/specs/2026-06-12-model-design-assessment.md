@@ -109,7 +109,7 @@ table_type: fact
 data_domain: SALE
 business_area: ORDER
 description: 订单明细事实表
-config:
+execution:
   materialized: incremental
 entities:
   - code: ORDER_ITEM

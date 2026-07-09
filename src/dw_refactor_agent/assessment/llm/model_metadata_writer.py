@@ -88,6 +88,7 @@ from dw_refactor_agent.config import (
     load_model_metadata,
     model_metadata_result_path,
 )
+from dw_refactor_agent.execution.model_config import EXECUTION_CONFIG_FIELDS
 from dw_refactor_agent.lineage.table_graph import load_lineage_data
 
 WRITE_SCOPES = {"all", "table", "metrics", "grain", "business"}
@@ -1292,17 +1293,18 @@ def update_model_yaml(
             updated.pop("dimension_content_type", None)
 
     if should_write_base_fields and (
-        "config" in updated or write_table_metadata
+        "execution" in updated or "config" in updated or write_table_metadata
     ):
         materialized_layer = str(
             updated.get("layer") or result.declared_layer or ""
         ).upper()
-        config_payload = dict(updated.get("config") or {})
-        config_payload["materialized"] = _materialized_for_write(
-            config_payload.get("materialized"),
+        execution_payload = dict(updated.get("execution") or {})
+        execution_payload["materialized"] = _materialized_for_write(
+            execution_payload.get("materialized"),
             materialized_layer,
         )
-        updated["config"] = config_payload
+        updated["execution"] = execution_payload
+        _drop_deprecated_execution_config(updated)
 
     if write_metric_groups and detected_metrics:
         if detected_groups["atomic_metrics"]:
@@ -2207,6 +2209,21 @@ def _materialized_for_write(value: Any, layer: str) -> str:
     return _materialized_for_layer(layer)
 
 
+def _drop_deprecated_execution_config(model: dict[str, Any]) -> None:
+    raw_config = model.get("config")
+    if not isinstance(raw_config, dict):
+        return
+
+    config_payload = dict(raw_config)
+    for key in EXECUTION_CONFIG_FIELDS:
+        config_payload.pop(key, None)
+
+    if config_payload:
+        model["config"] = config_payload
+    else:
+        model.pop("config", None)
+
+
 def _catalog_model_payload(
     *,
     table_name: str,
@@ -2224,7 +2241,7 @@ def _catalog_model_payload(
         or _infer_table_type(table_name, layer)
     ).strip()
     materialized = _materialized_for_write(
-        (existing.get("config") or {}).get("materialized")
+        (existing.get("execution") or {}).get("materialized")
         or mapping.get("materialized")
         or "",
         layer,
@@ -2236,9 +2253,10 @@ def _catalog_model_payload(
     updated["layer"] = layer
     updated["table_type"] = table_type or "other"
     if materialized:
-        config_payload = dict(updated.get("config") or {})
-        config_payload["materialized"] = materialized
-        updated["config"] = config_payload
+        execution_payload = dict(updated.get("execution") or {})
+        execution_payload["materialized"] = materialized
+        updated["execution"] = execution_payload
+        _drop_deprecated_execution_config(updated)
 
     data_domain = str(mapping.get("data_domain") or "").strip()
     business_area = str(mapping.get("business_area") or "").strip().upper()

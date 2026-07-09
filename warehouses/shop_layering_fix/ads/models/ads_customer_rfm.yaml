@@ -3,5 +3,5 @@ name: ads_customer_rfm
 layer: ADS
 table_type: other
 description: 客户 RFM 分析
-config:
+execution:
   materialized: incremental

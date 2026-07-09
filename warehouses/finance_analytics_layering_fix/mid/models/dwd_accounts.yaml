@@ -2,7 +2,7 @@ version: 2
 name: dwd_accounts
 layer: DWD
 table_type: other
-config:
+execution:
   materialized: full
 atomic_metrics:
 - current_balance

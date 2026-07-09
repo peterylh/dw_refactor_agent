@@ -4,7 +4,7 @@ layer: DWD
 table_type: fact
 business_area: SHOP
 description: 订单明细透传事实表，保持订单明细粒度
-config:
+execution:
   materialized: incremental
 atomic_metrics:
 - subtotal

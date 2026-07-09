@@ -3,7 +3,7 @@ name: dws_category_sales_monthly
 layer: DWS
 table_type: fact
 description: 品类月度销售汇总
-config:
+execution:
   materialized: incremental
 derived_metrics:
 - name: sale_quantity

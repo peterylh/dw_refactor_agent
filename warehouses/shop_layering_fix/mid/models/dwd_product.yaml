@@ -3,8 +3,8 @@ name: dwd_product
 layer: DIM
 table_type: dimension
 description: 商品每日快照
-config:
-  materialized: snapshot
+execution:
+  materialized: incremental
 entities:
 - code: PROD
   type: primary

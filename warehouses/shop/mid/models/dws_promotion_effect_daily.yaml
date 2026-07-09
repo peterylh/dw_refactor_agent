@@ -4,7 +4,7 @@ layer: DWS
 table_type: fact
 business_area: SHOP
 description: 促销效果日汇总
-config:
+execution:
   materialized: incremental
 atomic_metrics:
 - order_count

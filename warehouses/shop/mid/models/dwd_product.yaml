@@ -3,9 +3,8 @@ name: dwd_product
 layer: DIM
 table_type: dimension
 description: 商品每日快照
-config:
-  materialized: incremental
 execution:
+  materialized: incremental
   slice:
     param: etl_date
     column: snapshot_date

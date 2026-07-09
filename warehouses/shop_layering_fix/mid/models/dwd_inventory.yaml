@@ -5,8 +5,8 @@ table_type: fact
 data_domain: '05'
 business_area: SHOP
 description: 库存每日快照
-config:
-  materialized: snapshot
+execution:
+  materialized: incremental
 atomic_metrics:
 - quantity
 entities:

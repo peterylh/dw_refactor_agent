@@ -2,5 +2,5 @@ version: 2
 name: dim_date
 layer: DIM
 table_type: dimension
-config:
+execution:
   materialized: full

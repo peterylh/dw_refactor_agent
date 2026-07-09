@@ -249,7 +249,7 @@ def _write_execution_project(
     tmp_path,
     *,
     job_name="dwd_customer",
-    model_config="config:\n  materialized: incremental\n",
+    model_config="execution:\n  materialized: incremental\n",
     companion=False,
 ):
     project_dir = tmp_path / "demo_project"
@@ -351,7 +351,7 @@ def test_companion_full_refresh_runs_companion_with_full_refresh_one(
         monkeypatch,
         tmp_path,
         model_config=(
-            "config:\n"
+            "execution:\n"
             "  materialized: incremental\n"
             "  full_refresh_strategy: companion\n"
         ),
@@ -533,9 +533,8 @@ def test_load_partition_units_uses_model_execution_slice_period(
         "version: 2\n"
         "name: dws_monthly\n"
         "layer: DWS\n"
-        "config:\n"
-        "  materialized: incremental\n"
         "execution:\n"
+        "  materialized: incremental\n"
         "  slice:\n"
         "    param: etl_date\n"
         "    column: stat_month_date\n"
@@ -579,7 +578,7 @@ def test_load_partition_units_does_not_validate_unrelated_strategies(
         "version: 2\n"
         "name: bad_companion\n"
         "layer: DWD\n"
-        "config:\n"
+        "execution:\n"
         "  materialized: incremental\n"
         "  full_refresh_strategy: companion\n",
         encoding="utf-8",

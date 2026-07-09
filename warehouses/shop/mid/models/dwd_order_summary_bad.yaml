@@ -3,9 +3,8 @@ name: dwd_order_summary_bad
 layer: ADS
 table_type: fact
 description: DWD anti-pattern fixture with aggregation
-config:
-  materialized: incremental
 execution:
+  materialized: incremental
   slice:
     param: etl_date
     column: order_date

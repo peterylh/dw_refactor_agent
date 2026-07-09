@@ -14,6 +14,7 @@ from dw_refactor_agent.execution.invocation import TaskInvocation
 from dw_refactor_agent.execution.model_config import (
     ExecutionConfigError,
     SliceConfig,
+    execution_config_for_model,
     normalize_materialized,
     normalize_strategy,
     slice_config_from_mapping,
@@ -45,20 +46,18 @@ class ExecutionPlanner:
 
     def task_spec(self, job_name: str, sql_path: Path) -> TaskSpec:
         raw_model = self.model_metadata.get(job_name, {})
-        raw_config = raw_model.get("config") or {}
-        if not isinstance(raw_config, dict):
-            raw_config = {}
+        raw_execution = execution_config_for_model(job_name, raw_model)
 
         materialized = normalize_materialized(
             job_name,
-            raw_config.get("materialized", "incremental"),
+            raw_execution.get("materialized", "incremental"),
         )
         strategy = normalize_strategy(
             job_name,
             materialized,
-            raw_config.get("full_refresh_strategy"),
+            raw_execution.get("full_refresh_strategy"),
         )
-        slice_config = self._slice_config(job_name, raw_model)
+        slice_config = self._slice_config(job_name, raw_execution)
         if (
             materialized == "incremental"
             and strategy == "replay_slices"
@@ -75,8 +74,8 @@ class ExecutionPlanner:
         companion_path = self._companion_path(Path(sql_path), job_name)
         if strategy == "companion" and companion_path is None:
             raise ExecutionConfigError(
-                f"[{job_name}] full_refresh_strategy: companion requires "
-                f"tasks/full_refresh/{job_name}_full_refresh.sql"
+                f"[{job_name}] execution.full_refresh_strategy: companion "
+                f"requires tasks/full_refresh/{job_name}_full_refresh.sql"
             )
 
         return TaskSpec(
@@ -263,11 +262,8 @@ class ExecutionPlanner:
         return metadata
 
     def _slice_config(
-        self, job_name: str, raw_model: dict
+        self, job_name: str, raw_execution: dict
     ) -> SliceConfig | None:
-        raw_execution = raw_model.get("execution") or {}
-        if not isinstance(raw_execution, dict):
-            raw_execution = {}
         model_slice = slice_config_from_mapping(
             job_name,
             raw_execution.get("slice"),
