@@ -33,6 +33,46 @@ def _governed_table_names(asset_catalog: dict) -> set[str]:
     return governed
 
 
+def _normalized_path(value) -> str:
+    return str(value or "").replace("\\", "/").strip()
+
+
+def _task_file_matches(
+    *,
+    project_dir,
+    task: dict,
+    task_path: Path,
+    scoped_task_files: set[str],
+) -> bool:
+    if not scoped_task_files:
+        return True
+
+    file_name = _display_file_path(project_dir, task_path)
+    candidates = {
+        _normalized_path(task.get("file")),
+        _normalized_path(file_name),
+        _normalized_path(task_path),
+    }
+    if file_name:
+        candidates.add(f"warehouses/{_normalized_path(file_name)}")
+
+    for scoped_file in scoped_task_files:
+        scoped_file = _normalized_path(scoped_file)
+        if not scoped_file:
+            continue
+        if scoped_file in candidates:
+            return True
+        if any(
+            scoped_file.endswith(f"/{candidate}") for candidate in candidates
+        ):
+            return True
+        if any(
+            candidate.endswith(f"/{scoped_file}") for candidate in candidates
+        ):
+            return True
+    return False
+
+
 def score_code_quality(
     context: AssessmentContext,
     rule_selection: RuleSelection | None = None,
@@ -44,12 +84,20 @@ def score_code_quality(
     project_dir = asset_catalog.get("project_dir")
     targets = []
     task_names = scoped_names(scope, "tasks")
+    task_files = scoped_names(scope, "task_files")
 
     for task in asset_catalog.get("tasks") or []:
         expected_table = _short_table_name(task.get("expected_table") or "")
         if task_names is not None and expected_table not in task_names:
             continue
         task_path = Path(task["path"])
+        if task_files is not None and not _task_file_matches(
+            project_dir=project_dir,
+            task=task,
+            task_path=task_path,
+            scoped_task_files=task_files,
+        ):
+            continue
         file_name = _display_file_path(project_dir, task_path)
         sql = task_path.read_text(encoding=TEXT_ENCODING)
         creates, drops, write_statements = _scan_task_sql(sql)
