@@ -1,10 +1,16 @@
 -- DIM anti-pattern fixture: dimension table with metric group metadata
+-- table_id: c20f2557-dead-4641-9968-24e5b3bb0ec0
 DROP TABLE IF EXISTS shop_dm.dim_store_metric_snapshot;
 CREATE TABLE IF NOT EXISTS shop_dm.dim_store_metric_snapshot (
+    -- column_id: 313622da-4ae6-468c-b821-3af53582825f
     store_id          BIGINT       NOT NULL COMMENT 'Store ID',
+    -- column_id: b789b9d7-ed85-44ae-b3fd-048772023a25
     snapshot_date     DATE         NOT NULL COMMENT 'Snapshot date',
+    -- column_id: 9ef70fb9-df92-41c6-a5ea-130185e5142c
     store_name        VARCHAR(128) NOT NULL COMMENT 'Store name',
+    -- column_id: 0d9225fa-f2e7-4cc5-88b2-846b9d99cdc3
     store_order_count INT          NOT NULL DEFAULT 0 COMMENT 'Store order count',
+    -- column_id: 60a6e30d-93be-41cb-a938-dc2f53422ee6
     etl_time          DATETIME     NOT NULL COMMENT 'ETL time'
 ) ENGINE=OLAP
 UNIQUE KEY(store_id, snapshot_date)

@@ -1,40 +1,77 @@
 DROP TABLE IF EXISTS finance_analytics_dm.ods_transactions;
+-- table_id: 7447bc36-3d76-4b8b-a5ec-842fb51d3569
 CREATE TABLE IF NOT EXISTS finance_analytics_dm.ods_transactions (
+    -- column_id: c79356c7-be76-47c2-84ea-568043644b55
     transaction_id BIGINT NULL,
+    -- column_id: 938a638c-c304-4b2f-b736-94100b704502
     account_id BIGINT NULL,
+    -- column_id: 04d2c10d-351c-4f8c-84c4-70284cb4f5d1
     customer_id BIGINT NULL,
+    -- column_id: 6a1c9d6e-7b72-41b0-93c0-f066bce5273d
     merchant_id BIGINT NULL,
+    -- column_id: fe60de2b-d0ea-4789-bc3c-46e1b94e73a4
     transaction_date DATETIME NULL,
+    -- column_id: 64b0c54d-6c8e-4dad-ac0e-0e84d102c3b1
     transaction_type STRING NULL,
+    -- column_id: 5058cb41-d960-4bf3-88f4-12f761d4b35f
     amount DECIMAL(18,4) NULL,
+    -- column_id: 13384cb5-d02d-4135-9092-6419fb53e79c
     currency STRING NULL,
+    -- column_id: ed36a08b-b3dd-4271-80b2-031c8fa85365
     channel STRING NULL,
+    -- column_id: ecfc1372-f0e5-4151-8bd2-5d2162b65a36
     merchant_category STRING NULL,
+    -- column_id: f133ac52-f270-41e1-8532-7ed63903b3c8
     mcc_code STRING NULL,
+    -- column_id: 69d6d313-233c-4d8f-a69d-05024719a767
     description STRING NULL,
+    -- column_id: 9c7ccfec-093a-41ad-b0c3-5c156f15ddbd
     is_fraud BOOLEAN NULL,
+    -- column_id: 0d5676f2-7f9b-4711-b2ec-9489c17d94d0
     fraud_score DECIMAL(18,4) NULL,
+    -- column_id: 83b41031-744f-4861-8478-a0052c34bd32
     location_city STRING NULL,
+    -- column_id: 53f7a39d-94f9-4517-bf2e-9440b4736f4f
     location_state STRING NULL,
+    -- column_id: 52fb9d29-2c17-44a9-b64b-46b7079de5b8
     location_country STRING NULL,
+    -- column_id: e319462a-ddf4-4951-85e1-b6b4db1cc5e9
     latitude DECIMAL(18,4) NULL,
+    -- column_id: a47b7822-802f-48fa-9ad9-7437df078405
     longitude DECIMAL(18,4) NULL,
+    -- column_id: a208b9ca-466c-44fc-9d8b-d88cd7eb837f
     device_id STRING NULL,
+    -- column_id: df66c5c2-0503-4ed4-b46d-015344b304a7
     ip_address STRING NULL,
+    -- column_id: 0888d4fe-3065-4adb-9ef4-e1d5bead0980
     is_international BOOLEAN NULL,
+    -- column_id: 36987106-4fce-46fe-907d-251b3fa64328
     authorization_code STRING NULL,
+    -- column_id: b07faee6-5faa-447e-a0b7-3e216bdad5c6
     card_last_four STRING NULL,
+    -- column_id: 9d9be96c-f21f-4c80-bfa2-295e9a18cc9a
     is_recurring BOOLEAN NULL,
+    -- column_id: 94a2a94a-5d37-4680-b141-348341d33290
     hour_of_day BIGINT NULL,
+    -- column_id: 38ec1e89-36c5-4f94-9fbc-11dfb097d227
     day_of_week BIGINT NULL,
+    -- column_id: 5d9e79a4-e8aa-4941-ba8a-6c56a815f784
     is_weekend BOOLEAN NULL,
+    -- column_id: 0a43a3ad-fe6d-415f-a48c-e280807f4d47
     distance_from_home_km STRING NULL,
+    -- column_id: 7fcb76c1-9fd3-4411-ad1f-d0925f433b86
     merchant_risk_score DECIMAL(18,4) NULL,
+    -- column_id: d3987edb-16b1-43d3-a671-806ded3f10d3
     velocity_24h BIGINT NULL,
+    -- column_id: ee80b0c0-4ba7-4251-b9b8-805b813cb734
     amount_deviation_score DECIMAL(18,4) NULL,
+    -- column_id: 60c30b3b-54c8-46aa-9cbb-24a91ccdfed1
     processing_time_ms STRING NULL,
+    -- column_id: 3daf02c2-1a2b-4310-b72f-d7e8ac1e989f
     decline_reason STRING NULL,
+    -- column_id: 902203d9-e8fc-43d5-82ee-7121cf89fdd2
     created_at DATETIME NULL,
+    -- column_id: fba35a36-d37f-49c1-b1c6-6d996b23a6cf
     load_time DATETIME NULL
 ) ENGINE=OLAP
 DUPLICATE KEY(transaction_id)

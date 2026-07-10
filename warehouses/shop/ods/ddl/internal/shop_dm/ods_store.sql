@@ -2,15 +2,25 @@
 -- table_id: 9b80e880-ad2c-444d-92c5-c01b8130a0a1
 DROP TABLE IF EXISTS shop_dm.ods_store;
 CREATE TABLE IF NOT EXISTS shop_dm.ods_store (
+    -- column_id: afa7bebf-effd-4133-a873-c24f407cc519
     store_id    BIGINT       NOT NULL COMMENT '门店ID',
+    -- column_id: 9123ac44-8747-4222-9906-003b9b231416
     store_name  VARCHAR(128) NOT NULL COMMENT '门店名称',
+    -- column_id: b6054640-d65f-4642-b371-c84c624eac92
     store_type  VARCHAR(32)  NULL COMMENT '门店类型:旗舰店/标准店/社区店',
+    -- column_id: df492134-42c6-4735-afe0-6d24d35e40b3
     address     VARCHAR(256) NULL COMMENT '地址',
+    -- column_id: 1da42b12-c9b7-4d46-a827-21f8748a75e9
     city        VARCHAR(64)  NULL COMMENT '城市',
+    -- column_id: 37ad3482-8db4-4afa-ac51-aede73e533b1
     province    VARCHAR(64)  NULL COMMENT '省份',
+    -- column_id: c9843a64-9069-4d7c-9daf-75b871d51177
     area_size   DECIMAL(8,2) NULL COMMENT '面积(平方米)',
+    -- column_id: c10f369c-07cf-4b78-a228-ecb3bc16d15c
     open_date   DATE         NULL COMMENT '开业日期',
+    -- column_id: 38d562ef-4b83-4952-a834-7ce7de1a02e4
     status      TINYINT      NOT NULL DEFAULT 1 COMMENT '状态:1营业/0歇业',
+    -- column_id: f2adad4a-fb97-4cb7-b604-6bee43082bee
     load_time   DATETIME     NOT NULL COMMENT '数据导入时间(分区列)'
 ) ENGINE=OLAP
 DUPLICATE KEY(store_id)

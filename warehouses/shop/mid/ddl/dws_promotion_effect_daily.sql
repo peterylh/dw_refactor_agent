@@ -1,16 +1,26 @@
 -- DWS 促销效果日汇总表
--- table_id: b3c4d5e6-f7a8-4b9c-0d1e-2f3a4b5c6d7e
+-- table_id: ff4ae064-f1d3-403e-8a0a-92ed4d9f0c1b
 DROP TABLE IF EXISTS shop_dm.dws_promotion_effect_daily;
 CREATE TABLE IF NOT EXISTS shop_dm.dws_promotion_effect_daily (
+    -- column_id: 750f939e-c4c3-42ba-97f2-a6e0fc4c7041
     promotion_id   BIGINT        NOT NULL COMMENT '促销ID',
+    -- column_id: d0135db2-7354-49da-af94-a6dbe6d22193
     stat_date      DATE          NOT NULL COMMENT '统计日期',
+    -- column_id: c3e608e7-82a3-4278-bd05-f42b89cb3481
     promotion_name VARCHAR(128)  NULL COMMENT '促销名称',
+    -- column_id: 8760bdf8-a40a-46a5-8415-45e1028d190e
     promotion_type VARCHAR(32)   NULL COMMENT '促销类型',
+    -- column_id: 1f9923fa-68fd-4cb4-bd2b-4503d49462e3
     order_count    INT           NOT NULL DEFAULT 0 COMMENT '订单数',
+    -- column_id: adca081b-c53a-4932-9e92-8884500e98ab
     customer_count INT           NOT NULL DEFAULT 0 COMMENT '客户数(去重)',
+    -- column_id: 3080ad28-76f5-4d45-a2cb-c97da8e08341
     sale_quantity  INT           NOT NULL DEFAULT 0 COMMENT '销售数量',
+    -- column_id: 43fd8498-8b09-499f-9311-df5f7d33c7f1
     sale_amount    DECIMAL(14,2) NOT NULL DEFAULT 0.00 COMMENT '销售金额',
+    -- column_id: 9b268990-b7e5-421d-87f9-d3e9c977ce7a
     discount_amount DECIMAL(14,2) NOT NULL DEFAULT 0.00 COMMENT '折扣金额',
+    -- column_id: 1f3b870b-8f94-4691-af22-201a02a76e43
     etl_time       DATETIME      NOT NULL COMMENT 'ETL处理时间'
 ) ENGINE=OLAP
 UNIQUE KEY(promotion_id, stat_date)

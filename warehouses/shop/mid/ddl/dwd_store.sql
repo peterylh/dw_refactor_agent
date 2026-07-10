@@ -2,18 +2,31 @@
 -- table_id: 93c07cba-3c14-4486-9a5d-ddee38caaf4c
 DROP TABLE IF EXISTS shop_dm.dwd_store;
 CREATE TABLE IF NOT EXISTS shop_dm.dwd_store (
+    -- column_id: f6c5998e-f53e-4062-8e10-dfa147593dd0
     store_id     BIGINT        NOT NULL COMMENT '门店ID',
+    -- column_id: ac2266b1-6b31-4276-9b76-8a44f0b30c28
     snapshot_date DATE         NOT NULL COMMENT '快照日期',
+    -- column_id: 2728a551-891b-45be-b424-b55eaf9da07b
     etl_time     DATETIME      NOT NULL COMMENT 'ETL处理时间',
+    -- column_id: 89316282-1115-42d8-b953-5c41134e7829
     store_name   VARCHAR(128)  NOT NULL COMMENT '门店名称',
+    -- column_id: 97cb4c81-c912-4cfb-b606-77fab1b6a115
     store_type   VARCHAR(32)   NULL COMMENT '门店类型',
+    -- column_id: 0f62c9fe-c8e0-422e-be27-d2d7e5623468
     store_level  VARCHAR(16)   NULL COMMENT '门店级别:A级/B级/C级',
+    -- column_id: c433fdcf-f82f-4ecd-80f3-30f1858f1a41
     address      VARCHAR(256)  NULL COMMENT '地址',
+    -- column_id: 71c69111-3427-47f9-91e3-3ee55f5bb6a5
     city         VARCHAR(64)   NULL COMMENT '城市',
+    -- column_id: 80811f94-d4be-4f15-9a95-31808bcdfbce
     province     VARCHAR(64)   NULL COMMENT '省份',
+    -- column_id: 62ae2cc1-8df3-4452-b008-8974f5f56133
     area_size    DECIMAL(8,2)  NULL COMMENT '面积(平方米)',
+    -- column_id: 1157d023-49a1-410d-828b-ce5dff24fcc9
     open_date    DATE          NULL COMMENT '开业日期',
+    -- column_id: b670e681-3744-4d7c-9437-2a9fdbf5adfc
     open_years   DECIMAL(4,1)  NULL COMMENT '开业年限(年,含小数)',
+    -- column_id: 2ae594ab-c0f4-49b5-9d4a-7e866891559d
     status       TINYINT       NOT NULL DEFAULT 1 COMMENT '状态'
 ) ENGINE=OLAP
 UNIQUE KEY(store_id, snapshot_date)

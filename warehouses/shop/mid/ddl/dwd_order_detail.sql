@@ -2,23 +2,41 @@
 -- table_id: dd97001f-7b9a-412f-bdde-4f5a5ec0b76f
 DROP TABLE IF EXISTS shop_dm.dwd_order_detail;
 CREATE TABLE IF NOT EXISTS shop_dm.dwd_order_detail (
+    -- column_id: 2e2e63af-839f-4634-a73c-79aeae1a6d89
     order_id        BIGINT        NOT NULL COMMENT '订单ID',
+    -- column_id: 9239936f-1555-405f-897b-3d43acef61df
     order_item_id   BIGINT        NOT NULL COMMENT '订单明细ID',
+    -- column_id: 735e887c-eb4a-4906-bd83-fb50d14d6469
     order_date      DATE          NOT NULL COMMENT '订单日期',
+    -- column_id: dd80adc4-f318-46fc-8fd4-12d2cd2af31b
     customer_id     BIGINT        NOT NULL COMMENT '客户ID',
+    -- column_id: ce5bd048-0c79-4a83-b5bf-3928a70d92ca
     store_id        BIGINT        NOT NULL COMMENT '门店ID',
+    -- column_id: 8eda6429-958b-48eb-af50-0171543f9bf8
     product_id      BIGINT        NOT NULL COMMENT '商品ID',
+    -- column_id: 0360ad47-bfae-4893-af3f-ad4b0c97bd0a
     category_id     BIGINT        NULL COMMENT '品类ID',
+    -- column_id: 1cb978d3-fe40-4627-9785-29f8f72ba4f5
     promotion_id    BIGINT        NULL COMMENT '促销活动ID',
+    -- column_id: 30f1fdfa-61cf-4196-ab56-fb970b8d344f
     order_month     VARCHAR(7)    NULL COMMENT '订单月份:YYYY-MM',
+    -- column_id: 0851f694-217e-4711-aee9-09ba21427423
     quantity        INT           NOT NULL COMMENT '数量',
+    -- column_id: cb9e30d9-7053-4ecc-bb49-13b1c4309714
     unit_price      DECIMAL(12,2) NOT NULL COMMENT '单价',
+    -- column_id: f55aa6fc-5d44-45bf-a3d9-2b1d87cb2eff
     discount        DECIMAL(12,2) NOT NULL DEFAULT 0.00 COMMENT '折扣金额',
+    -- column_id: 6f112cd7-8e41-457f-9895-8ef3ac3d2a07
     subtotal        DECIMAL(12,2) NOT NULL COMMENT '小计',
+    -- column_id: 99199d8e-d017-46ef-86ab-6a93cadd1216
     cost_price      DECIMAL(12,2) NULL COMMENT '成本价',
+    -- column_id: 0a89d0b9-0944-4711-b7b4-5c9f05660161
     gross_profit    DECIMAL(12,2) NULL COMMENT '毛利',
+    -- column_id: 30fa2949-acc2-465a-8379-9b3371138efb
     payment_method  VARCHAR(16)   NULL COMMENT '支付方式',
+    -- column_id: 4d0bc54f-8025-43f3-8e7e-d5cfff3a2352
     order_status    VARCHAR(16)   NOT NULL DEFAULT '已完成' COMMENT '订单状态',
+    -- column_id: 5603270f-3d06-4712-a4fb-68db3861465c
     etl_time        DATETIME      NOT NULL COMMENT 'ETL处理时间'
 ) ENGINE=OLAP
 UNIQUE KEY(order_id, order_item_id, order_date)

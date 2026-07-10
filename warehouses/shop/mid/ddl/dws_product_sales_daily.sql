@@ -2,12 +2,19 @@
 -- table_id: 4fe902ed-0260-41fe-aaf6-57875f91700d
 DROP TABLE IF EXISTS shop_dm.dws_product_sales_daily;
 CREATE TABLE IF NOT EXISTS shop_dm.dws_product_sales_daily (
+    -- column_id: 567bcec4-136f-41c1-805b-ca37c4e41857
     product_id      BIGINT        NOT NULL COMMENT '商品ID',
+    -- column_id: 6baa7daa-1c35-47a1-9ea1-230dc996ce01
     stat_date       DATE          NOT NULL COMMENT '统计日期',
+    -- column_id: 1229cf7b-3bbf-43e0-b873-fc5bf7ad52b4
     order_count     INT           NOT NULL DEFAULT 0 COMMENT '订单笔数',
+    -- column_id: 9560b48d-b95a-495a-b436-632e6ab0172e
     sale_quantity   INT           NOT NULL DEFAULT 0 COMMENT '销售数量',
+    -- column_id: 2e9f48ab-6894-43b5-9f8c-ccc8623928f8
     sale_amount     DECIMAL(14,2) NOT NULL DEFAULT 0.00 COMMENT '销售金额',
+    -- column_id: 2686c420-0fed-4ffc-8bec-4790a509af22
     discount_amount DECIMAL(14,2) NOT NULL DEFAULT 0.00 COMMENT '折扣金额',
+    -- column_id: 39380b98-109b-4538-b103-b388f6311370
     etl_time        DATETIME      NOT NULL COMMENT 'ETL处理时间'
 ) ENGINE=OLAP
 UNIQUE KEY(product_id, stat_date)

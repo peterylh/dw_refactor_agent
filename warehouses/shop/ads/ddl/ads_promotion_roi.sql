@@ -1,16 +1,26 @@
 -- ADS 促销投资回报分析表
--- table_id: d5e6f7a8-b9c0-4d1e-2f3a-4b5c6d7e8f9a
+-- table_id: 70fe9228-4332-41ad-afec-0b5f85282bd1
 DROP TABLE IF EXISTS shop_dm.ads_promotion_roi;
 CREATE TABLE IF NOT EXISTS shop_dm.ads_promotion_roi (
+    -- column_id: 1f3420ca-e9f6-441f-bef1-313b425830c7
     promotion_id      BIGINT        NOT NULL COMMENT '促销ID',
+    -- column_id: a2c1d818-fe2e-4a46-921c-dc2bcff36bad
     stat_date         DATE          NOT NULL COMMENT '统计日期',
+    -- column_id: b40a09d3-322e-4044-a5dd-8dc1fad87c9e
     promotion_name    VARCHAR(128)  NULL COMMENT '促销名称',
+    -- column_id: 52107d52-bc0d-4841-b2c2-3e6ef75491a5
     promotion_type    VARCHAR(32)   NULL COMMENT '促销类型',
+    -- column_id: e7a87dde-8daf-45f4-8961-4b31ed77d735
     total_orders      INT           NOT NULL DEFAULT 0 COMMENT '总订单数',
+    -- column_id: 28a8bfdf-8d38-4efb-ba74-2233fd93eb2e
     total_sale_amount DECIMAL(14,2) NOT NULL DEFAULT 0.00 COMMENT '总销售金额',
+    -- column_id: a9a457d8-2d6b-495f-8886-31709c85ba05
     total_discount_cost DECIMAL(14,2) NOT NULL DEFAULT 0.00 COMMENT '总折扣成本',
+    -- column_id: 9c21de30-e3a5-4c82-a5b7-012e3ea285b5
     avg_discount_rate DECIMAL(5,2)  NULL COMMENT '平均折扣率',
+    -- column_id: dba24baa-9ca0-490e-9e6d-ad13958efb20
     roi               DECIMAL(10,2) NULL COMMENT '投资回报率:销售额/折扣成本',
+    -- column_id: afd228b7-5256-4f3a-a2d3-0f1c6831371e
     etl_time          DATETIME      NOT NULL COMMENT 'ETL处理时间'
 ) ENGINE=OLAP
 UNIQUE KEY(promotion_id, stat_date)

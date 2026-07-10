@@ -2,17 +2,29 @@
 -- table_id: 2aaceda8-a2cf-409e-82fa-57158161e20d
 DROP TABLE IF EXISTS shop_dm.ods_customer;
 CREATE TABLE IF NOT EXISTS shop_dm.ods_customer (
+    -- column_id: b9b88021-658f-4b41-b907-6c20e365d022
     customer_id   BIGINT       NOT NULL COMMENT '客户ID',
+    -- column_id: 9932dd4e-bc15-49c7-9254-b0622629aac4
     customer_name VARCHAR(64)  NOT NULL COMMENT '客户姓名',
+    -- column_id: 768d9f4e-c2d9-478f-b419-8770e3273ad0
     gender        VARCHAR(4)   NULL COMMENT '性别',
+    -- column_id: ac0fd511-34d6-4288-aac4-5914c8fe32ef
     age           INT          NULL COMMENT '年龄',
+    -- column_id: f466583c-ed8a-4c7e-a451-2e7fc674bae8
     phone         VARCHAR(20)  NULL COMMENT '手机号',
+    -- column_id: 3f50d55b-1378-4ae1-a9ca-d6c88faf4468
     email         VARCHAR(128) NULL COMMENT '邮箱',
+    -- column_id: b5777b0f-4661-4cac-bf1e-200c77833d68
     address       VARCHAR(256) NULL COMMENT '地址',
+    -- column_id: 239c35ac-ce8c-429c-80e0-b2a18344a03f
     city          VARCHAR(64)  NULL COMMENT '城市',
+    -- column_id: ad5ed3e8-d977-4187-81cc-a9211ca491cf
     province      VARCHAR(64)  NULL COMMENT '省份',
+    -- column_id: 34545a4a-f442-4744-9142-6f0891244266
     member_level  VARCHAR(16)  NULL COMMENT '会员等级:普通/银卡/金卡/钻石',
+    -- column_id: b55bc5a6-5f8a-4496-a2cd-f9e5810b6ca3
     register_date DATE         NULL COMMENT '注册日期',
+    -- column_id: d1c021b2-eacf-4fab-b6ef-1f72356173cc
     load_time     DATETIME     NOT NULL COMMENT '数据导入时间(分区列)'
 ) ENGINE=OLAP
 DUPLICATE KEY(customer_id)

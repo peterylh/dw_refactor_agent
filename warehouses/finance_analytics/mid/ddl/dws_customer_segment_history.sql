@@ -1,43 +1,83 @@
 DROP TABLE IF EXISTS finance_analytics_dm.dws_customer_segment_history;
+-- table_id: c98ce8cb-086d-4151-a7b5-a9408133e655
 CREATE TABLE IF NOT EXISTS finance_analytics_dm.dws_customer_segment_history (
+    -- column_id: 10ca7abd-b5fe-4d58-9301-bee773c47885
     segment_history_key CHAR(32) NULL,
+    -- column_id: f98f067c-1f39-4f11-af8d-cb4a5f76e8d8
     customer_key CHAR(32) NULL,
+    -- column_id: 03f161b7-9869-4547-9a1c-e34e1570ad27
     effective_date_key CHAR(32) NULL,
+    -- column_id: f932270c-f561-4eea-8b08-34bce75983b9
     end_date_key CHAR(32) NULL,
+    -- column_id: 7b2373f8-cc1f-479e-944a-33c18cfae9c1
     segment_history_id BIGINT NULL,
+    -- column_id: 7a688f73-802d-4e44-a6c9-981891afb93d
     effective_date DATETIME NULL,
+    -- column_id: c1bd6096-d641-439d-b5e2-c52bf2f45696
     end_date DATETIME NULL,
+    -- column_id: 624c4da2-126f-4eb9-b20f-db9456b65da7
     is_current BOOLEAN NULL,
+    -- column_id: 96eb9c1d-0d4f-4d72-9820-7ccfd3dfe3fb
     customer_segment STRING NULL,
+    -- column_id: b099d522-9399-44bd-b822-d82eaae410a0
     previous_segment STRING NULL,
+    -- column_id: 96f23702-1be9-466c-b74e-30b4a977efcd
     loyalty_tier STRING NULL,
+    -- column_id: 432e31f9-2fdc-4ca8-93d7-ef0c9632fe85
     previous_tier STRING NULL,
+    -- column_id: 91df09fa-af94-46cf-821c-a85d22870e65
     risk_segment STRING NULL,
+    -- column_id: 0160c9ca-25f2-4da1-886b-f12d0049c26c
     previous_risk STRING NULL,
+    -- column_id: c6200f52-84c8-4704-8d32-98f228e9df61
     change_type STRING NULL,
+    -- column_id: d0f84707-5943-45a8-b290-238835c94cdd
     change_reason STRING NULL,
+    -- column_id: e3ec924c-7df4-40c4-bbb8-b1af9ce5efe4
     triggered_by STRING NULL,
+    -- column_id: 0690004e-4191-45f7-b67c-2d792dfb4152
     total_accounts BIGINT NULL,
+    -- column_id: a35a7383-59b3-432f-86b4-a4f63cccd8cf
     total_balance DECIMAL(18,4) NULL,
+    -- column_id: f2da7b32-4fc8-4d42-8a1c-104cc3757905
     avg_monthly_transactions STRING NULL,
+    -- column_id: e928f469-bc37-4343-97a5-23a9b0a47a50
     products_held BIGINT NULL,
+    -- column_id: ebf3243a-8b9f-4270-8942-4a8f1733fe31
     customer_lifetime_value DECIMAL(18,4) NULL,
+    -- column_id: cd4dc2d9-b9f0-4ac9-9d40-2c464ab3e905
     tenure_days BIGINT NULL,
+    -- column_id: 19ef4570-f6f1-41f9-b220-937ae0c40af2
     credit_score DECIMAL(18,4) NULL,
+    -- column_id: 1c9cd6af-c04f-4c42-b105-2d99078e26ef
     annual_income DECIMAL(18,4) NULL,
+    -- column_id: 66498d40-6c35-4e39-85fe-32d9ca90e4db
     last_interaction_days STRING NULL,
+    -- column_id: e1299c1e-befb-4b2a-84ae-7367d838bfbc
     digital_engagement_score DECIMAL(18,4) NULL,
+    -- column_id: 6b87dabb-e5aa-4fc9-9b6e-0041eff6e8f8
     branch_visits_last_90d BIGINT NULL,
+    -- column_id: 8321cf73-a869-404d-92de-e6d581ce182c
     online_logins_last_90d BIGINT NULL,
+    -- column_id: 1ecb2551-0959-4c3b-bf34-5c170549c414
     segment_changed_flag BOOLEAN NULL,
+    -- column_id: a4abb6dd-be12-444f-bd45-09bf75d4e624
     tier_changed_flag BOOLEAN NULL,
+    -- column_id: 7029730e-53d3-4b35-9f92-50444574c281
     risk_changed_flag BOOLEAN NULL,
+    -- column_id: eaddff0b-ed63-4d24-8993-d0c452e09163
     tier_movement STRING NULL,
+    -- column_id: 43a71232-4320-4861-839d-2f95de6f8a00
     premium_eligible_flag BOOLEAN NULL,
+    -- column_id: 8710d954-c6fc-45c9-80e8-3f5aa2c00db4
     churn_risk_flag BOOLEAN NULL,
+    -- column_id: 0422cb61-cd55-4a20-ad65-18cecb99e420
     cross_sell_opportunity_flag BOOLEAN NULL,
+    -- column_id: 699fb827-563c-4626-bdbb-b2ec321d3ed5
     days_in_segment STRING NULL,
+    -- column_id: 40a8cc60-f7c5-44fa-b5fa-6bbc6a5ac1c8
     segment_change_count BIGINT NULL,
+    -- column_id: b663f2b9-e7d9-4664-934a-1c5fc6062223
     dbt_updated_at DATETIME NULL
 ) ENGINE=OLAP
 DUPLICATE KEY(segment_history_key)

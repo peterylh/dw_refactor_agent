@@ -2,16 +2,27 @@
 -- table_id: b79f7d88-bbb7-4fbc-b61e-96f6c3aafd11
 DROP TABLE IF EXISTS shop_dm.ads_customer_rfm;
 CREATE TABLE IF NOT EXISTS shop_dm.ads_customer_rfm (
+    -- column_id: 344ff94b-f1ca-40d2-aadc-f6f9e72acd1f
     customer_id      BIGINT        NOT NULL COMMENT '客户ID',
+    -- column_id: 8e37ef86-ce74-4d53-995a-6ad523ddda79
     stat_date        DATE          NOT NULL COMMENT '统计日期',
+    -- column_id: c7c7eabb-6824-465b-a8c2-4ea79d3cd414
     recency_days     INT           NULL COMMENT '最近一次消费距今天数',
+    -- column_id: 8478ffb6-582a-4409-9721-62a498fa1fdc
     frequency        INT           NULL COMMENT '消费频次',
+    -- column_id: eeec5665-e517-4171-a0c2-b1c8a9bb009a
     monetary         DECIMAL(14,2) NULL COMMENT '消费金额',
+    -- column_id: 6b802f0a-289e-44ec-afe4-b602afd3ef7f
     r_score          INT           NULL COMMENT 'R分值(1-5)',
+    -- column_id: f4a0235d-1562-4608-a4b3-caa4dc57f72e
     f_score          INT           NULL COMMENT 'F分值(1-5)',
+    -- column_id: bca94659-054a-4891-875c-36157b444c8e
     m_score          INT           NULL COMMENT 'M分值(1-5)',
+    -- column_id: 9b464d0f-6715-4e6f-9311-8f964c170e6d
     rfm_score        INT           NULL COMMENT 'RFM综合得分(3-15)',
+    -- column_id: dfe0c391-56c3-422d-bfda-35d2c420bcb4
     customer_segment VARCHAR(32)   NULL COMMENT '客户分层:高价值/重要发展/重要保持/一般价值/流失预警',
+    -- column_id: d3b91a0f-e500-4d05-b0fa-f25d7ecd4ab4
     etl_time         DATETIME      NOT NULL COMMENT 'ETL处理时间'
 ) ENGINE=OLAP
 UNIQUE KEY(customer_id, stat_date)
