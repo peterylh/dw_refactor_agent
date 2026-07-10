@@ -129,3 +129,15 @@ python -m dw_refactor_agent.refactor.run analyze --manifest warehouses/<project>
 
 没有 `execution_values` 的 sliced incremental 作业会在 shadow-run dry-run
 或真实执行阶段失败；工具不会默认使用当天日期或全局 driver value 兜底。
+
+sliced job 或无依赖 job 较多时，可显式开启 shadow-run 全局并发和
+mysql 会话批量复用：
+
+```bash
+python -m dw_refactor_agent.refactor.run shadow-run --manifest warehouses/<project>/artifacts/refactor_runs/<run_id>/manifest.json --parallel 4 --batch-size 2
+```
+
+`--parallel` 控制 shadow-run 全局 mysql 会话并发上限：无未完成上游依赖的
+ready job 可以并发执行，同一 sliced job 的 slice batch 也共享该上限。
+`--batch-size` 控制每个 mysql 会话中串联执行的 slice 数。默认均为 `1`，
+保持串行兼容行为。

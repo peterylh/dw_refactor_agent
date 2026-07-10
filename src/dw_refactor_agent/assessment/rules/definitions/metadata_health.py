@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from dw_refactor_agent.assessment.project_facts.asset_catalog import (
+    _display_file_path,
+)
 from dw_refactor_agent.assessment.project_facts.business_metadata import (
     _business_area_applies,
     _data_domain_applies,
@@ -54,6 +57,67 @@ class _MetadataHealthRule(AssessRule):
             evidence=evidence,
             message=message,
             issue=issue or None,
+        )
+
+
+class MetadataModelLayerMatchesAssetPathRule(_MetadataHealthRule):
+    rule_id = "METADATA_MODEL_LAYER_MATCHES_ASSET_PATH"
+    target = "file"
+
+    def evaluate(self, target: dict, rule_context: dict) -> dict | None:
+        model = target.get("model") or {}
+        model_path = model.get("path")
+        expected_layers = [
+            str(layer).upper()
+            for layer in model.get("expected_layers") or []
+            if str(layer or "").strip()
+        ]
+        if not model_path or not expected_layers:
+            return None
+
+        project_dir = rule_context.get("project_dir")
+        display_file = (
+            _display_file_path(project_dir, model_path)
+            if project_dir
+            else str(model_path)
+        )
+        declared_layer = str(target["metadata"].get("layer") or "").upper()
+        asset_role = str(model.get("asset_role") or "")
+        passed = declared_layer in set(expected_layers)
+        message = (
+            ""
+            if passed
+            else (
+                f"model.layer={declared_layer or '未配置'} 与 "
+                f"{asset_role}/models 路径不一致"
+            )
+        )
+        issue = (
+            None
+            if passed
+            else {
+                "message": message,
+                "remediation": {"related_files": [display_file]},
+            }
+        )
+        return make_check(
+            rule_id=self.rule_id,
+            target_type="file",
+            target=display_file,
+            passed=passed,
+            expected={
+                "description": "model.layer匹配所在资产路径角色",
+                "layers": expected_layers,
+            },
+            actual={"layer": declared_layer or None},
+            evidence={
+                "asset_role": asset_role,
+                "expected_layers": expected_layers,
+                "declared_layer": declared_layer,
+                "model_name": target["table_name"],
+            },
+            message=message,
+            issue=issue,
         )
 
 
@@ -449,6 +513,7 @@ class MetadataBusinessAreaValidRule(_MetadataHealthRule):
 
 
 METADATA_HEALTH_RULE_CLASSES = [
+    MetadataModelLayerMatchesAssetPathRule,
     MetadataDimHasPrimaryEntityRule,
     MetadataDimSemanticSubjectMatchesPrimaryRule,
     MetadataEntityKeysExistRule,

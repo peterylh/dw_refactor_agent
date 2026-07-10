@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import defaultdict, deque
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
 
@@ -16,8 +17,10 @@ from dw_refactor_agent.ddl_deriver.ddl_deriver import (
 )
 from dw_refactor_agent.execution.model_config import (
     ExecutionConfigError,
+    execution_config_for_model,
     slice_config_from_mapping,
 )
+from dw_refactor_agent.lineage.asset_graph import build_asset_table_graph
 from dw_refactor_agent.lineage.job_dag import asset_job_dag_from_lineage
 from dw_refactor_agent.sql.doris import extract_doris_partition_column
 
@@ -147,6 +150,10 @@ def _short_name(name: str) -> str:
     return str(name or "").split(".")[-1]
 
 
+def _table_key(name: str) -> str:
+    return _short_name(name).casefold()
+
+
 def _phase2_create_tables(ddl_changes: list[dict]) -> set[str]:
     phase2_creates = set()
     for change in ddl_changes:
@@ -272,6 +279,7 @@ def build_verification_plan(
         jobs_to_run,
         anchor_windows,
         metadata_errors,
+        lineage_data,
     )
 
     checks = []
@@ -526,10 +534,10 @@ def _table_execution_slice_metadata(
 
 def _is_incremental_model(project: str, table: str) -> bool:
     metadata = config.get_model_metadata(table, project) or {}
-    raw_config = metadata.get("config") or {}
-    if not isinstance(raw_config, dict):
-        raw_config = {}
-    materialized = str(raw_config.get("materialized") or "incremental").strip()
+    raw_execution = execution_config_for_model(table, metadata)
+    materialized = str(
+        raw_execution.get("materialized") or "incremental"
+    ).strip()
     return materialized.lower() != "full"
 
 
@@ -706,6 +714,48 @@ def _execution_values(
     return sorted(values)
 
 
+def _window_for_period_value(
+    project: str,
+    table: str,
+    period: str,
+    value: str,
+    metadata_errors: list[dict],
+) -> dict | None:
+    parsed = _parse_anchor_date(value, table, metadata_errors)
+    if parsed is None:
+        return None
+    start = _period_start(parsed, period, project, table, metadata_errors)
+    if start is None:
+        return None
+    return {
+        "table": table,
+        "time_period": period,
+        "start": start,
+        "end_exclusive": _period_end_exclusive(start, period),
+    }
+
+
+def _windows_for_execution_values(
+    project: str,
+    table: str,
+    period: str,
+    values: list[str],
+    metadata_errors: list[dict],
+) -> list[dict]:
+    windows = []
+    for value in values:
+        window = _window_for_period_value(
+            project,
+            table,
+            period,
+            value,
+            metadata_errors,
+        )
+        if window is not None:
+            windows.append(window)
+    return windows
+
+
 def _build_compare_anchors(
     project: str,
     anchors: list[str],
@@ -791,7 +841,7 @@ def _build_compare_anchors(
     return compare_anchors, windows, warnings
 
 
-def _apply_execution_values(
+def _apply_execution_values_globally(
     project: str,
     jobs_to_run: list[dict],
     anchor_windows: list[dict],
@@ -814,6 +864,135 @@ def _apply_execution_values(
         )
         if values:
             job["execution_values"] = values
+
+
+def _lineage_upstream_by_key(
+    lineage_data: dict | None,
+) -> tuple[dict[str, set[str]], dict[str, str]]:
+    upstream, downstream = build_asset_table_graph(lineage_data or {})
+    upstream_by_key: dict[str, set[str]] = defaultdict(set)
+    table_name_by_key = {}
+    for table in set(upstream) | set(downstream):
+        table_name_by_key.setdefault(_table_key(table), _short_name(table))
+    for table, sources in upstream.items():
+        target_key = _table_key(table)
+        table_name_by_key.setdefault(target_key, _short_name(table))
+        for source in sources:
+            source_key = _table_key(source)
+            if source_key:
+                upstream_by_key[target_key].add(source_key)
+                table_name_by_key.setdefault(source_key, _short_name(source))
+    return dict(upstream_by_key), table_name_by_key
+
+
+def _job_table(job: dict) -> str:
+    return str(job.get("target") or job.get("job") or "")
+
+
+def _apply_execution_values_by_lineage(
+    project: str,
+    jobs_to_run: list[dict],
+    anchor_windows: list[dict],
+    metadata_errors: list[dict],
+    lineage_data: dict | None,
+) -> None:
+    upstream_by_key, table_name_by_key = _lineage_upstream_by_key(lineage_data)
+    job_by_key = {}
+    assigned_values: dict[str, set[str]] = defaultdict(set)
+
+    for job in jobs_to_run:
+        table = _job_table(job)
+        key = _table_key(table)
+        if key:
+            job_by_key[key] = job
+            table_name_by_key.setdefault(key, table)
+
+    queue = deque()
+    for window in anchor_windows:
+        table = str(window.get("table") or "")
+        key = _table_key(table)
+        if key:
+            table_name_by_key.setdefault(key, _short_name(table))
+            queue.append((key, window))
+
+    visited = set()
+    while queue:
+        table_key, window = queue.popleft()
+        visit_key = (
+            table_key,
+            window.get("start"),
+            window.get("end_exclusive"),
+        )
+        if visit_key in visited:
+            continue
+        visited.add(visit_key)
+
+        job = job_by_key.get(table_key)
+        table = _job_table(job) if job else table_name_by_key.get(table_key)
+        if not table:
+            continue
+
+        before_error_count = len(metadata_errors)
+        slice_metadata = _table_execution_slice_metadata(
+            project,
+            table,
+            metadata_errors,
+        )
+        if len(metadata_errors) > before_error_count:
+            continue
+
+        upstream_windows = [window]
+        if slice_metadata:
+            period = slice_metadata["time_period"]
+            values = _execution_values([window], period, project)
+            if job and values:
+                assigned_values[table_key].update(values)
+            upstream_windows = _windows_for_execution_values(
+                project,
+                table,
+                period,
+                values,
+                metadata_errors,
+            )
+            if len(metadata_errors) > before_error_count:
+                continue
+
+        for upstream_key in sorted(upstream_by_key.get(table_key, set())):
+            for upstream_window in upstream_windows:
+                queue.append((upstream_key, upstream_window))
+
+    for table_key, values in assigned_values.items():
+        job = job_by_key.get(table_key)
+        if job and values:
+            job["execution_values"] = sorted(values)
+
+
+def _apply_execution_values(
+    project: str,
+    jobs_to_run: list[dict],
+    anchor_windows: list[dict],
+    metadata_errors: list[dict],
+    lineage_data: dict | None = None,
+) -> None:
+    if not anchor_windows:
+        return
+    if not lineage_data or not (
+        lineage_data.get("edges") or lineage_data.get("indirect_edges")
+    ):
+        _apply_execution_values_globally(
+            project,
+            jobs_to_run,
+            anchor_windows,
+            metadata_errors,
+        )
+        return
+    _apply_execution_values_by_lineage(
+        project,
+        jobs_to_run,
+        anchor_windows,
+        metadata_errors,
+        lineage_data,
+    )
 
 
 def _verification_metadata(

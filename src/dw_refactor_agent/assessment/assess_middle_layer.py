@@ -108,6 +108,142 @@ def build_rule_selection(
     return RuleSelection(disabled=disabled, only=only)
 
 
+def _sorted_values(values) -> list[str]:
+    return sorted(str(value) for value in values if str(value or "").strip())
+
+
+def _task_name_from_path(task_path: str) -> str:
+    name = Path(str(task_path or "")).stem
+    if name.endswith("_full_refresh"):
+        return name[: -len("_full_refresh")]
+    return name
+
+
+def _task_file_key(task_path: str) -> str:
+    return str(task_path or "").replace("\\", "/").strip()
+
+
+def selected_dimensions_for_rules(only_rules: list[str]) -> set[str]:
+    if not only_rules:
+        return set()
+    specs = rule_specs_by_id()
+    unknown = sorted(set(only_rules) - set(specs))
+    if unknown:
+        raise ValueError(f"未知评估规则: {', '.join(unknown)}")
+    return {specs[rule_id].dimension for rule_id in only_rules}
+
+
+def build_manual_focus_scope_plan(
+    *,
+    table_names: list[str] | tuple[str, ...] | None = None,
+    task_paths: list[str] | tuple[str, ...] | None = None,
+) -> dict | None:
+    tables = _sorted_values(table_names or [])
+    tasks = _sorted_values(
+        _task_name_from_path(path) for path in task_paths or []
+    )
+    task_files = _sorted_values(
+        _task_file_key(path) for path in task_paths or []
+    )
+    if not tables and not tasks:
+        return None
+
+    def scoped_dimension(
+        *,
+        scope_name: str,
+        include_tables: bool = False,
+        include_tasks: bool = False,
+        include_task_files: bool = False,
+    ) -> dict:
+        result = {
+            "mode": "scoped",
+            "scope": scope_name,
+            "reason": ["manual_focus"],
+            "score_semantics": "scope_local",
+        }
+        if include_tables:
+            result["tables"] = tables
+        if include_tasks:
+            result["tasks"] = tasks
+        if include_task_files:
+            result["task_files"] = task_files
+        return result
+
+    return {
+        "mode": "manual_focus",
+        "score_semantics": "scope_local",
+        "base_scope": {
+            "assessment_tables": tables,
+            "assessment_tasks": tasks,
+        },
+        "dimensions": {
+            "reuse": scoped_dimension(
+                scope_name="tables",
+                include_tables=True,
+            ),
+            "depth": scoped_dimension(
+                scope_name="tables",
+                include_tables=True,
+            ),
+            "model_design": scoped_dimension(
+                scope_name="tables",
+                include_tables=True,
+            ),
+            "naming": scoped_dimension(
+                scope_name="tables_and_tasks",
+                include_tables=True,
+                include_tasks=True,
+            ),
+            "asset_completeness": scoped_dimension(
+                scope_name="tables_and_tasks",
+                include_tables=True,
+                include_tasks=True,
+            ),
+            "metadata_health": scoped_dimension(
+                scope_name="tables",
+                include_tables=True,
+            ),
+            "code_quality": scoped_dimension(
+                scope_name="tasks",
+                include_tasks=True,
+                include_task_files=True,
+            ),
+        },
+    }
+
+
+def complete_manual_focus_scope_plan(
+    scope_plan: dict | None,
+    context,
+) -> dict | None:
+    if not scope_plan or scope_plan.get("mode") != "manual_focus":
+        return scope_plan
+
+    completed = dict(scope_plan)
+    dimensions = {
+        name: dict(value)
+        for name, value in (scope_plan.get("dimensions") or {}).items()
+    }
+    model_scope = dimensions.get("model_design") or {}
+    table_scope = scoped_names(model_scope, "tables")
+    if table_scope is not None and "edges" not in model_scope:
+        model_scope["edges"] = [
+            {"source": source, "target": target}
+            for source, target in sorted(context.table_edges)
+            if source in table_scope or target in table_scope
+        ]
+        dimensions["model_design"] = model_scope
+    completed["dimensions"] = dimensions
+    return completed
+
+
+def _has_issues(result: dict) -> bool:
+    return any(
+        dimension.get("issues")
+        for dimension in (result.get("dimensions") or {}).values()
+    )
+
+
 def assess(
     project: str,
     weights: dict = None,
@@ -151,6 +287,7 @@ def assess(
         business_domain_config=business_domain_config,
         naming_config=nc,
     )
+    scope_plan = complete_manual_focus_scope_plan(scope_plan, context)
     if scope_plan is None and change_analysis:
         scope_plan = build_scoped_assessment_plan(
             project,
@@ -405,6 +542,18 @@ def main():
         help="只运行指定规则ID；可重复传入",
     )
     parser.add_argument(
+        "--table",
+        action="append",
+        default=[],
+        help="只评估指定表；可重复传入",
+    )
+    parser.add_argument(
+        "--task",
+        action="append",
+        default=[],
+        help="只评估指定SQL作业文件；可重复传入",
+    )
+    parser.add_argument(
         "--reuse", action="store_true", help="只输出复用度维度"
     )
     parser.add_argument(
@@ -459,6 +608,16 @@ def main():
     ]:
         if enabled:
             selected_dimensions.add(dimension)
+    if not selected_dimensions and args.only_rule:
+        try:
+            selected_dimensions = selected_dimensions_for_rules(args.only_rule)
+        except ValueError as e:
+            parser.error(str(e))
+
+    scope_plan = build_manual_focus_scope_plan(
+        table_names=args.table,
+        task_paths=args.task,
+    )
 
     lineage_data = None
     if args.lineage_file:
@@ -492,7 +651,10 @@ def main():
             disabled_rules=args.disable_rule,
             only_rules=args.only_rule,
             lineage_data=lineage_data,
+            scope_plan=scope_plan,
         )
+    except ValueError as e:
+        parser.exit(1, f"错误: {e}\n")
     except FileNotFoundError as e:
         if is_missing_default_lineage_error(e, args.project):
             parser.exit(1, missing_lineage_guidance(args.project))
@@ -508,6 +670,8 @@ def main():
     with open(output_path, "w") as f:
         json.dump(result, f, ensure_ascii=False, indent=2)
     print(f"\n结果已写入: {output_path}")
+    if scope_plan and _has_issues(result):
+        sys.exit(1)
 
 
 if __name__ == "__main__":

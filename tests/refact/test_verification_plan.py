@@ -803,7 +803,7 @@ execution:
         """version: 2
 name: dws_store_sales_daily
 layer: DWS
-config:
+execution:
   materialized: incremental
 """,
         encoding="utf-8",
@@ -812,9 +812,8 @@ config:
         """version: 2
 name: ads_store_performance
 layer: ADS
-config:
-  materialized: incremental
 execution:
+  materialized: incremental
   slice:
     param: etl_month
     column: stat_month_date
@@ -893,6 +892,152 @@ execution:
     config.clear_model_metadata_cache()
 
 
+def test_build_verification_plan_propagates_anchor_windows_by_lineage_path(
+    tmp_path, monkeypatch
+):
+    project_dir = tmp_path / "demo"
+    for asset_dir in ("mid", "ads"):
+        (project_dir / asset_dir / "tasks").mkdir(parents=True)
+        (project_dir / asset_dir / "models").mkdir()
+    (project_dir / "warehouse.yaml").write_text(
+        """name: demo
+catalog: internal
+database: demo_dm
+qa_database: demo_dm_qa
+execution:
+  default_slice:
+    param: etl_date
+    column: stat_date
+    period: D
+""",
+        encoding="utf-8",
+    )
+
+    def write_job(asset_dir, name, layer, period="D"):
+        (project_dir / asset_dir / "models" / f"{name}.yaml").write_text(
+            f"""version: 2
+name: {name}
+layer: {layer}
+execution:
+  materialized: incremental
+  slice:
+    param: etl_date
+    column: stat_date
+    period: {period}
+""",
+            encoding="utf-8",
+        )
+        (project_dir / asset_dir / "tasks" / f"{name}.sql").write_text(
+            f"INSERT INTO demo_dm.{name} SELECT @etl_date;",
+            encoding="utf-8",
+        )
+
+    write_job("mid", "dwd_order_detail", "DWD", "D")
+    write_job("mid", "dws_category_sales_monthly", "DWS", "M")
+    write_job("ads", "ads_category_daily_report", "ADS", "D")
+    write_job("mid", "dwd_inventory", "DWD", "D")
+    write_job("ads", "ads_inventory_alert", "ADS", "D")
+    write_job("mid", "dwd_customer", "DWD", "D")
+    write_job("ads", "ads_store_performance", "ADS", "M")
+
+    monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setitem(
+        config.PROJECT_CONFIG,
+        "demo",
+        config.core.load_warehouse_config(
+            project_dir / "warehouse.yaml",
+            project_root=tmp_path,
+        ),
+    )
+    config.clear_model_metadata_cache()
+
+    plan = build_verification_plan(
+        "demo",
+        {
+            "affected_scope": {
+                "assessment_tables": [
+                    "dwd_order_detail",
+                    "dws_category_sales_monthly",
+                    "ads_category_daily_report",
+                    "dwd_inventory",
+                    "ads_inventory_alert",
+                    "dwd_customer",
+                    "ads_store_performance",
+                ],
+                "assessment_tasks": [
+                    "dwd_order_detail",
+                    "dws_category_sales_monthly",
+                    "ads_category_daily_report",
+                    "dwd_inventory",
+                    "ads_inventory_alert",
+                    "dwd_customer",
+                    "ads_store_performance",
+                ],
+                "anchor_tables": [
+                    "ads_category_daily_report",
+                    "ads_inventory_alert",
+                    "ads_store_performance",
+                ],
+            }
+        },
+        lineage_data={
+            "edges": [
+                {
+                    "source": {"type": "column", "id": "dwd_order_detail.id"},
+                    "target": {
+                        "type": "column",
+                        "id": "dws_category_sales_monthly.id",
+                    },
+                },
+                {
+                    "source": {
+                        "type": "column",
+                        "id": "dws_category_sales_monthly.id",
+                    },
+                    "target": {
+                        "type": "column",
+                        "id": "ads_category_daily_report.id",
+                    },
+                },
+                {
+                    "source": {"type": "column", "id": "dwd_inventory.id"},
+                    "target": {
+                        "type": "column",
+                        "id": "ads_inventory_alert.id",
+                    },
+                },
+                {
+                    "source": {"type": "column", "id": "dwd_customer.id"},
+                    "target": {
+                        "type": "column",
+                        "id": "ads_store_performance.id",
+                    },
+                },
+            ]
+        },
+        partition="2024-06-15",
+    )
+
+    jobs = {job["job"]: job for job in plan["jobs_to_run"]}
+    assert jobs["ads_category_daily_report"]["execution_values"] == [
+        "2024-06-15"
+    ]
+    assert jobs["dws_category_sales_monthly"]["execution_values"] == [
+        "2024-06-01"
+    ]
+    assert jobs["dwd_order_detail"]["execution_values"][0] == "2024-06-01"
+    assert jobs["dwd_order_detail"]["execution_values"][-1] == "2024-06-30"
+    assert len(jobs["dwd_order_detail"]["execution_values"]) == 30
+    assert jobs["ads_inventory_alert"]["execution_values"] == ["2024-06-15"]
+    assert jobs["dwd_inventory"]["execution_values"] == ["2024-06-15"]
+    assert jobs["ads_store_performance"]["execution_values"] == ["2024-06-01"]
+    assert jobs["dwd_customer"]["execution_values"][0] == "2024-06-01"
+    assert jobs["dwd_customer"]["execution_values"][-1] == "2024-06-30"
+    assert len(jobs["dwd_customer"]["execution_values"]) == 30
+
+    config.clear_model_metadata_cache()
+
+
 def test_build_verification_plan_supports_hour_execution_slice(
     tmp_path, monkeypatch
 ):
@@ -916,7 +1061,7 @@ execution:
         """version: 2
 name: ads_hourly
 layer: ADS
-config:
+execution:
   materialized: incremental
 """,
         encoding="utf-8",

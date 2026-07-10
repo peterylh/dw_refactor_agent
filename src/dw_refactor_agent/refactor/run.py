@@ -523,6 +523,8 @@ def _shadow_run(args) -> int:
             artifact_path(manifest_path, "shadow_run_result"),
             dry_run=args.dry_run,
             timing_detail=args.timing_detail,
+            parallel=args.parallel,
+            batch_size=args.batch_size,
         )
     return 1 if result.get("status") == "failed" else 0
 
@@ -572,6 +574,18 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         dest="timing_detail",
         help="record per-invocation timing details in shadow_run_result.json",
+    )
+    shadow.add_argument(
+        "--parallel",
+        type=int,
+        default=1,
+        help="global shadow-run mysql concurrency, default 1",
+    )
+    shadow.add_argument(
+        "--batch-size",
+        type=int,
+        default=1,
+        help="number of slice invocations per mysql session, default 1",
     )
     shadow.set_defaults(func=_shadow_run)
 

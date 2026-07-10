@@ -3,5 +3,5 @@ name: ads_sales_dashboard
 layer: ADS
 table_type: other
 description: 销售驾驶舱全量汇总
-config:
+execution:
   materialized: full

@@ -14,6 +14,12 @@ from dw_refactor_agent.lineage.sql_task_facts import extract_task_table_facts
 from dw_refactor_agent.lineage.table_graph import _table_from_node
 from dw_refactor_agent.sql.doris import extract_doris_partition_column
 
+_MODEL_ROLE_EXPECTED_LAYERS = {
+    "ods": ["ODS"],
+    "mid": ["DIM", "DWD", "DWS"],
+    "ads": ["ADS"],
+}
+
 
 def _short_table_name(table_name: str) -> str:
     name = str(table_name or "").strip().rstrip(";")
@@ -143,6 +149,18 @@ def _expected_task_table(task_path: Path) -> str:
     ):
         return stem[: -len("_full_refresh")]
     return stem
+
+
+def _model_asset_role(project_path: Path, model_path: Path) -> str:
+    try:
+        parts = model_path.relative_to(project_path).parts
+    except ValueError:
+        return ""
+    if len(parts) >= 2 and parts[1] == "models":
+        role = str(parts[0]).lower()
+        if role in _MODEL_ROLE_EXPECTED_LAYERS:
+            return role
+    return ""
 
 
 def _asset_dirs(project_path: Path, asset_kind: str) -> list[Path]:
@@ -318,6 +336,8 @@ def build_asset_catalog(
             file_stem=None,
             declared_name=declared_name,
             metadata=metadata,
+            asset_role="",
+            expected_layers=[],
         )
         if metadata.get("layer"):
             asset["layer"] = str(metadata["layer"]).upper()
@@ -376,12 +396,17 @@ def build_asset_catalog(
                     )
                     asset = ensure_asset(declared_name)
                     metadata = (model_metadata or {}).get(declared_name) or raw
+                    asset_role = _model_asset_role(project_path, model_path)
                     asset["model"] = dict(
                         exists=True,
                         path=model_path,
                         file_stem=model_path.stem,
                         declared_name=declared_name,
                         metadata=metadata,
+                        asset_role=asset_role,
+                        expected_layers=list(
+                            _MODEL_ROLE_EXPECTED_LAYERS.get(asset_role, [])
+                        ),
                     )
                     if metadata.get("layer"):
                         asset["layer"] = str(metadata["layer"]).upper()

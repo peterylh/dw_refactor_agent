@@ -4,7 +4,7 @@ layer: DWD
 table_type: fact
 business_area: SHOP
 description: DWS anti-pattern fixture without aggregation or grain
-config:
+execution:
   materialized: incremental
 atomic_metrics:
 - subtotal

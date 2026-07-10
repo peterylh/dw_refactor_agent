@@ -18,6 +18,7 @@ ALLOWED_STRATEGIES = {
     "replace_all",
 }
 ALLOWED_PERIODS = {"D", "M", "W", "H"}
+EXECUTION_CONFIG_FIELDS = {"materialized", "full_refresh_strategy"}
 
 
 @dataclass(frozen=True)
@@ -27,15 +28,33 @@ class SliceConfig:
     period: str
 
 
+def execution_config_for_model(job_name: str, raw_model: dict) -> dict:
+    raw_execution = raw_model.get("execution") or {}
+    if not isinstance(raw_execution, dict):
+        raise ExecutionConfigError(f"[{job_name}] execution must be a mapping")
+
+    raw_config = raw_model.get("config") or {}
+    if isinstance(raw_config, dict):
+        deprecated = sorted(EXECUTION_CONFIG_FIELDS.intersection(raw_config))
+        if deprecated:
+            old_fields = ", ".join(f"config.{key}" for key in deprecated)
+            new_fields = ", ".join(f"execution.{key}" for key in deprecated)
+            raise ExecutionConfigError(
+                f"[{job_name}] {old_fields} is no longer supported; "
+                f"use {new_fields}"
+            )
+
+    return dict(raw_execution)
+
+
 def normalize_materialized(job_name: str, value: Any) -> str:
     materialized = str(value or "incremental").strip().lower()
     if materialized == "snapshot":
         raise ExecutionConfigError(
             f"[{job_name}] materialized: snapshot is no longer supported. "
             "Migrate to:\n"
-            "config:\n"
-            "  materialized: incremental\n"
             "execution:\n"
+            "  materialized: incremental\n"
             "  slice:\n"
             "    param: etl_date\n"
             "    column: snapshot_date\n"
@@ -44,7 +63,7 @@ def normalize_materialized(job_name: str, value: Any) -> str:
     if materialized not in ALLOWED_MATERIALIZED:
         allowed = ", ".join(sorted(ALLOWED_MATERIALIZED))
         raise ExecutionConfigError(
-            f"[{job_name}] config.materialized must be one of: {allowed}"
+            f"[{job_name}] execution.materialized must be one of: {allowed}"
         )
     return materialized
 
@@ -64,7 +83,7 @@ def normalize_strategy(
     if strategy not in ALLOWED_STRATEGIES:
         allowed = ", ".join(sorted(ALLOWED_STRATEGIES))
         raise ExecutionConfigError(
-            f"[{job_name}] config.full_refresh_strategy must be one of: "
+            f"[{job_name}] execution.full_refresh_strategy must be one of: "
             f"{allowed}"
         )
 
@@ -75,8 +94,8 @@ def normalize_strategy(
         )
     if materialized == "full" and strategy != "replace_all":
         raise ExecutionConfigError(
-            f"[{job_name}] full models must use full_refresh_strategy: "
-            "replace_all"
+            f"[{job_name}] full models must use "
+            "execution.full_refresh_strategy: replace_all"
         )
     return strategy
 

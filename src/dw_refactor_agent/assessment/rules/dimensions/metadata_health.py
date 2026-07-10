@@ -59,6 +59,7 @@ def score_metadata_health(
             continue
         if table_scope is not None and table_name not in table_scope:
             continue
+        asset = (asset_catalog.get("tables") or {}).get(table_name) or {}
         table = tables_by_name.get(table_name)
         columns = _table_column_names(table) if table else set()
         entities = model_entities(metadata)
@@ -75,6 +76,7 @@ def score_metadata_health(
                 "entity_codes": entity_codes,
                 "primary_code": entity_codes[0] if entity_codes else "",
                 "grain": grain,
+                "model": asset.get("model") or {},
                 "grain_entities": (
                     _as_string_list(grain.get("entities"))
                     if isinstance(grain, dict)
@@ -88,9 +90,17 @@ def score_metadata_health(
     rule_context = {
         "business_domain_config": business_domain_config,
         "naming_config": nc,
+        "project_dir": asset_catalog.get("project_dir"),
     }
     checks = []
     for target in targets:
+        checks.extend(
+            runner.run_rules(
+                ["METADATA_MODEL_LAYER_MATCHES_ASSET_PATH"],
+                [target],
+                rule_context,
+            )
+        )
         if target["layer"] == "DIM":
             checks.extend(
                 runner.run_rules(

@@ -2,7 +2,7 @@ version: 2
 name: dim_economic_indicators
 layer: DIM
 table_type: dimension
-config:
+execution:
   materialized: full
 entities:
 - code: ECON_INDICATOR

@@ -2,7 +2,7 @@ version: 2
 name: dwd_account_events
 layer: DWD
 table_type: fact
-config:
+execution:
   materialized: full
 data_domain: '02'
 business_area: DPST

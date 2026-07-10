@@ -151,7 +151,7 @@ def isolated_assess_project(tmp_path, monkeypatch):
         (models_dir / f"{table_name}.yaml").write_text(
             (
                 f"version: 2\nname: {table_name}\nlayer: {layer}\n"
-                f"config:\n  materialized: {materialized}\n"
+                f"execution:\n  materialized: {materialized}\n"
             ),
             encoding="utf-8",
         )
@@ -498,6 +498,85 @@ def test_assess_builds_scope_plan_and_passes_dimension_scopes(
     assert result["scope_plan"]["dimensions"]["naming"]["mode"] == "scoped"
 
 
+def test_assess_manual_focus_limits_model_design_edges(
+    monkeypatch, sample_lineage_data, isolated_assess_project
+):
+    import dw_refactor_agent.assessment.assess_middle_layer as assess_module
+
+    monkeypatch.setattr(
+        "dw_refactor_agent.assessment.assess_middle_layer.load_lineage_data",
+        lambda project: sample_lineage_data,
+    )
+    captured = {}
+
+    def dimension(name):
+        return {
+            "score": 100.0,
+            "rule_summary": {},
+            "checks": [],
+            "issues": [],
+        }
+
+    def remember_scope(name):
+        def scorer(context, *args, **kwargs):
+            captured[name] = kwargs.get("scope")
+            return dimension(name)
+
+        return scorer
+
+    def fake_model_design_score(context, llm_results=None, **kwargs):
+        captured["model_design"] = kwargs.get("scope")
+        return dimension("model_design")
+
+    monkeypatch.setattr(
+        "dw_refactor_agent.assessment.assess_middle_layer.score_reusability",
+        remember_scope("reuse"),
+    )
+    monkeypatch.setattr(
+        "dw_refactor_agent.assessment.assess_middle_layer.score_lineage_depth",
+        remember_scope("depth"),
+    )
+    monkeypatch.setattr(
+        "dw_refactor_agent.assessment.assess_middle_layer.score_model_design_health",
+        fake_model_design_score,
+    )
+    monkeypatch.setattr(
+        "dw_refactor_agent.assessment.assess_middle_layer.score_asset_completeness",
+        remember_scope("asset_completeness"),
+    )
+    monkeypatch.setattr(
+        "dw_refactor_agent.assessment.assess_middle_layer.score_code_quality",
+        remember_scope("code_quality"),
+    )
+    monkeypatch.setattr(
+        "dw_refactor_agent.assessment.assess_middle_layer.score_metadata_health",
+        remember_scope("metadata_health"),
+    )
+    monkeypatch.setattr(
+        "dw_refactor_agent.assessment.assess_middle_layer.score_naming_conventions",
+        remember_scope("naming"),
+    )
+
+    scope_plan = assess_module.build_manual_focus_scope_plan(
+        table_names=["dws_store_sales_daily"],
+    )
+
+    result = assess(
+        project=isolated_assess_project,
+        selected_dimensions={"model_design"},
+        scope_plan=scope_plan,
+    )
+
+    assert result["assessment_mode"] == "manual_focus"
+    assert captured["model_design"]["tables"] == ["dws_store_sales_daily"]
+    assert captured["model_design"]["edges"] == [
+        {
+            "source": "dwd_order_detail",
+            "target": "dws_store_sales_daily",
+        }
+    ]
+
+
 def test_generate_report_reads_dimension_issues(
     monkeypatch, sample_lineage_data, isolated_assess_project
 ):
@@ -619,6 +698,249 @@ def test_assess_cli_accepts_explicit_lineage_file(
 
     assert captured["args"][0] == project
     assert captured["kwargs"]["lineage_data"] == lineage_data
+    assert output_path.exists()
+
+
+def test_assess_cli_table_focus_builds_manual_scope(
+    monkeypatch,
+    tmp_path,
+):
+    import dw_refactor_agent.assessment.assess_middle_layer as assess_module
+
+    project = "shop"
+    output_path = tmp_path / "assess_result.json"
+    captured = {}
+
+    def fake_assess(*args, **kwargs):
+        captured["args"] = args
+        captured["kwargs"] = kwargs
+        return {
+            "project": project,
+            "weights": {},
+            "dimensions": {
+                "naming": {
+                    "score": 100.0,
+                    "rule_summary": {
+                        "NAMING_ATOMIC_METRIC": {
+                            "name": "原子指标",
+                            "severity": "中",
+                            "pass_count": 1,
+                            "total": 1,
+                            "pct": 100.0,
+                        },
+                    },
+                    "issues": [],
+                }
+            },
+            "assessment_mode": "manual_focus",
+        }
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "assess_middle_layer.py",
+            "--project",
+            project,
+            "--table",
+            "dws_store_sales_daily",
+            "--only-rule",
+            "NAMING_ATOMIC_METRIC",
+            "--output",
+            str(output_path),
+        ],
+    )
+    monkeypatch.setattr(assess_module, "assess", fake_assess)
+    monkeypatch.setattr(
+        assess_module,
+        "generate_report",
+        lambda *args, **kwargs: "report",
+    )
+
+    assess_module.main()
+
+    assert captured["kwargs"]["selected_dimensions"] == {"naming"}
+    assert captured["kwargs"]["only_rules"] == ["NAMING_ATOMIC_METRIC"]
+    scope_plan = captured["kwargs"]["scope_plan"]
+    assert scope_plan["mode"] == "manual_focus"
+    assert scope_plan["dimensions"]["naming"]["tables"] == [
+        "dws_store_sales_daily"
+    ]
+    assert scope_plan["dimensions"]["model_design"]["tables"] == [
+        "dws_store_sales_daily"
+    ]
+    assert output_path.exists()
+
+
+def test_assess_cli_task_focus_builds_manual_scope(
+    monkeypatch,
+    tmp_path,
+):
+    import dw_refactor_agent.assessment.assess_middle_layer as assess_module
+
+    project = "shop"
+    output_path = tmp_path / "assess_result.json"
+    captured = {}
+
+    def fake_assess(*args, **kwargs):
+        captured["args"] = args
+        captured["kwargs"] = kwargs
+        return {
+            "project": project,
+            "weights": {},
+            "dimensions": {
+                "code_quality": {
+                    "score": 100.0,
+                    "rule_summary": {
+                        "CODE_NO_SELECT_STAR_IN_WRITE": {
+                            "name": "写入型语句不使用SELECT *",
+                            "severity": "高",
+                            "pass_count": 1,
+                            "total": 1,
+                            "pct": 100.0,
+                        },
+                    },
+                    "issues": [],
+                }
+            },
+            "assessment_mode": "manual_focus",
+        }
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "assess_middle_layer.py",
+            "--project",
+            project,
+            "--task",
+            "warehouses/shop/mid/tasks/dws_store_sales_daily.sql",
+            "--only-rule",
+            "CODE_NO_SELECT_STAR_IN_WRITE",
+            "--output",
+            str(output_path),
+        ],
+    )
+    monkeypatch.setattr(assess_module, "assess", fake_assess)
+    monkeypatch.setattr(
+        assess_module,
+        "generate_report",
+        lambda *args, **kwargs: "report",
+    )
+
+    assess_module.main()
+
+    assert captured["kwargs"]["selected_dimensions"] == {"code_quality"}
+    scope_plan = captured["kwargs"]["scope_plan"]
+    assert scope_plan["mode"] == "manual_focus"
+    assert scope_plan["dimensions"]["code_quality"]["tasks"] == [
+        "dws_store_sales_daily"
+    ]
+    assert scope_plan["dimensions"]["code_quality"]["task_files"] == [
+        "warehouses/shop/mid/tasks/dws_store_sales_daily.sql"
+    ]
+    assert scope_plan["dimensions"]["naming"]["tasks"] == [
+        "dws_store_sales_daily"
+    ]
+    assert output_path.exists()
+
+
+def test_task_focus_scans_only_requested_task_file(
+    monkeypatch,
+    sample_lineage_data,
+    isolated_assess_project,
+):
+    import dw_refactor_agent.assessment.assess_middle_layer as assess_module
+
+    project = isolated_assess_project
+    project_dir = config.PROJECT_ROOT / config.PROJECT_CONFIG[project]["dir"]
+    full_refresh_dir = project_dir / "mid" / "tasks" / "full_refresh"
+    full_refresh_dir.mkdir(parents=True)
+    (full_refresh_dir / "dwd_customer_full_refresh.sql").write_text(
+        "INSERT INTO dwd_customer SELECT * FROM ods_customer;",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "dw_refactor_agent.assessment.assess_middle_layer.load_lineage_data",
+        lambda project_name: sample_lineage_data,
+    )
+
+    result = assess(
+        project=project,
+        selected_dimensions={"code_quality"},
+        only_rules=["CODE_NO_SELECT_STAR_IN_WRITE"],
+        scope_plan=assess_module.build_manual_focus_scope_plan(
+            task_paths=["mid/tasks/dwd_customer.sql"],
+        ),
+    )
+
+    summary = result["dimensions"]["code_quality"]["rule_summary"][
+        "CODE_NO_SELECT_STAR_IN_WRITE"
+    ]
+    assert summary["pass_count"] == 1
+    assert summary["total"] == 1
+    assert result["dimensions"]["code_quality"]["issues"] == []
+
+
+def test_assess_cli_manual_focus_exits_nonzero_on_issue(
+    monkeypatch,
+    tmp_path,
+):
+    import dw_refactor_agent.assessment.assess_middle_layer as assess_module
+
+    project = "shop"
+    output_path = tmp_path / "assess_result.json"
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "assess_middle_layer.py",
+            "--project",
+            project,
+            "--table",
+            "dws_store_sales_daily",
+            "--only-rule",
+            "NAMING_ATOMIC_METRIC",
+            "--output",
+            str(output_path),
+        ],
+    )
+    monkeypatch.setattr(
+        assess_module,
+        "assess",
+        lambda *args, **kwargs: {
+            "project": project,
+            "weights": {},
+            "dimensions": {
+                "naming": {
+                    "score": 0.0,
+                    "rule_summary": {},
+                    "issues": [
+                        {
+                            "rule_id": "NAMING_ATOMIC_METRIC",
+                            "target": {
+                                "type": "metric",
+                                "name": "customer_count",
+                            },
+                            "message": "原子指标命名不合规",
+                        }
+                    ],
+                }
+            },
+            "assessment_mode": "manual_focus",
+        },
+    )
+    monkeypatch.setattr(
+        assess_module,
+        "generate_report",
+        lambda *args, **kwargs: "report",
+    )
+
+    with pytest.raises(SystemExit) as exc:
+        assess_module.main()
+
+    assert exc.value.code == 1
     assert output_path.exists()
 
 
@@ -1151,6 +1473,110 @@ def test_score_metadata_health_checks_business_dictionary_metadata(tmp_path):
         "METADATA_DATA_DOMAIN_VALID",
         "METADATA_BUSINESS_AREA_VALID",
     }
+
+
+def test_score_metadata_health_validates_model_layer_matches_asset_path(
+    tmp_path,
+):
+    project_dir = tmp_path / "demo"
+    (project_dir / "ods" / "models" / "internal" / "demo_dm").mkdir(
+        parents=True
+    )
+    (project_dir / "mid" / "models").mkdir(parents=True)
+    (project_dir / "ads" / "models").mkdir(parents=True)
+
+    model_files = {
+        "ods_bad": (
+            project_dir
+            / "ods"
+            / "models"
+            / "internal"
+            / "demo_dm"
+            / "ods_bad.yaml"
+        ),
+        "mid_good": project_dir / "mid" / "models" / "mid_good.yaml",
+        "mid_bad": project_dir / "mid" / "models" / "mid_bad.yaml",
+        "ads_bad": project_dir / "ads" / "models" / "ads_bad.yaml",
+    }
+    model_files["ods_bad"].write_text(
+        "name: ods_bad\nlayer: DWD\n",
+        encoding="utf-8",
+    )
+    model_files["mid_good"].write_text(
+        "name: mid_good\nlayer: DIM\n",
+        encoding="utf-8",
+    )
+    model_files["mid_bad"].write_text(
+        "name: mid_bad\nlayer: ADS\n",
+        encoding="utf-8",
+    )
+    model_files["ads_bad"].write_text(
+        "name: ads_bad\nlayer: DWS\n",
+        encoding="utf-8",
+    )
+    models = {
+        table_name: {
+            "name": table_name,
+            "layer": yaml.safe_load(path.read_text(encoding="utf-8"))["layer"],
+        }
+        for table_name, path in model_files.items()
+    }
+    models["mid_good"].update(
+        {
+            "table_type": "dimension",
+            "semantic_subject": "GOOD",
+            "entities": [
+                {
+                    "code": "GOOD",
+                    "type": "primary",
+                    "key_columns": ["good_id"],
+                }
+            ],
+        }
+    )
+    models["ads_bad"].update(
+        {
+            "table_type": "fact",
+            "entities": [
+                {
+                    "code": "BAD",
+                    "type": "foreign",
+                    "key_columns": ["bad_id"],
+                }
+            ],
+            "grain": {"entities": ["BAD"], "time_column": "stat_date"},
+        }
+    )
+
+    result = score_metadata_health(
+        _context(models=models, project_dir=project_dir)
+    )
+
+    layer_checks = _checks_by_rule(
+        result,
+        "METADATA_MODEL_LAYER_MATCHES_ASSET_PATH",
+    )
+    assert {
+        check["target"]["name"]: check["passed"] for check in layer_checks
+    } == {
+        "demo/ods/models/internal/demo_dm/ods_bad.yaml": False,
+        "demo/mid/models/mid_good.yaml": True,
+        "demo/mid/models/mid_bad.yaml": False,
+        "demo/ads/models/ads_bad.yaml": False,
+    }
+    failed_checks = [check for check in layer_checks if not check["passed"]]
+    assert {
+        check["evidence"]["asset_role"]: check["evidence"]["expected_layers"]
+        for check in failed_checks
+    } == {
+        "ods": ["ODS"],
+        "mid": ["DIM", "DWD", "DWS"],
+        "ads": ["ADS"],
+    }
+    assert _issue_rule_ids(result) == {
+        "METADATA_MODEL_LAYER_MATCHES_ASSET_PATH"
+    }
+    assert all(issue["severity"] == "高" for issue in result["issues"])
 
 
 def test_score_model_design_health_penalizes_declared_table_type_mismatch(

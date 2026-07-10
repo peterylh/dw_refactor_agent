@@ -565,7 +565,14 @@ def test_shadow_run_and_compare_delegate_to_plan_handlers(
     _write_json(plan_path, {"project": "shop"})
     calls = []
 
-    def fake_shadow(plan, output, dry_run=False, timing_detail=False):
+    def fake_shadow(
+        plan,
+        output,
+        dry_run=False,
+        timing_detail=False,
+        parallel=1,
+        batch_size=1,
+    ):
         calls.append(
             (
                 "shadow",
@@ -573,6 +580,8 @@ def test_shadow_run_and_compare_delegate_to_plan_handlers(
                 output,
                 dry_run,
                 timing_detail,
+                parallel,
+                batch_size,
                 run_cli.config.PROJECT_ROOT,
                 run_cli.shadow_run_module.PROJECT_ROOT,
             )
@@ -594,8 +603,10 @@ def test_shadow_run_and_compare_delegate_to_plan_handlers(
     assert calls[0][0] == "shadow"
     assert calls[0][1] == plan_path
     assert calls[0][4] is False
-    assert calls[0][5] == tmp_path.resolve()
-    assert calls[0][6] == tmp_path.resolve()
+    assert calls[0][5] == 1
+    assert calls[0][6] == 1
+    assert calls[0][7] == tmp_path.resolve()
+    assert calls[0][8] == tmp_path.resolve()
     assert calls[1][0] == "compare"
     assert calls[1][1] == plan_path
 
@@ -627,7 +638,14 @@ def test_shadow_run_cli_reports_handler_failure(tmp_path, monkeypatch):
     plan_path = manifest_path.parent / "verification" / "plan.json"
     _write_json(plan_path, {"project": "shop"})
 
-    def fake_shadow(plan, output, dry_run=False, timing_detail=False):
+    def fake_shadow(
+        plan,
+        output,
+        dry_run=False,
+        timing_detail=False,
+        parallel=1,
+        batch_size=1,
+    ):
         _write_json(output, {"status": "failed"})
         return {"status": "failed"}
 

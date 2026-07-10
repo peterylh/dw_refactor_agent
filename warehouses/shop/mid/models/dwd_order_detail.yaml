@@ -5,9 +5,8 @@ table_type: fact
 data_domain: '04'
 business_area: SHOP
 description: 订单明细事实表
-config:
-  materialized: incremental
 execution:
+  materialized: incremental
   slice:
     param: etl_date
     column: order_date
