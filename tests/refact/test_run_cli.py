@@ -33,9 +33,7 @@ def _write_warehouse_config(root, project="shop"):
     )
 
 
-def test_start_creates_manifest_and_baseline_artifacts(tmp_path, monkeypatch):
-    _write_warehouse_config(tmp_path)
-
+def _install_start_fakes(monkeypatch):
     def fake_lineage(
         project, output_path, cache_path, previous_cache_path=None
     ):
@@ -58,6 +56,11 @@ def test_start_creates_manifest_and_baseline_artifacts(tmp_path, monkeypatch):
         "_now",
         lambda: _local_datetime(2026, 6, 20, 7, 30),
     )
+
+
+def test_start_creates_manifest_and_baseline_artifacts(tmp_path, monkeypatch):
+    _write_warehouse_config(tmp_path)
+    _install_start_fakes(monkeypatch)
 
     exit_code = run_cli.main(
         ["start", "--project", "shop", "--root", str(tmp_path)]
@@ -88,29 +91,7 @@ def test_start_creates_manifest_and_baseline_artifacts(tmp_path, monkeypatch):
 
 def test_start_loads_project_choices_from_target_root(tmp_path, monkeypatch):
     _write_warehouse_config(tmp_path, "demo")
-
-    def fake_lineage(
-        project, output_path, cache_path, previous_cache_path=None
-    ):
-        _write_json(output_path, {"tables": [], "edges": []})
-        _write_json(cache_path, {"project": project, "tasks": []})
-        return {"lineage": {"tables": [], "edges": []}}
-
-    def fake_assess(project, **kwargs):
-        return {"project": project, "overall_score": 100.0, "dimensions": {}}
-
-    monkeypatch.setattr(run_cli, "build_lineage_artifacts", fake_lineage)
-    monkeypatch.setattr(run_cli, "assess", fake_assess)
-    monkeypatch.setattr(
-        run_cli,
-        "_git_info",
-        lambda _root: {"branch": "main", "head": "abc123", "dirty": False},
-    )
-    monkeypatch.setattr(
-        run_cli,
-        "_now",
-        lambda: _local_datetime(2026, 6, 20, 7, 30),
-    )
+    _install_start_fakes(monkeypatch)
 
     exit_code = run_cli.main(
         ["start", "--project", "demo", "--root", str(tmp_path)]

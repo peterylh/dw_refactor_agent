@@ -2759,6 +2759,7 @@ def test_run_metadata_write_reuses_table_inspector(
     import dw_refactor_agent.assessment.llm.model_metadata_writer as writer_module
 
     created_cache_files = []
+    seen_dws_contexts = []
 
     class FakeInspector:
         def __init__(
@@ -2772,6 +2773,8 @@ def test_run_metadata_write_reuses_table_inspector(
             created_cache_files.append(cache_file)
 
         def inspect_batch(self, contexts):
+            if contexts and contexts[0].layer == "DWS":
+                seen_dws_contexts.extend(contexts)
             results = []
             for ctx in contexts:
                 if ctx.table_name == "dwd_order_detail":
@@ -2853,6 +2856,11 @@ def test_run_metadata_write_reuses_table_inspector(
     assert updates_by_table["dws_store_sales_daily"]["table"] == (
         "dws_store_sales_daily"
     )
+    assert seen_dws_contexts[0].upstream_metric_groups["dwd_order_detail"] == {
+        "atomic_metrics": ["pay_amt"],
+        "derived_metrics": [_expected_pay_amt_1d_metric()],
+        "calculated_metrics": ["gross_profit"],
+    }
     assert result["skipped_model_updates"] == []
 
 
@@ -4627,51 +4635,6 @@ def test_run_metadata_write_report_uses_plan_prior(
     assert customer_report["metadata_warnings"][0]["prior_source"] == (
         "declared"
     )
-
-
-def test_run_metadata_write_passes_dwd_metric_groups_to_dws(
-    monkeypatch, sample_lineage_data, isolated_writer_project
-):
-    import dw_refactor_agent.assessment.llm.model_metadata_writer as writer_module
-
-    seen_dws_contexts = []
-
-    class FakeInspector:
-        def __init__(
-            self, api_key, *, model, cache_file, max_retries, parallelism
-        ):
-            pass
-
-        def inspect_batch(self, contexts):
-            if contexts and contexts[0].layer == "DWS":
-                seen_dws_contexts.extend(contexts)
-                return [_sample_dws_result()]
-            return [
-                _sample_fact_result()
-                if ctx.table_name == "dwd_order_detail"
-                else TableInspectResult(
-                    table_name=ctx.table_name,
-                    declared_layer=ctx.layer,
-                    inferred_layer="DIM",
-                    table_type="dimension",
-                    confidence=0.9,
-                    reasoning_steps=[],
-                )
-                for ctx in contexts
-            ]
-
-    monkeypatch.setattr(
-        writer_module, "load_lineage_data", lambda project: sample_lineage_data
-    )
-    monkeypatch.setattr(writer_module, "TableInspector", FakeInspector)
-
-    run_metadata_write(isolated_writer_project, api_key="test", dry_run=True)
-
-    assert seen_dws_contexts[0].upstream_metric_groups["dwd_order_detail"] == {
-        "atomic_metrics": ["pay_amt"],
-        "derived_metrics": [_expected_pay_amt_1d_metric()],
-        "calculated_metrics": ["gross_profit"],
-    }
 
 
 def test_run_metadata_write_discovers_related_entity_from_dws_grain(

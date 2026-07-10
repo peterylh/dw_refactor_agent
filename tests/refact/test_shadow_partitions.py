@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from datetime import date
 
+import pytest
+
 from dw_refactor_agent.refactor.shadow_scope import RowScope
 from dw_refactor_agent.sql.doris import (
     PartitionSelectionKind,
@@ -97,38 +99,38 @@ PARTITION BY RANGE(stat_date) (
     assert selection.partitions == ()
 
 
-def test_declared_partitioning_without_static_partitions_is_unknown():
-    catalog = parse_doris_partitions(
-        """CREATE TABLE dm.sales (stat_date DATE) ENGINE=OLAP
+@pytest.mark.parametrize(
+    ("ddl", "scope_date", "reason"),
+    [
+        (
+            """CREATE TABLE dm.sales (stat_date DATE) ENGINE=OLAP
 PARTITION BY RANGE(stat_date) (
-);"""
-    )
-
-    selection = catalog.map_scope(
-        RowScope.point("stat_date", date(2025, 1, 15))
-    )
-
-    assert selection.kind is PartitionSelectionKind.UNKNOWN
-    assert "no static partitions" in selection.reason
-
-
-def test_dynamic_partition_catalog_cannot_prove_missing_runtime_partition():
-    catalog = parse_doris_partitions(
-        """CREATE TABLE dm.sales (stat_date DATE) ENGINE=OLAP
+);""",
+            date(2025, 1, 15),
+            "no static partitions",
+        ),
+        (
+            """CREATE TABLE dm.sales (stat_date DATE) ENGINE=OLAP
 PARTITION BY RANGE(stat_date) (
   PARTITION p202501 VALUES LESS THAN ("2025-02-01")
 )
 PROPERTIES (
   "dynamic_partition.enable" = "true"
-);"""
-    )
-
-    selection = catalog.map_scope(
-        RowScope.point("stat_date", date(2025, 3, 15))
-    )
+);""",
+            date(2025, 3, 15),
+            "runtime partitions",
+        ),
+    ],
+    ids=("no-static-partitions", "missing-dynamic-runtime-partition"),
+)
+def test_partition_catalog_without_static_proof_is_unknown(
+    ddl, scope_date, reason
+):
+    catalog = parse_doris_partitions(ddl)
+    selection = catalog.map_scope(RowScope.point("stat_date", scope_date))
 
     assert selection.kind is PartitionSelectionKind.UNKNOWN
-    assert "runtime partitions" in selection.reason
+    assert reason in selection.reason
 
 
 def test_parse_show_partitions_tsv_range_metadata():

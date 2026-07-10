@@ -126,6 +126,47 @@ def _indirect_edges(entries):
     }
 
 
+def _assert_metric_literal_lineage(entries, schema):
+    output = build_lineage_output(entries, schema)
+
+    assert _direct_edges(entries) == {
+        ("src_metric", "metric_value", "ads_metric", "metric_value"),
+        ("src_metric", "dt", "ads_metric", "dt"),
+        (None, None, "ads_metric", "metric_code"),
+        (None, None, "ads_metric", "measure_index"),
+        (None, None, "ads_metric", "updated_at"),
+        (None, None, "ads_metric", "optional_note"),
+    }
+    constant_sources = {
+        entry["target_column"]: entry["source_type"]
+        for entry in entries
+        if entry.get("transformation_type") == "constant"
+    }
+    assert constant_sources == {
+        "metric_code": "literal",
+        "measure_index": "literal",
+        "updated_at": "expression",
+        "optional_note": "expression",
+    }
+    column_source_ids = {
+        edge["source"].get("id")
+        for edge in output["edges"]
+        if edge["source"].get("type") == "column"
+    }
+    assert column_source_ids == {
+        "src_metric.dt",
+        "src_metric.metric_value",
+    }
+    all_column_names = {
+        column["name"]
+        for table in output["tables"]
+        for column in table["columns"]
+    }
+    assert not {"ZBJ00000092", "ZBJ00000093", "NOW", "NULL"} & (
+        all_column_names - {"metric_code", "measure_index"}
+    )
+
+
 class TestIntegrationEtlToDwd:
     """Test the standard ODS → DWD ETL pattern"""
 
@@ -326,49 +367,7 @@ class TestIntegrationEtlToDwd:
                 file_path,
                 schema,
             )
-            output = build_lineage_output(entries, schema)
-
-            assert _direct_edges(entries) == {
-                (
-                    "src_metric",
-                    "metric_value",
-                    "ads_metric",
-                    "metric_value",
-                ),
-                ("src_metric", "dt", "ads_metric", "dt"),
-                (None, None, "ads_metric", "metric_code"),
-                (None, None, "ads_metric", "measure_index"),
-                (None, None, "ads_metric", "updated_at"),
-                (None, None, "ads_metric", "optional_note"),
-            }
-            constant_sources = {
-                entry["target_column"]: entry["source_type"]
-                for entry in entries
-                if entry.get("transformation_type") == "constant"
-            }
-            assert constant_sources == {
-                "metric_code": "literal",
-                "measure_index": "literal",
-                "updated_at": "expression",
-                "optional_note": "expression",
-            }
-            column_source_ids = {
-                edge["source"].get("id")
-                for edge in output["edges"]
-                if edge["source"].get("type") == "column"
-            }
-            assert column_source_ids == {
-                "src_metric.dt",
-                "src_metric.metric_value",
-            }
-            all_column_names = {
-                column["name"]
-                for table in output["tables"]
-                for column in table["columns"]
-            }
-            assert not {"ZBJ00000092", "ZBJ00000093", "NOW", "NULL"} & (
-                all_column_names - {"metric_code", "measure_index"}
-            )
+            _assert_metric_literal_lineage(entries, schema)
 
     def test_insert_union_metric_literals_are_not_lineage_columns(self):
         schema = build_schema_from_texts(
@@ -499,49 +498,7 @@ class TestIntegrationEtlToDwd:
                 file_path,
                 schema,
             )
-            output = build_lineage_output(entries, schema)
-
-            assert _direct_edges(entries) == {
-                (
-                    "src_metric",
-                    "metric_value",
-                    "ads_metric",
-                    "metric_value",
-                ),
-                ("src_metric", "dt", "ads_metric", "dt"),
-                (None, None, "ads_metric", "metric_code"),
-                (None, None, "ads_metric", "measure_index"),
-                (None, None, "ads_metric", "updated_at"),
-                (None, None, "ads_metric", "optional_note"),
-            }
-            constant_sources = {
-                entry["target_column"]: entry["source_type"]
-                for entry in entries
-                if entry.get("transformation_type") == "constant"
-            }
-            assert constant_sources == {
-                "metric_code": "literal",
-                "measure_index": "literal",
-                "updated_at": "expression",
-                "optional_note": "expression",
-            }
-            column_source_ids = {
-                edge["source"].get("id")
-                for edge in output["edges"]
-                if edge["source"].get("type") == "column"
-            }
-            assert column_source_ids == {
-                "src_metric.dt",
-                "src_metric.metric_value",
-            }
-            all_column_names = {
-                column["name"]
-                for table in output["tables"]
-                for column in table["columns"]
-            }
-            assert not {"ZBJ00000092", "ZBJ00000093", "NOW", "NULL"} & (
-                all_column_names - {"metric_code", "measure_index"}
-            )
+            _assert_metric_literal_lineage(entries, schema)
 
     def test_ctas_parenthesized_column_projection_keeps_lineage(self):
         schema = build_schema_from_texts(
@@ -1358,7 +1315,36 @@ class TestSelectStarLineage:
         """
         self._assert_star_expansion_failure(sql, "missing_schema_star.sql")
 
-    def test_bare_star_join_duplicate_column_names_map_by_position(self):
+    @pytest.mark.parametrize(
+        ("file_path", "sql"),
+        [
+            (
+                "duplicate_star_join.sql",
+                """
+                INSERT INTO shop_dm.dwd_order_customer_flat
+                SELECT *
+                FROM shop_dm.ods_order_key o
+                JOIN shop_dm.ods_customer_key c ON o.id = c.id
+                """,
+            ),
+            (
+                "nested_duplicate_star_join.sql",
+                """
+                INSERT INTO shop_dm.dwd_order_customer_flat
+                SELECT *
+                FROM (
+                    SELECT *
+                    FROM shop_dm.ods_order_key o
+                    JOIN shop_dm.ods_customer_key c ON o.id = c.id
+                ) t
+                """,
+            ),
+        ],
+        ids=("direct", "nested"),
+    )
+    def test_bare_star_join_duplicate_columns_map_by_position(
+        self, file_path, sql
+    ):
         schema = build_schema_from_texts(
             [
                 """
@@ -1383,17 +1369,11 @@ class TestSelectStarLineage:
                 """,
             ]
         )
-        sql = """
-        INSERT INTO shop_dm.dwd_order_customer_flat
-        SELECT *
-        FROM shop_dm.ods_order_key o
-        JOIN shop_dm.ods_customer_key c ON o.id = c.id
-        """
         diagnostics = []
 
         entries = extract_lineage_from_sql(
             sql,
-            "duplicate_star_join.sql",
+            file_path,
             schema,
             diagnostics=diagnostics,
         )
@@ -1625,77 +1605,6 @@ class TestSelectStarLineage:
             ("ods_order", "order_id", "dwd_order", "order_id"),
             ("ods_order", "customer_id", "dwd_order", "customer_id"),
             ("ods_order", "amount", "dwd_order", "amount"),
-        }
-
-    def test_nested_bare_star_join_duplicate_columns_map_by_position(self):
-        schema = build_schema_from_texts(
-            [
-                """
-                CREATE TABLE shop_dm.ods_order_key (
-                    id BIGINT,
-                    amount DECIMAL(12,2)
-                )
-                """,
-                """
-                CREATE TABLE shop_dm.ods_customer_key (
-                    id BIGINT,
-                    customer_name VARCHAR(64)
-                )
-                """,
-                """
-                CREATE TABLE shop_dm.dwd_order_customer_flat (
-                    order_id BIGINT,
-                    amount DECIMAL(12,2),
-                    customer_id BIGINT,
-                    customer_name VARCHAR(64)
-                )
-                """,
-            ]
-        )
-        sql = """
-        INSERT INTO shop_dm.dwd_order_customer_flat
-        SELECT *
-        FROM (
-            SELECT *
-            FROM shop_dm.ods_order_key o
-            JOIN shop_dm.ods_customer_key c ON o.id = c.id
-        ) t
-        """
-        diagnostics = []
-
-        entries = extract_lineage_from_sql(
-            sql,
-            "nested_duplicate_star_join.sql",
-            schema,
-            diagnostics=diagnostics,
-        )
-
-        assert diagnostics == []
-        assert _direct_edges(entries) == {
-            (
-                "ods_order_key",
-                "id",
-                "dwd_order_customer_flat",
-                "order_id",
-            ),
-            (
-                "ods_order_key",
-                "amount",
-                "dwd_order_customer_flat",
-                "amount",
-            ),
-            (
-                "ods_customer_key",
-                "id",
-                "dwd_order_customer_flat",
-                "customer_id",
-            ),
-            (
-                "ods_customer_key",
-                "customer_name",
-                "dwd_order_customer_flat",
-                "customer_name",
-            ),
         }
 
     @pytest.mark.parametrize(
@@ -2248,8 +2157,30 @@ class TestEdgeCases:
             )
         }
 
-    def test_lineage_extraction_matches_lowercase_aliased_column_to_uppercase_ddl(
-        self,
+    @pytest.mark.parametrize(
+        ("file_path", "sql"),
+        [
+            (
+                "case_aliased.sql",
+                """
+                INSERT INTO dwd_b
+                SELECT a.mortagage_amt
+                FROM ods_a a
+                """,
+            ),
+            (
+                "case_unaliased.sql",
+                """
+                INSERT INTO dwd_b
+                SELECT mortagage_amt
+                FROM ods_a
+                """,
+            ),
+        ],
+        ids=("aliased-source", "unaliased-source"),
+    )
+    def test_lineage_extraction_matches_column_case_insensitively(
+        self, file_path, sql
     ):
         schema = build_schema_from_texts(
             [
@@ -2265,13 +2196,7 @@ class TestEdgeCases:
                 """,
             ]
         )
-        sql = """
-        INSERT INTO dwd_b
-        SELECT a.mortagage_amt
-        FROM ods_a a
-        """
-
-        entries = extract_lineage_from_sql(sql, "case_aliased.sql", schema)
+        entries = extract_lineage_from_sql(sql, file_path, schema)
 
         assert _direct_edges(entries) == {
             ("ods_a", "MORTAGAGE_AMT", "dwd_b", "MORTAGAGE_AMT"),
@@ -2389,35 +2314,6 @@ class TestEdgeCases:
         assert _direct_edges(entries) == {
             ("src", "a", "dst", "c1"),
             ("src", "b", "dst", "c2"),
-        }
-
-    def test_lineage_extraction_does_not_use_target_for_unaliased_lowercase_column(
-        self,
-    ):
-        schema = build_schema_from_texts(
-            [
-                """
-                CREATE TABLE shop_dm.ods_a (
-                    MORTAGAGE_AMT DECIMAL(18,2)
-                )
-                """,
-                """
-                CREATE TABLE shop_dm.dwd_b (
-                    MORTAGAGE_AMT DECIMAL(18,2)
-                )
-                """,
-            ]
-        )
-        sql = """
-        INSERT INTO dwd_b
-        SELECT mortagage_amt
-        FROM ods_a
-        """
-
-        entries = extract_lineage_from_sql(sql, "case_unaliased.sql", schema)
-
-        assert _direct_edges(entries) == {
-            ("ods_a", "MORTAGAGE_AMT", "dwd_b", "MORTAGAGE_AMT"),
         }
 
     def test_lineage_extraction_matches_quoted_derived_column_case_insensitively(

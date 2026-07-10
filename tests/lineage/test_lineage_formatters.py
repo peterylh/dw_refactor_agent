@@ -106,19 +106,6 @@ def test_format_table_json_contains_only_selected_local_subgraph():
             "source_files": ["dws_product_sales_daily.sql"],
         },
     ]
-
-
-def test_format_table_json_includes_local_columns_and_column_lineage():
-    payload = json.loads(format_table_json(_table_subgraph()))
-
-    dws_table = next(
-        table
-        for table in payload["tables"]
-        if table["name"] == "dws_product_sales_daily"
-    )
-    assert dws_table["columns"] == ["product_id", "sales_amount"]
-
-    lineage_rows = payload["column_lineage"]
     assert {
         "source": "dwd_order_detail.sale_amount",
         "target": "dws_product_sales_daily.sales_amount",
@@ -139,7 +126,7 @@ def test_format_table_json_includes_local_columns_and_column_lineage():
                 "source_file": "dws_product_sales_daily.sql",
             },
         ],
-    } in lineage_rows
+    } in payload["column_lineage"]
 
 
 def test_format_table_html_includes_column_lineage_details():

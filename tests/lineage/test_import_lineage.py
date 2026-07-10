@@ -48,14 +48,6 @@ def _demo_snapshot():
     }
 
 
-def test_import_lineage_module_is_safe_to_import():
-    module = importlib.import_module(
-        "dw_refactor_agent.lineage.import_lineage"
-    )
-
-    assert callable(module.build_parser)
-
-
 def test_parser_accepts_test_db_env():
     module = importlib.import_module(
         "dw_refactor_agent.lineage.import_lineage"

@@ -2040,7 +2040,7 @@ def test_score_asset_completeness_allows_full_refresh_companion_writer(
     assert result["issues"] == []
 
 
-def test_score_naming_conventions_outputs_table_and_column_issues():
+def test_naming_diagnostics_are_agent_actionable():
     nc = load_naming_config(PROJECT_ROOT / "naming_config.yaml")
 
     result = score_naming_conventions(
@@ -2061,32 +2061,6 @@ def test_score_naming_conventions_outputs_table_and_column_issues():
         "NAMING_TABLE_TEMPLATE",
         "NAMING_COLUMN_NAME",
     }
-    assert result["issues"][0]["remediation"]["strategy"] == (
-        "rename_table_and_rewrite_references"
-    )
-    column_check = _checks_by_rule(result, "NAMING_COLUMN_NAME")[0]
-    assert column_check["target"]["qualified_name"] == (
-        "dwd_customer.customer_id"
-    )
-    assert column_check["actual"] == {"value": "customer_id"}
-
-
-def test_naming_diagnostics_are_agent_actionable():
-    nc = load_naming_config(PROJECT_ROOT / "naming_config.yaml")
-
-    result = score_naming_conventions(
-        _context(
-            [
-                {
-                    "name": "dwd_customer",
-                    "layer": "DWD",
-                    "columns": [{"name": "customer_id"}],
-                }
-            ],
-            nc,
-        )
-    )
-
     table_check = _checks_by_rule(result, "NAMING_TABLE_TEMPLATE")[0]
     assert table_check["schema_version"] == "assess.diagnostic.v1"
     assert table_check["dimension"] == "naming"
