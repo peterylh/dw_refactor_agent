@@ -1243,6 +1243,30 @@ def test_parse_fixture_ddl_files(tmp_path):
         assert len(t.columns) >= 1
 
 
+def test_parse_create_table_reads_column_ids():
+    first_id = "6bfa89c0-1e30-4f92-a25e-b5a39ab94880"
+    second_id = "77eb791d-9856-4cc2-a77c-89f46ee626b2"
+    ddl = f"""\
+-- table_id: 91ed8f6a-736d-4896-888e-f9225741b7fa
+CREATE TABLE shop_dm.dwd_order_detail (
+    -- column_id: {first_id}
+    order_id BIGINT NOT NULL COMMENT '订单ID',
+    -- column_id: {second_id}
+    amount DECIMAL(12,2) NOT NULL COMMENT '金额'
+) ENGINE=OLAP
+DUPLICATE KEY(order_id)
+DISTRIBUTED BY HASH(order_id) BUCKETS 10;
+"""
+
+    table = parse_create_table(ddl)
+
+    assert table is not None
+    assert [column.column_id for column in table.columns] == [
+        first_id,
+        second_id,
+    ]
+
+
 # ============================================================
 # 9. UUID 表唯一标识测试
 # ============================================================

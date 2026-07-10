@@ -58,6 +58,7 @@ class ColumnDef:
     default: Optional[str] = None
     comment: Optional[str] = None
     is_key: bool = False
+    column_id: str = ""
 
     def signature(self) -> str:
         """用于结构比对的签名(排除 comment)."""
@@ -227,6 +228,7 @@ class AlterTable(DDLChange):
 
 # 正则: 匹配 -- table_id: <uuid>
 TABLE_ID_RE = re.compile(r"--\s*table_id:\s*([0-9a-fA-F\-]{36})\s*")
+COLUMN_ID_RE = re.compile(r"\bcolumn_id:\s*([0-9a-fA-F\-]{36})\b")
 
 
 def extract_table_id(sql_text: str) -> str:
@@ -249,6 +251,14 @@ def inject_table_id(sql_text: str, table_id: str) -> str:
 
 def generate_table_id() -> str:
     return str(uuid.uuid4())
+
+
+def extract_column_id(col_node: exp.ColumnDef) -> str:
+    comments = getattr(col_node.this, "comments", None) or []
+    matches = []
+    for comment in comments:
+        matches.extend(COLUMN_ID_RE.findall(str(comment)))
+    return matches[0] if len(matches) == 1 else ""
 
 
 def parse_column_def(col_node: exp.ColumnDef) -> Optional[ColumnDef]:
@@ -279,6 +289,7 @@ def parse_column_def(col_node: exp.ColumnDef) -> Optional[ColumnDef]:
         nullable=nullable,
         default=default,
         comment=comment,
+        column_id=extract_column_id(col_node),
     )
 
 
