@@ -1,14 +1,22 @@
 -- DWS 库存日汇总表
--- table_id: c4d5e6f7-a8b9-4c0d-1e2f-3a4b5c6d7e8f
+-- table_id: 73f33c96-6d55-46b3-9e48-7d277ecb8398
 DROP TABLE IF EXISTS shop_dm.dws_inventory_daily;
 CREATE TABLE IF NOT EXISTS shop_dm.dws_inventory_daily (
+    -- column_id: c2996461-8e1f-4d7c-a277-f0a46e749562
     product_id        BIGINT      NOT NULL COMMENT '商品ID',
+    -- column_id: 62d27436-a1c5-4350-a6d8-bfeea65c0b56
     store_id          BIGINT      NOT NULL COMMENT '门店ID',
+    -- column_id: 179e513f-9815-462e-be0a-a2e027f67312
     stat_date         DATE        NOT NULL COMMENT '统计日期',
+    -- column_id: e0911424-8a46-4a06-9a70-020cc046b47a
     quantity          INT         NOT NULL DEFAULT 0 COMMENT '库存数量',
+    -- column_id: 500e8585-25dc-4575-9504-6ef72c934436
     safety_stock      INT         NOT NULL DEFAULT 10 COMMENT '安全库存',
+    -- column_id: 2bcd86c6-037d-455c-af35-b899ab17d7b0
     stock_status      VARCHAR(16) NULL COMMENT '库存状态:正常/偏低/缺货预警/缺货',
+    -- column_id: 6c0776f9-3717-4825-b3cb-e5c8890c769f
     days_since_restock INT        NULL COMMENT '距上次补货天数',
+    -- column_id: a592f375-a4e4-4ccc-98bc-c2d52eb55f3f
     etl_time          DATETIME    NOT NULL COMMENT 'ETL处理时间'
 ) ENGINE=OLAP
 UNIQUE KEY(product_id, store_id, stat_date)

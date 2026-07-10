@@ -2,13 +2,21 @@
 -- table_id: 6930c57e-9d4f-43ed-b276-a160e4031d6c
 DROP TABLE IF EXISTS shop_dm.ods_inventory;
 CREATE TABLE IF NOT EXISTS shop_dm.ods_inventory (
+    -- column_id: 74def9d0-9eea-489e-945e-e72e4d30379f
     inventory_id    BIGINT   NOT NULL COMMENT '库存记录ID',
+    -- column_id: c1623058-5dfb-4c2e-af6f-21b754077824
     product_id      BIGINT   NOT NULL COMMENT '商品ID',
+    -- column_id: fedea8b3-176f-4694-a452-d75529ac46e8
     store_id        BIGINT   NOT NULL COMMENT '门店ID',
+    -- column_id: 6653dbaf-758e-4485-b82f-d14ec140ac6e
     quantity        INT      NOT NULL COMMENT '库存数量',
+    -- column_id: 0aa1b98f-c789-4f7d-885d-6beaeb399b83
     safety_stock    INT      NOT NULL DEFAULT 10 COMMENT '安全库存',
+    -- column_id: 168dc198-ebe2-4d5b-a7a7-b8322a8fb442
     last_restock_date DATE   NULL COMMENT '最近补货日期',
+    -- column_id: ffc479d8-8430-43e7-9480-4d7974fccb76
     update_time     DATETIME NOT NULL COMMENT '更新时间',
+    -- column_id: fa74f443-297e-4d9f-91c3-429c269e7e3f
     load_time       DATETIME NOT NULL COMMENT '数据导入时间(分区列)'
 ) ENGINE=OLAP
 DUPLICATE KEY(inventory_id)

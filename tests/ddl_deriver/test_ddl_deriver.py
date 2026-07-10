@@ -2,6 +2,8 @@
 
 import copy
 
+import pytest
+
 from dw_refactor_agent.ddl_deriver.ddl_deriver import (
     AlterTable,
     ColumnDef,
@@ -110,7 +112,7 @@ def test_table_lifecycle_derivation_scenarios():
     _assert_rename_too_different_falls_back_to_drop_create()
     _assert_batch_create_drop()
     _assert_no_changes()
-    _assert_create_table_auto_uuid()
+    _assert_create_table_does_not_generate_uuid()
 
 
 def test_rename_with_followup_change_scenarios():
@@ -1084,27 +1086,257 @@ def _assert_alter_rename_output_json():
     old_t = TableDef(
         full_name="shop_dm.test",
         short_name="test",
-        columns=[ColumnDef("a", "INT"), ColumnDef("b", "VARCHAR(16)")],
+        columns=[
+            ColumnDef("unit_price", "INT"),
+            ColumnDef("b", "VARCHAR(16)"),
+        ],
         key_type="DUPLICATE",
-        key_columns=["a"],
-        distribution_col="a",
+        key_columns=["unit_price"],
+        distribution_col="unit_price",
     )
     new_t = TableDef(
         full_name="shop_dm.test",
         short_name="test",
-        columns=[ColumnDef("x", "INT"), ColumnDef("b", "VARCHAR(16)")],
+        columns=[
+            ColumnDef("price_unit", "INT"),
+            ColumnDef("b", "VARCHAR(16)"),
+        ],
         key_type="DUPLICATE",
-        key_columns=["x"],
-        distribution_col="x",
+        key_columns=["price_unit"],
+        distribution_col="price_unit",
     )
     changes = derive_ddl_changes({"test": old_t}, {"test": new_t})
     result = changes_to_json(changes)
     entry = result["changes"][0]
     assert entry["change_type"] == "ALTER"
-    assert entry["renames"] == [{"old": "a", "new": "x"}]
+    assert entry["renames"] == [{"old": "unit_price", "new": "price_unit"}]
     # 确认未出现在 adds/drops 中
-    assert not any(c["name"] == "a" for c in entry["drops"])
-    assert not any(c["name"] == "x" for c in entry["adds"])
+    assert not any(c["name"] == "unit_price" for c in entry["drops"])
+    assert not any(c["name"] == "price_unit" for c in entry["adds"])
+
+
+def test_column_id_matches_rename_with_followup_modify():
+    table_id = "91ed8f6a-736d-4896-888e-f9225741b7fa"
+    key_column_id = "6bfa89c0-1e30-4f92-a25e-b5a39ab94880"
+    metric_column_id = "77eb791d-9856-4cc2-a77c-89f46ee626b2"
+    old_t = TableDef(
+        full_name="shop_dm.dwd_order",
+        short_name="dwd_order",
+        columns=[
+            ColumnDef(
+                "order_id",
+                "BIGINT",
+                nullable=False,
+                column_id=key_column_id,
+            ),
+            ColumnDef(
+                "unit_price",
+                "DECIMAL(12,2)",
+                nullable=False,
+                default="0",
+                comment="单价",
+                column_id=metric_column_id,
+            ),
+        ],
+        key_columns=["order_id"],
+        distribution_col="order_id",
+        table_id=table_id,
+    )
+    new_t = TableDef(
+        full_name="shop_dm.dwd_order",
+        short_name="dwd_order",
+        columns=[
+            ColumnDef(
+                "order_id",
+                "BIGINT",
+                nullable=False,
+                column_id=key_column_id,
+            ),
+            ColumnDef(
+                "price_unit",
+                "DECIMAL(14,2)",
+                nullable=True,
+                default="1",
+                comment="成交单价",
+                column_id=metric_column_id,
+            ),
+        ],
+        key_columns=["order_id"],
+        distribution_col="order_id",
+        table_id=table_id,
+    )
+
+    changes = derive_ddl_changes(
+        {"dwd_order": old_t},
+        {"dwd_order": new_t},
+        legacy_identity=False,
+    )
+
+    change = changes[0]
+    assert isinstance(change, AlterTable)
+    assert change.renames == [("unit_price", "price_unit")]
+    assert [(old.name, new.name) for old, new in change.modifies] == [
+        ("unit_price", "price_unit")
+    ]
+    sql = change.to_sql()
+    assert sql.index("RENAME COLUMN unit_price price_unit") < sql.index(
+        "MODIFY COLUMN price_unit DECIMAL(14,2) NULL DEFAULT 1"
+    )
+    rename = changes_to_json(changes)["changes"][0]["renames"][0]
+    assert rename == {
+        "old": "unit_price",
+        "new": "price_unit",
+        "column_id": metric_column_id,
+        "matched_by": "column_id",
+    }
+
+
+def test_different_column_ids_are_drop_add_in_strict_mode():
+    old_t = TableDef(
+        full_name="shop_dm.dwd_order",
+        short_name="dwd_order",
+        columns=[
+            ColumnDef(
+                "old_metric",
+                "INT",
+                nullable=False,
+                comment="指标",
+                column_id="6bfa89c0-1e30-4f92-a25e-b5a39ab94880",
+            )
+        ],
+        table_id="91ed8f6a-736d-4896-888e-f9225741b7fa",
+    )
+    new_t = TableDef(
+        full_name="shop_dm.dwd_order",
+        short_name="dwd_order",
+        columns=[
+            ColumnDef(
+                "new_metric",
+                "INT",
+                nullable=False,
+                comment="指标",
+                column_id="77eb791d-9856-4cc2-a77c-89f46ee626b2",
+            )
+        ],
+        table_id="91ed8f6a-736d-4896-888e-f9225741b7fa",
+    )
+
+    change = derive_ddl_changes(
+        {"dwd_order": old_t},
+        {"dwd_order": new_t},
+        legacy_identity=False,
+    )[0]
+
+    assert isinstance(change, AlterTable)
+    assert change.renames == []
+    assert [column.name for column in change.drops] == ["old_metric"]
+    assert [column.name for column in change.adds] == ["new_metric"]
+
+
+def test_different_table_ids_replace_same_named_table_in_strict_mode():
+    column_id = "6bfa89c0-1e30-4f92-a25e-b5a39ab94880"
+    old_t = TableDef(
+        full_name="shop_dm.dwd_order",
+        short_name="dwd_order",
+        columns=[ColumnDef("order_id", "BIGINT", column_id=column_id)],
+        table_id="91ed8f6a-736d-4896-888e-f9225741b7fa",
+    )
+    new_t = TableDef(
+        full_name="shop_dm.dwd_order",
+        short_name="dwd_order",
+        columns=[ColumnDef("order_id", "BIGINT", column_id=column_id)],
+        table_id="1db7309f-1f9e-4393-807c-7d836ea25727",
+    )
+
+    changes = derive_ddl_changes(
+        {"dwd_order": old_t},
+        {"dwd_order": new_t},
+        legacy_identity=False,
+    )
+
+    assert [type(change) for change in changes] == [DropTable, CreateTable]
+
+
+def test_different_table_ids_disable_similarity_rename():
+    old_t = TableDef(
+        full_name="shop_dm.dwd_order",
+        short_name="dwd_order",
+        columns=[ColumnDef("order_id", "BIGINT")],
+        table_id="91ed8f6a-736d-4896-888e-f9225741b7fa",
+    )
+    new_t = TableDef(
+        full_name="shop_dm.dwd_order_v2",
+        short_name="dwd_order_v2",
+        columns=[ColumnDef("order_id", "BIGINT")],
+        table_id="1db7309f-1f9e-4393-807c-7d836ea25727",
+    )
+
+    changes = derive_ddl_changes({"dwd_order": old_t}, {"dwd_order_v2": new_t})
+
+    assert not any(isinstance(change, RenameTable) for change in changes)
+    assert [type(change) for change in changes] == [DropTable, CreateTable]
+
+
+def test_legacy_column_rename_requires_positive_evidence():
+    old_t = TableDef(
+        full_name="shop_dm.dwd_order",
+        short_name="dwd_order",
+        columns=[ColumnDef("legacy_flag", "INT", nullable=False)],
+    )
+    new_t = TableDef(
+        full_name="shop_dm.dwd_order",
+        short_name="dwd_order",
+        columns=[ColumnDef("new_metric", "INT", nullable=False)],
+    )
+
+    change = derive_ddl_changes({"dwd_order": old_t}, {"dwd_order": new_t})[0]
+
+    assert isinstance(change, AlterTable)
+    assert change.renames == []
+    assert [column.name for column in change.drops] == ["legacy_flag"]
+    assert [column.name for column in change.adds] == ["new_metric"]
+
+
+def test_legacy_column_rename_rejects_weak_token_overlap():
+    old_t = TableDef(
+        full_name="shop_dm.dwd_order",
+        short_name="dwd_order",
+        columns=[ColumnDef("customer_amount_total", "INT")],
+    )
+    new_t = TableDef(
+        full_name="shop_dm.dwd_order",
+        short_name="dwd_order",
+        columns=[ColumnDef("customer_status_flag", "INT")],
+    )
+
+    change = derive_ddl_changes({"dwd_order": old_t}, {"dwd_order": new_t})[0]
+
+    assert isinstance(change, AlterTable)
+    assert change.renames == []
+
+
+def test_legacy_duplicate_comments_do_not_disambiguate_renames():
+    old_t = TableDef(
+        full_name="shop_dm.dwd_order",
+        short_name="dwd_order",
+        columns=[
+            ColumnDef("old_a", "INT", comment="指标"),
+            ColumnDef("old_b", "INT", comment="指标"),
+        ],
+    )
+    new_t = TableDef(
+        full_name="shop_dm.dwd_order",
+        short_name="dwd_order",
+        columns=[
+            ColumnDef("new_x", "INT", comment="指标"),
+            ColumnDef("new_y", "INT", comment="指标"),
+        ],
+    )
+
+    change = derive_ddl_changes({"dwd_order": old_t}, {"dwd_order": new_t})[0]
+
+    assert isinstance(change, AlterTable)
+    assert change.renames == []
 
 
 # ============================================================
@@ -1241,6 +1473,108 @@ def test_parse_fixture_ddl_files(tmp_path):
         assert t is not None, f"Failed to parse {f.name}"
         assert t.short_name == f.stem
         assert len(t.columns) >= 1
+
+
+def test_parse_create_table_reads_column_ids():
+    first_id = "6bfa89c0-1e30-4f92-a25e-b5a39ab94880"
+    second_id = "77eb791d-9856-4cc2-a77c-89f46ee626b2"
+    ddl = f"""\
+-- table_id: 91ed8f6a-736d-4896-888e-f9225741b7fa
+CREATE TABLE shop_dm.dwd_order_detail (
+    -- column_id: {first_id}
+    order_id BIGINT NOT NULL COMMENT '订单ID',
+    -- column_id: {second_id}
+    amount DECIMAL(12,2) NOT NULL COMMENT '金额'
+) ENGINE=OLAP
+DUPLICATE KEY(order_id)
+DISTRIBUTED BY HASH(order_id) BUCKETS 10;
+"""
+
+    table = parse_create_table(ddl)
+
+    assert table is not None
+    assert [column.column_id for column in table.columns] == [
+        first_id,
+        second_id,
+    ]
+
+
+def test_schema_ids_match_case_insensitively_in_strict_mode():
+    table_id = "91ed8f6a-736d-4896-888e-f9225741b7fa"
+    column_id = "6bfa89c0-1e30-4f92-a25e-b5a39ab94880"
+    old = TableDef(
+        full_name="shop_dm.dwd_order",
+        short_name="dwd_order",
+        table_id=table_id,
+        columns=[
+            ColumnDef(
+                "unit_price",
+                "DECIMAL(12,2)",
+                nullable=False,
+                column_id=column_id,
+            )
+        ],
+    )
+    new = TableDef(
+        full_name="shop_dm.dwd_order_v2",
+        short_name="dwd_order_v2",
+        table_id=table_id.upper(),
+        columns=[
+            ColumnDef(
+                "price_unit",
+                "DECIMAL(12,2)",
+                nullable=False,
+                column_id=column_id.upper(),
+            )
+        ],
+    )
+
+    changes = derive_ddl_changes(
+        {"dwd_order": old},
+        {"dwd_order_v2": new},
+        legacy_identity=False,
+    )
+
+    assert [change.change_type for change in changes] == ["RENAME", "ALTER"]
+    assert changes[1].renames == [("unit_price", "price_unit")]
+
+
+@pytest.mark.parametrize("duplicate_side", ["old", "new"])
+def test_derive_rejects_duplicate_in_memory_table_ids(duplicate_side):
+    table_id = "91ed8f6a-736d-4896-888e-f9225741b7fa"
+    tables = {
+        "first": TableDef("demo.first", "first", table_id=table_id),
+        "second": TableDef("demo.second", "second", table_id=table_id.upper()),
+    }
+    old_tables = tables if duplicate_side == "old" else {}
+    new_tables = tables if duplicate_side == "new" else {}
+
+    with pytest.raises(ValueError, match=f"{duplicate_side}.*table_id.*重复"):
+        derive_ddl_changes(old_tables, new_tables)
+
+
+@pytest.mark.parametrize("duplicate_side", ["old", "new"])
+def test_derive_rejects_global_duplicate_in_memory_column_ids(duplicate_side):
+    column_id = "6bfa89c0-1e30-4f92-a25e-b5a39ab94880"
+    tables = {
+        "first": TableDef(
+            "demo.first",
+            "first",
+            columns=[ColumnDef("first_id", "BIGINT", column_id=column_id)],
+        ),
+        "second": TableDef(
+            "demo.second",
+            "second",
+            columns=[
+                ColumnDef("second_id", "BIGINT", column_id=column_id.upper())
+            ],
+        ),
+    }
+    old_tables = tables if duplicate_side == "old" else {}
+    new_tables = tables if duplicate_side == "new" else {}
+
+    with pytest.raises(ValueError, match=f"{duplicate_side}.*column_id.*重复"):
+        derive_ddl_changes(old_tables, new_tables)
 
 
 # ============================================================
@@ -1454,8 +1788,8 @@ def _assert_different_uuid_low_jaccard_not_rename():
     assert not any(isinstance(c, RenameTable) for c in changes)
 
 
-def _assert_create_table_auto_uuid():
-    """新表自动获得 table_id."""
+def _assert_create_table_does_not_generate_uuid():
+    """DDL 推导必须保持只读, 不为新表临时生成 table_id."""
     new_t = TableDef(
         full_name="shop_dm.ods_new_table",
         short_name="ods_new_table",
@@ -1469,8 +1803,5 @@ def _assert_create_table_auto_uuid():
     assert len(changes) == 1
     assert isinstance(changes[0], CreateTable)
     create = changes[0]
-    assert create.table_def.table_id
-    # raw_ddl 应包含注入的 UUID
-    assert (
-        f"-- table_id: {create.table_def.table_id}" in create.table_def.raw_ddl
-    )
+    assert create.table_def.table_id == ""
+    assert "-- table_id:" not in create.table_def.raw_ddl

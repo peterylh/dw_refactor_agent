@@ -1,40 +1,77 @@
 DROP TABLE IF EXISTS finance_analytics_dm.ods_customers;
+-- table_id: 1c2f1bc1-eca0-4190-b1e8-ae2ca65e15dc
 CREATE TABLE IF NOT EXISTS finance_analytics_dm.ods_customers (
+    -- column_id: 8253c1d5-0158-4b98-b5e6-40732de707bd
     customer_id BIGINT NULL,
+    -- column_id: f98166bd-197b-4347-a0a5-0673c2f5a7ee
     first_name STRING NULL,
+    -- column_id: 8adf0c37-c556-4b53-a45f-9ccaf5bc8043
     last_name STRING NULL,
+    -- column_id: 53d84285-f0ea-448b-a9f6-aaa2da7eb4ab
     email STRING NULL,
+    -- column_id: 2fce0b14-424e-4da0-a0a3-f212915c4723
     phone STRING NULL,
+    -- column_id: c373d486-c2c0-4ef3-8f33-7470b3e29a07
     date_of_birth STRING NULL,
+    -- column_id: 7203f1dc-f3d5-4c86-b5e8-7fbefcb339e0
     age BIGINT NULL,
+    -- column_id: c30420f1-5f00-4e75-b76f-f28ae96ba569
     ssn STRING NULL,
+    -- column_id: 3bedf151-59a1-4eb9-a22b-8f74d0e01361
     address STRING NULL,
+    -- column_id: 61ff7f41-280c-4f5f-9e08-c276f9f0de4d
     city STRING NULL,
+    -- column_id: 4d708174-f4bf-4d92-bedb-c2c1fc2d0bab
     state STRING NULL,
+    -- column_id: 9b53d855-a4ee-4e70-8fe4-1c5c34903af2
     zip_code STRING NULL,
+    -- column_id: 1655c640-eaf1-41c6-b556-d63816e1a9c3
     country STRING NULL,
+    -- column_id: ae5bc0a8-eec3-4656-a096-9eaa613d455d
     signup_date DATETIME NULL,
+    -- column_id: c8cdfd06-76a6-451d-bdbb-581892abe014
     credit_score DECIMAL(18,4) NULL,
+    -- column_id: cf8c8dbf-a79a-49c7-a32a-51ff342cee1e
     annual_income DECIMAL(18,4) NULL,
+    -- column_id: d98ab9de-e6f7-4dcd-aadc-f612b7dfc3d9
     employment_status STRING NULL,
+    -- column_id: a15af079-4ad7-4f51-a1c8-645d96441b3e
     employer STRING NULL,
+    -- column_id: 3532c075-523c-4e99-beea-c9ed42ec40b9
     job_title STRING NULL,
+    -- column_id: 6161a3f3-4f22-4ad8-9ac3-4959612016ea
     education_level STRING NULL,
+    -- column_id: 0f97f63b-d9f8-4561-a6bf-546d12f17e7c
     marital_status STRING NULL,
+    -- column_id: d2e0befe-8e4b-4fcf-bd2c-b1e8ab71ee81
     number_of_dependents BIGINT NULL,
+    -- column_id: fc71096a-ed1e-455d-9a60-214dfdd13a7e
     home_ownership STRING NULL,
+    -- column_id: e12512e5-e176-4e50-bfc5-4aee8272ecfd
     customer_segment STRING NULL,
+    -- column_id: 2a486fe2-0c8f-42a8-a553-e120c318ddf4
     life_stage STRING NULL,
+    -- column_id: 45dc68e9-c7b6-4cd7-91f1-5826ea18bb8d
     risk_segment STRING NULL,
+    -- column_id: d81ef97e-d2bb-4c00-b7f9-bcb045d23e4d
     is_active BOOLEAN NULL,
+    -- column_id: d05cfdb2-c1ba-4c44-a58a-b779e00e437a
     preferred_channel STRING NULL,
+    -- column_id: 14de3e5c-f8ed-4be1-b6c9-1f347906e94a
     marketing_opt_in STRING NULL,
+    -- column_id: 1e32bc10-4a40-48c9-90d9-5011ba3c1d2c
     loyalty_tier STRING NULL,
+    -- column_id: 7fa4cdac-c5f6-44be-8a4f-0d2f21ed1b83
     customer_lifetime_value DECIMAL(18,4) NULL,
+    -- column_id: 3d4414bf-24be-4f3f-9565-8abc11bbaf81
     churn_risk_score DECIMAL(18,4) NULL,
+    -- column_id: 95e3c247-f356-45f0-bfa0-c16a511036f9
     last_login_date DATETIME NULL,
+    -- column_id: 1f1a2a7e-0315-40de-b93f-54dd3af27b00
     acquisition_channel STRING NULL,
+    -- column_id: 58863b59-6de0-4232-ada5-fd854152499f
     created_at DATETIME NULL,
+    -- column_id: 36f5f987-1a2e-499d-a7cb-b54bef3f4a81
     load_time DATETIME NULL
 ) ENGINE=OLAP
 DUPLICATE KEY(customer_id)

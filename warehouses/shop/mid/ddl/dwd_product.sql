@@ -2,21 +2,37 @@
 -- table_id: a7d83b46-0937-444c-81be-161a8996e580
 DROP TABLE IF EXISTS shop_dm.dwd_product;
 CREATE TABLE IF NOT EXISTS shop_dm.dwd_product (
+    -- column_id: 4090de89-2938-40a2-9336-ffcdb894d239
     product_id        BIGINT        NOT NULL COMMENT '商品ID',
+    -- column_id: a2db87ce-285c-4cb3-aaca-eb7e631884eb
     snapshot_date     DATE          NOT NULL COMMENT '快照日期',
+    -- column_id: a4a937a2-80dc-46d5-af7f-63db2e1ac085
     etl_time          DATETIME      NOT NULL COMMENT 'ETL处理时间',
+    -- column_id: 44a941e7-e69d-4a0a-8678-1d801f07d411
     product_name      VARCHAR(128)  NOT NULL COMMENT '商品名称',
+    -- column_id: 99de2c90-4e1d-4af9-927c-31ca44f3b64c
     category_id       BIGINT        NOT NULL COMMENT '品类ID',
+    -- column_id: bf9fa495-7f0b-49d3-a6a0-d1fc2abb16e6
     category_name     VARCHAR(64)   NULL COMMENT '品类名称',
+    -- column_id: 23e13fa6-5b68-4a9f-8c64-0425f4dbe197
     parent_category_id BIGINT       NULL COMMENT '上级品类ID',
+    -- column_id: 50cf763c-4cb4-4260-b950-fc186dafb232
     category_level    TINYINT       NULL COMMENT '品类层级',
+    -- column_id: cd3939f8-7576-4dbe-a8c6-4b74fd711719
     brand             VARCHAR(64)   NULL COMMENT '品牌',
+    -- column_id: aa400dd6-9bed-4d46-a00f-3210247a3d86
     unit              VARCHAR(16)   NOT NULL COMMENT '单位',
+    -- column_id: 0af03cf3-c986-4d99-9f10-71f3e4f8f273
     unit_price        DECIMAL(12,2) NOT NULL COMMENT '单价',
+    -- column_id: 989bce80-7581-4918-a912-67e720975659
     cost_price        DECIMAL(12,2) NOT NULL COMMENT '成本价',
+    -- column_id: ad57b297-4b3c-4cac-9d9a-8ca44cbb838d
     gross_margin      DECIMAL(5,2)  NULL COMMENT '毛利率',
+    -- column_id: 4f419887-f6a3-4625-970d-3cff5d071f7d
     spec              VARCHAR(64)   NULL COMMENT '规格',
+    -- column_id: dc15081f-50bf-4c2d-8678-3e74d3a22db6
     barcode           VARCHAR(32)   NULL COMMENT '条形码',
+    -- column_id: 6cad941f-760a-44a7-9906-117bd58525c0
     status            TINYINT       NOT NULL DEFAULT 1 COMMENT '状态'
 ) ENGINE=OLAP
 UNIQUE KEY(product_id, snapshot_date)

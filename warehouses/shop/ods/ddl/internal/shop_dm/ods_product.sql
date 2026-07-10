@@ -2,16 +2,27 @@
 -- table_id: 1207263c-6522-4830-a666-14a1b616cf20
 DROP TABLE IF EXISTS shop_dm.ods_product;
 CREATE TABLE IF NOT EXISTS shop_dm.ods_product (
+    -- column_id: d196a993-be0a-495c-9846-a3f570e04da9
     product_id   BIGINT       NOT NULL COMMENT '商品ID',
+    -- column_id: d591992d-4d4a-4688-9c30-a9c9c85181e0
     product_name VARCHAR(128) NOT NULL COMMENT '商品名称',
+    -- column_id: 7fd8064c-d90d-4e1a-b5b6-7d4ebd771a7c
     category_id  BIGINT       NOT NULL COMMENT '品类ID',
+    -- column_id: 1dc52d68-9d20-40c8-b817-10fdaee7f190
     brand        VARCHAR(64)  NULL COMMENT '品牌',
+    -- column_id: 87343d6f-ba77-4ace-b92b-e72e106b7f0c
     unit         VARCHAR(16)  NOT NULL COMMENT '单位:瓶/袋/盒/箱/个',
+    -- column_id: b687c0c1-9e20-4410-952a-520037788552
     unit_price   DECIMAL(12,2) NOT NULL COMMENT '单价(元)',
+    -- column_id: dcce7439-a562-42a2-ba02-a31e4a1e783f
     cost_price   DECIMAL(12,2) NOT NULL COMMENT '成本价(元)',
+    -- column_id: 205555bc-2a21-4c7e-81ee-8f4a9623d7fa
     spec         VARCHAR(64)  NULL COMMENT '规格',
+    -- column_id: 1ae53d29-dba3-4308-8df5-2fff0819b569
     barcode      VARCHAR(32)  NULL COMMENT '条形码',
+    -- column_id: d2233420-3d19-43a7-b17c-8dbfd24f5918
     status       TINYINT      NOT NULL DEFAULT 1 COMMENT '状态:1上架/0下架',
+    -- column_id: 815cd27e-878a-4611-b616-c1eef664366b
     load_time    DATETIME     NOT NULL COMMENT '数据导入时间(分区列)'
 ) ENGINE=OLAP
 DUPLICATE KEY(product_id)

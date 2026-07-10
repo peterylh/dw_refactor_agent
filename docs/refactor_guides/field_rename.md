@@ -77,6 +77,7 @@ rg "<table_name>" warehouses/<project>
 在 `warehouses/{project}/mid/ddl/{table_name}.sql` 中：
 
 - 将字段定义名从 `{old_column}` 改为 `{new_column}`
+- 保留该字段原有的 `-- column_id: <uuid>`，不得生成新 ID
 - 保留字段类型、注释、默认值、聚合模型属性、Doris 属性
 - 如果分区、分桶或 key 中引用了旧字段，同步改为新字段
 
@@ -165,6 +166,8 @@ rg "<table_name>" warehouses/<project>
 - models YAML 中真实字段引用已更新
 - 原有 models 表级元数据未丢失
 - 初始化数据仅在确实涉及 ODS 字段时更新
+- 重命名字段的 `column_id` 与变更前一致
+- `schema_ids validate --project <project>` 校验通过
 - `rg "<old_column>" warehouses/<project>` 中没有未处理的真实字段引用
 - `PYTHONPATH=src python -m dw_refactor_agent.lineage.lineage_extractor --project <project>` 可正常解析
 - 未默认修改工具代码、测试代码、HTML、lineage JSON、DAG JSON

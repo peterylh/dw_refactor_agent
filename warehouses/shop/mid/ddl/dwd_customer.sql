@@ -2,19 +2,33 @@
 -- table_id: 3cacec5e-705c-430a-ae82-b6b0915d9096
 DROP TABLE IF EXISTS shop_dm.dwd_customer;
 CREATE TABLE IF NOT EXISTS shop_dm.dwd_customer (
+    -- column_id: 3c3d8cd3-afec-4a3b-aa8a-a0eaea3db65a
     customer_id    BIGINT       NOT NULL COMMENT '客户ID',
+    -- column_id: 4b3be4cd-6a18-43c9-91e7-af6e8835287e
     snapshot_date  DATE         NOT NULL COMMENT '快照日期',
+    -- column_id: d330dd75-1049-441f-a85a-3c8eb7b087f5
     etl_time       DATETIME     NOT NULL COMMENT 'ETL处理时间',
+    -- column_id: 65117a4a-4296-43ca-9658-d4aaa24f5e1e
     customer_name  VARCHAR(64)  NOT NULL COMMENT '客户姓名',
+    -- column_id: 3c0a249f-f746-4b96-a957-43a5b7ac93ee
     gender         VARCHAR(4)   NULL COMMENT '性别',
+    -- column_id: 133385af-f3ef-4d01-8500-ad0caaeed031
     age            INT          NULL COMMENT '年龄',
+    -- column_id: f2970093-e152-4283-b1b1-071ed9ff4bb1
     age_group      VARCHAR(16)  NULL COMMENT '年龄段:青年/中年/中老年/老年',
+    -- column_id: 1086046c-acdb-4652-a3e7-ede72f84d681
     phone          VARCHAR(20)  NULL COMMENT '手机号',
+    -- column_id: 38c3d261-735f-474d-83bd-b2df1b5e175d
     email          VARCHAR(128) NULL COMMENT '邮箱',
+    -- column_id: 49732a9a-31cb-488c-a74d-c765090ca786
     address        VARCHAR(256) NULL COMMENT '地址',
+    -- column_id: 2a287cb6-d84a-483a-98f3-0af923968e46
     city           VARCHAR(64)  NULL COMMENT '城市',
+    -- column_id: 10db5269-cb2b-4a98-8b13-44ff097b3a44
     province       VARCHAR(64)  NULL COMMENT '省份',
+    -- column_id: 5acddd11-4c19-402a-8eff-b71c4a9d2424
     member_level   VARCHAR(16)  NULL COMMENT '会员等级',
+    -- column_id: 1acd115b-04db-40ec-8217-b20c29d2ba7a
     register_date  DATE         NULL COMMENT '注册日期'
 ) ENGINE=OLAP
 UNIQUE KEY(customer_id, snapshot_date)

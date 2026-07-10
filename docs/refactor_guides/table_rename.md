@@ -53,6 +53,7 @@ rg "<old_table>"
 
 - 文件名改为 `{new_table}.sql`
 - `CREATE TABLE` 表名改为 `{new_table}`
+- 保留原有 `-- table_id: <uuid>` 和所有 `column_id`，不得重新生成
 - 表内字段、注释、分区、Doris 属性默认保持不变
 
 不要因为改表名而顺手调整字段、分区、模型语义。
@@ -119,6 +120,8 @@ rg "<old_table>"
 - 上下游 SQL 真实表引用已更新
 - models YAML 文件名和 `name` 已更新
 - 原有 models 元数据未丢失
+- 重命名表的 `table_id` 和所有未替换字段的 `column_id` 与变更前一致
+- `schema_ids validate --project <project>` 校验通过
 - `rg "<old_table>"` 中没有未处理的真实表引用
 - `PYTHONPATH=src python -m dw_refactor_agent.lineage.lineage_extractor --project <project>` 可正常解析
 - 未默认修改工具代码、测试代码、HTML、lineage JSON、DAG JSON

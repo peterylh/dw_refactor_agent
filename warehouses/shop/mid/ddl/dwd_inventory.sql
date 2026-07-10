@@ -2,15 +2,25 @@
 -- table_id: a2b3c4d5-e6f7-4a8b-9c0d-1e2f3a4b5c6d
 DROP TABLE IF EXISTS shop_dm.dwd_inventory;
 CREATE TABLE IF NOT EXISTS shop_dm.dwd_inventory (
+    -- column_id: 012ddada-ccb6-4c5b-8312-e8e0e618efbc
     inventory_id      BIGINT   NOT NULL COMMENT '库存记录ID',
+    -- column_id: 791f5ced-e071-47bd-8249-6af616fe247d
     snapshot_date     DATE     NOT NULL COMMENT '快照日期',
+    -- column_id: bc8ad129-cffa-4ae5-8acd-d4bbf151609e
     etl_time          DATETIME NOT NULL COMMENT 'ETL处理时间',
+    -- column_id: b5543526-f9a9-4071-92e1-5aa85411d337
     product_id        BIGINT   NOT NULL COMMENT '商品ID',
+    -- column_id: f0f23abb-1dc6-40ee-b561-bfaeb69e7fe1
     store_id          BIGINT   NOT NULL COMMENT '门店ID',
+    -- column_id: d4ebd2bc-d337-4c87-bb13-9ef61fb479c9
     quantity          INT      NOT NULL COMMENT '库存数量',
+    -- column_id: 9936405e-cdfc-4773-b9bb-01d63e3f808f
     safety_stock      INT      NOT NULL DEFAULT 10 COMMENT '安全库存',
+    -- column_id: b46cc6e1-96e4-4789-ae4e-c18fc22293fa
     stock_status      VARCHAR(16) NULL COMMENT '库存状态:正常/偏低/缺货预警/缺货',
+    -- column_id: 839aa83a-8cb3-465f-adf4-c29d66f5cdaf
     last_restock_date DATE     NULL COMMENT '最近补货日期',
+    -- column_id: b58cef25-7323-45d5-bc1c-d6fa0b850fac
     days_since_restock INT     NULL COMMENT '距上次补货天数'
 ) ENGINE=OLAP
 UNIQUE KEY(inventory_id, snapshot_date)

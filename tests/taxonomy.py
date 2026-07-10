@@ -40,6 +40,7 @@ TEST_TYPE_BY_FILE = {
     "tests/benchmarks/test_lineage_extractor_benchmark_dataset.py": "guard",
     "tests/ddl_deriver/test_ddl_deriver.py": "unit",
     "tests/ddl_deriver/test_git_mode.py": "scenario",
+    "tests/ddl_deriver/test_schema_ids.py": "unit",
     "tests/lineage/test_asset_graph.py": "unit",
     "tests/lineage/test_build_schema.py": "unit",
     "tests/lineage/test_extract_lineage.py": "unit",

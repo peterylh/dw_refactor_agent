@@ -1,41 +1,79 @@
 DROP TABLE IF EXISTS finance_analytics_dm.dws_regulatory_reports;
+-- table_id: 1d8dae8d-39bb-4eba-a9c4-12802aa250c2
 CREATE TABLE IF NOT EXISTS finance_analytics_dm.dws_regulatory_reports (
+    -- column_id: ad32e3e8-b80b-4cef-9c55-2b9af7e8323c
     report_key CHAR(32) NULL,
+    -- column_id: 98c38992-a4e2-4b9f-9002-78ce3bdf811d
     customer_key CHAR(32) NULL,
+    -- column_id: c81b1f0a-d5fd-45c8-a965-93ceb6304194
     account_key CHAR(32) NULL,
+    -- column_id: b2f34dfc-3418-4b62-8f8c-5c67c3a5901d
     transaction_key CHAR(32) NULL,
+    -- column_id: 137841bc-e980-4547-b0e3-fda7837714b3
     filing_date_key CHAR(32) NULL,
+    -- column_id: 15273198-57e1-4d4c-b677-e21d2534c1e6
     due_date_key CHAR(32) NULL,
+    -- column_id: f4edfd2f-3d54-417d-b67d-bd29cf91c0f7
     report_id BIGINT NULL,
+    -- column_id: 80c8ff3a-d27a-47d7-ae6c-a35d717c0364
     report_type_code STRING NULL,
+    -- column_id: ce77fe6e-3718-4c9f-ab27-cf0e0451707a
     report_type_name STRING NULL,
+    -- column_id: 1283649f-d330-444e-9142-aa70a5ed5a73
     report_frequency STRING NULL,
+    -- column_id: 56126d24-a53c-4fb3-b19b-b4805430978d
     regulator STRING NULL,
+    -- column_id: 73f9c627-94cb-40e3-a4f8-2cfc395e450d
     report_period_start STRING NULL,
+    -- column_id: 25f93616-9276-40fc-a4b8-37449a807d28
     report_period_end STRING NULL,
+    -- column_id: 2bf118f7-39cc-44ff-bab3-60633bc3b21c
     filing_date DATETIME NULL,
+    -- column_id: 6b8669ab-c9ba-4447-8e17-049ea6f24829
     due_date DATETIME NULL,
+    -- column_id: ad9b58d5-4081-4c42-85a7-8327c421481e
     actual_filing_date DATETIME NULL,
+    -- column_id: d063b6b5-c684-4d33-9423-bb5a578ea9a9
     filing_status STRING NULL,
+    -- column_id: d7350ea8-02f8-4de8-94f6-252198aa7273
     filing_method STRING NULL,
+    -- column_id: c082cbcb-1894-4484-9a50-312c97bb2d53
     confirmation_number STRING NULL,
+    -- column_id: f0f32726-32b2-4ce1-b663-c32384b879fb
     risk_level STRING NULL,
+    -- column_id: 6b8268d3-bac3-4d20-a899-f84f8af3fe64
     assigned_to STRING NULL,
+    -- column_id: fcfb58d3-789a-4828-9eb7-730eacb0957f
     reviewed_by STRING NULL,
+    -- column_id: f6ead138-d0a0-4d23-8800-51f91f683437
     approval_date DATETIME NULL,
+    -- column_id: 9b931b73-a88d-41ca-b83c-c8ce9abea41a
     amount_reported DECIMAL(18,4) NULL,
+    -- column_id: 59c71e86-64e4-4bdf-8e4b-09d823a5a51f
     penalty_amount DECIMAL(18,4) NULL,
+    -- column_id: 2bfc9351-0dff-4cc7-b640-a0f644e08367
     days_from_due_date DATETIME NULL,
+    -- column_id: 10580b77-b9e7-41f2-8fc2-a1a3fb0f5e4f
     processing_days BIGINT NULL,
+    -- column_id: c8be615d-d372-42b4-948d-b4a4db7b9e74
     filed_flag BOOLEAN NULL,
+    -- column_id: 815c4573-5501-4537-8bd2-2a3d35a3dee5
     pending_flag BOOLEAN NULL,
+    -- column_id: 00dc2d20-eb1c-409a-bb51-13fb1ca24122
     late_flag BOOLEAN NULL,
+    -- column_id: f63d85e4-76a0-46c2-a6b6-11e2b7768cd5
     requires_follow_up_flag BOOLEAN NULL,
+    -- column_id: e1e7b024-7c69-45ef-9124-2d96d790a543
     amended_flag BOOLEAN NULL,
+    -- column_id: d480739d-44d8-4888-8963-00d03b57cdab
     penalty_assessed_flag BOOLEAN NULL,
+    -- column_id: a81132cc-aab1-4176-a078-093cb0f7ebd8
     filed_late_flag BOOLEAN NULL,
+    -- column_id: 4fe24c81-054c-45a8-883f-c2b443792836
     risk_score DECIMAL(18,4) NULL,
+    -- column_id: 1ce231c7-5e63-4590-8c0a-7fef71a7d2c4
     report_count BIGINT NULL,
+    -- column_id: c9a79c80-7b1f-4259-8f0e-d660f2853d2b
     dbt_updated_at DATETIME NULL
 ) ENGINE=OLAP
 DUPLICATE KEY(report_key)

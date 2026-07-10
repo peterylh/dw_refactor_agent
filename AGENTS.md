@@ -49,6 +49,12 @@
 - 表重命名：参见 [docs/refactor_guides/table_rename.md](docs/refactor_guides/table_rename.md)
 - 字段重命名：参见 [docs/refactor_guides/field_rename.md](docs/refactor_guides/field_rename.md)
 
+受管 DDL 必须保留稳定 schema identity。新建表后运行
+`python -m dw_refactor_agent.ddl_deriver.schema_ids init-file --file <ddl_file>`；
+已有表新增字段后运行 `schema_ids assign-column`；表/字段重命名必须保留原
+`table_id` / `column_id`。重构完成前运行
+`python -m dw_refactor_agent.ddl_deriver.schema_ids validate --project <project>`。
+
 ## 血缘与 DAG 工具
 
 修改 `src/dw_refactor_agent/lineage/`、项目目录下的 `warehouses/{project}/artifacts/lineage/` 产物生成逻辑、血缘导入/查询或 DAG
