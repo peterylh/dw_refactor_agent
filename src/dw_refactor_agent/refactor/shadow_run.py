@@ -499,7 +499,6 @@ def _job_result(
     status: str,
     error: str | None = None,
     *,
-    actual_execution_values: list[str] | None = None,
     invocation_count: int | None = None,
     batch_count: int | None = None,
     parallelism: int | None = None,
@@ -518,8 +517,6 @@ def _job_result(
     for key in ("execution_values",):
         if key in job:
             result[key] = job.get(key)
-    if actual_execution_values is not None:
-        result["actual_execution_values"] = list(actual_execution_values)
     if invocation_count is not None:
         result["invocation_count"] = invocation_count
     if batch_count is not None:
@@ -570,15 +567,6 @@ def _job_driver_values(job: dict, spec) -> list[str | None]:
         f"[{job_name}] shadow-run requires execution_values "
         "for sliced incremental jobs"
     )
-
-
-def _append_actual_execution_value(
-    actual_execution_values: list[str],
-    driver_value: str | None,
-) -> None:
-    if driver_value is None or driver_value in actual_execution_values:
-        return
-    actual_execution_values.append(driver_value)
 
 
 def _job_for_driver_value(job: dict, driver_value: str | None) -> dict:
@@ -750,7 +738,6 @@ def _skipped_shadow_job_result(
             job,
             "skipped",
             reason,
-            actual_execution_values=[],
             invocation_count=0,
             invocations=invocation_results,
             **_job_batch_kwargs(0, parallel, batch_size),
@@ -778,7 +765,6 @@ def _execute_shadow_job(
     job_name = job["job"]
     job_file = job["file"]
     layer = job.get("layer", "?")
-    actual_values = []
     invocation_count = 0
     invocation_results = [] if timing_detail else None
     job_timer = _start_timing()
@@ -794,7 +780,6 @@ def _execute_shadow_job(
                 job,
                 "failed",
                 error,
-                actual_execution_values=actual_values,
                 invocation_count=invocation_count,
                 invocations=invocation_results,
                 **_job_batch_kwargs(
@@ -814,7 +799,6 @@ def _execute_shadow_job(
                 job,
                 "failed",
                 str(exc),
-                actual_execution_values=actual_values,
                 invocation_count=invocation_count,
                 invocations=invocation_results,
                 **_job_batch_kwargs(
@@ -850,7 +834,6 @@ def _execute_shadow_job(
                     job,
                     "failed",
                     str(exc),
-                    actual_execution_values=actual_values,
                     invocation_count=invocation_count,
                     invocations=invocation_results,
                     **_job_batch_kwargs(
@@ -868,8 +851,6 @@ def _execute_shadow_job(
     batches = _chunked(planned_invocations, batch_size)
     invocation_count = len(planned_invocations)
     batch_count = len(batches)
-    for driver_value, _invocation in planned_invocations:
-        _append_actual_execution_value(actual_values, driver_value)
 
     def execute_batch(batch):
         batch_timer = _start_timing()
@@ -966,7 +947,6 @@ def _execute_shadow_job(
                 job,
                 "failed",
                 str(exc),
-                actual_execution_values=actual_values,
                 invocation_count=invocation_count,
                 invocations=invocation_results,
                 **_job_batch_kwargs(
@@ -983,7 +963,6 @@ def _execute_shadow_job(
         _job_result(
             job,
             "success",
-            actual_execution_values=actual_values,
             invocation_count=invocation_count,
             invocations=invocation_results,
             **_job_batch_kwargs(
@@ -1092,7 +1071,6 @@ def _run_shadow_jobs(
                             job_by_name[job_name],
                             "failed",
                             str(exc),
-                            actual_execution_values=[],
                             invocation_count=0,
                             **_job_batch_kwargs(0, parallel, batch_size),
                         ),
@@ -1353,7 +1331,6 @@ def _dry_run_phases(
     for job in jobs_to_run:
         job_timer = _start_timing()
         file_path = root / job["file"]
-        actual_values = []
         invocation_count = 0
         invocation_results = [] if timing_detail else None
         if not file_path.exists():
@@ -1363,7 +1340,6 @@ def _dry_run_phases(
                         job,
                         "skipped",
                         "文件不存在",
-                        actual_execution_values=actual_values,
                         invocation_count=invocation_count,
                         invocations=invocation_results,
                         **_job_batch_kwargs(
@@ -1386,7 +1362,6 @@ def _dry_run_phases(
                     project_root=root,
                 )
                 if planned_invocations:
-                    _append_actual_execution_value(actual_values, driver_value)
                     invocation_count += len(planned_invocations)
                     if invocation_results is not None:
                         for _ in planned_invocations:
@@ -1405,7 +1380,6 @@ def _dry_run_phases(
                     _job_result(
                         job,
                         "dry_run",
-                        actual_execution_values=actual_values,
                         invocation_count=invocation_count,
                         invocations=invocation_results,
                         **_job_batch_kwargs(
@@ -1424,7 +1398,6 @@ def _dry_run_phases(
                         job,
                         "failed",
                         str(exc),
-                        actual_execution_values=actual_values,
                         invocation_count=invocation_count,
                         invocations=invocation_results,
                         **_job_batch_kwargs(

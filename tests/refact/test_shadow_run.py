@@ -795,7 +795,6 @@ def test_run_shadow_plan_executes_self_contained(tmp_path, monkeypatch):
         "status": "success",
         "error": None,
         "execution_values": ["2025-01-15"],
-        "actual_execution_values": ["2025-01-15"],
         "invocation_count": 1,
     }
     assert any(call[0] == "text" for call in calls)
@@ -877,7 +876,6 @@ def test_run_shadow_plan_persists_failed_job_result(tmp_path, monkeypatch):
         "status": "failed",
         "error": "insert failed",
         "execution_values": ["2025-01-15"],
-        "actual_execution_values": ["2025-01-15"],
         "invocation_count": 1,
     }
     assert json.loads(output_path.read_text(encoding="utf-8")) == result
@@ -1670,6 +1668,7 @@ execution:
     jobs = {job["job"]: job for job in phase_by_name["run_jobs"]["jobs"]}
     assert jobs["dws_order"]["status"] == "failed"
     assert jobs["ads_order"]["status"] == "skipped"
+    assert "actual_execution_values" not in jobs["ads_order"]
 
 
 def test_execute_shadow_plan_logs_sql_progress_for_each_slice(
@@ -1722,7 +1721,7 @@ def test_execute_shadow_plan_logs_sql_progress_for_each_slice(
     assert "SQL done: shop/mid/tasks/dws_order.sql duration=" in stdout
 
 
-def test_execute_shadow_plan_uses_job_execution_values_and_records_actuals(
+def test_execute_shadow_plan_uses_job_execution_values_and_records_counts(
     tmp_path, monkeypatch
 ):
     project = "shadow_driver_values"
@@ -1854,16 +1853,11 @@ execution:
 
     phase_by_name = {phase["name"]: phase for phase in result["phases"]}
     jobs = {job["job"]: job for job in phase_by_name["run_jobs"]["jobs"]}
-    assert jobs["dws_store_sales_daily"]["actual_execution_values"] == [
-        "2024-06-01",
-        "2024-06-02",
-    ]
+    assert "actual_execution_values" not in jobs["dws_store_sales_daily"]
     assert jobs["dws_store_sales_daily"]["invocation_count"] == 2
-    assert jobs["ads_store_performance"]["actual_execution_values"] == [
-        "2024-06-01"
-    ]
+    assert "actual_execution_values" not in jobs["ads_store_performance"]
     assert jobs["ads_store_performance"]["invocation_count"] == 1
-    assert jobs["ads_sales_dashboard"]["actual_execution_values"] == []
+    assert "actual_execution_values" not in jobs["ads_sales_dashboard"]
     assert jobs["ads_sales_dashboard"]["invocation_count"] == 1
 
     assert dry_run_result["status"] == "dry_run"
@@ -1873,15 +1867,15 @@ execution:
     dry_run_jobs = {
         job["job"]: job for job in dry_run_phase_by_name["run_jobs"]["jobs"]
     }
-    assert dry_run_jobs["dws_store_sales_daily"][
-        "actual_execution_values"
-    ] == ["2024-06-01", "2024-06-02"]
+    assert (
+        "actual_execution_values" not in dry_run_jobs["dws_store_sales_daily"]
+    )
     assert dry_run_jobs["dws_store_sales_daily"]["invocation_count"] == 2
-    assert dry_run_jobs["ads_store_performance"][
-        "actual_execution_values"
-    ] == ["2024-06-01"]
+    assert (
+        "actual_execution_values" not in dry_run_jobs["ads_store_performance"]
+    )
     assert dry_run_jobs["ads_store_performance"]["invocation_count"] == 1
-    assert dry_run_jobs["ads_sales_dashboard"]["actual_execution_values"] == []
+    assert "actual_execution_values" not in dry_run_jobs["ads_sales_dashboard"]
     assert dry_run_jobs["ads_sales_dashboard"]["invocation_count"] == 1
 
 
@@ -1950,7 +1944,7 @@ execution:
     job_result = phase_by_name["run_jobs"]["jobs"][0]
     assert job_result["status"] == "failed"
     assert "requires execution_values" in job_result["error"]
-    assert job_result["actual_execution_values"] == []
+    assert "actual_execution_values" not in job_result
     assert job_result["invocation_count"] == 0
 
     assert dry_run_result["status"] == "failed"
@@ -1961,7 +1955,7 @@ execution:
     dry_run_job_result = dry_run_phase_by_name["run_jobs"]["jobs"][0]
     assert dry_run_job_result["status"] == "failed"
     assert "requires execution_values" in dry_run_job_result["error"]
-    assert dry_run_job_result["actual_execution_values"] == []
+    assert "actual_execution_values" not in dry_run_job_result
     assert dry_run_job_result["invocation_count"] == 0
 
 
