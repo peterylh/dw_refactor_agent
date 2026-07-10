@@ -236,7 +236,7 @@ restarted after the migration.
 Run:
 
 ```bash
-PYTHONPATH=src conda run -n dw-refactor-py37 python -m dw_refactor_agent.ddl_deriver.schema_ids init-project --project shop
+PYTHONPATH=src conda run -n dw-refactor-py37 python -m dw_refactor_agent.ddl_deriver.schema_ids init-project --project shop --replace-invalid-table-ids
 PYTHONPATH=src conda run -n dw-refactor-py37 python -m dw_refactor_agent.ddl_deriver.schema_ids init-project --project finance_analytics
 ```
 

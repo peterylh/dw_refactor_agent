@@ -227,7 +227,7 @@ class AlterTable(DDLChange):
 # ============================================================
 
 # 正则: 匹配 -- table_id: <uuid>
-TABLE_ID_RE = re.compile(r"--\s*table_id:\s*([0-9a-fA-F\-]{36})\s*")
+TABLE_ID_RE = re.compile(r"--[ \t]*table_id:[ \t]*([0-9a-fA-F\-]{36})[ \t]*")
 COLUMN_ID_RE = re.compile(r"\bcolumn_id:\s*([0-9a-fA-F\-]{36})\b")
 
 

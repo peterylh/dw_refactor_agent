@@ -65,6 +65,11 @@ python -m dw_refactor_agent.ddl_deriver.schema_ids validate --project shop
 preserves existing valid IDs, processes files in stable path/column order, and
 is idempotent after the first successful write.
 
+Historical non-UUID4 table markers are rejected by default. The one-time
+`--replace-invalid-table-ids` migration option replaces only invalid table
+markers after the full project preflight succeeds; it never replaces a valid
+ID or any column ID.
+
 `init-file` is the new-table authoring command. It assigns a missing table ID
 and IDs to all missing columns in one file.
 

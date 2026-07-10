@@ -5,6 +5,7 @@ import pytest
 import dw_refactor_agent.config as config
 from dw_refactor_agent.ddl_deriver.ddl_deriver import parse_create_table
 from dw_refactor_agent.ddl_deriver.schema_ids import (
+    SchemaIdentityError,
     assign_column,
     init_file,
     init_project,
@@ -208,6 +209,52 @@ def test_init_project_identifies_every_managed_ddl_file(tmp_path, monkeypatch):
     assert validate_project("demo") == []
 
 
+def test_init_project_preflights_all_files_before_writing(
+    tmp_path, monkeypatch
+):
+    ddl_dir = _configure_project(tmp_path, monkeypatch)
+    first_path = ddl_dir / "dwd_order.sql"
+    first_text = _ddl()
+    first_path.write_text(first_text, encoding="utf-8")
+    invalid_path = ddl_dir / "dwd_payment.sql"
+    invalid_path.write_text(
+        _ddl("demo_dm.dwd_payment").replace(
+            "CREATE TABLE",
+            f"-- column_id: {SECOND_COLUMN_ID}\nCREATE TABLE",
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(SchemaIdentityError, match="orphan_column_id"):
+        init_project("demo")
+
+    assert first_path.read_text(encoding="utf-8") == first_text
+
+
+def test_init_project_replaces_invalid_table_ids_only_when_explicit(
+    tmp_path, monkeypatch
+):
+    ddl_dir = _configure_project(tmp_path, monkeypatch)
+    invalid_id = "c4d5e6f7-a8b9-4c0d-1e2f-3a4b5c6d7e8f"
+    path = ddl_dir / "dwd_order.sql"
+    path.write_text(_ddl(table_id=invalid_id), encoding="utf-8")
+
+    with pytest.raises(SchemaIdentityError, match="invalid_table_id"):
+        init_project("demo")
+
+    assignments = init_project("demo", replace_invalid_table_ids=True)
+
+    table = parse_create_table(path.read_text(encoding="utf-8"))
+    assert table is not None
+    assert table.table_id != invalid_id
+    _assert_uuid4(table.table_id)
+    assert [assignment.kind for assignment in assignments] == [
+        "table",
+        "column",
+        "column",
+    ]
+
+
 def test_cli_validate_returns_nonzero_for_identity_issues(
     tmp_path, monkeypatch, capsys
 ):
@@ -220,3 +267,8 @@ def test_cli_validate_returns_nonzero_for_identity_issues(
     output = capsys.readouterr().out
     assert "missing_table_id" in output
     assert "校验失败: 3 个问题" in output
+
+
+@pytest.mark.parametrize("project", ["shop", "finance_analytics"])
+def test_migrated_managed_projects_have_complete_schema_ids(project):
+    assert validate_project(project) == []

@@ -187,9 +187,18 @@ def _existing_marker_errors(path: Path, text: str, table, column_lines):
 
 
 def _raise_existing_marker_errors(
-    path: Path, text: str, table, column_lines
+    path: Path,
+    text: str,
+    table,
+    column_lines,
+    *,
+    allow_invalid_table_id: bool = False,
 ) -> None:
     issues = _existing_marker_errors(path, text, table, column_lines)
+    if allow_invalid_table_id:
+        issues = [
+            issue for issue in issues if issue.code != "invalid_table_id"
+        ]
     if issues:
         raise SchemaIdentityError(issues)
 
@@ -216,13 +225,23 @@ def _insert_column_ids(
     return "".join(lines)
 
 
-def init_file(path: Path) -> List[IdentityAssignment]:
+def init_file(
+    path: Path, *, replace_invalid_table_id: bool = False
+) -> List[IdentityAssignment]:
     target = Path(path)
     text, table, column_lines = _read_parsed_file(target)
-    _raise_existing_marker_errors(target, text, table, column_lines)
+    _raise_existing_marker_errors(
+        target,
+        text,
+        table,
+        column_lines,
+        allow_invalid_table_id=replace_invalid_table_id,
+    )
 
     assignments: List[IdentityAssignment] = []
-    if not table.table_id:
+    if not table.table_id or (
+        replace_invalid_table_id and not _is_uuid4(table.table_id)
+    ):
         assignments.append(IdentityAssignment("table", target, _new_uuid4()))
     for column in table.columns:
         if column.column_id:
@@ -283,10 +302,27 @@ def managed_ddl_files(project: str) -> List[Path]:
     return config.iter_project_asset_files(project, "ddl", "*.sql")
 
 
-def init_project(project: str) -> List[IdentityAssignment]:
+def init_project(
+    project: str, *, replace_invalid_table_ids: bool = False
+) -> List[IdentityAssignment]:
+    paths = managed_ddl_files(project)
+    for path in paths:
+        text, table, column_lines = _read_parsed_file(path)
+        _raise_existing_marker_errors(
+            path,
+            text,
+            table,
+            column_lines,
+            allow_invalid_table_id=replace_invalid_table_ids,
+        )
     assignments: List[IdentityAssignment] = []
-    for path in managed_ddl_files(project):
-        assignments.extend(init_file(path))
+    for path in paths:
+        assignments.extend(
+            init_file(
+                path,
+                replace_invalid_table_id=replace_invalid_table_ids,
+            )
+        )
     return assignments
 
 
@@ -556,6 +592,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     init_project_parser = subparsers.add_parser("init-project")
     init_project_parser.add_argument("--project", required=True)
+    init_project_parser.add_argument(
+        "--replace-invalid-table-ids", action="store_true"
+    )
 
     init_file_parser = subparsers.add_parser("init-file")
     init_file_parser.add_argument("--file", type=Path, required=True)
@@ -570,7 +609,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     args = parser.parse_args(argv)
     try:
         if args.command == "init-project":
-            assignments = init_project(args.project)
+            assignments = init_project(
+                args.project,
+                replace_invalid_table_ids=args.replace_invalid_table_ids,
+            )
             _print_assignments(assignments)
             print(f"完成: {len(assignments)} 个 schema ID")
             return 0

@@ -61,6 +61,25 @@
 
 ## 默认验证
 
+### Schema Identity
+
+受管 DDL 使用稳定 UUID 标识表和字段。Agent 修改 DDL 时遵守：
+
+```bash
+# 新建整张表
+python -m dw_refactor_agent.ddl_deriver.schema_ids init-file --file <ddl_file>
+
+# 已有表新增字段
+python -m dw_refactor_agent.ddl_deriver.schema_ids assign-column --file <ddl_file> --column <column_name>
+
+# 完成前校验
+python -m dw_refactor_agent.ddl_deriver.schema_ids validate --project <project>
+```
+
+表或字段重命名、字段属性修改必须保留原 ID。复制、拆分、合并或语义替换得到的
+新表/新字段必须生成新 ID。`ddl_deriver` 和 `refactor run analyze` 只读取 ID，
+不会自动补齐；缺失、非法或重复 ID 会阻断分析。
+
 默认验证：
 
 ```bash
