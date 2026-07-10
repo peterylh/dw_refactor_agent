@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 import threading
 import urllib.request
@@ -23,7 +24,7 @@ from dw_refactor_agent.assessment.project_facts.time_period import (
 )
 from dw_refactor_agent.config import TEXT_ENCODING
 
-PROMPT_VERSION = "table-inspector-v33"
+PROMPT_VERSION = "table-inspector-v36"
 VALID_LAYERS = {"DWD", "DWS", "DIM", "OTHER"}
 VALID_TABLE_TYPES = {"dimension", "fact", "other"}
 VALID_DIMENSION_ROLES = {"BASE", "ADDT"}
@@ -37,9 +38,11 @@ COLUMN_GROUPS = (
     "others",
 )
 RESOLUTION_REINSPECTION_ERROR_KEY = "resolution_requires_reinspection"
+DDL_COLUMNS_UNAVAILABLE_ERROR_KEY = "ddl_columns_unavailable"
 VALIDATION_ERROR_KEYS = (
     "unknown_columns",
     "duplicate_columns",
+    "missing_columns",
     "missing_base_metrics",
     "missing_base_metric_tables",
     "invalid_base_metrics",
@@ -50,9 +53,10 @@ VALIDATION_ERROR_KEYS = (
     "missing_primary_entities",
     "inconsistent_layer_table_types",
     "inconsistent_layer_sql",
+    DDL_COLUMNS_UNAVAILABLE_ERROR_KEY,
     RESOLUTION_REINSPECTION_ERROR_KEY,
 )
-VALIDATION_WARNING_KEYS = ("missing_columns",)
+VALIDATION_WARNING_KEYS = ()
 DEFAULT_DEEPSEEK_CHAT_COMPLETIONS_URL = (
     "https://api.deepseek.com/chat/completions"
 )
@@ -101,6 +105,12 @@ def _prompt_table_layers(
     return layers if ctx.expose_layer_hints else {}
 
 
+def _prompt_depth_feature(ctx: TableContext) -> str:
+    if not ctx.expose_layer_hints:
+        return ""
+    return f"- 距 ODS 最小跳数: {ctx.depth_from_ods}\n"
+
+
 @dataclass
 class TableInspectResult:
     table_name: str
@@ -124,6 +134,7 @@ class TableInspectResult:
     grain: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
+        self.confidence = _safe_float(self.confidence)
         self.entities = normalize_entities(
             self.entities,
             self.entity,
@@ -196,27 +207,20 @@ def build_prompt(ctx: TableContext) -> str:
 - DIM (公共维度表): 记录实体属性，主键通常为单一实体 ID，被其他宽表广泛 LEFT JOIN。
 
 ## 表类型判定标准
-- dimension: 维度表。描述可被事实表引用的业务实体属性、层级、状态或主数据，缓慢变化，常常作为维表被 JOIN。
-- fact: 事实表或汇总事实表。记录业务事件/交易，或按公共维度汇总业务过程，包含可度量字段，通常有时间分区。
-- other: 不满足维度发布边界、也不表达业务事件/周期快照事实的清洗实体表、标准化中间表或其他类型。
-- table_type 判断的是当前物理模型承担的职责，不是“字段看起来像实体属性”或“存在数值字段”。直接从单个源表逐行清洗、保留自然业务 ID 和一行一个当前实体的表，若下游仍有独立的规范化维度模型，通常是 DWD/other，不是 dimension。
-- fact 必须能回答“这一行记录了什么业务事件、状态变更或周期快照事实”。实体当前态中的数值属性或非加性参考值本身不能让清洗表变成 fact；缺少事件发生语义、事件时间或快照时间时应判 other。
-- 可度量业务活动记录也属于 fact：如果一行由独立的业务过程/活动标识，具有发生时间或生命周期，并承载该活动的投入、产出、次数、金额或效果等观测度量，即使没有 GROUP BY、每个活动只保留一行，也应判 DWD/fact。other 只用于不表达独立可度量业务过程的实体当前态或技术中间模型。
-- dimension 必须是供事实分析复用的公共参考边界。由清洗表进一步发布、使用稳定参考键并承担业务实体或参考序列的公共上下文职责时，才判 DIM/dimension。
-- 当前态清洗表与维度快照必须区分：如果 ETL 按实体键取截至驱动日期的最新记录，输出显式快照日期字段，并持续保留“一行一个实体在一个快照日”的属性版本，则它承担历史维度快照职责，应判 DIM/dimension；没有快照日期、覆盖式保存当前态并继续供下游规范化的单源清洗表才倾向 DWD/other。
-- 快照日期字段本身不能决定维表：若每个快照行记录可加或可统计的运营度量，表达的是“实体在该时点的业务事实”，则属于周期快照 fact；保持明细快照粒度时判 DWD/fact，经过 GROUP BY 形成公共汇总粒度时判 DWS/fact。只有主要承载实体描述、分类、层级和状态标签等属性版本时，才是 DIM/dimension 属性快照。
+- table_type 必须依据行粒度、键约束、聚合位置、时间字段和 JOIN 复用关系判断，不能仅依据表名、字段名或是否包含数值字段。
+- fact: 每行表示可独立识别的事件、明细或周期状态，具有稳定行键、发生/观察时间和可汇总度量；聚合事实还应有明确公共粒度。
+- dimension: 每行围绕稳定实体标识组织描述性属性，并作为查询或 JOIN 上下文被事实模型复用；它本身不承载事件度量。
+- other: 保持源行粒度的清洗、标准化或技术中间模型，尚未形成可复用维度发布边界，也不表达可度量事实。
+- 对同一实体键跨时间保留多个版本时，结合版本键、有效期/观察时间以及输出字段职责判断：主要输出描述性属性的是 dimension，主要输出可汇总度量的是 fact；时间字段本身不能决定表类型。
 
 ## 中间层候选与边界层规则
 - 当前巡检对象仅来自 DWD/DWS/DIM 可写模型候选；ODS 和 ADS 由资产目录边界固定，不参与中间层 LLM 裁决，也不得作为 inferred_layer 返回。
 - 如果原始配置层级是 DWD、DWS 或 DIM，且没有明确的 ads 资产目录、应用报表命名或最终看板用途证据，请优先在 DWD/DWS/DIM 中选择。
-- 对含 GROUP BY/SUM/COUNT/COUNT DISTINCT 或从上游汇总指标透传并形成公共粒度 grain 的中间层事实表，应优先考虑 DWS；不要因为下游引用数为 0 直接改判 ADS。
-- 聚合不只看最外层 SELECT：CTE、派生表或 JOIN 子查询中若先按业务键 GROUP BY/SUM/COUNT，再把这些聚合指标发布到当前公共粒度，当前表同样不是 DWD。若输出是一行一个实体×日期并承载多项聚合/计数指标，应判 DWS/fact。
-- 对保留单一 ODS 源行粒度、主要做清洗/标准化/类型转换的实体属性表，应区分“DWD 清洗实体表”和“DIM 公共维表”。只有当它承担公共维度边界、稳定主数据/快照或明确可被事实表复用时，才判为 DIM；若已有单独的维度/主题表承接公共实体，当前清洗表更可能是 DWD/other。
-- 如果当前表从 ODS 或清洗源读取，保留一行一个业务对象/事件/评估/分层变更的粒度，并且下游还有同实体的规范化模型或汇总模型，则当前表通常是 DWD 清洗/明细增强层，不要仅因字段像属性表或标签表就判为 DIM。
-- 对单源逐行清洗链路，必须区分自然键清洗模型和下游公共参考模型：前者通常为 DWD/other；后者若引入稳定代理键、作为 JOIN 上下文复用且不表达事件，则为 DIM/dimension。不要把同一链路的两张表都判成 dimension。
-- 无 GROUP BY 且没有把多行压缩为公共汇总粒度的活动、风险、分层历史、经济指标清洗增强表，即使包含率值、评分、标签、预算、点击、转化等指标/属性，也更可能是 DWD fact/other；DWS 需要明确的公共汇总粒度或可复用聚合语义。
-- 由上游 DWD 清洗表生成、带 surrogate key（如 *_key）且承担公共参考/维度上下文职责的规范化表，可以判为 DIM；非加性参考序列如果作为分析上下文而非业务事件，也可属于 DIM/reference。
-- 非加性参考值直接贴源清洗并保留自然键时倾向 DWD/other；从该清洗结果发布稳定参考键、供事实关联时倾向 DIM/dimension，不要仅因字段为数值就判 fact。
+- DWD: 输出行与输入明细保持同一粒度，转换主要是清洗、标准化、去重或逐行增强，不在任意 CTE、子查询或主查询中把多行压缩为汇总粒度。
+- DWS: 在任意查询阶段通过聚合把多行压缩到公共分析粒度，或发布已聚合的上游指标；必须返回 fact。
+- DIM: 具有稳定实体标识和描述性属性，并通过下游 JOIN 关系体现公共复用；生成新键本身不足以证明它是维度表。
+- 没有聚合的模型不属于 DWS；继续根据输出行是否表达可度量事实、可复用描述性实体或仅为逐行技术加工，在 DWD/fact、DIM/dimension 和 DWD/other 之间判断。
+- 下游引用数为 0 只能作为边界层弱证据，不能覆盖粒度、聚合和资产目录证据。
 
 ## 维表分类标准
 当 table_type=dimension 或 inferred_layer=DIM 时，必须额外判断维表内容形态和维表建设角色。
@@ -240,15 +244,15 @@ def build_prompt(ctx: TableContext) -> str:
 - atomic_metrics: 基于某一业务过程下不可再拆分的基础指标口径，通常由业务过程、度量对象和标准统计方式构成。对事件标识或实体标识字段做 COUNT/COUNT DISTINCT 生成基础计数口径时，应归 atomic_metrics；不包含比率、分数、多个度量组合、同一明细行内多个基础要素的算术组合、结果性明细度量、复杂 CASE/窗口函数/模型计算等二次计算。字段是否为原子指标不能只看 ETL 是否直接透传，必须结合字段语义和业务定义判断。business_process 仅当当前表是 fact/DWD fact/DWS 汇总事实且字段是指标时填写；dimension/属性字段返回空字符串。尽量填写 business_process/action/measure。
 - derived_metrics: 放度量型派生指标，即一个已存在的原子指标 + 多个修饰词(可选) + 时间周期/统计粒度/限定条件。它本质上仍是对原子指标统计范围的限定，没有改变指标计算逻辑。DWS 汇总表中，如果字段是对上游已存在的 atomic_metrics 做 SUM/AVG/MIN/MAX 等标准聚合，并叠加维度、周期或限定条件，通常应归 derived_metrics，而不是 atomic_metrics。尽量填写 base_metric/modifiers/time_period/expression。
 - calculated_metrics: 只放度量型衍生指标，即基于一个或多个已有指标，通过公式、规则、模型或二次计算得到的新指标，通常产生新的业务含义。包括比率、分数、差值、绝对值、风险等级、窗口函数、复杂 CASE 规则、多字段组合计算、同一明细行内多个基础要素组合后的结果度量等。即使字段从上游直接透传或上游已经预先算好，只要字段注释、字段级血缘或业务语义表明它是已物化的结果性度量，而不是独立观测到的基础计量，也应按 calculated_metrics 判断。DWS 汇总表中，如果字段是对上游 calculated_metrics 再聚合，也应归 calculated_metrics。尽量填写 expression/derived_from。
-- dimensions: 主键、外键、日期、时间、状态、标签、枚举、布尔标志、退化维度、实体属性、非加性属性等分析维度字段。价格、成本、费率、汇率、系数、阈值等非加性输入属性如果主要作为切片、描述或其他指标计算输入，而不是独立统计口径，应放入 dimensions；即使它们由 DATE_FORMAT、CASE WHEN 或其他表达式生成，只要用于切片/过滤/分组而不是作为度量，也应放入 dimensions。
+- dimensions: 主键、外键、日期、时间、状态、标签、枚举、布尔标志、退化维度、实体属性，以及用于切片、过滤、分组或公式输入但自身不可独立汇总的字段。
 - others: 审计字段、技术字段、无法判断字段。
 - DWD 事实表只能包含 atomic_metrics；derived_metrics 和 calculated_metrics 都属于 DWD 违规风险。
 - DWS 事实表通常承载 derived_metrics；不要因为 DWS 表包含派生指标而判为违规。
 
 ## 度量可加性约束
 - atomic_metrics 必须是可被独立观测、可计数或可按事实粒度直接汇总形成业务总量的基础口径。
-- 非加性输入属性只用于描述、切片或参与其他公式，不能作为 atomic_metrics。
-- 对非加性输入属性做补值、回填、估算、格式标准化或缺失值兜底，只是在修正属性取值，不会让字段变成 calculated_metrics；除非该字段本身已经表达新的业务结果口径，否则应继续归 dimensions。
+- 只用于描述、切片或作为其他公式输入且自身不可独立汇总的字段，不能作为 atomic_metrics。
+- 对属性字段做补值、回填、格式标准化或缺失值兜底，不会自动产生新的 calculated_metrics；只有字段本身形成新的业务结果口径时才按计算指标判断。
 - 已物化的明细行结果度量即使来自上游直接透传，也不能作为 atomic_metrics；如果它表示当前事实行的业务结果，应归 calculated_metrics。
 - 判断一个字段是否为 atomic_metrics 时，直接透传优先级低于可加性、字段注释、字段级血缘和业务语义。
 
@@ -260,7 +264,7 @@ def build_prompt(ctx: TableContext) -> str:
 5. 对字段做分组时，优先使用字段级血缘表达式判断来源和计算关系；直接透传只能说明当前 ETL 没有再次计算，不能否定字段自身已经是结果性度量。
 
 ## 指标 expression 与 grain 边界
-- metric.expression 只填写指标计算公式，例如 SUM(subtotal)、COUNT(DISTINCT order_id)、SUM(subtotal - discount)。
+- metric.expression 只填写指标计算公式，例如 SUM(metric_a)、COUNT(DISTINCT entity_key)、SUM(metric_a - metric_b)。
 - 不要在 metric.expression 中写 GROUP BY；不要在 metric.expression 中写“按...分组”、"by ..." 等粒度说明。
 - 聚合粒度由表级 grain 表达；grain.entities 和 grain.time_column 应与 SQL GROUP BY 的业务粒度对齐。
 - 如果 SQL 存在 GROUP BY，只从目标指标字段自身的 SELECT 表达式提取 metric.expression；GROUP BY 字段、时间字段、实体字段和中文粒度说明都不要写入 metric.expression。
@@ -270,8 +274,8 @@ def build_prompt(ctx: TableContext) -> str:
 - entities 表示当前模型中参与语义关联的实体键，借鉴 dbt Semantic Layer entity。每个实体返回 code、type 和 key_columns。
 - type 可取 primary、unique、foreign、natural。primary 表示当前表主实体键；unique 表示当前表内唯一但不是主实体；foreign 表示当前表引用其他实体的键；natural 表示拉链/快照表中标识业务实体但单独不唯一的自然键。
 - 维度型/实体型表应至少返回一个 type=primary 的主实体；如果当前表承载上级、归属或层级实体，则用 type=foreign 并带 relationship。
-- DWD fact 应优先识别当前事实行的主实体并返回 type=primary，例如订单明细、交易流水、支付事件、库存快照行等；复合业务键可以完整写入 key_columns，不要因为主键不是单列就放弃 primary。
-- DWD fact 中被引用的客户、商品、门店、活动等上下文对象应返回 type=foreign。
+- DWD fact 应优先识别能唯一标识当前事实行的主实体并返回 type=primary；复合业务键可以完整写入 key_columns，不要因为主键不是单列就放弃 primary。
+- DWD fact 中仅作为分析上下文被引用的实体应返回 type=foreign。
 - DWS 汇总事实表中的实体通常为 type=foreign，key_columns 是当前表中表示该实体的字段名；DWS 的行粒度由 grain 描述。
 - grain 主要适用于 DWS 汇总事实表。若当前表是 DWS fact，应返回粒度实体 grain.entities、时间字段 time_column 和时间周期 time_period；DWD fact 只有在没有清晰 primary entity 但能由业务键/日期明确行粒度时才返回 grain；其他表 grain 返回空对象。
 - grain.entities 必须引用当前返回的 entities[].code；它应来自粒度 key 对应的主要业务实体，不要把时间字段、状态、品牌、父级属性等普通维度属性放入 grain.entities。
@@ -286,7 +290,7 @@ def build_prompt(ctx: TableContext) -> str:
 - 原始配置数据域: {ctx.declared_data_domain or "未配置"}
 - 原始配置业务板块: {ctx.declared_business_area or "未配置"}
 - 下游被引用次数: {len(ctx.downstream_tables)}
-- 距 ODS 最小跳数: {ctx.depth_from_ods}
+{_prompt_depth_feature(ctx)}
 
 ## DDL
 {ctx.ddl}
@@ -344,11 +348,11 @@ def build_prompt(ctx: TableContext) -> str:
 {json.dumps(ctx.upstream_metric_groups, ensure_ascii=False, indent=2) if ctx.upstream_metric_groups else "无"}
 
 ## 思考步骤
-1. 首先分析 ETL_SQL 中是否包含 GROUP BY 等聚合操作，如果有，排除 DWD 和 ODS。
-2. 明确一行的业务语义：事件/交易/评估/状态变更/可度量运营状态的周期快照才是 fact；当前实体属性或非加性参考值不是 fact。看到 snapshot_date 时必须继续区分事实快照和属性快照。
-3. 沿上下游判断当前表在链路中的职责：单源逐行清洗且下游仍有公共参考模型时判 DWD/other；稳定参考键、被事实 JOIN 复用的发布模型，以及按驱动日期保留实体属性历史版本的显式快照模型，才判 DIM/dimension。
-4. 观察下游被引用次数。下游为 0 只是弱 ADS 证据，尤其在血缘可能不完整或当前表来自中间层候选时，必须结合 ETL 聚合、粒度和表用途判断；如果 > 1，倾向于 DWS 或 DWD。
-5. 检查组合一致性：DIM 必须对应 dimension，dimension 必须对应 DIM，DWS 必须对应 fact；DWD 的清洗实体模型应返回 other，不要返回 dimension。
+1. 从键、字段血缘和 ETL 判断输入与输出行粒度，检查所有查询阶段是否发生多行压缩或聚合。
+2. 根据稳定行键、时间语义、可汇总度量和描述性属性，判断输出行是事实、维度实体还是技术中间结果。
+3. 结合上下游 JOIN 与复用关系确认当前表在链路中的发布职责；生成新键或出现日期字段都只能作为辅助证据。
+4. 将下游引用数作为弱证据，并结合资产目录、粒度、聚合和用途判断边界层。
+5. 检查组合一致性：DIM 必须对应 dimension，dimension 必须对应 DIM，DWS 必须对应 fact；DWD 可对应 fact 或 other。
 6. 如果 inferred_layer 是 DWD 或 DWS 且表类型为 fact，再按字段语义、DDL 注释、ETL 表达式和业务过程分组。
 
 请严格返回 JSON 格式数据，只允许返回下方 JSON schema 中列出的顶层字段: inferred_layer、table_type、inferred_data_domain、inferred_business_area、dimension_role、dimension_content_type、entities、grain、confidence、reasoning_steps、columns。
@@ -364,19 +368,19 @@ def build_prompt(ctx: TableContext) -> str:
   "dimension_content_type": "INFO|TAG|TREE",
   "entities": [
     {{
-      "code": "实体编码，如 PROD；不适用或无法判断时返回空数组",
+      "code": "实体编码，如 ENTITY_A；不适用或无法判断时返回空数组",
       "type": "primary|unique|foreign|natural",
-      "name": "实体中文名，如 商品；无法判断则为空字符串",
+      "name": "实体名称，如 实体A；无法判断则为空字符串",
       "key_columns": ["当前表中表示该实体的字段名"],
       "relationship": {{
         "type": "many_to_one|one_to_many|one_to_one|hierarchy",
-        "from_entity": "当前表主实体编码，如 PROD；不适用则为空字符串"
+        "from_entity": "当前表主实体编码，如 ENTITY_A；不适用则为空字符串"
       }}
     }}
   ],
   "grain": {{
-    "entities": ["粒度实体编码，如 PROD"],
-    "time_column": "时间粒度字段名，如 stat_date；无则为空字符串",
+    "entities": ["粒度实体编码，如 ENTITY_A"],
+    "time_column": "时间粒度字段名，如 period_key；无则为空字符串",
     "time_period": "D|W|M|Q|Y|S，无法判断则为空字符串"
   }},
   "confidence": 0.0,
@@ -471,7 +475,7 @@ def build_retry_prompt(
 - invalid_time_periods 中列出的 time_period 必须改为 D/W/M/Q/Y/S 之一；不要返回中文、英文单词或 1d/1m 等写法。
 - invalid_metric_expressions 中列出的 expression 必须删除 GROUP BY、按...分组、by ... 等粒度说明，只保留指标计算公式。
 - missing_primary_entities 表示 DWD fact 缺少主实体；必须为当前事实行/事件/明细行补充至少一个 type=primary 的 entities 项。
-- inconsistent_layer_table_types 表示层级与物理表职责组合矛盾；DIM 必须返回 dimension，dimension 必须返回 DIM，DWS 必须返回 fact。DWD 清洗实体中间表应返回 other，不能用 DWD/dimension 规避选择。
+- inconsistent_layer_table_types 表示层级与物理表职责组合矛盾；DIM 必须返回 dimension，dimension 必须返回 DIM，DWS 必须返回 fact，DWD 只能返回 fact 或 other。
 - inconsistent_layer_sql 表示 DWD 候选的结构化字段血缘显示 CTE、子查询或主查询中存在 GROUP BY 聚合，违反 DWD 保持明细粒度的架构约束；必须根据公共聚合粒度重新判断，不能继续返回 DWD。
 - 不要返回 Markdown，不要返回额外解释。
 """
@@ -491,9 +495,12 @@ def _strip_markdown_json(content: str) -> str:
 
 def _safe_float(value: Any) -> float:
     try:
-        return float(value)
+        confidence = float(value)
     except (TypeError, ValueError):
         return 0.0
+    if not math.isfinite(confidence) or not 0.0 <= confidence <= 1.0:
+        return 0.0
+    return confidence
 
 
 def _safe_list(value: Any) -> list[str]:
@@ -811,6 +818,7 @@ def _normalize_validation(value: Any) -> dict[str, list[str]]:
         "missing_primary_entities",
         "inconsistent_layer_table_types",
         "inconsistent_layer_sql",
+        DDL_COLUMNS_UNAVAILABLE_ERROR_KEY,
     ):
         raw_items = value.get(key, []) or []
         if isinstance(raw_items, list):
@@ -825,9 +833,19 @@ def _extract_ddl_column_names(ddl: str) -> set[str]:
     try:
         import sqlglot
         from sqlglot import exp
+        from sqlglot.errors import ErrorLevel
+
+        from dw_refactor_agent.sql.doris import (
+            normalize_create_table_for_sqlglot,
+        )
 
         columns = set()
-        for stmt in sqlglot.parse(ddl, dialect="doris"):
+        normalized_ddl = normalize_create_table_for_sqlglot(ddl)
+        for stmt in sqlglot.parse(
+            normalized_ddl,
+            dialect="doris",
+            error_level=ErrorLevel.IGNORE,
+        ):
             if isinstance(stmt, exp.Create) and isinstance(
                 stmt.this, exp.Schema
             ):
@@ -844,7 +862,11 @@ def validate_columns(
 ) -> dict[str, list[str]]:
     """校验 LLM 返回字段是否存在、是否重复、事实表字段是否遗漏。"""
     if not ddl_columns:
-        return {}
+        return {
+            DDL_COLUMNS_UNAVAILABLE_ERROR_KEY: [
+                "无法从DDL建立字段集合，禁止覆盖指标分组"
+            ]
+        }
 
     grouped_names = []
     for group in COLUMN_GROUPS:
@@ -866,10 +888,8 @@ def validate_columns(
         "duplicate_columns": sorted(duplicates),
         "missing_columns": [],
     }
-    if (
-        result.declared_layer in METRIC_GROUPING_LAYERS
-        and result.is_fact_table
-    ):
+    inferred_layer = str(result.inferred_layer or "").upper()
+    if inferred_layer in METRIC_GROUPING_LAYERS and result.is_fact_table:
         validation["missing_columns"] = sorted(ddl_columns - returned)
     return validation
 
@@ -1003,13 +1023,36 @@ def _metric_names_from_items(raw_metrics: Any) -> list[str]:
     return names
 
 
+def _canonical_table_identity(table_name: Any) -> str:
+    text = str(table_name or "").strip().replace("`", "").replace('"', "")
+    return ".".join(
+        part.strip().casefold() for part in text.split(".") if part.strip()
+    )
+
+
 def _canonical_short_table_name(table_name: Any) -> str:
-    return (
-        str(table_name or "")
-        .strip()
-        .replace("`", "")
-        .split(".")[-1]
-        .casefold()
+    return _canonical_table_identity(table_name).split(".")[-1]
+
+
+def _matching_table_identities(
+    table_name: Any,
+    identities,
+) -> list[str]:
+    canonical_identities = {
+        _canonical_table_identity(identity)
+        for identity in identities
+        if _canonical_table_identity(identity)
+    }
+    wanted = _canonical_table_identity(table_name)
+    if not wanted:
+        return []
+    if "." in wanted:
+        return [wanted] if wanted in canonical_identities else []
+    short_name = _canonical_short_table_name(wanted)
+    return sorted(
+        identity
+        for identity in canonical_identities
+        if _canonical_short_table_name(identity) == short_name
     )
 
 
@@ -1026,7 +1069,7 @@ def _atomic_metric_tables_for_validation(
         for name in _metric_names_from_items(result.atomic_metrics)
     }
     if same_table_metrics:
-        tables[_canonical_short_table_name(result.table_name)] = (
+        tables[_canonical_table_identity(result.table_name)] = (
             same_table_metrics
         )
     for table_name, groups in (ctx.upstream_metric_groups or {}).items():
@@ -1037,7 +1080,8 @@ def _atomic_metric_tables_for_validation(
             for name in _metric_names_from_items(groups.get("atomic_metrics"))
         }
         if names:
-            tables[_canonical_short_table_name(table_name)] = names
+            identity = _canonical_table_identity(table_name)
+            tables.setdefault(identity, set()).update(names)
     return tables
 
 
@@ -1058,7 +1102,7 @@ def _split_column_identifier(identifier: Any) -> tuple[str, str]:
         return "", _canonical_column_name(text)
     table_name, column_name = text.rsplit(".", 1)
     return (
-        _canonical_short_table_name(table_name),
+        _canonical_table_identity(table_name),
         _canonical_column_name(column_name),
     )
 
@@ -1092,14 +1136,14 @@ def _lineage_base_metric_tables(
 
 def _known_upstream_metric_group_tables(ctx: TableContext) -> set[str]:
     return {
-        _canonical_short_table_name(table_name)
+        _canonical_table_identity(table_name)
         for table_name in (ctx.upstream_metric_groups or {})
     }
 
 
 def _actual_upstream_tables(ctx: TableContext) -> set[str]:
     return {
-        _canonical_short_table_name(table_name)
+        _canonical_table_identity(table_name)
         for table_name in (ctx.upstream_tables or [])
     }
 
@@ -1162,15 +1206,30 @@ def validate_metric_relationships(
             continue
 
         if base_metric_table:
-            table_key = _canonical_short_table_name(base_metric_table)
             metric_key = _canonical_column_name(base_metric)
+            lineage_tables = _lineage_base_metric_tables(
+                ctx,
+                target_metric=metric_name,
+                base_metric=base_metric,
+            )
+            known_table_identities = (
+                set(atomic_metric_tables)
+                | actual_upstream_tables
+                | known_group_tables
+                | set(lineage_tables)
+            )
+            matching_tables = _matching_table_identities(
+                base_metric_table,
+                known_table_identities,
+            )
+            if len(matching_tables) != 1:
+                issues["invalid_base_metric_tables"].append(
+                    f"{metric_name}:{base_metric_table}"
+                )
+                continue
+            table_key = matching_tables[0]
             table_metrics = atomic_metric_tables.get(table_key)
             if table_metrics is None:
-                lineage_tables = _lineage_base_metric_tables(
-                    ctx,
-                    target_metric=metric_name,
-                    base_metric=base_metric,
-                )
                 if (
                     table_key not in actual_upstream_tables
                     or table_key not in lineage_tables
@@ -1406,7 +1465,11 @@ class TableInspector:
                 validate_layer_sql_consistency(result, ctx),
                 validate_metric_relationships(result, ctx),
             )
-            if result.status == "passed" or attempt >= self.max_retries:
+            if (
+                result.status == "passed"
+                or result.validation.get(DDL_COLUMNS_UNAVAILABLE_ERROR_KEY)
+                or attempt >= self.max_retries
+            ):
                 break
             self._emit_progress(
                 "validation_retry",

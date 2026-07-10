@@ -25,7 +25,116 @@ LOGGER = logging.getLogger(__name__)
 
 
 def _short_table_name(table_name: str) -> str:
-    return str(table_name or "").strip().split(".")[-1]
+    text = str(table_name or "").strip().rstrip(";")
+    text = text.replace("`", "").replace('"', "")
+    return text.split(".")[-1].strip()
+
+
+def _canonical_table_name(table_name: str) -> str:
+    text = str(table_name or "").strip().rstrip(";")
+    text = text.replace("`", "").replace('"', "")
+    return ".".join(
+        part.strip().casefold() for part in text.split(".") if part.strip()
+    )
+
+
+def _ambiguous_short_table_names(table_names) -> frozenset[str]:
+    qualified_by_short: dict[str, set[str]] = {}
+    for table_name in table_names:
+        identity = _canonical_table_name(table_name)
+        if "." not in identity:
+            continue
+        short_name = _short_table_name(identity).casefold()
+        qualified_by_short.setdefault(short_name, set()).add(identity)
+    return frozenset(
+        short_name
+        for short_name, identities in qualified_by_short.items()
+        if len(identities) > 1
+    )
+
+
+@dataclass(frozen=True)
+class _CanonicalTableLookup:
+    by_identity: dict
+    unique_identity_by_short: dict[str, str]
+    ambiguous_short_names: frozenset[str]
+
+    def get(self, table_name: str, default=None):
+        identity = _canonical_table_name(table_name)
+        short_name = _short_table_name(identity).casefold()
+        if identity == short_name and short_name in self.ambiguous_short_names:
+            return default
+        if identity in self.by_identity:
+            return self.by_identity[identity]
+        if "." in identity:
+            return default
+        fallback_identity = self.unique_identity_by_short.get(short_name)
+        if fallback_identity is None:
+            return default
+        return self.by_identity[fallback_identity]
+
+    def has_ambiguous_fallback(self, table_name: str) -> bool:
+        identity = _canonical_table_name(table_name)
+        if "." in identity:
+            return False
+        short_name = _short_table_name(identity).casefold()
+        if short_name not in self.ambiguous_short_names:
+            return False
+        return identity == short_name or identity not in self.by_identity
+
+
+def _canonical_table_lookup(
+    values: dict,
+    *,
+    ambiguous_short_names: frozenset[str] = frozenset(),
+) -> _CanonicalTableLookup:
+    by_identity = {}
+    identities_by_short: dict[str, set[str]] = {}
+    for table_name, value in values.items():
+        identity = _canonical_table_name(table_name)
+        if not identity:
+            continue
+        by_identity.setdefault(identity, value)
+        short_name = _short_table_name(identity).casefold()
+        identities_by_short.setdefault(short_name, set()).add(identity)
+
+    all_ambiguous_short_names = set(ambiguous_short_names)
+    all_ambiguous_short_names.update(
+        short_name
+        for short_name, identities in identities_by_short.items()
+        if len(identities) > 1
+    )
+    unique_identity_by_short = {
+        short_name: next(iter(identities))
+        for short_name, identities in identities_by_short.items()
+        if len(identities) == 1 and short_name not in all_ambiguous_short_names
+    }
+    return _CanonicalTableLookup(
+        by_identity=by_identity,
+        unique_identity_by_short=unique_identity_by_short,
+        ambiguous_short_names=frozenset(all_ambiguous_short_names),
+    )
+
+
+def _with_unique_qualified_aliases(values: dict, table_names) -> dict:
+    expanded = dict(values)
+    qualified_by_short: dict[str, set[str]] = {}
+    for table_name in table_names:
+        identity = _canonical_table_name(table_name)
+        if "." not in identity:
+            continue
+        qualified_by_short.setdefault(
+            _short_table_name(identity).casefold(), set()
+        ).add(identity)
+
+    for table_name, value in list(values.items()):
+        identity = _canonical_table_name(table_name)
+        if not identity or "." in identity:
+            continue
+        matches = qualified_by_short.get(identity) or set()
+        if len(matches) == 1:
+            expanded.setdefault(next(iter(matches)), value)
+    return expanded
 
 
 @dataclass
@@ -36,6 +145,7 @@ class TableContext:
     etl_sql: str
     upstream_tables: list[str]
     downstream_tables: list[str]
+    table_identity: str = ""
     upstream_table_layers: dict[str, str] = field(default_factory=dict)
     downstream_table_layers: dict[str, str] = field(default_factory=dict)
     expose_layer_hints: bool = True
@@ -49,6 +159,12 @@ class TableContext:
     project_context: str = ""
     business_domain_options: dict = field(default_factory=dict)
     business_semantics_options: dict = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class _ModelMetadataEntry:
+    table_name: str
+    metadata: dict
 
 
 def _metric_names(value) -> list[str]:
@@ -166,9 +282,45 @@ def extract_column_lineage(lineage_data: dict, table_name: str) -> list[dict]:
     )
 
 
-def _layer_for_context_table(table_name: str, model_metadata: dict) -> str:
-    metadata = model_metadata.get(_short_table_name(table_name), {})
+def _canonical_model_metadata_index(
+    model_metadata: dict,
+) -> dict[str, _ModelMetadataEntry]:
+    index = {}
+    for table_name, metadata in model_metadata.items():
+        if not isinstance(metadata, dict):
+            continue
+        model_table_name = _short_table_name(
+            metadata.get("name") or table_name
+        )
+        entry = _ModelMetadataEntry(model_table_name, metadata)
+        key_identity = _canonical_table_name(table_name)
+        metadata_identity = _canonical_table_name(metadata.get("name"))
+        canonical_name = (
+            key_identity
+            if "." in key_identity
+            else metadata_identity or key_identity
+        )
+        if canonical_name:
+            index.setdefault(canonical_name, entry)
+    return index
+
+
+def _layer_for_context_table(
+    table_name: str,
+    model_metadata: _CanonicalTableLookup,
+) -> str:
+    entry = model_metadata.get(table_name)
+    metadata = entry.metadata if entry else {}
     return str(metadata.get("layer") or "OTHER").upper()
+
+
+def _canonical_dependency_index(dependencies: dict) -> dict[str, set[str]]:
+    index: dict[str, set[str]] = {}
+    for table_name, related_tables in dependencies.items():
+        canonical_name = _canonical_table_name(table_name)
+        if canonical_name:
+            index.setdefault(canonical_name, set()).update(related_tables)
+    return index
 
 
 def _project_dir(project: str) -> Path:
@@ -184,7 +336,43 @@ def _first_project_asset_file(
     filename: str,
 ) -> Path | None:
     files = iter_project_asset_files(project, asset_kind, filename)
-    return files[0] if files else None
+    if files:
+        return files[0]
+    canonical_filename = filename.casefold()
+    return next(
+        (
+            path
+            for path in iter_project_asset_files(project, asset_kind, "*")
+            if path.name.casefold() == canonical_filename
+        ),
+        None,
+    )
+
+
+def _first_directory_file(directory: Path, filename: str) -> Path | None:
+    direct_path = directory / filename
+    if direct_path.exists():
+        return direct_path
+    canonical_filename = filename.casefold()
+    return next(
+        (
+            path
+            for path in sorted(directory.glob("*"))
+            if path.is_file() and path.name.casefold() == canonical_filename
+        ),
+        None,
+    )
+
+
+def _project_task_path(project: str, table_name: str) -> Path | None:
+    task_path = task_path_for_job(
+        project,
+        table_name,
+        include_full_refresh=False,
+    )
+    if task_path:
+        return task_path
+    return _first_project_asset_file(project, "tasks", f"{table_name}.sql")
 
 
 def build_contexts(
@@ -203,6 +391,26 @@ def build_contexts(
 
     lineage_view = LineageView.from_data(project, lineage_data)
     upstream, downstream = lineage_view.asset_table_graph()
+    dependency_table_names = set(upstream) | set(downstream)
+    for dependencies in (upstream, downstream):
+        for related_tables in dependencies.values():
+            dependency_table_names.update(related_tables)
+    dependency_table_names.update(
+        table.get("name")
+        for table in lineage_data.get("tables", [])
+        if table.get("name")
+    )
+    ambiguous_short_names = _ambiguous_short_table_names(
+        dependency_table_names
+    )
+    canonical_upstream = _canonical_table_lookup(
+        _canonical_dependency_index(upstream),
+        ambiguous_short_names=ambiguous_short_names,
+    )
+    canonical_downstream = _canonical_table_lookup(
+        _canonical_dependency_index(downstream),
+        ambiguous_short_names=ambiguous_short_names,
+    )
     has_lineage_edges = any(upstream.values()) or any(downstream.values())
     target_layers = set(layers or ("DWD", "DWS", "DIM"))
     metric_groups = (
@@ -214,6 +422,20 @@ def build_contexts(
         model_metadata
         if model_metadata is not None
         else load_model_metadata(project)
+    )
+    canonical_model_metadata = _canonical_table_lookup(
+        _with_unique_qualified_aliases(
+            _canonical_model_metadata_index(model_metadata),
+            dependency_table_names,
+        ),
+        ambiguous_short_names=ambiguous_short_names,
+    )
+    canonical_metric_groups = _canonical_table_lookup(
+        _with_unique_qualified_aliases(
+            metric_groups,
+            dependency_table_names,
+        ),
+        ambiguous_short_names=ambiguous_short_names,
     )
     business_domain_config = get_business_domain_config(project)
     business_domain_options = (
@@ -228,37 +450,53 @@ def build_contexts(
     memo = {}
 
     def get_depth_from_ods(table_name: str, visiting: set = None) -> int:
+        canonical_name = _canonical_table_name(table_name)
         if visiting is None:
             visiting = set()
-        if table_name in memo:
-            return memo[table_name]
-        if table_name in visiting:
+        if canonical_name in memo:
+            return memo[canonical_name]
+        if canonical_name in visiting:
             return 0
-        visiting.add(table_name)
+        visiting.add(canonical_name)
 
-        parents = upstream.get(table_name, set())
+        parents = canonical_upstream.get(table_name, set())
         if not parents:
-            result = 0 if table_name.startswith("ods_") else 1
+            short_name = _short_table_name(canonical_name).casefold()
+            result = 0 if short_name.startswith("ods_") else 1
         else:
             result = min(get_depth_from_ods(p, visiting) for p in parents) + 1
 
-        visiting.remove(table_name)
-        memo[table_name] = result
+        visiting.remove(canonical_name)
+        memo[canonical_name] = result
         return result
 
     for table in lineage_data.get("tables", []):
         name = table["name"]
         short_name = _short_table_name(name)
-        metadata = model_metadata.get(short_name, {})
+        model_entry = canonical_model_metadata.get(name)
+        if canonical_model_metadata.has_ambiguous_fallback(name):
+            LOGGER.warning(
+                "Ambiguous short table name %s; qualified model metadata is "
+                "required",
+                short_name,
+            )
+        metadata = model_entry.metadata if model_entry else {}
+        model_table_name = (
+            model_entry.table_name if model_entry else short_name
+        )
         layer = str(metadata.get("layer") or "OTHER").upper()
         if layer not in target_layers:
             continue
 
         # Read DDL
         ddl_path = (
-            _first_project_asset_file(project, "ddl", f"{short_name}.sql")
+            _first_project_asset_file(
+                project,
+                "ddl",
+                f"{model_table_name}.sql",
+            )
             if use_project_asset_dirs
-            else ddl_dir / f"{short_name}.sql"
+            else _first_directory_file(ddl_dir, f"{model_table_name}.sql")
         )
         ddl_content = (
             ddl_path.read_text(encoding=TEXT_ENCODING)
@@ -268,30 +506,38 @@ def build_contexts(
 
         # Read ETL
         task_path = (
-            task_path_for_job(
-                project,
-                short_name,
-                include_full_refresh=False,
-            )
+            _project_task_path(project, model_table_name)
             if use_project_task_dirs
-            else tasks_dir / f"{short_name}.sql"
+            else _first_directory_file(
+                tasks_dir,
+                f"{model_table_name}.sql",
+            )
         )
         etl_content = (
             task_path.read_text(encoding=TEXT_ENCODING)
             if task_path and task_path.exists()
             else ""
         )
-        upstream_tables = sorted(list(upstream.get(name, set())))
-        downstream_tables = sorted(list(downstream.get(name, set())))
-        upstream_metric_groups = {
-            upstream_table: metric_groups[upstream_table]
-            for upstream_table in upstream_tables
-            if upstream_table in metric_groups
-        }
+        upstream_tables = sorted(canonical_upstream.get(name, set()))
+        downstream_tables = sorted(canonical_downstream.get(name, set()))
+        upstream_metric_groups = {}
+        for upstream_table in upstream_tables:
+            groups = canonical_metric_groups.get(upstream_table)
+            if groups is not None:
+                upstream_metric_groups[upstream_table] = groups
+            elif canonical_metric_groups.has_ambiguous_fallback(
+                upstream_table
+            ):
+                LOGGER.warning(
+                    "Ambiguous short table name %s; qualified metric groups "
+                    "are required",
+                    _short_table_name(upstream_table),
+                )
 
         contexts.append(
             TableContext(
-                table_name=short_name,
+                table_name=model_table_name,
+                table_identity=name,
                 layer=layer,
                 ddl=ddl_content,
                 etl_sql=etl_content,
@@ -300,14 +546,14 @@ def build_contexts(
                 upstream_table_layers={
                     table_name: _layer_for_context_table(
                         table_name,
-                        model_metadata,
+                        canonical_model_metadata,
                     )
                     for table_name in upstream_tables
                 },
                 downstream_table_layers={
                     table_name: _layer_for_context_table(
                         table_name,
-                        model_metadata,
+                        canonical_model_metadata,
                     )
                     for table_name in downstream_tables
                 },

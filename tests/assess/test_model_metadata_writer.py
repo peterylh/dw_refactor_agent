@@ -4,7 +4,6 @@ import pytest
 import yaml
 
 import dw_refactor_agent.config as config
-from dw_refactor_agent.assessment.llm.context_builder import TableContext
 from dw_refactor_agent.assessment.llm.layer_resolution import (
     LayerResolutionPolicy,
 )
@@ -20,7 +19,6 @@ from dw_refactor_agent.assessment.llm.model_metadata_writer import (
     build_inspection_contexts,
     build_metric_contexts,
     business_metadata_for_result,
-    enrich_results_with_related_entities,
     metric_groups_for_model,
     metric_names_for_model,
     metric_violations,
@@ -820,7 +818,7 @@ def test_write_model_updates_ignores_legacy_context_hint(
         table_type="dimension",
         confidence=0.9,
         reasoning_steps=[],
-        validation={"context_hints": ["dws_entity_metric_summary"]},
+        validation={"context_hints": ["legacy_layer_hint"]},
     )
 
     yaml_updates, skipped_updates = write_model_updates_from_plan(
@@ -887,6 +885,77 @@ def test_metric_helper_scenarios():
 
     assert metric_violations(result) == []
     assert metric_violations(_sample_dws_result()) == []
+
+    reclassified_dwd = TableInspectResult(
+        table_name="order_activity",
+        declared_layer="DIM",
+        inferred_layer="DWD",
+        table_type="fact",
+        confidence=0.9,
+        reasoning_steps=[],
+        columns={
+            "atomic_metrics": [],
+            "derived_metrics": [{"name": "order_count_1d"}],
+            "calculated_metrics": [],
+            "dimensions": [],
+            "others": [],
+        },
+    )
+
+    assert metric_violations(reclassified_dwd) == [
+        {
+            "table": "order_activity",
+            "column": "order_count_1d",
+            "metric_type": "derived",
+            "reason": "",
+            "confidence": 0.0,
+        }
+    ]
+    assert (
+        metric_violations(
+            reclassified_dwd,
+            applied_layer="DWD",
+            applied_table_type="other",
+        )
+        == []
+    )
+
+    fallback_to_existing_type = TableInspectResult(
+        table_name="dwd_order_stage",
+        declared_layer="DWD",
+        inferred_layer="OTHER",
+        table_type="fact",
+        confidence=0.9,
+        reasoning_steps=[],
+        columns={
+            "atomic_metrics": [],
+            "derived_metrics": [{"name": "order_count_1d"}],
+            "calculated_metrics": [],
+            "dimensions": [],
+            "others": [],
+        },
+    )
+    existing_model = {"layer": "DWD", "table_type": "other"}
+
+    assert (
+        result_for_report(
+            fallback_to_existing_type,
+            existing_model=existing_model,
+        )["violations"]
+        == []
+    )
+
+    import dw_refactor_agent.assessment.llm.model_metadata_writer as writer_module
+
+    assert (
+        writer_module._violation_count(
+            [fallback_to_existing_type],
+            existing_model_metadata={
+                fallback_to_existing_type.table_name: existing_model
+            },
+        )
+        == 0
+    )
 
 
 def _assert_update_model_yaml_preserves_existing_metadata(
@@ -2564,6 +2633,10 @@ def _assert_blocked_schema_migration_keeps_grain_entities_consistent(
                 "key_columns": ["campaign_key"],
             }
         ],
+        grain={
+            "entities": ["CAMPAIGN"],
+            "time_column": "ghost_time",
+        },
         validation={
             "duplicate_columns": ["campaign_id"],
         },
@@ -2572,14 +2645,9 @@ def _assert_blocked_schema_migration_keeps_grain_entities_consistent(
     update_model_yaml("demo", blocked, write_scope="grain")
     saved = yaml.safe_load(model_path.read_text(encoding="utf-8"))
 
-    assert saved["grain"]["entities"] == ["CAMPAIGN"]
-    assert saved["entities"] == [
-        {
-            "code": "CAMPAIGN",
-            "type": "foreign",
-            "key_columns": ["campaign_key"],
-        }
-    ]
+    assert saved["grain"]["entities"] == ["CAMP"]
+    assert saved["grain"]["time_column"] == "start_date"
+    assert "entities" not in saved
 
 
 def _assert_update_model_yaml_replaces_existing_metrics(tmp_path, monkeypatch):
@@ -2738,53 +2806,181 @@ def _assert_update_model_yaml_skips_blocked_results(tmp_path, monkeypatch):
     saved = yaml.safe_load(model_path.read_text(encoding="utf-8"))
 
     assert update["updated"] is False
-    assert update["reason"] == "validation_blocked"
+    assert update["reason"] == "validation_blocked_contract_change"
     assert saved["atomic_metrics"] == ["quantity"]
     assert saved["calculated_metrics"] == ["subtotal"]
 
 
-def test_update_model_yaml_writes_safe_table_metadata_when_metrics_blocked(
-    tmp_path, monkeypatch
+@pytest.mark.parametrize(
+    (
+        "existing_layer",
+        "existing_type",
+        "inferred_layer",
+        "inferred_type",
+        "confidence",
+        "validation",
+        "expected_reason",
+        "partial_write",
+    ),
+    [
+        (
+            "DWS",
+            "",
+            "DWS",
+            "fact",
+            0.95,
+            {"missing_columns": ["sale_amount"]},
+            "validation_blocked_table_metadata_only",
+            True,
+        ),
+        (
+            "DWD",
+            "fact",
+            "DWD",
+            "fact",
+            0.9,
+            {"ddl_columns_unavailable": ["unavailable"]},
+            "validation_blocked_table_metadata_only",
+            True,
+        ),
+        *[
+            (
+                "DWD",
+                existing_type,
+                "DWD",
+                "other",
+                0.9,
+                {"ddl_columns_unavailable": ["unavailable"]},
+                "validation_blocked_contract_change",
+                False,
+            )
+            for existing_type in ("fact", "")
+        ],
+        (
+            "DWD",
+            "fact",
+            "DIM",
+            "dimension",
+            0.9,
+            {"unknown_columns": ["ghost"]},
+            "validation_blocked_contract_change",
+            False,
+        ),
+        (
+            "DWD",
+            "fact",
+            "DIM",
+            "dimension",
+            0.01,
+            {},
+            "resolution_requires_reinspection",
+            False,
+        ),
+    ],
+    ids=(
+        "missing-columns",
+        "ddl-unavailable-fact",
+        "ddl-unavailable-explicit-fact",
+        "ddl-unavailable-implicit-fact",
+        "cross-contract",
+        "low-confidence",
+    ),
+)
+def test_update_model_yaml_blocked_contract_scenarios(
+    tmp_path,
+    existing_layer,
+    existing_type,
+    inferred_layer,
+    inferred_type,
+    confidence,
+    validation,
+    expected_reason,
+    partial_write,
 ):
-    import dw_refactor_agent.assessment.llm.model_metadata_writer as writer_module
-
-    project_root = tmp_path
-    models_dir = project_root / "demo" / "mid" / "models"
-    models_dir.mkdir(parents=True)
-    model_path = models_dir / "sales_daily.yaml"
     existing = {
         "version": 2,
-        "name": "sales_daily",
-        "layer": "DWD",
-        "table_type": "other",
+        "name": "sales_detail",
+        "layer": existing_layer,
         "atomic_metrics": ["existing_metric"],
     }
-    model_path.write_text(
-        yaml.safe_dump(existing, allow_unicode=True, sort_keys=False),
-        encoding="utf-8",
-    )
-    monkeypatch.setattr(writer_module, "PROJECT_ROOT", project_root)
-    monkeypatch.setitem(writer_module.PROJECT_CONFIG, "demo", {"dir": "demo"})
+    if existing_type:
+        existing["table_type"] = existing_type
     result = TableInspectResult(
-        table_name="sales_daily",
-        declared_layer="DWD",
-        inferred_layer="DWS",
-        table_type="fact",
-        confidence=0.95,
+        table_name="sales_detail",
+        declared_layer=existing_layer,
+        inferred_layer=inferred_layer,
+        table_type=inferred_type,
+        confidence=confidence,
         reasoning_steps=[],
-        validation={"invalid_base_metrics": ["sale_amount:subtotal"]},
+        validation=validation,
     )
 
-    update = update_model_yaml("demo", result)
-    saved = yaml.safe_load(model_path.read_text(encoding="utf-8"))
+    update = update_model_yaml(
+        "demo",
+        result,
+        dry_run=True,
+        existing_model=existing,
+        path=tmp_path / "sales_detail.yaml",
+        include_model_metadata=True,
+    )
 
     assert result.status == "blocked"
-    assert update["reason"] == "validation_blocked_table_metadata_only"
-    assert update["metadata_changed"] is True
+    assert update["reason"] == expected_reason
     assert update["metric_changed"] is False
-    assert saved["layer"] == "DWS"
-    assert saved["table_type"] == "fact"
-    assert saved["atomic_metrics"] == ["existing_metric"]
+    if partial_write:
+        assert update["model_metadata"]["table_type"] == "fact"
+        assert update["model_metadata"]["atomic_metrics"] == [
+            "existing_metric"
+        ]
+    else:
+        assert update["model_metadata"] == existing
+
+
+def test_blocked_grain_preserves_entity_type_without_existing_table_type(
+    tmp_path,
+):
+    existing = {
+        "version": 2,
+        "name": "entity_history",
+        "layer": "DWD",
+        "entities": [
+            {
+                "code": "ENTITY",
+                "type": "unique",
+                "key_columns": ["entity_id"],
+            }
+        ],
+        "grain": {"entities": ["ENTITY"]},
+    }
+    result = TableInspectResult(
+        table_name="entity_history",
+        declared_layer="DWD",
+        inferred_layer="DWD",
+        table_type="fact",
+        confidence=0.9,
+        reasoning_steps=[],
+        entities=[
+            {
+                "code": "HALLUCINATED",
+                "type": "primary",
+                "key_columns": ["ghost_id"],
+            }
+        ],
+        validation={"unknown_columns": ["ghost_id"]},
+    )
+
+    update = update_model_yaml(
+        "demo",
+        result,
+        dry_run=True,
+        write_scope="grain",
+        existing_model=existing,
+        path=tmp_path / "entity_history.yaml",
+        include_model_metadata=True,
+    )
+
+    assert update["model_metadata"]["entities"] == existing["entities"]
+    assert update["model_metadata"]["grain"] == existing["grain"]
 
 
 @pytest.mark.parametrize(
@@ -2838,7 +3034,7 @@ def test_update_model_yaml_does_not_write_inconsistent_table_classification(
     saved = yaml.safe_load(model_path.read_text(encoding="utf-8"))
 
     assert update["updated"] is False
-    assert update["reason"] == "validation_blocked"
+    assert update["reason"] == "validation_blocked_contract_change"
     assert saved == existing
 
 
@@ -4162,7 +4358,7 @@ def test_generate_single_writer_pass_keeps_base_model_when_llm_blocked(
     assert "atomic_metrics" not in saved
 
 
-def test_generate_single_writer_applies_table_metadata_when_metrics_blocked(
+def test_generate_single_writer_preserves_contract_when_metrics_blocked(
     tmp_path, monkeypatch
 ):
     import dw_refactor_agent.assessment.llm.model_metadata_writer as writer_module
@@ -4221,11 +4417,11 @@ def test_generate_single_writer_applies_table_metadata_when_metrics_blocked(
     )
 
     assert result["llm_result"]["blocked_table_count"] == 1
-    assert result["llm_result"]["model_updates"][0]["reason"] == (
-        "validation_blocked_table_metadata_only"
+    assert result["llm_result"]["skipped_model_updates"][0]["reason"] == (
+        "validation_blocked_contract_change"
     )
-    assert saved["layer"] == "DWS"
-    assert saved["table_type"] == "fact"
+    assert saved["layer"] == "DWD"
+    assert saved["table_type"] == "other"
 
 
 def test_generate_single_writer_pass_keeps_ods_ads_base_models(
@@ -4560,11 +4756,45 @@ def test_catalog_discovery_mapping_uses_resolved_table_type():
         },
     )
 
-    assert mapping["layer"] == "DWD"
-    assert mapping["table_type"] == "fact"
-    assert "semantic_subject" not in mapping
-    assert "dimension_role" not in mapping
-    assert "dimension_content_type" not in mapping
+    assert mapping == {}
+
+
+def test_catalog_discovery_rejects_low_confidence_semantics():
+    import dw_refactor_agent.assessment.llm.model_metadata_writer as writer_module
+
+    result = TableInspectResult(
+        table_name="customer_detail",
+        declared_layer="DWD",
+        inferred_layer="DIM",
+        table_type="dimension",
+        confidence=0.01,
+        reasoning_steps=[],
+        entities=[
+            {
+                "code": "LOW_CONFIDENCE_ENTITY",
+                "type": "primary",
+                "key_columns": ["customer_id"],
+            }
+        ],
+    )
+    existing = {"layer": "DWD", "table_type": "fact"}
+
+    assert (
+        writer_module.catalog_discovery_model_mapping(
+            "demo",
+            result,
+            {},
+            existing,
+        )
+        == {}
+    )
+    assert (
+        writer_module._resolved_results_for_catalog_discovery(
+            [result],
+            {result.table_name: existing},
+        )
+        == []
+    )
 
 
 def test_run_metadata_write_passes_parallelism(
@@ -4827,268 +5057,6 @@ def test_run_metadata_write_passes_dwd_metric_groups_to_dws(
         "derived_metrics": [_expected_pay_amt_1d_metric()],
         "calculated_metrics": ["gross_profit"],
     }
-
-
-def test_enrich_results_does_not_add_layer_context_hints():
-    dwd_intermediate = TableInspectResult(
-        table_name="products_2",
-        declared_layer="DWD",
-        inferred_layer="DIM",
-        table_type="dimension",
-        confidence=0.9,
-        reasoning_steps=[],
-    )
-    dwd_dimension_intermediate = TableInspectResult(
-        table_name="atm_locations_2",
-        declared_layer="DWD",
-        inferred_layer="DWD",
-        table_type="dimension",
-        confidence=0.9,
-        reasoning_steps=[],
-    )
-    dwd_fact_from_source = TableInspectResult(
-        table_name="customer_segment_history",
-        declared_layer="DWD",
-        inferred_layer="DIM",
-        table_type="dimension",
-        confidence=0.9,
-        reasoning_steps=[],
-    )
-    surrogate_dim = TableInspectResult(
-        table_name="economic_indicators_2",
-        declared_layer="DWD",
-        inferred_layer="DWD",
-        table_type="fact",
-        confidence=0.9,
-        reasoning_steps=[],
-    )
-    dws_snapshot = TableInspectResult(
-        table_name="account_daily_snapshot",
-        declared_layer="DWD",
-        inferred_layer="DWD",
-        table_type="fact",
-        confidence=0.9,
-        reasoning_steps=[],
-    )
-    dws_entity_metric = TableInspectResult(
-        table_name="agent",
-        declared_layer="DWD",
-        inferred_layer="DIM",
-        table_type="dimension",
-        confidence=0.9,
-        reasoning_steps=[],
-    )
-    dim_entity_snapshot = TableInspectResult(
-        table_name="promotion_2",
-        declared_layer="DWD",
-        inferred_layer="DWD",
-        table_type="other",
-        confidence=0.9,
-        reasoning_steps=[],
-    )
-    conformed_dim = TableInspectResult(
-        table_name="account",
-        declared_layer="DWD",
-        inferred_layer="DIM",
-        table_type="dimension",
-        confidence=0.9,
-        reasoning_steps=[],
-    )
-    plain_summary = TableInspectResult(
-        table_name="customer_summary",
-        declared_layer="DWD",
-        inferred_layer="DWD",
-        table_type="fact",
-        confidence=0.9,
-        reasoning_steps=[],
-    )
-
-    contexts = {
-        "products_2": TableContext(
-            table_name="products_2",
-            layer="DWD",
-            ddl="CREATE TABLE products_2 (product_id BIGINT);",
-            etl_sql="INSERT INTO products_2 SELECT product_id FROM products;",
-            upstream_tables=["products"],
-            downstream_tables=["product"],
-            downstream_table_layers={"product": "DIM"},
-        ),
-        "atm_locations_2": TableContext(
-            table_name="atm_locations_2",
-            layer="DWD",
-            ddl="CREATE TABLE atm_locations_2 (atm_id BIGINT);",
-            etl_sql=(
-                "INSERT INTO atm_locations_2 SELECT atm_id FROM atm_locations;"
-            ),
-            upstream_tables=["atm_locations"],
-            downstream_tables=["location"],
-            downstream_table_layers={"location": "DIM"},
-        ),
-        "customer_segment_history": TableContext(
-            table_name="customer_segment_history",
-            layer="DWD",
-            ddl=(
-                "CREATE TABLE customer_segment_history ("
-                "segment_history_key CHAR(32), customer_key CHAR(32), "
-                "total_balance DECIMAL(18,2), segment_change_count BIGINT"
-                ");"
-            ),
-            etl_sql=(
-                "INSERT INTO customer_segment_history "
-                "SELECT MD5(CAST(segment_history_id AS STRING)) "
-                "AS segment_history_key, total_balance, "
-                "1 AS segment_change_count "
-                "FROM customer_segments_history_2;"
-            ),
-            upstream_tables=["customer_segments_history_2"],
-            upstream_table_layers={"customer_segments_history_2": "DWD"},
-            downstream_tables=[],
-        ),
-        "economic_indicators_2": TableContext(
-            table_name="economic_indicators_2",
-            layer="DWD",
-            ddl=(
-                "CREATE TABLE economic_indicators_2 ("
-                "economic_indicator_key CHAR(32), indicator_date DATE"
-                ") DUPLICATE KEY(economic_indicator_key);"
-            ),
-            etl_sql=(
-                "INSERT INTO economic_indicators_2 "
-                "SELECT MD5(CAST(date AS STRING)) AS economic_indicator_key, "
-                "date AS indicator_date FROM economic_indicators_3;"
-            ),
-            upstream_tables=["economic_indicators_3"],
-            upstream_table_layers={"economic_indicators_3": "DWD"},
-            downstream_tables=[],
-        ),
-        "account_daily_snapshot": TableContext(
-            table_name="account_daily_snapshot",
-            layer="DWD",
-            ddl=(
-                "CREATE TABLE account_daily_snapshot ("
-                "account_key CHAR(32), snapshot_date DATE, "
-                "daily_transaction_count BIGINT"
-                ");"
-            ),
-            etl_sql=(
-                "INSERT INTO account_daily_snapshot "
-                "SELECT a.account_key, tx.daily_transaction_count "
-                "FROM accounts_2 a LEFT JOIN ("
-                "SELECT account_id, COUNT(*) AS daily_transaction_count "
-                "FROM transactions_2 GROUP BY account_id"
-                ") tx ON a.account_id = tx.account_id;"
-            ),
-            upstream_tables=["accounts_2", "transactions_2"],
-            upstream_table_layers={
-                "accounts_2": "DWD",
-                "transactions_2": "DWD",
-            },
-            downstream_tables=[],
-        ),
-        "agent": TableContext(
-            table_name="agent",
-            layer="DWD",
-            ddl=(
-                "CREATE TABLE agent ("
-                "agent_key CHAR(32), total_interactions BIGINT, "
-                "avg_satisfaction_rating DECIMAL(5,2)"
-                ");"
-            ),
-            etl_sql=(
-                "INSERT INTO agent "
-                "SELECT agent_id, COUNT(*) AS total_interactions, "
-                "AVG(satisfaction_rating) AS avg_satisfaction_rating "
-                "FROM customer_interactions_2 GROUP BY agent_id;"
-            ),
-            upstream_tables=["customer_interactions_2"],
-            upstream_table_layers={"customer_interactions_2": "DWD"},
-            downstream_tables=[],
-        ),
-        "promotion_2": TableContext(
-            table_name="promotion_2",
-            layer="DWD",
-            ddl=(
-                "CREATE TABLE promotion_2 ("
-                "promotion_id BIGINT, snapshot_date DATE, "
-                "discount_rate DECIMAL(5,2), min_amount DECIMAL(12,2)"
-                ");"
-            ),
-            etl_sql=(
-                "INSERT INTO promotion_2 "
-                "SELECT promotion_id, snapshot_date, discount_rate, min_amount "
-                "FROM promotion;"
-            ),
-            upstream_tables=["promotion"],
-            downstream_tables=["promotion_effect_daily"],
-        ),
-        "account": TableContext(
-            table_name="account",
-            layer="DWD",
-            ddl=(
-                "CREATE TABLE account ("
-                "account_key CHAR(32), account_natural_key BIGINT, "
-                "current_balance DECIMAL(18,2)"
-                ");"
-            ),
-            etl_sql=(
-                "INSERT INTO account "
-                "SELECT MD5(CAST(account_id AS STRING)) AS account_key, "
-                "account_id AS account_natural_key, current_balance "
-                "FROM accounts_2;"
-            ),
-            upstream_tables=["accounts_2"],
-            upstream_table_layers={"accounts_2": "DWD"},
-            downstream_tables=[],
-        ),
-        "customer_summary": TableContext(
-            table_name="customer_summary",
-            layer="DWD",
-            ddl=(
-                "CREATE TABLE customer_summary ("
-                "customer_key CHAR(32), total_amount DECIMAL(18,2)"
-                ") DUPLICATE KEY(customer_key);"
-            ),
-            etl_sql=(
-                "INSERT INTO customer_summary "
-                "SELECT MD5(CAST(customer_id AS STRING)) AS customer_key, "
-                "SUM(amount) AS total_amount FROM transactions_3 "
-                "GROUP BY customer_id;"
-            ),
-            upstream_tables=["transactions_3"],
-            upstream_table_layers={"transactions_3": "DWD"},
-            downstream_tables=[],
-        ),
-    }
-
-    enrich_results_with_related_entities(
-        [
-            dwd_intermediate,
-            dwd_dimension_intermediate,
-            dwd_fact_from_source,
-            surrogate_dim,
-            dws_snapshot,
-            dws_entity_metric,
-            dim_entity_snapshot,
-            conformed_dim,
-            plain_summary,
-        ],
-        contexts,
-    )
-
-    assert all(
-        "context_hints" not in result.validation
-        for result in (
-            dwd_intermediate,
-            dwd_dimension_intermediate,
-            dwd_fact_from_source,
-            surrogate_dim,
-            dws_snapshot,
-            dws_entity_metric,
-            dim_entity_snapshot,
-            conformed_dim,
-            plain_summary,
-        )
-    )
 
 
 def test_run_metadata_write_discovers_related_entity_from_dws_grain(

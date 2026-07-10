@@ -48,7 +48,8 @@ For each source project, the benchmark creates a temporary project with:
 - `warehouse.yaml` pointing to the benchmark project and ODS database.
 - `naming_config.yaml` copied from the source project.
 - `business_taxonomy.yaml` copied only for artificial taxonomy inputs:
-  `data_domains`, `business_areas`, and `project_context`.
+  `data_domains` and `business_areas`. Source `project_context` is omitted so
+  project-specific layer decisions cannot enter the LLM prompt.
 - Empty `business_processes.yaml` and `semantic_subjects.yaml`, so process and
   subject discovery can be measured rather than seeded.
 - Rewritten ODS, MID, and ADS DDL.
@@ -61,6 +62,13 @@ For each source project, the benchmark creates a temporary project with:
 Table prefixes `ods_`, `dwd_`, `dws_`, `ads_`, and `dim_` are removed. SQL line
 comments, DDL `COMMENT` clauses, and direct layer words such as ODS/DWD/DWS/ADS
 and their Chinese equivalents are removed. Business function words are kept.
+Prefix matching and SQL identifier rewriting are case-insensitive. When two
+tables collapse to the same prefixless name, every colliding table receives an
+opaque HMAC suffix keyed by a fresh in-memory salt for that benchmark run. The
+salt is not written to assets or reports, and generated assets/prompts do not
+contain the source-to-target mapping. For post-run scoring and audit, mismatch
+entries in the JSON report include both the source name and its opaque target
+alias.
 
 ## Metrics
 

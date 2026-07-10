@@ -29,6 +29,45 @@ def model_metadata(monkeypatch):
     )
 
 
+def _build_contexts_for_graph(
+    tmp_path,
+    monkeypatch,
+    *,
+    tables,
+    upstream,
+    model_metadata,
+    metric_groups=None,
+    ddl_files=None,
+):
+    ddl_dir = tmp_path / "ddl"
+    tasks_dir = tmp_path / "tasks"
+    ddl_dir.mkdir()
+    tasks_dir.mkdir()
+    for filename, content in (ddl_files or {}).items():
+        (ddl_dir / filename).write_text(content, encoding="utf-8")
+
+    class FakeLineageView:
+        @classmethod
+        def from_data(cls, project, lineage_data):
+            return cls()
+
+        def asset_table_graph(self):
+            return upstream, {}
+
+        def column_lineage_for_table(self, table_name):
+            return []
+
+    monkeypatch.setattr(context_builder_module, "LineageView", FakeLineageView)
+    return build_contexts(
+        "test_proj",
+        {"tables": [{"name": name} for name in tables]},
+        ddl_dir,
+        tasks_dir,
+        model_metadata=model_metadata,
+        metric_groups=metric_groups,
+    )
+
+
 def test_extract_dependencies(sample_lineage_data):
     upstream, downstream = extract_dependencies(sample_lineage_data)
 
@@ -170,6 +209,122 @@ def test_build_contexts_reuses_one_lineage_view(
     assert calls["column_tables"] == [ctx.table_name for ctx in contexts]
 
 
+def test_build_contexts_matches_dependency_layers_case_insensitively(
+    tmp_path,
+    monkeypatch,
+):
+    metric_groups = {
+        "atomic_metrics": ["order_count"],
+        "derived_metrics": [],
+        "calculated_metrics": [],
+    }
+
+    context = _build_contexts_for_graph(
+        tmp_path,
+        monkeypatch,
+        tables=["Internal.Demo.DWS_ORDER_DAILY"],
+        upstream={
+            "Internal.Demo.DWS_ORDER_DAILY": {"INTERNAL.DEMO.DWD_ORDER_DETAIL"}
+        },
+        model_metadata={
+            "dwd_order_detail": {"layer": "DWD"},
+            "dws_order_daily": {"layer": "DWS"},
+        },
+        metric_groups={"dwd_order_detail": metric_groups},
+        ddl_files={
+            "dws_order_daily.sql": (
+                "CREATE TABLE dws_order_daily (order_count BIGINT);"
+            )
+        },
+    )[0]
+
+    assert context.table_name == "dws_order_daily"
+    assert context.upstream_table_layers == {
+        "INTERNAL.DEMO.DWD_ORDER_DETAIL": "DWD"
+    }
+    assert context.upstream_metric_groups == {
+        "INTERNAL.DEMO.DWD_ORDER_DETAIL": metric_groups
+    }
+    assert context.ddl.endswith("order_count BIGINT);")
+
+
+def test_build_contexts_keeps_qualified_same_name_tables_isolated(
+    tmp_path,
+    monkeypatch,
+):
+    catalog_a_metrics = {
+        "atomic_metrics": ["gross_amount"],
+        "derived_metrics": [],
+        "calculated_metrics": [],
+    }
+    catalog_b_metrics = {
+        "atomic_metrics": ["balance_amount"],
+        "derived_metrics": [],
+        "calculated_metrics": [],
+    }
+
+    context = _build_contexts_for_graph(
+        tmp_path,
+        monkeypatch,
+        tables=["catalog_a.db_a.order_summary"],
+        upstream={
+            "catalog_a.db_a.order_summary": {"catalog_a.db_a.orders"},
+            "catalog_b.db_b.other_summary": {"catalog_b.db_b.orders"},
+        },
+        model_metadata={
+            "catalog_a.db_a.order_summary": {
+                "name": "order_summary",
+                "layer": "DWS",
+            },
+            "catalog_a.db_a.orders": {"layer": "DWD"},
+            "catalog_b.db_b.orders": {"layer": "DIM"},
+        },
+        metric_groups={
+            "catalog_a.db_a.orders": catalog_a_metrics,
+            "catalog_b.db_b.orders": catalog_b_metrics,
+        },
+    )[0]
+
+    assert context.upstream_tables == ["catalog_a.db_a.orders"]
+    assert context.upstream_table_layers == {"catalog_a.db_a.orders": "DWD"}
+    assert context.upstream_metric_groups == {
+        "catalog_a.db_a.orders": catalog_a_metrics
+    }
+
+
+def test_build_contexts_rejects_ambiguous_unqualified_exact_match(
+    tmp_path,
+    monkeypatch,
+    caplog,
+):
+    contexts = _build_contexts_for_graph(
+        tmp_path,
+        monkeypatch,
+        tables=["orders"],
+        upstream={
+            "summary_a": {"catalog_a.db_a.orders"},
+            "summary_b": {"catalog_b.db_b.orders"},
+        },
+        model_metadata={"orders": {"name": "orders", "layer": "DWD"}},
+    )
+
+    assert contexts == []
+    assert "Ambiguous short table name orders" in caplog.text
+
+
+def test_canonical_lookup_does_not_fallback_wrong_qualified_identity():
+    lookup = context_builder_module._canonical_table_lookup(
+        {"catalog_a.db_a.orders": {"layer": "DWD"}}
+    )
+    short_lookup = context_builder_module._canonical_table_lookup(
+        {"orders": {"layer": "DWD"}}
+    )
+
+    assert lookup.get("wrong.db.orders") is None
+    assert lookup.get("orders") == {"layer": "DWD"}
+    assert short_lookup.get("wrong.db.orders") is None
+
+
 def test_build_context_with_ddl_and_task(sample_lineage_data, tmp_path):
     ddl_dir = tmp_path / "ddl"
     tasks_dir = tmp_path / "tasks"
@@ -217,52 +372,21 @@ def test_build_contexts_warns_without_parsing_tasks_when_lineage_empty(
     tasks_dir = tmp_path / "tasks"
     ddl_dir.mkdir()
     tasks_dir.mkdir()
-    lineage_data = {
-        "tables": [
-            {"name": "ods_order"},
-            {"name": "dwd_order_clean"},
-            {"name": "dws_order_daily"},
-            {"name": "dim_customer"},
-            {"name": "order"},
-        ],
-        "edges": [],
-        "indirect_edges": [],
-    }
-    metadata = {
-        "dwd_order_clean": {"name": "dwd_order_clean", "layer": "DWD"},
-        "dws_order_daily": {"name": "dws_order_daily", "layer": "DWS"},
-        "dim_customer": {"name": "dim_customer", "layer": "DIM"},
-    }
-
     (tasks_dir / "dwd_order_clean.sql").write_text(
         "INSERT INTO dwd_order_clean SELECT * FROM ods_order;",
         encoding="utf-8",
     )
-    (tasks_dir / "dws_order_daily.sql").write_text(
-        "INSERT INTO dws_order_daily "
-        "SELECT order_date, COUNT(*) FROM dwd_order_clean GROUP BY order_date;",
-        encoding="utf-8",
-    )
-    (tasks_dir / "dim_customer.sql").write_text(
-        "INSERT INTO dim_customer "
-        "SELECT customer_id FROM dwd_order_clean ORDER BY customer_id;",
-        encoding="utf-8",
-    )
 
-    contexts = build_contexts(
+    context = build_contexts(
         "test_proj",
-        lineage_data,
+        {"tables": [{"name": "dwd_order_clean"}], "edges": []},
         ddl_dir,
         tasks_dir,
-        model_metadata=metadata,
-    )
-    by_name = {ctx.table_name: ctx for ctx in contexts}
+        model_metadata={"dwd_order_clean": {"layer": "DWD"}},
+    )[0]
 
-    assert by_name["dwd_order_clean"].upstream_tables == []
-    assert by_name["dwd_order_clean"].downstream_tables == []
-    assert by_name["dwd_order_clean"].downstream_table_layers == {}
-    assert by_name["dws_order_daily"].upstream_tables == []
-    assert by_name["dws_order_daily"].upstream_table_layers == {}
+    assert context.upstream_tables == []
+    assert context.downstream_tables == []
     assert "lineage graph is empty" in caplog.text.lower()
 
 

@@ -160,6 +160,33 @@ def test_unusable_llm_layer_falls_back_to_prior(
     assert resolution.warnings[0]["candidate_layers"] == ("DWD", "DWS", "DIM")
 
 
+def test_low_confidence_llm_candidate_falls_back_to_prior():
+    resolution = resolve_layer(
+        LayerResolutionInput(
+            table_name="customer_detail",
+            declared_layer="DWD",
+            declared_table_type="fact",
+            inspection_result=_inspect_result(
+                table_name="customer_detail",
+                inferred_layer="DIM",
+                table_type="dimension",
+                confidence=0.01,
+            ),
+            policy=LayerResolutionPolicy(
+                mode="refresh",
+                min_llm_confidence=0.5,
+            ),
+        )
+    )
+
+    assert resolution.applied_layer == "DWD"
+    assert resolution.table_type == "fact"
+    assert resolution.source == "declared"
+    assert resolution.validation["llm_confidence_below_min"] is True
+    assert resolution.warnings[0]["llm_confidence"] == 0.01
+    assert resolution.warnings[0]["min_llm_confidence"] == 0.5
+
+
 @pytest.mark.parametrize(
     (
         "fixed_layer",
@@ -227,105 +254,58 @@ def test_generate_without_llm_falls_back_to_direct_rule():
     assert resolution.validation["candidate"]["source"] == ""
 
 
-def test_generate_rejects_ads_dimension_candidate():
-    resolution = resolve_layer(
-        LayerResolutionInput(
-            table_name="customer_2",
-            fallback_layer="DWD",
-            fallback_table_type="fact",
-            inspection_result=_inspect_result(
-                table_name="customer_2",
-                inferred_layer="ADS",
-                table_type="dimension",
-            ),
-            policy=LayerResolutionPolicy(
-                mode="generate",
-                candidate_layers=("DWD", "DWS", "DIM"),
-                fallback_source="direct_rule",
-            ),
-        )
-    )
-
-    assert resolution.inferred_layer == "ADS"
-    assert resolution.applied_layer == "DWD"
-    assert resolution.table_type == "fact"
-    assert resolution.source == "direct_rule"
-    assert resolution.warnings[0]["type"] == "llm_layer_fallback"
-
-
-def test_generate_rejects_ads_summary_fact_candidate_even_with_grain():
-    resolution = resolve_layer(
-        LayerResolutionInput(
-            table_name="inventory_daily",
-            fallback_layer="DWD",
-            fallback_table_type="fact",
-            inspection_result=_inspect_result(
-                table_name="inventory_daily",
-                inferred_layer="ADS",
-                table_type="fact",
-                grain={
-                    "entities": ["PROD", "STOR"],
-                    "time_column": "stat_date",
-                    "time_period": "D",
-                },
-            ),
-            policy=LayerResolutionPolicy(
-                mode="generate",
-                candidate_layers=("DWD", "DWS", "DIM"),
-                fallback_source="direct_rule",
-            ),
-        )
-    )
-
-    assert resolution.inferred_layer == "ADS"
-    assert resolution.applied_layer == "DWD"
-    assert resolution.table_type == "fact"
-    assert resolution.source == "direct_rule"
-    assert resolution.warnings[0]["type"] == "llm_layer_fallback"
-
-
 @pytest.mark.parametrize(
-    (
-        "hint",
-        "inferred_layer",
-        "table_type",
-        "expected_layer",
-        "expected_type",
-    ),
+    ("table_type", "grain"),
     [
+        ("dimension", {}),
         (
-            "dwd_intermediate_downstream_model",
-            "DIM",
-            "dimension",
-            "DIM",
-            "dimension",
+            "fact",
+            {
+                "entities": ["ENTITY"],
+                "time_column": "stat_date",
+                "time_period": "D",
+            },
         ),
-        ("dwd_fact_from_dwd_source", "DIM", "dimension", "DIM", "dimension"),
-        ("dim_surrogate_from_dwd_source", "DWD", "fact", "DWD", "fact"),
-        ("dws_reusable_snapshot", "DWD", "fact", "DWD", "fact"),
-        ("dws_entity_metric_summary", "DIM", "dimension", "DIM", "dimension"),
-        ("dim_entity_snapshot", "DWD", "other", "DWD", "other"),
     ],
 )
-def test_generate_does_not_override_llm_candidate_from_context_hint(
-    hint,
-    inferred_layer,
-    table_type,
-    expected_layer,
-    expected_type,
-):
-    result = _inspect_result(
-        table_name="ambiguous_table_2",
-        inferred_layer=inferred_layer,
-        table_type=table_type,
+def test_generate_rejects_out_of_scope_ads_candidate(table_type, grain):
+    resolution = resolve_layer(
+        LayerResolutionInput(
+            table_name="candidate_table",
+            fallback_layer="DWD",
+            fallback_table_type="fact",
+            inspection_result=_inspect_result(
+                table_name="candidate_table",
+                inferred_layer="ADS",
+                table_type=table_type,
+                grain=grain,
+            ),
+            policy=LayerResolutionPolicy(
+                mode="generate",
+                candidate_layers=("DWD", "DWS", "DIM"),
+                fallback_source="direct_rule",
+            ),
+        )
     )
-    # Old cache entries can still contain these former benchmark-driven hints.
-    # The resolver must treat them as inert metadata rather than decisions.
-    result.validation["context_hints"] = [hint]
+
+    assert resolution.inferred_layer == "ADS"
+    assert resolution.applied_layer == "DWD"
+    assert resolution.table_type == "fact"
+    assert resolution.source == "direct_rule"
+    assert resolution.warnings[0]["type"] == "llm_layer_fallback"
+
+
+def test_generate_ignores_legacy_context_hint():
+    result = _inspect_result(
+        table_name="candidate_table",
+        inferred_layer="DIM",
+        table_type="dimension",
+    )
+    result.validation["context_hints"] = ["legacy_layer_hint"]
 
     resolution = resolve_layer(
         LayerResolutionInput(
-            table_name="ambiguous_table_2",
+            table_name="candidate_table",
             fallback_layer="DWD",
             fallback_table_type="other",
             inspection_result=result,
@@ -337,8 +317,7 @@ def test_generate_does_not_override_llm_candidate_from_context_hint(
         )
     )
 
-    assert resolution.inferred_layer == inferred_layer
-    assert resolution.applied_layer == expected_layer
-    assert resolution.table_type == expected_type
+    assert resolution.applied_layer == "DIM"
+    assert resolution.table_type == "dimension"
     assert resolution.source == "table_inspector"
     assert resolution.warnings == ()

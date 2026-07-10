@@ -2,9 +2,12 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
+import hmac
 import json
 import os
 import re
+import secrets
 import shutil
 import sys
 import tempfile
@@ -32,6 +35,8 @@ DEFAULT_BASE_URL = "https://api.deepseek.com"
 DEFAULT_PARALLELISM = 4
 DEFAULT_MAX_RETRIES = 1
 DEFAULT_REQUEST_TIMEOUT = 240
+ANONYMOUS_ALIAS_DIGEST_LENGTH = 8
+ANONYMOUS_ALIAS_SALT_BYTES = 32
 CATALOG = "internal"
 LAYER_PREFIXES = ("ods_", "dwd_", "dws_", "ads_", "dim_")
 FIXED_LAYERS = {"ODS", "ADS"}
@@ -80,9 +85,9 @@ class TempProject:
     @property
     def expected_by_target(self) -> Dict[str, Dict[str, Any]]:
         return {
-            new: self.expected_by_source[old]
+            new: _expected_model(self.expected_by_source, old)
             for old, new in self.table_mapping.items()
-            if old in self.expected_by_source
+            if _expected_model(self.expected_by_source, old)
         }
 
 
@@ -115,6 +120,10 @@ def _short_table_name(value: Any) -> str:
         return ""
     text = text.replace("`", "").replace('"', "")
     return text.split(".")[-1].strip()
+
+
+def _canonical_table_name(value: Any) -> str:
+    return _short_table_name(value).casefold()
 
 
 def _source_project_dir(source_root: Path, source_project: str) -> Path:
@@ -174,7 +183,7 @@ def _load_expected_models(source_dir: Path) -> Dict[str, Dict[str, Any]]:
         table = _short_table_name(data.get("name") or path.stem)
         if not table:
             continue
-        expected[table] = {
+        expected[_canonical_table_name(table)] = {
             "layer": str(data.get("layer") or "OTHER").upper(),
             "table_type": str(data.get("table_type") or "other").lower(),
             "path": str(path),
@@ -213,29 +222,65 @@ def _catalog_codes(entries: Any) -> List[str]:
 
 
 def strip_layer_prefix(name: str) -> str:
+    canonical_name = str(name or "").casefold()
     for prefix in LAYER_PREFIXES:
-        if name.startswith(prefix):
+        if canonical_name.startswith(prefix):
             return name[len(prefix) :]
     return name
 
 
-def functional_table_name(table_name: str, used: set) -> str:
+def _functional_table_base(table_name: str) -> str:
     base = strip_layer_prefix(table_name)
-    base = re.sub(r"__+", "_", base).strip("_") or table_name
-    candidate = base
-    index = 2
-    while candidate in used:
-        candidate = f"{base}_{index}"
-        index += 1
-    used.add(candidate)
-    return candidate
+    normalized = re.sub(r"__+", "_", base).strip("_") or table_name
+    return normalized.casefold()
 
 
-def _table_mapping(ddl_paths: Iterable[Path]) -> Dict[str, str]:
-    used = set()
+def _anonymous_collision_alias(
+    table_name: str,
+    base: str,
+    *,
+    alias_salt: bytes,
+) -> str:
+    token = hmac.new(
+        alias_salt,
+        table_name.casefold().encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()[:ANONYMOUS_ALIAS_DIGEST_LENGTH]
+    return f"{base}_{token}"
+
+
+def _validated_alias_salt(alias_salt: bytes | None) -> bytes:
+    salt = (
+        secrets.token_bytes(ANONYMOUS_ALIAS_SALT_BYTES)
+        if alias_salt is None
+        else alias_salt
+    )
+    if not isinstance(salt, bytes) or len(salt) < 16:
+        raise ValueError("alias_salt must contain at least 16 bytes")
+    return salt
+
+
+def _table_mapping(
+    ddl_paths: Iterable[Path],
+    *,
+    alias_salt: bytes,
+) -> Dict[str, str]:
+    table_names = sorted({path.stem for path in ddl_paths}, key=str.casefold)
+    tables_by_base: Dict[str, List[str]] = defaultdict(list)
+    for table_name in table_names:
+        tables_by_base[_functional_table_base(table_name)].append(table_name)
+
     mapping: Dict[str, str] = {}
-    for path in ddl_paths:
-        mapping[path.stem] = functional_table_name(path.stem, used)
+    for base, colliding_tables in tables_by_base.items():
+        if len(colliding_tables) == 1:
+            mapping[colliding_tables[0]] = base
+            continue
+        for table_name in colliding_tables:
+            mapping[table_name] = _anonymous_collision_alias(
+                table_name,
+                base,
+                alias_salt=alias_salt,
+            )
     return mapping
 
 
@@ -244,6 +289,7 @@ def _replace_identifier(text: str, old: str, new: str) -> str:
         r"(?<![A-Za-z0-9_]){}(?![A-Za-z0-9_])".format(re.escape(old)),
         new,
         text,
+        flags=re.IGNORECASE,
     )
 
 
@@ -293,7 +339,15 @@ def sanitize_sql(
 
 
 def _expected_layer(expected: Dict[str, Dict[str, Any]], table: str) -> str:
-    return str((expected.get(table) or {}).get("layer") or "OTHER").upper()
+    return str(
+        _expected_model(expected, table).get("layer") or "OTHER"
+    ).upper()
+
+
+def _expected_model(
+    expected: Dict[str, Dict[str, Any]], table: str
+) -> Dict[str, Any]:
+    return expected.get(_canonical_table_name(table), {})
 
 
 def _asset_role_for_expected_layer(layer: str) -> str:
@@ -368,7 +422,7 @@ def _write_target_taxonomy(
         "version": taxonomy.get("version") or 1,
         "project": target_project,
     }
-    for key in ("source", "project_context", "data_domains", "business_areas"):
+    for key in ("source", "data_domains", "business_areas"):
         if key in taxonomy:
             payload[key] = taxonomy[key]
     _write_yaml(target_dir / "business_taxonomy.yaml", payload)
@@ -414,11 +468,22 @@ def _task_base_table(
     stem: str, table_mapping: Dict[str, str]
 ) -> Tuple[str, str]:
     suffix = "_full_refresh"
-    if stem.endswith(suffix) and stem[: -len(suffix)] in table_mapping:
-        source_table = stem[: -len(suffix)]
+    mapping_by_name = {
+        _canonical_table_name(source_table): source_table
+        for source_table in table_mapping
+    }
+    canonical_stem = stem.casefold()
+    if canonical_stem.endswith(suffix):
+        base_stem = stem[: -len(suffix)]
+        source_table = mapping_by_name.get(
+            _canonical_table_name(base_stem), ""
+        )
+        if not source_table:
+            return "", ""
         return source_table, f"{table_mapping[source_table]}{suffix}"
-    if stem in table_mapping:
-        return stem, table_mapping[stem]
+    source_table = mapping_by_name.get(_canonical_table_name(stem), "")
+    if source_table:
+        return source_table, table_mapping[source_table]
     return "", ""
 
 
@@ -490,6 +555,7 @@ def build_temp_project(
     tmp_root: Path,
     *,
     source_root: Path = REPO_ROOT,
+    alias_salt: bytes | None = None,
 ) -> TempProject:
     """Build a cold-start benchmark project under tmp_root/warehouses."""
     source_dir = _source_project_dir(Path(source_root), source_project)
@@ -504,7 +570,10 @@ def build_temp_project(
 
     database = _target_database(source_project)
     expected = _load_expected_models(source_dir)
-    mapping = _table_mapping(_iter_ddl_paths(source_dir))
+    mapping = _table_mapping(
+        _iter_ddl_paths(source_dir),
+        alias_salt=_validated_alias_salt(alias_salt),
+    )
     database_mapping = {_source_database(source_dir, source_project): database}
 
     _copy_required_project_files(
@@ -850,7 +919,10 @@ def _summarize_project(
     for source_table, target_table in sorted(
         temp_project.table_mapping.items()
     ):
-        expected = temp_project.expected_by_source.get(source_table)
+        expected = _expected_model(
+            temp_project.expected_by_source,
+            source_table,
+        )
         if not expected:
             continue
         expected_layer = str(expected.get("layer") or "OTHER").upper()
@@ -984,9 +1056,13 @@ def run_benchmark(
                 source_root=source_root,
             )
             _register_target_project(temp_project, tmp_root)
+            # The benchmark project exists only in this process's runtime
+            # config. Spawned lineage workers cannot rediscover it from the
+            # source repository, so extract this small temporary graph in the
+            # current process and reserve parallelism for the LLM calls.
             _write_extracted_lineage(
                 temp_project,
-                parallelism=parallelism,
+                parallelism=1,
             )
             result = metadata_runner(
                 temp_project.target_project,

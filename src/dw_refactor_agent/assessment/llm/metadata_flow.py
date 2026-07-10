@@ -101,6 +101,7 @@ ResultEnricher = Callable[
     [List[TableInspectResult], Dict[str, TableContext]],
     None,
 ]
+MetricResultEligibility = Callable[[TableInspectResult], bool]
 
 
 def build_refresh_plan(project: str, *, write_scope: str) -> MetadataFlowPlan:
@@ -155,6 +156,7 @@ def run_inspection_pipeline(
     base_model_metadata: Optional[Dict[str, Dict[str, Any]]] = None,
     metric_groups: Optional[Dict[str, Dict[str, List[str]]]] = None,
     expose_layer_hints: bool = True,
+    metric_result_is_eligible: Optional[MetricResultEligibility] = None,
 ) -> InspectionResultBundle:
     contexts = build_contexts(
         project,
@@ -172,11 +174,17 @@ def run_inspection_pipeline(
     ]
 
     dwd_results = inspector.inspect_batch(dwd_contexts)
-    detected_groups = {
-        result.table_name: metric_group_builder(result)
-        for result in dwd_results
-        if result.status != "blocked"
-    }
+    detected_groups = {}
+    for ctx, result in zip(dwd_contexts, dwd_results):
+        is_eligible = (
+            metric_result_is_eligible(result)
+            if metric_result_is_eligible is not None
+            else result.status != "blocked"
+        )
+        if not is_eligible:
+            continue
+        table_identity = ctx.table_identity or result.table_name
+        detected_groups[table_identity] = metric_group_builder(result)
     _inject_upstream_metric_groups(dws_contexts, detected_groups)
     dws_results = inspector.inspect_batch(dws_contexts)
     metadata_only_results = inspector.inspect_batch(metadata_only_contexts)
@@ -202,28 +210,53 @@ def _inject_upstream_metric_groups(
     detected_groups: Dict[str, Dict[str, List[Any]]],
 ) -> None:
     """Inject metrics found earlier in the run into downstream contexts."""
-    detected_by_short_name = {
-        _canonical_short_table_name(table_name): groups
+    detected_by_identity = {
+        _canonical_table_identity(table_name): groups
         for table_name, groups in detected_groups.items()
     }
+    detected_identities_by_short: Dict[str, List[str]] = {}
+    for identity in detected_by_identity:
+        detected_identities_by_short.setdefault(
+            _canonical_short_table_name(identity), []
+        ).append(identity)
     for ctx in contexts:
         upstream_metric_groups = dict(ctx.upstream_metric_groups)
+        upstream_identities_by_short: Dict[str, List[str]] = {}
         for upstream_table in ctx.upstream_tables:
-            groups = detected_groups.get(upstream_table) or (
-                detected_by_short_name.get(
-                    _canonical_short_table_name(upstream_table)
+            upstream_identities_by_short.setdefault(
+                _canonical_short_table_name(upstream_table), []
+            ).append(_canonical_table_identity(upstream_table))
+        for upstream_table in ctx.upstream_tables:
+            upstream_identity = _canonical_table_identity(upstream_table)
+            groups = detected_by_identity.get(upstream_identity)
+            if groups is None:
+                short_name = _canonical_short_table_name(upstream_table)
+                upstream_matches = set(
+                    upstream_identities_by_short.get(short_name) or []
                 )
-            )
+                detected_matches = set(
+                    detected_identities_by_short.get(short_name) or []
+                )
+                if len(upstream_matches) == len(detected_matches) == 1:
+                    detected_identity = next(iter(detected_matches))
+                    both_qualified_but_different = bool(
+                        "." in upstream_identity
+                        and "." in detected_identity
+                        and upstream_identity != detected_identity
+                    )
+                    if not both_qualified_but_different:
+                        groups = detected_by_identity[detected_identity]
             if groups and any(groups.values()):
                 upstream_metric_groups[upstream_table] = groups
         ctx.upstream_metric_groups = upstream_metric_groups
 
 
-def _canonical_short_table_name(table_name: str) -> str:
-    return (
-        str(table_name or "")
-        .strip()
-        .replace("`", "")
-        .split(".")[-1]
-        .casefold()
+def _canonical_table_identity(table_name: str) -> str:
+    text = str(table_name or "").strip().replace("`", "").replace('"', "")
+    return ".".join(
+        part.strip().casefold() for part in text.split(".") if part.strip()
     )
+
+
+def _canonical_short_table_name(table_name: str) -> str:
+    return _canonical_table_identity(table_name).split(".")[-1]

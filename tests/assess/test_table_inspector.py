@@ -8,6 +8,8 @@ import pytest
 from dw_refactor_agent.assessment.llm.table_inspector import (
     TableContext,
     TableInspector,
+    TableInspectResult,
+    _extract_ddl_column_names,
     build_prompt,
     normalize_chat_completions_url,
     parse_response,
@@ -21,6 +23,41 @@ from dw_refactor_agent.assessment.llm.table_inspector import (
     validate_primary_entities,
     validate_time_periods,
 )
+
+
+def _inspection_result(
+    *,
+    table_name="candidate_table",
+    declared_layer="DWD",
+    inferred_layer="DWD",
+    table_type="fact",
+    confidence=0.9,
+    **metadata,
+):
+    return TableInspectResult(
+        table_name=table_name,
+        declared_layer=declared_layer,
+        inferred_layer=inferred_layer,
+        table_type=table_type,
+        confidence=confidence,
+        reasoning_steps=[],
+        **metadata,
+    )
+
+
+def _inspect_with_responses(inspector, context, responses, monkeypatch):
+    prompts = []
+
+    def fake_api(prompt):
+        prompts.append(prompt)
+        payload = responses[len(prompts) - 1]
+        return json.dumps(
+            {"choices": [{"message": {"content": json.dumps(payload)}}]}
+        )
+
+    monkeypatch.setattr(inspector, "_call_api", fake_api)
+    return inspector.inspect(context), prompts
+
 
 # ============================================================
 # 1. Prompt 组装测试
@@ -54,6 +91,29 @@ def test_normalize_chat_completions_url():
     )
 
 
+def test_extract_ddl_columns_normalizes_doris_table_clauses():
+    ddl = """
+    DROP TABLE IF EXISTS demo.sales_daily;
+    CREATE TABLE IF NOT EXISTS demo.sales_daily (
+        store_id BIGINT NOT NULL COMMENT '门店',
+        stat_date DATE NOT NULL COMMENT '日期',
+        sale_amount DECIMAL(18,2) NULL COMMENT '销售额'
+    ) ENGINE=OLAP
+    UNIQUE KEY(store_id, stat_date)
+    PARTITION BY RANGE(stat_date) (
+        PARTITION p1 VALUES LESS THAN ('2026-01-02')
+    )
+    DISTRIBUTED BY HASH(store_id) BUCKETS 1
+    PROPERTIES ('replication_num'='1');
+    """
+
+    assert _extract_ddl_column_names(ddl) == {
+        "store_id",
+        "stat_date",
+        "sale_amount",
+    }
+
+
 def test_parse_response_metadata_scenarios():
     helpers = [
         _assert_parse_dimension_response,
@@ -84,8 +144,10 @@ def test_validate_response_contract_scenarios():
         _assert_validate_layer_sql_consistency,
         _assert_validate_columns_flags_unknown_duplicate_and_missing_fields,
         _assert_validate_columns_requires_all_dws_fact_fields,
+        _assert_validate_columns_uses_inferred_metric_layer,
         _assert_validate_metric_relationships_requires_derived_base_metric_in_upstream_atomic,
         _assert_validate_metric_relationships_matches_qualified_upstream_table,
+        _assert_validate_metric_relationships_isolates_same_short_name_schemas,
         _assert_validate_metric_relationships_accepts_lineage_backed_raw_source,
         _assert_validate_metric_relationships_flags_ambiguous_unqualified_base_metric,
         _assert_result_status_from_validation,
@@ -204,6 +266,7 @@ def _assert_build_prompt_can_hide_layer_hints():
     assert "下游表: order_dashboard" in prompt
     assert "order_detail(DWD)" not in prompt
     assert "order_dashboard(ADS)" not in prompt
+    assert "距 ODS 最小跳数" not in prompt
 
 
 def _assert_build_prompt_keeps_metadata_contracts_without_project_examples():
@@ -225,12 +288,11 @@ def _assert_build_prompt_keeps_metadata_contracts_without_project_examples():
         "grain.entities",
         "business_process",
         "semantic_subject",
-        "当前物理模型承担的职责",
-        "实体当前态中的数值属性或非加性参考值",
-        "可度量业务活动记录也属于 fact",
-        "不要把同一链路的两张表都判成 dimension",
-        "一行一个实体在一个快照日",
-        "必须继续区分事实快照和属性快照",
+        "行粒度、键约束、聚合位置、时间字段和 JOIN 复用关系",
+        "输出行与输入明细保持同一粒度",
+        "稳定实体标识和描述性属性",
+        "可汇总度量",
+        "生成新键本身不足以证明它是维度表",
         "DIM 必须对应 dimension",
     ]:
         assert contract in prompt
@@ -239,6 +301,19 @@ def _assert_build_prompt_keeps_metadata_contracts_without_project_examples():
         "PRODUCT_MANAGEMENT",
         "STORE_OPERATION",
         "dwd_order_detail.cost_price",
+        "分层历史、经济指标",
+        "预算、点击、转化",
+        "评估/分层变更",
+        "投入、产出、次数、金额或效果",
+        "surrogate key",
+        "一行一个实体在一个快照日",
+        "SUM(subtotal)",
+        "COUNT(DISTINCT order_id)",
+        "订单明细、交易流水、支付事件、库存快照行",
+        "客户、商品、门店、活动",
+        "如 PROD",
+        "如 商品",
+        "如 stat_date",
     ]:
         assert hardcoded_example not in prompt
 
@@ -357,11 +432,6 @@ def _assert_build_prompt_weakens_empty_downstream_ads_signal():
     assert "inventory(ODS)" in prompt
     assert "出度为 0 只能作为弱证据" in prompt
     assert "不得仅凭下游为空判为 ADS" in prompt
-    assert "优先在 DWD/DWS/DIM 中选择" in prompt
-    assert "当前清洗表更可能是 DWD/other" in prompt
-    assert "同实体的规范化模型或汇总模型" in prompt
-    assert "没有把多行压缩为公共汇总粒度" in prompt
-    assert "非加性参考序列" in prompt
 
 
 # ============================================================
@@ -712,43 +782,16 @@ def _assert_validate_primary_entities_requires_dwd_fact_primary():
 
 def _assert_validate_primary_entities_uses_inferred_dwd_layer():
     for inferred_layer in ("DWS", "ADS"):
-        result = parse_response(
-            "inventory_daily",
-            {
-                "choices": [
-                    {
-                        "message": {
-                            "content": json.dumps(
-                                {
-                                    "inferred_layer": inferred_layer,
-                                    "table_type": "fact",
-                                    "confidence": 0.9,
-                                    "entities": [
-                                        {
-                                            "code": "PROD",
-                                            "type": "foreign",
-                                            "key_columns": ["product_id"],
-                                        }
-                                    ],
-                                    "grain": {
-                                        "entities": ["PROD"],
-                                        "time_column": "stat_date",
-                                        "time_period": "D",
-                                    },
-                                    "columns": {
-                                        "atomic_metrics": [],
-                                        "derived_metrics": [],
-                                        "calculated_metrics": [],
-                                        "dimensions": [],
-                                        "others": [],
-                                    },
-                                }
-                            )
-                        }
-                    }
-                ]
-            },
-            declared_layer="DWD",
+        result = _inspection_result(
+            inferred_layer=inferred_layer,
+            entities=[
+                {
+                    "code": "ENTITY",
+                    "type": "foreign",
+                    "key_columns": ["entity_id"],
+                }
+            ],
+            grain={"entities": ["ENTITY"]},
         )
 
         assert validate_primary_entities(result) == {}
@@ -760,111 +803,55 @@ def _assert_validate_layer_table_type_consistency():
         ("DIM", "fact"),
         ("DWS", "other"),
     ):
-        result = parse_response(
-            "ambiguous_table",
-            {
-                "choices": [
-                    {
-                        "message": {
-                            "content": json.dumps(
-                                {
-                                    "inferred_layer": layer,
-                                    "table_type": table_type,
-                                    "confidence": 0.9,
-                                    "columns": {},
-                                }
-                            )
-                        }
-                    }
-                ]
-            },
-            declared_layer="DWD",
+        result = _inspection_result(
+            inferred_layer=layer,
+            table_type=table_type,
         )
 
-        validation = validate_layer_table_type_consistency(result)
+        assert validate_layer_table_type_consistency(result)[
+            "inconsistent_layer_table_types"
+        ]
 
-        assert validation["inconsistent_layer_table_types"]
-
-    consistent = parse_response(
-        "customer",
-        {
-            "choices": [
-                {
-                    "message": {
-                        "content": json.dumps(
-                            {
-                                "inferred_layer": "DIM",
-                                "table_type": "dimension",
-                                "confidence": 0.9,
-                                "columns": {},
-                            }
-                        )
-                    }
-                }
-            ]
-        },
-        declared_layer="DWD",
+    consistent = _inspection_result(
+        inferred_layer="DIM",
+        table_type="dimension",
     )
     assert validate_layer_table_type_consistency(consistent) == {}
 
 
 def _assert_validate_layer_sql_consistency():
     context = TableContext(
-        table_name="account_daily_snapshot",
+        table_name="entity_daily_metrics",
         layer="DWD",
         ddl="",
-        etl_sql=(
-            "SELECT a.account_id, t.tx_count FROM accounts a "
-            "LEFT JOIN (SELECT account_id, COUNT(*) AS tx_count "
-            "FROM transactions GROUP BY account_id) t "
-            "ON a.account_id = t.account_id"
-        ),
-        upstream_tables=["accounts", "transactions"],
+        etl_sql="",
+        upstream_tables=["event_detail"],
         downstream_tables=[],
         column_lineage=[
             {
-                "source": "transactions.account_id",
-                "target": "account_daily_snapshot.event_count",
+                "source": "event_detail.entity_id",
+                "target": "entity_daily_metrics.event_count",
                 "condition_lineage": [
                     {
-                        "source": "transactions.account_id",
+                        "source": "event_detail.entity_id",
                         "condition_type": "GROUP_BY",
-                        "condition_expression": "account_id",
+                        "condition_expression": "entity_id",
                     }
                 ],
             }
         ],
     )
-    dwd_result = parse_response(
-        "account_daily_snapshot",
-        {
-            "choices": [
-                {
-                    "message": {
-                        "content": json.dumps(
-                            {
-                                "inferred_layer": "DWD",
-                                "table_type": "fact",
-                                "confidence": 0.9,
-                                "columns": {},
-                            }
-                        )
-                    }
-                }
-            ]
-        },
-        declared_layer="DWD",
-    )
+    result = _inspection_result()
 
-    assert validate_layer_sql_consistency(dwd_result, context) == {
+    assert validate_layer_sql_consistency(result, context) == {
         "inconsistent_layer_sql": [
             "DWD候选的结构化字段血缘包含GROUP_BY聚合；"
             "请重新判断DWS或其他合法层级"
         ]
     }
 
-    dwd_result.inferred_layer = "DWS"
-    assert validate_layer_sql_consistency(dwd_result, context) == {}
+    result.inferred_layer = "DWS"
+    assert validate_layer_sql_consistency(result, context) == {}
 
 
 def _assert_parse_response_preserves_entities_metadata():
@@ -1276,6 +1263,24 @@ def _assert_validate_columns_requires_all_dws_fact_fields():
     assert validation["missing_columns"] == ["etl_time", "stat_date"]
 
 
+def _assert_validate_columns_uses_inferred_metric_layer():
+    result = _inspection_result(
+        declared_layer="DIM",
+        inferred_layer="DWS",
+    )
+
+    validation = validate_columns(
+        result,
+        {"customer_id", "stat_date", "order_count"},
+    )
+
+    assert validation["missing_columns"] == [
+        "customer_id",
+        "order_count",
+        "stat_date",
+    ]
+
+
 def _assert_validate_metric_relationships_requires_derived_base_metric_in_upstream_atomic():
     result = parse_response(
         "dws_store_sales_daily",
@@ -1362,40 +1367,20 @@ def _assert_validate_metric_relationships_requires_derived_base_metric_in_upstre
 
 
 def _assert_validate_metric_relationships_matches_qualified_upstream_table():
-    result = parse_response(
-        "sales_daily",
-        {
-            "choices": [
+    result = _inspection_result(
+        inferred_layer="DWS",
+        columns={
+            "derived_metrics": [
                 {
-                    "message": {
-                        "content": json.dumps(
-                            {
-                                "inferred_layer": "DWS",
-                                "table_type": "fact",
-                                "confidence": 0.9,
-                                "columns": {
-                                    "atomic_metrics": [],
-                                    "derived_metrics": [
-                                        {
-                                            "name": "sale_amount",
-                                            "base_metric": "SUBTOTAL",
-                                            "base_metric_table": "order_detail",
-                                            "expression": "SUM(subtotal)",
-                                        }
-                                    ],
-                                    "calculated_metrics": [],
-                                    "dimensions": [],
-                                    "others": [],
-                                },
-                            }
-                        )
-                    }
+                    "name": "sale_amount",
+                    "base_metric": "SUBTOTAL",
+                    "base_metric_table": "order_detail",
+                    "expression": "SUM(subtotal)",
                 }
             ]
         },
-        declared_layer="DWS",
     )
-    ctx = TableContext(
+    context = TableContext(
         table_name="sales_daily",
         layer="DWS",
         ddl="",
@@ -1407,44 +1392,86 @@ def _assert_validate_metric_relationships_matches_qualified_upstream_table():
         },
     )
 
-    assert validate_metric_relationships(result, ctx) == {}
+    assert validate_metric_relationships(result, context) == {}
 
 
-def _assert_validate_metric_relationships_accepts_lineage_backed_raw_source():
-    result = parse_response(
-        "order_summary",
-        {
-            "choices": [
+def _assert_validate_metric_relationships_isolates_same_short_name_schemas():
+    context = TableContext(
+        table_name="sales_daily",
+        layer="DWS",
+        ddl="",
+        etl_sql="",
+        upstream_tables=[
+            "catalog_a.db_a.orders",
+            "catalog_b.db_b.orders",
+        ],
+        downstream_tables=[],
+        upstream_metric_groups={
+            "catalog_a.db_a.orders": {"atomic_metrics": ["amount"]},
+            "catalog_b.db_b.orders": {"atomic_metrics": ["quantity"]},
+        },
+    )
+    qualified = _inspection_result(
+        inferred_layer="DWS",
+        columns={
+            "derived_metrics": [
                 {
-                    "message": {
-                        "content": json.dumps(
-                            {
-                                "inferred_layer": "DWS",
-                                "table_type": "fact",
-                                "confidence": 0.9,
-                                "columns": {
-                                    "atomic_metrics": [],
-                                    "derived_metrics": [
-                                        {
-                                            "name": "total_amount",
-                                            "base_metric": "subtotal",
-                                            "base_metric_table": "order_item",
-                                            "expression": "SUM(subtotal)",
-                                        }
-                                    ],
-                                    "calculated_metrics": [],
-                                    "dimensions": [],
-                                    "others": [],
-                                },
-                            }
-                        )
-                    }
+                    "name": "total_amount",
+                    "base_metric": "amount",
+                    "base_metric_table": "catalog_a.db_a.orders",
                 }
             ]
         },
-        declared_layer="DWS",
     )
-    ctx = TableContext(
+    ambiguous = _inspection_result(
+        inferred_layer="DWS",
+        columns={
+            "derived_metrics": [
+                {
+                    "name": "total_amount",
+                    "base_metric": "amount",
+                    "base_metric_table": "orders",
+                }
+            ]
+        },
+    )
+    wrong_qualified = _inspection_result(
+        inferred_layer="DWS",
+        columns={
+            "derived_metrics": [
+                {
+                    "name": "total_amount",
+                    "base_metric": "amount",
+                    "base_metric_table": "wrong.db.orders",
+                }
+            ]
+        },
+    )
+
+    assert validate_metric_relationships(qualified, context) == {}
+    assert validate_metric_relationships(ambiguous, context) == {
+        "invalid_base_metric_tables": ["total_amount:orders"]
+    }
+    assert validate_metric_relationships(wrong_qualified, context) == {
+        "invalid_base_metric_tables": ["total_amount:wrong.db.orders"]
+    }
+
+
+def _assert_validate_metric_relationships_accepts_lineage_backed_raw_source():
+    result = _inspection_result(
+        inferred_layer="DWS",
+        columns={
+            "derived_metrics": [
+                {
+                    "name": "total_amount",
+                    "base_metric": "subtotal",
+                    "base_metric_table": "order_item",
+                    "expression": "SUM(subtotal)",
+                }
+            ]
+        },
+    )
+    context = TableContext(
         table_name="order_summary",
         layer="DWS",
         ddl="",
@@ -1460,7 +1487,7 @@ def _assert_validate_metric_relationships_accepts_lineage_backed_raw_source():
         ],
     )
 
-    assert validate_metric_relationships(result, ctx) == {}
+    assert validate_metric_relationships(result, context) == {}
 
 
 def _assert_validate_metric_relationships_flags_ambiguous_unqualified_base_metric():
@@ -1546,7 +1573,7 @@ def _assert_result_status_from_validation():
         "duplicate_columns": [],
         "missing_columns": ["etl_time"],
     }
-    assert result.status == "warning"
+    assert result.status == "blocked"
 
     result.validation["unknown_columns"] = ["ghost_amt"]
     assert result.status == "blocked"
@@ -1557,6 +1584,71 @@ def _assert_result_status_from_validation():
         "missing_columns": [],
     }
     assert result.status == "passed"
+
+
+@pytest.mark.parametrize(
+    "confidence",
+    [float("nan"), float("inf"), float("-inf"), -0.1, 1.1],
+)
+def test_inspect_result_rejects_non_finite_or_out_of_range_confidence(
+    confidence,
+):
+    result = _inspection_result(confidence=confidence)
+
+    assert result.confidence == 0.0
+    assert result.status == "blocked"
+
+
+def test_inspect_blocks_metric_write_when_ddl_columns_unavailable(
+    tmp_path,
+    monkeypatch,
+):
+    inspector = TableInspector(
+        api_key="test",
+        cache_file=tmp_path / "cache.json",
+        max_retries=1,
+    )
+    context = TableContext(
+        table_name="sales_detail",
+        layer="DWD",
+        ddl="",
+        etl_sql="SELECT * FROM source_detail",
+        upstream_tables=["source_detail"],
+        downstream_tables=[],
+    )
+    response = {
+        "inferred_layer": "DWD",
+        "table_type": "fact",
+        "confidence": 0.9,
+        "reasoning_steps": [],
+        "entities": [
+            {
+                "code": "SALE",
+                "type": "primary",
+                "key_columns": ["sale_id"],
+            }
+        ],
+        "columns": {
+            "atomic_metrics": [],
+            "derived_metrics": [],
+            "calculated_metrics": [],
+            "dimensions": [],
+            "others": [],
+        },
+    }
+
+    result, prompts = _inspect_with_responses(
+        inspector,
+        context,
+        [response],
+        monkeypatch,
+    )
+
+    assert len(prompts) == 1
+    assert result.status == "blocked"
+    assert result.validation["ddl_columns_unavailable"] == [
+        "无法从DDL建立字段集合，禁止覆盖指标分组"
+    ]
 
 
 def test_inspect_preserves_llm_metric_groups(tmp_path, monkeypatch):
@@ -1941,18 +2033,9 @@ def _assert_inspect_retries_validation_errors(tmp_path, monkeypatch):
         },
     ]
 
-    calls = []
-
-    def fake_api(prompt):
-        calls.append(prompt)
-        data = responses[len(calls) - 1]
-        return json.dumps(
-            {"choices": [{"message": {"content": json.dumps(data)}}]}
-        )
-
-    monkeypatch.setattr(inspector, "_call_api", fake_api)
-
-    result = inspector.inspect(ctx)
+    result, calls = _inspect_with_responses(
+        inspector, ctx, responses, monkeypatch
+    )
 
     assert len(calls) == 2
     assert "上次返回结果校验未通过" in calls[1]
@@ -2018,18 +2101,9 @@ def _assert_inspect_normalizes_convertible_time_periods_without_retry(
             },
         },
     ]
-    calls = []
-
-    def fake_api(prompt):
-        calls.append(prompt)
-        data = responses[len(calls) - 1]
-        return json.dumps(
-            {"choices": [{"message": {"content": json.dumps(data)}}]}
-        )
-
-    monkeypatch.setattr(inspector, "_call_api", fake_api)
-
-    result = inspector.inspect(ctx)
+    result, calls = _inspect_with_responses(
+        inspector, ctx, responses, monkeypatch
+    )
 
     assert len(calls) == 1
     assert result.status == "passed"
@@ -2393,18 +2467,9 @@ def _assert_inspect_retries_inconsistent_layer_table_type(
             },
         },
     ]
-    calls = []
-
-    def fake_api(prompt):
-        calls.append(prompt)
-        data = responses[len(calls) - 1]
-        return json.dumps(
-            {"choices": [{"message": {"content": json.dumps(data)}}]}
-        )
-
-    monkeypatch.setattr(inspector, "_call_api", fake_api)
-
-    result = inspector.inspect(ctx)
+    result, calls = _inspect_with_responses(
+        inspector, ctx, responses, monkeypatch
+    )
 
     assert len(calls) == 2
     assert "inconsistent_layer_table_types" in calls[1]
@@ -2422,7 +2487,10 @@ def _assert_inspect_retries_dwd_group_by_candidate(tmp_path, monkeypatch):
     ctx = TableContext(
         table_name="entity_daily_metrics",
         layer="DWD",
-        ddl="",
+        ddl=(
+            "CREATE TABLE entity_daily_metrics ("
+            "entity_id BIGINT, metric_date DATE, event_count BIGINT);"
+        ),
         etl_sql=(
             "SELECT entity_id, metric_date, COUNT(*) AS event_count "
             "FROM event_detail GROUP BY entity_id, metric_date"
@@ -2454,10 +2522,13 @@ def _assert_inspect_retries_dwd_group_by_candidate(tmp_path, monkeypatch):
             }
         ],
         "columns": {
-            "atomic_metrics": [],
+            "atomic_metrics": [{"name": "event_count"}],
             "derived_metrics": [],
             "calculated_metrics": [],
-            "dimensions": [],
+            "dimensions": [
+                {"name": "entity_id"},
+                {"name": "metric_date"},
+            ],
             "others": [],
         },
     }
@@ -2465,18 +2536,9 @@ def _assert_inspect_retries_dwd_group_by_candidate(tmp_path, monkeypatch):
         {**common, "inferred_layer": "DWD"},
         {**common, "inferred_layer": "DWS"},
     ]
-    calls = []
-
-    def fake_api(prompt):
-        calls.append(prompt)
-        data = responses[len(calls) - 1]
-        return json.dumps(
-            {"choices": [{"message": {"content": json.dumps(data)}}]}
-        )
-
-    monkeypatch.setattr(inspector, "_call_api", fake_api)
-
-    result = inspector.inspect(ctx)
+    result, calls = _inspect_with_responses(
+        inspector, ctx, responses, monkeypatch
+    )
 
     assert len(calls) == 2
     assert "inconsistent_layer_sql" in calls[1]
