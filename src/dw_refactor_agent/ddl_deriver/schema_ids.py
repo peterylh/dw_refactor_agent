@@ -451,6 +451,78 @@ def validate_project(project: str) -> List[IdentityIssue]:
     return sorted(issues, key=_issue_sort_key)
 
 
+def validate_table_defs(tables: dict, source: str) -> List[IdentityIssue]:
+    issues: List[IdentityIssue] = []
+    table_occurrences: List[Tuple[str, Path, int, str]] = []
+    column_occurrences: List[Tuple[str, Path, int, str]] = []
+    source_path = Path(source)
+    for table_name, table in sorted(tables.items()):
+        path = source_path / f"{table_name}.sql"
+        if not table.table_id:
+            issues.append(
+                IdentityIssue(
+                    "missing_table_id", path, "基线 DDL 缺少 table_id"
+                )
+            )
+        elif not _is_uuid4(table.table_id):
+            issues.append(
+                IdentityIssue(
+                    "invalid_table_id",
+                    path,
+                    "table_id 必须是规范 UUID4",
+                    value=table.table_id,
+                )
+            )
+        else:
+            table_occurrences.append(
+                (table.table_id.lower(), path, 0, table_name)
+            )
+        for column in table.columns:
+            if not column.column_id:
+                issues.append(
+                    IdentityIssue(
+                        "missing_column_id",
+                        path,
+                        "基线字段缺少 column_id",
+                        column_name=column.name,
+                    )
+                )
+            elif not _is_uuid4(column.column_id):
+                issues.append(
+                    IdentityIssue(
+                        "invalid_column_id",
+                        path,
+                        "column_id 必须是规范 UUID4",
+                        column_name=column.name,
+                        value=column.column_id,
+                    )
+                )
+            else:
+                column_occurrences.append(
+                    (
+                        column.column_id.lower(),
+                        path,
+                        0,
+                        column.name,
+                    )
+                )
+    issues.extend(
+        _duplicate_issues(
+            table_occurrences,
+            code="duplicate_table_id",
+            label="table_id",
+        )
+    )
+    issues.extend(
+        _duplicate_issues(
+            column_occurrences,
+            code="duplicate_column_id",
+            label="column_id",
+        )
+    )
+    return sorted(issues, key=_issue_sort_key)
+
+
 def require_valid_project(project: str) -> None:
     issues = validate_project(project)
     if issues:

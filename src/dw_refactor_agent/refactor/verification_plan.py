@@ -15,6 +15,11 @@ from dw_refactor_agent.ddl_deriver.ddl_deriver import (
     load_git_tables,
     load_tables_from_dir,
 )
+from dw_refactor_agent.ddl_deriver.schema_ids import (
+    SchemaIdentityError,
+    require_valid_project,
+    validate_table_defs,
+)
 from dw_refactor_agent.execution.model_config import (
     ExecutionConfigError,
     execution_config_for_model,
@@ -113,13 +118,19 @@ def derive_project_ddl_changes(
     repo_root: Path | None = None,
 ) -> list[dict]:
     """Derive DDL changes between a git base ref and the working tree."""
+    require_valid_project(project)
     repo = _project_repo_root(repo_root)
     old_tables = {}
     new_tables = {}
     for ddl_rel in _project_ddl_rels(project):
         old_tables.update(load_git_tables(repo, ddl_rel, base_ref))
         new_tables.update(load_tables_from_dir(repo / ddl_rel))
-    changes = derive_ddl_changes(old_tables, new_tables)
+    baseline_issues = validate_table_defs(
+        old_tables, f"git-baseline-{base_ref}"
+    )
+    if baseline_issues:
+        raise SchemaIdentityError(baseline_issues)
+    changes = derive_ddl_changes(old_tables, new_tables, legacy_identity=False)
     return changes_to_json(changes)["changes"]
 
 
