@@ -156,6 +156,12 @@ python -m dw_refactor_agent.refactor.run analyze --manifest warehouses/<project>
 没有 `execution_values` 的 sliced incremental 作业会在 shadow-run dry-run
 或真实执行阶段失败；工具不会默认使用当天日期或全局 driver value 兜底。
 
+`jobs_to_run` 只包含本次直接修改的可执行任务及其下游任务。未修改上游仍可
+出现在 `change_analysis.json` 的宽 `affected_scope` 中，但不会因此创建 QA 表
+或参与重算；shadow manifest 会将其数据读取路由到生产库。verification plan
+的最终锚点位于 `verification.anchor_tables`，旧 plan 不再兼容，相关 run 需要
+重新执行 `analyze`。
+
 sliced job 或无依赖 job 较多时，可显式开启 shadow-run 全局并发和
 mysql 会话批量复用：
 

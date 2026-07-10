@@ -240,9 +240,6 @@ def test_analyze_refreshes_current_analysis_diff_and_plan(
             "project": project,
             "project_db": "shop_dm",
             "qa_db": "shop_dm_qa",
-            "scope": {
-                "assessment_tables": ["dwd_order"],
-            },
             "baseline_ddl": {},
             "ddl_changes": [
                 {
@@ -472,18 +469,11 @@ def test_analyze_marks_empty_diff_assessment_not_applicable(
                 "model_tables": [],
                 "config_files": [],
             },
-            "scope": {
-                "direct_tables": [],
-                "downstream_tables": [],
-                "anchor_tables": [],
-                "assessment_tables": [],
-                "assessment_tasks": [],
-                "global_dimensions": [],
-            },
             "baseline_ddl": {},
             "ddl_changes": [],
             "jobs_to_run": [],
             "verification": {
+                "anchor_tables": [],
                 "checks": [],
                 "data_anchor_status": "not_required",
             },

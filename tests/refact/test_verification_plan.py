@@ -6,6 +6,11 @@ import pytest
 import dw_refactor_agent.config as config
 from dw_refactor_agent.ddl_deriver.ddl_deriver import ColumnDef, TableDef
 from dw_refactor_agent.ddl_deriver.schema_ids import SchemaIdentityError
+from dw_refactor_agent.execution.planner import ExecutionPlanner
+from dw_refactor_agent.refactor.shadow_manifest import (
+    compile_shadow_manifest,
+    manifest_summary,
+)
 from dw_refactor_agent.refactor.verification_plan import (
     build_verification_plan,
     derive_project_ddl_changes,
@@ -174,11 +179,19 @@ def _build_single_anchor_plan(
     return build_verification_plan(
         "demo",
         {
+            "changed_assets": {
+                "task_jobs": [table_name],
+                "ddl_tables": [],
+                "model_tables": [],
+                "config_files": [],
+            },
             "affected_scope": {
+                "direct_tables": [table_name],
+                "downstream_tables": [],
                 "assessment_tables": [table_name],
                 "assessment_tasks": [table_name],
                 "anchor_tables": [table_name],
-            }
+            },
         },
         lineage_data={
             "edges": [
@@ -285,8 +298,8 @@ def test_build_verification_plan_uses_baseline_ddl_changes_and_jobs(
             "config_files": ["demo/naming_config.yaml"],
         },
         "affected_scope": {
-            "direct_tables": ["dwd_order"],
-            "downstream_tables": ["ads_order"],
+            "direct_tables": ["dws_order"],
+            "downstream_tables": [],
             "assessment_tables": ["dws_order"],
             "assessment_tasks": ["dws_order"],
             "anchor_tables": ["dws_order"],
@@ -315,19 +328,12 @@ def test_build_verification_plan_uses_baseline_ddl_changes_and_jobs(
     assert "modified_jobs" not in plan
     assert "downstream_tables" not in plan
     assert "anchors" not in plan
+    assert "scope" not in plan
     assert plan["changes"] == {
         "modified_jobs": ["dws_order"],
         "ddl_tables": ["dws_order"],
         "model_tables": ["dws_order"],
         "config_files": ["demo/naming_config.yaml"],
-    }
-    assert plan["scope"] == {
-        "direct_tables": ["dwd_order"],
-        "downstream_tables": ["ads_order"],
-        "assessment_tables": ["dws_order"],
-        "assessment_tasks": ["dws_order"],
-        "anchor_tables": ["dws_order"],
-        "global_dimensions": [],
     }
     assert plan["baseline_ddl"] == {
         "dws_order": "CREATE TABLE demo_dm.dws_order (order_id BIGINT) ENGINE=OLAP;"
@@ -348,6 +354,7 @@ def test_build_verification_plan_uses_baseline_ddl_changes_and_jobs(
         }
     ]
     assert "checks" not in plan
+    assert plan["verification"]["anchor_tables"] == ["dws_order"]
     assert plan["verification"]["checks"] == [
         {"table": "dws_order", "method": "count"},
         {
@@ -393,7 +400,15 @@ def test_build_verification_plan_writes_row_compare_exclude_columns_from_config(
     plan = build_verification_plan(
         "demo",
         {
+            "changed_assets": {
+                "task_jobs": [],
+                "ddl_tables": [],
+                "model_tables": [],
+                "config_files": ["demo/warehouse.yaml"],
+            },
             "affected_scope": {
+                "direct_tables": [],
+                "downstream_tables": [],
                 "assessment_tables": [
                     "ads_full_audit",
                     "dws_customer",
@@ -404,7 +419,7 @@ def test_build_verification_plan_writes_row_compare_exclude_columns_from_config(
                     "dws_customer",
                     "dws_order",
                 ],
-            }
+            },
         },
     )
 
@@ -460,11 +475,19 @@ def test_build_verification_plan_requires_lineage_when_jobs_exist(
             build_verification_plan(
                 "demo",
                 {
+                    "changed_assets": {
+                        "task_jobs": ["dws_order"],
+                        "ddl_tables": [],
+                        "model_tables": [],
+                        "config_files": [],
+                    },
                     "affected_scope": {
+                        "direct_tables": ["dws_order"],
+                        "downstream_tables": [],
                         "assessment_tables": ["dws_order"],
                         "assessment_tasks": ["dws_order"],
                         "anchor_tables": ["dws_order"],
-                    }
+                    },
                 },
                 lineage_data=lineage_data,
             )
@@ -500,8 +523,15 @@ def test_build_verification_plan_preserves_empty_modified_jobs(
     plan = build_verification_plan(
         "demo",
         {
-            "changed_assets": {"task_jobs": []},
+            "changed_assets": {
+                "task_jobs": [],
+                "ddl_tables": [],
+                "model_tables": ["dws_order"],
+                "config_files": [],
+            },
             "affected_scope": {
+                "direct_tables": ["dws_order"],
+                "downstream_tables": [],
                 "assessment_tables": ["dws_order"],
                 "assessment_tasks": ["dws_order"],
                 "anchor_tables": ["dws_order"],
@@ -519,6 +549,36 @@ def test_build_verification_plan_preserves_empty_modified_jobs(
 
     assert plan["changes"]["modified_jobs"] == []
     assert [job["job"] for job in plan["jobs_to_run"]] == ["dws_order"]
+
+
+def test_build_verification_plan_requires_changed_assets(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setitem(
+        config.PROJECT_CONFIG,
+        "demo",
+        {
+            "dir": "demo",
+            "db": "demo_dm",
+            "qa_db": "demo_dm_qa",
+            "catalog": "internal",
+        },
+    )
+
+    with pytest.raises(ValueError, match="changed_assets"):
+        build_verification_plan(
+            "demo",
+            {
+                "affected_scope": {
+                    "direct_tables": [],
+                    "downstream_tables": [],
+                    "assessment_tables": [],
+                    "assessment_tasks": [],
+                    "anchor_tables": [],
+                }
+            },
+            repo_root=tmp_path,
+        )
 
 
 def test_build_verification_plan_self_anchors_sql_only_task_without_downstream(
@@ -574,7 +634,7 @@ def test_build_verification_plan_self_anchors_sql_only_task_without_downstream(
         },
     )
 
-    assert plan["scope"]["anchor_tables"] == ["dws_terminal"]
+    assert plan["verification"]["anchor_tables"] == ["dws_terminal"]
     assert plan["verification"]["data_anchor_status"] == "self_anchor_warning"
     assert plan["verification"]["self_anchor_tables"] == ["dws_terminal"]
     assert "fallback self-anchor" in plan["verification"]["data_anchor_reason"]
@@ -663,7 +723,7 @@ def test_build_verification_plan_does_not_self_anchor_when_downstream_anchor_exi
         },
     )
 
-    assert plan["scope"]["anchor_tables"] == ["ads_final"]
+    assert plan["verification"]["anchor_tables"] == ["ads_final"]
     assert plan["verification"]["data_anchor_status"] == "ready"
     assert "self_anchor_tables" not in plan["verification"]
     assert plan["verification"]["checks"] == [
@@ -754,7 +814,7 @@ def test_build_verification_plan_blocks_ads_ddl_changes(tmp_path, monkeypatch):
         },
     )
 
-    assert plan["scope"]["anchor_tables"] == []
+    assert plan["verification"]["anchor_tables"] == []
     assert plan["verification"]["schema_anchor_status"] == "blocked"
     assert plan["verification"]["blocked_schema_tables"] == ["ads_final"]
     assert (
@@ -818,7 +878,7 @@ def test_build_verification_plan_marks_no_data_anchor_for_terminal_ddl_change(
         },
     )
 
-    assert plan["scope"]["anchor_tables"] == []
+    assert plan["verification"]["anchor_tables"] == []
     assert plan["verification"]["checks"] == []
     assert plan["verification"]["data_anchor_status"] == "none"
     assert (
@@ -856,11 +916,19 @@ def test_build_verification_plan_rejects_cyclic_job_lineage(
         build_verification_plan(
             "demo",
             {
+                "changed_assets": {
+                    "task_jobs": ["dwd_order"],
+                    "ddl_tables": [],
+                    "model_tables": [],
+                    "config_files": [],
+                },
                 "affected_scope": {
+                    "direct_tables": ["dwd_order"],
+                    "downstream_tables": ["dws_order"],
                     "assessment_tables": ["dwd_order", "dws_order"],
                     "assessment_tasks": ["dwd_order", "dws_order"],
                     "anchor_tables": ["dws_order"],
-                }
+                },
             },
             lineage_data={
                 "edges": [
@@ -924,11 +992,19 @@ PROPERTIES ("replication_num" = "1");"""
     plan = build_verification_plan(
         "demo",
         {
+            "changed_assets": {
+                "task_jobs": ["dws_order"],
+                "ddl_tables": [],
+                "model_tables": [],
+                "config_files": [],
+            },
             "affected_scope": {
+                "direct_tables": ["dws_order"],
+                "downstream_tables": [],
                 "assessment_tables": ["dws_order"],
                 "assessment_tasks": ["dws_order"],
                 "anchor_tables": ["dws_order"],
-            }
+            },
         },
         base_ref="abc123",
         repo_root=tmp_path,
@@ -1027,7 +1103,15 @@ execution:
     plan = build_verification_plan(
         "demo",
         {
+            "changed_assets": {
+                "task_jobs": ["dws_store_sales_daily"],
+                "ddl_tables": [],
+                "model_tables": [],
+                "config_files": [],
+            },
             "affected_scope": {
+                "direct_tables": ["dws_store_sales_daily"],
+                "downstream_tables": ["ads_store_performance"],
                 "assessment_tables": [
                     "dws_store_sales_daily",
                     "ads_store_performance",
@@ -1037,7 +1121,7 @@ execution:
                     "ads_store_performance",
                 ],
                 "anchor_tables": ["ads_store_performance"],
-            }
+            },
         },
         lineage_data={
             "edges": [
@@ -1072,6 +1156,183 @@ execution:
     assert jobs["ads_store_performance"]["execution_values"] == ["2024-06-01"]
     assert "refresh_parameter" not in jobs["dws_store_sales_daily"]
     assert "refresh_time_period" not in jobs["dws_store_sales_daily"]
+
+    config.clear_model_metadata_cache()
+
+
+@pytest.mark.parametrize("use_base_ref", [False, True])
+def test_build_verification_plan_excludes_unchanged_upstream_from_jobs(
+    tmp_path, monkeypatch, use_base_ref
+):
+    project_dir = tmp_path / "demo"
+    for asset_dir in ("mid", "ads"):
+        (project_dir / asset_dir / "tasks").mkdir(parents=True)
+        (project_dir / asset_dir / "models").mkdir()
+        (project_dir / asset_dir / "ddl").mkdir()
+    (project_dir / "warehouse.yaml").write_text(
+        """name: demo
+catalog: internal
+database: demo_dm
+qa_database: demo_dm_qa
+execution:
+  default_slice:
+    param: etl_date
+    column: stat_date
+    period: D
+""",
+        encoding="utf-8",
+    )
+
+    def write_job(asset_dir, name, layer, period="D"):
+        (project_dir / asset_dir / "models" / f"{name}.yaml").write_text(
+            f"""version: 2
+name: {name}
+layer: {layer}
+execution:
+  materialized: incremental
+  slice:
+    param: etl_date
+    column: stat_date
+    period: {period}
+""",
+            encoding="utf-8",
+        )
+        (project_dir / asset_dir / "tasks" / f"{name}.sql").write_text(
+            f"INSERT INTO demo_dm.{name} SELECT @etl_date;",
+            encoding="utf-8",
+        )
+        (project_dir / asset_dir / "ddl" / f"{name}.sql").write_text(
+            f"CREATE TABLE demo_dm.{name} (id BIGINT) ENGINE=OLAP;",
+            encoding="utf-8",
+        )
+
+    write_job("mid", "dwd_order_detail", "DWD")
+    write_job("mid", "dws_category_sales_daily", "DWS")
+    write_job("ads", "ads_store_performance", "ADS", "M")
+    (
+        project_dir / "mid" / "tasks" / "dws_category_sales_daily.sql"
+    ).write_text(
+        "INSERT INTO demo_dm.dws_category_sales_daily "
+        "SELECT * FROM demo_dm.dwd_order_detail "
+        "WHERE stat_date = @etl_date;",
+        encoding="utf-8",
+    )
+    (project_dir / "ads" / "tasks" / "ads_store_performance.sql").write_text(
+        "INSERT INTO demo_dm.ads_store_performance "
+        "SELECT * FROM demo_dm.dws_category_sales_daily "
+        "WHERE stat_date = @etl_date;",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setitem(
+        config.PROJECT_CONFIG,
+        "demo",
+        config.core.load_warehouse_config(
+            project_dir / "warehouse.yaml",
+            project_root=tmp_path,
+        ),
+    )
+    config.clear_model_metadata_cache()
+    if use_base_ref:
+        monkeypatch.setattr(
+            "dw_refactor_agent.refactor.verification_plan.load_baseline_ddl",
+            lambda project, base_ref, repo_root=None: {
+                table: (
+                    f"CREATE TABLE demo_dm.{table} (id BIGINT) ENGINE=OLAP;"
+                )
+                for table in (
+                    "dwd_order_detail",
+                    "dws_category_sales_daily",
+                    "ads_store_performance",
+                )
+            },
+        )
+        monkeypatch.setattr(
+            "dw_refactor_agent.refactor.verification_plan.derive_project_ddl_changes",
+            lambda project, base_ref, repo_root=None: [],
+        )
+
+    plan = build_verification_plan(
+        "demo",
+        {
+            "changed_assets": {
+                "task_jobs": ["dws_category_sales_daily"],
+                "ddl_tables": [],
+                "model_tables": [],
+                "config_files": [],
+            },
+            "affected_scope": {
+                "direct_tables": ["dws_category_sales_daily"],
+                "downstream_tables": ["ads_store_performance"],
+                "assessment_tables": [
+                    "dwd_order_detail",
+                    "dws_category_sales_daily",
+                    "ads_store_performance",
+                ],
+                "assessment_tasks": [
+                    "dwd_order_detail",
+                    "dws_category_sales_daily",
+                    "ads_store_performance",
+                ],
+                "anchor_tables": ["ads_store_performance"],
+            },
+        },
+        base_ref="abc123" if use_base_ref else None,
+        repo_root=tmp_path,
+        lineage_data={
+            "edges": [
+                {
+                    "source": {
+                        "type": "column",
+                        "id": "dwd_order_detail.order_id",
+                    },
+                    "target": {
+                        "type": "column",
+                        "id": "dws_category_sales_daily.order_id",
+                    },
+                },
+                {
+                    "source": {
+                        "type": "column",
+                        "id": "dws_category_sales_daily.store_id",
+                    },
+                    "target": {
+                        "type": "column",
+                        "id": "ads_store_performance.store_id",
+                    },
+                },
+            ]
+        },
+        partition="2024-06-15",
+    )
+
+    jobs = {job["job"]: job for job in plan["jobs_to_run"]}
+    assert sorted(jobs) == [
+        "ads_store_performance",
+        "dws_category_sales_daily",
+    ]
+    assert len(jobs["dws_category_sales_daily"]["execution_values"]) == 30
+    assert jobs["ads_store_performance"]["execution_values"] == ["2024-06-01"]
+    assert sorted(plan["baseline_ddl"]) == [
+        "ads_store_performance",
+        "dws_category_sales_daily",
+    ]
+    summary = manifest_summary(
+        compile_shadow_manifest(
+            plan,
+            tmp_path,
+            ExecutionPlanner("demo", project_root=tmp_path),
+        )
+    )
+    assert summary["jobs"]["dws_category_sales_daily"]["routes"]["data_read"][
+        "dwd_order_detail"
+    ] == {
+        "database": "demo_dm",
+        "table": "dwd_order_detail",
+    }
+    assert "dwd_order_detail" not in summary["producers"]
+    assert summary["blockers"] == []
 
     config.clear_model_metadata_cache()
 
@@ -1138,7 +1399,28 @@ execution:
     plan = build_verification_plan(
         "demo",
         {
+            "changed_assets": {
+                "task_jobs": [
+                    "dwd_order_detail",
+                    "dwd_inventory",
+                    "dwd_customer",
+                ],
+                "ddl_tables": [],
+                "model_tables": [],
+                "config_files": [],
+            },
             "affected_scope": {
+                "direct_tables": [
+                    "dwd_order_detail",
+                    "dwd_inventory",
+                    "dwd_customer",
+                ],
+                "downstream_tables": [
+                    "dws_category_sales_monthly",
+                    "ads_category_daily_report",
+                    "ads_inventory_alert",
+                    "ads_store_performance",
+                ],
                 "assessment_tables": [
                     "dwd_order_detail",
                     "dws_category_sales_monthly",
@@ -1162,7 +1444,7 @@ execution:
                     "ads_inventory_alert",
                     "ads_store_performance",
                 ],
-            }
+            },
         },
         lineage_data={
             "edges": [
@@ -1268,11 +1550,19 @@ execution:
     plan = build_verification_plan(
         "demo",
         {
+            "changed_assets": {
+                "task_jobs": ["ads_hourly"],
+                "ddl_tables": [],
+                "model_tables": [],
+                "config_files": [],
+            },
             "affected_scope": {
+                "direct_tables": ["ads_hourly"],
+                "downstream_tables": [],
                 "assessment_tables": ["ads_hourly"],
                 "assessment_tasks": ["ads_hourly"],
                 "anchor_tables": ["ads_hourly"],
-            }
+            },
         },
         lineage_data={
             "edges": [
@@ -1361,7 +1651,15 @@ grain:
     plan = build_verification_plan(
         "demo",
         {
+            "changed_assets": {
+                "task_jobs": ["dws_store_sales_daily"],
+                "ddl_tables": [],
+                "model_tables": [],
+                "config_files": [],
+            },
             "affected_scope": {
+                "direct_tables": ["dws_store_sales_daily"],
+                "downstream_tables": ["ads_store_performance"],
                 "assessment_tables": [
                     "dws_store_sales_daily",
                     "ads_store_performance",
@@ -1371,7 +1669,7 @@ grain:
                     "ads_store_performance",
                 ],
                 "anchor_tables": ["ads_store_performance"],
-            }
+            },
         },
         lineage_data={
             "edges": [
@@ -1458,6 +1756,78 @@ def test_build_verification_plan_uses_full_table_compare_without_time_grain(
         {"table": "ads_dashboard", "method": "count"},
         {"table": "ads_dashboard", "method": "row_compare"},
     ]
+
+    config.clear_model_metadata_cache()
+
+
+def test_build_verification_plan_allows_ddl_only_table_without_lineage(
+    tmp_path, monkeypatch
+):
+    project_dir = tmp_path / "demo"
+    (project_dir / "mid" / "models").mkdir(parents=True)
+    (project_dir / "mid" / "models" / "dws_order.yaml").write_text(
+        "version: 2\nname: dws_order\nlayer: DWS\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setitem(
+        config.PROJECT_CONFIG,
+        "demo",
+        {
+            "dir": "demo",
+            "db": "demo_dm",
+            "qa_db": "demo_dm_qa",
+            "catalog": "internal",
+        },
+    )
+    config.clear_model_metadata_cache()
+    monkeypatch.setattr(
+        "dw_refactor_agent.refactor.verification_plan.load_baseline_ddl",
+        lambda project, base_ref, repo_root=None: {
+            "dws_order": (
+                "CREATE TABLE demo_dm.dws_order (order_id BIGINT) ENGINE=OLAP;"
+            )
+        },
+    )
+    monkeypatch.setattr(
+        "dw_refactor_agent.refactor.verification_plan.derive_project_ddl_changes",
+        lambda project, base_ref, repo_root=None: [
+            {
+                "change_type": "ALTER",
+                "table_name": "demo_dm.dws_order",
+                "sql": (
+                    "ALTER TABLE demo_dm.dws_order "
+                    "ADD COLUMN amount DECIMAL(10,2);"
+                ),
+            }
+        ],
+    )
+
+    plan = build_verification_plan(
+        "demo",
+        {
+            "changed_assets": {
+                "task_jobs": [],
+                "ddl_tables": ["dws_order"],
+                "model_tables": [],
+                "config_files": [],
+            },
+            "affected_scope": {
+                "direct_tables": ["dws_order"],
+                "downstream_tables": [],
+                "assessment_tables": ["dws_order"],
+                "assessment_tasks": [],
+                "anchor_tables": [],
+            },
+        },
+        base_ref="abc123",
+        repo_root=tmp_path,
+        lineage_data={},
+    )
+
+    assert plan["jobs_to_run"] == []
+    assert sorted(plan["baseline_ddl"]) == ["dws_order"]
+    assert plan["ddl_changes"][0]["table_name"] == "demo_dm.dws_order"
 
     config.clear_model_metadata_cache()
 
@@ -1600,7 +1970,15 @@ def test_build_verification_plan_orders_jobs_topologically(
     plan = build_verification_plan(
         "demo",
         {
+            "changed_assets": {
+                "task_jobs": ["dwd_order"],
+                "ddl_tables": [],
+                "model_tables": [],
+                "config_files": [],
+            },
             "affected_scope": {
+                "direct_tables": ["dwd_order"],
+                "downstream_tables": ["dws_order", "ads_order"],
                 "assessment_tables": [
                     "ads_order",
                     "dws_order",
@@ -1612,7 +1990,7 @@ def test_build_verification_plan_orders_jobs_topologically(
                     "dwd_order",
                 ],
                 "anchor_tables": ["ads_order"],
-            }
+            },
         },
         lineage_data={
             "edges": [
