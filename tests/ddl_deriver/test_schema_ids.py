@@ -198,6 +198,33 @@ def test_validate_project_accepts_complete_unique_ids(tmp_path, monkeypatch):
     assert validate_project("demo") == []
 
 
+def test_validate_and_parse_accept_uppercase_marker_names(
+    tmp_path, monkeypatch
+):
+    ddl_dir = _configure_project(tmp_path, monkeypatch)
+    path = ddl_dir / "dwd_order.sql"
+    text = _ddl(
+        table_id=TABLE_ID,
+        first_column_id=FIRST_COLUMN_ID,
+        second_column_id=SECOND_COLUMN_ID,
+    )
+    path.write_text(
+        text.replace("-- table_id:", "-- TABLE_ID:").replace(
+            "-- column_id:", "-- COLUMN_ID:"
+        ),
+        encoding="utf-8",
+    )
+
+    assert validate_project("demo") == []
+    table = parse_create_table(path.read_text(encoding="utf-8"))
+    assert table is not None
+    assert table.table_id == TABLE_ID
+    assert [column.column_id for column in table.columns] == [
+        FIRST_COLUMN_ID,
+        SECOND_COLUMN_ID,
+    ]
+
+
 def test_init_project_identifies_every_managed_ddl_file(tmp_path, monkeypatch):
     ddl_dir = _configure_project(tmp_path, monkeypatch)
     (ddl_dir / "dwd_order.sql").write_text(_ddl(), encoding="utf-8")
@@ -267,7 +294,7 @@ def test_init_project_replaces_invalid_table_ids_only_when_explicit(
     tmp_path, monkeypatch
 ):
     ddl_dir = _configure_project(tmp_path, monkeypatch)
-    invalid_id = "not-a-uuid"
+    invalid_id = "not a uuid"
     path = ddl_dir / "dwd_order.sql"
     path.write_text(_ddl(table_id=invalid_id), encoding="utf-8")
 
@@ -319,7 +346,7 @@ def test_validate_project_rejects_multiple_create_tables(
         table_id="1db7309f-1f9e-4393-807c-7d836ea25727",
         first_column_id="3d8b5422-027b-4d15-9db3-2d50e83bbef8",
         second_column_id="ffdf6876-6258-46b3-a35a-2f49718260df",
-    )
+    ).replace("CREATE TABLE", "CREATE /* second table */ TABLE")
     (ddl_dir / "combined.sql").write_text(
         first + "\n" + second, encoding="utf-8"
     )

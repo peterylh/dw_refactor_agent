@@ -37,6 +37,7 @@ if str(_src_root) not in sys.path:
 import sqlglot
 from sqlglot import exp
 from sqlglot.errors import ErrorLevel
+from sqlglot.tokens import TokenType
 
 from dw_refactor_agent.config import PROJECT_CONFIG, TEXT_ENCODING
 from dw_refactor_agent.sql.doris import (
@@ -226,9 +227,21 @@ class AlterTable(DDLChange):
 # DDL 解析
 # ============================================================
 
-# 正则: 匹配 -- table_id: <uuid>
-TABLE_ID_RE = re.compile(r"--[ \t]*table_id:[ \t]*([0-9a-fA-F\-]{36})[ \t]*")
-COLUMN_ID_RE = re.compile(r"\bcolumn_id:\s*([0-9a-fA-F\-]{36})\b")
+# Schema identity markers are standalone SQL comment lines. Capture the whole
+# value so validation and repair also see malformed multi-token values.
+TABLE_ID_MARKER_RE = re.compile(
+    r"^[ \t]*--[ \t]*table_id[ \t]*:[ \t]*(?P<value>[^\r\n]*?)[ \t]*(?=\r?$)",
+    re.IGNORECASE | re.MULTILINE,
+)
+COLUMN_ID_MARKER_RE = re.compile(
+    r"^[ \t]*--[ \t]*column_id[ \t]*:[ \t]*(?P<value>[^\r\n]*?)[ \t]*(?=\r?$)",
+    re.IGNORECASE | re.MULTILINE,
+)
+_COLUMN_ID_COMMENT_RE = re.compile(
+    r"^[ \t]*(?:--[ \t]*)?column_id[ \t]*:[ \t]*(?P<value>.*?)[ \t]*$",
+    re.IGNORECASE,
+)
+_UUID_SHAPE_RE = re.compile(r"[0-9a-fA-F\-]{36}")
 
 
 def normalize_schema_id(value: str) -> str:
@@ -236,17 +249,31 @@ def normalize_schema_id(value: str) -> str:
     return str(value or "").lower()
 
 
+def schema_id_marker_value(match) -> str:
+    return normalize_schema_id(match.group("value").strip())
+
+
+def _parsed_schema_id(value: str) -> str:
+    canonical = normalize_schema_id(value.strip())
+    return canonical if _UUID_SHAPE_RE.fullmatch(canonical) else ""
+
+
 def extract_table_id(sql_text: str) -> str:
     """从 DDL 文本中提取 table_id UUID."""
-    m = TABLE_ID_RE.search(sql_text)
-    return normalize_schema_id(m.group(1)) if m else ""
+    markers = list(TABLE_ID_MARKER_RE.finditer(sql_text))
+    return (
+        _parsed_schema_id(schema_id_marker_value(markers[0]))
+        if len(markers) == 1
+        else ""
+    )
 
 
 def inject_table_id(sql_text: str, table_id: str) -> str:
     """在 DDL 文本中注入或替换 table_id 注释行。"""
     line = f"-- table_id: {table_id}"
-    if TABLE_ID_RE.search(sql_text):
-        return TABLE_ID_RE.sub(line, sql_text)
+    marker = TABLE_ID_MARKER_RE.search(sql_text)
+    if marker:
+        return sql_text[: marker.start()] + line + sql_text[marker.end() :]
     # 插在第一行之后
     idx = sql_text.find("\n")
     if idx == -1:
@@ -262,8 +289,64 @@ def extract_column_id(col_node: exp.ColumnDef) -> str:
     comments = getattr(col_node.this, "comments", None) or []
     matches = []
     for comment in comments:
-        matches.extend(COLUMN_ID_RE.findall(str(comment)))
-    return normalize_schema_id(matches[0]) if len(matches) == 1 else ""
+        match = _COLUMN_ID_COMMENT_RE.fullmatch(str(comment))
+        if match:
+            matches.append(schema_id_marker_value(match))
+    return _parsed_schema_id(matches[0]) if len(matches) == 1 else ""
+
+
+def count_create_table_statements(sql_text: str) -> int:
+    try:
+        text = str(sql_text or "")
+        tokens = sqlglot.Tokenizer(dialect="doris").tokenize(text)
+    except Exception:
+        return 0
+
+    segments = []
+    start = 0
+    for token in tokens:
+        if token.token_type != TokenType.SEMICOLON:
+            continue
+        segments.append(text[start : token.end + 1])
+        start = token.end + 1
+    if text[start:].strip():
+        segments.append(text[start:])
+
+    count = 0
+    for segment in segments:
+        try:
+            statements = sqlglot.parse(
+                normalize_create_table_for_sqlglot(segment),
+                dialect="doris",
+                error_level=ErrorLevel.IGNORE,
+            )
+        except Exception:
+            continue
+        count += sum(
+            1
+            for statement in statements
+            if isinstance(statement, exp.Create)
+            and isinstance(statement.this, exp.Schema)
+        )
+    return count
+
+
+def first_create_table_offset(sql_text: str) -> int:
+    try:
+        tokens = sqlglot.Tokenizer(dialect="doris").tokenize(
+            str(sql_text or "")
+        )
+    except Exception:
+        return -1
+    for index, token in enumerate(tokens):
+        if token.token_type != TokenType.CREATE:
+            continue
+        for following in tokens[index + 1 :]:
+            if following.token_type == TokenType.TABLE:
+                return token.start
+            if following.token_type == TokenType.SEMICOLON:
+                break
+    return -1
 
 
 def parse_column_def(col_node: exp.ColumnDef) -> Optional[ColumnDef]:
@@ -764,6 +847,22 @@ def _column_ids_by_name(columns: List[ColumnDef], side: str) -> dict:
     return result
 
 
+def _validate_global_column_ids(tables: dict, side: str) -> None:
+    by_id = {}
+    for table_name, table in sorted(tables.items()):
+        for column in table.columns:
+            column_id = normalize_schema_id(column.column_id)
+            if not column_id:
+                continue
+            owner = f"{table_name}.{column.name}"
+            if column_id in by_id:
+                raise ValueError(
+                    f"{side} column_id 重复: {column_id}: "
+                    f"{by_id[column_id]}, {owner}"
+                )
+            by_id[column_id] = owner
+
+
 def derive_ddl_changes(
     old_tables: dict,
     new_tables: dict,
@@ -786,6 +885,8 @@ def derive_ddl_changes(
     """
     old_ids = _table_ids_by_name(old_tables, "old")
     new_ids = _table_ids_by_name(new_tables, "new")
+    _validate_global_column_ids(old_tables, "old")
+    _validate_global_column_ids(new_tables, "new")
     old_names = set(old_tables.keys())
     new_names = set(new_tables.keys())
 

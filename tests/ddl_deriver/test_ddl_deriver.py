@@ -1553,6 +1553,30 @@ def test_derive_rejects_duplicate_in_memory_table_ids(duplicate_side):
         derive_ddl_changes(old_tables, new_tables)
 
 
+@pytest.mark.parametrize("duplicate_side", ["old", "new"])
+def test_derive_rejects_global_duplicate_in_memory_column_ids(duplicate_side):
+    column_id = "6bfa89c0-1e30-4f92-a25e-b5a39ab94880"
+    tables = {
+        "first": TableDef(
+            "demo.first",
+            "first",
+            columns=[ColumnDef("first_id", "BIGINT", column_id=column_id)],
+        ),
+        "second": TableDef(
+            "demo.second",
+            "second",
+            columns=[
+                ColumnDef("second_id", "BIGINT", column_id=column_id.upper())
+            ],
+        ),
+    }
+    old_tables = tables if duplicate_side == "old" else {}
+    new_tables = tables if duplicate_side == "new" else {}
+
+    with pytest.raises(ValueError, match=f"{duplicate_side}.*column_id.*重复"):
+        derive_ddl_changes(old_tables, new_tables)
+
+
 # ============================================================
 # 9. UUID 表唯一标识测试
 # ============================================================

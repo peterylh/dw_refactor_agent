@@ -10,21 +10,14 @@ from typing import Dict, List, Optional, Sequence, Tuple
 import dw_refactor_agent.config as config
 
 from .ddl_deriver import (
+    COLUMN_ID_MARKER_RE,
+    TABLE_ID_MARKER_RE,
+    count_create_table_statements,
+    first_create_table_offset,
     inject_table_id,
     normalize_schema_id,
     parse_create_table,
-)
-
-_TABLE_MARKER_RE = re.compile(
-    r"^[ \t]*--[ \t]*table_id:[ \t]*(?P<value>\S*)[ \t]*(?:\r?\n|$)",
-    re.IGNORECASE | re.MULTILINE,
-)
-_COLUMN_MARKER_RE = re.compile(
-    r"^[ \t]*--[ \t]*column_id:[ \t]*(?P<value>\S*)[ \t]*(?:\r?\n|$)",
-    re.IGNORECASE | re.MULTILINE,
-)
-_CREATE_TABLE_LINE_RE = re.compile(
-    r"^[ \t]*CREATE\s+TABLE\b", re.IGNORECASE | re.MULTILINE
+    schema_id_marker_value,
 )
 
 
@@ -106,9 +99,9 @@ def _column_markers_before(
             continue
         if not stripped.startswith("--"):
             break
-        match = _COLUMN_MARKER_RE.search(lines[index])
+        match = COLUMN_ID_MARKER_RE.search(lines[index])
         if match:
-            markers.append((match.group("value"), index))
+            markers.append((schema_id_marker_value(match), index))
         index -= 1
     markers.reverse()
     return markers
@@ -119,7 +112,7 @@ def _read_parsed_file(path: Path):
     table = parse_create_table(text)
     if table is None:
         raise ValueError(f"DDL 无法解析: {path}")
-    if len(list(_CREATE_TABLE_LINE_RE.finditer(text))) != 1:
+    if count_create_table_statements(text) != 1:
         raise SchemaIdentityError(
             [
                 IdentityIssue(
@@ -146,7 +139,7 @@ def _read_parsed_file(path: Path):
 def _existing_marker_errors(path: Path, text: str, table, column_lines):
     issues: List[IdentityIssue] = []
     lines = text.splitlines(keepends=True)
-    table_markers = list(_TABLE_MARKER_RE.finditer(text))
+    table_markers = list(TABLE_ID_MARKER_RE.finditer(text))
     if len(table_markers) > 1:
         issues.append(
             IdentityIssue(
@@ -157,8 +150,8 @@ def _existing_marker_errors(path: Path, text: str, table, column_lines):
         )
     elif table_markers:
         marker = table_markers[0]
-        create_match = _CREATE_TABLE_LINE_RE.search(text)
-        if create_match is not None and marker.start() > create_match.start():
+        create_offset = first_create_table_offset(text)
+        if create_offset >= 0 and marker.start() > create_offset:
             issues.append(
                 IdentityIssue(
                     "orphan_table_id",
@@ -167,13 +160,14 @@ def _existing_marker_errors(path: Path, text: str, table, column_lines):
                     line=_line_number(text, marker.start()),
                 )
             )
-        if not _is_uuid4(marker.group("value")):
+        marker_value = schema_id_marker_value(marker)
+        if not _is_uuid4(marker_value):
             issues.append(
                 IdentityIssue(
                     "invalid_table_id",
                     path,
                     "table_id 必须是规范 UUID4",
-                    value=marker.group("value"),
+                    value=marker_value,
                 )
             )
 
@@ -204,7 +198,7 @@ def _existing_marker_errors(path: Path, text: str, table, column_lines):
 
     for index, line in enumerate(lines):
         if (
-            _COLUMN_MARKER_RE.search(line)
+            COLUMN_ID_MARKER_RE.search(line)
             and index not in attached_marker_lines
         ):
             issues.append(
@@ -258,8 +252,8 @@ def _insert_column_ids(
 
 
 def _replace_invalid_table_marker(text: str, table_id: str) -> Optional[str]:
-    markers = list(_TABLE_MARKER_RE.finditer(text))
-    if len(markers) != 1 or _is_uuid4(markers[0].group("value")):
+    markers = list(TABLE_ID_MARKER_RE.finditer(text))
+    if len(markers) != 1 or _is_uuid4(schema_id_marker_value(markers[0])):
         return None
     start, end = markers[0].span("value")
     return text[:start] + table_id + text[end:]
@@ -399,10 +393,7 @@ def _scan_file(path: Path, require_complete: bool) -> _FileScan:
         if require_complete
         else []
     )
-    if (
-        require_complete
-        and len(list(_CREATE_TABLE_LINE_RE.finditer(text))) != 1
-    ):
+    if require_complete and count_create_table_statements(text) != 1:
         issues.append(
             IdentityIssue(
                 "multiple_create_tables",
@@ -414,13 +405,13 @@ def _scan_file(path: Path, require_complete: bool) -> _FileScan:
     table_occurrences: List[Tuple[str, Path, int, str]] = []
     column_occurrences: List[Tuple[str, Path, int, str]] = []
 
-    table_markers = list(_TABLE_MARKER_RE.finditer(text))
+    table_markers = list(TABLE_ID_MARKER_RE.finditer(text))
     if not table_markers and require_complete:
         issues.append(
             IdentityIssue("missing_table_id", target, "受管 DDL 缺少 table_id")
         )
     for marker in table_markers:
-        value = marker.group("value")
+        value = schema_id_marker_value(marker)
         if _is_uuid4(value):
             table_occurrences.append(
                 (
