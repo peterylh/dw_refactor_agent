@@ -222,13 +222,17 @@ python -m dw_refactor_agent.refactor.run compare --manifest warehouses/<project>
 
 - `changes`：本次变更入口，例如 `modified_jobs`、`ddl_tables`、`model_tables`
   与 `config_files`
-- `scope`：由变更入口推导出的验证范围，例如 `direct_tables`、`downstream_tables`、
-  `assessment_tables`、`assessment_tasks` 与 `anchor_tables`
+- `analysis/change_analysis.json` 中的 `affected_scope`：由变更入口推导出的宽影响范围，
+  包含 `direct_tables`、`downstream_tables`、`assessment_tables`、
+  `assessment_tasks` 与候选 `anchor_tables`；该范围用于评估和验证计划推导，
+  不直接等同于待执行作业
 - `baseline_ddl`：merge-base 的完整 DDL（已剥离 INSERT）
 - `ddl_changes`：由 `ddl_deriver` 推导的 DDL 变更
 - `jobs_to_run`：按拓扑排序后的待执行作业；对配置了 `execution.slice`
   或项目 `execution.default_slice` 的增量作业，`analyze --partition` 会写入
-  `execution_values`，供 shadow-run 逐分区重放
+  `execution_values`，供 shadow-run 逐分区重放；作业只从 `direct_tables` 和
+  `downstream_tables` 中选择，未修改的上游即使属于宽评估范围也不会执行
+- `verification.anchor_tables`：verification planner 最终选择的验证锚点表
 - `verification.compare_anchors`：compare 使用的锚点输入，包含锚点表的时间列、
   时间粒度与锚点时间值；缺少合理时间粒度时会降级为全表 compare 并输出 warning
 - `verification.checks`：自动配置的校验项，包含表名、校验方法；`row_compare`

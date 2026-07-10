@@ -433,15 +433,9 @@ def _check_with_compare_anchor(check: dict, verification: dict) -> dict:
     return resolved
 
 
-def _plan_scope(plan: dict) -> dict:
-    return plan.get("scope") or plan.get("affected_scope") or {}
-
-
 def _plan_anchor_tables(plan: dict) -> list:
-    anchors = plan.get("anchors")
-    if anchors is not None:
-        return list(anchors)
-    return list((_plan_scope(plan).get("anchor_tables") or []))
+    verification = plan.get("verification") or {}
+    return list(verification.get("anchor_tables") or [])
 
 
 def _rewrite_db_prefix(value: str, prod_db: str, qa_db: str) -> str:

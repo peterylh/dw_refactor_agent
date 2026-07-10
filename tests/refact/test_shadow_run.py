@@ -667,16 +667,18 @@ def test_dry_run_omits_where_for_unpartitioned_checks(capsys):
     assert "[row_compare] shop_dm_qa.ads_sales_dashboard" in output
 
 
-def test_dry_run_prints_anchor_tables_from_scope(capsys):
+def test_dry_run_prints_anchor_tables_from_verification(capsys):
     plan = {
         "project": "shop",
         "project_db": "shop_dm",
         "qa_db": "shop_dm_qa",
-        "scope": {"anchor_tables": ["ads_store_performance"]},
         "baseline_ddl": {},
         "ddl_changes": [],
         "jobs_to_run": [],
-        "verification": {"checks": []},
+        "verification": {
+            "anchor_tables": ["ads_store_performance"],
+            "checks": [],
+        },
     }
 
     execute_shadow_plan(plan, dry_run=True)

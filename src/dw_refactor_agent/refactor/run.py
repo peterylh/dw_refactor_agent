@@ -97,11 +97,9 @@ def _first_scope_values(
 def _refactor_scope_metadata(
     assess_result: dict,
     change_analysis: dict | None,
-    plan: dict | None,
 ) -> dict:
     scope_plan = assess_result.get("scope_plan") or {}
     scope_sources = [
-        (plan or {}).get("scope"),
         (change_analysis or {}).get("affected_scope"),
         scope_plan.get("base_scope"),
     ]
@@ -131,7 +129,6 @@ def _mark_assessment_full(assess_result: dict) -> dict:
 def _mark_assessment_scoped(
     assess_result: dict,
     change_analysis: dict | None,
-    plan: dict | None,
 ) -> dict:
     marked = deepcopy(assess_result)
     marked["assessment_mode"] = "scoped"
@@ -139,7 +136,6 @@ def _mark_assessment_scoped(
     marked["scope"] = _refactor_scope_metadata(
         marked,
         change_analysis,
-        plan,
     )
     return marked
 
@@ -278,16 +274,8 @@ def _has_any_items(mapping: dict, keys: tuple[str, ...]) -> bool:
     return any(bool(mapping.get(key)) for key in keys)
 
 
-def _plan_scope(plan: dict) -> dict:
-    return plan.get("scope") or plan.get("affected_scope") or {}
-
-
 def _plan_changes(plan: dict) -> dict:
-    if plan.get("changes"):
-        return plan.get("changes") or {}
-    return {
-        "modified_jobs": plan.get("modified_jobs") or [],
-    }
+    return plan.get("changes") or {}
 
 
 def _change_analysis_has_work(change_analysis: dict) -> bool:
@@ -319,25 +307,21 @@ def _change_analysis_has_work(change_analysis: dict) -> bool:
 
 
 def _verification_plan_has_work(plan: dict) -> bool:
-    scope = _plan_scope(plan)
     changes = _plan_changes(plan)
+    verification = plan.get("verification") or {}
     return bool(
         _has_any_items(
             changes,
             ("modified_jobs", "ddl_tables", "model_tables", "config_files"),
         )
-        or plan.get("anchors")
         or plan.get("ddl_changes")
         or plan.get("jobs_to_run")
         or _has_any_items(
-            scope,
+            verification,
             (
-                "direct_tables",
-                "downstream_tables",
                 "anchor_tables",
-                "assessment_tables",
-                "assessment_tasks",
-                "global_dimensions",
+                "compare_anchors",
+                "checks",
             ),
         )
     )
@@ -488,7 +472,6 @@ def _analyze(args) -> int:
         current_assess = _mark_assessment_scoped(
             current_assess,
             change_analysis,
-            plan,
         )
         if _has_no_refactor_changes(change_analysis, plan):
             current_assess = _mark_assessment_no_changes(current_assess)
