@@ -215,17 +215,17 @@ def build_verification_plan(
     scope["anchor_tables"] = anchors
     changes = _plan_changes(change_analysis, modified_jobs)
 
-    sorted_jobs = _sort_jobs_for_execution(
-        project,
-        execution_tasks,
-        lineage_data=lineage_data,
-    )
-
-    jobs_to_run = []
-    for job_name in sorted_jobs:
+    job_entries = {}
+    for job_name in execution_tasks:
         entry = _job_entry(project, job_name)
         if entry:
-            jobs_to_run.append(entry)
+            job_entries[job_name] = entry
+    sorted_jobs = _sort_jobs_for_execution(
+        project,
+        set(job_entries),
+        lineage_data=lineage_data,
+    )
+    jobs_to_run = [job_entries[job_name] for job_name in sorted_jobs]
 
     if base_ref:
         all_baseline_ddl = load_baseline_ddl(

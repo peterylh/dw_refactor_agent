@@ -1053,7 +1053,9 @@ def test_shadow_run_cli_passes_timing_detail_flag(tmp_path, monkeypatch):
     assert calls == [(plan_path, output_path, False, True, 1, 1)]
 
 
-def test_run_shadow_plan_dry_run_persists_phase_summary(tmp_path, monkeypatch):
+def test_run_shadow_plan_dry_run_persists_phase_summary(
+    tmp_path, monkeypatch, capsys
+):
     job_file = (
         tmp_path
         / "warehouses"
@@ -1161,6 +1163,7 @@ def test_run_shadow_plan_dry_run_persists_phase_summary(tmp_path, monkeypatch):
     assert phase_by_name["run_jobs"]["jobs"][0]["job"] == "M_SHOP_05_INV_DF"
     assert phase_by_name["run_jobs"]["jobs"][0]["status"] == "dry_run"
     assert json.loads(output_path.read_text(encoding="utf-8")) == result
+    assert "分区:" not in capsys.readouterr().out
 
 
 def test_run_shadow_plan_dry_run_prints_rewritten_task_ddl_targets(

@@ -4,6 +4,11 @@ from pathlib import Path
 import pytest
 
 import dw_refactor_agent.config as config
+from dw_refactor_agent.execution.planner import ExecutionPlanner
+from dw_refactor_agent.refactor.shadow_manifest import (
+    compile_shadow_manifest,
+    manifest_summary,
+)
 from dw_refactor_agent.refactor.verification_plan import (
     build_verification_plan,
     get_partition_col,
@@ -965,8 +970,9 @@ execution:
     config.clear_model_metadata_cache()
 
 
+@pytest.mark.parametrize("use_base_ref", [False, True])
 def test_build_verification_plan_excludes_unchanged_upstream_from_jobs(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, use_base_ref
 ):
     project_dir = tmp_path / "demo"
     for asset_dir in ("mid", "ads"):
@@ -1013,6 +1019,20 @@ execution:
     write_job("mid", "dwd_order_detail", "DWD")
     write_job("mid", "dws_category_sales_daily", "DWS")
     write_job("ads", "ads_store_performance", "ADS", "M")
+    (
+        project_dir / "mid" / "tasks" / "dws_category_sales_daily.sql"
+    ).write_text(
+        "INSERT INTO demo_dm.dws_category_sales_daily "
+        "SELECT * FROM demo_dm.dwd_order_detail "
+        "WHERE stat_date = @etl_date;",
+        encoding="utf-8",
+    )
+    (project_dir / "ads" / "tasks" / "ads_store_performance.sql").write_text(
+        "INSERT INTO demo_dm.ads_store_performance "
+        "SELECT * FROM demo_dm.dws_category_sales_daily "
+        "WHERE stat_date = @etl_date;",
+        encoding="utf-8",
+    )
 
     monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
     monkeypatch.setitem(
@@ -1024,6 +1044,24 @@ execution:
         ),
     )
     config.clear_model_metadata_cache()
+    if use_base_ref:
+        monkeypatch.setattr(
+            "dw_refactor_agent.refactor.verification_plan.load_baseline_ddl",
+            lambda project, base_ref, repo_root=None: {
+                table: (
+                    f"CREATE TABLE demo_dm.{table} (id BIGINT) ENGINE=OLAP;"
+                )
+                for table in (
+                    "dwd_order_detail",
+                    "dws_category_sales_daily",
+                    "ads_store_performance",
+                )
+            },
+        )
+        monkeypatch.setattr(
+            "dw_refactor_agent.refactor.verification_plan.derive_project_ddl_changes",
+            lambda project, base_ref, repo_root=None: [],
+        )
 
     plan = build_verification_plan(
         "demo",
@@ -1050,6 +1088,8 @@ execution:
                 "anchor_tables": ["ads_store_performance"],
             },
         },
+        base_ref="abc123" if use_base_ref else None,
+        repo_root=tmp_path,
         lineage_data={
             "edges": [
                 {
@@ -1088,6 +1128,21 @@ execution:
         "ads_store_performance",
         "dws_category_sales_daily",
     ]
+    summary = manifest_summary(
+        compile_shadow_manifest(
+            plan,
+            tmp_path,
+            ExecutionPlanner("demo", project_root=tmp_path),
+        )
+    )
+    assert summary["jobs"]["dws_category_sales_daily"]["routes"]["data_read"][
+        "dwd_order_detail"
+    ] == {
+        "database": "demo_dm",
+        "table": "dwd_order_detail",
+    }
+    assert "dwd_order_detail" not in summary["producers"]
+    assert summary["blockers"] == []
 
     config.clear_model_metadata_cache()
 
@@ -1619,6 +1674,78 @@ grain:
             ),
         }
     ]
+
+    config.clear_model_metadata_cache()
+
+
+def test_build_verification_plan_allows_ddl_only_table_without_lineage(
+    tmp_path, monkeypatch
+):
+    project_dir = tmp_path / "demo"
+    (project_dir / "mid" / "models").mkdir(parents=True)
+    (project_dir / "mid" / "models" / "dws_order.yaml").write_text(
+        "version: 2\nname: dws_order\nlayer: DWS\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setitem(
+        config.PROJECT_CONFIG,
+        "demo",
+        {
+            "dir": "demo",
+            "db": "demo_dm",
+            "qa_db": "demo_dm_qa",
+            "catalog": "internal",
+        },
+    )
+    config.clear_model_metadata_cache()
+    monkeypatch.setattr(
+        "dw_refactor_agent.refactor.verification_plan.load_baseline_ddl",
+        lambda project, base_ref, repo_root=None: {
+            "dws_order": (
+                "CREATE TABLE demo_dm.dws_order (order_id BIGINT) ENGINE=OLAP;"
+            )
+        },
+    )
+    monkeypatch.setattr(
+        "dw_refactor_agent.refactor.verification_plan.derive_project_ddl_changes",
+        lambda project, base_ref, repo_root=None: [
+            {
+                "change_type": "ALTER",
+                "table_name": "demo_dm.dws_order",
+                "sql": (
+                    "ALTER TABLE demo_dm.dws_order "
+                    "ADD COLUMN amount DECIMAL(10,2);"
+                ),
+            }
+        ],
+    )
+
+    plan = build_verification_plan(
+        "demo",
+        {
+            "changed_assets": {
+                "task_jobs": [],
+                "ddl_tables": ["dws_order"],
+                "model_tables": [],
+                "config_files": [],
+            },
+            "affected_scope": {
+                "direct_tables": ["dws_order"],
+                "downstream_tables": [],
+                "assessment_tables": ["dws_order"],
+                "assessment_tasks": [],
+                "anchor_tables": [],
+            },
+        },
+        base_ref="abc123",
+        repo_root=tmp_path,
+        lineage_data={},
+    )
+
+    assert plan["jobs_to_run"] == []
+    assert sorted(plan["baseline_ddl"]) == ["dws_order"]
+    assert plan["ddl_changes"][0]["table_name"] == "demo_dm.dws_order"
 
     config.clear_model_metadata_cache()
 

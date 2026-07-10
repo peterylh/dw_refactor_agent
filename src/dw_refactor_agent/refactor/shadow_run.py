@@ -1758,9 +1758,6 @@ def _dry_run(plan: dict, manifest: dict) -> None:
                 )
             else:
                 print(f"  对比范围: {table} 全表")
-    else:
-        partition_info = plan.get("partition_info", {})
-        print(f"  分区: {partition_info.get('partition', 'N/A')}")
     checks = plan.get("verification", {}).get("checks", [])
     if not _plan_anchor_tables(plan) and not checks:
         print()
