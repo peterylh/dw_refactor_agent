@@ -80,6 +80,13 @@ python -m dw_refactor_agent.ddl_deriver.schema_ids validate --project <project>
 新表/新字段必须生成新 ID。`ddl_deriver` 和 `refactor run analyze` 只读取 ID，
 不会自动补齐；缺失、非法或重复 ID 会阻断分析。
 
+首次为项目补齐 schema identity 后，迁移前创建的 refactor run 不再具有可用的
+身份基线。合并迁移后应重新开始 run：
+
+```bash
+python -m dw_refactor_agent.refactor.run start --project <project>
+```
+
 默认验证：
 
 ```bash

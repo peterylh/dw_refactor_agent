@@ -231,10 +231,15 @@ TABLE_ID_RE = re.compile(r"--[ \t]*table_id:[ \t]*([0-9a-fA-F\-]{36})[ \t]*")
 COLUMN_ID_RE = re.compile(r"\bcolumn_id:\s*([0-9a-fA-F\-]{36})\b")
 
 
+def normalize_schema_id(value: str) -> str:
+    """Return the canonical representation used for schema identity matching."""
+    return str(value or "").lower()
+
+
 def extract_table_id(sql_text: str) -> str:
     """从 DDL 文本中提取 table_id UUID."""
     m = TABLE_ID_RE.search(sql_text)
-    return m.group(1) if m else ""
+    return normalize_schema_id(m.group(1)) if m else ""
 
 
 def inject_table_id(sql_text: str, table_id: str) -> str:
@@ -258,7 +263,7 @@ def extract_column_id(col_node: exp.ColumnDef) -> str:
     matches = []
     for comment in comments:
         matches.extend(COLUMN_ID_RE.findall(str(comment)))
-    return matches[0] if len(matches) == 1 else ""
+    return normalize_schema_id(matches[0]) if len(matches) == 1 else ""
 
 
 def parse_column_def(col_node: exp.ColumnDef) -> Optional[ColumnDef]:
@@ -637,17 +642,19 @@ def _derive_column_renames(
     dropped_by_id = {}
     added_by_id = {}
     for di, column in enumerate(dropped):
-        if not column.column_id:
+        column_id = normalize_schema_id(column.column_id)
+        if not column_id:
             continue
-        if column.column_id in dropped_by_id:
-            raise ValueError(f"旧表 column_id 重复: {column.column_id}")
-        dropped_by_id[column.column_id] = di
+        if column_id in dropped_by_id:
+            raise ValueError(f"旧表 column_id 重复: {column_id}")
+        dropped_by_id[column_id] = di
     for ai, column in enumerate(added):
-        if not column.column_id:
+        column_id = normalize_schema_id(column.column_id)
+        if not column_id:
             continue
-        if column.column_id in added_by_id:
-            raise ValueError(f"新表 column_id 重复: {column.column_id}")
-        added_by_id[column.column_id] = ai
+        if column_id in added_by_id:
+            raise ValueError(f"新表 column_id 重复: {column_id}")
+        added_by_id[column_id] = ai
 
     matched_drops = set()
     matched_adds = set()
@@ -724,6 +731,39 @@ def _derive_column_renames(
     return sorted(renames, key=lambda item: item[0])
 
 
+def _table_ids_by_name(tables: dict, side: str) -> dict:
+    by_id = {}
+    result = {}
+    for name, table in sorted(tables.items()):
+        table_id = normalize_schema_id(table.table_id)
+        result[name] = table_id
+        if not table_id:
+            continue
+        if table_id in by_id:
+            raise ValueError(
+                f"{side} table_id 重复: {table_id}: {by_id[table_id]}, {name}"
+            )
+        by_id[table_id] = name
+    return result
+
+
+def _column_ids_by_name(columns: List[ColumnDef], side: str) -> dict:
+    by_id = {}
+    result = {}
+    for column in columns:
+        column_id = normalize_schema_id(column.column_id)
+        result[column.name] = column_id
+        if not column_id:
+            continue
+        if column_id in by_id:
+            raise ValueError(
+                f"{side} column_id 重复: {column_id}: "
+                f"{by_id[column_id]}, {column.name}"
+            )
+        by_id[column_id] = column.name
+    return result
+
+
 def derive_ddl_changes(
     old_tables: dict,
     new_tables: dict,
@@ -735,7 +775,7 @@ def derive_ddl_changes(
 
     重命名检测策略:
       1. UUID 精准匹配(优先): old.table_id == new.table_id → RENAME
-      2. Jaccard 相似度(回退): 仅当 UUID 缺失或不同时使用
+      2. Jaccard 相似度(兼容回退): 仅当两侧 UUID 均缺失时使用
 
     参数:
         old_tables: {short_name: TableDef}
@@ -744,6 +784,8 @@ def derive_ddl_changes(
     返回:
         List[DDLChange], 按 RENAME → ALTER → DROP → CREATE 排序
     """
+    old_ids = _table_ids_by_name(old_tables, "old")
+    new_ids = _table_ids_by_name(new_tables, "new")
     old_names = set(old_tables.keys())
     new_names = set(new_tables.keys())
 
@@ -752,8 +794,8 @@ def derive_ddl_changes(
     created_names = set(new_names - old_names)
 
     for name in list(common_names):
-        old_id = old_tables[name].table_id
-        new_id = new_tables[name].table_id
+        old_id = old_ids[name]
+        new_id = new_ids[name]
         identity_conflict = old_id and new_id and old_id != new_id
         identity_missing_in_strict_mode = not legacy_identity and (
             not old_id or not new_id
@@ -767,20 +809,13 @@ def derive_ddl_changes(
     changes: List[DDLChange] = []
 
     # ---- Phase 1: UUID-based rename detection (identity-based, no threshold) ----
-    old_by_uuid = {}
-    for name in dropped_names:
-        tid = old_tables[name].table_id
-        if tid:
-            if tid in old_by_uuid:
-                print(
-                    f"警告: 旧表 {old_by_uuid[tid]} 与 {name} 的 table_id 重复({tid}),跳过"
-                )
-                continue
-            old_by_uuid[tid] = name
+    old_by_uuid = {
+        old_ids[name]: name for name in dropped_names if old_ids[name]
+    }
 
     rename_pairs = []
-    for name in list(created_names):
-        tid = new_tables[name].table_id
+    for name in sorted(created_names):
+        tid = new_ids[name]
         if tid and tid in old_by_uuid:
             rename_pairs.append((old_by_uuid[tid], name))
             created_names.discard(name)
@@ -866,14 +901,16 @@ def _derive_alter_columns(
     """
     old_cols = {c.name: c for c in old.columns}
     new_cols = {c.name: c for c in new.columns}
+    old_ids = _column_ids_by_name(old.columns, "旧表")
+    new_ids = _column_ids_by_name(new.columns, "新表")
 
     old_names = set(old_cols.keys())
     new_names = set(new_cols.keys())
 
     common_names = set()
     for name in old_names & new_names:
-        old_id = old_cols[name].column_id
-        new_id = new_cols[name].column_id
+        old_id = old_ids[name]
+        new_id = new_ids[name]
         if old_id and new_id:
             if old_id == new_id:
                 common_names.add(name)
@@ -1018,9 +1055,12 @@ def changes_to_json(changes: List[DDLChange]) -> dict:
                     old_column
                     and new_column
                     and old_column.column_id
-                    and old_column.column_id == new_column.column_id
+                    and normalize_schema_id(old_column.column_id)
+                    == normalize_schema_id(new_column.column_id)
                 ):
-                    rename_entry["column_id"] = old_column.column_id
+                    rename_entry["column_id"] = normalize_schema_id(
+                        old_column.column_id
+                    )
                     rename_entry["matched_by"] = "column_id"
                 rename_entries.append(rename_entry)
             entry["renames"] = rename_entries

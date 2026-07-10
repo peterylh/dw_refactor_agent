@@ -9,13 +9,22 @@ from typing import Dict, List, Optional, Sequence, Tuple
 
 import dw_refactor_agent.config as config
 
-from .ddl_deriver import inject_table_id, parse_create_table
+from .ddl_deriver import (
+    inject_table_id,
+    normalize_schema_id,
+    parse_create_table,
+)
 
 _TABLE_MARKER_RE = re.compile(
-    r"--[ \t]*table_id:[ \t]*(?P<value>[^\s]+)", re.IGNORECASE
+    r"^[ \t]*--[ \t]*table_id:[ \t]*(?P<value>\S*)[ \t]*(?:\r?\n|$)",
+    re.IGNORECASE | re.MULTILINE,
 )
 _COLUMN_MARKER_RE = re.compile(
-    r"--[ \t]*column_id:[ \t]*(?P<value>[^\s]+)", re.IGNORECASE
+    r"^[ \t]*--[ \t]*column_id:[ \t]*(?P<value>\S*)[ \t]*(?:\r?\n|$)",
+    re.IGNORECASE | re.MULTILINE,
+)
+_CREATE_TABLE_LINE_RE = re.compile(
+    r"^[ \t]*CREATE\s+TABLE\b", re.IGNORECASE | re.MULTILINE
 )
 
 
@@ -56,11 +65,12 @@ def _new_uuid4() -> str:
 
 
 def _is_uuid4(value: str) -> bool:
+    canonical = normalize_schema_id(value)
     try:
-        parsed = uuid.UUID(str(value))
+        parsed = uuid.UUID(canonical)
     except (AttributeError, TypeError, ValueError):
         return False
-    return parsed.version == 4 and str(parsed) == str(value).lower()
+    return parsed.version == 4 and str(parsed) == canonical
 
 
 def _newline_for(text: str) -> str:
@@ -109,6 +119,16 @@ def _read_parsed_file(path: Path):
     table = parse_create_table(text)
     if table is None:
         raise ValueError(f"DDL 无法解析: {path}")
+    if len(list(_CREATE_TABLE_LINE_RE.finditer(text))) != 1:
+        raise SchemaIdentityError(
+            [
+                IdentityIssue(
+                    "multiple_create_tables",
+                    Path(path),
+                    "一个受管 DDL 文件必须且只能定义一张表",
+                )
+            ]
+        )
     column_lines = _column_line_indices(
         text, [column.name for column in table.columns]
     )
@@ -135,15 +155,27 @@ def _existing_marker_errors(path: Path, text: str, table, column_lines):
                 "一个 DDL 文件只能有一个 table_id",
             )
         )
-    elif table_markers and not _is_uuid4(table_markers[0].group("value")):
-        issues.append(
-            IdentityIssue(
-                "invalid_table_id",
-                path,
-                "table_id 必须是规范 UUID4",
-                value=table_markers[0].group("value"),
+    elif table_markers:
+        marker = table_markers[0]
+        create_match = _CREATE_TABLE_LINE_RE.search(text)
+        if create_match is not None and marker.start() > create_match.start():
+            issues.append(
+                IdentityIssue(
+                    "orphan_table_id",
+                    path,
+                    "table_id 必须位于 CREATE TABLE 之前",
+                    line=_line_number(text, marker.start()),
+                )
             )
-        )
+        if not _is_uuid4(marker.group("value")):
+            issues.append(
+                IdentityIssue(
+                    "invalid_table_id",
+                    path,
+                    "table_id 必须是规范 UUID4",
+                    value=marker.group("value"),
+                )
+            )
 
     attached_marker_lines = set()
     for column in table.columns:
@@ -225,6 +257,14 @@ def _insert_column_ids(
     return "".join(lines)
 
 
+def _replace_invalid_table_marker(text: str, table_id: str) -> Optional[str]:
+    markers = list(_TABLE_MARKER_RE.finditer(text))
+    if len(markers) != 1 or _is_uuid4(markers[0].group("value")):
+        return None
+    start, end = markers[0].span("value")
+    return text[:start] + table_id + text[end:]
+
+
 def init_file(
     path: Path, *, replace_invalid_table_id: bool = False
 ) -> List[IdentityAssignment]:
@@ -267,7 +307,14 @@ def init_file(
         None,
     )
     if table_assignment:
-        new_text = inject_table_id(new_text, table_assignment.value)
+        replaced = (
+            _replace_invalid_table_marker(new_text, table_assignment.value)
+            if replace_invalid_table_id
+            else None
+        )
+        new_text = replaced or inject_table_id(
+            new_text, table_assignment.value
+        )
     target.write_text(new_text, encoding=config.TEXT_ENCODING)
     return assignments
 
@@ -315,6 +362,9 @@ def init_project(
             column_lines,
             allow_invalid_table_id=replace_invalid_table_ids,
         )
+    duplicate_issues = _existing_duplicate_identity_issues(project)
+    if duplicate_issues:
+        raise SchemaIdentityError(duplicate_issues)
     assignments: List[IdentityAssignment] = []
     for path in paths:
         assignments.extend(
@@ -341,11 +391,25 @@ def _scan_file(path: Path, require_complete: bool) -> _FileScan:
             else []
         )
         return _FileScan(issues, [], [])
-
     column_lines = _column_line_indices(
         text, [column.name for column in table.columns]
     )
-    issues = _existing_marker_errors(target, text, table, column_lines)
+    issues = (
+        _existing_marker_errors(target, text, table, column_lines)
+        if require_complete
+        else []
+    )
+    if (
+        require_complete
+        and len(list(_CREATE_TABLE_LINE_RE.finditer(text))) != 1
+    ):
+        issues.append(
+            IdentityIssue(
+                "multiple_create_tables",
+                target,
+                "一个受管 DDL 文件必须且只能定义一张表",
+            )
+        )
     lines = text.splitlines(keepends=True)
     table_occurrences: List[Tuple[str, Path, int, str]] = []
     column_occurrences: List[Tuple[str, Path, int, str]] = []
@@ -409,13 +473,12 @@ def _scan_file(path: Path, require_complete: bool) -> _FileScan:
 
 
 def _managed_identity_projects(requested_project: str) -> List[str]:
-    projects = {requested_project}
-    for project, project_config in config.PROJECT_CONFIG.items():
-        identity_config = project_config.get("schema_identity") or {}
-        if isinstance(identity_config, dict) and identity_config.get(
-            "required"
-        ):
-            projects.add(project)
+    projects = {
+        project
+        for project, project_config in config.PROJECT_CONFIG.items()
+        if not project_config.get("fixture")
+    }
+    projects.add(requested_project)
     return sorted(projects)
 
 
@@ -446,6 +509,34 @@ def _duplicate_issues(
     return issues
 
 
+def _existing_duplicate_identity_issues(project: str) -> List[IdentityIssue]:
+    table_occurrences: List[Tuple[str, Path, int, str]] = []
+    column_occurrences: List[Tuple[str, Path, int, str]] = []
+    scanned = set()
+    for identity_project in _managed_identity_projects(project):
+        for path in managed_ddl_files(identity_project):
+            path_key = path.resolve()
+            if path_key in scanned:
+                continue
+            scanned.add(path_key)
+            scan = _scan_file(path, require_complete=False)
+            table_occurrences.extend(scan.table_occurrences)
+            column_occurrences.extend(scan.column_occurrences)
+    issues = _duplicate_issues(
+        table_occurrences,
+        code="duplicate_table_id",
+        label="table_id",
+    )
+    issues.extend(
+        _duplicate_issues(
+            column_occurrences,
+            code="duplicate_column_id",
+            label="column_id",
+        )
+    )
+    return sorted(issues, key=_issue_sort_key)
+
+
 def _issue_sort_key(issue: IdentityIssue):
     return (
         issue.path.as_posix(),
@@ -456,17 +547,18 @@ def _issue_sort_key(issue: IdentityIssue):
 
 
 def validate_project(project: str) -> List[IdentityIssue]:
-    target_files = set(managed_ddl_files(project))
+    target_files = {path.resolve() for path in managed_ddl_files(project)}
     issues: List[IdentityIssue] = []
     table_occurrences: List[Tuple[str, Path, int, str]] = []
     column_occurrences: List[Tuple[str, Path, int, str]] = []
     scanned = set()
     for identity_project in _managed_identity_projects(project):
         for path in managed_ddl_files(identity_project):
-            if path in scanned:
+            path_key = path.resolve()
+            if path_key in scanned:
                 continue
-            scanned.add(path)
-            scan = _scan_file(path, require_complete=path in target_files)
+            scanned.add(path_key)
+            scan = _scan_file(path, require_complete=path_key in target_files)
             issues.extend(scan.issues)
             table_occurrences.extend(scan.table_occurrences)
             column_occurrences.extend(scan.column_occurrences)

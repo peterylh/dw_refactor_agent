@@ -84,6 +84,54 @@ CREATE TABLE demo_dm.dwd_order (
         derive_project_ddl_changes("demo", "base", repo_root=tmp_path)
 
 
+def test_derive_project_ddl_changes_uses_ids_for_column_rename(
+    tmp_path, monkeypatch
+):
+    _configure_identity_project(
+        tmp_path,
+        monkeypatch,
+        f"""\
+-- table_id: {TABLE_ID}
+CREATE TABLE demo_dm.dwd_order (
+    -- column_id: {COLUMN_ID}
+    order_number BIGINT NOT NULL
+) ENGINE=OLAP;
+""",
+    )
+    old_table = TableDef(
+        full_name="demo_dm.dwd_order",
+        short_name="dwd_order",
+        table_id=TABLE_ID,
+        columns=[
+            ColumnDef(
+                "order_id",
+                "BIGINT",
+                nullable=False,
+                column_id=COLUMN_ID,
+            )
+        ],
+    )
+    monkeypatch.setattr(
+        "dw_refactor_agent.refactor.verification_plan.load_git_tables",
+        lambda repo, ddl_rel, base_ref: (
+            {"dwd_order": old_table} if "/mid/" in ddl_rel else {}
+        ),
+    )
+
+    changes = derive_project_ddl_changes("demo", "base", repo_root=tmp_path)
+
+    assert len(changes) == 1
+    assert changes[0]["change_type"] == "ALTER"
+    assert changes[0]["renames"] == [
+        {
+            "old": "order_id",
+            "new": "order_number",
+            "column_id": COLUMN_ID,
+            "matched_by": "column_id",
+        }
+    ]
+
+
 def test_verification_plan_uses_public_ddl_deriver_api():
     source_path = (
         Path(__file__).parents[2]

@@ -2,6 +2,8 @@
 
 import copy
 
+import pytest
+
 from dw_refactor_agent.ddl_deriver.ddl_deriver import (
     AlterTable,
     ColumnDef,
@@ -1495,6 +1497,60 @@ DISTRIBUTED BY HASH(order_id) BUCKETS 10;
         first_id,
         second_id,
     ]
+
+
+def test_schema_ids_match_case_insensitively_in_strict_mode():
+    table_id = "91ed8f6a-736d-4896-888e-f9225741b7fa"
+    column_id = "6bfa89c0-1e30-4f92-a25e-b5a39ab94880"
+    old = TableDef(
+        full_name="shop_dm.dwd_order",
+        short_name="dwd_order",
+        table_id=table_id,
+        columns=[
+            ColumnDef(
+                "unit_price",
+                "DECIMAL(12,2)",
+                nullable=False,
+                column_id=column_id,
+            )
+        ],
+    )
+    new = TableDef(
+        full_name="shop_dm.dwd_order_v2",
+        short_name="dwd_order_v2",
+        table_id=table_id.upper(),
+        columns=[
+            ColumnDef(
+                "price_unit",
+                "DECIMAL(12,2)",
+                nullable=False,
+                column_id=column_id.upper(),
+            )
+        ],
+    )
+
+    changes = derive_ddl_changes(
+        {"dwd_order": old},
+        {"dwd_order_v2": new},
+        legacy_identity=False,
+    )
+
+    assert [change.change_type for change in changes] == ["RENAME", "ALTER"]
+    assert changes[1].renames == [("unit_price", "price_unit")]
+
+
+@pytest.mark.parametrize("duplicate_side", ["old", "new"])
+def test_derive_rejects_duplicate_in_memory_table_ids(duplicate_side):
+    table_id = "91ed8f6a-736d-4896-888e-f9225741b7fa"
+    tables = {
+        "first": TableDef("demo.first", "first", table_id=table_id),
+        "second": TableDef("demo.second", "second", table_id=table_id.upper()),
+    }
+    old_tables = tables if duplicate_side == "old" else {}
+    new_tables = tables if duplicate_side == "new" else {}
+
+    with pytest.raises(ValueError, match=f"{duplicate_side}.*table_id.*重复"):
+        derive_ddl_changes(old_tables, new_tables)
 
 
 # ============================================================

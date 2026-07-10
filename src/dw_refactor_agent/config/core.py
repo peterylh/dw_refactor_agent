@@ -118,6 +118,9 @@ def load_warehouse_config(
     raw_schema_identity = data.get("schema_identity") or {}
     if not isinstance(raw_schema_identity, dict):
         raise ValueError(f"schema_identity 必须是 mapping: {warehouse_file}")
+    raw_fixture = data.get("fixture") or {}
+    if not isinstance(raw_fixture, dict):
+        raise ValueError(f"fixture 必须是 mapping: {warehouse_file}")
 
     config = {
         "dir": _warehouse_relative_path(warehouse_dir, data.get("dir"), root),
@@ -144,6 +147,8 @@ def load_warehouse_config(
         config["execution"] = dict(raw_execution)
     if raw_schema_identity:
         config["schema_identity"] = dict(raw_schema_identity)
+    if raw_fixture:
+        config["fixture"] = dict(raw_fixture)
     return config
 
 

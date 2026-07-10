@@ -231,11 +231,43 @@ def test_init_project_preflights_all_files_before_writing(
     assert first_path.read_text(encoding="utf-8") == first_text
 
 
+def test_init_project_preflights_duplicate_ids_before_writing(
+    tmp_path, monkeypatch
+):
+    ddl_dir = _configure_project(tmp_path, monkeypatch)
+    missing_path = ddl_dir / "a_missing.sql"
+    missing_text = _ddl("demo_dm.a_missing")
+    missing_path.write_text(missing_text, encoding="utf-8")
+    (ddl_dir / "b_identified.sql").write_text(
+        _ddl(
+            "demo_dm.b_identified",
+            table_id=TABLE_ID,
+            first_column_id=FIRST_COLUMN_ID,
+            second_column_id=SECOND_COLUMN_ID,
+        ),
+        encoding="utf-8",
+    )
+    (ddl_dir / "c_duplicate.sql").write_text(
+        _ddl(
+            "demo_dm.c_duplicate",
+            table_id=TABLE_ID,
+            first_column_id="3d8b5422-027b-4d15-9db3-2d50e83bbef8",
+            second_column_id="ffdf6876-6258-46b3-a35a-2f49718260df",
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(SchemaIdentityError, match="duplicate_table_id"):
+        init_project("demo")
+
+    assert missing_path.read_text(encoding="utf-8") == missing_text
+
+
 def test_init_project_replaces_invalid_table_ids_only_when_explicit(
     tmp_path, monkeypatch
 ):
     ddl_dir = _configure_project(tmp_path, monkeypatch)
-    invalid_id = "c4d5e6f7-a8b9-4c0d-1e2f-3a4b5c6d7e8f"
+    invalid_id = "not-a-uuid"
     path = ddl_dir / "dwd_order.sql"
     path.write_text(_ddl(table_id=invalid_id), encoding="utf-8")
 
@@ -248,11 +280,86 @@ def test_init_project_replaces_invalid_table_ids_only_when_explicit(
     assert table is not None
     assert table.table_id != invalid_id
     _assert_uuid4(table.table_id)
+    assert path.read_text(encoding="utf-8").count("table_id:") == 1
+    assert validate_project("demo") == []
     assert [assignment.kind for assignment in assignments] == [
         "table",
         "column",
         "column",
     ]
+
+
+def test_validate_project_rejects_table_id_after_create(tmp_path, monkeypatch):
+    ddl_dir = _configure_project(tmp_path, monkeypatch)
+    text = _ddl(
+        table_id=TABLE_ID,
+        first_column_id=FIRST_COLUMN_ID,
+        second_column_id=SECOND_COLUMN_ID,
+    )
+    text = text.replace(f"-- table_id: {TABLE_ID}\n", "")
+    path = ddl_dir / "dwd_order.sql"
+    path.write_text(f"{text}\n-- table_id: {TABLE_ID}\n", encoding="utf-8")
+
+    issues = validate_project("demo")
+
+    assert "orphan_table_id" in {issue.code for issue in issues}
+
+
+def test_validate_project_rejects_multiple_create_tables(
+    tmp_path, monkeypatch
+):
+    ddl_dir = _configure_project(tmp_path, monkeypatch)
+    first = _ddl(
+        table_id=TABLE_ID,
+        first_column_id=FIRST_COLUMN_ID,
+        second_column_id=SECOND_COLUMN_ID,
+    )
+    second = _ddl(
+        "demo_dm.dwd_payment",
+        table_id="1db7309f-1f9e-4393-807c-7d836ea25727",
+        first_column_id="3d8b5422-027b-4d15-9db3-2d50e83bbef8",
+        second_column_id="ffdf6876-6258-46b3-a35a-2f49718260df",
+    )
+    (ddl_dir / "combined.sql").write_text(
+        first + "\n" + second, encoding="utf-8"
+    )
+
+    issues = validate_project("demo")
+
+    assert "multiple_create_tables" in {issue.code for issue in issues}
+
+
+def test_validate_project_scans_nonrequired_projects_for_duplicate_ids(
+    tmp_path, monkeypatch
+):
+    ddl_dir = _configure_project(tmp_path, monkeypatch)
+    ddl = _ddl(
+        table_id=TABLE_ID,
+        first_column_id=FIRST_COLUMN_ID,
+        second_column_id=SECOND_COLUMN_ID,
+    )
+    (ddl_dir / "dwd_order.sql").write_text(ddl, encoding="utf-8")
+    other_dir = tmp_path / "other" / "mid" / "ddl"
+    other_dir.mkdir(parents=True)
+    (other_dir / "dwd_order_copy.sql").write_text(
+        ddl.replace("demo_dm.dwd_order", "other_dm.dwd_order_copy"),
+        encoding="utf-8",
+    )
+    monkeypatch.setitem(
+        config.PROJECT_CONFIG,
+        "other",
+        {
+            "dir": "other",
+            "db": "other_dm",
+            "qa_db": "other_dm_qa",
+            "catalog": "internal",
+        },
+    )
+
+    issues = validate_project("demo")
+
+    assert [issue.code for issue in issues].count("duplicate_table_id") == 2
+    assert [issue.code for issue in issues].count("duplicate_column_id") == 4
 
 
 def test_cli_validate_returns_nonzero_for_identity_issues(
