@@ -1,3 +1,4 @@
+import pytest
 import sqlglot
 
 from dw_refactor_agent.lineage.lineage_extractor import (
@@ -245,25 +246,6 @@ class TestIntegrationEtlToDwd:
             ("dwd_order", "total_amount", "dws_daily_sales", "WHERE"),
             ("dwd_order", "order_date", "dws_daily_sales", "GROUP_BY"),
         }
-
-    def test_complex_expression_propagation(self):
-        """Test that expressions like SUM() propagate to source columns"""
-        sql = """
-        INSERT INTO shop_dm.dws_daily_sales
-        SELECT order_date, SUM(total_amount) AS total_amount,
-               COUNT(DISTINCT order_id) AS order_count, NOW() AS etl_time
-        FROM shop_dm.dwd_order
-        GROUP BY order_date
-        """
-        entries = extract_lineage_from_sql(
-            sql, "dws_daily_sales.sql", self.schema
-        )
-        assert (
-            "dwd_order",
-            "total_amount",
-            "dws_daily_sales",
-            "total_amount",
-        ) in _direct_edges(entries)
 
     def test_insert_select_metric_literals_are_not_source_columns(self):
         schema = build_schema_from_texts(
@@ -1086,16 +1068,27 @@ class TestSelectStarLineage:
             ]
         )
 
-    def test_insert_select_star_expands_physical_table_columns(self):
-        sql = """
-        INSERT INTO shop_dm.dwd_order (order_id, customer_id, amount)
-        SELECT *
-        FROM shop_dm.ods_order
-        """
+    def _assert_star_expansion_failure(self, sql, file_path):
         diagnostics = []
-
         entries = extract_lineage_from_sql(
-            sql, "select_star.sql", self.schema, diagnostics=diagnostics
+            sql,
+            file_path,
+            self.schema,
+            diagnostics=diagnostics,
+        )
+
+        assert _direct_edges(entries) == set()
+        assert [diagnostic["stage"] for diagnostic in diagnostics] == [
+            "lineage_star_expand"
+        ]
+
+    def _assert_order_star_expansion(self, sql, file_path):
+        diagnostics = []
+        entries = extract_lineage_from_sql(
+            sql,
+            file_path,
+            self.schema,
+            diagnostics=diagnostics,
         )
 
         assert diagnostics == []
@@ -1104,6 +1097,14 @@ class TestSelectStarLineage:
             ("ods_order", "customer_id", "dwd_order", "customer_id"),
             ("ods_order", "amount", "dwd_order", "amount"),
         }
+
+    def test_insert_select_star_expands_physical_table_columns(self):
+        sql = """
+        INSERT INTO shop_dm.dwd_order (order_id, customer_id, amount)
+        SELECT *
+        FROM shop_dm.ods_order
+        """
+        self._assert_order_star_expansion(sql, "select_star.sql")
 
     def test_task_alter_add_column_updates_ctas_schema_for_later_star(self):
         schema = build_schema_from_texts(
@@ -1169,18 +1170,7 @@ class TestSelectStarLineage:
         SELECT o.*
         FROM shop_dm.ods_order o
         """
-        diagnostics = []
-
-        entries = extract_lineage_from_sql(
-            sql, "alias_star.sql", self.schema, diagnostics=diagnostics
-        )
-
-        assert diagnostics == []
-        assert _direct_edges(entries) == {
-            ("ods_order", "order_id", "dwd_order", "order_id"),
-            ("ods_order", "customer_id", "dwd_order", "customer_id"),
-            ("ods_order", "amount", "dwd_order", "amount"),
-        }
+        self._assert_order_star_expansion(sql, "alias_star.sql")
 
     def test_insert_select_star_then_expression_keeps_target_alignment(self):
         sql = """
@@ -1227,18 +1217,7 @@ class TestSelectStarLineage:
             FROM shop_dm.ods_order
         ) t
         """
-        diagnostics = []
-
-        entries = extract_lineage_from_sql(
-            sql, "subquery_star.sql", self.schema, diagnostics=diagnostics
-        )
-
-        assert diagnostics == []
-        assert _direct_edges(entries) == {
-            ("ods_order", "order_id", "dwd_order", "order_id"),
-            ("ods_order", "customer_id", "dwd_order", "customer_id"),
-            ("ods_order", "amount", "dwd_order", "amount"),
-        }
+        self._assert_order_star_expansion(sql, "subquery_star.sql")
 
     def test_subquery_star_inlines_unaliased_constant_projection(self):
         schema = build_schema_from_texts(
@@ -1316,18 +1295,7 @@ class TestSelectStarLineage:
         SELECT *
         FROM cleaned
         """
-        diagnostics = []
-
-        entries = extract_lineage_from_sql(
-            sql, "cte_star.sql", self.schema, diagnostics=diagnostics
-        )
-
-        assert diagnostics == []
-        assert _direct_edges(entries) == {
-            ("ods_order", "order_id", "dwd_order", "order_id"),
-            ("ods_order", "customer_id", "dwd_order", "customer_id"),
-            ("ods_order", "amount", "dwd_order", "amount"),
-        }
+        self._assert_order_star_expansion(sql, "cte_star.sql")
 
     def test_ctas_select_star_uses_expanded_output_columns(self):
         sql = """
@@ -1388,19 +1356,7 @@ class TestSelectStarLineage:
         FROM shop_dm.missing_orders m
         JOIN shop_dm.ods_customer c ON m.customer_id = c.customer_id
         """
-        diagnostics = []
-
-        entries = extract_lineage_from_sql(
-            sql,
-            "missing_schema_star.sql",
-            self.schema,
-            diagnostics=diagnostics,
-        )
-
-        assert _direct_edges(entries) == set()
-        assert [diagnostic["stage"] for diagnostic in diagnostics] == [
-            "lineage_star_expand"
-        ]
+        self._assert_star_expansion_failure(sql, "missing_schema_star.sql")
 
     def test_bare_star_join_duplicate_column_names_map_by_position(self):
         schema = build_schema_from_texts(
@@ -1477,21 +1433,7 @@ class TestSelectStarLineage:
         FROM shop_dm.ods_order o
         JOIN shop_dm.missing_customer c ON o.customer_id = c.customer_id
         """
-        diagnostics = []
-
-        entries = extract_lineage_from_sql(
-            sql,
-            "alias_star_missing_join.sql",
-            self.schema,
-            diagnostics=diagnostics,
-        )
-
-        assert diagnostics == []
-        assert _direct_edges(entries) == {
-            ("ods_order", "order_id", "dwd_order", "order_id"),
-            ("ods_order", "customer_id", "dwd_order", "customer_id"),
-            ("ods_order", "amount", "dwd_order", "amount"),
-        }
+        self._assert_order_star_expansion(sql, "alias_star_missing_join.sql")
 
     def test_unresolved_inner_star_does_not_leak_as_derived_column(self):
         sql = """
@@ -1503,19 +1445,7 @@ class TestSelectStarLineage:
             JOIN shop_dm.ods_customer c ON m.customer_id = c.customer_id
         ) t
         """
-        diagnostics = []
-
-        entries = extract_lineage_from_sql(
-            sql,
-            "unresolved_inner_star.sql",
-            self.schema,
-            diagnostics=diagnostics,
-        )
-
-        assert _direct_edges(entries) == set()
-        assert [diagnostic["stage"] for diagnostic in diagnostics] == [
-            "lineage_star_expand",
-        ]
+        self._assert_star_expansion_failure(sql, "unresolved_inner_star.sql")
 
     def test_unresolved_star_suppresses_later_position_dependent_expression(
         self,
@@ -1525,59 +1455,45 @@ class TestSelectStarLineage:
         SELECT *, NOW() AS etl_time
         FROM shop_dm.missing_orders
         """
+        self._assert_star_expansion_failure(
+            sql, "unresolved_star_then_expr.sql"
+        )
+
+    @pytest.mark.parametrize(
+        ("file_path", "sql"),
+        [
+            (
+                "cte_alias_columns.sql",
+                """
+                INSERT INTO shop_dm.dwd_order (customer_id, amount)
+                WITH renamed(customer_id, amount) AS (
+                    SELECT order_id, amount
+                    FROM shop_dm.ods_order
+                )
+                SELECT *
+                FROM renamed
+                """,
+            ),
+            (
+                "subquery_alias_columns.sql",
+                """
+                INSERT INTO shop_dm.dwd_order (customer_id, amount)
+                SELECT *
+                FROM (
+                    SELECT order_id, amount
+                    FROM shop_dm.ods_order
+                ) renamed(customer_id, amount)
+                """,
+            ),
+        ],
+        ids=("cte", "subquery"),
+    )
+    def test_column_alias_list_exposes_star_output_names(self, file_path, sql):
         diagnostics = []
 
         entries = extract_lineage_from_sql(
             sql,
-            "unresolved_star_then_expr.sql",
-            self.schema,
-            diagnostics=diagnostics,
-        )
-
-        assert _direct_edges(entries) == set()
-        assert [diagnostic["stage"] for diagnostic in diagnostics] == [
-            "lineage_star_expand"
-        ]
-
-    def test_cte_column_alias_list_exposes_star_output_names(self):
-        sql = """
-        INSERT INTO shop_dm.dwd_order (customer_id, amount)
-        WITH renamed(customer_id, amount) AS (
-            SELECT order_id, amount
-            FROM shop_dm.ods_order
-        )
-        SELECT *
-        FROM renamed
-        """
-        diagnostics = []
-
-        entries = extract_lineage_from_sql(
-            sql,
-            "cte_alias_columns.sql",
-            self.schema,
-            diagnostics=diagnostics,
-        )
-
-        assert diagnostics == []
-        assert _direct_edges(entries) == {
-            ("ods_order", "order_id", "dwd_order", "customer_id"),
-            ("ods_order", "amount", "dwd_order", "amount"),
-        }
-
-    def test_subquery_column_alias_list_exposes_star_output_names(self):
-        sql = """
-        INSERT INTO shop_dm.dwd_order (customer_id, amount)
-        SELECT *
-        FROM (
-            SELECT order_id, amount
-            FROM shop_dm.ods_order
-        ) renamed(customer_id, amount)
-        """
-        diagnostics = []
-
-        entries = extract_lineage_from_sql(
-            sql,
-            "subquery_alias_columns.sql",
+            file_path,
             self.schema,
             diagnostics=diagnostics,
         )
@@ -1622,19 +1538,9 @@ class TestSelectStarLineage:
             FROM shop_dm.missing_orders
         ) t
         """
-        diagnostics = []
-
-        entries = extract_lineage_from_sql(
-            sql,
-            "explicit_unresolved_subquery_star.sql",
-            self.schema,
-            diagnostics=diagnostics,
+        self._assert_star_expansion_failure(
+            sql, "explicit_unresolved_subquery_star.sql"
         )
-
-        assert _direct_edges(entries) == set()
-        assert [diagnostic["stage"] for diagnostic in diagnostics] == [
-            "lineage_star_expand"
-        ]
 
     def test_unqualified_projection_from_unresolved_subquery_star_is_blocked(
         self,
@@ -1647,19 +1553,9 @@ class TestSelectStarLineage:
             FROM shop_dm.missing_orders
         ) t
         """
-        diagnostics = []
-
-        entries = extract_lineage_from_sql(
-            sql,
-            "unqualified_unresolved_subquery_star.sql",
-            self.schema,
-            diagnostics=diagnostics,
+        self._assert_star_expansion_failure(
+            sql, "unqualified_unresolved_subquery_star.sql"
         )
-
-        assert _direct_edges(entries) == set()
-        assert [diagnostic["stage"] for diagnostic in diagnostics] == [
-            "lineage_star_expand"
-        ]
 
     def test_unqualified_projection_from_unresolved_cte_star_is_blocked(self):
         sql = """
@@ -1671,19 +1567,9 @@ class TestSelectStarLineage:
         SELECT order_id
         FROM t
         """
-        diagnostics = []
-
-        entries = extract_lineage_from_sql(
-            sql,
-            "unqualified_unresolved_cte_star.sql",
-            self.schema,
-            diagnostics=diagnostics,
+        self._assert_star_expansion_failure(
+            sql, "unqualified_unresolved_cte_star.sql"
         )
-
-        assert _direct_edges(entries) == set()
-        assert [diagnostic["stage"] for diagnostic in diagnostics] == [
-            "lineage_star_expand"
-        ]
 
     def test_unused_unresolved_cte_star_does_not_block_main_query(self):
         sql = """
@@ -1812,7 +1698,17 @@ class TestSelectStarLineage:
             ),
         }
 
-    def test_fully_qualified_star_matches_exact_relation(self):
+    @pytest.mark.parametrize(
+        ("selected_relation", "expected_source"),
+        [
+            ("shop_dm.ods_same_name", "ods_same_name"),
+            ("other_dm.ods_same_name", "other_dm.ods_same_name"),
+        ],
+        ids=("default-database", "non-default-database"),
+    )
+    def test_fully_qualified_star_matches_exact_relation(
+        self, selected_relation, expected_source
+    ):
         schema = build_schema_from_texts(
             [
                 """
@@ -1832,9 +1728,9 @@ class TestSelectStarLineage:
                 """,
             ]
         )
-        sql = """
+        sql = f"""
         INSERT INTO shop_dm.dwd_same_name
-        SELECT shop_dm.ods_same_name.*
+        SELECT {selected_relation}.*
         FROM shop_dm.ods_same_name
         JOIN other_dm.ods_same_name
           ON shop_dm.ods_same_name.id = other_dm.ods_same_name.id
@@ -1850,48 +1746,7 @@ class TestSelectStarLineage:
 
         assert diagnostics == []
         assert _direct_edges(entries) == {
-            ("ods_same_name", "id", "dwd_same_name", "id"),
-        }
-
-    def test_fully_qualified_star_matches_non_default_database_relation(self):
-        schema = build_schema_from_texts(
-            [
-                """
-                CREATE TABLE shop_dm.ods_same_name (
-                    id BIGINT
-                )
-                """,
-                """
-                CREATE TABLE other_dm.ods_same_name (
-                    id BIGINT
-                )
-                """,
-                """
-                CREATE TABLE shop_dm.dwd_same_name (
-                    id BIGINT
-                )
-                """,
-            ]
-        )
-        sql = """
-        INSERT INTO shop_dm.dwd_same_name
-        SELECT other_dm.ods_same_name.*
-        FROM shop_dm.ods_same_name
-        JOIN other_dm.ods_same_name
-          ON shop_dm.ods_same_name.id = other_dm.ods_same_name.id
-        """
-        diagnostics = []
-
-        entries = extract_lineage_from_sql(
-            sql,
-            "qualified_star_other_db.sql",
-            schema,
-            diagnostics=diagnostics,
-        )
-
-        assert diagnostics == []
-        assert _direct_edges(entries) == {
-            ("other_dm.ods_same_name", "id", "dwd_same_name", "id"),
+            (expected_source, "id", "dwd_same_name", "id"),
         }
 
     def test_qualified_physical_table_star_is_not_shadowed_by_cte(self):
@@ -1904,21 +1759,9 @@ class TestSelectStarLineage:
         SELECT shop_dm.ods_order.*
         FROM shop_dm.ods_order
         """
-        diagnostics = []
-
-        entries = extract_lineage_from_sql(
-            sql,
-            "qualified_physical_not_cte.sql",
-            self.schema,
-            diagnostics=diagnostics,
+        self._assert_order_star_expansion(
+            sql, "qualified_physical_not_cte.sql"
         )
-
-        assert diagnostics == []
-        assert _direct_edges(entries) == {
-            ("ods_order", "order_id", "dwd_order", "order_id"),
-            ("ods_order", "customer_id", "dwd_order", "customer_id"),
-            ("ods_order", "amount", "dwd_order", "amount"),
-        }
 
     def test_union_right_unresolved_star_does_not_emit_star_column_edge(self):
         sql = """
@@ -1957,19 +1800,7 @@ class TestSelectStarLineage:
         SELECT order_id, customer_id
         FROM shop_dm.ods_order
         """
-        diagnostics = []
-
-        entries = extract_lineage_from_sql(
-            sql,
-            "union_left_missing_star.sql",
-            self.schema,
-            diagnostics=diagnostics,
-        )
-
-        assert [diagnostic["stage"] for diagnostic in diagnostics] == [
-            "lineage_star_expand"
-        ]
-        assert _direct_edges(entries) == set()
+        self._assert_star_expansion_failure(sql, "union_left_missing_star.sql")
 
     def test_ctas_unresolved_star_records_single_diagnostic(self):
         sql = """
@@ -1977,19 +1808,7 @@ class TestSelectStarLineage:
         SELECT *
         FROM shop_dm.missing_orders
         """
-        diagnostics = []
-
-        entries = extract_lineage_from_sql(
-            sql,
-            "ctas_missing_star.sql",
-            self.schema,
-            diagnostics=diagnostics,
-        )
-
-        assert _direct_edges(entries) == set()
-        assert [diagnostic["stage"] for diagnostic in diagnostics] == [
-            "lineage_star_expand"
-        ]
+        self._assert_star_expansion_failure(sql, "ctas_missing_star.sql")
 
     def test_ctas_known_shape_with_unresolved_source_registers_columns(self):
         sql = """
@@ -2344,46 +2163,32 @@ class TestEdgeCases:
         assert {e["source_table"] for e in direct} == {"M_SHOP_01_SRC_DF"}
         assert {e["target_table"] for e in direct} == {"M_SHOP_01_CUST_DF"}
 
-    def test_quoted_alias_column_is_canonicalized_in_lineage_entries(self):
-        schema = {
-            "shop_dm": {
-                "M_SHOP_01_SRC_DF": {"CUSTOMER_ID": "BIGINT"},
-                "M_SHOP_01_CUST_DF": {"CUSTOMER_ID": "BIGINT"},
-            }
-        }
-        sql = """
-        INSERT INTO shop_dm.M_SHOP_01_CUST_DF (`CUSTOMER_ID`)
-        SELECT s.`CUSTOMER_ID`
-        FROM shop_dm.M_SHOP_01_SRC_DF s
-        """
-        entries = extract_lineage_from_sql(
-            sql, "quoted_alias_column.sql", schema
-        )
-
-        assert _direct_edges(entries) == {
+    @pytest.mark.parametrize(
+        ("file_path", "projection"),
+        [
+            ("quoted_alias_column.sql", "s.`CUSTOMER_ID`"),
             (
-                "M_SHOP_01_SRC_DF",
-                "CUSTOMER_ID",
-                "M_SHOP_01_CUST_DF",
-                "CUSTOMER_ID",
+                "quoted_projection_alias.sql",
+                "s.customer_id AS `CUSTOMER_ID`",
             ),
-        }
-
-    def test_quoted_projection_alias_is_canonicalized_in_lineage_entries(self):
+        ],
+        ids=("quoted-column", "quoted-projection-alias"),
+    )
+    def test_quoted_projection_is_canonicalized_in_lineage_entries(
+        self, file_path, projection
+    ):
         schema = {
             "shop_dm": {
                 "M_SHOP_01_SRC_DF": {"CUSTOMER_ID": "BIGINT"},
                 "M_SHOP_01_CUST_DF": {"CUSTOMER_ID": "BIGINT"},
             }
         }
-        sql = """
+        sql = f"""
         INSERT INTO shop_dm.M_SHOP_01_CUST_DF (`CUSTOMER_ID`)
-        SELECT s.customer_id AS `CUSTOMER_ID`
+        SELECT {projection}
         FROM shop_dm.M_SHOP_01_SRC_DF s
         """
-        entries = extract_lineage_from_sql(
-            sql, "quoted_projection_alias.sql", schema
-        )
+        entries = extract_lineage_from_sql(sql, file_path, schema)
 
         assert _direct_edges(entries) == {
             (

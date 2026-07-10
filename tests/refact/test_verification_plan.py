@@ -132,6 +132,69 @@ CREATE TABLE demo_dm.dwd_order (
     ]
 
 
+_NO_PARTITION = object()
+
+
+def _build_single_anchor_plan(
+    tmp_path,
+    monkeypatch,
+    table_name,
+    model_yaml,
+    *,
+    task_sql="INSERT INTO demo_dm.{table_name} SELECT 1;",
+    partition="2024-06-15",
+    verification=None,
+):
+    project_dir = tmp_path / "demo"
+    (project_dir / "ads" / "models").mkdir(parents=True)
+    (project_dir / "ads" / "tasks").mkdir()
+    (project_dir / "ads" / "models" / f"{table_name}.yaml").write_text(
+        model_yaml,
+        encoding="utf-8",
+    )
+    (project_dir / "ads" / "tasks" / f"{table_name}.sql").write_text(
+        task_sql.format(table_name=table_name),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
+    project_config = {
+        "dir": "demo",
+        "db": "demo_dm",
+        "qa_db": "demo_dm_qa",
+        "catalog": "internal",
+    }
+    if verification is not None:
+        project_config["verification"] = verification
+    monkeypatch.setitem(config.PROJECT_CONFIG, "demo", project_config)
+    config.clear_model_metadata_cache()
+
+    kwargs = {}
+    if partition is not _NO_PARTITION:
+        kwargs["partition"] = partition
+    return build_verification_plan(
+        "demo",
+        {
+            "affected_scope": {
+                "assessment_tables": [table_name],
+                "assessment_tasks": [table_name],
+                "anchor_tables": [table_name],
+            }
+        },
+        lineage_data={
+            "edges": [
+                {
+                    "source": {"type": "column", "id": "ods_order.id"},
+                    "target": {
+                        "type": "column",
+                        "id": f"{table_name}.id",
+                    },
+                }
+            ]
+        },
+        **kwargs,
+    )
+
+
 def test_verification_plan_uses_public_ddl_deriver_api():
     source_path = (
         Path(__file__).parents[2]
@@ -1355,51 +1418,28 @@ grain:
     config.clear_model_metadata_cache()
 
 
-def test_build_verification_plan_warns_full_table_compare_without_execution_slice(
-    tmp_path, monkeypatch
-):
-    project_dir = tmp_path / "demo"
-    (project_dir / "ads" / "models").mkdir(parents=True)
-    (project_dir / "ads" / "tasks").mkdir()
-    (project_dir / "ads" / "models" / "ads_dashboard.yaml").write_text(
+@pytest.mark.parametrize(
+    "model_yaml",
+    [
         "version: 2\nname: ads_dashboard\nlayer: ADS\n",
-        encoding="utf-8",
-    )
-    (project_dir / "ads" / "tasks" / "ads_dashboard.sql").write_text(
-        "INSERT INTO demo_dm.ads_dashboard SELECT 1;",
-        encoding="utf-8",
-    )
-    monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
-    monkeypatch.setitem(
-        config.PROJECT_CONFIG,
-        "demo",
-        {
-            "dir": "demo",
-            "db": "demo_dm",
-            "qa_db": "demo_dm_qa",
-            "catalog": "internal",
-        },
-    )
-    config.clear_model_metadata_cache()
-
-    plan = build_verification_plan(
-        "demo",
-        {
-            "affected_scope": {
-                "assessment_tables": ["ads_dashboard"],
-                "assessment_tasks": ["ads_dashboard"],
-                "anchor_tables": ["ads_dashboard"],
-            }
-        },
-        lineage_data={
-            "edges": [
-                {
-                    "source": {"type": "column", "id": "ods_order.id"},
-                    "target": {"type": "column", "id": "ads_dashboard.id"},
-                }
-            ]
-        },
-        partition="2024-06-15",
+        """version: 2
+name: ads_dashboard
+layer: ADS
+grain:
+  entities:
+  - STORE
+""",
+    ],
+    ids=("without-grain", "entity-only-grain"),
+)
+def test_build_verification_plan_uses_full_table_compare_without_time_grain(
+    tmp_path, monkeypatch, model_yaml
+):
+    plan = _build_single_anchor_plan(
+        tmp_path,
+        monkeypatch,
+        "ads_dashboard",
+        model_yaml,
     )
 
     assert plan["verification"]["data_anchor_status"] == "ready"
@@ -1422,83 +1462,15 @@ def test_build_verification_plan_warns_full_table_compare_without_execution_slic
     config.clear_model_metadata_cache()
 
 
-def test_build_verification_plan_treats_entity_only_grain_as_full_table_compare(
-    tmp_path, monkeypatch
-):
-    project_dir = tmp_path / "demo"
-    (project_dir / "ads" / "models").mkdir(parents=True)
-    (project_dir / "ads" / "tasks").mkdir()
-    (project_dir / "ads" / "models" / "ads_dashboard.yaml").write_text(
-        """version: 2
-name: ads_dashboard
-layer: ADS
-grain:
-  entities:
-  - STORE
-""",
-        encoding="utf-8",
-    )
-    (project_dir / "ads" / "tasks" / "ads_dashboard.sql").write_text(
-        "INSERT INTO demo_dm.ads_dashboard SELECT 1;",
-        encoding="utf-8",
-    )
-    monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
-    monkeypatch.setitem(
-        config.PROJECT_CONFIG,
-        "demo",
-        {
-            "dir": "demo",
-            "db": "demo_dm",
-            "qa_db": "demo_dm_qa",
-            "catalog": "internal",
-        },
-    )
-    config.clear_model_metadata_cache()
-
-    plan = build_verification_plan(
-        "demo",
-        {
-            "affected_scope": {
-                "assessment_tables": ["ads_dashboard"],
-                "assessment_tasks": ["ads_dashboard"],
-                "anchor_tables": ["ads_dashboard"],
-            }
-        },
-        lineage_data={
-            "edges": [
-                {
-                    "source": {"type": "column", "id": "ods_order.id"},
-                    "target": {"type": "column", "id": "ads_dashboard.id"},
-                }
-            ]
-        },
-        partition="2024-06-15",
-    )
-
-    assert plan["verification"]["data_anchor_status"] == "ready"
-    assert plan["verification"]["compare_anchors"] == {"ads_dashboard": {}}
-    assert plan["verification"]["warnings"] == [
-        {
-            "type": "full_table_compare",
-            "tables": ["ads_dashboard"],
-            "message": (
-                "No execution slice metadata is configured; full-table "
-                "compare will be used."
-            ),
-        }
-    ]
-
-    config.clear_model_metadata_cache()
-
-
 def test_build_verification_plan_requires_partition_for_incremental_jobs(
     tmp_path, monkeypatch
 ):
-    project_dir = tmp_path / "demo"
-    (project_dir / "ads" / "models").mkdir(parents=True)
-    (project_dir / "ads" / "tasks").mkdir()
-    (project_dir / "ads" / "models" / "ads_dashboard.yaml").write_text(
-        """version: 2
+    with pytest.raises(ValueError) as exc_info:
+        _build_single_anchor_plan(
+            tmp_path,
+            monkeypatch,
+            "ads_dashboard",
+            """version: 2
 name: ads_dashboard
 layer: ADS
 execution:
@@ -1507,72 +1479,23 @@ execution:
     column: stat_date
     period: D
 """,
-        encoding="utf-8",
-    )
-    (project_dir / "ads" / "tasks" / "ads_dashboard.sql").write_text(
-        "INSERT INTO demo_dm.ads_dashboard SELECT @etl_date;",
-        encoding="utf-8",
-    )
-    monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
-    monkeypatch.setitem(
-        config.PROJECT_CONFIG,
-        "demo",
-        {
-            "dir": "demo",
-            "db": "demo_dm",
-            "qa_db": "demo_dm_qa",
-            "catalog": "internal",
-            "verification": {
-                "week_start": "MON",
-            },
-        },
-    )
-    config.clear_model_metadata_cache()
+            task_sql="INSERT INTO demo_dm.{table_name} SELECT @etl_date;",
+            partition=_NO_PARTITION,
+            verification={"week_start": "MON"},
+        )
 
-    try:
-        build_verification_plan(
-            "demo",
-            {
-                "affected_scope": {
-                    "assessment_tables": ["ads_dashboard"],
-                    "assessment_tasks": ["ads_dashboard"],
-                    "anchor_tables": ["ads_dashboard"],
-                }
-            },
-            lineage_data={
-                "edges": [
-                    {
-                        "source": {
-                            "type": "column",
-                            "id": "ods_order.id",
-                        },
-                        "target": {
-                            "type": "column",
-                            "id": "ads_dashboard.id",
-                        },
-                    }
-                ]
-            },
-        )
-    except ValueError as exc:
-        assert "--partition" in str(exc)
-        assert "ads_dashboard" in str(exc)
-    else:
-        raise AssertionError(
-            "incremental refactor jobs should require --partition"
-        )
+    assert "--partition" in str(exc_info.value)
+    assert "ads_dashboard" in str(exc_info.value)
 
     config.clear_model_metadata_cache()
 
 
-def test_build_verification_plan_blocks_partial_execution_slice_metadata(
-    tmp_path, monkeypatch
-):
-    project_dir = tmp_path / "demo"
-    (project_dir / "ads" / "models").mkdir(parents=True)
-    (project_dir / "ads" / "tasks").mkdir()
-    (project_dir / "ads" / "models" / "ads_order.yaml").write_text(
-        """version: 2
+@pytest.mark.parametrize(
+    ("table_name", "model_yaml", "partition", "expected_error"),
+    [
+        (
+            "ads_order",
+            """version: 2
 name: ads_order
 layer: ADS
 execution:
@@ -1580,69 +1503,19 @@ execution:
     param: etl_date
     column: stat_date
 """,
-        encoding="utf-8",
-    )
-    (project_dir / "ads" / "tasks" / "ads_order.sql").write_text(
-        "INSERT INTO demo_dm.ads_order SELECT @etl_date;",
-        encoding="utf-8",
-    )
-    monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
-    monkeypatch.setitem(
-        config.PROJECT_CONFIG,
-        "demo",
-        {
-            "dir": "demo",
-            "db": "demo_dm",
-            "qa_db": "demo_dm_qa",
-            "catalog": "internal",
-        },
-    )
-    config.clear_model_metadata_cache()
-
-    plan = build_verification_plan(
-        "demo",
-        {
-            "affected_scope": {
-                "assessment_tables": ["ads_order"],
-                "assessment_tasks": ["ads_order"],
-                "anchor_tables": ["ads_order"],
-            }
-        },
-        lineage_data={
-            "edges": [
-                {
-                    "source": {"type": "column", "id": "ods_order.id"},
-                    "target": {"type": "column", "id": "ads_order.id"},
-                }
-            ]
-        },
-        partition="2024-06-15",
-    )
-
-    assert plan["verification"]["data_anchor_status"] == "blocked"
-    assert plan["verification"]["metadata_errors"] == [
-        {
-            "table": "ads_order",
-            "field": "execution.slice",
-            "message": (
-                "[ads_order] execution.slice requires param, column, and "
-                "period"
-            ),
-        }
-    ]
-    assert plan["verification"]["checks"] == []
-
-    config.clear_model_metadata_cache()
-
-
-def test_build_verification_plan_blocks_week_execution_slice_without_week_start(
-    tmp_path, monkeypatch
-):
-    project_dir = tmp_path / "demo"
-    (project_dir / "ads" / "models").mkdir(parents=True)
-    (project_dir / "ads" / "tasks").mkdir()
-    (project_dir / "ads" / "models" / "ads_weekly.yaml").write_text(
-        """version: 2
+            "2024-06-15",
+            {
+                "table": "ads_order",
+                "field": "execution.slice",
+                "message": (
+                    "[ads_order] execution.slice requires param, column, "
+                    "and period"
+                ),
+            },
+        ),
+        (
+            "ads_weekly",
+            """version: 2
 name: ads_weekly
 layer: ADS
 execution:
@@ -1651,54 +1524,37 @@ execution:
     column: stat_week_date
     period: W
 """,
-        encoding="utf-8",
-    )
-    (project_dir / "ads" / "tasks" / "ads_weekly.sql").write_text(
-        "INSERT INTO demo_dm.ads_weekly SELECT @etl_date;",
-        encoding="utf-8",
-    )
-    monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
-    monkeypatch.setitem(
-        config.PROJECT_CONFIG,
-        "demo",
-        {
-            "dir": "demo",
-            "db": "demo_dm",
-            "qa_db": "demo_dm_qa",
-            "catalog": "internal",
-        },
-    )
-    config.clear_model_metadata_cache()
-
-    plan = build_verification_plan(
-        "demo",
-        {
-            "affected_scope": {
-                "assessment_tables": ["ads_weekly"],
-                "assessment_tasks": ["ads_weekly"],
-                "anchor_tables": ["ads_weekly"],
-            }
-        },
-        lineage_data={
-            "edges": [
-                {
-                    "source": {"type": "column", "id": "ods_order.id"},
-                    "target": {"type": "column", "id": "ads_weekly.id"},
-                }
-            ]
-        },
+            _NO_PARTITION,
+            {
+                "table": "ads_weekly",
+                "field": "week_start",
+                "message": (
+                    "project verification.week_start is required for W periods"
+                ),
+            },
+        ),
+    ],
+    ids=("partial-slice", "weekly-without-week-start"),
+)
+def test_build_verification_plan_blocks_invalid_slice_metadata(
+    tmp_path,
+    monkeypatch,
+    table_name,
+    model_yaml,
+    partition,
+    expected_error,
+):
+    plan = _build_single_anchor_plan(
+        tmp_path,
+        monkeypatch,
+        table_name,
+        model_yaml,
+        task_sql="INSERT INTO demo_dm.{table_name} SELECT @etl_date;",
+        partition=partition,
     )
 
     assert plan["verification"]["data_anchor_status"] == "blocked"
-    assert plan["verification"]["metadata_errors"] == [
-        {
-            "table": "ads_weekly",
-            "field": "week_start",
-            "message": (
-                "project verification.week_start is required for W periods"
-            ),
-        }
-    ]
+    assert plan["verification"]["metadata_errors"] == [expected_error]
     assert plan["verification"]["checks"] == []
 
     config.clear_model_metadata_cache()
