@@ -4,7 +4,9 @@ import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import sqlglot
 import yaml
+from sqlglot import exp
 
 import dw_refactor_agent.config as config
 from dw_refactor_agent.assessment.project_facts.business_semantics import (
@@ -22,6 +24,31 @@ from dw_refactor_agent.lineage.view import LineageView
 DATA_DOMAIN_LAYERS = {"DWD"}
 BUSINESS_AREA_LAYERS = {"DWD", "DWS"}
 LOGGER = logging.getLogger(__name__)
+GENERATED_KEY_FUNCTIONS = frozenset(
+    {
+        "FARM_FINGERPRINT",
+        "HASH",
+        "MD5",
+        "SHA",
+        "SHA1",
+        "SHA2",
+        "UUID",
+        "UUID_STRING",
+        "XXHASH64",
+    }
+)
+VERSION_CONTROL_COLUMN_NAMES = frozenset(
+    {
+        "current_flag",
+        "effective_date",
+        "effective_from",
+        "effective_to",
+        "expiration_date",
+        "is_current",
+        "valid_from",
+        "valid_to",
+    }
+)
 
 
 def _short_table_name(table_name: str) -> str:
@@ -151,6 +178,9 @@ class TableContext:
     expose_layer_hints: bool = True
     depth_from_ods: int = 0
     upstream_metric_groups: dict[str, dict[str, list[str]]] = field(
+        default_factory=dict
+    )
+    downstream_entity_publication_features: dict[str, dict] = field(
         default_factory=dict
     )
     column_lineage: list[dict] = field(default_factory=list)
@@ -375,6 +405,82 @@ def _project_task_path(project: str, table_name: str) -> Path | None:
     return _first_project_asset_file(project, "tasks", f"{table_name}.sql")
 
 
+def _normalized_output_name(expression) -> str:
+    return (
+        str(getattr(expression, "alias_or_name", "") or "").strip().casefold()
+    )
+
+
+def _uses_generated_key_function(expression) -> bool:
+    return any(
+        str(function.sql_name() or "").upper() in GENERATED_KEY_FUNCTIONS
+        for function in expression.find_all(exp.Func)
+    )
+
+
+def _downstream_entity_publication_features(sql_text: str) -> dict:
+    """Extract layer-neutral evidence of a downstream entity publish step."""
+    if not str(sql_text or "").strip():
+        return {}
+    try:
+        statements = sqlglot.parse(sql_text, dialect="doris")
+    except Exception:
+        return {}
+
+    generated_key_columns = set()
+    natural_key_aliases = set()
+    added_version_control_columns = set()
+    contains_aggregation = False
+    combines_sources_with_union = False
+
+    for statement in statements:
+        if statement is None:
+            continue
+        if any(True for _ in statement.find_all(exp.Union)):
+            combines_sources_with_union = True
+        if any(True for _ in statement.find_all(exp.AggFunc)):
+            contains_aggregation = True
+        for select in statement.find_all(exp.Select):
+            if select.args.get("group") is not None:
+                contains_aggregation = True
+            for projection in select.expressions:
+                if not isinstance(projection, exp.Alias):
+                    continue
+                alias = _normalized_output_name(projection)
+                if not alias:
+                    continue
+                source_expression = projection.this
+                if alias.endswith("_key") and _uses_generated_key_function(
+                    source_expression
+                ):
+                    generated_key_columns.add(alias)
+                if "natural_key" in alias and any(
+                    True for _ in source_expression.find_all(exp.Column)
+                ):
+                    natural_key_aliases.add(alias)
+                if alias in VERSION_CONTROL_COLUMN_NAMES and not isinstance(
+                    source_expression, exp.Column
+                ):
+                    added_version_control_columns.add(alias)
+
+    # A generated entity key alone is common in facts too. Requiring an
+    # explicit natural-key alias and no aggregation keeps this signal focused
+    # on a later entity publication boundary without using table/layer names.
+    if (
+        not generated_key_columns
+        or not natural_key_aliases
+        or contains_aggregation
+    ):
+        return {}
+    return {
+        "generated_key_columns": sorted(generated_key_columns),
+        "natural_key_aliases": sorted(natural_key_aliases),
+        "added_version_control_columns": sorted(added_version_control_columns),
+        "combines_sources_with_union": combines_sources_with_union,
+        "contains_aggregation": contains_aggregation,
+    }
+
+
 def build_contexts(
     project: str,
     lineage_data: dict,
@@ -448,6 +554,43 @@ def build_contexts(
     contexts = []
 
     memo = {}
+    downstream_publication_feature_cache: dict[str, dict] = {}
+
+    def get_downstream_publication_features(table_name: str) -> dict:
+        canonical_name = _canonical_table_name(table_name)
+        if canonical_name in downstream_publication_feature_cache:
+            return downstream_publication_feature_cache[canonical_name]
+
+        model_entry = canonical_model_metadata.get(table_name)
+        if canonical_model_metadata.has_ambiguous_fallback(table_name):
+            LOGGER.warning(
+                "Ambiguous downstream table name %s; qualified task "
+                "identity is required for publication feature extraction",
+                _short_table_name(table_name),
+            )
+            downstream_publication_feature_cache[canonical_name] = {}
+            return {}
+        model_table_name = (
+            model_entry.table_name
+            if model_entry
+            else _short_table_name(table_name)
+        )
+        task_path = (
+            _project_task_path(project, model_table_name)
+            if use_project_task_dirs
+            else _first_directory_file(
+                tasks_dir,
+                f"{model_table_name}.sql",
+            )
+        )
+        sql_text = (
+            task_path.read_text(encoding=TEXT_ENCODING)
+            if task_path and task_path.exists()
+            else ""
+        )
+        features = _downstream_entity_publication_features(sql_text)
+        downstream_publication_feature_cache[canonical_name] = features
+        return features
 
     def get_depth_from_ods(table_name: str, visiting: set = None) -> int:
         canonical_name = _canonical_table_name(table_name)
@@ -533,6 +676,13 @@ def build_contexts(
                     "are required",
                     _short_table_name(upstream_table),
                 )
+        downstream_entity_publication_features = {}
+        for downstream_table in downstream_tables:
+            features = get_downstream_publication_features(downstream_table)
+            if features:
+                downstream_entity_publication_features[downstream_table] = (
+                    features
+                )
 
         contexts.append(
             TableContext(
@@ -560,6 +710,9 @@ def build_contexts(
                 expose_layer_hints=expose_layer_hints,
                 depth_from_ods=get_depth_from_ods(name),
                 upstream_metric_groups=upstream_metric_groups,
+                downstream_entity_publication_features=(
+                    downstream_entity_publication_features
+                ),
                 column_lineage=(lineage_view.column_lineage_for_table(name)),
                 declared_data_domain=(
                     str(metadata.get("data_domain") or "")

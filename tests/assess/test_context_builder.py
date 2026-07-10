@@ -38,6 +38,8 @@ def _build_contexts_for_graph(
     model_metadata,
     metric_groups=None,
     ddl_files=None,
+    task_files=None,
+    downstream=None,
 ):
     ddl_dir = tmp_path / "ddl"
     tasks_dir = tmp_path / "tasks"
@@ -45,6 +47,8 @@ def _build_contexts_for_graph(
     tasks_dir.mkdir()
     for filename, content in (ddl_files or {}).items():
         (ddl_dir / filename).write_text(content, encoding="utf-8")
+    for filename, content in (task_files or {}).items():
+        (tasks_dir / filename).write_text(content, encoding="utf-8")
 
     class FakeLineageView:
         @classmethod
@@ -52,7 +56,7 @@ def _build_contexts_for_graph(
             return cls()
 
         def asset_table_graph(self):
-            return upstream, {}
+            return upstream, downstream or {}
 
         def column_lineage_for_table(self, table_name):
             return []
@@ -343,6 +347,67 @@ def test_build_context_with_ddl_and_task(sample_lineage_data, tmp_path):
     assert ctx.etl_sql == "INSERT dwd_customer;"
     assert ctx.upstream_tables == ["ods_customer"]
     assert ctx.downstream_tables == ["ads_sales_dashboard"]
+
+
+def test_build_contexts_extracts_downstream_entity_publication_features(
+    tmp_path,
+    monkeypatch,
+):
+    contexts = _build_contexts_for_graph(
+        tmp_path,
+        monkeypatch,
+        tables=["clean_entity", "published_entity", "entity_summary"],
+        upstream={
+            "clean_entity": {"raw_entity"},
+            "published_entity": {"clean_entity"},
+            "entity_summary": {"clean_entity"},
+        },
+        downstream={
+            "clean_entity": {"published_entity", "entity_summary"},
+        },
+        model_metadata={
+            "clean_entity": {"name": "clean_entity", "layer": "DWD"},
+            "published_entity": {
+                "name": "published_entity",
+                "layer": "DIM",
+            },
+            "entity_summary": {
+                "name": "entity_summary",
+                "layer": "DWS",
+            },
+        },
+        task_files={
+            "published_entity.sql": (
+                "INSERT INTO published_entity "
+                "SELECT MD5(CAST(entity_id AS STRING)) AS entity_key, "
+                "entity_id AS entity_natural_key, "
+                "CURRENT_TIMESTAMP AS effective_date, "
+                "CAST('9999-12-31' AS DATETIME) AS expiration_date, "
+                "TRUE AS is_current FROM clean_entity;"
+            ),
+            "entity_summary.sql": (
+                "INSERT INTO entity_summary "
+                "SELECT MD5(CAST(entity_id AS STRING)) AS entity_key, "
+                "SUM(amount) AS total_amount FROM clean_entity "
+                "GROUP BY entity_id;"
+            ),
+        },
+    )
+    context = next(ctx for ctx in contexts if ctx.table_name == "clean_entity")
+
+    assert context.downstream_entity_publication_features == {
+        "published_entity": {
+            "generated_key_columns": ["entity_key"],
+            "natural_key_aliases": ["entity_natural_key"],
+            "added_version_control_columns": [
+                "effective_date",
+                "expiration_date",
+                "is_current",
+            ],
+            "combines_sources_with_union": False,
+            "contains_aggregation": False,
+        }
+    }
 
 
 def test_build_context_without_task(sample_lineage_data, tmp_path):

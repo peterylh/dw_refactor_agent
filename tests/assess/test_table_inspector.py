@@ -73,6 +73,7 @@ def test_build_prompt_scenarios():
     _assert_build_prompt_documents_business_metadata_scope()
     _assert_build_prompt_keeps_metric_expression_separate_from_grain()
     _assert_build_prompt_weakens_empty_downstream_ads_signal()
+    _assert_build_prompt_distinguishes_entity_staging_from_publication()
 
 
 def test_normalize_chat_completions_url():
@@ -432,6 +433,39 @@ def _assert_build_prompt_weakens_empty_downstream_ads_signal():
     assert "inventory(ODS)" in prompt
     assert "出度为 0 只能作为弱证据" in prompt
     assert "不得仅凭下游为空判为 ADS" in prompt
+
+
+def _assert_build_prompt_distinguishes_entity_staging_from_publication():
+    ctx = TableContext(
+        table_name="clean_entity",
+        layer="DWD",
+        ddl="CREATE TABLE clean_entity (entity_id BIGINT, name STRING);",
+        etl_sql=(
+            "INSERT INTO clean_entity "
+            "SELECT entity_id, TRIM(name) AS name FROM raw_entity;"
+        ),
+        upstream_tables=["raw_entity"],
+        downstream_tables=["published_entity"],
+        downstream_entity_publication_features={
+            "published_entity": {
+                "generated_key_columns": ["entity_key"],
+                "natural_key_aliases": ["entity_natural_key"],
+                "added_version_control_columns": ["effective_date"],
+                "combines_sources_with_union": False,
+                "contains_aggregation": False,
+            }
+        },
+        expose_layer_hints=False,
+    )
+
+    prompt = build_prompt(ctx)
+
+    assert "下游实体发布结构特征" in prompt
+    assert '"generated_key_columns"' in prompt
+    assert '"natural_key_aliases"' in prompt
+    assert "当前表应为 DWD/other" in prompt
+    assert "不包含下游层级标签" in prompt
+    assert "published_entity(DIM)" not in prompt
 
 
 # ============================================================
@@ -2617,6 +2651,21 @@ def _assert_cache_hash_includes_context_fields(tmp_path):
     )
     assert inspector._compute_hash(hidden_dws_ctx) != (
         inspector._compute_hash(downstream_dws_ctx)
+    )
+    downstream_publication_ctx = TableContext(
+        downstream_entity_publication_features={
+            "published_entity": {
+                "generated_key_columns": ["entity_key"],
+                "natural_key_aliases": ["entity_natural_key"],
+                "added_version_control_columns": [],
+                "combines_sources_with_union": False,
+                "contains_aggregation": False,
+            }
+        },
+        **base,
+    )
+    assert inspector._compute_hash(downstream_publication_ctx) != (
+        inspector._compute_hash(TableContext(**base))
     )
     assert inspector.parallelism == 2
 

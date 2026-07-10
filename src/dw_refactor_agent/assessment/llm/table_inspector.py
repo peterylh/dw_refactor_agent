@@ -24,7 +24,7 @@ from dw_refactor_agent.assessment.project_facts.time_period import (
 )
 from dw_refactor_agent.config import TEXT_ENCODING
 
-PROMPT_VERSION = "table-inspector-v36"
+PROMPT_VERSION = "table-inspector-v37"
 VALID_LAYERS = {"DWD", "DWS", "DIM", "OTHER"}
 VALID_TABLE_TYPES = {"dimension", "fact", "other"}
 VALID_DIMENSION_ROLES = {"BASE", "ADDT"}
@@ -220,6 +220,8 @@ def build_prompt(ctx: TableContext) -> str:
 - DWS: 在任意查询阶段通过聚合把多行压缩到公共分析粒度，或发布已聚合的上游指标；必须返回 fact。
 - DIM: 具有稳定实体标识和描述性属性，并通过下游 JOIN 关系体现公共复用；生成新键本身不足以证明它是维度表。
 - 没有聚合的模型不属于 DWS；继续根据输出行是否表达可度量事实、可复用描述性实体或仅为逐行技术加工，在 DWD/fact、DIM/dimension 和 DWD/other 之间判断。
+- 必须区分“内容围绕实体组织”和“已经到达维度发布边界”：单表逐行清洗、标准化、类型转换或标签衍生后的实体数据，如果下游才生成正式实体代理键并保留自然键，则当前表仍是 DWD/other；不能仅因当前表有稳定实体 ID 和描述性属性就提前判为 DIM。
+- 下游生成代理键本身不是硬裁决。只有在下游同时保留自然键、没有聚合，并且当前表自身不表达业务事件或可度量事实时，才把它作为“当前仍处于实体清洗中间阶段”的强证据；若当前表承载事件或事实度量，仍应按事实语义判断。
 - 下游引用数为 0 只能作为边界层弱证据，不能覆盖粒度、聚合和资产目录证据。
 
 ## 维表分类标准
@@ -341,7 +343,15 @@ def build_prompt(ctx: TableContext) -> str:
 上游表: {_format_layered_tables(ctx.upstream_tables, _prompt_table_layers(ctx, ctx.upstream_table_layers))}
 下游表: {_format_layered_tables(ctx.downstream_tables, _prompt_table_layers(ctx, ctx.downstream_table_layers))}
 
-## 字段级血缘
+"""
+    if ctx.downstream_entity_publication_features:
+        prompt += f"""## 下游实体发布结构特征
+以下内容仅由下游 SQL 结构提取，不包含下游层级标签。generated_key_columns 表示下游生成的新键，natural_key_aliases 表示下游显式保留的自然键，added_version_control_columns 表示下游新增的版本控制字段。请结合当前表是否只是逐行清洗来判断发布边界，不要仅凭表名判断。
+{json.dumps(ctx.downstream_entity_publication_features, ensure_ascii=False, indent=2)}
+
+"""
+
+    prompt += f"""## 字段级血缘
 {json.dumps(ctx.column_lineage, ensure_ascii=False, indent=2) if ctx.column_lineage else "无"}
 
 ## 上游指标分组
@@ -351,9 +361,10 @@ def build_prompt(ctx: TableContext) -> str:
 1. 从键、字段血缘和 ETL 判断输入与输出行粒度，检查所有查询阶段是否发生多行压缩或聚合。
 2. 根据稳定行键、时间语义、可汇总度量和描述性属性，判断输出行是事实、维度实体还是技术中间结果。
 3. 结合上下游 JOIN 与复用关系确认当前表在链路中的发布职责；生成新键或出现日期字段都只能作为辅助证据。
-4. 将下游引用数作为弱证据，并结合资产目录、粒度、聚合和用途判断边界层。
-5. 检查组合一致性：DIM 必须对应 dimension，dimension 必须对应 DIM，DWS 必须对应 fact；DWD 可对应 fact 或 other。
-6. 如果 inferred_layer 是 DWD 或 DWS 且表类型为 fact，再按字段语义、DDL 注释、ETL 表达式和业务过程分组。
+4. 若下游实体发布结构特征显示下游才生成代理键并保留自然键，检查当前表是否只是实体逐行清洗；满足时当前表应为 DWD/other，而下游才是实体发布边界。
+5. 将下游引用数作为弱证据，并结合资产目录、粒度、聚合和用途判断边界层。
+6. 检查组合一致性：DIM 必须对应 dimension，dimension 必须对应 DIM，DWS 必须对应 fact；DWD 可对应 fact 或 other。
+7. 如果 inferred_layer 是 DWD 或 DWS 且表类型为 fact，再按字段语义、DDL 注释、ETL 表达式和业务过程分组。
 
 请严格返回 JSON 格式数据，只允许返回下方 JSON schema 中列出的顶层字段: inferred_layer、table_type、inferred_data_domain、inferred_business_area、dimension_role、dimension_content_type、entities、grain、confidence、reasoning_steps、columns。
 不要返回 Markdown，不要返回额外解释，不要新增任何字段。
@@ -1339,6 +1350,7 @@ class TableInspector:
             f"{ctx.etl_sql}|{ctx.upstream_tables}|{ctx.downstream_tables}|"
             f"{upstream_layers}|{downstream_layers}|"
             f"{ctx.depth_from_ods}|{ctx.upstream_metric_groups}|"
+            f"{ctx.downstream_entity_publication_features}|"
             f"{ctx.column_lineage}|{ctx.declared_data_domain}|"
             f"{ctx.declared_business_area}|{ctx.business_domain_options}|"
             f"{ctx.business_semantics_options}|{ctx.project_context}"
