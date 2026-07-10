@@ -1,7 +1,10 @@
 # Python 3.7 Development
 
 This project defaults to Python 3.7 for local development and test runs.
-Use the released `sqlglot==26.9.0`; do not use a local sqlglot checkout.
+Use the Doris-dialect fork from branch
+`HYDCP/hy-sqlglot@hy-sqlglot-26.9.0-doris-dialect`, pinned to commit
+`77fe22e66498ea4ad996d9c5a172c69d7ac693c8`; do not use an unrelated local
+sqlglot checkout.
 
 Create the shared conda environment:
 

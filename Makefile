@@ -5,7 +5,7 @@ CONDA_ENV ?= dw-refactor-py37
 CONDA_SUBDIR ?=
 CONDA_SUBDIR_ARG = $(if $(CONDA_SUBDIR),--subdir $(CONDA_SUBDIR),)
 CONDA_PACKAGES ?= python=3.7 pip pytest=7 pyyaml=6 requests pymysql typing_extensions
-SQLGLOT_PACKAGE ?= sqlglot==26.9.0
+SQLGLOT_PACKAGE ?= git+https://github.com/HYDCP/hy-sqlglot.git@77fe22e66498ea4ad996d9c5a172c69d7ac693c8
 RUFF_PACKAGE ?= ruff==0.12.0
 PYTEST_COV_PACKAGES ?= pytest-cov==4.1.0 coverage[toml]==6.5.0
 CONDA_PYTHON = $(CONDA) run -n $(CONDA_ENV) /bin/sh -c 'exec "$$CONDA_PREFIX/bin/python" "$$@"' conda-python
