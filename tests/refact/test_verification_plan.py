@@ -2,6 +2,7 @@ import ast
 from pathlib import Path
 
 import dw_refactor_agent.config as config
+from dw_refactor_agent.refactor import verification_plan
 from dw_refactor_agent.refactor.verification_plan import (
     build_verification_plan,
     get_partition_col,
@@ -271,7 +272,7 @@ def test_build_verification_plan_requires_lineage_when_jobs_exist(
         },
     )
 
-    for lineage_data in (None, {"edges": []}):
+    for lineage_data in (None, [], "invalid"):
         try:
             build_verification_plan(
                 "demo",
@@ -288,6 +289,41 @@ def test_build_verification_plan_requires_lineage_when_jobs_exist(
             assert "lineage" in str(exc)
         else:
             raise AssertionError("expected missing lineage to fail")
+
+
+def test_build_job_execution_graph_allows_zero_jobs_without_lineage():
+    assert verification_plan._build_job_execution_graph(
+        set(), lineage_data=None
+    ) == ([], {})
+
+
+def test_build_job_execution_graph_allows_isolated_job_with_empty_lineage():
+    order, dependencies = verification_plan._build_job_execution_graph(
+        {"dws_order"}, lineage_data={"edges": []}
+    )
+
+    assert order == ["dws_order"]
+    assert dependencies == {"dws_order": []}
+
+
+def test_build_job_execution_graph_uses_indirect_only_lineage():
+    order, dependencies = verification_plan._build_job_execution_graph(
+        {"dws_order", "ads_order"},
+        lineage_data={
+            "indirect_edges": [
+                {
+                    "source": {"type": "column", "id": "dws_order.id"},
+                    "target_table": "ads_order",
+                }
+            ]
+        },
+    )
+
+    assert order == ["dws_order", "ads_order"]
+    assert dependencies == {
+        "ads_order": ["dws_order"],
+        "dws_order": [],
+    }
 
 
 def test_build_verification_plan_preserves_empty_modified_jobs(
@@ -1583,7 +1619,7 @@ execution:
     config.clear_model_metadata_cache()
 
 
-def test_build_verification_plan_orders_jobs_topologically(
+def test_build_verification_plan_writes_job_dependencies(
     tmp_path, monkeypatch
 ):
     project_dir = tmp_path / "demo"
@@ -1600,7 +1636,10 @@ def test_build_verification_plan_orders_jobs_topologically(
             encoding="utf-8",
         )
         (project_dir / "mid" / "models" / f"{table_name}.yaml").write_text(
-            f"version: 2\nname: {table_name}\nlayer: {layer}\n",
+            (
+                f"version: 2\nname: {table_name}\nlayer: {layer}\n"
+                "execution:\n  materialized: full\n"
+            ),
             encoding="utf-8",
         )
         (project_dir / "mid" / "tasks" / f"{table_name}.sql").write_text(
@@ -1619,6 +1658,21 @@ def test_build_verification_plan_orders_jobs_topologically(
         },
     )
     config.clear_model_metadata_cache()
+
+    original_asset_job_dag_from_lineage = (
+        verification_plan.asset_job_dag_from_lineage
+    )
+    calls = []
+
+    def wrapped_asset_job_dag_from_lineage(lineage_data):
+        calls.append(lineage_data)
+        return original_asset_job_dag_from_lineage(lineage_data)
+
+    monkeypatch.setattr(
+        verification_plan,
+        "asset_job_dag_from_lineage",
+        wrapped_asset_job_dag_from_lineage,
+    )
 
     plan = build_verification_plan(
         "demo",
@@ -1655,6 +1709,25 @@ def test_build_verification_plan_orders_jobs_topologically(
         "dwd_order",
         "dws_order",
         "ads_order",
+    ]
+    assert plan["job_dependencies"] == {
+        "ads_order": ["dws_order"],
+        "dwd_order": [],
+        "dws_order": ["dwd_order"],
+    }
+    assert calls == [
+        {
+            "edges": [
+                {
+                    "source": {"type": "column", "id": "dwd_order.id"},
+                    "target": {"type": "column", "id": "dws_order.id"},
+                },
+                {
+                    "source": {"type": "column", "id": "dws_order.id"},
+                    "target": {"type": "column", "id": "ads_order.id"},
+                },
+            ]
+        }
     ]
 
     config.clear_model_metadata_cache()

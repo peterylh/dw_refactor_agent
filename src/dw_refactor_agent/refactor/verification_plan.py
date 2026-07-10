@@ -214,18 +214,19 @@ def build_verification_plan(
     scope["anchor_tables"] = anchors
     changes = _plan_changes(change_analysis, modified_jobs)
 
-    sorted_jobs = _sort_jobs_for_execution(
-        project,
-        assessment_tasks,
+    job_entries = {
+        job_name: entry
+        for job_name in assessment_tasks
+        for entry in [_job_entry(project, job_name)]
+        if entry
+    }
+    sorted_jobs, job_dependencies = _build_job_execution_graph(
+        set(job_entries),
         lineage_data=lineage_data,
     )
-
-    jobs_to_run = []
-    for job_name in sorted_jobs:
-        entry = _job_entry(project, job_name)
-        if entry:
-            jobs_to_run.append(entry)
-            assessment_tables.add(entry["target"])
+    jobs_to_run = [job_entries[job_name] for job_name in sorted_jobs]
+    for entry in jobs_to_run:
+        assessment_tables.add(entry["target"])
 
     if base_ref:
         all_baseline_ddl = load_baseline_ddl(
@@ -313,6 +314,7 @@ def build_verification_plan(
         "baseline_ddl": dict(sorted(baseline_ddl.items())),
         "ddl_changes": ddl_changes,
         "jobs_to_run": jobs_to_run,
+        "job_dependencies": job_dependencies,
         "verification": verification,
     }
 
@@ -1081,14 +1083,22 @@ def _ads_schema_change_tables(
     return sorted(tables)
 
 
-def _sort_jobs_for_execution(
-    project: str,
+def _build_job_execution_graph(
     jobs: set[str],
     *,
     lineage_data: dict | None = None,
-) -> list[str]:
+) -> tuple[list[str], dict[str, list[str]]]:
     if not jobs:
-        return []
-    if not lineage_data or not lineage_data.get("edges"):
+        return [], {}
+    if not isinstance(lineage_data, dict):
         raise ValueError("lineage data is required to sort jobs_to_run")
-    return asset_job_dag_from_lineage(lineage_data).topological_sort(set(jobs))
+    job_dag = asset_job_dag_from_lineage(lineage_data)
+    sorted_jobs = job_dag.topological_sort(jobs)
+    _in_degree, adjacency = job_dag.compute_in_degree(jobs)
+    dependencies = {job: [] for job in jobs}
+    for upstream, downstream_jobs in adjacency.items():
+        for downstream in downstream_jobs:
+            dependencies[downstream].append(upstream)
+    return sorted_jobs, {
+        job: sorted(dependencies[job]) for job in sorted(dependencies)
+    }

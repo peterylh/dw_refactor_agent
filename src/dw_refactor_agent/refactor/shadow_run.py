@@ -28,13 +28,12 @@ from sqlglot import exp
 from sqlglot.errors import ErrorLevel
 from sqlglot.tokens import Tokenizer, TokenType
 
-import dw_refactor_agent.config as config
 from dw_refactor_agent.config import PROJECT_ROOT, TEXT_ENCODING, get_mysql_cmd
 from dw_refactor_agent.execution.model_config import ExecutionConfigError
 from dw_refactor_agent.execution.planner import ExecutionPlanner
 from dw_refactor_agent.execution.sql_executor import ShadowSqlExecutor
 from dw_refactor_agent.execution.thread_pool import shutdown_executor
-from dw_refactor_agent.lineage.job_dag import JobDAG
+from dw_refactor_agent.lineage.identifiers import identifier_match_key
 from dw_refactor_agent.sql.doris import extract_create_table_name
 
 FINAL_ALTER_JOB_STATES = {"FINISHED", "CANCELLED"}
@@ -994,70 +993,127 @@ def _execute_invocation_batch(
     executor.execute_batch([invocation for _driver_value, invocation in batch])
 
 
-def _job_dag_artifact_path(project: str, root: Path) -> Path:
-    cfg = config.core.PROJECT_CONFIG.get(project)
-    if cfg and cfg.get("dir"):
-        project_dir = Path(cfg["dir"])
-        if not project_dir.is_absolute():
-            project_dir = Path(root) / project_dir
-    else:
-        project_dir = Path(root) / "warehouses" / project
-    return project_dir / "artifacts" / "lineage" / "job_dag.json"
-
-
-def _serial_job_dependencies(
-    jobs_to_run: list[dict],
+def _job_dependencies_from_plan(
+    plan: dict,
 ) -> tuple[dict[str, int], dict[str, list[str]]]:
-    job_names = [job["job"] for job in jobs_to_run]
+    jobs_to_run = plan.get("jobs_to_run", [])
+    if not isinstance(jobs_to_run, list):
+        raise ValueError("jobs_to_run must be a list")
+
+    job_names = []
+    job_name_by_key = {}
+    for job in jobs_to_run:
+        job_name = job.get("job") if isinstance(job, dict) else None
+        job_key = (
+            identifier_match_key(job_name) if isinstance(job_name, str) else ""
+        )
+        if not job_key:
+            raise ValueError("jobs_to_run contains an invalid job name")
+        if job_key in job_name_by_key:
+            raise ValueError(f"duplicate job name {job_name}")
+        job_names.append(job_name)
+        job_name_by_key[job_key] = job_name
+
+    job_dependencies = plan.get("job_dependencies")
+    if not isinstance(job_dependencies, dict):
+        raise ValueError("job_dependencies must be an object")
+
+    dependency_name_by_key = {}
+    for dependency_name in job_dependencies:
+        dependency_key = (
+            identifier_match_key(dependency_name)
+            if isinstance(dependency_name, str)
+            else ""
+        )
+        if not dependency_key:
+            raise ValueError("job_dependencies contains an invalid job name")
+        if dependency_key in dependency_name_by_key:
+            raise ValueError(f"duplicate dependency key {dependency_name}")
+        dependency_name_by_key[dependency_key] = dependency_name
+    if set(dependency_name_by_key) != set(job_name_by_key):
+        raise ValueError(
+            "job_dependencies keys must exactly match jobs_to_run"
+        )
+
     in_degree = dict.fromkeys(job_names, 0)
     adj = {job_name: [] for job_name in job_names}
-    for upstream, downstream in zip(job_names, job_names[1:]):
-        adj[upstream].append(downstream)
-        in_degree[downstream] += 1
+    for downstream in job_names:
+        downstream_key = identifier_match_key(downstream)
+        dependency_name = dependency_name_by_key[downstream_key]
+        upstreams = job_dependencies[dependency_name]
+        if not isinstance(upstreams, list):
+            raise ValueError(f"dependencies for {downstream} must be a list")
+        seen = set()
+        for upstream in upstreams:
+            upstream_key = (
+                identifier_match_key(upstream)
+                if isinstance(upstream, str)
+                else ""
+            )
+            if not upstream_key:
+                raise ValueError(
+                    f"dependencies for {downstream} contain an invalid job name"
+                )
+            if upstream_key not in job_name_by_key:
+                raise ValueError(f"unknown upstream job {upstream}")
+            if upstream_key == downstream_key:
+                raise ValueError(f"job {downstream} cannot depend on itself")
+            if upstream_key in seen:
+                raise ValueError(f"duplicate upstream job {upstream}")
+            seen.add(upstream_key)
+            upstream_job_name = job_name_by_key[upstream_key]
+            adj[upstream_job_name].append(downstream)
+            in_degree[downstream] += 1
+
+    remaining_in_degree = dict(in_degree)
+    ready = [name for name in job_names if remaining_in_degree[name] == 0]
+    visited = 0
+    while ready:
+        upstream = ready.pop(0)
+        visited += 1
+        for downstream in adj[upstream]:
+            remaining_in_degree[downstream] -= 1
+            if remaining_in_degree[downstream] == 0:
+                ready.append(downstream)
+    if visited != len(job_names):
+        raise ValueError("job_dependencies contains a cycle")
+
     return in_degree, adj
 
 
-def _job_dependencies_from_plan(
+def _topologically_ordered_dry_run_plan(
     plan: dict,
-    root: Path,
-) -> tuple[dict[str, int], dict[str, list[str]], str, list[str]]:
+    in_degree: dict[str, int],
+    adjacency: dict[str, list[str]],
+) -> dict:
     jobs_to_run = plan.get("jobs_to_run", [])
-    job_names = [job["job"] for job in jobs_to_run]
-    job_set = set(job_names)
-    if len(job_names) <= 1:
-        return (
-            dict.fromkeys(job_names, 0),
-            {job_name: [] for job_name in job_names},
-            "trivial",
-            [],
+    job_by_name = {job["job"]: job for job in jobs_to_run}
+    job_names = list(job_by_name)
+    remaining = set(job_names)
+    remaining_in_degree = dict(in_degree)
+    ordered_names = []
+
+    while remaining:
+        job_name = next(
+            (
+                name
+                for name in job_names
+                if name in remaining and remaining_in_degree[name] == 0
+            ),
+            None,
         )
+        if job_name is None:
+            raise ValueError("job_dependencies contains a cycle")
+        remaining.remove(job_name)
+        ordered_names.append(job_name)
+        for downstream in adjacency[job_name]:
+            remaining_in_degree[downstream] -= 1
 
-    job_dependencies = plan.get("job_dependencies")
-    if isinstance(job_dependencies, dict):
-        in_degree = dict.fromkeys(job_names, 0)
-        adj = {job_name: [] for job_name in job_names}
-        for downstream, upstreams in job_dependencies.items():
-            if downstream not in job_set:
-                continue
-            for upstream in upstreams or []:
-                if upstream not in job_set:
-                    continue
-                adj[upstream].append(downstream)
-                in_degree[downstream] += 1
-        return in_degree, adj, "plan", []
-
-    dag_path = _job_dag_artifact_path(str(plan.get("project") or ""), root)
-    if dag_path.exists():
-        dag = JobDAG.load(dag_path)
-        in_degree, adj = dag.compute_in_degree(job_set)
-        return in_degree, adj, "lineage_dag", []
-
-    in_degree, adj = _serial_job_dependencies(jobs_to_run)
-    warning = (
-        f"job DAG artifact not found: {dag_path}; "
-        "falling back to serial jobs_to_run order"
-    )
-    return in_degree, adj, "serial_fallback", [warning]
+    ordered_plan = dict(plan)
+    ordered_plan["jobs_to_run"] = [
+        job_by_name[job_name] for job_name in ordered_names
+    ]
+    return ordered_plan
 
 
 def _skipped_shadow_job_result(
@@ -1315,6 +1371,8 @@ def _execute_shadow_job(
 def _run_shadow_jobs(
     plan: dict,
     *,
+    in_degree: dict[str, int],
+    adjacency: dict[str, list[str]],
     root: Path,
     prod_db: str,
     qa_db: str,
@@ -1334,17 +1392,14 @@ def _run_shadow_jobs(
         "parallelism": parallel,
     }
     if job_count == 0:
-        phase["scheduler"] = "empty"
+        phase["scheduler"] = "plan"
         _finish_timing(phase, job_phase_timer)
         return phase
 
     recalculated = set()
     recalculated_lock = threading.Lock()
     batch_semaphore = threading.Semaphore(parallel)
-    in_degree, adj, scheduler, warnings = _job_dependencies_from_plan(
-        plan,
-        root,
-    )
+    in_degree = dict(in_degree)
     job_by_name = {job["job"]: job for job in jobs_to_run}
     index_by_name = {
         job["job"]: index for index, job in enumerate(jobs_to_run, 1)
@@ -1361,11 +1416,7 @@ def _run_shadow_jobs(
     running = {}
     failed = False
 
-    phase["scheduler"] = scheduler
-    if warnings:
-        phase["warnings"] = list(warnings)
-        for warning in warnings:
-            _log(f"  警告: {warning}")
+    phase["scheduler"] = "plan"
 
     def submit_job(executor_pool, job_name: str) -> None:
         remaining.remove(job_name)
@@ -1422,7 +1473,7 @@ def _run_shadow_jobs(
                 if failed:
                     continue
                 for downstream in sorted(
-                    adj.get(job_name, []),
+                    adjacency.get(job_name, []),
                     key=lambda item: index_by_name.get(item, 0),
                 ):
                     in_degree[downstream] -= 1
@@ -1671,6 +1722,7 @@ def _dry_run_phases(
         {
             "name": "run_jobs",
             "status": job_phase_status,
+            "scheduler": "plan",
             "jobs": jobs,
         },
         job_phase_timer,
@@ -1688,6 +1740,7 @@ def execute_shadow_plan(
     batch_size: int = 1,
 ) -> dict:
     """Execute or preview a shadow-run validation plan."""
+    in_degree, adjacency = _job_dependencies_from_plan(plan)
     result_timer = _start_timing()
     parallel = _effective_parallel(parallel)
     batch_size = _effective_batch_size(batch_size)
@@ -1696,9 +1749,14 @@ def execute_shadow_plan(
         return _finish_timing(result, result_timer)
 
     if dry_run:
-        _dry_run(plan)
-        phases = _dry_run_phases(
+        dry_run_plan = _topologically_ordered_dry_run_plan(
             plan,
+            in_degree,
+            adjacency,
+        )
+        _dry_run(dry_run_plan)
+        phases = _dry_run_phases(
+            dry_run_plan,
             timing_detail=timing_detail,
             parallel=parallel,
             batch_size=batch_size,
@@ -1863,6 +1921,8 @@ def execute_shadow_plan(
     planner = ExecutionPlanner(plan["project"], project_root=root)
     job_phase = _run_shadow_jobs(
         plan,
+        in_degree=in_degree,
+        adjacency=adjacency,
         root=root,
         prod_db=prod_db,
         qa_db=qa_db,

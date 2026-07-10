@@ -5,15 +5,17 @@ import threading
 import time
 from datetime import datetime
 
+import pytest
 import sqlglot
 from sqlglot import exp
 from sqlglot.errors import ErrorLevel
 
-from dw_refactor_agent.lineage.job_dag import JobDAG
 from dw_refactor_agent.refactor.shadow_run import (
     ShadowRunSqlError,
     _ddl_change_statements,
     _get_dml_target,
+    _job_dependencies_from_plan,
+    _topologically_ordered_dry_run_plan,
     _wait_for_table_alter_jobs,
     execute_shadow_plan,
     main,
@@ -98,21 +100,6 @@ def _write_shadow_job(
         task_sql,
         encoding="utf-8",
     )
-
-
-def _write_shadow_job_dag(tmp_path, project: str, *edges) -> None:
-    dag_path = (
-        tmp_path
-        / "warehouses"
-        / project
-        / "artifacts"
-        / "lineage"
-        / "job_dag.json"
-    )
-    dag_path.parent.mkdir(parents=True, exist_ok=True)
-    JobDAG(
-        [{"source": source, "target": target} for source, target in edges]
-    ).save(dag_path)
 
 
 def test_get_dml_target_recognizes_statement_targets():
@@ -398,6 +385,7 @@ def test_execute_shadow_plan_splits_rename_columns_and_waits(monkeypatch):
         ],
         "partition_info": {},
         "jobs_to_run": [],
+        "job_dependencies": {},
         "verification": {"checks": []},
     }
     calls = []
@@ -500,6 +488,7 @@ def test_execute_shadow_plan_runs_case_only_rename_steps_in_order(monkeypatch):
         ],
         "partition_info": {},
         "jobs_to_run": [],
+        "job_dependencies": {},
         "verification": {"checks": []},
     }
     calls = []
@@ -620,6 +609,7 @@ def test_dry_run_omits_where_for_unpartitioned_checks(capsys):
         "ddl_changes": [],
         "partition_info": {},
         "jobs_to_run": [],
+        "job_dependencies": {},
         "verification": {
             "checks": [
                 {"table": "ads_sales_dashboard", "method": "count"},
@@ -648,6 +638,7 @@ def test_dry_run_prints_anchor_tables_from_scope(capsys):
         "baseline_ddl": {},
         "ddl_changes": [],
         "jobs_to_run": [],
+        "job_dependencies": {},
         "verification": {"checks": []},
     }
 
@@ -676,6 +667,7 @@ def test_dry_run_prints_qa_ddl_changes(capsys):
         ],
         "partition_info": {},
         "jobs_to_run": [],
+        "job_dependencies": {},
         "verification": {"checks": []},
     }
 
@@ -722,6 +714,7 @@ def test_run_shadow_plan_executes_self_contained(tmp_path, monkeypatch):
                     "execution_values": ["2025-01-15"],
                 }
             ],
+            "job_dependencies": {"dwd_order_detail": []},
             "verification": {"checks": []},
         },
     )
@@ -805,6 +798,7 @@ def test_run_shadow_plan_persists_failed_job_result(tmp_path, monkeypatch):
                     "execution_values": ["2025-01-15"],
                 }
             ],
+            "job_dependencies": {"dwd_order_detail": []},
             "verification": {
                 "checks": [{"table": "ads_sales_dashboard", "method": "count"}]
             },
@@ -883,6 +877,7 @@ def test_run_shadow_plan_timing_detail_records_invocation_timings(
                     "execution_values": ["2024-06-01", "2024-06-02"],
                 }
             ],
+            "job_dependencies": {"dws_order": []},
             "verification": {"checks": []},
         },
     )
@@ -934,6 +929,7 @@ def test_execute_shadow_plan_fails_when_job_file_is_missing(
                 "layer": "DWD",
             }
         ],
+        "job_dependencies": {"dwd_order_detail": []},
         "verification": {"checks": []},
     }
 
@@ -1072,6 +1068,7 @@ def test_run_shadow_plan_dry_run_persists_phase_summary(tmp_path, monkeypatch):
                 "execution_values": ["2025-01-15"],
             }
         ],
+        "job_dependencies": {"M_SHOP_05_INV_DF": []},
         "verification": {
             "checks": [
                 {"table": "dws_inventory_daily", "method": "count"},
@@ -1126,6 +1123,7 @@ def test_run_shadow_plan_dry_run_persists_phase_summary(tmp_path, monkeypatch):
             "error": None,
         }
     ]
+    assert phase_by_name["run_jobs"]["scheduler"] == "plan"
     assert phase_by_name["run_jobs"]["jobs"][0]["job"] == "M_SHOP_05_INV_DF"
     assert phase_by_name["run_jobs"]["jobs"][0]["status"] == "dry_run"
     assert json.loads(output_path.read_text(encoding="utf-8")) == result
@@ -1172,6 +1170,7 @@ def test_run_shadow_plan_dry_run_prints_rewritten_task_ddl_targets(
                     "execution_values": ["2025-01-15"],
                 }
             ],
+            "job_dependencies": {"dws_store_sales_daily": []},
             "verification": {"checks": []},
         },
     )
@@ -1211,6 +1210,7 @@ def test_execute_shadow_plan_runs_job_once_per_execution_value(
                 "execution_values": ["2024-06-01", "2024-06-02"],
             }
         ],
+        "job_dependencies": {"dws_order": []},
         "verification": {"checks": []},
     }
     executed_texts = []
@@ -1266,6 +1266,7 @@ def test_execute_shadow_plan_batches_slices_for_same_job(
                 ],
             }
         ],
+        "job_dependencies": {"dws_order": []},
         "verification": {"checks": []},
     }
     executed_texts = []
@@ -1334,6 +1335,7 @@ def test_execute_shadow_plan_runs_same_job_slice_batches_in_parallel(
                 ],
             }
         ],
+        "job_dependencies": {"dws_order": []},
         "verification": {"checks": []},
     }
     lock = threading.Lock()
@@ -1375,6 +1377,203 @@ def test_execute_shadow_plan_runs_same_job_slice_batches_in_parallel(
     assert job_result["batch_size"] == 1
 
 
+def test_job_dependencies_match_case_insensitively_and_preserve_job_casing():
+    plan = {
+        "jobs_to_run": [
+            {"job": "M_SHOP_05_INV_DF"},
+            {"job": "ADS_INVENTORY"},
+        ],
+        "job_dependencies": {
+            "m_shop_05_inv_df": [],
+            "ads_inventory": ["M_Shop_05_Inv_Df"],
+        },
+    }
+
+    in_degree, adjacency = _job_dependencies_from_plan(plan)
+
+    assert in_degree == {
+        "M_SHOP_05_INV_DF": 0,
+        "ADS_INVENTORY": 1,
+    }
+    assert adjacency == {
+        "M_SHOP_05_INV_DF": ["ADS_INVENTORY"],
+        "ADS_INVENTORY": [],
+    }
+
+
+def test_dry_run_topological_order_uses_descriptor_order_for_ready_jobs():
+    jobs = [{"job": name} for name in ("first", "upstream", "last")]
+    plan = {"jobs_to_run": jobs}
+
+    ordered = _topologically_ordered_dry_run_plan(
+        plan,
+        {"first": 1, "upstream": 0, "last": 0},
+        {"first": [], "upstream": ["first"], "last": []},
+    )
+
+    assert [job["job"] for job in ordered["jobs_to_run"]] == [
+        "upstream",
+        "first",
+        "last",
+    ]
+    assert plan["jobs_to_run"] is jobs
+
+
+@pytest.mark.parametrize(
+    ("jobs_to_run", "job_dependencies", "error_match"),
+    [
+        (
+            [{"job": "M_SHOP_05_INV_DF"}, {"job": "m_shop_05_inv_df"}],
+            {"M_SHOP_05_INV_DF": []},
+            "duplicate job name m_shop_05_inv_df",
+        ),
+        (
+            [{"job": "M_SHOP_05_INV_DF"}],
+            {"M_SHOP_05_INV_DF": [], "m_shop_05_inv_df": []},
+            "duplicate dependency key m_shop_05_inv_df",
+        ),
+        (
+            [{"job": "M_SHOP_05_INV_DF"}, {"job": "ADS_INVENTORY"}],
+            {
+                "M_SHOP_05_INV_DF": [],
+                "ADS_INVENTORY": [
+                    "M_SHOP_05_INV_DF",
+                    "m_shop_05_inv_df",
+                ],
+            },
+            "duplicate upstream job m_shop_05_inv_df",
+        ),
+    ],
+    ids=["job-name", "dependency-key", "upstream"],
+)
+def test_job_dependencies_reject_case_only_duplicates(
+    jobs_to_run,
+    job_dependencies,
+    error_match,
+):
+    with pytest.raises(ValueError, match=error_match):
+        _job_dependencies_from_plan(
+            {
+                "jobs_to_run": jobs_to_run,
+                "job_dependencies": job_dependencies,
+            }
+        )
+
+
+@pytest.mark.parametrize(
+    ("jobs_to_run", "job_dependencies", "error_match"),
+    [
+        (
+            [{"job": "dws_order"}],
+            None,
+            "job_dependencies must be an object",
+        ),
+        (
+            [{"job": "dws_order"}],
+            [],
+            "job_dependencies must be an object",
+        ),
+        (
+            [{"job": "dws_order"}, {"job": "ads_order"}],
+            {"dws_order": []},
+            "job_dependencies keys must exactly match jobs_to_run",
+        ),
+        (
+            [{"job": "dws_order"}],
+            {"dws_order": [], "ads_order": []},
+            "job_dependencies keys must exactly match jobs_to_run",
+        ),
+        (
+            [{"job": "dws_order"}],
+            {"dws_order": "ods_order"},
+            "dependencies for dws_order must be a list",
+        ),
+        (
+            [{"job": "dws_order"}],
+            {"dws_order": ["ods_order"]},
+            "unknown upstream job ods_order",
+        ),
+        (
+            [{"job": "dws_order"}, {"job": "ads_order"}],
+            {"dws_order": [], "ads_order": ["dws_order", "dws_order"]},
+            "duplicate upstream job dws_order",
+        ),
+        (
+            [{"job": "dws_order"}],
+            {"DWS_ORDER": ["Dws_Order"]},
+            "job dws_order cannot depend on itself",
+        ),
+        (
+            [{"job": "dws_order"}, {"job": "ads_order"}],
+            {"DWS_ORDER": ["Ads_Order"], "ads_ORDER": ["Dws_Order"]},
+            "job_dependencies contains a cycle",
+        ),
+        (
+            [{"job": "dws_order"}, {"job": "dws_order"}],
+            {"dws_order": []},
+            "duplicate job name dws_order",
+        ),
+        (
+            [{"job": ""}],
+            {"": []},
+            "jobs_to_run contains an invalid job name",
+        ),
+    ],
+    ids=[
+        "missing-dependencies",
+        "non-object-dependencies",
+        "missing-key",
+        "unknown-key",
+        "non-list-upstreams",
+        "unknown-upstream",
+        "duplicate-upstream",
+        "self-dependency",
+        "cycle",
+        "duplicate-job-name",
+        "invalid-job-name",
+    ],
+)
+def test_execute_shadow_plan_rejects_invalid_job_dependencies_before_sql(
+    monkeypatch,
+    jobs_to_run,
+    job_dependencies,
+    error_match,
+):
+    plan = {
+        "project": "shop",
+        "project_db": "shop_dm",
+        "qa_db": "shop_dm_qa",
+        "baseline_ddl": {},
+        "ddl_changes": [],
+        "jobs_to_run": jobs_to_run,
+        "verification": {"checks": []},
+    }
+    if job_dependencies is not None:
+        plan["job_dependencies"] = job_dependencies
+    sql_calls = []
+    monkeypatch.setattr(
+        "dw_refactor_agent.refactor.shadow_run.run_sql",
+        lambda *args, **kwargs: sql_calls.append((args, kwargs)),
+    )
+
+    def fail_dry_run_planning(*args, **kwargs):
+        raise AssertionError("dry-run planning must not be reached")
+
+    monkeypatch.setattr(
+        "dw_refactor_agent.refactor.shadow_run._dry_run",
+        fail_dry_run_planning,
+    )
+    monkeypatch.setattr(
+        "dw_refactor_agent.refactor.shadow_run._dry_run_phases",
+        fail_dry_run_planning,
+    )
+
+    for dry_run in (False, True):
+        with pytest.raises(ValueError, match=error_match):
+            execute_shadow_plan(plan, dry_run=dry_run)
+        assert sql_calls == []
+
+
 def test_execute_shadow_plan_runs_independent_jobs_concurrently(
     tmp_path, monkeypatch
 ):
@@ -1394,7 +1593,6 @@ execution:
 """,
             task_sql=f"INSERT INTO shadow_dm.{job_name} SELECT 1;",
         )
-    _write_shadow_job_dag(tmp_path, project)
     plan = {
         "project": project,
         "project_db": "shadow_dm",
@@ -1419,6 +1617,7 @@ execution:
                 "target": "dws_order_b",
             },
         ],
+        "job_dependencies": {"dws_order_a": [], "dws_order_b": []},
         "verification": {"checks": []},
     }
     lock = threading.Lock()
@@ -1454,10 +1653,11 @@ execution:
     assert max_active == 2
     phase_by_name = {phase["name"]: phase for phase in result["phases"]}
     assert phase_by_name["run_jobs"]["parallelism"] == 2
+    assert phase_by_name["run_jobs"]["scheduler"] == "plan"
 
 
 def test_execute_shadow_plan_uses_dag_order_when_plan_order_is_reversed(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, capsys
 ):
     project = "shadow_dag_order"
     _write_shadow_project(tmp_path, project)
@@ -1487,7 +1687,6 @@ execution:
 """,
         task_sql="INSERT INTO shadow_dm.ads_order SELECT * FROM shadow_dm.dws_order;",
     )
-    _write_shadow_job_dag(tmp_path, project, ("dws_order", "ads_order"))
     plan = {
         "project": project,
         "project_db": "shadow_dm",
@@ -1512,8 +1711,23 @@ execution:
                 "target": "dws_order",
             },
         ],
+        "job_dependencies": {
+            "ads_order": ["dws_order"],
+            "dws_order": [],
+        },
+        "scope": {"anchor_tables": ["ads_order"]},
         "verification": {"checks": []},
     }
+    artifact_path = (
+        tmp_path
+        / "warehouses"
+        / project
+        / "artifacts"
+        / "lineage"
+        / "job_dag.json"
+    )
+    artifact_path.parent.mkdir(parents=True)
+    artifact_path.write_text("{malformed", encoding="utf-8")
     executed_jobs = []
 
     def fake_run_sql_text(sql_text, db="", qa=False):
@@ -1538,10 +1752,101 @@ execution:
 
     result = execute_shadow_plan(plan, parallel=2)
 
+    stdout = capsys.readouterr().out
     assert result["status"] == "completed"
     assert executed_jobs == ["dws_order", "ads_order"]
+    assert "警告" not in stdout
+    phase_by_name = {phase["name"]: phase for phase in result["phases"]}
+    assert phase_by_name["run_jobs"]["scheduler"] == "plan"
+    assert [job["job"] for job in phase_by_name["run_jobs"]["jobs"]] == [
+        "ads_order",
+        "dws_order",
+    ]
+
+
+def test_execute_shadow_plan_dry_run_topologically_orders_rewrites(
+    tmp_path, monkeypatch, capsys
+):
+    project = "shadow_dry_run_order"
+    _write_shadow_project(tmp_path, project)
+    _write_shadow_job(
+        tmp_path,
+        project,
+        "mid",
+        "dws_order",
+        model_yaml="""version: 2
+name: dws_order
+layer: DWS
+execution:
+  materialized: full
+""",
+        task_sql="INSERT INTO shadow_dm.dws_order SELECT 1;",
+    )
+    _write_shadow_job(
+        tmp_path,
+        project,
+        "ads",
+        "ads_order",
+        model_yaml="""version: 2
+name: ads_order
+layer: ADS
+execution:
+  materialized: full
+""",
+        task_sql=(
+            "INSERT INTO shadow_dm.ads_order "
+            "SELECT * FROM shadow_dm.dws_order;"
+        ),
+    )
+    jobs_to_run = [
+        {
+            "job": "ads_order",
+            "file": (
+                "warehouses/shadow_dry_run_order/ads/tasks/ads_order.sql"
+            ),
+            "layer": "ADS",
+            "target": "ads_order",
+        },
+        {
+            "job": "dws_order",
+            "file": (
+                "warehouses/shadow_dry_run_order/mid/tasks/dws_order.sql"
+            ),
+            "layer": "DWS",
+            "target": "dws_order",
+        },
+    ]
+    plan = {
+        "project": project,
+        "project_db": "shadow_dm",
+        "qa_db": "shadow_dm_qa",
+        "baseline_ddl": {},
+        "ddl_changes": [],
+        "jobs_to_run": jobs_to_run,
+        "job_dependencies": {
+            "ads_order": ["dws_order"],
+            "dws_order": [],
+        },
+        "verification": {"checks": []},
+    }
+    monkeypatch.setattr(
+        "dw_refactor_agent.refactor.shadow_run._project_root",
+        lambda: tmp_path,
+    )
+
+    result = execute_shadow_plan(plan, dry_run=True)
+
+    stdout = capsys.readouterr().out
+    assert result["status"] == "dry_run"
+    assert stdout.index("[DWS] dws_order") < stdout.index("[ADS] ads_order")
+    assert "FROM shadow_dm_qa.dws_order" in stdout
     phase_by_name = {phase["name"]: phase for phase in result["phases"]}
     assert [job["job"] for job in phase_by_name["run_jobs"]["jobs"]] == [
+        "dws_order",
+        "ads_order",
+    ]
+    assert plan["jobs_to_run"] is jobs_to_run
+    assert [job["job"] for job in plan["jobs_to_run"]] == [
         "ads_order",
         "dws_order",
     ]
@@ -1578,7 +1883,6 @@ execution:
 """,
         task_sql="INSERT INTO shadow_dm.ads_order SELECT * FROM shadow_dm.dws_order;",
     )
-    _write_shadow_job_dag(tmp_path, project, ("dws_order", "ads_order"))
     plan = {
         "project": project,
         "project_db": "shadow_dm",
@@ -1603,6 +1907,10 @@ execution:
                 "target": "dws_order",
             },
         ],
+        "job_dependencies": {
+            "ads_order": ["dws_order"],
+            "dws_order": [],
+        },
         "verification": {"checks": []},
     }
     executed_jobs = []
@@ -1633,6 +1941,7 @@ execution:
     assert executed_jobs == ["dws_order"]
     phase_by_name = {phase["name"]: phase for phase in result["phases"]}
     jobs = {job["job"]: job for job in phase_by_name["run_jobs"]["jobs"]}
+    assert phase_by_name["run_jobs"]["scheduler"] == "plan"
     assert jobs["dws_order"]["status"] == "failed"
     assert jobs["ads_order"]["status"] == "skipped"
 
@@ -1661,6 +1970,7 @@ def test_execute_shadow_plan_logs_sql_progress_for_each_slice(
                 "execution_values": ["2024-06-01", "2024-06-02"],
             }
         ],
+        "job_dependencies": {"dws_order": []},
         "verification": {"checks": []},
     }
 
@@ -1777,6 +2087,11 @@ execution:
                 "layer": "ADS",
             },
         ],
+        "job_dependencies": {
+            "dws_store_sales_daily": [],
+            "ads_store_performance": [],
+            "ads_sales_dashboard": [],
+        },
         "verification": {"checks": []},
     }
     executed_texts = []
@@ -1887,6 +2202,7 @@ execution:
                 "layer": "DWS",
             },
         ],
+        "job_dependencies": {"dws_order": []},
         "verification": {"checks": []},
     }
     executed_texts = []
