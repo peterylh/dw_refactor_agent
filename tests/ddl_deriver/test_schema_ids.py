@@ -356,6 +356,21 @@ def test_validate_project_rejects_multiple_create_tables(
     assert "multiple_create_tables" in {issue.code for issue in issues}
 
 
+def test_validate_project_ignores_create_example_in_trailing_comment(
+    tmp_path, monkeypatch
+):
+    ddl_dir = _configure_project(tmp_path, monkeypatch)
+    text = _ddl(
+        table_id=TABLE_ID,
+        first_column_id=FIRST_COLUMN_ID,
+        second_column_id=SECOND_COLUMN_ID,
+    )
+    text += "\n-- example: CREATE TABLE demo_dm.example (id BIGINT);\n"
+    (ddl_dir / "dwd_order.sql").write_text(text, encoding="utf-8")
+
+    assert validate_project("demo") == []
+
+
 def test_validate_project_scans_nonrequired_projects_for_duplicate_ids(
     tmp_path, monkeypatch
 ):

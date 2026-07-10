@@ -315,6 +315,14 @@ def count_create_table_statements(sql_text: str) -> int:
     count = 0
     for segment in segments:
         try:
+            segment_tokens = sqlglot.Tokenizer(dialect="doris").tokenize(
+                segment
+            )
+            if not any(
+                token.token_type == TokenType.CREATE
+                for token in segment_tokens
+            ):
+                continue
             statements = sqlglot.parse(
                 normalize_create_table_for_sqlglot(segment),
                 dialect="doris",
