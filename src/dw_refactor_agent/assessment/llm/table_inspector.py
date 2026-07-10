@@ -23,8 +23,8 @@ from dw_refactor_agent.assessment.project_facts.time_period import (
 )
 from dw_refactor_agent.config import TEXT_ENCODING
 
-PROMPT_VERSION = "table-inspector-v26"
-VALID_LAYERS = {"ODS", "DWD", "DWS", "ADS", "DIM", "OTHER"}
+PROMPT_VERSION = "table-inspector-v33"
+VALID_LAYERS = {"DWD", "DWS", "DIM", "OTHER"}
 VALID_TABLE_TYPES = {"dimension", "fact", "other"}
 VALID_DIMENSION_ROLES = {"BASE", "ADDT"}
 VALID_DIMENSION_CONTENT_TYPES = {"INFO", "TAG", "TREE"}
@@ -36,6 +36,7 @@ COLUMN_GROUPS = (
     "dimensions",
     "others",
 )
+RESOLUTION_REINSPECTION_ERROR_KEY = "resolution_requires_reinspection"
 VALIDATION_ERROR_KEYS = (
     "unknown_columns",
     "duplicate_columns",
@@ -47,6 +48,9 @@ VALIDATION_ERROR_KEYS = (
     "invalid_time_periods",
     "invalid_metric_expressions",
     "missing_primary_entities",
+    "inconsistent_layer_table_types",
+    "inconsistent_layer_sql",
+    RESOLUTION_REINSPECTION_ERROR_KEY,
 )
 VALIDATION_WARNING_KEYS = ("missing_columns",)
 DEFAULT_DEEPSEEK_CHAT_COMPLETIONS_URL = (
@@ -84,6 +88,17 @@ def _format_layered_tables(
         layer = str(layers.get(table) or "").strip().upper()
         rendered.append(f"{table}({layer})" if layer else table)
     return ", ".join(rendered)
+
+
+def _prompt_layer(ctx: TableContext) -> str:
+    return ctx.layer if ctx.expose_layer_hints else "未提供"
+
+
+def _prompt_table_layers(
+    ctx: TableContext,
+    layers: dict[str, str],
+) -> dict[str, str]:
+    return layers if ctx.expose_layer_hints else {}
 
 
 @dataclass
@@ -171,7 +186,7 @@ def build_prompt(ctx: TableContext) -> str:
 1. 客观推断这张表真实应该归属的数仓分层。
 2. 判断它的物理表类型（维度表/事实表/其他）。
 3. 识别 entities、grain 元数据候选。
-4. 如果原始配置层级是 DWD 或 DWS 且你判断它是事实表，则对字段分组识别原子指标、派生指标、衍生指标、维度字段和其他字段。
+4. 如果推断层级是 DWD 或 DWS 且你判断它是事实表，则对字段分组识别原子指标、派生指标、衍生指标、维度字段和其他字段。
 
 ## 数仓分层判定标准
 - ODS (贴源层): 直接同步业务库，通常不含复杂的转化逻辑，数据粒度与源库完全一致。
@@ -183,16 +198,25 @@ def build_prompt(ctx: TableContext) -> str:
 ## 表类型判定标准
 - dimension: 维度表。描述可被事实表引用的业务实体属性、层级、状态或主数据，缓慢变化，常常作为维表被 JOIN。
 - fact: 事实表或汇总事实表。记录业务事件/交易，或按公共维度汇总业务过程，包含可度量字段，通常有时间分区。
-- other: 其他类型。
+- other: 不满足维度发布边界、也不表达业务事件/周期快照事实的清洗实体表、标准化中间表或其他类型。
+- table_type 判断的是当前物理模型承担的职责，不是“字段看起来像实体属性”或“存在数值字段”。直接从单个源表逐行清洗、保留自然业务 ID 和一行一个当前实体的表，若下游仍有独立的规范化维度模型，通常是 DWD/other，不是 dimension。
+- fact 必须能回答“这一行记录了什么业务事件、状态变更或周期快照事实”。实体当前态中的数值属性或非加性参考值本身不能让清洗表变成 fact；缺少事件发生语义、事件时间或快照时间时应判 other。
+- 可度量业务活动记录也属于 fact：如果一行由独立的业务过程/活动标识，具有发生时间或生命周期，并承载该活动的投入、产出、次数、金额或效果等观测度量，即使没有 GROUP BY、每个活动只保留一行，也应判 DWD/fact。other 只用于不表达独立可度量业务过程的实体当前态或技术中间模型。
+- dimension 必须是供事实分析复用的公共参考边界。由清洗表进一步发布、使用稳定参考键并承担业务实体或参考序列的公共上下文职责时，才判 DIM/dimension。
+- 当前态清洗表与维度快照必须区分：如果 ETL 按实体键取截至驱动日期的最新记录，输出显式快照日期字段，并持续保留“一行一个实体在一个快照日”的属性版本，则它承担历史维度快照职责，应判 DIM/dimension；没有快照日期、覆盖式保存当前态并继续供下游规范化的单源清洗表才倾向 DWD/other。
+- 快照日期字段本身不能决定维表：若每个快照行记录可加或可统计的运营度量，表达的是“实体在该时点的业务事实”，则属于周期快照 fact；保持明细快照粒度时判 DWD/fact，经过 GROUP BY 形成公共汇总粒度时判 DWS/fact。只有主要承载实体描述、分类、层级和状态标签等属性版本时，才是 DIM/dimension 属性快照。
 
 ## 中间层候选与边界层规则
-- 当前巡检对象通常来自 DWD/DWS/DIM 可写模型候选；ODS 和 ADS 多数情况下由资产目录边界固定，不应参与中间层 LLM 裁决。
+- 当前巡检对象仅来自 DWD/DWS/DIM 可写模型候选；ODS 和 ADS 由资产目录边界固定，不参与中间层 LLM 裁决，也不得作为 inferred_layer 返回。
 - 如果原始配置层级是 DWD、DWS 或 DIM，且没有明确的 ads 资产目录、应用报表命名或最终看板用途证据，请优先在 DWD/DWS/DIM 中选择。
 - 对含 GROUP BY/SUM/COUNT/COUNT DISTINCT 或从上游汇总指标透传并形成公共粒度 grain 的中间层事实表，应优先考虑 DWS；不要因为下游引用数为 0 直接改判 ADS。
+- 聚合不只看最外层 SELECT：CTE、派生表或 JOIN 子查询中若先按业务键 GROUP BY/SUM/COUNT，再把这些聚合指标发布到当前公共粒度，当前表同样不是 DWD。若输出是一行一个实体×日期并承载多项聚合/计数指标，应判 DWS/fact。
 - 对保留单一 ODS 源行粒度、主要做清洗/标准化/类型转换的实体属性表，应区分“DWD 清洗实体表”和“DIM 公共维表”。只有当它承担公共维度边界、稳定主数据/快照或明确可被事实表复用时，才判为 DIM；若已有单独的维度/主题表承接公共实体，当前清洗表更可能是 DWD/other。
 - 如果当前表从 ODS 或清洗源读取，保留一行一个业务对象/事件/评估/分层变更的粒度，并且下游还有同实体的规范化模型或汇总模型，则当前表通常是 DWD 清洗/明细增强层，不要仅因字段像属性表或标签表就判为 DIM。
+- 对单源逐行清洗链路，必须区分自然键清洗模型和下游公共参考模型：前者通常为 DWD/other；后者若引入稳定代理键、作为 JOIN 上下文复用且不表达事件，则为 DIM/dimension。不要把同一链路的两张表都判成 dimension。
 - 无 GROUP BY 且没有把多行压缩为公共汇总粒度的活动、风险、分层历史、经济指标清洗增强表，即使包含率值、评分、标签、预算、点击、转化等指标/属性，也更可能是 DWD fact/other；DWS 需要明确的公共汇总粒度或可复用聚合语义。
-- 由上游 DWD 清洗表生成、带 surrogate key（如 *_key）且作为日期、地点、产品、客户、经济指标等参考/维度上下文的规范化表，可以判为 DIM；数值型宏观指标/指数如果作为分析上下文而非业务事件，也可属于 DIM/reference。
+- 由上游 DWD 清洗表生成、带 surrogate key（如 *_key）且承担公共参考/维度上下文职责的规范化表，可以判为 DIM；非加性参考序列如果作为分析上下文而非业务事件，也可属于 DIM/reference。
+- 非加性参考值直接贴源清洗并保留自然键时倾向 DWD/other；从该清洗结果发布稳定参考键、供事实关联时倾向 DIM/dimension，不要仅因字段为数值就判 fact。
 
 ## 维表分类标准
 当 table_type=dimension 或 inferred_layer=DIM 时，必须额外判断维表内容形态和维表建设角色。
@@ -258,7 +282,7 @@ def build_prompt(ctx: TableContext) -> str:
 
 ## 表级特征信息
 - 原始表名: {ctx.table_name}
-- 原始配置层级: {ctx.layer}
+- 原始配置层级: {_prompt_layer(ctx)}
 - 原始配置数据域: {ctx.declared_data_domain or "未配置"}
 - 原始配置业务板块: {ctx.declared_business_area or "未配置"}
 - 下游被引用次数: {len(ctx.downstream_tables)}
@@ -310,8 +334,8 @@ def build_prompt(ctx: TableContext) -> str:
         prompt += f"## ETL 加工逻辑\n{ctx.etl_sql}\n\n"
 
     prompt += f"""## 血缘关系
-上游表: {_format_layered_tables(ctx.upstream_tables, ctx.upstream_table_layers)}
-下游表: {_format_layered_tables(ctx.downstream_tables, ctx.downstream_table_layers)}
+上游表: {_format_layered_tables(ctx.upstream_tables, _prompt_table_layers(ctx, ctx.upstream_table_layers))}
+下游表: {_format_layered_tables(ctx.downstream_tables, _prompt_table_layers(ctx, ctx.downstream_table_layers))}
 
 ## 字段级血缘
 {json.dumps(ctx.column_lineage, ensure_ascii=False, indent=2) if ctx.column_lineage else "无"}
@@ -321,16 +345,18 @@ def build_prompt(ctx: TableContext) -> str:
 
 ## 思考步骤
 1. 首先分析 ETL_SQL 中是否包含 GROUP BY 等聚合操作，如果有，排除 DWD 和 ODS。
-2. 观察下游被引用次数。下游为 0 只是弱 ADS 证据，尤其在血缘可能不完整或当前表来自中间层候选时，必须结合 ETL 聚合、粒度和表用途判断；如果 > 1，倾向于 DWS 或 DWD。
-3. 判断是否为 dimension（主键是否为实体属性）。
-4. 如果原始配置层级是 DWD 或 DWS 且表类型为 fact，再按字段语义、DDL 注释、ETL 表达式和业务过程分组。
+2. 明确一行的业务语义：事件/交易/评估/状态变更/可度量运营状态的周期快照才是 fact；当前实体属性或非加性参考值不是 fact。看到 snapshot_date 时必须继续区分事实快照和属性快照。
+3. 沿上下游判断当前表在链路中的职责：单源逐行清洗且下游仍有公共参考模型时判 DWD/other；稳定参考键、被事实 JOIN 复用的发布模型，以及按驱动日期保留实体属性历史版本的显式快照模型，才判 DIM/dimension。
+4. 观察下游被引用次数。下游为 0 只是弱 ADS 证据，尤其在血缘可能不完整或当前表来自中间层候选时，必须结合 ETL 聚合、粒度和表用途判断；如果 > 1，倾向于 DWS 或 DWD。
+5. 检查组合一致性：DIM 必须对应 dimension，dimension 必须对应 DIM，DWS 必须对应 fact；DWD 的清洗实体模型应返回 other，不要返回 dimension。
+6. 如果 inferred_layer 是 DWD 或 DWS 且表类型为 fact，再按字段语义、DDL 注释、ETL 表达式和业务过程分组。
 
 请严格返回 JSON 格式数据，只允许返回下方 JSON schema 中列出的顶层字段: inferred_layer、table_type、inferred_data_domain、inferred_business_area、dimension_role、dimension_content_type、entities、grain、confidence、reasoning_steps、columns。
 不要返回 Markdown，不要返回额外解释，不要新增任何字段。
 如果不需要做字段分组，columns 下五个数组都返回空数组。
 
 {{
-  "inferred_layer": "ODS|DWD|DWS|ADS|DIM|OTHER",
+  "inferred_layer": "DWD|DWS|DIM|OTHER",
   "table_type": "dimension|fact|other",
   "inferred_data_domain": "已确认数据域编号；未提供字典、不适用或不确定时为空字符串",
   "inferred_business_area": "已确认业务板块简写；未提供字典、不适用或不确定时为空字符串",
@@ -445,6 +471,8 @@ def build_retry_prompt(
 - invalid_time_periods 中列出的 time_period 必须改为 D/W/M/Q/Y/S 之一；不要返回中文、英文单词或 1d/1m 等写法。
 - invalid_metric_expressions 中列出的 expression 必须删除 GROUP BY、按...分组、by ... 等粒度说明，只保留指标计算公式。
 - missing_primary_entities 表示 DWD fact 缺少主实体；必须为当前事实行/事件/明细行补充至少一个 type=primary 的 entities 项。
+- inconsistent_layer_table_types 表示层级与物理表职责组合矛盾；DIM 必须返回 dimension，dimension 必须返回 DIM，DWS 必须返回 fact。DWD 清洗实体中间表应返回 other，不能用 DWD/dimension 规避选择。
+- inconsistent_layer_sql 表示 DWD 候选的结构化字段血缘显示 CTE、子查询或主查询中存在 GROUP BY 聚合，违反 DWD 保持明细粒度的架构约束；必须根据公共聚合粒度重新判断，不能继续返回 DWD。
 - 不要返回 Markdown，不要返回额外解释。
 """
     )
@@ -781,6 +809,8 @@ def _normalize_validation(value: Any) -> dict[str, list[str]]:
         "invalid_time_periods",
         "invalid_metric_expressions",
         "missing_primary_entities",
+        "inconsistent_layer_table_types",
+        "inconsistent_layer_sql",
     ):
         raw_items = value.get(key, []) or []
         if isinstance(raw_items, list):
@@ -909,6 +939,48 @@ def validate_primary_entities(
     }
 
 
+def validate_layer_table_type_consistency(
+    result: TableInspectResult,
+) -> dict[str, list[str]]:
+    """校验层级和物理表职责组合，避免 writer 再做内容改写。"""
+    layer = str(result.inferred_layer or "").upper()
+    table_type = str(result.table_type or "").lower()
+    issues = []
+    if table_type == "dimension" and layer != "DIM":
+        issues.append(f"{layer}/dimension: dimension必须与DIM配对")
+    if layer == "DIM" and table_type != "dimension":
+        issues.append(f"DIM/{table_type}: DIM必须与dimension配对")
+    if layer == "DWS" and table_type != "fact":
+        issues.append(f"DWS/{table_type}: DWS必须与fact配对")
+    if not issues:
+        return {}
+    return {"inconsistent_layer_table_types": issues}
+
+
+def validate_layer_sql_consistency(
+    result: TableInspectResult,
+    ctx: TableContext,
+) -> dict[str, list[str]]:
+    """用结构化血缘验证 DWD 无聚合不变量，不替 LLM 指定目标层。"""
+    if str(result.inferred_layer or "").upper() != "DWD":
+        return {}
+    has_group_by = any(
+        str(condition.get("condition_type") or "").upper() == "GROUP_BY"
+        for edge in (ctx.column_lineage or [])
+        if isinstance(edge, dict)
+        for condition in (edge.get("condition_lineage") or [])
+        if isinstance(condition, dict)
+    )
+    if not has_group_by:
+        return {}
+    return {
+        "inconsistent_layer_sql": [
+            "DWD候选的结构化字段血缘包含GROUP_BY聚合；"
+            "请重新判断DWS或其他合法层级"
+        ]
+    }
+
+
 def _metric_names_from_items(raw_metrics: Any) -> list[str]:
     if isinstance(raw_metrics, dict):
         iterable = []
@@ -931,30 +1003,105 @@ def _metric_names_from_items(raw_metrics: Any) -> list[str]:
     return names
 
 
+def _canonical_short_table_name(table_name: Any) -> str:
+    return (
+        str(table_name or "")
+        .strip()
+        .replace("`", "")
+        .split(".")[-1]
+        .casefold()
+    )
+
+
+def _canonical_column_name(column_name: Any) -> str:
+    return str(column_name or "").strip().replace("`", "").casefold()
+
+
 def _atomic_metric_tables_for_validation(
     result: TableInspectResult, ctx: TableContext
 ) -> dict[str, set[str]]:
     tables: dict[str, set[str]] = {}
-    same_table_metrics = set(_metric_names_from_items(result.atomic_metrics))
+    same_table_metrics = {
+        _canonical_column_name(name)
+        for name in _metric_names_from_items(result.atomic_metrics)
+    }
     if same_table_metrics:
-        tables[result.table_name] = same_table_metrics
+        tables[_canonical_short_table_name(result.table_name)] = (
+            same_table_metrics
+        )
     for table_name, groups in (ctx.upstream_metric_groups or {}).items():
         if not isinstance(groups, dict):
             continue
-        names = set(_metric_names_from_items(groups.get("atomic_metrics")))
+        names = {
+            _canonical_column_name(name)
+            for name in _metric_names_from_items(groups.get("atomic_metrics"))
+        }
         if names:
-            tables[str(table_name)] = names
+            tables[_canonical_short_table_name(table_name)] = names
     return tables
 
 
 def _base_metric_candidate_tables(
     base_metric: str, atomic_metric_tables: dict[str, set[str]]
 ) -> list[str]:
+    metric_key = _canonical_column_name(base_metric)
     return sorted(
         table_name
         for table_name, metric_names in atomic_metric_tables.items()
-        if base_metric in metric_names
+        if metric_key in metric_names
     )
+
+
+def _split_column_identifier(identifier: Any) -> tuple[str, str]:
+    text = str(identifier or "").strip().replace("`", "")
+    if "." not in text:
+        return "", _canonical_column_name(text)
+    table_name, column_name = text.rsplit(".", 1)
+    return (
+        _canonical_short_table_name(table_name),
+        _canonical_column_name(column_name),
+    )
+
+
+def _lineage_base_metric_tables(
+    ctx: TableContext,
+    *,
+    target_metric: str,
+    base_metric: str,
+) -> list[str]:
+    target_key = _canonical_column_name(target_metric)
+    base_key = _canonical_column_name(base_metric)
+    tables = set()
+    for edge in ctx.column_lineage or []:
+        if not isinstance(edge, dict):
+            continue
+        _target_table, target_column = _split_column_identifier(
+            edge.get("target")
+        )
+        source_table, source_column = _split_column_identifier(
+            edge.get("source")
+        )
+        if (
+            target_column == target_key
+            and source_column == base_key
+            and source_table
+        ):
+            tables.add(source_table)
+    return sorted(tables)
+
+
+def _known_upstream_metric_group_tables(ctx: TableContext) -> set[str]:
+    return {
+        _canonical_short_table_name(table_name)
+        for table_name in (ctx.upstream_metric_groups or {})
+    }
+
+
+def _actual_upstream_tables(ctx: TableContext) -> set[str]:
+    return {
+        _canonical_short_table_name(table_name)
+        for table_name in (ctx.upstream_tables or [])
+    }
 
 
 def enrich_metric_relationships(
@@ -972,6 +1119,17 @@ def enrich_metric_relationships(
             base_metric,
             atomic_metric_tables,
         )
+        if not candidates:
+            known_group_tables = _known_upstream_metric_group_tables(ctx)
+            candidates = [
+                table_name
+                for table_name in _lineage_base_metric_tables(
+                    ctx,
+                    target_metric=str(metric.get("name") or ""),
+                    base_metric=base_metric,
+                )
+                if table_name not in known_group_tables
+            ]
         if len(candidates) == 1:
             metric["base_metric_table"] = candidates[0]
 
@@ -991,6 +1149,8 @@ def validate_metric_relationships(
         return {}
 
     atomic_metric_tables = _atomic_metric_tables_for_validation(result, ctx)
+    actual_upstream_tables = _actual_upstream_tables(ctx)
+    known_group_tables = _known_upstream_metric_group_tables(ctx)
     for metric in result.derived_metrics:
         metric_name = str(metric.get("name") or "").strip()
         base_metric = str(metric.get("base_metric") or "").strip()
@@ -1002,13 +1162,28 @@ def validate_metric_relationships(
             continue
 
         if base_metric_table:
-            table_metrics = atomic_metric_tables.get(base_metric_table)
+            table_key = _canonical_short_table_name(base_metric_table)
+            metric_key = _canonical_column_name(base_metric)
+            table_metrics = atomic_metric_tables.get(table_key)
             if table_metrics is None:
-                issues["invalid_base_metric_tables"].append(
-                    f"{metric_name}:{base_metric_table}"
+                lineage_tables = _lineage_base_metric_tables(
+                    ctx,
+                    target_metric=metric_name,
+                    base_metric=base_metric,
                 )
+                if (
+                    table_key not in actual_upstream_tables
+                    or table_key not in lineage_tables
+                ):
+                    issues["invalid_base_metric_tables"].append(
+                        f"{metric_name}:{base_metric_table}"
+                    )
+                elif table_key in known_group_tables:
+                    issues["invalid_base_metrics"].append(
+                        f"{metric_name}:{base_metric_table}.{base_metric}"
+                    )
                 continue
-            if base_metric not in table_metrics:
+            if metric_key not in table_metrics:
                 issues["invalid_base_metrics"].append(
                     f"{metric_name}:{base_metric_table}.{base_metric}"
                 )
@@ -1091,9 +1266,19 @@ class TableInspector:
 
     def _compute_hash(self, ctx: TableContext) -> str:
         # 缓存 hash 需要包含所有影响 LLM 判断的特征与 prompt schema 版本。
+        prompt_layer = _prompt_layer(ctx)
+        upstream_layers = _prompt_table_layers(
+            ctx,
+            ctx.upstream_table_layers,
+        )
+        downstream_layers = _prompt_table_layers(
+            ctx,
+            ctx.downstream_table_layers,
+        )
         content = (
-            f"{PROMPT_VERSION}|{ctx.table_name}|{ctx.layer}|{ctx.ddl}|"
+            f"{PROMPT_VERSION}|{ctx.table_name}|{prompt_layer}|{ctx.ddl}|"
             f"{ctx.etl_sql}|{ctx.upstream_tables}|{ctx.downstream_tables}|"
+            f"{upstream_layers}|{downstream_layers}|"
             f"{ctx.depth_from_ods}|{ctx.upstream_metric_groups}|"
             f"{ctx.column_lineage}|{ctx.declared_data_domain}|"
             f"{ctx.declared_business_area}|{ctx.business_domain_options}|"
@@ -1217,6 +1402,8 @@ class TableInspector:
                 validate_time_periods(result),
                 validate_metric_expressions(result),
                 validate_primary_entities(result),
+                validate_layer_table_type_consistency(result),
+                validate_layer_sql_consistency(result, ctx),
                 validate_metric_relationships(result, ctx),
             )
             if result.status == "passed" or attempt >= self.max_retries:

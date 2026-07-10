@@ -209,8 +209,9 @@ def test_build_context_without_task(sample_lineage_data, tmp_path):
     assert ctx.downstream_tables == ["dws_store_sales_daily"]
 
 
-def test_build_contexts_falls_back_to_task_sql_graph_when_lineage_empty(
+def test_build_contexts_warns_without_parsing_tasks_when_lineage_empty(
     tmp_path,
+    caplog,
 ):
     ddl_dir = tmp_path / "ddl"
     tasks_dir = tmp_path / "tasks"
@@ -257,20 +258,12 @@ def test_build_contexts_falls_back_to_task_sql_graph_when_lineage_empty(
     )
     by_name = {ctx.table_name: ctx for ctx in contexts}
 
-    assert by_name["dwd_order_clean"].upstream_tables == ["ods_order"]
-    assert by_name["dwd_order_clean"].downstream_tables == [
-        "dim_customer",
-        "dws_order_daily",
-    ]
-    assert by_name["dwd_order_clean"].downstream_table_layers == {
-        "dim_customer": "DIM",
-        "dws_order_daily": "DWS",
-    }
-    assert by_name["dws_order_daily"].upstream_tables == ["dwd_order_clean"]
-    assert by_name["dws_order_daily"].upstream_table_layers == {
-        "dwd_order_clean": "DWD"
-    }
-    assert "order" not in by_name["dim_customer"].upstream_tables
+    assert by_name["dwd_order_clean"].upstream_tables == []
+    assert by_name["dwd_order_clean"].downstream_tables == []
+    assert by_name["dwd_order_clean"].downstream_table_layers == {}
+    assert by_name["dws_order_daily"].upstream_tables == []
+    assert by_name["dws_order_daily"].upstream_table_layers == {}
+    assert "lineage graph is empty" in caplog.text.lower()
 
 
 def test_build_contexts_reads_default_mid_asset_dirs(

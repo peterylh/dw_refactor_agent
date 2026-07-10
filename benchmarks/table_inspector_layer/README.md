@@ -53,8 +53,10 @@ For each source project, the benchmark creates a temporary project with:
   subject discovery can be measured rather than seeded.
 - Rewritten ODS, MID, and ADS DDL.
 - Rewritten MID and ADS task SQL, including `full_refresh` companions.
-- A minimal `artifacts/lineage/lineage_data.json` with tables and empty edges,
-  because the writer currently expects a lineage snapshot.
+- An `artifacts/lineage/lineage_data.json` snapshot extracted from the rewritten
+  DDL and task SQL, using the same lineage extractor as normal projects.
+- Layer labels for the target, upstream, and downstream tables are hidden from
+  the LLM; the prompt keeps only prefixless names and unlabeled lineage.
 
 Table prefixes `ods_`, `dwd_`, `dws_`, `ads_`, and `dim_` are removed. SQL line
 comments, DDL `COMMENT` clauses, and direct layer words such as ODS/DWD/DWS/ADS
@@ -64,8 +66,8 @@ and their Chinese equivalents are removed. Business function words are kept.
 
 Top-level report fields include:
 
-- `combined_llm_middle_accuracy`: LLM middle-layer decision accuracy over only
-  expected DWD/DWS/DIM tables.
+- `combined_llm_middle_accuracy`: raw LLM `inferred_layer` accuracy over only
+  expected DWD/DWS/DIM tables, before resolver or model-write corrections.
 - `total_catalog_change_count`: process/subject catalog additions or updates.
 - `total_business_process_count` and `total_semantic_subject_count`: generated
   catalog entry counts.

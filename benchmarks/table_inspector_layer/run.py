@@ -484,36 +484,6 @@ def _copy_rewritten_tasks(
         )
 
 
-def _write_minimal_lineage(
-    target_dir: Path,
-    table_mapping: Dict[str, str],
-    expected: Dict[str, Dict[str, Any]],
-) -> None:
-    tables = []
-    for old, new in sorted(table_mapping.items(), key=lambda item: item[1]):
-        layer = _expected_layer(expected, old)
-        tables.append(
-            {
-                "name": new,
-                "layer": layer if layer in FIXED_LAYERS else "OTHER",
-            }
-        )
-    lineage_dir = target_dir / "artifacts" / "lineage"
-    lineage_dir.mkdir(parents=True, exist_ok=True)
-    (lineage_dir / "lineage_data.json").write_text(
-        json.dumps(
-            {
-                "tables": tables,
-                "edges": [],
-                "indirect_edges": [],
-            },
-            ensure_ascii=False,
-            indent=2,
-        ),
-        encoding="utf-8",
-    )
-
-
 def build_temp_project(
     source_project: str,
     target_project: str,
@@ -555,8 +525,6 @@ def build_temp_project(
         expected,
         database_mapping,
     )
-    _write_minimal_lineage(target_dir, mapping, expected)
-
     return TempProject(
         source_project=source_project,
         target_project=target_project,
@@ -621,6 +589,53 @@ def _register_target_project(
     _clear_config_caches()
 
 
+def _write_extracted_lineage(
+    temp_project: TempProject,
+    *,
+    parallelism: int,
+) -> None:
+    from dw_refactor_agent.lineage import lineage_extractor
+
+    runtime_config, _ = _runtime_modules()
+    project = temp_project.target_project
+    previous_project = lineage_extractor.CURRENT_PROJECT
+    try:
+        lineage_extractor.configure_project(project)
+        schema = lineage_extractor.build_schema_from_project_ddl(project)
+        task_files = lineage_extractor.iter_project_task_files(project)
+        extraction = lineage_extractor.extract_lineage_from_task_files(
+            task_files,
+            temp_project.target_dir,
+            schema,
+            parallel=max(1, int(parallelism or 1)),
+            source_file_for_path=lambda path: (
+                lineage_extractor.task_source_file(project, path)
+            ),
+        )
+        fatal_diagnostics = lineage_extractor._fatal_diagnostics(
+            extraction["errors"]
+        )
+        if fatal_diagnostics:
+            raise RuntimeError(
+                f"benchmark lineage extraction failed for {project}: "
+                f"{len(fatal_diagnostics)} fatal diagnostics"
+            )
+
+        output = lineage_extractor.build_lineage_output(
+            extraction["lineage"],
+            schema,
+            transient_tables=extraction["transient_tables"],
+        )
+        output_path = runtime_config.lineage_data_path(project)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(
+            json.dumps(output, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+    finally:
+        lineage_extractor.configure_project(previous_project)
+
+
 def _read_generated_models(target_project: str) -> Dict[str, Dict[str, Any]]:
     runtime_config, _ = _runtime_modules()
     runtime_config.clear_model_metadata_cache()
@@ -681,39 +696,19 @@ def _has_grain(model: Dict[str, Any]) -> bool:
     return bool(model.get("grain"))
 
 
-def _layer_from_item(item: Dict[str, Any]) -> str:
-    layer = str(
-        item.get("layer")
-        or item.get("applied_layer")
-        or item.get("final_layer")
-        or ""
-    ).upper()
-    if layer:
-        return layer
-    if str(item.get("table_type") or "").lower() == "dimension":
-        return "DIM"
-    return str(item.get("inferred_layer") or "MISSING").upper()
-
-
 def _llm_layers(result: Dict[str, Any]) -> Dict[str, str]:
     llm_result = result.get("llm_result") or {}
     layers: Dict[str, str] = {}
-    for update in llm_result.get("model_updates") or []:
-        if not isinstance(update, dict):
-            continue
-        table = str(
-            update.get("table") or update.get("table_name") or ""
-        ).strip()
-        if table:
-            layers[table] = _layer_from_item(update)
     for table_result in llm_result.get("tables") or []:
         if not isinstance(table_result, dict):
             continue
         table = str(
             table_result.get("table") or table_result.get("table_name") or ""
         ).strip()
-        if table and table not in layers:
-            layers[table] = _layer_from_item(table_result)
+        if table:
+            layers[table] = str(
+                table_result.get("inferred_layer") or "MISSING"
+            ).upper()
     return layers
 
 
@@ -989,6 +984,10 @@ def run_benchmark(
                 source_root=source_root,
             )
             _register_target_project(temp_project, tmp_root)
+            _write_extracted_lineage(
+                temp_project,
+                parallelism=parallelism,
+            )
             result = metadata_runner(
                 temp_project.target_project,
                 api_key=api_key,
@@ -1002,6 +1001,7 @@ def run_benchmark(
                 update_catalog=True,
                 replace_existing_models=True,
                 show_progress=show_progress,
+                expose_layer_hints=False,
             )
             summaries.append(
                 _summarize_project(
@@ -1022,6 +1022,7 @@ def run_benchmark(
         "benchmark": "generate_llm_cold_start",
         "model": model,
         "base_url": base_url,
+        "layer_hints_visible_to_llm": False,
         "parallelism": parallelism,
         "request_timeout": request_timeout,
         "dry_run": dry_run,

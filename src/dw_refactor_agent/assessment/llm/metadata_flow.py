@@ -154,6 +154,7 @@ def run_inspection_pipeline(
     result_enricher: ResultEnricher,
     base_model_metadata: Optional[Dict[str, Dict[str, Any]]] = None,
     metric_groups: Optional[Dict[str, Dict[str, List[str]]]] = None,
+    expose_layer_hints: bool = True,
 ) -> InspectionResultBundle:
     contexts = build_contexts(
         project,
@@ -161,6 +162,7 @@ def run_inspection_pipeline(
         layers=WRITABLE_METADATA_LAYERS,
         model_metadata=base_model_metadata,
         metric_groups=metric_groups,
+        expose_layer_hints=expose_layer_hints,
     )
     metric_contexts = [ctx for ctx in contexts if ctx.layer in METRIC_LAYERS]
     dwd_contexts = [ctx for ctx in metric_contexts if ctx.layer == "DWD"]
@@ -200,10 +202,28 @@ def _inject_upstream_metric_groups(
     detected_groups: Dict[str, Dict[str, List[Any]]],
 ) -> None:
     """Inject metrics found earlier in the run into downstream contexts."""
+    detected_by_short_name = {
+        _canonical_short_table_name(table_name): groups
+        for table_name, groups in detected_groups.items()
+    }
     for ctx in contexts:
         upstream_metric_groups = dict(ctx.upstream_metric_groups)
         for upstream_table in ctx.upstream_tables:
-            groups = detected_groups.get(upstream_table)
+            groups = detected_groups.get(upstream_table) or (
+                detected_by_short_name.get(
+                    _canonical_short_table_name(upstream_table)
+                )
+            )
             if groups and any(groups.values()):
                 upstream_metric_groups[upstream_table] = groups
         ctx.upstream_metric_groups = upstream_metric_groups
+
+
+def _canonical_short_table_name(table_name: str) -> str:
+    return (
+        str(table_name or "")
+        .strip()
+        .replace("`", "")
+        .split(".")[-1]
+        .casefold()
+    )

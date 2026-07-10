@@ -227,7 +227,7 @@ def test_generate_without_llm_falls_back_to_direct_rule():
     assert resolution.validation["candidate"]["source"] == ""
 
 
-def test_generate_remaps_ads_dimension_candidate_to_dim():
+def test_generate_rejects_ads_dimension_candidate():
     resolution = resolve_layer(
         LayerResolutionInput(
             table_name="customer_2",
@@ -247,13 +247,13 @@ def test_generate_remaps_ads_dimension_candidate_to_dim():
     )
 
     assert resolution.inferred_layer == "ADS"
-    assert resolution.applied_layer == "DIM"
-    assert resolution.table_type == "dimension"
-    assert resolution.source == "table_inspector"
-    assert resolution.warnings[0]["type"] == "llm_boundary_candidate_remapped"
+    assert resolution.applied_layer == "DWD"
+    assert resolution.table_type == "fact"
+    assert resolution.source == "direct_rule"
+    assert resolution.warnings[0]["type"] == "llm_layer_fallback"
 
 
-def test_generate_remaps_ads_summary_fact_candidate_to_dws():
+def test_generate_rejects_ads_summary_fact_candidate_even_with_grain():
     resolution = resolve_layer(
         LayerResolutionInput(
             table_name="inventory_daily",
@@ -278,102 +278,54 @@ def test_generate_remaps_ads_summary_fact_candidate_to_dws():
     )
 
     assert resolution.inferred_layer == "ADS"
-    assert resolution.applied_layer == "DWS"
-    assert resolution.table_type == "fact"
-    assert resolution.source == "table_inspector"
-    assert resolution.warnings[0]["type"] == "llm_boundary_candidate_remapped"
-
-
-def test_generate_preserves_dwd_intermediate_prior_for_downstream_model_hint():
-    resolution = resolve_layer(
-        LayerResolutionInput(
-            table_name="products_2",
-            fallback_layer="DWD",
-            fallback_table_type="other",
-            inspection_result=_inspect_result(
-                table_name="products_2",
-                inferred_layer="DIM",
-                table_type="dimension",
-                grain={},
-            ),
-            policy=LayerResolutionPolicy(
-                mode="generate",
-                candidate_layers=("DWD", "DWS", "DIM"),
-                fallback_source="direct_rule",
-            ),
-        )
-    )
-    assert resolution.applied_layer == "DIM"
-
-    hinted_result = _inspect_result(
-        table_name="products_2",
-        inferred_layer="DIM",
-        table_type="dimension",
-    )
-    hinted_result.validation["context_hints"] = [
-        "dwd_intermediate_downstream_model"
-    ]
-
-    resolution = resolve_layer(
-        LayerResolutionInput(
-            table_name="products_2",
-            fallback_layer="DWD",
-            fallback_table_type="other",
-            inspection_result=hinted_result,
-            policy=LayerResolutionPolicy(
-                mode="generate",
-                candidate_layers=("DWD", "DWS", "DIM"),
-                fallback_source="direct_rule",
-            ),
-        )
-    )
-
-    assert resolution.inferred_layer == "DIM"
     assert resolution.applied_layer == "DWD"
-    assert resolution.table_type == "other"
+    assert resolution.table_type == "fact"
     assert resolution.source == "direct_rule"
-    assert resolution.warnings[0]["type"] == "dwd_intermediate_prior_preserved"
-
-    dwd_dimension_result = _inspect_result(
-        table_name="products_2",
-        inferred_layer="DWD",
-        table_type="dimension",
-    )
-    dwd_dimension_result.validation["context_hints"] = [
-        "dwd_intermediate_downstream_model"
-    ]
-
-    resolution = resolve_layer(
-        LayerResolutionInput(
-            table_name="products_2",
-            fallback_layer="DWD",
-            fallback_table_type="other",
-            inspection_result=dwd_dimension_result,
-            policy=LayerResolutionPolicy(
-                mode="generate",
-                candidate_layers=("DWD", "DWS", "DIM"),
-                fallback_source="direct_rule",
-            ),
-        )
-    )
-
-    assert resolution.inferred_layer == "DWD"
-    assert resolution.applied_layer == "DWD"
-    assert resolution.table_type == "other"
-    assert resolution.warnings[0]["type"] == "dwd_intermediate_prior_preserved"
+    assert resolution.warnings[0]["type"] == "llm_layer_fallback"
 
 
-def test_generate_preserves_dwd_fact_from_source_hint():
+@pytest.mark.parametrize(
+    (
+        "hint",
+        "inferred_layer",
+        "table_type",
+        "expected_layer",
+        "expected_type",
+    ),
+    [
+        (
+            "dwd_intermediate_downstream_model",
+            "DIM",
+            "dimension",
+            "DIM",
+            "dimension",
+        ),
+        ("dwd_fact_from_dwd_source", "DIM", "dimension", "DIM", "dimension"),
+        ("dim_surrogate_from_dwd_source", "DWD", "fact", "DWD", "fact"),
+        ("dws_reusable_snapshot", "DWD", "fact", "DWD", "fact"),
+        ("dws_entity_metric_summary", "DIM", "dimension", "DIM", "dimension"),
+        ("dim_entity_snapshot", "DWD", "other", "DWD", "other"),
+    ],
+)
+def test_generate_does_not_override_llm_candidate_from_context_hint(
+    hint,
+    inferred_layer,
+    table_type,
+    expected_layer,
+    expected_type,
+):
     result = _inspect_result(
-        table_name="customer_segment_history",
-        inferred_layer="DIM",
-        table_type="dimension",
+        table_name="ambiguous_table_2",
+        inferred_layer=inferred_layer,
+        table_type=table_type,
     )
-    result.validation["context_hints"] = ["dwd_fact_from_dwd_source"]
+    # Old cache entries can still contain these former benchmark-driven hints.
+    # The resolver must treat them as inert metadata rather than decisions.
+    result.validation["context_hints"] = [hint]
 
     resolution = resolve_layer(
         LayerResolutionInput(
-            table_name="customer_segment_history",
+            table_name="ambiguous_table_2",
             fallback_layer="DWD",
             fallback_table_type="other",
             inspection_result=result,
@@ -385,124 +337,8 @@ def test_generate_preserves_dwd_fact_from_source_hint():
         )
     )
 
-    assert resolution.inferred_layer == "DIM"
-    assert resolution.applied_layer == "DWD"
-    assert resolution.table_type == "fact"
-    assert resolution.warnings[0]["type"] == "dwd_fact_prior_preserved"
-
-
-def test_generate_remaps_surrogate_dim_from_dwd_source_hint():
-    result = _inspect_result(
-        table_name="economic_indicators_2",
-        inferred_layer="DWD",
-        table_type="fact",
-    )
-    result.validation["context_hints"] = ["dim_surrogate_from_dwd_source"]
-
-    resolution = resolve_layer(
-        LayerResolutionInput(
-            table_name="economic_indicators_2",
-            fallback_layer="DWD",
-            fallback_table_type="fact",
-            inspection_result=result,
-            policy=LayerResolutionPolicy(
-                mode="generate",
-                candidate_layers=("DWD", "DWS", "DIM"),
-                fallback_source="direct_rule",
-            ),
-        )
-    )
-
-    assert resolution.inferred_layer == "DWD"
-    assert resolution.applied_layer == "DIM"
-    assert resolution.table_type == "dimension"
+    assert resolution.inferred_layer == inferred_layer
+    assert resolution.applied_layer == expected_layer
+    assert resolution.table_type == expected_type
     assert resolution.source == "table_inspector"
-    assert resolution.warnings[0]["type"] == "dim_surrogate_candidate_remapped"
-
-
-def test_generate_remaps_reusable_snapshot_to_dws_hint():
-    result = _inspect_result(
-        table_name="account_daily_snapshot",
-        inferred_layer="DWD",
-        table_type="fact",
-    )
-    result.validation["context_hints"] = ["dws_reusable_snapshot"]
-
-    resolution = resolve_layer(
-        LayerResolutionInput(
-            table_name="account_daily_snapshot",
-            fallback_layer="DWD",
-            fallback_table_type="fact",
-            inspection_result=result,
-            policy=LayerResolutionPolicy(
-                mode="generate",
-                candidate_layers=("DWD", "DWS", "DIM"),
-                fallback_source="direct_rule",
-            ),
-        )
-    )
-
-    assert resolution.inferred_layer == "DWD"
-    assert resolution.applied_layer == "DWS"
-    assert resolution.table_type == "fact"
-    assert resolution.warnings[0]["type"] == "dws_snapshot_candidate_remapped"
-
-
-def test_generate_remaps_entity_metric_summary_to_dws_hint():
-    result = _inspect_result(
-        table_name="agent",
-        inferred_layer="DIM",
-        table_type="dimension",
-    )
-    result.validation["context_hints"] = ["dws_entity_metric_summary"]
-
-    resolution = resolve_layer(
-        LayerResolutionInput(
-            table_name="agent",
-            fallback_layer="DWD",
-            fallback_table_type="other",
-            inspection_result=result,
-            policy=LayerResolutionPolicy(
-                mode="generate",
-                candidate_layers=("DWD", "DWS", "DIM"),
-                fallback_source="direct_rule",
-            ),
-        )
-    )
-
-    assert resolution.inferred_layer == "DIM"
-    assert resolution.applied_layer == "DWS"
-    assert resolution.table_type == "fact"
-    assert resolution.warnings[0]["type"] == (
-        "dws_entity_metric_candidate_remapped"
-    )
-
-
-def test_generate_remaps_entity_snapshot_to_dim_hint():
-    result = _inspect_result(
-        table_name="promotion_2",
-        inferred_layer="DWD",
-        table_type="other",
-    )
-    result.validation["context_hints"] = ["dim_entity_snapshot"]
-
-    resolution = resolve_layer(
-        LayerResolutionInput(
-            table_name="promotion_2",
-            fallback_layer="DWD",
-            fallback_table_type="other",
-            inspection_result=result,
-            policy=LayerResolutionPolicy(
-                mode="generate",
-                candidate_layers=("DWD", "DWS", "DIM"),
-                fallback_source="direct_rule",
-            ),
-        )
-    )
-
-    assert resolution.inferred_layer == "DWD"
-    assert resolution.applied_layer == "DIM"
-    assert resolution.table_type == "dimension"
-    assert resolution.warnings[0]["type"] == (
-        "dim_entity_snapshot_candidate_remapped"
-    )
+    assert resolution.warnings == ()

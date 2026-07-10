@@ -7,10 +7,15 @@ from pathlib import Path
 import yaml
 
 from benchmarks.table_inspector_layer.run import (
+    _llm_layers,
     build_temp_project,
     run_benchmark,
 )
-from dw_refactor_agent.assessment.llm.table_inspector import TableInspectResult
+from dw_refactor_agent.assessment.llm.table_inspector import (
+    TableInspectResult,
+    build_prompt,
+)
+from dw_refactor_agent.lineage.view import LineageView
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
@@ -256,6 +261,7 @@ def test_run_benchmark_prefixless_mid_assets_enter_llm_contexts(
     source_root = tmp_path / "source"
     _create_demo_project(source_root)
     seen_contexts = []
+    seen_prompts = {}
 
     class FakeInspector:
         def __init__(self, *args, **kwargs):
@@ -263,7 +269,11 @@ def test_run_benchmark_prefixless_mid_assets_enter_llm_contexts(
 
         def inspect_batch(self, contexts):
             seen_contexts.extend(
-                (ctx.table_name, ctx.layer) for ctx in contexts
+                (ctx.table_name, ctx.layer, ctx.expose_layer_hints)
+                for ctx in contexts
+            )
+            seen_prompts.update(
+                {ctx.table_name: build_prompt(ctx) for ctx in contexts}
             )
             results = []
             for ctx in contexts:
@@ -348,16 +358,37 @@ def test_run_benchmark_prefixless_mid_assets_enter_llm_contexts(
 
     assert report["benchmark"] == "generate_llm_cold_start"
     assert report["base_url"] == "https://api.deepseek.com/chat/completions"
+    assert report["layer_hints_visible_to_llm"] is False
     assert "combined_final_accuracy" not in report
     assert report["combined_llm_middle_accuracy"] == 1.0
     assert report["total_catalog_change_count"] == 2
     assert report["total_business_process_count"] == 1
     assert report["total_semantic_subject_count"] == 1
     assert set(seen_contexts) == {
-        ("customer_profile", "DWD"),
-        ("order_detail", "DWD"),
-        ("order_summary", "DWD"),
+        ("customer_profile", "DWD", False),
+        ("order_detail", "DWD", False),
+        ("order_summary", "DWD", False),
     }
+    assert "原始配置层级: 未提供" in seen_prompts["order_detail"]
+    assert "上游表: order_event" in seen_prompts["order_detail"]
+    assert "order_event(ODS)" not in seen_prompts["order_detail"]
+    assert "下游表: order_dashboard" in seen_prompts["order_summary"]
+    assert "order_dashboard(ADS)" not in seen_prompts["order_summary"]
+    lineage_path = (
+        tmp_path
+        / "assets"
+        / "warehouses"
+        / "demo_generate_llm_benchmark"
+        / "artifacts"
+        / "lineage"
+        / "lineage_data.json"
+    )
+    lineage = json.loads(lineage_path.read_text(encoding="utf-8"))
+    upstream, _downstream = LineageView.from_data(
+        "", lineage
+    ).asset_table_graph()
+    assert upstream["order_detail"] == {"order_event"}
+    assert upstream["order_dashboard"] == {"order_summary"}
     project = report["projects"][0]
     assert project["source_project"] == "demo"
     assert project["table_count"] == 5
@@ -379,6 +410,29 @@ def test_run_benchmark_prefixless_mid_assets_enter_llm_contexts(
     assert project["mismatches"] == []
     assert output.exists()
     assert json.loads(output.read_text(encoding="utf-8")) == report
+
+
+def test_llm_layers_use_raw_inspection_results_only():
+    result = {
+        "llm_result": {
+            "model_updates": [
+                {
+                    "table": "order_summary",
+                    "layer": "DWS",
+                    "table_type": "fact",
+                }
+            ],
+            "tables": [
+                {
+                    "table_name": "order_summary",
+                    "inferred_layer": "DIM",
+                    "table_type": "dimension",
+                }
+            ],
+        }
+    }
+
+    assert _llm_layers(result) == {"order_summary": "DIM"}
 
 
 def test_runner_script_help_works_without_pythonpath():

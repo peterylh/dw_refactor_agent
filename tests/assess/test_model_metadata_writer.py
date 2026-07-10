@@ -781,7 +781,7 @@ def test_write_model_updates_from_plan_uses_plan_model_paths(
     ).exists()
 
 
-def test_write_model_updates_from_plan_uses_plan_resolution_policy(
+def test_write_model_updates_ignores_legacy_context_hint(
     tmp_path, monkeypatch
 ):
     project = "plan_resolution_policy"
@@ -792,15 +792,23 @@ def test_write_model_updates_from_plan_uses_plan_resolution_policy(
         ddl_tables=["dwd_order_detail"],
     )
     model_path = tmp_path / "models" / "dwd_order_detail.yaml"
+    existing_model = {
+        "version": 2,
+        "name": "dwd_order_detail",
+        "layer": "DWD",
+        "table_type": "fact",
+        "atomic_metrics": ["pay_amt"],
+        "derived_metrics": [_expected_pay_amt_1d_metric()],
+    }
+    model_path.parent.mkdir(parents=True)
+    model_path.write_text(
+        yaml.safe_dump(existing_model, allow_unicode=True, sort_keys=False),
+        encoding="utf-8",
+    )
     plan = build_generate_plan(
         project,
-        write_scope="table",
-        base_model_metadata={
-            "dwd_order_detail": {
-                "layer": "DWD",
-                "table_type": "fact",
-            }
-        },
+        write_scope="all",
+        base_model_metadata={"dwd_order_detail": existing_model},
         model_paths={"dwd_order_detail": model_path},
         planned_deleted_model_files=[],
         replace_existing_models=True,
@@ -808,10 +816,11 @@ def test_write_model_updates_from_plan_uses_plan_resolution_policy(
     result = TableInspectResult(
         table_name="dwd_order_detail",
         declared_layer="DWD",
-        inferred_layer="ADS",
+        inferred_layer="DIM",
         table_type="dimension",
         confidence=0.9,
         reasoning_steps=[],
+        validation={"context_hints": ["dws_entity_metric_summary"]},
     )
 
     yaml_updates, skipped_updates = write_model_updates_from_plan(
@@ -823,9 +832,8 @@ def test_write_model_updates_from_plan_uses_plan_resolution_policy(
     saved = yaml.safe_load(model_path.read_text(encoding="utf-8"))
 
     assert skipped_updates == []
-    assert yaml_updates[0]["warnings"][0]["type"] == (
-        "llm_boundary_candidate_remapped"
-    )
+    assert yaml_updates[0]["status"] == "passed"
+    assert "resolution_requires_reinspection" not in result.validation
     assert saved["layer"] == "DIM"
     assert saved["table_type"] == "dimension"
 
@@ -1386,22 +1394,13 @@ def test_result_for_report_includes_dimension_layer_warning():
     assert report["metadata_warnings"][0]["inferred_layer"] == "DWD"
 
 
-@pytest.mark.parametrize(
-    ("existing_layer", "existing_type", "result_layer", "result_type"),
-    [
-        ("DWD", "fact", "OTHER", "dimension"),
-        ("DIM", "dimension", "DWD", "fact"),
-    ],
-)
-def test_update_model_yaml_uses_resolved_metadata_for_entities(
+def test_update_model_yaml_uses_resolved_metadata_for_aligned_entities(
     tmp_path,
     monkeypatch,
-    existing_layer,
-    existing_type,
-    result_layer,
-    result_type,
 ):
     table_name = "dwd_order_detail"
+    existing_layer = "DIM"
+    existing_type = "dimension"
     project_dir = _write_catalog_project(
         tmp_path,
         monkeypatch,
@@ -1422,8 +1421,8 @@ def test_update_model_yaml_uses_resolved_metadata_for_entities(
         TableInspectResult(
             table_name=table_name,
             declared_layer=existing_layer,
-            inferred_layer=result_layer,
-            table_type=result_type,
+            inferred_layer="DWD",
+            table_type="fact",
             confidence=0.9,
             reasoning_steps=[],
             entities=[
@@ -1449,8 +1448,6 @@ def test_update_model_yaml_uses_resolved_metadata_for_entities(
 
     assert update["layer"] == "DWD"
     assert update["table_type"] == "fact"
-    if result_layer == "OTHER":
-        assert update["warnings"][0]["type"] == "llm_layer_fallback"
     assert saved["layer"] == "DWD"
     assert saved["table_type"] == "fact"
     assert saved["entities"] == [
@@ -1468,7 +1465,7 @@ def test_update_model_yaml_uses_resolved_metadata_for_entities(
     assert "layer_score" not in saved
 
 
-def test_update_model_yaml_missing_table_type_uses_code_prior_on_fallback(
+def test_update_model_yaml_blocks_fallback_that_changes_table_type(
     tmp_path,
     monkeypatch,
 ):
@@ -1513,24 +1510,14 @@ def test_update_model_yaml_missing_table_type_uses_code_prior_on_fallback(
     )
     saved = yaml.safe_load(model_path.read_text(encoding="utf-8"))
 
-    assert update["layer"] == "DWD"
-    assert update["table_type"] == "other"
+    assert update["status"] == "blocked"
+    assert update["changed"] is False
+    assert update["reason"] == "resolution_requires_reinspection"
     assert update["warnings"][0]["type"] == "llm_layer_fallback"
     assert update["warnings"][0]["prior_layer"] == "DWD"
     assert saved["layer"] == "DWD"
-    assert saved["table_type"] == "other"
-    assert saved["entities"] == [
-        {
-            "code": "ORDER",
-            "type": "primary",
-            "key_columns": ["order_id"],
-        },
-        {
-            "code": "CUST",
-            "type": "foreign",
-            "key_columns": ["customer_id"],
-        },
-    ]
+    assert "table_type" not in saved
+    assert "entities" not in saved
     assert "layer_score" not in saved
 
 
@@ -2754,6 +2741,105 @@ def _assert_update_model_yaml_skips_blocked_results(tmp_path, monkeypatch):
     assert update["reason"] == "validation_blocked"
     assert saved["atomic_metrics"] == ["quantity"]
     assert saved["calculated_metrics"] == ["subtotal"]
+
+
+def test_update_model_yaml_writes_safe_table_metadata_when_metrics_blocked(
+    tmp_path, monkeypatch
+):
+    import dw_refactor_agent.assessment.llm.model_metadata_writer as writer_module
+
+    project_root = tmp_path
+    models_dir = project_root / "demo" / "mid" / "models"
+    models_dir.mkdir(parents=True)
+    model_path = models_dir / "sales_daily.yaml"
+    existing = {
+        "version": 2,
+        "name": "sales_daily",
+        "layer": "DWD",
+        "table_type": "other",
+        "atomic_metrics": ["existing_metric"],
+    }
+    model_path.write_text(
+        yaml.safe_dump(existing, allow_unicode=True, sort_keys=False),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(writer_module, "PROJECT_ROOT", project_root)
+    monkeypatch.setitem(writer_module.PROJECT_CONFIG, "demo", {"dir": "demo"})
+    result = TableInspectResult(
+        table_name="sales_daily",
+        declared_layer="DWD",
+        inferred_layer="DWS",
+        table_type="fact",
+        confidence=0.95,
+        reasoning_steps=[],
+        validation={"invalid_base_metrics": ["sale_amount:subtotal"]},
+    )
+
+    update = update_model_yaml("demo", result)
+    saved = yaml.safe_load(model_path.read_text(encoding="utf-8"))
+
+    assert result.status == "blocked"
+    assert update["reason"] == "validation_blocked_table_metadata_only"
+    assert update["metadata_changed"] is True
+    assert update["metric_changed"] is False
+    assert saved["layer"] == "DWS"
+    assert saved["table_type"] == "fact"
+    assert saved["atomic_metrics"] == ["existing_metric"]
+
+
+@pytest.mark.parametrize(
+    ("validation_key", "validation_message"),
+    [
+        (
+            "inconsistent_layer_table_types",
+            "DWD/dimension: dimension必须与DIM配对",
+        ),
+        (
+            "inconsistent_layer_sql",
+            "DWD候选的结构化字段血缘包含GROUP_BY聚合",
+        ),
+    ],
+)
+def test_update_model_yaml_does_not_write_inconsistent_table_classification(
+    tmp_path,
+    monkeypatch,
+    validation_key,
+    validation_message,
+):
+    import dw_refactor_agent.assessment.llm.model_metadata_writer as writer_module
+
+    project_root = tmp_path
+    models_dir = project_root / "demo" / "mid" / "models"
+    models_dir.mkdir(parents=True)
+    model_path = models_dir / "customer_cleaned.yaml"
+    existing = {
+        "version": 2,
+        "name": "customer_cleaned",
+        "layer": "DWD",
+        "table_type": "other",
+    }
+    model_path.write_text(
+        yaml.safe_dump(existing, allow_unicode=True, sort_keys=False),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(writer_module, "PROJECT_ROOT", project_root)
+    monkeypatch.setitem(writer_module.PROJECT_CONFIG, "demo", {"dir": "demo"})
+    result = TableInspectResult(
+        table_name="customer_cleaned",
+        declared_layer="DWD",
+        inferred_layer="DWD",
+        table_type="dimension",
+        confidence=0.9,
+        reasoning_steps=[],
+        validation={validation_key: [validation_message]},
+    )
+
+    update = update_model_yaml("demo", result)
+    saved = yaml.safe_load(model_path.read_text(encoding="utf-8"))
+
+    assert update["updated"] is False
+    assert update["reason"] == "validation_blocked"
+    assert saved == existing
 
 
 def test_run_metadata_write_reuses_table_inspector(
@@ -4076,6 +4162,72 @@ def test_generate_single_writer_pass_keeps_base_model_when_llm_blocked(
     assert "atomic_metrics" not in saved
 
 
+def test_generate_single_writer_applies_table_metadata_when_metrics_blocked(
+    tmp_path, monkeypatch
+):
+    import dw_refactor_agent.assessment.llm.model_metadata_writer as writer_module
+
+    project = "generate_single_writer_partial_block"
+    project_dir = _write_single_writer_project(
+        tmp_path,
+        monkeypatch,
+        project,
+        existing_models={
+            "dwd_order_detail": {
+                "version": 2,
+                "name": "dwd_order_detail",
+                "layer": "DWD",
+                "table_type": "other",
+            }
+        },
+    )
+
+    class FakeInspector:
+        def __init__(self, api_key, **kwargs):
+            pass
+
+        def inspect_batch(self, contexts):
+            return [
+                TableInspectResult(
+                    table_name=ctx.table_name,
+                    declared_layer=ctx.layer,
+                    inferred_layer="DWS",
+                    table_type="fact",
+                    validation={
+                        "invalid_base_metrics": ["sale_amount:subtotal"]
+                    },
+                    confidence=0.95,
+                    reasoning_steps=[],
+                )
+                for ctx in contexts
+            ]
+
+    monkeypatch.setattr(
+        writer_module,
+        "load_lineage_data",
+        lambda _project: _lineage_for_tables("dwd_order_detail"),
+    )
+    monkeypatch.setattr(writer_module, "TableInspector", FakeInspector)
+
+    result = run_generate_model_metadata(
+        project,
+        api_key="test",
+        dry_run=False,
+    )
+    saved = yaml.safe_load(
+        (project_dir / "mid" / "models" / "dwd_order_detail.yaml").read_text(
+            encoding="utf-8"
+        )
+    )
+
+    assert result["llm_result"]["blocked_table_count"] == 1
+    assert result["llm_result"]["model_updates"][0]["reason"] == (
+        "validation_blocked_table_metadata_only"
+    )
+    assert saved["layer"] == "DWS"
+    assert saved["table_type"] == "fact"
+
+
 def test_generate_single_writer_pass_keeps_ods_ads_base_models(
     tmp_path, monkeypatch
 ):
@@ -4677,7 +4829,7 @@ def test_run_metadata_write_passes_dwd_metric_groups_to_dws(
     }
 
 
-def test_enrich_results_marks_layer_context_hints():
+def test_enrich_results_does_not_add_layer_context_hints():
     dwd_intermediate = TableInspectResult(
         table_name="products_2",
         declared_layer="DWD",
@@ -4766,8 +4918,7 @@ def test_enrich_results_marks_layer_context_hints():
             layer="DWD",
             ddl="CREATE TABLE atm_locations_2 (atm_id BIGINT);",
             etl_sql=(
-                "INSERT INTO atm_locations_2 "
-                "SELECT atm_id FROM atm_locations;"
+                "INSERT INTO atm_locations_2 SELECT atm_id FROM atm_locations;"
             ),
             upstream_tables=["atm_locations"],
             downstream_tables=["location"],
@@ -4924,29 +5075,20 @@ def test_enrich_results_marks_layer_context_hints():
         contexts,
     )
 
-    assert dwd_intermediate.validation["context_hints"] == [
-        "dwd_intermediate_downstream_model"
-    ]
-    assert dwd_dimension_intermediate.validation["context_hints"] == [
-        "dwd_intermediate_downstream_model"
-    ]
-    assert dwd_fact_from_source.validation["context_hints"] == [
-        "dwd_fact_from_dwd_source"
-    ]
-    assert surrogate_dim.validation["context_hints"] == [
-        "dim_surrogate_from_dwd_source"
-    ]
-    assert dws_snapshot.validation["context_hints"] == [
-        "dws_reusable_snapshot"
-    ]
-    assert dws_entity_metric.validation["context_hints"] == [
-        "dws_entity_metric_summary"
-    ]
-    assert dim_entity_snapshot.validation["context_hints"] == [
-        "dim_entity_snapshot"
-    ]
-    assert "context_hints" not in conformed_dim.validation
-    assert "context_hints" not in plain_summary.validation
+    assert all(
+        "context_hints" not in result.validation
+        for result in (
+            dwd_intermediate,
+            dwd_dimension_intermediate,
+            dwd_fact_from_source,
+            surrogate_dim,
+            dws_snapshot,
+            dws_entity_metric,
+            dim_entity_snapshot,
+            conformed_dim,
+            plain_summary,
+        )
+    )
 
 
 def test_run_metadata_write_discovers_related_entity_from_dws_grain(
