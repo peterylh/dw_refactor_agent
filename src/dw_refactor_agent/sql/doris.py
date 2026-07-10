@@ -1,7 +1,16 @@
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
+from datetime import date, datetime
+from enum import Enum
 from typing import List, Tuple
+
+from dw_refactor_agent.refactor.shadow_scope import (
+    Overlap,
+    RowScope,
+    ScopeKind,
+)
 
 _CREATE_TABLE_RE = re.compile(
     r"\bCREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?"
@@ -119,8 +128,281 @@ def extract_doris_distribution_column(sql_text: str) -> str:
 
 def extract_doris_partition_column(sql_text: str) -> str:
     match = re.search(
-        r"\bPARTITION\s+BY\s+RANGE\s*\(\s*(?P<column>`?[\w]+`?)\s*\)",
+        r"\bPARTITION\s+BY\s+(?:RANGE|LIST)\s*"
+        r"\(\s*(?P<column>`?[\w]+`?)\s*\)",
         str(sql_text or ""),
         flags=re.IGNORECASE,
     )
     return _strip_identifier(match.group("column")) if match else ""
+
+
+class PartitionSelectionKind(Enum):
+    EMPTY = "empty"
+    PARTITIONS = "partitions"
+    FULL = "full"
+    UNKNOWN = "unknown"
+
+
+@dataclass(frozen=True)
+class PartitionSelection:
+    kind: PartitionSelectionKind
+    partitions: tuple[str, ...] = ()
+    reason: str = ""
+
+
+@dataclass(frozen=True)
+class PartitionDef:
+    name: str
+    scope: RowScope
+
+
+@dataclass(frozen=True)
+class PartitionCatalog:
+    column: str
+    partitions: tuple[PartitionDef, ...] = ()
+    unpartitioned: bool = False
+    complete: bool = True
+
+    def map_scope(self, scope: RowScope) -> PartitionSelection:
+        if scope.kind is ScopeKind.EMPTY:
+            return PartitionSelection(PartitionSelectionKind.EMPTY)
+        if self.unpartitioned:
+            return PartitionSelection(PartitionSelectionKind.FULL)
+        if not self.partitions:
+            return PartitionSelection(
+                PartitionSelectionKind.UNKNOWN,
+                reason="partitioned table has no static partitions",
+            )
+        if scope.kind is ScopeKind.UNKNOWN:
+            return PartitionSelection(
+                PartitionSelectionKind.UNKNOWN, reason=scope.reason
+            )
+        if self.column.casefold() != scope.column.casefold():
+            return PartitionSelection(
+                PartitionSelectionKind.UNKNOWN,
+                reason="scope and partition columns differ",
+            )
+        selected = []
+        for partition in self.partitions:
+            overlap = partition.scope.overlap(scope)
+            if overlap is Overlap.UNKNOWN:
+                return PartitionSelection(
+                    PartitionSelectionKind.UNKNOWN,
+                    reason=f"cannot compare partition {partition.name}",
+                )
+            if overlap is Overlap.OVERLAP:
+                selected.append(partition.name)
+        if not selected:
+            if not self.complete:
+                return PartitionSelection(
+                    PartitionSelectionKind.UNKNOWN,
+                    reason="runtime partitions may not be present in static DDL",
+                )
+            return PartitionSelection(PartitionSelectionKind.EMPTY)
+        return PartitionSelection(
+            PartitionSelectionKind.PARTITIONS, tuple(selected)
+        )
+
+
+def _split_top_level(value: str) -> List[str]:
+    items = []
+    start = 0
+    depth = 0
+    quote = ""
+    for index, char in enumerate(value):
+        if quote:
+            if char == quote:
+                quote = ""
+            continue
+        if char in {"'", '"', "`"}:
+            quote = char
+        elif char in "([":
+            depth += 1
+        elif char in ")]":
+            depth -= 1
+        elif char == "," and depth == 0:
+            items.append(value[start:index].strip())
+            start = index + 1
+    tail = value[start:].strip()
+    if tail:
+        items.append(tail)
+    return items
+
+
+def _partition_scalar(value: str):
+    text = str(value or "").strip()
+    while text.startswith("(") and text.endswith(")"):
+        text = text[1:-1].strip()
+    text = text.strip("'\"`").strip()
+    if text.upper() in {"MAXVALUE", "MINVALUE"}:
+        return None
+    try:
+        return int(text)
+    except ValueError:
+        try:
+            return float(text)
+        except ValueError:
+            pass
+    try:
+        if "T" in text or " " in text:
+            return datetime.fromisoformat(text)
+        return date.fromisoformat(text)
+    except ValueError:
+        return text
+
+
+def _partition_body(sql_text: str):
+    match = re.search(
+        r"\bPARTITION\s+BY\s+(?P<kind>RANGE|LIST)\s*"
+        r"\(\s*(?P<column>`?[\w]+`?)\s*\)\s*\(",
+        sql_text,
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return None
+    open_index = match.end() - 1
+    remainder = sql_text[open_index + 1 :]
+    terminator = re.search(
+        r"(?m)^\s*\)\s*(?=DISTRIBUTED\b|PROPERTIES\b|;|$)",
+        remainder,
+        flags=re.IGNORECASE,
+    )
+    close_index = (
+        open_index + 1 + terminator.start()
+        if terminator
+        else _matching_paren_index(sql_text, open_index)
+    )
+    if close_index < 0:
+        return None
+    return (
+        match.group("kind").upper(),
+        _strip_identifier(match.group("column")),
+        sql_text[open_index + 1 : close_index],
+    )
+
+
+def _parse_range_partition(
+    clause: str, column: str, previous_upper
+) -> tuple[PartitionDef, object]:
+    name_match = re.match(
+        r"\s*PARTITION\s+(?P<name>`?[\w]+`?)\s+VALUES\s+",
+        clause,
+        flags=re.IGNORECASE,
+    )
+    if not name_match:
+        raise ValueError("invalid RANGE partition clause")
+    name = _strip_identifier(name_match.group("name"))
+    values = clause[name_match.end() :].strip()
+    less_than = re.match(
+        r"LESS\s+THAN\s*\((?P<upper>.*)\)\s*$",
+        values,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    if less_than:
+        upper = _partition_scalar(less_than.group("upper"))
+        scope = RowScope.interval(column, previous_upper, upper)
+        return PartitionDef(name, scope), upper
+    fixed = re.match(
+        r"[\[(]\s*\((?P<lower>.*?)\)\s*,\s*"
+        r"\((?P<upper>.*?)\)\s*[)\]]\s*$",
+        values,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    if fixed:
+        lower = _partition_scalar(fixed.group("lower"))
+        upper = _partition_scalar(fixed.group("upper"))
+        return PartitionDef(
+            name, RowScope.interval(column, lower, upper)
+        ), upper
+    raise ValueError(f"unsupported RANGE partition: {clause}")
+
+
+def _parse_list_partition(clause: str, column: str) -> PartitionDef:
+    match = re.match(
+        r"\s*PARTITION\s+(?P<name>`?[\w]+`?)\s+"
+        r"VALUES\s+IN\s*\((?P<values>.*)\)\s*$",
+        clause,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    if not match:
+        raise ValueError(f"unsupported LIST partition: {clause}")
+    values = tuple(
+        _partition_scalar(item)
+        for item in _split_top_level(match.group("values"))
+    )
+    return PartitionDef(
+        _strip_identifier(match.group("name")),
+        RowScope.from_points(column, values),
+    )
+
+
+def parse_doris_partitions(sql_text: str) -> PartitionCatalog:
+    """Parse static Doris RANGE/LIST partitions conservatively."""
+    ddl_text = str(sql_text or "")
+    parsed = _partition_body(ddl_text)
+    if parsed is None:
+        return PartitionCatalog("", unpartitioned=True)
+    kind, column, body = parsed
+    clauses = _split_top_level(body)
+    partitions = []
+    if kind == "RANGE":
+        previous_upper = None
+        for clause in clauses:
+            partition, previous_upper = _parse_range_partition(
+                clause, column, previous_upper
+            )
+            partitions.append(partition)
+    else:
+        partitions = [
+            _parse_list_partition(clause, column) for clause in clauses
+        ]
+    dynamic_enabled = re.search(
+        r"[\"']dynamic_partition\.enable[\"']\s*=\s*[\"']true[\"']",
+        ddl_text,
+        flags=re.IGNORECASE,
+    )
+    return PartitionCatalog(
+        column,
+        tuple(partitions),
+        complete=dynamic_enabled is None,
+    )
+
+
+def _parse_runtime_range(value: str, column: str) -> RowScope:
+    match = re.search(
+        r"\[\s*\((?P<lower>.*?)\)\s*,\s*\((?P<upper>.*?)\)\s*\)",
+        value,
+    )
+    if not match:
+        return RowScope.unknown(
+            column, f"unrecognized partition range: {value}"
+        )
+    return RowScope.interval(
+        column,
+        _partition_scalar(match.group("lower")),
+        _partition_scalar(match.group("upper")),
+    )
+
+
+def parse_show_partitions(output: str, column: str) -> PartitionCatalog:
+    """Parse tab-separated SHOW PARTITIONS output."""
+    rows = [
+        line.split("\t") for line in str(output or "").splitlines() if line
+    ]
+    if not rows:
+        return PartitionCatalog(column)
+    headers = {name.casefold(): index for index, name in enumerate(rows[0])}
+    name_index = headers.get("partitionname")
+    range_index = headers.get("range")
+    if name_index is None or range_index is None:
+        return PartitionCatalog(column)
+    partitions = []
+    for row in rows[1:]:
+        if max(name_index, range_index) >= len(row):
+            continue
+        partitions.append(
+            PartitionDef(
+                row[name_index], _parse_runtime_range(row[range_index], column)
+            )
+        )
+    return PartitionCatalog(column, tuple(partitions))

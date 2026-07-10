@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import subprocess
+from dataclasses import replace
 from pathlib import Path
 from typing import Callable
 
@@ -10,6 +11,10 @@ from dw_refactor_agent.config import TEXT_ENCODING
 from dw_refactor_agent.execution.invocation import (
     TaskInvocation,
     render_invocation_sql,
+)
+from dw_refactor_agent.refactor.shadow_rewrite import (
+    RewriteContext,
+    rewrite_shadow_sql,
 )
 
 
@@ -57,26 +62,22 @@ class ShadowSqlExecutor:
     def __init__(
         self,
         *,
-        prod_db: str,
-        qa_db: str,
-        recalculated: set,
-        rewrite_sql: Callable[[str, str, str, set], str],
+        context: RewriteContext,
+        qa_ready_tables: set[str],
         run_sql_text: Callable[..., str],
     ):
-        self.prod_db = prod_db
-        self.qa_db = qa_db
-        self.recalculated = recalculated
-        self.rewrite_sql = rewrite_sql
+        self.context = context
+        self.qa_db = context.qa_db
+        self.qa_ready_tables = qa_ready_tables
         self.run_sql_text = run_sql_text
 
     def render(self, invocation: TaskInvocation) -> str:
         sql_text = Path(invocation.sql_path).read_text(encoding=TEXT_ENCODING)
-        rewritten = self.rewrite_sql(
-            sql_text,
-            self.prod_db,
-            self.qa_db,
-            self.recalculated,
+        context = replace(
+            self.context,
+            qa_ready_tables=set(self.qa_ready_tables),
         )
+        rewritten = rewrite_shadow_sql(sql_text, context)
         return render_invocation_sql(invocation, rewritten)
 
     def execute(self, invocation: TaskInvocation) -> None:
