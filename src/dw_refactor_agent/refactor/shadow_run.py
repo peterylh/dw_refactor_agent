@@ -460,6 +460,16 @@ def _qa_ddl_change(change: dict, prod_db: str, qa_db: str) -> dict:
     return result
 
 
+def _ddl_change_display_name(change: dict) -> str:
+    change_type = str(change.get("change_type") or "").upper()
+    table_name = str(change.get("table_name") or "").strip()
+    old_name = str(change.get("old_name") or "").strip()
+    new_name = str(change.get("new_name") or "").strip()
+    if change_type == "RENAME" and old_name and new_name:
+        return f"{old_name} -> {new_name}"
+    return table_name or old_name or new_name or "?"
+
+
 def _ddl_change_result(
     change: dict,
     status: str,
@@ -1598,7 +1608,7 @@ def execute_shadow_plan(
                     )
                 _log(
                     f"  [{qa_change.get('change_type')}] "
-                    f"{qa_change.get('table_name', '?')}"
+                    f"{_ddl_change_display_name(qa_change)}"
                 )
                 ddl_change_results.append(
                     _ddl_change_result(
@@ -1754,8 +1764,10 @@ def _dry_run(plan: dict, manifest: dict) -> None:
     print(f"\n--- Phase 2: DDL 变更 ({len(ddl_changes)} 条) ---")
     for change in ddl_changes:
         qa_change = _qa_ddl_change(change, prod_db, qa_db)
-        name = qa_change.get("table_name", qa_change.get("old_name", "?"))
-        print(f"  [{qa_change['change_type']}] {name}")
+        print(
+            f"  [{qa_change['change_type']}] "
+            f"{_ddl_change_display_name(qa_change)}"
+        )
         for statement in _ddl_change_statements(qa_change.get("sql", "")):
             print(f"    {statement}")
 

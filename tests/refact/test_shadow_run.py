@@ -598,6 +598,44 @@ def test_execute_shadow_plan_runs_case_only_rename_steps_in_order(monkeypatch):
     ]
 
 
+def test_execute_shadow_plan_logs_table_rename_display(monkeypatch, capsys):
+    plan = {
+        "project": "shop",
+        "project_db": "shop_dm",
+        "qa_db": "shop_dm_qa",
+        "baseline_ddl": {
+            "dwd_inventory": ("CREATE TABLE shop_dm.dwd_inventory (id BIGINT)")
+        },
+        "ddl_changes": [
+            {
+                "change_type": "RENAME",
+                "sql": (
+                    "ALTER TABLE shop_dm.dwd_inventory "
+                    "RENAME M_SHOP_05_INV_DF;"
+                ),
+                "old_name": "shop_dm.dwd_inventory",
+                "new_name": "shop_dm.M_SHOP_05_INV_DF",
+            }
+        ],
+        "jobs_to_run": [],
+        "verification": {"checks": []},
+    }
+
+    monkeypatch.setattr(
+        "dw_refactor_agent.refactor.shadow_run.run_sql",
+        lambda sql, db="", qa=False: "",
+    )
+
+    result = execute_shadow_plan(plan)
+
+    output = capsys.readouterr().out
+    assert result["status"] == "completed"
+    assert (
+        "[RENAME] shop_dm_qa.dwd_inventory -> shop_dm_qa.M_SHOP_05_INV_DF"
+    ) in output
+    assert "[RENAME] ?" not in output
+
+
 def test_wait_for_table_alter_jobs_polls_until_finished(monkeypatch):
     outputs = [
         (
@@ -1161,7 +1199,12 @@ def test_run_shadow_plan_dry_run_persists_phase_summary(
     assert phase_by_name["run_jobs"]["jobs"][0]["job"] == "M_SHOP_05_INV_DF"
     assert phase_by_name["run_jobs"]["jobs"][0]["status"] == "dry_run"
     assert json.loads(output_path.read_text(encoding="utf-8")) == result
-    assert "分区:" not in capsys.readouterr().out
+    output = capsys.readouterr().out
+    assert "分区:" not in output
+    assert (
+        "[RENAME] shop_dm_qa.dwd_inventory -> shop_dm_qa.M_SHOP_05_INV_DF"
+    ) in output
+    assert "[RENAME] ?" not in output
 
 
 def test_run_shadow_plan_dry_run_prints_rewritten_task_ddl_targets(
