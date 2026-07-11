@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Store baseline DDL in readable SQL files referenced and integrity-checked by `verification/plan.json`.
+**Goal:** Store baseline DDL in standalone SQL files referenced and integrity-checked by `verification/plan.json`.
 
 **Architecture:** Keep baseline selection in `verification_plan.py`, but move artifact serialization and loading into a focused `plan_artifact.py` module. The writer externalizes transient DDL text into SQL files and emits references; the loader validates those references and materializes DDL before existing shadow-manifest and shadow-run code executes.
 
@@ -12,12 +12,12 @@
 
 - Only `baseline_ddl_refs` is supported in persisted plans; embedded `baseline_ddl` is rejected.
 - Reference paths are relative to `plan.json`, cannot escape its directory, and include SHA-256 of exact UTF-8 file bytes.
-- DDL formatting preserves quoted text, comments, Doris-specific clauses, and schema identity annotations.
+- DDL files preserve the exact text supplied by the planner; no formatter or AST regeneration is applied.
 - Tests run through the configured `dw-refactor-py37` conda environment, never bare `pytest`.
 
 ---
 
-### Task 1: Plan artifact writer and readable DDL files
+### Task 1: Plan artifact writer and standalone DDL files
 
 **Files:**
 - Create: `src/dw_refactor_agent/refactor/plan_artifact.py`
@@ -25,11 +25,10 @@
 
 **Interfaces:**
 - Produces: `write_verification_plan(plan_path: Path, plan: dict) -> dict`
-- Produces: `format_baseline_ddl(ddl_text: str) -> str`
 
 - [ ] **Step 1: Write failing writer tests**
 
-Cover multiline output, exact hashes, no embedded field, stale-file cleanup, safe filenames, and quoted comma preservation.
+Cover exact source preservation, exact hashes, no embedded field, stale-file cleanup, and safe filenames.
 
 - [ ] **Step 2: Run tests and verify RED**
 
@@ -37,10 +36,10 @@ Run: `make test PYTEST_ARGS='tests/refact/test_plan_artifact.py -q'`
 
 Expected: collection/import failure because `plan_artifact` does not exist.
 
-- [ ] **Step 3: Implement the minimal writer and conservative formatter**
+- [ ] **Step 3: Implement the minimal source-preserving writer**
 
-The writer consumes transient `plan["baseline_ddl"]`, writes
-`baseline_ddl/<table>.sql`, computes SHA-256, returns/writes a copy containing
+The writer consumes transient `plan["baseline_ddl"]`, writes its text unchanged
+to `baseline_ddl/<table>.sql`, computes SHA-256, returns/writes a copy containing
 `baseline_ddl_refs`, and removes unreferenced `.sql` files.
 
 - [ ] **Step 4: Run focused writer tests and verify GREEN**
@@ -161,13 +160,13 @@ Expected: configured Python 3.7 environment is healthy and all non-API tests pas
 - [ ] **Step 2: Run artifact smoke inspection**
 
 Generate a representative plan in tests or a temporary directory and inspect
-that `plan.json` is compact, referenced SQL is multiline, and its digest
+that `plan.json` is compact, referenced SQL matches its source, and its digest
 matches.
 
 - [ ] **Step 3: Perform Code Review**
 
-Review correctness, failure ordering, path traversal resistance, format
-stability, stale cleanup, Python 3.7 compatibility, and unintended behavior
+Review correctness, failure ordering, path traversal resistance, source
+fidelity, stale cleanup, Python 3.7 compatibility, and unintended behavior
 changes. Fix findings using new RED/GREEN tests, then rerun affected and full
 verification.
 

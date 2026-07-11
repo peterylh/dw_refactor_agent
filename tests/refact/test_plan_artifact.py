@@ -4,7 +4,6 @@ import json
 import pytest
 
 from dw_refactor_agent.refactor.plan_artifact import (
-    format_baseline_ddl,
     load_verification_plan,
     write_verification_plan,
 )
@@ -22,16 +21,13 @@ def _plan(ddl_by_table):
     }
 
 
-def test_write_verification_plan_externalizes_readable_ddl_and_hashes_bytes(
+def test_write_verification_plan_externalizes_exact_ddl_and_hashes_bytes(
     tmp_path,
 ):
     plan_path = tmp_path / "verification" / "plan.json"
     ddl = (
-        "-- @table_id: 1234\n"
-        "CREATE TABLE demo_dm.dwd_order (id BIGINT COMMENT 'a,b', "
-        "amount DECIMAL(10, 2)) ENGINE=OLAP DUPLICATE KEY(id) "
-        "DISTRIBUTED BY HASH(id) BUCKETS 1 "
-        'PROPERTIES ("replication_num" = "1", "note" = "a,b");'
+        "CREATE TABLE demo_dm.dwd_order (id BIGINT, amount DECIMAL(10, 2)) "
+        "ENGINE=OLAP DISTRIBUTED BY HASH(id) BUCKETS 1;"
     )
 
     persisted = write_verification_plan(plan_path, _plan({"dwd_order": ddl}))
@@ -49,16 +45,11 @@ def test_write_verification_plan_externalizes_readable_ddl_and_hashes_bytes(
             "sha256": hashlib.sha256(ddl_bytes).hexdigest(),
         }
     }
-    assert ddl_text.endswith("\n")
-    assert ddl_text.count("\n") >= 7
-    assert ddl_text.startswith("-- @table_id: 1234\nCREATE TABLE")
-    assert "'a,b'" in ddl_text
-    assert "DECIMAL(10, 2)" in ddl_text
-    assert '"note" = "a,b"' in ddl_text
-    assert "DISTRIBUTED BY HASH(id) BUCKETS 1" in ddl_text
+    assert ddl_text == ddl
 
 
-def test_format_baseline_ddl_preserves_existing_multiline_comments():
+def test_write_verification_plan_preserves_multiline_ddl_exactly(tmp_path):
+    plan_path = tmp_path / "verification" / "plan.json"
     ddl = """-- @table_id: abc
 CREATE TABLE demo_dm.dwd_order (
     -- @column_id: def
@@ -66,7 +57,10 @@ CREATE TABLE demo_dm.dwd_order (
 ) ENGINE=OLAP;
 """
 
-    assert format_baseline_ddl(ddl) == ddl
+    write_verification_plan(plan_path, _plan({"dwd_order": ddl}))
+
+    ddl_path = plan_path.parent / "baseline_ddl" / "dwd_order.sql"
+    assert ddl_path.read_text(encoding="utf-8") == ddl
 
 
 def test_write_verification_plan_removes_stale_sql_files(tmp_path):
@@ -135,7 +129,7 @@ def test_load_verification_plan_materializes_referenced_ddl(tmp_path):
     loaded = load_verification_plan(plan_path)
 
     assert loaded["baseline_ddl"] == {
-        "dwd_order": ("CREATE TABLE dwd_order (\n    id INT\n);\n")
+        "dwd_order": "CREATE TABLE dwd_order (id INT);"
     }
     assert "baseline_ddl_refs" in loaded
 

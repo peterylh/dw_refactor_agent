@@ -2,8 +2,8 @@
 
 ## Goal
 
-Move baseline DDL text out of `verification/plan.json` into readable SQL files
-while keeping the verification plan deterministic and self-validating.
+Move baseline DDL text out of `verification/plan.json` into standalone SQL
+files while keeping the verification plan deterministic and self-validating.
 
 ## Artifact layout
 
@@ -50,12 +50,12 @@ DDL as text because that calculation belongs to planning. A dedicated plan
 artifact writer then:
 
 1. validates table names before using them as filenames;
-2. formats each DDL for human-readable display;
-3. writes one UTF-8 SQL file per table with a final newline;
-4. computes SHA-256 over the exact UTF-8 bytes written;
-5. replaces the transient DDL payload with `baseline_ddl_refs` in serialized
+2. writes each planner-provided DDL text unchanged to one UTF-8 SQL file per
+   table;
+3. computes SHA-256 over the exact UTF-8 bytes written;
+4. replaces the transient DDL payload with `baseline_ddl_refs` in serialized
    `plan.json`;
-6. removes stale `.sql` files in `verification/baseline_ddl/` that are not
+5. removes stale `.sql` files in `verification/baseline_ddl/` that are not
    referenced by the new plan.
 
 The writer returns the serialized plan representation so subsequent analyze
@@ -75,18 +75,13 @@ DDL, keeping routing and execution logic independent from artifact storage.
 Reference failures stop before QA database reset. Error messages identify the
 table and the invalid, missing, or digest-mismatched file.
 
-## DDL readability
+## DDL source fidelity
 
-Existing multiline DDL retains its meaningful comments and statement text.
-For single-line or densely formatted DDL, a conservative token-aware formatter
-adds indentation and line breaks around structural parentheses, top-level
-clauses, and column/property separators. It must respect quoted strings,
-quoted identifiers, and SQL comments.
-
-Formatting must not parse and regenerate the statement through an AST because
-that could discard Doris-specific syntax, comments, or schema identity
-annotations. The executable SQL and the displayed SQL file are the same text;
-there is no hidden compact copy.
+The writer does not format or regenerate DDL. Multiline source remains
+multiline and single-line source remains single-line. This avoids changing
+Doris-specific syntax, comments, schema identity annotations, statement
+terminators, or other meaningful source text. The executable SQL and the
+standalone SQL file are the same text; there is no hidden formatted copy.
 
 ## Manifest and documentation
 
@@ -99,7 +94,7 @@ resolved through the plan. Refactor documentation will describe
 
 Tests cover:
 
-- serialization writes readable, multiline SQL files and reference metadata;
+- serialization preserves exact DDL text and writes reference metadata;
 - hashes match the exact file bytes;
 - rerunning analyze removes stale baseline DDL files;
 - filenames cannot escape the baseline DDL directory;
