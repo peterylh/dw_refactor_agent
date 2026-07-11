@@ -6,6 +6,7 @@ from dw_refactor_agent.refactor.compare import (
     fmt_val,
     run_checks,
 )
+from dw_refactor_agent.refactor.plan_artifact import write_verification_plan
 
 
 class FakeCursor:
@@ -320,15 +321,18 @@ def test_run_checks_short_circuit_scenarios(monkeypatch):
 def test_compare_shadow_results_writes_compare_output(tmp_path, monkeypatch):
     plan_path = tmp_path / "verification" / "plan.json"
     output_path = tmp_path / "verification" / "compare_result.json"
-    plan_path.parent.mkdir(parents=True)
-    plan_path.write_text(
-        json.dumps(
-            {"project": "shop", "project_db": "shop_dm", "qa_db": "shop_dm_qa"}
-        ),
-        encoding="utf-8",
+    write_verification_plan(
+        plan_path,
+        {
+            "project": "shop",
+            "project_db": "shop_dm",
+            "qa_db": "shop_dm_qa",
+            "baseline_ddl": {},
+        },
     )
 
     def fake_run_checks(meta, method="all", sample=0, precision=0.01):
+        assert meta["baseline_ddl"] == {}
         return {
             "all_pass": True,
             "results": [],

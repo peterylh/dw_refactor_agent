@@ -67,6 +67,7 @@ TEST_TYPE_BY_FILE = {
     "tests/refact/test_compare.py": "scenario",
     "tests/refact/test_incremental_lineage.py": "scenario",
     "tests/refact/test_issue_diff.py": "unit",
+    "tests/refact/test_plan_artifact.py": "contract",
     "tests/refact/test_run_cli.py": "scenario",
     "tests/refact/test_session.py": "contract",
     "tests/refact/test_shadow_executor.py": "unit",

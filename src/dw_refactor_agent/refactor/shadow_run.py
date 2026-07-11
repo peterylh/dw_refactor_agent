@@ -30,6 +30,7 @@ from dw_refactor_agent.execution.planner import ExecutionPlanner
 from dw_refactor_agent.execution.sql_executor import ShadowSqlExecutor
 from dw_refactor_agent.execution.thread_pool import shutdown_executor
 from dw_refactor_agent.lineage.job_dag import JobDAG
+from dw_refactor_agent.refactor.plan_artifact import load_verification_plan
 from dw_refactor_agent.refactor.shadow_manifest import (
     PrefillMode,
     compile_shadow_manifest,
@@ -1685,7 +1686,7 @@ def run_shadow_plan(
     """Run or dry-run a validation plan and write the execution result."""
     plan_path = Path(plan_path)
     output_path = Path(output_path)
-    plan = json.loads(plan_path.read_text(encoding=TEXT_ENCODING))
+    plan = load_verification_plan(plan_path)
     result = execute_shadow_plan(
         plan,
         dry_run=dry_run,
