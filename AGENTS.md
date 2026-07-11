@@ -191,113 +191,26 @@ python warehouses/finance_analytics/generate_ods_data.py
 
 ## 重构验证工具 (refactor)
 
-`src/dw_refactor_agent/refactor/` 提供完整的数仓重构验证工具链，当前脚本基于 `PROJECT_CONFIG` 工作，可用于 `shop`、`finance_analytics`。
+`src/dw_refactor_agent/refactor/` 提供重构基线、增量分析、QA 旁路执行与生产/QA
+结果对比工具，支持 `PROJECT_CONFIG` 中的项目。修改 refactor 代码、验证流程或
+`warehouses/{project}/artifacts/refactor_runs/` 产物逻辑前，先阅读
+[src/dw_refactor_agent/refactor/AGENTS.md](src/dw_refactor_agent/refactor/AGENTS.md)。
 
-本次布局迁移后，旧路径下创建的 refactor run 基线不再适用于
-`warehouses/{project}/...` 新资产路径。合并该结构变更后，在途 run 应重新执行
-`python -m dw_refactor_agent.refactor.run start --project <project>` 固化新基线。
-
-### 工作流
+标准流程如下；参数、阶段语义、模块职责与完整输出物解释统一维护在目录级文档中。
 
 ```bash
-# 1. 固化重构基线
-python -m dw_refactor_agent.refactor.run start --project shop
-
-# 2. 基于当前修改刷新血缘、评估与验证计划
-# 若验证范围包含 sliced incremental 作业，必须指定验证分区
+python -m dw_refactor_agent.refactor.run start --project <project>
 python -m dw_refactor_agent.refactor.run analyze --manifest warehouses/<project>/artifacts/refactor_runs/<run_id>/manifest.json --partition 2025-01-15
-
-# 仅当验证计划不包含 sliced incremental 作业时，才可省略 --partition
-python -m dw_refactor_agent.refactor.run analyze --manifest warehouses/<project>/artifacts/refactor_runs/<run_id>/manifest.json
-
-# 3. 预览旁路执行计划
 python -m dw_refactor_agent.refactor.run shadow-run --manifest warehouses/<project>/artifacts/refactor_runs/<run_id>/manifest.json --dry-run
-
-# 4. 执行旁路验证
 python -m dw_refactor_agent.refactor.run shadow-run --manifest warehouses/<project>/artifacts/refactor_runs/<run_id>/manifest.json
-
-# 5. 对比生产与验证库结果
 python -m dw_refactor_agent.refactor.run compare --manifest warehouses/<project>/artifacts/refactor_runs/<run_id>/manifest.json --method all
 ```
 
-### run.py analyze
-
-分析入口。读取 run manifest 中的基线信息，基于当前工作区刷新血缘、变更范围、issue diff 与验证计划。
-
-输出的 `verification/plan.json` 包含：
-
-- `changes`：本次变更入口，例如 `modified_jobs`、`ddl_tables`、`model_tables`
-  与 `config_files`
-- `analysis/change_analysis.json` 中的 `affected_scope`：由变更入口推导出的宽影响范围，
-  包含 `direct_tables`、`downstream_tables`、`assessment_tables`、
-  `assessment_tasks` 与候选 `anchor_tables`；该范围用于评估和验证计划推导，
-  不直接等同于待执行作业
-- `baseline_ddl`：merge-base 的完整 DDL（已剥离 INSERT）
-- `ddl_changes`：由 `ddl_deriver` 推导的 DDL 变更
-- `jobs_to_run`：按拓扑排序后的待执行作业；对配置了 `execution.slice`
-  或项目 `execution.default_slice` 的增量作业，`analyze --partition` 会写入
-  `execution_values`，供 shadow-run 逐分区重放；作业只从 `direct_tables` 和
-  `downstream_tables` 中选择，未修改的上游即使属于宽评估范围也不会执行
-- `verification.anchor_tables`：verification planner 最终选择的验证锚点表
-- `verification.compare_anchors`：compare 使用的锚点输入，包含锚点表的时间列、
-  时间粒度与锚点时间值；缺少合理时间粒度时会降级为全表 compare 并输出 warning
-- `verification.checks`：自动配置的校验项，包含表名、校验方法；`row_compare`
-  会在配置了排除列时写入最终生效的 `exclude_columns`
-
-### shadow_run.py
-
-根据验证计划执行三阶段旁路验证：
-
-1. **Phase 0 - 重置**：重建 QA 库
-2. **Phase 1 - 基线建表**：按 `baseline_ddl` 还原 merge-base 结构
-3. **Phase 2 - DDL 变更**：应用 `ddl_changes`
-4. **Phase 3 - 执行作业**：按依赖顺序在 QA 库运行改写后的 SQL
-
-关键策略：作业读取生产库中的 ODS / 未变更中间表，以及已在 QA 侧重算出的中间结果；写入目标统一指向 `{project}_dm_qa`，从而做到 **不复制生产数据，仅重算必要链路**。
-
-对 sliced incremental 作业，shadow-run 要求 `jobs_to_run[].execution_values`
-已存在；通常需要先执行带 `--partition` 的 `analyze`。未提供验证分区时，
-compare 可能降级为全表对比，但 shadow-run 不会默认使用当天日期或全局 driver
-value 兜底。
-
-### compare.py
-
-负责对比生产基线与 QA 结果，默认输出到 run 目录下的 `verification/compare_result.json`。
-
-示例：
-
-```bash
-python -m dw_refactor_agent.refactor.run compare --manifest warehouses/<project>/artifacts/refactor_runs/<run_id>/manifest.json
-python -m dw_refactor_agent.refactor.run compare --manifest warehouses/<project>/artifacts/refactor_runs/<run_id>/manifest.json --method count
-python -m dw_refactor_agent.refactor.run compare --manifest warehouses/<project>/artifacts/refactor_runs/<run_id>/manifest.json --method row_compare --sample 1000
-python -m dw_refactor_agent.refactor.run compare --manifest warehouses/<project>/artifacts/refactor_runs/<run_id>/manifest.json --precision 0.001
-```
-
-支持校验方法：
-
-- `count`：行数对比
-- `row_compare`：逐行逐列对比，支持 `--sample` 与 `--precision`；
-  运行时字段可通过 `warehouses/{project}/warehouse.yaml` 配置排除
-
-`row_compare` 默认从验证计划中的 `exclude_columns` 读取排除列。旧 plan
-没有该字段时，compare 运行时默认忽略 `etl_time`，避免加工时间导致天然不一致。
-新 plan 推荐在项目 `warehouse.yaml` 中显式配置：
-
-```yaml
-verification:
-  row_compare:
-    exclude_columns:
-      - etl_time
-    tables:
-      dws_order_detail:
-        exclude_columns:
-          - etl_time
-          - update_time
-      ads_full_audit:
-        exclude_columns: []
-```
-
-表级 `exclude_columns` 覆盖项目级配置；表级空列表表示该表全列比较，不忽略任何列。
+每个 run 位于 `warehouses/{project}/artifacts/refactor_runs/{run_id}/`：
+`manifest.json` 是后续命令的稳定入口，`baseline/` 是冻结基线，`current/` 与
+`analysis/` 由 analyze 刷新，`verification/` 保存 plan、shadow-run 和 compare
+结果。资产布局、schema identity 或基线解析语义变化后，旧 run 不再可靠，应重新
+执行 `start` 固化基线。
 
 ## 数据集市评估工具 (assessment)
 
