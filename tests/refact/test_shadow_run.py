@@ -10,6 +10,7 @@ from sqlglot import exp
 from sqlglot.errors import ErrorLevel
 
 from dw_refactor_agent.lineage.job_dag import JobDAG
+from dw_refactor_agent.refactor.plan_artifact import write_verification_plan
 from dw_refactor_agent.refactor.shadow_rewrite import (
     RewriteContext,
     rewrite_shadow_sql,
@@ -735,7 +736,7 @@ def test_run_shadow_plan_executes_self_contained(tmp_path, monkeypatch):
     )
     plan_path = tmp_path / "verification" / "plan.json"
     output_path = tmp_path / "verification" / "shadow_run_result.json"
-    _write_json(
+    write_verification_plan(
         plan_path,
         {
             "project": "shop",
@@ -817,7 +818,7 @@ def test_run_shadow_plan_persists_failed_job_result(tmp_path, monkeypatch):
     )
     plan_path = tmp_path / "verification" / "plan.json"
     output_path = tmp_path / "verification" / "shadow_run_result.json"
-    _write_json(
+    write_verification_plan(
         plan_path,
         {
             "project": "shop",
@@ -894,7 +895,7 @@ def test_run_shadow_plan_timing_detail_records_invocation_timings(
     )
     plan_path = tmp_path / "verification" / "plan.json"
     output_path = tmp_path / "verification" / "shadow_run_result.json"
-    _write_json(
+    write_verification_plan(
         plan_path,
         {
             "project": "shop",
@@ -1109,7 +1110,7 @@ def test_run_shadow_plan_dry_run_persists_phase_summary(
             ]
         },
     }
-    _write_json(plan_path, plan)
+    write_verification_plan(plan_path, plan)
 
     monkeypatch.setattr(
         "dw_refactor_agent.refactor.shadow_run._project_root", lambda: tmp_path
@@ -1186,7 +1187,7 @@ def test_run_shadow_plan_dry_run_prints_rewritten_task_ddl_targets(
     )
     plan_path = tmp_path / "verification" / "plan.json"
     output_path = tmp_path / "verification" / "shadow_run_result.json"
-    _write_json(
+    write_verification_plan(
         plan_path,
         {
             "project": "shop",

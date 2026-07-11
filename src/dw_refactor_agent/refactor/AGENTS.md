@@ -25,6 +25,8 @@
 - `change_analysis.py`：比较基线与当前资产，计算直接表、下游表、评估范围和候选锚点。
 - `issue_diff.py`：按稳定 fingerprint 比较基线全量评估与当前范围评估的问题变化。
 - `verification_plan.py`：推导 DDL 变化、最小作业重算集合、执行值、验证锚点与 checks。
+- `plan_artifact.py`：将 baseline DDL 写为独立 SQL 文件，维护 plan 引用与 SHA-256
+  校验，并在 shadow-run / compare 前物化可执行 plan。
 - `shadow_scope.py`：表示并合并旁路读取、写入和预填充所需的行范围。
 - `shadow_manifest.py`：运行时编译表路由、producer、作业依赖、prefill action、blocker 与 warning。
 - `shadow_rewrite.py`：按编译后的路由上下文重写 SQL 表引用，生产读穿与 QA 读写规则以此处为准。
@@ -95,7 +97,7 @@ changed files 时必须考虑未提交基线修改。
 
 1. 编译 shadow manifest，发现 blocker 时停止。
 2. Phase 0 重建 QA 库。
-3. Phase 1 用 `baseline_ddl` 创建必要的基线表。
+3. Phase 1 校验 `baseline_ddl_refs` 并用引用的 SQL 文件创建必要的基线表。
 4. 按 manifest 的 `prefill_actions` 从生产库预填充自读、DDL-only 等必要数据。
 5. Phase 2 应用 `ddl_changes`。
 6. Phase 3 按 DAG 运行 `jobs_to_run`。
@@ -137,6 +139,8 @@ warehouses/{project}/artifacts/refactor_runs/{run_id}/
 │   ├── change_analysis.json
 │   └── issue_diff.json
 └── verification/
+    ├── baseline_ddl/
+    │   └── <table_name>.sql
     ├── plan.json
     ├── shadow_run_result.json
     └── compare_result.json
@@ -187,8 +191,13 @@ run 的稳定入口和产物索引，记录：
 
 ### verification/
 
+- `baseline_ddl/*.sql`：由 `analyze` 生成，每张必要的基线表一个可读 DDL 文件；
+  重跑 analyze 会覆盖当前引用文件，并清理不再引用的 `.sql` 文件。
 - `plan.json`：由 `analyze` 生成，是 shadow-run 与 compare 的共同输入。核心字段包括
-  `changes`、`baseline_ddl`、`ddl_changes`、`jobs_to_run` 与 `verification`。
+  `changes`、`baseline_ddl_refs`、`ddl_changes`、`jobs_to_run` 与 `verification`。
+  每个 baseline DDL 引用记录相对 `plan.json` 的 `path` 和文件字节的 `sha256`；
+  shadow-run / compare 在继续前校验路径、文件存在性和摘要。内嵌 `baseline_ddl`
+  的旧 plan 不再兼容，应重新运行 analyze（基线语义已变化时应新建 run）。
   `verification` 内含最终 `anchor_tables`、`compare_anchors`、checks、block status、
   warning 和必要的 metadata error。
 - `shadow_run_result.json`：每次 shadow-run（包括 dry-run）覆盖写入，记录模式、状态、

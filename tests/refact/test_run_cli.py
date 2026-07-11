@@ -240,7 +240,9 @@ def test_analyze_refreshes_current_analysis_diff_and_plan(
             "project": project,
             "project_db": "shop_dm",
             "qa_db": "shop_dm_qa",
-            "baseline_ddl": {},
+            "baseline_ddl": {
+                "dwd_order": "CREATE TABLE shop_dm.dwd_order (id BIGINT);"
+            },
             "ddl_changes": [
                 {
                     "change_type": "RENAME",
@@ -308,6 +310,19 @@ def test_analyze_refreshes_current_analysis_diff_and_plan(
         "model_tables"
     ] == ["dwd_order"]
     assert (run_root / "verification" / "plan.json").exists()
+    persisted_plan = json.loads(
+        (run_root / "verification" / "plan.json").read_text()
+    )
+    assert "baseline_ddl" not in persisted_plan
+    assert persisted_plan["baseline_ddl_refs"]["dwd_order"]["path"] == (
+        "baseline_ddl/dwd_order.sql"
+    )
+    persisted_ddl = (
+        run_root / "verification" / "baseline_ddl" / "dwd_order.sql"
+    ).read_text()
+    assert persisted_ddl == (
+        "CREATE TABLE shop_dm.dwd_order (\n    id BIGINT\n);\n"
+    )
     assert diff_calls == [
         {
             "root": tmp_path.resolve(),

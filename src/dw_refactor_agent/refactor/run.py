@@ -33,6 +33,7 @@ from dw_refactor_agent.refactor.incremental_lineage import (
     build_lineage_artifacts,
 )
 from dw_refactor_agent.refactor.issue_diff import diff_assess_results
+from dw_refactor_agent.refactor.plan_artifact import write_verification_plan
 from dw_refactor_agent.refactor.session import (
     artifact_path,
     create_run_manifest,
@@ -478,7 +479,9 @@ def _analyze(args) -> int:
         _write_json(
             artifact_path(manifest_path, "current_assess"), current_assess
         )
-        _write_json(artifact_path(manifest_path, "verification_plan"), plan)
+        plan = write_verification_plan(
+            artifact_path(manifest_path, "verification_plan"), plan
+        )
 
         baseline_assess = _read_json(
             artifact_path(manifest_path, "baseline_assess")
