@@ -1,0 +1,100 @@
+version: 2
+name: ads_loan_disbursement_kpi_daily
+layer: ADS
+description: 贷款与信贷 reviewed application data
+table_type: application_fact
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+data_domain: '04'
+business_area: LOAN
+business_process: loan_disbursement
+sensitivity: restricted
+business_date:
+  column: stat_date
+  kind: inherited_event_date
+grain:
+  columns:
+  - stat_date
+  - loan_id
+  description: one disbursement day and loan
+  entities:
+  - LOAN_ACCOUNT
+  degenerate_dimensions: []
+entities:
+- code: LOAN_ACCOUNT
+  key: loan_id
+degenerate_dimensions: []
+derived_metrics:
+- &id001
+  name: record_count
+  class: derived
+  formula: source.record_count
+  unit: count
+  currency_source: not_applicable
+  aggregation_behavior: additive
+  additive_over:
+  - stat_date
+  - loan_id
+  sign: positive_count
+  reversal: inherited_source_policy
+- &id002
+  name: total_principal
+  class: derived
+  formula: source.total_principal
+  unit: currency
+  currency_source: dim_loan_account.currency_code
+  aggregation_behavior: additive
+  additive_over:
+  - stat_date
+  - loan_id
+  sign: unsigned_disbursement
+  reversal: inherited_source_policy
+- &id003
+  name: total_net_disbursal_amount
+  class: derived
+  formula: source.total_net_disbursal_amount
+  unit: currency
+  currency_source: dim_loan_account.currency_code
+  aggregation_behavior: additive
+  additive_over:
+  - stat_date
+  - loan_id
+  sign: unsigned_disbursement
+  reversal: inherited_source_policy
+calculated_metrics:
+- &id004
+  name: average_principal
+  class: calculated
+  formula: total_principal / nullif(record_count, 0)
+  unit: currency
+  currency_source: dim_loan_account.currency_code
+  aggregation_behavior: non_additive
+  additive_over: []
+  sign: unsigned_disbursement
+  reversal: inherited_source_policy
+- &id005
+  name: net_disbursal_ratio
+  class: calculated
+  formula: total_net_disbursal_amount / nullif(total_principal, 0)
+  unit: ratio
+  currency_source: not_applicable
+  aggregation_behavior: non_additive
+  additive_over: []
+  sign: positive_ratio
+  reversal: inherited_source_policy
+metric_semantics:
+- *id001
+- *id002
+- *id003
+- *id004
+- *id005
+application_rules:
+- name: net_disbursal_ratio
+  kind: ratio
+  formula: total_net_disbursal_amount / nullif(total_principal, 0)
+  purpose: descriptive disbursement KPI; not delay monitoring
+human_review:
+  decision: revise
+  current_name: ads_disbursement_monitor_daily
+  status: human_reviewed_candidate

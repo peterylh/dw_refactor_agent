@@ -1,0 +1,13 @@
+version: 2
+name: ods_fineract_oauth_access_token
+layer: ODS
+description: Fineract oauth_access_token 贴源表
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+source:
+  repository: https://github.com/apache/fineract
+  table: oauth_access_token
+  disposition: security_excluded
+  confidence: security_reviewed
+sensitivity: restricted

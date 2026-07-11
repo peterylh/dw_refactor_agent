@@ -1,0 +1,43 @@
+version: 2
+name: dim_rate_index
+layer: DIM
+description: Header identifies the index; dated rate observations must be modeled from the period source.
+table_type: dimension
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+data_domain: '03'
+business_area: OTHR
+entities:
+- code: RATE_INDEX
+  type: primary
+  name: Rate Index
+  key_columns:
+  - id
+grain:
+  description: one floating-rate index header
+  columns:
+  - id
+business_date:
+  kind: effective
+  column: created_date
+  inherit_from: null
+  source_column: created_date
+source_mapping:
+  upstream_repository: https://github.com/apache/fineract
+  source_table: m_floating_rates
+  ods_table: ods_fineract_m_floating_rates
+  disposition: standalone_dimension
+  confidence: human_reviewed
+sensitivity: internal
+sensitivity_policy:
+  level: internal
+  action: retain
+column_sensitivity: []
+human_review:
+  verdict: revise
+  allowed_alternatives:
+  - dwd_rate_index_observation_from_floating_rate_periods
+semantic_subject: RATE_INDEX
+dimension_role: BASE
+dimension_content_type: INFO

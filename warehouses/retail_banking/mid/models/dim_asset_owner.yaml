@@ -1,0 +1,42 @@
+version: 2
+name: dim_asset_owner
+layer: DIM
+description: External asset owner is a durable counterparty dimension.
+table_type: dimension
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+data_domain: 09
+business_area: ASTM
+entities:
+- code: ASSET_OWNER
+  type: primary
+  name: Asset Owner
+  key_columns:
+  - id
+grain:
+  description: one external asset owner
+  columns:
+  - id
+business_date:
+  kind: effective
+  column: last_modified_on_utc
+  inherit_from: null
+  source_column: last_modified_on_utc
+source_mapping:
+  upstream_repository: https://github.com/apache/fineract
+  source_table: m_external_asset_owner
+  ods_table: ods_fineract_m_external_asset_owner
+  disposition: standalone_dimension
+  confidence: human_reviewed
+sensitivity: internal
+sensitivity_policy:
+  level: internal
+  action: retain
+column_sensitivity: []
+human_review:
+  verdict: accept
+  allowed_alternatives: []
+semantic_subject: ASSET_OWNER
+dimension_role: BASE
+dimension_content_type: INFO

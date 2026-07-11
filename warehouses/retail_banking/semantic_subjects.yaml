@@ -1,0 +1,108 @@
+version: 1
+project: retail_banking
+semantic_subjects:
+- code: ACCOUNTING_RULE
+  name: accounting rule
+  description: 总账与财务主数据主题，来源 Fineract acc_accounting_rule。
+- code: GL_ACCOUNT
+  name: gl account
+  description: 总账与财务主数据主题，来源 Fineract acc_gl_account。
+- code: ADDRESS
+  name: address
+  description: 客户与参与方主数据主题，来源 Fineract m_address。
+- code: BUSINESS_CALENDAR
+  name: meeting calendar
+  description: 渠道与客户服务主数据主题，来源 Fineract m_calendar。
+- code: CHARGE_TYPE
+  name: charge definition
+  description: 产品、定价与税费主数据主题，来源 Fineract m_charge。
+- code: CUSTOMER
+  name: customer
+  description: 客户与参与方主数据主题，来源 Fineract m_client。
+- code: CODE_VALUE
+  name: code value
+  description: 公共参考与元数据主数据主题，来源 Fineract m_code_value。
+- code: COLLATERAL
+  name: collateral type
+  description: 贷款与信贷主数据主题，来源 Fineract m_collateral_management。
+- code: CREDIT_BUREAU
+  name: credit bureau
+  description: 贷款与信贷主数据主题，来源 Fineract m_creditbureau。
+- code: CURRENCY
+  name: currency
+  description: 产品、定价与税费主数据主题，来源 Fineract m_currency。
+- code: DELINQUENCY_BUCKET
+  name: delinquency bucket
+  description: 贷款与信贷主数据主题，来源 Fineract m_delinquency_bucket。
+- code: DELINQUENCY_RANGE
+  name: delinquency range
+  description: 贷款与信贷主数据主题，来源 Fineract m_delinquency_range。
+- code: ASSET_OWNER
+  name: asset owner
+  description: 投资、份额与资产持有主数据主题，来源 Fineract m_external_asset_owner。
+- code: RATE_INDEX
+  name: rate index
+  description: 产品、定价与税费主数据主题，来源 Fineract m_floating_rates。
+- code: CUSTOMER_GROUP
+  name: customer group
+  description: 客户与参与方主数据主题，来源 Fineract m_group。
+- code: CUSTOMER_GROUP_LEVEL
+  name: customer group level
+  description: 客户与参与方主数据主题，来源 Fineract m_group_level。
+- code: HOLIDAY
+  name: holiday
+  description: 机构与员工主数据主题，来源 Fineract m_holiday。
+- code: LOAN_ACCOUNT
+  name: loan account
+  description: 贷款与信贷主数据主题，来源 Fineract m_loan。
+- code: LOAN_RATE_RELATION
+  name: ge loan rate
+  description: 贷款与信贷主数据主题，来源 Fineract m_loan_rate。
+- code: LOAN_INTEREST_TERMS
+  name: loan interest terms satellite
+  description: 贷款与信贷主数据主题，来源 Fineract m_loan_recalculation_details。
+- code: OFFICE
+  name: office
+  description: 机构与员工主数据主题，来源 Fineract m_office。
+- code: PAYMENT_TYPE
+  name: payment type
+  description: 支付结算主数据主题，来源 Fineract m_payment_type。
+- code: LOAN_PRODUCT
+  name: loan product
+  description: 贷款与信贷主数据主题，来源 Fineract m_product_loan。
+- code: PROVISION_CATEGORY
+  name: provision category
+  description: 贷款与信贷主数据主题，来源 Fineract m_provision_category。
+- code: RATE
+  name: rate
+  description: 产品、定价与税费主数据主题，来源 Fineract m_rate。
+- code: DEPOSIT_ACCOUNT
+  name: deposit account
+  description: 存款与储蓄主数据主题，来源 Fineract m_savings_account。
+- code: DEPOSIT_PRODUCT
+  name: deposit product
+  description: 存款与储蓄主数据主题，来源 Fineract m_savings_product。
+- code: SHARE_ACCOUNT
+  name: share account
+  description: 投资、份额与资产持有主数据主题，来源 Fineract m_share_account。
+- code: SHARE_PRODUCT
+  name: share product
+  description: 投资、份额与资产持有主数据主题，来源 Fineract m_share_product。
+- code: STAFF
+  name: staff
+  description: 机构与员工主数据主题，来源 Fineract m_staff。
+- code: SURVEY
+  name: survey
+  description: 渠道与客户服务主数据主题，来源 Fineract m_surveys。
+- code: TELLER
+  name: teller
+  description: 支付结算主数据主题，来源 Fineract m_tellers。
+- code: WC_LOAN_ACCOUNT
+  name: wc loan account
+  description: 营运资金贷款主数据主题，来源 Fineract m_wc_loan。
+- code: WC_LOAN_PRODUCT
+  name: wc loan product
+  description: 营运资金贷款主数据主题，来源 Fineract m_wc_loan_product。
+- code: WORKING_DAY_RULE
+  name: working day rule
+  description: 机构与员工主数据主题，来源 Fineract m_working_days。

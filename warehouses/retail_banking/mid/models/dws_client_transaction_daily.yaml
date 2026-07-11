@@ -1,0 +1,71 @@
+version: 2
+name: dws_client_transaction_daily
+layer: DWS
+description: 客户与参与方 reviewed aggregate
+table_type: aggregate_fact
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+data_domain: '01'
+business_area: CLNT
+business_process: customer_management
+sensitivity: restricted
+business_date:
+  column: transaction_date
+  output_column: stat_date
+  kind: event_date
+grain:
+  columns:
+  - stat_date
+  - office_id
+  - client_id
+  - currency_code
+  - transaction_type_enum
+  description: one day, office, customer, currency and transaction type
+  entities:
+  - OFFICE
+  - CUSTOMER
+  degenerate_dimensions: &id001
+  - currency_code
+  - transaction_type_enum
+  time_column: stat_date
+  time_period: D
+entities:
+- code: OFFICE
+  key: office_id
+- code: CUSTOMER
+  key: client_id
+degenerate_dimensions: *id001
+derived_metrics: &id002
+- name: record_count
+  class: derived
+  formula: count(*)
+  unit: count
+  currency_source: not_applicable
+  aggregation_behavior: additive
+  additive_over:
+  - stat_date
+  - office_id
+  - client_id
+  - currency_code
+  - transaction_type_enum
+  sign: positive_count
+  reversal: exclude_is_reversed_true
+- name: total_amount
+  class: derived
+  formula: sum(amount)
+  unit: currency
+  currency_source: currency_code
+  aggregation_behavior: additive
+  additive_over:
+  - stat_date
+  - office_id
+  - client_id
+  - transaction_type_enum
+  sign: gross_by_transaction_type
+  reversal: exclude_is_reversed_true
+metric_semantics: *id002
+human_review:
+  decision: revise
+  current_name: dws_client_transaction_daily
+  status: human_reviewed_candidate

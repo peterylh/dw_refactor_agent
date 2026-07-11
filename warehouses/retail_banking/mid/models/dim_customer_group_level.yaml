@@ -1,0 +1,49 @@
+version: 2
+name: dim_customer_group_level
+layer: DIM
+description: Group level is a stable hierarchical reference dimension.
+table_type: dimension
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+data_domain: '01'
+business_area: CLNT
+entities:
+- code: CUSTOMER_GROUP_LEVEL
+  type: primary
+  name: Customer Group Level
+  key_columns:
+  - id
+grain:
+  description: one group hierarchy level
+  columns:
+  - id
+business_date:
+  kind: none
+  column: null
+  inherit_from: null
+  source_column: null
+source_mapping:
+  upstream_repository: https://github.com/apache/fineract
+  source_table: m_group_level
+  ods_table: ods_fineract_m_group_level
+  disposition: standalone_dimension
+  confidence: human_reviewed
+sensitivity: internal
+sensitivity_policy:
+  level: internal
+  action: retain
+column_sensitivity: []
+human_review:
+  verdict: accept
+  allowed_alternatives: []
+hierarchy_roles:
+- role: parent_level
+  entity: CUSTOMER_GROUP_LEVEL
+  key_columns:
+  - parent_id
+  source_fk:
+  - parent_id
+semantic_subject: CUSTOMER_GROUP_LEVEL
+dimension_role: BASE
+dimension_content_type: INFO

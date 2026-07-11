@@ -1,0 +1,128 @@
+version: 2
+name: ads_provision_posting_monitor_daily
+layer: ADS
+description: 贷款与信贷 reviewed application data
+table_type: application_fact
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+data_domain: '04'
+business_area: LOAN
+business_process: loan_provisioning
+sensitivity: internal
+business_date:
+  column: stat_date
+  kind: inherited_provisioning_run_date
+grain:
+  columns:
+  - stat_date
+  - office_id
+  - product_id
+  - category_id
+  - currency_code
+  description: one provisioning run day, office, product, category and currency
+  entities:
+  - OFFICE
+  - LOAN_PRODUCT
+  - PROVISION_CATEGORY
+  degenerate_dimensions: &id001
+  - currency_code
+entities:
+- code: OFFICE
+  key: office_id
+- code: LOAN_PRODUCT
+  key: product_id
+- code: PROVISION_CATEGORY
+  key: category_id
+degenerate_dimensions: *id001
+derived_metrics:
+- &id002
+  name: provision_entry_count
+  class: derived
+  formula: sum(provision_entry_count)
+  unit: count
+  currency_source: not_applicable
+  aggregation_behavior: additive
+  additive_over:
+  - stat_date
+  - office_id
+  - product_id
+  - category_id
+  - currency_code
+  sign: positive_count
+  reversal: not_applicable
+- &id003
+  name: total_reserve_amount
+  class: derived
+  formula: sum(total_reserve_amount)
+  unit: currency
+  currency_source: currency_code
+  aggregation_behavior: additive
+  additive_over:
+  - stat_date
+  - office_id
+  - product_id
+  - category_id
+  sign: positive_provision
+  reversal: not_applicable
+calculated_metrics:
+- &id004
+  name: unposted_entry_count
+  class: calculated
+  formula: sum(case when coalesce(journal_entry_created, false) = false then provision_entry_count else
+    0 end)
+  unit: count
+  currency_source: not_applicable
+  aggregation_behavior: additive
+  additive_over:
+  - stat_date
+  - office_id
+  - product_id
+  - category_id
+  - currency_code
+  sign: positive_count
+  reversal: not_applicable
+- &id005
+  name: unposted_reserve_amount
+  class: calculated
+  formula: sum(case when coalesce(journal_entry_created, false) = false then total_reserve_amount else
+    0 end)
+  unit: currency
+  currency_source: currency_code
+  aggregation_behavior: additive
+  additive_over:
+  - stat_date
+  - office_id
+  - product_id
+  - category_id
+  sign: positive_provision
+  reversal: not_applicable
+- &id006
+  name: posting_ratio
+  class: calculated
+  formula: 1 - unposted_entry_count / nullif(provision_entry_count, 0)
+  unit: ratio
+  currency_source: not_applicable
+  aggregation_behavior: non_additive
+  additive_over: []
+  sign: positive_ratio
+  reversal: not_applicable
+metric_semantics:
+- *id002
+- *id003
+- *id004
+- *id005
+- *id006
+application_rules:
+- name: unposted_provision_alert
+  kind: status_monitor
+  formula: unposted_entry_count > 0
+  purpose: alert provisioning entries without GL journal creation
+- name: posting_completion_ratio
+  kind: ratio
+  formula: 1 - unposted_entry_count / nullif(provision_entry_count, 0)
+  purpose: monitor provisioning-to-GL completion
+human_review:
+  decision: revise
+  current_name: ads_provision_posting_monitor_daily
+  status: human_reviewed_candidate

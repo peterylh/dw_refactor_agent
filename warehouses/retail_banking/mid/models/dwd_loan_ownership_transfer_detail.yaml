@@ -1,0 +1,124 @@
+version: 2
+name: dwd_loan_ownership_transfer_detail
+layer: DWD
+description: Detail must join its transfer header to obtain loan, owner and effective date context.
+table_type: fact
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+data_domain: 09
+business_area: ASTM
+entities:
+- code: LOAN_OWNERSHIP_TRANSFER_DETAIL
+  type: primary
+  name: Loan Ownership Transfer Detail
+  key_columns:
+  - id
+- code: LOAN_OWNERSHIP_TRANSFER
+  type: foreign
+  role: ownership_transfer
+  name: Loan Ownership Transfer
+  key_columns:
+  - asset_owner_transfer_id
+  source_fk:
+  - asset_owner_transfer_id
+grain:
+  description: one outstanding-balance detail row for one ownership transfer
+  columns:
+  - asset_owner_transfer_id
+  - id
+business_date:
+  kind: inherited
+  column: business_date
+  inherit_from: m_external_asset_owner_transfer.effective_date_from
+  source_column: null
+source_mapping:
+  upstream_repository: https://github.com/apache/fineract
+  source_table: m_external_asset_owner_transfer_details
+  ods_table: ods_fineract_m_external_asset_owner_transfer_details
+  disposition: standalone_fact
+  confidence: human_reviewed
+sensitivity: restricted
+sensitivity_policy:
+  level: restricted
+  action: mask_and_tokenize
+column_sensitivity: []
+human_review:
+  verdict: revise
+  allowed_alternatives:
+  - merge_into_dwd_loan_ownership_transfer
+business_process: loan_asset_transfer
+atomic_metrics:
+- total_outstanding_derived
+- principal_outstanding_derived
+- interest_outstanding_derived
+- fee_charges_outstanding_derived
+- penalty_charges_outstanding_derived
+- total_overpaid_derived
+metric_semantics:
+- name: total_outstanding_derived
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: total_outstanding_derived
+  unit: currency
+  currency_source: account_currency
+  additive_over:
+  - asset_owner_transfer_id
+  - id
+  sign: source_defined
+  reversal: source_policy
+- name: principal_outstanding_derived
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: principal_outstanding_derived
+  unit: currency
+  currency_source: account_currency
+  additive_over:
+  - asset_owner_transfer_id
+  - id
+  sign: source_defined
+  reversal: source_policy
+- name: interest_outstanding_derived
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: interest_outstanding_derived
+  unit: currency
+  currency_source: account_currency
+  additive_over:
+  - asset_owner_transfer_id
+  - id
+  sign: source_defined
+  reversal: source_policy
+- name: fee_charges_outstanding_derived
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: fee_charges_outstanding_derived
+  unit: currency
+  currency_source: account_currency
+  additive_over:
+  - asset_owner_transfer_id
+  - id
+  sign: source_defined
+  reversal: source_policy
+- name: penalty_charges_outstanding_derived
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: penalty_charges_outstanding_derived
+  unit: currency
+  currency_source: account_currency
+  additive_over:
+  - asset_owner_transfer_id
+  - id
+  sign: source_defined
+  reversal: source_policy
+- name: total_overpaid_derived
+  class: atomic
+  aggregation_behavior: additive
+  formula: total_overpaid_derived
+  unit: currency
+  currency_source: account_currency
+  additive_over:
+  - asset_owner_transfer_id
+  - id
+  sign: source_defined
+  reversal: source_policy

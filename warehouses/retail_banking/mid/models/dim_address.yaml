@@ -1,0 +1,89 @@
+version: 2
+name: dim_address
+layer: DIM
+description: Address is reusable party reference data but must remain PII protected.
+table_type: dimension
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+data_domain: '01'
+business_area: CLNT
+entities:
+- code: ADDRESS
+  type: primary
+  name: Address
+  key_columns:
+  - id
+- code: CODE_VALUE
+  type: foreign
+  role: state_province
+  name: Code Value
+  key_columns:
+  - state_province_id
+  source_fk:
+  - state_province_id
+- code: CODE_VALUE
+  type: foreign
+  role: country
+  name: Code Value
+  key_columns:
+  - country_id
+  source_fk:
+  - country_id
+grain:
+  description: one address record
+  columns:
+  - id
+business_date:
+  kind: effective
+  column: updated_on
+  inherit_from: null
+  source_column: updated_on
+source_mapping:
+  upstream_repository: https://github.com/apache/fineract
+  source_table: m_address
+  ods_table: ods_fineract_m_address
+  disposition: standalone_dimension
+  confidence: human_reviewed
+sensitivity: restricted
+sensitivity_policy:
+  level: restricted
+  action: mask_and_tokenize
+column_sensitivity:
+- name: street
+  classification: pii
+  action: mask
+- name: address_line_1
+  classification: pii
+  action: mask
+- name: address_line_2
+  classification: pii
+  action: mask
+- name: address_line_3
+  classification: pii
+  action: mask
+- name: town_village
+  classification: pii
+  action: mask
+- name: city
+  classification: pii
+  action: mask
+- name: county_district
+  classification: pii
+  action: mask
+- name: postal_code
+  classification: pii
+  action: mask
+- name: latitude
+  classification: pii
+  action: mask
+- name: longitude
+  classification: pii
+  action: mask
+human_review:
+  verdict: accept
+  allowed_alternatives:
+  - customer_address_satellite
+semantic_subject: ADDRESS
+dimension_role: BASE
+dimension_content_type: INFO

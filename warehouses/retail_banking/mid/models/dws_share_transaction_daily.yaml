@@ -1,0 +1,105 @@
+version: 2
+name: dws_share_transaction_daily
+layer: DWS
+description: 投资、份额与资产持有 reviewed aggregate
+table_type: aggregate_fact
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+data_domain: 09
+business_area: ASTM
+business_process: share_account_management
+sensitivity: restricted
+business_date:
+  column: transaction_date
+  output_column: stat_date
+  kind: event_date
+grain:
+  columns:
+  - stat_date
+  - account_id
+  - type_enum
+  - status_enum
+  description: one day, share account, transaction type and status
+  entities:
+  - SHARE_ACCOUNT
+  degenerate_dimensions: &id001
+  - type_enum
+  - status_enum
+  time_column: stat_date
+  time_period: D
+entities:
+- code: SHARE_ACCOUNT
+  key: account_id
+degenerate_dimensions: *id001
+derived_metrics: &id002
+- name: record_count
+  class: derived
+  formula: count(*)
+  unit: count
+  currency_source: not_applicable
+  aggregation_behavior: additive
+  additive_over:
+  - stat_date
+  - account_id
+  - type_enum
+  - status_enum
+  sign: positive_count
+  reversal: include_is_active_true
+- name: total_shares
+  class: derived
+  formula: sum(total_shares)
+  unit: shares
+  currency_source: not_applicable
+  aggregation_behavior: additive
+  additive_over:
+  - stat_date
+  - account_id
+  - type_enum
+  - status_enum
+  sign: gross_by_transaction_type
+  reversal: include_is_active_true
+- name: total_amount
+  class: derived
+  formula: sum(amount)
+  unit: currency
+  currency_source: dim_share_account.currency_code
+  aggregation_behavior: additive
+  additive_over:
+  - stat_date
+  - account_id
+  - type_enum
+  - status_enum
+  sign: gross_by_transaction_type
+  reversal: include_is_active_true
+- name: total_charge_amount
+  class: derived
+  formula: sum(charge_amount)
+  unit: currency
+  currency_source: dim_share_account.currency_code
+  aggregation_behavior: additive
+  additive_over:
+  - stat_date
+  - account_id
+  - type_enum
+  - status_enum
+  sign: positive_charge
+  reversal: include_is_active_true
+- name: total_amount_paid
+  class: derived
+  formula: sum(amount_paid)
+  unit: currency
+  currency_source: dim_share_account.currency_code
+  aggregation_behavior: additive
+  additive_over:
+  - stat_date
+  - account_id
+  - type_enum
+  - status_enum
+  sign: positive_payment
+  reversal: include_is_active_true
+metric_semantics: *id002
+human_review:
+  decision: accept
+  current_name: dws_share_transaction_daily
+  status: human_reviewed_candidate

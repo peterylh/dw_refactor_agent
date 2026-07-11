@@ -1,0 +1,97 @@
+version: 2
+name: dim_customer
+layer: DIM
+description: Customer remains a conformed dimension but requires SCD2 and PII controls.
+table_type: dimension
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+data_domain: '01'
+business_area: CLNT
+entities:
+- code: CUSTOMER
+  type: primary
+  name: Customer
+  key_columns:
+  - id
+- code: OFFICE
+  type: foreign
+  role: home_office
+  name: Office
+  key_columns:
+  - office_id
+  source_fk:
+  - office_id
+- code: DEPOSIT_ACCOUNT
+  type: foreign
+  role: default_deposit_account
+  name: Deposit Account
+  key_columns:
+  - default_savings_account
+  source_fk:
+  - default_savings_account
+- code: CODE_VALUE
+  type: foreign
+  role: gender
+  name: Code Value
+  key_columns:
+  - gender_cv_id
+  source_fk:
+  - gender_cv_id
+grain:
+  description: one effective customer version
+  columns:
+  - id
+business_date:
+  kind: effective
+  column: last_modified_on_utc
+  inherit_from: null
+  source_column: last_modified_on_utc
+source_mapping:
+  upstream_repository: https://github.com/apache/fineract
+  source_table: m_client
+  ods_table: ods_fineract_m_client
+  disposition: standalone_dimension
+  confidence: human_reviewed
+sensitivity: restricted
+sensitivity_policy:
+  level: restricted
+  action: mask_and_tokenize
+column_sensitivity:
+- name: account_no
+  classification: identifier
+  action: hash
+- name: external_id
+  classification: identifier
+  action: hash
+- name: firstname
+  classification: pii
+  action: mask
+- name: middlename
+  classification: pii
+  action: mask
+- name: lastname
+  classification: pii
+  action: mask
+- name: fullname
+  classification: pii
+  action: mask
+- name: display_name
+  classification: pii
+  action: mask
+- name: mobile_no
+  classification: identifier
+  action: hash
+- name: date_of_birth
+  classification: pii
+  action: mask
+- name: email_address
+  classification: identifier
+  action: hash
+human_review:
+  verdict: revise
+  allowed_alternatives:
+  - dim_customer_scd2
+semantic_subject: CUSTOMER
+dimension_role: BASE
+dimension_content_type: INFO

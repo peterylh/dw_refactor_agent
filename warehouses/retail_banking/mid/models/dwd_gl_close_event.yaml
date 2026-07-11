@@ -1,0 +1,49 @@
+version: 2
+name: dwd_gl_close_event
+layer: DWD
+description: Closing event is valid after replacing the invalid generated finance-management code.
+table_type: factless_fact
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+data_domain: '07'
+business_area: FMAN
+entities:
+- code: GL_CLOSE_EVENT
+  type: primary
+  name: Gl Close Event
+  key_columns:
+  - id
+- code: OFFICE
+  type: foreign
+  role: office
+  name: Office
+  key_columns:
+  - office_id
+  source_fk:
+  - office_id
+grain:
+  description: one office GL closing event
+  columns:
+  - id
+business_date:
+  kind: event
+  column: business_date
+  inherit_from: null
+  source_column: closing_date
+source_mapping:
+  upstream_repository: https://github.com/apache/fineract
+  source_table: acc_gl_closure
+  ods_table: ods_fineract_acc_gl_closure
+  disposition: standalone_fact
+  confidence: human_reviewed
+sensitivity: internal
+sensitivity_policy:
+  level: internal
+  action: retain
+column_sensitivity: []
+human_review:
+  verdict: revise
+  allowed_alternatives:
+  - dwd_gl_period_close
+business_process: general_ledger_posting

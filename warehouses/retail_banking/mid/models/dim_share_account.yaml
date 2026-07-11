@@ -1,0 +1,86 @@
+version: 2
+name: dim_share_account
+layer: DIM
+description: Durable account attributes remain dimensional while approved and pending shares require snapshots.
+table_type: dimension
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+data_domain: 09
+business_area: ASTM
+entities:
+- code: SHARE_ACCOUNT
+  type: primary
+  name: Share Account
+  key_columns:
+  - id
+- code: CUSTOMER
+  type: foreign
+  role: owner_customer
+  name: Customer
+  key_columns:
+  - client_id
+  source_fk:
+  - client_id
+- code: SHARE_PRODUCT
+  type: foreign
+  role: share_product
+  name: Share Product
+  key_columns:
+  - product_id
+  source_fk:
+  - product_id
+- code: DEPOSIT_ACCOUNT
+  type: foreign
+  role: settlement_account
+  name: Deposit Account
+  key_columns:
+  - savings_account_id
+  source_fk:
+  - savings_account_id
+grain:
+  description: one effective share account version excluding balances
+  columns:
+  - id
+business_date:
+  kind: none
+  column: null
+  inherit_from: null
+  source_column: null
+source_mapping:
+  upstream_repository: https://github.com/apache/fineract
+  source_table: m_share_account
+  ods_table: ods_fineract_m_share_account
+  disposition: standalone_dimension
+  confidence: human_reviewed
+sensitivity: restricted
+sensitivity_policy:
+  level: restricted
+  action: mask_and_tokenize
+column_sensitivity:
+- name: account_no
+  classification: identifier
+  action: hash
+- name: external_id
+  classification: identifier
+  action: hash
+human_review:
+  verdict: revise
+  allowed_alternatives:
+  - dim_share_account_scd2
+semantic_subject: SHARE_ACCOUNT
+dimension_role: BASE
+dimension_content_type: INFO
+dimension_policy:
+  stable_fields:
+  - id
+  - account_no
+  - external_id
+  - client_id
+  - product_id
+  - savings_account_id
+  - currency_code
+  snapshot_target:
+    layer: DWD
+    table: dwd_share_account_daily_snapshot
+    date_column: snapshot_date

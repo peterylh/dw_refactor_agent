@@ -1,0 +1,42 @@
+version: 2
+name: dim_payment_type
+layer: DIM
+description: Payment type is stable reference data.
+table_type: dimension
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+data_domain: '06'
+business_area: PAYM
+entities:
+- code: PAYMENT_TYPE
+  type: primary
+  name: Payment Type
+  key_columns:
+  - id
+grain:
+  description: one payment method type
+  columns:
+  - id
+business_date:
+  kind: none
+  column: null
+  inherit_from: null
+  source_column: null
+source_mapping:
+  upstream_repository: https://github.com/apache/fineract
+  source_table: m_payment_type
+  ods_table: ods_fineract_m_payment_type
+  disposition: standalone_dimension
+  confidence: human_reviewed
+sensitivity: internal
+sensitivity_policy:
+  level: internal
+  action: retain
+column_sensitivity: []
+human_review:
+  verdict: accept
+  allowed_alternatives: []
+semantic_subject: PAYMENT_TYPE
+dimension_role: BASE
+dimension_content_type: INFO

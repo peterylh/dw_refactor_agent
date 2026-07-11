@@ -1,0 +1,31 @@
+version: 1
+project: retail_banking
+project_context: |
+  retail_banking 基于 Apache Fineract 核心银行租户模型，覆盖客户与团体、机构员工、
+  贷款、存款、内部账户划转、柜面现金、总账、担保抵押、拨备、股份账户、贷款资产
+  所有权及可选营运资金贷款。纯 Fineract 不提供银行卡、商户收单、外部支付网络、
+  市场交易或完整 AML 案件事实，这些主题不得由本项目凭空推断。
+data_domains:
+  - {id: '01', code: CUST, name: 客户与参与方, description: 客户、团体、家庭、地址及关系。}
+  - {id: '02', code: ORGN, name: 机构与员工, description: 机构层级、员工、柜员和营业日历。}
+  - {id: '03', code: PROD, name: 产品与定价, description: 贷款、存款、费用、利率和税费规则。}
+  - {id: '04', code: LOAN, name: 贷款与信贷, description: 贷款账户、计划、交易、逾期、重组和拨备。}
+  - {id: '05', code: DPST, name: 存款与储蓄, description: 储蓄和定期账户、流水、利息、费用和冻结。}
+  - {id: '06', code: PAYM, name: 支付结算, description: Fineract 内部账户划转、standing instruction、柜员和柜面资金操作。}
+  - {id: '07', code: FINA, name: 总账与财务, description: 科目、会计映射、分录和关账。}
+  - {id: '08', code: RISK, name: 风险与合规, description: 逾期、征信、拨备、外部事件和审计。}
+  - {id: '09', code: INVS, name: 投资与资产持有, description: 股份产品、股份账户、股息、市场价格和贷款资产所有权转让。}
+  - {id: '10', code: WCLN, name: 营运资金贷款, description: 可选 working-capital loan 模块。}
+  - {id: '11', code: CHNL, name: 渠道与服务, description: 会议、调查、通知、短信和客户服务元数据。}
+  - {id: '12', code: REFR, name: 公共参考, description: 码值、规则及公共元数据。}
+  - {id: '13', code: OPER, name: 平台运营, description: 调度、权限、配置、hook、外部事件投递和运行控制。}
+  - {id: '99', code: OTHR, name: 其它, description: 无明确业务主归属的标准 Fineract 数据。}
+business_areas:
+  - {id: '01', code: LOAN, name: 贷款业务, description: 贷款全生命周期、逾期、催收和拨备。}
+  - {id: '02', code: DPST, name: 存款业务, description: 储蓄、定期和账户管理。}
+  - {id: '03', code: PAYM, name: 支付结算, description: 内部划转和柜面现金操作。}
+  - {id: '04', code: CLNT, name: 客户经营, description: 客户、团体、关系和服务。}
+  - {id: '05', code: FMAN, name: 财务管理, description: 总账、关账、对账和财务汇总。}
+  - {id: '06', code: ASTM, name: 资产管理, description: 股份和贷款资产所有权。}
+  - {id: '07', code: CHNL, name: 渠道运营, description: 机构、员工、柜员和服务触点。}
+  - {id: '99', code: OTHR, name: 其它, description: 公共规则和平台运营。}

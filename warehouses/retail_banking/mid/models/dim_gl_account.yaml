@@ -1,0 +1,57 @@
+version: 2
+name: dim_gl_account
+layer: DIM
+description: GL account is a conformed hierarchical dimension.
+table_type: dimension
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+data_domain: '07'
+business_area: FMAN
+entities:
+- code: GL_ACCOUNT
+  type: primary
+  name: Gl Account
+  key_columns:
+  - id
+- code: CODE_VALUE
+  type: foreign
+  role: account_tag
+  name: Code Value
+  key_columns:
+  - tag_id
+  source_fk:
+  - tag_id
+grain:
+  description: one general ledger account
+  columns:
+  - id
+business_date:
+  kind: none
+  column: null
+  inherit_from: null
+  source_column: null
+source_mapping:
+  upstream_repository: https://github.com/apache/fineract
+  source_table: acc_gl_account
+  ods_table: ods_fineract_acc_gl_account
+  disposition: standalone_dimension
+  confidence: human_reviewed
+sensitivity: internal
+sensitivity_policy:
+  level: internal
+  action: retain
+column_sensitivity: []
+human_review:
+  verdict: accept
+  allowed_alternatives: []
+hierarchy_roles:
+- role: parent_gl_account
+  entity: GL_ACCOUNT
+  key_columns:
+  - parent_id
+  source_fk:
+  - parent_id
+semantic_subject: GL_ACCOUNT
+dimension_role: BASE
+dimension_content_type: INFO

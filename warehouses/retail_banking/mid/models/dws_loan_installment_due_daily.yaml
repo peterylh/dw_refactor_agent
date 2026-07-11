@@ -1,0 +1,91 @@
+version: 2
+name: dws_loan_installment_due_daily
+layer: DWS
+description: 贷款与信贷 reviewed aggregate
+table_type: aggregate_fact
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+data_domain: '04'
+business_area: LOAN
+business_process: loan_repayment
+sensitivity: restricted
+business_date:
+  column: duedate
+  output_column: stat_date
+  kind: contractual_due_date
+grain:
+  columns:
+  - stat_date
+  - loan_id
+  description: one contractual due day and loan
+  entities:
+  - LOAN_ACCOUNT
+  degenerate_dimensions: []
+  time_column: stat_date
+  time_period: D
+entities:
+- code: LOAN_ACCOUNT
+  key: loan_id
+degenerate_dimensions: []
+derived_metrics: &id001
+- name: installment_count
+  class: derived
+  formula: count(*)
+  unit: count
+  currency_source: not_applicable
+  aggregation_behavior: additive
+  additive_over:
+  - stat_date
+  - loan_id
+  sign: positive_count
+  reversal: not_applicable
+- name: scheduled_principal_amount
+  class: derived
+  formula: sum(principal_amount)
+  unit: currency
+  currency_source: dim_loan_account.currency_code
+  aggregation_behavior: additive
+  additive_over:
+  - stat_date
+  - loan_id
+  sign: positive_scheduled
+  reversal: not_applicable
+- name: scheduled_interest_amount
+  class: derived
+  formula: sum(interest_amount)
+  unit: currency
+  currency_source: dim_loan_account.currency_code
+  aggregation_behavior: additive
+  additive_over:
+  - stat_date
+  - loan_id
+  sign: positive_scheduled
+  reversal: not_applicable
+- name: scheduled_fee_amount
+  class: derived
+  formula: sum(fee_charges_amount)
+  unit: currency
+  currency_source: dim_loan_account.currency_code
+  aggregation_behavior: additive
+  additive_over:
+  - stat_date
+  - loan_id
+  sign: positive_scheduled
+  reversal: not_applicable
+- name: scheduled_penalty_amount
+  class: derived
+  formula: sum(penalty_charges_amount)
+  unit: currency
+  currency_source: dim_loan_account.currency_code
+  aggregation_behavior: additive
+  additive_over:
+  - stat_date
+  - loan_id
+  sign: positive_scheduled
+  reversal: not_applicable
+metric_semantics: *id001
+human_review:
+  decision: accept
+  current_name: dws_loan_installment_due_daily
+  status: human_reviewed_candidate

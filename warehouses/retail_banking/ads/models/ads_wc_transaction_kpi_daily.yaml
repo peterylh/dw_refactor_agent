@@ -1,0 +1,80 @@
+version: 2
+name: ads_wc_transaction_kpi_daily
+layer: ADS
+description: 营运资金贷款 reviewed application data
+table_type: application_fact
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+data_domain: '10'
+business_area: LOAN
+business_process: loan_transaction
+sensitivity: restricted
+business_date:
+  column: stat_date
+  kind: inherited_event_date
+grain:
+  columns:
+  - stat_date
+  - wc_loan_id
+  - transaction_type_id
+  description: one day, WC loan and transaction type
+  entities:
+  - WC_LOAN_ACCOUNT
+  degenerate_dimensions: &id001
+  - transaction_type_id
+entities:
+- code: WC_LOAN_ACCOUNT
+  key: wc_loan_id
+degenerate_dimensions: *id001
+derived_metrics:
+- &id002
+  name: record_count
+  class: derived
+  formula: source.record_count
+  unit: count
+  currency_source: not_applicable
+  aggregation_behavior: additive
+  additive_over:
+  - stat_date
+  - wc_loan_id
+  - transaction_type_id
+  sign: positive_count
+  reversal: inherited_source_policy
+- &id003
+  name: total_transaction_amount
+  class: derived
+  formula: source.total_transaction_amount
+  unit: currency
+  currency_source: dim_wc_loan_account.currency_code
+  aggregation_behavior: additive
+  additive_over:
+  - stat_date
+  - wc_loan_id
+  - transaction_type_id
+  sign: gross_by_transaction_type
+  reversal: inherited_source_policy
+calculated_metrics:
+- &id004
+  name: average_transaction_amount
+  class: calculated
+  formula: total_transaction_amount / nullif(record_count, 0)
+  unit: currency
+  currency_source: dim_wc_loan_account.currency_code
+  aggregation_behavior: non_additive
+  additive_over: []
+  sign: gross_by_transaction_type
+  reversal: inherited_source_policy
+metric_semantics:
+- *id002
+- *id003
+- *id004
+application_rules:
+- name: average_wc_transaction_value
+  kind: ratio
+  formula: total_transaction_amount / nullif(record_count, 0)
+  purpose: descriptive WC loan KPI; no monitoring claim
+human_review:
+  decision: revise
+  current_name: ads_wc_transaction_monitor_daily
+  status: human_reviewed_candidate

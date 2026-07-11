@@ -1,0 +1,13 @@
+version: 2
+name: ods_fineract_notification_mapper
+layer: ODS
+description: Fineract notification_mapper 贴源表
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+source:
+  repository: https://github.com/apache/fineract
+  table: notification_mapper
+  disposition: component_source
+  confidence: candidate
+sensitivity: internal

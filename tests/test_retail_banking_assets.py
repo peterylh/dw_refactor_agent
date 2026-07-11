@@ -1,0 +1,523 @@
+import copy
+import importlib.util
+import re
+import sys
+from pathlib import Path
+
+import pytest
+import yaml
+
+PROJECT_DIR = Path(__file__).resolve().parents[1] / "warehouses/retail_banking"
+MAPPINGS_DIR = PROJECT_DIR / "mappings"
+
+
+def _load_yaml(path):
+    value = yaml.safe_load(path.read_text(encoding="utf-8"))
+    assert isinstance(value, dict)
+    return value
+
+
+def _stems(path, suffix):
+    return {item.stem for item in path.glob(f"*.{suffix}")}
+
+
+def _load_tool(module_name, filename):
+    tool_path = PROJECT_DIR / f"tools/{filename}"
+    spec = importlib.util.spec_from_file_location(module_name, tool_path)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    sys.modules[module_name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_retail_banking_mapping_covers_active_fineract_schema():
+    schema = _load_yaml(MAPPINGS_DIR / "fineract_schema_snapshot.yaml")
+    mapping = _load_yaml(MAPPINGS_DIR / "fineract_table_mapping.yaml")
+
+    source_tables = {item["source_table"] for item in schema["tables"]}
+    mapped_tables = {item["source_table"] for item in mapping["mappings"]}
+
+    assert schema["upstream_commit"] == mapping["upstream_commit"]
+    assert source_tables == mapped_tables
+    assert len(source_tables) == schema["active_table_count"] == 277
+    assert all(item["disposition"] for item in mapping["mappings"])
+    assert all(item["rationale"] for item in mapping["mappings"])
+    assert all(
+        item["confidence"]
+        in {"human_reviewed", "security_reviewed", "candidate"}
+        for item in mapping["mappings"]
+    )
+    savings = {item["source_table"]: item for item in schema["tables"]}
+    assert "accrued_till_date" in {
+        column["name"] for column in savings["m_savings_account"]["columns"]
+    }
+    assert "external_id" in {
+        column["name"]
+        for column in savings["m_savings_account_transaction"]["columns"]
+    }
+    assert all(
+        change["status"] == "overridden"
+        for table in schema["tables"]
+        for change in table["unresolved_changes"]
+    )
+    assert all(
+        change["status"] == "overridden"
+        for change in schema["unresolved_changes"]
+    )
+
+
+def test_retail_banking_generated_asset_sets_match_manifest():
+    mapping = _load_yaml(MAPPINGS_DIR / "fineract_table_mapping.yaml")
+    manifest = _load_yaml(MAPPINGS_DIR / "generated_asset_manifest.yaml")
+    mappings = mapping["mappings"]
+
+    ods_expected = {item["ods_table"] for item in mappings}
+    direct_expected = {
+        item["target_table"] for item in mappings if item["target_table"]
+    }
+    semantic_spec = _load_yaml(PROJECT_DIR / "semantic_specs/dim_dwd.yaml")
+    snapshot_expected = {
+        entry["dimension_policy"]["snapshot_target"]["table"]
+        for entry in semantic_spec["entries"]
+        if (entry.get("dimension_policy") or {}).get("snapshot_target")
+    }
+    reviewed_expected = direct_expected | snapshot_expected
+    ods_ddl = _stems(PROJECT_DIR / "ods/ddl/internal/retail_banking_dm", "sql")
+    ods_models = _stems(
+        PROJECT_DIR / "ods/models/internal/retail_banking_dm", "yaml"
+    )
+    ods_data = _stems(
+        PROJECT_DIR / "ods/data/internal/retail_banking_dm", "sql"
+    )
+    mid_ddl = _stems(PROJECT_DIR / "mid/ddl", "sql")
+    mid_models = _stems(PROJECT_DIR / "mid/models", "yaml")
+    mid_tasks = _stems(PROJECT_DIR / "mid/tasks", "sql")
+    ads_ddl = _stems(PROJECT_DIR / "ads/ddl", "sql")
+    ads_models = _stems(PROJECT_DIR / "ads/models", "yaml")
+    ads_tasks = _stems(PROJECT_DIR / "ads/tasks", "sql")
+
+    assert ods_ddl == ods_models == ods_data == ods_expected
+    assert reviewed_expected <= mid_ddl
+    assert mid_ddl == mid_models == mid_tasks
+    assert ads_ddl == ads_models == ads_tasks
+    assert len(ods_ddl) == manifest["counts"]["ODS"] == 277
+    assert len(direct_expected) == 100
+    assert len(snapshot_expected) == 4
+    assert len(reviewed_expected) == manifest["counts"]["DIM_DWD"] == 104
+    assert len(mid_ddl - reviewed_expected) == manifest["counts"]["DWS"] == 18
+    assert len(ads_ddl) == manifest["counts"]["ADS"] == 13
+    assert (
+        len(ods_ddl) + len(mid_ddl) + len(ads_ddl)
+        == manifest["counts"]["TOTAL"]
+        == 412
+    )
+
+
+def test_retail_banking_complete_layer_mapping_covers_every_source():
+    source_mapping = _load_yaml(MAPPINGS_DIR / "fineract_table_mapping.yaml")[
+        "mappings"
+    ]
+    layer_mapping = _load_yaml(MAPPINGS_DIR / "fineract_layer_mapping.yaml")
+    by_source = {
+        item["source_table"]: item for item in layer_mapping["mappings"]
+    }
+
+    assert set(by_source) == {item["source_table"] for item in source_mapping}
+    assert layer_mapping["source_table_count"] == 277
+    assert all(len(item["layers"]["ODS"]) == 1 for item in by_source.values())
+    assert any(item["layers"]["DWS"] for item in by_source.values())
+    assert any(item["layers"]["ADS"] for item in by_source.values())
+
+
+def test_retail_banking_only_reviewed_mappings_generate_direct_downstream():
+    mapping = _load_yaml(MAPPINGS_DIR / "fineract_table_mapping.yaml")
+    mappings = mapping["mappings"]
+
+    reviewed = [
+        item for item in mappings if item["confidence"] == "human_reviewed"
+    ]
+    candidates = [
+        item for item in mappings if item["confidence"] == "candidate"
+    ]
+
+    assert all(item["target_layer"] in {"DIM", "DWD"} for item in reviewed)
+    assert all(item["target_table"] for item in reviewed)
+    assert all(item["target_layer"] == "NONE" for item in candidates)
+    assert all(not item["target_table"] for item in candidates)
+
+
+def test_retail_banking_sensitive_and_provisioning_overrides_are_applied():
+    mapping = _load_yaml(MAPPINGS_DIR / "fineract_table_mapping.yaml")
+    by_source = {item["source_table"]: item for item in mapping["mappings"]}
+
+    for source_table in ("m_creditbureau_token", "request_audit_table"):
+        item = by_source[source_table]
+        assert item["sensitivity"] == "restricted"
+        assert item["disposition"] == "security_excluded"
+        assert not item["target_table"]
+    for source_table in ("m_client", "m_staff", "m_guarantor"):
+        assert by_source[source_table]["sensitivity"] == "restricted"
+    assert by_source["m_external_event"]["target_layer"] == "NONE"
+    assert (
+        by_source["m_loanproduct_provisioning_entry"]["target_table"]
+        == "dwd_loan_provision_entry"
+    )
+    assert (
+        by_source["m_provisioning_history"]["target_table"]
+        == "dwd_loan_provision_run"
+    )
+
+
+def test_retail_banking_dws_and_ads_use_explicit_reviewed_semantics():
+    dws_tasks = PROJECT_DIR / "mid/tasks"
+    deposit_sql = (dws_tasks / "dws_deposit_transaction_daily.sql").read_text(
+        encoding="utf-8"
+    )
+    cashier_sql = (dws_tasks / "dws_cashier_transaction_daily.sql").read_text(
+        encoding="utf-8"
+    )
+    installment_sql = (
+        dws_tasks / "dws_loan_installment_due_daily.sql"
+    ).read_text(encoding="utf-8")
+    provision_sql = (dws_tasks / "dws_loan_provision_run_daily.sql").read_text(
+        encoding="utf-8"
+    )
+
+    assert "running_balance_derived" not in deposit_sql
+    assert "cumulative_balance_derived" not in deposit_sql
+    assert "`is_reversed` = FALSE" in deposit_sql
+    assert "DATE(src.`txn_date`)" in cashier_sql
+    assert "DATE(src.`duedate`)" in installment_sql
+    assert "`reseve_amount`" in provision_sql
+    assert not (PROJECT_DIR / "ads/ddl/ads_trial_balance_daily.sql").exists()
+    assert not (
+        PROJECT_DIR / "ads/ddl/ads_provision_reconciliation_daily.sql"
+    ).exists()
+    ads_sql = (
+        PROJECT_DIR / "ads/tasks/ads_loan_transaction_kpi_daily.sql"
+    ).read_text(encoding="utf-8")
+    assert "average_amount" in ads_sql
+
+    gl_sql = (
+        PROJECT_DIR / "ads/tasks/ads_gl_posting_reconciliation_daily.sql"
+    ).read_text(encoding="utf-8")
+    provision_monitor_sql = (
+        PROJECT_DIR / "ads/tasks/ads_provision_posting_monitor_daily.sql"
+    ).read_text(encoding="utf-8")
+    assert "src.`transaction_id`" in gl_sql
+    assert "coalesce(src.`journal_entry_created`, false) = false" in (
+        provision_monitor_sql
+    )
+
+
+def test_retail_banking_current_state_snapshots_retain_daily_slices():
+    snapshot_tables = {
+        "dwd_deposit_account_daily_snapshot",
+        "dwd_loan_account_daily_snapshot",
+        "dwd_share_account_daily_snapshot",
+        "dwd_wc_loan_account_daily_snapshot",
+        "dwd_loan_arrears_snapshot",
+        "dwd_wc_loan_balance_snapshot",
+    }
+    for table_name in snapshot_tables:
+        task = (PROJECT_DIR / f"mid/tasks/{table_name}.sql").read_text(
+            encoding="utf-8"
+        )
+        model = _load_yaml(PROJECT_DIR / f"mid/models/{table_name}.yaml")
+        assert "DELETE FROM" in task
+        assert "TRUNCATE TABLE" not in task
+        assert "SET @etl_date = CURDATE()" in task
+        assert model["execution"]["materialized"] == "incremental"
+        assert model["execution"]["snapshot_mode"] == "current_state_capture"
+        assert model["execution"]["historical_replay_supported"] is False
+        assert "slice" not in model["execution"]
+
+    share_price = _load_yaml(
+        PROJECT_DIR / "mid/models/dwd_share_market_price.yaml"
+    )
+    share_snapshot = _load_yaml(
+        PROJECT_DIR / "mid/models/dwd_share_account_daily_snapshot.yaml"
+    )
+    loan_snapshot = _load_yaml(
+        PROJECT_DIR / "mid/models/dwd_loan_account_daily_snapshot.yaml"
+    )
+    deposit_snapshot = _load_yaml(
+        PROJECT_DIR / "mid/models/dwd_deposit_account_daily_snapshot.yaml"
+    )
+    wc_snapshot = _load_yaml(
+        PROJECT_DIR / "mid/models/dwd_wc_loan_account_daily_snapshot.yaml"
+    )
+    assert "share_value" in share_price["atomic_metrics"]
+    assert {
+        "total_approved_shares",
+        "total_pending_shares",
+    } <= set(share_snapshot["atomic_metrics"])
+    assert {
+        "total_outstanding_derived",
+        "interest_outstanding_derived",
+        "fee_charges_outstanding_derived",
+        "penalty_charges_outstanding_derived",
+        "total_expected_repayment_derived",
+        "total_repayment_derived",
+        "total_costofloan_derived",
+        "total_recovered_derived",
+    } <= set(loan_snapshot["atomic_metrics"])
+    assert {
+        "total_deposits_derived",
+        "total_withdrawals_derived",
+        "total_withhold_tax_derived",
+        "on_hold_funds_derived",
+    } <= set(deposit_snapshot["atomic_metrics"])
+    assert "total_payment_volume" in wc_snapshot["atomic_metrics"]
+    for metric in loan_snapshot["metric_semantics"]:
+        if "rate" in metric["name"] or "percentage" in metric["name"]:
+            assert metric["aggregation_behavior"] == "non_additive"
+        else:
+            assert metric["aggregation_behavior"] != "additive"
+
+
+def test_retail_banking_restricted_projection_preserves_keys_and_masks_pii():
+    bridge_sql = (
+        PROJECT_DIR / "mid/tasks/bridge_customer_address.sql"
+    ).read_text(encoding="utf-8")
+    assert "src.`address_id`" in bridge_sql
+    assert "'***' AS `address_id`" not in bridge_sql
+
+    expected_masked = {
+        "dim_customer": ["middlename", "fullname", "date_of_birth"],
+        "dim_address": ["street", "city", "postal_code"],
+        "dwd_loan_guarantor_relation": ["dob", "city", "zip", "comment"],
+        "dim_customer_group": ["display_name"],
+    }
+    for table_name, columns in expected_masked.items():
+        task = (PROJECT_DIR / f"mid/tasks/{table_name}.sql").read_text(
+            encoding="utf-8"
+        )
+        for column in columns:
+            assert f"ELSE '***' END AS `{column}`" in task
+
+    ownership_sql = (
+        PROJECT_DIR / "mid/tasks/dwd_loan_ownership_transfer_detail.sql"
+    ).read_text(encoding="utf-8")
+    assert "DATE(date_parent.`effective_date_from`)" in ownership_sql
+    assert "NULL AS `business_date`" not in ownership_sql
+
+
+def test_retail_banking_ods_has_date_discovery_column():
+    ddl_root = PROJECT_DIR / "ods/ddl/internal/retail_banking_dm"
+    missing = []
+    for ddl_path in sorted(ddl_root.glob("*.sql")):
+        text = ddl_path.read_text(encoding="utf-8").lower()
+        if "`load_time` datetime not null" not in text:
+            missing.append(ddl_path.name)
+    assert missing == []
+
+
+def test_retail_banking_identity_registry_covers_all_generated_columns():
+    registry = _load_yaml(MAPPINGS_DIR / "schema_identities.yaml")["tables"]
+    manifest = _load_yaml(MAPPINGS_DIR / "generated_asset_manifest.yaml")
+    ddl_paths = list(PROJECT_DIR.glob("ods/ddl/*/*/*.sql"))
+    ddl_paths += list((PROJECT_DIR / "mid/ddl").glob("*.sql"))
+    ddl_paths += list((PROJECT_DIR / "ads/ddl").glob("*.sql"))
+
+    assert len(ddl_paths) == manifest["counts"]["TOTAL"]
+    assert {path.stem for path in ddl_paths} == set(registry)
+    assert all(entry["table_id"] for entry in registry.values())
+    assert all(entry["columns"] for entry in registry.values())
+
+
+def test_retail_banking_doris_keys_are_ordered_schema_prefixes():
+    ddl_paths = list(PROJECT_DIR.glob("ods/ddl/*/*/*.sql"))
+    ddl_paths += list((PROJECT_DIR / "mid/ddl").glob("*.sql"))
+    ddl_paths += list((PROJECT_DIR / "ads/ddl").glob("*.sql"))
+
+    violations = []
+    for ddl_path in ddl_paths:
+        ddl = ddl_path.read_text(encoding="utf-8")
+        body_match = re.search(
+            r"CREATE TABLE IF NOT EXISTS[^\n]+\((.*?)\) ENGINE=OLAP",
+            ddl,
+            flags=re.S | re.I,
+        )
+        key_match = re.search(
+            r"DUPLICATE\s+KEY\s*\(([^)]*)\)", ddl, flags=re.I
+        )
+        assert body_match is not None, ddl_path
+        assert key_match is not None, ddl_path
+        columns = re.findall(r"^\s*`([^`]+)`", body_match.group(1), re.M)
+        keys = re.findall(r"`([^`]+)`", key_match.group(1))
+        if columns[: len(keys)] != keys:
+            violations.append(ddl_path.name)
+    assert violations == []
+
+
+def test_retail_banking_gl_smoke_data_balances_by_transaction_and_date():
+    gl_data = (
+        PROJECT_DIR
+        / "ods/data/internal/retail_banking_dm"
+        / "ods_fineract_acc_gl_journal_entry.sql"
+    ).read_text(encoding="utf-8")
+
+    assert gl_data.count("'GL-00000001'") == 2
+    assert gl_data.count("'2025-01-15'") >= 2
+    assert "'2025-01-16'" not in gl_data
+
+
+def test_retail_banking_private_gold_is_external_and_fully_validated(tmp_path):
+    generator = _load_tool("retail_asset_generator", "generate_assets.py")
+    builder = _load_tool(
+        "retail_bundle_builder_gold", "build_benchmark_bundle.py"
+    )
+    gold_path = tmp_path / "private_gold.yaml"
+    input_manifest = PROJECT_DIR / "benchmark/input_manifest.yaml"
+    manifest_content = input_manifest.read_bytes()
+    manifest_mtime = input_manifest.stat().st_mtime_ns
+
+    generator.generate_private_gold(gold_path)
+    gold = builder.validate_private_gold(gold_path)
+
+    assert input_manifest.read_bytes() == manifest_content
+    assert input_manifest.stat().st_mtime_ns == manifest_mtime
+    assert not (PROJECT_DIR / "benchmark/private_gold.yaml").exists()
+    assert gold["status"] == "candidate_not_gold_v1"
+    assert len(gold["records"]) == 412
+    assert len({record["asset_id"] for record in gold["records"]}) == 412
+
+    invalid_gold = copy.deepcopy(gold)
+    invalid_gold["records"][0]["metrics"][0]["class"] = "hallucinated"
+    invalid_path = tmp_path / "invalid_private_gold.yaml"
+    invalid_path.write_text(
+        yaml.safe_dump(invalid_gold, allow_unicode=True, sort_keys=False),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="is not in enum"):
+        builder.validate_private_gold(invalid_path)
+
+    invalid_evidence = copy.deepcopy(gold)
+    first_record = invalid_evidence["records"][0]
+    first_record["evidence"]["ddl_paths"] = [
+        f"ads/models/{first_record['asset_name']}.yaml"
+    ]
+    invalid_evidence_path = tmp_path / "invalid_evidence_gold.yaml"
+    invalid_evidence_path.write_text(
+        yaml.safe_dump(invalid_evidence, allow_unicode=True, sort_keys=False),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="not a registered DDL asset"):
+        builder.validate_private_gold(invalid_evidence_path)
+
+    invalid_task_evidence = copy.deepcopy(gold)
+    invalid_task_evidence["records"][0]["evidence"]["task_paths"] = [
+        "README.md"
+    ]
+    invalid_task_path = tmp_path / "invalid_task_evidence_gold.yaml"
+    invalid_task_path.write_text(
+        yaml.safe_dump(
+            invalid_task_evidence, allow_unicode=True, sort_keys=False
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="must exactly match"):
+        builder.validate_private_gold(invalid_task_path)
+
+    missing_task_evidence = copy.deepcopy(gold)
+    missing_task_evidence["records"][0]["evidence"]["task_paths"] = []
+    missing_task_path = tmp_path / "missing_task_evidence_gold.yaml"
+    missing_task_path.write_text(
+        yaml.safe_dump(
+            missing_task_evidence, allow_unicode=True, sort_keys=False
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="must exactly match"):
+        builder.validate_private_gold(missing_task_path)
+
+    repository_gold = PROJECT_DIR.parents[1] / "tests/private_gold.yaml"
+    with pytest.raises(ValueError, match="outside the Git checkout"):
+        generator.generate_private_gold(repository_gold)
+    with pytest.raises(ValueError, match="outside the Git checkout"):
+        builder.validate_private_gold(repository_gold)
+
+
+def test_prefixless_bundle_physically_separates_answers(tmp_path):
+    module = _load_tool("retail_bundle_builder", "build_benchmark_bundle.py")
+    generator = _load_tool(
+        "retail_asset_generator_bundle", "generate_assets.py"
+    )
+    output = tmp_path / "bundle"
+    private_gold = tmp_path / "private_gold.yaml"
+    generator.generate_private_gold(private_gold)
+
+    module.build_bundle(
+        output=output,
+        track="prefixless_role_blind",
+        force=False,
+        private_gold=private_gold,
+    )
+
+    manifest = _load_yaml(output / "public/manifest.json")
+    public_sql = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in sorted((output / "public").rglob("*.sql"))
+    )
+    assert manifest["counts"] == {"ddl": 412, "tasks": 135}
+    assert manifest["constraint_counts"]["tables"] == 412
+    assert manifest["constraint_counts"]["unique_constraints"] == 118
+    assert manifest["constraint_counts"]["foreign_keys"] == 561
+    assert manifest["constraint_counts"]["external_foreign_keys"] == 2
+    assert manifest["constraint_counts"]["source_foreign_keys"] == 563
+    assert manifest["evaluator_gold_included"] is True
+    assert not re.search(
+        r"\b(?:ods|dim|dwd|dws|ads)_[a-z0-9_]+", public_sql, re.I
+    )
+    assert not any(
+        line.lstrip().startswith("--") for line in public_sql.splitlines()
+    )
+    assert not list((output / "public").rglob("*gold*"))
+    assert (output / "evaluator/private_gold.yaml").exists()
+    assert (output / "evaluator/alias_map.yaml").exists()
+    constraints = _load_yaml(output / "public/constraints.yaml")
+    aliases = _load_yaml(output / "evaluator/alias_map.yaml")["table_aliases"]
+    opaque_names = set(aliases.values())
+    assert {item["table"] for item in constraints["tables"]} == opaque_names
+    assert all(
+        foreign_key["referenced_table"] in opaque_names
+        for table in constraints["tables"]
+        for foreign_key in table["foreign_keys"]
+    )
+    external_foreign_keys = [
+        foreign_key
+        for table in constraints["tables"]
+        for foreign_key in table["external_foreign_keys"]
+    ]
+    assert len(external_foreign_keys) == 2
+    assert all(
+        foreign_key["referenced_external_table"].startswith("external_asset_")
+        for foreign_key in external_foreign_keys
+    )
+    assert "batch_job_execution" not in yaml.safe_dump(constraints)
+
+
+def test_bundle_omits_private_gold_without_external_input(tmp_path):
+    module = _load_tool(
+        "retail_bundle_builder_public_only", "build_benchmark_bundle.py"
+    )
+    output = tmp_path / "public_only_bundle"
+
+    module.build_bundle(
+        output=output, track="named_taxonomy_assisted", force=False
+    )
+
+    manifest = _load_yaml(output / "public/manifest.json")
+    assert manifest["evaluator_gold_included"] is False
+    assert (output / "public/constraints.yaml").exists()
+    assert not (output / "evaluator/private_gold.yaml").exists()
+
+    repository_output = PROJECT_DIR.parents[1] / "work/benchmark_bundle"
+    with pytest.raises(ValueError, match="outside the Git checkout"):
+        module.build_bundle(
+            output=repository_output,
+            track="named_taxonomy_assisted",
+            force=False,
+        )

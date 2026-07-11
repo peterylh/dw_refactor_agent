@@ -1,0 +1,66 @@
+version: 2
+name: dim_accounting_rule
+layer: DIM
+description: Accounting rule is stable reference data with explicit office and GL roles.
+table_type: dimension
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+data_domain: '07'
+business_area: FMAN
+entities:
+- code: ACCOUNTING_RULE
+  type: primary
+  name: Accounting Rule
+  key_columns:
+  - id
+- code: OFFICE
+  type: foreign
+  role: office
+  name: Office
+  key_columns:
+  - office_id
+  source_fk:
+  - office_id
+- code: GL_ACCOUNT
+  type: foreign
+  role: debit_gl_account
+  name: Gl Account
+  key_columns:
+  - debit_account_id
+  source_fk:
+  - debit_account_id
+- code: GL_ACCOUNT
+  type: foreign
+  role: credit_gl_account
+  name: Gl Account
+  key_columns:
+  - credit_account_id
+  source_fk:
+  - credit_account_id
+grain:
+  description: one accounting rule definition
+  columns:
+  - id
+business_date:
+  kind: none
+  column: null
+  inherit_from: null
+  source_column: null
+source_mapping:
+  upstream_repository: https://github.com/apache/fineract
+  source_table: acc_accounting_rule
+  ods_table: ods_fineract_acc_accounting_rule
+  disposition: standalone_dimension
+  confidence: human_reviewed
+sensitivity: internal
+sensitivity_policy:
+  level: internal
+  action: retain
+column_sensitivity: []
+human_review:
+  verdict: accept
+  allowed_alternatives: []
+semantic_subject: ACCOUNTING_RULE
+dimension_role: BASE
+dimension_content_type: INFO

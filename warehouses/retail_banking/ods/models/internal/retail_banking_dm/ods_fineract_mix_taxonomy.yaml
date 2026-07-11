@@ -1,0 +1,13 @@
+version: 2
+name: ods_fineract_mix_taxonomy
+layer: ODS
+description: Fineract mix_taxonomy 贴源表
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+source:
+  repository: https://github.com/apache/fineract
+  table: mix_taxonomy
+  disposition: component_source
+  confidence: candidate
+sensitivity: internal

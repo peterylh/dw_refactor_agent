@@ -1,0 +1,13 @@
+version: 2
+name: ods_fineract_m_wc_loan_range_delinquency_tag
+layer: ODS
+description: Fineract m_wc_loan_range_delinquency_tag 贴源表
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+source:
+  repository: https://github.com/apache/fineract
+  table: m_wc_loan_range_delinquency_tag
+  disposition: component_source
+  confidence: candidate
+sensitivity: internal

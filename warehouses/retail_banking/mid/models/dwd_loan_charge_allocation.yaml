@@ -1,0 +1,73 @@
+version: 2
+name: dwd_loan_charge_allocation
+layer: DWD
+description: Allocation needs its parent loan transaction to provide event time and loan context.
+table_type: fact
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+data_domain: '04'
+business_area: LOAN
+entities:
+- code: LOAN_CHARGE_ALLOCATION
+  type: primary
+  name: Loan Charge Allocation
+  key_columns:
+  - id
+- code: LOAN_CHARGE
+  type: foreign
+  role: loan_charge
+  name: Loan Charge
+  key_columns:
+  - loan_charge_id
+  source_fk:
+  - loan_charge_id
+- code: LOAN_TRANSACTION
+  type: foreign
+  role: loan_transaction
+  name: Loan Transaction
+  key_columns:
+  - loan_transaction_id
+  source_fk:
+  - loan_transaction_id
+grain:
+  description: one loan transaction-to-charge allocation
+  columns:
+  - loan_charge_id
+  - loan_transaction_id
+  - id
+business_date:
+  kind: inherited
+  column: business_date
+  inherit_from: m_loan_transaction.transaction_date
+  source_column: null
+source_mapping:
+  upstream_repository: https://github.com/apache/fineract
+  source_table: m_loan_charge_paid_by
+  ods_table: ods_fineract_m_loan_charge_paid_by
+  disposition: standalone_fact
+  confidence: human_reviewed
+sensitivity: restricted
+sensitivity_policy:
+  level: restricted
+  action: mask_and_tokenize
+column_sensitivity: []
+human_review:
+  verdict: revise
+  allowed_alternatives: []
+business_process: loan_repayment
+atomic_metrics:
+- amount
+metric_semantics:
+- name: amount
+  class: atomic
+  aggregation_behavior: additive
+  formula: amount
+  unit: currency
+  currency_source: account_currency
+  additive_over:
+  - loan_charge_id
+  - loan_transaction_id
+  - id
+  sign: source_defined
+  reversal: source_policy

@@ -1,0 +1,67 @@
+version: 2
+name: dwd_loan_ownership_transfer
+layer: DWD
+description: Transfer header has clear loan, owner, effective period and settlement semantics.
+table_type: accumulating_snapshot
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+data_domain: 09
+business_area: ASTM
+entities:
+- code: LOAN_OWNERSHIP_TRANSFER
+  type: primary
+  name: Loan Ownership Transfer
+  key_columns:
+  - id
+- code: LOAN_ACCOUNT
+  type: foreign
+  role: loan_account
+  name: Loan Account
+  key_columns:
+  - loan_id
+  source_fk:
+  - loan_id
+- code: ASSET_OWNER
+  type: foreign
+  role: new_asset_owner
+  name: Asset Owner
+  key_columns:
+  - owner_id
+  source_fk:
+  - owner_id
+- code: ASSET_OWNER
+  type: foreign
+  role: previous_asset_owner
+  name: Asset Owner
+  key_columns:
+  - previous_owner_id
+  source_fk:
+  - previous_owner_id
+grain:
+  description: one loan ownership sale
+  columns:
+  - id
+business_date:
+  kind: period_start
+  column: business_date
+  inherit_from: null
+  source_column: effective_date_from
+source_mapping:
+  upstream_repository: https://github.com/apache/fineract
+  source_table: m_external_asset_owner_transfer
+  ods_table: ods_fineract_m_external_asset_owner_transfer
+  disposition: snapshot_source
+  confidence: human_reviewed
+sensitivity: restricted
+sensitivity_policy:
+  level: restricted
+  action: mask_and_tokenize
+column_sensitivity:
+- name: external_id
+  classification: identifier
+  action: hash
+human_review:
+  verdict: accept
+  allowed_alternatives: []
+business_process: loan_asset_transfer

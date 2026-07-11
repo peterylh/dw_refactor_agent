@@ -1,0 +1,61 @@
+SET @etl_date = COALESCE(@etl_date, CURDATE());
+
+-- Human-reviewed semantic target: retail_banking_dm.dim_charge_definition
+TRUNCATE TABLE retail_banking_dm.dim_charge_definition;
+
+INSERT INTO retail_banking_dm.dim_charge_definition (
+    `id`,
+    `name`,
+    `currency_code`,
+    `charge_applies_to_enum`,
+    `charge_time_enum`,
+    `charge_calculation_enum`,
+    `charge_payment_mode_enum`,
+    `amount`,
+    `fee_on_day`,
+    `fee_interval`,
+    `fee_on_month`,
+    `is_penalty`,
+    `is_active`,
+    `is_deleted`,
+    `min_cap`,
+    `max_cap`,
+    `fee_frequency`,
+    `is_free_withdrawal`,
+    `free_withdrawal_charge_frequency`,
+    `restart_frequency`,
+    `restart_frequency_enum`,
+    `is_payment_type`,
+    `payment_type_id`,
+    `income_or_liability_account_id`,
+    `tax_group_id`,
+    `etl_time`
+)
+SELECT
+    src.`id`,
+    src.`name`,
+    src.`currency_code`,
+    src.`charge_applies_to_enum`,
+    src.`charge_time_enum`,
+    src.`charge_calculation_enum`,
+    src.`charge_payment_mode_enum`,
+    src.`amount`,
+    src.`fee_on_day`,
+    src.`fee_interval`,
+    src.`fee_on_month`,
+    src.`is_penalty`,
+    src.`is_active`,
+    src.`is_deleted`,
+    src.`min_cap`,
+    src.`max_cap`,
+    src.`fee_frequency`,
+    src.`is_free_withdrawal`,
+    src.`free_withdrawal_charge_frequency`,
+    src.`restart_frequency`,
+    src.`restart_frequency_enum`,
+    src.`is_payment_type`,
+    src.`payment_type_id`,
+    src.`income_or_liability_account_id`,
+    src.`tax_group_id`,
+    CURRENT_TIMESTAMP AS `etl_time`
+FROM retail_banking_dm.ods_fineract_m_charge AS src;

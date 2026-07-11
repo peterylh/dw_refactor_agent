@@ -1,0 +1,13 @@
+version: 2
+name: ods_fineract_m_floating_rates
+layer: ODS
+description: Fineract m_floating_rates 贴源表
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+source:
+  repository: https://github.com/apache/fineract
+  table: m_floating_rates
+  disposition: standalone_dimension
+  confidence: human_reviewed
+sensitivity: internal

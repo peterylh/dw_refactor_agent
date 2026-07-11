@@ -1,0 +1,59 @@
+types:
+  TABLE_SUFFIX:
+    label: 表业务语义后缀
+    patterns:
+      - "^[a-z][a-z0-9_]*$"
+  COLUMN_NAME:
+    label: 字段名
+    patterns:
+      - "^[a-z][a-z0-9_]*$"
+  METRIC_NAME:
+    label: 指标名
+    patterns:
+      - "^[a-z][a-z0-9_]*$"
+rules:
+  TABLE_DIM:
+    desc: 一致性维度表
+    expr: ["_", dim, "$TABLE_SUFFIX"]
+    constraints:
+      max_length: 96
+  TABLE_DWD:
+    desc: 明细事实和关系表
+    expr: ["_", dwd, "$TABLE_SUFFIX"]
+    constraints:
+      max_length: 96
+  TABLE_DWS:
+    desc: 主题汇总表
+    expr: ["_", dws, "$TABLE_SUFFIX"]
+    constraints:
+      max_length: 96
+  TABLE_ADS:
+    desc: 应用数据表
+    expr: ["_", ads, "$TABLE_SUFFIX"]
+    constraints:
+      max_length: 96
+  COLUMN_DEFAULT:
+    desc: 小写下划线字段名
+    expr: "$COLUMN_NAME"
+  ATOMIC_METRIC:
+    desc: 小写下划线原子指标名
+    expr: "$METRIC_NAME"
+  DERIVED_METRIC:
+    desc: 小写下划线派生指标名
+    expr: "$METRIC_NAME"
+bindings:
+  table:
+    DIM:
+      - "@TABLE_DIM"
+    DWD:
+      - "@TABLE_DWD"
+    DWS:
+      - "@TABLE_DWS"
+    ADS:
+      - "@TABLE_ADS"
+  column:
+    rules:
+      - "@COLUMN_DEFAULT"
+  metric:
+    atomic: "@ATOMIC_METRIC"
+    derived: "@DERIVED_METRIC"

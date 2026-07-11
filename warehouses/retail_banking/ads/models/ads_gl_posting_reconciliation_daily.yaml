@@ -1,0 +1,96 @@
+version: 2
+name: ads_gl_posting_reconciliation_daily
+layer: ADS
+description: 总账与财务 reviewed application data
+table_type: application_fact
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+data_domain: '07'
+business_area: FMAN
+business_process: general_ledger_posting
+sensitivity: internal
+business_date:
+  column: stat_date
+  kind: inherited_posting_date
+grain:
+  columns:
+  - stat_date
+  - transaction_id
+  - office_id
+  - currency_code
+  description: one GL posting transaction, office and currency per day
+  entities:
+  - OFFICE
+  degenerate_dimensions: &id001
+  - transaction_id
+  - currency_code
+entities:
+- code: OFFICE
+  key: office_id
+degenerate_dimensions: *id001
+derived_metrics: []
+calculated_metrics:
+- &id002
+  name: debit_amount
+  class: calculated
+  formula: sum(case when type_enum = 1 then total_amount else 0 end)
+  unit: currency
+  currency_source: currency_code
+  aggregation_behavior: additive
+  additive_over:
+  - stat_date
+  - transaction_id
+  - office_id
+  sign: positive_debit
+  reversal: inherited_source_policy
+- &id003
+  name: credit_amount
+  class: calculated
+  formula: sum(case when type_enum = 2 then total_amount else 0 end)
+  unit: currency
+  currency_source: currency_code
+  aggregation_behavior: additive
+  additive_over:
+  - stat_date
+  - transaction_id
+  - office_id
+  sign: positive_credit
+  reversal: inherited_source_policy
+- &id004
+  name: imbalance_amount
+  class: calculated
+  formula: debit_amount - credit_amount
+  unit: currency
+  currency_source: currency_code
+  aggregation_behavior: additive
+  additive_over:
+  - stat_date
+  - transaction_id
+  - office_id
+  sign: signed_debit_minus_credit
+  reversal: inherited_source_policy
+- &id005
+  name: is_balanced
+  class: calculated
+  formula: abs(imbalance_amount) <= reconciliation_tolerance
+  unit: boolean
+  currency_source: not_applicable
+  aggregation_behavior: non_additive
+  additive_over: []
+  sign: not_applicable
+  reversal: inherited_source_policy
+metric_semantics:
+- *id002
+- *id003
+- *id004
+- *id005
+application_rules:
+- name: debit_credit_balance
+  kind: reconciliation
+  formula: abs(debit_amount - credit_amount) <= reconciliation_tolerance
+  purpose: flag unbalanced GL posting by transaction, day, office and currency
+human_review:
+  decision: revise
+  current_name: ads_gl_posting_monitor_daily
+  status: human_reviewed_candidate

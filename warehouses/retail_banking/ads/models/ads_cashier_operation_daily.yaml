@@ -1,0 +1,83 @@
+version: 2
+name: ads_cashier_operation_daily
+layer: ADS
+description: 支付结算 reviewed application data
+table_type: application_fact
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+data_domain: '06'
+business_area: PAYM
+business_process: cashier_operation
+sensitivity: internal
+business_date:
+  column: stat_date
+  kind: inherited_event_date
+grain:
+  columns:
+  - stat_date
+  - cashier_id
+  - currency_code
+  - txn_type
+  description: one day, cashier, currency and transaction type
+  entities:
+  - CASHIER
+  degenerate_dimensions: &id001
+  - currency_code
+  - txn_type
+entities:
+- code: CASHIER
+  key: cashier_id
+degenerate_dimensions: *id001
+derived_metrics:
+- &id002
+  name: record_count
+  class: derived
+  formula: source.record_count
+  unit: count
+  currency_source: not_applicable
+  aggregation_behavior: additive
+  additive_over:
+  - stat_date
+  - cashier_id
+  - currency_code
+  - txn_type
+  sign: positive_count
+  reversal: inherited_source_policy
+- &id003
+  name: total_txn_amount
+  class: derived
+  formula: source.total_txn_amount
+  unit: currency
+  currency_source: currency_code
+  aggregation_behavior: additive
+  additive_over:
+  - stat_date
+  - cashier_id
+  - txn_type
+  sign: gross_by_txn_type
+  reversal: inherited_source_policy
+calculated_metrics:
+- &id004
+  name: average_txn_amount
+  class: calculated
+  formula: total_txn_amount / nullif(record_count, 0)
+  unit: currency
+  currency_source: currency_code
+  aggregation_behavior: non_additive
+  additive_over: []
+  sign: gross_by_txn_type
+  reversal: inherited_source_policy
+metric_semantics:
+- *id002
+- *id003
+- *id004
+application_rules:
+- name: average_cashier_transaction_value
+  kind: ratio
+  formula: total_txn_amount / nullif(record_count, 0)
+  purpose: cashier operations KPI
+human_review:
+  decision: accept
+  current_name: ads_cashier_operation_daily
+  status: human_reviewed_candidate

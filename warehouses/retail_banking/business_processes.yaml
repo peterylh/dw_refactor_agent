@@ -1,0 +1,31 @@
+version: 1
+project: retail_banking
+business_processes:
+  - {code: customer_management, name: 客户管理, description: 客户和团体关系维护。}
+  - {code: organisation_management, name: 机构与员工管理, description: 机构、员工、工作日和组织关系维护。}
+  - {code: product_configuration, name: 产品配置, description: 产品、定价、利率、费用和税费规则维护。}
+  - {code: loan_account_management, name: 贷款账户管理, description: 贷款合同、账户状态和生命周期属性维护。}
+  - {code: loan_disbursement, name: 贷款放款, description: 贷款分笔放款。}
+  - {code: loan_repayment, name: 贷款还款, description: 贷款本金、利息、费用和罚息交易。}
+  - {code: loan_transaction, name: 贷款交易, description: 贷款放款、还款、调整、减免、核销及冲正等通用交易。}
+  - {code: loan_restructure, name: 贷款重组, description: 展期、重排、re-age 和 re-amortize。}
+  - {code: delinquency_management, name: 逾期管理, description: 逾期标签和催收动作。}
+  - {code: loan_provisioning, name: 贷款拨备, description: 贷款拨备计算和结果快照。}
+  - {code: deposit_account_management, name: 存款账户管理, description: 储蓄、定期和强制储蓄账户维护。}
+  - {code: deposit_transaction, name: 存款交易, description: 储蓄账户资金、利息、费用及冲正。}
+  - {code: payment_operation, name: 支付与柜面操作, description: 内部支付、柜员和柜面资金操作。}
+  - {code: account_transfer, name: 账户划转, description: Fineract 内部账户划转。}
+  - {code: cashier_operation, name: 柜员操作, description: 柜员和机构现金资金操作。}
+  - {code: general_ledger_posting, name: 总账记账, description: 借贷分录和关账。}
+  - {code: guarantee_management, name: 担保管理, description: 担保承诺和担保资金事件。}
+  - {code: collateral_management, name: 抵押品管理, description: 客户抵押品和贷款质押关系。}
+  - {code: share_account_management, name: 股份账户管理, description: 股份账户交易和股息。}
+  - {code: loan_asset_transfer, name: 贷款资产转让, description: 贷款份额出售、回购和所有权变更。}
+  - {code: investment_account_management, name: 投资账户管理, description: 股份产品、股份账户、价格和资产所有权维护。}
+  - {code: customer_survey, name: 客户调查, description: 调查问卷和响应。}
+  - {code: customer_service_management, name: 客户服务管理, description: 日历、会议、调查、通知、短信和服务内容维护。}
+  - {code: risk_management, name: 风险管理, description: 征信、逾期、拨备、审计和风险规则维护。}
+  - {code: wc_loan_management, name: 营运资金贷款管理, description: 营运资金贷款账户、余额、交易和违约管理。}
+  - {code: reference_data_management, name: 参考数据管理, description: 码值、公共规则和元数据维护。}
+  - {code: external_event_delivery, name: 外部事件投递, description: 业务外部事件的生成、投递、状态和重试控制。}
+  - {code: operations_management, name: 平台运营, description: 运行控制和运维审计。}

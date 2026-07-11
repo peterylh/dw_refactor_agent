@@ -1,0 +1,62 @@
+version: 2
+name: dwd_share_market_price
+layer: DWD
+description: Source is a dated price observation and share_value must be labeled as an atomic metric.
+table_type: snapshot_fact
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+data_domain: 09
+business_area: ASTM
+entities:
+- code: SHARE_MARKET_PRICE
+  type: primary
+  name: Share Market Price
+  key_columns:
+  - id
+- code: SHARE_PRODUCT
+  type: foreign
+  role: share_product
+  name: Share Product
+  key_columns:
+  - product_id
+  source_fk:
+  - product_id
+grain:
+  description: one effective market value per share product and date
+  columns:
+  - product_id
+  - from_date
+business_date:
+  kind: effective
+  column: business_date
+  inherit_from: null
+  source_column: from_date
+source_mapping:
+  upstream_repository: https://github.com/apache/fineract
+  source_table: m_share_product_market_price
+  ods_table: ods_fineract_m_share_product_market_price
+  disposition: snapshot_source
+  confidence: human_reviewed
+sensitivity: internal
+sensitivity_policy:
+  level: internal
+  action: retain
+column_sensitivity: []
+human_review:
+  verdict: revise
+  allowed_alternatives:
+  - dwd_share_price_observation
+business_process: share_account_management
+atomic_metrics:
+- share_value
+metric_semantics:
+- name: share_value
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: share_value
+  unit: currency
+  currency_source: account_currency
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy

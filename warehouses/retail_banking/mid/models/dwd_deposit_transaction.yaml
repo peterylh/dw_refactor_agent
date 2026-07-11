@@ -1,0 +1,105 @@
+version: 2
+name: dwd_deposit_transaction
+layer: DWD
+description: Source is the core dated deposit transaction with amount, reversal and running-balance semantics.
+table_type: fact
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+data_domain: '05'
+business_area: DPST
+entities:
+- code: DEPOSIT_TRANSACTION
+  type: primary
+  name: Deposit Transaction
+  key_columns:
+  - id
+- code: DEPOSIT_ACCOUNT
+  type: foreign
+  role: deposit_account
+  name: Deposit Account
+  key_columns:
+  - savings_account_id
+  source_fk:
+  - savings_account_id
+- code: OFFICE
+  type: foreign
+  role: office
+  name: Office
+  key_columns:
+  - office_id
+  source_fk:
+  - office_id
+grain:
+  description: one posted deposit-account transaction
+  columns:
+  - id
+business_date:
+  kind: event
+  column: business_date
+  inherit_from: null
+  source_column: transaction_date
+source_mapping:
+  upstream_repository: https://github.com/apache/fineract
+  source_table: m_savings_account_transaction
+  ods_table: ods_fineract_m_savings_account_transaction
+  disposition: standalone_fact
+  confidence: human_reviewed
+sensitivity: restricted
+sensitivity_policy:
+  level: restricted
+  action: mask_and_tokenize
+column_sensitivity:
+- name: external_id
+  classification: identifier
+  action: hash
+human_review:
+  verdict: accept
+  allowed_alternatives: []
+business_process: deposit_transaction
+atomic_metrics:
+- amount
+- overdraft_amount_derived
+- running_balance_derived
+- cumulative_balance_derived
+metric_semantics:
+- name: amount
+  class: atomic
+  aggregation_behavior: additive
+  formula: amount
+  unit: currency
+  currency_source: account_currency
+  additive_over:
+  - id
+  sign: source_defined
+  reversal: source_policy
+- name: overdraft_amount_derived
+  class: atomic
+  aggregation_behavior: additive
+  formula: overdraft_amount_derived
+  unit: currency
+  currency_source: account_currency
+  additive_over:
+  - id
+  sign: source_defined
+  reversal: source_policy
+- name: running_balance_derived
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: running_balance_derived
+  unit: currency
+  currency_source: account_currency
+  additive_over:
+  - id
+  sign: source_defined
+  reversal: source_policy
+- name: cumulative_balance_derived
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: cumulative_balance_derived
+  unit: currency
+  currency_source: account_currency
+  additive_over:
+  - id
+  sign: source_defined
+  reversal: source_policy

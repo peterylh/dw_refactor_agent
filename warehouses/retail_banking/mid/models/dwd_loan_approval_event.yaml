@@ -1,0 +1,74 @@
+version: 2
+name: dwd_loan_approval_event
+layer: DWD
+description: Approval amount history is valid after replacing the invalid process and naming the change-event
+  grain.
+table_type: fact
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+data_domain: '04'
+business_area: LOAN
+entities:
+- code: LOAN_APPROVAL_EVENT
+  type: primary
+  name: Loan Approval Event
+  key_columns:
+  - id
+- code: LOAN_ACCOUNT
+  type: foreign
+  role: loan_account
+  name: Loan Account
+  key_columns:
+  - loan_id
+  source_fk:
+  - loan_id
+grain:
+  description: one approved-principal change event for one loan
+  columns:
+  - id
+business_date:
+  kind: event
+  column: business_date
+  inherit_from: null
+  source_column: created_on_utc
+source_mapping:
+  upstream_repository: https://github.com/apache/fineract
+  source_table: m_loan_approved_amount_history
+  ods_table: ods_fineract_m_loan_approved_amount_history
+  disposition: standalone_fact
+  confidence: human_reviewed
+sensitivity: restricted
+sensitivity_policy:
+  level: restricted
+  action: mask_and_tokenize
+column_sensitivity: []
+human_review:
+  verdict: revise
+  allowed_alternatives:
+  - dwd_loan_approved_amount_change
+business_process: loan_transaction
+atomic_metrics:
+- new_approved_amount
+- old_approved_amount
+metric_semantics:
+- name: new_approved_amount
+  class: atomic
+  aggregation_behavior: additive
+  formula: new_approved_amount
+  unit: currency
+  currency_source: account_currency
+  additive_over:
+  - id
+  sign: source_defined
+  reversal: source_policy
+- name: old_approved_amount
+  class: atomic
+  aggregation_behavior: additive
+  formula: old_approved_amount
+  unit: currency
+  currency_source: account_currency
+  additive_over:
+  - id
+  sign: source_defined
+  reversal: source_policy

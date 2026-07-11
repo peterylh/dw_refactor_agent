@@ -1,0 +1,75 @@
+version: 2
+name: dim_customer_group
+layer: DIM
+description: Group hierarchy and operating assignment require effective-version semantics.
+table_type: dimension
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+data_domain: '01'
+business_area: CLNT
+entities:
+- code: CUSTOMER_GROUP
+  type: primary
+  name: Customer Group
+  key_columns:
+  - id
+- code: CUSTOMER_GROUP_LEVEL
+  type: foreign
+  role: group_level
+  name: Customer Group Level
+  key_columns:
+  - level_id
+  source_fk:
+  - level_id
+- code: OFFICE
+  type: foreign
+  role: office
+  name: Office
+  key_columns:
+  - office_id
+  source_fk:
+  - office_id
+grain:
+  description: one effective customer group version
+  columns:
+  - id
+business_date:
+  kind: effective
+  column: submittedon_date
+  inherit_from: null
+  source_column: submittedon_date
+source_mapping:
+  upstream_repository: https://github.com/apache/fineract
+  source_table: m_group
+  ods_table: ods_fineract_m_group
+  disposition: standalone_dimension
+  confidence: human_reviewed
+sensitivity: restricted
+sensitivity_policy:
+  level: restricted
+  action: mask_and_tokenize
+column_sensitivity:
+- name: external_id
+  classification: identifier
+  action: hash
+- name: display_name
+  classification: pii
+  action: mask
+- name: account_no
+  classification: identifier
+  action: hash
+human_review:
+  verdict: revise
+  allowed_alternatives:
+  - dim_customer_group_scd2
+hierarchy_roles:
+- role: parent_group
+  entity: CUSTOMER_GROUP
+  key_columns:
+  - parent_id
+  source_fk:
+  - parent_id
+semantic_subject: CUSTOMER_GROUP
+dimension_role: BASE
+dimension_content_type: INFO

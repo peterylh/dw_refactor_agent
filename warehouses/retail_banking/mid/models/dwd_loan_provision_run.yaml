@@ -1,0 +1,40 @@
+version: 2
+name: dwd_loan_provision_run
+layer: DWD
+description: Source is the audited run header for provisioning result entries.
+table_type: factless_fact
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+data_domain: '04'
+business_area: LOAN
+entities:
+- code: LOAN_PROVISION_RUN
+  type: primary
+  name: Loan Provision Run
+  key_columns:
+  - id
+grain:
+  description: one provisioning calculation run
+  columns:
+  - id
+business_date:
+  kind: event
+  column: business_date
+  inherit_from: null
+  source_column: created_date
+source_mapping:
+  upstream_repository: https://github.com/apache/fineract
+  source_table: m_provisioning_history
+  ods_table: ods_fineract_m_provisioning_history
+  disposition: standalone_fact
+  confidence: human_reviewed
+sensitivity: internal
+sensitivity_policy:
+  level: internal
+  action: retain
+column_sensitivity: []
+human_review:
+  verdict: accept
+  allowed_alternatives: []
+business_process: loan_provisioning

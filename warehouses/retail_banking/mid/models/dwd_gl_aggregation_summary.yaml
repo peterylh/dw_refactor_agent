@@ -1,0 +1,107 @@
+version: 2
+name: dwd_gl_aggregation_summary
+layer: DWD
+description: Source stores explicit dated debit and credit aggregations with conformed accounting roles.
+table_type: aggregate_fact
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+data_domain: '07'
+business_area: FMAN
+entities:
+- code: GL_AGGREGATION_SUMMARY
+  type: primary
+  name: Gl Aggregation Summary
+  key_columns:
+  - id
+- code: GL_ACCOUNT
+  type: foreign
+  role: gl_account
+  name: Gl Account
+  key_columns:
+  - gl_account_id
+  source_fk:
+  - gl_account_id
+- code: OFFICE
+  type: foreign
+  role: office
+  name: Office
+  key_columns:
+  - office_id
+  source_fk:
+  - office_id
+- code: ASSET_OWNER
+  type: foreign
+  role: external_asset_owner
+  name: Asset Owner
+  key_columns:
+  - external_owner_id
+  source_fk:
+  - external_owner_id
+grain:
+  description: one debit-credit aggregation cell for one accounting date
+  columns:
+  - gl_account_id
+  - product_id
+  - office_id
+  - entity_type_enum
+  - external_owner_id
+  - manual_entry
+  - aggregated_on_date
+business_date:
+  kind: snapshot
+  column: business_date
+  inherit_from: null
+  source_column: aggregated_on_date
+source_mapping:
+  upstream_repository: https://github.com/apache/fineract
+  source_table: m_journal_entry_aggregation_summary
+  ods_table: ods_fineract_m_journal_entry_aggregation_summary
+  disposition: snapshot_source
+  confidence: human_reviewed
+sensitivity: internal
+sensitivity_policy:
+  level: internal
+  action: retain
+column_sensitivity: []
+human_review:
+  verdict: accept
+  allowed_alternatives:
+  - dws_gl_posting_aggregation_daily
+business_process: general_ledger_posting
+atomic_metrics:
+- debit_amount
+- credit_amount
+metric_semantics:
+- name: debit_amount
+  class: atomic
+  aggregation_behavior: additive
+  formula: debit_amount
+  unit: currency
+  currency_source: account_currency
+  additive_over:
+  - gl_account_id
+  - product_id
+  - office_id
+  - entity_type_enum
+  - external_owner_id
+  - manual_entry
+  - aggregated_on_date
+  sign: source_defined
+  reversal: source_policy
+- name: credit_amount
+  class: atomic
+  aggregation_behavior: additive
+  formula: credit_amount
+  unit: currency
+  currency_source: account_currency
+  additive_over:
+  - gl_account_id
+  - product_id
+  - office_id
+  - entity_type_enum
+  - external_owner_id
+  - manual_entry
+  - aggregated_on_date
+  sign: source_defined
+  reversal: source_policy

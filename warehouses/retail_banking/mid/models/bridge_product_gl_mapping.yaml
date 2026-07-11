@@ -1,0 +1,65 @@
+version: 2
+name: bridge_product_gl_mapping
+layer: DWD
+description: Source is accounting configuration, not a transaction fact.
+table_type: bridge
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+data_domain: '07'
+business_area: FMAN
+entities:
+- code: PRODUCT_GL_MAPPING
+  type: primary
+  name: Product Gl Mapping
+  key_columns:
+  - id
+- code: GL_ACCOUNT
+  type: foreign
+  role: gl_account
+  name: Gl Account
+  key_columns:
+  - gl_account_id
+  source_fk:
+  - gl_account_id
+- code: CHARGE_TYPE
+  type: foreign
+  role: charge_definition
+  name: Charge Type
+  key_columns:
+  - charge_id
+  source_fk:
+  - charge_id
+- code: PAYMENT_TYPE
+  type: foreign
+  role: payment_type
+  name: Payment Type
+  key_columns:
+  - payment_type
+  source_fk:
+  - payment_type
+grain:
+  description: one product or charge accounting-to-GL mapping rule
+  columns:
+  - id
+business_date:
+  kind: none
+  column: null
+  inherit_from: null
+  source_column: null
+source_mapping:
+  upstream_repository: https://github.com/apache/fineract
+  source_table: acc_product_mapping
+  ods_table: ods_fineract_acc_product_mapping
+  disposition: bridge_source
+  confidence: human_reviewed
+sensitivity: internal
+sensitivity_policy:
+  level: internal
+  action: retain
+column_sensitivity: []
+human_review:
+  verdict: revise
+  allowed_alternatives:
+  - dim_product_accounting_rule
+business_process: general_ledger_posting

@@ -1034,12 +1034,7 @@ def test_shadow_run_cli_returns_nonzero_for_failed_result(
 
     monkeypatch.setattr(
         "dw_refactor_agent.refactor.shadow_run.run_shadow_plan",
-        lambda plan,
-        output,
-        dry_run=False,
-        timing_detail=False,
-        parallel=1,
-        batch_size=1: {
+        lambda plan, output, dry_run=False, timing_detail=False, parallel=1, batch_size=1: {
             "status": "failed",
             "timing_detail": timing_detail,
             "parallel": parallel,

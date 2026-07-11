@@ -1,0 +1,13 @@
+version: 2
+name: ods_fineract_scheduler_detail
+layer: ODS
+description: Fineract scheduler_detail 贴源表
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+source:
+  repository: https://github.com/apache/fineract
+  table: scheduler_detail
+  disposition: operational_only
+  confidence: candidate
+sensitivity: internal

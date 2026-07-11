@@ -1,0 +1,6027 @@
+version: 1
+upstream_repository: https://github.com/apache/fineract
+upstream_commit: 45d8e24f82c9c42c46a6762b24e102ad2c723824
+source_database: postgresql
+active_table_count: 277
+analytical_ods_table_count: 277
+excluded_spring_batch_table_count: 6
+excluded_tenant_store_table_count: 4
+fineract_physical_table_count: 287
+mapped_downstream_count: 100
+mappings:
+- source_table: acc_accounting_rule
+  ods_table: ods_fineract_acc_accounting_rule
+  business_area: FMAN
+  data_domain: FINA
+  domain_name: 总账与财务
+  source_kind: master_or_reference
+  disposition: standalone_dimension
+  target_layer: DIM
+  target_table: dim_accounting_rule
+  downstream_targets:
+  - dim_accounting_rule
+  grain: id
+  load_strategy: full_snapshot
+  optional_module: false
+  confidence: human_reviewed
+  business_processes:
+  - general_ledger_posting
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: Accounting rule is stable reference data with explicit office and GL roles.
+- source_table: acc_gl_account
+  ods_table: ods_fineract_acc_gl_account
+  business_area: FMAN
+  data_domain: FINA
+  domain_name: 总账与财务
+  source_kind: master_or_reference
+  disposition: standalone_dimension
+  target_layer: DIM
+  target_table: dim_gl_account
+  downstream_targets:
+  - dim_gl_account
+  grain: id
+  load_strategy: full_snapshot
+  optional_module: false
+  confidence: human_reviewed
+  business_processes:
+  - general_ledger_posting
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: GL account is a conformed hierarchical dimension.
+- source_table: acc_gl_closure
+  ods_table: ods_fineract_acc_gl_closure
+  business_area: FMAN
+  data_domain: FINA
+  domain_name: 总账与财务
+  source_kind: master_or_reference
+  disposition: standalone_fact
+  target_layer: DWD
+  target_table: dwd_gl_close_event
+  downstream_targets:
+  - dwd_gl_close_event
+  grain: id
+  load_strategy: full_replay
+  optional_module: false
+  confidence: human_reviewed
+  business_processes:
+  - general_ledger_posting
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: Closing event is valid after replacing the invalid generated finance-management code.
+- source_table: acc_gl_financial_activity_account
+  ods_table: ods_fineract_acc_gl_financial_activity_account
+  business_area: FMAN
+  data_domain: FINA
+  domain_name: 总账与财务
+  source_kind: master_or_reference
+  disposition: component_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - general_ledger_posting
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: acc_gl_journal_entry
+  ods_table: ods_fineract_acc_gl_journal_entry
+  business_area: FMAN
+  data_domain: FINA
+  domain_name: 总账与财务
+  source_kind: event_or_relation
+  disposition: standalone_fact
+  target_layer: DWD
+  target_table: dwd_gl_journal_entry
+  downstream_targets:
+  - dwd_gl_journal_entry
+  grain: id
+  load_strategy: full_replay
+  optional_module: false
+  confidence: human_reviewed
+  business_processes:
+  - general_ledger_posting
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  - amount_decimal_precision
+  - currency_code_valid
+  - journal_debit_credit_balance
+  sensitivity: internal
+  rationale: Source is the authoritative journal-line fact with explicit GL and source-transaction roles.
+- source_table: acc_gl_journal_entry_annual_summary
+  ods_table: ods_fineract_acc_gl_journal_entry_annual_summary
+  business_area: FMAN
+  data_domain: FINA
+  domain_name: 总账与财务
+  source_kind: event_or_relation
+  disposition: snapshot_source
+  target_layer: DWD
+  target_table: dwd_gl_annual_balance_snapshot
+  downstream_targets:
+  - dwd_gl_annual_balance_snapshot
+  grain: gl_code, product_id, office_id, currency_code, owner_external_id, manual_entry, year_end_date
+  load_strategy: full_replay
+  optional_module: false
+  confidence: human_reviewed
+  business_processes:
+  - general_ledger_posting
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  - amount_decimal_precision
+  - currency_code_valid
+  sensitivity: internal
+  rationale: Annual snapshot is valid but semantic grain must replace the generated surrogate-id grain.
+- source_table: acc_product_mapping
+  ods_table: ods_fineract_acc_product_mapping
+  business_area: FMAN
+  data_domain: FINA
+  domain_name: 总账与财务
+  source_kind: event_or_relation
+  disposition: bridge_source
+  target_layer: DWD
+  target_table: bridge_product_gl_mapping
+  downstream_targets:
+  - bridge_product_gl_mapping
+  grain: id
+  load_strategy: full_replay
+  optional_module: false
+  confidence: human_reviewed
+  business_processes:
+  - general_ledger_posting
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: Source is accounting configuration, not a transaction fact.
+- source_table: acc_rule_tags
+  ods_table: ods_fineract_acc_rule_tags
+  business_area: FMAN
+  data_domain: FINA
+  domain_name: 总账与财务
+  source_kind: master_or_reference
+  disposition: rule_reference
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - general_ledger_posting
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: batch_custom_job_parameters
+  ods_table: ods_fineract_batch_custom_job_parameters
+  business_area: OTHR
+  data_domain: OPER
+  domain_name: 平台运营与安全
+  source_kind: technical
+  disposition: security_excluded
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: security_reviewed
+  business_processes:
+  - operations_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: restricted
+  rationale: 包含秘密、认证信息或高风险自由文本，仅保留受限 ODS，禁止进入普通分析层。
+- source_table: c_account_number_format
+  ods_table: ods_fineract_c_account_number_format
+  business_area: OTHR
+  data_domain: REFR
+  domain_name: 公共参考与元数据
+  source_kind: master_or_reference
+  disposition: component_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - reference_data_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: c_cache
+  ods_table: ods_fineract_c_cache
+  business_area: OTHR
+  data_domain: OPER
+  domain_name: 平台运营与安全
+  source_kind: technical
+  disposition: operational_only
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - operations_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: c_configuration
+  ods_table: ods_fineract_c_configuration
+  business_area: OTHR
+  data_domain: REFR
+  domain_name: 公共参考与元数据
+  source_kind: technical
+  disposition: operational_only
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - reference_data_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: c_external_service
+  ods_table: ods_fineract_c_external_service
+  business_area: OTHR
+  data_domain: OTHR
+  domain_name: 其它银行运营
+  source_kind: technical
+  disposition: operational_only
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - operations_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: c_external_service_properties
+  ods_table: ods_fineract_c_external_service_properties
+  business_area: OTHR
+  data_domain: OTHR
+  domain_name: 其它银行运营
+  source_kind: technical
+  disposition: security_excluded
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: source row
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: security_reviewed
+  business_processes:
+  - operations_management
+  quality_rules:
+  - source_row_count_reconciliation
+  sensitivity: restricted
+  rationale: 包含密码、令牌或认证凭据，仅保留受限 ODS，禁止进入普通分析层。
+- source_table: glim_accounts
+  ods_table: ods_fineract_glim_accounts
+  business_area: LOAN
+  data_domain: LOAN
+  domain_name: 贷款与信贷
+  source_kind: master_or_reference
+  disposition: component_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - loan_account_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  - amount_decimal_precision
+  sensitivity: restricted
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: gsim_accounts
+  ods_table: ods_fineract_gsim_accounts
+  business_area: DPST
+  data_domain: DPST
+  domain_name: 存款与储蓄
+  source_kind: master_or_reference
+  disposition: component_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - deposit_account_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: restricted
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: interop_identifier
+  ods_table: ods_fineract_interop_identifier
+  business_area: PAYM
+  data_domain: PAYM
+  domain_name: 支付结算
+  source_kind: master_or_reference
+  disposition: component_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - payment_operation
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: job
+  ods_table: ods_fineract_job
+  business_area: OTHR
+  data_domain: OPER
+  domain_name: 平台运营与安全
+  source_kind: technical
+  disposition: security_excluded
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: security_reviewed
+  business_processes:
+  - operations_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: restricted
+  rationale: 包含密码、令牌或认证凭据，仅保留受限 ODS，禁止进入普通分析层。
+- source_table: job_parameters
+  ods_table: ods_fineract_job_parameters
+  business_area: OTHR
+  data_domain: OPER
+  domain_name: 平台运营与安全
+  source_kind: technical
+  disposition: security_excluded
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: security_reviewed
+  business_processes:
+  - operations_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: restricted
+  rationale: 包含秘密、认证信息或高风险自由文本，仅保留受限 ODS，禁止进入普通分析层。
+- source_table: job_run_history
+  ods_table: ods_fineract_job_run_history
+  business_area: OTHR
+  data_domain: OPER
+  domain_name: 平台运营与安全
+  source_kind: technical
+  disposition: operational_only
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - operations_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_account_transfer_details
+  ods_table: ods_fineract_m_account_transfer_details
+  business_area: PAYM
+  data_domain: PAYM
+  domain_name: 支付结算
+  source_kind: event_or_relation
+  disposition: bridge_source
+  target_layer: DWD
+  target_table: dwd_account_transfer_instruction
+  downstream_targets:
+  - dwd_account_transfer_instruction
+  grain: id
+  load_strategy: full_replay
+  optional_module: false
+  confidence: human_reviewed
+  business_processes:
+  - account_transfer
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: restricted
+  rationale: Source is the transfer header and endpoint relationship, not the dated transfer transaction.
+- source_table: m_account_transfer_standing_instructions
+  ods_table: ods_fineract_m_account_transfer_standing_instructions
+  business_area: PAYM
+  data_domain: PAYM
+  domain_name: 支付结算
+  source_kind: event_or_relation
+  disposition: component_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - account_transfer
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  - amount_decimal_precision
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_account_transfer_standing_instructions_history
+  ods_table: ods_fineract_m_account_transfer_standing_instructions_history
+  business_area: PAYM
+  data_domain: PAYM
+  domain_name: 支付结算
+  source_kind: event_or_relation
+  disposition: standalone_fact
+  target_layer: DWD
+  target_table: dwd_standing_instruction_event
+  downstream_targets:
+  - dwd_standing_instruction_event
+  grain: id
+  load_strategy: full_replay
+  optional_module: false
+  confidence: human_reviewed
+  business_processes:
+  - account_transfer
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  - amount_decimal_precision
+  sensitivity: restricted
+  rationale: Source records each instruction execution with status, amount and error context.
+- source_table: m_account_transfer_transaction
+  ods_table: ods_fineract_m_account_transfer_transaction
+  business_area: PAYM
+  data_domain: PAYM
+  domain_name: 支付结算
+  source_kind: event_or_relation
+  disposition: standalone_fact
+  target_layer: DWD
+  target_table: dwd_account_transfer_transaction
+  downstream_targets:
+  - dwd_account_transfer_transaction
+  grain: id
+  load_strategy: full_replay
+  optional_module: false
+  confidence: human_reviewed
+  business_processes:
+  - account_transfer
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  - amount_decimal_precision
+  - currency_code_valid
+  sensitivity: restricted
+  rationale: Source has a dated monetary transfer event and links both ledger-side transactions.
+- source_table: m_address
+  ods_table: ods_fineract_m_address
+  business_area: CLNT
+  data_domain: CUST
+  domain_name: 客户与参与方
+  source_kind: master_or_reference
+  disposition: standalone_dimension
+  target_layer: DIM
+  target_table: dim_address
+  downstream_targets:
+  - dim_address
+  grain: id
+  load_strategy: full_snapshot
+  optional_module: false
+  confidence: human_reviewed
+  business_processes:
+  - customer_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: restricted
+  rationale: Address is reusable party reference data but must remain PII protected.
+- source_table: m_adhoc
+  ods_table: ods_fineract_m_adhoc
+  business_area: OTHR
+  data_domain: OTHR
+  domain_name: 其它银行运营
+  source_kind: technical
+  disposition: security_excluded
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: security_reviewed
+  business_processes:
+  - operations_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: restricted
+  rationale: 包含密码、令牌或认证凭据，仅保留受限 ODS，禁止进入普通分析层。
+- source_table: m_appuser
+  ods_table: ods_fineract_m_appuser
+  business_area: OTHR
+  data_domain: OPER
+  domain_name: 平台运营与安全
+  source_kind: technical
+  disposition: security_excluded
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: security_reviewed
+  business_processes:
+  - operations_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: restricted
+  rationale: 包含密码、令牌或认证凭据，仅保留受限 ODS，禁止进入普通分析层。
+- source_table: m_appuser_previous_password
+  ods_table: ods_fineract_m_appuser_previous_password
+  business_area: OTHR
+  data_domain: OPER
+  domain_name: 平台运营与安全
+  source_kind: technical
+  disposition: security_excluded
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: security_reviewed
+  business_processes:
+  - operations_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: restricted
+  rationale: 包含密码、令牌或认证凭据，仅保留受限 ODS，禁止进入普通分析层。
+- source_table: m_appuser_role
+  ods_table: ods_fineract_m_appuser_role
+  business_area: OTHR
+  data_domain: OPER
+  domain_name: 平台运营与安全
+  source_kind: technical
+  disposition: security_excluded
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: appuser_id, role_id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: security_reviewed
+  business_processes:
+  - operations_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: restricted
+  rationale: 包含密码、令牌或认证凭据，仅保留受限 ODS，禁止进入普通分析层。
+- source_table: m_batch_business_steps
+  ods_table: ods_fineract_m_batch_business_steps
+  business_area: OTHR
+  data_domain: OTHR
+  domain_name: 其它银行运营
+  source_kind: master_or_reference
+  disposition: component_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - operations_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_business_date
+  ods_table: ods_fineract_m_business_date
+  business_area: OTHR
+  data_domain: OPER
+  domain_name: 平台运营与安全
+  source_kind: master_or_reference
+  disposition: component_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - operations_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_calendar
+  ods_table: ods_fineract_m_calendar
+  business_area: CHNL
+  data_domain: CHNL
+  domain_name: 渠道与客户服务
+  source_kind: master_or_reference
+  disposition: standalone_dimension
+  target_layer: DIM
+  target_table: dim_meeting_calendar
+  downstream_targets:
+  - dim_meeting_calendar
+  grain: id
+  load_strategy: full_snapshot
+  optional_module: false
+  confidence: human_reviewed
+  business_processes:
+  - customer_service_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: Source represents recurring meetings and events, not the bank working-day calendar.
+- source_table: m_calendar_history
+  ods_table: ods_fineract_m_calendar_history
+  business_area: CHNL
+  data_domain: CHNL
+  domain_name: 渠道与客户服务
+  source_kind: event_or_relation
+  disposition: component_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - customer_service_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_calendar_instance
+  ods_table: ods_fineract_m_calendar_instance
+  business_area: CHNL
+  data_domain: CHNL
+  domain_name: 渠道与客户服务
+  source_kind: master_or_reference
+  disposition: component_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - customer_service_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_cashier_transactions
+  ods_table: ods_fineract_m_cashier_transactions
+  business_area: PAYM
+  data_domain: PAYM
+  domain_name: 支付结算
+  source_kind: event_or_relation
+  disposition: standalone_fact
+  target_layer: DWD
+  target_table: dwd_cashier_transaction
+  downstream_targets:
+  - dwd_cashier_transaction
+  grain: id
+  load_strategy: full_replay
+  optional_module: false
+  confidence: human_reviewed
+  business_processes:
+  - cashier_operation
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  - amount_decimal_precision
+  - currency_code_valid
+  sensitivity: internal
+  rationale: Source is a dated cashier-level monetary transaction.
+- source_table: m_cashiers
+  ods_table: ods_fineract_m_cashiers
+  business_area: PAYM
+  data_domain: PAYM
+  domain_name: 支付结算
+  source_kind: master_or_reference
+  disposition: component_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - cashier_operation
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_charge
+  ods_table: ods_fineract_m_charge
+  business_area: OTHR
+  data_domain: PROD
+  domain_name: 产品、定价与税费
+  source_kind: master_or_reference
+  disposition: standalone_dimension
+  target_layer: DIM
+  target_table: dim_charge_definition
+  downstream_targets:
+  - dim_charge_definition
+  grain: id
+  load_strategy: full_snapshot
+  optional_module: false
+  confidence: human_reviewed
+  business_processes:
+  - product_configuration
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  - amount_decimal_precision
+  - currency_code_valid
+  sensitivity: internal
+  rationale: Source is a complete charge definition, not merely a charge type code.
+- source_table: m_client
+  ods_table: ods_fineract_m_client
+  business_area: CLNT
+  data_domain: CUST
+  domain_name: 客户与参与方
+  source_kind: master_or_reference
+  disposition: standalone_dimension
+  target_layer: DIM
+  target_table: dim_customer
+  downstream_targets:
+  - dim_customer
+  grain: id
+  load_strategy: full_snapshot
+  optional_module: false
+  confidence: human_reviewed
+  business_processes:
+  - customer_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: restricted
+  rationale: Customer remains a conformed dimension but requires SCD2 and PII controls.
+- source_table: m_client_address
+  ods_table: ods_fineract_m_client_address
+  business_area: CLNT
+  data_domain: CUST
+  domain_name: 客户与参与方
+  source_kind: master_or_reference
+  disposition: bridge_source
+  target_layer: DWD
+  target_table: bridge_customer_address
+  downstream_targets:
+  - bridge_customer_address
+  grain: id
+  load_strategy: full_replay
+  optional_module: false
+  confidence: human_reviewed
+  business_processes:
+  - customer_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: restricted
+  rationale: Source is a relationship bridge and lacks an effective-date history.
+- source_table: m_client_attendance
+  ods_table: ods_fineract_m_client_attendance
+  business_area: CLNT
+  data_domain: CUST
+  domain_name: 客户与参与方
+  source_kind: event_or_relation
+  disposition: standalone_fact
+  target_layer: DWD
+  target_table: dwd_group_meeting_attendance
+  downstream_targets:
+  - dwd_group_meeting_attendance
+  grain: id
+  load_strategy: full_replay
+  optional_module: false
+  confidence: human_reviewed
+  business_processes:
+  - customer_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: restricted
+  rationale: Attendance must join the meeting/calendar chain to acquire a business date.
+- source_table: m_client_charge
+  ods_table: ods_fineract_m_client_charge
+  business_area: CLNT
+  data_domain: CUST
+  domain_name: 客户与参与方
+  source_kind: master_or_reference
+  disposition: snapshot_source
+  target_layer: DWD
+  target_table: dwd_client_charge
+  downstream_targets:
+  - dwd_client_charge
+  grain: id
+  load_strategy: full_replay
+  optional_module: false
+  confidence: human_reviewed
+  business_processes:
+  - customer_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  - amount_decimal_precision
+  sensitivity: restricted
+  rationale: Amount paid, waived, written off and outstanding describe an accumulating receivable.
+- source_table: m_client_charge_paid_by
+  ods_table: ods_fineract_m_client_charge_paid_by
+  business_area: CLNT
+  data_domain: CUST
+  domain_name: 客户与参与方
+  source_kind: event_or_relation
+  disposition: standalone_fact
+  target_layer: DWD
+  target_table: dwd_client_charge_allocation
+  downstream_targets:
+  - dwd_client_charge_allocation
+  grain: client_charge_id, client_transaction_id, id
+  load_strategy: full_replay
+  optional_module: false
+  confidence: human_reviewed
+  business_processes:
+  - customer_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  - amount_decimal_precision
+  sensitivity: restricted
+  rationale: Allocation requires its parent client transaction to supply event date and customer context.
+- source_table: m_client_collateral_management
+  ods_table: ods_fineract_m_client_collateral_management
+  business_area: LOAN
+  data_domain: LOAN
+  domain_name: 贷款与信贷
+  source_kind: master_or_reference
+  disposition: component_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - customer_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_client_identifier
+  ods_table: ods_fineract_m_client_identifier
+  business_area: CLNT
+  data_domain: CUST
+  domain_name: 客户与参与方
+  source_kind: master_or_reference
+  disposition: bridge_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - customer_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: restricted
+  rationale: 经人工复核不应直接生成分析事实；保留受控 ODS，并按明确的规则、关系或运维用途参与后续模型设计。
+- source_table: m_client_non_person
+  ods_table: ods_fineract_m_client_non_person
+  business_area: CLNT
+  data_domain: CUST
+  domain_name: 客户与参与方
+  source_kind: master_or_reference
+  disposition: component_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - customer_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: restricted
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_client_transaction
+  ods_table: ods_fineract_m_client_transaction
+  business_area: CLNT
+  data_domain: CUST
+  domain_name: 客户与参与方
+  source_kind: event_or_relation
+  disposition: standalone_fact
+  target_layer: DWD
+  target_table: dwd_client_transaction
+  downstream_targets:
+  - dwd_client_transaction
+  grain: id
+  load_strategy: full_replay
+  optional_module: false
+  confidence: human_reviewed
+  business_processes:
+  - customer_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  - amount_decimal_precision
+  - currency_code_valid
+  sensitivity: restricted
+  rationale: Source has a dated customer transaction, amount and reversal semantics.
+- source_table: m_client_transfer_details
+  ods_table: ods_fineract_m_client_transfer_details
+  business_area: CLNT
+  data_domain: CUST
+  domain_name: 客户与参与方
+  source_kind: event_or_relation
+  disposition: snapshot_source
+  target_layer: DWD
+  target_table: dwd_customer_transfer_event
+  downstream_targets:
+  - dwd_customer_transfer_event
+  grain: id
+  load_strategy: full_replay
+  optional_module: false
+  confidence: human_reviewed
+  business_processes:
+  - customer_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: restricted
+  rationale: Source records a customer transfer lifecycle with endpoint offices and status dates.
+- source_table: m_code
+  ods_table: ods_fineract_m_code
+  business_area: OTHR
+  data_domain: REFR
+  domain_name: 公共参考与元数据
+  source_kind: master_or_reference
+  disposition: component_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - reference_data_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_code_value
+  ods_table: ods_fineract_m_code_value
+  business_area: OTHR
+  data_domain: REFR
+  domain_name: 公共参考与元数据
+  source_kind: master_or_reference
+  disposition: standalone_dimension
+  target_layer: DIM
+  target_table: dim_code_value
+  downstream_targets:
+  - dim_code_value
+  grain: code_id, id
+  load_strategy: full_snapshot
+  optional_module: false
+  confidence: human_reviewed
+  business_processes:
+  - reference_data_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: Code-set context is required to interpret repeated labels and values safely.
+- source_table: m_collateral_management
+  ods_table: ods_fineract_m_collateral_management
+  business_area: LOAN
+  data_domain: LOAN
+  domain_name: 贷款与信贷
+  source_kind: master_or_reference
+  disposition: standalone_dimension
+  target_layer: DIM
+  target_table: dim_collateral_type
+  downstream_targets:
+  - dim_collateral_type
+  grain: id
+  load_strategy: full_snapshot
+  optional_module: false
+  confidence: human_reviewed
+  business_processes:
+  - loan_account_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  - currency_code_valid
+  sensitivity: internal
+  rationale: Customer-owned collateral is a separate source; this table is a type and valuation catalog.
+- source_table: m_command
+  ods_table: ods_fineract_m_command
+  business_area: OTHR
+  data_domain: OPER
+  domain_name: 平台运营与安全
+  source_kind: technical
+  disposition: security_excluded
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: security_reviewed
+  business_processes:
+  - operations_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: restricted
+  rationale: 包含密码、令牌或认证凭据，仅保留受限 ODS，禁止进入普通分析层。
+- source_table: m_creditbureau
+  ods_table: ods_fineract_m_creditbureau
+  business_area: LOAN
+  data_domain: LOAN
+  domain_name: 贷款与信贷
+  source_kind: master_or_reference
+  disposition: standalone_dimension
+  target_layer: DIM
+  target_table: dim_credit_bureau
+  downstream_targets:
+  - dim_credit_bureau
+  grain: id
+  load_strategy: full_snapshot
+  optional_module: false
+  confidence: human_reviewed
+  business_processes:
+  - loan_account_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: Credit bureau is stable reference data independent of restricted report payloads.
+- source_table: m_creditbureau_configuration
+  ods_table: ods_fineract_m_creditbureau_configuration
+  business_area: LOAN
+  data_domain: LOAN
+  domain_name: 贷款与信贷
+  source_kind: master_or_reference
+  disposition: security_excluded
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: security_reviewed
+  business_processes:
+  - loan_account_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: restricted
+  rationale: 包含密码、令牌或认证凭据，仅保留受限 ODS，禁止进入普通分析层。
+- source_table: m_creditbureau_loanproduct_mapping
+  ods_table: ods_fineract_m_creditbureau_loanproduct_mapping
+  business_area: LOAN
+  data_domain: LOAN
+  domain_name: 贷款与信贷
+  source_kind: event_or_relation
+  disposition: bridge_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - loan_account_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_creditbureau_token
+  ods_table: ods_fineract_m_creditbureau_token
+  business_area: LOAN
+  data_domain: LOAN
+  domain_name: 贷款与信贷
+  source_kind: master_or_reference
+  disposition: security_excluded
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: security_reviewed
+  business_processes:
+  - loan_account_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: restricted
+  rationale: 包含密码、令牌或认证凭据，仅保留受限 ODS，禁止进入普通分析层。
+- source_table: m_creditreport
+  ods_table: ods_fineract_m_creditreport
+  business_area: LOAN
+  data_domain: LOAN
+  domain_name: 贷款与信贷
+  source_kind: master_or_reference
+  disposition: security_excluded
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: security_reviewed
+  business_processes:
+  - loan_account_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: restricted
+  rationale: 包含密码、令牌或认证凭据，仅保留受限 ODS，禁止进入普通分析层。
+- source_table: m_currency
+  ods_table: ods_fineract_m_currency
+  business_area: OTHR
+  data_domain: PROD
+  domain_name: 产品、定价与税费
+  source_kind: master_or_reference
+  disposition: standalone_dimension
+  target_layer: DIM
+  target_table: dim_currency
+  downstream_targets:
+  - dim_currency
+  grain: code
+  load_strategy: full_snapshot
+  optional_module: false
+  confidence: human_reviewed
+  business_processes:
+  - product_configuration
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  - currency_code_valid
+  sensitivity: internal
+  rationale: Currency is a conformed reference dimension keyed by business code.
+- source_table: m_delinquency_bucket
+  ods_table: ods_fineract_m_delinquency_bucket
+  business_area: LOAN
+  data_domain: LOAN
+  domain_name: 贷款与信贷
+  source_kind: master_or_reference
+  disposition: standalone_dimension
+  target_layer: DIM
+  target_table: dim_delinquency_bucket
+  downstream_targets:
+  - dim_delinquency_bucket
+  grain: id
+  load_strategy: full_snapshot
+  optional_module: false
+  confidence: human_reviewed
+  business_processes:
+  - delinquency_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: Delinquency bucket is stable loan-risk reference data.
+- source_table: m_delinquency_bucket_mappings
+  ods_table: ods_fineract_m_delinquency_bucket_mappings
+  business_area: LOAN
+  data_domain: LOAN
+  domain_name: 贷款与信贷
+  source_kind: event_or_relation
+  disposition: bridge_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - delinquency_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_delinquency_range
+  ods_table: ods_fineract_m_delinquency_range
+  business_area: LOAN
+  data_domain: LOAN
+  domain_name: 贷款与信贷
+  source_kind: master_or_reference
+  disposition: standalone_dimension
+  target_layer: DIM
+  target_table: dim_delinquency_range
+  downstream_targets:
+  - dim_delinquency_range
+  grain: id
+  load_strategy: full_snapshot
+  optional_module: false
+  confidence: human_reviewed
+  business_processes:
+  - delinquency_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: Delinquency range is stable classification reference data.
+- source_table: m_deposit_account_on_hold_transaction
+  ods_table: ods_fineract_m_deposit_account_on_hold_transaction
+  business_area: DPST
+  data_domain: DPST
+  domain_name: 存款与储蓄
+  source_kind: event_or_relation
+  disposition: standalone_fact
+  target_layer: DWD
+  target_table: dwd_deposit_hold_event
+  downstream_targets:
+  - dwd_deposit_hold_event
+  grain: id
+  load_strategy: full_replay
+  optional_module: false
+  confidence: human_reviewed
+  business_processes:
+  - deposit_transaction
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  - amount_decimal_precision
+  sensitivity: restricted
+  rationale: Dated hold event is valid after replacing the generated invalid process code.
+- source_table: m_deposit_account_recurring_detail
+  ods_table: ods_fineract_m_deposit_account_recurring_detail
+  business_area: DPST
+  data_domain: DPST
+  domain_name: 存款与储蓄
+  source_kind: master_or_reference
+  disposition: component_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - deposit_account_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  - amount_decimal_precision
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_deposit_account_term_and_preclosure
+  ods_table: ods_fineract_m_deposit_account_term_and_preclosure
+  business_area: DPST
+  data_domain: DPST
+  domain_name: 存款与储蓄
+  source_kind: master_or_reference
+  disposition: component_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - deposit_account_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  - amount_decimal_precision
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_deposit_product_interest_rate_chart
+  ods_table: ods_fineract_m_deposit_product_interest_rate_chart
+  business_area: DPST
+  data_domain: DPST
+  domain_name: 存款与储蓄
+  source_kind: master_or_reference
+  disposition: component_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: source row
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - deposit_account_management
+  quality_rules:
+  - source_row_count_reconciliation
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_deposit_product_recurring_detail
+  ods_table: ods_fineract_m_deposit_product_recurring_detail
+  business_area: DPST
+  data_domain: DPST
+  domain_name: 存款与储蓄
+  source_kind: master_or_reference
+  disposition: component_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - deposit_account_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_deposit_product_term_and_preclosure
+  ods_table: ods_fineract_m_deposit_product_term_and_preclosure
+  business_area: DPST
+  data_domain: DPST
+  domain_name: 存款与储蓄
+  source_kind: master_or_reference
+  disposition: component_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - deposit_account_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  - amount_decimal_precision
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_document
+  ods_table: ods_fineract_m_document
+  business_area: CHNL
+  data_domain: CHNL
+  domain_name: 渠道与客户服务
+  source_kind: master_or_reference
+  disposition: component_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - customer_service_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: restricted
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_entity_datatable_check
+  ods_table: ods_fineract_m_entity_datatable_check
+  business_area: OTHR
+  data_domain: REFR
+  domain_name: 公共参考与元数据
+  source_kind: master_or_reference
+  disposition: component_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - reference_data_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_entity_relation
+  ods_table: ods_fineract_m_entity_relation
+  business_area: OTHR
+  data_domain: REFR
+  domain_name: 公共参考与元数据
+  source_kind: event_or_relation
+  disposition: bridge_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - reference_data_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_entity_to_entity_access
+  ods_table: ods_fineract_m_entity_to_entity_access
+  business_area: OTHR
+  data_domain: REFR
+  domain_name: 公共参考与元数据
+  source_kind: master_or_reference
+  disposition: component_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - reference_data_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_entity_to_entity_mapping
+  ods_table: ods_fineract_m_entity_to_entity_mapping
+  business_area: OTHR
+  data_domain: REFR
+  domain_name: 公共参考与元数据
+  source_kind: event_or_relation
+  disposition: bridge_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - reference_data_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_external_asset_owner
+  ods_table: ods_fineract_m_external_asset_owner
+  business_area: ASTM
+  data_domain: INVS
+  domain_name: 投资、份额与资产持有
+  source_kind: master_or_reference
+  disposition: standalone_dimension
+  target_layer: DIM
+  target_table: dim_asset_owner
+  downstream_targets:
+  - dim_asset_owner
+  grain: id
+  load_strategy: full_snapshot
+  optional_module: true
+  confidence: human_reviewed
+  business_processes:
+  - loan_asset_transfer
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: External asset owner is a durable counterparty dimension.
+- source_table: m_external_asset_owner_journal_entry_mapping
+  ods_table: ods_fineract_m_external_asset_owner_journal_entry_mapping
+  business_area: FMAN
+  data_domain: FINA
+  domain_name: 总账与财务
+  source_kind: event_or_relation
+  disposition: bridge_source
+  target_layer: DWD
+  target_table: bridge_asset_owner_gl_entry
+  downstream_targets:
+  - bridge_asset_owner_gl_entry
+  grain: id
+  load_strategy: full_replay
+  optional_module: false
+  confidence: human_reviewed
+  business_processes:
+  - loan_asset_transfer
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: This is a factless ownership-to-ledger bridge and inherits the journal business date.
+- source_table: m_external_asset_owner_loan_product_configurable_attributes
+  ods_table: ods_fineract_m_external_asset_owner_loan_product_configurable_attributes
+  business_area: LOAN
+  data_domain: LOAN
+  domain_name: 贷款与信贷
+  source_kind: master_or_reference
+  disposition: component_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - loan_asset_transfer
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_external_asset_owner_transfer
+  ods_table: ods_fineract_m_external_asset_owner_transfer
+  business_area: ASTM
+  data_domain: INVS
+  domain_name: 投资、份额与资产持有
+  source_kind: event_or_relation
+  disposition: snapshot_source
+  target_layer: DWD
+  target_table: dwd_loan_ownership_transfer
+  downstream_targets:
+  - dwd_loan_ownership_transfer
+  grain: id
+  load_strategy: full_replay
+  optional_module: true
+  confidence: human_reviewed
+  business_processes:
+  - loan_asset_transfer
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: restricted
+  rationale: Transfer header has clear loan, owner, effective period and settlement semantics.
+- source_table: m_external_asset_owner_transfer_details
+  ods_table: ods_fineract_m_external_asset_owner_transfer_details
+  business_area: ASTM
+  data_domain: INVS
+  domain_name: 投资、份额与资产持有
+  source_kind: event_or_relation
+  disposition: standalone_fact
+  target_layer: DWD
+  target_table: dwd_loan_ownership_transfer_detail
+  downstream_targets:
+  - dwd_loan_ownership_transfer_detail
+  grain: asset_owner_transfer_id, id
+  load_strategy: full_replay
+  optional_module: true
+  confidence: human_reviewed
+  business_processes:
+  - loan_asset_transfer
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: restricted
+  rationale: Detail must join its transfer header to obtain loan, owner and effective date context.
+- source_table: m_external_asset_owner_transfer_journal_entry_mapping
+  ods_table: ods_fineract_m_external_asset_owner_transfer_journal_entry_mapping
+  business_area: FMAN
+  data_domain: FINA
+  domain_name: 总账与财务
+  source_kind: event_or_relation
+  disposition: bridge_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - general_ledger_posting
+  - loan_asset_transfer
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_external_asset_owner_transfer_loan_mapping
+  ods_table: ods_fineract_m_external_asset_owner_transfer_loan_mapping
+  business_area: LOAN
+  data_domain: LOAN
+  domain_name: 贷款与信贷
+  source_kind: event_or_relation
+  disposition: bridge_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - loan_asset_transfer
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_external_event
+  ods_table: ods_fineract_m_external_event
+  business_area: OTHR
+  data_domain: OPER
+  domain_name: 平台运营与安全
+  source_kind: event_or_relation
+  disposition: security_excluded
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: security_reviewed
+  business_processes:
+  - external_event_delivery
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: restricted
+  rationale: 包含密码、令牌或认证凭据，仅保留受限 ODS，禁止进入普通分析层。
+- source_table: m_external_event_configuration
+  ods_table: ods_fineract_m_external_event_configuration
+  business_area: OTHR
+  data_domain: OPER
+  domain_name: 平台运营与安全
+  source_kind: master_or_reference
+  disposition: rule_reference
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: type
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - external_event_delivery
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_family_members
+  ods_table: ods_fineract_m_family_members
+  business_area: CLNT
+  data_domain: CUST
+  domain_name: 客户与参与方
+  source_kind: master_or_reference
+  disposition: component_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - customer_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: restricted
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_field_configuration
+  ods_table: ods_fineract_m_field_configuration
+  business_area: OTHR
+  data_domain: REFR
+  domain_name: 公共参考与元数据
+  source_kind: master_or_reference
+  disposition: rule_reference
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - reference_data_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_floating_rates
+  ods_table: ods_fineract_m_floating_rates
+  business_area: OTHR
+  data_domain: PROD
+  domain_name: 产品、定价与税费
+  source_kind: master_or_reference
+  disposition: standalone_dimension
+  target_layer: DIM
+  target_table: dim_rate_index
+  downstream_targets:
+  - dim_rate_index
+  grain: id
+  load_strategy: full_snapshot
+  optional_module: false
+  confidence: human_reviewed
+  business_processes:
+  - product_configuration
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: Header identifies the index; dated rate observations must be modeled from the period source.
+- source_table: m_floating_rates_periods
+  ods_table: ods_fineract_m_floating_rates_periods
+  business_area: OTHR
+  data_domain: PROD
+  domain_name: 产品、定价与税费
+  source_kind: master_or_reference
+  disposition: component_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - product_configuration
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_fund
+  ods_table: ods_fineract_m_fund
+  business_area: CHNL
+  data_domain: ORGN
+  domain_name: 机构与员工
+  source_kind: master_or_reference
+  disposition: component_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - organisation_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_group
+  ods_table: ods_fineract_m_group
+  business_area: CLNT
+  data_domain: CUST
+  domain_name: 客户与参与方
+  source_kind: master_or_reference
+  disposition: standalone_dimension
+  target_layer: DIM
+  target_table: dim_customer_group
+  downstream_targets:
+  - dim_customer_group
+  grain: id
+  load_strategy: full_snapshot
+  optional_module: false
+  confidence: human_reviewed
+  business_processes:
+  - customer_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: restricted
+  rationale: Group hierarchy and operating assignment require effective-version semantics.
+- source_table: m_group_client
+  ods_table: ods_fineract_m_group_client
+  business_area: CLNT
+  data_domain: CUST
+  domain_name: 客户与参与方
+  source_kind: master_or_reference
+  disposition: bridge_source
+  target_layer: DWD
+  target_table: bridge_group_customer
+  downstream_targets:
+  - bridge_group_customer
+  grain: group_id, client_id
+  load_strategy: full_replay
+  optional_module: false
+  confidence: human_reviewed
+  business_processes:
+  - customer_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: restricted
+  rationale: Composite grain is correct but the object is a membership bridge without effective history.
+- source_table: m_group_level
+  ods_table: ods_fineract_m_group_level
+  business_area: CLNT
+  data_domain: CUST
+  domain_name: 客户与参与方
+  source_kind: master_or_reference
+  disposition: standalone_dimension
+  target_layer: DIM
+  target_table: dim_customer_group_level
+  downstream_targets:
+  - dim_customer_group_level
+  grain: id
+  load_strategy: full_snapshot
+  optional_module: false
+  confidence: human_reviewed
+  business_processes:
+  - customer_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: Group level is a stable hierarchical reference dimension.
+- source_table: m_group_roles
+  ods_table: ods_fineract_m_group_roles
+  business_area: CLNT
+  data_domain: CUST
+  domain_name: 客户与参与方
+  source_kind: master_or_reference
+  disposition: bridge_source
+  target_layer: DWD
+  target_table: bridge_group_customer_role
+  downstream_targets:
+  - bridge_group_customer_role
+  grain: id
+  load_strategy: full_replay
+  optional_module: false
+  confidence: human_reviewed
+  business_processes:
+  - customer_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: restricted
+  rationale: This is a typed relationship bridge and replaces the invalid generated customer process code.
+- source_table: m_guarantor
+  ods_table: ods_fineract_m_guarantor
+  business_area: LOAN
+  data_domain: LOAN
+  domain_name: 贷款与信贷
+  source_kind: master_or_reference
+  disposition: bridge_source
+  target_layer: DWD
+  target_table: dwd_loan_guarantor_relation
+  downstream_targets:
+  - dwd_loan_guarantor_relation
+  grain: id
+  load_strategy: full_replay
+  optional_module: false
+  confidence: human_reviewed
+  business_processes:
+  - guarantee_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: restricted
+  rationale: Source duplicates loan-specific PII and is not a deduplicated conformed guarantor dimension.
+- source_table: m_guarantor_funding_details
+  ods_table: ods_fineract_m_guarantor_funding_details
+  business_area: LOAN
+  data_domain: LOAN
+  domain_name: 贷款与信贷
+  source_kind: master_or_reference
+  disposition: snapshot_source
+  target_layer: DWD
+  target_table: dwd_guarantee_commitment_snapshot
+  downstream_targets:
+  - dwd_guarantee_commitment_snapshot
+  grain: id
+  load_strategy: full_replay
+  optional_module: false
+  confidence: human_reviewed
+  business_processes:
+  - guarantee_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  - amount_decimal_precision
+  sensitivity: restricted
+  rationale: Amount fields describe current cumulative commitment state and need an explicit snapshot
+    date.
+- source_table: m_guarantor_transaction
+  ods_table: ods_fineract_m_guarantor_transaction
+  business_area: LOAN
+  data_domain: LOAN
+  domain_name: 贷款与信贷
+  source_kind: event_or_relation
+  disposition: bridge_source
+  target_layer: DWD
+  target_table: bridge_guarantee_transaction
+  downstream_targets:
+  - bridge_guarantee_transaction
+  grain: id
+  load_strategy: full_replay
+  optional_module: false
+  confidence: human_reviewed
+  business_processes:
+  - guarantee_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: restricted
+  rationale: Source has no amount or date and is a three-way transactional bridge.
+- source_table: m_holiday
+  ods_table: ods_fineract_m_holiday
+  business_area: CHNL
+  data_domain: ORGN
+  domain_name: 机构与员工
+  source_kind: master_or_reference
+  disposition: standalone_dimension
+  target_layer: DIM
+  target_table: dim_holiday
+  downstream_targets:
+  - dim_holiday
+  grain: id
+  load_strategy: full_snapshot
+  optional_module: false
+  confidence: human_reviewed
+  business_processes:
+  - organisation_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: Holiday is stable calendar reference data with office applicability modeled separately.
+- source_table: m_holiday_office
+  ods_table: ods_fineract_m_holiday_office
+  business_area: CHNL
+  data_domain: ORGN
+  domain_name: 机构与员工
+  source_kind: master_or_reference
+  disposition: bridge_source
+  target_layer: DWD
+  target_table: bridge_office_holiday
+  downstream_targets:
+  - bridge_office_holiday
+  grain: holiday_id, office_id
+  load_strategy: full_replay
+  optional_module: false
+  confidence: human_reviewed
+  business_processes:
+  - operations_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: Composite relation is a bridge and inherits its effective interval from the holiday.
+- source_table: m_hook
+  ods_table: ods_fineract_m_hook
+  business_area: OTHR
+  data_domain: OPER
+  domain_name: 平台运营与安全
+  source_kind: technical
+  disposition: operational_only
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - operations_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_hook_configuration
+  ods_table: ods_fineract_m_hook_configuration
+  business_area: OTHR
+  data_domain: OPER
+  domain_name: 平台运营与安全
+  source_kind: technical
+  disposition: security_excluded
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: security_reviewed
+  business_processes:
+  - operations_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: restricted
+  rationale: 包含密码、令牌或认证凭据，仅保留受限 ODS，禁止进入普通分析层。
+- source_table: m_hook_registered_events
+  ods_table: ods_fineract_m_hook_registered_events
+  business_area: OTHR
+  data_domain: OPER
+  domain_name: 平台运营与安全
+  source_kind: technical
+  disposition: operational_only
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - operations_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_hook_schema
+  ods_table: ods_fineract_m_hook_schema
+  business_area: OTHR
+  data_domain: OPER
+  domain_name: 平台运营与安全
+  source_kind: technical
+  disposition: operational_only
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - operations_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_hook_templates
+  ods_table: ods_fineract_m_hook_templates
+  business_area: OTHR
+  data_domain: OPER
+  domain_name: 平台运营与安全
+  source_kind: technical
+  disposition: operational_only
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - operations_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_image
+  ods_table: ods_fineract_m_image
+  business_area: CHNL
+  data_domain: CHNL
+  domain_name: 渠道与客户服务
+  source_kind: master_or_reference
+  disposition: component_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - customer_service_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: restricted
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_import_document
+  ods_table: ods_fineract_m_import_document
+  business_area: CHNL
+  data_domain: CHNL
+  domain_name: 渠道与客户服务
+  source_kind: master_or_reference
+  disposition: component_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - customer_service_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_interest_incentives
+  ods_table: ods_fineract_m_interest_incentives
+  business_area: OTHR
+  data_domain: OTHR
+  domain_name: 其它银行运营
+  source_kind: master_or_reference
+  disposition: component_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - operations_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  - amount_decimal_precision
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_interest_rate_chart
+  ods_table: ods_fineract_m_interest_rate_chart
+  business_area: OTHR
+  data_domain: PROD
+  domain_name: 产品、定价与税费
+  source_kind: master_or_reference
+  disposition: component_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - product_configuration
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  - amount_decimal_precision
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_interest_rate_slab
+  ods_table: ods_fineract_m_interest_rate_slab
+  business_area: OTHR
+  data_domain: PROD
+  domain_name: 产品、定价与税费
+  source_kind: master_or_reference
+  disposition: component_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - product_configuration
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  - amount_decimal_precision
+  - currency_code_valid
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_journal_entry_aggregation_summary
+  ods_table: ods_fineract_m_journal_entry_aggregation_summary
+  business_area: FMAN
+  data_domain: FINA
+  domain_name: 总账与财务
+  source_kind: event_or_relation
+  disposition: snapshot_source
+  target_layer: DWD
+  target_table: dwd_gl_aggregation_summary
+  downstream_targets:
+  - dwd_gl_aggregation_summary
+  grain: gl_account_id, product_id, office_id, entity_type_enum, external_owner_id, manual_entry, aggregated_on_date
+  load_strategy: full_replay
+  optional_module: false
+  confidence: human_reviewed
+  business_processes:
+  - general_ledger_posting
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  - amount_decimal_precision
+  sensitivity: internal
+  rationale: Source stores explicit dated debit and credit aggregations with conformed accounting roles.
+- source_table: m_journal_entry_aggregation_tracking
+  ods_table: ods_fineract_m_journal_entry_aggregation_tracking
+  business_area: FMAN
+  data_domain: FINA
+  domain_name: 总账与财务
+  source_kind: event_or_relation
+  disposition: standalone_fact
+  target_layer: DWD
+  target_table: dwd_gl_aggregation_run
+  downstream_targets:
+  - dwd_gl_aggregation_run
+  grain: id
+  load_strategy: full_replay
+  optional_module: false
+  confidence: human_reviewed
+  business_processes:
+  - general_ledger_posting
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: Run header is useful audit lineage but must remain distinct from monetary aggregation results.
+- source_table: m_loan
+  ods_table: ods_fineract_m_loan
+  business_area: LOAN
+  data_domain: LOAN
+  domain_name: 贷款与信贷
+  source_kind: master_or_reference
+  disposition: standalone_dimension
+  target_layer: DIM
+  target_table: dim_loan_account
+  downstream_targets:
+  - dim_loan_account
+  grain: id
+  load_strategy: full_snapshot
+  optional_module: false
+  confidence: human_reviewed
+  business_processes:
+  - loan_account_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  - amount_decimal_precision
+  - currency_code_valid
+  sensitivity: restricted
+  rationale: Durable account descriptors belong in DIM; balances and cumulative servicing amounts are
+    snapshot facts.
+- source_table: m_loan_account_locks
+  ods_table: ods_fineract_m_loan_account_locks
+  business_area: LOAN
+  data_domain: LOAN
+  domain_name: 贷款与信贷
+  source_kind: master_or_reference
+  disposition: component_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: loan_id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - loan_account_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_loan_amortization_allocation_mapping
+  ods_table: ods_fineract_m_loan_amortization_allocation_mapping
+  business_area: LOAN
+  data_domain: LOAN
+  domain_name: 贷款与信贷
+  source_kind: event_or_relation
+  disposition: bridge_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - loan_account_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  - amount_decimal_precision
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_loan_approved_amount_history
+  ods_table: ods_fineract_m_loan_approved_amount_history
+  business_area: LOAN
+  data_domain: LOAN
+  domain_name: 贷款与信贷
+  source_kind: event_or_relation
+  disposition: standalone_fact
+  target_layer: DWD
+  target_table: dwd_loan_approval_event
+  downstream_targets:
+  - dwd_loan_approval_event
+  grain: id
+  load_strategy: full_replay
+  optional_module: false
+  confidence: human_reviewed
+  business_processes:
+  - loan_transaction
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  - amount_decimal_precision
+  sensitivity: restricted
+  rationale: Approval amount history is valid after replacing the invalid process and naming the change-event
+    grain.
+- source_table: m_loan_arrears_aging
+  ods_table: ods_fineract_m_loan_arrears_aging
+  business_area: LOAN
+  data_domain: LOAN
+  domain_name: 贷款与信贷
+  source_kind: master_or_reference
+  disposition: snapshot_source
+  target_layer: DWD
+  target_table: dwd_loan_arrears_snapshot
+  downstream_targets:
+  - dwd_loan_arrears_snapshot
+  grain: loan_id, snapshot_date
+  load_strategy: full_replay
+  optional_module: false
+  confidence: human_reviewed
+  business_processes:
+  - delinquency_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: restricted
+  rationale: Source is current one-row-per-loan arrears state; a generated snapshot date is mandatory
+    for history.
+- source_table: m_loan_buy_down_fee_balance
+  ods_table: ods_fineract_m_loan_buy_down_fee_balance
+  business_area: LOAN
+  data_domain: LOAN
+  domain_name: 贷款与信贷
+  source_kind: master_or_reference
+  disposition: snapshot_source
+  target_layer: DWD
+  target_table: dwd_loan_buy_down_fee_balance
+  downstream_targets:
+  - dwd_loan_buy_down_fee_balance
+  grain: id
+  load_strategy: full_replay
+  optional_module: false
+  confidence: human_reviewed
+  business_processes:
+  - loan_transaction
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  - amount_decimal_precision
+  sensitivity: restricted
+  rationale: Source has explicit date, amount, unrecognized and charged-off balance measures.
+- source_table: m_loan_capitalized_income_balance
+  ods_table: ods_fineract_m_loan_capitalized_income_balance
+  business_area: LOAN
+  data_domain: LOAN
+  domain_name: 贷款与信贷
+  source_kind: master_or_reference
+  disposition: snapshot_source
+  target_layer: DWD
+  target_table: dwd_loan_capitalized_income_balance
+  downstream_targets:
+  - dwd_loan_capitalized_income_balance
+  grain: id
+  load_strategy: full_replay
+  optional_module: false
+  confidence: human_reviewed
+  business_processes:
+  - loan_transaction
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  - amount_decimal_precision
+  sensitivity: restricted
+  rationale: Source has explicit date, amount, unrecognized and charged-off balance measures.
+- source_table: m_loan_charge
+  ods_table: ods_fineract_m_loan_charge
+  business_area: LOAN
+  data_domain: LOAN
+  domain_name: 贷款与信贷
+  source_kind: master_or_reference
+  disposition: snapshot_source
+  target_layer: DWD
+  target_table: dwd_loan_charge
+  downstream_targets:
+  - dwd_loan_charge
+  grain: id
+  load_strategy: full_replay
+  optional_module: false
+  confidence: human_reviewed
+  business_processes:
+  - loan_repayment
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  - amount_decimal_precision
+  sensitivity: restricted
+  rationale: Charge balances are accumulating servicing facts and use loan repayment as the canonical
+    process.
+- source_table: m_loan_charge_paid_by
+  ods_table: ods_fineract_m_loan_charge_paid_by
+  business_area: LOAN
+  data_domain: LOAN
+  domain_name: 贷款与信贷
+  source_kind: event_or_relation
+  disposition: standalone_fact
+  target_layer: DWD
+  target_table: dwd_loan_charge_allocation
+  downstream_targets:
+  - dwd_loan_charge_allocation
+  grain: loan_charge_id, loan_transaction_id, id
+  load_strategy: full_replay
+  optional_module: false
+  confidence: human_reviewed
+  business_processes:
+  - loan_repayment
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  - amount_decimal_precision
+  sensitivity: restricted
+  rationale: Allocation needs its parent loan transaction to provide event time and loan context.
+- source_table: m_loan_charge_tax_details
+  ods_table: ods_fineract_m_loan_charge_tax_details
+  business_area: LOAN
+  data_domain: LOAN
+  domain_name: 贷款与信贷
+  source_kind: master_or_reference
+  disposition: component_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - loan_account_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  - amount_decimal_precision
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_loan_collateral
+  ods_table: ods_fineract_m_loan_collateral
+  business_area: LOAN
+  data_domain: LOAN
+  domain_name: 贷款与信贷
+  source_kind: master_or_reference
+  disposition: component_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - loan_account_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_loan_collateral_management
+  ods_table: ods_fineract_m_loan_collateral_management
+  business_area: LOAN
+  data_domain: LOAN
+  domain_name: 贷款与信贷
+  source_kind: master_or_reference
+  disposition: standalone_fact
+  target_layer: DWD
+  target_table: dwd_loan_collateral_pledge
+  downstream_targets:
+  - dwd_loan_collateral_pledge
+  grain: id
+  load_strategy: full_replay
+  optional_module: false
+  confidence: human_reviewed
+  business_processes:
+  - collateral_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: restricted
+  rationale: Pledge is a loan-collateral relationship with quantity and transaction provenance.
+- source_table: m_loan_credit_allocation_rule
+  ods_table: ods_fineract_m_loan_credit_allocation_rule
+  business_area: LOAN
+  data_domain: LOAN
+  domain_name: 贷款与信贷
+  source_kind: event_or_relation
+  disposition: rule_reference
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - loan_account_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_loan_delinquency_action
+  ods_table: ods_fineract_m_loan_delinquency_action
+  business_area: LOAN
+  data_domain: LOAN
+  domain_name: 贷款与信贷
+  source_kind: event_or_relation
+  disposition: standalone_fact
+  target_layer: DWD
+  target_table: dwd_collection_action
+  downstream_targets:
+  - dwd_collection_action
+  grain: id
+  load_strategy: full_replay
+  optional_module: false
+  confidence: human_reviewed
+  business_processes:
+  - delinquency_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: restricted
+  rationale: Start and end dates define a loan collection-action interval.
+- source_table: m_loan_delinquency_tag_history
+  ods_table: ods_fineract_m_loan_delinquency_tag_history
+  business_area: LOAN
+  data_domain: LOAN
+  domain_name: 贷款与信贷
+  source_kind: event_or_relation
+  disposition: standalone_fact
+  target_layer: DWD
+  target_table: dwd_loan_delinquency_event
+  downstream_targets:
+  - dwd_loan_delinquency_event
+  grain: id
+  load_strategy: full_replay
+  optional_module: false
+  confidence: human_reviewed
+  business_processes:
+  - delinquency_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: restricted
+  rationale: Added and lifted dates define an explicit loan delinquency interval.
+- source_table: m_loan_disbursement_detail
+  ods_table: ods_fineract_m_loan_disbursement_detail
+  business_area: LOAN
+  data_domain: LOAN
+  domain_name: 贷款与信贷
+  source_kind: master_or_reference
+  disposition: standalone_fact
+  target_layer: DWD
+  target_table: dwd_loan_disbursement
+  downstream_targets:
+  - dwd_loan_disbursement
+  grain: id
+  load_strategy: full_replay
+  optional_module: false
+  confidence: human_reviewed
+  business_processes:
+  - loan_disbursement
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  - amount_decimal_precision
+  sensitivity: restricted
+  rationale: Tranche-level expected and actual dates and amounts define a clear disbursement fact.
+- source_table: m_loan_installment_charge
+  ods_table: ods_fineract_m_loan_installment_charge
+  business_area: LOAN
+  data_domain: LOAN
+  domain_name: 贷款与信贷
+  source_kind: event_or_relation
+  disposition: standalone_fact
+  target_layer: DWD
+  target_table: dwd_loan_installment_charge
+  downstream_targets:
+  - dwd_loan_installment_charge
+  grain: loan_schedule_id, loan_charge_id, id
+  load_strategy: full_replay
+  optional_module: false
+  confidence: human_reviewed
+  business_processes:
+  - loan_repayment
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  - amount_decimal_precision
+  sensitivity: restricted
+  rationale: Source is an installment-charge allocation with due and settlement amounts.
+- source_table: m_loan_installment_delinquency_tag
+  ods_table: ods_fineract_m_loan_installment_delinquency_tag
+  business_area: LOAN
+  data_domain: LOAN
+  domain_name: 贷款与信贷
+  source_kind: event_or_relation
+  disposition: component_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - delinquency_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  - amount_decimal_precision
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_loan_interest_recalculation_additional_details
+  ods_table: ods_fineract_m_loan_interest_recalculation_additional_details
+  business_area: LOAN
+  data_domain: LOAN
+  domain_name: 贷款与信贷
+  source_kind: master_or_reference
+  disposition: component_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - loan_account_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  - amount_decimal_precision
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_loan_officer_assignment_history
+  ods_table: ods_fineract_m_loan_officer_assignment_history
+  business_area: LOAN
+  data_domain: LOAN
+  domain_name: 贷款与信贷
+  source_kind: event_or_relation
+  disposition: standalone_fact
+  target_layer: DWD
+  target_table: dwd_loan_officer_assignment
+  downstream_targets:
+  - dwd_loan_officer_assignment
+  grain: id
+  load_strategy: full_replay
+  optional_module: false
+  confidence: human_reviewed
+  business_processes:
+  - operations_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: restricted
+  rationale: Assignment is an effective relationship and uses a canonical operations process.
+- source_table: m_loan_originator
+  ods_table: ods_fineract_m_loan_originator
+  business_area: LOAN
+  data_domain: LOAN
+  domain_name: 贷款与信贷
+  source_kind: master_or_reference
+  disposition: component_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - loan_account_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_loan_originator_mapping
+  ods_table: ods_fineract_m_loan_originator_mapping
+  business_area: LOAN
+  data_domain: LOAN
+  domain_name: 贷款与信贷
+  source_kind: event_or_relation
+  disposition: bridge_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - loan_account_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_loan_overdue_installment_charge
+  ods_table: ods_fineract_m_loan_overdue_installment_charge
+  business_area: LOAN
+  data_domain: LOAN
+  domain_name: 贷款与信贷
+  source_kind: event_or_relation
+  disposition: component_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - loan_account_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_loan_payment_allocation_rule
+  ods_table: ods_fineract_m_loan_payment_allocation_rule
+  business_area: LOAN
+  data_domain: LOAN
+  domain_name: 贷款与信贷
+  source_kind: event_or_relation
+  disposition: rule_reference
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - loan_account_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_loan_product_credit_allocation_rule
+  ods_table: ods_fineract_m_loan_product_credit_allocation_rule
+  business_area: LOAN
+  data_domain: LOAN
+  domain_name: 贷款与信贷
+  source_kind: event_or_relation
+  disposition: rule_reference
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - loan_account_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_loan_product_payment_allocation_rule
+  ods_table: ods_fineract_m_loan_product_payment_allocation_rule
+  business_area: LOAN
+  data_domain: LOAN
+  domain_name: 贷款与信贷
+  source_kind: event_or_relation
+  disposition: rule_reference
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - loan_account_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_loan_progressive_model
+  ods_table: ods_fineract_m_loan_progressive_model
+  business_area: LOAN
+  data_domain: LOAN
+  domain_name: 贷款与信贷
+  source_kind: master_or_reference
+  disposition: component_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - loan_account_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_loan_rate
+  ods_table: ods_fineract_m_loan_rate
+  business_area: LOAN
+  data_domain: LOAN
+  domain_name: 贷款与信贷
+  source_kind: master_or_reference
+  disposition: standalone_dimension
+  target_layer: DIM
+  target_table: bridge_loan_rate
+  downstream_targets:
+  - bridge_loan_rate
+  grain: loan_id, rate_id
+  load_strategy: full_snapshot
+  optional_module: false
+  confidence: human_reviewed
+  business_processes:
+  - loan_account_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: Source has no period dates; current target invents a period that does not exist.
+- source_table: m_loan_reage_parameter
+  ods_table: ods_fineract_m_loan_reage_parameter
+  business_area: LOAN
+  data_domain: LOAN
+  domain_name: 贷款与信贷
+  source_kind: master_or_reference
+  disposition: component_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - loan_account_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_loan_reamortization_parameter
+  ods_table: ods_fineract_m_loan_reamortization_parameter
+  business_area: LOAN
+  data_domain: LOAN
+  domain_name: 贷款与信贷
+  source_kind: master_or_reference
+  disposition: component_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - loan_account_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_loan_recalculation_details
+  ods_table: ods_fineract_m_loan_recalculation_details
+  business_area: LOAN
+  data_domain: LOAN
+  domain_name: 贷款与信贷
+  source_kind: master_or_reference
+  disposition: standalone_dimension
+  target_layer: DIM
+  target_table: dim_loan_interest_terms_satellite
+  downstream_targets:
+  - dim_loan_interest_terms_satellite
+  grain: loan_id
+  load_strategy: full_snapshot
+  optional_module: false
+  confidence: human_reviewed
+  business_processes:
+  - loan_account_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: Source is loan-level calculation configuration and has no recalculation event date.
+- source_table: m_loan_repayment_schedule
+  ods_table: ods_fineract_m_loan_repayment_schedule
+  business_area: LOAN
+  data_domain: LOAN
+  domain_name: 贷款与信贷
+  source_kind: event_or_relation
+  disposition: snapshot_source
+  target_layer: DWD
+  target_table: dwd_loan_installment
+  downstream_targets:
+  - dwd_loan_installment
+  grain: loan_id, installment, id
+  load_strategy: full_replay
+  optional_module: false
+  confidence: human_reviewed
+  business_processes:
+  - loan_repayment
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  - amount_decimal_precision
+  - loan_subledger_reconciliation
+  sensitivity: restricted
+  rationale: Schedule row is an accumulating installment fact and must include all principal, interest,
+    fee and penalty states.
+- source_table: m_loan_repayment_schedule_history
+  ods_table: ods_fineract_m_loan_repayment_schedule_history
+  business_area: LOAN
+  data_domain: LOAN
+  domain_name: 贷款与信贷
+  source_kind: event_or_relation
+  disposition: snapshot_source
+  target_layer: DWD
+  target_table: dwd_loan_installment_version
+  downstream_targets:
+  - dwd_loan_installment_version
+  grain: loan_id, loan_reschedule_request_id, version, installment
+  load_strategy: full_replay
+  optional_module: false
+  confidence: human_reviewed
+  business_processes:
+  - loan_restructure
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  - amount_decimal_precision
+  sensitivity: restricted
+  rationale: Semantic grain must identify schedule version and installment rather than only the surrogate
+    id.
+- source_table: m_loan_reschedule_request
+  ods_table: ods_fineract_m_loan_reschedule_request
+  business_area: LOAN
+  data_domain: LOAN
+  domain_name: 贷款与信贷
+  source_kind: event_or_relation
+  disposition: snapshot_source
+  target_layer: DWD
+  target_table: dwd_loan_restructure_event
+  downstream_targets:
+  - dwd_loan_restructure_event
+  grain: id
+  load_strategy: full_replay
+  optional_module: false
+  confidence: human_reviewed
+  business_processes:
+  - loan_restructure
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: restricted
+  rationale: Submitted, approved and rejected dates define a clear restructuring lifecycle.
+- source_table: m_loan_reschedule_request_term_variations_mapping
+  ods_table: ods_fineract_m_loan_reschedule_request_term_variations_mapping
+  business_area: LOAN
+  data_domain: LOAN
+  domain_name: 贷款与信贷
+  source_kind: event_or_relation
+  disposition: bridge_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - loan_restructure
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_loan_status_change_history
+  ods_table: ods_fineract_m_loan_status_change_history
+  business_area: LOAN
+  data_domain: LOAN
+  domain_name: 贷款与信贷
+  source_kind: event_or_relation
+  disposition: standalone_fact
+  target_layer: DWD
+  target_table: dwd_loan_lifecycle_event
+  downstream_targets:
+  - dwd_loan_lifecycle_event
+  grain: id
+  load_strategy: full_replay
+  optional_module: false
+  confidence: human_reviewed
+  business_processes:
+  - loan_transaction
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: restricted
+  rationale: Status-change history is valid after replacing the invalid generic loan-management process.
+- source_table: m_loan_term_variations
+  ods_table: ods_fineract_m_loan_term_variations
+  business_area: LOAN
+  data_domain: LOAN
+  domain_name: 贷款与信贷
+  source_kind: master_or_reference
+  disposition: component_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - loan_account_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_loan_topup
+  ods_table: ods_fineract_m_loan_topup
+  business_area: LOAN
+  data_domain: LOAN
+  domain_name: 贷款与信贷
+  source_kind: master_or_reference
+  disposition: component_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - loan_account_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  - amount_decimal_precision
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_loan_tranche_charges
+  ods_table: ods_fineract_m_loan_tranche_charges
+  business_area: LOAN
+  data_domain: LOAN
+  domain_name: 贷款与信贷
+  source_kind: master_or_reference
+  disposition: component_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - loan_account_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_loan_tranche_disbursement_charge
+  ods_table: ods_fineract_m_loan_tranche_disbursement_charge
+  business_area: LOAN
+  data_domain: LOAN
+  domain_name: 贷款与信贷
+  source_kind: master_or_reference
+  disposition: component_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - loan_disbursement
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_loan_transaction
+  ods_table: ods_fineract_m_loan_transaction
+  business_area: LOAN
+  data_domain: LOAN
+  domain_name: 贷款与信贷
+  source_kind: event_or_relation
+  disposition: standalone_fact
+  target_layer: DWD
+  target_table: dwd_loan_transaction
+  downstream_targets:
+  - dwd_loan_transaction
+  grain: id
+  load_strategy: full_replay
+  optional_module: false
+  confidence: human_reviewed
+  business_processes:
+  - loan_transaction
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  - amount_decimal_precision
+  - loan_subledger_reconciliation
+  sensitivity: restricted
+  rationale: Source is the core dated loan transaction with component amounts and reversal semantics.
+- source_table: m_loan_transaction_relation
+  ods_table: ods_fineract_m_loan_transaction_relation
+  business_area: LOAN
+  data_domain: LOAN
+  domain_name: 贷款与信贷
+  source_kind: event_or_relation
+  disposition: bridge_source
+  target_layer: DWD
+  target_table: bridge_loan_transaction_relation
+  downstream_targets:
+  - bridge_loan_transaction_relation
+  grain: id
+  load_strategy: full_replay
+  optional_module: false
+  confidence: human_reviewed
+  business_processes:
+  - loan_transaction
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: restricted
+  rationale: Typed relationship is a bridge and inherits dates from the participating transactions.
+- source_table: m_loan_transaction_repayment_schedule_mapping
+  ods_table: ods_fineract_m_loan_transaction_repayment_schedule_mapping
+  business_area: LOAN
+  data_domain: LOAN
+  domain_name: 贷款与信贷
+  source_kind: event_or_relation
+  disposition: standalone_fact
+  target_layer: DWD
+  target_table: dwd_loan_repayment_allocation
+  downstream_targets:
+  - dwd_loan_repayment_allocation
+  grain: loan_transaction_id, loan_repayment_schedule_id, id
+  load_strategy: full_replay
+  optional_module: false
+  confidence: human_reviewed
+  business_processes:
+  - loan_repayment
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  - amount_decimal_precision
+  sensitivity: restricted
+  rationale: Parent loan transaction provides event time while allocation fields provide component amounts.
+- source_table: m_loanproduct_provisioning_entry
+  ods_table: ods_fineract_m_loanproduct_provisioning_entry
+  business_area: LOAN
+  data_domain: LOAN
+  domain_name: 贷款与信贷
+  source_kind: master_or_reference
+  disposition: snapshot_source
+  target_layer: DWD
+  target_table: dwd_loan_provision_entry
+  downstream_targets:
+  - dwd_loan_provision_entry
+  grain: history_id, office_id, product_id, category_id, criteria_id, id
+  load_strategy: full_replay
+  optional_module: false
+  confidence: human_reviewed
+  business_processes:
+  - loan_provisioning
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  - amount_decimal_precision
+  - currency_code_valid
+  sensitivity: internal
+  rationale: Run enrichment is correct; normalize the source typo reseve_amount to semantic metric reserve_amount.
+- source_table: m_loanproduct_provisioning_mapping
+  ods_table: ods_fineract_m_loanproduct_provisioning_mapping
+  business_area: LOAN
+  data_domain: LOAN
+  domain_name: 贷款与信贷
+  source_kind: event_or_relation
+  disposition: bridge_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - loan_provisioning
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_mandatory_savings_schedule
+  ods_table: ods_fineract_m_mandatory_savings_schedule
+  business_area: DPST
+  data_domain: DPST
+  domain_name: 存款与储蓄
+  source_kind: event_or_relation
+  disposition: component_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - deposit_account_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  - amount_decimal_precision
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_meeting
+  ods_table: ods_fineract_m_meeting
+  business_area: CHNL
+  data_domain: CHNL
+  domain_name: 渠道与客户服务
+  source_kind: master_or_reference
+  disposition: component_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - customer_service_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_note
+  ods_table: ods_fineract_m_note
+  business_area: CHNL
+  data_domain: CHNL
+  domain_name: 渠道与客户服务
+  source_kind: master_or_reference
+  disposition: component_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - customer_service_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: restricted
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_office
+  ods_table: ods_fineract_m_office
+  business_area: CHNL
+  data_domain: ORGN
+  domain_name: 机构与员工
+  source_kind: master_or_reference
+  disposition: standalone_dimension
+  target_layer: DIM
+  target_table: dim_office
+  downstream_targets:
+  - dim_office
+  grain: id
+  load_strategy: full_snapshot
+  optional_module: false
+  confidence: human_reviewed
+  business_processes:
+  - organisation_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: Office is a conformed hierarchical organization dimension.
+- source_table: m_office_transaction
+  ods_table: ods_fineract_m_office_transaction
+  business_area: PAYM
+  data_domain: PAYM
+  domain_name: 支付结算
+  source_kind: event_or_relation
+  disposition: standalone_fact
+  target_layer: DWD
+  target_table: dwd_office_cash_transfer
+  downstream_targets:
+  - dwd_office_cash_transfer
+  grain: id
+  load_strategy: full_replay
+  optional_module: false
+  confidence: human_reviewed
+  business_processes:
+  - cashier_operation
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  - amount_decimal_precision
+  - currency_code_valid
+  sensitivity: internal
+  rationale: Monetary event is valid after replacing the invalid generated payment-management code.
+- source_table: m_organisation_creditbureau
+  ods_table: ods_fineract_m_organisation_creditbureau
+  business_area: LOAN
+  data_domain: LOAN
+  domain_name: 贷款与信贷
+  source_kind: master_or_reference
+  disposition: component_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - loan_account_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_organisation_currency
+  ods_table: ods_fineract_m_organisation_currency
+  business_area: OTHR
+  data_domain: PROD
+  domain_name: 产品、定价与税费
+  source_kind: master_or_reference
+  disposition: component_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - product_configuration
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  - currency_code_valid
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_password_validation_policy
+  ods_table: ods_fineract_m_password_validation_policy
+  business_area: OTHR
+  data_domain: OTHR
+  domain_name: 其它银行运营
+  source_kind: master_or_reference
+  disposition: component_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - operations_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_payment_detail
+  ods_table: ods_fineract_m_payment_detail
+  business_area: PAYM
+  data_domain: PAYM
+  domain_name: 支付结算
+  source_kind: master_or_reference
+  disposition: component_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - payment_operation
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: restricted
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_payment_type
+  ods_table: ods_fineract_m_payment_type
+  business_area: PAYM
+  data_domain: PAYM
+  domain_name: 支付结算
+  source_kind: master_or_reference
+  disposition: standalone_dimension
+  target_layer: DIM
+  target_table: dim_payment_type
+  downstream_targets:
+  - dim_payment_type
+  grain: id
+  load_strategy: full_snapshot
+  optional_module: false
+  confidence: human_reviewed
+  business_processes:
+  - payment_operation
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: Payment type is stable reference data.
+- source_table: m_permission
+  ods_table: ods_fineract_m_permission
+  business_area: OTHR
+  data_domain: OPER
+  domain_name: 平台运营与安全
+  source_kind: technical
+  disposition: operational_only
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - operations_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_portfolio_account_associations
+  ods_table: ods_fineract_m_portfolio_account_associations
+  business_area: OTHR
+  data_domain: OTHR
+  domain_name: 其它银行运营
+  source_kind: master_or_reference
+  disposition: component_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - operations_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_portfolio_command_source
+  ods_table: ods_fineract_m_portfolio_command_source
+  business_area: OTHR
+  data_domain: OPER
+  domain_name: 平台运营与安全
+  source_kind: technical
+  disposition: security_excluded
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: security_reviewed
+  business_processes:
+  - operations_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: restricted
+  rationale: 包含密码、令牌或认证凭据，仅保留受限 ODS，禁止进入普通分析层。
+- source_table: m_product_loan
+  ods_table: ods_fineract_m_product_loan
+  business_area: LOAN
+  data_domain: LOAN
+  domain_name: 贷款与信贷
+  source_kind: master_or_reference
+  disposition: standalone_dimension
+  target_layer: DIM
+  target_table: dim_loan_product
+  downstream_targets:
+  - dim_loan_product
+  grain: id
+  load_strategy: full_snapshot
+  optional_module: false
+  confidence: human_reviewed
+  business_processes:
+  - loan_account_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  - amount_decimal_precision
+  - currency_code_valid
+  sensitivity: internal
+  rationale: Loan product is reusable pricing and servicing reference data.
+- source_table: m_product_loan_charge
+  ods_table: ods_fineract_m_product_loan_charge
+  business_area: LOAN
+  data_domain: LOAN
+  domain_name: 贷款与信贷
+  source_kind: master_or_reference
+  disposition: component_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: product_loan_id, charge_id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - loan_account_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_product_loan_configurable_attributes
+  ods_table: ods_fineract_m_product_loan_configurable_attributes
+  business_area: LOAN
+  data_domain: LOAN
+  domain_name: 贷款与信贷
+  source_kind: master_or_reference
+  disposition: component_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - loan_account_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  - amount_decimal_precision
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_product_loan_floating_rates
+  ods_table: ods_fineract_m_product_loan_floating_rates
+  business_area: LOAN
+  data_domain: LOAN
+  domain_name: 贷款与信贷
+  source_kind: master_or_reference
+  disposition: component_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - loan_account_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_product_loan_guarantee_details
+  ods_table: ods_fineract_m_product_loan_guarantee_details
+  business_area: LOAN
+  data_domain: LOAN
+  domain_name: 贷款与信贷
+  source_kind: master_or_reference
+  disposition: component_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - loan_account_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_product_loan_rate
+  ods_table: ods_fineract_m_product_loan_rate
+  business_area: LOAN
+  data_domain: LOAN
+  domain_name: 贷款与信贷
+  source_kind: master_or_reference
+  disposition: component_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: product_loan_id, rate_id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - loan_account_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_product_loan_recalculation_details
+  ods_table: ods_fineract_m_product_loan_recalculation_details
+  business_area: LOAN
+  data_domain: LOAN
+  domain_name: 贷款与信贷
+  source_kind: master_or_reference
+  disposition: component_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - loan_account_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_product_loan_variable_installment_config
+  ods_table: ods_fineract_m_product_loan_variable_installment_config
+  business_area: LOAN
+  data_domain: LOAN
+  domain_name: 贷款与信贷
+  source_kind: event_or_relation
+  disposition: component_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - loan_account_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_product_loan_variations_borrower_cycle
+  ods_table: ods_fineract_m_product_loan_variations_borrower_cycle
+  business_area: LOAN
+  data_domain: LOAN
+  domain_name: 贷款与信贷
+  source_kind: master_or_reference
+  disposition: component_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - loan_account_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_product_mix
+  ods_table: ods_fineract_m_product_mix
+  business_area: OTHR
+  data_domain: PROD
+  domain_name: 产品、定价与税费
+  source_kind: master_or_reference
+  disposition: component_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - product_configuration
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_provision_category
+  ods_table: ods_fineract_m_provision_category
+  business_area: LOAN
+  data_domain: LOAN
+  domain_name: 贷款与信贷
+  source_kind: master_or_reference
+  disposition: standalone_dimension
+  target_layer: DIM
+  target_table: dim_provision_category
+  downstream_targets:
+  - dim_provision_category
+  grain: id
+  load_strategy: full_snapshot
+  optional_module: false
+  confidence: human_reviewed
+  business_processes:
+  - loan_provisioning
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: Provision category is stable credit-risk reference data.
+- source_table: m_provisioning_criteria
+  ods_table: ods_fineract_m_provisioning_criteria
+  business_area: LOAN
+  data_domain: LOAN
+  domain_name: 贷款与信贷
+  source_kind: master_or_reference
+  disposition: rule_reference
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - loan_provisioning
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_provisioning_criteria_definition
+  ods_table: ods_fineract_m_provisioning_criteria_definition
+  business_area: LOAN
+  data_domain: LOAN
+  domain_name: 贷款与信贷
+  source_kind: master_or_reference
+  disposition: rule_reference
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - loan_provisioning
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_provisioning_history
+  ods_table: ods_fineract_m_provisioning_history
+  business_area: LOAN
+  data_domain: LOAN
+  domain_name: 贷款与信贷
+  source_kind: event_or_relation
+  disposition: standalone_fact
+  target_layer: DWD
+  target_table: dwd_loan_provision_run
+  downstream_targets:
+  - dwd_loan_provision_run
+  grain: id
+  load_strategy: full_replay
+  optional_module: false
+  confidence: human_reviewed
+  business_processes:
+  - loan_provisioning
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: Source is the audited run header for provisioning result entries.
+- source_table: m_rate
+  ods_table: ods_fineract_m_rate
+  business_area: OTHR
+  data_domain: PROD
+  domain_name: 产品、定价与税费
+  source_kind: master_or_reference
+  disposition: standalone_dimension
+  target_layer: DIM
+  target_table: dim_rate
+  downstream_targets:
+  - dim_rate
+  grain: id
+  load_strategy: full_snapshot
+  optional_module: false
+  confidence: human_reviewed
+  business_processes:
+  - product_configuration
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: Percentage and approval state are time-sensitive and require effective-version semantics.
+- source_table: m_repayment_with_post_dated_checks
+  ods_table: ods_fineract_m_repayment_with_post_dated_checks
+  business_area: PAYM
+  data_domain: PAYM
+  domain_name: 支付结算
+  source_kind: master_or_reference
+  disposition: component_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - loan_repayment
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  - amount_decimal_precision
+  sensitivity: restricted
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_report_mailing_job
+  ods_table: ods_fineract_m_report_mailing_job
+  business_area: OTHR
+  data_domain: REFR
+  domain_name: 公共参考与元数据
+  source_kind: technical
+  disposition: security_excluded
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: security_reviewed
+  business_processes:
+  - reference_data_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: restricted
+  rationale: 包含密码、令牌或认证凭据，仅保留受限 ODS，禁止进入普通分析层。
+- source_table: m_report_mailing_job_configuration
+  ods_table: ods_fineract_m_report_mailing_job_configuration
+  business_area: OTHR
+  data_domain: REFR
+  domain_name: 公共参考与元数据
+  source_kind: technical
+  disposition: security_excluded
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: security_reviewed
+  business_processes:
+  - reference_data_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: restricted
+  rationale: 包含密码、令牌或认证凭据，仅保留受限 ODS，禁止进入普通分析层。
+- source_table: m_report_mailing_job_run_history
+  ods_table: ods_fineract_m_report_mailing_job_run_history
+  business_area: OTHR
+  data_domain: REFR
+  domain_name: 公共参考与元数据
+  source_kind: technical
+  disposition: operational_only
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - reference_data_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_role
+  ods_table: ods_fineract_m_role
+  business_area: OTHR
+  data_domain: OPER
+  domain_name: 平台运营与安全
+  source_kind: technical
+  disposition: operational_only
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - operations_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_role_permission
+  ods_table: ods_fineract_m_role_permission
+  business_area: OTHR
+  data_domain: OPER
+  domain_name: 平台运营与安全
+  source_kind: technical
+  disposition: operational_only
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: role_id, permission_id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - operations_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_savings_account
+  ods_table: ods_fineract_m_savings_account
+  business_area: DPST
+  data_domain: DPST
+  domain_name: 存款与储蓄
+  source_kind: master_or_reference
+  disposition: standalone_dimension
+  target_layer: DIM
+  target_table: dim_deposit_account
+  downstream_targets:
+  - dim_deposit_account
+  grain: id
+  load_strategy: full_snapshot
+  optional_module: false
+  confidence: human_reviewed
+  business_processes:
+  - deposit_account_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  - amount_decimal_precision
+  - currency_code_valid
+  sensitivity: restricted
+  rationale: Durable account attributes belong in DIM while balances and cumulative amounts require snapshots.
+- source_table: m_savings_account_charge
+  ods_table: ods_fineract_m_savings_account_charge
+  business_area: DPST
+  data_domain: DPST
+  domain_name: 存款与储蓄
+  source_kind: master_or_reference
+  disposition: snapshot_source
+  target_layer: DWD
+  target_table: dwd_deposit_charge
+  downstream_targets:
+  - dwd_deposit_charge
+  grain: id
+  load_strategy: full_replay
+  optional_module: false
+  confidence: human_reviewed
+  business_processes:
+  - deposit_transaction
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  - amount_decimal_precision
+  sensitivity: restricted
+  rationale: Charge balances are accumulating facts; canonical process replaces the invalid generated
+    code.
+- source_table: m_savings_account_charge_paid_by
+  ods_table: ods_fineract_m_savings_account_charge_paid_by
+  business_area: DPST
+  data_domain: DPST
+  domain_name: 存款与储蓄
+  source_kind: event_or_relation
+  disposition: standalone_fact
+  target_layer: DWD
+  target_table: dwd_deposit_charge_allocation
+  downstream_targets:
+  - dwd_deposit_charge_allocation
+  grain: savings_account_charge_id, savings_account_transaction_id, id
+  load_strategy: full_replay
+  optional_module: false
+  confidence: human_reviewed
+  business_processes:
+  - deposit_transaction
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  - amount_decimal_precision
+  sensitivity: restricted
+  rationale: Allocation needs its parent transaction to provide business date and account context.
+- source_table: m_savings_account_interest_rate_chart
+  ods_table: ods_fineract_m_savings_account_interest_rate_chart
+  business_area: DPST
+  data_domain: DPST
+  domain_name: 存款与储蓄
+  source_kind: master_or_reference
+  disposition: component_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - deposit_account_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  - amount_decimal_precision
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_savings_account_interest_rate_slab
+  ods_table: ods_fineract_m_savings_account_interest_rate_slab
+  business_area: DPST
+  data_domain: DPST
+  domain_name: 存款与储蓄
+  source_kind: master_or_reference
+  disposition: component_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - deposit_account_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  - amount_decimal_precision
+  - currency_code_valid
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_savings_account_transaction
+  ods_table: ods_fineract_m_savings_account_transaction
+  business_area: DPST
+  data_domain: DPST
+  domain_name: 存款与储蓄
+  source_kind: event_or_relation
+  disposition: standalone_fact
+  target_layer: DWD
+  target_table: dwd_deposit_transaction
+  downstream_targets:
+  - dwd_deposit_transaction
+  grain: id
+  load_strategy: full_replay
+  optional_module: false
+  confidence: human_reviewed
+  business_processes:
+  - deposit_transaction
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  - amount_decimal_precision
+  - deposit_balance_reconciliation
+  sensitivity: restricted
+  rationale: Source is the core dated deposit transaction with amount, reversal and running-balance semantics.
+- source_table: m_savings_account_transaction_tax_details
+  ods_table: ods_fineract_m_savings_account_transaction_tax_details
+  business_area: DPST
+  data_domain: DPST
+  domain_name: 存款与储蓄
+  source_kind: event_or_relation
+  disposition: standalone_fact
+  target_layer: DWD
+  target_table: dwd_deposit_transaction_tax
+  downstream_targets:
+  - dwd_deposit_transaction_tax
+  grain: savings_transaction_id, tax_component_id, id
+  load_strategy: full_replay
+  optional_module: false
+  confidence: human_reviewed
+  business_processes:
+  - deposit_transaction
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  - amount_decimal_precision
+  sensitivity: restricted
+  rationale: Tax detail must inherit transaction date and account context from its parent.
+- source_table: m_savings_interest_incentives
+  ods_table: ods_fineract_m_savings_interest_incentives
+  business_area: DPST
+  data_domain: DPST
+  domain_name: 存款与储蓄
+  source_kind: master_or_reference
+  disposition: component_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - deposit_account_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  - amount_decimal_precision
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_savings_officer_assignment_history
+  ods_table: ods_fineract_m_savings_officer_assignment_history
+  business_area: DPST
+  data_domain: DPST
+  domain_name: 存款与储蓄
+  source_kind: event_or_relation
+  disposition: standalone_fact
+  target_layer: DWD
+  target_table: dwd_deposit_officer_assignment
+  downstream_targets:
+  - dwd_deposit_officer_assignment
+  grain: id
+  load_strategy: full_replay
+  optional_module: false
+  confidence: human_reviewed
+  business_processes:
+  - deposit_transaction
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: restricted
+  rationale: Assignment history is an effective relationship, not a monetary fact.
+- source_table: m_savings_product
+  ods_table: ods_fineract_m_savings_product
+  business_area: DPST
+  data_domain: DPST
+  domain_name: 存款与储蓄
+  source_kind: master_or_reference
+  disposition: standalone_dimension
+  target_layer: DIM
+  target_table: dim_deposit_product
+  downstream_targets:
+  - dim_deposit_product
+  grain: id
+  load_strategy: full_snapshot
+  optional_module: false
+  confidence: human_reviewed
+  business_processes:
+  - deposit_account_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  - amount_decimal_precision
+  - currency_code_valid
+  sensitivity: internal
+  rationale: Deposit product is reusable reference data across deposit accounts and transactions.
+- source_table: m_savings_product_charge
+  ods_table: ods_fineract_m_savings_product_charge
+  business_area: DPST
+  data_domain: DPST
+  domain_name: 存款与储蓄
+  source_kind: master_or_reference
+  disposition: component_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: savings_product_id, charge_id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - deposit_account_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_share_account
+  ods_table: ods_fineract_m_share_account
+  business_area: ASTM
+  data_domain: INVS
+  domain_name: 投资、份额与资产持有
+  source_kind: master_or_reference
+  disposition: standalone_dimension
+  target_layer: DIM
+  target_table: dim_share_account
+  downstream_targets:
+  - dim_share_account
+  grain: id
+  load_strategy: full_snapshot
+  optional_module: true
+  confidence: human_reviewed
+  business_processes:
+  - share_account_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  - currency_code_valid
+  sensitivity: restricted
+  rationale: Durable account attributes remain dimensional while approved and pending shares require snapshots.
+- source_table: m_share_account_charge
+  ods_table: ods_fineract_m_share_account_charge
+  business_area: ASTM
+  data_domain: INVS
+  domain_name: 投资、份额与资产持有
+  source_kind: master_or_reference
+  disposition: snapshot_source
+  target_layer: DWD
+  target_table: dwd_share_charge_snapshot
+  downstream_targets:
+  - dwd_share_charge_snapshot
+  grain: id
+  load_strategy: full_replay
+  optional_module: true
+  confidence: human_reviewed
+  business_processes:
+  - share_account_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  - amount_decimal_precision
+  sensitivity: restricted
+  rationale: Source lacks a reliable event date and represents current charge settlement state.
+- source_table: m_share_account_charge_paid_by
+  ods_table: ods_fineract_m_share_account_charge_paid_by
+  business_area: ASTM
+  data_domain: INVS
+  domain_name: 投资、份额与资产持有
+  source_kind: event_or_relation
+  disposition: standalone_fact
+  target_layer: DWD
+  target_table: dwd_share_charge_allocation
+  downstream_targets:
+  - dwd_share_charge_allocation
+  grain: share_transaction_id, charge_transaction_id, id
+  load_strategy: full_replay
+  optional_module: true
+  confidence: human_reviewed
+  business_processes:
+  - share_account_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  - amount_decimal_precision
+  sensitivity: restricted
+  rationale: Allocation requires parent share transaction date and account context.
+- source_table: m_share_account_dividend_details
+  ods_table: ods_fineract_m_share_account_dividend_details
+  business_area: ASTM
+  data_domain: INVS
+  domain_name: 投资、份额与资产持有
+  source_kind: master_or_reference
+  disposition: standalone_fact
+  target_layer: DWD
+  target_table: dwd_share_dividend
+  downstream_targets:
+  - dwd_share_dividend
+  grain: dividend_pay_out_id, account_id, id
+  load_strategy: full_replay
+  optional_module: true
+  confidence: human_reviewed
+  business_processes:
+  - share_account_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  - amount_decimal_precision
+  sensitivity: restricted
+  rationale: Detail must join the payout header to obtain product and dividend-period context.
+- source_table: m_share_account_transactions
+  ods_table: ods_fineract_m_share_account_transactions
+  business_area: ASTM
+  data_domain: INVS
+  domain_name: 投资、份额与资产持有
+  source_kind: event_or_relation
+  disposition: standalone_fact
+  target_layer: DWD
+  target_table: dwd_share_transaction
+  downstream_targets:
+  - dwd_share_transaction
+  grain: id
+  load_strategy: full_replay
+  optional_module: true
+  confidence: human_reviewed
+  business_processes:
+  - share_account_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  - amount_decimal_precision
+  sensitivity: restricted
+  rationale: Source has dated share, amount and charge measures at transaction grain.
+- source_table: m_share_product
+  ods_table: ods_fineract_m_share_product
+  business_area: ASTM
+  data_domain: INVS
+  domain_name: 投资、份额与资产持有
+  source_kind: master_or_reference
+  disposition: standalone_dimension
+  target_layer: DIM
+  target_table: dim_share_product
+  downstream_targets:
+  - dim_share_product
+  grain: id
+  load_strategy: full_snapshot
+  optional_module: true
+  confidence: human_reviewed
+  business_processes:
+  - share_account_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  - amount_decimal_precision
+  - currency_code_valid
+  sensitivity: internal
+  rationale: Share product is reusable reference data; dated market value is a separate fact.
+- source_table: m_share_product_charge
+  ods_table: ods_fineract_m_share_product_charge
+  business_area: ASTM
+  data_domain: INVS
+  domain_name: 投资、份额与资产持有
+  source_kind: master_or_reference
+  disposition: component_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: product_id, charge_id
+  load_strategy: ods_full_snapshot
+  optional_module: true
+  confidence: candidate
+  business_processes:
+  - share_account_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_share_product_dividend_pay_out
+  ods_table: ods_fineract_m_share_product_dividend_pay_out
+  business_area: ASTM
+  data_domain: INVS
+  domain_name: 投资、份额与资产持有
+  source_kind: master_or_reference
+  disposition: component_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: true
+  confidence: candidate
+  business_processes:
+  - share_account_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  - amount_decimal_precision
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_share_product_market_price
+  ods_table: ods_fineract_m_share_product_market_price
+  business_area: ASTM
+  data_domain: INVS
+  domain_name: 投资、份额与资产持有
+  source_kind: master_or_reference
+  disposition: snapshot_source
+  target_layer: DWD
+  target_table: dwd_share_market_price
+  downstream_targets:
+  - dwd_share_market_price
+  grain: product_id, from_date
+  load_strategy: full_replay
+  optional_module: true
+  confidence: human_reviewed
+  business_processes:
+  - share_account_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: Source is a dated price observation and share_value must be labeled as an atomic metric.
+- source_table: m_staff
+  ods_table: ods_fineract_m_staff
+  business_area: CHNL
+  data_domain: ORGN
+  domain_name: 机构与员工
+  source_kind: master_or_reference
+  disposition: standalone_dimension
+  target_layer: DIM
+  target_table: dim_staff
+  downstream_targets:
+  - dim_staff
+  grain: id
+  load_strategy: full_snapshot
+  optional_module: false
+  confidence: human_reviewed
+  business_processes:
+  - organisation_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: restricted
+  rationale: Office and active state change over time and need SCD semantics.
+- source_table: m_staff_assignment_history
+  ods_table: ods_fineract_m_staff_assignment_history
+  business_area: CHNL
+  data_domain: ORGN
+  domain_name: 机构与员工
+  source_kind: event_or_relation
+  disposition: standalone_fact
+  target_layer: DWD
+  target_table: dwd_staff_assignment
+  downstream_targets:
+  - dwd_staff_assignment
+  grain: id
+  load_strategy: full_replay
+  optional_module: false
+  confidence: human_reviewed
+  business_processes:
+  - operations_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: restricted
+  rationale: Assignment is a factless effective relationship and uses the canonical operations process.
+- source_table: m_survey_components
+  ods_table: ods_fineract_m_survey_components
+  business_area: CHNL
+  data_domain: CHNL
+  domain_name: 渠道与客户服务
+  source_kind: master_or_reference
+  disposition: component_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: true
+  confidence: candidate
+  business_processes:
+  - customer_survey
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_survey_lookup_tables
+  ods_table: ods_fineract_m_survey_lookup_tables
+  business_area: CHNL
+  data_domain: CHNL
+  domain_name: 渠道与客户服务
+  source_kind: master_or_reference
+  disposition: component_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: true
+  confidence: candidate
+  business_processes:
+  - customer_survey
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_survey_questions
+  ods_table: ods_fineract_m_survey_questions
+  business_area: CHNL
+  data_domain: CHNL
+  domain_name: 渠道与客户服务
+  source_kind: master_or_reference
+  disposition: component_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: true
+  confidence: candidate
+  business_processes:
+  - customer_survey
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_survey_responses
+  ods_table: ods_fineract_m_survey_responses
+  business_area: CHNL
+  data_domain: CHNL
+  domain_name: 渠道与客户服务
+  source_kind: master_or_reference
+  disposition: component_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: true
+  confidence: candidate
+  business_processes:
+  - customer_survey
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_survey_scorecards
+  ods_table: ods_fineract_m_survey_scorecards
+  business_area: CHNL
+  data_domain: CHNL
+  domain_name: 渠道与客户服务
+  source_kind: master_or_reference
+  disposition: standalone_fact
+  target_layer: DWD
+  target_table: dwd_survey_response
+  downstream_targets:
+  - dwd_survey_response
+  grain: id
+  load_strategy: full_replay
+  optional_module: true
+  confidence: human_reviewed
+  business_processes:
+  - customer_survey
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: restricted
+  rationale: Source has explicit survey, question, response, customer and creation-time roles.
+- source_table: m_surveys
+  ods_table: ods_fineract_m_surveys
+  business_area: CHNL
+  data_domain: CHNL
+  domain_name: 渠道与客户服务
+  source_kind: master_or_reference
+  disposition: standalone_dimension
+  target_layer: DIM
+  target_table: dim_survey
+  downstream_targets:
+  - dim_survey
+  grain: id
+  load_strategy: full_snapshot
+  optional_module: true
+  confidence: human_reviewed
+  business_processes:
+  - customer_survey
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: Survey header is reusable reference data for question and response facts.
+- source_table: m_tax_component
+  ods_table: ods_fineract_m_tax_component
+  business_area: OTHR
+  data_domain: PROD
+  domain_name: 产品、定价与税费
+  source_kind: master_or_reference
+  disposition: component_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - product_configuration
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_tax_component_history
+  ods_table: ods_fineract_m_tax_component_history
+  business_area: OTHR
+  data_domain: PROD
+  domain_name: 产品、定价与税费
+  source_kind: event_or_relation
+  disposition: component_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - product_configuration
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_tax_group
+  ods_table: ods_fineract_m_tax_group
+  business_area: OTHR
+  data_domain: PROD
+  domain_name: 产品、定价与税费
+  source_kind: master_or_reference
+  disposition: component_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - product_configuration
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_tax_group_mappings
+  ods_table: ods_fineract_m_tax_group_mappings
+  business_area: OTHR
+  data_domain: PROD
+  domain_name: 产品、定价与税费
+  source_kind: event_or_relation
+  disposition: bridge_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - product_configuration
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_tellers
+  ods_table: ods_fineract_m_tellers
+  business_area: PAYM
+  data_domain: PAYM
+  domain_name: 支付结算
+  source_kind: master_or_reference
+  disposition: standalone_dimension
+  target_layer: DIM
+  target_table: dim_teller
+  downstream_targets:
+  - dim_teller
+  grain: id
+  load_strategy: full_snapshot
+  optional_module: false
+  confidence: human_reviewed
+  business_processes:
+  - payment_operation
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: Validity window and office/GL roles require effective-version semantics.
+- source_table: m_template
+  ods_table: ods_fineract_m_template
+  business_area: OTHR
+  data_domain: OTHR
+  domain_name: 其它银行运营
+  source_kind: master_or_reference
+  disposition: rule_reference
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - operations_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_template_m_templatemappers
+  ods_table: ods_fineract_m_template_m_templatemappers
+  business_area: OTHR
+  data_domain: OTHR
+  domain_name: 其它银行运营
+  source_kind: master_or_reference
+  disposition: rule_reference
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: source row
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - operations_management
+  quality_rules:
+  - source_row_count_reconciliation
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_templatemappers
+  ods_table: ods_fineract_m_templatemappers
+  business_area: OTHR
+  data_domain: OTHR
+  domain_name: 其它银行运营
+  source_kind: master_or_reference
+  disposition: rule_reference
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - operations_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_trial_balance
+  ods_table: ods_fineract_m_trial_balance
+  business_area: OTHR
+  data_domain: OTHR
+  domain_name: 其它银行运营
+  source_kind: master_or_reference
+  disposition: snapshot_source
+  target_layer: DWD
+  target_table: dwd_gl_trial_balance_snapshot
+  downstream_targets:
+  - dwd_gl_trial_balance_snapshot
+  grain: office_id, account_id, entry_date
+  load_strategy: full_replay
+  optional_module: false
+  confidence: human_reviewed
+  business_processes:
+  - general_ledger_posting
+  quality_rules:
+  - source_row_count_reconciliation
+  - amount_decimal_precision
+  sensitivity: internal
+  rationale: Source lacks a declared PK, so gold must validate uniqueness at the semantic composite grain.
+- source_table: m_wc_breach_configuration
+  ods_table: ods_fineract_m_wc_breach_configuration
+  business_area: LOAN
+  data_domain: WCLN
+  domain_name: 营运资金贷款
+  source_kind: event_or_relation
+  disposition: rule_reference
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: true
+  confidence: candidate
+  business_processes:
+  - wc_loan_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  - amount_decimal_precision
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_wc_delinquency_configuration
+  ods_table: ods_fineract_m_wc_delinquency_configuration
+  business_area: LOAN
+  data_domain: WCLN
+  domain_name: 营运资金贷款
+  source_kind: master_or_reference
+  disposition: rule_reference
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: true
+  confidence: candidate
+  business_processes:
+  - delinquency_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_wc_loan
+  ods_table: ods_fineract_m_wc_loan
+  business_area: LOAN
+  data_domain: WCLN
+  domain_name: 营运资金贷款
+  source_kind: master_or_reference
+  disposition: standalone_dimension
+  target_layer: DIM
+  target_table: dim_wc_loan_account
+  downstream_targets:
+  - dim_wc_loan_account
+  grain: id
+  load_strategy: full_snapshot
+  optional_module: true
+  confidence: human_reviewed
+  business_processes:
+  - wc_loan_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  - amount_decimal_precision
+  - currency_code_valid
+  sensitivity: restricted
+  rationale: Durable account attributes belong in DIM while utilization and breach amounts require snapshots.
+- source_table: m_wc_loan_account_locks
+  ods_table: ods_fineract_m_wc_loan_account_locks
+  business_area: LOAN
+  data_domain: WCLN
+  domain_name: 营运资金贷款
+  source_kind: technical
+  disposition: operational_only
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: loan_id
+  load_strategy: ods_full_snapshot
+  optional_module: true
+  confidence: candidate
+  business_processes:
+  - wc_loan_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 经人工复核不应直接生成分析事实；保留受控 ODS，并按明确的规则、关系或运维用途参与后续模型设计。
+- source_table: m_wc_loan_amortization_model
+  ods_table: ods_fineract_m_wc_loan_amortization_model
+  business_area: LOAN
+  data_domain: WCLN
+  domain_name: 营运资金贷款
+  source_kind: master_or_reference
+  disposition: component_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: true
+  confidence: candidate
+  business_processes:
+  - wc_loan_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_wc_loan_balance
+  ods_table: ods_fineract_m_wc_loan_balance
+  business_area: LOAN
+  data_domain: WCLN
+  domain_name: 营运资金贷款
+  source_kind: master_or_reference
+  disposition: snapshot_source
+  target_layer: DWD
+  target_table: dwd_wc_loan_balance_snapshot
+  downstream_targets:
+  - dwd_wc_loan_balance_snapshot
+  grain: wc_loan_id, snapshot_date
+  load_strategy: full_replay
+  optional_module: true
+  confidence: human_reviewed
+  business_processes:
+  - loan_transaction
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  - amount_decimal_precision
+  sensitivity: restricted
+  rationale: Source holds current cumulative balances without a business date, so ETL must add snapshot_date.
+- source_table: m_wc_loan_breach_action
+  ods_table: ods_fineract_m_wc_loan_breach_action
+  business_area: LOAN
+  data_domain: WCLN
+  domain_name: 营运资金贷款
+  source_kind: event_or_relation
+  disposition: standalone_fact
+  target_layer: DWD
+  target_table: dwd_wc_breach_event
+  downstream_targets:
+  - dwd_wc_breach_event
+  grain: id
+  load_strategy: full_replay
+  optional_module: true
+  confidence: human_reviewed
+  business_processes:
+  - delinquency_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: restricted
+  rationale: Breach interval is valid after replacing the invalid generated WC process code.
+- source_table: m_wc_loan_breach_reset_history
+  ods_table: ods_fineract_m_wc_loan_breach_reset_history
+  business_area: LOAN
+  data_domain: WCLN
+  domain_name: 营运资金贷款
+  source_kind: event_or_relation
+  disposition: component_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: true
+  confidence: candidate
+  business_processes:
+  - wc_loan_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  - amount_decimal_precision
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_wc_loan_breach_schedule
+  ods_table: ods_fineract_m_wc_loan_breach_schedule
+  business_area: LOAN
+  data_domain: WCLN
+  domain_name: 营运资金贷款
+  source_kind: event_or_relation
+  disposition: component_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: true
+  confidence: candidate
+  business_processes:
+  - wc_loan_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  - amount_decimal_precision
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_wc_loan_charge
+  ods_table: ods_fineract_m_wc_loan_charge
+  business_area: LOAN
+  data_domain: WCLN
+  domain_name: 营运资金贷款
+  source_kind: master_or_reference
+  disposition: component_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: true
+  confidence: candidate
+  business_processes:
+  - wc_loan_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  - amount_decimal_precision
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_wc_loan_delinquency_action
+  ods_table: ods_fineract_m_wc_loan_delinquency_action
+  business_area: LOAN
+  data_domain: WCLN
+  domain_name: 营运资金贷款
+  source_kind: event_or_relation
+  disposition: component_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: true
+  confidence: candidate
+  business_processes:
+  - delinquency_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_wc_loan_delinquency_range_schedule
+  ods_table: ods_fineract_m_wc_loan_delinquency_range_schedule
+  business_area: LOAN
+  data_domain: WCLN
+  domain_name: 营运资金贷款
+  source_kind: event_or_relation
+  disposition: component_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: true
+  confidence: candidate
+  business_processes:
+  - delinquency_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  - amount_decimal_precision
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_wc_loan_disbursement_detail
+  ods_table: ods_fineract_m_wc_loan_disbursement_detail
+  business_area: LOAN
+  data_domain: WCLN
+  domain_name: 营运资金贷款
+  source_kind: master_or_reference
+  disposition: standalone_fact
+  target_layer: DWD
+  target_table: dwd_wc_loan_disbursement
+  downstream_targets:
+  - dwd_wc_loan_disbursement
+  grain: id
+  load_strategy: full_replay
+  optional_module: true
+  confidence: human_reviewed
+  business_processes:
+  - loan_disbursement
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  - amount_decimal_precision
+  sensitivity: restricted
+  rationale: Source has expected and actual disbursement dates and amounts at tranche grain.
+- source_table: m_wc_loan_near_breach_action
+  ods_table: ods_fineract_m_wc_loan_near_breach_action
+  business_area: LOAN
+  data_domain: WCLN
+  domain_name: 营运资金贷款
+  source_kind: event_or_relation
+  disposition: component_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: true
+  confidence: candidate
+  business_processes:
+  - wc_loan_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_wc_loan_note
+  ods_table: ods_fineract_m_wc_loan_note
+  business_area: LOAN
+  data_domain: WCLN
+  domain_name: 营运资金贷款
+  source_kind: master_or_reference
+  disposition: component_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: true
+  confidence: candidate
+  business_processes:
+  - wc_loan_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: restricted
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_wc_loan_originator_mapping
+  ods_table: ods_fineract_m_wc_loan_originator_mapping
+  business_area: LOAN
+  data_domain: WCLN
+  domain_name: 营运资金贷款
+  source_kind: event_or_relation
+  disposition: bridge_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: true
+  confidence: candidate
+  business_processes:
+  - wc_loan_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_wc_loan_payment_allocation_rule
+  ods_table: ods_fineract_m_wc_loan_payment_allocation_rule
+  business_area: LOAN
+  data_domain: WCLN
+  domain_name: 营运资金贷款
+  source_kind: master_or_reference
+  disposition: rule_reference
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: true
+  confidence: candidate
+  business_processes:
+  - wc_loan_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 经人工复核不应直接生成分析事实；保留受控 ODS，并按明确的规则、关系或运维用途参与后续模型设计。
+- source_table: m_wc_loan_period_payment_rate_change
+  ods_table: ods_fineract_m_wc_loan_period_payment_rate_change
+  business_area: LOAN
+  data_domain: WCLN
+  domain_name: 营运资金贷款
+  source_kind: master_or_reference
+  disposition: component_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: true
+  confidence: candidate
+  business_processes:
+  - wc_loan_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_wc_loan_product
+  ods_table: ods_fineract_m_wc_loan_product
+  business_area: LOAN
+  data_domain: WCLN
+  domain_name: 营运资金贷款
+  source_kind: master_or_reference
+  disposition: standalone_dimension
+  target_layer: DIM
+  target_table: dim_wc_loan_product
+  downstream_targets:
+  - dim_wc_loan_product
+  grain: id
+  load_strategy: full_snapshot
+  optional_module: true
+  confidence: human_reviewed
+  business_processes:
+  - wc_loan_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  - amount_decimal_precision
+  - currency_code_valid
+  sensitivity: internal
+  rationale: Working-capital loan product is reusable product reference data.
+- source_table: m_wc_loan_product_configurable_attributes
+  ods_table: ods_fineract_m_wc_loan_product_configurable_attributes
+  business_area: LOAN
+  data_domain: WCLN
+  domain_name: 营运资金贷款
+  source_kind: master_or_reference
+  disposition: component_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: true
+  confidence: candidate
+  business_processes:
+  - wc_loan_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_wc_loan_product_payment_allocation_rule
+  ods_table: ods_fineract_m_wc_loan_product_payment_allocation_rule
+  business_area: LOAN
+  data_domain: WCLN
+  domain_name: 营运资金贷款
+  source_kind: event_or_relation
+  disposition: rule_reference
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: true
+  confidence: candidate
+  business_processes:
+  - wc_loan_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_wc_loan_range_delinquency_tag
+  ods_table: ods_fineract_m_wc_loan_range_delinquency_tag
+  business_area: LOAN
+  data_domain: WCLN
+  domain_name: 营运资金贷款
+  source_kind: master_or_reference
+  disposition: component_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: true
+  confidence: candidate
+  business_processes:
+  - delinquency_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  - amount_decimal_precision
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_wc_loan_transaction
+  ods_table: ods_fineract_m_wc_loan_transaction
+  business_area: LOAN
+  data_domain: WCLN
+  domain_name: 营运资金贷款
+  source_kind: event_or_relation
+  disposition: standalone_fact
+  target_layer: DWD
+  target_table: dwd_wc_loan_transaction
+  downstream_targets:
+  - dwd_wc_loan_transaction
+  grain: id
+  load_strategy: full_replay
+  optional_module: true
+  confidence: human_reviewed
+  business_processes:
+  - loan_transaction
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  - amount_decimal_precision
+  sensitivity: restricted
+  rationale: Source is a dated working-capital transaction with amount, reversal and classification semantics.
+- source_table: m_wc_loan_transaction_allocation
+  ods_table: ods_fineract_m_wc_loan_transaction_allocation
+  business_area: LOAN
+  data_domain: WCLN
+  domain_name: 营运资金贷款
+  source_kind: event_or_relation
+  disposition: component_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: true
+  confidence: candidate
+  business_processes:
+  - loan_transaction
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_wc_loan_transaction_relation
+  ods_table: ods_fineract_m_wc_loan_transaction_relation
+  business_area: LOAN
+  data_domain: WCLN
+  domain_name: 营运资金贷款
+  source_kind: event_or_relation
+  disposition: bridge_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: true
+  confidence: candidate
+  business_processes:
+  - loan_transaction
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_wc_near_breach
+  ods_table: ods_fineract_m_wc_near_breach
+  business_area: LOAN
+  data_domain: WCLN
+  domain_name: 营运资金贷款
+  source_kind: event_or_relation
+  disposition: component_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: true
+  confidence: candidate
+  business_processes:
+  - wc_loan_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: m_working_days
+  ods_table: ods_fineract_m_working_days
+  business_area: CHNL
+  data_domain: ORGN
+  domain_name: 机构与员工
+  source_kind: master_or_reference
+  disposition: standalone_dimension
+  target_layer: DIM
+  target_table: dim_working_day_rule
+  downstream_targets:
+  - dim_working_day_rule
+  grain: id
+  load_strategy: full_snapshot
+  optional_module: false
+  confidence: human_reviewed
+  business_processes:
+  - organisation_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: Singleton working-day configuration is a valid rule dimension when scope is explicit.
+- source_table: mix_taxonomy
+  ods_table: ods_fineract_mix_taxonomy
+  business_area: OTHR
+  data_domain: OTHR
+  domain_name: 其它银行运营
+  source_kind: master_or_reference
+  disposition: component_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - operations_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: mix_taxonomy_mapping
+  ods_table: ods_fineract_mix_taxonomy_mapping
+  business_area: OTHR
+  data_domain: OTHR
+  domain_name: 其它银行运营
+  source_kind: event_or_relation
+  disposition: bridge_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - operations_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  - currency_code_valid
+  sensitivity: restricted
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: mix_xbrl_namespace
+  ods_table: ods_fineract_mix_xbrl_namespace
+  business_area: OTHR
+  data_domain: OTHR
+  domain_name: 其它银行运营
+  source_kind: master_or_reference
+  disposition: component_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - operations_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: notification_generator
+  ods_table: ods_fineract_notification_generator
+  business_area: CHNL
+  data_domain: CHNL
+  domain_name: 渠道与客户服务
+  source_kind: master_or_reference
+  disposition: component_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - customer_service_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: restricted
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: notification_mapper
+  ods_table: ods_fineract_notification_mapper
+  business_area: CHNL
+  data_domain: CHNL
+  domain_name: 渠道与客户服务
+  source_kind: master_or_reference
+  disposition: component_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - customer_service_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: oauth_access_token
+  ods_table: ods_fineract_oauth_access_token
+  business_area: OTHR
+  data_domain: OPER
+  domain_name: 平台运营与安全
+  source_kind: technical
+  disposition: security_excluded
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: source row
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: security_reviewed
+  business_processes:
+  - operations_management
+  quality_rules:
+  - source_row_count_reconciliation
+  sensitivity: restricted
+  rationale: 包含密码、令牌或认证凭据，仅保留受限 ODS，禁止进入普通分析层。
+- source_table: oauth_client_details
+  ods_table: ods_fineract_oauth_client_details
+  business_area: OTHR
+  data_domain: OPER
+  domain_name: 平台运营与安全
+  source_kind: technical
+  disposition: security_excluded
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: client_id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: security_reviewed
+  business_processes:
+  - customer_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: restricted
+  rationale: 包含密码、令牌或认证凭据，仅保留受限 ODS，禁止进入普通分析层。
+- source_table: oauth_refresh_token
+  ods_table: ods_fineract_oauth_refresh_token
+  business_area: OTHR
+  data_domain: OPER
+  domain_name: 平台运营与安全
+  source_kind: technical
+  disposition: security_excluded
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: source row
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: security_reviewed
+  business_processes:
+  - operations_management
+  quality_rules:
+  - source_row_count_reconciliation
+  sensitivity: restricted
+  rationale: 包含密码、令牌或认证凭据，仅保留受限 ODS，禁止进入普通分析层。
+- source_table: ppi_likelihoods
+  ods_table: ods_fineract_ppi_likelihoods
+  business_area: CHNL
+  data_domain: CHNL
+  domain_name: 渠道与客户服务
+  source_kind: master_or_reference
+  disposition: component_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: true
+  confidence: candidate
+  business_processes:
+  - customer_service_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: ppi_likelihoods_ppi
+  ods_table: ods_fineract_ppi_likelihoods_ppi
+  business_area: CHNL
+  data_domain: CHNL
+  domain_name: 渠道与客户服务
+  source_kind: master_or_reference
+  disposition: component_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: true
+  confidence: candidate
+  business_processes:
+  - customer_service_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: ppi_scores
+  ods_table: ods_fineract_ppi_scores
+  business_area: CHNL
+  data_domain: CHNL
+  domain_name: 渠道与客户服务
+  source_kind: master_or_reference
+  disposition: component_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: true
+  confidence: candidate
+  business_processes:
+  - customer_service_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: r_enum_value
+  ods_table: ods_fineract_r_enum_value
+  business_area: OTHR
+  data_domain: OTHR
+  domain_name: 其它银行运营
+  source_kind: master_or_reference
+  disposition: component_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: enum_name, enum_id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - operations_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: ref_loan_transaction_processing_strategy
+  ods_table: ods_fineract_ref_loan_transaction_processing_strategy
+  business_area: LOAN
+  data_domain: LOAN
+  domain_name: 贷款与信贷
+  source_kind: event_or_relation
+  disposition: rule_reference
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - loan_transaction
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: request_audit_table
+  ods_table: ods_fineract_request_audit_table
+  business_area: OTHR
+  data_domain: RISK
+  domain_name: 风险、合规与审计
+  source_kind: technical
+  disposition: security_excluded
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: security_reviewed
+  business_processes:
+  - risk_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: restricted
+  rationale: 包含密码、令牌或认证凭据，仅保留受限 ODS，禁止进入普通分析层。
+- source_table: rpt_sequence
+  ods_table: ods_fineract_rpt_sequence
+  business_area: OTHR
+  data_domain: OTHR
+  domain_name: 其它银行运营
+  source_kind: technical
+  disposition: operational_only
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - operations_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: scheduled_email_campaign
+  ods_table: ods_fineract_scheduled_email_campaign
+  business_area: OTHR
+  data_domain: OTHR
+  domain_name: 其它银行运营
+  source_kind: technical
+  disposition: security_excluded
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: security_reviewed
+  business_processes:
+  - operations_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: restricted
+  rationale: 包含密码、令牌或认证凭据，仅保留受限 ODS，禁止进入普通分析层。
+- source_table: scheduled_email_configuration
+  ods_table: ods_fineract_scheduled_email_configuration
+  business_area: OTHR
+  data_domain: REFR
+  domain_name: 公共参考与元数据
+  source_kind: technical
+  disposition: security_excluded
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: security_reviewed
+  business_processes:
+  - reference_data_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: restricted
+  rationale: 包含密码、令牌或认证凭据，仅保留受限 ODS，禁止进入普通分析层。
+- source_table: scheduled_email_messages_outbound
+  ods_table: ods_fineract_scheduled_email_messages_outbound
+  business_area: OTHR
+  data_domain: OTHR
+  domain_name: 其它银行运营
+  source_kind: technical
+  disposition: security_excluded
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: security_reviewed
+  business_processes:
+  - operations_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: restricted
+  rationale: 包含密码、令牌或认证凭据，仅保留受限 ODS，禁止进入普通分析层。
+- source_table: scheduler_detail
+  ods_table: ods_fineract_scheduler_detail
+  business_area: OTHR
+  data_domain: OPER
+  domain_name: 平台运营与安全
+  source_kind: technical
+  disposition: operational_only
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - operations_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: sms_campaign
+  ods_table: ods_fineract_sms_campaign
+  business_area: CHNL
+  data_domain: CHNL
+  domain_name: 渠道与客户服务
+  source_kind: technical
+  disposition: security_excluded
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: security_reviewed
+  business_processes:
+  - customer_service_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: restricted
+  rationale: 包含秘密、认证信息或高风险自由文本，仅保留受限 ODS，禁止进入普通分析层。
+- source_table: sms_messages_outbound
+  ods_table: ods_fineract_sms_messages_outbound
+  business_area: CHNL
+  data_domain: CHNL
+  domain_name: 渠道与客户服务
+  source_kind: master_or_reference
+  disposition: component_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - customer_service_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: restricted
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: stretchy_parameter
+  ods_table: ods_fineract_stretchy_parameter
+  business_area: OTHR
+  data_domain: REFR
+  domain_name: 公共参考与元数据
+  source_kind: technical
+  disposition: operational_only
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - reference_data_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: stretchy_report
+  ods_table: ods_fineract_stretchy_report
+  business_area: OTHR
+  data_domain: REFR
+  domain_name: 公共参考与元数据
+  source_kind: technical
+  disposition: operational_only
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - reference_data_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: stretchy_report_parameter
+  ods_table: ods_fineract_stretchy_report_parameter
+  business_area: OTHR
+  data_domain: REFR
+  domain_name: 公共参考与元数据
+  source_kind: technical
+  disposition: operational_only
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - reference_data_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: twofactor_access_token
+  ods_table: ods_fineract_twofactor_access_token
+  business_area: OTHR
+  data_domain: OPER
+  domain_name: 平台运营与安全
+  source_kind: technical
+  disposition: security_excluded
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: security_reviewed
+  business_processes:
+  - operations_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: restricted
+  rationale: 包含密码、令牌或认证凭据，仅保留受限 ODS，禁止进入普通分析层。
+- source_table: twofactor_configuration
+  ods_table: ods_fineract_twofactor_configuration
+  business_area: OTHR
+  data_domain: REFR
+  domain_name: 公共参考与元数据
+  source_kind: technical
+  disposition: security_excluded
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: id
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: security_reviewed
+  business_processes:
+  - reference_data_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: restricted
+  rationale: 包含密码、令牌或认证凭据，仅保留受限 ODS，禁止进入普通分析层。
+- source_table: x_registered_table
+  ods_table: ods_fineract_x_registered_table
+  business_area: OTHR
+  data_domain: OTHR
+  domain_name: 其它银行运营
+  source_kind: master_or_reference
+  disposition: component_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: registered_table_name
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - operations_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+- source_table: x_table_column_code_mappings
+  ods_table: ods_fineract_x_table_column_code_mappings
+  business_area: OTHR
+  data_domain: REFR
+  domain_name: 公共参考与元数据
+  source_kind: event_or_relation
+  disposition: bridge_source
+  target_layer: NONE
+  target_table: ''
+  downstream_targets: []
+  grain: column_alias_name
+  load_strategy: ods_full_snapshot
+  optional_module: false
+  confidence: candidate
+  business_processes:
+  - reference_data_management
+  quality_rules:
+  - source_row_count_reconciliation
+  - pk_not_null_unique
+  sensitivity: internal
+  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。

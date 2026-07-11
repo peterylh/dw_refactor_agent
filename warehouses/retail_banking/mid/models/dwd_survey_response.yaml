@@ -1,0 +1,72 @@
+version: 2
+name: dwd_survey_response
+layer: DWD
+description: Source has explicit survey, question, response, customer and creation-time roles.
+table_type: factless_fact
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+data_domain: '11'
+business_area: CHNL
+entities:
+- code: SURVEY_RESPONSE
+  type: primary
+  name: Survey Response
+  key_columns:
+  - id
+- code: SURVEY
+  type: foreign
+  role: survey
+  name: Survey
+  key_columns:
+  - survey_id
+  source_fk:
+  - survey_id
+- code: CUSTOMER
+  type: foreign
+  role: customer
+  name: Customer
+  key_columns:
+  - client_id
+  source_fk:
+  - client_id
+- code: SURVEY_QUESTION
+  type: foreign
+  role: question
+  name: Survey Question
+  key_columns:
+  - question_id
+  source_fk:
+  - question_id
+- code: SURVEY_RESPONSE_OPTION
+  type: foreign
+  role: response
+  name: Survey Response Option
+  key_columns:
+  - response_id
+  source_fk:
+  - response_id
+grain:
+  description: one selected response to one survey question for one customer
+  columns:
+  - id
+business_date:
+  kind: event
+  column: business_date
+  inherit_from: null
+  source_column: created_on
+source_mapping:
+  upstream_repository: https://github.com/apache/fineract
+  source_table: m_survey_scorecards
+  ods_table: ods_fineract_m_survey_scorecards
+  disposition: standalone_fact
+  confidence: human_reviewed
+sensitivity: restricted
+sensitivity_policy:
+  level: restricted
+  action: mask_and_tokenize
+column_sensitivity: []
+human_review:
+  verdict: accept
+  allowed_alternatives: []
+business_process: customer_survey

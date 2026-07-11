@@ -1,0 +1,60 @@
+-- Deterministic smoke data for Fineract m_client_transaction
+TRUNCATE TABLE retail_banking_dm.ods_fineract_m_client_transaction;
+
+INSERT INTO retail_banking_dm.ods_fineract_m_client_transaction (
+    `id`,
+    `client_id`,
+    `office_id`,
+    `currency_code`,
+    `payment_detail_id`,
+    `is_reversed`,
+    `external_id`,
+    `transaction_date`,
+    `transaction_type_enum`,
+    `amount`,
+    `created_date`,
+    `created_on_utc`,
+    `created_by`,
+    `last_modified_by`,
+    `last_modified_on_utc`,
+    `submitted_on_date`,
+    `load_time`
+) VALUES
+    (
+        1,
+        1,
+        1,
+        'USD',
+        1,
+        FALSE,
+        '00000000-0000-4000-8000-000000000001',
+        '2025-01-15',
+        1,
+        100.000000,
+        '2025-01-15 09:00:00',
+        '2025-01-15 09:00:00',
+        1,
+        1,
+        '2025-01-15 09:00:00',
+        '2025-01-15',
+        '2025-01-15 00:00:00'
+    ),
+    (
+        2,
+        1,
+        1,
+        'USD',
+        1,
+        FALSE,
+        '00000000-0000-4000-8000-000000000002',
+        '2025-01-16',
+        1,
+        100.000000,
+        '2025-01-16 09:00:00',
+        '2025-01-16 09:00:00',
+        2,
+        2,
+        '2025-01-16 09:00:00',
+        '2025-01-16',
+        '2025-01-15 00:00:00'
+    );

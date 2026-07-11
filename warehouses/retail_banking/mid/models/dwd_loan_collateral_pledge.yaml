@@ -1,0 +1,78 @@
+version: 2
+name: dwd_loan_collateral_pledge
+layer: DWD
+description: Pledge is a loan-collateral relationship with quantity and transaction provenance.
+table_type: factless_fact
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+data_domain: '04'
+business_area: LOAN
+entities:
+- code: LOAN_COLLATERAL_PLEDGE
+  type: primary
+  name: Loan Collateral Pledge
+  key_columns:
+  - id
+- code: LOAN_ACCOUNT
+  type: foreign
+  role: loan_account
+  name: Loan Account
+  key_columns:
+  - loan_id
+  source_fk:
+  - loan_id
+- code: CUSTOMER_COLLATERAL
+  type: foreign
+  role: customer_collateral
+  name: Customer Collateral
+  key_columns:
+  - client_collateral_id
+  source_fk:
+  - client_collateral_id
+- code: LOAN_TRANSACTION
+  type: foreign
+  role: originating_loan_transaction
+  name: Loan Transaction
+  key_columns:
+  - transaction_id
+  source_fk:
+  - transaction_id
+grain:
+  description: one pledged customer-collateral item on one loan
+  columns:
+  - id
+business_date:
+  kind: inherited
+  column: business_date
+  inherit_from: m_loan_transaction.transaction_date
+  source_column: null
+source_mapping:
+  upstream_repository: https://github.com/apache/fineract
+  source_table: m_loan_collateral_management
+  ods_table: ods_fineract_m_loan_collateral_management
+  disposition: standalone_fact
+  confidence: human_reviewed
+sensitivity: restricted
+sensitivity_policy:
+  level: restricted
+  action: mask_and_tokenize
+column_sensitivity: []
+human_review:
+  verdict: revise
+  allowed_alternatives:
+  - bridge_loan_customer_collateral
+business_process: collateral_management
+atomic_metrics:
+- quantity
+metric_semantics:
+- name: quantity
+  class: atomic
+  aggregation_behavior: additive
+  formula: quantity
+  unit: count
+  currency_source: not_applicable
+  additive_over:
+  - id
+  sign: source_defined
+  reversal: source_policy

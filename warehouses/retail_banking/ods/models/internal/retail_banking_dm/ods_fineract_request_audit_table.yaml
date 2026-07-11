@@ -1,0 +1,13 @@
+version: 2
+name: ods_fineract_request_audit_table
+layer: ODS
+description: Fineract request_audit_table 贴源表
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+source:
+  repository: https://github.com/apache/fineract
+  table: request_audit_table
+  disposition: security_excluded
+  confidence: security_reviewed
+sensitivity: restricted

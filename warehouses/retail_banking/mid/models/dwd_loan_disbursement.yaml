@@ -1,0 +1,72 @@
+version: 2
+name: dwd_loan_disbursement
+layer: DWD
+description: Tranche-level expected and actual dates and amounts define a clear disbursement fact.
+table_type: fact
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+data_domain: '04'
+business_area: LOAN
+entities:
+- code: LOAN_DISBURSEMENT
+  type: primary
+  name: Loan Disbursement
+  key_columns:
+  - id
+- code: LOAN_ACCOUNT
+  type: foreign
+  role: loan_account
+  name: Loan Account
+  key_columns:
+  - loan_id
+  source_fk:
+  - loan_id
+grain:
+  description: one expected or actual disbursement tranche
+  columns:
+  - id
+business_date:
+  kind: event
+  column: business_date
+  inherit_from: null
+  source_column: disbursedon_date
+source_mapping:
+  upstream_repository: https://github.com/apache/fineract
+  source_table: m_loan_disbursement_detail
+  ods_table: ods_fineract_m_loan_disbursement_detail
+  disposition: standalone_fact
+  confidence: human_reviewed
+sensitivity: restricted
+sensitivity_policy:
+  level: restricted
+  action: mask_and_tokenize
+column_sensitivity: []
+human_review:
+  verdict: accept
+  allowed_alternatives: []
+business_process: loan_disbursement
+atomic_metrics:
+- principal
+- net_disbursal_amount
+metric_semantics:
+- name: principal
+  class: atomic
+  aggregation_behavior: additive
+  formula: principal
+  unit: currency
+  currency_source: account_currency
+  additive_over:
+  - id
+  sign: source_defined
+  reversal: source_policy
+- name: net_disbursal_amount
+  class: atomic
+  aggregation_behavior: additive
+  formula: net_disbursal_amount
+  unit: currency
+  currency_source: account_currency
+  additive_over:
+  - id
+  sign: source_defined
+  reversal: source_policy

@@ -1,0 +1,51 @@
+-- Deterministic smoke data for Fineract sms_campaign
+TRUNCATE TABLE retail_banking_dm.ods_fineract_sms_campaign;
+
+INSERT INTO retail_banking_dm.ods_fineract_sms_campaign (
+    `id`,
+    `campaign_name`,
+    `campaign_type`,
+    `campaign_trigger_type`,
+    `report_id`,
+    `provider_id`,
+    `param_value`,
+    `status_enum`,
+    `message`,
+    `submittedon_date`,
+    `submittedon_userid`,
+    `approvedon_date`,
+    `approvedon_userid`,
+    `closedon_date`,
+    `closedon_userid`,
+    `recurrence`,
+    `next_trigger_date`,
+    `last_trigger_date`,
+    `recurrence_start_date`,
+    `is_visible`,
+    `is_notification`,
+    `load_time`
+) VALUES
+    (
+        1,
+        'sms_campaign_campaign_name_1',
+        1,
+        1,
+        1,
+        1,
+        'sms_campaign_param_value_1',
+        1,
+        'sms_campaign_message_1',
+        '2025-01-15',
+        1,
+        '2025-01-15',
+        1,
+        '2025-01-15',
+        1,
+        'sms_campaign_recurrence_1',
+        '2025-01-15 09:00:00',
+        '2025-01-15 09:00:00',
+        '2025-01-15 09:00:00',
+        FALSE,
+        FALSE,
+        '2025-01-15 00:00:00'
+    );

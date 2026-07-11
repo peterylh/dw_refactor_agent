@@ -1,0 +1,56 @@
+version: 2
+name: dwd_group_meeting_attendance
+layer: DWD
+description: Attendance must join the meeting/calendar chain to acquire a business date.
+table_type: factless_fact
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+data_domain: '01'
+business_area: CLNT
+entities:
+- code: GROUP_MEETING_ATTENDANCE
+  type: primary
+  name: Group Meeting Attendance
+  key_columns:
+  - id
+- code: CUSTOMER
+  type: foreign
+  role: customer
+  name: Customer
+  key_columns:
+  - client_id
+  source_fk:
+  - client_id
+- code: GROUP_MEETING
+  type: foreign
+  role: meeting
+  name: Group Meeting
+  key_columns:
+  - meeting_id
+  source_fk:
+  - meeting_id
+grain:
+  description: one customer attendance result for one meeting
+  columns:
+  - id
+business_date:
+  kind: inherited
+  column: business_date
+  inherit_from: m_meeting.meeting_date
+  source_column: null
+source_mapping:
+  upstream_repository: https://github.com/apache/fineract
+  source_table: m_client_attendance
+  ods_table: ods_fineract_m_client_attendance
+  disposition: standalone_fact
+  confidence: human_reviewed
+sensitivity: restricted
+sensitivity_policy:
+  level: restricted
+  action: mask_and_tokenize
+column_sensitivity: []
+human_review:
+  verdict: revise
+  allowed_alternatives: []
+business_process: customer_management

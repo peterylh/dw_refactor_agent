@@ -1,0 +1,49 @@
+version: 2
+name: dim_office
+layer: DIM
+description: Office is a conformed hierarchical organization dimension.
+table_type: dimension
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+data_domain: '02'
+business_area: CHNL
+entities:
+- code: OFFICE
+  type: primary
+  name: Office
+  key_columns:
+  - id
+grain:
+  description: one office in the institution hierarchy
+  columns:
+  - id
+business_date:
+  kind: effective
+  column: opening_date
+  inherit_from: null
+  source_column: opening_date
+source_mapping:
+  upstream_repository: https://github.com/apache/fineract
+  source_table: m_office
+  ods_table: ods_fineract_m_office
+  disposition: standalone_dimension
+  confidence: human_reviewed
+sensitivity: internal
+sensitivity_policy:
+  level: internal
+  action: retain
+column_sensitivity: []
+human_review:
+  verdict: accept
+  allowed_alternatives: []
+hierarchy_roles:
+- role: parent_office
+  entity: OFFICE
+  key_columns:
+  - parent_id
+  source_fk:
+  - parent_id
+semantic_subject: OFFICE
+dimension_role: BASE
+dimension_content_type: INFO

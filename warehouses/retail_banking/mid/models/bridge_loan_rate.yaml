@@ -1,0 +1,61 @@
+version: 2
+name: bridge_loan_rate
+layer: DIM
+description: Source has no period dates; current target invents a period that does not exist.
+table_type: bridge
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+data_domain: '04'
+business_area: LOAN
+entities:
+- code: LOAN_RATE_RELATION
+  type: primary
+  name: Loan Rate Relation
+  key_columns:
+  - loan_id
+  - rate_id
+- code: LOAN_ACCOUNT
+  type: foreign
+  role: loan_account
+  name: Loan Account
+  key_columns:
+  - loan_id
+  source_fk:
+  - loan_id
+- code: RATE
+  type: foreign
+  role: rate_definition
+  name: Rate
+  key_columns:
+  - rate_id
+  source_fk:
+  - rate_id
+grain:
+  description: one loan-to-rate assignment
+  columns:
+  - loan_id
+  - rate_id
+business_date:
+  kind: none
+  column: null
+  inherit_from: null
+  source_column: null
+source_mapping:
+  upstream_repository: https://github.com/apache/fineract
+  source_table: m_loan_rate
+  ods_table: ods_fineract_m_loan_rate
+  disposition: standalone_dimension
+  confidence: human_reviewed
+sensitivity: internal
+sensitivity_policy:
+  level: internal
+  action: retain
+column_sensitivity: []
+human_review:
+  verdict: reject
+  allowed_alternatives:
+  - loan_rate_assignment_satellite
+semantic_subject: LOAN_RATE_RELATION
+dimension_role: BASE
+dimension_content_type: INFO

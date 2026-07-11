@@ -1,0 +1,59 @@
+version: 2
+name: dim_charge_definition
+layer: DIM
+description: Source is a complete charge definition, not merely a charge type code.
+table_type: dimension
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+data_domain: '03'
+business_area: OTHR
+entities:
+- code: CHARGE_TYPE
+  type: primary
+  name: Charge Type
+  key_columns:
+  - id
+- code: GL_ACCOUNT
+  type: foreign
+  role: income_or_liability_gl
+  name: Gl Account
+  key_columns:
+  - income_or_liability_account_id
+  source_fk:
+  - income_or_liability_account_id
+- code: PAYMENT_TYPE
+  type: foreign
+  role: payment_type
+  name: Payment Type
+  key_columns:
+  - payment_type_id
+  source_fk:
+  - payment_type_id
+grain:
+  description: one fee or penalty definition
+  columns:
+  - id
+business_date:
+  kind: none
+  column: null
+  inherit_from: null
+  source_column: null
+source_mapping:
+  upstream_repository: https://github.com/apache/fineract
+  source_table: m_charge
+  ods_table: ods_fineract_m_charge
+  disposition: standalone_dimension
+  confidence: human_reviewed
+sensitivity: internal
+sensitivity_policy:
+  level: internal
+  action: retain
+column_sensitivity: []
+human_review:
+  verdict: revise
+  allowed_alternatives:
+  - dim_charge_type
+semantic_subject: CHARGE_TYPE
+dimension_role: BASE
+dimension_content_type: INFO

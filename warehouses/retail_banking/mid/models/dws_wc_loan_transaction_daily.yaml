@@ -1,0 +1,62 @@
+version: 2
+name: dws_wc_loan_transaction_daily
+layer: DWS
+description: 营运资金贷款 reviewed aggregate
+table_type: aggregate_fact
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+data_domain: '10'
+business_area: LOAN
+business_process: loan_transaction
+sensitivity: restricted
+business_date:
+  column: transaction_date
+  output_column: stat_date
+  kind: event_date
+grain:
+  columns:
+  - stat_date
+  - wc_loan_id
+  - transaction_type_id
+  description: one day, WC loan and transaction type
+  entities:
+  - WC_LOAN_ACCOUNT
+  degenerate_dimensions: &id001
+  - transaction_type_id
+  time_column: stat_date
+  time_period: D
+entities:
+- code: WC_LOAN_ACCOUNT
+  key: wc_loan_id
+degenerate_dimensions: *id001
+derived_metrics: &id002
+- name: record_count
+  class: derived
+  formula: count(*)
+  unit: count
+  currency_source: not_applicable
+  aggregation_behavior: additive
+  additive_over:
+  - stat_date
+  - wc_loan_id
+  - transaction_type_id
+  sign: positive_count
+  reversal: exclude_is_reversed_true
+- name: total_transaction_amount
+  class: derived
+  formula: sum(transaction_amount)
+  unit: currency
+  currency_source: dim_wc_loan_account.currency_code
+  aggregation_behavior: additive
+  additive_over:
+  - stat_date
+  - wc_loan_id
+  - transaction_type_id
+  sign: gross_by_transaction_type
+  reversal: exclude_is_reversed_true
+metric_semantics: *id002
+human_review:
+  decision: accept
+  current_name: dws_wc_loan_transaction_daily
+  status: human_reviewed_candidate

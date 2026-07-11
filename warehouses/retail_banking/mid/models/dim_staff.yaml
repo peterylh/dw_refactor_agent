@@ -1,0 +1,69 @@
+version: 2
+name: dim_staff
+layer: DIM
+description: Office and active state change over time and need SCD semantics.
+table_type: dimension
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+data_domain: '02'
+business_area: CHNL
+entities:
+- code: STAFF
+  type: primary
+  name: Staff
+  key_columns:
+  - id
+- code: OFFICE
+  type: foreign
+  role: assigned_office
+  name: Office
+  key_columns:
+  - office_id
+  source_fk:
+  - office_id
+grain:
+  description: one effective staff member version
+  columns:
+  - id
+business_date:
+  kind: effective
+  column: joining_date
+  inherit_from: null
+  source_column: joining_date
+source_mapping:
+  upstream_repository: https://github.com/apache/fineract
+  source_table: m_staff
+  ods_table: ods_fineract_m_staff
+  disposition: standalone_dimension
+  confidence: human_reviewed
+sensitivity: restricted
+sensitivity_policy:
+  level: restricted
+  action: mask_and_tokenize
+column_sensitivity:
+- name: firstname
+  classification: pii
+  action: mask
+- name: lastname
+  classification: pii
+  action: mask
+- name: display_name
+  classification: pii
+  action: mask
+- name: mobile_no
+  classification: identifier
+  action: hash
+- name: external_id
+  classification: identifier
+  action: hash
+- name: email_address
+  classification: identifier
+  action: hash
+human_review:
+  verdict: revise
+  allowed_alternatives:
+  - dim_staff_scd2
+semantic_subject: STAFF
+dimension_role: BASE
+dimension_content_type: INFO

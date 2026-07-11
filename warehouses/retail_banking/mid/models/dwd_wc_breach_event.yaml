@@ -1,0 +1,62 @@
+version: 2
+name: dwd_wc_breach_event
+layer: DWD
+description: Breach interval is valid after replacing the invalid generated WC process code.
+table_type: factless_fact
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+data_domain: '10'
+business_area: LOAN
+entities:
+- code: WC_BREACH_EVENT
+  type: primary
+  name: Wc Breach Event
+  key_columns:
+  - id
+- code: WC_LOAN_ACCOUNT
+  type: foreign
+  role: wc_loan_account
+  name: Wc Loan Account
+  key_columns:
+  - wc_loan_id
+  source_fk:
+  - wc_loan_id
+grain:
+  description: one working-capital loan breach-action interval
+  columns:
+  - id
+business_date:
+  kind: period_start
+  column: business_date
+  inherit_from: null
+  source_column: start_date
+source_mapping:
+  upstream_repository: https://github.com/apache/fineract
+  source_table: m_wc_loan_breach_action
+  ods_table: ods_fineract_m_wc_loan_breach_action
+  disposition: standalone_fact
+  confidence: human_reviewed
+sensitivity: restricted
+sensitivity_policy:
+  level: restricted
+  action: mask_and_tokenize
+column_sensitivity: []
+human_review:
+  verdict: revise
+  allowed_alternatives:
+  - dwd_wc_covenant_breach_event
+business_process: delinquency_management
+atomic_metrics:
+- minimum_payment
+metric_semantics:
+- name: minimum_payment
+  class: atomic
+  aggregation_behavior: additive
+  formula: minimum_payment
+  unit: currency
+  currency_source: account_currency
+  additive_over:
+  - id
+  sign: source_defined
+  reversal: source_policy

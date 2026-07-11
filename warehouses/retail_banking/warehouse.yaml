@@ -1,0 +1,22 @@
+name: retail_banking
+catalog: internal
+database: retail_banking_dm
+qa_database: retail_banking_dm_qa
+lineage_database: retail_banking_lineage
+naming_config: naming_config.yaml
+schema_identity:
+  required: true
+verification:
+  week_start: MON
+  row_compare:
+    exclude_columns:
+      - etl_time
+      - load_time
+execution:
+  default_slice:
+    param: etl_date
+    column: stat_date
+    period: D
+default_dialect: doris
+ods_source_catalog_dialects:
+  internal: doris
