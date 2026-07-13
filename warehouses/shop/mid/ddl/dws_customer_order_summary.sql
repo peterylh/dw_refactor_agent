@@ -2,13 +2,21 @@
 -- table_id: 674c2c22-95c3-47f2-92f0-2d9fcd34b4f0
 DROP TABLE IF EXISTS shop_dm.dws_customer_order_summary;
 CREATE TABLE IF NOT EXISTS shop_dm.dws_customer_order_summary (
+    -- column_id: 2b40cf90-75db-481e-8140-44f7c01b1fb5
     customer_id      BIGINT        NOT NULL COMMENT '客户ID',
+    -- column_id: dd4085b7-784e-4f01-bc33-45961c930e85
     stat_date        DATE          NOT NULL COMMENT '统计日期',
+    -- column_id: 0babbe51-7515-42b6-b524-443bc9b3e2ba
     order_count      INT           NOT NULL DEFAULT 0 COMMENT '订单数',
+    -- column_id: 35b44e28-e926-431c-ab39-0e0bd7a3fbb9
     total_amount     DECIMAL(14,2) NOT NULL DEFAULT 0.00 COMMENT '订单总额',
+    -- column_id: c160b15d-20f6-4612-8569-afa898e6c136
     total_discount   DECIMAL(14,2) NOT NULL DEFAULT 0.00 COMMENT '折扣总额',
+    -- column_id: 2c971d35-bed8-4a9a-8779-f898824b607c
     payment_amount   DECIMAL(14,2) NOT NULL DEFAULT 0.00 COMMENT '实付总额',
+    -- column_id: 26bb07ad-9f9b-4ea5-9306-b04306e45d4e
     avg_order_amount DECIMAL(10,2) NULL COMMENT '平均客单价',
+    -- column_id: ffd2ca0b-1edf-4c18-8f56-3117cbcb2c5a
     etl_time         DATETIME      NOT NULL COMMENT 'ETL处理时间'
 ) ENGINE=OLAP
 UNIQUE KEY(customer_id, stat_date)

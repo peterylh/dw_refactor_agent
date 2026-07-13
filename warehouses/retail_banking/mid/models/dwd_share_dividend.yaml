@@ -1,0 +1,74 @@
+version: 2
+name: dwd_share_dividend
+layer: DWD
+description: Detail must join the payout header to obtain product and dividend-period context.
+table_type: fact
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+data_domain: 09
+business_area: ASTM
+entities:
+- code: SHARE_DIVIDEND
+  type: primary
+  name: Share Dividend
+  key_columns:
+  - id
+- code: SHARE_ACCOUNT
+  type: foreign
+  role: share_account
+  name: Share Account
+  key_columns:
+  - account_id
+  source_fk:
+  - account_id
+- code: SHARE_DIVIDEND_PAYOUT
+  type: foreign
+  role: dividend_payout
+  name: Share Dividend Payout
+  key_columns:
+  - dividend_pay_out_id
+  source_fk:
+  - dividend_pay_out_id
+grain:
+  description: one payout allocation to one share account
+  columns:
+  - dividend_pay_out_id
+  - account_id
+  - id
+business_date:
+  kind: inherited
+  column: business_date
+  inherit_from: m_share_product_dividend_pay_out.dividend_period_end_date
+  source_column: null
+source_mapping:
+  upstream_repository: https://github.com/apache/fineract
+  source_table: m_share_account_dividend_details
+  ods_table: ods_fineract_m_share_account_dividend_details
+  disposition: standalone_fact
+  confidence: human_reviewed
+sensitivity: restricted
+sensitivity_policy:
+  level: restricted
+  action: mask_and_tokenize
+column_sensitivity: []
+human_review:
+  verdict: revise
+  allowed_alternatives:
+  - dwd_share_dividend_payout_detail
+business_process: share_account_management
+atomic_metrics:
+- amount
+metric_semantics:
+- name: amount
+  class: atomic
+  aggregation_behavior: additive
+  formula: amount
+  unit: currency
+  currency_source: account_currency
+  additive_over:
+  - dividend_pay_out_id
+  - account_id
+  - id
+  sign: source_defined
+  reversal: source_policy

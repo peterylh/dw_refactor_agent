@@ -1,0 +1,26 @@
+version: 1
+project: retail_banking
+scope_statement: >-
+  The analytical ODS covers 277 active tenant application tables. The following
+  ten Fineract-owned control-plane tables are inventoried but intentionally not
+  materialized as banking analytical ODS assets.
+excluded_tables:
+  - {table: BATCH_JOB_INSTANCE, source_database: tenant, category: spring_batch, reason: scheduler_metadata}
+  - {table: BATCH_JOB_EXECUTION, source_database: tenant, category: spring_batch, reason: scheduler_metadata}
+  - {table: BATCH_JOB_EXECUTION_PARAMS, source_database: tenant, category: spring_batch, reason: scheduler_metadata}
+  - {table: BATCH_STEP_EXECUTION, source_database: tenant, category: spring_batch, reason: scheduler_metadata}
+  - {table: BATCH_STEP_EXECUTION_CONTEXT, source_database: tenant, category: spring_batch, reason: scheduler_metadata}
+  - {table: BATCH_JOB_EXECUTION_CONTEXT, source_database: tenant, category: spring_batch, reason: scheduler_metadata}
+  - {table: tenant_server_connections, source_database: tenant_store, category: tenant_control, reason: infrastructure_secret}
+  - {table: tenants, source_database: tenant_store, category: tenant_control, reason: multitenancy_control}
+  - {table: timezones, source_database: tenant_store, category: tenant_control, reason: control_reference}
+  - {table: m_tenant_oidc_config, source_database: tenant_store, category: tenant_control, reason: identity_provider_secret}
+physical_scope_counts:
+  analytical_tenant_tables: 277
+  tenant_control_tables_excluded: 6
+  tenant_database_physical_tables: 283
+  tenant_store_tables_excluded: 4
+  total_fineract_physical_tables: 287
+notes:
+  - Liquibase DATABASECHANGELOG metadata tables and database sequences are not counted.
+  - Spring Batch tables are created by PostgreSQL-specific raw SQL, not ordinary business changelogs.

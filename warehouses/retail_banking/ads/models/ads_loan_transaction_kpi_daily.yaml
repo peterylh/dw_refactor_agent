@@ -1,0 +1,108 @@
+version: 2
+name: ads_loan_transaction_kpi_daily
+layer: ADS
+description: 贷款与信贷 reviewed application data
+table_type: application_fact
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+data_domain: '04'
+business_area: LOAN
+business_process: loan_transaction
+sensitivity: restricted
+business_date:
+  column: stat_date
+  kind: inherited_event_date
+grain:
+  columns:
+  - stat_date
+  - office_id
+  - loan_id
+  - transaction_type_enum
+  description: one day, office, loan and transaction type
+  entities:
+  - OFFICE
+  - LOAN_ACCOUNT
+  degenerate_dimensions: &id001
+  - transaction_type_enum
+entities:
+- code: OFFICE
+  key: office_id
+- code: LOAN_ACCOUNT
+  key: loan_id
+degenerate_dimensions: *id001
+derived_metrics:
+- &id002
+  name: record_count
+  class: derived
+  formula: source.record_count
+  unit: count
+  currency_source: not_applicable
+  aggregation_behavior: additive
+  additive_over:
+  - stat_date
+  - office_id
+  - loan_id
+  - transaction_type_enum
+  sign: positive_count
+  reversal: inherited_source_policy
+- &id003
+  name: total_amount
+  class: derived
+  formula: source.total_amount
+  unit: currency
+  currency_source: dim_loan_account.currency_code
+  aggregation_behavior: additive
+  additive_over:
+  - stat_date
+  - office_id
+  - loan_id
+  - transaction_type_enum
+  sign: gross_by_transaction_type
+  reversal: inherited_source_policy
+calculated_metrics:
+- &id004
+  name: average_amount
+  class: calculated
+  formula: total_amount / nullif(record_count, 0)
+  unit: currency
+  currency_source: dim_loan_account.currency_code
+  aggregation_behavior: non_additive
+  additive_over: []
+  sign: gross_by_transaction_type
+  reversal: inherited_source_policy
+- &id005
+  name: principal_component_ratio
+  class: calculated
+  formula: total_principal_component / nullif(total_amount, 0)
+  unit: ratio
+  currency_source: not_applicable
+  aggregation_behavior: non_additive
+  additive_over: []
+  sign: positive_ratio
+  reversal: inherited_source_policy
+- &id006
+  name: interest_component_ratio
+  class: calculated
+  formula: total_interest_component / nullif(total_amount, 0)
+  unit: ratio
+  currency_source: not_applicable
+  aggregation_behavior: non_additive
+  additive_over: []
+  sign: positive_ratio
+  reversal: inherited_source_policy
+metric_semantics:
+- *id002
+- *id003
+- *id004
+- *id005
+- *id006
+application_rules:
+- name: transaction_component_mix
+  kind: ratio
+  formula: component_amount / nullif(total_amount, 0)
+  purpose: descriptive loan transaction composition; no monitoring claim
+human_review:
+  decision: revise
+  current_name: ads_loan_transaction_monitor_daily
+  status: human_reviewed_candidate

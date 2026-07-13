@@ -10,14 +10,17 @@ from sqlglot import exp
 from sqlglot.errors import ErrorLevel
 
 from dw_refactor_agent.lineage.job_dag import JobDAG
+from dw_refactor_agent.refactor.plan_artifact import write_verification_plan
+from dw_refactor_agent.refactor.shadow_rewrite import (
+    RewriteContext,
+    rewrite_shadow_sql,
+)
 from dw_refactor_agent.refactor.shadow_run import (
     ShadowRunSqlError,
     _ddl_change_statements,
-    _get_dml_target,
     _wait_for_table_alter_jobs,
     execute_shadow_plan,
     main,
-    rewrite_sql,
     run_shadow_plan,
 )
 
@@ -39,12 +42,6 @@ def _assert_timing(result: dict) -> None:
     assert finished_at >= started_at
 
 
-def _parse_one(sql: str):
-    return sqlglot.parse_one(
-        sql, dialect="doris", error_level=ErrorLevel.IGNORE
-    )
-
-
 def _table_refs(sql: str) -> list[tuple[str, str]]:
     statements = sqlglot.parse(
         sql, dialect="doris", error_level=ErrorLevel.IGNORE
@@ -56,6 +53,25 @@ def _table_refs(sql: str) -> list[tuple[str, str]]:
         for table in stmt.find_all(exp.Table):
             refs.append((table.name, table.db))
     return refs
+
+
+def _rewrite_with_context(
+    sql_text: str,
+    prod_db: str,
+    qa_db: str,
+    qa_ready_tables: set[str],
+    selected_tables: set[str] | None = None,
+) -> str:
+    qa_ready = set(qa_ready_tables)
+    return rewrite_shadow_sql(
+        sql_text,
+        RewriteContext(
+            prod_db=prod_db,
+            qa_db=qa_db,
+            selected_tables=set(selected_tables or set()) | qa_ready,
+            qa_ready_tables=qa_ready,
+        ),
+    )
 
 
 def _write_json(path, data):
@@ -115,38 +131,10 @@ def _write_shadow_job_dag(tmp_path, project: str, *edges) -> None:
     ).save(dag_path)
 
 
-def test_get_dml_target_recognizes_statement_targets():
-    scenarios = [
-        (
-            "INSERT INTO shop_dm.dwd_order_detail "
-            "SELECT * FROM shop_dm.ods_order",
-            "dwd_order_detail",
-        ),
-        ("TRUNCATE TABLE shop_dm.dwd_order_detail", "dwd_order_detail"),
-        (
-            "UPDATE shop_dm.dwd_order_detail "
-            "SET cost_price = 0 WHERE cost_price IS NULL",
-            "dwd_order_detail",
-        ),
-        (
-            "DELETE FROM shop_dm.dws_store_sales_daily WHERE order_count = 0",
-            "dws_store_sales_daily",
-        ),
-        (
-            "CREATE TABLE shop_dm.ods_new (id BIGINT) ENGINE=OLAP "
-            "DUPLICATE KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 10 "
-            "PROPERTIES ('replication_num' = '1')",
-            "ods_new",
-        ),
-    ]
-    for sql, expected in scenarios:
-        assert _get_dml_target(_parse_one(sql)) == expected
-
-
 def test_rewrite_sql_table_mapping_scenarios():
     _assert_rewrite_sql_maps_targets_to_qa_and_keeps_ods_sources_in_prod()
-    _assert_rewrite_sql_maps_recalculated_sources_to_qa()
-    _assert_rewrite_sql_rewrites_recalculated_sources_inside_ctes()
+    _assert_rewrite_sql_maps_qa_ready_sources_to_qa()
+    _assert_rewrite_sql_rewrites_qa_ready_sources_inside_ctes()
     _assert_rewrite_sql_handles_multiple_dml_statements_in_one_file()
 
 
@@ -158,7 +146,9 @@ def _assert_rewrite_sql_maps_targets_to_qa_and_keeps_ods_sources_in_prod():
     JOIN shop_dm.ods_order_item i ON o.order_id = i.order_id
     """
 
-    refs = _table_refs(rewrite_sql(sql, "shop_dm", "shop_dm_qa", set()))
+    refs = _table_refs(
+        _rewrite_with_context(sql, "shop_dm", "shop_dm_qa", set())
+    )
 
     assert ("dwd_order_detail", "shop_dm_qa") in refs
     assert ("ods_order", "shop_dm") in refs
@@ -166,7 +156,7 @@ def _assert_rewrite_sql_maps_targets_to_qa_and_keeps_ods_sources_in_prod():
     assert ("dwd_order_detail", "shop_dm") not in refs
 
 
-def _assert_rewrite_sql_maps_recalculated_sources_to_qa():
+def _assert_rewrite_sql_maps_qa_ready_sources_to_qa():
     sql = """
     INSERT INTO shop_dm.ads_store_performance
     SELECT ssd.store_id, s.store_name
@@ -175,7 +165,12 @@ def _assert_rewrite_sql_maps_recalculated_sources_to_qa():
     """
 
     refs = _table_refs(
-        rewrite_sql(sql, "shop_dm", "shop_dm_qa", {"dws_store_sales_daily"})
+        _rewrite_with_context(
+            sql,
+            "shop_dm",
+            "shop_dm_qa",
+            {"dws_store_sales_daily"},
+        )
     )
 
     assert ("ads_store_performance", "shop_dm_qa") in refs
@@ -184,7 +179,7 @@ def _assert_rewrite_sql_maps_recalculated_sources_to_qa():
     assert ("dws_store_sales_daily", "shop_dm") not in refs
 
 
-def _assert_rewrite_sql_rewrites_recalculated_sources_inside_ctes():
+def _assert_rewrite_sql_rewrites_qa_ready_sources_inside_ctes():
     sql = """
     INSERT INTO shop_dm.ads_sales_dashboard
     WITH daily_base AS (
@@ -196,7 +191,12 @@ def _assert_rewrite_sql_rewrites_recalculated_sources_inside_ctes():
     """
 
     refs = _table_refs(
-        rewrite_sql(sql, "shop_dm", "shop_dm_qa", {"dwd_order_detail"})
+        _rewrite_with_context(
+            sql,
+            "shop_dm",
+            "shop_dm_qa",
+            {"dwd_order_detail"},
+        )
     )
 
     assert ("ads_sales_dashboard", "shop_dm_qa") in refs
@@ -213,7 +213,9 @@ def _assert_rewrite_sql_handles_multiple_dml_statements_in_one_file():
     SET cost_price = 0.00 WHERE cost_price IS NULL;
     """
 
-    refs = _table_refs(rewrite_sql(sql, "shop_dm", "shop_dm_qa", set()))
+    refs = _table_refs(
+        _rewrite_with_context(sql, "shop_dm", "shop_dm_qa", set())
+    )
 
     assert refs.count(("dwd_order_detail", "shop_dm_qa")) == 3
     assert ("ods_order", "shop_dm") in refs
@@ -228,7 +230,9 @@ def test_rewrite_sql_qualifies_unqualified_physical_table_references():
     LEFT JOIN dwd_discount d ON o.order_id = d.order_id
     """
 
-    rewritten = rewrite_sql(sql, "shop_dm", "shop_dm_qa", {"dwd_discount"})
+    rewritten = _rewrite_with_context(
+        sql, "shop_dm", "shop_dm_qa", {"dwd_discount"}
+    )
     refs = _table_refs(rewritten)
 
     assert ("dwd_order_detail", "shop_dm_qa") in refs
@@ -250,7 +254,9 @@ def test_rewrite_sql_does_not_qualify_unqualified_cte_references():
     SELECT order_date, cnt FROM daily_base
     """
 
-    rewritten = rewrite_sql(sql, "shop_dm", "shop_dm_qa", {"dwd_order_detail"})
+    rewritten = _rewrite_with_context(
+        sql, "shop_dm", "shop_dm_qa", {"dwd_order_detail"}
+    )
     refs = _table_refs(rewritten)
 
     assert ("ads_sales_dashboard", "shop_dm_qa") in refs
@@ -264,7 +270,9 @@ def test_rewrite_sql_does_not_invent_database_prefixes():
         "SET @etl_date = '2025-01-15'",
     ]
     for sql in scenarios:
-        refs = _table_refs(rewrite_sql(sql, "shop_dm", "shop_dm_qa", set()))
+        refs = _table_refs(
+            _rewrite_with_context(sql, "shop_dm", "shop_dm_qa", set())
+        )
 
         assert all(db not in {"shop_dm", "shop_dm_qa"} for _, db in refs)
 
@@ -280,7 +288,12 @@ def test_rewrite_sql_preserves_non_table_sql_text():
       AND note <> 'shop_dm.dwd_customer should stay literal'
     """
 
-    rewritten = rewrite_sql(sql, "shop_dm", "shop_dm_qa", set())
+    rewritten = _rewrite_with_context(
+        sql,
+        "shop_dm",
+        "shop_dm_qa",
+        set(),
+    )
 
     assert "shop_dm_qa.dwd_customer" in rewritten
     assert "shop_dm.ods_customer" in rewritten
@@ -296,7 +309,7 @@ def test_rewrite_sql_maps_create_table_like_target_to_qa():
         "LIKE shop_dm.dws_store_sales_daily;"
     )
 
-    rewritten = rewrite_sql(
+    rewritten = _rewrite_with_context(
         sql,
         "shop_dm",
         "shop_dm_qa",
@@ -305,6 +318,22 @@ def test_rewrite_sql_maps_create_table_like_target_to_qa():
 
     assert "shop_dm_qa.stage_store_sales_daily" in rewritten
     assert "LIKE shop_dm_qa.dws_store_sales_daily" in rewritten
+
+
+def test_rewrite_sql_maps_qa_only_create_like_source_without_data_readiness():
+    sql = "CREATE TABLE shop_dm.tmp_x LIKE shop_dm.I_SHOP_STORE_SALES_DS;"
+
+    rewritten = _rewrite_with_context(
+        sql,
+        "shop_dm",
+        "shop_dm_qa",
+        set(),
+        {"I_SHOP_STORE_SALES_DS"},
+    )
+
+    assert rewritten == (
+        "CREATE TABLE shop_dm_qa.tmp_x LIKE shop_dm_qa.I_SHOP_STORE_SALES_DS;"
+    )
 
 
 def test_rewrite_sql_maps_project_ddl_targets_to_qa():
@@ -318,7 +347,7 @@ def test_rewrite_sql_maps_project_ddl_targets_to_qa():
     ALTER TABLE shop_dm.tmp_store_sales_daily ADD COLUMN c1 INT;
     """
 
-    rewritten = rewrite_sql(sql, "shop_dm", "shop_dm_qa", set())
+    rewritten = _rewrite_with_context(sql, "shop_dm", "shop_dm_qa", set())
 
     assert "DROP TABLE IF EXISTS shop_dm_qa.tmp_store_sales_daily" in rewritten
     assert (
@@ -338,14 +367,14 @@ def test_rewrite_sql_maps_project_ddl_targets_to_qa():
 def test_rewrite_sql_keeps_non_project_ddl_targets_in_place():
     sql = "DROP TABLE IF EXISTS other_db.tmp_x;"
 
-    rewritten = rewrite_sql(sql, "shop_dm", "shop_dm_qa", set())
+    rewritten = _rewrite_with_context(sql, "shop_dm", "shop_dm_qa", set())
 
     assert "DROP TABLE IF EXISTS other_db.tmp_x" in rewritten
     assert "shop_dm_qa.tmp_x" not in rewritten
 
 
 def test_rewrite_sql_text_empty():
-    assert rewrite_sql("", "shop_dm", "shop_dm_qa", set()) == ""
+    assert _rewrite_with_context("", "shop_dm", "shop_dm_qa", set()) == ""
 
 
 def test_ddl_change_statements_do_not_rewrite_invalid_multi_rename_column():
@@ -570,6 +599,44 @@ def test_execute_shadow_plan_runs_case_only_rename_steps_in_order(monkeypatch):
     ]
 
 
+def test_execute_shadow_plan_logs_table_rename_display(monkeypatch, capsys):
+    plan = {
+        "project": "shop",
+        "project_db": "shop_dm",
+        "qa_db": "shop_dm_qa",
+        "baseline_ddl": {
+            "dwd_inventory": ("CREATE TABLE shop_dm.dwd_inventory (id BIGINT)")
+        },
+        "ddl_changes": [
+            {
+                "change_type": "RENAME",
+                "sql": (
+                    "ALTER TABLE shop_dm.dwd_inventory "
+                    "RENAME M_SHOP_05_INV_DF;"
+                ),
+                "old_name": "shop_dm.dwd_inventory",
+                "new_name": "shop_dm.M_SHOP_05_INV_DF",
+            }
+        ],
+        "jobs_to_run": [],
+        "verification": {"checks": []},
+    }
+
+    monkeypatch.setattr(
+        "dw_refactor_agent.refactor.shadow_run.run_sql",
+        lambda sql, db="", qa=False: "",
+    )
+
+    result = execute_shadow_plan(plan)
+
+    output = capsys.readouterr().out
+    assert result["status"] == "completed"
+    assert (
+        "[RENAME] shop_dm_qa.dwd_inventory -> shop_dm_qa.M_SHOP_05_INV_DF"
+    ) in output
+    assert "[RENAME] ?" not in output
+
+
 def test_wait_for_table_alter_jobs_polls_until_finished(monkeypatch):
     outputs = [
         (
@@ -639,16 +706,18 @@ def test_dry_run_omits_where_for_unpartitioned_checks(capsys):
     assert "[row_compare] shop_dm_qa.ads_sales_dashboard" in output
 
 
-def test_dry_run_prints_anchor_tables_from_scope(capsys):
+def test_dry_run_prints_anchor_tables_from_verification(capsys):
     plan = {
         "project": "shop",
         "project_db": "shop_dm",
         "qa_db": "shop_dm_qa",
-        "scope": {"anchor_tables": ["ads_store_performance"]},
         "baseline_ddl": {},
         "ddl_changes": [],
         "jobs_to_run": [],
-        "verification": {"checks": []},
+        "verification": {
+            "anchor_tables": ["ads_store_performance"],
+            "checks": [],
+        },
     }
 
     execute_shadow_plan(plan, dry_run=True)
@@ -705,7 +774,7 @@ def test_run_shadow_plan_executes_self_contained(tmp_path, monkeypatch):
     )
     plan_path = tmp_path / "verification" / "plan.json"
     output_path = tmp_path / "verification" / "shadow_run_result.json"
-    _write_json(
+    write_verification_plan(
         plan_path,
         {
             "project": "shop",
@@ -765,7 +834,6 @@ def test_run_shadow_plan_executes_self_contained(tmp_path, monkeypatch):
         "status": "success",
         "error": None,
         "execution_values": ["2025-01-15"],
-        "actual_execution_values": ["2025-01-15"],
         "invocation_count": 1,
     }
     assert any(call[0] == "text" for call in calls)
@@ -788,7 +856,7 @@ def test_run_shadow_plan_persists_failed_job_result(tmp_path, monkeypatch):
     )
     plan_path = tmp_path / "verification" / "plan.json"
     output_path = tmp_path / "verification" / "shadow_run_result.json"
-    _write_json(
+    write_verification_plan(
         plan_path,
         {
             "project": "shop",
@@ -847,7 +915,6 @@ def test_run_shadow_plan_persists_failed_job_result(tmp_path, monkeypatch):
         "status": "failed",
         "error": "insert failed",
         "execution_values": ["2025-01-15"],
-        "actual_execution_values": ["2025-01-15"],
         "invocation_count": 1,
     }
     assert json.loads(output_path.read_text(encoding="utf-8")) == result
@@ -866,7 +933,7 @@ def test_run_shadow_plan_timing_detail_records_invocation_timings(
     )
     plan_path = tmp_path / "verification" / "plan.json"
     output_path = tmp_path / "verification" / "shadow_run_result.json"
-    _write_json(
+    write_verification_plan(
         plan_path,
         {
             "project": "shop",
@@ -967,12 +1034,7 @@ def test_shadow_run_cli_returns_nonzero_for_failed_result(
 
     monkeypatch.setattr(
         "dw_refactor_agent.refactor.shadow_run.run_shadow_plan",
-        lambda plan,
-        output,
-        dry_run=False,
-        timing_detail=False,
-        parallel=1,
-        batch_size=1: {
+        lambda plan, output, dry_run=False, timing_detail=False, parallel=1, batch_size=1: {
             "status": "failed",
             "timing_detail": timing_detail,
             "parallel": parallel,
@@ -1023,7 +1085,9 @@ def test_shadow_run_cli_passes_timing_detail_flag(tmp_path, monkeypatch):
     assert calls == [(plan_path, output_path, False, True, 1, 1)]
 
 
-def test_run_shadow_plan_dry_run_persists_phase_summary(tmp_path, monkeypatch):
+def test_run_shadow_plan_dry_run_persists_phase_summary(
+    tmp_path, monkeypatch, capsys
+):
     job_file = (
         tmp_path
         / "warehouses"
@@ -1079,7 +1143,7 @@ def test_run_shadow_plan_dry_run_persists_phase_summary(tmp_path, monkeypatch):
             ]
         },
     }
-    _write_json(plan_path, plan)
+    write_verification_plan(plan_path, plan)
 
     monkeypatch.setattr(
         "dw_refactor_agent.refactor.shadow_run._project_root", lambda: tmp_path
@@ -1098,8 +1162,10 @@ def test_run_shadow_plan_dry_run_persists_phase_summary(tmp_path, monkeypatch):
     }
     phase_names = [phase["name"] for phase in result["phases"]]
     assert phase_names == [
+        "compile_shadow_manifest",
         "reset_qa_db",
         "create_baseline_tables",
+        "prefill_baseline_data",
         "apply_ddl_changes",
         "run_jobs",
     ]
@@ -1129,6 +1195,12 @@ def test_run_shadow_plan_dry_run_persists_phase_summary(tmp_path, monkeypatch):
     assert phase_by_name["run_jobs"]["jobs"][0]["job"] == "M_SHOP_05_INV_DF"
     assert phase_by_name["run_jobs"]["jobs"][0]["status"] == "dry_run"
     assert json.loads(output_path.read_text(encoding="utf-8")) == result
+    output = capsys.readouterr().out
+    assert "分区:" not in output
+    assert (
+        "[RENAME] shop_dm_qa.dwd_inventory -> shop_dm_qa.M_SHOP_05_INV_DF"
+    ) in output
+    assert "[RENAME] ?" not in output
 
 
 def test_run_shadow_plan_dry_run_prints_rewritten_task_ddl_targets(
@@ -1153,7 +1225,7 @@ def test_run_shadow_plan_dry_run_prints_rewritten_task_ddl_targets(
     )
     plan_path = tmp_path / "verification" / "plan.json"
     output_path = tmp_path / "verification" / "shadow_run_result.json"
-    _write_json(
+    write_verification_plan(
         plan_path,
         {
             "project": "shop",
@@ -1635,6 +1707,7 @@ execution:
     jobs = {job["job"]: job for job in phase_by_name["run_jobs"]["jobs"]}
     assert jobs["dws_order"]["status"] == "failed"
     assert jobs["ads_order"]["status"] == "skipped"
+    assert "actual_execution_values" not in jobs["ads_order"]
 
 
 def test_execute_shadow_plan_logs_sql_progress_for_each_slice(
@@ -1687,7 +1760,7 @@ def test_execute_shadow_plan_logs_sql_progress_for_each_slice(
     assert "SQL done: shop/mid/tasks/dws_order.sql duration=" in stdout
 
 
-def test_execute_shadow_plan_uses_job_execution_values_and_records_actuals(
+def test_execute_shadow_plan_uses_job_execution_values_and_records_counts(
     tmp_path, monkeypatch
 ):
     project = "shadow_driver_values"
@@ -1819,16 +1892,11 @@ execution:
 
     phase_by_name = {phase["name"]: phase for phase in result["phases"]}
     jobs = {job["job"]: job for job in phase_by_name["run_jobs"]["jobs"]}
-    assert jobs["dws_store_sales_daily"]["actual_execution_values"] == [
-        "2024-06-01",
-        "2024-06-02",
-    ]
+    assert "actual_execution_values" not in jobs["dws_store_sales_daily"]
     assert jobs["dws_store_sales_daily"]["invocation_count"] == 2
-    assert jobs["ads_store_performance"]["actual_execution_values"] == [
-        "2024-06-01"
-    ]
+    assert "actual_execution_values" not in jobs["ads_store_performance"]
     assert jobs["ads_store_performance"]["invocation_count"] == 1
-    assert jobs["ads_sales_dashboard"]["actual_execution_values"] == []
+    assert "actual_execution_values" not in jobs["ads_sales_dashboard"]
     assert jobs["ads_sales_dashboard"]["invocation_count"] == 1
 
     assert dry_run_result["status"] == "dry_run"
@@ -1838,15 +1906,15 @@ execution:
     dry_run_jobs = {
         job["job"]: job for job in dry_run_phase_by_name["run_jobs"]["jobs"]
     }
-    assert dry_run_jobs["dws_store_sales_daily"][
-        "actual_execution_values"
-    ] == ["2024-06-01", "2024-06-02"]
+    assert (
+        "actual_execution_values" not in dry_run_jobs["dws_store_sales_daily"]
+    )
     assert dry_run_jobs["dws_store_sales_daily"]["invocation_count"] == 2
-    assert dry_run_jobs["ads_store_performance"][
-        "actual_execution_values"
-    ] == ["2024-06-01"]
+    assert (
+        "actual_execution_values" not in dry_run_jobs["ads_store_performance"]
+    )
     assert dry_run_jobs["ads_store_performance"]["invocation_count"] == 1
-    assert dry_run_jobs["ads_sales_dashboard"]["actual_execution_values"] == []
+    assert "actual_execution_values" not in dry_run_jobs["ads_sales_dashboard"]
     assert dry_run_jobs["ads_sales_dashboard"]["invocation_count"] == 1
 
 
@@ -1915,7 +1983,7 @@ execution:
     job_result = phase_by_name["run_jobs"]["jobs"][0]
     assert job_result["status"] == "failed"
     assert "requires execution_values" in job_result["error"]
-    assert job_result["actual_execution_values"] == []
+    assert "actual_execution_values" not in job_result
     assert job_result["invocation_count"] == 0
 
     assert dry_run_result["status"] == "failed"
@@ -1926,5 +1994,394 @@ execution:
     dry_run_job_result = dry_run_phase_by_name["run_jobs"]["jobs"][0]
     assert dry_run_job_result["status"] == "failed"
     assert "requires execution_values" in dry_run_job_result["error"]
-    assert dry_run_job_result["actual_execution_values"] == []
+    assert "actual_execution_values" not in dry_run_job_result
     assert dry_run_job_result["invocation_count"] == 0
+
+
+def test_execute_shadow_plan_prefills_after_baseline_before_rename(
+    tmp_path, monkeypatch
+):
+    project = "shadow_prefill"
+    _write_shadow_project(tmp_path, project)
+    _write_shadow_job(
+        tmp_path,
+        project,
+        "mid",
+        "daily_report",
+        model_yaml="""version: 2
+name: daily_report
+layer: DWS
+execution:
+  materialized: full
+""",
+        task_sql=(
+            "INSERT INTO shadow_dm.daily_report "
+            "SELECT * FROM shadow_dm.renamed_sales;"
+        ),
+    )
+    plan = {
+        "project": project,
+        "project_db": "shadow_dm",
+        "qa_db": "shadow_dm_qa",
+        "baseline_ddl": {
+            "sales": "CREATE TABLE shadow_dm.sales (id BIGINT) ENGINE=OLAP;",
+            "daily_report": (
+                "CREATE TABLE shadow_dm.daily_report (id BIGINT) ENGINE=OLAP;"
+            ),
+        },
+        "ddl_changes": [
+            {
+                "change_type": "RENAME",
+                "old_name": "shadow_dm.sales",
+                "new_name": "shadow_dm.renamed_sales",
+                "sql": "ALTER TABLE shadow_dm.sales RENAME renamed_sales;",
+            }
+        ],
+        "jobs_to_run": [
+            {
+                "job": "daily_report",
+                "target": "daily_report",
+                "file": (f"warehouses/{project}/mid/tasks/daily_report.sql"),
+                "layer": "DWS",
+            }
+        ],
+        "verification": {"checks": []},
+    }
+    calls = []
+
+    monkeypatch.setattr(
+        "dw_refactor_agent.refactor.shadow_run._project_root", lambda: tmp_path
+    )
+    monkeypatch.setattr(
+        "dw_refactor_agent.refactor.shadow_run.run_sql",
+        lambda sql, db="", qa=False: calls.append(("sql", sql)) or "",
+    )
+    monkeypatch.setattr(
+        "dw_refactor_agent.refactor.shadow_run.run_sql_text",
+        lambda sql, db="", qa=False: calls.append(("text", sql)),
+    )
+
+    result = execute_shadow_plan(plan)
+
+    phase_names = [phase["name"] for phase in result["phases"]]
+    assert phase_names == [
+        "compile_shadow_manifest",
+        "reset_qa_db",
+        "create_baseline_tables",
+        "prefill_baseline_data",
+        "apply_ddl_changes",
+        "run_jobs",
+    ]
+    sql_texts = [sql for _kind, sql in calls]
+    prefill_index = sql_texts.index(
+        "INSERT INTO shadow_dm_qa.sales SELECT * FROM shadow_dm.sales;"
+    )
+    rename_index = sql_texts.index(
+        "ALTER TABLE shadow_dm_qa.sales RENAME renamed_sales;"
+    )
+    assert prefill_index < rename_index
+    assert result["shadow_manifest"]["prefill_actions"][0]["mode"] == "full"
+
+
+def test_execute_shadow_plan_manifest_blocker_runs_no_database_sql(
+    tmp_path, monkeypatch
+):
+    project = "shadow_blocked"
+    _write_shadow_project(tmp_path, project)
+    _write_shadow_job(
+        tmp_path,
+        project,
+        "mid",
+        "daily_report",
+        model_yaml="""version: 2
+name: daily_report
+layer: DWS
+execution:
+  materialized: full
+""",
+        task_sql=(
+            "INSERT INTO shadow_dm.daily_report "
+            "SELECT * FROM shadow_dm.brand_new_sales;"
+        ),
+    )
+    plan = {
+        "project": project,
+        "project_db": "shadow_dm",
+        "qa_db": "shadow_dm_qa",
+        "baseline_ddl": {
+            "daily_report": (
+                "CREATE TABLE shadow_dm.daily_report (id BIGINT) ENGINE=OLAP;"
+            )
+        },
+        "ddl_changes": [
+            {
+                "change_type": "CREATE",
+                "table_name": "shadow_dm.brand_new_sales",
+                "sql": (
+                    "CREATE TABLE shadow_dm.brand_new_sales "
+                    "(id BIGINT) ENGINE=OLAP;"
+                ),
+            }
+        ],
+        "jobs_to_run": [
+            {
+                "job": "daily_report",
+                "target": "daily_report",
+                "file": (f"warehouses/{project}/mid/tasks/daily_report.sql"),
+                "layer": "DWS",
+            }
+        ],
+        "verification": {"checks": []},
+    }
+    calls = []
+
+    monkeypatch.setattr(
+        "dw_refactor_agent.refactor.shadow_run._project_root", lambda: tmp_path
+    )
+    monkeypatch.setattr(
+        "dw_refactor_agent.refactor.shadow_run.run_sql",
+        lambda sql, db="", qa=False: calls.append(sql),
+    )
+
+    result = execute_shadow_plan(plan)
+
+    assert result["status"] == "failed"
+    assert calls == []
+    assert [phase["name"] for phase in result["phases"]] == [
+        "compile_shadow_manifest"
+    ]
+    assert result["phases"][0]["status"] == "failed"
+    assert "brand_new_sales" in result["phases"][0]["blockers"][0]
+
+
+def test_job_success_publishes_all_outputs_for_downstream_readiness(
+    tmp_path, monkeypatch
+):
+    project = "shadow_outputs"
+    _write_shadow_project(tmp_path, project)
+    for name, task_sql in {
+        "sales": (
+            "INSERT INTO shadow_dm.sales SELECT * FROM shadow_dm.ods_sales;\n"
+            "INSERT INTO shadow_dm.sales_audit "
+            "SELECT * FROM shadow_dm.ods_sales;"
+        ),
+        "daily_report": (
+            "INSERT INTO shadow_dm.daily_report "
+            "SELECT * FROM shadow_dm.sales_audit;"
+        ),
+    }.items():
+        _write_shadow_job(
+            tmp_path,
+            project,
+            "mid",
+            name,
+            model_yaml=f"""version: 2
+name: {name}
+layer: DWS
+execution:
+  materialized: full
+""",
+            task_sql=task_sql,
+        )
+    plan = {
+        "project": project,
+        "project_db": "shadow_dm",
+        "qa_db": "shadow_dm_qa",
+        "baseline_ddl": {
+            name: f"CREATE TABLE shadow_dm.{name} (id BIGINT) ENGINE=OLAP;"
+            for name in ("sales", "sales_audit", "daily_report")
+        },
+        "ddl_changes": [],
+        "jobs_to_run": [
+            {
+                "job": name,
+                "target": name,
+                "file": f"warehouses/{project}/mid/tasks/{name}.sql",
+                "layer": "DWS",
+            }
+            for name in ("sales", "daily_report")
+        ],
+        "verification": {"checks": []},
+    }
+    rendered = []
+
+    monkeypatch.setattr(
+        "dw_refactor_agent.refactor.shadow_run._project_root", lambda: tmp_path
+    )
+    monkeypatch.setattr(
+        "dw_refactor_agent.refactor.shadow_run.run_sql",
+        lambda sql, db="", qa=False: "",
+    )
+    monkeypatch.setattr(
+        "dw_refactor_agent.refactor.shadow_run.run_sql_text",
+        lambda sql, db="", qa=False: rendered.append(sql),
+    )
+
+    result = execute_shadow_plan(plan)
+
+    assert result["status"] == "completed"
+    assert any("FROM shadow_dm_qa.sales_audit" in sql for sql in rendered)
+    jobs = result["shadow_manifest"]["jobs"]
+    assert jobs["sales"]["outputs"] == ["sales", "sales_audit"]
+
+
+def test_manifest_dependency_orders_jobs_when_declared_dag_edge_is_missing(
+    tmp_path, monkeypatch
+):
+    project = "shadow_manifest_order"
+    _write_shadow_project(tmp_path, project)
+    for name, task_sql in {
+        "sales": "INSERT INTO shadow_dm.sales SELECT 1;",
+        "report": (
+            "INSERT INTO shadow_dm.report SELECT * FROM shadow_dm.sales;"
+        ),
+    }.items():
+        _write_shadow_job(
+            tmp_path,
+            project,
+            "mid",
+            name,
+            model_yaml=f"""version: 2
+name: {name}
+layer: DWS
+execution:
+  materialized: full
+""",
+            task_sql=task_sql,
+        )
+    plan = {
+        "project": project,
+        "project_db": "shadow_dm",
+        "qa_db": "shadow_dm_qa",
+        "baseline_ddl": {
+            name: f"CREATE TABLE shadow_dm.{name} (id BIGINT) ENGINE=OLAP;"
+            for name in ("sales", "report")
+        },
+        "ddl_changes": [],
+        "jobs_to_run": [
+            {
+                "job": name,
+                "target": name,
+                "file": f"warehouses/{project}/mid/tasks/{name}.sql",
+                "layer": "DWS",
+            }
+            for name in ("report", "sales")
+        ],
+        "job_dependencies": {},
+        "verification": {"checks": []},
+    }
+    executed = []
+
+    def fake_run_sql_text(sql, db="", qa=False):
+        executed.append("report" if "shadow_dm_qa.report" in sql else "sales")
+        return ""
+
+    monkeypatch.setattr(
+        "dw_refactor_agent.refactor.shadow_run._project_root", lambda: tmp_path
+    )
+    monkeypatch.setattr(
+        "dw_refactor_agent.refactor.shadow_run.run_sql",
+        lambda sql, db="", qa=False: "",
+    )
+    monkeypatch.setattr(
+        "dw_refactor_agent.refactor.shadow_run.run_sql_text",
+        fake_run_sql_text,
+    )
+
+    result = execute_shadow_plan(plan, parallel=2)
+    run_phase = {phase["name"]: phase for phase in result["phases"]}[
+        "run_jobs"
+    ]
+
+    assert result["status"] == "completed"
+    assert executed == ["sales", "report"]
+    assert run_phase["scheduler"] == "plan+manifest"
+
+
+def test_self_reading_job_serializes_parallel_slice_invocations(
+    tmp_path, monkeypatch
+):
+    project = "shadow_self_serial"
+    _write_shadow_project(tmp_path, project)
+    _write_shadow_job(
+        tmp_path,
+        project,
+        "mid",
+        "sales",
+        model_yaml="""version: 2
+name: sales
+layer: DWS
+execution:
+  materialized: incremental
+  slice:
+    param: etl_date
+    column: stat_date
+    period: D
+""",
+        task_sql=(
+            "INSERT INTO shadow_dm.sales "
+            "SELECT * FROM shadow_dm.sales "
+            "WHERE stat_date = DATE_SUB(@etl_date, INTERVAL 1 DAY);"
+        ),
+    )
+    plan = {
+        "project": project,
+        "project_db": "shadow_dm",
+        "qa_db": "shadow_dm_qa",
+        "baseline_ddl": {
+            "sales": """CREATE TABLE shadow_dm.sales (
+  stat_date DATE
+) ENGINE=OLAP
+PARTITION BY RANGE(stat_date) (
+  PARTITION p20250114 VALUES LESS THAN ("2025-01-15"),
+  PARTITION p20250115 VALUES LESS THAN ("2025-01-16"),
+  PARTITION p_after VALUES LESS THAN (MAXVALUE)
+);"""
+        },
+        "ddl_changes": [],
+        "jobs_to_run": [
+            {
+                "job": "sales",
+                "target": "sales",
+                "file": f"warehouses/{project}/mid/tasks/sales.sql",
+                "layer": "DWS",
+                "execution_values": ["2025-01-15", "2025-01-16"],
+            }
+        ],
+        "verification": {"checks": []},
+    }
+    lock = threading.Lock()
+    active = 0
+    max_active = 0
+
+    def fake_run_sql_text(sql, db="", qa=False):
+        nonlocal active, max_active
+        with lock:
+            active += 1
+            max_active = max(max_active, active)
+        time.sleep(0.03)
+        with lock:
+            active -= 1
+        return ""
+
+    monkeypatch.setattr(
+        "dw_refactor_agent.refactor.shadow_run._project_root", lambda: tmp_path
+    )
+    monkeypatch.setattr(
+        "dw_refactor_agent.refactor.shadow_run.run_sql",
+        lambda sql, db="", qa=False: "",
+    )
+    monkeypatch.setattr(
+        "dw_refactor_agent.refactor.shadow_run.run_sql_text",
+        fake_run_sql_text,
+    )
+
+    result = execute_shadow_plan(plan, parallel=2)
+    job_result = {phase["name"]: phase for phase in result["phases"]}[
+        "run_jobs"
+    ]["jobs"][0]
+
+    assert result["status"] == "completed"
+    assert max_active == 1
+    assert "parallelism" not in job_result
+    assert result["shadow_manifest"]["jobs"]["sales"]["self_read"] is True

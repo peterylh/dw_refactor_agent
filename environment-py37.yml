@@ -11,5 +11,5 @@ dependencies:
   - pymysql
   - typing_extensions
   - pip:
-      - sqlglot==26.9.0
+      - git+https://github.com/HYDCP/hy-sqlglot.git@77fe22e66498ea4ad996d9c5a172c69d7ac693c8
       - ruff==0.12.0

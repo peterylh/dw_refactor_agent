@@ -1,0 +1,65 @@
+version: 2
+name: bridge_guarantee_transaction
+layer: DWD
+description: Source has no amount or date and is a three-way transactional bridge.
+table_type: bridge
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+data_domain: '04'
+business_area: LOAN
+entities:
+- code: GUARANTEE_TRANSACTION_RELATION
+  type: primary
+  name: Guarantee Transaction Relation
+  key_columns:
+  - id
+- code: GUARANTEE_COMMITMENT
+  type: foreign
+  role: guarantee_commitment
+  name: Guarantee Commitment
+  key_columns:
+  - guarantor_fund_detail_id
+  source_fk:
+  - guarantor_fund_detail_id
+- code: LOAN_TRANSACTION
+  type: foreign
+  role: loan_transaction
+  name: Loan Transaction
+  key_columns:
+  - loan_transaction_id
+  source_fk:
+  - loan_transaction_id
+- code: DEPOSIT_HOLD_EVENT
+  type: foreign
+  role: deposit_hold_event
+  name: Deposit Hold Event
+  key_columns:
+  - deposit_on_hold_transaction_id
+  source_fk:
+  - deposit_on_hold_transaction_id
+grain:
+  description: one guarantee commitment-to-loan/deposit transaction relationship
+  columns:
+  - id
+business_date:
+  kind: inherited
+  column: business_date
+  inherit_from: m_loan_transaction.transaction_date
+  source_column: null
+source_mapping:
+  upstream_repository: https://github.com/apache/fineract
+  source_table: m_guarantor_transaction
+  ods_table: ods_fineract_m_guarantor_transaction
+  disposition: bridge_source
+  confidence: human_reviewed
+sensitivity: restricted
+sensitivity_policy:
+  level: restricted
+  action: mask_and_tokenize
+column_sensitivity: []
+human_review:
+  verdict: revise
+  allowed_alternatives:
+  - dwd_guarantee_funding_event_enriched
+business_process: guarantee_management

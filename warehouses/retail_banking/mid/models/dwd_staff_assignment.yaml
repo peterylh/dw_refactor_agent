@@ -1,0 +1,57 @@
+version: 2
+name: dwd_staff_assignment
+layer: DWD
+description: Assignment is a factless effective relationship and uses the canonical operations process.
+table_type: factless_fact
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+data_domain: '02'
+business_area: CHNL
+entities:
+- code: STAFF_ASSIGNMENT
+  type: primary
+  name: Staff Assignment
+  key_columns:
+  - id
+- code: CUSTOMER_GROUP
+  type: foreign
+  role: centre_group
+  name: Customer Group
+  key_columns:
+  - centre_id
+  source_fk:
+  - centre_id
+- code: STAFF
+  type: foreign
+  role: staff_member
+  name: Staff
+  key_columns:
+  - staff_id
+  source_fk:
+  - staff_id
+grain:
+  description: one centre-to-staff effective assignment interval
+  columns:
+  - id
+business_date:
+  kind: period_start
+  column: business_date
+  inherit_from: null
+  source_column: start_date
+source_mapping:
+  upstream_repository: https://github.com/apache/fineract
+  source_table: m_staff_assignment_history
+  ods_table: ods_fineract_m_staff_assignment_history
+  disposition: standalone_fact
+  confidence: human_reviewed
+sensitivity: restricted
+sensitivity_policy:
+  level: restricted
+  action: mask_and_tokenize
+column_sensitivity: []
+human_review:
+  verdict: revise
+  allowed_alternatives:
+  - bridge_centre_staff_history
+business_process: operations_management

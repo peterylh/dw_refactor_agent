@@ -1,0 +1,99 @@
+version: 2
+name: dwd_gl_journal_entry
+layer: DWD
+description: Source is the authoritative journal-line fact with explicit GL and source-transaction roles.
+table_type: fact
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+data_domain: '07'
+business_area: FMAN
+entities:
+- code: GL_JOURNAL_LINE
+  type: primary
+  name: Gl Journal Line
+  key_columns:
+  - id
+- code: GL_ACCOUNT
+  type: foreign
+  role: gl_account
+  name: Gl Account
+  key_columns:
+  - account_id
+  source_fk:
+  - account_id
+- code: OFFICE
+  type: foreign
+  role: office
+  name: Office
+  key_columns:
+  - office_id
+  source_fk:
+  - office_id
+- code: LOAN_TRANSACTION
+  type: foreign
+  role: loan_transaction
+  name: Loan Transaction
+  key_columns:
+  - loan_transaction_id
+  source_fk:
+  - loan_transaction_id
+grain:
+  description: one debit or credit journal line within a transaction_id voucher
+  columns:
+  - id
+business_date:
+  kind: event
+  column: business_date
+  inherit_from: null
+  source_column: entry_date
+source_mapping:
+  upstream_repository: https://github.com/apache/fineract
+  source_table: acc_gl_journal_entry
+  ods_table: ods_fineract_acc_gl_journal_entry
+  disposition: standalone_fact
+  confidence: human_reviewed
+sensitivity: internal
+sensitivity_policy:
+  level: internal
+  action: retain
+column_sensitivity: []
+human_review:
+  verdict: accept
+  allowed_alternatives: []
+business_process: general_ledger_posting
+atomic_metrics:
+- amount
+- office_running_balance
+- organization_running_balance
+metric_semantics:
+- name: amount
+  class: atomic
+  aggregation_behavior: additive
+  formula: amount
+  unit: currency
+  currency_source: currency_code
+  additive_over:
+  - id
+  sign: source_defined
+  reversal: source_policy
+- name: office_running_balance
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: office_running_balance
+  unit: currency
+  currency_source: currency_code
+  additive_over:
+  - id
+  sign: source_defined
+  reversal: source_policy
+- name: organization_running_balance
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: organization_running_balance
+  unit: currency
+  currency_source: currency_code
+  additive_over:
+  - id
+  sign: source_defined
+  reversal: source_policy

@@ -4,6 +4,8 @@ database: finance_analytics_dm
 qa_database: finance_analytics_dm_qa
 lineage_database: finance_analytics_lineage
 naming_config: naming_config.yaml
+schema_identity:
+  required: true
 verification:
   week_start: MON
   row_compare:

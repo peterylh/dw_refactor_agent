@@ -1,0 +1,42 @@
+version: 2
+name: dim_delinquency_range
+layer: DIM
+description: Delinquency range is stable classification reference data.
+table_type: dimension
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+data_domain: '04'
+business_area: LOAN
+entities:
+- code: DELINQUENCY_RANGE
+  type: primary
+  name: Delinquency Range
+  key_columns:
+  - id
+grain:
+  description: one delinquency day range
+  columns:
+  - id
+business_date:
+  kind: none
+  column: null
+  inherit_from: null
+  source_column: null
+source_mapping:
+  upstream_repository: https://github.com/apache/fineract
+  source_table: m_delinquency_range
+  ods_table: ods_fineract_m_delinquency_range
+  disposition: standalone_dimension
+  confidence: human_reviewed
+sensitivity: internal
+sensitivity_policy:
+  level: internal
+  action: retain
+column_sensitivity: []
+human_review:
+  verdict: accept
+  allowed_alternatives: []
+semantic_subject: DELINQUENCY_RANGE
+dimension_role: BASE
+dimension_content_type: INFO

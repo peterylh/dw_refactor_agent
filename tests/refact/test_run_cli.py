@@ -33,9 +33,7 @@ def _write_warehouse_config(root, project="shop"):
     )
 
 
-def test_start_creates_manifest_and_baseline_artifacts(tmp_path, monkeypatch):
-    _write_warehouse_config(tmp_path)
-
+def _install_start_fakes(monkeypatch):
     def fake_lineage(
         project, output_path, cache_path, previous_cache_path=None
     ):
@@ -58,6 +56,11 @@ def test_start_creates_manifest_and_baseline_artifacts(tmp_path, monkeypatch):
         "_now",
         lambda: _local_datetime(2026, 6, 20, 7, 30),
     )
+
+
+def test_start_creates_manifest_and_baseline_artifacts(tmp_path, monkeypatch):
+    _write_warehouse_config(tmp_path)
+    _install_start_fakes(monkeypatch)
 
     exit_code = run_cli.main(
         ["start", "--project", "shop", "--root", str(tmp_path)]
@@ -88,29 +91,7 @@ def test_start_creates_manifest_and_baseline_artifacts(tmp_path, monkeypatch):
 
 def test_start_loads_project_choices_from_target_root(tmp_path, monkeypatch):
     _write_warehouse_config(tmp_path, "demo")
-
-    def fake_lineage(
-        project, output_path, cache_path, previous_cache_path=None
-    ):
-        _write_json(output_path, {"tables": [], "edges": []})
-        _write_json(cache_path, {"project": project, "tasks": []})
-        return {"lineage": {"tables": [], "edges": []}}
-
-    def fake_assess(project, **kwargs):
-        return {"project": project, "overall_score": 100.0, "dimensions": {}}
-
-    monkeypatch.setattr(run_cli, "build_lineage_artifacts", fake_lineage)
-    monkeypatch.setattr(run_cli, "assess", fake_assess)
-    monkeypatch.setattr(
-        run_cli,
-        "_git_info",
-        lambda _root: {"branch": "main", "head": "abc123", "dirty": False},
-    )
-    monkeypatch.setattr(
-        run_cli,
-        "_now",
-        lambda: _local_datetime(2026, 6, 20, 7, 30),
-    )
+    _install_start_fakes(monkeypatch)
 
     exit_code = run_cli.main(
         ["start", "--project", "demo", "--root", str(tmp_path)]
@@ -259,10 +240,9 @@ def test_analyze_refreshes_current_analysis_diff_and_plan(
             "project": project,
             "project_db": "shop_dm",
             "qa_db": "shop_dm_qa",
-            "scope": {
-                "assessment_tables": ["dwd_order"],
+            "baseline_ddl": {
+                "dwd_order": "CREATE TABLE shop_dm.dwd_order (id BIGINT);"
             },
-            "baseline_ddl": {},
             "ddl_changes": [
                 {
                     "change_type": "RENAME",
@@ -330,6 +310,17 @@ def test_analyze_refreshes_current_analysis_diff_and_plan(
         "model_tables"
     ] == ["dwd_order"]
     assert (run_root / "verification" / "plan.json").exists()
+    persisted_plan = json.loads(
+        (run_root / "verification" / "plan.json").read_text()
+    )
+    assert "baseline_ddl" not in persisted_plan
+    assert persisted_plan["baseline_ddl_refs"]["dwd_order"]["path"] == (
+        "baseline_ddl/dwd_order.sql"
+    )
+    persisted_ddl = (
+        run_root / "verification" / "baseline_ddl" / "dwd_order.sql"
+    ).read_text()
+    assert persisted_ddl == "CREATE TABLE shop_dm.dwd_order (id BIGINT);"
     assert diff_calls == [
         {
             "root": tmp_path.resolve(),
@@ -491,18 +482,11 @@ def test_analyze_marks_empty_diff_assessment_not_applicable(
                 "model_tables": [],
                 "config_files": [],
             },
-            "scope": {
-                "direct_tables": [],
-                "downstream_tables": [],
-                "anchor_tables": [],
-                "assessment_tables": [],
-                "assessment_tasks": [],
-                "global_dimensions": [],
-            },
             "baseline_ddl": {},
             "ddl_changes": [],
             "jobs_to_run": [],
             "verification": {
+                "anchor_tables": [],
                 "checks": [],
                 "data_anchor_status": "not_required",
             },

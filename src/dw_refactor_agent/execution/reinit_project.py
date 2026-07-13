@@ -96,6 +96,18 @@ def _task_run_command(project: str, db_env: str, parallel: int) -> list[str]:
     ]
 
 
+def _validate_etl_dates_requirement(
+    project: str, etl_dates: list[str] | None
+) -> None:
+    """Reject unsafe implicit business-date discovery before rebuilding tables."""
+    execution = (PROJECT_CONFIG.get(project) or {}).get("execution") or {}
+    if execution.get("require_explicit_etl_dates") is True and not etl_dates:
+        raise ValueError(
+            f"[{project}] requires explicit --etl-dates; ODS load_time is an "
+            "ingestion timestamp, not a business date"
+        )
+
+
 def main():
     parser = argparse.ArgumentParser(description="数据重新初始化")
     parser.add_argument(
@@ -121,6 +133,11 @@ def main():
     args = parser.parse_args()
 
     project = args.project
+    try:
+        _validate_etl_dates_requirement(project, args.etl_dates)
+    except ValueError as e:
+        print(f"错误: {e}")
+        sys.exit(1)
     env_cmd = get_mysql_cmd(args.db_env)
     cfg = PROJECT_CONFIG[project]
     db_name = cfg["db"]
@@ -201,6 +218,8 @@ def main():
         print(f"\n{'=' * 60}")
         print("Step 3: 全量刷新模式 (启用 batch SQL 加速)")
         cmd += ["--full-refresh"]
+        if args.etl_dates:
+            cmd += ["--etl-dates", *args.etl_dates]
         print("  跳过逐日迭代, 按 batch SQL 执行")
     else:
         print(f"\n{'=' * 60}")

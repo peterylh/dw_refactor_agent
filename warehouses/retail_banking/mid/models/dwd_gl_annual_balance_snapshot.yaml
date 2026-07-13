@@ -1,0 +1,72 @@
+version: 2
+name: dwd_gl_annual_balance_snapshot
+layer: DWD
+description: Annual snapshot is valid but semantic grain must replace the generated surrogate-id grain.
+table_type: snapshot_fact
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+data_domain: '07'
+business_area: FMAN
+entities:
+- code: GL_ANNUAL_BALANCE_SNAPSHOT
+  type: primary
+  name: Gl Annual Balance Snapshot
+  key_columns:
+  - id
+- code: OFFICE
+  type: foreign
+  role: office
+  name: Office
+  key_columns:
+  - office_id
+  source_fk:
+  - office_id
+grain:
+  description: one annual opening-balance cell by GL/product/office/owner and currency
+  columns:
+  - gl_code
+  - product_id
+  - office_id
+  - currency_code
+  - owner_external_id
+  - manual_entry
+  - year_end_date
+business_date:
+  kind: snapshot
+  column: business_date
+  inherit_from: null
+  source_column: year_end_date
+source_mapping:
+  upstream_repository: https://github.com/apache/fineract
+  source_table: acc_gl_journal_entry_annual_summary
+  ods_table: ods_fineract_acc_gl_journal_entry_annual_summary
+  disposition: snapshot_source
+  confidence: human_reviewed
+sensitivity: internal
+sensitivity_policy:
+  level: internal
+  action: retain
+column_sensitivity: []
+human_review:
+  verdict: revise
+  allowed_alternatives:
+  - name: dws_gl_annual_opening_balance
+    layer: DWS
+    table_type: snapshot_fact
+    credit: 0.5
+    rationale: A source-provided annual opening-balance snapshot may be curated directly as a summary-layer
+      snapshot.
+business_process: general_ledger_posting
+atomic_metrics:
+- opening_balance_amount
+metric_semantics:
+- name: opening_balance_amount
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: opening_balance_amount
+  unit: currency
+  currency_source: currency_code
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy

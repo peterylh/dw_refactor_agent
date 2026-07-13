@@ -1,0 +1,190 @@
+version: 2
+name: dwd_wc_loan_account_daily_snapshot
+layer: DWD
+description: Time-varying account balances split from durable DIM attributes.
+table_type: snapshot_fact
+execution:
+  materialized: incremental
+  full_refresh_strategy: legacy_full_refresh
+  slice:
+    param: etl_date
+    column: snapshot_date
+    period: D
+  snapshot_mode: current_state_capture
+  historical_replay_supported: false
+  source_contract: ODS current state at execution time
+data_domain: '10'
+business_area: LOAN
+entities:
+- code: WC_LOAN_ACCOUNT
+  type: primary
+  name: Wc Loan Account
+  key_columns:
+  - id
+- code: CUSTOMER
+  type: foreign
+  role: borrower_customer
+  name: Customer
+  key_columns:
+  - client_id
+  source_fk:
+  - client_id
+- code: WC_LOAN_PRODUCT
+  type: foreign
+  role: wc_loan_product
+  name: Wc Loan Product
+  key_columns:
+  - product_id
+  source_fk:
+  - product_id
+- code: DELINQUENCY_BUCKET
+  type: foreign
+  role: delinquency_bucket
+  name: Delinquency Bucket
+  key_columns:
+  - delinquency_bucket_classification_id
+  source_fk:
+  - delinquency_bucket_classification_id
+grain:
+  description: one account state per extraction date
+  columns:
+  - id
+  - snapshot_date
+business_date:
+  kind: snapshot
+  column: snapshot_date
+  inherit_from: etl_context.etl_date
+  source_column: snapshot_date
+source_mapping:
+  upstream_repository: https://github.com/apache/fineract
+  source_table: m_wc_loan
+  ods_table: ods_fineract_m_wc_loan
+  disposition: standalone_dimension
+  confidence: human_reviewed
+sensitivity: restricted
+sensitivity_policy:
+  level: restricted
+  action: mask_and_tokenize
+column_sensitivity:
+- name: account_no
+  classification: identifier
+  action: hash
+- name: external_id
+  classification: identifier
+  action: hash
+human_review:
+  verdict: revise
+  allowed_alternatives: []
+business_process: wc_loan_management
+atomic_metrics:
+- principal_amount_proposed
+- approved_principal
+- principal_amount
+- period_payment_rate
+- npv_day_count
+- discount
+- loan_counter
+- loan_product_counter
+- discount_proposed
+- discount_approved
+- total_payment_volume
+metric_semantics:
+- name: principal_amount_proposed
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: principal_amount_proposed
+  unit: currency
+  currency_source: currency_code
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy
+- name: approved_principal
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: approved_principal
+  unit: currency
+  currency_source: currency_code
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy
+- name: principal_amount
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: principal_amount
+  unit: currency
+  currency_source: currency_code
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy
+- name: period_payment_rate
+  class: atomic
+  aggregation_behavior: non_additive
+  formula: period_payment_rate
+  unit: rate
+  currency_source: not_applicable
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy
+- name: npv_day_count
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: npv_day_count
+  unit: count
+  currency_source: not_applicable
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy
+- name: discount
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: discount
+  unit: currency
+  currency_source: currency_code
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy
+- name: loan_counter
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: loan_counter
+  unit: count
+  currency_source: not_applicable
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy
+- name: loan_product_counter
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: loan_product_counter
+  unit: count
+  currency_source: not_applicable
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy
+- name: discount_proposed
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: discount_proposed
+  unit: currency
+  currency_source: currency_code
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy
+- name: discount_approved
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: discount_approved
+  unit: currency
+  currency_source: currency_code
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy
+- name: total_payment_volume
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: total_payment_volume
+  unit: currency
+  currency_source: currency_code
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy

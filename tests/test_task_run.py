@@ -2,8 +2,11 @@ import json
 import os
 import subprocess
 
+import pytest
+
 import dw_refactor_agent.config as config
 from dw_refactor_agent.execution import task_run
+from dw_refactor_agent.execution.model_config import ExecutionConfigError
 from dw_refactor_agent.execution.planner import ExecutionPlanner
 
 
@@ -276,6 +279,28 @@ def test_resolve_full_refresh_dates_prefers_explicit_dates(monkeypatch):
         ["mysql"],
         ["2025-01-02", "2025-01-01", "2025-01-02"],
     ) == ["2025-01-02", "2025-01-01"]
+
+
+def test_resolve_full_refresh_dates_requires_explicit_business_dates(
+    monkeypatch,
+):
+    def fail_discover(*args, **kwargs):
+        raise AssertionError("should not discover ODS dates")
+
+    monkeypatch.setitem(
+        task_run.PROJECT_CONFIG,
+        "demo",
+        {"execution": {"require_explicit_etl_dates": True}},
+    )
+    monkeypatch.setattr(task_run, "_discover_ods_dates", fail_discover)
+
+    with pytest.raises(ExecutionConfigError, match="explicit --etl-dates"):
+        task_run._resolve_full_refresh_dates(
+            "demo",
+            "demo_db",
+            ["mysql"],
+            None,
+        )
 
 
 def test_build_job_dag_accepts_structured_lineage_edges(monkeypatch, tmp_path):

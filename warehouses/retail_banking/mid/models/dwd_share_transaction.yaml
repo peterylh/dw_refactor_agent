@@ -1,0 +1,105 @@
+version: 2
+name: dwd_share_transaction
+layer: DWD
+description: Source has dated share, amount and charge measures at transaction grain.
+table_type: fact
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+data_domain: 09
+business_area: ASTM
+entities:
+- code: SHARE_TRANSACTION
+  type: primary
+  name: Share Transaction
+  key_columns:
+  - id
+- code: SHARE_ACCOUNT
+  type: foreign
+  role: share_account
+  name: Share Account
+  key_columns:
+  - account_id
+  source_fk:
+  - account_id
+grain:
+  description: one dated share-account transaction
+  columns:
+  - id
+business_date:
+  kind: event
+  column: business_date
+  inherit_from: null
+  source_column: transaction_date
+source_mapping:
+  upstream_repository: https://github.com/apache/fineract
+  source_table: m_share_account_transactions
+  ods_table: ods_fineract_m_share_account_transactions
+  disposition: standalone_fact
+  confidence: human_reviewed
+sensitivity: restricted
+sensitivity_policy:
+  level: restricted
+  action: mask_and_tokenize
+column_sensitivity: []
+human_review:
+  verdict: accept
+  allowed_alternatives: []
+business_process: share_account_management
+atomic_metrics:
+- total_shares
+- unit_price
+- amount
+- charge_amount
+- amount_paid
+metric_semantics:
+- name: total_shares
+  class: atomic
+  aggregation_behavior: additive
+  formula: total_shares
+  unit: shares
+  currency_source: not_applicable
+  additive_over:
+  - id
+  sign: source_defined
+  reversal: source_policy
+- name: unit_price
+  class: atomic
+  aggregation_behavior: additive
+  formula: unit_price
+  unit: currency
+  currency_source: account_currency
+  additive_over:
+  - id
+  sign: source_defined
+  reversal: source_policy
+- name: amount
+  class: atomic
+  aggregation_behavior: additive
+  formula: amount
+  unit: currency
+  currency_source: account_currency
+  additive_over:
+  - id
+  sign: source_defined
+  reversal: source_policy
+- name: charge_amount
+  class: atomic
+  aggregation_behavior: additive
+  formula: charge_amount
+  unit: currency
+  currency_source: account_currency
+  additive_over:
+  - id
+  sign: source_defined
+  reversal: source_policy
+- name: amount_paid
+  class: atomic
+  aggregation_behavior: additive
+  formula: amount_paid
+  unit: currency
+  currency_source: account_currency
+  additive_over:
+  - id
+  sign: source_defined
+  reversal: source_policy

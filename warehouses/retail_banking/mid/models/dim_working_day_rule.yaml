@@ -1,0 +1,42 @@
+version: 2
+name: dim_working_day_rule
+layer: DIM
+description: Singleton working-day configuration is a valid rule dimension when scope is explicit.
+table_type: dimension
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+data_domain: '02'
+business_area: CHNL
+entities:
+- code: WORKING_DAY_RULE
+  type: primary
+  name: Working Day Rule
+  key_columns:
+  - id
+grain:
+  description: one institution-wide working-day rule
+  columns:
+  - id
+business_date:
+  kind: none
+  column: null
+  inherit_from: null
+  source_column: null
+source_mapping:
+  upstream_repository: https://github.com/apache/fineract
+  source_table: m_working_days
+  ods_table: ods_fineract_m_working_days
+  disposition: standalone_dimension
+  confidence: human_reviewed
+sensitivity: internal
+sensitivity_policy:
+  level: internal
+  action: retain
+column_sensitivity: []
+human_review:
+  verdict: accept
+  allowed_alternatives: []
+semantic_subject: WORKING_DAY_RULE
+dimension_role: BASE
+dimension_content_type: INFO

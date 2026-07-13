@@ -1,0 +1,42 @@
+version: 2
+name: dim_deposit_product
+layer: DIM
+description: Deposit product is reusable reference data across deposit accounts and transactions.
+table_type: dimension
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+data_domain: '05'
+business_area: DPST
+entities:
+- code: DEPOSIT_PRODUCT
+  type: primary
+  name: Deposit Product
+  key_columns:
+  - id
+grain:
+  description: one deposit product definition
+  columns:
+  - id
+business_date:
+  kind: none
+  column: null
+  inherit_from: null
+  source_column: null
+source_mapping:
+  upstream_repository: https://github.com/apache/fineract
+  source_table: m_savings_product
+  ods_table: ods_fineract_m_savings_product
+  disposition: standalone_dimension
+  confidence: human_reviewed
+sensitivity: internal
+sensitivity_policy:
+  level: internal
+  action: retain
+column_sensitivity: []
+human_review:
+  verdict: accept
+  allowed_alternatives: []
+semantic_subject: DEPOSIT_PRODUCT
+dimension_role: BASE
+dimension_content_type: INFO

@@ -1,0 +1,48 @@
+version: 2
+name: dwd_collection_action
+layer: DWD
+description: Start and end dates define a loan collection-action interval.
+table_type: factless_fact
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+data_domain: '04'
+business_area: LOAN
+entities:
+- code: COLLECTION_ACTION
+  type: primary
+  name: Collection Action
+  key_columns:
+  - id
+- code: LOAN_ACCOUNT
+  type: foreign
+  role: loan_account
+  name: Loan Account
+  key_columns:
+  - loan_id
+  source_fk:
+  - loan_id
+grain:
+  description: one collection action interval for one loan
+  columns:
+  - id
+business_date:
+  kind: period_start
+  column: business_date
+  inherit_from: null
+  source_column: start_date
+source_mapping:
+  upstream_repository: https://github.com/apache/fineract
+  source_table: m_loan_delinquency_action
+  ods_table: ods_fineract_m_loan_delinquency_action
+  disposition: standalone_fact
+  confidence: human_reviewed
+sensitivity: restricted
+sensitivity_policy:
+  level: restricted
+  action: mask_and_tokenize
+column_sensitivity: []
+human_review:
+  verdict: accept
+  allowed_alternatives: []
+business_process: delinquency_management

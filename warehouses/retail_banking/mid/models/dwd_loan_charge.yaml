@@ -1,0 +1,184 @@
+version: 2
+name: dwd_loan_charge
+layer: DWD
+description: Charge balances are accumulating servicing facts and use loan repayment as the canonical
+  process.
+table_type: accumulating_snapshot
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+data_domain: '04'
+business_area: LOAN
+entities:
+- code: LOAN_CHARGE
+  type: primary
+  name: Loan Charge
+  key_columns:
+  - id
+- code: LOAN_ACCOUNT
+  type: foreign
+  role: loan_account
+  name: Loan Account
+  key_columns:
+  - loan_id
+  source_fk:
+  - loan_id
+- code: CHARGE_TYPE
+  type: foreign
+  role: charge_definition
+  name: Charge Type
+  key_columns:
+  - charge_id
+  source_fk:
+  - charge_id
+grain:
+  description: one assessed loan charge through settlement lifecycle
+  columns:
+  - id
+business_date:
+  kind: due
+  column: business_date
+  inherit_from: null
+  source_column: due_for_collection_as_of_date
+source_mapping:
+  upstream_repository: https://github.com/apache/fineract
+  source_table: m_loan_charge
+  ods_table: ods_fineract_m_loan_charge
+  disposition: snapshot_source
+  confidence: human_reviewed
+sensitivity: restricted
+sensitivity_policy:
+  level: restricted
+  action: mask_and_tokenize
+column_sensitivity:
+- name: external_id
+  classification: identifier
+  action: hash
+human_review:
+  verdict: revise
+  allowed_alternatives:
+  - dwd_loan_charge_daily_snapshot
+business_process: loan_repayment
+atomic_metrics:
+- calculation_percentage
+- calculation_on_amount
+- charge_amount_or_percentage
+- amount
+- amount_paid_derived
+- amount_waived_derived
+- amount_writtenoff_derived
+- amount_outstanding_derived
+- min_cap
+- max_cap
+- tax_amount
+metric_semantics:
+- name: calculation_percentage
+  class: atomic
+  aggregation_behavior: non_additive
+  formula: calculation_percentage
+  unit: rate
+  currency_source: not_applicable
+  additive_over:
+  - id
+  sign: source_defined
+  reversal: source_policy
+- name: calculation_on_amount
+  class: atomic
+  aggregation_behavior: additive
+  formula: calculation_on_amount
+  unit: currency
+  currency_source: account_currency
+  additive_over:
+  - id
+  sign: source_defined
+  reversal: source_policy
+- name: charge_amount_or_percentage
+  class: atomic
+  aggregation_behavior: non_additive
+  formula: charge_amount_or_percentage
+  unit: rate
+  currency_source: not_applicable
+  additive_over:
+  - id
+  sign: source_defined
+  reversal: source_policy
+- name: amount
+  class: atomic
+  aggregation_behavior: additive
+  formula: amount
+  unit: currency
+  currency_source: account_currency
+  additive_over:
+  - id
+  sign: source_defined
+  reversal: source_policy
+- name: amount_paid_derived
+  class: atomic
+  aggregation_behavior: additive
+  formula: amount_paid_derived
+  unit: currency
+  currency_source: account_currency
+  additive_over:
+  - id
+  sign: source_defined
+  reversal: source_policy
+- name: amount_waived_derived
+  class: atomic
+  aggregation_behavior: additive
+  formula: amount_waived_derived
+  unit: currency
+  currency_source: account_currency
+  additive_over:
+  - id
+  sign: source_defined
+  reversal: source_policy
+- name: amount_writtenoff_derived
+  class: atomic
+  aggregation_behavior: additive
+  formula: amount_writtenoff_derived
+  unit: currency
+  currency_source: account_currency
+  additive_over:
+  - id
+  sign: source_defined
+  reversal: source_policy
+- name: amount_outstanding_derived
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: amount_outstanding_derived
+  unit: currency
+  currency_source: account_currency
+  additive_over:
+  - id
+  sign: source_defined
+  reversal: source_policy
+- name: min_cap
+  class: atomic
+  aggregation_behavior: additive
+  formula: min_cap
+  unit: currency
+  currency_source: account_currency
+  additive_over:
+  - id
+  sign: source_defined
+  reversal: source_policy
+- name: max_cap
+  class: atomic
+  aggregation_behavior: additive
+  formula: max_cap
+  unit: currency
+  currency_source: account_currency
+  additive_over:
+  - id
+  sign: source_defined
+  reversal: source_policy
+- name: tax_amount
+  class: atomic
+  aggregation_behavior: additive
+  formula: tax_amount
+  unit: currency
+  currency_source: account_currency
+  additive_over:
+  - id
+  sign: source_defined
+  reversal: source_policy

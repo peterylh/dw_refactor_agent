@@ -1,0 +1,50 @@
+version: 2
+name: dim_wc_loan_product
+layer: DIM
+description: Working-capital loan product is reusable product reference data.
+table_type: dimension
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+data_domain: '10'
+business_area: LOAN
+entities:
+- code: WC_LOAN_PRODUCT
+  type: primary
+  name: Wc Loan Product
+  key_columns:
+  - id
+- code: DELINQUENCY_BUCKET
+  type: foreign
+  role: delinquency_bucket
+  name: Delinquency Bucket
+  key_columns:
+  - delinquency_bucket_classification_id
+  source_fk:
+  - delinquency_bucket_classification_id
+grain:
+  description: one working-capital loan product definition
+  columns:
+  - id
+business_date:
+  kind: effective
+  column: start_date
+  inherit_from: null
+  source_column: start_date
+source_mapping:
+  upstream_repository: https://github.com/apache/fineract
+  source_table: m_wc_loan_product
+  ods_table: ods_fineract_m_wc_loan_product
+  disposition: standalone_dimension
+  confidence: human_reviewed
+sensitivity: internal
+sensitivity_policy:
+  level: internal
+  action: retain
+column_sensitivity: []
+human_review:
+  verdict: accept
+  allowed_alternatives: []
+semantic_subject: WC_LOAN_PRODUCT
+dimension_role: BASE
+dimension_content_type: INFO

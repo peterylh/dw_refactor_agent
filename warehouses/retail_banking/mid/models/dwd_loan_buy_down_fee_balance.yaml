@@ -1,0 +1,98 @@
+version: 2
+name: dwd_loan_buy_down_fee_balance
+layer: DWD
+description: Source has explicit date, amount, unrecognized and charged-off balance measures.
+table_type: snapshot_fact
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+data_domain: '04'
+business_area: LOAN
+entities:
+- code: LOAN_BUY_DOWN_FEE_BALANCE
+  type: primary
+  name: Loan Buy Down Fee Balance
+  key_columns:
+  - id
+- code: LOAN_ACCOUNT
+  type: foreign
+  role: loan_account
+  name: Loan Account
+  key_columns:
+  - loan_id
+  source_fk:
+  - loan_id
+- code: LOAN_TRANSACTION
+  type: foreign
+  role: loan_transaction
+  name: Loan Transaction
+  key_columns:
+  - loan_transaction_id
+  source_fk:
+  - loan_transaction_id
+grain:
+  description: one dated buy-down-fee balance version linked to a loan transaction
+  columns:
+  - id
+business_date:
+  kind: snapshot
+  column: business_date
+  inherit_from: null
+  source_column: date
+source_mapping:
+  upstream_repository: https://github.com/apache/fineract
+  source_table: m_loan_buy_down_fee_balance
+  ods_table: ods_fineract_m_loan_buy_down_fee_balance
+  disposition: snapshot_source
+  confidence: human_reviewed
+sensitivity: restricted
+sensitivity_policy:
+  level: restricted
+  action: mask_and_tokenize
+column_sensitivity: []
+human_review:
+  verdict: accept
+  allowed_alternatives: []
+business_process: loan_transaction
+atomic_metrics:
+- amount
+- unrecognized_amount
+- charged_off_amount
+- amount_adjustment
+metric_semantics:
+- name: amount
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: amount
+  unit: currency
+  currency_source: account_currency
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy
+- name: unrecognized_amount
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: unrecognized_amount
+  unit: currency
+  currency_source: account_currency
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy
+- name: charged_off_amount
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: charged_off_amount
+  unit: currency
+  currency_source: account_currency
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy
+- name: amount_adjustment
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: amount_adjustment
+  unit: currency
+  currency_source: account_currency
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy

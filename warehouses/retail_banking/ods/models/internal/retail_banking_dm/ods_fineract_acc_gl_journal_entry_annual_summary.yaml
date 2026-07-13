@@ -1,0 +1,13 @@
+version: 2
+name: ods_fineract_acc_gl_journal_entry_annual_summary
+layer: ODS
+description: Fineract acc_gl_journal_entry_annual_summary 贴源表
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+source:
+  repository: https://github.com/apache/fineract
+  table: acc_gl_journal_entry_annual_summary
+  disposition: snapshot_source
+  confidence: human_reviewed
+sensitivity: internal

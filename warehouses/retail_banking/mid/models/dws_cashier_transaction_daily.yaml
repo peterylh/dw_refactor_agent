@@ -1,0 +1,65 @@
+version: 2
+name: dws_cashier_transaction_daily
+layer: DWS
+description: 支付结算 reviewed aggregate
+table_type: aggregate_fact
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+data_domain: '06'
+business_area: PAYM
+business_process: cashier_operation
+sensitivity: internal
+business_date:
+  column: txn_date
+  output_column: stat_date
+  kind: event_date
+grain:
+  columns:
+  - stat_date
+  - cashier_id
+  - currency_code
+  - txn_type
+  description: one day, cashier, currency and transaction type
+  entities:
+  - CASHIER
+  degenerate_dimensions: &id001
+  - currency_code
+  - txn_type
+  time_column: stat_date
+  time_period: D
+entities:
+- code: CASHIER
+  key: cashier_id
+degenerate_dimensions: *id001
+derived_metrics: &id002
+- name: record_count
+  class: derived
+  formula: count(*)
+  unit: count
+  currency_source: not_applicable
+  aggregation_behavior: additive
+  additive_over:
+  - stat_date
+  - cashier_id
+  - currency_code
+  - txn_type
+  sign: positive_count
+  reversal: source_has_no_reversal_flag
+- name: total_txn_amount
+  class: derived
+  formula: sum(txn_amount)
+  unit: currency
+  currency_source: currency_code
+  aggregation_behavior: additive
+  additive_over:
+  - stat_date
+  - cashier_id
+  - txn_type
+  sign: gross_by_txn_type
+  reversal: source_has_no_reversal_flag
+metric_semantics: *id002
+human_review:
+  decision: accept
+  current_name: dws_cashier_transaction_daily
+  status: human_reviewed_candidate

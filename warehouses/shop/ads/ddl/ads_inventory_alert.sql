@@ -1,19 +1,32 @@
 -- ADS 库存预警分析表
--- table_id: e6f7a8b9-c0d1-4e2f-3a4b-5c6d7e8f9a0b
+-- table_id: e4bbe17b-fdaa-430b-bfbb-d80eecfe1f12
 DROP TABLE IF EXISTS shop_dm.ads_inventory_alert;
 CREATE TABLE IF NOT EXISTS shop_dm.ads_inventory_alert (
+    -- column_id: dfdae621-4632-43fb-8641-12e84d1e667f
     product_id          BIGINT        NOT NULL COMMENT '商品ID',
+    -- column_id: a39b4398-31f8-490d-9eca-07091380d5a7
     store_id            BIGINT        NOT NULL COMMENT '门店ID',
+    -- column_id: a6d8cba4-19db-490e-b1ce-3e07853b2d45
     stat_date           DATE          NOT NULL COMMENT '统计日期',
+    -- column_id: b5fa33ba-e532-4d8a-b5a8-2649132175a7
     product_name        VARCHAR(128)  NULL COMMENT '商品名称',
+    -- column_id: ab3e7a0a-6b3f-49d1-84af-9585bb8b75f8
     store_name          VARCHAR(128)  NULL COMMENT '门店名称',
+    -- column_id: b6c11533-7a31-4191-947d-2e03132c2a92
     quantity            INT           NOT NULL DEFAULT 0 COMMENT '库存数量',
+    -- column_id: 650e8994-17d6-44fd-9c4b-609c96568916
     safety_stock        INT           NOT NULL DEFAULT 10 COMMENT '安全库存',
+    -- column_id: a8216ed3-f7c8-46dd-89c0-81e0e06852e8
     stock_status        VARCHAR(16)   NULL COMMENT '库存状态:正常/偏低/缺货预警/缺货',
+    -- column_id: 389176ea-b2fb-4c2f-8952-5e243b1447c1
     days_since_restock  INT           NULL COMMENT '距上次补货天数',
+    -- column_id: 68a01bfd-1efa-44da-89fe-4aadc237329b
     daily_sales_velocity DECIMAL(10,2) NULL COMMENT '日均销售数量(近7天)',
+    -- column_id: 5018a685-40c8-4fc3-a8ee-8ff1d0cd2341
     days_of_stock_remaining DECIMAL(5,1) NULL COMMENT '预计库存可支撑天数',
+    -- column_id: ed301bc4-9269-4e4d-b5b1-0241cb0993da
     alert_level         VARCHAR(16)   NULL COMMENT '预警级别:正常/关注/预警/严重',
+    -- column_id: d7cdb50c-1801-4983-bd82-83b9c01ebd29
     etl_time            DATETIME      NOT NULL COMMENT 'ETL处理时间'
 ) ENGINE=OLAP
 UNIQUE KEY(product_id, store_id, stat_date)

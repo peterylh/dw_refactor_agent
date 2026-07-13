@@ -11,7 +11,7 @@ dependencies = [
     "PyYAML>=6",
     "pymysql",
     "requests",
-    "sqlglot==26.9.0",
+    "sqlglot @ git+https://github.com/HYDCP/hy-sqlglot.git@77fe22e66498ea4ad996d9c5a172c69d7ac693c8",
     "typing_extensions",
 ]
 

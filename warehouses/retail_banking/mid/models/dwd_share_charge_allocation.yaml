@@ -1,0 +1,73 @@
+version: 2
+name: dwd_share_charge_allocation
+layer: DWD
+description: Allocation requires parent share transaction date and account context.
+table_type: fact
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+data_domain: 09
+business_area: ASTM
+entities:
+- code: SHARE_CHARGE_ALLOCATION
+  type: primary
+  name: Share Charge Allocation
+  key_columns:
+  - id
+- code: SHARE_TRANSACTION
+  type: foreign
+  role: share_transaction
+  name: Share Transaction
+  key_columns:
+  - share_transaction_id
+  source_fk:
+  - share_transaction_id
+- code: SHARE_CHARGE
+  type: foreign
+  role: share_charge
+  name: Share Charge
+  key_columns:
+  - charge_transaction_id
+  source_fk:
+  - charge_transaction_id
+grain:
+  description: one share transaction-to-charge allocation
+  columns:
+  - share_transaction_id
+  - charge_transaction_id
+  - id
+business_date:
+  kind: inherited
+  column: business_date
+  inherit_from: m_share_account_transactions.transaction_date
+  source_column: null
+source_mapping:
+  upstream_repository: https://github.com/apache/fineract
+  source_table: m_share_account_charge_paid_by
+  ods_table: ods_fineract_m_share_account_charge_paid_by
+  disposition: standalone_fact
+  confidence: human_reviewed
+sensitivity: restricted
+sensitivity_policy:
+  level: restricted
+  action: mask_and_tokenize
+column_sensitivity: []
+human_review:
+  verdict: revise
+  allowed_alternatives: []
+business_process: share_account_management
+atomic_metrics:
+- amount
+metric_semantics:
+- name: amount
+  class: atomic
+  aggregation_behavior: additive
+  formula: amount
+  unit: currency
+  currency_source: account_currency
+  additive_over:
+  - share_transaction_id
+  - charge_transaction_id
+  - id
+  sign: source_defined
+  reversal: source_policy

@@ -1,0 +1,65 @@
+version: 2
+name: bridge_group_customer_role
+layer: DWD
+description: This is a typed relationship bridge and replaces the invalid generated customer process code.
+table_type: bridge
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+data_domain: '01'
+business_area: CLNT
+entities:
+- code: GROUP_CUSTOMER_ROLE
+  type: primary
+  name: Group Customer Role
+  key_columns:
+  - id
+- code: CUSTOMER_GROUP
+  type: foreign
+  role: customer_group
+  name: Customer Group
+  key_columns:
+  - group_id
+  source_fk:
+  - group_id
+- code: CUSTOMER
+  type: foreign
+  role: customer
+  name: Customer
+  key_columns:
+  - client_id
+  source_fk:
+  - client_id
+- code: CODE_VALUE
+  type: foreign
+  role: group_role
+  name: Code Value
+  key_columns:
+  - role_cv_id
+  source_fk:
+  - role_cv_id
+grain:
+  description: one customer role within one group
+  columns:
+  - id
+business_date:
+  kind: none
+  column: null
+  inherit_from: null
+  source_column: null
+source_mapping:
+  upstream_repository: https://github.com/apache/fineract
+  source_table: m_group_roles
+  ods_table: ods_fineract_m_group_roles
+  disposition: bridge_source
+  confidence: human_reviewed
+sensitivity: restricted
+sensitivity_policy:
+  level: restricted
+  action: mask_and_tokenize
+column_sensitivity: []
+human_review:
+  verdict: revise
+  allowed_alternatives:
+  - periodic_group_role_snapshot
+business_process: customer_management

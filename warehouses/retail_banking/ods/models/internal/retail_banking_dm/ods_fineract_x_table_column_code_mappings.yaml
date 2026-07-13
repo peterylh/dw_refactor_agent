@@ -1,0 +1,13 @@
+version: 2
+name: ods_fineract_x_table_column_code_mappings
+layer: ODS
+description: Fineract x_table_column_code_mappings 贴源表
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+source:
+  repository: https://github.com/apache/fineract
+  table: x_table_column_code_mappings
+  disposition: bridge_source
+  confidence: candidate
+sensitivity: internal

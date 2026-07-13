@@ -1,48 +1,93 @@
 DROP TABLE IF EXISTS finance_analytics_dm.dim_customer;
+-- table_id: bc212093-c931-4a5c-9820-c898e6ae728e
 CREATE TABLE IF NOT EXISTS finance_analytics_dm.dim_customer (
+    -- column_id: 659abec3-161a-4665-bd15-fa2194f65da9
     customer_key CHAR(32) NULL,
+    -- column_id: 4fccf764-6253-4cb0-972e-25a37b9da7d5
     customer_natural_key BIGINT NULL,
+    -- column_id: 6da3772a-49a3-4af3-a1cc-d38b41de903e
     first_name STRING NULL,
+    -- column_id: 4b467ae1-7d5e-4c32-85fc-3827d09af836
     last_name STRING NULL,
+    -- column_id: a49755d6-fbc9-47ae-a6d2-9cf1f3b58f16
     full_name STRING NULL,
+    -- column_id: 684e7505-47fc-4b92-bfc4-319e2c5fcbc0
     email STRING NULL,
+    -- column_id: f2ec9a12-1d6e-4e5c-8696-532ec29812a1
     phone_clean STRING NULL,
+    -- column_id: b5686f0e-1b37-4a6f-b7b0-241077797fe6
     date_of_birth STRING NULL,
+    -- column_id: 00ad1e32-bcc6-4217-9482-d933ddc4f18d
     age BIGINT NULL,
+    -- column_id: ed45b90e-572f-4293-acf1-de8309b81248
     age_group STRING NULL,
+    -- column_id: 4a488a4b-8f28-4ac3-a65c-cc1c0d207489
     address STRING NULL,
+    -- column_id: 8bbdf781-19dd-4e86-8f56-61811fe7d49e
     city STRING NULL,
+    -- column_id: 700e2313-9913-4548-ba3a-f13f37231c7d
     state STRING NULL,
+    -- column_id: f9503c66-ba8d-46cd-a481-51aec89e8fcc
     zip_code STRING NULL,
+    -- column_id: 32178483-5912-45ff-9552-23c5df1a531d
     country STRING NULL,
+    -- column_id: 8d7416ad-78e2-4d69-a3db-e19c773cc0e7
     signup_date DATETIME NULL,
+    -- column_id: 92211dd2-1b2c-44e9-b5da-8081c4a0b70b
     credit_score DECIMAL(18,4) NULL,
+    -- column_id: a90cf5dd-f056-4268-9244-a9a7ce5d652c
     credit_score_band DECIMAL(18,4) NULL,
+    -- column_id: ee35f218-2a6e-4097-b56e-6de9d324742e
     annual_income DECIMAL(18,4) NULL,
+    -- column_id: 90d65b17-e438-40b2-b2ee-5b037d98f941
     income_bracket DECIMAL(18,4) NULL,
+    -- column_id: b92ae115-a3c8-4a2b-8354-f0d1cb20b415
     employment_status STRING NULL,
+    -- column_id: b35035aa-cc35-465b-9804-beafd40ba2cf
     employer STRING NULL,
+    -- column_id: 57502280-14de-46df-b080-f7523447226c
     job_title STRING NULL,
+    -- column_id: c3d9d2aa-223d-414a-97c3-fd5fe342b2ae
     education_level STRING NULL,
+    -- column_id: 834d07d5-cbc3-42ad-9a81-b00b7c4975c0
     marital_status STRING NULL,
+    -- column_id: a2971608-1be0-4955-8874-7bffc7aa0d89
     number_of_dependents BIGINT NULL,
+    -- column_id: cda4fe36-8317-4353-aaac-c068b0478633
     home_ownership STRING NULL,
+    -- column_id: 58042dc9-c02a-4571-b750-26d57b7a0868
     customer_segment STRING NULL,
+    -- column_id: 499a9646-f49d-4ff9-816b-939f4da64490
     life_stage STRING NULL,
+    -- column_id: c6098d0a-f06e-444d-b0fb-778ce5712de4
     risk_segment STRING NULL,
+    -- column_id: 03c69f7c-8b7c-4c67-80b7-ddc6a6b51be5
     loyalty_tier STRING NULL,
+    -- column_id: 62e98c78-8ada-42c9-91e9-1ade6ddd8474
     is_active BOOLEAN NULL,
+    -- column_id: 8702ce38-e279-49c0-95d0-fff9512bfffb
     preferred_channel STRING NULL,
+    -- column_id: f8e8a43c-e2c8-4d8b-b398-e6b3fa944cce
     marketing_opt_in STRING NULL,
+    -- column_id: dc337c37-49af-4ed3-bcfe-cbea69d7f96f
     customer_lifetime_value DECIMAL(18,4) NULL,
+    -- column_id: ec2d45e1-67ec-40b6-af60-18f6d1aec3da
     churn_risk_score DECIMAL(18,4) NULL,
+    -- column_id: 1b97f842-1017-48fd-96a1-bcb9877f5969
     churn_risk_category STRING NULL,
+    -- column_id: 0f4746cc-a481-4a0a-bc60-3868d8d6e229
     last_login_date DATETIME NULL,
+    -- column_id: 95a2ed34-f3fd-4aa8-aaec-7c642dbbe44e
     acquisition_channel STRING NULL,
+    -- column_id: f7b2d18f-054d-4952-b2bb-67936be357a3
     tenure_months BIGINT NULL,
+    -- column_id: e3990b24-ed77-4ce1-8d52-be7a59fcdb62
     effective_date DATETIME NULL,
+    -- column_id: 91dde00c-bf95-44cd-9c96-35d4f8c8fde3
     expiration_date DATETIME NULL,
+    -- column_id: aa4c57cb-6740-4702-b670-5134a0a929ab
     is_current BOOLEAN NULL,
+    -- column_id: bacbeb87-6b88-4a55-b140-ef4736a4d994
     dbt_updated_at DATETIME NULL
 ) ENGINE=OLAP
 DUPLICATE KEY(customer_key)

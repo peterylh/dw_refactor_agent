@@ -1,0 +1,42 @@
+version: 2
+name: dim_currency
+layer: DIM
+description: Currency is a conformed reference dimension keyed by business code.
+table_type: dimension
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+data_domain: '03'
+business_area: OTHR
+entities:
+- code: CURRENCY
+  type: primary
+  name: Currency
+  key_columns:
+  - code
+grain:
+  description: one ISO-style currency code
+  columns:
+  - code
+business_date:
+  kind: none
+  column: null
+  inherit_from: null
+  source_column: null
+source_mapping:
+  upstream_repository: https://github.com/apache/fineract
+  source_table: m_currency
+  ods_table: ods_fineract_m_currency
+  disposition: standalone_dimension
+  confidence: human_reviewed
+sensitivity: internal
+sensitivity_policy:
+  level: internal
+  action: retain
+column_sensitivity: []
+human_review:
+  verdict: accept
+  allowed_alternatives: []
+semantic_subject: CURRENCY
+dimension_role: BASE
+dimension_content_type: INFO

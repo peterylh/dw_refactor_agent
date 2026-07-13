@@ -1,0 +1,13 @@
+version: 2
+name: ods_fineract_ppi_scores
+layer: ODS
+description: Fineract ppi_scores 贴源表
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+source:
+  repository: https://github.com/apache/fineract
+  table: ppi_scores
+  disposition: component_source
+  confidence: candidate
+sensitivity: internal

@@ -1,0 +1,13 @@
+version: 2
+name: ods_fineract_sms_messages_outbound
+layer: ODS
+description: Fineract sms_messages_outbound 贴源表
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+source:
+  repository: https://github.com/apache/fineract
+  table: sms_messages_outbound
+  disposition: component_source
+  confidence: candidate
+sensitivity: restricted

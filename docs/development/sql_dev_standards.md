@@ -37,6 +37,7 @@
 -- table_id: uuid
 DROP TABLE IF EXISTS {db}.{table_name};
 CREATE TABLE IF NOT EXISTS {db}.{table_name} (
+    -- column_id: uuid
     id BIGINT NOT NULL COMMENT 'ID',
     ...
 ) ENGINE=OLAP
@@ -48,7 +49,10 @@ PROPERTIES ("replication_num" = "1");
 ### 要点
 
 - 文件头注释说明表用途、主键、数据类型、金额字段等
-- table_id 为 UUID4 字符串, 不要编辑table_id
+- `table_id` 和 `column_id` 均为 UUID4 字符串，不要手工复制或重新生成已有 ID
+- 新表使用 `schema_ids init-file` 同时生成表和字段 ID
+- 已有表新增字段使用 `schema_ids assign-column` 生成新字段 ID
+- 表或字段重命名、类型/默认值/注释修改必须保留原 ID
 - 主键列 `NOT NULL`，附中文 COMMENT
 - 枚举值在 COMMENT 中列出可选值（如 `COMMENT '状态: 已完成/已取消'`）
 - 数据类型优先级：`BIGINT` > `DECIMAL(12,2)` > `DATE/DATETIME` > `VARCHAR(n)`

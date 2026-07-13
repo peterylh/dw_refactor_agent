@@ -1,0 +1,64 @@
+version: 2
+name: dwd_customer_transfer_event
+layer: DWD
+description: Source records a customer transfer lifecycle with endpoint offices and status dates.
+table_type: accumulating_snapshot
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+data_domain: '01'
+business_area: CLNT
+entities:
+- code: CUSTOMER_TRANSFER_EVENT
+  type: primary
+  name: Customer Transfer Event
+  key_columns:
+  - id
+- code: CUSTOMER
+  type: foreign
+  role: customer
+  name: Customer
+  key_columns:
+  - client_id
+  source_fk:
+  - client_id
+- code: OFFICE
+  type: foreign
+  role: from_office
+  name: Office
+  key_columns:
+  - from_office_id
+  source_fk:
+  - from_office_id
+- code: OFFICE
+  type: foreign
+  role: to_office
+  name: Office
+  key_columns:
+  - to_office_id
+  source_fk:
+  - to_office_id
+grain:
+  description: one customer office-transfer request lifecycle
+  columns:
+  - id
+business_date:
+  kind: event
+  column: business_date
+  inherit_from: null
+  source_column: proposed_transfer_date
+source_mapping:
+  upstream_repository: https://github.com/apache/fineract
+  source_table: m_client_transfer_details
+  ods_table: ods_fineract_m_client_transfer_details
+  disposition: snapshot_source
+  confidence: human_reviewed
+sensitivity: restricted
+sensitivity_policy:
+  level: restricted
+  action: mask_and_tokenize
+column_sensitivity: []
+human_review:
+  verdict: accept
+  allowed_alternatives: []
+business_process: customer_management

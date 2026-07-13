@@ -1,0 +1,13 @@
+version: 2
+name: ods_fineract_gsim_accounts
+layer: ODS
+description: Fineract gsim_accounts 贴源表
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+source:
+  repository: https://github.com/apache/fineract
+  table: gsim_accounts
+  disposition: component_source
+  confidence: candidate
+sensitivity: restricted

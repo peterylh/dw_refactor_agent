@@ -1,0 +1,49 @@
+version: 2
+name: dwd_loan_lifecycle_event
+layer: DWD
+description: Status-change history is valid after replacing the invalid generic loan-management process.
+table_type: factless_fact
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+data_domain: '04'
+business_area: LOAN
+entities:
+- code: LOAN_LIFECYCLE_EVENT
+  type: primary
+  name: Loan Lifecycle Event
+  key_columns:
+  - id
+- code: LOAN_ACCOUNT
+  type: foreign
+  role: loan_account
+  name: Loan Account
+  key_columns:
+  - loan_id
+  source_fk:
+  - loan_id
+grain:
+  description: one status transition recorded for one loan
+  columns:
+  - id
+business_date:
+  kind: event
+  column: business_date
+  inherit_from: null
+  source_column: status_change_business_date
+source_mapping:
+  upstream_repository: https://github.com/apache/fineract
+  source_table: m_loan_status_change_history
+  ods_table: ods_fineract_m_loan_status_change_history
+  disposition: standalone_fact
+  confidence: human_reviewed
+sensitivity: restricted
+sensitivity_policy:
+  level: restricted
+  action: mask_and_tokenize
+column_sensitivity: []
+human_review:
+  verdict: revise
+  allowed_alternatives:
+  - dwd_loan_status_change_event
+business_process: loan_transaction

@@ -1,0 +1,379 @@
+version: 2
+name: dwd_loan_installment
+layer: DWD
+description: Schedule row is an accumulating installment fact and must include all principal, interest,
+  fee and penalty states.
+table_type: accumulating_snapshot
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+data_domain: '04'
+business_area: LOAN
+entities:
+- code: LOAN_INSTALLMENT
+  type: primary
+  name: Loan Installment
+  key_columns:
+  - id
+- code: LOAN_ACCOUNT
+  type: foreign
+  role: loan_account
+  name: Loan Account
+  key_columns:
+  - loan_id
+  source_fk:
+  - loan_id
+grain:
+  description: one scheduled installment for one loan and schedule version
+  columns:
+  - loan_id
+  - installment
+  - id
+business_date:
+  kind: due
+  column: business_date
+  inherit_from: null
+  source_column: duedate
+source_mapping:
+  upstream_repository: https://github.com/apache/fineract
+  source_table: m_loan_repayment_schedule
+  ods_table: ods_fineract_m_loan_repayment_schedule
+  disposition: snapshot_source
+  confidence: human_reviewed
+sensitivity: restricted
+sensitivity_policy:
+  level: restricted
+  action: mask_and_tokenize
+column_sensitivity: []
+human_review:
+  verdict: revise
+  allowed_alternatives:
+  - dwd_loan_installment_daily_snapshot
+business_process: loan_repayment
+atomic_metrics:
+- principal_amount
+- principal_completed_derived
+- principal_writtenoff_derived
+- interest_amount
+- interest_completed_derived
+- interest_writtenoff_derived
+- interest_waived_derived
+- accrual_interest_derived
+- reschedule_interest_portion
+- fee_charges_amount
+- fee_charges_completed_derived
+- fee_charges_writtenoff_derived
+- fee_charges_waived_derived
+- accrual_fee_charges_derived
+- penalty_charges_amount
+- penalty_charges_completed_derived
+- penalty_charges_writtenoff_derived
+- penalty_charges_waived_derived
+- accrual_penalty_charges_derived
+- total_paid_in_advance_derived
+- total_paid_late_derived
+- credits_amount
+- credited_interest
+- credited_fee
+- credited_penalty
+metric_semantics:
+- name: principal_amount
+  class: atomic
+  aggregation_behavior: additive
+  formula: principal_amount
+  unit: currency
+  currency_source: account_currency
+  additive_over:
+  - loan_id
+  - installment
+  - id
+  sign: source_defined
+  reversal: source_policy
+- name: principal_completed_derived
+  class: atomic
+  aggregation_behavior: additive
+  formula: principal_completed_derived
+  unit: currency
+  currency_source: account_currency
+  additive_over:
+  - loan_id
+  - installment
+  - id
+  sign: source_defined
+  reversal: source_policy
+- name: principal_writtenoff_derived
+  class: atomic
+  aggregation_behavior: additive
+  formula: principal_writtenoff_derived
+  unit: currency
+  currency_source: account_currency
+  additive_over:
+  - loan_id
+  - installment
+  - id
+  sign: source_defined
+  reversal: source_policy
+- name: interest_amount
+  class: atomic
+  aggregation_behavior: additive
+  formula: interest_amount
+  unit: currency
+  currency_source: account_currency
+  additive_over:
+  - loan_id
+  - installment
+  - id
+  sign: source_defined
+  reversal: source_policy
+- name: interest_completed_derived
+  class: atomic
+  aggregation_behavior: additive
+  formula: interest_completed_derived
+  unit: currency
+  currency_source: account_currency
+  additive_over:
+  - loan_id
+  - installment
+  - id
+  sign: source_defined
+  reversal: source_policy
+- name: interest_writtenoff_derived
+  class: atomic
+  aggregation_behavior: additive
+  formula: interest_writtenoff_derived
+  unit: currency
+  currency_source: account_currency
+  additive_over:
+  - loan_id
+  - installment
+  - id
+  sign: source_defined
+  reversal: source_policy
+- name: interest_waived_derived
+  class: atomic
+  aggregation_behavior: additive
+  formula: interest_waived_derived
+  unit: currency
+  currency_source: account_currency
+  additive_over:
+  - loan_id
+  - installment
+  - id
+  sign: source_defined
+  reversal: source_policy
+- name: accrual_interest_derived
+  class: atomic
+  aggregation_behavior: additive
+  formula: accrual_interest_derived
+  unit: currency
+  currency_source: account_currency
+  additive_over:
+  - loan_id
+  - installment
+  - id
+  sign: source_defined
+  reversal: source_policy
+- name: reschedule_interest_portion
+  class: atomic
+  aggregation_behavior: additive
+  formula: reschedule_interest_portion
+  unit: currency
+  currency_source: account_currency
+  additive_over:
+  - loan_id
+  - installment
+  - id
+  sign: source_defined
+  reversal: source_policy
+- name: fee_charges_amount
+  class: atomic
+  aggregation_behavior: additive
+  formula: fee_charges_amount
+  unit: currency
+  currency_source: account_currency
+  additive_over:
+  - loan_id
+  - installment
+  - id
+  sign: source_defined
+  reversal: source_policy
+- name: fee_charges_completed_derived
+  class: atomic
+  aggregation_behavior: additive
+  formula: fee_charges_completed_derived
+  unit: currency
+  currency_source: account_currency
+  additive_over:
+  - loan_id
+  - installment
+  - id
+  sign: source_defined
+  reversal: source_policy
+- name: fee_charges_writtenoff_derived
+  class: atomic
+  aggregation_behavior: additive
+  formula: fee_charges_writtenoff_derived
+  unit: currency
+  currency_source: account_currency
+  additive_over:
+  - loan_id
+  - installment
+  - id
+  sign: source_defined
+  reversal: source_policy
+- name: fee_charges_waived_derived
+  class: atomic
+  aggregation_behavior: additive
+  formula: fee_charges_waived_derived
+  unit: currency
+  currency_source: account_currency
+  additive_over:
+  - loan_id
+  - installment
+  - id
+  sign: source_defined
+  reversal: source_policy
+- name: accrual_fee_charges_derived
+  class: atomic
+  aggregation_behavior: additive
+  formula: accrual_fee_charges_derived
+  unit: currency
+  currency_source: account_currency
+  additive_over:
+  - loan_id
+  - installment
+  - id
+  sign: source_defined
+  reversal: source_policy
+- name: penalty_charges_amount
+  class: atomic
+  aggregation_behavior: additive
+  formula: penalty_charges_amount
+  unit: currency
+  currency_source: account_currency
+  additive_over:
+  - loan_id
+  - installment
+  - id
+  sign: source_defined
+  reversal: source_policy
+- name: penalty_charges_completed_derived
+  class: atomic
+  aggregation_behavior: additive
+  formula: penalty_charges_completed_derived
+  unit: currency
+  currency_source: account_currency
+  additive_over:
+  - loan_id
+  - installment
+  - id
+  sign: source_defined
+  reversal: source_policy
+- name: penalty_charges_writtenoff_derived
+  class: atomic
+  aggregation_behavior: additive
+  formula: penalty_charges_writtenoff_derived
+  unit: currency
+  currency_source: account_currency
+  additive_over:
+  - loan_id
+  - installment
+  - id
+  sign: source_defined
+  reversal: source_policy
+- name: penalty_charges_waived_derived
+  class: atomic
+  aggregation_behavior: additive
+  formula: penalty_charges_waived_derived
+  unit: currency
+  currency_source: account_currency
+  additive_over:
+  - loan_id
+  - installment
+  - id
+  sign: source_defined
+  reversal: source_policy
+- name: accrual_penalty_charges_derived
+  class: atomic
+  aggregation_behavior: additive
+  formula: accrual_penalty_charges_derived
+  unit: currency
+  currency_source: account_currency
+  additive_over:
+  - loan_id
+  - installment
+  - id
+  sign: source_defined
+  reversal: source_policy
+- name: total_paid_in_advance_derived
+  class: atomic
+  aggregation_behavior: additive
+  formula: total_paid_in_advance_derived
+  unit: currency
+  currency_source: account_currency
+  additive_over:
+  - loan_id
+  - installment
+  - id
+  sign: source_defined
+  reversal: source_policy
+- name: total_paid_late_derived
+  class: atomic
+  aggregation_behavior: additive
+  formula: total_paid_late_derived
+  unit: currency
+  currency_source: account_currency
+  additive_over:
+  - loan_id
+  - installment
+  - id
+  sign: source_defined
+  reversal: source_policy
+- name: credits_amount
+  class: atomic
+  aggregation_behavior: additive
+  formula: credits_amount
+  unit: currency
+  currency_source: account_currency
+  additive_over:
+  - loan_id
+  - installment
+  - id
+  sign: source_defined
+  reversal: source_policy
+- name: credited_interest
+  class: atomic
+  aggregation_behavior: additive
+  formula: credited_interest
+  unit: currency
+  currency_source: account_currency
+  additive_over:
+  - loan_id
+  - installment
+  - id
+  sign: source_defined
+  reversal: source_policy
+- name: credited_fee
+  class: atomic
+  aggregation_behavior: additive
+  formula: credited_fee
+  unit: currency
+  currency_source: account_currency
+  additive_over:
+  - loan_id
+  - installment
+  - id
+  sign: source_defined
+  reversal: source_policy
+- name: credited_penalty
+  class: atomic
+  aggregation_behavior: additive
+  formula: credited_penalty
+  unit: currency
+  currency_source: account_currency
+  additive_over:
+  - loan_id
+  - installment
+  - id
+  sign: source_defined
+  reversal: source_policy

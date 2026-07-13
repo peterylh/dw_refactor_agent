@@ -84,38 +84,27 @@ def test_table_prints_table_lineage(tmp_path, capsys):
     assert "Tables: 4   Edges: 3   Jobs: 2" in captured.out
 
 
-def test_show_is_not_a_supported_command(tmp_path):
-    _write_demo_lineage(tmp_path)
-
+@pytest.mark.parametrize(
+    ("command", "table_name"),
+    [
+        ("show", "ads_sales_dashboard"),
+        ("column", "dws_product_sales_daily"),
+    ],
+    ids=("unsupported-command", "missing-column-argument"),
+)
+def test_invalid_command_line_arguments_exit_with_usage_error(
+    tmp_path, command, table_name
+):
     with pytest.raises(SystemExit) as exc:
         main(
             [
-                "show",
+                command,
                 "--project",
                 "demo",
                 "--lineage-dir",
                 str(tmp_path),
                 "--table",
-                "ads_sales_dashboard",
-            ]
-        )
-
-    assert exc.value.code == 2
-
-
-def test_column_requires_column_argument(tmp_path):
-    _write_demo_lineage(tmp_path)
-
-    with pytest.raises(SystemExit) as exc:
-        main(
-            [
-                "column",
-                "--project",
-                "demo",
-                "--lineage-dir",
-                str(tmp_path),
-                "--table",
-                "dws_product_sales_daily",
+                table_name,
             ]
         )
 

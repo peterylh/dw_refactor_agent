@@ -1,0 +1,42 @@
+version: 2
+name: dim_share_product
+layer: DIM
+description: Share product is reusable reference data; dated market value is a separate fact.
+table_type: dimension
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+data_domain: 09
+business_area: ASTM
+entities:
+- code: SHARE_PRODUCT
+  type: primary
+  name: Share Product
+  key_columns:
+  - id
+grain:
+  description: one share product definition
+  columns:
+  - id
+business_date:
+  kind: effective
+  column: start_date
+  inherit_from: null
+  source_column: start_date
+source_mapping:
+  upstream_repository: https://github.com/apache/fineract
+  source_table: m_share_product
+  ods_table: ods_fineract_m_share_product
+  disposition: standalone_dimension
+  confidence: human_reviewed
+sensitivity: internal
+sensitivity_policy:
+  level: internal
+  action: retain
+column_sensitivity: []
+human_review:
+  verdict: accept
+  allowed_alternatives: []
+semantic_subject: SHARE_PRODUCT
+dimension_role: BASE
+dimension_content_type: INFO

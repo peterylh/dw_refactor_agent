@@ -13,6 +13,9 @@ PROJECT_CODE_DIRS = (
     "warehouses/finance_analytics",
 )
 ROOT_MODULES = ()
+SQLGLOT_FORK_URL = "https://github.com/HYDCP/hy-sqlglot.git"
+SQLGLOT_FORK_COMMIT = "77fe22e66498ea4ad996d9c5a172c69d7ac693c8"
+SQLGLOT_FORK_REF = f"git+{SQLGLOT_FORK_URL}@{SQLGLOT_FORK_COMMIT}"
 
 
 def _project_python_files():
@@ -26,7 +29,18 @@ def _project_python_files():
     ]
 
 
-def test_project_modules_import_under_python37_with_released_sqlglot():
+def test_project_uses_doris_sqlglot_fork_under_python37():
+    for manifest in (
+        "Makefile",
+        "environment-py37.yml",
+        "pyproject.toml",
+        "docs/python37_development.md",
+    ):
+        manifest_text = (PROJECT_ROOT / manifest).read_text(encoding="utf-8")
+        assert SQLGLOT_FORK_COMMIT in manifest_text, manifest
+        if manifest != "docs/python37_development.md":
+            assert SQLGLOT_FORK_REF in manifest_text, manifest
+
     if sys.version_info[:2] != (3, 7):
         pytest.skip("Python 3.7 compatibility gate runs in the py37 env")
 
@@ -45,11 +59,25 @@ def test_project_modules_import_under_python37_with_released_sqlglot():
             sys.path.insert(0, str(src_root))
 
         sqlglot_path = Path(sqlglot.__file__).resolve()
-        if sqlglot.__version__ != "26.9.0":
+        if not sqlglot.__version__.startswith("26.9."):
             raise AssertionError(
-                "expected sqlglot 26.9.0, got %s from %s"
+                "expected sqlglot 26.9.x, got %s from %s"
                 % (sqlglot.__version__, sqlglot_path)
             )
+        direct_url_paths = list(
+            sqlglot_path.parent.parent.glob("sqlglot-*.dist-info/direct_url.json")
+        )
+        if len(direct_url_paths) != 1:
+            raise AssertionError(
+                "expected one sqlglot direct_url.json, got %s"
+                % direct_url_paths
+            )
+        direct_url = json.loads(direct_url_paths[0].read_text(encoding="utf-8"))
+        vcs_info = direct_url.get("vcs_info") or {}
+        if direct_url.get("url") != "https://github.com/HYDCP/hy-sqlglot.git":
+            raise AssertionError("unexpected sqlglot source: %s" % direct_url)
+        if vcs_info.get("commit_id") != "77fe22e66498ea4ad996d9c5a172c69d7ac693c8":
+            raise AssertionError("unexpected sqlglot commit: %s" % direct_url)
         if str(sqlglot_path).startswith("/Users/yulihua/Projects/sqlglot"):
             raise AssertionError("local sqlglot checkout is not allowed: %s" % sqlglot_path)
 

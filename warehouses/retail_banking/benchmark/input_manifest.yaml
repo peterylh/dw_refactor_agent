@@ -1,0 +1,39 @@
+version: 1
+project: retail_banking
+task: semantic_cold_start
+participant_delivery: Only the public/ directory emitted by tools/build_benchmark_bundle.py may be delivered
+  to participants.
+tracks:
+  named_taxonomy_assisted:
+    role_blind: false
+    public_layout:
+    - ddl/*.sql
+    - tasks/*.sql
+    - constraints.yaml
+    - business_taxonomy.yaml
+    - manifest.json
+  prefixless_role_blind:
+    role_blind: true
+    public_layout:
+    - ddl/asset_*.sql
+    - tasks/asset_*.sql
+    - constraints.yaml
+    - manifest.json
+    enforced_transformations:
+    - opaque_table_aliases
+    - flatten_directories
+    - replace_database_name
+    - remove_sql_comments
+    - remove_ddl_comments
+must_exclude:
+- '**/models/**/*.yaml'
+- mappings/**
+- semantic_specs/**
+- business_processes.yaml
+- semantic_subjects.yaml
+- benchmark/benchmark_contract.yaml
+- artifacts/lineage/**
+role_blind_must_exclude:
+- business_taxonomy.yaml
+gold_handling: Generate private gold directly to access-controlled storage with generate_assets.py generate-private-gold
+  --private-gold-output, then pass that external path to build_benchmark_bundle.py --private-gold.

@@ -38,6 +38,7 @@ def _split_top_level_csv(text):
 
 
 def _column_names(create_body):
+    create_body = re.sub(r"(?m)^[ \t]*--[^\n]*(?:\n|$)", "", create_body)
     columns = []
     for part in _split_top_level_csv(create_body):
         line = part.strip()

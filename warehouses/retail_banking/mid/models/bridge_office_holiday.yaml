@@ -1,0 +1,59 @@
+version: 2
+name: bridge_office_holiday
+layer: DWD
+description: Composite relation is a bridge and inherits its effective interval from the holiday.
+table_type: bridge
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+data_domain: '02'
+business_area: CHNL
+entities:
+- code: OFFICE_HOLIDAY_RELATION
+  type: primary
+  name: Office Holiday Relation
+  key_columns:
+  - holiday_id
+  - office_id
+- code: HOLIDAY
+  type: foreign
+  role: holiday
+  name: Holiday
+  key_columns:
+  - holiday_id
+  source_fk:
+  - holiday_id
+- code: OFFICE
+  type: foreign
+  role: office
+  name: Office
+  key_columns:
+  - office_id
+  source_fk:
+  - office_id
+grain:
+  description: one office applicability relation for one holiday
+  columns:
+  - holiday_id
+  - office_id
+business_date:
+  kind: inherited
+  column: business_date
+  inherit_from: m_holiday.from_date
+  source_column: null
+source_mapping:
+  upstream_repository: https://github.com/apache/fineract
+  source_table: m_holiday_office
+  ods_table: ods_fineract_m_holiday_office
+  disposition: bridge_source
+  confidence: human_reviewed
+sensitivity: internal
+sensitivity_policy:
+  level: internal
+  action: retain
+column_sensitivity: []
+human_review:
+  verdict: revise
+  allowed_alternatives:
+  - office_holiday_rule_bridge
+business_process: operations_management

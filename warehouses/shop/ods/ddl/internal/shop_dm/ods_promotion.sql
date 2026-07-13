@@ -2,14 +2,23 @@
 -- table_id: 1b96955c-e1c0-48a7-85ee-b5c5078bc741
 DROP TABLE IF EXISTS shop_dm.ods_promotion;
 CREATE TABLE IF NOT EXISTS shop_dm.ods_promotion (
+    -- column_id: 0d2b83d8-475f-45a0-9784-451e4a664709
     promotion_id   BIGINT        NOT NULL COMMENT '促销ID',
+    -- column_id: 9631d1aa-2e63-4ada-a196-448c083a3593
     promotion_name VARCHAR(128)  NOT NULL COMMENT '促销名称',
+    -- column_id: 47362ec6-6f87-47e7-bd9d-fa496a9f4ae1
     promotion_type VARCHAR(32)   NOT NULL COMMENT '促销类型:满减/折扣/买赠/秒杀',
+    -- column_id: f75cc5e4-b6b7-418b-9619-7e60a4c91729
     discount_rate  DECIMAL(5,2)  NULL COMMENT '折扣率',
+    -- column_id: 2fd36515-fe6f-45ba-83f6-f222a1d79a12
     start_date     DATE          NOT NULL COMMENT '开始日期',
+    -- column_id: 033226b9-900e-4d0a-a26e-e23a43a0f55b
     end_date       DATE          NOT NULL COMMENT '结束日期',
+    -- column_id: 7113e50d-48b5-4412-a774-c030656579e1
     min_amount     DECIMAL(12,2) NULL COMMENT '最低消费金额',
+    -- column_id: ad3d13b2-1e16-49b5-b97a-15b87b2b9f2e
     status         TINYINT       NOT NULL DEFAULT 1 COMMENT '状态:1进行中/0已结束',
+    -- column_id: 0436449b-b512-4f97-8b98-212a38560e50
     load_time      DATETIME      NOT NULL COMMENT '数据导入时间(分区列)'
 ) ENGINE=OLAP
 DUPLICATE KEY(promotion_id)

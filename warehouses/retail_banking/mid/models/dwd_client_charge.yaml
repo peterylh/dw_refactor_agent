@@ -1,0 +1,114 @@
+version: 2
+name: dwd_client_charge
+layer: DWD
+description: Amount paid, waived, written off and outstanding describe an accumulating receivable.
+table_type: accumulating_snapshot
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+data_domain: '01'
+business_area: CLNT
+entities:
+- code: CLIENT_CHARGE
+  type: primary
+  name: Client Charge
+  key_columns:
+  - id
+- code: CUSTOMER
+  type: foreign
+  role: customer
+  name: Customer
+  key_columns:
+  - client_id
+  source_fk:
+  - client_id
+- code: CHARGE_TYPE
+  type: foreign
+  role: charge_definition
+  name: Charge Type
+  key_columns:
+  - charge_id
+  source_fk:
+  - charge_id
+grain:
+  description: one assessed client charge through settlement lifecycle
+  columns:
+  - id
+business_date:
+  kind: due
+  column: business_date
+  inherit_from: null
+  source_column: charge_due_date
+source_mapping:
+  upstream_repository: https://github.com/apache/fineract
+  source_table: m_client_charge
+  ods_table: ods_fineract_m_client_charge
+  disposition: snapshot_source
+  confidence: human_reviewed
+sensitivity: restricted
+sensitivity_policy:
+  level: restricted
+  action: mask_and_tokenize
+column_sensitivity: []
+human_review:
+  verdict: revise
+  allowed_alternatives:
+  - dwd_client_charge_daily_snapshot
+business_process: customer_management
+atomic_metrics:
+- amount
+- amount_paid_derived
+- amount_waived_derived
+- amount_writtenoff_derived
+- amount_outstanding_derived
+metric_semantics:
+- name: amount
+  class: atomic
+  aggregation_behavior: additive
+  formula: amount
+  unit: currency
+  currency_source: account_currency
+  additive_over:
+  - id
+  sign: source_defined
+  reversal: source_policy
+- name: amount_paid_derived
+  class: atomic
+  aggregation_behavior: additive
+  formula: amount_paid_derived
+  unit: currency
+  currency_source: account_currency
+  additive_over:
+  - id
+  sign: source_defined
+  reversal: source_policy
+- name: amount_waived_derived
+  class: atomic
+  aggregation_behavior: additive
+  formula: amount_waived_derived
+  unit: currency
+  currency_source: account_currency
+  additive_over:
+  - id
+  sign: source_defined
+  reversal: source_policy
+- name: amount_writtenoff_derived
+  class: atomic
+  aggregation_behavior: additive
+  formula: amount_writtenoff_derived
+  unit: currency
+  currency_source: account_currency
+  additive_over:
+  - id
+  sign: source_defined
+  reversal: source_policy
+- name: amount_outstanding_derived
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: amount_outstanding_derived
+  unit: currency
+  currency_source: account_currency
+  additive_over:
+  - id
+  sign: source_defined
+  reversal: source_policy

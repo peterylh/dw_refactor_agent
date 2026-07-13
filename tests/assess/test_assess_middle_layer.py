@@ -701,80 +701,48 @@ def test_assess_cli_accepts_explicit_lineage_file(
     assert output_path.exists()
 
 
-def test_assess_cli_table_focus_builds_manual_scope(
-    monkeypatch,
-    tmp_path,
-):
-    import dw_refactor_agent.assessment.assess_middle_layer as assess_module
-
-    project = "shop"
-    output_path = tmp_path / "assess_result.json"
-    captured = {}
-
-    def fake_assess(*args, **kwargs):
-        captured["args"] = args
-        captured["kwargs"] = kwargs
-        return {
-            "project": project,
-            "weights": {},
-            "dimensions": {
-                "naming": {
-                    "score": 100.0,
-                    "rule_summary": {
-                        "NAMING_ATOMIC_METRIC": {
-                            "name": "原子指标",
-                            "severity": "中",
-                            "pass_count": 1,
-                            "total": 1,
-                            "pct": 100.0,
-                        },
-                    },
-                    "issues": [],
-                }
-            },
-            "assessment_mode": "manual_focus",
-        }
-
-    monkeypatch.setattr(
-        sys,
-        "argv",
-        [
-            "assess_middle_layer.py",
-            "--project",
-            project,
-            "--table",
-            "dws_store_sales_daily",
-            "--only-rule",
+@pytest.mark.parametrize(
+    (
+        "focus_args",
+        "rule_id",
+        "selected_dimension",
+        "expected_scope",
+    ),
+    [
+        (
+            ("--table", "dws_store_sales_daily"),
             "NAMING_ATOMIC_METRIC",
-            "--output",
-            str(output_path),
-        ],
-    )
-    monkeypatch.setattr(assess_module, "assess", fake_assess)
-    monkeypatch.setattr(
-        assess_module,
-        "generate_report",
-        lambda *args, **kwargs: "report",
-    )
-
-    assess_module.main()
-
-    assert captured["kwargs"]["selected_dimensions"] == {"naming"}
-    assert captured["kwargs"]["only_rules"] == ["NAMING_ATOMIC_METRIC"]
-    scope_plan = captured["kwargs"]["scope_plan"]
-    assert scope_plan["mode"] == "manual_focus"
-    assert scope_plan["dimensions"]["naming"]["tables"] == [
-        "dws_store_sales_daily"
-    ]
-    assert scope_plan["dimensions"]["model_design"]["tables"] == [
-        "dws_store_sales_daily"
-    ]
-    assert output_path.exists()
-
-
-def test_assess_cli_task_focus_builds_manual_scope(
+            "naming",
+            {
+                ("naming", "tables"): ["dws_store_sales_daily"],
+                ("model_design", "tables"): ["dws_store_sales_daily"],
+            },
+        ),
+        (
+            (
+                "--task",
+                "warehouses/shop/mid/tasks/dws_store_sales_daily.sql",
+            ),
+            "CODE_NO_SELECT_STAR_IN_WRITE",
+            "code_quality",
+            {
+                ("code_quality", "tasks"): ["dws_store_sales_daily"],
+                ("code_quality", "task_files"): [
+                    "warehouses/shop/mid/tasks/dws_store_sales_daily.sql"
+                ],
+                ("naming", "tasks"): ["dws_store_sales_daily"],
+            },
+        ),
+    ],
+    ids=("table", "task"),
+)
+def test_assess_cli_focus_builds_manual_scope(
     monkeypatch,
     tmp_path,
+    focus_args,
+    rule_id,
+    selected_dimension,
+    expected_scope,
 ):
     import dw_refactor_agent.assessment.assess_middle_layer as assess_module
 
@@ -789,11 +757,11 @@ def test_assess_cli_task_focus_builds_manual_scope(
             "project": project,
             "weights": {},
             "dimensions": {
-                "code_quality": {
+                selected_dimension: {
                     "score": 100.0,
                     "rule_summary": {
-                        "CODE_NO_SELECT_STAR_IN_WRITE": {
-                            "name": "写入型语句不使用SELECT *",
+                        rule_id: {
+                            "name": "test rule",
                             "severity": "高",
                             "pass_count": 1,
                             "total": 1,
@@ -813,10 +781,9 @@ def test_assess_cli_task_focus_builds_manual_scope(
             "assess_middle_layer.py",
             "--project",
             project,
-            "--task",
-            "warehouses/shop/mid/tasks/dws_store_sales_daily.sql",
+            *focus_args,
             "--only-rule",
-            "CODE_NO_SELECT_STAR_IN_WRITE",
+            rule_id,
             "--output",
             str(output_path),
         ],
@@ -830,18 +797,12 @@ def test_assess_cli_task_focus_builds_manual_scope(
 
     assess_module.main()
 
-    assert captured["kwargs"]["selected_dimensions"] == {"code_quality"}
+    assert captured["kwargs"]["selected_dimensions"] == {selected_dimension}
+    assert captured["kwargs"]["only_rules"] == [rule_id]
     scope_plan = captured["kwargs"]["scope_plan"]
     assert scope_plan["mode"] == "manual_focus"
-    assert scope_plan["dimensions"]["code_quality"]["tasks"] == [
-        "dws_store_sales_daily"
-    ]
-    assert scope_plan["dimensions"]["code_quality"]["task_files"] == [
-        "warehouses/shop/mid/tasks/dws_store_sales_daily.sql"
-    ]
-    assert scope_plan["dimensions"]["naming"]["tasks"] == [
-        "dws_store_sales_daily"
-    ]
+    for (dimension, field), expected in expected_scope.items():
+        assert scope_plan["dimensions"][dimension][field] == expected
     assert output_path.exists()
 
 
@@ -2079,7 +2040,7 @@ def test_score_asset_completeness_allows_full_refresh_companion_writer(
     assert result["issues"] == []
 
 
-def test_score_naming_conventions_outputs_table_and_column_issues():
+def test_naming_diagnostics_are_agent_actionable():
     nc = load_naming_config(PROJECT_ROOT / "naming_config.yaml")
 
     result = score_naming_conventions(
@@ -2100,32 +2061,6 @@ def test_score_naming_conventions_outputs_table_and_column_issues():
         "NAMING_TABLE_TEMPLATE",
         "NAMING_COLUMN_NAME",
     }
-    assert result["issues"][0]["remediation"]["strategy"] == (
-        "rename_table_and_rewrite_references"
-    )
-    column_check = _checks_by_rule(result, "NAMING_COLUMN_NAME")[0]
-    assert column_check["target"]["qualified_name"] == (
-        "dwd_customer.customer_id"
-    )
-    assert column_check["actual"] == {"value": "customer_id"}
-
-
-def test_naming_diagnostics_are_agent_actionable():
-    nc = load_naming_config(PROJECT_ROOT / "naming_config.yaml")
-
-    result = score_naming_conventions(
-        _context(
-            [
-                {
-                    "name": "dwd_customer",
-                    "layer": "DWD",
-                    "columns": [{"name": "customer_id"}],
-                }
-            ],
-            nc,
-        )
-    )
-
     table_check = _checks_by_rule(result, "NAMING_TABLE_TEMPLATE")[0]
     assert table_check["schema_version"] == "assess.diagnostic.v1"
     assert table_check["dimension"] == "naming"

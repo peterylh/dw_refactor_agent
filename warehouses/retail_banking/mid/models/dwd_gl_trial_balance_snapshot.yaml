@@ -1,0 +1,87 @@
+version: 2
+name: dwd_gl_trial_balance_snapshot
+layer: DWD
+description: Source lacks a declared PK, so gold must validate uniqueness at the semantic composite grain.
+table_type: snapshot_fact
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+data_domain: '99'
+business_area: OTHR
+entities:
+- code: GL_TRIAL_BALANCE_SNAPSHOT
+  type: primary
+  name: Gl Trial Balance Snapshot
+  key_columns:
+  - office_id
+  - account_id
+  - entry_date
+- code: OFFICE
+  type: foreign
+  role: office
+  name: Office
+  key_columns:
+  - office_id
+  source_fk:
+  - office_id
+- code: GL_ACCOUNT
+  type: foreign
+  role: gl_account
+  name: Gl Account
+  key_columns:
+  - account_id
+  source_fk:
+  - account_id
+grain:
+  description: one trial-balance row per office
+  columns:
+  - office_id
+  - account_id
+  - entry_date
+business_date:
+  kind: snapshot
+  column: business_date
+  inherit_from: null
+  source_column: entry_date
+source_mapping:
+  upstream_repository: https://github.com/apache/fineract
+  source_table: m_trial_balance
+  ods_table: ods_fineract_m_trial_balance
+  disposition: snapshot_source
+  confidence: human_reviewed
+sensitivity: internal
+sensitivity_policy:
+  level: internal
+  action: retain
+column_sensitivity: []
+human_review:
+  verdict: revise
+  allowed_alternatives:
+  - name: dws_gl_trial_balance_daily
+    layer: DWS
+    table_type: snapshot_fact
+    credit: 0.5
+    rationale: A daily office-account trial balance may be treated as a summary-layer periodic snapshot.
+business_process: general_ledger_posting
+atomic_metrics:
+- amount
+- closing_balance
+metric_semantics:
+- name: amount
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: amount
+  unit: currency
+  currency_source: account_currency
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy
+- name: closing_balance
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: closing_balance
+  unit: currency
+  currency_source: account_currency
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy

@@ -1,0 +1,42 @@
+version: 2
+name: dim_provision_category
+layer: DIM
+description: Provision category is stable credit-risk reference data.
+table_type: dimension
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+data_domain: '04'
+business_area: LOAN
+entities:
+- code: PROVISION_CATEGORY
+  type: primary
+  name: Provision Category
+  key_columns:
+  - id
+grain:
+  description: one loan provisioning category
+  columns:
+  - id
+business_date:
+  kind: none
+  column: null
+  inherit_from: null
+  source_column: null
+source_mapping:
+  upstream_repository: https://github.com/apache/fineract
+  source_table: m_provision_category
+  ods_table: ods_fineract_m_provision_category
+  disposition: standalone_dimension
+  confidence: human_reviewed
+sensitivity: internal
+sensitivity_policy:
+  level: internal
+  action: retain
+column_sensitivity: []
+human_review:
+  verdict: accept
+  allowed_alternatives: []
+semantic_subject: PROVISION_CATEGORY
+dimension_role: BASE
+dimension_content_type: INFO

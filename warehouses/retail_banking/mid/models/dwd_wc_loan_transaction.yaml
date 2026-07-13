@@ -1,0 +1,75 @@
+version: 2
+name: dwd_wc_loan_transaction
+layer: DWD
+description: Source is a dated working-capital transaction with amount, reversal and classification semantics.
+table_type: fact
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+data_domain: '10'
+business_area: LOAN
+entities:
+- code: WC_LOAN_TRANSACTION
+  type: primary
+  name: Wc Loan Transaction
+  key_columns:
+  - id
+- code: WC_LOAN_ACCOUNT
+  type: foreign
+  role: wc_loan_account
+  name: Wc Loan Account
+  key_columns:
+  - wc_loan_id
+  source_fk:
+  - wc_loan_id
+- code: CODE_VALUE
+  type: foreign
+  role: classification
+  name: Code Value
+  key_columns:
+  - classification_cv_id
+  source_fk:
+  - classification_cv_id
+grain:
+  description: one posted working-capital loan transaction
+  columns:
+  - id
+business_date:
+  kind: event
+  column: business_date
+  inherit_from: null
+  source_column: transaction_date
+source_mapping:
+  upstream_repository: https://github.com/apache/fineract
+  source_table: m_wc_loan_transaction
+  ods_table: ods_fineract_m_wc_loan_transaction
+  disposition: standalone_fact
+  confidence: human_reviewed
+sensitivity: restricted
+sensitivity_policy:
+  level: restricted
+  action: mask_and_tokenize
+column_sensitivity:
+- name: external_id
+  classification: identifier
+  action: hash
+- name: reversal_external_id
+  classification: identifier
+  action: hash
+human_review:
+  verdict: accept
+  allowed_alternatives: []
+business_process: loan_transaction
+atomic_metrics:
+- transaction_amount
+metric_semantics:
+- name: transaction_amount
+  class: atomic
+  aggregation_behavior: additive
+  formula: transaction_amount
+  unit: currency
+  currency_source: account_currency
+  additive_over:
+  - id
+  sign: source_defined
+  reversal: source_policy

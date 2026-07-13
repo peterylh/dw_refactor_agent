@@ -1,0 +1,110 @@
+version: 1
+project: retail_banking
+policy: >-
+  Each override acknowledges a PostgreSQL raw-SQL change that was inspected.
+  Logical table/column/constraint changes remain fail-closed; the entries below
+  are limited to excluded scheduler objects, sequence state, indexes, extensions,
+  and data backfills whose columns are compiled from structured Liquibase changes.
+overrides:
+  - table: <global>
+    pattern: "*0003_postgresql_specific_initial_data.xml*"
+    rationale: Sequence SETVAL initialization changes data state, not the analytical schema.
+  - table: <global>
+    pattern: "*0021_add_spring_batch_db_structure.xml*"
+    rationale: Six Spring Batch scheduler tables and three sequences are explicitly excluded control-plane assets.
+  - table: <global>
+    pattern: "*0109_spring_batch_5_upgrade.xml*"
+    rationale: The migration changes only the explicitly excluded Spring Batch scheduler schema.
+  - table: <global>
+    pattern: "*0114_create_cob_indices.xml*"
+    rationale: Indexes target the explicitly excluded Spring Batch scheduler schema.
+  - table: <global>
+    pattern: "*0061_add_idempotency_key_to_command_source.xml*"
+    rationale: CREATE EXTENSION uuid-ossp is database infrastructure; the business column and constraints are structured changes.
+  - table: <global>
+    pattern: "*initial_data.xml*"
+    rationale: PostgreSQL sequence/data initialization does not alter logical table columns or constraints.
+  - table: <global>
+    pattern: "*configuration*"
+    rationale: Reviewed statements initialize sequence or configuration rows; structured changes define the schema.
+  - table: <global>
+    pattern: "*0053_add_external_events_purge_job.xml*"
+    rationale: Reviewed statement resets configuration sequence state after inserting a job configuration row.
+  - table: <global>
+    pattern: "*0075_add_processed_commands_purge_job.xml*"
+    rationale: Reviewed statement resets configuration sequence state after inserting a job configuration row.
+  - table: <global>
+    pattern: "*0147_enable_payment_hub_integration.xml*"
+    rationale: Reviewed statement resets configuration sequence state after inserting a configuration row.
+  - table: <global>
+    pattern: "*0224_add_allow_cash_and_non_cash_accrual_config.xml*"
+    rationale: Reviewed statement resets configuration sequence state after inserting a configuration row.
+  - table: <global>
+    pattern: "*global_config*"
+    rationale: Reviewed statement initializes configuration data only.
+  - table: <global>
+    pattern: "*indices.xml*"
+    rationale: Reviewed statements create physical indexes without changing analytical columns.
+  - table: <global>
+    pattern: "*index*.xml*"
+    rationale: Reviewed statements create physical indexes without changing analytical columns.
+  - table: <global>
+    pattern: "*0158_create_acc_gl_journal_entry_annual_summary.xml*"
+    rationale: Raw SQL creates a physical index; the table and columns use structured Liquibase operations.
+  - table: <global>
+    pattern: "*0172_create_loan_capitalized_income_balance.xml*"
+    rationale: Raw SQL creates physical indexes; the table and columns use structured Liquibase operations.
+  - table: <global>
+    pattern: "*0188_create_loan_buy_down_fee_balance.xml*"
+    rationale: Raw SQL creates physical indexes; the table and columns use structured Liquibase operations.
+  - table: <global>
+    pattern: "*0195_create_loan_amortization_allocation_mapping.xml*"
+    rationale: Raw SQL creates physical indexes; the table and columns use structured Liquibase operations.
+  - table: <global>
+    pattern: "*0200_add_journal_entry_aggregation_tables.xml*"
+    rationale: Raw SQL creates physical indexes; the tables and columns use structured Liquibase operations.
+  - table: <global>
+    pattern: "*setval*"
+    rationale: Sequence position changes data state, not logical analytical schema.
+  - table: "*"
+    pattern: "*0084_add_general_accounting_table_reports.xml*"
+    rationale: Reviewed statements insert report-parameter rows only.
+  - table: "*"
+    pattern: "*0103_modify_parameter_json_column_custom_job_parameters.xml*"
+    rationale: Reviewed statement backfills JSON data after a structured type change.
+  - table: "*"
+    pattern: "*0149_update_global_configuration_names.xml*"
+    rationale: Reviewed statement normalizes configuration row values only.
+  - table: "*"
+    pattern: "*0173_user_change_pwd.xml*"
+    rationale: Reviewed statement backfills role-permission relation rows only.
+  - table: "*"
+    pattern: "*0194_fix_missing_permission.xml*"
+    rationale: Reviewed statements correct permission row values only.
+  - table: "*"
+    pattern: "*0217_force_withdrawal_configs.xml*"
+    rationale: Reviewed statement backfills role-permission relation rows only.
+  - table: "*"
+    pattern: "*0233_backfill_repayment_start_date_type_on_loan.xml*"
+    rationale: Reviewed PostgreSQL block backfills a column created by structured Liquibase.
+  - table: "*"
+    pattern: "*1025_store_pre_closure_strategy_to_loan_level.xml*"
+    rationale: Reviewed statement backfills a column created by structured Liquibase.
+  - table: "*"
+    pattern: "*1029_add_installment_amount_in_multiples_of_to_loan.xml*"
+    rationale: Reviewed statement backfills a column created by structured Liquibase.
+  - table: "*"
+    pattern: "*0028_create_wc_delinquency_and_breach_configuration_tables.xml*"
+    rationale: Reviewed statements migrate legacy rows and reset sequences; structured operations define both schemas.
+  - table: "*"
+    pattern: "*0029_drop_legacy_wc_configuration_tables.xml*"
+    rationale: Reviewed statements migrate legacy rows and reset sequences before structured drops.
+  - table: "*"
+    pattern: "*0048_rename_wc_accounting_type_cash_based_to_acc_def_rev_am.xml*"
+    rationale: Reviewed statement updates accounting-type values only.
+  - table: "*"
+    pattern: "*0018_add_external_asset_owner_transfer_outstanding_interest_strategy.xml*"
+    rationale: Reviewed statement initializes configuration sequence state only.
+  - table: "*"
+    pattern: "*0004_add_global_config_originator_creation.xml*"
+    rationale: Reviewed statement initializes configuration sequence state only.

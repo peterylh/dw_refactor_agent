@@ -1,0 +1,51 @@
+version: 2
+name: dim_collateral_type
+layer: DIM
+description: Customer-owned collateral is a separate source; this table is a type and valuation catalog.
+table_type: dimension
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+data_domain: '04'
+business_area: LOAN
+entities:
+- code: COLLATERAL
+  type: primary
+  name: Collateral
+  key_columns:
+  - id
+- code: CURRENCY
+  type: foreign
+  role: valuation_currency
+  name: Currency
+  key_columns:
+  - currency
+  source_fk:
+  - currency
+grain:
+  description: one collateral category and valuation template
+  columns:
+  - id
+business_date:
+  kind: none
+  column: null
+  inherit_from: null
+  source_column: null
+source_mapping:
+  upstream_repository: https://github.com/apache/fineract
+  source_table: m_collateral_management
+  ods_table: ods_fineract_m_collateral_management
+  disposition: standalone_dimension
+  confidence: human_reviewed
+sensitivity: internal
+sensitivity_policy:
+  level: internal
+  action: retain
+column_sensitivity: []
+human_review:
+  verdict: revise
+  allowed_alternatives:
+  - dim_collateral_definition
+semantic_subject: COLLATERAL
+dimension_role: BASE
+dimension_content_type: INFO

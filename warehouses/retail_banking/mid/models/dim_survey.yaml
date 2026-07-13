@@ -1,0 +1,42 @@
+version: 2
+name: dim_survey
+layer: DIM
+description: Survey header is reusable reference data for question and response facts.
+table_type: dimension
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+data_domain: '11'
+business_area: CHNL
+entities:
+- code: SURVEY
+  type: primary
+  name: Survey
+  key_columns:
+  - id
+grain:
+  description: one survey definition
+  columns:
+  - id
+business_date:
+  kind: effective
+  column: valid_from
+  inherit_from: null
+  source_column: valid_from
+source_mapping:
+  upstream_repository: https://github.com/apache/fineract
+  source_table: m_surveys
+  ods_table: ods_fineract_m_surveys
+  disposition: standalone_dimension
+  confidence: human_reviewed
+sensitivity: internal
+sensitivity_policy:
+  level: internal
+  action: retain
+column_sensitivity: []
+human_review:
+  verdict: accept
+  allowed_alternatives: []
+semantic_subject: SURVEY
+dimension_role: BASE
+dimension_content_type: INFO

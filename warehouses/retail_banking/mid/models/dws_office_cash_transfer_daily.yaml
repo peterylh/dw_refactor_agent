@@ -1,0 +1,67 @@
+version: 2
+name: dws_office_cash_transfer_daily
+layer: DWS
+description: 支付结算 reviewed aggregate
+table_type: aggregate_fact
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+data_domain: '06'
+business_area: PAYM
+business_process: cashier_operation
+sensitivity: internal
+business_date:
+  column: transaction_date
+  output_column: stat_date
+  kind: event_date
+grain:
+  columns:
+  - stat_date
+  - from_office_id
+  - to_office_id
+  - currency_code
+  description: one day, office pair and currency
+  entities:
+  - FROM_OFFICE
+  - TO_OFFICE
+  degenerate_dimensions: &id001
+  - currency_code
+  time_column: stat_date
+  time_period: D
+entities:
+- code: FROM_OFFICE
+  key: from_office_id
+- code: TO_OFFICE
+  key: to_office_id
+degenerate_dimensions: *id001
+derived_metrics: &id002
+- name: record_count
+  class: derived
+  formula: count(*)
+  unit: count
+  currency_source: not_applicable
+  aggregation_behavior: additive
+  additive_over:
+  - stat_date
+  - from_office_id
+  - to_office_id
+  - currency_code
+  sign: positive_count
+  reversal: source_has_no_reversal_flag
+- name: total_transaction_amount
+  class: derived
+  formula: sum(transaction_amount)
+  unit: currency
+  currency_source: currency_code
+  aggregation_behavior: additive
+  additive_over:
+  - stat_date
+  - from_office_id
+  - to_office_id
+  sign: unsigned_transfer_amount
+  reversal: source_has_no_reversal_flag
+metric_semantics: *id002
+human_review:
+  decision: accept
+  current_name: dws_office_cash_transfer_daily
+  status: human_reviewed_candidate

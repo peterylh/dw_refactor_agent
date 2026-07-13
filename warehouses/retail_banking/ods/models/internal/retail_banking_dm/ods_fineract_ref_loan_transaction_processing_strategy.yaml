@@ -1,0 +1,13 @@
+version: 2
+name: ods_fineract_ref_loan_transaction_processing_strategy
+layer: ODS
+description: Fineract ref_loan_transaction_processing_strategy 贴源表
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+source:
+  repository: https://github.com/apache/fineract
+  table: ref_loan_transaction_processing_strategy
+  disposition: rule_reference
+  confidence: candidate
+sensitivity: internal

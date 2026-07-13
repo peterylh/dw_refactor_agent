@@ -1,0 +1,42 @@
+version: 2
+name: dim_delinquency_bucket
+layer: DIM
+description: Delinquency bucket is stable loan-risk reference data.
+table_type: dimension
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+data_domain: '04'
+business_area: LOAN
+entities:
+- code: DELINQUENCY_BUCKET
+  type: primary
+  name: Delinquency Bucket
+  key_columns:
+  - id
+grain:
+  description: one delinquency bucket definition
+  columns:
+  - id
+business_date:
+  kind: none
+  column: null
+  inherit_from: null
+  source_column: null
+source_mapping:
+  upstream_repository: https://github.com/apache/fineract
+  source_table: m_delinquency_bucket
+  ods_table: ods_fineract_m_delinquency_bucket
+  disposition: standalone_dimension
+  confidence: human_reviewed
+sensitivity: internal
+sensitivity_policy:
+  level: internal
+  action: retain
+column_sensitivity: []
+human_review:
+  verdict: accept
+  allowed_alternatives: []
+semantic_subject: DELINQUENCY_BUCKET
+dimension_role: BASE
+dimension_content_type: INFO

@@ -1,0 +1,13 @@
+version: 2
+name: ods_fineract_mix_xbrl_namespace
+layer: ODS
+description: Fineract mix_xbrl_namespace 贴源表
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+source:
+  repository: https://github.com/apache/fineract
+  table: mix_xbrl_namespace
+  disposition: component_source
+  confidence: candidate
+sensitivity: internal

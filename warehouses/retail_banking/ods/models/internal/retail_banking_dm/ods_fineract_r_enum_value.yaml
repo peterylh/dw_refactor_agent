@@ -1,0 +1,13 @@
+version: 2
+name: ods_fineract_r_enum_value
+layer: ODS
+description: Fineract r_enum_value 贴源表
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+source:
+  repository: https://github.com/apache/fineract
+  table: r_enum_value
+  disposition: component_source
+  confidence: candidate
+sensitivity: internal

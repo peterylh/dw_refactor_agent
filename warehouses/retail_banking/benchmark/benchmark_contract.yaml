@@ -1,0 +1,149 @@
+version: 1
+name: retail_banking_semantic_cold_start_benchmark_contract
+status: specification
+private_gold: true
+public_input_must_exclude:
+  - mid/models
+  - ads/models
+  - mappings
+  - semantic_specs
+  - business_processes.yaml
+  - semantic_subjects.yaml
+  - benchmark/benchmark_contract.yaml
+
+table_record:
+  required:
+    - asset_id
+    - asset_name
+    - expected
+    - grain
+    - time_semantics
+    - entities
+    - metrics
+    - sensitivity
+    - evidence
+    - annotation
+  fields:
+    asset_id: {type: string, description: opaque stable identifier unrelated to layer or business name}
+    asset_name: {type: string, description: evaluator-only physical asset name}
+    expected:
+      type: object
+      required: [layer, table_type, disposition, allowed_alternatives]
+      layer: {enum: [ODS, DIM, DWD, DWS, ADS, EXCLUDE]}
+      table_type: {enum: [source, dimension, transaction_fact, snapshot_fact, accumulating_snapshot, factless_fact, aggregate_fact, application_mart, rule_reference, bridge, operational]}
+      disposition: {enum: [materialize, component_only, ods_only, security_excluded, operational_excluded]}
+      data_domain_id: {type: [string, 'null']}
+      data_domain_code: {type: [string, 'null']}
+      business_area_code: {type: [string, 'null']}
+      business_process_codes: {type: array, items: string}
+      semantic_subject_code: {type: [string, 'null']}
+      allowed_alternatives:
+        type: array
+        description: adjudicated answers that are architecturally equivalent enough for full or partial credit
+        items:
+          type: object
+          required: [name, layer, table_type, credit, rationale]
+          name: {type: string}
+          layer: {enum: [ODS, DIM, DWD, DWS, ADS, EXCLUDE]}
+          table_type: {enum: [source, dimension, transaction_fact, snapshot_fact, accumulating_snapshot, factless_fact, aggregate_fact, application_mart, rule_reference, bridge, operational]}
+          credit: {type: number, minimum: 0, maximum: 1}
+          rationale: {type: string}
+    grain:
+      type: object
+      required: [columns, primary_entity, related_entities, degenerate_dimensions]
+      columns: {type: array, items: string}
+      primary_entity: {type: [string, 'null']}
+      related_entities: {type: array, items: string}
+      degenerate_dimensions: {type: array, items: string}
+    time_semantics:
+      type: object
+      required: [business_date_column, kind]
+      kind: {enum: [event_date, posting_date, contractual_due_date, settlement_date, effective_date, snapshot_date, processing_date, timeless]}
+      business_date_column: {type: [string, 'null']}
+      as_of_column: {type: [string, 'null']}
+    entities:
+      type: array
+      items:
+        type: object
+        required: [code, role, key_columns]
+        code: {type: string}
+        role: {enum: [primary, related, foreign, degenerate]}
+        key_columns: {type: array, items: string}
+    metrics:
+      type: array
+      items:
+        type: object
+        required: [name, class, formula, unit, currency_source, aggregation_behavior, additive_over, sign_convention, reversal_policy]
+        name: {type: string}
+        class: {enum: [atomic, derived, calculated]}
+        aggregation_behavior: {enum: [additive, semi_additive, non_additive]}
+        formula: {type: string, description: canonical SQL expression or normalized semantic expression}
+        unit: {type: string}
+        currency_source: {type: [string, 'null']}
+        additive_over: {type: array, items: string}
+        sign_convention: {type: string}
+        reversal_policy: {type: string}
+    sensitivity:
+      type: object
+      required: [table_level, restricted_columns]
+      table_level: {enum: [public, internal, confidential, restricted]}
+      restricted_columns: {type: array, items: string}
+    evidence:
+      type: object
+      required: [upstream_commit, source_tables, ddl_paths, task_paths]
+      upstream_commit: {type: string}
+      source_tables: {type: array, items: string}
+      ddl_paths: {type: array, min_items: 1, items: string}
+      task_paths: {type: array, items: string}
+    annotation:
+      type: object
+      required: [reviewers, adjudication, rationale, gold_version]
+      reviewers: {type: array, min_items: 2, items: string}
+      adjudication: {enum: [accepted, accepted_with_alternatives, excluded]}
+      rationale: {type: string}
+      gold_version: {type: string}
+
+tracks:
+  named_taxonomy_assisted:
+    public_inputs: [ddl, constraints, task_sql, business_taxonomy, business_names]
+    role_blind: false
+    scored_dimensions: [layer, table_type, domain, process, entities, grain, metrics, sensitivity]
+  prefixless_role_blind:
+    public_inputs: [flattened_ddl, constraints, flattened_task_sql, business_names]
+    transformations: [remove_layer_prefixes, flatten_asset_directories, replace_database_names, remove_comments]
+    role_blind: true
+    scored_dimensions: [layer, table_type, domain, process, entities, grain, metrics, sensitivity]
+  partially_obfuscated:
+    public_inputs: [aliased_ddl, constraints, aliased_task_sql, limited_business_descriptions]
+    transformations: [stable_table_aliases, partial_column_aliases, flatten_asset_directories, remove_taxonomy]
+    role_blind: true
+    scored_dimensions: [layer, table_type, entities, grain, metric_class, metric_behavior, sensitivity]
+  template_holdout:
+    public_inputs: [ddl, constraints, non_template_task_sql]
+    sql_patterns: [window_functions, event_expansion, state_snapshot, multi_source_reconciliation, scd]
+    role_blind: true
+    scored_dimensions: [layer, table_type, entities, grain, metrics, sensitivity]
+
+scoring:
+  dimensions:
+    layer: {metric: accuracy_with_allowed_alternatives, weight: 0.12}
+    table_type: {metric: macro_f1_with_allowed_alternatives, weight: 0.10}
+    domain: {metric: macro_f1, weight: 0.08}
+    process: {metric: macro_f1, weight: 0.10}
+    entities: {metric: set_f1, weight: 0.10}
+    grain: {metric: column_set_f1, weight: 0.12}
+    metric_class: {metric: macro_f1, weight: 0.08}
+    metric_formula: {metric: normalized_expression_equivalence, weight: 0.10}
+    metric_behavior: {metric: exact_and_set_f1, weight: 0.10}
+    sensitivity: {metric: restricted_recall_and_f1, weight: 0.10}
+  hard_failures:
+    - restricted_column_leak
+    - cross_currency_sum_without_currency_partition
+    - balance_metric_marked_fully_additive_over_time
+    - reversal_double_count
+    - fabricated_field_or_source
+  report_both:
+    - macro_average_across_tables
+    - micro_average_across_labels
+    - hard_failure_count
+    - hallucinated_field_rate

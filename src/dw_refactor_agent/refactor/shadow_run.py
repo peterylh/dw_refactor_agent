@@ -23,11 +23,6 @@ _src_root = Path(__file__).resolve().parents[2]
 if str(_src_root) not in sys.path:
     sys.path.insert(0, str(_src_root))
 
-import sqlglot
-from sqlglot import exp
-from sqlglot.errors import ErrorLevel
-from sqlglot.tokens import Tokenizer, TokenType
-
 import dw_refactor_agent.config as config
 from dw_refactor_agent.config import PROJECT_ROOT, TEXT_ENCODING, get_mysql_cmd
 from dw_refactor_agent.execution.model_config import ExecutionConfigError
@@ -35,7 +30,12 @@ from dw_refactor_agent.execution.planner import ExecutionPlanner
 from dw_refactor_agent.execution.sql_executor import ShadowSqlExecutor
 from dw_refactor_agent.execution.thread_pool import shutdown_executor
 from dw_refactor_agent.lineage.job_dag import JobDAG
-from dw_refactor_agent.sql.doris import extract_create_table_name
+from dw_refactor_agent.refactor.plan_artifact import load_verification_plan
+from dw_refactor_agent.refactor.shadow_manifest import (
+    PrefillMode,
+    compile_shadow_manifest,
+    manifest_summary,
+)
 
 FINAL_ALTER_JOB_STATES = {"FINISHED", "CANCELLED"}
 DEFAULT_ALTER_JOB_TIMEOUT_SECONDS = 300
@@ -418,349 +418,6 @@ def _execute_ddl_statement(statement: str, qa_db: str) -> None:
         known_job_ids_by_ref[(db_name, table_name)] = _job_ids(jobs)
 
 
-def _get_statement_target_table(stmt):
-    """Return the statement target table name without database prefix."""
-    if isinstance(stmt, exp.Insert):
-        target = stmt.this
-        if isinstance(target, exp.Table):
-            return target.name
-        if isinstance(target, exp.Schema) and isinstance(
-            target.this, exp.Table
-        ):
-            return target.this.name
-    elif isinstance(stmt, (exp.Update, exp.Delete)):
-        if isinstance(stmt.this, exp.Table):
-            return stmt.this.name
-    elif isinstance(stmt, exp.TruncateTable):
-        if stmt.expressions:
-            table = stmt.expressions[0]
-            if isinstance(table, exp.Table):
-                return table.name
-    elif isinstance(stmt, exp.Create):
-        if isinstance(stmt.this, exp.Table):
-            return stmt.this.name
-        if isinstance(stmt.this, exp.Schema) and isinstance(
-            stmt.this.this, exp.Table
-        ):
-            return stmt.this.this.name
-    elif isinstance(stmt, (exp.Drop, exp.Alter)):
-        if isinstance(stmt.this, exp.Table):
-            return stmt.this.name
-    elif isinstance(stmt, exp.Command) and str(stmt.this).upper() == "CREATE":
-        table_name = extract_create_table_name(stmt.sql(dialect="doris"))
-        return table_name.split(".")[-1] if table_name else None
-    return None
-
-
-def _get_dml_target(stmt):
-    """Backward-compatible alias for statement target detection."""
-    return _get_statement_target_table(stmt)
-
-
-def _statement_ranges(sql_text: str) -> list[tuple[int, int]]:
-    """Return raw SQL statement ranges, including statement terminators."""
-    tokens = Tokenizer(dialect="doris").tokenize(sql_text)
-    ranges = []
-    start = 0
-    for token in tokens:
-        if token.token_type == TokenType.SEMICOLON:
-            end = token.end + 1
-            ranges.append((start, end))
-            start = end
-    if sql_text[start:].strip():
-        ranges.append((start, len(sql_text)))
-    return ranges
-
-
-def _parse_first_statement(sql_text: str):
-    statements = sqlglot.parse(
-        sql_text, dialect="doris", error_level=ErrorLevel.IGNORE
-    )
-    return next((stmt for stmt in statements if stmt is not None), None)
-
-
-def _is_backtick(token) -> bool:
-    return token.token_type == TokenType.UNKNOWN and token.text == "`"
-
-
-def _next_non_backtick(tokens: list, index: int) -> int:
-    while index < len(tokens) and _is_backtick(tokens[index]):
-        index += 1
-    return index
-
-
-def _previous_non_backtick(tokens: list, index: int) -> int:
-    index -= 1
-    while index >= 0 and _is_backtick(tokens[index]):
-        index -= 1
-    return index
-
-
-def _identifier_matches(token, value: str) -> bool:
-    if token.token_type not in {TokenType.IDENTIFIER, TokenType.VAR}:
-        return False
-    return token.text.casefold() == value.casefold()
-
-
-def _identifier_replacement(sql_text: str, token, value: str) -> str:
-    original = sql_text[token.start : token.end + 1]
-    if (
-        len(original) >= 2
-        and original[0] == original[-1]
-        and original[0] in {'"', "`"}
-    ):
-        return f"{original[0]}{value}{original[-1]}"
-    return value
-
-
-def _identifier_start(tokens: list, index: int) -> int:
-    previous_index = index - 1
-    if previous_index >= 0 and _is_backtick(tokens[previous_index]):
-        return tokens[previous_index].start
-    return tokens[index].start
-
-
-def _is_unqualified_identifier(tokens: list, index: int) -> bool:
-    previous_index = _previous_non_backtick(tokens, index)
-    next_index = _next_non_backtick(tokens, index + 1)
-    if (
-        previous_index >= 0
-        and tokens[previous_index].token_type == TokenType.DOT
-    ):
-        return False
-    return not (
-        next_index < len(tokens)
-        and tokens[next_index].token_type == TokenType.DOT
-    )
-
-
-def _comma_continues_table_context(tokens: list, comma_index: int) -> bool:
-    boundary_tokens = {
-        TokenType.SELECT,
-        TokenType.WHERE,
-        TokenType.ON,
-        TokenType.GROUP_BY,
-        TokenType.ORDER_BY,
-        TokenType.HAVING,
-        TokenType.LIMIT,
-        TokenType.WITH,
-        TokenType.SEMICOLON,
-    }
-    index = comma_index - 1
-    while index >= 0:
-        token_type = tokens[index].token_type
-        if token_type in {TokenType.FROM, TokenType.JOIN}:
-            return True
-        if token_type in boundary_tokens:
-            return False
-        index -= 1
-    return False
-
-
-def _is_table_reference_context(tokens: list, index: int) -> bool:
-    previous_index = _previous_non_backtick(tokens, index)
-    if previous_index < 0:
-        return False
-    previous_type = tokens[previous_index].token_type
-    if previous_type in {
-        TokenType.FROM,
-        TokenType.JOIN,
-        TokenType.UPDATE,
-        TokenType.INTO,
-        TokenType.TABLE,
-    }:
-        return True
-    if previous_type == TokenType.COMMA:
-        return _comma_continues_table_context(tokens, previous_index)
-    return False
-
-
-def _cte_names(stmt) -> set[str]:
-    return {
-        cte.alias_or_name.casefold()
-        for cte in stmt.find_all(exp.CTE)
-        if cte.alias_or_name
-    }
-
-
-def _unqualified_table_dbs(
-    stmt,
-    prod_db: str,
-    qa_db: str,
-    recalculated: set,
-    statement_target: str | None,
-) -> dict[str, str]:
-    cte_names = _cte_names(stmt)
-    recalculated_names = {name.casefold() for name in recalculated}
-    target_name = statement_target.casefold() if statement_target else ""
-    table_dbs = {}
-
-    for table in stmt.find_all(exp.Table):
-        if table.db:
-            continue
-        table_name = table.name
-        if not table_name:
-            continue
-        canonical_name = table_name.casefold()
-        if canonical_name in cte_names and canonical_name != target_name:
-            continue
-        if (
-            canonical_name == target_name
-            or canonical_name in recalculated_names
-        ):
-            table_dbs[canonical_name] = qa_db
-        else:
-            table_dbs[canonical_name] = prod_db
-
-    return table_dbs
-
-
-def _rewrite_qualified_table_dbs(
-    sql_text: str,
-    prod_db: str,
-    qa_db: str,
-    table_names: set[str],
-) -> str:
-    if not table_names:
-        return sql_text
-
-    wanted_tables = {name.casefold() for name in table_names}
-    tokens = Tokenizer(dialect="doris").tokenize(sql_text)
-    replacements = []
-
-    for index, token in enumerate(tokens):
-        if not _identifier_matches(token, prod_db):
-            continue
-
-        dot_index = _next_non_backtick(tokens, index + 1)
-        if (
-            dot_index >= len(tokens)
-            or tokens[dot_index].token_type != TokenType.DOT
-        ):
-            continue
-
-        table_index = _next_non_backtick(tokens, dot_index + 1)
-        if table_index >= len(tokens):
-            continue
-
-        table_token = tokens[table_index]
-        if table_token.token_type not in {TokenType.IDENTIFIER, TokenType.VAR}:
-            continue
-        if table_token.text.casefold() not in wanted_tables:
-            continue
-
-        after_table = _next_non_backtick(tokens, table_index + 1)
-        if (
-            after_table < len(tokens)
-            and tokens[after_table].token_type == TokenType.DOT
-        ):
-            continue
-
-        replacements.append(
-            (
-                token.start,
-                token.end + 1,
-                _identifier_replacement(sql_text, token, qa_db),
-            )
-        )
-
-    if not replacements:
-        return sql_text
-
-    rewritten = sql_text
-    for start, end, value in reversed(replacements):
-        rewritten = f"{rewritten[:start]}{value}{rewritten[end:]}"
-    return rewritten
-
-
-def _rewrite_unqualified_table_dbs(
-    sql_text: str,
-    table_dbs: dict[str, str],
-) -> str:
-    if not table_dbs:
-        return sql_text
-
-    tokens = Tokenizer(dialect="doris").tokenize(sql_text)
-    replacements = []
-
-    for index, token in enumerate(tokens):
-        if token.token_type not in {TokenType.IDENTIFIER, TokenType.VAR}:
-            continue
-        target_db = table_dbs.get(token.text.casefold())
-        if not target_db:
-            continue
-        if not _is_unqualified_identifier(tokens, index):
-            continue
-        if not _is_table_reference_context(tokens, index):
-            continue
-        replacements.append(
-            (
-                _identifier_start(tokens, index),
-                _identifier_start(tokens, index),
-                f"{target_db}.",
-            )
-        )
-
-    if not replacements:
-        return sql_text
-
-    rewritten = sql_text
-    for start, end, value in reversed(replacements):
-        rewritten = f"{rewritten[:start]}{value}{rewritten[end:]}"
-    return rewritten
-
-
-def _rewrite_statement_sql(
-    sql_text: str, prod_db: str, qa_db: str, recalculated: set
-) -> str:
-    stmt = _parse_first_statement(sql_text)
-    if stmt is None:
-        return sql_text
-
-    table_names = set(recalculated)
-    statement_target = _get_statement_target_table(stmt)
-    if statement_target:
-        table_names.add(statement_target)
-
-    rewritten = _rewrite_qualified_table_dbs(
-        sql_text, prod_db, qa_db, table_names
-    )
-    table_dbs = _unqualified_table_dbs(
-        stmt, prod_db, qa_db, recalculated, statement_target
-    )
-    return _rewrite_unqualified_table_dbs(rewritten, table_dbs)
-
-
-def rewrite_sql(
-    sql_text: str, prod_db: str, qa_db: str, recalculated: set
-) -> str:
-    """
-    Rewrite table references for shadow execution.
-
-    DML targets write to QA. Already recalculated intermediate sources read from
-    QA. ODS and untouched intermediate sources keep reading from production.
-    """
-    if not sql_text.strip():
-        return ""
-
-    ranges = _statement_ranges(sql_text)
-    if not ranges:
-        return sql_text
-
-    parts = []
-    cursor = 0
-    for start, end in ranges:
-        parts.append(sql_text[cursor:start])
-        parts.append(
-            _rewrite_statement_sql(
-                sql_text[start:end], prod_db, qa_db, recalculated
-            )
-        )
-        cursor = end
-    parts.append(sql_text[cursor:])
-    return "".join(parts)
-
-
 def _check_with_compare_anchor(check: dict, verification: dict) -> dict:
     if check.get("partition_col") or check.get("partition_value") is not None:
         return dict(check)
@@ -777,15 +434,9 @@ def _check_with_compare_anchor(check: dict, verification: dict) -> dict:
     return resolved
 
 
-def _plan_scope(plan: dict) -> dict:
-    return plan.get("scope") or plan.get("affected_scope") or {}
-
-
 def _plan_anchor_tables(plan: dict) -> list:
-    anchors = plan.get("anchors")
-    if anchors is not None:
-        return list(anchors)
-    return list((_plan_scope(plan).get("anchor_tables") or []))
+    verification = plan.get("verification") or {}
+    return list(verification.get("anchor_tables") or [])
 
 
 def _rewrite_db_prefix(value: str, prod_db: str, qa_db: str) -> str:
@@ -808,6 +459,16 @@ def _qa_ddl_change(change: dict, prod_db: str, qa_db: str) -> dict:
             result[key] = _rewrite_db_prefix(result[key], prod_db, qa_db)
 
     return result
+
+
+def _ddl_change_display_name(change: dict) -> str:
+    change_type = str(change.get("change_type") or "").upper()
+    table_name = str(change.get("table_name") or "").strip()
+    old_name = str(change.get("old_name") or "").strip()
+    new_name = str(change.get("new_name") or "").strip()
+    if change_type == "RENAME" and old_name and new_name:
+        return f"{old_name} -> {new_name}"
+    return table_name or old_name or new_name or "?"
 
 
 def _ddl_change_result(
@@ -849,7 +510,6 @@ def _job_result(
     status: str,
     error: str | None = None,
     *,
-    actual_execution_values: list[str] | None = None,
     invocation_count: int | None = None,
     batch_count: int | None = None,
     parallelism: int | None = None,
@@ -868,8 +528,6 @@ def _job_result(
     for key in ("execution_values",):
         if key in job:
             result[key] = job.get(key)
-    if actual_execution_values is not None:
-        result["actual_execution_values"] = list(actual_execution_values)
     if invocation_count is not None:
         result["invocation_count"] = invocation_count
     if batch_count is not None:
@@ -920,15 +578,6 @@ def _job_driver_values(job: dict, spec) -> list[str | None]:
         f"[{job_name}] shadow-run requires execution_values "
         "for sliced incremental jobs"
     )
-
-
-def _append_actual_execution_value(
-    actual_execution_values: list[str],
-    driver_value: str | None,
-) -> None:
-    if driver_value is None or driver_value in actual_execution_values:
-        return
-    actual_execution_values.append(driver_value)
 
 
 def _job_for_driver_value(job: dict, driver_value: str | None) -> dict:
@@ -1060,6 +709,31 @@ def _job_dependencies_from_plan(
     return in_degree, adj, "serial_fallback", [warning]
 
 
+def _augment_manifest_dependencies(
+    in_degree: dict[str, int],
+    adj: dict[str, list[str]],
+    manifest: dict,
+) -> bool:
+    augmented = False
+    producers = manifest.get("producers") or {}
+    for consumer, job_manifest in (manifest.get("jobs") or {}).items():
+        if consumer not in in_degree:
+            continue
+        for table in job_manifest.get("required_qa_tables") or []:
+            producer = producers.get(table)
+            if (
+                not producer
+                or producer == consumer
+                or producer not in adj
+                or consumer in adj[producer]
+            ):
+                continue
+            adj[producer].append(consumer)
+            in_degree[consumer] += 1
+            augmented = True
+    return augmented
+
+
 def _skipped_shadow_job_result(
     job: dict,
     reason: str,
@@ -1075,7 +749,6 @@ def _skipped_shadow_job_result(
             job,
             "skipped",
             reason,
-            actual_execution_values=[],
             invocation_count=0,
             invocations=invocation_results,
             **_job_batch_kwargs(0, parallel, batch_size),
@@ -1087,14 +760,14 @@ def _skipped_shadow_job_result(
 def _execute_shadow_job(
     job: dict,
     *,
+    job_manifest: dict,
     job_index: int,
     job_count: int,
     root: Path,
     planner: ExecutionPlanner,
-    prod_db: str,
     qa_db: str,
-    recalculated: set,
-    recalculated_lock: threading.Lock,
+    qa_ready_tables: set[str],
+    qa_ready_lock: threading.Lock,
     batch_semaphore: threading.Semaphore,
     parallel: int,
     batch_size: int,
@@ -1103,10 +776,10 @@ def _execute_shadow_job(
     job_name = job["job"]
     job_file = job["file"]
     layer = job.get("layer", "?")
-    actual_values = []
     invocation_count = 0
     invocation_results = [] if timing_detail else None
     job_timer = _start_timing()
+    invocation_parallel = 1 if job_manifest.get("self_read") else parallel
 
     _log(f"\n  --- {job_index}/{job_count}: [{layer}] {job_name} ---")
     file_path = root / job_file
@@ -1118,10 +791,11 @@ def _execute_shadow_job(
                 job,
                 "failed",
                 error,
-                actual_execution_values=actual_values,
                 invocation_count=invocation_count,
                 invocations=invocation_results,
-                **_job_batch_kwargs(invocation_count, parallel, batch_size),
+                **_job_batch_kwargs(
+                    invocation_count, invocation_parallel, batch_size
+                ),
             ),
             job_timer,
         )
@@ -1136,10 +810,11 @@ def _execute_shadow_job(
                 job,
                 "failed",
                 str(exc),
-                actual_execution_values=actual_values,
                 invocation_count=invocation_count,
                 invocations=invocation_results,
-                **_job_batch_kwargs(invocation_count, parallel, batch_size),
+                **_job_batch_kwargs(
+                    invocation_count, invocation_parallel, batch_size
+                ),
             ),
             job_timer,
         )
@@ -1170,12 +845,11 @@ def _execute_shadow_job(
                     job,
                     "failed",
                     str(exc),
-                    actual_execution_values=actual_values,
                     invocation_count=invocation_count,
                     invocations=invocation_results,
                     **_job_batch_kwargs(
                         invocation_count,
-                        parallel,
+                        invocation_parallel,
                         batch_size,
                     ),
                 ),
@@ -1188,8 +862,6 @@ def _execute_shadow_job(
     batches = _chunked(planned_invocations, batch_size)
     invocation_count = len(planned_invocations)
     batch_count = len(batches)
-    for driver_value, _invocation in planned_invocations:
-        _append_actual_execution_value(actual_values, driver_value)
 
     def execute_batch(batch):
         batch_timer = _start_timing()
@@ -1198,13 +870,11 @@ def _execute_shadow_job(
             _log(f"    SQL start: {sql_path}")
         batch_semaphore.acquire()
         try:
-            with recalculated_lock:
-                recalculated_snapshot = set(recalculated)
+            with qa_ready_lock:
+                qa_ready_snapshot = set(qa_ready_tables)
             executor = ShadowSqlExecutor(
-                prod_db=prod_db,
-                qa_db=qa_db,
-                recalculated=recalculated_snapshot,
-                rewrite_sql=rewrite_sql,
+                context=job_manifest["context"],
+                qa_ready_tables=qa_ready_snapshot,
                 run_sql_text=run_sql_text,
             )
             _execute_invocation_batch(executor, batch)
@@ -1250,11 +920,11 @@ def _execute_shadow_job(
         }
 
     try:
-        if parallel == 1 or batch_count <= 1:
+        if invocation_parallel == 1 or batch_count <= 1:
             batch_results = [execute_batch(batch) for batch in batches]
         else:
             executor_pool = ThreadPoolExecutor(
-                max_workers=min(parallel, batch_count)
+                max_workers=min(invocation_parallel, batch_count)
             )
             try:
                 future_to_index = {
@@ -1288,25 +958,27 @@ def _execute_shadow_job(
                 job,
                 "failed",
                 str(exc),
-                actual_execution_values=actual_values,
                 invocation_count=invocation_count,
                 invocations=invocation_results,
-                **_job_batch_kwargs(invocation_count, parallel, batch_size),
+                **_job_batch_kwargs(
+                    invocation_count, invocation_parallel, batch_size
+                ),
             ),
             job_timer,
         )
 
-    with recalculated_lock:
-        recalculated.add(job_name)
+    with qa_ready_lock:
+        qa_ready_tables.update(job_manifest.get("outputs") or {job_name})
 
     return _finish_timing(
         _job_result(
             job,
             "success",
-            actual_execution_values=actual_values,
             invocation_count=invocation_count,
             invocations=invocation_results,
-            **_job_batch_kwargs(invocation_count, parallel, batch_size),
+            **_job_batch_kwargs(
+                invocation_count, invocation_parallel, batch_size
+            ),
         ),
         job_timer,
     )
@@ -1315,8 +987,8 @@ def _execute_shadow_job(
 def _run_shadow_jobs(
     plan: dict,
     *,
+    manifest: dict,
     root: Path,
-    prod_db: str,
     qa_db: str,
     planner: ExecutionPlanner,
     parallel: int,
@@ -1338,13 +1010,15 @@ def _run_shadow_jobs(
         _finish_timing(phase, job_phase_timer)
         return phase
 
-    recalculated = set()
-    recalculated_lock = threading.Lock()
+    qa_ready_tables: set[str] = set()
+    qa_ready_lock = threading.Lock()
     batch_semaphore = threading.Semaphore(parallel)
     in_degree, adj, scheduler, warnings = _job_dependencies_from_plan(
         plan,
         root,
     )
+    if _augment_manifest_dependencies(in_degree, adj, manifest):
+        scheduler = f"{scheduler}+manifest"
     job_by_name = {job["job"]: job for job in jobs_to_run}
     index_by_name = {
         job["job"]: index for index, job in enumerate(jobs_to_run, 1)
@@ -1372,14 +1046,14 @@ def _run_shadow_jobs(
         future = executor_pool.submit(
             _execute_shadow_job,
             job_by_name[job_name],
+            job_manifest=(manifest.get("jobs") or {}).get(job_name, {}),
             job_index=index_by_name[job_name],
             job_count=job_count,
             root=root,
             planner=planner,
-            prod_db=prod_db,
             qa_db=qa_db,
-            recalculated=recalculated,
-            recalculated_lock=recalculated_lock,
+            qa_ready_tables=qa_ready_tables,
+            qa_ready_lock=qa_ready_lock,
             batch_semaphore=batch_semaphore,
             parallel=parallel,
             batch_size=batch_size,
@@ -1408,7 +1082,6 @@ def _run_shadow_jobs(
                             job_by_name[job_name],
                             "failed",
                             str(exc),
-                            actual_execution_values=[],
                             invocation_count=0,
                             **_job_batch_kwargs(0, parallel, batch_size),
                         ),
@@ -1497,7 +1170,7 @@ def _result_summary(plan: dict, phases: list[dict]) -> dict:
 def _shadow_result(
     plan: dict, *, mode: str, status: str, phases: list
 ) -> dict:
-    return {
+    result = {
         "status": status,
         "mode": mode,
         "project": plan.get("project"),
@@ -1507,6 +1180,10 @@ def _shadow_result(
         "summary": _result_summary(plan, phases),
         "phases": phases,
     }
+    shadow_manifest = plan.get("_shadow_manifest_summary")
+    if shadow_manifest is not None:
+        result["shadow_manifest"] = shadow_manifest
+    return result
 
 
 def _failed_shadow_result(plan: dict, phases: list[dict]) -> dict:
@@ -1518,8 +1195,89 @@ def _failed_shadow_result(plan: dict, phases: list[dict]) -> dict:
     )
 
 
+def _compile_shadow_manifest_phase(
+    plan: dict,
+    root: Path,
+    planner: ExecutionPlanner,
+    *,
+    dry_run: bool,
+) -> tuple[dict | None, dict]:
+    timer = _start_timing()
+    try:
+        manifest = compile_shadow_manifest(plan, root, planner)
+        blockers = list(manifest.get("blockers") or [])
+        phase = {
+            "name": "compile_shadow_manifest",
+            "status": "failed"
+            if blockers
+            else ("dry_run" if dry_run else "success"),
+            "blockers": blockers,
+            "warnings": list(manifest.get("warnings") or []),
+        }
+        plan["_shadow_manifest_summary"] = manifest_summary(manifest)
+        return manifest, _finish_timing(phase, timer)
+    except Exception as exc:
+        phase = {
+            "name": "compile_shadow_manifest",
+            "status": "failed",
+            "blockers": [str(exc)],
+            "warnings": [],
+        }
+        plan["_shadow_manifest_summary"] = {
+            "blockers": [str(exc)],
+            "warnings": [],
+        }
+        return None, _finish_timing(phase, timer)
+
+
+def _prefill_sql(action, prod_db: str, qa_db: str) -> str:
+    partition = ""
+    if action.mode is PrefillMode.PARTITIONS:
+        partition = f" PARTITION ({', '.join(action.partitions)})"
+    return (
+        f"INSERT INTO {qa_db}.{action.baseline_table} "
+        f"SELECT * FROM {prod_db}.{action.baseline_table}{partition};"
+    )
+
+
+def _prefill_phase(
+    manifest: dict,
+    prod_db: str,
+    qa_db: str,
+    *,
+    dry_run: bool,
+) -> dict:
+    timer = _start_timing()
+    results = []
+    phase = {
+        "name": "prefill_baseline_data",
+        "status": "dry_run" if dry_run else "success",
+        "actions": results,
+    }
+    for action in manifest.get("prefill_actions") or []:
+        sql = _prefill_sql(action, prod_db, qa_db)
+        result = {
+            **action.to_dict(),
+            "sql": sql,
+            "status": "dry_run" if dry_run else "success",
+            "error": None,
+        }
+        if not dry_run:
+            try:
+                run_sql(sql, qa_db, qa=True)
+            except Exception as exc:
+                result["status"] = "failed"
+                result["error"] = str(exc)
+                results.append(result)
+                phase["status"] = "failed"
+                return _finish_timing(phase, timer)
+        results.append(result)
+    return _finish_timing(phase, timer)
+
+
 def _dry_run_phases(
     plan: dict,
+    manifest: dict,
     *,
     timing_detail: bool = False,
     parallel: int = 1,
@@ -1560,6 +1318,12 @@ def _dry_run_phases(
         },
         create_timer,
     )
+    prefill_phase = _prefill_phase(
+        manifest,
+        prod_db,
+        qa_db,
+        dry_run=True,
+    )
     ddl_timer = _start_timing()
     ddl_phase = _finish_timing(
         {
@@ -1578,7 +1342,6 @@ def _dry_run_phases(
     for job in jobs_to_run:
         job_timer = _start_timing()
         file_path = root / job["file"]
-        actual_values = []
         invocation_count = 0
         invocation_results = [] if timing_detail else None
         if not file_path.exists():
@@ -1588,7 +1351,6 @@ def _dry_run_phases(
                         job,
                         "skipped",
                         "文件不存在",
-                        actual_execution_values=actual_values,
                         invocation_count=invocation_count,
                         invocations=invocation_results,
                         **_job_batch_kwargs(
@@ -1611,7 +1373,6 @@ def _dry_run_phases(
                     project_root=root,
                 )
                 if planned_invocations:
-                    _append_actual_execution_value(actual_values, driver_value)
                     invocation_count += len(planned_invocations)
                     if invocation_results is not None:
                         for _ in planned_invocations:
@@ -1630,7 +1391,6 @@ def _dry_run_phases(
                     _job_result(
                         job,
                         "dry_run",
-                        actual_execution_values=actual_values,
                         invocation_count=invocation_count,
                         invocations=invocation_results,
                         **_job_batch_kwargs(
@@ -1649,7 +1409,6 @@ def _dry_run_phases(
                         job,
                         "failed",
                         str(exc),
-                        actual_execution_values=actual_values,
                         invocation_count=invocation_count,
                         invocations=invocation_results,
                         **_job_batch_kwargs(
@@ -1676,7 +1435,7 @@ def _dry_run_phases(
         job_phase_timer,
     )
 
-    return [reset_phase, create_phase, ddl_phase, job_phase]
+    return [reset_phase, create_phase, prefill_phase, ddl_phase, job_phase]
 
 
 def execute_shadow_plan(
@@ -1695,10 +1454,29 @@ def execute_shadow_plan(
     def finish_result(result: dict) -> dict:
         return _finish_timing(result, result_timer)
 
+    root = _project_root()
+    planner = ExecutionPlanner(plan["project"], project_root=root)
+    manifest, manifest_phase = _compile_shadow_manifest_phase(
+        plan,
+        root,
+        planner,
+        dry_run=dry_run,
+    )
+    if manifest is None or manifest_phase["status"] == "failed":
+        return finish_result(
+            _shadow_result(
+                plan,
+                mode="dry_run" if dry_run else "execute",
+                status="failed",
+                phases=[manifest_phase],
+            )
+        )
+
     if dry_run:
-        _dry_run(plan)
-        phases = _dry_run_phases(
+        _dry_run(plan, manifest)
+        phases = [manifest_phase] + _dry_run_phases(
             plan,
+            manifest,
             timing_detail=timing_detail,
             parallel=parallel,
             batch_size=batch_size,
@@ -1714,7 +1492,7 @@ def execute_shadow_plan(
     baseline_ddl = plan.get("baseline_ddl", {})
     ddl_changes = plan.get("ddl_changes", [])
     jobs_to_run = plan.get("jobs_to_run", [])
-    phases = []
+    phases = [manifest_phase]
 
     checks = plan.get("verification", {}).get("checks", [])
     if not _plan_anchor_tables(plan) and not checks:
@@ -1783,6 +1561,16 @@ def execute_shadow_plan(
     _log(f"Phase 1 完成 duration={create_phase['duration_ms']}ms")
     phases.append(create_phase)
 
+    prefill_phase = _prefill_phase(
+        manifest,
+        prod_db,
+        qa_db,
+        dry_run=False,
+    )
+    phases.append(prefill_phase)
+    if prefill_phase.get("status") == "failed":
+        return finish_result(_failed_shadow_result(plan, phases))
+
     ddl_change_results = []
     ddl_timer = _start_timing()
     ddl_phase = {
@@ -1821,7 +1609,7 @@ def execute_shadow_plan(
                     )
                 _log(
                     f"  [{qa_change.get('change_type')}] "
-                    f"{qa_change.get('table_name', '?')}"
+                    f"{_ddl_change_display_name(qa_change)}"
                 )
                 ddl_change_results.append(
                     _ddl_change_result(
@@ -1859,12 +1647,10 @@ def execute_shadow_plan(
 
     _log(f"\n{'=' * 60}")
     _log(f"Phase 3: 执行作业 ({len(jobs_to_run)} 个)")
-    root = _project_root()
-    planner = ExecutionPlanner(plan["project"], project_root=root)
     job_phase = _run_shadow_jobs(
         plan,
+        manifest=manifest,
         root=root,
-        prod_db=prod_db,
         qa_db=qa_db,
         planner=planner,
         parallel=parallel,
@@ -1900,7 +1686,7 @@ def run_shadow_plan(
     """Run or dry-run a validation plan and write the execution result."""
     plan_path = Path(plan_path)
     output_path = Path(output_path)
-    plan = json.loads(plan_path.read_text(encoding=TEXT_ENCODING))
+    plan = load_verification_plan(plan_path)
     result = execute_shadow_plan(
         plan,
         dry_run=dry_run,
@@ -1922,7 +1708,7 @@ def run_shadow_plan(
     return result
 
 
-def _dry_run(plan: dict) -> None:
+def _dry_run(plan: dict, manifest: dict) -> None:
     qa_db = plan["qa_db"]
     prod_db = plan["project_db"]
     baseline_ddl = plan.get("baseline_ddl", {})
@@ -1956,9 +1742,6 @@ def _dry_run(plan: dict) -> None:
                 )
             else:
                 print(f"  对比范围: {table} 全表")
-    else:
-        partition_info = plan.get("partition_info", {})
-        print(f"  分区: {partition_info.get('partition', 'N/A')}")
     checks = plan.get("verification", {}).get("checks", [])
     if not _plan_anchor_tables(plan) and not checks:
         print()
@@ -1974,23 +1757,23 @@ def _dry_run(plan: dict) -> None:
     for table_name in sorted(baseline_ddl):
         print(f"  [CREATE] {qa_db}.{table_name}")
 
+    actions = manifest.get("prefill_actions") or []
+    print(f"\n--- Phase 1.5: 基线数据预填 ({len(actions)} 条) ---")
+    for action in actions:
+        print(f"  {_prefill_sql(action, prod_db, qa_db)}")
+
     print(f"\n--- Phase 2: DDL 变更 ({len(ddl_changes)} 条) ---")
     for change in ddl_changes:
         qa_change = _qa_ddl_change(change, prod_db, qa_db)
-        name = qa_change.get("table_name", qa_change.get("old_name", "?"))
-        print(f"  [{qa_change['change_type']}] {name}")
+        print(
+            f"  [{qa_change['change_type']}] "
+            f"{_ddl_change_display_name(qa_change)}"
+        )
         for statement in _ddl_change_statements(qa_change.get("sql", "")):
             print(f"    {statement}")
 
     print(f"\n--- Phase 3: 作业 ({len(jobs_to_run)} 个) ---")
-    recalculated = set()
-    executor = ShadowSqlExecutor(
-        prod_db=prod_db,
-        qa_db=qa_db,
-        recalculated=recalculated,
-        rewrite_sql=rewrite_sql,
-        run_sql_text=run_sql_text,
-    )
+    qa_ready_tables: set[str] = set()
     for idx, job in enumerate(jobs_to_run, 1):
         job_name = job["job"]
         layer = job.get("layer", "?")
@@ -2028,6 +1811,12 @@ def _dry_run(plan: dict) -> None:
                 continue
 
             for invocation in invocations:
+                job_manifest = (manifest.get("jobs") or {}).get(job_name, {})
+                executor = ShadowSqlExecutor(
+                    context=job_manifest["context"],
+                    qa_ready_tables=set(qa_ready_tables),
+                    run_sql_text=run_sql_text,
+                )
                 print(
                     f"    strategy={invocation.strategy}, "
                     f"full_refresh={int(invocation.full_refresh)}, "
@@ -2040,7 +1829,10 @@ def _dry_run(plan: dict) -> None:
                 if total > 8:
                     print(f"    ... ({total} 行)")
 
-            recalculated.add(job_name)
+            qa_ready_tables.update(
+                (manifest.get("jobs") or {}).get(job_name, {}).get("outputs")
+                or {job_name}
+            )
 
     if checks:
         print(f"\n--- 校验检查 ({len(checks)} 项) ---")

@@ -2,16 +2,27 @@
 -- table_id: a17bb555-fc22-4ef5-807d-497a9d950295
 DROP TABLE IF EXISTS shop_dm.ods_order;
 CREATE TABLE IF NOT EXISTS shop_dm.ods_order (
+    -- column_id: c5b984d2-b62d-40c6-b387-7a649516d3bd
     order_id       BIGINT        NOT NULL COMMENT '订单ID',
+    -- column_id: 4a6de65d-8c64-49a8-ad16-9ee766802091
     customer_id    BIGINT        NOT NULL COMMENT '客户ID',
+    -- column_id: 735c2fc7-df94-4723-9a5e-b24451645061
     store_id       BIGINT        NOT NULL COMMENT '门店ID',
+    -- column_id: 73f5f392-833f-40b3-927a-31cc49b2895d
     order_date     DATE          NOT NULL COMMENT '订单日期',
+    -- column_id: 379e4e4b-46f5-4a22-b6f8-a0dc69de9576
     total_amount   DECIMAL(12,2) NOT NULL COMMENT '订单总额',
+    -- column_id: 63b05369-3637-409f-a720-b99317ff0816
     discount_amount DECIMAL(12,2) NOT NULL DEFAULT 0.00 COMMENT '折扣金额',
+    -- column_id: 6b218106-0702-4ce3-8249-bdd09bba232e
     payment_amount DECIMAL(12,2) NOT NULL COMMENT '实付金额',
+    -- column_id: 7d4be2e2-72dc-473a-9e47-fbc10f3959e0
     payment_method VARCHAR(16)   NULL COMMENT '支付方式:微信/支付宝/银行卡/现金',
+    -- column_id: 8f50f712-c3a7-4f50-a957-f082249f8ec9
     order_status   VARCHAR(16)   NOT NULL DEFAULT '已完成' COMMENT '订单状态:已完成/已取消/退货',
+    -- column_id: 74797c3d-d788-4a13-99be-7c7f5aa38101
     promotion_id   BIGINT        NULL COMMENT '促销活动ID',
+    -- column_id: cdc805dd-b8f4-4e61-9f30-da71334b809b
     load_time    DATETIME      NOT NULL COMMENT '数据导入时间(分区列)'
 ) ENGINE=OLAP
 DUPLICATE KEY(order_id)

@@ -1,0 +1,57 @@
+version: 2
+name: dwd_deposit_officer_assignment
+layer: DWD
+description: Assignment history is an effective relationship, not a monetary fact.
+table_type: factless_fact
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+data_domain: '05'
+business_area: DPST
+entities:
+- code: DEPOSIT_OFFICER_ASSIGNMENT
+  type: primary
+  name: Deposit Officer Assignment
+  key_columns:
+  - id
+- code: DEPOSIT_ACCOUNT
+  type: foreign
+  role: deposit_account
+  name: Deposit Account
+  key_columns:
+  - account_id
+  source_fk:
+  - account_id
+- code: STAFF
+  type: foreign
+  role: savings_officer
+  name: Staff
+  key_columns:
+  - savings_officer_id
+  source_fk:
+  - savings_officer_id
+grain:
+  description: one account-officer effective interval
+  columns:
+  - id
+business_date:
+  kind: period_start
+  column: business_date
+  inherit_from: null
+  source_column: start_date
+source_mapping:
+  upstream_repository: https://github.com/apache/fineract
+  source_table: m_savings_officer_assignment_history
+  ods_table: ods_fineract_m_savings_officer_assignment_history
+  disposition: standalone_fact
+  confidence: human_reviewed
+sensitivity: restricted
+sensitivity_policy:
+  level: restricted
+  action: mask_and_tokenize
+column_sensitivity: []
+human_review:
+  verdict: revise
+  allowed_alternatives:
+  - bridge_deposit_account_officer_history
+business_process: deposit_transaction

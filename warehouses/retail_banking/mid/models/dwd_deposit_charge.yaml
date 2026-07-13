@@ -1,0 +1,148 @@
+version: 2
+name: dwd_deposit_charge
+layer: DWD
+description: Charge balances are accumulating facts; canonical process replaces the invalid generated
+  code.
+table_type: accumulating_snapshot
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+data_domain: '05'
+business_area: DPST
+entities:
+- code: DEPOSIT_CHARGE
+  type: primary
+  name: Deposit Charge
+  key_columns:
+  - id
+- code: DEPOSIT_ACCOUNT
+  type: foreign
+  role: deposit_account
+  name: Deposit Account
+  key_columns:
+  - savings_account_id
+  source_fk:
+  - savings_account_id
+- code: CHARGE_TYPE
+  type: foreign
+  role: charge_definition
+  name: Charge Type
+  key_columns:
+  - charge_id
+  source_fk:
+  - charge_id
+grain:
+  description: one assessed deposit-account charge through settlement lifecycle
+  columns:
+  - id
+business_date:
+  kind: due
+  column: business_date
+  inherit_from: null
+  source_column: charge_due_date
+source_mapping:
+  upstream_repository: https://github.com/apache/fineract
+  source_table: m_savings_account_charge
+  ods_table: ods_fineract_m_savings_account_charge
+  disposition: snapshot_source
+  confidence: human_reviewed
+sensitivity: restricted
+sensitivity_policy:
+  level: restricted
+  action: mask_and_tokenize
+column_sensitivity: []
+human_review:
+  verdict: revise
+  allowed_alternatives:
+  - dwd_deposit_charge_daily_snapshot
+business_process: deposit_transaction
+atomic_metrics:
+- free_withdrawal_count
+- calculation_percentage
+- calculation_on_amount
+- amount
+- amount_paid_derived
+- amount_waived_derived
+- amount_writtenoff_derived
+- amount_outstanding_derived
+metric_semantics:
+- name: free_withdrawal_count
+  class: atomic
+  aggregation_behavior: additive
+  formula: free_withdrawal_count
+  unit: count
+  currency_source: not_applicable
+  additive_over:
+  - id
+  sign: source_defined
+  reversal: source_policy
+- name: calculation_percentage
+  class: atomic
+  aggregation_behavior: non_additive
+  formula: calculation_percentage
+  unit: rate
+  currency_source: not_applicable
+  additive_over:
+  - id
+  sign: source_defined
+  reversal: source_policy
+- name: calculation_on_amount
+  class: atomic
+  aggregation_behavior: additive
+  formula: calculation_on_amount
+  unit: currency
+  currency_source: account_currency
+  additive_over:
+  - id
+  sign: source_defined
+  reversal: source_policy
+- name: amount
+  class: atomic
+  aggregation_behavior: additive
+  formula: amount
+  unit: currency
+  currency_source: account_currency
+  additive_over:
+  - id
+  sign: source_defined
+  reversal: source_policy
+- name: amount_paid_derived
+  class: atomic
+  aggregation_behavior: additive
+  formula: amount_paid_derived
+  unit: currency
+  currency_source: account_currency
+  additive_over:
+  - id
+  sign: source_defined
+  reversal: source_policy
+- name: amount_waived_derived
+  class: atomic
+  aggregation_behavior: additive
+  formula: amount_waived_derived
+  unit: currency
+  currency_source: account_currency
+  additive_over:
+  - id
+  sign: source_defined
+  reversal: source_policy
+- name: amount_writtenoff_derived
+  class: atomic
+  aggregation_behavior: additive
+  formula: amount_writtenoff_derived
+  unit: currency
+  currency_source: account_currency
+  additive_over:
+  - id
+  sign: source_defined
+  reversal: source_policy
+- name: amount_outstanding_derived
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: amount_outstanding_derived
+  unit: currency
+  currency_source: account_currency
+  additive_over:
+  - id
+  sign: source_defined
+  reversal: source_policy

@@ -1,0 +1,50 @@
+version: 2
+name: dws_collection_action_daily
+layer: DWS
+description: 贷款与信贷 reviewed aggregate
+table_type: aggregate_fact
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+data_domain: '04'
+business_area: LOAN
+business_process: delinquency_management
+sensitivity: restricted
+business_date:
+  column: start_date
+  output_column: stat_date
+  kind: event_start_date
+grain:
+  columns:
+  - stat_date
+  - loan_id
+  - action
+  description: one action-start day, loan and action code
+  entities:
+  - LOAN_ACCOUNT
+  degenerate_dimensions: &id001
+  - action
+  time_column: stat_date
+  time_period: D
+entities:
+- code: LOAN_ACCOUNT
+  key: loan_id
+degenerate_dimensions: *id001
+derived_metrics: &id002
+- name: record_count
+  class: derived
+  formula: count(*)
+  unit: count
+  currency_source: not_applicable
+  aggregation_behavior: additive
+  additive_over:
+  - stat_date
+  - loan_id
+  - action
+  sign: positive_count
+  reversal: not_applicable
+metric_semantics: *id002
+human_review:
+  decision: accept
+  current_name: dws_collection_action_daily
+  status: human_reviewed_candidate

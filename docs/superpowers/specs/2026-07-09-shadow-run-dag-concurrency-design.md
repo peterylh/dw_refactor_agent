@@ -45,7 +45,7 @@ Existing job result fields stay unchanged:
 - `target`
 - `status`
 - `error`
-- `actual_execution_values`
+- `execution_values`
 - `invocation_count`
 - `batch_count`
 - `parallelism`

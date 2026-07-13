@@ -1,0 +1,13 @@
+version: 2
+name: ods_fineract_acc_accounting_rule
+layer: ODS
+description: Fineract acc_accounting_rule 贴源表
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+source:
+  repository: https://github.com/apache/fineract
+  table: acc_accounting_rule
+  disposition: standalone_dimension
+  confidence: human_reviewed
+sensitivity: internal

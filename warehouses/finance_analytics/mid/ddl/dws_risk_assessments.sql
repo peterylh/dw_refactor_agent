@@ -1,40 +1,77 @@
 DROP TABLE IF EXISTS finance_analytics_dm.dws_risk_assessments;
+-- table_id: f84ed2b3-f2f0-4c5a-85cd-225b24988fec
 CREATE TABLE IF NOT EXISTS finance_analytics_dm.dws_risk_assessments (
+    -- column_id: 0c82a657-4a1d-45cd-9ce5-3ed11125a667
     assessment_key CHAR(32) NULL,
+    -- column_id: 584cc5ae-0ac4-4ebc-addb-3e8eeb5152b9
     customer_key CHAR(32) NULL,
+    -- column_id: 3278da67-9818-4ed8-83f2-d6dfcb91bb57
     assessment_date_key CHAR(32) NULL,
+    -- column_id: 8c2e9cef-44bf-4b36-83e6-279e8e09b5a7
     next_review_date_key CHAR(32) NULL,
+    -- column_id: fe0d0cf8-6ebf-4049-b555-71492bfbd0c4
     assessment_id BIGINT NULL,
+    -- column_id: c377cc47-c8c5-4a04-94bb-81d72e2bfc55
     assessment_date DATETIME NULL,
+    -- column_id: 227c200d-cbf5-412e-899f-98127ac5ba63
     assessment_type STRING NULL,
+    -- column_id: 47d410de-f061-4008-8990-5cbebbdff496
     next_review_date DATETIME NULL,
+    -- column_id: 06d96e7c-58bc-4415-81db-3ad63adee19d
     risk_rating STRING NULL,
+    -- column_id: 802a8014-408e-4366-988a-7262d80da641
     credit_risk STRING NULL,
+    -- column_id: 2a1907ae-b9c3-4b28-a541-433ddb2f9203
     fraud_risk STRING NULL,
+    -- column_id: 3e70a821-2f74-4067-a057-7108bf63d2de
     aml_risk STRING NULL,
+    -- column_id: 28f717b9-aae7-4543-97da-b254d3b9ae4e
     kyc_status STRING NULL,
+    -- column_id: 201b8fd9-ae56-43eb-9a96-0d07c9969d78
     kyc_last_updated STRING NULL,
+    -- column_id: 40da9da0-2474-4aac-971c-76d465ed41a0
     assessor_id STRING NULL,
+    -- column_id: 05e692a4-bfee-4e70-8ee3-7bb8f2504fad
     risk_score DECIMAL(18,4) NULL,
+    -- column_id: 334b1912-6f25-4935-b8d1-055465ce4073
     transaction_volume_last_90d DECIMAL(18,4) NULL,
+    -- column_id: 5227fdb3-6200-462a-a9b0-74d2223cf518
     num_accounts BIGINT NULL,
+    -- column_id: 7eb58bf8-f107-43f6-a534-a3b8c512f5fc
     years_as_customer BIGINT NULL,
+    -- column_id: fa303e00-3328-4be6-b499-411689fdd2fb
     credit_risk_score DECIMAL(18,4) NULL,
+    -- column_id: c7bd9667-5e80-4087-9fbc-cdbc075cbb7d
     fraud_risk_score DECIMAL(18,4) NULL,
+    -- column_id: 2652b4d9-03c6-44d6-b082-c85b120bd8b2
     aml_risk_score DECIMAL(18,4) NULL,
+    -- column_id: 6d8c0615-1176-4878-90fe-2064b053693a
     days_until_review STRING NULL,
+    -- column_id: 9a4631a4-06b1-4472-a459-2b97c249bd94
     kyc_age_days STRING NULL,
+    -- column_id: 20a95e2f-c1bc-41a2-8834-a262ab18f954
     pep_flag BOOLEAN NULL,
+    -- column_id: aada0af9-a51f-45a9-a051-257a81134748
     sanctions_flag BOOLEAN NULL,
+    -- column_id: 7b3e5b54-f946-4a9e-9384-0290740ac162
     adverse_media_flag BOOLEAN NULL,
+    -- column_id: 694da474-6586-4885-acc2-beef55bb8909
     high_value_flag BOOLEAN NULL,
+    -- column_id: 329803d7-41fb-4ae6-9cfa-7cb5dc4a76ba
     edd_required_flag BOOLEAN NULL,
+    -- column_id: 0ee22f03-8b1e-4598-95d9-520916c253ba
     employment_verified_flag BOOLEAN NULL,
+    -- column_id: b12224d2-56b4-4115-aeb0-ca32bfb541fb
     income_verified_flag BOOLEAN NULL,
+    -- column_id: 5467cc57-de0c-4bf3-ab34-79dd2e5b9b49
     address_verified_flag BOOLEAN NULL,
+    -- column_id: 6a779e27-fc6a-461c-90d8-e0a45ca217e8
     kyc_compliant_flag BOOLEAN NULL,
+    -- column_id: 55814dd2-bd17-4c3b-ba47-cac72863d096
     high_risk_customer_flag BOOLEAN NULL,
+    -- column_id: 7519b77c-ed8b-42a6-89b2-d5879039c86f
     assessment_count BIGINT NULL,
+    -- column_id: a17fa06c-d8c1-4794-a825-3f138db7d5cf
     dbt_updated_at DATETIME NULL
 ) ENGINE=OLAP
 DUPLICATE KEY(assessment_key)

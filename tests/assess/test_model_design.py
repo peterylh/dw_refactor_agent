@@ -1,3 +1,5 @@
+import pytest
+
 from dw_refactor_agent.assessment.assessment_context import AssessmentContext
 from dw_refactor_agent.assessment.rules.definitions.model_design import (
     extract_model_design_sql_facts,
@@ -523,19 +525,44 @@ def test_model_design_flags_dim_info_from_non_ods_upstream():
     assert check["evidence"]["reason_codes"] == ["non_ods_upstream"]
 
 
-def test_model_design_flags_dim_info_with_aggregate_output():
+@pytest.mark.parametrize(
+    ("sql", "evidence_field", "reason_code"),
+    [
+        (
+            """
+            INSERT INTO shop_dm.dim_base_customer_info
+            SELECT customer_id, COUNT(*) AS order_count
+            FROM shop_dm.ods_order
+            GROUP BY customer_id;
+            """,
+            "aggregate_columns",
+            "aggregate_output",
+        ),
+        (
+            """
+            INSERT INTO shop_dm.dim_base_customer_info
+            SELECT customer_id,
+                   COUNT(*) OVER (
+                       PARTITION BY customer_id
+                   ) AS order_count
+            FROM shop_dm.ods_order;
+            """,
+            "window_metric_columns",
+            "window_metric",
+        ),
+    ],
+    ids=("aggregate", "window-metric"),
+)
+def test_model_design_flags_dim_info_with_metric_output(
+    sql, evidence_field, reason_code
+):
     asset_catalog = {
         "tables": {
             "dim_base_customer_info": {
                 "tasks": [
                     {
                         "source_file": "dim_base_customer_info.sql",
-                        "sql": """
-                        INSERT INTO shop_dm.dim_base_customer_info
-                        SELECT customer_id, COUNT(*) AS order_count
-                        FROM shop_dm.ods_order
-                        GROUP BY customer_id;
-                        """,
+                        "sql": sql,
                     }
                 ],
             },
@@ -568,59 +595,8 @@ def test_model_design_flags_dim_info_with_aggregate_output():
         for check in result["checks"]
         if check["rule_id"] == "MODEL_DIM_INFO_DIRECT_ODS_ONLY"
     )
-    assert check["evidence"]["aggregate_columns"] == ["order_count"]
-    assert check["evidence"]["reason_codes"] == ["aggregate_output"]
-
-
-def test_model_design_flags_dim_info_with_window_metric():
-    asset_catalog = {
-        "tables": {
-            "dim_base_customer_info": {
-                "tasks": [
-                    {
-                        "source_file": "dim_base_customer_info.sql",
-                        "sql": """
-                        INSERT INTO shop_dm.dim_base_customer_info
-                        SELECT customer_id,
-                               COUNT(*) OVER (
-                                   PARTITION BY customer_id
-                               ) AS order_count
-                        FROM shop_dm.ods_order;
-                        """,
-                    }
-                ],
-            },
-        },
-    }
-    tables = [
-        {"name": "ods_order", "layer": "ODS", "columns": []},
-        {"name": "dim_base_customer_info", "layer": "DIM", "columns": []},
-    ]
-    model_metadata = {
-        "dim_base_customer_info": {
-            "table_type": "dimension",
-            "dimension_role": "BASE",
-            "dimension_content_type": "INFO",
-        }
-    }
-
-    context = _context(
-        tables,
-        [],
-        [],
-        models=model_metadata,
-        assets=asset_catalog,
-    )
-    result = score_model_design_health(context)
-
-    assert "MODEL_DIM_INFO_DIRECT_ODS_ONLY" in _rule_ids(result)
-    check = next(
-        check
-        for check in result["checks"]
-        if check["rule_id"] == "MODEL_DIM_INFO_DIRECT_ODS_ONLY"
-    )
-    assert check["evidence"]["window_metric_columns"] == ["order_count"]
-    assert check["evidence"]["reason_codes"] == ["window_metric"]
+    assert check["evidence"][evidence_field] == ["order_count"]
+    assert check["evidence"]["reason_codes"] == [reason_code]
 
 
 def test_model_design_allows_dim_info_from_ods_with_cleaning_and_dedup():

@@ -37,6 +37,7 @@ if str(_src_root) not in sys.path:
 import sqlglot
 from sqlglot import exp
 from sqlglot.errors import ErrorLevel
+from sqlglot.tokens import TokenType
 
 from dw_refactor_agent.config import PROJECT_CONFIG, TEXT_ENCODING
 from dw_refactor_agent.sql.doris import (
@@ -58,6 +59,7 @@ class ColumnDef:
     default: Optional[str] = None
     comment: Optional[str] = None
     is_key: bool = False
+    column_id: str = ""
 
     def signature(self) -> str:
         """用于结构比对的签名(排除 comment)."""
@@ -225,21 +227,53 @@ class AlterTable(DDLChange):
 # DDL 解析
 # ============================================================
 
-# 正则: 匹配 -- table_id: <uuid>
-TABLE_ID_RE = re.compile(r"--\s*table_id:\s*([0-9a-fA-F\-]{36})\s*")
+# Schema identity markers are standalone SQL comment lines. Capture the whole
+# value so validation and repair also see malformed multi-token values.
+TABLE_ID_MARKER_RE = re.compile(
+    r"^[ \t]*--[ \t]*table_id[ \t]*:[ \t]*(?P<value>[^\r\n]*?)[ \t]*(?=\r?$)",
+    re.IGNORECASE | re.MULTILINE,
+)
+COLUMN_ID_MARKER_RE = re.compile(
+    r"^[ \t]*--[ \t]*column_id[ \t]*:[ \t]*(?P<value>[^\r\n]*?)[ \t]*(?=\r?$)",
+    re.IGNORECASE | re.MULTILINE,
+)
+_COLUMN_ID_COMMENT_RE = re.compile(
+    r"^[ \t]*(?:--[ \t]*)?column_id[ \t]*:[ \t]*(?P<value>.*?)[ \t]*$",
+    re.IGNORECASE,
+)
+_UUID_SHAPE_RE = re.compile(r"[0-9a-fA-F\-]{36}")
+
+
+def normalize_schema_id(value: str) -> str:
+    """Return the canonical representation used for schema identity matching."""
+    return str(value or "").lower()
+
+
+def schema_id_marker_value(match) -> str:
+    return normalize_schema_id(match.group("value").strip())
+
+
+def _parsed_schema_id(value: str) -> str:
+    canonical = normalize_schema_id(value.strip())
+    return canonical if _UUID_SHAPE_RE.fullmatch(canonical) else ""
 
 
 def extract_table_id(sql_text: str) -> str:
     """从 DDL 文本中提取 table_id UUID."""
-    m = TABLE_ID_RE.search(sql_text)
-    return m.group(1) if m else ""
+    markers = list(TABLE_ID_MARKER_RE.finditer(sql_text))
+    return (
+        _parsed_schema_id(schema_id_marker_value(markers[0]))
+        if len(markers) == 1
+        else ""
+    )
 
 
 def inject_table_id(sql_text: str, table_id: str) -> str:
     """在 DDL 文本中注入或替换 table_id 注释行。"""
     line = f"-- table_id: {table_id}"
-    if TABLE_ID_RE.search(sql_text):
-        return TABLE_ID_RE.sub(line, sql_text)
+    marker = TABLE_ID_MARKER_RE.search(sql_text)
+    if marker:
+        return sql_text[: marker.start()] + line + sql_text[marker.end() :]
     # 插在第一行之后
     idx = sql_text.find("\n")
     if idx == -1:
@@ -249,6 +283,78 @@ def inject_table_id(sql_text: str, table_id: str) -> str:
 
 def generate_table_id() -> str:
     return str(uuid.uuid4())
+
+
+def extract_column_id(col_node: exp.ColumnDef) -> str:
+    comments = getattr(col_node.this, "comments", None) or []
+    matches = []
+    for comment in comments:
+        match = _COLUMN_ID_COMMENT_RE.fullmatch(str(comment))
+        if match:
+            matches.append(schema_id_marker_value(match))
+    return _parsed_schema_id(matches[0]) if len(matches) == 1 else ""
+
+
+def count_create_table_statements(sql_text: str) -> int:
+    try:
+        text = str(sql_text or "")
+        tokens = sqlglot.Tokenizer(dialect="doris").tokenize(text)
+    except Exception:
+        return 0
+
+    segments = []
+    start = 0
+    for token in tokens:
+        if token.token_type != TokenType.SEMICOLON:
+            continue
+        segments.append(text[start : token.end + 1])
+        start = token.end + 1
+    if text[start:].strip():
+        segments.append(text[start:])
+
+    count = 0
+    for segment in segments:
+        try:
+            segment_tokens = sqlglot.Tokenizer(dialect="doris").tokenize(
+                segment
+            )
+            if not any(
+                token.token_type == TokenType.CREATE
+                for token in segment_tokens
+            ):
+                continue
+            statements = sqlglot.parse(
+                normalize_create_table_for_sqlglot(segment),
+                dialect="doris",
+                error_level=ErrorLevel.IGNORE,
+            )
+        except Exception:
+            continue
+        count += sum(
+            1
+            for statement in statements
+            if isinstance(statement, exp.Create)
+            and isinstance(statement.this, exp.Schema)
+        )
+    return count
+
+
+def first_create_table_offset(sql_text: str) -> int:
+    try:
+        tokens = sqlglot.Tokenizer(dialect="doris").tokenize(
+            str(sql_text or "")
+        )
+    except Exception:
+        return -1
+    for index, token in enumerate(tokens):
+        if token.token_type != TokenType.CREATE:
+            continue
+        for following in tokens[index + 1 :]:
+            if following.token_type == TokenType.TABLE:
+                return token.start
+            if following.token_type == TokenType.SEMICOLON:
+                break
+    return -1
 
 
 def parse_column_def(col_node: exp.ColumnDef) -> Optional[ColumnDef]:
@@ -279,6 +385,7 @@ def parse_column_def(col_node: exp.ColumnDef) -> Optional[ColumnDef]:
         nullable=nullable,
         default=default,
         comment=comment,
+        column_id=extract_column_id(col_node),
     )
 
 
@@ -435,6 +542,8 @@ def derive_from_git(
     repo: Optional[Path] = None,
     base_branch: str = "main",
     project: str = "shop",
+    *,
+    legacy_identity: bool = True,
 ) -> List[DDLChange]:
     """
     对比 Git merge-base 与工作区的 DDL 差异,返回变更列表。
@@ -456,7 +565,9 @@ def derive_from_git(
     for rel_path in _normalize_ddl_dir_rels(ddl_dir_rel, project):
         old_tables.update(load_git_tables(repo, rel_path, base_ref))
         new_tables.update(load_tables_from_dir(repo / rel_path))
-    return derive_ddl_changes(old_tables, new_tables)
+    return derive_ddl_changes(
+        old_tables, new_tables, legacy_identity=legacy_identity
+    )
 
 
 # ============================================================
@@ -505,6 +616,36 @@ def _comment_matches(old_col: ColumnDef, new_col: ColumnDef) -> bool:
     old_comment = (old_col.comment or "").strip()
     new_comment = (new_col.comment or "").strip()
     return bool(old_comment) and old_comment == new_comment
+
+
+def _normalized_comment(column: ColumnDef) -> str:
+    return (column.comment or "").strip()
+
+
+def _comment_counts(columns: List[ColumnDef]) -> dict:
+    counts = {}
+    for column in columns:
+        comment = _normalized_comment(column)
+        if comment:
+            counts[comment] = counts.get(comment, 0) + 1
+    return counts
+
+
+def _has_legacy_rename_evidence(
+    old_col: ColumnDef,
+    new_col: ColumnDef,
+    old_comment_counts: dict,
+    new_comment_counts: dict,
+) -> bool:
+    if _column_name_similarity(old_col.name, new_col.name) >= 0.5:
+        return True
+    if not _comment_matches(old_col, new_col):
+        return False
+    comment = _normalized_comment(old_col)
+    return (
+        old_comment_counts.get(comment) == 1
+        and new_comment_counts.get(comment) == 1
+    )
 
 
 def _column_rename_scores(
@@ -584,18 +725,62 @@ def _derive_column_renames(
     added: List[ColumnDef],
     old: TableDef,
     new: TableDef,
+    *,
+    legacy_identity: bool,
 ) -> List[Tuple[int, int, str, str]]:
     old_positions = {col.name: idx for idx, col in enumerate(old.columns)}
     new_positions = {col.name: idx for idx, col in enumerate(new.columns)}
-    eligible_by_drop = {}
-    eligible_by_add = {}
+    dropped_by_id = {}
+    added_by_id = {}
+    for di, column in enumerate(dropped):
+        column_id = normalize_schema_id(column.column_id)
+        if not column_id:
+            continue
+        if column_id in dropped_by_id:
+            raise ValueError(f"旧表 column_id 重复: {column_id}")
+        dropped_by_id[column_id] = di
+    for ai, column in enumerate(added):
+        column_id = normalize_schema_id(column.column_id)
+        if not column_id:
+            continue
+        if column_id in added_by_id:
+            raise ValueError(f"新表 column_id 重复: {column_id}")
+        added_by_id[column_id] = ai
+
+    matched_drops = set()
+    matched_adds = set()
+    renames = []
+    for column_id, di in dropped_by_id.items():
+        ai = added_by_id.get(column_id)
+        if ai is None:
+            continue
+        matched_drops.add(di)
+        matched_adds.add(ai)
+        renames.append((di, ai, dropped[di].name, added[ai].name))
+
+    if not legacy_identity:
+        return sorted(renames, key=lambda item: item[0])
+
+    old_comment_counts = _comment_counts(dropped)
+    new_comment_counts = _comment_counts(added)
     candidates = []
 
     for di, drop_col in enumerate(dropped):
+        if di in matched_drops or drop_col.column_id:
+            continue
         for ai, add_col in enumerate(added):
+            if ai in matched_adds or add_col.column_id:
+                continue
             if (
                 drop_col.data_type != add_col.data_type
                 or drop_col.nullable != add_col.nullable
+            ):
+                continue
+            if not _has_legacy_rename_evidence(
+                drop_col,
+                add_col,
+                old_comment_counts,
+                new_comment_counts,
             ):
                 continue
             ranking_score, semantic_score = _column_rename_scores(
@@ -605,8 +790,6 @@ def _derive_column_renames(
                 old_positions.get(drop_col.name, di)
                 - new_positions.get(add_col.name, ai)
             )
-            eligible_by_drop[di] = eligible_by_drop.get(di, 0) + 1
-            eligible_by_add[ai] = eligible_by_add.get(ai, 0) + 1
             candidates.append(
                 (
                     ranking_score,
@@ -620,24 +803,17 @@ def _derive_column_renames(
             )
 
     candidates.sort(reverse=True)
-    matched_drops = set()
-    matched_adds = set()
-    renames = []
 
     for (
         _ranking_score,
         _position_score,
-        semantic_score,
+        _semantic_score,
         _old_name,
         _new_name,
         di,
         ai,
     ) in candidates:
         if di in matched_drops or ai in matched_adds:
-            continue
-        if semantic_score == 0 and (
-            eligible_by_drop.get(di, 0) > 1 or eligible_by_add.get(ai, 0) > 1
-        ):
             continue
         matched_drops.add(di)
         matched_adds.add(ai)
@@ -646,13 +822,67 @@ def _derive_column_renames(
     return sorted(renames, key=lambda item: item[0])
 
 
-def derive_ddl_changes(old_tables: dict, new_tables: dict) -> List[DDLChange]:
+def _table_ids_by_name(tables: dict, side: str) -> dict:
+    by_id = {}
+    result = {}
+    for name, table in sorted(tables.items()):
+        table_id = normalize_schema_id(table.table_id)
+        result[name] = table_id
+        if not table_id:
+            continue
+        if table_id in by_id:
+            raise ValueError(
+                f"{side} table_id 重复: {table_id}: {by_id[table_id]}, {name}"
+            )
+        by_id[table_id] = name
+    return result
+
+
+def _column_ids_by_name(columns: List[ColumnDef], side: str) -> dict:
+    by_id = {}
+    result = {}
+    for column in columns:
+        column_id = normalize_schema_id(column.column_id)
+        result[column.name] = column_id
+        if not column_id:
+            continue
+        if column_id in by_id:
+            raise ValueError(
+                f"{side} column_id 重复: {column_id}: "
+                f"{by_id[column_id]}, {column.name}"
+            )
+        by_id[column_id] = column.name
+    return result
+
+
+def _validate_global_column_ids(tables: dict, side: str) -> None:
+    by_id = {}
+    for table_name, table in sorted(tables.items()):
+        for column in table.columns:
+            column_id = normalize_schema_id(column.column_id)
+            if not column_id:
+                continue
+            owner = f"{table_name}.{column.name}"
+            if column_id in by_id:
+                raise ValueError(
+                    f"{side} column_id 重复: {column_id}: "
+                    f"{by_id[column_id]}, {owner}"
+                )
+            by_id[column_id] = owner
+
+
+def derive_ddl_changes(
+    old_tables: dict,
+    new_tables: dict,
+    *,
+    legacy_identity: bool = True,
+) -> List[DDLChange]:
     """
     核心方法: 对比 old/new 两套表定义,返回变更列表。
 
     重命名检测策略:
       1. UUID 精准匹配(优先): old.table_id == new.table_id → RENAME
-      2. Jaccard 相似度(回退): 仅当 UUID 缺失或不同时使用
+      2. Jaccard 相似度(兼容回退): 仅当两侧 UUID 均缺失时使用
 
     参数:
         old_tables: {short_name: TableDef}
@@ -661,6 +891,10 @@ def derive_ddl_changes(old_tables: dict, new_tables: dict) -> List[DDLChange]:
     返回:
         List[DDLChange], 按 RENAME → ALTER → DROP → CREATE 排序
     """
+    old_ids = _table_ids_by_name(old_tables, "old")
+    new_ids = _table_ids_by_name(new_tables, "new")
+    _validate_global_column_ids(old_tables, "old")
+    _validate_global_column_ids(new_tables, "new")
     old_names = set(old_tables.keys())
     new_names = set(new_tables.keys())
 
@@ -668,23 +902,29 @@ def derive_ddl_changes(old_tables: dict, new_tables: dict) -> List[DDLChange]:
     dropped_names = set(old_names - new_names)
     created_names = set(new_names - old_names)
 
+    for name in list(common_names):
+        old_id = old_ids[name]
+        new_id = new_ids[name]
+        identity_conflict = old_id and new_id and old_id != new_id
+        identity_missing_in_strict_mode = not legacy_identity and (
+            not old_id or not new_id
+        )
+        if not identity_conflict and not identity_missing_in_strict_mode:
+            continue
+        common_names.discard(name)
+        dropped_names.add(name)
+        created_names.add(name)
+
     changes: List[DDLChange] = []
 
     # ---- Phase 1: UUID-based rename detection (identity-based, no threshold) ----
-    old_by_uuid = {}
-    for name in dropped_names:
-        tid = old_tables[name].table_id
-        if tid:
-            if tid in old_by_uuid:
-                print(
-                    f"警告: 旧表 {old_by_uuid[tid]} 与 {name} 的 table_id 重复({tid}),跳过"
-                )
-                continue
-            old_by_uuid[tid] = name
+    old_by_uuid = {
+        old_ids[name]: name for name in dropped_names if old_ids[name]
+    }
 
     rename_pairs = []
-    for name in list(created_names):
-        tid = new_tables[name].table_id
+    for name in sorted(created_names):
+        tid = new_ids[name]
         if tid and tid in old_by_uuid:
             rename_pairs.append((old_by_uuid[tid], name))
             created_names.discard(name)
@@ -692,10 +932,12 @@ def derive_ddl_changes(old_tables: dict, new_tables: dict) -> List[DDLChange]:
             del old_by_uuid[tid]
 
     # ---- Phase 2: Jaccard similarity matching (fallback for tables without UUID) ----
-    if dropped_names and created_names:
+    if legacy_identity and dropped_names and created_names:
         similarity_scores = []
         for d in dropped_names:
             for c in created_names:
+                if old_tables[d].table_id or new_tables[c].table_id:
+                    continue
                 score = _jaccard_similarity(
                     old_tables[d].columns, new_tables[c].columns
                 )
@@ -717,7 +959,9 @@ def derive_ddl_changes(old_tables: dict, new_tables: dict) -> List[DDLChange]:
         old_t = old_tables[d]
         new_t = new_tables[c]
         changes.append(RenameTable(old_t, new_t))
-        alters = _derive_alter_columns(old_t, new_t)
+        alters = _derive_alter_columns(
+            old_t, new_t, legacy_identity=legacy_identity
+        )
         if any(alters.values()):
             alter = alter_to_change(c, old_t, new_t, alters)
             alter.table_name = new_t.full_name
@@ -732,23 +976,33 @@ def derive_ddl_changes(old_tables: dict, new_tables: dict) -> List[DDLChange]:
     # ---- Remaining CREATEs ----
     for name in sorted(created_names):
         t = new_tables[name]
-        if not t.table_id:
-            t.table_id = generate_table_id()
-            t.raw_ddl = inject_table_id(t.raw_ddl, t.table_id)
         changes.append(CreateTable(t))
 
     # ---- ALTER TABLE: same-name tables ----
     for name in sorted(common_names):
         old_t = old_tables[name]
         new_t = new_tables[name]
-        alters = _derive_alter_columns(old_t, new_t)
+        alters = _derive_alter_columns(
+            old_t, new_t, legacy_identity=legacy_identity
+        )
         if any(alters.values()):
             changes.append(alter_to_change(name, old_t, new_t, alters))
 
     return changes
 
 
-def _derive_alter_columns(old: TableDef, new: TableDef) -> dict:
+def _column_changed(old_column: ColumnDef, new_column: ColumnDef) -> bool:
+    return (
+        old_column.data_type != new_column.data_type
+        or old_column.nullable != new_column.nullable
+        or old_column.default != new_column.default
+        or (old_column.comment or "") != (new_column.comment or "")
+    )
+
+
+def _derive_alter_columns(
+    old: TableDef, new: TableDef, *, legacy_identity: bool
+) -> dict:
     """逐列对比 old/new 同名 table,返回 {adds, drops, modifies, renames}.
 
     列重命名检测: data_type + nullable 相同的 drop/add 列进入候选池,
@@ -756,15 +1010,33 @@ def _derive_alter_columns(old: TableDef, new: TableDef) -> dict:
     """
     old_cols = {c.name: c for c in old.columns}
     new_cols = {c.name: c for c in new.columns}
+    old_ids = _column_ids_by_name(old.columns, "旧表")
+    new_ids = _column_ids_by_name(new.columns, "新表")
 
     old_names = set(old_cols.keys())
     new_names = set(new_cols.keys())
 
-    dropped = [old_cols[n] for n in sorted(old_names - new_names)]
-    added = [new_cols[n] for n in sorted(new_names - old_names)]
+    common_names = set()
+    for name in old_names & new_names:
+        old_id = old_ids[name]
+        new_id = new_ids[name]
+        if old_id and new_id:
+            if old_id == new_id:
+                common_names.add(name)
+        elif legacy_identity:
+            common_names.add(name)
+
+    rename_dropped = [old_cols[n] for n in sorted(old_names - common_names)]
+    rename_added = [new_cols[n] for n in sorted(new_names - common_names)]
 
     # 检测列重命名: 相同结构候选按语义证据配对
-    rename_matches = _derive_column_renames(dropped, added, old, new)
+    rename_matches = _derive_column_renames(
+        rename_dropped,
+        rename_added,
+        old,
+        new,
+        legacy_identity=legacy_identity,
+    )
     renames = [
         (old_name, new_name) for _, _, old_name, new_name in rename_matches
     ]
@@ -772,19 +1044,26 @@ def _derive_alter_columns(old: TableDef, new: TableDef) -> dict:
     if renames:
         matched_drops = {di for di, _, _, _ in rename_matches}
         matched_adds = {ai for _, ai, _, _ in rename_matches}
-        dropped = [c for i, c in enumerate(dropped) if i not in matched_drops]
-        added = [c for i, c in enumerate(added) if i not in matched_adds]
+        dropped = [
+            c for i, c in enumerate(rename_dropped) if i not in matched_drops
+        ]
+        added = [
+            c for i, c in enumerate(rename_added) if i not in matched_adds
+        ]
+    else:
+        dropped = rename_dropped
+        added = rename_added
 
     modified = []
-    for name in sorted(old_names & new_names):
+    for name in sorted(common_names):
         old_c = old_cols[name]
         new_c = new_cols[name]
-        if (
-            old_c.data_type != new_c.data_type
-            or old_c.nullable != new_c.nullable
-            or old_c.default != new_c.default
-            or (old_c.comment or "") != (new_c.comment or "")
-        ):
+        if _column_changed(old_c, new_c):
+            modified.append((old_c, new_c))
+    for di, ai, _old_name, _new_name in rename_matches:
+        old_c = rename_dropped[di]
+        new_c = rename_added[ai]
+        if _column_changed(old_c, new_c):
             modified.append((old_c, new_c))
 
     return {
@@ -874,7 +1153,26 @@ def changes_to_json(changes: List[DDLChange]) -> dict:
             entry["table_name"] = ch.table_name
             entry["adds"] = [asdict(c) for c in ch.adds]
             entry["drops"] = [asdict(c) for c in ch.drops]
-            entry["renames"] = [{"old": o, "new": n} for o, n in ch.renames]
+            old_columns = ch.old_def.column_map()
+            new_columns = ch.new_def.column_map()
+            rename_entries = []
+            for old_name, new_name in ch.renames:
+                rename_entry = {"old": old_name, "new": new_name}
+                old_column = old_columns.get(old_name)
+                new_column = new_columns.get(new_name)
+                if (
+                    old_column
+                    and new_column
+                    and old_column.column_id
+                    and normalize_schema_id(old_column.column_id)
+                    == normalize_schema_id(new_column.column_id)
+                ):
+                    rename_entry["column_id"] = normalize_schema_id(
+                        old_column.column_id
+                    )
+                    rename_entry["matched_by"] = "column_id"
+                rename_entries.append(rename_entry)
+            entry["renames"] = rename_entries
             if ch.case_only_renames:
                 entry["case_only_renames"] = ch.case_only_renames
             entry["modifies"] = [

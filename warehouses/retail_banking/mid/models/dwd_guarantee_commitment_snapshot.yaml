@@ -1,0 +1,104 @@
+version: 2
+name: dwd_guarantee_commitment_snapshot
+layer: DWD
+description: Amount fields describe current cumulative commitment state and need an explicit snapshot
+  date.
+table_type: accumulating_snapshot
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+data_domain: '04'
+business_area: LOAN
+entities:
+- code: GUARANTEE_COMMITMENT
+  type: primary
+  name: Guarantee Commitment
+  key_columns:
+  - id
+- code: LOAN_GUARANTOR_RELATION
+  type: foreign
+  role: guarantor_record
+  name: Loan Guarantor Relation
+  key_columns:
+  - guarantor_id
+  source_fk:
+  - guarantor_id
+- code: PORTFOLIO_ACCOUNT_ASSOCIATION
+  type: foreign
+  role: portfolio_association
+  name: Portfolio Account Association
+  key_columns:
+  - account_associations_id
+  source_fk:
+  - account_associations_id
+grain:
+  description: one guarantor funding commitment through release and transfer states
+  columns:
+  - id
+business_date:
+  kind: none
+  column: null
+  inherit_from: null
+  source_column: null
+source_mapping:
+  upstream_repository: https://github.com/apache/fineract
+  source_table: m_guarantor_funding_details
+  ods_table: ods_fineract_m_guarantor_funding_details
+  disposition: snapshot_source
+  confidence: human_reviewed
+sensitivity: restricted
+sensitivity_policy:
+  level: restricted
+  action: mask_and_tokenize
+column_sensitivity: []
+human_review:
+  verdict: revise
+  allowed_alternatives:
+  - dwd_guarantee_commitment_daily_snapshot
+business_process: guarantee_management
+atomic_metrics:
+- amount
+- amount_released_derived
+- amount_remaining_derived
+- amount_transfered_derived
+metric_semantics:
+- name: amount
+  class: atomic
+  aggregation_behavior: additive
+  formula: amount
+  unit: currency
+  currency_source: account_currency
+  additive_over:
+  - id
+  sign: source_defined
+  reversal: source_policy
+- name: amount_released_derived
+  class: atomic
+  aggregation_behavior: additive
+  formula: amount_released_derived
+  unit: currency
+  currency_source: account_currency
+  additive_over:
+  - id
+  sign: source_defined
+  reversal: source_policy
+- name: amount_remaining_derived
+  class: atomic
+  aggregation_behavior: additive
+  formula: amount_remaining_derived
+  unit: currency
+  currency_source: account_currency
+  additive_over:
+  - id
+  sign: source_defined
+  reversal: source_policy
+- name: amount_transfered_derived
+  class: atomic
+  aggregation_behavior: additive
+  formula: amount_transfered_derived
+  unit: currency
+  currency_source: account_currency
+  additive_over:
+  - id
+  sign: source_defined
+  reversal: source_policy

@@ -1,3 +1,5 @@
+import pytest
+
 import dw_refactor_agent.assessment.rules.definitions.task_sql_quality as task_sql_quality_defs
 import dw_refactor_agent.assessment.rules.dimensions.task_sql_quality as task_sql_quality_dimension
 from dw_refactor_agent.assessment.assessment_context import AssessmentContext
@@ -658,32 +660,21 @@ FROM demo.dwd_order a, demo.dwd_product b;
     }
 
 
-def test_score_code_quality_accepts_keyed_join_without_cartesian_risk(
-    tmp_path,
-):
-    context = _catalog_for_task(
-        tmp_path,
-        "dwd_order_customer.sql",
-        """
+@pytest.mark.parametrize(
+    ("task_name", "sql"),
+    [
+        (
+            "dwd_order_customer.sql",
+            """
 INSERT INTO demo.dwd_order_customer
 SELECT a.order_id, b.customer_name
 FROM demo.dwd_order a
 JOIN demo.dwd_customer b ON a.customer_id = b.customer_id;
 """,
-    )
-
-    result = score_code_quality(context)
-
-    assert "CODE_CARTESIAN_JOIN_RISK" not in _issue_rule_ids(result)
-
-
-def test_score_code_quality_accepts_multiple_ctes_without_cartesian_risk(
-    tmp_path,
-):
-    context = _catalog_for_task(
-        tmp_path,
-        "ads_customer_rfm.sql",
-        """
+        ),
+        (
+            "ads_customer_rfm.sql",
+            """
 INSERT INTO demo.ads_customer_rfm
 WITH rfm_base AS (
     SELECT
@@ -705,20 +696,10 @@ SELECT
     m_score
 FROM rfm_scored;
 """,
-    )
-
-    result = score_code_quality(context)
-
-    assert "CODE_CARTESIAN_JOIN_RISK" not in _issue_rule_ids(result)
-
-
-def test_score_code_quality_accepts_explicit_cross_join_without_cartesian_risk(
-    tmp_path,
-):
-    context = _catalog_for_task(
-        tmp_path,
-        "dim_date.sql",
-        """
+        ),
+        (
+            "dim_date.sql",
+            """
 INSERT INTO demo.dim_date
 WITH date_spine AS (
     SELECT DATE_ADD(CAST('2010-01-01' AS DATE), INTERVAL (o.n + t.n * 10) DAY) AS date_day
@@ -728,7 +709,14 @@ WITH date_spine AS (
 SELECT date_day
 FROM date_spine;
 """,
-    )
+        ),
+    ],
+    ids=("keyed-join", "multiple-ctes", "explicit-cross-join"),
+)
+def test_score_code_quality_accepts_non_cartesian_sql(
+    tmp_path, task_name, sql
+):
+    context = _catalog_for_task(tmp_path, task_name, sql)
 
     result = score_code_quality(context)
 
@@ -890,35 +878,22 @@ WHERE DATE(pay_time) = @etl_date
     assert len(failed) == 2
 
 
-def test_score_code_quality_accepts_full_refresh_if_filter_predicate(
-    tmp_path,
-):
-    context = _catalog_for_task(
-        tmp_path,
-        "dws_customer_order_summary.sql",
-        """
+@pytest.mark.parametrize(
+    ("task_name", "sql"),
+    [
+        (
+            "dws_customer_order_summary.sql",
+            """
 INSERT INTO demo.dws_customer_order_summary
 SELECT customer_id, SUM(payment_amount) AS payment_amount
 FROM demo.dwd_order_detail
 WHERE IF(@full_refresh = 1, 1=1, order_date = CAST(@etl_date AS DATE))
 GROUP BY customer_id;
 """,
-    )
-
-    result = score_code_quality(context)
-
-    assert "CODE_FILTER_COLUMN_WRAPPED_IN_FUNCTION" not in _issue_rule_ids(
-        result
-    )
-
-
-def test_score_code_quality_accepts_generator_expression_filter(
-    tmp_path,
-):
-    context = _catalog_for_task(
-        tmp_path,
-        "dim_date.sql",
-        """
+        ),
+        (
+            "dim_date.sql",
+            """
 INSERT INTO demo.dim_date
 WITH date_spine AS (
     SELECT DATE_ADD(CAST('2010-01-01' AS DATE), INTERVAL o.n DAY) AS date_day
@@ -928,20 +903,10 @@ WITH date_spine AS (
 SELECT date_day
 FROM date_spine;
 """,
-    )
-
-    result = score_code_quality(context)
-
-    assert "CODE_FILTER_COLUMN_WRAPPED_IN_FUNCTION" not in _issue_rule_ids(
-        result
-    )
-
-
-def test_score_code_quality_accepts_sargable_filter_columns(tmp_path):
-    context = _catalog_for_task(
-        tmp_path,
-        "dwd_order_detail.sql",
-        """
+        ),
+        (
+            "dwd_order_detail.sql",
+            """
 INSERT INTO demo.dwd_order_detail
 SELECT order_id, pay_amount
 FROM demo.ods_order
@@ -949,7 +914,14 @@ WHERE pay_time >= @etl_date
   AND pay_time < DATE_ADD(@etl_date, INTERVAL 1 DAY)
   AND store_id = 1001;
 """,
-    )
+        ),
+    ],
+    ids=("full-refresh-if", "generator-expression", "sargable-columns"),
+)
+def test_score_code_quality_accepts_unwrapped_filter_columns(
+    tmp_path, task_name, sql
+):
+    context = _catalog_for_task(tmp_path, task_name, sql)
 
     result = score_code_quality(context)
 

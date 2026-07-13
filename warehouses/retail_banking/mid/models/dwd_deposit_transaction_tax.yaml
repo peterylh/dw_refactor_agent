@@ -1,0 +1,73 @@
+version: 2
+name: dwd_deposit_transaction_tax
+layer: DWD
+description: Tax detail must inherit transaction date and account context from its parent.
+table_type: fact
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+data_domain: '05'
+business_area: DPST
+entities:
+- code: DEPOSIT_TRANSACTION_TAX
+  type: primary
+  name: Deposit Transaction Tax
+  key_columns:
+  - id
+- code: DEPOSIT_TRANSACTION
+  type: foreign
+  role: deposit_transaction
+  name: Deposit Transaction
+  key_columns:
+  - savings_transaction_id
+  source_fk:
+  - savings_transaction_id
+- code: TAX_COMPONENT
+  type: foreign
+  role: tax_component
+  name: Tax Component
+  key_columns:
+  - tax_component_id
+  source_fk:
+  - tax_component_id
+grain:
+  description: one tax component on one deposit transaction
+  columns:
+  - savings_transaction_id
+  - tax_component_id
+  - id
+business_date:
+  kind: inherited
+  column: business_date
+  inherit_from: m_savings_account_transaction.transaction_date
+  source_column: null
+source_mapping:
+  upstream_repository: https://github.com/apache/fineract
+  source_table: m_savings_account_transaction_tax_details
+  ods_table: ods_fineract_m_savings_account_transaction_tax_details
+  disposition: standalone_fact
+  confidence: human_reviewed
+sensitivity: restricted
+sensitivity_policy:
+  level: restricted
+  action: mask_and_tokenize
+column_sensitivity: []
+human_review:
+  verdict: revise
+  allowed_alternatives: []
+business_process: deposit_transaction
+atomic_metrics:
+- amount
+metric_semantics:
+- name: amount
+  class: atomic
+  aggregation_behavior: additive
+  formula: amount
+  unit: currency
+  currency_source: account_currency
+  additive_over:
+  - savings_transaction_id
+  - tax_component_id
+  - id
+  sign: source_defined
+  reversal: source_policy

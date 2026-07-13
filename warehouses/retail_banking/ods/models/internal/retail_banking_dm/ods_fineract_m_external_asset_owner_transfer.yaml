@@ -1,0 +1,13 @@
+version: 2
+name: ods_fineract_m_external_asset_owner_transfer
+layer: ODS
+description: Fineract m_external_asset_owner_transfer 贴源表
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+source:
+  repository: https://github.com/apache/fineract
+  table: m_external_asset_owner_transfer
+  disposition: snapshot_source
+  confidence: human_reviewed
+sensitivity: restricted

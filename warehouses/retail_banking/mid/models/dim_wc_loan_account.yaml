@@ -1,0 +1,80 @@
+version: 2
+name: dim_wc_loan_account
+layer: DIM
+description: Durable account attributes belong in DIM while utilization and breach amounts require snapshots.
+table_type: dimension
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+data_domain: '10'
+business_area: LOAN
+entities:
+- code: WC_LOAN_ACCOUNT
+  type: primary
+  name: Wc Loan Account
+  key_columns:
+  - id
+- code: CUSTOMER
+  type: foreign
+  role: borrower_customer
+  name: Customer
+  key_columns:
+  - client_id
+  source_fk:
+  - client_id
+- code: WC_LOAN_PRODUCT
+  type: foreign
+  role: wc_loan_product
+  name: Wc Loan Product
+  key_columns:
+  - product_id
+  source_fk:
+  - product_id
+grain:
+  description: one effective working-capital loan account version excluding balances
+  columns:
+  - id
+business_date:
+  kind: none
+  column: null
+  inherit_from: null
+  source_column: null
+source_mapping:
+  upstream_repository: https://github.com/apache/fineract
+  source_table: m_wc_loan
+  ods_table: ods_fineract_m_wc_loan
+  disposition: standalone_dimension
+  confidence: human_reviewed
+sensitivity: restricted
+sensitivity_policy:
+  level: restricted
+  action: mask_and_tokenize
+column_sensitivity:
+- name: account_no
+  classification: identifier
+  action: hash
+- name: external_id
+  classification: identifier
+  action: hash
+human_review:
+  verdict: revise
+  allowed_alternatives:
+  - dim_wc_loan_account_scd2
+semantic_subject: WC_LOAN_ACCOUNT
+dimension_role: BASE
+dimension_content_type: INFO
+dimension_policy:
+  stable_fields:
+  - id
+  - account_no
+  - external_id
+  - client_id
+  - fund_id
+  - product_id
+  - wc_loan_product_id
+  - currency_code
+  - amortization_type
+  snapshot_target:
+    layer: DWD
+    table: dwd_wc_loan_account_daily_snapshot
+    date_column: snapshot_date

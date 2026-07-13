@@ -1,0 +1,13 @@
+version: 2
+name: ods_fineract_m_working_days
+layer: ODS
+description: Fineract m_working_days 贴源表
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+source:
+  repository: https://github.com/apache/fineract
+  table: m_working_days
+  disposition: standalone_dimension
+  confidence: human_reviewed
+sensitivity: internal

@@ -1,0 +1,43 @@
+version: 2
+name: dim_rate
+layer: DIM
+description: Percentage and approval state are time-sensitive and require effective-version semantics.
+table_type: dimension
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+data_domain: '03'
+business_area: OTHR
+entities:
+- code: RATE
+  type: primary
+  name: Rate
+  key_columns:
+  - id
+grain:
+  description: one effective rate definition version
+  columns:
+  - id
+business_date:
+  kind: effective
+  column: created_date
+  inherit_from: null
+  source_column: created_date
+source_mapping:
+  upstream_repository: https://github.com/apache/fineract
+  source_table: m_rate
+  ods_table: ods_fineract_m_rate
+  disposition: standalone_dimension
+  confidence: human_reviewed
+sensitivity: internal
+sensitivity_policy:
+  level: internal
+  action: retain
+column_sensitivity: []
+human_review:
+  verdict: revise
+  allowed_alternatives:
+  - dim_rate_scd2
+semantic_subject: RATE
+dimension_role: BASE
+dimension_content_type: INFO

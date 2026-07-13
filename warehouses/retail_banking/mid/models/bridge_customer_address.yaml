@@ -1,0 +1,68 @@
+version: 2
+name: bridge_customer_address
+layer: DWD
+description: Source is a relationship bridge and lacks an effective-date history.
+table_type: bridge
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+data_domain: '01'
+business_area: CLNT
+entities:
+- code: CUSTOMER_ADDRESS_RELATION
+  type: primary
+  name: Customer Address Relation
+  key_columns:
+  - id
+- code: CUSTOMER
+  type: foreign
+  role: customer
+  name: Customer
+  key_columns:
+  - client_id
+  source_fk:
+  - client_id
+- code: CODE_VALUE
+  type: foreign
+  role: address_type
+  name: Code Value
+  key_columns:
+  - address_type_id
+  source_fk:
+  - address_type_id
+grain:
+  description: one customer-address-type relationship
+  columns:
+  - id
+business_date:
+  kind: none
+  column: null
+  inherit_from: null
+  source_column: null
+source_mapping:
+  upstream_repository: https://github.com/apache/fineract
+  source_table: m_client_address
+  ods_table: ods_fineract_m_client_address
+  disposition: bridge_source
+  confidence: human_reviewed
+sensitivity: restricted
+sensitivity_policy:
+  level: restricted
+  action: mask_and_tokenize
+column_sensitivity: []
+human_review:
+  verdict: revise
+  allowed_alternatives:
+  - name: dim_customer_address_bridge
+    layer: DIM
+    table_type: bridge
+    credit: 0.8
+    rationale: Kimball-style multivalued-dimension modeling may place the customer-address relation on
+      the DIM side.
+  - name: customer_address_satellite
+    layer: DIM
+    table_type: dimension
+    credit: 0.65
+    rationale: The relation may be modeled as a customer multivalued-attribute satellite, although an
+      explicit bridge is more precise.
+business_process: customer_management

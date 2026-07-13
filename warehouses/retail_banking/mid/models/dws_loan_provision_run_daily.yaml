@@ -1,0 +1,77 @@
+version: 2
+name: dws_loan_provision_run_daily
+layer: DWS
+description: 贷款与信贷 reviewed aggregate
+table_type: aggregate_fact
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+data_domain: '04'
+business_area: LOAN
+business_process: loan_provisioning
+sensitivity: internal
+business_date:
+  column: provision_date
+  output_column: stat_date
+  kind: provisioning_run_created_date
+grain:
+  columns:
+  - stat_date
+  - office_id
+  - product_id
+  - category_id
+  - currency_code
+  - journal_entry_created
+  description: one provisioning run day, office, product, category, currency and posting state
+  entities:
+  - OFFICE
+  - LOAN_PRODUCT
+  - PROVISION_CATEGORY
+  degenerate_dimensions: &id001
+  - currency_code
+  - journal_entry_created
+  time_column: stat_date
+  time_period: D
+entities:
+- code: OFFICE
+  key: office_id
+- code: LOAN_PRODUCT
+  key: product_id
+- code: PROVISION_CATEGORY
+  key: category_id
+degenerate_dimensions: *id001
+derived_metrics: &id002
+- name: provision_entry_count
+  class: derived
+  formula: count(*)
+  unit: count
+  currency_source: not_applicable
+  aggregation_behavior: additive
+  additive_over:
+  - stat_date
+  - office_id
+  - product_id
+  - category_id
+  - currency_code
+  - journal_entry_created
+  sign: positive_count
+  reversal: not_applicable
+- name: total_reserve_amount
+  class: derived
+  formula: sum(reseve_amount)
+  unit: currency
+  currency_source: currency_code
+  aggregation_behavior: additive
+  additive_over:
+  - stat_date
+  - office_id
+  - product_id
+  - category_id
+  - journal_entry_created
+  sign: positive_provision
+  reversal: not_applicable
+metric_semantics: *id002
+human_review:
+  decision: revise
+  current_name: dws_loan_provision_entry_daily
+  status: human_reviewed_candidate

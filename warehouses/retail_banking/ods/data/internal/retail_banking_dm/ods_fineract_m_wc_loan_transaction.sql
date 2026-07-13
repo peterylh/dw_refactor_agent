@@ -1,0 +1,63 @@
+-- Deterministic smoke data for Fineract m_wc_loan_transaction
+TRUNCATE TABLE retail_banking_dm.ods_fineract_m_wc_loan_transaction;
+
+INSERT INTO retail_banking_dm.ods_fineract_m_wc_loan_transaction (
+    `id`,
+    `wc_loan_id`,
+    `payment_detail_id`,
+    `classification_cv_id`,
+    `external_id`,
+    `transaction_type_id`,
+    `transaction_date`,
+    `submitted_on_date`,
+    `transaction_amount`,
+    `version`,
+    `created_by`,
+    `last_modified_by`,
+    `created_on_utc`,
+    `last_modified_on_utc`,
+    `is_reversed`,
+    `reversal_external_id`,
+    `reversed_on_date`,
+    `load_time`
+) VALUES
+    (
+        1,
+        1,
+        1,
+        1,
+        '00000000-0000-4000-8000-000000000001',
+        1,
+        '2025-01-15',
+        '2025-01-15',
+        100.000000,
+        1,
+        1,
+        1,
+        '2025-01-15 09:00:00',
+        '2025-01-15 09:00:00',
+        FALSE,
+        '00000000-0000-4000-8000-000000000001',
+        '2025-01-15',
+        '2025-01-15 00:00:00'
+    ),
+    (
+        2,
+        1,
+        1,
+        1,
+        '00000000-0000-4000-8000-000000000002',
+        1,
+        '2025-01-16',
+        '2025-01-16',
+        100.000000,
+        1,
+        2,
+        2,
+        '2025-01-16 09:00:00',
+        '2025-01-16 09:00:00',
+        FALSE,
+        '00000000-0000-4000-8000-000000000002',
+        '2025-01-16',
+        '2025-01-15 00:00:00'
+    );

@@ -1,0 +1,52 @@
+version: 2
+name: dws_loan_delinquency_entry_daily
+layer: DWS
+description: 贷款与信贷 reviewed aggregate
+table_type: aggregate_fact
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+data_domain: '04'
+business_area: LOAN
+business_process: delinquency_management
+sensitivity: restricted
+business_date:
+  column: addedon_date
+  output_column: stat_date
+  kind: event_entry_date
+grain:
+  columns:
+  - stat_date
+  - loan_id
+  - delinquency_range_id
+  description: one delinquency-entry day, loan and range
+  entities:
+  - LOAN_ACCOUNT
+  - DELINQUENCY_RANGE
+  degenerate_dimensions: []
+  time_column: stat_date
+  time_period: D
+entities:
+- code: LOAN_ACCOUNT
+  key: loan_id
+- code: DELINQUENCY_RANGE
+  key: delinquency_range_id
+degenerate_dimensions: []
+derived_metrics: &id001
+- name: entry_count
+  class: derived
+  formula: count(*)
+  unit: count
+  currency_source: not_applicable
+  aggregation_behavior: additive
+  additive_over:
+  - stat_date
+  - loan_id
+  - delinquency_range_id
+  sign: positive_count
+  reversal: not_applicable
+metric_semantics: *id001
+human_review:
+  decision: revise
+  current_name: dws_loan_delinquency_event_daily
+  status: human_reviewed_candidate

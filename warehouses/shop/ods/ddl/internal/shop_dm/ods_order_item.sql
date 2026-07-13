@@ -2,13 +2,21 @@
 -- table_id: 3ef976ba-17e4-49ca-83c1-85f1163e192f
 DROP TABLE IF EXISTS shop_dm.ods_order_item;
 CREATE TABLE IF NOT EXISTS shop_dm.ods_order_item (
+    -- column_id: 7dc0d0a6-00ba-43d2-ad15-25d2298a8788
     order_item_id BIGINT        NOT NULL COMMENT '订单明细ID',
+    -- column_id: 610957e7-d14c-4e16-a120-e10006844dbb
     order_id      BIGINT        NOT NULL COMMENT '订单ID',
+    -- column_id: 88638790-2926-4d9b-83fa-9206f3bb1c97
     product_id    BIGINT        NOT NULL COMMENT '商品ID',
+    -- column_id: 4ff84f39-a8bf-4047-a01f-edacc4a2ef8f
     quantity      INT           NOT NULL COMMENT '数量',
+    -- column_id: b21d68e1-0921-4117-ae11-aa768ec3e387
     unit_price    DECIMAL(12,2) NOT NULL COMMENT '单价',
+    -- column_id: 1e40cc62-08da-42b9-a967-0b3e731c9dd6
     discount      DECIMAL(12,2) NOT NULL DEFAULT 0.00 COMMENT '折扣金额',
+    -- column_id: 32a87ad2-da58-4846-b8f2-0c4e69904815
     subtotal      DECIMAL(12,2) NOT NULL COMMENT '小计',
+    -- column_id: 2832d9d3-cf98-4ad2-8ef3-96c8a6fb4e43
     load_time   DATETIME      NOT NULL COMMENT '数据导入时间(分区列)'
 ) ENGINE=OLAP
 DUPLICATE KEY(order_item_id)

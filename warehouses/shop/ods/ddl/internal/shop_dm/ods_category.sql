@@ -2,11 +2,17 @@
 -- table_id: bf1e1a62-7080-419d-bcba-448c95b0f068
 DROP TABLE IF EXISTS shop_dm.ods_category;
 CREATE TABLE IF NOT EXISTS shop_dm.ods_category (
+    -- column_id: 3f62a1cf-7d1b-4ac8-87a7-1cd7e68a8482
     category_id        BIGINT      NOT NULL COMMENT '品类ID',
+    -- column_id: a7b05403-9dfd-4083-9637-ff8c74693960
     category_name      VARCHAR(64) NOT NULL COMMENT '品类名称',
+    -- column_id: 5e2a0476-13d6-4397-9287-7bc342513b00
     parent_category_id BIGINT      NULL COMMENT '上级品类ID',
+    -- column_id: e259a01b-14b6-4dee-b940-8e066c86239e
     category_level     TINYINT     NOT NULL COMMENT '品类层级:1/2/3',
+    -- column_id: 8e403ee1-27f4-4132-978a-d263e7b26395
     sort_order         INT         NULL COMMENT '排序',
+    -- column_id: 0490c070-9a33-45d9-b050-35bcf8605b51
     load_time          DATETIME    NOT NULL COMMENT '数据导入时间(分区列)'
 ) ENGINE=OLAP
 DUPLICATE KEY(category_id)

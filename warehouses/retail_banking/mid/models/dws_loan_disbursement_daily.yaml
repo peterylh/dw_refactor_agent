@@ -1,0 +1,69 @@
+version: 2
+name: dws_loan_disbursement_daily
+layer: DWS
+description: 贷款与信贷 reviewed aggregate
+table_type: aggregate_fact
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+data_domain: '04'
+business_area: LOAN
+business_process: loan_disbursement
+sensitivity: restricted
+business_date:
+  column: disbursedon_date
+  output_column: stat_date
+  kind: event_date
+grain:
+  columns:
+  - stat_date
+  - loan_id
+  description: one disbursement day and loan
+  entities:
+  - LOAN_ACCOUNT
+  degenerate_dimensions: []
+  time_column: stat_date
+  time_period: D
+entities:
+- code: LOAN_ACCOUNT
+  key: loan_id
+degenerate_dimensions: []
+derived_metrics: &id001
+- name: record_count
+  class: derived
+  formula: count(*)
+  unit: count
+  currency_source: not_applicable
+  aggregation_behavior: additive
+  additive_over:
+  - stat_date
+  - loan_id
+  sign: positive_count
+  reversal: exclude_is_reversed_true
+- name: total_principal
+  class: derived
+  formula: sum(principal)
+  unit: currency
+  currency_source: dim_loan_account.currency_code
+  aggregation_behavior: additive
+  additive_over:
+  - stat_date
+  - loan_id
+  sign: unsigned_disbursement
+  reversal: exclude_is_reversed_true
+- name: total_net_disbursal_amount
+  class: derived
+  formula: sum(net_disbursal_amount)
+  unit: currency
+  currency_source: dim_loan_account.currency_code
+  aggregation_behavior: additive
+  additive_over:
+  - stat_date
+  - loan_id
+  sign: unsigned_disbursement
+  reversal: exclude_is_reversed_true
+metric_semantics: *id001
+human_review:
+  decision: accept
+  current_name: dws_loan_disbursement_daily
+  status: human_reviewed_candidate

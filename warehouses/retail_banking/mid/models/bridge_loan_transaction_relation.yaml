@@ -1,0 +1,64 @@
+version: 2
+name: bridge_loan_transaction_relation
+layer: DWD
+description: Typed relationship is a bridge and inherits dates from the participating transactions.
+table_type: bridge
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+data_domain: '04'
+business_area: LOAN
+entities:
+- code: LOAN_TRANSACTION_RELATION
+  type: primary
+  name: Loan Transaction Relation
+  key_columns:
+  - id
+- code: LOAN_TRANSACTION
+  type: foreign
+  role: from_loan_transaction
+  name: Loan Transaction
+  key_columns:
+  - from_loan_transaction_id
+  source_fk:
+  - from_loan_transaction_id
+- code: LOAN_TRANSACTION
+  type: foreign
+  role: to_loan_transaction
+  name: Loan Transaction
+  key_columns:
+  - to_loan_transaction_id
+  source_fk:
+  - to_loan_transaction_id
+- code: LOAN_CHARGE
+  type: foreign
+  role: to_loan_charge
+  name: Loan Charge
+  key_columns:
+  - to_loan_charge_id
+  source_fk:
+  - to_loan_charge_id
+grain:
+  description: one typed relation between loan transactions or a charge
+  columns:
+  - id
+business_date:
+  kind: inherited
+  column: business_date
+  inherit_from: m_loan_transaction.transaction_date
+  source_column: null
+source_mapping:
+  upstream_repository: https://github.com/apache/fineract
+  source_table: m_loan_transaction_relation
+  ods_table: ods_fineract_m_loan_transaction_relation
+  disposition: bridge_source
+  confidence: human_reviewed
+sensitivity: restricted
+sensitivity_policy:
+  level: restricted
+  action: mask_and_tokenize
+column_sensitivity: []
+human_review:
+  verdict: revise
+  allowed_alternatives: []
+business_process: loan_transaction

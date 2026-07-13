@@ -1,0 +1,88 @@
+version: 2
+name: dim_deposit_account
+layer: DIM
+description: Durable account attributes belong in DIM while balances and cumulative amounts require snapshots.
+table_type: dimension
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+data_domain: '05'
+business_area: DPST
+entities:
+- code: DEPOSIT_ACCOUNT
+  type: primary
+  name: Deposit Account
+  key_columns:
+  - id
+- code: CUSTOMER
+  type: foreign
+  role: owner_customer
+  name: Customer
+  key_columns:
+  - client_id
+  source_fk:
+  - client_id
+- code: CUSTOMER_GROUP
+  type: foreign
+  role: owner_group
+  name: Customer Group
+  key_columns:
+  - group_id
+  source_fk:
+  - group_id
+- code: DEPOSIT_PRODUCT
+  type: foreign
+  role: deposit_product
+  name: Deposit Product
+  key_columns:
+  - product_id
+  source_fk:
+  - product_id
+grain:
+  description: one effective deposit account version excluding balances
+  columns:
+  - id
+business_date:
+  kind: none
+  column: null
+  inherit_from: null
+  source_column: null
+source_mapping:
+  upstream_repository: https://github.com/apache/fineract
+  source_table: m_savings_account
+  ods_table: ods_fineract_m_savings_account
+  disposition: standalone_dimension
+  confidence: human_reviewed
+sensitivity: restricted
+sensitivity_policy:
+  level: restricted
+  action: mask_and_tokenize
+column_sensitivity:
+- name: account_no
+  classification: identifier
+  action: hash
+- name: external_id
+  classification: identifier
+  action: hash
+human_review:
+  verdict: revise
+  allowed_alternatives:
+  - dim_deposit_account_scd2
+semantic_subject: DEPOSIT_ACCOUNT
+dimension_role: BASE
+dimension_content_type: INFO
+dimension_policy:
+  stable_fields:
+  - id
+  - account_no
+  - external_id
+  - client_id
+  - group_id
+  - product_id
+  - account_type_enum
+  - deposit_type_enum
+  - currency_code
+  snapshot_target:
+    layer: DWD
+    table: dwd_deposit_account_daily_snapshot
+    date_column: snapshot_date

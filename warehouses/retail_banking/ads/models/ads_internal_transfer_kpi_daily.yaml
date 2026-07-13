@@ -1,0 +1,89 @@
+version: 2
+name: ads_internal_transfer_kpi_daily
+layer: ADS
+description: 支付结算 reviewed application data
+table_type: application_fact
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+data_domain: '06'
+business_area: PAYM
+business_process: account_transfer
+sensitivity: restricted
+business_date:
+  column: stat_date
+  kind: inherited_event_date
+grain:
+  columns:
+  - stat_date
+  - from_office_id
+  - to_office_id
+  - transfer_type
+  - currency_code
+  description: one day, office pair, transfer type and currency
+  entities:
+  - FROM_OFFICE
+  - TO_OFFICE
+  degenerate_dimensions: &id001
+  - transfer_type
+  - currency_code
+entities:
+- code: FROM_OFFICE
+  key: from_office_id
+- code: TO_OFFICE
+  key: to_office_id
+degenerate_dimensions: *id001
+derived_metrics:
+- &id002
+  name: record_count
+  class: derived
+  formula: source.record_count
+  unit: count
+  currency_source: not_applicable
+  aggregation_behavior: additive
+  additive_over:
+  - stat_date
+  - from_office_id
+  - to_office_id
+  - transfer_type
+  - currency_code
+  sign: positive_count
+  reversal: inherited_source_policy
+- &id003
+  name: total_amount
+  class: derived
+  formula: source.total_amount
+  unit: currency
+  currency_source: currency_code
+  aggregation_behavior: additive
+  additive_over:
+  - stat_date
+  - from_office_id
+  - to_office_id
+  - transfer_type
+  sign: unsigned_transfer_amount
+  reversal: inherited_source_policy
+calculated_metrics:
+- &id004
+  name: average_amount
+  class: calculated
+  formula: total_amount / nullif(record_count, 0)
+  unit: currency
+  currency_source: currency_code
+  aggregation_behavior: non_additive
+  additive_over: []
+  sign: unsigned_transfer_amount
+  reversal: inherited_source_policy
+metric_semantics:
+- *id002
+- *id003
+- *id004
+application_rules:
+- name: average_internal_transfer_value
+  kind: ratio
+  formula: total_amount / nullif(record_count, 0)
+  purpose: descriptive transfer KPI; no monitoring claim
+human_review:
+  decision: revise
+  current_name: ads_internal_transfer_monitor_daily
+  status: human_reviewed_candidate

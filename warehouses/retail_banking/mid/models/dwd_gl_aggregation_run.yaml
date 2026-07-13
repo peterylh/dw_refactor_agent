@@ -1,0 +1,49 @@
+version: 2
+name: dwd_gl_aggregation_run
+layer: DWD
+description: Run header is useful audit lineage but must remain distinct from monetary aggregation results.
+table_type: factless_fact
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+data_domain: '07'
+business_area: FMAN
+entities:
+- code: GL_AGGREGATION_RUN
+  type: primary
+  name: Gl Aggregation Run
+  key_columns:
+  - id
+- code: JOB_EXECUTION
+  type: foreign
+  role: batch_job_execution
+  name: Job Execution
+  key_columns:
+  - job_execution_id
+  source_fk:
+  - job_execution_id
+grain:
+  description: one GL aggregation run over one source-date interval
+  columns:
+  - id
+business_date:
+  kind: period_start
+  column: business_date
+  inherit_from: null
+  source_column: aggregated_on_date_from
+source_mapping:
+  upstream_repository: https://github.com/apache/fineract
+  source_table: m_journal_entry_aggregation_tracking
+  ods_table: ods_fineract_m_journal_entry_aggregation_tracking
+  disposition: standalone_fact
+  confidence: human_reviewed
+sensitivity: internal
+sensitivity_policy:
+  level: internal
+  action: retain
+column_sensitivity: []
+human_review:
+  verdict: revise
+  allowed_alternatives:
+  - operations_gl_aggregation_run_audit
+business_process: general_ledger_posting

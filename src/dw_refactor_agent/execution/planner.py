@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import yaml
@@ -31,6 +31,7 @@ class TaskSpec:
     slice_column: str | None
     slice_period: str | None
     companion_path: Path | None
+    historical_replay_supported: bool
 
 
 class ExecutionPlanner:
@@ -57,7 +58,22 @@ class ExecutionPlanner:
             materialized,
             raw_execution.get("full_refresh_strategy"),
         )
-        slice_config = self._slice_config(job_name, raw_execution)
+        # Full models do not consume the warehouse default slice.  Reject an
+        # explicit model slice instead of silently accepting contradictory
+        # execution metadata.
+        if materialized == "full":
+            explicit_slice = slice_config_from_mapping(
+                job_name,
+                raw_execution.get("slice"),
+                label="execution.slice",
+            )
+            if explicit_slice is not None:
+                raise ExecutionConfigError(
+                    f"[{job_name}] full models cannot define execution.slice"
+                )
+            slice_config = None
+        else:
+            slice_config = self._slice_config(job_name, raw_execution)
         if (
             materialized == "incremental"
             and strategy == "replay_slices"
@@ -87,6 +103,9 @@ class ExecutionPlanner:
             slice_column=slice_config.column if slice_config else None,
             slice_period=slice_config.period if slice_config else None,
             companion_path=companion_path,
+            historical_replay_supported=bool(
+                raw_execution.get("historical_replay_supported", True)
+            ),
         )
 
     def plan_regular_run(
@@ -110,6 +129,7 @@ class ExecutionPlanner:
             normalized = self._normalize_slice_values(
                 values, spec.slice_period
             )
+            self._validate_historical_replay(spec, normalized)
             if not normalized:
                 return [
                     TaskInvocation(
@@ -140,6 +160,22 @@ class ExecutionPlanner:
                 strategy=spec.full_refresh_strategy,
             )
         ]
+
+    def _validate_historical_replay(
+        self,
+        spec: TaskSpec,
+        values: list[str],
+    ) -> None:
+        if spec.historical_replay_supported:
+            return
+        current_date = date.today().isoformat()
+        unsupported = [value for value in values if value != current_date]
+        if unsupported:
+            raise ExecutionConfigError(
+                f"[{spec.job_name}] current-state capture does not support "
+                f"historical replay; expected {current_date}, got "
+                f"{', '.join(unsupported)}"
+            )
 
     def plan_full_refresh(
         self,

@@ -1,12 +1,20 @@
 -- DWS anti-pattern fixture: detail passthrough without aggregation
+-- table_id: f95bdbff-9805-4dee-a156-965b3f3b64d8
 DROP TABLE IF EXISTS shop_dm.dws_order_passthrough_daily;
 CREATE TABLE IF NOT EXISTS shop_dm.dws_order_passthrough_daily (
+    -- column_id: f3f71aab-89e0-454b-9030-62163148cb44
     order_item_id BIGINT        NOT NULL COMMENT 'Order item ID',
+    -- column_id: d701c4e8-7690-44d5-970f-4a98db1afe99
     stat_date     DATE          NOT NULL COMMENT 'Stat date',
+    -- column_id: 769d3844-0364-42e7-b709-1ba8c6042bd9
     order_id      BIGINT        NOT NULL COMMENT 'Order ID',
+    -- column_id: cdf478b1-825b-4eea-99ac-fe09f4fce473
     store_id      BIGINT        NOT NULL COMMENT 'Store ID',
+    -- column_id: bde70b96-46f5-4074-95ea-42763521bbc6
     product_id    BIGINT        NOT NULL COMMENT 'Product ID',
+    -- column_id: 31d98801-e683-4a6e-b631-1fc2e357aaa1
     subtotal      DECIMAL(12,2) NOT NULL COMMENT 'Line subtotal',
+    -- column_id: 07c6fd96-6b39-4e32-85ba-32131c097db5
     etl_time      DATETIME      NOT NULL COMMENT 'ETL time'
 ) ENGINE=OLAP
 UNIQUE KEY(order_item_id, stat_date)

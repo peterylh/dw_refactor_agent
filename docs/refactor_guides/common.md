@@ -61,6 +61,32 @@
 
 ## 默认验证
 
+### Schema Identity
+
+受管 DDL 使用稳定 UUID 标识表和字段。Agent 修改 DDL 时遵守：
+
+```bash
+# 新建整张表
+python -m dw_refactor_agent.ddl_deriver.schema_ids init-file --file <ddl_file>
+
+# 已有表新增字段
+python -m dw_refactor_agent.ddl_deriver.schema_ids assign-column --file <ddl_file> --column <column_name>
+
+# 完成前校验
+python -m dw_refactor_agent.ddl_deriver.schema_ids validate --project <project>
+```
+
+表或字段重命名、字段属性修改必须保留原 ID。复制、拆分、合并或语义替换得到的
+新表/新字段必须生成新 ID。`ddl_deriver` 和 `refactor run analyze` 只读取 ID，
+不会自动补齐；缺失、非法或重复 ID 会阻断分析。
+
+首次为项目补齐 schema identity 后，迁移前创建的 refactor run 不再具有可用的
+身份基线。合并迁移后应重新开始 run：
+
+```bash
+python -m dw_refactor_agent.refactor.run start --project <project>
+```
+
 默认验证：
 
 ```bash
@@ -129,6 +155,12 @@ python -m dw_refactor_agent.refactor.run analyze --manifest warehouses/<project>
 
 没有 `execution_values` 的 sliced incremental 作业会在 shadow-run dry-run
 或真实执行阶段失败；工具不会默认使用当天日期或全局 driver value 兜底。
+
+`jobs_to_run` 只包含本次直接修改的可执行任务及其下游任务。未修改上游仍可
+出现在 `change_analysis.json` 的宽 `affected_scope` 中，但不会因此创建 QA 表
+或参与重算；shadow manifest 会将其数据读取路由到生产库。verification plan
+的最终锚点位于 `verification.anchor_tables`，旧 plan 不再兼容，相关 run 需要
+重新执行 `analyze`。
 
 sliced job 或无依赖 job 较多时，可显式开启 shadow-run 全局并发和
 mysql 会话批量复用：

@@ -12,6 +12,16 @@ def test_project_config_is_loaded_from_warehouse_yaml():
     assert shop["lineage_db"] == "shop_lineage"
     assert shop["naming_config"] == "warehouses/shop/naming_config.yaml"
     assert shop["ods_source_catalog_dialects"] == {"internal": "doris"}
+    assert shop["schema_identity"] == {"required": True}
+    assert config.PROJECT_CONFIG["finance_analytics"]["schema_identity"] == {
+        "required": True
+    }
+    assert config.PROJECT_CONFIG["shop_layering_fix"]["fixture"] == {
+        "source_project": "shop",
+        "purpose": "table_inspector_layer_benchmark_gold_labels",
+        "execution": "disabled",
+        "warning": ("Do not execute this project; metadata fixture only."),
+    }
 
 
 def test_load_project_config_maps_warehouse_yaml_to_runtime_shape(tmp_path):
@@ -30,6 +40,8 @@ def test_load_project_config_maps_warehouse_yaml_to_runtime_shape(tmp_path):
                 "ods_source_catalog_dialects:",
                 "  internal: doris",
                 "  hive: hive",
+                "schema_identity:",
+                "  required: true",
             ]
         ),
         encoding="utf-8",
@@ -49,6 +61,7 @@ def test_load_project_config_maps_warehouse_yaml_to_runtime_shape(tmp_path):
                 "internal": "doris",
                 "hive": "hive",
             },
+            "schema_identity": {"required": True},
         }
     }
 

@@ -1,0 +1,42 @@
+version: 2
+name: dim_holiday
+layer: DIM
+description: Holiday is stable calendar reference data with office applicability modeled separately.
+table_type: dimension
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+data_domain: '02'
+business_area: CHNL
+entities:
+- code: HOLIDAY
+  type: primary
+  name: Holiday
+  key_columns:
+  - id
+grain:
+  description: one holiday rule interval
+  columns:
+  - id
+business_date:
+  kind: effective
+  column: from_date
+  inherit_from: null
+  source_column: from_date
+source_mapping:
+  upstream_repository: https://github.com/apache/fineract
+  source_table: m_holiday
+  ods_table: ods_fineract_m_holiday
+  disposition: standalone_dimension
+  confidence: human_reviewed
+sensitivity: internal
+sensitivity_policy:
+  level: internal
+  action: retain
+column_sensitivity: []
+human_review:
+  verdict: accept
+  allowed_alternatives: []
+semantic_subject: HOLIDAY
+dimension_role: BASE
+dimension_content_type: INFO

@@ -1,0 +1,90 @@
+version: 2
+name: dwd_loan_provision_entry
+layer: DWD
+description: Run enrichment is correct; normalize the source typo reseve_amount to semantic metric reserve_amount.
+table_type: snapshot_fact
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+data_domain: '04'
+business_area: LOAN
+entities:
+- code: LOAN_PROVISION_ENTRY
+  type: primary
+  name: Loan Provision Entry
+  key_columns:
+  - id
+- code: LOAN_PROVISION_RUN
+  type: foreign
+  role: provision_run
+  name: Loan Provision Run
+  key_columns:
+  - history_id
+  source_fk:
+  - history_id
+- code: OFFICE
+  type: foreign
+  role: office
+  name: Office
+  key_columns:
+  - office_id
+  source_fk:
+  - office_id
+- code: LOAN_PRODUCT
+  type: foreign
+  role: loan_product
+  name: Loan Product
+  key_columns:
+  - product_id
+  source_fk:
+  - product_id
+- code: PROVISION_CATEGORY
+  type: foreign
+  role: provision_category
+  name: Provision Category
+  key_columns:
+  - category_id
+  source_fk:
+  - category_id
+grain:
+  description: one provisioning result cell within one run
+  columns:
+  - history_id
+  - office_id
+  - product_id
+  - category_id
+  - criteria_id
+  - id
+business_date:
+  kind: inherited
+  column: provision_date
+  inherit_from: m_provisioning_history.created_date
+  source_column: null
+source_mapping:
+  upstream_repository: https://github.com/apache/fineract
+  source_table: m_loanproduct_provisioning_entry
+  ods_table: ods_fineract_m_loanproduct_provisioning_entry
+  disposition: snapshot_source
+  confidence: human_reviewed
+sensitivity: internal
+sensitivity_policy:
+  level: internal
+  action: retain
+column_sensitivity: []
+human_review:
+  verdict: revise
+  allowed_alternatives:
+  - dwd_loan_provision_result
+business_process: loan_provisioning
+atomic_metrics:
+- reseve_amount
+metric_semantics:
+- name: reseve_amount
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: reseve_amount
+  unit: currency
+  currency_source: currency_code
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy

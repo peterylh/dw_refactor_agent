@@ -1,0 +1,43 @@
+version: 2
+name: dim_meeting_calendar
+layer: DIM
+description: Source represents recurring meetings and events, not the bank working-day calendar.
+table_type: dimension
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+data_domain: '11'
+business_area: CHNL
+entities:
+- code: BUSINESS_CALENDAR
+  type: primary
+  name: Business Calendar
+  key_columns:
+  - id
+grain:
+  description: one recurring meeting or event calendar
+  columns:
+  - id
+business_date:
+  kind: effective
+  column: start_date
+  inherit_from: null
+  source_column: start_date
+source_mapping:
+  upstream_repository: https://github.com/apache/fineract
+  source_table: m_calendar
+  ods_table: ods_fineract_m_calendar
+  disposition: standalone_dimension
+  confidence: human_reviewed
+sensitivity: internal
+sensitivity_policy:
+  level: internal
+  action: retain
+column_sensitivity: []
+human_review:
+  verdict: revise
+  allowed_alternatives:
+  - dim_event_calendar
+semantic_subject: BUSINESS_CALENDAR
+dimension_role: BASE
+dimension_content_type: INFO

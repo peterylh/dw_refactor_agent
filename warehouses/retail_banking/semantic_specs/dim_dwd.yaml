@@ -1,0 +1,2013 @@
+version: 1
+project: retail_banking
+scope: fineract_direct_dim_dwd_sources
+review_basis: work/retail_banking_dim_dwd_human_review.md
+catalogs:
+  business_processes: ../business_processes.yaml
+  semantic_subjects: ../semantic_subjects.yaml
+
+defaults:
+  internal: &internal {level: internal, action: retain}
+  restricted: &restricted {level: restricted, action: mask_and_tokenize}
+  none_date: &none_date {kind: none, column: null, inherit_from: null}
+
+entries:
+- source_table: acc_accounting_rule
+  current_target: dim_accounting_rule
+  verdict: accept
+  materialize: true
+  target_layer: DIM
+  target_table: dim_accounting_rule
+  table_type: dimension
+  primary_entity: {code: ACCOUNTING_RULE, key_columns: [id]}
+  related_entities:
+  - {role: office, entity: OFFICE, key_columns: [office_id], source_fk: [office_id]}
+  - {role: debit_gl_account, entity: GL_ACCOUNT, key_columns: [debit_account_id], source_fk: [debit_account_id]}
+  - {role: credit_gl_account, entity: GL_ACCOUNT, key_columns: [credit_account_id], source_fk: [credit_account_id]}
+  grain: {columns: [id], description: one accounting rule definition}
+  business_date: *none_date
+  business_process: null
+  semantic_subject: ACCOUNTING_RULE
+  sensitivity: *internal
+  allowed_alternatives: []
+  rationale: Accounting rule is stable reference data with explicit office and GL roles.
+
+- source_table: m_address
+  current_target: dim_address
+  verdict: accept
+  materialize: true
+  target_layer: DIM
+  target_table: dim_address
+  table_type: dimension
+  primary_entity: {code: ADDRESS, key_columns: [id]}
+  related_entities:
+  - {role: state_province, entity: CODE_VALUE, key_columns: [state_province_id], source_fk: [state_province_id]}
+  - {role: country, entity: CODE_VALUE, key_columns: [country_id], source_fk: [country_id]}
+  grain: {columns: [id], description: one address record}
+  business_date: {kind: effective, column: updated_on, inherit_from: null}
+  business_process: null
+  semantic_subject: ADDRESS
+  sensitivity: *restricted
+  allowed_alternatives: [customer_address_satellite]
+  rationale: Address is reusable party reference data but must remain PII protected.
+
+- source_table: m_external_asset_owner
+  current_target: dim_asset_owner
+  verdict: accept
+  materialize: true
+  target_layer: DIM
+  target_table: dim_asset_owner
+  table_type: dimension
+  primary_entity: {code: ASSET_OWNER, key_columns: [id]}
+  related_entities: []
+  grain: {columns: [id], description: one external asset owner}
+  business_date: {kind: effective, column: last_modified_on_utc, inherit_from: null}
+  business_process: null
+  semantic_subject: ASSET_OWNER
+  sensitivity: *internal
+  allowed_alternatives: []
+  rationale: External asset owner is a durable counterparty dimension.
+
+- source_table: m_calendar
+  current_target: dim_business_calendar
+  verdict: revise
+  materialize: true
+  target_layer: DIM
+  target_table: dim_meeting_calendar
+  table_type: dimension
+  primary_entity: {code: BUSINESS_CALENDAR, key_columns: [id]}
+  related_entities: []
+  grain: {columns: [id], description: one recurring meeting or event calendar}
+  business_date: {kind: effective, column: start_date, inherit_from: null}
+  business_process: null
+  semantic_subject: BUSINESS_CALENDAR
+  sensitivity: *internal
+  allowed_alternatives: [dim_event_calendar]
+  rationale: Source represents recurring meetings and events, not the bank working-day calendar.
+
+- source_table: m_charge
+  current_target: dim_charge_type
+  verdict: revise
+  materialize: true
+  target_layer: DIM
+  target_table: dim_charge_definition
+  table_type: dimension
+  primary_entity: {code: CHARGE_TYPE, key_columns: [id]}
+  related_entities:
+  - {role: income_or_liability_gl, entity: GL_ACCOUNT, key_columns: [income_or_liability_account_id], source_fk: [income_or_liability_account_id]}
+  - {role: payment_type, entity: PAYMENT_TYPE, key_columns: [payment_type_id], source_fk: [payment_type_id]}
+  grain: {columns: [id], description: one fee or penalty definition}
+  business_date: *none_date
+  business_process: null
+  semantic_subject: CHARGE_TYPE
+  sensitivity: *internal
+  allowed_alternatives: [dim_charge_type]
+  rationale: Source is a complete charge definition, not merely a charge type code.
+
+- source_table: m_code_value
+  current_target: dim_code_value
+  verdict: revise
+  materialize: true
+  target_layer: DIM
+  target_table: dim_code_value
+  table_type: dimension
+  primary_entity: {code: CODE_VALUE, key_columns: [id]}
+  related_entities:
+  - {role: code_set, entity: CODE_SET, key_columns: [code_id], source_fk: [code_id]}
+  grain: {columns: [code_id, id], description: one value within one code set}
+  business_date: *none_date
+  business_process: null
+  semantic_subject: CODE_VALUE
+  sensitivity: *internal
+  allowed_alternatives: [dim_code_set_value]
+  rationale: Code-set context is required to interpret repeated labels and values safely.
+
+- source_table: m_collateral_management
+  current_target: dim_collateral
+  verdict: revise
+  materialize: true
+  target_layer: DIM
+  target_table: dim_collateral_type
+  table_type: dimension
+  primary_entity: {code: COLLATERAL, key_columns: [id]}
+  related_entities:
+  - {role: valuation_currency, entity: CURRENCY, key_columns: [currency], source_fk: [currency]}
+  grain: {columns: [id], description: one collateral category and valuation template}
+  business_date: *none_date
+  business_process: null
+  semantic_subject: COLLATERAL
+  sensitivity: *internal
+  allowed_alternatives: [dim_collateral_definition]
+  rationale: Customer-owned collateral is a separate source; this table is a type and valuation catalog.
+
+- source_table: m_creditbureau
+  current_target: dim_credit_bureau
+  verdict: accept
+  materialize: true
+  target_layer: DIM
+  target_table: dim_credit_bureau
+  table_type: dimension
+  primary_entity: {code: CREDIT_BUREAU, key_columns: [id]}
+  related_entities: []
+  grain: {columns: [id], description: one credit bureau}
+  business_date: *none_date
+  business_process: null
+  semantic_subject: CREDIT_BUREAU
+  sensitivity: *internal
+  allowed_alternatives: []
+  rationale: Credit bureau is stable reference data independent of restricted report payloads.
+
+- source_table: m_currency
+  current_target: dim_currency
+  verdict: accept
+  materialize: true
+  target_layer: DIM
+  target_table: dim_currency
+  table_type: dimension
+  primary_entity: {code: CURRENCY, key_columns: [code]}
+  related_entities: []
+  grain: {columns: [code], description: one ISO-style currency code}
+  business_date: *none_date
+  business_process: null
+  semantic_subject: CURRENCY
+  sensitivity: *internal
+  allowed_alternatives: []
+  rationale: Currency is a conformed reference dimension keyed by business code.
+
+- source_table: m_client
+  current_target: dim_customer
+  verdict: revise
+  materialize: true
+  target_layer: DIM
+  target_table: dim_customer
+  table_type: dimension
+  primary_entity: {code: CUSTOMER, key_columns: [id]}
+  related_entities:
+  - {role: home_office, entity: OFFICE, key_columns: [office_id], source_fk: [office_id]}
+  - {role: default_deposit_account, entity: DEPOSIT_ACCOUNT, key_columns: [default_savings_account], source_fk: [default_savings_account]}
+  - {role: gender, entity: CODE_VALUE, key_columns: [gender_cv_id], source_fk: [gender_cv_id]}
+  grain: {columns: [id], description: one effective customer version}
+  business_date: {kind: effective, column: last_modified_on_utc, inherit_from: null}
+  business_process: null
+  semantic_subject: CUSTOMER
+  sensitivity: *restricted
+  allowed_alternatives: [dim_customer_scd2]
+  rationale: Customer remains a conformed dimension but requires SCD2 and PII controls.
+
+- source_table: m_group
+  current_target: dim_customer_group
+  verdict: revise
+  materialize: true
+  target_layer: DIM
+  target_table: dim_customer_group
+  table_type: dimension
+  primary_entity: {code: CUSTOMER_GROUP, key_columns: [id]}
+  related_entities:
+  - {role: group_level, entity: CUSTOMER_GROUP_LEVEL, key_columns: [level_id], source_fk: [level_id]}
+  - {role: parent_group, entity: CUSTOMER_GROUP, key_columns: [parent_id], source_fk: [parent_id]}
+  - {role: office, entity: OFFICE, key_columns: [office_id], source_fk: [office_id]}
+  grain: {columns: [id], description: one effective customer group version}
+  business_date: {kind: effective, column: submittedon_date, inherit_from: null}
+  business_process: null
+  semantic_subject: CUSTOMER_GROUP
+  sensitivity: *restricted
+  allowed_alternatives: [dim_customer_group_scd2]
+  rationale: Group hierarchy and operating assignment require effective-version semantics.
+
+- source_table: m_group_level
+  current_target: dim_customer_group_level
+  verdict: accept
+  materialize: true
+  target_layer: DIM
+  target_table: dim_customer_group_level
+  table_type: dimension
+  primary_entity: {code: CUSTOMER_GROUP_LEVEL, key_columns: [id]}
+  related_entities:
+  - {role: parent_level, entity: CUSTOMER_GROUP_LEVEL, key_columns: [parent_id], source_fk: [parent_id]}
+  grain: {columns: [id], description: one group hierarchy level}
+  business_date: *none_date
+  business_process: null
+  semantic_subject: CUSTOMER_GROUP_LEVEL
+  sensitivity: *internal
+  allowed_alternatives: []
+  rationale: Group level is a stable hierarchical reference dimension.
+
+- source_table: m_delinquency_bucket
+  current_target: dim_delinquency_bucket
+  verdict: accept
+  materialize: true
+  target_layer: DIM
+  target_table: dim_delinquency_bucket
+  table_type: dimension
+  primary_entity: {code: DELINQUENCY_BUCKET, key_columns: [id]}
+  related_entities: []
+  grain: {columns: [id], description: one delinquency bucket definition}
+  business_date: *none_date
+  business_process: null
+  semantic_subject: DELINQUENCY_BUCKET
+  sensitivity: *internal
+  allowed_alternatives: []
+  rationale: Delinquency bucket is stable loan-risk reference data.
+
+- source_table: m_delinquency_range
+  current_target: dim_delinquency_range
+  verdict: accept
+  materialize: true
+  target_layer: DIM
+  target_table: dim_delinquency_range
+  table_type: dimension
+  primary_entity: {code: DELINQUENCY_RANGE, key_columns: [id]}
+  related_entities: []
+  grain: {columns: [id], description: one delinquency day range}
+  business_date: *none_date
+  business_process: null
+  semantic_subject: DELINQUENCY_RANGE
+  sensitivity: *internal
+  allowed_alternatives: []
+  rationale: Delinquency range is stable classification reference data.
+
+- source_table: m_savings_account
+  current_target: dim_deposit_account
+  verdict: revise
+  materialize: true
+  target_layer: DIM
+  target_table: dim_deposit_account
+  table_type: dimension
+  primary_entity: {code: DEPOSIT_ACCOUNT, key_columns: [id]}
+  related_entities:
+  - {role: owner_customer, entity: CUSTOMER, key_columns: [client_id], source_fk: [client_id]}
+  - {role: owner_group, entity: CUSTOMER_GROUP, key_columns: [group_id], source_fk: [group_id]}
+  - {role: deposit_product, entity: DEPOSIT_PRODUCT, key_columns: [product_id], source_fk: [product_id]}
+  grain: {columns: [id], description: one effective deposit account version excluding balances}
+  business_date: *none_date
+  business_process: null
+  semantic_subject: DEPOSIT_ACCOUNT
+  sensitivity: *restricted
+  allowed_alternatives: [dim_deposit_account_scd2]
+  rationale: Durable account attributes belong in DIM while balances and cumulative amounts require snapshots.
+  dimension_policy:
+    stable_fields: [id, account_no, external_id, client_id, group_id, product_id, account_type_enum, deposit_type_enum, currency_code]
+    snapshot_target: {layer: DWD, table: dwd_deposit_account_daily_snapshot, date_column: snapshot_date}
+
+- source_table: m_savings_product
+  current_target: dim_deposit_product
+  verdict: accept
+  materialize: true
+  target_layer: DIM
+  target_table: dim_deposit_product
+  table_type: dimension
+  primary_entity: {code: DEPOSIT_PRODUCT, key_columns: [id]}
+  related_entities: []
+  grain: {columns: [id], description: one deposit product definition}
+  business_date: *none_date
+  business_process: null
+  semantic_subject: DEPOSIT_PRODUCT
+  sensitivity: *internal
+  allowed_alternatives: []
+  rationale: Deposit product is reusable reference data across deposit accounts and transactions.
+
+- source_table: acc_gl_account
+  current_target: dim_gl_account
+  verdict: accept
+  materialize: true
+  target_layer: DIM
+  target_table: dim_gl_account
+  table_type: dimension
+  primary_entity: {code: GL_ACCOUNT, key_columns: [id]}
+  related_entities:
+  - {role: parent_gl_account, entity: GL_ACCOUNT, key_columns: [parent_id], source_fk: [parent_id]}
+  - {role: account_tag, entity: CODE_VALUE, key_columns: [tag_id], source_fk: [tag_id]}
+  grain: {columns: [id], description: one general ledger account}
+  business_date: *none_date
+  business_process: null
+  semantic_subject: GL_ACCOUNT
+  sensitivity: *internal
+  allowed_alternatives: []
+  rationale: GL account is a conformed hierarchical dimension.
+
+- source_table: m_guarantor
+  current_target: dim_guarantor
+  verdict: reject
+  materialize: true
+  target_layer: DWD
+  target_table: dwd_loan_guarantor_relation
+  table_type: bridge
+  primary_entity: {code: LOAN_GUARANTOR_RELATION, key_columns: [id]}
+  related_entities:
+  - {role: guaranteed_loan, entity: LOAN_ACCOUNT, key_columns: [loan_id], source_fk: [loan_id]}
+  - {role: relationship_type, entity: CODE_VALUE, key_columns: [client_reln_cv_id], source_fk: [client_reln_cv_id]}
+  grain: {columns: [id], description: one loan-specific guarantor record}
+  business_date: *none_date
+  business_process: guarantee_management
+  semantic_subject: null
+  sensitivity: {level: restricted, action: isolate_and_tokenize_party_attributes}
+  allowed_alternatives: [secure_party_satellite_plus_loan_guarantor_bridge]
+  rationale: Source duplicates loan-specific PII and is not a deduplicated conformed guarantor dimension.
+
+- source_table: m_holiday
+  current_target: dim_holiday
+  verdict: accept
+  materialize: true
+  target_layer: DIM
+  target_table: dim_holiday
+  table_type: dimension
+  primary_entity: {code: HOLIDAY, key_columns: [id]}
+  related_entities: []
+  grain: {columns: [id], description: one holiday rule interval}
+  business_date: {kind: effective, column: from_date, inherit_from: null}
+  business_process: null
+  semantic_subject: HOLIDAY
+  sensitivity: *internal
+  allowed_alternatives: []
+  rationale: Holiday is stable calendar reference data with office applicability modeled separately.
+
+- source_table: m_loan
+  current_target: dim_loan_account
+  verdict: revise
+  materialize: true
+  target_layer: DIM
+  target_table: dim_loan_account
+  table_type: dimension
+  primary_entity: {code: LOAN_ACCOUNT, key_columns: [id]}
+  related_entities:
+  - {role: borrower_customer, entity: CUSTOMER, key_columns: [client_id], source_fk: [client_id]}
+  - {role: borrower_group, entity: CUSTOMER_GROUP, key_columns: [group_id], source_fk: [group_id]}
+  - {role: loan_product, entity: LOAN_PRODUCT, key_columns: [product_id], source_fk: [product_id]}
+  - {role: loan_officer, entity: STAFF, key_columns: [loan_officer_id], source_fk: [loan_officer_id]}
+  grain: {columns: [id], description: one effective loan account version excluding balances}
+  business_date: *none_date
+  business_process: null
+  semantic_subject: LOAN_ACCOUNT
+  sensitivity: *restricted
+  allowed_alternatives: [dim_loan_account_scd2]
+  rationale: Durable account descriptors belong in DIM; balances and cumulative servicing amounts are snapshot facts.
+  dimension_policy:
+    stable_fields: [id, account_no, external_id, client_id, group_id, product_id, fund_id, loan_type_enum, currency_code, loan_transaction_strategy_code]
+    snapshot_target: {layer: DWD, table: dwd_loan_account_daily_snapshot, date_column: snapshot_date}
+
+- source_table: m_product_loan
+  current_target: dim_loan_product
+  verdict: accept
+  materialize: true
+  target_layer: DIM
+  target_table: dim_loan_product
+  table_type: dimension
+  primary_entity: {code: LOAN_PRODUCT, key_columns: [id]}
+  related_entities:
+  - {role: delinquency_bucket, entity: DELINQUENCY_BUCKET, key_columns: [delinquency_bucket_id], source_fk: [delinquency_bucket_id]}
+  grain: {columns: [id], description: one loan product definition}
+  business_date: {kind: effective, column: start_date, inherit_from: null}
+  business_process: null
+  semantic_subject: LOAN_PRODUCT
+  sensitivity: *internal
+  allowed_alternatives: [dim_loan_product_scd2]
+  rationale: Loan product is reusable pricing and servicing reference data.
+
+- source_table: m_office
+  current_target: dim_office
+  verdict: accept
+  materialize: true
+  target_layer: DIM
+  target_table: dim_office
+  table_type: dimension
+  primary_entity: {code: OFFICE, key_columns: [id]}
+  related_entities:
+  - {role: parent_office, entity: OFFICE, key_columns: [parent_id], source_fk: [parent_id]}
+  grain: {columns: [id], description: one office in the institution hierarchy}
+  business_date: {kind: effective, column: opening_date, inherit_from: null}
+  business_process: null
+  semantic_subject: OFFICE
+  sensitivity: *internal
+  allowed_alternatives: []
+  rationale: Office is a conformed hierarchical organization dimension.
+
+- source_table: m_payment_type
+  current_target: dim_payment_type
+  verdict: accept
+  materialize: true
+  target_layer: DIM
+  target_table: dim_payment_type
+  table_type: dimension
+  primary_entity: {code: PAYMENT_TYPE, key_columns: [id]}
+  related_entities: []
+  grain: {columns: [id], description: one payment method type}
+  business_date: *none_date
+  business_process: null
+  semantic_subject: PAYMENT_TYPE
+  sensitivity: *internal
+  allowed_alternatives: []
+  rationale: Payment type is stable reference data.
+
+- source_table: m_provision_category
+  current_target: dim_provision_category
+  verdict: accept
+  materialize: true
+  target_layer: DIM
+  target_table: dim_provision_category
+  table_type: dimension
+  primary_entity: {code: PROVISION_CATEGORY, key_columns: [id]}
+  related_entities: []
+  grain: {columns: [id], description: one loan provisioning category}
+  business_date: *none_date
+  business_process: null
+  semantic_subject: PROVISION_CATEGORY
+  sensitivity: *internal
+  allowed_alternatives: []
+  rationale: Provision category is stable credit-risk reference data.
+
+- source_table: m_rate
+  current_target: dim_rate
+  verdict: revise
+  materialize: true
+  target_layer: DIM
+  target_table: dim_rate
+  table_type: dimension
+  primary_entity: {code: RATE, key_columns: [id]}
+  related_entities: []
+  grain: {columns: [id], description: one effective rate definition version}
+  business_date: {kind: effective, column: created_date, inherit_from: null}
+  business_process: null
+  semantic_subject: RATE
+  sensitivity: *internal
+  allowed_alternatives: [dim_rate_scd2]
+  rationale: Percentage and approval state are time-sensitive and require effective-version semantics.
+
+- source_table: m_floating_rates
+  current_target: dim_rate_index
+  verdict: revise
+  materialize: true
+  target_layer: DIM
+  target_table: dim_rate_index
+  table_type: dimension
+  primary_entity: {code: RATE_INDEX, key_columns: [id]}
+  related_entities: []
+  grain: {columns: [id], description: one floating-rate index header}
+  business_date: {kind: effective, column: created_date, inherit_from: null}
+  business_process: null
+  semantic_subject: RATE_INDEX
+  sensitivity: *internal
+  allowed_alternatives: [dwd_rate_index_observation_from_floating_rate_periods]
+  rationale: Header identifies the index; dated rate observations must be modeled from the period source.
+
+- source_table: m_share_account
+  current_target: dim_share_account
+  verdict: revise
+  materialize: true
+  target_layer: DIM
+  target_table: dim_share_account
+  table_type: dimension
+  primary_entity: {code: SHARE_ACCOUNT, key_columns: [id]}
+  related_entities:
+  - {role: owner_customer, entity: CUSTOMER, key_columns: [client_id], source_fk: [client_id]}
+  - {role: share_product, entity: SHARE_PRODUCT, key_columns: [product_id], source_fk: [product_id]}
+  - {role: settlement_account, entity: DEPOSIT_ACCOUNT, key_columns: [savings_account_id], source_fk: [savings_account_id]}
+  grain: {columns: [id], description: one effective share account version excluding balances}
+  business_date: *none_date
+  business_process: null
+  semantic_subject: SHARE_ACCOUNT
+  sensitivity: *restricted
+  allowed_alternatives: [dim_share_account_scd2]
+  rationale: Durable account attributes remain dimensional while approved and pending shares require snapshots.
+  dimension_policy:
+    stable_fields: [id, account_no, external_id, client_id, product_id, savings_account_id, currency_code]
+    snapshot_target: {layer: DWD, table: dwd_share_account_daily_snapshot, date_column: snapshot_date}
+
+- source_table: m_share_product
+  current_target: dim_share_product
+  verdict: accept
+  materialize: true
+  target_layer: DIM
+  target_table: dim_share_product
+  table_type: dimension
+  primary_entity: {code: SHARE_PRODUCT, key_columns: [id]}
+  related_entities: []
+  grain: {columns: [id], description: one share product definition}
+  business_date: {kind: effective, column: start_date, inherit_from: null}
+  business_process: null
+  semantic_subject: SHARE_PRODUCT
+  sensitivity: *internal
+  allowed_alternatives: []
+  rationale: Share product is reusable reference data; dated market value is a separate fact.
+
+- source_table: m_staff
+  current_target: dim_staff
+  verdict: revise
+  materialize: true
+  target_layer: DIM
+  target_table: dim_staff
+  table_type: dimension
+  primary_entity: {code: STAFF, key_columns: [id]}
+  related_entities:
+  - {role: assigned_office, entity: OFFICE, key_columns: [office_id], source_fk: [office_id]}
+  grain: {columns: [id], description: one effective staff member version}
+  business_date: {kind: effective, column: joining_date, inherit_from: null}
+  business_process: null
+  semantic_subject: STAFF
+  sensitivity: *restricted
+  allowed_alternatives: [dim_staff_scd2]
+  rationale: Office and active state change over time and need SCD semantics.
+
+- source_table: m_surveys
+  current_target: dim_survey
+  verdict: accept
+  materialize: true
+  target_layer: DIM
+  target_table: dim_survey
+  table_type: dimension
+  primary_entity: {code: SURVEY, key_columns: [id]}
+  related_entities: []
+  grain: {columns: [id], description: one survey definition}
+  business_date: {kind: effective, column: valid_from, inherit_from: null}
+  business_process: null
+  semantic_subject: SURVEY
+  sensitivity: *internal
+  allowed_alternatives: []
+  rationale: Survey header is reusable reference data for question and response facts.
+
+- source_table: m_tellers
+  current_target: dim_teller
+  verdict: revise
+  materialize: true
+  target_layer: DIM
+  target_table: dim_teller
+  table_type: dimension
+  primary_entity: {code: TELLER, key_columns: [id]}
+  related_entities:
+  - {role: office, entity: OFFICE, key_columns: [office_id], source_fk: [office_id]}
+  - {role: debit_gl_account, entity: GL_ACCOUNT, key_columns: [debit_account_id], source_fk: [debit_account_id]}
+  - {role: credit_gl_account, entity: GL_ACCOUNT, key_columns: [credit_account_id], source_fk: [credit_account_id]}
+  grain: {columns: [id], description: one effective teller setup}
+  business_date: {kind: effective, column: valid_from, inherit_from: null}
+  business_process: null
+  semantic_subject: TELLER
+  sensitivity: *internal
+  allowed_alternatives: [dim_teller_scd2]
+  rationale: Validity window and office/GL roles require effective-version semantics.
+
+- source_table: m_wc_loan
+  current_target: dim_wc_loan_account
+  verdict: revise
+  materialize: true
+  target_layer: DIM
+  target_table: dim_wc_loan_account
+  table_type: dimension
+  primary_entity: {code: WC_LOAN_ACCOUNT, key_columns: [id]}
+  related_entities:
+  - {role: borrower_customer, entity: CUSTOMER, key_columns: [client_id], source_fk: [client_id]}
+  - {role: wc_loan_product, entity: WC_LOAN_PRODUCT, key_columns: [product_id], source_fk: [product_id]}
+  - {role: delinquency_bucket, entity: DELINQUENCY_BUCKET, key_columns: [delinquency_bucket_classification_id], source_fk: [delinquency_bucket_classification_id]}
+  grain: {columns: [id], description: one effective working-capital loan account version excluding balances}
+  business_date: *none_date
+  business_process: null
+  semantic_subject: WC_LOAN_ACCOUNT
+  sensitivity: *restricted
+  allowed_alternatives: [dim_wc_loan_account_scd2]
+  rationale: Durable account attributes belong in DIM while utilization and breach amounts require snapshots.
+  dimension_policy:
+    stable_fields: [id, account_no, external_id, client_id, fund_id, product_id, wc_loan_product_id, currency_code, amortization_type]
+    snapshot_target: {layer: DWD, table: dwd_wc_loan_account_daily_snapshot, date_column: snapshot_date}
+
+- source_table: m_wc_loan_product
+  current_target: dim_wc_loan_product
+  verdict: accept
+  materialize: true
+  target_layer: DIM
+  target_table: dim_wc_loan_product
+  table_type: dimension
+  primary_entity: {code: WC_LOAN_PRODUCT, key_columns: [id]}
+  related_entities:
+  - {role: delinquency_bucket, entity: DELINQUENCY_BUCKET, key_columns: [delinquency_bucket_classification_id], source_fk: [delinquency_bucket_classification_id]}
+  grain: {columns: [id], description: one working-capital loan product definition}
+  business_date: {kind: effective, column: start_date, inherit_from: null}
+  business_process: null
+  semantic_subject: WC_LOAN_PRODUCT
+  sensitivity: *internal
+  allowed_alternatives: []
+  rationale: Working-capital loan product is reusable product reference data.
+
+- source_table: m_working_days
+  current_target: dim_working_day_rule
+  verdict: accept
+  materialize: true
+  target_layer: DIM
+  target_table: dim_working_day_rule
+  table_type: dimension
+  primary_entity: {code: WORKING_DAY_RULE, key_columns: [id]}
+  related_entities: []
+  grain: {columns: [id], description: one institution-wide working-day rule}
+  business_date: *none_date
+  business_process: null
+  semantic_subject: WORKING_DAY_RULE
+  sensitivity: *internal
+  allowed_alternatives: []
+  rationale: Singleton working-day configuration is a valid rule dimension when scope is explicit.
+
+- source_table: m_account_transfer_details
+  current_target: dwd_account_transfer
+  verdict: revise
+  materialize: true
+  target_layer: DWD
+  target_table: dwd_account_transfer_instruction
+  table_type: bridge
+  primary_entity: {code: ACCOUNT_TRANSFER, key_columns: [id]}
+  related_entities:
+  - {role: from_customer, entity: CUSTOMER, key_columns: [from_client_id], source_fk: [from_client_id]}
+  - {role: to_customer, entity: CUSTOMER, key_columns: [to_client_id], source_fk: [to_client_id]}
+  - {role: from_deposit_account, entity: DEPOSIT_ACCOUNT, key_columns: [from_savings_account_id], source_fk: [from_savings_account_id]}
+  - {role: to_deposit_account, entity: DEPOSIT_ACCOUNT, key_columns: [to_savings_account_id], source_fk: [to_savings_account_id]}
+  grain: {columns: [id], description: one transfer instruction and its endpoint roles}
+  business_date: {kind: inherited, column: null, inherit_from: m_account_transfer_transaction.transaction_date}
+  business_process: account_transfer
+  semantic_subject: null
+  sensitivity: *restricted
+  allowed_alternatives: [bridge_account_transfer_endpoints]
+  rationale: Source is the transfer header and endpoint relationship, not the dated transfer transaction.
+
+- source_table: m_account_transfer_transaction
+  current_target: dwd_account_transfer_transaction
+  verdict: accept
+  materialize: true
+  target_layer: DWD
+  target_table: dwd_account_transfer_transaction
+  table_type: fact
+  primary_entity: {code: ACCOUNT_TRANSFER_TRANSACTION, key_columns: [id]}
+  related_entities:
+  - {role: transfer_instruction, entity: ACCOUNT_TRANSFER, key_columns: [account_transfer_details_id], source_fk: [account_transfer_details_id]}
+  - {role: from_loan_transaction, entity: LOAN_TRANSACTION, key_columns: [from_loan_transaction_id], source_fk: [from_loan_transaction_id]}
+  - {role: to_loan_transaction, entity: LOAN_TRANSACTION, key_columns: [to_loan_transaction_id], source_fk: [to_loan_transaction_id]}
+  grain: {columns: [id], description: one executed account transfer transaction}
+  business_date: {kind: event, column: transaction_date, inherit_from: null}
+  business_process: account_transfer
+  semantic_subject: null
+  sensitivity: *restricted
+  allowed_alternatives: []
+  rationale: Source has a dated monetary transfer event and links both ledger-side transactions.
+
+- source_table: m_external_asset_owner_journal_entry_mapping
+  current_target: dwd_asset_owner_gl_relation
+  verdict: revise
+  materialize: true
+  target_layer: DWD
+  target_table: bridge_asset_owner_gl_entry
+  table_type: bridge
+  primary_entity: {code: ASSET_OWNER_GL_RELATION, key_columns: [id]}
+  related_entities:
+  - {role: asset_owner, entity: ASSET_OWNER, key_columns: [owner_id], source_fk: [owner_id]}
+  - {role: journal_entry, entity: GL_JOURNAL_ENTRY, key_columns: [journal_entry_id], source_fk: [journal_entry_id]}
+  grain: {columns: [id], description: one external owner to GL journal-entry mapping}
+  business_date: {kind: inherited, column: null, inherit_from: acc_gl_journal_entry.entry_date}
+  business_process: loan_asset_transfer
+  semantic_subject: null
+  sensitivity: *internal
+  allowed_alternatives: [dwd_asset_owner_gl_relation]
+  rationale: This is a factless ownership-to-ledger bridge and inherits the journal business date.
+
+- source_table: m_cashier_transactions
+  current_target: dwd_cashier_transaction
+  verdict: accept
+  materialize: true
+  target_layer: DWD
+  target_table: dwd_cashier_transaction
+  table_type: fact
+  primary_entity: {code: CASHIER_TRANSACTION, key_columns: [id]}
+  related_entities:
+  - {role: cashier, entity: CASHIER, key_columns: [cashier_id], source_fk: [cashier_id]}
+  grain: {columns: [id], description: one cashier cash movement}
+  business_date: {kind: event, column: txn_date, inherit_from: null}
+  business_process: cashier_operation
+  semantic_subject: null
+  sensitivity: *internal
+  allowed_alternatives: []
+  rationale: Source is a dated cashier-level monetary transaction.
+
+- source_table: m_client_charge
+  current_target: dwd_client_charge
+  verdict: revise
+  materialize: true
+  target_layer: DWD
+  target_table: dwd_client_charge
+  table_type: accumulating_snapshot
+  primary_entity: {code: CLIENT_CHARGE, key_columns: [id]}
+  related_entities:
+  - {role: customer, entity: CUSTOMER, key_columns: [client_id], source_fk: [client_id]}
+  - {role: charge_definition, entity: CHARGE_TYPE, key_columns: [charge_id], source_fk: [charge_id]}
+  grain: {columns: [id], description: one assessed client charge through settlement lifecycle}
+  business_date: {kind: due, column: charge_due_date, inherit_from: null}
+  business_process: customer_management
+  semantic_subject: null
+  sensitivity: *restricted
+  allowed_alternatives: [dwd_client_charge_daily_snapshot]
+  rationale: Amount paid, waived, written off and outstanding describe an accumulating receivable.
+
+- source_table: m_client_charge_paid_by
+  current_target: dwd_client_charge_allocation
+  verdict: revise
+  materialize: true
+  target_layer: DWD
+  target_table: dwd_client_charge_allocation
+  table_type: fact
+  primary_entity: {code: CLIENT_CHARGE_ALLOCATION, key_columns: [id]}
+  related_entities:
+  - {role: client_charge, entity: CLIENT_CHARGE, key_columns: [client_charge_id], source_fk: [client_charge_id]}
+  - {role: client_transaction, entity: CLIENT_TRANSACTION, key_columns: [client_transaction_id], source_fk: [client_transaction_id]}
+  grain: {columns: [client_charge_id, client_transaction_id, id], description: one transaction-to-client-charge allocation}
+  business_date: {kind: inherited, column: null, inherit_from: m_client_transaction.transaction_date}
+  business_process: customer_management
+  semantic_subject: null
+  sensitivity: *restricted
+  allowed_alternatives: []
+  rationale: Allocation requires its parent client transaction to supply event date and customer context.
+
+- source_table: m_client_transaction
+  current_target: dwd_client_transaction
+  verdict: accept
+  materialize: true
+  target_layer: DWD
+  target_table: dwd_client_transaction
+  table_type: fact
+  primary_entity: {code: CLIENT_TRANSACTION, key_columns: [id]}
+  related_entities:
+  - {role: customer, entity: CUSTOMER, key_columns: [client_id], source_fk: [client_id]}
+  grain: {columns: [id], description: one customer-level monetary transaction}
+  business_date: {kind: event, column: transaction_date, inherit_from: null}
+  business_process: customer_management
+  semantic_subject: null
+  sensitivity: *restricted
+  allowed_alternatives: []
+  rationale: Source has a dated customer transaction, amount and reversal semantics.
+
+- source_table: m_loan_delinquency_action
+  current_target: dwd_collection_action
+  verdict: accept
+  materialize: true
+  target_layer: DWD
+  target_table: dwd_collection_action
+  table_type: factless_fact
+  primary_entity: {code: COLLECTION_ACTION, key_columns: [id]}
+  related_entities:
+  - {role: loan_account, entity: LOAN_ACCOUNT, key_columns: [loan_id], source_fk: [loan_id]}
+  grain: {columns: [id], description: one collection action interval for one loan}
+  business_date: {kind: period_start, column: start_date, inherit_from: null}
+  business_process: delinquency_management
+  semantic_subject: null
+  sensitivity: *restricted
+  allowed_alternatives: []
+  rationale: Start and end dates define a loan collection-action interval.
+
+- source_table: m_creditreport
+  current_target: dwd_credit_report
+  active_mapping: false
+  verdict: reject
+  materialize: false
+  target_layer: null
+  target_table: null
+  table_type: excluded_sensitive_document
+  primary_entity: {code: CREDIT_REPORT_DOCUMENT, key_columns: [id]}
+  related_entities:
+  - {role: credit_bureau, entity: CREDIT_BUREAU, key_columns: [credit_bureau_id], source_fk: [credit_bureau_id]}
+  grain: {columns: [id], description: one raw credit-report document without a reliable customer key or event time}
+  business_date: *none_date
+  business_process: null
+  semantic_subject: null
+  sensitivity: {level: highly_restricted, action: exclude_payload_from_analytic_gold}
+  allowed_alternatives: [secure_document_vault, tokenized_credit_inquiry_event_from_audited_source]
+  rationale: Raw national identifier and report payload lack a reliable customer FK and retrieval date.
+
+- source_table: m_client_address
+  current_target: dwd_customer_address_relation
+  verdict: revise
+  materialize: true
+  target_layer: DWD
+  target_table: bridge_customer_address
+  table_type: bridge
+  primary_entity: {code: CUSTOMER_ADDRESS_RELATION, key_columns: [id]}
+  related_entities:
+  - {role: customer, entity: CUSTOMER, key_columns: [client_id], source_fk: [client_id]}
+  - {role: address_type, entity: CODE_VALUE, key_columns: [address_type_id], source_fk: [address_type_id]}
+  grain: {columns: [id], description: one customer-address-type relationship}
+  business_date: *none_date
+  business_process: customer_management
+  semantic_subject: null
+  sensitivity: *restricted
+  allowed_alternatives:
+  - name: dim_customer_address_bridge
+    layer: DIM
+    table_type: bridge
+    credit: 0.8
+    rationale: Kimball-style multivalued-dimension modeling may place the customer-address relation on the DIM side.
+  - name: customer_address_satellite
+    layer: DIM
+    table_type: dimension
+    credit: 0.65
+    rationale: The relation may be modeled as a customer multivalued-attribute satellite, although an explicit bridge is more precise.
+  rationale: Source is a relationship bridge and lacks an effective-date history.
+
+- source_table: m_client_identifier
+  current_target: dwd_customer_identifier
+  active_mapping: false
+  verdict: reject
+  materialize: false
+  target_layer: null
+  target_table: null
+  table_type: dimension_satellite
+  primary_entity: {code: CUSTOMER_IDENTIFIER, key_columns: [id]}
+  related_entities:
+  - {role: customer, entity: CUSTOMER, key_columns: [client_id], source_fk: [client_id]}
+  - {role: document_type, entity: CODE_VALUE, key_columns: [document_type_id], source_fk: [document_type_id]}
+  grain: {columns: [id], description: one protected identifier attached to one customer}
+  business_date: {kind: effective, column: created_date, inherit_from: null}
+  business_process: null
+  semantic_subject: CUSTOMER
+  sensitivity: {level: highly_restricted, action: tokenize_identifier_and_restrict_cleartext}
+  allowed_alternatives: [secure_customer_identifier_vault]
+  rationale: Identifier is protected multi-valued customer master data, not a business fact.
+
+- source_table: m_client_transfer_details
+  current_target: dwd_customer_transfer_event
+  verdict: accept
+  materialize: true
+  target_layer: DWD
+  target_table: dwd_customer_transfer_event
+  table_type: accumulating_snapshot
+  primary_entity: {code: CUSTOMER_TRANSFER_EVENT, key_columns: [id]}
+  related_entities:
+  - {role: customer, entity: CUSTOMER, key_columns: [client_id], source_fk: [client_id]}
+  - {role: from_office, entity: OFFICE, key_columns: [from_office_id], source_fk: [from_office_id]}
+  - {role: to_office, entity: OFFICE, key_columns: [to_office_id], source_fk: [to_office_id]}
+  grain: {columns: [id], description: one customer office-transfer request lifecycle}
+  business_date: {kind: event, column: proposed_transfer_date, inherit_from: null}
+  business_process: customer_management
+  semantic_subject: null
+  sensitivity: *restricted
+  allowed_alternatives: []
+  rationale: Source records a customer transfer lifecycle with endpoint offices and status dates.
+
+- source_table: m_savings_account_charge
+  current_target: dwd_deposit_charge
+  verdict: revise
+  materialize: true
+  target_layer: DWD
+  target_table: dwd_deposit_charge
+  table_type: accumulating_snapshot
+  primary_entity: {code: DEPOSIT_CHARGE, key_columns: [id]}
+  related_entities:
+  - {role: deposit_account, entity: DEPOSIT_ACCOUNT, key_columns: [savings_account_id], source_fk: [savings_account_id]}
+  - {role: charge_definition, entity: CHARGE_TYPE, key_columns: [charge_id], source_fk: [charge_id]}
+  grain: {columns: [id], description: one assessed deposit-account charge through settlement lifecycle}
+  business_date: {kind: due, column: charge_due_date, inherit_from: null}
+  business_process: deposit_transaction
+  semantic_subject: null
+  sensitivity: *restricted
+  allowed_alternatives: [dwd_deposit_charge_daily_snapshot]
+  rationale: Charge balances are accumulating facts; canonical process replaces the invalid generated code.
+
+- source_table: m_savings_account_charge_paid_by
+  current_target: dwd_deposit_charge_allocation
+  verdict: revise
+  materialize: true
+  target_layer: DWD
+  target_table: dwd_deposit_charge_allocation
+  table_type: fact
+  primary_entity: {code: DEPOSIT_CHARGE_ALLOCATION, key_columns: [id]}
+  related_entities:
+  - {role: deposit_charge, entity: DEPOSIT_CHARGE, key_columns: [savings_account_charge_id], source_fk: [savings_account_charge_id]}
+  - {role: deposit_transaction, entity: DEPOSIT_TRANSACTION, key_columns: [savings_account_transaction_id], source_fk: [savings_account_transaction_id]}
+  grain: {columns: [savings_account_charge_id, savings_account_transaction_id, id], description: one deposit transaction-to-charge allocation}
+  business_date: {kind: inherited, column: null, inherit_from: m_savings_account_transaction.transaction_date}
+  business_process: deposit_transaction
+  semantic_subject: null
+  sensitivity: *restricted
+  allowed_alternatives: []
+  rationale: Allocation needs its parent transaction to provide business date and account context.
+
+- source_table: m_deposit_account_on_hold_transaction
+  current_target: dwd_deposit_hold_event
+  verdict: revise
+  materialize: true
+  target_layer: DWD
+  target_table: dwd_deposit_hold_event
+  table_type: fact
+  primary_entity: {code: DEPOSIT_HOLD_EVENT, key_columns: [id]}
+  related_entities:
+  - {role: deposit_account, entity: DEPOSIT_ACCOUNT, key_columns: [savings_account_id], source_fk: [savings_account_id]}
+  grain: {columns: [id], description: one deposit hold or release event}
+  business_date: {kind: event, column: transaction_date, inherit_from: null}
+  business_process: deposit_transaction
+  semantic_subject: null
+  sensitivity: *restricted
+  allowed_alternatives: [dwd_deposit_lien_event]
+  rationale: Dated hold event is valid after replacing the generated invalid process code.
+
+- source_table: m_savings_officer_assignment_history
+  current_target: dwd_deposit_officer_assignment
+  verdict: revise
+  materialize: true
+  target_layer: DWD
+  target_table: dwd_deposit_officer_assignment
+  table_type: factless_fact
+  primary_entity: {code: DEPOSIT_OFFICER_ASSIGNMENT, key_columns: [id]}
+  related_entities:
+  - {role: deposit_account, entity: DEPOSIT_ACCOUNT, key_columns: [account_id], source_fk: [account_id]}
+  - {role: savings_officer, entity: STAFF, key_columns: [savings_officer_id], source_fk: [savings_officer_id]}
+  grain: {columns: [id], description: one account-officer effective interval}
+  business_date: {kind: period_start, column: start_date, inherit_from: null}
+  business_process: deposit_transaction
+  semantic_subject: null
+  sensitivity: *restricted
+  allowed_alternatives: [bridge_deposit_account_officer_history]
+  rationale: Assignment history is an effective relationship, not a monetary fact.
+
+- source_table: m_savings_account_transaction
+  current_target: dwd_deposit_transaction
+  verdict: accept
+  materialize: true
+  target_layer: DWD
+  target_table: dwd_deposit_transaction
+  table_type: fact
+  primary_entity: {code: DEPOSIT_TRANSACTION, key_columns: [id]}
+  related_entities:
+  - {role: deposit_account, entity: DEPOSIT_ACCOUNT, key_columns: [savings_account_id], source_fk: [savings_account_id]}
+  - {role: office, entity: OFFICE, key_columns: [office_id], source_fk: [office_id]}
+  grain: {columns: [id], description: one posted deposit-account transaction}
+  business_date: {kind: event, column: transaction_date, inherit_from: null}
+  business_process: deposit_transaction
+  semantic_subject: null
+  sensitivity: *restricted
+  allowed_alternatives: []
+  rationale: Source is the core dated deposit transaction with amount, reversal and running-balance semantics.
+
+- source_table: m_savings_account_transaction_tax_details
+  current_target: dwd_deposit_transaction_tax
+  verdict: revise
+  materialize: true
+  target_layer: DWD
+  target_table: dwd_deposit_transaction_tax
+  table_type: fact
+  primary_entity: {code: DEPOSIT_TRANSACTION_TAX, key_columns: [id]}
+  related_entities:
+  - {role: deposit_transaction, entity: DEPOSIT_TRANSACTION, key_columns: [savings_transaction_id], source_fk: [savings_transaction_id]}
+  - {role: tax_component, entity: TAX_COMPONENT, key_columns: [tax_component_id], source_fk: [tax_component_id]}
+  grain: {columns: [savings_transaction_id, tax_component_id, id], description: one tax component on one deposit transaction}
+  business_date: {kind: inherited, column: null, inherit_from: m_savings_account_transaction.transaction_date}
+  business_process: deposit_transaction
+  semantic_subject: null
+  sensitivity: *restricted
+  allowed_alternatives: []
+  rationale: Tax detail must inherit transaction date and account context from its parent.
+
+- source_table: acc_gl_closure
+  current_target: dwd_gl_close_event
+  verdict: revise
+  materialize: true
+  target_layer: DWD
+  target_table: dwd_gl_close_event
+  table_type: factless_fact
+  primary_entity: {code: GL_CLOSE_EVENT, key_columns: [id]}
+  related_entities:
+  - {role: office, entity: OFFICE, key_columns: [office_id], source_fk: [office_id]}
+  grain: {columns: [id], description: one office GL closing event}
+  business_date: {kind: event, column: closing_date, inherit_from: null}
+  business_process: general_ledger_posting
+  semantic_subject: null
+  sensitivity: *internal
+  allowed_alternatives: [dwd_gl_period_close]
+  rationale: Closing event is valid after replacing the invalid generated finance-management code.
+
+- source_table: acc_gl_journal_entry
+  current_target: dwd_gl_journal_entry
+  verdict: accept
+  materialize: true
+  target_layer: DWD
+  target_table: dwd_gl_journal_entry
+  table_type: fact
+  primary_entity: {code: GL_JOURNAL_LINE, key_columns: [id]}
+  related_entities:
+  - {role: gl_account, entity: GL_ACCOUNT, key_columns: [account_id], source_fk: [account_id]}
+  - {role: office, entity: OFFICE, key_columns: [office_id], source_fk: [office_id]}
+  - {role: loan_transaction, entity: LOAN_TRANSACTION, key_columns: [loan_transaction_id], source_fk: [loan_transaction_id]}
+  grain: {columns: [id], description: one debit or credit journal line within a transaction_id voucher}
+  business_date: {kind: event, column: entry_date, inherit_from: null}
+  business_process: general_ledger_posting
+  semantic_subject: null
+  sensitivity: *internal
+  allowed_alternatives: []
+  rationale: Source is the authoritative journal-line fact with explicit GL and source-transaction roles.
+
+- source_table: m_group_client
+  current_target: dwd_group_customer_relation
+  verdict: revise
+  materialize: true
+  target_layer: DWD
+  target_table: bridge_group_customer
+  table_type: bridge
+  primary_entity: {code: GROUP_CUSTOMER_RELATION, key_columns: [group_id, client_id]}
+  related_entities:
+  - {role: customer_group, entity: CUSTOMER_GROUP, key_columns: [group_id], source_fk: [group_id]}
+  - {role: customer, entity: CUSTOMER, key_columns: [client_id], source_fk: [client_id]}
+  grain: {columns: [group_id, client_id], description: one group-customer membership}
+  business_date: *none_date
+  business_process: customer_management
+  semantic_subject: null
+  sensitivity: *restricted
+  allowed_alternatives: [periodic_group_membership_snapshot]
+  rationale: Composite grain is correct but the object is a membership bridge without effective history.
+
+- source_table: m_client_attendance
+  current_target: dwd_group_meeting_attendance
+  verdict: revise
+  materialize: true
+  target_layer: DWD
+  target_table: dwd_group_meeting_attendance
+  table_type: factless_fact
+  primary_entity: {code: GROUP_MEETING_ATTENDANCE, key_columns: [id]}
+  related_entities:
+  - {role: customer, entity: CUSTOMER, key_columns: [client_id], source_fk: [client_id]}
+  - {role: meeting, entity: GROUP_MEETING, key_columns: [meeting_id], source_fk: [meeting_id]}
+  grain: {columns: [id], description: one customer attendance result for one meeting}
+  business_date: {kind: inherited, column: null, inherit_from: m_meeting.meeting_date}
+  business_process: customer_management
+  semantic_subject: null
+  sensitivity: *restricted
+  allowed_alternatives: []
+  rationale: Attendance must join the meeting/calendar chain to acquire a business date.
+
+- source_table: m_group_roles
+  current_target: dwd_group_role_relation
+  verdict: revise
+  materialize: true
+  target_layer: DWD
+  target_table: bridge_group_customer_role
+  table_type: bridge
+  primary_entity: {code: GROUP_CUSTOMER_ROLE, key_columns: [id]}
+  related_entities:
+  - {role: customer_group, entity: CUSTOMER_GROUP, key_columns: [group_id], source_fk: [group_id]}
+  - {role: customer, entity: CUSTOMER, key_columns: [client_id], source_fk: [client_id]}
+  - {role: group_role, entity: CODE_VALUE, key_columns: [role_cv_id], source_fk: [role_cv_id]}
+  grain: {columns: [id], description: one customer role within one group}
+  business_date: *none_date
+  business_process: customer_management
+  semantic_subject: null
+  sensitivity: *restricted
+  allowed_alternatives: [periodic_group_role_snapshot]
+  rationale: This is a typed relationship bridge and replaces the invalid generated customer process code.
+
+- source_table: m_guarantor_funding_details
+  current_target: dwd_guarantee_commitment
+  verdict: revise
+  materialize: true
+  target_layer: DWD
+  target_table: dwd_guarantee_commitment_snapshot
+  table_type: accumulating_snapshot
+  primary_entity: {code: GUARANTEE_COMMITMENT, key_columns: [id]}
+  related_entities:
+  - {role: guarantor_record, entity: LOAN_GUARANTOR_RELATION, key_columns: [guarantor_id], source_fk: [guarantor_id]}
+  - {role: portfolio_association, entity: PORTFOLIO_ACCOUNT_ASSOCIATION, key_columns: [account_associations_id], source_fk: [account_associations_id]}
+  grain: {columns: [id], description: one guarantor funding commitment through release and transfer states}
+  business_date: *none_date
+  business_process: guarantee_management
+  semantic_subject: null
+  sensitivity: *restricted
+  allowed_alternatives: [dwd_guarantee_commitment_daily_snapshot]
+  rationale: Amount fields describe current cumulative commitment state and need an explicit snapshot date.
+
+- source_table: m_guarantor_transaction
+  current_target: dwd_guarantee_transaction
+  verdict: revise
+  materialize: true
+  target_layer: DWD
+  target_table: bridge_guarantee_transaction
+  table_type: bridge
+  primary_entity: {code: GUARANTEE_TRANSACTION_RELATION, key_columns: [id]}
+  related_entities:
+  - {role: guarantee_commitment, entity: GUARANTEE_COMMITMENT, key_columns: [guarantor_fund_detail_id], source_fk: [guarantor_fund_detail_id]}
+  - {role: loan_transaction, entity: LOAN_TRANSACTION, key_columns: [loan_transaction_id], source_fk: [loan_transaction_id]}
+  - {role: deposit_hold_event, entity: DEPOSIT_HOLD_EVENT, key_columns: [deposit_on_hold_transaction_id], source_fk: [deposit_on_hold_transaction_id]}
+  grain: {columns: [id], description: one guarantee commitment-to-loan/deposit transaction relationship}
+  business_date: {kind: inherited, column: null, inherit_from: m_loan_transaction.transaction_date}
+  business_process: guarantee_management
+  semantic_subject: null
+  sensitivity: *restricted
+  allowed_alternatives: [dwd_guarantee_funding_event_enriched]
+  rationale: Source has no amount or date and is a three-way transactional bridge.
+
+- source_table: m_loan_approved_amount_history
+  current_target: dwd_loan_approval_event
+  verdict: revise
+  materialize: true
+  target_layer: DWD
+  target_table: dwd_loan_approval_event
+  table_type: fact
+  primary_entity: {code: LOAN_APPROVAL_EVENT, key_columns: [id]}
+  related_entities:
+  - {role: loan_account, entity: LOAN_ACCOUNT, key_columns: [loan_id], source_fk: [loan_id]}
+  grain: {columns: [id], description: one approved-principal change event for one loan}
+  business_date: {kind: event, column: created_on_utc, inherit_from: null}
+  business_process: loan_transaction
+  semantic_subject: null
+  sensitivity: *restricted
+  allowed_alternatives: [dwd_loan_approved_amount_change]
+  rationale: Approval amount history is valid after replacing the invalid process and naming the change-event grain.
+
+- source_table: m_loan_charge
+  current_target: dwd_loan_charge
+  verdict: revise
+  materialize: true
+  target_layer: DWD
+  target_table: dwd_loan_charge
+  table_type: accumulating_snapshot
+  primary_entity: {code: LOAN_CHARGE, key_columns: [id]}
+  related_entities:
+  - {role: loan_account, entity: LOAN_ACCOUNT, key_columns: [loan_id], source_fk: [loan_id]}
+  - {role: charge_definition, entity: CHARGE_TYPE, key_columns: [charge_id], source_fk: [charge_id]}
+  grain: {columns: [id], description: one assessed loan charge through settlement lifecycle}
+  business_date: {kind: due, column: due_for_collection_as_of_date, inherit_from: null}
+  business_process: loan_repayment
+  semantic_subject: null
+  sensitivity: *restricted
+  allowed_alternatives: [dwd_loan_charge_daily_snapshot]
+  rationale: Charge balances are accumulating servicing facts and use loan repayment as the canonical process.
+
+- source_table: m_loan_charge_paid_by
+  current_target: dwd_loan_charge_allocation
+  verdict: revise
+  materialize: true
+  target_layer: DWD
+  target_table: dwd_loan_charge_allocation
+  table_type: fact
+  primary_entity: {code: LOAN_CHARGE_ALLOCATION, key_columns: [id]}
+  related_entities:
+  - {role: loan_charge, entity: LOAN_CHARGE, key_columns: [loan_charge_id], source_fk: [loan_charge_id]}
+  - {role: loan_transaction, entity: LOAN_TRANSACTION, key_columns: [loan_transaction_id], source_fk: [loan_transaction_id]}
+  grain: {columns: [loan_charge_id, loan_transaction_id, id], description: one loan transaction-to-charge allocation}
+  business_date: {kind: inherited, column: null, inherit_from: m_loan_transaction.transaction_date}
+  business_process: loan_repayment
+  semantic_subject: null
+  sensitivity: *restricted
+  allowed_alternatives: []
+  rationale: Allocation needs its parent loan transaction to provide event time and loan context.
+
+- source_table: m_loan_collateral_management
+  current_target: dwd_loan_collateral_pledge
+  verdict: revise
+  materialize: true
+  target_layer: DWD
+  target_table: dwd_loan_collateral_pledge
+  table_type: factless_fact
+  primary_entity: {code: LOAN_COLLATERAL_PLEDGE, key_columns: [id]}
+  related_entities:
+  - {role: loan_account, entity: LOAN_ACCOUNT, key_columns: [loan_id], source_fk: [loan_id]}
+  - {role: customer_collateral, entity: CUSTOMER_COLLATERAL, key_columns: [client_collateral_id], source_fk: [client_collateral_id]}
+  - {role: originating_loan_transaction, entity: LOAN_TRANSACTION, key_columns: [transaction_id], source_fk: [transaction_id]}
+  grain: {columns: [id], description: one pledged customer-collateral item on one loan}
+  business_date: {kind: inherited, column: null, inherit_from: m_loan_transaction.transaction_date}
+  business_process: collateral_management
+  semantic_subject: null
+  sensitivity: *restricted
+  allowed_alternatives: [bridge_loan_customer_collateral]
+  rationale: Pledge is a loan-collateral relationship with quantity and transaction provenance.
+
+- source_table: m_loan_delinquency_tag_history
+  current_target: dwd_loan_delinquency_event
+  verdict: accept
+  materialize: true
+  target_layer: DWD
+  target_table: dwd_loan_delinquency_event
+  table_type: factless_fact
+  primary_entity: {code: LOAN_DELINQUENCY_EVENT, key_columns: [id]}
+  related_entities:
+  - {role: loan_account, entity: LOAN_ACCOUNT, key_columns: [loan_id], source_fk: [loan_id]}
+  - {role: delinquency_range, entity: DELINQUENCY_RANGE, key_columns: [delinquency_range_id], source_fk: [delinquency_range_id]}
+  grain: {columns: [id], description: one delinquency-tag interval for one loan}
+  business_date: {kind: period_start, column: addedon_date, inherit_from: null}
+  business_process: delinquency_management
+  semantic_subject: null
+  sensitivity: *restricted
+  allowed_alternatives: []
+  rationale: Added and lifted dates define an explicit loan delinquency interval.
+
+- source_table: m_loan_disbursement_detail
+  current_target: dwd_loan_disbursement
+  verdict: accept
+  materialize: true
+  target_layer: DWD
+  target_table: dwd_loan_disbursement
+  table_type: fact
+  primary_entity: {code: LOAN_DISBURSEMENT, key_columns: [id]}
+  related_entities:
+  - {role: loan_account, entity: LOAN_ACCOUNT, key_columns: [loan_id], source_fk: [loan_id]}
+  grain: {columns: [id], description: one expected or actual disbursement tranche}
+  business_date: {kind: event, column: disbursedon_date, inherit_from: null}
+  business_process: loan_disbursement
+  semantic_subject: null
+  sensitivity: *restricted
+  allowed_alternatives: []
+  rationale: Tranche-level expected and actual dates and amounts define a clear disbursement fact.
+
+- source_table: m_loan_repayment_schedule
+  current_target: dwd_loan_installment
+  verdict: revise
+  materialize: true
+  target_layer: DWD
+  target_table: dwd_loan_installment
+  table_type: accumulating_snapshot
+  primary_entity: {code: LOAN_INSTALLMENT, key_columns: [id]}
+  related_entities:
+  - {role: loan_account, entity: LOAN_ACCOUNT, key_columns: [loan_id], source_fk: [loan_id]}
+  grain: {columns: [loan_id, installment, id], description: one scheduled installment for one loan and schedule version}
+  business_date: {kind: due, column: duedate, inherit_from: null}
+  business_process: loan_repayment
+  semantic_subject: null
+  sensitivity: *restricted
+  allowed_alternatives: [dwd_loan_installment_daily_snapshot]
+  rationale: Schedule row is an accumulating installment fact and must include all principal, interest, fee and penalty states.
+
+- source_table: m_loan_installment_charge
+  current_target: dwd_loan_installment_charge
+  verdict: revise
+  materialize: true
+  target_layer: DWD
+  target_table: dwd_loan_installment_charge
+  table_type: fact
+  primary_entity: {code: LOAN_INSTALLMENT_CHARGE, key_columns: [id]}
+  related_entities:
+  - {role: loan_charge, entity: LOAN_CHARGE, key_columns: [loan_charge_id], source_fk: [loan_charge_id]}
+  - {role: loan_installment, entity: LOAN_INSTALLMENT, key_columns: [loan_schedule_id], source_fk: [loan_schedule_id]}
+  grain: {columns: [loan_schedule_id, loan_charge_id, id], description: one charge amount applied to one installment}
+  business_date: {kind: due, column: due_date, inherit_from: null}
+  business_process: loan_repayment
+  semantic_subject: null
+  sensitivity: *restricted
+  allowed_alternatives: [bridge_loan_installment_charge]
+  rationale: Source is an installment-charge allocation with due and settlement amounts.
+
+- source_table: m_loan_repayment_schedule_history
+  current_target: dwd_loan_installment_version
+  verdict: revise
+  materialize: true
+  target_layer: DWD
+  target_table: dwd_loan_installment_version
+  table_type: snapshot_fact
+  primary_entity: {code: LOAN_INSTALLMENT_VERSION, key_columns: [id]}
+  related_entities:
+  - {role: loan_account, entity: LOAN_ACCOUNT, key_columns: [loan_id], source_fk: [loan_id]}
+  - {role: restructure_request, entity: LOAN_RESTRUCTURE_EVENT, key_columns: [loan_reschedule_request_id], source_fk: [loan_reschedule_request_id]}
+  grain: {columns: [loan_id, loan_reschedule_request_id, version, installment], description: one installment in one historical loan schedule version}
+  business_date: {kind: due, column: duedate, inherit_from: null}
+  business_process: loan_restructure
+  semantic_subject: null
+  sensitivity: *restricted
+  allowed_alternatives: [dwd_loan_schedule_version]
+  rationale: Semantic grain must identify schedule version and installment rather than only the surrogate id.
+
+- source_table: m_loan_recalculation_details
+  current_target: dwd_loan_interest_recalculation
+  verdict: reject
+  materialize: true
+  target_layer: DIM
+  target_table: dim_loan_interest_terms_satellite
+  table_type: dimension_satellite
+  primary_entity: {code: LOAN_INTEREST_TERMS, key_columns: [id]}
+  related_entities:
+  - {role: loan_account, entity: LOAN_ACCOUNT, key_columns: [loan_id], source_fk: [loan_id]}
+  grain: {columns: [loan_id], description: one current interest-recalculation configuration per loan}
+  business_date: *none_date
+  business_process: null
+  semantic_subject: LOAN_INTEREST_TERMS
+  sensitivity: *internal
+  allowed_alternatives: [loan_terms_json_satellite, dim_loan_account_scd2_extension]
+  rationale: Source is loan-level calculation configuration and has no recalculation event date.
+
+- source_table: m_loan_status_change_history
+  current_target: dwd_loan_lifecycle_event
+  verdict: revise
+  materialize: true
+  target_layer: DWD
+  target_table: dwd_loan_lifecycle_event
+  table_type: factless_fact
+  primary_entity: {code: LOAN_LIFECYCLE_EVENT, key_columns: [id]}
+  related_entities:
+  - {role: loan_account, entity: LOAN_ACCOUNT, key_columns: [loan_id], source_fk: [loan_id]}
+  grain: {columns: [id], description: one status transition recorded for one loan}
+  business_date: {kind: event, column: status_change_business_date, inherit_from: null}
+  business_process: loan_transaction
+  semantic_subject: null
+  sensitivity: *restricted
+  allowed_alternatives: [dwd_loan_status_change_event]
+  rationale: Status-change history is valid after replacing the invalid generic loan-management process.
+
+- source_table: m_loan_officer_assignment_history
+  current_target: dwd_loan_officer_assignment
+  verdict: revise
+  materialize: true
+  target_layer: DWD
+  target_table: dwd_loan_officer_assignment
+  table_type: factless_fact
+  primary_entity: {code: LOAN_OFFICER_ASSIGNMENT, key_columns: [id]}
+  related_entities:
+  - {role: loan_account, entity: LOAN_ACCOUNT, key_columns: [loan_id], source_fk: [loan_id]}
+  - {role: loan_officer, entity: STAFF, key_columns: [loan_officer_id], source_fk: [loan_officer_id]}
+  grain: {columns: [id], description: one loan-officer effective interval}
+  business_date: {kind: period_start, column: start_date, inherit_from: null}
+  business_process: operations_management
+  semantic_subject: null
+  sensitivity: *restricted
+  allowed_alternatives: [bridge_loan_officer_history]
+  rationale: Assignment is an effective relationship and uses a canonical operations process.
+
+- source_table: m_external_asset_owner_transfer
+  current_target: dwd_loan_ownership_transfer
+  verdict: accept
+  materialize: true
+  target_layer: DWD
+  target_table: dwd_loan_ownership_transfer
+  table_type: accumulating_snapshot
+  primary_entity: {code: LOAN_OWNERSHIP_TRANSFER, key_columns: [id]}
+  related_entities:
+  - {role: loan_account, entity: LOAN_ACCOUNT, key_columns: [loan_id], source_fk: [loan_id]}
+  - {role: new_asset_owner, entity: ASSET_OWNER, key_columns: [owner_id], source_fk: [owner_id]}
+  - {role: previous_asset_owner, entity: ASSET_OWNER, key_columns: [previous_owner_id], source_fk: [previous_owner_id]}
+  grain: {columns: [id], description: one loan ownership sale, repurchase or transfer lifecycle}
+  business_date: {kind: period_start, column: effective_date_from, inherit_from: null}
+  business_process: loan_asset_transfer
+  semantic_subject: null
+  sensitivity: *restricted
+  allowed_alternatives: []
+  rationale: Transfer header has clear loan, owner, effective period and settlement semantics.
+
+- source_table: m_external_asset_owner_transfer_details
+  current_target: dwd_loan_ownership_transfer_detail
+  verdict: revise
+  materialize: true
+  target_layer: DWD
+  target_table: dwd_loan_ownership_transfer_detail
+  table_type: fact
+  primary_entity: {code: LOAN_OWNERSHIP_TRANSFER_DETAIL, key_columns: [id]}
+  related_entities:
+  - {role: ownership_transfer, entity: LOAN_OWNERSHIP_TRANSFER, key_columns: [asset_owner_transfer_id], source_fk: [asset_owner_transfer_id]}
+  grain: {columns: [asset_owner_transfer_id, id], description: one outstanding-balance detail row for one ownership transfer}
+  business_date: {kind: inherited, column: null, inherit_from: m_external_asset_owner_transfer.effective_date_from}
+  business_process: loan_asset_transfer
+  semantic_subject: null
+  sensitivity: *restricted
+  allowed_alternatives: [merge_into_dwd_loan_ownership_transfer]
+  rationale: Detail must join its transfer header to obtain loan, owner and effective date context.
+
+- source_table: m_loanproduct_provisioning_entry
+  current_target: dwd_loan_provision_entry
+  verdict: revise
+  materialize: true
+  target_layer: DWD
+  target_table: dwd_loan_provision_entry
+  table_type: snapshot_fact
+  primary_entity: {code: LOAN_PROVISION_ENTRY, key_columns: [id]}
+  related_entities:
+  - {role: provision_run, entity: LOAN_PROVISION_RUN, key_columns: [history_id], source_fk: [history_id]}
+  - {role: office, entity: OFFICE, key_columns: [office_id], source_fk: [office_id]}
+  - {role: loan_product, entity: LOAN_PRODUCT, key_columns: [product_id], source_fk: [product_id]}
+  - {role: provision_category, entity: PROVISION_CATEGORY, key_columns: [category_id], source_fk: [category_id]}
+  grain: {columns: [history_id, office_id, product_id, category_id, criteria_id, id], description: one provisioning result cell within one run}
+  business_date: {kind: inherited, column: null, inherit_from: m_provisioning_history.created_date}
+  business_process: loan_provisioning
+  semantic_subject: null
+  sensitivity: *internal
+  allowed_alternatives: [dwd_loan_provision_result]
+  rationale: Run enrichment is correct; normalize the source typo reseve_amount to semantic metric reserve_amount.
+
+- source_table: m_provisioning_history
+  current_target: dwd_loan_provision_run
+  verdict: accept
+  materialize: true
+  target_layer: DWD
+  target_table: dwd_loan_provision_run
+  table_type: factless_fact
+  primary_entity: {code: LOAN_PROVISION_RUN, key_columns: [id]}
+  related_entities: []
+  grain: {columns: [id], description: one provisioning calculation run}
+  business_date: {kind: event, column: created_date, inherit_from: null}
+  business_process: loan_provisioning
+  semantic_subject: null
+  sensitivity: *internal
+  allowed_alternatives: []
+  rationale: Source is the audited run header for provisioning result entries.
+
+- source_table: m_loan_rate
+  current_target: dwd_loan_rate_period
+  verdict: reject
+  materialize: true
+  target_layer: DIM
+  target_table: bridge_loan_rate
+  table_type: bridge
+  primary_entity: {code: LOAN_RATE_RELATION, key_columns: [loan_id, rate_id]}
+  related_entities:
+  - {role: loan_account, entity: LOAN_ACCOUNT, key_columns: [loan_id], source_fk: [loan_id]}
+  - {role: rate_definition, entity: RATE, key_columns: [rate_id], source_fk: [rate_id]}
+  grain: {columns: [loan_id, rate_id], description: one loan-to-rate assignment}
+  business_date: *none_date
+  business_process: null
+  semantic_subject: LOAN_RATE_RELATION
+  sensitivity: *internal
+  allowed_alternatives:
+  - name: loan_rate_assignment_satellite
+    layer: DIM
+    table_type: dimension
+    credit: 0.85
+    rationale: The assignment may be represented as a loan-dimension satellite, although an explicit bridge preserves the composite relation more precisely.
+  - name: dwd_loan_rate_assignment_relation
+    layer: DWD
+    table_type: bridge
+    credit: 0.65
+    rationale: Warehouses that place all business relations in DWD may treat this timeless assignment as a factless relation bridge.
+  rationale: Source has no period dates; current target invents a period that does not exist.
+
+- source_table: m_loan_transaction_repayment_schedule_mapping
+  current_target: dwd_loan_repayment_allocation
+  verdict: revise
+  materialize: true
+  target_layer: DWD
+  target_table: dwd_loan_repayment_allocation
+  table_type: fact
+  primary_entity: {code: LOAN_REPAYMENT_ALLOCATION, key_columns: [id]}
+  related_entities:
+  - {role: loan_transaction, entity: LOAN_TRANSACTION, key_columns: [loan_transaction_id], source_fk: [loan_transaction_id]}
+  - {role: loan_installment, entity: LOAN_INSTALLMENT, key_columns: [loan_repayment_schedule_id], source_fk: [loan_repayment_schedule_id]}
+  grain: {columns: [loan_transaction_id, loan_repayment_schedule_id, id], description: one repayment transaction-to-installment allocation}
+  business_date: {kind: inherited, column: null, inherit_from: m_loan_transaction.transaction_date}
+  business_process: loan_repayment
+  semantic_subject: null
+  sensitivity: *restricted
+  allowed_alternatives: []
+  rationale: Parent loan transaction provides event time while allocation fields provide component amounts.
+
+- source_table: m_loan_reschedule_request
+  current_target: dwd_loan_restructure_event
+  verdict: accept
+  materialize: true
+  target_layer: DWD
+  target_table: dwd_loan_restructure_event
+  table_type: accumulating_snapshot
+  primary_entity: {code: LOAN_RESTRUCTURE_EVENT, key_columns: [id]}
+  related_entities:
+  - {role: loan_account, entity: LOAN_ACCOUNT, key_columns: [loan_id], source_fk: [loan_id]}
+  - {role: restructure_reason, entity: CODE_VALUE, key_columns: [reschedule_reason_cv_id], source_fk: [reschedule_reason_cv_id]}
+  grain: {columns: [id], description: one loan reschedule request lifecycle}
+  business_date: {kind: event, column: submitted_on_date, inherit_from: null}
+  business_process: loan_restructure
+  semantic_subject: null
+  sensitivity: *restricted
+  allowed_alternatives: []
+  rationale: Submitted, approved and rejected dates define a clear restructuring lifecycle.
+
+- source_table: m_loan_transaction
+  current_target: dwd_loan_transaction
+  verdict: accept
+  materialize: true
+  target_layer: DWD
+  target_table: dwd_loan_transaction
+  table_type: fact
+  primary_entity: {code: LOAN_TRANSACTION, key_columns: [id]}
+  related_entities:
+  - {role: loan_account, entity: LOAN_ACCOUNT, key_columns: [loan_id], source_fk: [loan_id]}
+  - {role: office, entity: OFFICE, key_columns: [office_id], source_fk: [office_id]}
+  grain: {columns: [id], description: one posted loan transaction}
+  business_date: {kind: event, column: transaction_date, inherit_from: null}
+  business_process: loan_transaction
+  semantic_subject: null
+  sensitivity: *restricted
+  allowed_alternatives: []
+  rationale: Source is the core dated loan transaction with component amounts and reversal semantics.
+
+- source_table: m_loan_transaction_relation
+  current_target: dwd_loan_transaction_relation
+  verdict: revise
+  materialize: true
+  target_layer: DWD
+  target_table: bridge_loan_transaction_relation
+  table_type: bridge
+  primary_entity: {code: LOAN_TRANSACTION_RELATION, key_columns: [id]}
+  related_entities:
+  - {role: from_loan_transaction, entity: LOAN_TRANSACTION, key_columns: [from_loan_transaction_id], source_fk: [from_loan_transaction_id]}
+  - {role: to_loan_transaction, entity: LOAN_TRANSACTION, key_columns: [to_loan_transaction_id], source_fk: [to_loan_transaction_id]}
+  - {role: to_loan_charge, entity: LOAN_CHARGE, key_columns: [to_loan_charge_id], source_fk: [to_loan_charge_id]}
+  grain: {columns: [id], description: one typed relation between loan transactions or a charge}
+  business_date: {kind: inherited, column: null, inherit_from: m_loan_transaction.transaction_date}
+  business_process: loan_transaction
+  semantic_subject: null
+  sensitivity: *restricted
+  allowed_alternatives: []
+  rationale: Typed relationship is a bridge and inherits dates from the participating transactions.
+
+- source_table: m_office_transaction
+  current_target: dwd_office_cash_transfer
+  verdict: revise
+  materialize: true
+  target_layer: DWD
+  target_table: dwd_office_cash_transfer
+  table_type: fact
+  primary_entity: {code: OFFICE_CASH_TRANSFER, key_columns: [id]}
+  related_entities:
+  - {role: from_office, entity: OFFICE, key_columns: [from_office_id], source_fk: [from_office_id]}
+  - {role: to_office, entity: OFFICE, key_columns: [to_office_id], source_fk: [to_office_id]}
+  grain: {columns: [id], description: one dated inter-office cash movement}
+  business_date: {kind: event, column: transaction_date, inherit_from: null}
+  business_process: cashier_operation
+  semantic_subject: null
+  sensitivity: *internal
+  allowed_alternatives: [office_cash_transfer_process]
+  rationale: Monetary event is valid after replacing the invalid generated payment-management code.
+
+- source_table: m_holiday_office
+  current_target: dwd_office_holiday_relation
+  verdict: revise
+  materialize: true
+  target_layer: DWD
+  target_table: bridge_office_holiday
+  table_type: bridge
+  primary_entity: {code: OFFICE_HOLIDAY_RELATION, key_columns: [holiday_id, office_id]}
+  related_entities:
+  - {role: holiday, entity: HOLIDAY, key_columns: [holiday_id], source_fk: [holiday_id]}
+  - {role: office, entity: OFFICE, key_columns: [office_id], source_fk: [office_id]}
+  grain: {columns: [holiday_id, office_id], description: one office applicability relation for one holiday}
+  business_date: {kind: inherited, column: null, inherit_from: m_holiday.from_date}
+  business_process: operations_management
+  semantic_subject: null
+  sensitivity: *internal
+  allowed_alternatives: [office_holiday_rule_bridge]
+  rationale: Composite relation is a bridge and inherits its effective interval from the holiday.
+
+- source_table: acc_product_mapping
+  current_target: dwd_product_gl_mapping
+  verdict: revise
+  materialize: true
+  target_layer: DIM
+  target_table: bridge_product_gl_mapping
+  table_type: bridge
+  primary_entity: {code: PRODUCT_GL_MAPPING, key_columns: [id]}
+  related_entities:
+  - {role: gl_account, entity: GL_ACCOUNT, key_columns: [gl_account_id], source_fk: [gl_account_id]}
+  - {role: charge_definition, entity: CHARGE_TYPE, key_columns: [charge_id], source_fk: [charge_id]}
+  - {role: payment_type, entity: PAYMENT_TYPE, key_columns: [payment_type], source_fk: [payment_type]}
+  grain: {columns: [id], description: one product or charge accounting-to-GL mapping rule}
+  business_date: *none_date
+  business_process: null
+  semantic_subject: PRODUCT_GL_MAPPING
+  sensitivity: *internal
+  allowed_alternatives:
+  - name: dim_product_accounting_rule
+    layer: DIM
+    table_type: rule_reference
+    credit: 0.9
+    rationale: Each row may be modeled as a timeless accounting-routing rule rather than as an entity bridge.
+  - name: dwd_product_gl_mapping_relation
+    layer: DWD
+    table_type: bridge
+    credit: 0.55
+    rationale: A convention that places all business relations in DWD may retain this configuration as a factless relation bridge.
+  rationale: Source is accounting configuration, not a transaction fact.
+
+- source_table: m_share_account_charge
+  current_target: dwd_share_charge
+  verdict: revise
+  materialize: true
+  target_layer: DWD
+  target_table: dwd_share_charge_snapshot
+  table_type: accumulating_snapshot
+  primary_entity: {code: SHARE_CHARGE, key_columns: [id]}
+  related_entities:
+  - {role: share_account, entity: SHARE_ACCOUNT, key_columns: [account_id], source_fk: [account_id]}
+  - {role: charge_definition, entity: CHARGE_TYPE, key_columns: [charge_id], source_fk: [charge_id]}
+  grain: {columns: [id], description: one assessed share-account charge through settlement lifecycle}
+  business_date: *none_date
+  business_process: share_account_management
+  semantic_subject: null
+  sensitivity: *restricted
+  allowed_alternatives: [dwd_share_charge_daily_snapshot]
+  rationale: Source lacks a reliable event date and represents current charge settlement state.
+
+- source_table: m_share_account_charge_paid_by
+  current_target: dwd_share_charge_allocation
+  verdict: revise
+  materialize: true
+  target_layer: DWD
+  target_table: dwd_share_charge_allocation
+  table_type: fact
+  primary_entity: {code: SHARE_CHARGE_ALLOCATION, key_columns: [id]}
+  related_entities:
+  - {role: share_transaction, entity: SHARE_TRANSACTION, key_columns: [share_transaction_id], source_fk: [share_transaction_id]}
+  - {role: share_charge, entity: SHARE_CHARGE, key_columns: [charge_transaction_id], source_fk: [charge_transaction_id]}
+  grain: {columns: [share_transaction_id, charge_transaction_id, id], description: one share transaction-to-charge allocation}
+  business_date: {kind: inherited, column: null, inherit_from: m_share_account_transactions.transaction_date}
+  business_process: share_account_management
+  semantic_subject: null
+  sensitivity: *restricted
+  allowed_alternatives: []
+  rationale: Allocation requires parent share transaction date and account context.
+
+- source_table: m_share_account_dividend_details
+  current_target: dwd_share_dividend
+  verdict: revise
+  materialize: true
+  target_layer: DWD
+  target_table: dwd_share_dividend
+  table_type: fact
+  primary_entity: {code: SHARE_DIVIDEND, key_columns: [id]}
+  related_entities:
+  - {role: share_account, entity: SHARE_ACCOUNT, key_columns: [account_id], source_fk: [account_id]}
+  - {role: dividend_payout, entity: SHARE_DIVIDEND_PAYOUT, key_columns: [dividend_pay_out_id], source_fk: [dividend_pay_out_id]}
+  grain: {columns: [dividend_pay_out_id, account_id, id], description: one payout allocation to one share account}
+  business_date: {kind: inherited, column: null, inherit_from: m_share_product_dividend_pay_out.dividend_period_end_date}
+  business_process: share_account_management
+  semantic_subject: null
+  sensitivity: *restricted
+  allowed_alternatives: [dwd_share_dividend_payout_detail]
+  rationale: Detail must join the payout header to obtain product and dividend-period context.
+
+- source_table: m_share_product_market_price
+  current_target: dwd_share_market_price
+  verdict: revise
+  materialize: true
+  target_layer: DWD
+  target_table: dwd_share_market_price
+  table_type: snapshot_fact
+  primary_entity: {code: SHARE_MARKET_PRICE, key_columns: [id]}
+  related_entities:
+  - {role: share_product, entity: SHARE_PRODUCT, key_columns: [product_id], source_fk: [product_id]}
+  grain: {columns: [product_id, from_date], description: one effective market value per share product and date}
+  business_date: {kind: effective, column: from_date, inherit_from: null}
+  business_process: share_account_management
+  semantic_subject: null
+  sensitivity: *internal
+  allowed_alternatives: [dwd_share_price_observation]
+  rationale: Source is a dated price observation and share_value must be labeled as an atomic metric.
+
+- source_table: m_share_account_transactions
+  current_target: dwd_share_transaction
+  verdict: accept
+  materialize: true
+  target_layer: DWD
+  target_table: dwd_share_transaction
+  table_type: fact
+  primary_entity: {code: SHARE_TRANSACTION, key_columns: [id]}
+  related_entities:
+  - {role: share_account, entity: SHARE_ACCOUNT, key_columns: [account_id], source_fk: [account_id]}
+  grain: {columns: [id], description: one dated share-account transaction}
+  business_date: {kind: event, column: transaction_date, inherit_from: null}
+  business_process: share_account_management
+  semantic_subject: null
+  sensitivity: *restricted
+  allowed_alternatives: []
+  rationale: Source has dated share, amount and charge measures at transaction grain.
+
+- source_table: m_staff_assignment_history
+  current_target: dwd_staff_assignment
+  verdict: revise
+  materialize: true
+  target_layer: DWD
+  target_table: dwd_staff_assignment
+  table_type: factless_fact
+  primary_entity: {code: STAFF_ASSIGNMENT, key_columns: [id]}
+  related_entities:
+  - {role: centre_group, entity: CUSTOMER_GROUP, key_columns: [centre_id], source_fk: [centre_id]}
+  - {role: staff_member, entity: STAFF, key_columns: [staff_id], source_fk: [staff_id]}
+  grain: {columns: [id], description: one centre-to-staff effective assignment interval}
+  business_date: {kind: period_start, column: start_date, inherit_from: null}
+  business_process: operations_management
+  semantic_subject: null
+  sensitivity: *restricted
+  allowed_alternatives: [bridge_centre_staff_history]
+  rationale: Assignment is a factless effective relationship and uses the canonical operations process.
+
+- source_table: m_account_transfer_standing_instructions_history
+  current_target: dwd_standing_instruction_event
+  verdict: accept
+  materialize: true
+  target_layer: DWD
+  target_table: dwd_standing_instruction_event
+  table_type: fact
+  primary_entity: {code: STANDING_INSTRUCTION_EVENT, key_columns: [id]}
+  related_entities:
+  - {role: standing_instruction, entity: STANDING_INSTRUCTION, key_columns: [standing_instruction_id], source_fk: [standing_instruction_id]}
+  grain: {columns: [id], description: one standing-instruction execution attempt}
+  business_date: {kind: event, column: execution_time, inherit_from: null}
+  business_process: account_transfer
+  semantic_subject: null
+  sensitivity: *restricted
+  allowed_alternatives: []
+  rationale: Source records each instruction execution with status, amount and error context.
+
+- source_table: m_survey_scorecards
+  current_target: dwd_survey_response
+  verdict: accept
+  materialize: true
+  target_layer: DWD
+  target_table: dwd_survey_response
+  table_type: factless_fact
+  primary_entity: {code: SURVEY_RESPONSE, key_columns: [id]}
+  related_entities:
+  - {role: survey, entity: SURVEY, key_columns: [survey_id], source_fk: [survey_id]}
+  - {role: customer, entity: CUSTOMER, key_columns: [client_id], source_fk: [client_id]}
+  - {role: question, entity: SURVEY_QUESTION, key_columns: [question_id], source_fk: [question_id]}
+  - {role: response, entity: SURVEY_RESPONSE_OPTION, key_columns: [response_id], source_fk: [response_id]}
+  grain: {columns: [id], description: one selected response to one survey question for one customer}
+  business_date: {kind: event, column: created_on, inherit_from: null}
+  business_process: customer_survey
+  semantic_subject: null
+  sensitivity: *restricted
+  allowed_alternatives: []
+  rationale: Source has explicit survey, question, response, customer and creation-time roles.
+
+- source_table: m_wc_loan_breach_action
+  current_target: dwd_wc_breach_event
+  verdict: revise
+  materialize: true
+  target_layer: DWD
+  target_table: dwd_wc_breach_event
+  table_type: factless_fact
+  primary_entity: {code: WC_BREACH_EVENT, key_columns: [id]}
+  related_entities:
+  - {role: wc_loan_account, entity: WC_LOAN_ACCOUNT, key_columns: [wc_loan_id], source_fk: [wc_loan_id]}
+  grain: {columns: [id], description: one working-capital loan breach-action interval}
+  business_date: {kind: period_start, column: start_date, inherit_from: null}
+  business_process: delinquency_management
+  semantic_subject: null
+  sensitivity: *restricted
+  allowed_alternatives: [dwd_wc_covenant_breach_event]
+  rationale: Breach interval is valid after replacing the invalid generated WC process code.
+
+- source_table: m_wc_loan_disbursement_detail
+  current_target: dwd_wc_loan_disbursement
+  verdict: accept
+  materialize: true
+  target_layer: DWD
+  target_table: dwd_wc_loan_disbursement
+  table_type: fact
+  primary_entity: {code: WC_LOAN_DISBURSEMENT, key_columns: [id]}
+  related_entities:
+  - {role: wc_loan_account, entity: WC_LOAN_ACCOUNT, key_columns: [wc_loan_id], source_fk: [wc_loan_id]}
+  grain: {columns: [id], description: one expected or actual working-capital disbursement tranche}
+  business_date: {kind: event, column: actual_disburse_date, inherit_from: null}
+  business_process: loan_disbursement
+  semantic_subject: null
+  sensitivity: *restricted
+  allowed_alternatives: []
+  rationale: Source has expected and actual disbursement dates and amounts at tranche grain.
+
+- source_table: m_wc_loan_account_locks
+  current_target: dwd_wc_loan_lock_event
+  active_mapping: false
+  verdict: reject
+  materialize: false
+  target_layer: null
+  target_table: null
+  table_type: snapshot_fact
+  primary_entity: {code: WC_LOAN_LOCK_SNAPSHOT, key_columns: [loan_id]}
+  related_entities:
+  - {role: wc_loan_account, entity: WC_LOAN_ACCOUNT, key_columns: [loan_id], source_fk: [loan_id]}
+  grain: {columns: [loan_id], description: one current lock state per working-capital loan at extraction time}
+  business_date: {kind: snapshot, column: lock_placed_on_cob_business_date, inherit_from: null}
+  business_process: operations_management
+  semantic_subject: null
+  sensitivity: *restricted
+  allowed_alternatives: [wc_loan_lock_satellite, audited_wc_loan_lock_event_from_event_log]
+  rationale: Primary key is loan_id, so source stores current lock state rather than event history.
+
+- source_table: m_wc_loan_transaction
+  current_target: dwd_wc_loan_transaction
+  verdict: accept
+  materialize: true
+  target_layer: DWD
+  target_table: dwd_wc_loan_transaction
+  table_type: fact
+  primary_entity: {code: WC_LOAN_TRANSACTION, key_columns: [id]}
+  related_entities:
+  - {role: wc_loan_account, entity: WC_LOAN_ACCOUNT, key_columns: [wc_loan_id], source_fk: [wc_loan_id]}
+  - {role: classification, entity: CODE_VALUE, key_columns: [classification_cv_id], source_fk: [classification_cv_id]}
+  grain: {columns: [id], description: one posted working-capital loan transaction}
+  business_date: {kind: event, column: transaction_date, inherit_from: null}
+  business_process: loan_transaction
+  semantic_subject: null
+  sensitivity: *restricted
+  allowed_alternatives: []
+  rationale: Source is a dated working-capital transaction with amount, reversal and classification semantics.
+
+- source_table: m_wc_loan_payment_allocation_rule
+  current_target: dwd_wc_payment_allocation_rule
+  active_mapping: false
+  verdict: reject
+  materialize: false
+  target_layer: null
+  target_table: null
+  table_type: dimension_satellite
+  primary_entity: {code: WC_PAYMENT_ALLOCATION_RULE, key_columns: [id]}
+  related_entities:
+  - {role: wc_loan_account, entity: WC_LOAN_ACCOUNT, key_columns: [wc_loan_id], source_fk: [wc_loan_id]}
+  grain: {columns: [id], description: one payment-allocation configuration for one working-capital loan}
+  business_date: {kind: effective, column: created_on_utc, inherit_from: null}
+  business_process: null
+  semantic_subject: WC_LOAN_ACCOUNT
+  sensitivity: *internal
+  allowed_alternatives: [wc_loan_terms_satellite]
+  rationale: Source is account-specific processing configuration and not a business transaction fact.
+
+- source_table: acc_gl_journal_entry_annual_summary
+  current_target: dwd_gl_annual_balance_snapshot
+  verdict: revise
+  materialize: true
+  target_layer: DWD
+  target_table: dwd_gl_annual_balance_snapshot
+  table_type: snapshot_fact
+  primary_entity: {code: GL_ANNUAL_BALANCE_SNAPSHOT, key_columns: [id]}
+  related_entities:
+  - {role: office, entity: OFFICE, key_columns: [office_id], source_fk: [office_id]}
+  grain: {columns: [gl_code, product_id, office_id, currency_code, owner_external_id, manual_entry, year_end_date], description: one annual opening-balance cell by GL/product/office/owner and currency}
+  business_date: {kind: snapshot, column: year_end_date, inherit_from: null}
+  business_process: general_ledger_posting
+  semantic_subject: null
+  sensitivity: *internal
+  allowed_alternatives:
+  - name: dws_gl_annual_opening_balance
+    layer: DWS
+    table_type: snapshot_fact
+    credit: 0.5
+    rationale: A source-provided annual opening-balance snapshot may be curated directly as a summary-layer snapshot.
+  rationale: Annual snapshot is valid but semantic grain must replace the generated surrogate-id grain.
+
+- source_table: m_journal_entry_aggregation_summary
+  current_target: dwd_gl_aggregation_summary
+  verdict: accept
+  materialize: true
+  target_layer: DWD
+  target_table: dwd_gl_aggregation_summary
+  table_type: aggregate_fact
+  primary_entity: {code: GL_AGGREGATION_SUMMARY, key_columns: [id]}
+  related_entities:
+  - {role: gl_account, entity: GL_ACCOUNT, key_columns: [gl_account_id], source_fk: [gl_account_id]}
+  - {role: office, entity: OFFICE, key_columns: [office_id], source_fk: [office_id]}
+  - {role: external_asset_owner, entity: ASSET_OWNER, key_columns: [external_owner_id], source_fk: [external_owner_id]}
+  grain: {columns: [gl_account_id, product_id, office_id, entity_type_enum, external_owner_id, manual_entry, aggregated_on_date], description: one debit-credit aggregation cell for one accounting date}
+  business_date: {kind: snapshot, column: aggregated_on_date, inherit_from: null}
+  business_process: general_ledger_posting
+  semantic_subject: null
+  sensitivity: *internal
+  allowed_alternatives:
+  - name: dws_gl_posting_aggregation_daily
+    layer: DWS
+    table_type: aggregate_fact
+    credit: 0.75
+    rationale: The source already stores daily debit-credit aggregates at a conformed analytical grain.
+  rationale: Source stores explicit dated debit and credit aggregations with conformed accounting roles.
+
+- source_table: m_journal_entry_aggregation_tracking
+  current_target: dwd_gl_aggregation_run
+  verdict: revise
+  materialize: true
+  target_layer: DWD
+  target_table: dwd_gl_aggregation_run
+  table_type: factless_fact
+  primary_entity: {code: GL_AGGREGATION_RUN, key_columns: [id]}
+  related_entities:
+  - {role: batch_job_execution, entity: JOB_EXECUTION, key_columns: [job_execution_id], source_fk: [job_execution_id]}
+  grain: {columns: [id], description: one GL aggregation run over one source-date interval}
+  business_date: {kind: period_start, column: aggregated_on_date_from, inherit_from: null}
+  business_process: general_ledger_posting
+  semantic_subject: null
+  sensitivity: *internal
+  allowed_alternatives: [operations_gl_aggregation_run_audit]
+  rationale: Run header is useful audit lineage but must remain distinct from monetary aggregation results.
+
+- source_table: m_loan_arrears_aging
+  current_target: dwd_loan_arrears_snapshot
+  verdict: revise
+  materialize: true
+  target_layer: DWD
+  target_table: dwd_loan_arrears_snapshot
+  table_type: snapshot_fact
+  primary_entity: {code: LOAN_ARREARS_SNAPSHOT, key_columns: [loan_id]}
+  related_entities:
+  - {role: loan_account, entity: LOAN_ACCOUNT, key_columns: [loan_id], source_fk: [loan_id]}
+  grain: {columns: [loan_id, snapshot_date], description: one arrears balance snapshot per loan and extraction business date}
+  business_date: {kind: generated_snapshot, column: snapshot_date, inherit_from: etl_context.etl_date}
+  business_process: delinquency_management
+  semantic_subject: null
+  sensitivity: *restricted
+  allowed_alternatives: [dwd_loan_arrears_current_state]
+  rationale: Source is current one-row-per-loan arrears state; a generated snapshot date is mandatory for history.
+
+- source_table: m_loan_buy_down_fee_balance
+  current_target: dwd_loan_buy_down_fee_balance
+  verdict: accept
+  materialize: true
+  target_layer: DWD
+  target_table: dwd_loan_buy_down_fee_balance
+  table_type: snapshot_fact
+  primary_entity: {code: LOAN_BUY_DOWN_FEE_BALANCE, key_columns: [id]}
+  related_entities:
+  - {role: loan_account, entity: LOAN_ACCOUNT, key_columns: [loan_id], source_fk: [loan_id]}
+  - {role: loan_transaction, entity: LOAN_TRANSACTION, key_columns: [loan_transaction_id], source_fk: [loan_transaction_id]}
+  grain: {columns: [id], description: one dated buy-down-fee balance version linked to a loan transaction}
+  business_date: {kind: snapshot, column: date, inherit_from: null}
+  business_process: loan_transaction
+  semantic_subject: null
+  sensitivity: *restricted
+  allowed_alternatives: []
+  rationale: Source has explicit date, amount, unrecognized and charged-off balance measures.
+
+- source_table: m_loan_capitalized_income_balance
+  current_target: dwd_loan_capitalized_income_balance
+  verdict: accept
+  materialize: true
+  target_layer: DWD
+  target_table: dwd_loan_capitalized_income_balance
+  table_type: snapshot_fact
+  primary_entity: {code: LOAN_CAPITALIZED_INCOME_BALANCE, key_columns: [id]}
+  related_entities:
+  - {role: loan_account, entity: LOAN_ACCOUNT, key_columns: [loan_id], source_fk: [loan_id]}
+  - {role: loan_transaction, entity: LOAN_TRANSACTION, key_columns: [loan_transaction_id], source_fk: [loan_transaction_id]}
+  grain: {columns: [id], description: one dated capitalized-income balance version linked to a loan transaction}
+  business_date: {kind: snapshot, column: date, inherit_from: null}
+  business_process: loan_transaction
+  semantic_subject: null
+  sensitivity: *restricted
+  allowed_alternatives: []
+  rationale: Source has explicit date, amount, unrecognized and charged-off balance measures.
+
+- source_table: m_trial_balance
+  current_target: dwd_gl_trial_balance_snapshot
+  verdict: revise
+  materialize: true
+  target_layer: DWD
+  target_table: dwd_gl_trial_balance_snapshot
+  table_type: snapshot_fact
+  primary_entity: {code: GL_TRIAL_BALANCE_SNAPSHOT, key_columns: [office_id, account_id, entry_date]}
+  related_entities:
+  - {role: office, entity: OFFICE, key_columns: [office_id], source_fk: [office_id]}
+  - {role: gl_account, entity: GL_ACCOUNT, key_columns: [account_id], source_fk: [account_id]}
+  grain: {columns: [office_id, account_id, entry_date], description: one trial-balance row per office, GL account and entry date}
+  business_date: {kind: snapshot, column: entry_date, inherit_from: null}
+  business_process: general_ledger_posting
+  semantic_subject: null
+  sensitivity: *internal
+  allowed_alternatives:
+  - name: dws_gl_trial_balance_daily
+    layer: DWS
+    table_type: snapshot_fact
+    credit: 0.5
+    rationale: A daily office-account trial balance may be treated as a summary-layer periodic snapshot.
+  rationale: Source lacks a declared PK, so gold must validate uniqueness at the semantic composite grain.
+
+- source_table: m_wc_loan_balance
+  current_target: dwd_wc_loan_balance_snapshot
+  verdict: revise
+  materialize: true
+  target_layer: DWD
+  target_table: dwd_wc_loan_balance_snapshot
+  table_type: snapshot_fact
+  primary_entity: {code: WC_LOAN_BALANCE_SNAPSHOT, key_columns: [id]}
+  related_entities:
+  - {role: wc_loan_account, entity: WC_LOAN_ACCOUNT, key_columns: [wc_loan_id], source_fk: [wc_loan_id]}
+  grain: {columns: [wc_loan_id, snapshot_date], description: one working-capital loan balance snapshot per extraction business date}
+  business_date: {kind: generated_snapshot, column: snapshot_date, inherit_from: etl_context.etl_date}
+  business_process: loan_transaction
+  semantic_subject: null
+  sensitivity: *restricted
+  allowed_alternatives: [dwd_wc_loan_balance_current_state]
+  rationale: Source holds current cumulative balances without a business date, so ETL must add snapshot_date.

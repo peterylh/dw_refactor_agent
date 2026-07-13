@@ -1,0 +1,169 @@
+version: 2
+name: dwd_wc_loan_balance_snapshot
+layer: DWD
+description: Source holds current cumulative balances without a business date, so ETL must add snapshot_date.
+table_type: snapshot_fact
+execution:
+  materialized: incremental
+  full_refresh_strategy: legacy_full_refresh
+  slice:
+    param: etl_date
+    column: snapshot_date
+    period: D
+  snapshot_mode: current_state_capture
+  historical_replay_supported: false
+  source_contract: ODS current state at execution time
+data_domain: '10'
+business_area: LOAN
+entities:
+- code: WC_LOAN_BALANCE_SNAPSHOT
+  type: primary
+  name: Wc Loan Balance Snapshot
+  key_columns:
+  - id
+- code: WC_LOAN_ACCOUNT
+  type: foreign
+  role: wc_loan_account
+  name: Wc Loan Account
+  key_columns:
+  - wc_loan_id
+  source_fk:
+  - wc_loan_id
+grain:
+  description: one working-capital loan balance snapshot per extraction business date
+  columns:
+  - wc_loan_id
+  - snapshot_date
+business_date:
+  kind: generated_snapshot
+  column: snapshot_date
+  inherit_from: etl_context.etl_date
+  source_column: snapshot_date
+source_mapping:
+  upstream_repository: https://github.com/apache/fineract
+  source_table: m_wc_loan_balance
+  ods_table: ods_fineract_m_wc_loan_balance
+  disposition: snapshot_source
+  confidence: human_reviewed
+sensitivity: restricted
+sensitivity_policy:
+  level: restricted
+  action: mask_and_tokenize
+column_sensitivity: []
+human_review:
+  verdict: revise
+  allowed_alternatives:
+  - dwd_wc_loan_balance_current_state
+business_process: loan_transaction
+atomic_metrics:
+- principal_paid
+- realized_income_from_discount_fee
+- overpayment_amount
+- principal
+- fee
+- fee_paid
+- penalty
+- penalty_paid
+- total_disbursement
+- total_discount_fee
+- total_discount_fee_adjustment
+metric_semantics:
+- name: principal_paid
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: principal_paid
+  unit: currency
+  currency_source: account_currency
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy
+- name: realized_income_from_discount_fee
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: realized_income_from_discount_fee
+  unit: currency
+  currency_source: account_currency
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy
+- name: overpayment_amount
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: overpayment_amount
+  unit: currency
+  currency_source: account_currency
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy
+- name: principal
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: principal
+  unit: currency
+  currency_source: account_currency
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy
+- name: fee
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: fee
+  unit: currency
+  currency_source: account_currency
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy
+- name: fee_paid
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: fee_paid
+  unit: currency
+  currency_source: account_currency
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy
+- name: penalty
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: penalty
+  unit: currency
+  currency_source: account_currency
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy
+- name: penalty_paid
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: penalty_paid
+  unit: currency
+  currency_source: account_currency
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy
+- name: total_disbursement
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: total_disbursement
+  unit: currency
+  currency_source: account_currency
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy
+- name: total_discount_fee
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: total_discount_fee
+  unit: currency
+  currency_source: account_currency
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy
+- name: total_discount_fee_adjustment
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: total_discount_fee_adjustment
+  unit: currency
+  currency_source: account_currency
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy

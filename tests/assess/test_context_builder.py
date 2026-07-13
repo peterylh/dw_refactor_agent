@@ -144,21 +144,25 @@ def test_extract_column_lineage_collapses_transient_fields():
 
 
 def test_build_contexts_filters_middle_layer(sample_lineage_data, tmp_path):
-    # Setup mock files
     ddl_dir = tmp_path / "ddl"
     tasks_dir = tmp_path / "tasks"
     ddl_dir.mkdir()
     tasks_dir.mkdir()
 
-    (ddl_dir / "dwd_customer.sql").write_text("DDL dwd_customer")
-    (tasks_dir / "dwd_customer.sql").write_text("ETL dwd_customer")
-    (ddl_dir / "dwd_order_detail.sql").write_text("DDL dwd_order_detail")
+    (ddl_dir / "dwd_customer.sql").write_text(
+        "CREATE dwd_customer;", encoding="utf-8"
+    )
+    (tasks_dir / "dwd_customer.sql").write_text(
+        "INSERT dwd_customer;", encoding="utf-8"
+    )
+    (ddl_dir / "dwd_order_detail.sql").write_text(
+        "DDL dwd_order_detail", encoding="utf-8"
+    )
 
     contexts = build_contexts(
         "test_proj", sample_lineage_data, ddl_dir, tasks_dir
     )
 
-    # 验证只有 DWD/DWS 层的表被返回
     assert len(contexts) == 3
     table_names = [ctx.table_name for ctx in contexts]
     assert "dwd_customer" in table_names
@@ -166,6 +170,13 @@ def test_build_contexts_filters_middle_layer(sample_lineage_data, tmp_path):
     assert "dws_store_sales_daily" in table_names
     assert "ods_customer" not in table_names
     assert "ads_sales_dashboard" not in table_names
+    customer_context = next(
+        ctx for ctx in contexts if ctx.table_name == "dwd_customer"
+    )
+    assert customer_context.ddl == "CREATE dwd_customer;"
+    assert customer_context.etl_sql == "INSERT dwd_customer;"
+    assert customer_context.upstream_tables == ["ods_customer"]
+    assert customer_context.downstream_tables == ["ads_sales_dashboard"]
 
 
 def test_build_contexts_reuses_one_lineage_view(

@@ -1,0 +1,52 @@
+version: 2
+name: dim_code_value
+layer: DIM
+description: Code-set context is required to interpret repeated labels and values safely.
+table_type: dimension
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+data_domain: '12'
+business_area: OTHR
+entities:
+- code: CODE_VALUE
+  type: primary
+  name: Code Value
+  key_columns:
+  - id
+- code: CODE_SET
+  type: foreign
+  role: code_set
+  name: Code Set
+  key_columns:
+  - code_id
+  source_fk:
+  - code_id
+grain:
+  description: one value within one code set
+  columns:
+  - code_id
+  - id
+business_date:
+  kind: none
+  column: null
+  inherit_from: null
+  source_column: null
+source_mapping:
+  upstream_repository: https://github.com/apache/fineract
+  source_table: m_code_value
+  ods_table: ods_fineract_m_code_value
+  disposition: standalone_dimension
+  confidence: human_reviewed
+sensitivity: internal
+sensitivity_policy:
+  level: internal
+  action: retain
+column_sensitivity: []
+human_review:
+  verdict: revise
+  allowed_alternatives:
+  - dim_code_set_value
+semantic_subject: CODE_VALUE
+dimension_role: BASE
+dimension_content_type: INFO

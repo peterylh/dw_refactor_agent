@@ -1,0 +1,110 @@
+version: 2
+name: dwd_loan_arrears_snapshot
+layer: DWD
+description: Source is current one-row-per-loan arrears state; a generated snapshot date is mandatory
+  for history.
+table_type: snapshot_fact
+execution:
+  materialized: incremental
+  full_refresh_strategy: legacy_full_refresh
+  slice:
+    param: etl_date
+    column: snapshot_date
+    period: D
+  snapshot_mode: current_state_capture
+  historical_replay_supported: false
+  source_contract: ODS current state at execution time
+data_domain: '04'
+business_area: LOAN
+entities:
+- code: LOAN_ARREARS_SNAPSHOT
+  type: primary
+  name: Loan Arrears Snapshot
+  key_columns:
+  - loan_id
+- code: LOAN_ACCOUNT
+  type: foreign
+  role: loan_account
+  name: Loan Account
+  key_columns:
+  - loan_id
+  source_fk:
+  - loan_id
+grain:
+  description: one arrears balance snapshot per loan and extraction business date
+  columns:
+  - loan_id
+  - snapshot_date
+business_date:
+  kind: generated_snapshot
+  column: snapshot_date
+  inherit_from: etl_context.etl_date
+  source_column: snapshot_date
+source_mapping:
+  upstream_repository: https://github.com/apache/fineract
+  source_table: m_loan_arrears_aging
+  ods_table: ods_fineract_m_loan_arrears_aging
+  disposition: snapshot_source
+  confidence: human_reviewed
+sensitivity: restricted
+sensitivity_policy:
+  level: restricted
+  action: mask_and_tokenize
+column_sensitivity: []
+human_review:
+  verdict: revise
+  allowed_alternatives:
+  - dwd_loan_arrears_current_state
+business_process: delinquency_management
+atomic_metrics:
+- principal_overdue_derived
+- interest_overdue_derived
+- fee_charges_overdue_derived
+- penalty_charges_overdue_derived
+- total_overdue_derived
+metric_semantics:
+- name: principal_overdue_derived
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: principal_overdue_derived
+  unit: currency
+  currency_source: account_currency
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy
+- name: interest_overdue_derived
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: interest_overdue_derived
+  unit: currency
+  currency_source: account_currency
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy
+- name: fee_charges_overdue_derived
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: fee_charges_overdue_derived
+  unit: currency
+  currency_source: account_currency
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy
+- name: penalty_charges_overdue_derived
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: penalty_charges_overdue_derived
+  unit: currency
+  currency_source: account_currency
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy
+- name: total_overdue_derived
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: total_overdue_derived
+  unit: currency
+  currency_source: account_currency
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy

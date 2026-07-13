@@ -1,3 +1,5 @@
+import pytest
+
 from dw_refactor_agent.lineage.asset_graph import (
     build_asset_column_lineage,
     build_asset_self_edges,
@@ -159,16 +161,36 @@ def test_table_graph_exposes_self_edges_without_dependency_noise():
     ]
 
 
-def test_build_asset_table_graph_collapses_transient_tables():
+@pytest.mark.parametrize(
+    ("source_table", "first_transient", "second_transient", "target_table"),
+    [
+        (
+            "dwd_orders",
+            "tmp_orders_stage",
+            "tmp_orders_stage",
+            "dws_orders",
+        ),
+        (
+            "DWD_Orders",
+            "TMP_Orders_Stage",
+            "tmp_orders_stage",
+            "DWS_Orders",
+        ),
+    ],
+    ids=("matching-case", "mixed-case"),
+)
+def test_build_asset_table_graph_collapses_transient_tables(
+    source_table, first_transient, second_transient, target_table
+):
     lineage_data = {
         "edges": [
             {
-                "source": "dwd_orders.order_id",
-                "target": "tmp_orders_stage.order_id",
+                "source": f"{source_table}.order_id",
+                "target": f"{first_transient}.order_id",
             },
             {
-                "source": "tmp_orders_stage.order_id",
-                "target": "dws_orders.order_id",
+                "source": f"{second_transient}.order_id",
+                "target": f"{target_table}.order_id",
             },
         ],
         "indirect_edges": [],
@@ -177,30 +199,8 @@ def test_build_asset_table_graph_collapses_transient_tables():
 
     upstream, downstream = build_asset_table_graph(lineage_data)
 
-    assert upstream == {"dws_orders": {"dwd_orders"}}
-    assert downstream == {"dwd_orders": {"dws_orders"}}
-
-
-def test_build_asset_table_graph_collapses_transient_tables_case_insensitively():
-    lineage_data = {
-        "edges": [
-            {
-                "source": "DWD_Orders.order_id",
-                "target": "TMP_Orders_Stage.order_id",
-            },
-            {
-                "source": "tmp_orders_stage.order_id",
-                "target": "DWS_Orders.order_id",
-            },
-        ],
-        "indirect_edges": [],
-        "tables": [{"name": "tmp_orders_stage", "is_transient": True}],
-    }
-
-    upstream, downstream = build_asset_table_graph(lineage_data)
-
-    assert upstream == {"DWS_Orders": {"DWD_Orders"}}
-    assert downstream == {"DWD_Orders": {"DWS_Orders"}}
+    assert upstream == {target_table: {source_table}}
+    assert downstream == {source_table: {target_table}}
 
 
 def test_build_asset_table_graph_uses_table_transient_flags():

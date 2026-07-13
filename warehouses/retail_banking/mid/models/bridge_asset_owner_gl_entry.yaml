@@ -1,0 +1,57 @@
+version: 2
+name: bridge_asset_owner_gl_entry
+layer: DWD
+description: This is a factless ownership-to-ledger bridge and inherits the journal business date.
+table_type: bridge
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+data_domain: '07'
+business_area: FMAN
+entities:
+- code: ASSET_OWNER_GL_RELATION
+  type: primary
+  name: Asset Owner Gl Relation
+  key_columns:
+  - id
+- code: ASSET_OWNER
+  type: foreign
+  role: asset_owner
+  name: Asset Owner
+  key_columns:
+  - owner_id
+  source_fk:
+  - owner_id
+- code: GL_JOURNAL_ENTRY
+  type: foreign
+  role: journal_entry
+  name: Gl Journal Entry
+  key_columns:
+  - journal_entry_id
+  source_fk:
+  - journal_entry_id
+grain:
+  description: one external owner to GL journal-entry mapping
+  columns:
+  - id
+business_date:
+  kind: inherited
+  column: business_date
+  inherit_from: acc_gl_journal_entry.entry_date
+  source_column: null
+source_mapping:
+  upstream_repository: https://github.com/apache/fineract
+  source_table: m_external_asset_owner_journal_entry_mapping
+  ods_table: ods_fineract_m_external_asset_owner_journal_entry_mapping
+  disposition: bridge_source
+  confidence: human_reviewed
+sensitivity: internal
+sensitivity_policy:
+  level: internal
+  action: retain
+column_sensitivity: []
+human_review:
+  verdict: revise
+  allowed_alternatives:
+  - dwd_asset_owner_gl_relation
+business_process: loan_asset_transfer

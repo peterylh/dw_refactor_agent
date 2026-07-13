@@ -1,10 +1,16 @@
 -- DWD anti-pattern fixture: aggregated fact in DWD
+-- table_id: 6a1f0c1a-327a-4cab-9df2-792b0c335510
 DROP TABLE IF EXISTS shop_dm.dwd_order_summary_bad;
 CREATE TABLE IF NOT EXISTS shop_dm.dwd_order_summary_bad (
+    -- column_id: 8670e9e2-3920-4ead-88e5-720a6e7d563a
     order_id     BIGINT        NOT NULL COMMENT 'Order ID',
+    -- column_id: 856c5a35-af47-4d83-b571-47db9a448381
     order_date   DATE          NOT NULL COMMENT 'Order date',
+    -- column_id: b7e7df5f-2e4d-4411-b903-c1b4361d5991
     item_count   INT           NOT NULL DEFAULT 0 COMMENT 'Item count',
+    -- column_id: 13ecd0f2-533e-49f8-a344-660679fecf08
     total_amount DECIMAL(14,2) NOT NULL DEFAULT 0.00 COMMENT 'Total amount',
+    -- column_id: a159875f-591f-43fe-bd82-e80d323352bf
     etl_time     DATETIME      NOT NULL COMMENT 'ETL time'
 ) ENGINE=OLAP
 UNIQUE KEY(order_id, order_date)

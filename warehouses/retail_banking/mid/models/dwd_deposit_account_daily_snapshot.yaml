@@ -1,0 +1,300 @@
+version: 2
+name: dwd_deposit_account_daily_snapshot
+layer: DWD
+description: Time-varying account balances split from durable DIM attributes.
+table_type: snapshot_fact
+execution:
+  materialized: incremental
+  full_refresh_strategy: legacy_full_refresh
+  slice:
+    param: etl_date
+    column: snapshot_date
+    period: D
+  snapshot_mode: current_state_capture
+  historical_replay_supported: false
+  source_contract: ODS current state at execution time
+data_domain: '05'
+business_area: DPST
+entities:
+- code: DEPOSIT_ACCOUNT
+  type: primary
+  name: Deposit Account
+  key_columns:
+  - id
+- code: CUSTOMER
+  type: foreign
+  role: owner_customer
+  name: Customer
+  key_columns:
+  - client_id
+  source_fk:
+  - client_id
+- code: CUSTOMER_GROUP
+  type: foreign
+  role: owner_group
+  name: Customer Group
+  key_columns:
+  - group_id
+  source_fk:
+  - group_id
+- code: DEPOSIT_PRODUCT
+  type: foreign
+  role: deposit_product
+  name: Deposit Product
+  key_columns:
+  - product_id
+  source_fk:
+  - product_id
+grain:
+  description: one account state per extraction date
+  columns:
+  - id
+  - snapshot_date
+business_date:
+  kind: snapshot
+  column: snapshot_date
+  inherit_from: etl_context.etl_date
+  source_column: snapshot_date
+source_mapping:
+  upstream_repository: https://github.com/apache/fineract
+  source_table: m_savings_account
+  ods_table: ods_fineract_m_savings_account
+  disposition: standalone_dimension
+  confidence: human_reviewed
+sensitivity: restricted
+sensitivity_policy:
+  level: restricted
+  action: mask_and_tokenize
+column_sensitivity:
+- name: account_no
+  classification: identifier
+  action: hash
+- name: external_id
+  classification: identifier
+  action: hash
+human_review:
+  verdict: revise
+  allowed_alternatives: []
+business_process: deposit_account_management
+atomic_metrics:
+- nominal_annual_interest_rate
+- min_required_opening_balance
+- lockin_period_frequency
+- overdraft_limit
+- nominal_annual_interest_rate_overdraft
+- min_overdraft_for_interest_calculation
+- total_deposits_derived
+- total_withdrawals_derived
+- total_withdrawal_fees_derived
+- total_fees_charge_derived
+- total_penalty_charge_derived
+- total_annual_fees_derived
+- total_interest_earned_derived
+- total_interest_posted_derived
+- total_overdraft_interest_derived
+- total_withhold_tax_derived
+- account_balance_derived
+- min_required_balance
+- min_balance_for_interest_calculation
+- on_hold_funds_derived
+- total_savings_amount_on_hold
+- max_allowed_lien_limit
+metric_semantics:
+- name: nominal_annual_interest_rate
+  class: atomic
+  aggregation_behavior: non_additive
+  formula: nominal_annual_interest_rate
+  unit: rate
+  currency_source: not_applicable
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy
+- name: min_required_opening_balance
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: min_required_opening_balance
+  unit: currency
+  currency_source: currency_code
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy
+- name: lockin_period_frequency
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: lockin_period_frequency
+  unit: currency
+  currency_source: currency_code
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy
+- name: overdraft_limit
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: overdraft_limit
+  unit: currency
+  currency_source: currency_code
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy
+- name: nominal_annual_interest_rate_overdraft
+  class: atomic
+  aggregation_behavior: non_additive
+  formula: nominal_annual_interest_rate_overdraft
+  unit: rate
+  currency_source: not_applicable
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy
+- name: min_overdraft_for_interest_calculation
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: min_overdraft_for_interest_calculation
+  unit: currency
+  currency_source: currency_code
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy
+- name: total_deposits_derived
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: total_deposits_derived
+  unit: currency
+  currency_source: currency_code
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy
+- name: total_withdrawals_derived
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: total_withdrawals_derived
+  unit: currency
+  currency_source: currency_code
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy
+- name: total_withdrawal_fees_derived
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: total_withdrawal_fees_derived
+  unit: currency
+  currency_source: currency_code
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy
+- name: total_fees_charge_derived
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: total_fees_charge_derived
+  unit: currency
+  currency_source: currency_code
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy
+- name: total_penalty_charge_derived
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: total_penalty_charge_derived
+  unit: currency
+  currency_source: currency_code
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy
+- name: total_annual_fees_derived
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: total_annual_fees_derived
+  unit: currency
+  currency_source: currency_code
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy
+- name: total_interest_earned_derived
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: total_interest_earned_derived
+  unit: currency
+  currency_source: currency_code
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy
+- name: total_interest_posted_derived
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: total_interest_posted_derived
+  unit: currency
+  currency_source: currency_code
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy
+- name: total_overdraft_interest_derived
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: total_overdraft_interest_derived
+  unit: currency
+  currency_source: currency_code
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy
+- name: total_withhold_tax_derived
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: total_withhold_tax_derived
+  unit: currency
+  currency_source: currency_code
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy
+- name: account_balance_derived
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: account_balance_derived
+  unit: currency
+  currency_source: currency_code
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy
+- name: min_required_balance
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: min_required_balance
+  unit: currency
+  currency_source: currency_code
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy
+- name: min_balance_for_interest_calculation
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: min_balance_for_interest_calculation
+  unit: currency
+  currency_source: currency_code
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy
+- name: on_hold_funds_derived
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: on_hold_funds_derived
+  unit: currency
+  currency_source: currency_code
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy
+- name: total_savings_amount_on_hold
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: total_savings_amount_on_hold
+  unit: currency
+  currency_source: currency_code
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy
+- name: max_allowed_lien_limit
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: max_allowed_lien_limit
+  unit: currency
+  currency_source: currency_code
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy

@@ -1,0 +1,52 @@
+version: 2
+name: dim_loan_interest_terms_satellite
+layer: DIM
+description: Source is loan-level calculation configuration and has no recalculation event date.
+table_type: dimension_satellite
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+data_domain: '04'
+business_area: LOAN
+entities:
+- code: LOAN_INTEREST_TERMS
+  type: primary
+  name: Loan Interest Terms
+  key_columns:
+  - id
+- code: LOAN_ACCOUNT
+  type: foreign
+  role: loan_account
+  name: Loan Account
+  key_columns:
+  - loan_id
+  source_fk:
+  - loan_id
+grain:
+  description: one current interest-recalculation configuration per loan
+  columns:
+  - loan_id
+business_date:
+  kind: none
+  column: null
+  inherit_from: null
+  source_column: null
+source_mapping:
+  upstream_repository: https://github.com/apache/fineract
+  source_table: m_loan_recalculation_details
+  ods_table: ods_fineract_m_loan_recalculation_details
+  disposition: standalone_dimension
+  confidence: human_reviewed
+sensitivity: internal
+sensitivity_policy:
+  level: internal
+  action: retain
+column_sensitivity: []
+human_review:
+  verdict: reject
+  allowed_alternatives:
+  - loan_terms_json_satellite
+  - dim_loan_account_scd2_extension
+semantic_subject: LOAN_INTEREST_TERMS
+dimension_role: BASE
+dimension_content_type: INFO

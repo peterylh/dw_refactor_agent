@@ -1,0 +1,87 @@
+version: 2
+name: dwd_loan_guarantor_relation
+layer: DWD
+description: Source duplicates loan-specific PII and is not a deduplicated conformed guarantor dimension.
+table_type: bridge
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+data_domain: '04'
+business_area: LOAN
+entities:
+- code: LOAN_GUARANTOR_RELATION
+  type: primary
+  name: Loan Guarantor Relation
+  key_columns:
+  - id
+- code: LOAN_ACCOUNT
+  type: foreign
+  role: guaranteed_loan
+  name: Loan Account
+  key_columns:
+  - loan_id
+  source_fk:
+  - loan_id
+- code: CODE_VALUE
+  type: foreign
+  role: relationship_type
+  name: Code Value
+  key_columns:
+  - client_reln_cv_id
+  source_fk:
+  - client_reln_cv_id
+grain:
+  description: one loan-specific guarantor record
+  columns:
+  - id
+business_date:
+  kind: none
+  column: null
+  inherit_from: null
+  source_column: null
+source_mapping:
+  upstream_repository: https://github.com/apache/fineract
+  source_table: m_guarantor
+  ods_table: ods_fineract_m_guarantor
+  disposition: bridge_source
+  confidence: human_reviewed
+sensitivity: restricted
+sensitivity_policy:
+  level: restricted
+  action: isolate_and_tokenize_party_attributes
+column_sensitivity:
+- name: firstname
+  classification: pii
+  action: mask
+- name: lastname
+  classification: pii
+  action: mask
+- name: dob
+  classification: pii
+  action: mask
+- name: address_line_1
+  classification: pii
+  action: mask
+- name: address_line_2
+  classification: pii
+  action: mask
+- name: city
+  classification: pii
+  action: mask
+- name: zip
+  classification: pii
+  action: mask
+- name: house_phone_number
+  classification: identifier
+  action: hash
+- name: mobile_number
+  classification: identifier
+  action: hash
+- name: comment
+  classification: pii
+  action: mask
+human_review:
+  verdict: reject
+  allowed_alternatives:
+  - secure_party_satellite_plus_loan_guarantor_bridge
+business_process: guarantee_management

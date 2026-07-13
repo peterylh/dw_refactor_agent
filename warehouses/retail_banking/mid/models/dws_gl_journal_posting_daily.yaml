@@ -1,0 +1,75 @@
+version: 2
+name: dws_gl_journal_posting_daily
+layer: DWS
+description: 总账与财务 reviewed aggregate
+table_type: aggregate_fact
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+data_domain: '07'
+business_area: FMAN
+business_process: general_ledger_posting
+sensitivity: internal
+business_date:
+  column: entry_date
+  output_column: stat_date
+  kind: posting_date
+grain:
+  columns:
+  - stat_date
+  - transaction_id
+  - office_id
+  - account_id
+  - currency_code
+  - type_enum
+  description: one posting transaction, office, GL account, currency and debit-credit type per day
+  entities:
+  - OFFICE
+  - GL_ACCOUNT
+  degenerate_dimensions: &id001
+  - transaction_id
+  - currency_code
+  - type_enum
+  time_column: stat_date
+  time_period: D
+entities:
+- code: OFFICE
+  key: office_id
+- code: GL_ACCOUNT
+  key: account_id
+degenerate_dimensions: *id001
+derived_metrics: &id002
+- name: record_count
+  class: derived
+  formula: count(*)
+  unit: count
+  currency_source: not_applicable
+  aggregation_behavior: additive
+  additive_over:
+  - stat_date
+  - transaction_id
+  - office_id
+  - account_id
+  - currency_code
+  - type_enum
+  sign: positive_count
+  reversal: exclude_reversed_true
+- name: total_amount
+  class: derived
+  formula: sum(amount)
+  unit: currency
+  currency_source: currency_code
+  aggregation_behavior: additive
+  additive_over:
+  - stat_date
+  - transaction_id
+  - office_id
+  - account_id
+  - type_enum
+  sign: debit_credit_type_separated
+  reversal: exclude_reversed_true
+metric_semantics: *id002
+human_review:
+  decision: accept
+  current_name: dws_gl_journal_posting_daily
+  status: human_reviewed_candidate

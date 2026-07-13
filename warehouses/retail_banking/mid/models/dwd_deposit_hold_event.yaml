@@ -1,0 +1,62 @@
+version: 2
+name: dwd_deposit_hold_event
+layer: DWD
+description: Dated hold event is valid after replacing the generated invalid process code.
+table_type: fact
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+data_domain: '05'
+business_area: DPST
+entities:
+- code: DEPOSIT_HOLD_EVENT
+  type: primary
+  name: Deposit Hold Event
+  key_columns:
+  - id
+- code: DEPOSIT_ACCOUNT
+  type: foreign
+  role: deposit_account
+  name: Deposit Account
+  key_columns:
+  - savings_account_id
+  source_fk:
+  - savings_account_id
+grain:
+  description: one deposit hold or release event
+  columns:
+  - id
+business_date:
+  kind: event
+  column: business_date
+  inherit_from: null
+  source_column: transaction_date
+source_mapping:
+  upstream_repository: https://github.com/apache/fineract
+  source_table: m_deposit_account_on_hold_transaction
+  ods_table: ods_fineract_m_deposit_account_on_hold_transaction
+  disposition: standalone_fact
+  confidence: human_reviewed
+sensitivity: restricted
+sensitivity_policy:
+  level: restricted
+  action: mask_and_tokenize
+column_sensitivity: []
+human_review:
+  verdict: revise
+  allowed_alternatives:
+  - dwd_deposit_lien_event
+business_process: deposit_transaction
+atomic_metrics:
+- amount
+metric_semantics:
+- name: amount
+  class: atomic
+  aggregation_behavior: additive
+  formula: amount
+  unit: currency
+  currency_source: account_currency
+  additive_over:
+  - id
+  sign: source_defined
+  reversal: source_policy

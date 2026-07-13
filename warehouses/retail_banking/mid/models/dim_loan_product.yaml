@@ -1,0 +1,51 @@
+version: 2
+name: dim_loan_product
+layer: DIM
+description: Loan product is reusable pricing and servicing reference data.
+table_type: dimension
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+data_domain: '04'
+business_area: LOAN
+entities:
+- code: LOAN_PRODUCT
+  type: primary
+  name: Loan Product
+  key_columns:
+  - id
+- code: DELINQUENCY_BUCKET
+  type: foreign
+  role: delinquency_bucket
+  name: Delinquency Bucket
+  key_columns:
+  - delinquency_bucket_id
+  source_fk:
+  - delinquency_bucket_id
+grain:
+  description: one loan product definition
+  columns:
+  - id
+business_date:
+  kind: effective
+  column: start_date
+  inherit_from: null
+  source_column: start_date
+source_mapping:
+  upstream_repository: https://github.com/apache/fineract
+  source_table: m_product_loan
+  ods_table: ods_fineract_m_product_loan
+  disposition: standalone_dimension
+  confidence: human_reviewed
+sensitivity: internal
+sensitivity_policy:
+  level: internal
+  action: retain
+column_sensitivity: []
+human_review:
+  verdict: accept
+  allowed_alternatives:
+  - dim_loan_product_scd2
+semantic_subject: LOAN_PRODUCT
+dimension_role: BASE
+dimension_content_type: INFO

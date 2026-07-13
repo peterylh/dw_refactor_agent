@@ -2,13 +2,21 @@
 -- table_id: 208649ff-2988-4a90-b1a6-1359c8334e18
 DROP TABLE IF EXISTS shop_dm.ads_product_topn_daily;
 CREATE TABLE IF NOT EXISTS shop_dm.ads_product_topn_daily (
+    -- column_id: e45469f7-de0b-469b-b4e4-04a3737c3551
     stat_date      DATE          NOT NULL COMMENT '统计日期',
+    -- column_id: 48de940b-1f7c-43d3-ae37-2284fcb9e7ca
     product_id     BIGINT        NOT NULL COMMENT '商品ID',
+    -- column_id: 5c645a76-c351-4105-8013-3f3d5a7b378e
     product_name   VARCHAR(128)  NULL COMMENT '商品名称',
+    -- column_id: afecb147-5e61-47fe-b6d0-f89619380169
     category_name  VARCHAR(64)   NULL COMMENT '品类名称',
+    -- column_id: 3fe100a5-c57c-48b9-b1d6-c7c1ec8dfcd9
     sale_quantity  INT           NULL COMMENT '销售数量',
+    -- column_id: b2a5dc98-75c4-47b7-bc47-0aed71889bc7
     sale_amount    DECIMAL(14,2) NULL COMMENT '销售金额',
+    -- column_id: 3742b138-079e-40a4-afb8-7684fe98e709
     rank_num       INT           NULL COMMENT '排名',
+    -- column_id: 628effb8-b76b-49a0-926d-8a709f7853f3
     etl_time       DATETIME      NOT NULL COMMENT 'ETL处理时间'
 ) ENGINE=OLAP
 UNIQUE KEY(stat_date, product_id)

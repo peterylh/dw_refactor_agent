@@ -1,0 +1,56 @@
+version: 2
+name: dws_loan_ownership_settlement_daily
+layer: DWS
+description: 投资、份额与资产持有 reviewed aggregate
+table_type: aggregate_fact
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+data_domain: 09
+business_area: ASTM
+business_process: loan_asset_transfer
+sensitivity: restricted
+business_date:
+  column: settlement_date
+  output_column: stat_date
+  kind: settlement_event_date
+grain:
+  columns:
+  - stat_date
+  - owner_id
+  - loan_id
+  - status
+  description: one settlement day, owner, loan and adjudicated settlement status
+  entities:
+  - ASSET_OWNER
+  - LOAN_ACCOUNT
+  degenerate_dimensions: &id001
+  - status
+  time_column: stat_date
+  time_period: D
+entities:
+- code: ASSET_OWNER
+  key: owner_id
+- code: LOAN_ACCOUNT
+  key: loan_id
+degenerate_dimensions: *id001
+derived_metrics: &id002
+- name: settlement_count
+  class: derived
+  formula: count(*)
+  unit: count
+  currency_source: not_applicable
+  aggregation_behavior: additive
+  additive_over:
+  - stat_date
+  - owner_id
+  - loan_id
+  - status
+  sign: positive_count
+  reversal: not_applicable
+metric_semantics: *id002
+human_review:
+  decision: revise
+  current_name: dws_loan_ownership_transfer_daily
+  status: human_reviewed_candidate
+row_policy: include_only_adjudicated_settlement_statuses

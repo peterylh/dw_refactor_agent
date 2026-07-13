@@ -2,17 +2,29 @@
 -- table_id: f1a2b3c4-d5e6-4f7a-8b9c-0d1e2f3a4b5c
 DROP TABLE IF EXISTS shop_dm.dwd_promotion;
 CREATE TABLE IF NOT EXISTS shop_dm.dwd_promotion (
+    -- column_id: fb8b1116-155b-4080-8193-7d914f5bf05c
     promotion_id   BIGINT        NOT NULL COMMENT '促销ID',
+    -- column_id: f910f689-9a48-4398-86a3-80aec77606f5
     snapshot_date  DATE          NOT NULL COMMENT '快照日期',
+    -- column_id: 8cbde4e0-179f-48ee-972f-9d7857ec241d
     etl_time       DATETIME      NOT NULL COMMENT 'ETL处理时间',
+    -- column_id: 3b061805-9f24-47de-9063-a6423b40cb70
     promotion_name VARCHAR(128)  NOT NULL COMMENT '促销名称',
+    -- column_id: 340be00a-2cd4-44e2-949c-056a7b839e4f
     promotion_type VARCHAR(32)   NOT NULL COMMENT '促销类型:满减/折扣/买赠/秒杀',
+    -- column_id: 39a7fe9e-1526-40ad-9310-82ef3cd6e67d
     discount_rate  DECIMAL(5,2)  NULL COMMENT '折扣率',
+    -- column_id: 168fc56c-27ac-4f71-8eaf-1946193393e8
     start_date     DATE          NOT NULL COMMENT '开始日期',
+    -- column_id: 6aa5a43f-4de9-4c7d-b3f4-fa722e686361
     end_date       DATE          NOT NULL COMMENT '结束日期',
+    -- column_id: c24e3059-aee7-4c14-84ae-717ed4474901
     duration_days  INT           NULL COMMENT '活动持续天数',
+    -- column_id: 6369ac78-139f-4901-b453-313e31ba6e22
     min_amount     DECIMAL(12,2) NULL COMMENT '最低消费金额',
+    -- column_id: feb62bdc-9f53-48d6-82a6-6e28cf924aa9
     is_active      TINYINT       NULL COMMENT '是否进行中:1是/0否',
+    -- column_id: 376a89cf-26a5-4806-854a-b058c7dffe40
     status         TINYINT       NOT NULL DEFAULT 1 COMMENT '状态'
 ) ENGINE=OLAP
 UNIQUE KEY(promotion_id, snapshot_date)

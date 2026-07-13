@@ -1,3 +1,5 @@
+import pytest
+
 import dw_refactor_agent.config as config
 from dw_refactor_agent.execution import reinit_project
 from dw_refactor_agent.execution.thread_pool import shutdown_executor
@@ -122,3 +124,16 @@ def test_task_run_command_uses_unbuffered_python():
     assert "prod" in cmd
     assert "--parallel" in cmd
     assert "2" in cmd
+
+
+def test_reinit_requires_explicit_business_dates_before_rebuild(monkeypatch):
+    monkeypatch.setitem(
+        reinit_project.PROJECT_CONFIG,
+        "demo",
+        {"execution": {"require_explicit_etl_dates": True}},
+    )
+
+    with pytest.raises(ValueError, match="explicit --etl-dates"):
+        reinit_project._validate_etl_dates_requirement("demo", None)
+
+    reinit_project._validate_etl_dates_requirement("demo", ["2025-01-01"])

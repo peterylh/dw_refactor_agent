@@ -1,0 +1,42 @@
+version: 2
+name: dim_credit_bureau
+layer: DIM
+description: Credit bureau is stable reference data independent of restricted report payloads.
+table_type: dimension
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+data_domain: '04'
+business_area: LOAN
+entities:
+- code: CREDIT_BUREAU
+  type: primary
+  name: Credit Bureau
+  key_columns:
+  - id
+grain:
+  description: one credit bureau
+  columns:
+  - id
+business_date:
+  kind: none
+  column: null
+  inherit_from: null
+  source_column: null
+source_mapping:
+  upstream_repository: https://github.com/apache/fineract
+  source_table: m_creditbureau
+  ods_table: ods_fineract_m_creditbureau
+  disposition: standalone_dimension
+  confidence: human_reviewed
+sensitivity: internal
+sensitivity_policy:
+  level: internal
+  action: retain
+column_sensitivity: []
+human_review:
+  verdict: accept
+  allowed_alternatives: []
+semantic_subject: CREDIT_BUREAU
+dimension_role: BASE
+dimension_content_type: INFO

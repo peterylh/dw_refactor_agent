@@ -1,0 +1,13 @@
+version: 2
+name: ods_fineract_m_wc_loan
+layer: ODS
+description: Fineract m_wc_loan 贴源表
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+source:
+  repository: https://github.com/apache/fineract
+  table: m_wc_loan
+  disposition: standalone_dimension
+  confidence: human_reviewed
+sensitivity: restricted

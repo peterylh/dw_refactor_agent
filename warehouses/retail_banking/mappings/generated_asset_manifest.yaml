@@ -1,0 +1,15 @@
+version: 1
+project: retail_banking
+upstream_repository: https://github.com/apache/fineract
+upstream_commit: 45d8e24f82c9c42c46a6762b24e102ad2c723824
+counts:
+  ODS: 277
+  DIM_DWD: 104
+  DWS: 18
+  ADS: 13
+  TOTAL: 412
+generation_policy:
+  all_active_sources_have_ods: true
+  downstream_requires_structural_mapping: true
+  candidate_sources_remain_ods_or_component_sources: true
+  pure_fineract_scope_only: true

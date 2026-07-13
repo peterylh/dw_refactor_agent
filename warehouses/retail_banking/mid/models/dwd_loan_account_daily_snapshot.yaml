@@ -1,0 +1,598 @@
+version: 2
+name: dwd_loan_account_daily_snapshot
+layer: DWD
+description: Time-varying account balances split from durable DIM attributes.
+table_type: snapshot_fact
+execution:
+  materialized: incremental
+  full_refresh_strategy: legacy_full_refresh
+  slice:
+    param: etl_date
+    column: snapshot_date
+    period: D
+  snapshot_mode: current_state_capture
+  historical_replay_supported: false
+  source_contract: ODS current state at execution time
+data_domain: '04'
+business_area: LOAN
+entities:
+- code: LOAN_ACCOUNT
+  type: primary
+  name: Loan Account
+  key_columns:
+  - id
+- code: CUSTOMER
+  type: foreign
+  role: borrower_customer
+  name: Customer
+  key_columns:
+  - client_id
+  source_fk:
+  - client_id
+- code: CUSTOMER_GROUP
+  type: foreign
+  role: borrower_group
+  name: Customer Group
+  key_columns:
+  - group_id
+  source_fk:
+  - group_id
+- code: LOAN_PRODUCT
+  type: foreign
+  role: loan_product
+  name: Loan Product
+  key_columns:
+  - product_id
+  source_fk:
+  - product_id
+- code: STAFF
+  type: foreign
+  role: loan_officer
+  name: Staff
+  key_columns:
+  - loan_officer_id
+  source_fk:
+  - loan_officer_id
+grain:
+  description: one account state per extraction date
+  columns:
+  - id
+  - snapshot_date
+business_date:
+  kind: snapshot
+  column: snapshot_date
+  inherit_from: etl_context.etl_date
+  source_column: snapshot_date
+source_mapping:
+  upstream_repository: https://github.com/apache/fineract
+  source_table: m_loan
+  ods_table: ods_fineract_m_loan
+  disposition: standalone_dimension
+  confidence: human_reviewed
+sensitivity: restricted
+sensitivity_policy:
+  level: restricted
+  action: mask_and_tokenize
+column_sensitivity:
+- name: account_no
+  classification: identifier
+  action: hash
+- name: external_id
+  classification: identifier
+  action: hash
+human_review:
+  verdict: revise
+  allowed_alternatives: []
+business_process: loan_account_management
+atomic_metrics:
+- principal_amount_proposed
+- principal_amount
+- approved_principal
+- net_disbursal_amount
+- arrearstolerance_amount
+- interest_rate_differential
+- nominal_interest_rate_per_period
+- annual_nominal_interest_rate
+- total_charges_due_at_disbursement_derived
+- principal_disbursed_derived
+- principal_repaid_derived
+- principal_writtenoff_derived
+- principal_outstanding_derived
+- interest_charged_derived
+- interest_repaid_derived
+- interest_waived_derived
+- interest_writtenoff_derived
+- interest_outstanding_derived
+- fee_charges_charged_derived
+- fee_charges_repaid_derived
+- fee_charges_waived_derived
+- fee_charges_writtenoff_derived
+- fee_charges_outstanding_derived
+- penalty_charges_charged_derived
+- penalty_charges_repaid_derived
+- penalty_charges_waived_derived
+- penalty_charges_writtenoff_derived
+- penalty_charges_outstanding_derived
+- total_expected_repayment_derived
+- total_repayment_derived
+- total_expected_costofloan_derived
+- total_costofloan_derived
+- total_waived_derived
+- total_writtenoff_derived
+- total_outstanding_derived
+- total_overpaid_derived
+- loan_counter
+- loan_product_counter
+- fixed_emi_amount
+- max_outstanding_loan_balance
+- total_recovered_derived
+- guarantee_amount_derived
+- fixed_principal_percentage_per_installment
+- principal_adjustments_derived
+- disbursed_amount_percentage_for_down_payment
+- capitalized_income_derived
+- capitalized_income_adjustment_derived
+- total_principal_derived
+- fee_adjustments_derived
+- penalty_adjustments_derived
+- installment_amount_in_multiples_of
+metric_semantics:
+- name: principal_amount_proposed
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: principal_amount_proposed
+  unit: currency
+  currency_source: currency_code
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy
+- name: principal_amount
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: principal_amount
+  unit: currency
+  currency_source: currency_code
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy
+- name: approved_principal
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: approved_principal
+  unit: currency
+  currency_source: currency_code
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy
+- name: net_disbursal_amount
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: net_disbursal_amount
+  unit: currency
+  currency_source: currency_code
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy
+- name: arrearstolerance_amount
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: arrearstolerance_amount
+  unit: currency
+  currency_source: currency_code
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy
+- name: interest_rate_differential
+  class: atomic
+  aggregation_behavior: non_additive
+  formula: interest_rate_differential
+  unit: rate
+  currency_source: not_applicable
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy
+- name: nominal_interest_rate_per_period
+  class: atomic
+  aggregation_behavior: non_additive
+  formula: nominal_interest_rate_per_period
+  unit: rate
+  currency_source: not_applicable
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy
+- name: annual_nominal_interest_rate
+  class: atomic
+  aggregation_behavior: non_additive
+  formula: annual_nominal_interest_rate
+  unit: rate
+  currency_source: not_applicable
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy
+- name: total_charges_due_at_disbursement_derived
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: total_charges_due_at_disbursement_derived
+  unit: currency
+  currency_source: currency_code
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy
+- name: principal_disbursed_derived
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: principal_disbursed_derived
+  unit: currency
+  currency_source: currency_code
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy
+- name: principal_repaid_derived
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: principal_repaid_derived
+  unit: currency
+  currency_source: currency_code
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy
+- name: principal_writtenoff_derived
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: principal_writtenoff_derived
+  unit: currency
+  currency_source: currency_code
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy
+- name: principal_outstanding_derived
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: principal_outstanding_derived
+  unit: currency
+  currency_source: currency_code
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy
+- name: interest_charged_derived
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: interest_charged_derived
+  unit: currency
+  currency_source: currency_code
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy
+- name: interest_repaid_derived
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: interest_repaid_derived
+  unit: currency
+  currency_source: currency_code
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy
+- name: interest_waived_derived
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: interest_waived_derived
+  unit: currency
+  currency_source: currency_code
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy
+- name: interest_writtenoff_derived
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: interest_writtenoff_derived
+  unit: currency
+  currency_source: currency_code
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy
+- name: interest_outstanding_derived
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: interest_outstanding_derived
+  unit: currency
+  currency_source: currency_code
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy
+- name: fee_charges_charged_derived
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: fee_charges_charged_derived
+  unit: currency
+  currency_source: currency_code
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy
+- name: fee_charges_repaid_derived
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: fee_charges_repaid_derived
+  unit: currency
+  currency_source: currency_code
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy
+- name: fee_charges_waived_derived
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: fee_charges_waived_derived
+  unit: currency
+  currency_source: currency_code
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy
+- name: fee_charges_writtenoff_derived
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: fee_charges_writtenoff_derived
+  unit: currency
+  currency_source: currency_code
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy
+- name: fee_charges_outstanding_derived
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: fee_charges_outstanding_derived
+  unit: currency
+  currency_source: currency_code
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy
+- name: penalty_charges_charged_derived
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: penalty_charges_charged_derived
+  unit: currency
+  currency_source: currency_code
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy
+- name: penalty_charges_repaid_derived
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: penalty_charges_repaid_derived
+  unit: currency
+  currency_source: currency_code
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy
+- name: penalty_charges_waived_derived
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: penalty_charges_waived_derived
+  unit: currency
+  currency_source: currency_code
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy
+- name: penalty_charges_writtenoff_derived
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: penalty_charges_writtenoff_derived
+  unit: currency
+  currency_source: currency_code
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy
+- name: penalty_charges_outstanding_derived
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: penalty_charges_outstanding_derived
+  unit: currency
+  currency_source: currency_code
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy
+- name: total_expected_repayment_derived
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: total_expected_repayment_derived
+  unit: currency
+  currency_source: currency_code
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy
+- name: total_repayment_derived
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: total_repayment_derived
+  unit: currency
+  currency_source: currency_code
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy
+- name: total_expected_costofloan_derived
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: total_expected_costofloan_derived
+  unit: currency
+  currency_source: currency_code
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy
+- name: total_costofloan_derived
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: total_costofloan_derived
+  unit: currency
+  currency_source: currency_code
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy
+- name: total_waived_derived
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: total_waived_derived
+  unit: currency
+  currency_source: currency_code
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy
+- name: total_writtenoff_derived
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: total_writtenoff_derived
+  unit: currency
+  currency_source: currency_code
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy
+- name: total_outstanding_derived
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: total_outstanding_derived
+  unit: currency
+  currency_source: currency_code
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy
+- name: total_overpaid_derived
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: total_overpaid_derived
+  unit: currency
+  currency_source: currency_code
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy
+- name: loan_counter
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: loan_counter
+  unit: count
+  currency_source: not_applicable
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy
+- name: loan_product_counter
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: loan_product_counter
+  unit: count
+  currency_source: not_applicable
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy
+- name: fixed_emi_amount
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: fixed_emi_amount
+  unit: currency
+  currency_source: currency_code
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy
+- name: max_outstanding_loan_balance
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: max_outstanding_loan_balance
+  unit: currency
+  currency_source: currency_code
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy
+- name: total_recovered_derived
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: total_recovered_derived
+  unit: currency
+  currency_source: currency_code
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy
+- name: guarantee_amount_derived
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: guarantee_amount_derived
+  unit: currency
+  currency_source: currency_code
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy
+- name: fixed_principal_percentage_per_installment
+  class: atomic
+  aggregation_behavior: non_additive
+  formula: fixed_principal_percentage_per_installment
+  unit: rate
+  currency_source: not_applicable
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy
+- name: principal_adjustments_derived
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: principal_adjustments_derived
+  unit: currency
+  currency_source: currency_code
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy
+- name: disbursed_amount_percentage_for_down_payment
+  class: atomic
+  aggregation_behavior: non_additive
+  formula: disbursed_amount_percentage_for_down_payment
+  unit: rate
+  currency_source: not_applicable
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy
+- name: capitalized_income_derived
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: capitalized_income_derived
+  unit: currency
+  currency_source: currency_code
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy
+- name: capitalized_income_adjustment_derived
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: capitalized_income_adjustment_derived
+  unit: currency
+  currency_source: currency_code
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy
+- name: total_principal_derived
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: total_principal_derived
+  unit: currency
+  currency_source: currency_code
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy
+- name: fee_adjustments_derived
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: fee_adjustments_derived
+  unit: currency
+  currency_source: currency_code
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy
+- name: penalty_adjustments_derived
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: penalty_adjustments_derived
+  unit: currency
+  currency_source: currency_code
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy
+- name: installment_amount_in_multiples_of
+  class: atomic
+  aggregation_behavior: semi_additive
+  formula: installment_amount_in_multiples_of
+  unit: currency
+  currency_source: currency_code
+  additive_over: []
+  sign: source_defined
+  reversal: source_policy

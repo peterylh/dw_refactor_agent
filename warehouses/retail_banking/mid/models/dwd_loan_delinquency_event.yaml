@@ -1,0 +1,56 @@
+version: 2
+name: dwd_loan_delinquency_event
+layer: DWD
+description: Added and lifted dates define an explicit loan delinquency interval.
+table_type: factless_fact
+execution:
+  materialized: full
+  full_refresh_strategy: replace_all
+data_domain: '04'
+business_area: LOAN
+entities:
+- code: LOAN_DELINQUENCY_EVENT
+  type: primary
+  name: Loan Delinquency Event
+  key_columns:
+  - id
+- code: LOAN_ACCOUNT
+  type: foreign
+  role: loan_account
+  name: Loan Account
+  key_columns:
+  - loan_id
+  source_fk:
+  - loan_id
+- code: DELINQUENCY_RANGE
+  type: foreign
+  role: delinquency_range
+  name: Delinquency Range
+  key_columns:
+  - delinquency_range_id
+  source_fk:
+  - delinquency_range_id
+grain:
+  description: one delinquency-tag interval for one loan
+  columns:
+  - id
+business_date:
+  kind: period_start
+  column: business_date
+  inherit_from: null
+  source_column: addedon_date
+source_mapping:
+  upstream_repository: https://github.com/apache/fineract
+  source_table: m_loan_delinquency_tag_history
+  ods_table: ods_fineract_m_loan_delinquency_tag_history
+  disposition: standalone_fact
+  confidence: human_reviewed
+sensitivity: restricted
+sensitivity_policy:
+  level: restricted
+  action: mask_and_tokenize
+column_sensitivity: []
+human_review:
+  verdict: accept
+  allowed_alternatives: []
+business_process: delinquency_management

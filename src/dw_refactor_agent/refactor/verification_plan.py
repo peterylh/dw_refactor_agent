@@ -15,6 +15,11 @@ from dw_refactor_agent.ddl_deriver.ddl_deriver import (
     load_git_tables,
     load_tables_from_dir,
 )
+from dw_refactor_agent.ddl_deriver.schema_ids import (
+    SchemaIdentityError,
+    require_valid_project,
+    validate_table_defs,
+)
 from dw_refactor_agent.execution.model_config import (
     ExecutionConfigError,
     execution_config_for_model,
@@ -113,13 +118,19 @@ def derive_project_ddl_changes(
     repo_root: Path | None = None,
 ) -> list[dict]:
     """Derive DDL changes between a git base ref and the working tree."""
+    require_valid_project(project)
     repo = _project_repo_root(repo_root)
     old_tables = {}
     new_tables = {}
     for ddl_rel in _project_ddl_rels(project):
         old_tables.update(load_git_tables(repo, ddl_rel, base_ref))
         new_tables.update(load_tables_from_dir(repo / ddl_rel))
-    changes = derive_ddl_changes(old_tables, new_tables)
+    baseline_issues = validate_table_defs(
+        old_tables, f"git-baseline-{base_ref}"
+    )
+    if baseline_issues:
+        raise SchemaIdentityError(baseline_issues)
+    changes = derive_ddl_changes(old_tables, new_tables, legacy_identity=False)
     return changes_to_json(changes)["changes"]
 
 
@@ -196,15 +207,16 @@ def build_verification_plan(
 ) -> dict:
     cfg = config.PROJECT_CONFIG[project]
     metadata_errors = []
-    raw_scope = (
-        change_analysis.get("scope")
-        or change_analysis.get("affected_scope")
-        or {}
-    )
+    if not isinstance(change_analysis.get("changed_assets"), dict):
+        raise ValueError("change_analysis.changed_assets is required")
+    raw_scope = change_analysis.get("affected_scope")
+    if not isinstance(raw_scope, dict):
+        raise ValueError("change_analysis.affected_scope is required")
     scope = _normalized_scope(raw_scope)
-    assessment_tables = set(scope["assessment_tables"])
-    assessment_tasks = set(scope["assessment_tasks"])
-    modified_jobs = _modified_jobs(change_analysis, assessment_tasks)
+    execution_tasks = set(scope["direct_tables"]) | set(
+        scope["downstream_tables"]
+    )
+    modified_jobs = _modified_jobs(change_analysis)
     changed_ddl_tables = _changed_ddl_tables(change_analysis)
     anchors, self_anchor_tables = _verification_anchor_tables(
         scope,
@@ -214,18 +226,17 @@ def build_verification_plan(
     scope["anchor_tables"] = anchors
     changes = _plan_changes(change_analysis, modified_jobs)
 
-    sorted_jobs = _sort_jobs_for_execution(
-        project,
-        assessment_tasks,
-        lineage_data=lineage_data,
-    )
-
-    jobs_to_run = []
-    for job_name in sorted_jobs:
+    job_entries = {}
+    for job_name in execution_tasks:
         entry = _job_entry(project, job_name)
         if entry:
-            jobs_to_run.append(entry)
-            assessment_tables.add(entry["target"])
+            job_entries[job_name] = entry
+    sorted_jobs = _sort_jobs_for_execution(
+        project,
+        set(job_entries),
+        lineage_data=lineage_data,
+    )
+    jobs_to_run = [job_entries[job_name] for job_name in sorted_jobs]
 
     if base_ref:
         all_baseline_ddl = load_baseline_ddl(
@@ -238,19 +249,23 @@ def build_verification_plan(
             base_ref,
             repo_root=repo_root,
         )
-        needed_baseline = _baseline_needed_tables(
-            ddl_changes,
-            jobs_to_run,
-            set(anchors),
-        )
+    else:
+        all_baseline_ddl = None
+        ddl_changes = []
+
+    needed_baseline = _baseline_needed_tables(
+        ddl_changes,
+        jobs_to_run,
+        set(anchors),
+    )
+    if all_baseline_ddl is not None:
         baseline_ddl = {
             table: strip_insert_data(ddl)
             for table, ddl in all_baseline_ddl.items()
             if table in needed_baseline
         }
     else:
-        ddl_changes = []
-        baseline_ddl = _current_ddl_by_table(project, assessment_tables)
+        baseline_ddl = _current_ddl_by_table(project, needed_baseline)
 
     compare_anchors, anchor_windows, verification_warnings = (
         _build_compare_anchors(
@@ -298,6 +313,7 @@ def build_verification_plan(
         jobs_to_run,
         ddl_changes,
         _ads_schema_change_tables(project, ddl_changes),
+        anchors,
         self_anchor_tables,
         compare_anchors,
         verification_warnings,
@@ -309,7 +325,6 @@ def build_verification_plan(
         "project_db": cfg["db"],
         "qa_db": cfg["qa_db"],
         "changes": changes,
-        "scope": scope,
         "baseline_ddl": dict(sorted(baseline_ddl.items())),
         "ddl_changes": ddl_changes,
         "jobs_to_run": jobs_to_run,
@@ -328,13 +343,9 @@ def _normalized_scope(scope: dict) -> dict:
     }
 
 
-def _modified_jobs(
-    change_analysis: dict, assessment_tasks: set[str]
-) -> list[str]:
-    changed_assets = change_analysis.get("changed_assets")
-    if isinstance(changed_assets, dict) and "task_jobs" in changed_assets:
-        return sorted(set(changed_assets.get("task_jobs") or []))
-    return sorted(assessment_tasks)
+def _modified_jobs(change_analysis: dict) -> list[str]:
+    changed_assets = change_analysis["changed_assets"]
+    return sorted(set(changed_assets.get("task_jobs") or []))
 
 
 def _changed_asset_list(change_analysis: dict, key: str) -> list[str]:
@@ -385,7 +396,6 @@ def _has_verification_work(
     return bool(
         affected_scope.get("direct_tables")
         or affected_scope.get("downstream_tables")
-        or affected_scope.get("assessment_tasks")
         or jobs_to_run
         or ddl_changes
     )
@@ -1001,12 +1011,16 @@ def _verification_metadata(
     jobs_to_run: list[dict],
     ddl_changes: list[dict],
     blocked_schema_tables: list[str],
+    anchor_tables: list[str],
     self_anchor_tables: list[str],
     compare_anchors: dict | None = None,
     warnings: list[dict] | None = None,
     metadata_errors: list[dict] | None = None,
 ) -> dict:
-    verification = {"checks": checks}
+    verification = {
+        "anchor_tables": sorted(set(anchor_tables)),
+        "checks": checks,
+    }
     if compare_anchors is not None:
         verification["compare_anchors"] = compare_anchors
     combined_warnings = list(warnings or [])
