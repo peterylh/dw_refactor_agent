@@ -13,6 +13,7 @@ verification:
       - etl_time
       - load_time
 execution:
+  require_explicit_etl_dates: true
   default_slice:
     param: etl_date
     column: stat_date

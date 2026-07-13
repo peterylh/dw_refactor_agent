@@ -7,6 +7,10 @@ table_type: snapshot_fact
 execution:
   materialized: incremental
   full_refresh_strategy: legacy_full_refresh
+  slice:
+    param: etl_date
+    column: snapshot_date
+    period: D
   snapshot_mode: current_state_capture
   historical_replay_supported: false
   source_contract: ODS current state at execution time

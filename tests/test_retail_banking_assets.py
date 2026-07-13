@@ -2,10 +2,13 @@ import copy
 import importlib.util
 import re
 import sys
+from datetime import date
 from pathlib import Path
 
 import pytest
 import yaml
+
+from dw_refactor_agent.execution.planner import ExecutionPlanner
 
 PROJECT_DIR = Path(__file__).resolve().parents[1] / "warehouses/retail_banking"
 MAPPINGS_DIR = PROJECT_DIR / "mappings"
@@ -229,9 +232,13 @@ def test_retail_banking_current_state_snapshots_retain_daily_slices():
         assert "TRUNCATE TABLE" not in task
         assert "SET @etl_date = CURDATE()" in task
         assert model["execution"]["materialized"] == "incremental"
+        assert model["execution"]["slice"] == {
+            "param": "etl_date",
+            "column": "snapshot_date",
+            "period": "D",
+        }
         assert model["execution"]["snapshot_mode"] == "current_state_capture"
         assert model["execution"]["historical_replay_supported"] is False
-        assert "slice" not in model["execution"]
 
     share_price = _load_yaml(
         PROJECT_DIR / "mid/models/dwd_share_market_price.yaml"
@@ -275,6 +282,91 @@ def test_retail_banking_current_state_snapshots_retain_daily_slices():
             assert metric["aggregation_behavior"] == "non_additive"
         else:
             assert metric["aggregation_behavior"] != "additive"
+
+
+def test_retail_banking_dated_facts_use_safe_etl_date_strategies():
+    generator = _load_tool(
+        "retail_asset_generator_daily_slices", "generate_assets.py"
+    )
+    source_schema = _load_yaml(MAPPINGS_DIR / "fineract_schema_snapshot.yaml")
+    source_columns = {
+        table["source_table"]: {
+            column["name"]: column for column in table["columns"]
+        }
+        for table in source_schema["tables"]
+    }
+    semantic_entries = _load_yaml(PROJECT_DIR / "semantic_specs/dim_dwd.yaml")[
+        "entries"
+    ]
+    semantic_by_source = {
+        entry["source_table"]: entry for entry in semantic_entries
+    }
+    dated_models = []
+    for model_path in sorted((PROJECT_DIR / "mid/models").glob("*.yaml")):
+        model = _load_yaml(model_path)
+        business_date = model.get("business_date") or {}
+        if model.get("layer") != "DWD" or not business_date.get("column"):
+            continue
+        dated_models.append((model_path, model))
+    for model_path in sorted((PROJECT_DIR / "ads/models").glob("*.yaml")):
+        dated_models.append((model_path, _load_yaml(model_path)))
+    for model_path in sorted((PROJECT_DIR / "mid/models").glob("dws_*.yaml")):
+        dated_models.append((model_path, _load_yaml(model_path)))
+
+    assert dated_models
+    for model_path, model in dated_models:
+        execution = model["execution"]
+        task = (
+            model_path.parent.parent / "tasks" / f"{model_path.stem}.sql"
+        ).read_text(encoding="utf-8")
+        if execution["materialized"] == "incremental":
+            slice_config = execution["slice"]
+            slice_column = slice_config["column"]
+            assert slice_config["param"] == "etl_date"
+            assert slice_config["period"] == "D"
+            if execution.get("historical_replay_supported") is False:
+                assert "SET @etl_date = CURDATE()" in task
+                assert "COALESCE(@etl_date" not in task
+            else:
+                assert "SET @etl_date = COALESCE(@etl_date, CURDATE())" in task
+            assert "TRUNCATE TABLE" not in task
+            assert f"WHERE `{slice_column}` = CAST(@etl_date AS DATE)" in task
+            assert task.count("CAST(@etl_date AS DATE)") >= 2
+        else:
+            assert execution["full_refresh_strategy"] == "replace_all"
+            assert "TRUNCATE TABLE" in task
+            assert "@etl_date" not in task
+            if model.get("layer") == "DWD":
+                source_table = model["source_mapping"]["source_table"]
+                assert not generator._supports_dwd_daily_slice(
+                    semantic_by_source[source_table],
+                    list(source_columns[source_table].values()),
+                )
+
+
+def test_retail_banking_all_tasks_plan_for_one_business_date():
+    planner = ExecutionPlanner("retail_banking")
+    task_paths = sorted((PROJECT_DIR / "mid/tasks").glob("*.sql"))
+    task_paths += sorted((PROJECT_DIR / "ads/tasks").glob("*.sql"))
+    incremental_count = 0
+    full_count = 0
+
+    assert len(task_paths) == 135
+    etl_date = date.today().isoformat()
+    for task_path in task_paths:
+        spec = planner.task_spec(task_path.stem, task_path)
+        invocations = planner.plan_regular_run(spec, [etl_date])
+
+        assert len(invocations) == 1
+        if spec.materialized == "incremental":
+            incremental_count += 1
+            assert invocations[0].params == {"etl_date": etl_date}
+        else:
+            full_count += 1
+            assert invocations[0].params == {}
+
+    assert incremental_count == 6
+    assert full_count == 129
 
 
 def test_retail_banking_restricted_projection_preserves_keys_and_masks_pii():

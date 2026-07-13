@@ -1,5 +1,3 @@
-SET @etl_date = COALESCE(@etl_date, CURDATE());
-
 -- Human-reviewed semantic target: retail_banking_dm.dim_customer_group_level
 TRUNCATE TABLE retail_banking_dm.dim_customer_group_level;
 

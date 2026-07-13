@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import date
+
 import pytest
 
 import dw_refactor_agent.config as config
@@ -228,6 +230,66 @@ def test_full_defaults_to_replace_all_with_full_refresh_one(
             strategy="replace_all",
         )
     ]
+
+
+def test_full_model_ignores_warehouse_default_slice(monkeypatch, tmp_path):
+    sql_path, _ = _write_demo_project(
+        monkeypatch,
+        tmp_path,
+        model_config="execution:\n  materialized: full\n",
+        ddl_column="dimension_value",
+    )
+    planner = ExecutionPlanner("demo")
+
+    spec = planner.task_spec("dwd_orders", sql_path)
+
+    assert spec.slice_param is None
+    assert spec.slice_column is None
+    assert spec.slice_period is None
+
+
+def test_full_model_rejects_explicit_slice(monkeypatch, tmp_path):
+    sql_path, _ = _write_demo_project(
+        monkeypatch,
+        tmp_path,
+        model_config=(
+            "execution:\n"
+            "  materialized: full\n"
+            "  slice:\n"
+            "    param: etl_date\n"
+            "    column: stat_date\n"
+            "    period: D\n"
+        ),
+    )
+    planner = ExecutionPlanner("demo")
+
+    with pytest.raises(
+        ExecutionConfigError, match="full models cannot define execution.slice"
+    ):
+        planner.task_spec("dwd_orders", sql_path)
+
+
+def test_current_state_capture_rejects_historical_slice(monkeypatch, tmp_path):
+    sql_path, _ = _write_demo_project(
+        monkeypatch,
+        tmp_path,
+        model_config=(
+            "execution:\n"
+            "  materialized: incremental\n"
+            "  full_refresh_strategy: legacy_full_refresh\n"
+            "  historical_replay_supported: false\n"
+        ),
+    )
+    planner = ExecutionPlanner("demo")
+    spec = planner.task_spec("dwd_orders", sql_path)
+
+    with pytest.raises(
+        ExecutionConfigError, match="does not support historical replay"
+    ):
+        planner.plan_regular_run(spec, ["2000-01-01"])
+
+    invocations = planner.plan_regular_run(spec, [date.today().isoformat()])
+    assert invocations[0].params == {"etl_date": date.today().isoformat()}
 
 
 def test_model_slice_overrides_project_default_slice(monkeypatch, tmp_path):

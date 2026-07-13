@@ -210,6 +210,12 @@ def _resolve_full_refresh_dates(
     if etl_dates:
         print("使用指定日期切片...")
         return list(dict.fromkeys(etl_dates))
+    execution = (PROJECT_CONFIG.get(project) or {}).get("execution") or {}
+    if execution.get("require_explicit_etl_dates") is True:
+        raise ExecutionConfigError(
+            f"[{project}] full refresh requires explicit --etl-dates; "
+            "ODS load_time is an ingestion timestamp, not a business date"
+        )
     print("发现 ODS 日期分区...")
     return _discover_ods_dates(project, db_name, mysql_cmd)
 
@@ -382,12 +388,16 @@ def main():
         print(f"\n{'=' * 60}")
         print("全量刷新模式 (按 DAG 拓扑执行)")
         print(f"{'=' * 60}")
-        all_dates = _resolve_full_refresh_dates(
-            project,
-            db_name,
-            mysql_cmd,
-            args.etl_dates,
-        )
+        try:
+            all_dates = _resolve_full_refresh_dates(
+                project,
+                db_name,
+                mysql_cmd,
+                args.etl_dates,
+            )
+        except ExecutionConfigError as e:
+            print(f"  {e}")
+            sys.exit(1)
         print(f"  {len(all_dates)} 个日期")
         for job_name in exec_order:
             try:

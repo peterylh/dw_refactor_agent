@@ -600,6 +600,24 @@ def _is_count_metric_name(column_name: str) -> bool:
     )
 
 
+def _supports_dwd_daily_slice(
+    semantic_spec: dict,
+    columns: list[dict],
+) -> bool:
+    """Return whether rerunning one day cannot leave older slices stale."""
+    date_spec = semantic_spec.get("business_date") or {}
+    # Source business dates alone do not prove immutability: transactions can
+    # be reversed and statuses or amounts can change after their original
+    # business date.  Without a change watermark that identifies every
+    # affected historical slice, those models must remain full replacements.
+    # Current-state captures are safe because every row is deliberately
+    # assigned to the execution date and that one slice is replaced atomically.
+    return (
+        date_spec.get("kind") == "generated_snapshot"
+        or date_spec.get("inherit_from") == "etl_context.etl_date"
+    )
+
+
 def _model(
     *,
     mapping: dict,
@@ -676,20 +694,36 @@ def _model(
         business_date_spec.get("kind") == "generated_snapshot"
         or business_date_spec.get("inherit_from") == "etl_context.etl_date"
     )
-    execution = (
-        {
+    supports_daily_slice = (
+        layer == "DWD"
+        and bool(target_business_date_column)
+        and _supports_dwd_daily_slice(semantic_spec, columns)
+    )
+    if supports_daily_slice:
+        execution = {
             "materialized": "incremental",
-            "full_refresh_strategy": "legacy_full_refresh",
-            "snapshot_mode": "current_state_capture",
-            "historical_replay_supported": False,
-            "source_contract": "ODS current state at execution time",
+            "full_refresh_strategy": (
+                "legacy_full_refresh" if is_etl_snapshot else "replay_slices"
+            ),
+            "slice": {
+                "param": "etl_date",
+                "column": target_business_date_column,
+                "period": "D",
+            },
         }
-        if is_etl_snapshot
-        else {
+        if is_etl_snapshot:
+            execution.update(
+                {
+                    "snapshot_mode": "current_state_capture",
+                    "historical_replay_supported": False,
+                    "source_contract": "ODS current state at execution time",
+                }
+            )
+    else:
+        execution = {
             "materialized": "full",
             "full_refresh_strategy": "replace_all",
         }
-    )
     value = {
         "version": 2,
         "name": table_name,
@@ -1057,25 +1091,41 @@ def _semantic_copy_task(
         date_spec.get("kind") == "generated_snapshot"
         or date_spec.get("inherit_from") == "etl_context.etl_date"
     )
+    supports_daily_slice = bool(
+        business_date_output_column
+        and date_expression
+        and date_expression.upper() != "NULL"
+        and _supports_dwd_daily_slice(semantic_spec, source_schema["columns"])
+    )
     reset_sql = (
         f"DELETE FROM {DATABASE}.{target_table}\n"
         f"WHERE `{business_date_output_column}` = CAST(@etl_date AS DATE);"
-        if is_etl_snapshot
+        if supports_daily_slice
         else f"TRUNCATE TABLE {DATABASE}.{target_table};"
     )
-    return (
+    date_filter = (
+        f"\nWHERE {date_expression} = CAST(@etl_date AS DATE)"
+        if supports_daily_slice and not is_etl_snapshot
+        else ""
+    )
+    parameter_sql = (
         (
             "SET @etl_date = CURDATE();\n\n"
             if is_etl_snapshot
             else "SET @etl_date = COALESCE(@etl_date, CURDATE());\n\n"
         )
+        if supports_daily_slice
+        else ""
+    )
+    return (
+        parameter_sql
         + f"-- Human-reviewed semantic target: {DATABASE}.{target_table}\n"
         f"{reset_sql}\n\n"
         f"INSERT INTO {DATABASE}.{target_table} (\n    "
         + ",\n    ".join(f"`{name}`" for name in insert_names)
         + "\n)\nSELECT\n    "
         + ",\n    ".join(select_parts)
-        + f"\n{from_sql};\n"
+        + f"\n{from_sql}{date_filter};\n"
     )
 
 
@@ -1690,6 +1740,15 @@ def generate_summaries(
             source_items = source_items[:1]
         mapping = source_items[0][0]
         source_lookups = [_column_lookup(item[1]) for item in source_items]
+        supports_daily_slice = all(
+            (
+                _load_yaml(PROJECT_DIR / "mid/models" / f"{source_name}.yaml")
+                .get("execution", {})
+                .get("materialized")
+                == "incremental"
+            )
+            for source_name in source_names
+        )
         columns: list[dict] = []
         for column_name in grain_columns:
             if column_name == date_output:
@@ -1729,10 +1788,22 @@ def generate_summaries(
             "layer": "DWS",
             "description": f"{mapping['domain_name']} reviewed aggregate",
             "table_type": "aggregate_fact",
-            "execution": {
-                "materialized": "full",
-                "full_refresh_strategy": "replace_all",
-            },
+            "execution": (
+                {
+                    "materialized": "incremental",
+                    "full_refresh_strategy": "replay_slices",
+                    "slice": {
+                        "param": "etl_date",
+                        "column": date_output,
+                        "period": "D",
+                    },
+                }
+                if supports_daily_slice
+                else {
+                    "materialized": "full",
+                    "full_refresh_strategy": "replace_all",
+                }
+            ),
             "data_domain": DOMAIN_IDS.get(mapping["data_domain"], "99"),
             "business_area": mapping["business_area"],
             "business_process": spec["canonical_process"],
@@ -1802,11 +1873,30 @@ def generate_summaries(
         joins = join_sql(source_names)
         conditions = [
             f"{source_expression(date_source, source_names, source_lookups)} IS NOT NULL",
+            *(
+                [
+                    f"DATE({source_expression(date_source, source_names, source_lookups)}) "
+                    "= CAST(@etl_date AS DATE)"
+                ]
+                if supports_daily_slice
+                else []
+            ),
             *filter_sql(spec, source_lookups),
         ]
+        reset_sql = (
+            f"DELETE FROM {DATABASE}.{name}\n"
+            f"WHERE `{date_output}` = CAST(@etl_date AS DATE);"
+            if supports_daily_slice
+            else f"TRUNCATE TABLE {DATABASE}.{name};"
+        )
         task = (
-            f"-- Human-reviewed aggregation from {', '.join(source_names)}\n"
-            f"TRUNCATE TABLE {DATABASE}.{name};\n\n"
+            (
+                "SET @etl_date = COALESCE(@etl_date, CURDATE());\n\n"
+                if supports_daily_slice
+                else ""
+            )
+            + f"-- Human-reviewed aggregation from {', '.join(source_names)}\n"
+            f"{reset_sql}\n\n"
             f"INSERT INTO {DATABASE}.{name} (\n    "
             + ",\n    ".join(f"`{item}`" for item in insert_names)
             + "\n)\nSELECT\n    "
@@ -1909,6 +1999,10 @@ def generate_ads(
         dws_name = source_names[0]
         item = summaries[dws_name]
         mapping, columns = item
+        dws_model = _load_yaml(PROJECT_DIR / "mid/models" / f"{dws_name}.yaml")
+        supports_daily_slice = (
+            dws_model.get("execution", {}).get("materialized") == "incremental"
+        )
         source_lookup = _column_lookup(columns)
         grain_columns = list(spec["grain"]["columns"])
         missing_grain = sorted(set(grain_columns) - set(source_lookup))
@@ -2017,10 +2111,22 @@ def generate_ads(
                 "layer": "ADS",
                 "description": f"{mapping['domain_name']} reviewed application data",
                 "table_type": "application_fact",
-                "execution": {
-                    "materialized": "full",
-                    "full_refresh_strategy": "replace_all",
-                },
+                "execution": (
+                    {
+                        "materialized": "incremental",
+                        "full_refresh_strategy": "replay_slices",
+                        "slice": {
+                            "param": "etl_date",
+                            "column": str(spec["business_date"]["column"]),
+                            "period": "D",
+                        },
+                    }
+                    if supports_daily_slice
+                    else {
+                        "materialized": "full",
+                        "full_refresh_strategy": "replace_all",
+                    }
+                ),
                 "data_domain": DOMAIN_IDS.get(mapping["data_domain"], "99"),
                 "business_area": mapping["business_area"],
                 "business_process": spec["canonical_process"],
@@ -2063,14 +2169,31 @@ def generate_ads(
             re.search(r"\bSUM\s*\(", formula, re.I)
             for formula in expanded_formulas.values()
         )
+        slice_column = str(spec["business_date"]["column"])
+        reset_sql = (
+            f"DELETE FROM {DATABASE}.{ads_name}\n"
+            f"WHERE `{slice_column}` = CAST(@etl_date AS DATE);"
+            if supports_daily_slice
+            else f"TRUNCATE TABLE {DATABASE}.{ads_name};"
+        )
         task_sql = (
-            f"-- Reviewed application metrics derived from {DATABASE}.{dws_name}\n"
-            f"TRUNCATE TABLE {DATABASE}.{ads_name};\n\n"
+            (
+                "SET @etl_date = COALESCE(@etl_date, CURDATE());\n\n"
+                if supports_daily_slice
+                else ""
+            )
+            + f"-- Reviewed application metrics derived from {DATABASE}.{dws_name}\n"
+            f"{reset_sql}\n\n"
             f"INSERT INTO {DATABASE}.{ads_name} (\n    "
             + ",\n    ".join(f"`{name}`" for name in insert_names)
             + "\n)\nSELECT\n    "
             + ",\n    ".join(select_parts)
             + f"\nFROM {DATABASE}.{dws_name} AS src"
+            + (
+                f"\nWHERE src.`{slice_column}` = CAST(@etl_date AS DATE)"
+                if supports_daily_slice
+                else ""
+            )
             + (
                 "\nGROUP BY\n    "
                 + ",\n    ".join(f"src.`{name}`" for name in grain_columns)

@@ -1,5 +1,3 @@
-SET @etl_date = COALESCE(@etl_date, CURDATE());
-
 -- Human-reviewed semantic target: retail_banking_dm.bridge_asset_owner_gl_entry
 TRUNCATE TABLE retail_banking_dm.bridge_asset_owner_gl_entry;
 
