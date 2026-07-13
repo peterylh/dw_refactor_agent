@@ -67,7 +67,11 @@ column_sensitivity: []
 human_review:
   verdict: accept
   allowed_alternatives:
-  - dws_gl_posting_aggregation_daily
+  - name: dws_gl_posting_aggregation_daily
+    layer: DWS
+    table_type: aggregate_fact
+    credit: 0.75
+    rationale: The source already stores daily debit-credit aggregates at a conformed analytical grain.
 business_process: general_ledger_posting
 atomic_metrics:
 - debit_amount

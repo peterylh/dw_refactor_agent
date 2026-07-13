@@ -10,7 +10,7 @@ The evaluator must build two physically separate artifacts:
 
 - **Public input bundle:** only the files permitted by the selected track.
 - **Private gold bundle:** adjudicated records conforming to
-  `gold_schema.yaml`, label dictionaries, alias maps, and scoring code.
+  `benchmark_contract.yaml`, label dictionaries, alias maps, and scoring code.
 
 The public bundle must never contain model YAML, mappings, semantic specs,
 business-process or semantic-subject catalogs, gold reports, or filenames that
@@ -87,7 +87,7 @@ and average-projection templates.
 
 ## Gold annotation
 
-Each record follows `gold_schema.yaml`. Two reviewers independently annotate a
+Each record follows `benchmark_contract.yaml`. Two reviewers independently annotate a
 table, then an adjudicator resolves disagreement. Gold records retain reviewer
 IDs, rationale, evidence paths, upstream commit, gold version, and any allowed
 alternative answers.
@@ -119,7 +119,7 @@ accuracy:
 - double-counting reversed transactions;
 - fabricating a field or source table.
 
-Exact weights and required fields are machine-readable in `gold_schema.yaml`.
+Exact weights and required fields are machine-readable in `benchmark_contract.yaml`.
 
 ## Release gates
 

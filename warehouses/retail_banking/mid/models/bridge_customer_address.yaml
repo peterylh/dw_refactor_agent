@@ -53,5 +53,16 @@ column_sensitivity: []
 human_review:
   verdict: revise
   allowed_alternatives:
-  - customer_address_satellite
+  - name: dim_customer_address_bridge
+    layer: DIM
+    table_type: bridge
+    credit: 0.8
+    rationale: Kimball-style multivalued-dimension modeling may place the customer-address relation on
+      the DIM side.
+  - name: customer_address_satellite
+    layer: DIM
+    table_type: dimension
+    credit: 0.65
+    rationale: The relation may be modeled as a customer multivalued-attribute satellite, although an
+      explicit bridge is more precise.
 business_process: customer_management

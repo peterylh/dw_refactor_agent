@@ -9,8 +9,8 @@ tenant schema. The source inventory is pinned to Fineract commit
 | Layer | Tables | Purpose |
 |---|---:|---|
 | ODS | 277 | One mirror for each analytical tenant application table |
-| DIM | 35 | Human-reviewed durable entities, reference data, and bridges |
-| DWD | 69 | Human-reviewed events, relations, balances, and account snapshots |
+| DIM | 36 | Human-reviewed durable entities, reference data, and bridges |
+| DWD | 68 | Human-reviewed events, relations, balances, and account snapshots |
 | DWS | 18 | Contract-driven aggregates with explicit grain and metric behavior |
 | ADS | 13 | KPI, reconciliation, schedule, and posting-monitor applications |
 | Total | 412 | Physical warehouse tables |

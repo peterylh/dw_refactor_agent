@@ -20,6 +20,8 @@ DATABASE = "retail_banking_dm"
 CATALOG = "internal"
 TEXT_ENCODING = "utf-8"
 SEMANTIC_SPEC_DIR = PROJECT_DIR / "semantic_specs"
+BENCHMARK_CONTRACT_FILENAME = "benchmark_contract.yaml"
+PRIVATE_GOLD_SCHEMA_REFERENCE = f"{BENCHMARK_CONTRACT_FILENAME}#table_record"
 
 DWS_DEFINITIONS = (
     (
@@ -1443,11 +1445,16 @@ def generate_semantic_subjects(mappings: list[dict]) -> None:
         if spec is None or spec.get("target_layer") != "DIM":
             continue
         target = str(spec["target_table"])
+        subject_name = target
+        for prefix in ("dim_", "bridge_"):
+            if subject_name.startswith(prefix):
+                subject_name = subject_name[len(prefix) :]
+                break
         code = str(spec.get("semantic_subject") or _entity_code(target))
         subjects.append(
             {
                 "code": code,
-                "name": target[4:].replace("_", " "),
+                "name": subject_name.replace("_", " "),
                 "description": (
                     f"{mapping['domain_name']}主数据主题，来源 "
                     f"Fineract {mapping['source_table']}。"
@@ -2187,6 +2194,95 @@ def generate_complete_layer_mapping(
     )
 
 
+def _normalize_gold_alternatives(
+    raw_alternatives: list,
+    *,
+    canonical_layer: str,
+    canonical_table_type: str,
+    valid_layers: set[str],
+    valid_table_types: set[str],
+) -> list[dict]:
+    """Normalize legacy names and explicit benchmark alternatives."""
+
+    normalized = []
+    required_fields = {
+        "name",
+        "layer",
+        "table_type",
+        "credit",
+        "rationale",
+    }
+    for index, item in enumerate(raw_alternatives):
+        if isinstance(item, str):
+            name = item.strip()
+            if not name:
+                raise ValueError(
+                    f"Gold alternative {index} must have a non-empty name"
+                )
+            normalized.append(
+                {
+                    "name": name,
+                    "layer": canonical_layer,
+                    "table_type": canonical_table_type,
+                    "credit": 0.5,
+                    "rationale": (
+                        f"Adjudicated architecture alternative: {name}"
+                    ),
+                }
+            )
+            continue
+        if not isinstance(item, dict):
+            raise ValueError(
+                "Gold alternative must be a name or mapping, received "
+                f"{item!r}"
+            )
+        missing_fields = sorted(required_fields - set(item))
+        if missing_fields:
+            raise ValueError(
+                f"Gold alternative {index} is missing fields: {missing_fields}"
+            )
+        name = item["name"]
+        layer = item["layer"]
+        table_type = item["table_type"]
+        credit = item["credit"]
+        rationale = item["rationale"]
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError(
+                f"Gold alternative {index} must have a non-empty name"
+            )
+        if layer not in valid_layers:
+            raise ValueError(
+                f"Gold alternative {name!r} has invalid layer {layer!r}"
+            )
+        if table_type not in valid_table_types:
+            raise ValueError(
+                f"Gold alternative {name!r} has invalid table_type "
+                f"{table_type!r}"
+            )
+        if (
+            isinstance(credit, bool)
+            or not isinstance(credit, (int, float))
+            or not 0 <= credit <= 1
+        ):
+            raise ValueError(
+                f"Gold alternative {name!r} has invalid credit {credit!r}"
+            )
+        if not isinstance(rationale, str) or not rationale.strip():
+            raise ValueError(
+                f"Gold alternative {name!r} must have a rationale"
+            )
+        normalized.append(
+            {
+                "name": name.strip(),
+                "layer": layer,
+                "table_type": table_type,
+                "credit": credit,
+                "rationale": rationale.strip(),
+            }
+        )
+    return normalized
+
+
 def generate_benchmark_contract(
     *,
     mappings: list[dict],
@@ -2200,6 +2296,16 @@ def generate_benchmark_contract(
 
     dws_ads_payload = _dws_ads_specs()
     benchmark_root = PROJECT_DIR / "benchmark"
+    benchmark_contract = _load_yaml(
+        benchmark_root / BENCHMARK_CONTRACT_FILENAME
+    )
+    alternative_schema = benchmark_contract["table_record"]["fields"][
+        "expected"
+    ]["allowed_alternatives"]["items"]
+    valid_alternative_layers = set(alternative_schema["layer"]["enum"])
+    valid_alternative_table_types = set(
+        alternative_schema["table_type"]["enum"]
+    )
     identity_payload = _load_yaml(
         PROJECT_DIR / "mappings/schema_identities.yaml"
     )
@@ -2285,16 +2391,13 @@ def generate_benchmark_contract(
             "allowed_alternatives"
         ) or []
         table_type = normalized_table_type(model)
-        allowed_alternatives = [
-            {
-                "name": item,
-                "layer": layer,
-                "table_type": table_type,
-                "credit": 0.5,
-                "rationale": f"Adjudicated architecture alternative: {item}",
-            }
-            for item in raw_alternatives
-        ]
+        allowed_alternatives = _normalize_gold_alternatives(
+            raw_alternatives,
+            canonical_layer=layer,
+            canonical_table_type=table_type,
+            valid_layers=valid_alternative_layers,
+            valid_table_types=valid_alternative_table_types,
+        )
         business_date = model.get("business_date") or {}
         sensitivity_level = str(model.get("sensitivity") or "internal")
         if sensitivity_level not in {
@@ -2433,7 +2536,7 @@ def generate_benchmark_contract(
                 "warning": (
                     "PRIVATE GOLD: store outside any participant-visible benchmark bundle."
                 ),
-                "schema": "gold_schema.yaml#table_record",
+                "schema": PRIVATE_GOLD_SCHEMA_REFERENCE,
                 "status": "candidate_not_gold_v1",
                 "records": records,
                 "expected_asset_counts": {
@@ -2486,7 +2589,7 @@ def generate_benchmark_contract(
             "semantic_specs/**",
             "business_processes.yaml",
             "semantic_subjects.yaml",
-            "benchmark/gold_schema.yaml",
+            f"benchmark/{BENCHMARK_CONTRACT_FILENAME}",
             "artifacts/lineage/**",
         ],
         "role_blind_must_exclude": ["business_taxonomy.yaml"],

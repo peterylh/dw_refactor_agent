@@ -1,4 +1,4 @@
--- DWD generated from acc_product_mapping
+-- DIM generated from acc_product_mapping
 DROP TABLE IF EXISTS retail_banking_dm.bridge_product_gl_mapping;
 -- table_id: bd015903-4be2-491c-b8aa-84244080472c
 CREATE TABLE IF NOT EXISTS retail_banking_dm.bridge_product_gl_mapping (

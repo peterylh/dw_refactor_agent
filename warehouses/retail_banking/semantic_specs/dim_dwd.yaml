@@ -829,7 +829,17 @@ entries:
   business_process: customer_management
   semantic_subject: null
   sensitivity: *restricted
-  allowed_alternatives: [customer_address_satellite]
+  allowed_alternatives:
+  - name: dim_customer_address_bridge
+    layer: DIM
+    table_type: bridge
+    credit: 0.8
+    rationale: Kimball-style multivalued-dimension modeling may place the customer-address relation on the DIM side.
+  - name: customer_address_satellite
+    layer: DIM
+    table_type: dimension
+    credit: 0.65
+    rationale: The relation may be modeled as a customer multivalued-attribute satellite, although an explicit bridge is more precise.
   rationale: Source is a relationship bridge and lacks an effective-date history.
 
 - source_table: m_client_identifier
@@ -1436,7 +1446,17 @@ entries:
   business_process: null
   semantic_subject: LOAN_RATE_RELATION
   sensitivity: *internal
-  allowed_alternatives: [loan_rate_assignment_satellite]
+  allowed_alternatives:
+  - name: loan_rate_assignment_satellite
+    layer: DIM
+    table_type: dimension
+    credit: 0.85
+    rationale: The assignment may be represented as a loan-dimension satellite, although an explicit bridge preserves the composite relation more precisely.
+  - name: dwd_loan_rate_assignment_relation
+    layer: DWD
+    table_type: bridge
+    credit: 0.65
+    rationale: Warehouses that place all business relations in DWD may treat this timeless assignment as a factless relation bridge.
   rationale: Source has no period dates; current target invents a period that does not exist.
 
 - source_table: m_loan_transaction_repayment_schedule_mapping
@@ -1558,7 +1578,7 @@ entries:
   current_target: dwd_product_gl_mapping
   verdict: revise
   materialize: true
-  target_layer: DWD
+  target_layer: DIM
   target_table: bridge_product_gl_mapping
   table_type: bridge
   primary_entity: {code: PRODUCT_GL_MAPPING, key_columns: [id]}
@@ -1568,10 +1588,20 @@ entries:
   - {role: payment_type, entity: PAYMENT_TYPE, key_columns: [payment_type], source_fk: [payment_type]}
   grain: {columns: [id], description: one product or charge accounting-to-GL mapping rule}
   business_date: *none_date
-  business_process: general_ledger_posting
-  semantic_subject: null
+  business_process: null
+  semantic_subject: PRODUCT_GL_MAPPING
   sensitivity: *internal
-  allowed_alternatives: [dim_product_accounting_rule]
+  allowed_alternatives:
+  - name: dim_product_accounting_rule
+    layer: DIM
+    table_type: rule_reference
+    credit: 0.9
+    rationale: Each row may be modeled as a timeless accounting-routing rule rather than as an entity bridge.
+  - name: dwd_product_gl_mapping_relation
+    layer: DWD
+    table_type: bridge
+    credit: 0.55
+    rationale: A convention that places all business relations in DWD may retain this configuration as a factless relation bridge.
   rationale: Source is accounting configuration, not a transaction fact.
 
 - source_table: m_share_account_charge
@@ -1833,7 +1863,12 @@ entries:
   business_process: general_ledger_posting
   semantic_subject: null
   sensitivity: *internal
-  allowed_alternatives: [dws_gl_annual_opening_balance]
+  allowed_alternatives:
+  - name: dws_gl_annual_opening_balance
+    layer: DWS
+    table_type: snapshot_fact
+    credit: 0.5
+    rationale: A source-provided annual opening-balance snapshot may be curated directly as a summary-layer snapshot.
   rationale: Annual snapshot is valid but semantic grain must replace the generated surrogate-id grain.
 
 - source_table: m_journal_entry_aggregation_summary
@@ -1853,7 +1888,12 @@ entries:
   business_process: general_ledger_posting
   semantic_subject: null
   sensitivity: *internal
-  allowed_alternatives: [dws_gl_posting_aggregation_daily]
+  allowed_alternatives:
+  - name: dws_gl_posting_aggregation_daily
+    layer: DWS
+    table_type: aggregate_fact
+    credit: 0.75
+    rationale: The source already stores daily debit-credit aggregates at a conformed analytical grain.
   rationale: Source stores explicit dated debit and credit aggregations with conformed accounting roles.
 
 - source_table: m_journal_entry_aggregation_tracking
@@ -1946,7 +1986,12 @@ entries:
   business_process: general_ledger_posting
   semantic_subject: null
   sensitivity: *internal
-  allowed_alternatives: [dws_gl_trial_balance_daily]
+  allowed_alternatives:
+  - name: dws_gl_trial_balance_daily
+    layer: DWS
+    table_type: snapshot_fact
+    credit: 0.5
+    rationale: A daily office-account trial balance may be treated as a summary-layer periodic snapshot.
   rationale: Source lacks a declared PK, so gold must validate uniqueness at the semantic composite grain.
 
 - source_table: m_wc_loan_balance

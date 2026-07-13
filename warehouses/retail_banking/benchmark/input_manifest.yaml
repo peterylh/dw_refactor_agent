@@ -31,7 +31,7 @@ must_exclude:
 - semantic_specs/**
 - business_processes.yaml
 - semantic_subjects.yaml
-- benchmark/gold_schema.yaml
+- benchmark/benchmark_contract.yaml
 - artifacts/lineage/**
 role_blind_must_exclude:
 - business_taxonomy.yaml

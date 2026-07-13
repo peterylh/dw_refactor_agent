@@ -1,6 +1,6 @@
 version: 2
 name: bridge_product_gl_mapping
-layer: DWD
+layer: DIM
 description: Source is accounting configuration, not a transaction fact.
 table_type: bridge
 execution:
@@ -51,7 +51,7 @@ source_mapping:
   upstream_repository: https://github.com/apache/fineract
   source_table: acc_product_mapping
   ods_table: ods_fineract_acc_product_mapping
-  disposition: bridge_source
+  disposition: standalone_dimension
   confidence: human_reviewed
 sensitivity: internal
 sensitivity_policy:
@@ -61,5 +61,18 @@ column_sensitivity: []
 human_review:
   verdict: revise
   allowed_alternatives:
-  - dim_product_accounting_rule
-business_process: general_ledger_posting
+  - name: dim_product_accounting_rule
+    layer: DIM
+    table_type: rule_reference
+    credit: 0.9
+    rationale: Each row may be modeled as a timeless accounting-routing rule rather than as an entity
+      bridge.
+  - name: dwd_product_gl_mapping_relation
+    layer: DWD
+    table_type: bridge
+    credit: 0.55
+    rationale: A convention that places all business relations in DWD may retain this configuration as
+      a factless relation bridge.
+semantic_subject: PRODUCT_GL_MAPPING
+dimension_role: BASE
+dimension_content_type: INFO

@@ -8,6 +8,6 @@ execution:
 source:
   repository: https://github.com/apache/fineract
   table: acc_product_mapping
-  disposition: bridge_source
+  disposition: standalone_dimension
   confidence: human_reviewed
 sensitivity: internal

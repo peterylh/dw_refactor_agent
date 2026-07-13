@@ -17,6 +17,9 @@ PROJECT_DIR = Path(__file__).resolve().parents[1]
 REPOSITORY_ROOT = PROJECT_DIR.parents[1]
 TEXT_ENCODING = "utf-8"
 TRACKS = ("named_taxonomy_assisted", "prefixless_role_blind")
+BENCHMARK_CONTRACT_FILENAME = "benchmark_contract.yaml"
+PRIVATE_GOLD_SCHEMA_REFERENCE = f"{BENCHMARK_CONTRACT_FILENAME}#table_record"
+LEGACY_PRIVATE_GOLD_SCHEMA_REFERENCE = "gold_schema.yaml#table_record"
 _SCHEMA_KEYWORDS = {
     "type",
     "description",
@@ -173,7 +176,10 @@ def validate_private_gold(private_gold: Path) -> dict:
         raise ValueError("private_gold.project must be retail_banking")
     if payload.get("version") != 1:
         raise ValueError("private_gold.version must be 1")
-    if payload.get("schema") != "gold_schema.yaml#table_record":
+    if payload.get("schema") not in {
+        PRIVATE_GOLD_SCHEMA_REFERENCE,
+        LEGACY_PRIVATE_GOLD_SCHEMA_REFERENCE,
+    }:
         raise ValueError("private_gold.schema must reference the table record")
     if payload.get("status") != "candidate_not_gold_v1":
         raise ValueError("private_gold.status is not supported")
@@ -199,9 +205,9 @@ def validate_private_gold(private_gold: Path) -> dict:
         raise ValueError(
             "private_gold record count does not match expected_asset_counts"
         )
-    record_schema = _load_yaml(PROJECT_DIR / "benchmark/gold_schema.yaml")[
-        "table_record"
-    ]
+    record_schema = _load_yaml(
+        PROJECT_DIR / f"benchmark/{BENCHMARK_CONTRACT_FILENAME}"
+    )["table_record"]
     registered_ddl_paths, registered_task_paths = _asset_paths()
     registered_ddl = {
         path.relative_to(PROJECT_DIR).as_posix(): path
@@ -503,13 +509,21 @@ def build_bundle(
         encoding=TEXT_ENCODING,
     )
     shutil.copy2(
-        str(PROJECT_DIR / "benchmark/gold_schema.yaml"),
-        str(evaluator / "gold_schema.yaml"),
+        str(PROJECT_DIR / f"benchmark/{BENCHMARK_CONTRACT_FILENAME}"),
+        str(evaluator / BENCHMARK_CONTRACT_FILENAME),
     )
     if private_gold is not None:
         private_gold = private_gold.expanduser().resolve()
-        validate_private_gold(private_gold)
-        shutil.copy2(str(private_gold), str(evaluator / "private_gold.yaml"))
+        gold_payload = validate_private_gold(private_gold)
+        gold_payload["schema"] = PRIVATE_GOLD_SCHEMA_REFERENCE
+        (evaluator / "private_gold.yaml").write_text(
+            yaml.safe_dump(
+                gold_payload,
+                allow_unicode=True,
+                sort_keys=False,
+            ),
+            encoding=TEXT_ENCODING,
+        )
     manifest = {
         "version": 1,
         "project": "retail_banking",

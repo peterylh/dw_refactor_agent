@@ -51,7 +51,12 @@ column_sensitivity: []
 human_review:
   verdict: revise
   allowed_alternatives:
-  - dws_gl_annual_opening_balance
+  - name: dws_gl_annual_opening_balance
+    layer: DWS
+    table_type: snapshot_fact
+    credit: 0.5
+    rationale: A source-provided annual opening-balance snapshot may be curated directly as a summary-layer
+      snapshot.
 business_process: general_ledger_posting
 atomic_metrics:
 - opening_balance_amount

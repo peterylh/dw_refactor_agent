@@ -381,8 +381,91 @@ def test_retail_banking_private_gold_is_external_and_fully_validated(tmp_path):
     assert input_manifest.stat().st_mtime_ns == manifest_mtime
     assert not (PROJECT_DIR / "benchmark/private_gold.yaml").exists()
     assert gold["status"] == "candidate_not_gold_v1"
+    assert gold["schema"] == "benchmark_contract.yaml#table_record"
     assert len(gold["records"]) == 412
     assert len({record["asset_id"] for record in gold["records"]}) == 412
+
+    legacy_schema_gold = copy.deepcopy(gold)
+    legacy_schema_gold["schema"] = "gold_schema.yaml#table_record"
+    legacy_schema_path = tmp_path / "legacy_schema_private_gold.yaml"
+    legacy_schema_path.write_text(
+        yaml.safe_dump(
+            legacy_schema_gold,
+            allow_unicode=True,
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    assert builder.validate_private_gold(legacy_schema_path)["schema"] == (
+        "gold_schema.yaml#table_record"
+    )
+
+    by_asset = {record["asset_name"]: record for record in gold["records"]}
+    expected_alternatives = {
+        "bridge_loan_rate": {
+            ("loan_rate_assignment_satellite", "DIM", "dimension", 0.85),
+            (
+                "dwd_loan_rate_assignment_relation",
+                "DWD",
+                "bridge",
+                0.65,
+            ),
+        },
+        "bridge_customer_address": {
+            ("dim_customer_address_bridge", "DIM", "bridge", 0.8),
+            ("customer_address_satellite", "DIM", "dimension", 0.65),
+        },
+        "bridge_product_gl_mapping": {
+            ("dim_product_accounting_rule", "DIM", "rule_reference", 0.9),
+            (
+                "dwd_product_gl_mapping_relation",
+                "DWD",
+                "bridge",
+                0.55,
+            ),
+        },
+        "dwd_gl_annual_balance_snapshot": {
+            ("dws_gl_annual_opening_balance", "DWS", "snapshot_fact", 0.5)
+        },
+        "dwd_gl_aggregation_summary": {
+            (
+                "dws_gl_posting_aggregation_daily",
+                "DWS",
+                "aggregate_fact",
+                0.75,
+            )
+        },
+        "dwd_gl_trial_balance_snapshot": {
+            ("dws_gl_trial_balance_daily", "DWS", "snapshot_fact", 0.5)
+        },
+    }
+    for asset_name, expected in expected_alternatives.items():
+        alternatives = by_asset[asset_name]["expected"]["allowed_alternatives"]
+        assert {
+            (
+                item["name"],
+                item["layer"],
+                item["table_type"],
+                item["credit"],
+            )
+            for item in alternatives
+        } == expected
+
+    legacy_alternative = by_asset["dim_address"]["expected"][
+        "allowed_alternatives"
+    ]
+    assert legacy_alternative == [
+        {
+            "name": "customer_address_satellite",
+            "layer": "DIM",
+            "table_type": "dimension",
+            "credit": 0.5,
+            "rationale": (
+                "Adjudicated architecture alternative: "
+                "customer_address_satellite"
+            ),
+        }
+    ]
 
     invalid_gold = copy.deepcopy(gold)
     invalid_gold["records"][0]["metrics"][0]["class"] = "hallucinated"
@@ -393,6 +476,25 @@ def test_retail_banking_private_gold_is_external_and_fully_validated(tmp_path):
     )
     with pytest.raises(ValueError, match="is not in enum"):
         builder.validate_private_gold(invalid_path)
+
+    missing_alternative_name = copy.deepcopy(gold)
+    alternative = next(
+        item
+        for record in missing_alternative_name["records"]
+        for item in record["expected"]["allowed_alternatives"]
+    )
+    del alternative["name"]
+    missing_alternative_name_path = tmp_path / "missing_alternative_name.yaml"
+    missing_alternative_name_path.write_text(
+        yaml.safe_dump(
+            missing_alternative_name,
+            allow_unicode=True,
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="missing required fields.*name"):
+        builder.validate_private_gold(missing_alternative_name_path)
 
     invalid_evidence = copy.deepcopy(gold)
     first_record = invalid_evidence["records"][0]
@@ -448,6 +550,12 @@ def test_prefixless_bundle_physically_separates_answers(tmp_path):
     output = tmp_path / "bundle"
     private_gold = tmp_path / "private_gold.yaml"
     generator.generate_private_gold(private_gold)
+    legacy_gold = _load_yaml(private_gold)
+    legacy_gold["schema"] = "gold_schema.yaml#table_record"
+    private_gold.write_text(
+        yaml.safe_dump(legacy_gold, allow_unicode=True, sort_keys=False),
+        encoding="utf-8",
+    )
 
     module.build_bundle(
         output=output,
@@ -476,6 +584,10 @@ def test_prefixless_bundle_physically_separates_answers(tmp_path):
     )
     assert not list((output / "public").rglob("*gold*"))
     assert (output / "evaluator/private_gold.yaml").exists()
+    assert (output / "evaluator/benchmark_contract.yaml").exists()
+    assert not (output / "evaluator/gold_schema.yaml").exists()
+    evaluator_gold = _load_yaml(output / "evaluator/private_gold.yaml")
+    assert evaluator_gold["schema"] == ("benchmark_contract.yaml#table_record")
     assert (output / "evaluator/alias_map.yaml").exists()
     constraints = _load_yaml(output / "public/constraints.yaml")
     aliases = _load_yaml(output / "evaluator/alias_map.yaml")["table_aliases"]

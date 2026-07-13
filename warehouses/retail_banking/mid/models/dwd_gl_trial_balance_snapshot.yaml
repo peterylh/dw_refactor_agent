@@ -57,7 +57,11 @@ column_sensitivity: []
 human_review:
   verdict: revise
   allowed_alternatives:
-  - dws_gl_trial_balance_daily
+  - name: dws_gl_trial_balance_daily
+    layer: DWS
+    table_type: snapshot_fact
+    credit: 0.5
+    rationale: A daily office-account trial balance may be treated as a summary-layer periodic snapshot.
 business_process: general_ledger_posting
 atomic_metrics:
 - amount

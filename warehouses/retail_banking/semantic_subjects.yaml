@@ -7,6 +7,9 @@ semantic_subjects:
 - code: GL_ACCOUNT
   name: gl account
   description: 总账与财务主数据主题，来源 Fineract acc_gl_account。
+- code: PRODUCT_GL_MAPPING
+  name: product gl mapping
+  description: 总账与财务主数据主题，来源 Fineract acc_product_mapping。
 - code: ADDRESS
   name: address
   description: 客户与参与方主数据主题，来源 Fineract m_address。
@@ -56,7 +59,7 @@ semantic_subjects:
   name: loan account
   description: 贷款与信贷主数据主题，来源 Fineract m_loan。
 - code: LOAN_RATE_RELATION
-  name: ge loan rate
+  name: loan rate
   description: 贷款与信贷主数据主题，来源 Fineract m_loan_rate。
 - code: LOAN_INTEREST_TERMS
   name: loan interest terms satellite

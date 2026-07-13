@@ -114,6 +114,16 @@ def test_semantic_spec_uses_only_canonical_catalog_codes():
 
 def test_semantic_spec_schema_is_complete_and_machine_consumable():
     spec = _load_yaml(SPEC_FILE)
+    benchmark_contract = _load_yaml(
+        WAREHOUSE / "benchmark/benchmark_contract.yaml"
+    )
+    alternative_schema = benchmark_contract["table_record"]["fields"][
+        "expected"
+    ]["allowed_alternatives"]["items"]
+    valid_alternative_layers = set(alternative_schema["layer"]["enum"])
+    valid_alternative_table_types = set(
+        alternative_schema["table_type"]["enum"]
+    )
     snapshot = _load_yaml(
         WAREHOUSE / "mappings" / "fineract_schema_snapshot.yaml"
     )
@@ -185,6 +195,100 @@ def test_semantic_spec_schema_is_complete_and_machine_consumable():
         sensitivity = entry["sensitivity"]
         assert sensitivity["level"]
         assert sensitivity["action"]
+
+        for alternative in entry["allowed_alternatives"]:
+            if isinstance(alternative, str):
+                assert alternative.strip()
+                continue
+            assert {
+                "name",
+                "layer",
+                "table_type",
+                "credit",
+                "rationale",
+            } <= set(alternative)
+            assert alternative["name"].strip()
+            assert alternative["layer"] in valid_alternative_layers
+            assert alternative["table_type"] in valid_alternative_table_types
+            assert not isinstance(alternative["credit"], bool)
+            assert 0 <= alternative["credit"] <= 1
+            assert alternative["rationale"].strip()
+
+
+def test_boundary_layer_alternatives_are_explicit_and_adjudicated():
+    entries = _load_yaml(SPEC_FILE)["entries"]
+    by_target = {
+        entry["target_table"]: entry
+        for entry in entries
+        if entry.get("target_table")
+    }
+    expected = {
+        "bridge_loan_rate": {
+            ("loan_rate_assignment_satellite", "DIM", "dimension", 0.85),
+            (
+                "dwd_loan_rate_assignment_relation",
+                "DWD",
+                "bridge",
+                0.65,
+            ),
+        },
+        "bridge_customer_address": {
+            ("dim_customer_address_bridge", "DIM", "bridge", 0.8),
+            ("customer_address_satellite", "DIM", "dimension", 0.65),
+        },
+        "bridge_product_gl_mapping": {
+            ("dim_product_accounting_rule", "DIM", "rule_reference", 0.9),
+            (
+                "dwd_product_gl_mapping_relation",
+                "DWD",
+                "bridge",
+                0.55,
+            ),
+        },
+        "dwd_gl_annual_balance_snapshot": {
+            ("dws_gl_annual_opening_balance", "DWS", "snapshot_fact", 0.5)
+        },
+        "dwd_gl_aggregation_summary": {
+            (
+                "dws_gl_posting_aggregation_daily",
+                "DWS",
+                "aggregate_fact",
+                0.75,
+            )
+        },
+        "dwd_gl_trial_balance_snapshot": {
+            ("dws_gl_trial_balance_daily", "DWS", "snapshot_fact", 0.5)
+        },
+    }
+
+    for table_name, expected_alternatives in expected.items():
+        alternatives = by_target[table_name]["allowed_alternatives"]
+        assert {
+            (
+                item["name"],
+                item["layer"],
+                item["table_type"],
+                item["credit"],
+            )
+            for item in alternatives
+        } == expected_alternatives
+
+    assert by_target["bridge_product_gl_mapping"]["target_layer"] == "DIM"
+    assert by_target["bridge_product_gl_mapping"]["business_process"] is None
+    assert (
+        by_target["bridge_product_gl_mapping"]["semantic_subject"]
+        == "PRODUCT_GL_MAPPING"
+    )
+
+
+def test_dim_bridge_subject_names_do_not_leak_partial_prefixes():
+    subjects = _load_yaml(WAREHOUSE / "semantic_subjects.yaml")[
+        "semantic_subjects"
+    ]
+    by_code = {item["code"]: item for item in subjects}
+
+    assert by_code["LOAN_RATE_RELATION"]["name"] == "loan rate"
+    assert by_code["PRODUCT_GL_MAPPING"]["name"] == "product gl mapping"
 
 
 def test_account_dimensions_define_stable_fields_and_snapshot_targets():

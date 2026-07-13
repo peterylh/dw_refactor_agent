@@ -1,5 +1,5 @@
 version: 1
-name: retail_banking_semantic_cold_start_gold
+name: retail_banking_semantic_cold_start_benchmark_contract
 status: specification
 private_gold: true
 public_input_must_exclude:
@@ -9,7 +9,7 @@ public_input_must_exclude:
   - semantic_specs
   - business_processes.yaml
   - semantic_subjects.yaml
-  - benchmark/gold
+  - benchmark/benchmark_contract.yaml
 
 table_record:
   required:
@@ -42,7 +42,7 @@ table_record:
         description: adjudicated answers that are architecturally equivalent enough for full or partial credit
         items:
           type: object
-          required: [layer, table_type, credit, rationale]
+          required: [name, layer, table_type, credit, rationale]
           name: {type: string}
           layer: {enum: [ODS, DIM, DWD, DWS, ADS, EXCLUDE]}
           table_type: {enum: [source, dimension, transaction_fact, snapshot_fact, accumulating_snapshot, factless_fact, aggregate_fact, application_mart, rule_reference, bridge, operational]}

@@ -5,7 +5,9 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 PROJECT_ROOT = ROOT / "warehouses" / "retail_banking"
 SPEC_PATH = PROJECT_ROOT / "semantic_specs" / "dws_ads.yaml"
-GOLD_SCHEMA_PATH = PROJECT_ROOT / "benchmark" / "gold_schema.yaml"
+BENCHMARK_CONTRACT_PATH = (
+    PROJECT_ROOT / "benchmark" / "benchmark_contract.yaml"
+)
 
 METRIC_KEYS = {
     "name",
@@ -183,11 +185,15 @@ def test_revised_overstated_monitor_names_are_not_canonical_names():
     )
 
 
-def test_gold_schema_defines_private_role_blind_scoring_contract():
-    schema = _load_yaml(GOLD_SCHEMA_PATH)
+def test_benchmark_contract_defines_private_role_blind_scoring():
+    schema = _load_yaml(BENCHMARK_CONTRACT_PATH)
 
     assert schema["private_gold"] is True
     assert "semantic_specs" in schema["public_input_must_exclude"]
+    assert (
+        "benchmark/benchmark_contract.yaml"
+        in schema["public_input_must_exclude"]
+    )
     assert schema["tracks"]["prefixless_role_blind"]["role_blind"] is True
     assert schema["tracks"]["partially_obfuscated"]["role_blind"] is True
     assert (

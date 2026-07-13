@@ -99,15 +99,15 @@ mappings:
   business_area: FMAN
   data_domain: FINA
   domain_name: 总账与财务
-  disposition: bridge_source
+  disposition: standalone_dimension
   mapping_status: human_reviewed
   sensitivity: internal
   layers:
     ODS:
     - ods_fineract_acc_product_mapping
-    DIM: []
-    DWD:
+    DIM:
     - bridge_product_gl_mapping
+    DWD: []
     DWS: []
     ADS: []
 - source_table: acc_rule_tags

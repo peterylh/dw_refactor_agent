@@ -55,7 +55,18 @@ column_sensitivity: []
 human_review:
   verdict: reject
   allowed_alternatives:
-  - loan_rate_assignment_satellite
+  - name: loan_rate_assignment_satellite
+    layer: DIM
+    table_type: dimension
+    credit: 0.85
+    rationale: The assignment may be represented as a loan-dimension satellite, although an explicit bridge
+      preserves the composite relation more precisely.
+  - name: dwd_loan_rate_assignment_relation
+    layer: DWD
+    table_type: bridge
+    credit: 0.65
+    rationale: Warehouses that place all business relations in DWD may treat this timeless assignment
+      as a factless relation bridge.
 semantic_subject: LOAN_RATE_RELATION
 dimension_role: BASE
 dimension_content_type: INFO

@@ -29,8 +29,8 @@
 
 | 目标层 | 源表数 |
 |---|---:|
-| DIM | 35 |
-| DWD | 65 |
+| DIM | 36 |
+| DWD | 64 |
 | NONE | 177 |
 
 ## 完整映射
@@ -43,7 +43,7 @@
 | acc_gl_financial_activity_account | ods_fineract_acc_gl_financial_activity_account | FINA 总账与财务 | component_source | candidate | NONE | — | id |
 | acc_gl_journal_entry | ods_fineract_acc_gl_journal_entry | FINA 总账与财务 | standalone_fact | human_reviewed | DWD | dwd_gl_journal_entry | id |
 | acc_gl_journal_entry_annual_summary | ods_fineract_acc_gl_journal_entry_annual_summary | FINA 总账与财务 | snapshot_source | human_reviewed | DWD | dwd_gl_annual_balance_snapshot | gl_code, product_id, office_id, currency_code, owner_external_id, manual_entry, year_end_date |
-| acc_product_mapping | ods_fineract_acc_product_mapping | FINA 总账与财务 | bridge_source | human_reviewed | DWD | bridge_product_gl_mapping | id |
+| acc_product_mapping | ods_fineract_acc_product_mapping | FINA 总账与财务 | standalone_dimension | human_reviewed | DIM | bridge_product_gl_mapping | id |
 | acc_rule_tags | ods_fineract_acc_rule_tags | FINA 总账与财务 | rule_reference | candidate | NONE | — | id |
 | batch_custom_job_parameters | ods_fineract_batch_custom_job_parameters | OPER 平台运营与安全 | security_excluded | security_reviewed | NONE | — | id |
 | c_account_number_format | ods_fineract_c_account_number_format | REFR 公共参考与元数据 | component_source | candidate | NONE | — | id |

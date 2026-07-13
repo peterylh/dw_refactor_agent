@@ -150,14 +150,14 @@ mappings:
   business_area: FMAN
   data_domain: FINA
   domain_name: 总账与财务
-  source_kind: event_or_relation
-  disposition: bridge_source
-  target_layer: DWD
+  source_kind: master_or_reference
+  disposition: standalone_dimension
+  target_layer: DIM
   target_table: bridge_product_gl_mapping
   downstream_targets:
   - bridge_product_gl_mapping
   grain: id
-  load_strategy: full_replay
+  load_strategy: full_snapshot
   optional_module: false
   confidence: human_reviewed
   business_processes:

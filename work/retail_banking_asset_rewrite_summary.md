@@ -64,4 +64,4 @@ Apache Fineract `45d8e24f82c9c42c46a6762b24e102ad2c723824`。
 当前已提供 `tools/build_benchmark_bundle.py`，可在源树外生成真正隔离的
 `public/` 与 `evaluator/` 目录；prefixless 输出 412 个 opaque DDL、135 个 opaque
 task，公开 SQL 中无层前缀和注释。`private_gold.yaml` 已生成 412 条符合
-`gold_schema.yaml#table_record` 必填字段的 candidate 记录。
+`benchmark_contract.yaml#table_record` 必填字段的 candidate 记录。
