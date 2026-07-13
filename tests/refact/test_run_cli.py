@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 import pytest
 
 import dw_refactor_agent.refactor.run as run_cli
+from dw_refactor_agent.refactor.plan_artifact import StalePlanError
 from dw_refactor_agent.refactor.semantic_mode import SemanticResolution
 from dw_refactor_agent.refactor.session import (
     create_run_manifest,
@@ -577,9 +578,19 @@ def test_shadow_run_and_compare_delegate_to_plan_handlers(
     _write_json(plan_path, {"project": "shop"})
     calls = []
 
+    monkeypatch.setattr(
+        run_cli,
+        "require_fresh_plan",
+        lambda *args, **kwargs: {
+            "analysis_snapshot": {"workspace_fingerprint": "sha256:workspace"},
+            "plan_fingerprint": "sha256:plan",
+        },
+    )
+
     def fake_shadow(
         plan,
         output,
+        provenance,
         dry_run=False,
         timing_detail=False,
         parallel=1,
@@ -590,6 +601,7 @@ def test_shadow_run_and_compare_delegate_to_plan_handlers(
                 "shadow",
                 plan,
                 output,
+                provenance,
                 dry_run,
                 timing_detail,
                 parallel,
@@ -601,10 +613,27 @@ def test_shadow_run_and_compare_delegate_to_plan_handlers(
         _write_json(output, {"ok": True})
         return {"ok": True}
 
-    def fake_compare(plan, output, method="all", sample=0, precision=0.01):
-        calls.append(("compare", plan, output, method, sample, precision))
+    def fake_compare(
+        plan,
+        shadow_result,
+        output,
+        method="all",
+        sample=0,
+        precision=0.01,
+    ):
+        calls.append(
+            (
+                "compare",
+                plan,
+                shadow_result,
+                output,
+                method,
+                sample,
+                precision,
+            )
+        )
         _write_json(output, {"ok": True})
-        return {"ok": True}
+        return {"verification_status": "passed"}
 
     monkeypatch.setattr(run_cli, "run_shadow_plan", fake_shadow)
     monkeypatch.setattr(run_cli, "compare_shadow_results", fake_compare)
@@ -614,13 +643,20 @@ def test_shadow_run_and_compare_delegate_to_plan_handlers(
 
     assert calls[0][0] == "shadow"
     assert calls[0][1] == plan_path
-    assert calls[0][4] is False
-    assert calls[0][5] == 1
+    assert calls[0][3] == {
+        "workspace_fingerprint": "sha256:workspace",
+        "plan_fingerprint": "sha256:plan",
+    }
+    assert calls[0][5] is False
     assert calls[0][6] == 1
-    assert calls[0][7] == tmp_path.resolve()
+    assert calls[0][7] == 1
     assert calls[0][8] == tmp_path.resolve()
+    assert calls[0][9] == tmp_path.resolve()
     assert calls[1][0] == "compare"
     assert calls[1][1] == plan_path
+    assert calls[1][2] == (
+        manifest_path.parent / "verification" / "shadow_run_result.json"
+    )
 
     calls.clear()
     assert (
@@ -635,7 +671,7 @@ def test_shadow_run_and_compare_delegate_to_plan_handlers(
         == 0
     )
     assert calls[0][0] == "shadow"
-    assert calls[0][4] is True
+    assert calls[0][5] is True
 
 
 def test_shadow_run_cli_reports_handler_failure(tmp_path, monkeypatch):
@@ -650,9 +686,19 @@ def test_shadow_run_cli_reports_handler_failure(tmp_path, monkeypatch):
     plan_path = manifest_path.parent / "verification" / "plan.json"
     _write_json(plan_path, {"project": "shop"})
 
+    monkeypatch.setattr(
+        run_cli,
+        "require_fresh_plan",
+        lambda *args, **kwargs: {
+            "analysis_snapshot": {"workspace_fingerprint": "sha256:workspace"},
+            "plan_fingerprint": "sha256:plan",
+        },
+    )
+
     def fake_shadow(
         plan,
         output,
+        provenance,
         dry_run=False,
         timing_detail=False,
         parallel=1,
@@ -812,3 +858,61 @@ def test_semantic_mode_set_rejects_table_outside_affected_scope(
                 "equivalent",
             ]
         )
+
+
+def test_shadow_run_rejects_stale_plan_before_handler(tmp_path, monkeypatch):
+    _write_warehouse_config(tmp_path)
+    manifest_path, manifest = create_run_manifest(
+        tmp_path,
+        "shop",
+        now=datetime(2026, 7, 13, 11, 32, 26, tzinfo=timezone.utc),
+        git_info={},
+    )
+    write_manifest(manifest_path, manifest)
+    called = []
+
+    def stale_plan(*args, **kwargs):
+        raise StalePlanError(
+            "stale_plan: workspace changed after analyze; run analyze again"
+        )
+
+    monkeypatch.setattr(run_cli, "require_fresh_plan", stale_plan)
+    monkeypatch.setattr(
+        run_cli,
+        "run_shadow_plan",
+        lambda *args, **kwargs: called.append((args, kwargs)),
+    )
+
+    with pytest.raises(SystemExit, match="stale_plan.*analyze"):
+        run_cli.main(["shadow-run", "--manifest", str(manifest_path)])
+
+    assert called == []
+
+
+def test_compare_rejects_stale_plan_before_handler(tmp_path, monkeypatch):
+    _write_warehouse_config(tmp_path)
+    manifest_path, manifest = create_run_manifest(
+        tmp_path,
+        "shop",
+        now=datetime(2026, 7, 13, 11, 32, 26, tzinfo=timezone.utc),
+        git_info={},
+    )
+    write_manifest(manifest_path, manifest)
+    called = []
+
+    def stale_plan(*args, **kwargs):
+        raise StalePlanError(
+            "stale_plan: workspace changed after analyze; run analyze again"
+        )
+
+    monkeypatch.setattr(run_cli, "require_fresh_plan", stale_plan)
+    monkeypatch.setattr(
+        run_cli,
+        "compare_shadow_results",
+        lambda *args, **kwargs: called.append((args, kwargs)),
+    )
+
+    with pytest.raises(SystemExit, match="stale_plan.*analyze"):
+        run_cli.main(["compare", "--manifest", str(manifest_path)])
+
+    assert called == []

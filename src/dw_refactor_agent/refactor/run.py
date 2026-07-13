@@ -24,6 +24,7 @@ import dw_refactor_agent.refactor.shadow_run as shadow_run_module
 from dw_refactor_agent.assessment.assess_middle_layer import assess
 from dw_refactor_agent.config import TEXT_ENCODING
 from dw_refactor_agent.config import core as config_core
+from dw_refactor_agent.refactor.artifact_contract import ArtifactFormatError
 from dw_refactor_agent.refactor.change_analysis import (
     build_change_analysis,
     changed_files_since_head,
@@ -599,9 +600,24 @@ def _shadow_run(args) -> int:
     manifest = load_manifest(manifest_path)
     repo_root = _root_from_manifest(manifest, manifest_path)
     with _project_root_context(repo_root):
+        plan_path = artifact_path(manifest_path, "verification_plan")
+        try:
+            persisted_plan = require_fresh_plan(
+                plan_path,
+                root=repo_root,
+                project=manifest["project"],
+            )
+        except ArtifactFormatError as exc:
+            raise SystemExit(str(exc)) from None
         result = run_shadow_plan(
-            artifact_path(manifest_path, "verification_plan"),
+            plan_path,
             artifact_path(manifest_path, "shadow_run_result"),
+            provenance={
+                "workspace_fingerprint": persisted_plan["analysis_snapshot"][
+                    "workspace_fingerprint"
+                ],
+                "plan_fingerprint": persisted_plan["plan_fingerprint"],
+            },
             dry_run=args.dry_run,
             timing_detail=args.timing_detail,
             parallel=args.parallel,
@@ -612,14 +628,32 @@ def _shadow_run(args) -> int:
 
 def _compare(args) -> int:
     manifest_path = _manifest_path_from_args(args)
-    compare_shadow_results(
-        artifact_path(manifest_path, "verification_plan"),
-        artifact_path(manifest_path, "compare_result"),
-        method=args.method,
-        sample=args.sample,
-        precision=args.precision,
-    )
-    return 0
+    manifest = load_manifest(manifest_path)
+    repo_root = _root_from_manifest(manifest, manifest_path)
+    with _project_root_context(repo_root):
+        plan_path = artifact_path(manifest_path, "verification_plan")
+        try:
+            require_fresh_plan(
+                plan_path,
+                root=repo_root,
+                project=manifest["project"],
+            )
+            result = compare_shadow_results(
+                plan_path,
+                artifact_path(manifest_path, "shadow_run_result"),
+                artifact_path(manifest_path, "compare_result"),
+                method=args.method,
+                sample=args.sample,
+                precision=args.precision,
+            )
+        except ArtifactFormatError as exc:
+            raise SystemExit(str(exc)) from None
+    status = result["verification_status"]
+    if status in {"passed", "passed_with_warnings"}:
+        return 0
+    if status == "inconclusive":
+        return 2
+    return 1
 
 
 def _replan(

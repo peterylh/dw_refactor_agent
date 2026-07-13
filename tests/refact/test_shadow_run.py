@@ -5,11 +5,13 @@ import threading
 import time
 from datetime import datetime
 
+import pytest
 import sqlglot
 from sqlglot import exp
 from sqlglot.errors import ErrorLevel
 
 from dw_refactor_agent.lineage.job_dag import JobDAG
+from dw_refactor_agent.refactor.artifact_contract import ArtifactFormatError
 from dw_refactor_agent.refactor.plan_artifact import write_verification_plan
 from dw_refactor_agent.refactor.shadow_rewrite import (
     RewriteContext,
@@ -77,6 +79,39 @@ def _rewrite_with_context(
 def _write_json(path, data):
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2))
+
+
+def _provenance(plan_path):
+    persisted_plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    return {
+        "workspace_fingerprint": persisted_plan["analysis_snapshot"][
+            "workspace_fingerprint"
+        ],
+        "plan_fingerprint": persisted_plan["plan_fingerprint"],
+    }
+
+
+def _analysis_snapshot():
+    return {
+        "partition": None,
+        "workspace_fingerprint": "sha256:workspace",
+    }
+
+
+def _write_shadow_cli_plan(plan_path):
+    return write_verification_plan(
+        plan_path,
+        {
+            "project": "shop",
+            "project_db": "shop_dm",
+            "qa_db": "shop_dm_qa",
+            "baseline_ddl": {},
+            "ddl_changes": [],
+            "jobs_to_run": [],
+            "verification": {"checks": []},
+            "analysis_snapshot": _analysis_snapshot(),
+        },
+    )
 
 
 def _write_shadow_project(tmp_path, project: str) -> None:
@@ -792,6 +827,7 @@ def test_run_shadow_plan_executes_self_contained(tmp_path, monkeypatch):
                 }
             ],
             "verification": {"checks": []},
+            "analysis_snapshot": _analysis_snapshot(),
         },
     )
     calls = []
@@ -808,10 +844,20 @@ def test_run_shadow_plan_executes_self_contained(tmp_path, monkeypatch):
         lambda sql, db="", qa=False: calls.append(("text", sql, db, qa)),
     )
 
-    result = run_shadow_plan(plan_path, output_path)
+    result = run_shadow_plan(
+        plan_path,
+        output_path,
+        provenance=_provenance(plan_path),
+    )
 
+    assert result["format_version"] == 1
     assert result["status"] == "completed"
     assert result["mode"] == "execute"
+    assert result["workspace_fingerprint"] == "sha256:workspace"
+    assert (
+        result["plan_fingerprint"]
+        == _provenance(plan_path)["plan_fingerprint"]
+    )
     assert result["job_count"] == 1
     assert result["summary"]["job_count"] == 1
     assert result["summary"]["failed_job_count"] == 0
@@ -876,6 +922,7 @@ def test_run_shadow_plan_persists_failed_job_result(tmp_path, monkeypatch):
             "verification": {
                 "checks": [{"table": "ads_sales_dashboard", "method": "count"}]
             },
+            "analysis_snapshot": _analysis_snapshot(),
         },
     )
 
@@ -893,7 +940,11 @@ def test_run_shadow_plan_persists_failed_job_result(tmp_path, monkeypatch):
         ),
     )
 
-    result = run_shadow_plan(plan_path, output_path)
+    result = run_shadow_plan(
+        plan_path,
+        output_path,
+        provenance=_provenance(plan_path),
+    )
 
     assert result["status"] == "failed"
     assert result["mode"] == "execute"
@@ -951,6 +1002,7 @@ def test_run_shadow_plan_timing_detail_records_invocation_timings(
                 }
             ],
             "verification": {"checks": []},
+            "analysis_snapshot": _analysis_snapshot(),
         },
     )
 
@@ -966,7 +1018,12 @@ def test_run_shadow_plan_timing_detail_records_invocation_timings(
         lambda sql, db="", qa=False: "",
     )
 
-    result = run_shadow_plan(plan_path, output_path, timing_detail=True)
+    result = run_shadow_plan(
+        plan_path,
+        output_path,
+        provenance=_provenance(plan_path),
+        timing_detail=True,
+    )
 
     phase_by_name = {phase["name"]: phase for phase in result["phases"]}
     job_result = phase_by_name["run_jobs"]["jobs"][0]
@@ -1030,11 +1087,21 @@ def test_shadow_run_cli_returns_nonzero_for_failed_result(
 ):
     plan_path = tmp_path / "verification" / "plan.json"
     output_path = tmp_path / "verification" / "shadow_run_result.json"
-    _write_json(plan_path, {"project": "shop"})
+    persisted_plan = _write_shadow_cli_plan(plan_path)
+    monkeypatch.setattr(
+        "dw_refactor_agent.refactor.shadow_run.require_fresh_plan",
+        lambda *args, **kwargs: persisted_plan,
+    )
 
     monkeypatch.setattr(
         "dw_refactor_agent.refactor.shadow_run.run_shadow_plan",
-        lambda plan, output, dry_run=False, timing_detail=False, parallel=1, batch_size=1: {
+        lambda plan,
+        output,
+        provenance,
+        dry_run=False,
+        timing_detail=False,
+        parallel=1,
+        batch_size=1: {
             "status": "failed",
             "timing_detail": timing_detail,
             "parallel": parallel,
@@ -1048,19 +1115,32 @@ def test_shadow_run_cli_returns_nonzero_for_failed_result(
 def test_shadow_run_cli_passes_timing_detail_flag(tmp_path, monkeypatch):
     plan_path = tmp_path / "verification" / "plan.json"
     output_path = tmp_path / "verification" / "shadow_run_result.json"
-    _write_json(plan_path, {"project": "shop"})
+    persisted_plan = _write_shadow_cli_plan(plan_path)
     calls = []
+    monkeypatch.setattr(
+        "dw_refactor_agent.refactor.shadow_run.require_fresh_plan",
+        lambda *args, **kwargs: persisted_plan,
+    )
 
     def fake_run_shadow_plan(
         plan,
         output,
+        provenance,
         dry_run=False,
         timing_detail=False,
         parallel=1,
         batch_size=1,
     ):
         calls.append(
-            (plan, output, dry_run, timing_detail, parallel, batch_size)
+            (
+                plan,
+                output,
+                provenance,
+                dry_run,
+                timing_detail,
+                parallel,
+                batch_size,
+            )
         )
         return {"status": "completed"}
 
@@ -1082,7 +1162,66 @@ def test_shadow_run_cli_passes_timing_detail_flag(tmp_path, monkeypatch):
         == 0
     )
 
-    assert calls == [(plan_path, output_path, False, True, 1, 1)]
+    assert calls == [
+        (
+            plan_path,
+            output_path,
+            {
+                "workspace_fingerprint": "sha256:workspace",
+                "plan_fingerprint": persisted_plan["plan_fingerprint"],
+            },
+            False,
+            True,
+            1,
+            1,
+        )
+    ]
+
+
+def test_run_shadow_plan_rejects_provenance_not_from_plan(
+    tmp_path, monkeypatch
+):
+    plan_path = tmp_path / "verification" / "plan.json"
+    output_path = tmp_path / "verification" / "shadow_run_result.json"
+    _write_shadow_cli_plan(plan_path)
+    monkeypatch.setattr(
+        "dw_refactor_agent.refactor.shadow_run.execute_shadow_plan",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("mismatched provenance must block execution")
+        ),
+    )
+
+    with pytest.raises(ArtifactFormatError, match="does not match"):
+        run_shadow_plan(
+            plan_path,
+            output_path,
+            provenance={
+                "workspace_fingerprint": "sha256:other-workspace",
+                "plan_fingerprint": "sha256:other-plan",
+            },
+        )
+
+
+def test_shadow_run_standalone_cli_rejects_stale_plan(tmp_path, monkeypatch):
+    plan_path = tmp_path / "verification" / "plan.json"
+    _write_shadow_cli_plan(plan_path)
+    monkeypatch.setattr(
+        "dw_refactor_agent.refactor.shadow_run.require_fresh_plan",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            ArtifactFormatError(
+                "stale_plan: workspace changed after analyze; run analyze again"
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        "dw_refactor_agent.refactor.shadow_run.run_shadow_plan",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("stale plan must block shadow execution")
+        ),
+    )
+
+    with pytest.raises(SystemExit, match="stale_plan.*analyze"):
+        main(["--plan", str(plan_path)])
 
 
 def test_run_shadow_plan_dry_run_persists_phase_summary(
@@ -1142,6 +1281,7 @@ def test_run_shadow_plan_dry_run_persists_phase_summary(
                 {"table": "dws_inventory_daily", "method": "row_compare"},
             ]
         },
+        "analysis_snapshot": _analysis_snapshot(),
     }
     write_verification_plan(plan_path, plan)
 
@@ -1149,7 +1289,18 @@ def test_run_shadow_plan_dry_run_persists_phase_summary(
         "dw_refactor_agent.refactor.shadow_run._project_root", lambda: tmp_path
     )
 
-    result = run_shadow_plan(plan_path, output_path, dry_run=True)
+    result = run_shadow_plan(
+        plan_path,
+        output_path,
+        provenance=_provenance(plan_path),
+        dry_run=True,
+    )
+    assert result["format_version"] == 1
+    assert result["workspace_fingerprint"] == "sha256:workspace"
+    assert (
+        result["plan_fingerprint"]
+        == _provenance(plan_path)["plan_fingerprint"]
+    )
 
     assert result["status"] == "dry_run"
     assert result["mode"] == "dry_run"
@@ -1245,6 +1396,7 @@ def test_run_shadow_plan_dry_run_prints_rewritten_task_ddl_targets(
                 }
             ],
             "verification": {"checks": []},
+            "analysis_snapshot": _analysis_snapshot(),
         },
     )
 
@@ -1252,7 +1404,12 @@ def test_run_shadow_plan_dry_run_prints_rewritten_task_ddl_targets(
         "dw_refactor_agent.refactor.shadow_run._project_root", lambda: tmp_path
     )
 
-    run_shadow_plan(plan_path, output_path, dry_run=True)
+    run_shadow_plan(
+        plan_path,
+        output_path,
+        provenance=_provenance(plan_path),
+        dry_run=True,
+    )
 
     stdout = capsys.readouterr().out
     assert "shop_dm.tmp_shadow_test" not in stdout

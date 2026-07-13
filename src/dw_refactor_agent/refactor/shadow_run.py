@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 import re
 import subprocess
 import sys
@@ -24,13 +23,22 @@ if str(_src_root) not in sys.path:
     sys.path.insert(0, str(_src_root))
 
 import dw_refactor_agent.config as config
-from dw_refactor_agent.config import PROJECT_ROOT, TEXT_ENCODING, get_mysql_cmd
+from dw_refactor_agent.config import PROJECT_ROOT, get_mysql_cmd
 from dw_refactor_agent.execution.model_config import ExecutionConfigError
 from dw_refactor_agent.execution.planner import ExecutionPlanner
 from dw_refactor_agent.execution.sql_executor import ShadowSqlExecutor
 from dw_refactor_agent.execution.thread_pool import shutdown_executor
 from dw_refactor_agent.lineage.job_dag import JobDAG
-from dw_refactor_agent.refactor.plan_artifact import load_verification_plan
+from dw_refactor_agent.refactor.artifact_contract import (
+    FORMAT_VERSION,
+    ArtifactFormatError,
+    atomic_write_json,
+)
+from dw_refactor_agent.refactor.plan_artifact import (
+    load_persisted_verification_plan,
+    load_verification_plan,
+    require_fresh_plan,
+)
 from dw_refactor_agent.refactor.shadow_manifest import (
     PrefillMode,
     compile_shadow_manifest,
@@ -1678,6 +1686,7 @@ def run_shadow_plan(
     plan_path: Path,
     output_path: Path,
     *,
+    provenance: dict,
     dry_run: bool = False,
     timing_detail: bool = False,
     parallel: int = 1,
@@ -1686,7 +1695,31 @@ def run_shadow_plan(
     """Run or dry-run a validation plan and write the execution result."""
     plan_path = Path(plan_path)
     output_path = Path(output_path)
+    workspace_digest = provenance.get("workspace_fingerprint")
+    plan_digest = provenance.get("plan_fingerprint")
+    for field, value in (
+        ("workspace_fingerprint", workspace_digest),
+        ("plan_fingerprint", plan_digest),
+    ):
+        if not isinstance(value, str) or not value.startswith("sha256:"):
+            raise ArtifactFormatError(
+                f"shadow-run provenance {field} must be a SHA-256 digest"
+            )
     plan = load_verification_plan(plan_path)
+    expected_workspace = (plan.get("analysis_snapshot") or {}).get(
+        "workspace_fingerprint"
+    )
+    expected_plan = plan.get("plan_fingerprint")
+    if workspace_digest != expected_workspace:
+        raise ArtifactFormatError(
+            "shadow-run provenance workspace_fingerprint does not match "
+            "the verification plan"
+        )
+    if plan_digest != expected_plan:
+        raise ArtifactFormatError(
+            "shadow-run provenance plan_fingerprint does not match the "
+            "verification plan"
+        )
     result = execute_shadow_plan(
         plan,
         dry_run=dry_run,
@@ -1696,15 +1729,14 @@ def run_shadow_plan(
     )
     result.update(
         {
+            "format_version": FORMAT_VERSION,
             "plan": str(plan_path),
             "project": plan.get("project"),
+            "workspace_fingerprint": workspace_digest,
+            "plan_fingerprint": plan_digest,
         }
     )
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(
-        json.dumps(result, ensure_ascii=False, indent=2),
-        encoding=TEXT_ENCODING,
-    )
+    atomic_write_json(output_path, result)
     return result
 
 
@@ -1891,9 +1923,24 @@ def main(argv: list[str] | None = None) -> int:
         if args.output
         else plan_path.parent / "shadow_run_result.json"
     )
+    persisted_plan = load_persisted_verification_plan(plan_path)
+    try:
+        persisted_plan = require_fresh_plan(
+            plan_path,
+            root=_project_root(),
+            project=persisted_plan["project"],
+        )
+    except ArtifactFormatError as exc:
+        raise SystemExit(str(exc)) from None
+    snapshot = persisted_plan.get("analysis_snapshot") or {}
+    provenance = {
+        "workspace_fingerprint": snapshot.get("workspace_fingerprint"),
+        "plan_fingerprint": persisted_plan.get("plan_fingerprint"),
+    }
     result = run_shadow_plan(
         plan_path,
         output_path,
+        provenance=provenance,
         dry_run=args.dry_run,
         timing_detail=args.timing_detail,
         parallel=args.parallel,
