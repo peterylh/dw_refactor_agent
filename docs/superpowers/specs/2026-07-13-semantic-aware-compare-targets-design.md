@@ -252,6 +252,7 @@ Manifest 保存本次 run 的用户输入，不保存自动推导结果：
   "verification_intent": {
     "semantic_modes": {
       "dws_store_sales_daily": {
+        "table_id": "a6a0be8b-b889-4d1a-bb27-e6434f6aa88b",
         "mode": "equivalent",
         "semantic_context_fingerprint": "sha256:...",
         "confirmed_at": "2026-07-13T15:30:00+08:00"
@@ -263,7 +264,7 @@ Manifest 保存本次 run 的用户输入，不保存自动推导结果：
 
 Analyze 必须保留已有 `verification_intent`。声明 fingerprint 不匹配时不删除旧值，而是在 plan 中标记 stale 并按未声明处理，便于审计和重新确认。
 
-Manifest 不保存 `last_analyze`。Analyze 的输入快照属于派生 plan 的生成上下文，不属于用户意图。
+`table_id` 是该次用户选择所绑定的稳定表身份，供表重命名后的跨 run 精确匹配使用；它与 context fingerprint 一起属于声明上下文。Manifest 不保存 `last_analyze`。Analyze 的输入快照属于派生 plan 的生成上下文，不属于用户意图。
 
 ### 历史 run 决策复用
 
@@ -311,6 +312,7 @@ Fingerprint 输入包含所有可能影响本项目 plan 或 shadow 执行的源
 ```json
 {
   "dws_store_sales_daily": {
+    "table_id": "a6a0be8b-b889-4d1a-bb27-e6434f6aa88b",
     "declared_mode": null,
     "automatic_mode": null,
     "resolved_mode": "unknown",
