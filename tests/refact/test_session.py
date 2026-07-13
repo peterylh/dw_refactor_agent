@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 import pytest
 
 from dw_refactor_agent.config import core as config_core
+from dw_refactor_agent.refactor.artifact_contract import ArtifactFormatError
 from dw_refactor_agent.refactor.session import (
     artifact_path,
     create_run_manifest,
@@ -60,6 +61,7 @@ def test_create_run_manifest_writes_expected_layout(tmp_path):
         / "manifest.json"
     )
     assert manifest["run_id"] == "20260620_073000_shop"
+    assert manifest["format_version"] == 1
     assert manifest["project"] == "shop"
     assert manifest["root"] == str(tmp_path.resolve())
     assert manifest["base_git"] == {
@@ -150,3 +152,16 @@ def test_manifest_round_trip_and_run_root(tmp_path):
 
     assert load_manifest(manifest_path) == manifest
     assert run_root_from_manifest_path(manifest_path) == manifest_path.parent
+
+
+@pytest.mark.parametrize(
+    "payload", [{"project": "shop"}, {"format_version": 2}]
+)
+def test_load_manifest_rejects_missing_or_wrong_format_version(
+    tmp_path, payload
+):
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(str(payload).replace("'", '"'), encoding="utf-8")
+
+    with pytest.raises(ArtifactFormatError, match="manifest.*format_version"):
+        load_manifest(manifest_path)

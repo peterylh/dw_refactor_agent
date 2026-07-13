@@ -7,6 +7,11 @@ from datetime import datetime
 from pathlib import Path
 
 from dw_refactor_agent.config import TEXT_ENCODING, refactor_runs_dir
+from dw_refactor_agent.refactor.artifact_contract import (
+    FORMAT_VERSION,
+    atomic_write_json,
+    require_format_version,
+)
 
 
 def _refactor_runs_root(root: Path, project: str) -> Path:
@@ -56,6 +61,7 @@ def create_run_manifest(
         (run_root / dirname).mkdir(parents=True, exist_ok=True)
 
     manifest = {
+        "format_version": FORMAT_VERSION,
         "run_id": run_id,
         "project": project,
         "root": str(root),
@@ -69,16 +75,15 @@ def create_run_manifest(
 
 
 def write_manifest(manifest_path: Path, manifest: dict) -> None:
-    manifest_path = Path(manifest_path)
-    manifest_path.parent.mkdir(parents=True, exist_ok=True)
-    manifest_path.write_text(
-        json.dumps(manifest, ensure_ascii=False, indent=2),
-        encoding=TEXT_ENCODING,
-    )
+    atomic_write_json(Path(manifest_path), manifest)
 
 
 def load_manifest(manifest_path: Path) -> dict:
-    return json.loads(Path(manifest_path).read_text(encoding=TEXT_ENCODING))
+    manifest = json.loads(
+        Path(manifest_path).read_text(encoding=TEXT_ENCODING)
+    )
+    require_format_version(manifest, "manifest")
+    return manifest
 
 
 def run_root_from_manifest_path(manifest_path: Path) -> Path:

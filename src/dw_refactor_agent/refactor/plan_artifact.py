@@ -9,6 +9,13 @@ from copy import deepcopy
 from pathlib import Path
 
 from dw_refactor_agent.config import TEXT_ENCODING
+from dw_refactor_agent.refactor.artifact_contract import (
+    FORMAT_VERSION,
+    ArtifactFormatError,
+    atomic_write_json,
+    require_format_version,
+    sha256_json,
+)
 
 _SAFE_TABLE_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_$]*$")
 
@@ -22,6 +29,23 @@ def _validate_table_name(table_name: str) -> str:
 
 def _sha256(content: bytes) -> str:
     return hashlib.sha256(content).hexdigest()
+
+
+def calculate_plan_fingerprint(persisted_plan: dict) -> str:
+    """Hash a persisted plan while excluding its own digest field."""
+    canonical_plan = deepcopy(persisted_plan)
+    canonical_plan.pop("plan_fingerprint", None)
+    return sha256_json(canonical_plan)
+
+
+def validate_plan_fingerprint(persisted_plan: dict) -> None:
+    """Reject a plan whose persisted content was edited after writing."""
+    expected = persisted_plan.get("plan_fingerprint")
+    actual = calculate_plan_fingerprint(persisted_plan)
+    if expected != actual:
+        raise ArtifactFormatError(
+            "verification plan plan_fingerprint mismatch; run analyze again"
+        )
 
 
 def write_verification_plan(plan_path: Path, plan: dict) -> dict:
@@ -52,12 +76,11 @@ def write_verification_plan(plan_path: Path, plan: dict) -> dict:
 
     persisted = deepcopy(plan)
     persisted.pop("baseline_ddl", None)
+    persisted["format_version"] = FORMAT_VERSION
     persisted["baseline_ddl_refs"] = refs
+    persisted["plan_fingerprint"] = calculate_plan_fingerprint(persisted)
     plan_path.parent.mkdir(parents=True, exist_ok=True)
-    plan_path.write_text(
-        json.dumps(persisted, ensure_ascii=False, indent=2),
-        encoding=TEXT_ENCODING,
-    )
+    atomic_write_json(plan_path, persisted)
     for stale_path in ddl_dir.glob("*.sql"):
         if stale_path not in expected_paths:
             stale_path.unlink()
@@ -83,10 +106,9 @@ def _resolved_reference_path(
     return resolved
 
 
-def load_verification_plan(plan_path: Path) -> dict:
-    """Load references, verify their bytes, and materialize baseline DDL."""
+def _materialize_baseline_ddl(plan_path: Path, plan: dict) -> dict:
+    """Verify referenced DDL bytes and return decoded text by table."""
     plan_path = Path(plan_path)
-    plan = json.loads(plan_path.read_text(encoding=TEXT_ENCODING))
     if "baseline_ddl" in plan:
         raise ValueError(
             "legacy verification plan contains embedded baseline_ddl; "
@@ -144,6 +166,23 @@ def load_verification_plan(plan_path: Path) -> dict:
                 f"{reference_path}"
             ) from exc
 
+    return ddl_by_table
+
+
+def load_persisted_verification_plan(plan_path: Path) -> dict:
+    """Load and validate the exact persisted plan representation."""
+    plan_path = Path(plan_path)
+    plan = json.loads(plan_path.read_text(encoding=TEXT_ENCODING))
+    require_format_version(plan, "verification plan")
+    validate_plan_fingerprint(plan)
+    _materialize_baseline_ddl(plan_path, plan)
+    return plan
+
+
+def load_verification_plan(plan_path: Path) -> dict:
+    """Load a validated plan and materialize referenced baseline DDL."""
+    plan_path = Path(plan_path)
+    plan = load_persisted_verification_plan(plan_path)
     executable = deepcopy(plan)
-    executable["baseline_ddl"] = ddl_by_table
+    executable["baseline_ddl"] = _materialize_baseline_ddl(plan_path, plan)
     return executable

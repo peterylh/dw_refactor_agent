@@ -3,7 +3,10 @@ import json
 
 import pytest
 
+from dw_refactor_agent.refactor.artifact_contract import ArtifactFormatError
 from dw_refactor_agent.refactor.plan_artifact import (
+    calculate_plan_fingerprint,
+    load_persisted_verification_plan,
     load_verification_plan,
     write_verification_plan,
 )
@@ -19,6 +22,14 @@ def _plan(ddl_by_table):
         "jobs_to_run": [],
         "verification": {"checks": []},
     }
+
+
+def _write_persisted_plan(path, payload):
+    persisted = {"format_version": 1, **payload}
+    persisted["plan_fingerprint"] = calculate_plan_fingerprint(persisted)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(persisted), encoding="utf-8")
+    return persisted
 
 
 def test_write_verification_plan_externalizes_exact_ddl_and_hashes_bytes(
@@ -38,6 +49,10 @@ def test_write_verification_plan_externalizes_exact_ddl_and_hashes_bytes(
     on_disk_plan = json.loads(plan_path.read_text(encoding="utf-8"))
 
     assert persisted == on_disk_plan
+    assert persisted["format_version"] == 1
+    assert persisted["plan_fingerprint"] == calculate_plan_fingerprint(
+        persisted
+    )
     assert "baseline_ddl" not in persisted
     assert persisted["baseline_ddl_refs"] == {
         "dwd_order": {
@@ -46,6 +61,16 @@ def test_write_verification_plan_externalizes_exact_ddl_and_hashes_bytes(
         }
     }
     assert ddl_text == ddl
+
+
+def test_load_persisted_plan_detects_plan_body_edit(tmp_path):
+    plan_path = tmp_path / "verification" / "plan.json"
+    persisted = write_verification_plan(plan_path, _plan({}))
+    persisted["qa_db"] = "tampered"
+    plan_path.write_text(json.dumps(persisted), encoding="utf-8")
+
+    with pytest.raises(ArtifactFormatError, match="plan_fingerprint"):
+        load_persisted_verification_plan(plan_path)
 
 
 def test_write_verification_plan_preserves_multiline_ddl_exactly(tmp_path):
@@ -136,16 +161,16 @@ def test_load_verification_plan_materializes_referenced_ddl(tmp_path):
 
 def test_load_verification_plan_accepts_empty_reference_map(tmp_path):
     plan_path = tmp_path / "plan.json"
-    plan_path.write_text('{"baseline_ddl_refs": {}}', encoding="utf-8")
+    _write_persisted_plan(plan_path, {"baseline_ddl_refs": {}})
 
     assert load_verification_plan(plan_path)["baseline_ddl"] == {}
 
 
 def test_load_verification_plan_rejects_legacy_embedded_ddl(tmp_path):
     plan_path = tmp_path / "plan.json"
-    plan_path.write_text(
-        json.dumps({"baseline_ddl": {}, "baseline_ddl_refs": {}}),
-        encoding="utf-8",
+    _write_persisted_plan(
+        plan_path,
+        {"baseline_ddl": {}, "baseline_ddl_refs": {}},
     )
 
     with pytest.raises(ValueError, match="legacy.*baseline_ddl.*analyze"):
@@ -176,9 +201,7 @@ def test_load_verification_plan_rejects_malformed_references(
     tmp_path, refs, expected_message
 ):
     plan_path = tmp_path / "plan.json"
-    plan_path.write_text(
-        json.dumps({"baseline_ddl_refs": refs}), encoding="utf-8"
-    )
+    _write_persisted_plan(plan_path, {"baseline_ddl_refs": refs})
 
     with pytest.raises(ValueError, match=expected_message):
         load_verification_plan(plan_path)
@@ -192,19 +215,16 @@ def test_load_verification_plan_rejects_unsafe_reference_paths(
     tmp_path, reference_path
 ):
     plan_path = tmp_path / "verification" / "plan.json"
-    plan_path.parent.mkdir()
-    plan_path.write_text(
-        json.dumps(
-            {
-                "baseline_ddl_refs": {
-                    "dwd_order": {
-                        "path": reference_path,
-                        "sha256": "a" * 64,
-                    }
+    _write_persisted_plan(
+        plan_path,
+        {
+            "baseline_ddl_refs": {
+                "dwd_order": {
+                    "path": reference_path,
+                    "sha256": "a" * 64,
                 }
             }
-        ),
-        encoding="utf-8",
+        },
     )
 
     with pytest.raises(ValueError, match="unsafe baseline DDL path"):
@@ -213,18 +233,16 @@ def test_load_verification_plan_rejects_unsafe_reference_paths(
 
 def test_load_verification_plan_rejects_missing_file(tmp_path):
     plan_path = tmp_path / "plan.json"
-    plan_path.write_text(
-        json.dumps(
-            {
-                "baseline_ddl_refs": {
-                    "dwd_order": {
-                        "path": "baseline_ddl/dwd_order.sql",
-                        "sha256": "a" * 64,
-                    }
+    _write_persisted_plan(
+        plan_path,
+        {
+            "baseline_ddl_refs": {
+                "dwd_order": {
+                    "path": "baseline_ddl/dwd_order.sql",
+                    "sha256": "a" * 64,
                 }
             }
-        ),
-        encoding="utf-8",
+        },
     )
 
     with pytest.raises(ValueError, match="dwd_order.*does not exist"):
@@ -238,6 +256,7 @@ def test_load_verification_plan_rejects_digest_mismatch(tmp_path):
         _plan({"dwd_order": "CREATE TABLE dwd_order (id INT);"}),
     )
     persisted["baseline_ddl_refs"]["dwd_order"]["sha256"] = "0" * 64
+    persisted["plan_fingerprint"] = calculate_plan_fingerprint(persisted)
     plan_path.write_text(json.dumps(persisted), encoding="utf-8")
 
     with pytest.raises(ValueError, match="dwd_order.*SHA-256 mismatch"):
