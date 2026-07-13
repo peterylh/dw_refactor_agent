@@ -10,7 +10,7 @@ from pathlib import Path
 
 from dw_refactor_agent.refactor.artifact_contract import ArtifactFormatError
 
-EXECUTION_MARKER_TABLE = "__dw_refactor_execution_marker"
+EXECUTION_MARKER_TABLE = "dw_refactor_execution_marker"
 
 
 def _lock_path(plan_path: Path) -> Path:

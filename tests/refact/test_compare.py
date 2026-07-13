@@ -429,7 +429,8 @@ def test_qa_execution_marker_binds_shared_database_to_shadow(monkeypatch):
     )
 
     assert connection.closed is True
-    assert "__dw_refactor_execution_marker" in cursor.executed[0]
+    assert "dw_refactor_execution_marker" in cursor.executed[0]
+    assert "__dw_refactor_execution_marker" not in cursor.executed[0]
 
 
 def test_qa_execution_marker_rejects_database_replaced_by_other_run(

@@ -1254,6 +1254,8 @@ def test_shadow_run_publishes_running_attempt_before_execution(
     assert result["phases"][-1]["name"] == "publish_execution_marker"
     assert result["execution_id"] in marker_sql[0]
     assert "CREATE TABLE IF NOT EXISTS" in marker_sql[0]
+    assert "shop_dm_qa.dw_refactor_execution_marker" in marker_sql[0]
+    assert "__dw_refactor_execution_marker" not in marker_sql[0]
 
 
 def test_shadow_run_fails_when_execution_marker_cannot_be_published(
