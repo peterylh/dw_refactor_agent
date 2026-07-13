@@ -7,6 +7,7 @@ import dw_refactor_agent.config as config
 from dw_refactor_agent.ddl_deriver.ddl_deriver import ColumnDef, TableDef
 from dw_refactor_agent.ddl_deriver.schema_ids import SchemaIdentityError
 from dw_refactor_agent.execution.planner import ExecutionPlanner
+from dw_refactor_agent.refactor.semantic_mode import SemanticResolution
 from dw_refactor_agent.refactor.shadow_manifest import (
     compile_shadow_manifest,
     manifest_summary,
@@ -2110,3 +2111,274 @@ def test_parse_partition_col_from_ddl_and_get_partition_col():
     assert parse_partition_col_from_ddl(ddl) == "order_date"
     assert get_partition_col("dwd_order", {"dwd_order": ddl}) == "order_date"
     assert get_partition_col("missing", {"dwd_order": ddl}) == ""
+
+
+def _semantic_record(table, mode, *, source="automatic", **extra):
+    record = {
+        "table_id": f"id-{table}",
+        "declared_mode": None,
+        "automatic_mode": "equivalent" if mode == "equivalent" else None,
+        "resolved_mode": mode,
+        "resolved_source": source,
+        "local_change_fingerprint": f"sha256:local-{table}",
+        "semantic_context_fingerprint": f"sha256:context-{table}",
+        "upstream_context": [],
+        "evidence": [],
+        "prod_table": table,
+        "qa_table": table,
+        "column_mapping": [],
+        "compare_blocker": None,
+    }
+    record.update(extra)
+    return record
+
+
+def _build_semantic_target_plan(
+    tmp_path,
+    monkeypatch,
+    *,
+    direct_tables,
+    all_tables,
+    edges,
+    resolution,
+):
+    project_dir = tmp_path / "demo"
+    (project_dir / "mid" / "models").mkdir(parents=True)
+    (project_dir / "mid" / "tasks").mkdir()
+    for table in all_tables:
+        (project_dir / "mid" / "models" / f"{table}.yaml").write_text(
+            f"version: 2\nname: {table}\nlayer: DWS\n",
+            encoding="utf-8",
+        )
+        (project_dir / "mid" / "tasks" / f"{table}.sql").write_text(
+            f"INSERT INTO demo_dm.{table} SELECT 1;\n",
+            encoding="utf-8",
+        )
+    monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setitem(
+        config.PROJECT_CONFIG,
+        "demo",
+        {
+            "dir": "demo",
+            "db": "demo_dm",
+            "qa_db": "demo_dm_qa",
+            "catalog": "internal",
+        },
+    )
+    config.clear_model_metadata_cache()
+    downstream = sorted(set(all_tables) - set(direct_tables))
+    lineage_edges = [
+        {
+            "source": {"type": "column", "id": f"{source}.id"},
+            "target": {"type": "column", "id": f"{target}.id"},
+        }
+        for source, target in edges
+    ]
+    for table in direct_tables:
+        if not any(target == table for _source, target in edges):
+            lineage_edges.append(
+                {
+                    "source": {"type": "column", "id": "ods_source.id"},
+                    "target": {"type": "column", "id": f"{table}.id"},
+                }
+            )
+    return build_verification_plan(
+        "demo",
+        {
+            "changed_assets": {
+                "task_jobs": list(direct_tables),
+                "ddl_tables": [],
+                "model_tables": [],
+                "config_files": [],
+            },
+            "affected_scope": {
+                "direct_tables": list(direct_tables),
+                "downstream_tables": downstream,
+                "assessment_tables": list(all_tables),
+                "assessment_tasks": list(all_tables),
+                "anchor_tables": downstream,
+            },
+        },
+        lineage_data={"edges": lineage_edges},
+        semantic_resolution=resolution,
+    )
+
+
+def test_semantic_equivalent_direct_table_stops_unchanged_downstream_jobs(
+    tmp_path, monkeypatch
+):
+    target_semantics = {
+        "dws_store_sales_daily": _semantic_record(
+            "dws_store_sales_daily", "equivalent"
+        ),
+        "ads_store_performance": _semantic_record(
+            "ads_store_performance", "equivalent"
+        ),
+        "dim_store_metric_snapshot": _semantic_record(
+            "dim_store_metric_snapshot", "equivalent"
+        ),
+    }
+    resolution = SemanticResolution(
+        target_semantics=target_semantics,
+        boundaries={
+            "authority": ["dws_store_sales_daily"],
+            "observational": [],
+        },
+        selected_tables=("dws_store_sales_daily",),
+        warnings=(),
+        inherited_declarations={},
+    )
+
+    plan = _build_semantic_target_plan(
+        tmp_path,
+        monkeypatch,
+        direct_tables=["dws_store_sales_daily"],
+        all_tables=list(target_semantics),
+        edges=[
+            ("dws_store_sales_daily", "ads_store_performance"),
+            ("dws_store_sales_daily", "dim_store_metric_snapshot"),
+        ],
+        resolution=resolution,
+    )
+
+    assert [job["job"] for job in plan["jobs_to_run"]] == [
+        "dws_store_sales_daily"
+    ]
+    assert plan["verification"]["anchor_tables"] == ["dws_store_sales_daily"]
+    assert {check["table"] for check in plan["verification"]["checks"]} == {
+        "dws_store_sales_daily"
+    }
+    assert plan["verification"]["target_semantics"] == target_semantics
+
+
+def test_semantic_unknown_path_uses_observational_leaf(tmp_path, monkeypatch):
+    warning = {
+        "type": "unknown_table_semantics",
+        "table": "dws_sales",
+        "message": "risk",
+    }
+    target_semantics = {
+        "dws_sales": _semantic_record(
+            "dws_sales", "unknown", source="default_unknown"
+        ),
+        "ads_sales": _semantic_record(
+            "ads_sales", "unknown", source="upstream_propagation"
+        ),
+    }
+    resolution = SemanticResolution(
+        target_semantics=target_semantics,
+        boundaries={"authority": [], "observational": ["ads_sales"]},
+        selected_tables=("dws_sales", "ads_sales"),
+        warnings=(warning,),
+        inherited_declarations={},
+    )
+
+    plan = _build_semantic_target_plan(
+        tmp_path,
+        monkeypatch,
+        direct_tables=["dws_sales"],
+        all_tables=list(target_semantics),
+        edges=[("dws_sales", "ads_sales")],
+        resolution=resolution,
+    )
+
+    assert [job["job"] for job in plan["jobs_to_run"]] == [
+        "dws_sales",
+        "ads_sales",
+    ]
+    assert plan["verification"]["anchor_tables"] == ["ads_sales"]
+    assert {check["table"] for check in plan["verification"]["checks"]} == {
+        "ads_sales"
+    }
+    assert warning in plan["verification"]["warnings"]
+
+
+def test_semantic_rename_checks_keep_prod_qa_and_column_mapping(
+    tmp_path, monkeypatch
+):
+    column_mapping = [
+        {
+            "column_id": COLUMN_ID,
+            "prod": "store_name",
+            "qa": "STORE_NAME",
+        }
+    ]
+    target_semantics = {
+        "dim_store": _semantic_record(
+            "dim_store",
+            "equivalent",
+            prod_table="dwd_store",
+            qa_table="dim_store",
+            column_mapping=column_mapping,
+        )
+    }
+    resolution = SemanticResolution(
+        target_semantics=target_semantics,
+        boundaries={"authority": ["dim_store"], "observational": []},
+        selected_tables=("dim_store",),
+        warnings=(),
+        inherited_declarations={},
+    )
+
+    plan = _build_semantic_target_plan(
+        tmp_path,
+        monkeypatch,
+        direct_tables=["dim_store"],
+        all_tables=["dim_store"],
+        edges=[],
+        resolution=resolution,
+    )
+
+    assert plan["verification"]["checks"] == [
+        {
+            "table": "dim_store",
+            "prod_table": "dwd_store",
+            "qa_table": "dim_store",
+            "method": "count",
+        },
+        {
+            "table": "dim_store",
+            "prod_table": "dwd_store",
+            "qa_table": "dim_store",
+            "method": "row_compare",
+            "column_mapping": column_mapping,
+        },
+    ]
+
+
+def test_equivalent_boundary_with_incomplete_mapping_is_blocked(
+    tmp_path, monkeypatch
+):
+    target_semantics = {
+        "dim_store": _semantic_record(
+            "dim_store",
+            "equivalent",
+            compare_blocker="complete stable column identity is required",
+        )
+    }
+    resolution = SemanticResolution(
+        target_semantics=target_semantics,
+        boundaries={"authority": ["dim_store"], "observational": []},
+        selected_tables=("dim_store",),
+        warnings=(),
+        inherited_declarations={},
+    )
+
+    plan = _build_semantic_target_plan(
+        tmp_path,
+        monkeypatch,
+        direct_tables=["dim_store"],
+        all_tables=["dim_store"],
+        edges=[],
+        resolution=resolution,
+    )
+
+    assert plan["verification"]["checks"] == []
+    assert plan["verification"]["data_anchor_status"] == "blocked"
+    assert plan["verification"]["metadata_errors"] == [
+        {
+            "table": "dim_store",
+            "field": "schema_identity",
+            "message": "complete stable column identity is required",
+        }
+    ]

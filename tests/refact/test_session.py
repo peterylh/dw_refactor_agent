@@ -5,10 +5,13 @@ from datetime import datetime, timezone
 import pytest
 
 from dw_refactor_agent.config import core as config_core
+from dw_refactor_agent.refactor.artifact_contract import ArtifactFormatError
 from dw_refactor_agent.refactor.session import (
     artifact_path,
     create_run_manifest,
+    load_historical_manifests,
     load_manifest,
+    resolve_manifest_path,
     run_root_from_manifest_path,
     write_manifest,
 )
@@ -60,6 +63,7 @@ def test_create_run_manifest_writes_expected_layout(tmp_path):
         / "manifest.json"
     )
     assert manifest["run_id"] == "20260620_073000_shop"
+    assert manifest["format_version"] == 1
     assert manifest["project"] == "shop"
     assert manifest["root"] == str(tmp_path.resolve())
     assert manifest["base_git"] == {
@@ -150,3 +154,186 @@ def test_manifest_round_trip_and_run_root(tmp_path):
 
     assert load_manifest(manifest_path) == manifest
     assert run_root_from_manifest_path(manifest_path) == manifest_path.parent
+
+
+def test_create_run_manifest_never_overwrites_same_second_run(tmp_path):
+    now = _local_datetime(2026, 7, 13, 12, 0, 0)
+
+    first_path, first = create_run_manifest(
+        tmp_path, "shop", now=now, git_info={"head": "first"}
+    )
+    second_path, second = create_run_manifest(
+        tmp_path, "shop", now=now, git_info={"head": "second"}
+    )
+
+    assert first_path != second_path
+    assert first["run_id"] == "20260713_120000_shop"
+    assert second["run_id"] == "20260713_120000_shop_01"
+    assert load_manifest(first_path)["base_git"]["head"] == "first"
+
+
+def test_artifact_path_rejects_manifest_path_escape(tmp_path):
+    manifest_path = tmp_path / "run" / "manifest.json"
+    write_manifest(
+        manifest_path,
+        {
+            "format_version": 1,
+            "run_id": "unsafe",
+            "project": "shop",
+            "root": str(tmp_path),
+            "artifacts": {"verification_plan": "../../outside.json"},
+        },
+    )
+
+    with pytest.raises(ArtifactFormatError, match="artifact path"):
+        load_manifest(manifest_path)
+
+
+@pytest.mark.parametrize(
+    "payload", [{"project": "shop"}, {"format_version": 2}]
+)
+def test_load_manifest_rejects_missing_or_wrong_format_version(
+    tmp_path, payload
+):
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(str(payload).replace("'", '"'), encoding="utf-8")
+
+    with pytest.raises(ArtifactFormatError, match="manifest.*format_version"):
+        load_manifest(manifest_path)
+
+
+def test_resolve_manifest_path_finds_unique_run_across_projects(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(
+        config_core,
+        "PROJECT_CONFIG",
+        {
+            "shop": {"dir": "warehouses/shop"},
+            "finance": {"dir": "warehouses/finance"},
+        },
+    )
+    manifest_path, _manifest = create_run_manifest(
+        tmp_path,
+        "shop",
+        now=_local_datetime(2026, 7, 13, 11, 32, 26),
+        git_info={},
+    )
+
+    assert (
+        resolve_manifest_path(
+            manifest_path=None,
+            run_id="20260713_113226_shop",
+            root=tmp_path,
+        )
+        == manifest_path
+    )
+
+
+def test_resolve_manifest_path_rejects_zero_and_multiple_matches(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(
+        config_core,
+        "PROJECT_CONFIG",
+        {
+            "one": {"dir": "warehouses/one"},
+            "two": {"dir": "warehouses/two"},
+        },
+    )
+    with pytest.raises(SystemExit, match="no run.*--manifest"):
+        resolve_manifest_path(
+            manifest_path=None, run_id="same_run", root=tmp_path
+        )
+
+    for project in ("one", "two"):
+        path = (
+            tmp_path
+            / "warehouses"
+            / project
+            / "artifacts/refactor_runs/same_run/manifest.json"
+        )
+        write_manifest(
+            path,
+            {
+                "format_version": 1,
+                "run_id": "same_run",
+                "project": project,
+                "root": str(tmp_path),
+                "artifacts": {},
+            },
+        )
+
+    with pytest.raises(SystemExit, match="multiple.*--manifest"):
+        resolve_manifest_path(
+            manifest_path=None, run_id="same_run", root=tmp_path
+        )
+
+
+def test_load_historical_manifests_skips_corrupt_history_with_diagnostic(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(
+        config_core,
+        "PROJECT_CONFIG",
+        {"shop": {"dir": "warehouses/shop"}},
+    )
+    current_path, current = create_run_manifest(
+        tmp_path,
+        "shop",
+        now=_local_datetime(2026, 7, 13, 12, 0, 0),
+        git_info={},
+    )
+    historical_path, historical = create_run_manifest(
+        tmp_path,
+        "shop",
+        now=_local_datetime(2026, 7, 12, 12, 0, 0),
+        git_info={},
+    )
+    historical["verification_intent"] = {
+        "semantic_modes": {"dws_sales": {"mode": "equivalent"}}
+    }
+    write_manifest(historical_path, historical)
+    corrupt_path = (
+        historical_path.parent.parent
+        / "20260711_120000_shop"
+        / "manifest.json"
+    )
+    corrupt_path.parent.mkdir()
+    corrupt_path.write_text("{broken", encoding="utf-8")
+
+    loaded, diagnostics = load_historical_manifests(current_path, current)
+
+    assert loaded == [(historical_path, historical)]
+    assert len(diagnostics) == 1
+    assert "20260711_120000_shop" in diagnostics[0]
+
+
+def test_historical_loader_skips_malformed_nested_intent(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(
+        config_core,
+        "PROJECT_CONFIG",
+        {"shop": {"dir": "warehouses/shop"}},
+    )
+    current_path, current = create_run_manifest(
+        tmp_path,
+        "shop",
+        now=_local_datetime(2026, 7, 13, 12, 0, 0),
+        git_info={},
+    )
+    malformed_path, malformed = create_run_manifest(
+        tmp_path,
+        "shop",
+        now=_local_datetime(2026, 7, 12, 12, 0, 0),
+        git_info={},
+    )
+    malformed["verification_intent"] = {"semantic_modes": []}
+    write_manifest(malformed_path, malformed)
+
+    loaded, diagnostics = load_historical_manifests(current_path, current)
+
+    assert loaded == []
+    assert len(diagnostics) == 1
+    assert "verification_intent.semantic_modes" in diagnostics[0]
