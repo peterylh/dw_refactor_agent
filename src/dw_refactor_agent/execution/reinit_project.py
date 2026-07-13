@@ -35,6 +35,7 @@ from dw_refactor_agent.config import (
     iter_project_asset_files,
     python_module_env,
 )
+from dw_refactor_agent.execution.date_window import resolve_etl_dates
 from dw_refactor_agent.execution.thread_pool import shutdown_executor
 
 
@@ -76,12 +77,26 @@ def get_etl_date_partitions(
     return sorted(all_dates)
 
 
-def _project_sql_files(project: str, asset_kind: str) -> list[Path]:
-    return iter_project_asset_files(project, asset_kind, "*.sql")
+def _project_sql_files(
+    project: str,
+    asset_kind: str,
+    *,
+    include_ods: bool = True,
+) -> list[Path]:
+    files = iter_project_asset_files(project, asset_kind, "*.sql")
+    if include_ods:
+        return files
+    return [path for path in files if "ods" not in path.parts]
 
 
-def _task_run_command(project: str, db_env: str, parallel: int) -> list[str]:
-    return [
+def _task_run_command(
+    project: str,
+    db_env: str,
+    parallel: int,
+    *,
+    refresh_dag: bool = True,
+) -> list[str]:
+    command = [
         sys.executable,
         "-u",
         "-m",
@@ -90,10 +105,12 @@ def _task_run_command(project: str, db_env: str, parallel: int) -> list[str]:
         project,
         "--db-env",
         db_env,
-        "--refresh-dag",
         "--parallel",
         str(parallel),
     ]
+    if refresh_dag:
+        command.append("--refresh-dag")
+    return command
 
 
 def _validate_etl_dates_requirement(
@@ -123,6 +140,17 @@ def main():
         help="ETL 日期列表 (YYYY-MM-DD), 不传则自动从 ODS 发现",
     )
     parser.add_argument(
+        "--etl-lookback-months",
+        type=int,
+        default=None,
+        help="展开截至 --etl-end-date 向前 N 个日历月的闭区间",
+    )
+    parser.add_argument(
+        "--etl-end-date",
+        default=None,
+        help="日期窗口结束日 (YYYY-MM-DD), 默认当天",
+    )
+    parser.add_argument(
         "--full-refresh",
         action="store_true",
         help="全量刷新模式 (启用 batch SQL 加速)",
@@ -130,11 +158,23 @@ def main():
     parser.add_argument(
         "--parallel", type=int, default=1, help="并行度, 默认 1 (串行)"
     )
+    parser.add_argument(
+        "--preserve-ods",
+        action="store_true",
+        help="保留已装载的 ODS，仅重建并计算 MID/ADS",
+    )
     args = parser.parse_args()
 
     project = args.project
     try:
-        _validate_etl_dates_requirement(project, args.etl_dates)
+        etl_dates = resolve_etl_dates(
+            args.etl_dates,
+            lookback_months=args.etl_lookback_months,
+            end_date=args.etl_end_date,
+        )
+        if args.etl_lookback_months is not None and not args.full_refresh:
+            raise ValueError("初始化日期窗口必须与 --full-refresh 一起使用")
+        _validate_etl_dates_requirement(project, etl_dates)
     except ValueError as e:
         print(f"错误: {e}")
         sys.exit(1)
@@ -151,11 +191,41 @@ def main():
     print(f"环境: {args.db_env}")
     print(f"并行度: {parallel}")
 
+    # ── Preflight: validate the complete downstream plan before DDL ──
+    print(f"\n{'=' * 60}")
+    print("Preflight: 在重建表前校验完整执行计划")
+    preflight_cmd = _task_run_command(
+        project,
+        args.db_env,
+        parallel,
+        refresh_dag=True,
+    )
+    preflight_cmd.append("--validate-only")
+    if args.full_refresh:
+        preflight_cmd.append("--full-refresh")
+    if etl_dates:
+        preflight_cmd += ["--etl-dates", *etl_dates]
+    preflight = subprocess.run(
+        preflight_cmd,
+        cwd=PROJECT_ROOT,
+        env=python_module_env(),
+    )
+    if preflight.returncode != 0:
+        print("\n[FAIL] 执行计划校验失败，尚未执行任何 DDL")
+        sys.exit(1)
+
     # ── Step 1: 重建所有表 ──
     print(f"\n{'=' * 60}")
-    print("Step 1: 重建所有表 (执行 ODS/MID/ADS DDL)")
+    if args.preserve_ods:
+        print("Step 1: 保留 ODS，重建 MID/ADS 表")
+    else:
+        print("Step 1: 重建所有表 (执行 ODS/MID/ADS DDL)")
 
-    ddl_files = _project_sql_files(project, "ddl")
+    ddl_files = _project_sql_files(
+        project,
+        "ddl",
+        include_ods=not args.preserve_ods,
+    )
     if not ddl_files:
         print("  DDL 目录中无 SQL 文件")
         sys.exit(1)
@@ -170,10 +240,15 @@ def main():
 
     # ── Step 2: 初始化 ODS (并行) ──
     print(f"\n{'=' * 60}")
-    print(f"Step 2: 初始化 ODS 层  (并行度: {parallel})")
+    if args.preserve_ods:
+        print("Step 2: 保留现有 ODS 层")
+    else:
+        print(f"Step 2: 初始化 ODS 层  (并行度: {parallel})")
 
     ods_files = _project_sql_files(project, "data")
-    if ods_files:
+    if args.preserve_ods:
+        print("  已保留现有 ODS，跳过仓库内 ODS 初始化 SQL")
+    elif ods_files:
         if parallel == 1:
             for f in ods_files:
                 print(f"  [ODS INIT] {f.name}")
@@ -212,19 +287,23 @@ def main():
         print(f"  {project} 项目无 ODS 初始化 SQL, 请手动导入 ODS 数据")
 
     # ── Step 3: 确定 ETL 日期 ──
-    cmd = _task_run_command(project, args.db_env, parallel)
+    cmd = _task_run_command(
+        project,
+        args.db_env,
+        parallel,
+        refresh_dag=False,
+    )
 
     if args.full_refresh:
         print(f"\n{'=' * 60}")
         print("Step 3: 全量刷新模式 (启用 batch SQL 加速)")
         cmd += ["--full-refresh"]
-        if args.etl_dates:
-            cmd += ["--etl-dates", *args.etl_dates]
+        if etl_dates:
+            cmd += ["--etl-dates", *etl_dates]
         print("  跳过逐日迭代, 按 batch SQL 执行")
     else:
         print(f"\n{'=' * 60}")
-        if args.etl_dates:
-            etl_dates = args.etl_dates
+        if etl_dates:
             print(f"Step 3: 使用指定的 ETL 日期 ({len(etl_dates)} 个)")
         else:
             print("Step 3: 自动发现 ODS 分区日期")

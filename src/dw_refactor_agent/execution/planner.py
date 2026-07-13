@@ -188,6 +188,7 @@ class ExecutionPlanner:
                 list(slice_values),
                 spec.slice_period,
             )
+            self._validate_historical_replay(spec, normalized)
             return [
                 TaskInvocation(
                     job_name=spec.job_name,
@@ -204,11 +205,16 @@ class ExecutionPlanner:
         sql_path = (
             spec.companion_path if strategy == "companion" else spec.sql_path
         )
+        params = (
+            self._full_refresh_window_params(slice_values)
+            if strategy == "companion"
+            else {}
+        )
         return [
             TaskInvocation(
                 job_name=spec.job_name,
                 sql_path=sql_path or spec.sql_path,
-                params={},
+                params=params,
                 full_refresh=True,
                 strategy=strategy,
             )
@@ -385,6 +391,42 @@ class ExecutionPlanner:
             seen.add(item)
             normalized.append(item)
         return normalized
+
+    def _full_refresh_window_params(
+        self,
+        slice_values: list[str],
+    ) -> dict[str, str]:
+        raw_window = self.warehouse_execution.get("full_refresh_window")
+        if not isinstance(raw_window, dict) or not slice_values:
+            return {}
+        start_param = str(raw_window.get("start_param") or "").strip()
+        end_param = str(raw_window.get("end_param") or "").strip()
+        if not start_param or not end_param:
+            raise ExecutionConfigError(
+                "warehouse execution.full_refresh_window requires "
+                "start_param and end_param"
+            )
+        normalized = self._normalize_slice_values(
+            [str(value) for value in slice_values],
+            "D",
+        )
+        if not normalized:
+            return {}
+        ordered = sorted(normalized)
+        parsed = [
+            datetime.strptime(value, "%Y-%m-%d").date() for value in ordered
+        ]
+        if any(
+            current - previous != timedelta(days=1)
+            for previous, current in zip(parsed, parsed[1:])
+        ):
+            raise ExecutionConfigError(
+                "full refresh window requires contiguous daily slice values"
+            )
+        return {
+            start_param: ordered[0],
+            end_param: ordered[-1],
+        }
 
 
 def _normalize_slice_value(value: str, period: str | None) -> str:

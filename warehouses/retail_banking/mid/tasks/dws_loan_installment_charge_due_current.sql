@@ -1,5 +1,8 @@
+SET @etl_date = COALESCE(@etl_date, CURDATE());
+
 -- Human-reviewed aggregation from dwd_loan_installment_charge
-TRUNCATE TABLE retail_banking_dm.dws_loan_installment_charge_due_current;
+DELETE FROM retail_banking_dm.dws_loan_installment_charge_due_current
+WHERE `due_date` = CAST(@etl_date AS DATE);
 
 INSERT INTO retail_banking_dm.dws_loan_installment_charge_due_current (
     `due_date`,
@@ -26,6 +29,7 @@ SELECT
     CURRENT_TIMESTAMP AS `etl_time`
 FROM retail_banking_dm.dwd_loan_installment_charge AS src
 WHERE src.`due_date` IS NOT NULL
+  AND DATE(src.`due_date`) = CAST(@etl_date AS DATE)
 GROUP BY
     DATE(src.`due_date`),
     src.`loan_id`,

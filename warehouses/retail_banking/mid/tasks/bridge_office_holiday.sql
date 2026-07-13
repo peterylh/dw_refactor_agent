@@ -1,5 +1,10 @@
+SET @etl_date = COALESCE(@etl_date, CURDATE());
+
 -- Human-reviewed semantic target: retail_banking_dm.bridge_office_holiday
-TRUNCATE TABLE retail_banking_dm.bridge_office_holiday;
+DELETE FROM retail_banking_dm.bridge_office_holiday
+WHERE `business_date` = CAST(@etl_date AS DATE);
+DELETE FROM retail_banking_dm.bridge_office_holiday
+WHERE `business_date` IS NULL;
 
 INSERT INTO retail_banking_dm.bridge_office_holiday (
     `holiday_id`,
@@ -14,4 +19,6 @@ SELECT
     CURRENT_TIMESTAMP AS `etl_time`
 FROM retail_banking_dm.ods_fineract_m_holiday_office AS src
 LEFT JOIN retail_banking_dm.ods_fineract_m_holiday AS date_parent
-    ON src.`holiday_id` = date_parent.`id`;
+    ON src.`holiday_id` = date_parent.`id`
+WHERE DATE(date_parent.`from_date`) = CAST(@etl_date AS DATE)
+   OR DATE(date_parent.`from_date`) IS NULL;

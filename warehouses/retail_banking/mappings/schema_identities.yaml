@@ -3664,7 +3664,7 @@ tables:
       load_time: d2764e56-135d-4c05-ab76-a8fa1deab30e
       owner_id: ef7e47fb-2fca-4965-88d6-a91d7ff0a9c9
     table_id: 7e9a66dd-6ed5-44e3-ba2f-ad67b6833193
-  ods_fineract_m_external_asset_owner_loan_product_configurable_attributes:
+  ods_fineract_m_external_asset_owner_loan_product_config_11bc4520:
     columns:
       attribute_key: 43ac32b4-82d3-4619-b620-cb5fbc992aaf
       attribute_value: 3237fc95-44e5-43be-b639-3a379cadd52c
@@ -3713,7 +3713,7 @@ tables:
       total_outstanding_derived: fa607dd4-2cab-46fe-9ad4-62cc138632c3
       total_overpaid_derived: d875ca79-361e-49f0-9e26-7362a1ac418b
     table_id: 688ad3f6-9800-45e6-91c5-a557dab16c0e
-  ods_fineract_m_external_asset_owner_transfer_journal_entry_mapping:
+  ods_fineract_m_external_asset_owner_transfer_journal_en_0adfde70:
     columns:
       created_by: 69a84c30-dc11-4ef4-a27d-4fb6df6f2ac5
       created_on_utc: d0147e55-19c8-443c-9487-cb67e819bff8

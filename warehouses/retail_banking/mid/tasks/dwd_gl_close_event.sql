@@ -1,5 +1,10 @@
+SET @etl_date = COALESCE(@etl_date, CURDATE());
+
 -- Human-reviewed semantic target: retail_banking_dm.dwd_gl_close_event
-TRUNCATE TABLE retail_banking_dm.dwd_gl_close_event;
+DELETE FROM retail_banking_dm.dwd_gl_close_event
+WHERE `business_date` = CAST(@etl_date AS DATE);
+DELETE FROM retail_banking_dm.dwd_gl_close_event
+WHERE `business_date` IS NULL;
 
 INSERT INTO retail_banking_dm.dwd_gl_close_event (
     `id`,
@@ -26,4 +31,6 @@ SELECT
     src.`comments`,
     DATE(src.`closing_date`) AS `business_date`,
     CURRENT_TIMESTAMP AS `etl_time`
-FROM retail_banking_dm.ods_fineract_acc_gl_closure AS src;
+FROM retail_banking_dm.ods_fineract_acc_gl_closure AS src
+WHERE DATE(src.`closing_date`) = CAST(@etl_date AS DATE)
+   OR DATE(src.`closing_date`) IS NULL;

@@ -1,0 +1,29 @@
+SET @etl_end_date = COALESCE(@etl_end_date, CURDATE());
+SET @etl_start_date = COALESCE(@etl_start_date, @etl_end_date);
+
+-- Reviewed application metrics derived from retail_banking_dm.dws_account_transfer_daily
+TRUNCATE TABLE retail_banking_dm.ads_internal_transfer_kpi_daily;
+
+INSERT INTO retail_banking_dm.ads_internal_transfer_kpi_daily (
+    `stat_date`,
+    `from_office_id`,
+    `to_office_id`,
+    `transfer_type`,
+    `currency_code`,
+    `record_count`,
+    `total_amount`,
+    `average_amount`,
+    `etl_time`
+)
+SELECT
+    src.`stat_date`,
+    src.`from_office_id`,
+    src.`to_office_id`,
+    src.`transfer_type`,
+    src.`currency_code`,
+    src.`record_count` AS `record_count`,
+    src.`total_amount` AS `total_amount`,
+    (src.`total_amount`) / nullif((src.`record_count`), 0) AS `average_amount`,
+    CURRENT_TIMESTAMP AS `etl_time`
+FROM retail_banking_dm.dws_account_transfer_daily AS src
+WHERE (src.`stat_date` IS NULL OR (src.`stat_date` >= CAST(@etl_start_date AS DATE) AND src.`stat_date` <= CAST(@etl_end_date AS DATE)));

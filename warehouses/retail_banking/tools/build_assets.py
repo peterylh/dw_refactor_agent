@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import csv
 import fnmatch
+import hashlib
 import logging
 import re
 import subprocess
@@ -29,6 +30,7 @@ TEXT_ENCODING = "utf-8"
 UPSTREAM_REPOSITORY = "https://github.com/apache/fineract"
 SEMANTIC_SPEC_PATH = PROJECT_DIR / "semantic_specs/dim_dwd.yaml"
 _SEMANTIC_SPEC_CACHE: Optional[dict[str, dict]] = None
+MAX_DORIS_TABLE_NAME_LENGTH = 64
 
 
 @dataclass
@@ -1567,6 +1569,15 @@ def _semantic_specs() -> dict[str, dict]:
     return _SEMANTIC_SPEC_CACHE
 
 
+def _ods_table_name(source_table: str) -> str:
+    raw_name = f"ods_fineract_{source_table.lower()}"
+    if len(raw_name) <= MAX_DORIS_TABLE_NAME_LENGTH:
+        return raw_name
+    digest = hashlib.sha1(raw_name.encode("utf-8")).hexdigest()[:8]
+    prefix_length = MAX_DORIS_TABLE_NAME_LENGTH - len(digest) - 1
+    return f"{raw_name[:prefix_length]}_{digest}"
+
+
 def build_mapping_entry(table: TableSchema) -> MappingEntry:
     domain = classify_domain(table.name)
     kind = source_kind(table.name)
@@ -1635,7 +1646,7 @@ def build_mapping_entry(table: TableSchema) -> MappingEntry:
         grain = "source row"
     return MappingEntry(
         source_table=table.name,
-        ods_table=f"ods_fineract_{table.name.lower()}",
+        ods_table=_ods_table_name(table.name),
         business_area=domain.business_area,
         data_domain=domain.code,
         domain_name=domain.name,

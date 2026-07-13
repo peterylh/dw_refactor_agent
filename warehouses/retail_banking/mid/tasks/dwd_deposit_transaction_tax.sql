@@ -1,5 +1,10 @@
+SET @etl_date = COALESCE(@etl_date, CURDATE());
+
 -- Human-reviewed semantic target: retail_banking_dm.dwd_deposit_transaction_tax
-TRUNCATE TABLE retail_banking_dm.dwd_deposit_transaction_tax;
+DELETE FROM retail_banking_dm.dwd_deposit_transaction_tax
+WHERE `business_date` = CAST(@etl_date AS DATE);
+DELETE FROM retail_banking_dm.dwd_deposit_transaction_tax
+WHERE `business_date` IS NULL;
 
 INSERT INTO retail_banking_dm.dwd_deposit_transaction_tax (
     `id`,
@@ -18,4 +23,6 @@ SELECT
     CURRENT_TIMESTAMP AS `etl_time`
 FROM retail_banking_dm.ods_fineract_m_savings_account_transaction_tax_details AS src
 LEFT JOIN retail_banking_dm.ods_fineract_m_savings_account_transaction AS date_parent
-    ON src.`savings_transaction_id` = date_parent.`id`;
+    ON src.`savings_transaction_id` = date_parent.`id`
+WHERE DATE(date_parent.`transaction_date`) = CAST(@etl_date AS DATE)
+   OR DATE(date_parent.`transaction_date`) IS NULL;

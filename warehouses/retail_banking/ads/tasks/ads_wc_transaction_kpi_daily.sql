@@ -1,5 +1,8 @@
+SET @etl_date = COALESCE(@etl_date, CURDATE());
+
 -- Reviewed application metrics derived from retail_banking_dm.dws_wc_loan_transaction_daily
-TRUNCATE TABLE retail_banking_dm.ads_wc_transaction_kpi_daily;
+DELETE FROM retail_banking_dm.ads_wc_transaction_kpi_daily
+WHERE `stat_date` = CAST(@etl_date AS DATE);
 
 INSERT INTO retail_banking_dm.ads_wc_transaction_kpi_daily (
     `stat_date`,
@@ -18,4 +21,5 @@ SELECT
     src.`total_transaction_amount` AS `total_transaction_amount`,
     (src.`total_transaction_amount`) / nullif((src.`record_count`), 0) AS `average_transaction_amount`,
     CURRENT_TIMESTAMP AS `etl_time`
-FROM retail_banking_dm.dws_wc_loan_transaction_daily AS src;
+FROM retail_banking_dm.dws_wc_loan_transaction_daily AS src
+WHERE src.`stat_date` = CAST(@etl_date AS DATE);

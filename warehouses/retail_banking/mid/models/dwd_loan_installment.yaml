@@ -5,8 +5,14 @@ description: Schedule row is an accumulating installment fact and must include a
   fee and penalty states.
 table_type: accumulating_snapshot
 execution:
-  materialized: full
-  full_refresh_strategy: replace_all
+  materialized: incremental
+  full_refresh_strategy: companion
+  slice:
+    param: etl_date
+    column: business_date
+    period: D
+  late_arriving_policy: replay_original_and_current_business_dates
+  undated_row_policy: refresh_on_every_daily_run
 data_domain: '04'
 business_area: LOAN
 entities:

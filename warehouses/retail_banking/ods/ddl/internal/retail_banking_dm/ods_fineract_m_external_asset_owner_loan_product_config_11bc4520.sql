@@ -1,7 +1,7 @@
 -- ODS mirror of Apache Fineract m_external_asset_owner_loan_product_configurable_attributes (贷款与信贷)
-DROP TABLE IF EXISTS retail_banking_dm.ods_fineract_m_external_asset_owner_loan_product_configurable_attributes;
+DROP TABLE IF EXISTS retail_banking_dm.ods_fineract_m_external_asset_owner_loan_product_config_11bc4520;
 -- table_id: ebe5513a-e9eb-4d22-8a49-38c76393c8bc
-CREATE TABLE IF NOT EXISTS retail_banking_dm.ods_fineract_m_external_asset_owner_loan_product_configurable_attributes (
+CREATE TABLE IF NOT EXISTS retail_banking_dm.ods_fineract_m_external_asset_owner_loan_product_config_11bc4520 (
     -- column_id: bdd44d87-324c-47ad-9a59-0e51721a78ba
     `id` BIGINT NOT NULL COMMENT 'Internal ID',
     -- column_id: 17a30a56-732a-4567-a343-b4897daf88eb

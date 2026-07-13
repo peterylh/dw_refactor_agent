@@ -1,5 +1,10 @@
+SET @etl_date = COALESCE(@etl_date, CURDATE());
+
 -- Human-reviewed semantic target: retail_banking_dm.dwd_loan_restructure_event
-TRUNCATE TABLE retail_banking_dm.dwd_loan_restructure_event;
+DELETE FROM retail_banking_dm.dwd_loan_restructure_event
+WHERE `business_date` = CAST(@etl_date AS DATE);
+DELETE FROM retail_banking_dm.dwd_loan_restructure_event
+WHERE `business_date` IS NULL;
 
 INSERT INTO retail_banking_dm.dwd_loan_restructure_event (
     `id`,
@@ -36,4 +41,6 @@ SELECT
     src.`rejected_by_user_id`,
     DATE(src.`submitted_on_date`) AS `business_date`,
     CURRENT_TIMESTAMP AS `etl_time`
-FROM retail_banking_dm.ods_fineract_m_loan_reschedule_request AS src;
+FROM retail_banking_dm.ods_fineract_m_loan_reschedule_request AS src
+WHERE DATE(src.`submitted_on_date`) = CAST(@etl_date AS DATE)
+   OR DATE(src.`submitted_on_date`) IS NULL;

@@ -1,5 +1,10 @@
+SET @etl_date = COALESCE(@etl_date, CURDATE());
+
 -- Human-reviewed semantic target: retail_banking_dm.dwd_account_transfer_instruction
-TRUNCATE TABLE retail_banking_dm.dwd_account_transfer_instruction;
+DELETE FROM retail_banking_dm.dwd_account_transfer_instruction
+WHERE `business_date` = CAST(@etl_date AS DATE);
+DELETE FROM retail_banking_dm.dwd_account_transfer_instruction
+WHERE `business_date` IS NULL;
 
 INSERT INTO retail_banking_dm.dwd_account_transfer_instruction (
     `id`,
@@ -34,4 +39,6 @@ LEFT JOIN (
     FROM retail_banking_dm.ods_fineract_m_account_transfer_transaction
     GROUP BY `account_transfer_details_id`
 ) AS date_parent
-    ON src.`id` = date_parent.`account_transfer_details_id`;
+    ON src.`id` = date_parent.`account_transfer_details_id`
+WHERE DATE(date_parent.`business_date`) = CAST(@etl_date AS DATE)
+   OR DATE(date_parent.`business_date`) IS NULL;

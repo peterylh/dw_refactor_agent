@@ -1,5 +1,10 @@
+SET @etl_date = COALESCE(@etl_date, CURDATE());
+
 -- Human-reviewed semantic target: retail_banking_dm.dwd_loan_buy_down_fee_balance
-TRUNCATE TABLE retail_banking_dm.dwd_loan_buy_down_fee_balance;
+DELETE FROM retail_banking_dm.dwd_loan_buy_down_fee_balance
+WHERE `business_date` = CAST(@etl_date AS DATE);
+DELETE FROM retail_banking_dm.dwd_loan_buy_down_fee_balance
+WHERE `business_date` IS NULL;
 
 INSERT INTO retail_banking_dm.dwd_loan_buy_down_fee_balance (
     `id`,
@@ -38,4 +43,6 @@ SELECT
     src.`is_closed`,
     DATE(src.`date`) AS `business_date`,
     CURRENT_TIMESTAMP AS `etl_time`
-FROM retail_banking_dm.ods_fineract_m_loan_buy_down_fee_balance AS src;
+FROM retail_banking_dm.ods_fineract_m_loan_buy_down_fee_balance AS src
+WHERE DATE(src.`date`) = CAST(@etl_date AS DATE)
+   OR DATE(src.`date`) IS NULL;

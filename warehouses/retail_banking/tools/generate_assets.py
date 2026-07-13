@@ -604,17 +604,31 @@ def _supports_dwd_daily_slice(
     semantic_spec: dict,
     columns: list[dict],
 ) -> bool:
-    """Return whether rerunning one day cannot leave older slices stale."""
+    """Return whether a DWD target has a resolvable daily business date."""
     date_spec = semantic_spec.get("business_date") or {}
-    # Source business dates alone do not prove immutability: transactions can
-    # be reversed and statuses or amounts can change after their original
-    # business date.  Without a change watermark that identifies every
-    # affected historical slice, those models must remain full replacements.
-    # Current-state captures are safe because every row is deliberately
-    # assigned to the execution date and that one slice is replaced atomically.
-    return (
+    if (
         date_spec.get("kind") == "generated_snapshot"
         or date_spec.get("inherit_from") == "etl_context.etl_date"
+    ):
+        return True
+    if date_spec.get("inherit_from"):
+        return True
+    source_names = {str(column.get("name")) for column in columns}
+    return bool(date_spec.get("column") in source_names)
+
+
+def _full_refresh_window_setup() -> str:
+    return (
+        "SET @etl_end_date = COALESCE(@etl_end_date, CURDATE());\n"
+        "SET @etl_start_date = COALESCE(@etl_start_date, @etl_end_date);\n\n"
+    )
+
+
+def _full_refresh_window_predicate(date_expression: str) -> str:
+    return (
+        f"({date_expression} IS NULL OR ("
+        f"{date_expression} >= CAST(@etl_start_date AS DATE) AND "
+        f"{date_expression} <= CAST(@etl_end_date AS DATE)))"
     )
 
 
@@ -703,7 +717,7 @@ def _model(
         execution = {
             "materialized": "incremental",
             "full_refresh_strategy": (
-                "legacy_full_refresh" if is_etl_snapshot else "replay_slices"
+                "legacy_full_refresh" if is_etl_snapshot else "companion"
             ),
             "slice": {
                 "param": "etl_date",
@@ -717,6 +731,15 @@ def _model(
                     "snapshot_mode": "current_state_capture",
                     "historical_replay_supported": False,
                     "source_contract": "ODS current state at execution time",
+                }
+            )
+        else:
+            execution.update(
+                {
+                    "late_arriving_policy": (
+                        "replay_original_and_current_business_dates"
+                    ),
+                    "undated_row_policy": "refresh_on_every_daily_run",
                 }
             )
     else:
@@ -1044,6 +1067,7 @@ def _semantic_copy_task(
     mappings_by_source: dict[str, dict],
     business_date_output_column: str,
     enrichment: Optional[dict] = None,
+    full_refresh: bool = False,
 ) -> str:
     sensitivity = semantic_spec.get("sensitivity") or {}
     table_level = (
@@ -1097,26 +1121,40 @@ def _semantic_copy_task(
         and date_expression.upper() != "NULL"
         and _supports_dwd_daily_slice(semantic_spec, source_schema["columns"])
     )
-    reset_sql = (
-        f"DELETE FROM {DATABASE}.{target_table}\n"
-        f"WHERE `{business_date_output_column}` = CAST(@etl_date AS DATE);"
-        if supports_daily_slice
-        else f"TRUNCATE TABLE {DATABASE}.{target_table};"
-    )
-    date_filter = (
-        f"\nWHERE {date_expression} = CAST(@etl_date AS DATE)"
-        if supports_daily_slice and not is_etl_snapshot
-        else ""
-    )
-    parameter_sql = (
-        (
+    if supports_daily_slice and full_refresh:
+        reset_sql = f"TRUNCATE TABLE {DATABASE}.{target_table};"
+        date_filter = "\nWHERE " + _full_refresh_window_predicate(
+            date_expression
+        )
+        parameter_sql = _full_refresh_window_setup()
+    elif supports_daily_slice:
+        reset_sql = (
+            f"DELETE FROM {DATABASE}.{target_table}\n"
+            f"WHERE `{business_date_output_column}` = "
+            "CAST(@etl_date AS DATE);"
+        )
+        if not is_etl_snapshot:
+            reset_sql += (
+                f"\nDELETE FROM {DATABASE}.{target_table}\n"
+                f"WHERE `{business_date_output_column}` IS NULL;"
+            )
+        date_filter = (
+            ""
+            if is_etl_snapshot
+            else (
+                f"\nWHERE {date_expression} = CAST(@etl_date AS DATE)"
+                f"\n   OR {date_expression} IS NULL"
+            )
+        )
+        parameter_sql = (
             "SET @etl_date = CURDATE();\n\n"
             if is_etl_snapshot
             else "SET @etl_date = COALESCE(@etl_date, CURDATE());\n\n"
         )
-        if supports_daily_slice
-        else ""
-    )
+    else:
+        reset_sql = f"TRUNCATE TABLE {DATABASE}.{target_table};"
+        date_filter = ""
+        parameter_sql = ""
     return (
         parameter_sql
         + f"-- Human-reviewed semantic target: {DATABASE}.{target_table}\n"
@@ -1153,7 +1191,10 @@ def _provision_entry_columns(source_columns: list[dict]) -> list[dict]:
 
 
 def _provision_entry_task(
-    *, source_table: str, source_columns: list[dict]
+    *,
+    source_table: str,
+    source_columns: list[dict],
+    full_refresh: bool = False,
 ) -> str:
     target_table = "dwd_loan_provision_entry"
     source_names = [column["name"] for column in source_columns]
@@ -1170,9 +1211,29 @@ def _provision_entry_task(
             "CURRENT_TIMESTAMP AS `etl_time`",
         ]
     )
+    date_expression = "DATE(run.`created_date`)"
+    if full_refresh:
+        parameter_sql = _full_refresh_window_setup()
+        reset_sql = f"TRUNCATE TABLE {DATABASE}.{target_table};"
+        date_filter = "\nWHERE " + _full_refresh_window_predicate(
+            date_expression
+        )
+    else:
+        parameter_sql = "SET @etl_date = COALESCE(@etl_date, CURDATE());\n\n"
+        reset_sql = (
+            f"DELETE FROM {DATABASE}.{target_table}\n"
+            "WHERE `provision_date` = CAST(@etl_date AS DATE);\n"
+            f"DELETE FROM {DATABASE}.{target_table}\n"
+            "WHERE `provision_date` IS NULL;"
+        )
+        date_filter = (
+            f"\nWHERE {date_expression} = CAST(@etl_date AS DATE)"
+            f"\n   OR {date_expression} IS NULL"
+        )
     return (
-        f"-- Provisioning detail enriched with its run header and references\n"
-        f"TRUNCATE TABLE {DATABASE}.{target_table};\n\n"
+        parameter_sql
+        + f"-- Provisioning detail enriched with its run header and references\n"
+        f"{reset_sql}\n\n"
         f"INSERT INTO {DATABASE}.{target_table} (\n    "
         + ",\n    ".join(f"`{name}`" for name in insert_names)
         + "\n)\nSELECT\n    "
@@ -1187,7 +1248,8 @@ def _provision_entry_task(
         + f"LEFT JOIN {DATABASE}.ods_fineract_acc_gl_account AS liability_account\n"
         + "    ON src.`liability_account` = liability_account.`id`\n"
         + f"LEFT JOIN {DATABASE}.ods_fineract_acc_gl_account AS expense_account\n"
-        + "    ON src.`expense_account` = expense_account.`id`;\n"
+        + "    ON src.`expense_account` = expense_account.`id`"
+        + f"{date_filter};\n"
     )
 
 
@@ -1256,7 +1318,9 @@ def generate_reviewed_mid(
     ddl_root = PROJECT_DIR / "mid/ddl"
     model_root = PROJECT_DIR / "mid/models"
     task_root = PROJECT_DIR / "mid/tasks"
-    _clear_generated_files([ddl_root, model_root, task_root])
+    _clear_generated_files(
+        [ddl_root, model_root, task_root, task_root / "full_refresh"]
+    )
     generated: dict[str, tuple[dict, list[dict]]] = {}
     semantic_specs, _aliases = _dim_dwd_specs()
     mappings_by_source = {item["source_table"]: item for item in mappings}
@@ -1349,16 +1413,14 @@ def generate_reviewed_mid(
                 description=f"{layer} generated from {mapping['source_table']}",
             ),
         )
-        _write_yaml(
-            model_root / f"{target}.yaml",
-            _model(
-                mapping=mapping,
-                table_name=target,
-                layer=layer,
-                columns=columns,
-                semantic_spec=semantic_spec,
-            ),
+        model = _model(
+            mapping=mapping,
+            table_name=target,
+            layer=layer,
+            columns=columns,
+            semantic_spec=semantic_spec,
         )
+        _write_yaml(model_root / f"{target}.yaml", model)
         task_sql = (
             _provision_entry_task(
                 source_table=mapping["ods_table"],
@@ -1378,6 +1440,31 @@ def generate_reviewed_mid(
             )
         )
         _write(task_root / f"{target}.sql", task_sql)
+        if model["execution"]["full_refresh_strategy"] == "companion":
+            full_refresh_task = (
+                _provision_entry_task(
+                    source_table=mapping["ods_table"],
+                    source_columns=source_columns,
+                    full_refresh=True,
+                )
+                if target == "dwd_loan_provision_entry"
+                else _semantic_copy_task(
+                    target_table=target,
+                    source_table=mapping["ods_table"],
+                    columns=source_columns,
+                    semantic_spec=semantic_spec,
+                    source_schema=source,
+                    schema_tables=schema_tables,
+                    mappings_by_source=mappings_by_source,
+                    business_date_output_column=business_date_output_column,
+                    enrichment=enrichment,
+                    full_refresh=True,
+                )
+            )
+            _write(
+                task_root / "full_refresh" / f"{target}_full_refresh.sql",
+                full_refresh_task,
+            )
         generated[target] = (mapping, columns)
         snapshot_policy = dimension_policy.get("snapshot_target") or {}
         if layer == "DIM" and snapshot_policy:
@@ -1632,6 +1719,36 @@ def _summary_task(spec: SummarySpec) -> str:
     )
 
 
+def _render_reviewed_dws_task(
+    *,
+    name: str,
+    source_names: list[str],
+    insert_names: list[str],
+    select_parts: list[str],
+    joins: str,
+    group_by_expressions: list[str],
+    parameter_sql: str,
+    reset_sql: str,
+    conditions: list[str],
+) -> str:
+    return (
+        parameter_sql
+        + f"-- Human-reviewed aggregation from {', '.join(source_names)}\n"
+        f"{reset_sql}\n\n"
+        f"INSERT INTO {DATABASE}.{name} (\n    "
+        + ",\n    ".join(f"`{item}`" for item in insert_names)
+        + "\n)\nSELECT\n    "
+        + ",\n    ".join(select_parts)
+        + f"\nFROM {DATABASE}.{source_names[0]} AS src\n"
+        + (f"{joins}\n" if joins else "")
+        + "WHERE "
+        + "\n  AND ".join(conditions)
+        + "\nGROUP BY\n    "
+        + ",\n    ".join(group_by_expressions)
+        + ";\n"
+    )
+
+
 def generate_summaries(
     *,
     generated_mid: dict[str, tuple[dict, list[dict]]],
@@ -1791,12 +1908,15 @@ def generate_summaries(
             "execution": (
                 {
                     "materialized": "incremental",
-                    "full_refresh_strategy": "replay_slices",
+                    "full_refresh_strategy": "companion",
                     "slice": {
                         "param": "etl_date",
                         "column": date_output,
                         "period": "D",
                     },
+                    "late_arriving_policy": (
+                        "replay_original_and_current_business_dates"
+                    ),
                 }
                 if supports_daily_slice
                 else {
@@ -1889,27 +2009,45 @@ def generate_summaries(
             if supports_daily_slice
             else f"TRUNCATE TABLE {DATABASE}.{name};"
         )
-        task = (
-            (
+        task = _render_reviewed_dws_task(
+            name=name,
+            source_names=source_names,
+            insert_names=insert_names,
+            select_parts=select_parts,
+            joins=joins,
+            group_by_expressions=group_by_expressions,
+            parameter_sql=(
                 "SET @etl_date = COALESCE(@etl_date, CURDATE());\n\n"
                 if supports_daily_slice
                 else ""
-            )
-            + f"-- Human-reviewed aggregation from {', '.join(source_names)}\n"
-            f"{reset_sql}\n\n"
-            f"INSERT INTO {DATABASE}.{name} (\n    "
-            + ",\n    ".join(f"`{item}`" for item in insert_names)
-            + "\n)\nSELECT\n    "
-            + ",\n    ".join(select_parts)
-            + f"\nFROM {DATABASE}.{source_names[0]} AS src\n"
-            + (f"{joins}\n" if joins else "")
-            + "WHERE "
-            + "\n  AND ".join(conditions)
-            + "\nGROUP BY\n    "
-            + ",\n    ".join(group_by_expressions)
-            + ";\n"
+            ),
+            reset_sql=reset_sql,
+            conditions=conditions,
         )
         _write(PROJECT_DIR / "mid/tasks" / f"{name}.sql", task)
+        if supports_daily_slice:
+            source_date_expression = f"DATE({source_expression(date_source, source_names, source_lookups)})"
+            full_conditions = [
+                f"{source_expression(date_source, source_names, source_lookups)} IS NOT NULL",
+                _full_refresh_window_predicate(source_date_expression),
+                *filter_sql(spec, source_lookups),
+            ]
+            _write(
+                PROJECT_DIR
+                / "mid/tasks/full_refresh"
+                / f"{name}_full_refresh.sql",
+                _render_reviewed_dws_task(
+                    name=name,
+                    source_names=source_names,
+                    insert_names=insert_names,
+                    select_parts=select_parts,
+                    joins=joins,
+                    group_by_expressions=group_by_expressions,
+                    parameter_sql=_full_refresh_window_setup(),
+                    reset_sql=f"TRUNCATE TABLE {DATABASE}.{name};",
+                    conditions=full_conditions,
+                ),
+            )
         result[name] = (mapping, columns)
     return len(result), result
 
@@ -1976,6 +2114,38 @@ def _ads_task(
     )
 
 
+def _render_reviewed_ads_task(
+    *,
+    ads_name: str,
+    dws_name: str,
+    insert_names: list[str],
+    select_parts: list[str],
+    grain_columns: list[str],
+    aggregate_query: bool,
+    parameter_sql: str,
+    reset_sql: str,
+    where_sql: str,
+) -> str:
+    return (
+        parameter_sql
+        + f"-- Reviewed application metrics derived from {DATABASE}.{dws_name}\n"
+        f"{reset_sql}\n\n"
+        f"INSERT INTO {DATABASE}.{ads_name} (\n    "
+        + ",\n    ".join(f"`{name}`" for name in insert_names)
+        + "\n)\nSELECT\n    "
+        + ",\n    ".join(select_parts)
+        + f"\nFROM {DATABASE}.{dws_name} AS src"
+        + where_sql
+        + (
+            "\nGROUP BY\n    "
+            + ",\n    ".join(f"src.`{name}`" for name in grain_columns)
+            if aggregate_query
+            else ""
+        )
+        + ";\n"
+    )
+
+
 def generate_ads(
     *,
     summaries: dict[str, tuple[dict, list[dict]]],
@@ -1986,7 +2156,9 @@ def generate_ads(
     ddl_root = PROJECT_DIR / "ads/ddl"
     model_root = PROJECT_DIR / "ads/models"
     task_root = PROJECT_DIR / "ads/tasks"
-    _clear_generated_files([ddl_root, model_root, task_root])
+    _clear_generated_files(
+        [ddl_root, model_root, task_root, task_root / "full_refresh"]
+    )
     payload = _dws_ads_specs()
     generated_names: set[str] = set()
     for spec in payload.get("ads") or []:
@@ -2114,12 +2286,15 @@ def generate_ads(
                 "execution": (
                     {
                         "materialized": "incremental",
-                        "full_refresh_strategy": "replay_slices",
+                        "full_refresh_strategy": "companion",
                         "slice": {
                             "param": "etl_date",
                             "column": str(spec["business_date"]["column"]),
                             "period": "D",
                         },
+                        "late_arriving_policy": (
+                            "replay_original_and_current_business_dates"
+                        ),
                     }
                     if supports_daily_slice
                     else {
@@ -2176,36 +2351,49 @@ def generate_ads(
             if supports_daily_slice
             else f"TRUNCATE TABLE {DATABASE}.{ads_name};"
         )
-        task_sql = (
-            (
+        task_sql = _render_reviewed_ads_task(
+            ads_name=ads_name,
+            dws_name=dws_name,
+            insert_names=insert_names,
+            select_parts=select_parts,
+            grain_columns=grain_columns,
+            aggregate_query=aggregate_query,
+            parameter_sql=(
                 "SET @etl_date = COALESCE(@etl_date, CURDATE());\n\n"
                 if supports_daily_slice
                 else ""
-            )
-            + f"-- Reviewed application metrics derived from {DATABASE}.{dws_name}\n"
-            f"{reset_sql}\n\n"
-            f"INSERT INTO {DATABASE}.{ads_name} (\n    "
-            + ",\n    ".join(f"`{name}`" for name in insert_names)
-            + "\n)\nSELECT\n    "
-            + ",\n    ".join(select_parts)
-            + f"\nFROM {DATABASE}.{dws_name} AS src"
-            + (
+            ),
+            reset_sql=reset_sql,
+            where_sql=(
                 f"\nWHERE src.`{slice_column}` = CAST(@etl_date AS DATE)"
                 if supports_daily_slice
                 else ""
-            )
-            + (
-                "\nGROUP BY\n    "
-                + ",\n    ".join(f"src.`{name}`" for name in grain_columns)
-                if aggregate_query
-                else ""
-            )
-            + ";\n"
+            ),
         )
         _write(
             task_root / f"{ads_name}.sql",
             task_sql,
         )
+        if supports_daily_slice:
+            _write(
+                task_root / "full_refresh" / f"{ads_name}_full_refresh.sql",
+                _render_reviewed_ads_task(
+                    ads_name=ads_name,
+                    dws_name=dws_name,
+                    insert_names=insert_names,
+                    select_parts=select_parts,
+                    grain_columns=grain_columns,
+                    aggregate_query=aggregate_query,
+                    parameter_sql=_full_refresh_window_setup(),
+                    reset_sql=f"TRUNCATE TABLE {DATABASE}.{ads_name};",
+                    where_sql=(
+                        "\nWHERE "
+                        + _full_refresh_window_predicate(
+                            f"src.`{slice_column}`"
+                        )
+                    ),
+                ),
+            )
         generated_names.add(ads_name)
     return len(generated_names), generated_names
 

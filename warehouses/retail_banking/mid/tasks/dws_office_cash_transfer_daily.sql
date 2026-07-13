@@ -1,5 +1,8 @@
+SET @etl_date = COALESCE(@etl_date, CURDATE());
+
 -- Human-reviewed aggregation from dwd_office_cash_transfer
-TRUNCATE TABLE retail_banking_dm.dws_office_cash_transfer_daily;
+DELETE FROM retail_banking_dm.dws_office_cash_transfer_daily
+WHERE `stat_date` = CAST(@etl_date AS DATE);
 
 INSERT INTO retail_banking_dm.dws_office_cash_transfer_daily (
     `stat_date`,
@@ -20,6 +23,7 @@ SELECT
     CURRENT_TIMESTAMP AS `etl_time`
 FROM retail_banking_dm.dwd_office_cash_transfer AS src
 WHERE src.`transaction_date` IS NOT NULL
+  AND DATE(src.`transaction_date`) = CAST(@etl_date AS DATE)
 GROUP BY
     DATE(src.`transaction_date`),
     src.`from_office_id`,

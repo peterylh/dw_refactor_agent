@@ -1,7 +1,7 @@
 -- ODS mirror of Apache Fineract m_external_asset_owner_transfer_journal_entry_mapping (总账与财务)
-DROP TABLE IF EXISTS retail_banking_dm.ods_fineract_m_external_asset_owner_transfer_journal_entry_mapping;
+DROP TABLE IF EXISTS retail_banking_dm.ods_fineract_m_external_asset_owner_transfer_journal_en_0adfde70;
 -- table_id: 989d2ba3-ff33-4e47-8f22-88a662b08524
-CREATE TABLE IF NOT EXISTS retail_banking_dm.ods_fineract_m_external_asset_owner_transfer_journal_entry_mapping (
+CREATE TABLE IF NOT EXISTS retail_banking_dm.ods_fineract_m_external_asset_owner_transfer_journal_en_0adfde70 (
     -- column_id: fa31dad0-a58e-47f0-a2cc-b511ffbf9d50
     `id` BIGINT NOT NULL COMMENT 'Internal ID',
     -- column_id: 8fcf0679-31a3-4cad-9531-446c13ee5819

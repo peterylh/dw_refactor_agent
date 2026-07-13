@@ -1,5 +1,10 @@
+SET @etl_date = COALESCE(@etl_date, CURDATE());
+
 -- Human-reviewed semantic target: retail_banking_dm.dwd_customer_transfer_event
-TRUNCATE TABLE retail_banking_dm.dwd_customer_transfer_event;
+DELETE FROM retail_banking_dm.dwd_customer_transfer_event
+WHERE `business_date` = CAST(@etl_date AS DATE);
+DELETE FROM retail_banking_dm.dwd_customer_transfer_event
+WHERE `business_date` IS NULL;
 
 INSERT INTO retail_banking_dm.dwd_customer_transfer_event (
     `id`,
@@ -24,4 +29,6 @@ SELECT
     src.`submitted_by`,
     DATE(src.`proposed_transfer_date`) AS `business_date`,
     CURRENT_TIMESTAMP AS `etl_time`
-FROM retail_banking_dm.ods_fineract_m_client_transfer_details AS src;
+FROM retail_banking_dm.ods_fineract_m_client_transfer_details AS src
+WHERE DATE(src.`proposed_transfer_date`) = CAST(@etl_date AS DATE)
+   OR DATE(src.`proposed_transfer_date`) IS NULL;

@@ -1,5 +1,8 @@
+SET @etl_date = COALESCE(@etl_date, CURDATE());
+
 -- Human-reviewed aggregation from dwd_cashier_transaction
-TRUNCATE TABLE retail_banking_dm.dws_cashier_transaction_daily;
+DELETE FROM retail_banking_dm.dws_cashier_transaction_daily
+WHERE `stat_date` = CAST(@etl_date AS DATE);
 
 INSERT INTO retail_banking_dm.dws_cashier_transaction_daily (
     `stat_date`,
@@ -20,6 +23,7 @@ SELECT
     CURRENT_TIMESTAMP AS `etl_time`
 FROM retail_banking_dm.dwd_cashier_transaction AS src
 WHERE src.`txn_date` IS NOT NULL
+  AND DATE(src.`txn_date`) = CAST(@etl_date AS DATE)
 GROUP BY
     DATE(src.`txn_date`),
     src.`cashier_id`,

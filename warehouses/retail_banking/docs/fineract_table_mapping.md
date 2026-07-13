@@ -110,10 +110,10 @@
 | m_entity_to_entity_mapping | ods_fineract_m_entity_to_entity_mapping | REFR 公共参考与元数据 | bridge_source | candidate | NONE | — | id |
 | m_external_asset_owner | ods_fineract_m_external_asset_owner | INVS 投资、份额与资产持有 | standalone_dimension | human_reviewed | DIM | dim_asset_owner | id |
 | m_external_asset_owner_journal_entry_mapping | ods_fineract_m_external_asset_owner_journal_entry_mapping | FINA 总账与财务 | bridge_source | human_reviewed | DWD | bridge_asset_owner_gl_entry | id |
-| m_external_asset_owner_loan_product_configurable_attributes | ods_fineract_m_external_asset_owner_loan_product_configurable_attributes | LOAN 贷款与信贷 | component_source | candidate | NONE | — | id |
+| m_external_asset_owner_loan_product_configurable_attributes | ods_fineract_m_external_asset_owner_loan_product_config_11bc4520 | LOAN 贷款与信贷 | component_source | candidate | NONE | — | id |
 | m_external_asset_owner_transfer | ods_fineract_m_external_asset_owner_transfer | INVS 投资、份额与资产持有 | snapshot_source | human_reviewed | DWD | dwd_loan_ownership_transfer | id |
 | m_external_asset_owner_transfer_details | ods_fineract_m_external_asset_owner_transfer_details | INVS 投资、份额与资产持有 | standalone_fact | human_reviewed | DWD | dwd_loan_ownership_transfer_detail | asset_owner_transfer_id, id |
-| m_external_asset_owner_transfer_journal_entry_mapping | ods_fineract_m_external_asset_owner_transfer_journal_entry_mapping | FINA 总账与财务 | bridge_source | candidate | NONE | — | id |
+| m_external_asset_owner_transfer_journal_entry_mapping | ods_fineract_m_external_asset_owner_transfer_journal_en_0adfde70 | FINA 总账与财务 | bridge_source | candidate | NONE | — | id |
 | m_external_asset_owner_transfer_loan_mapping | ods_fineract_m_external_asset_owner_transfer_loan_mapping | LOAN 贷款与信贷 | bridge_source | candidate | NONE | — | id |
 | m_external_event | ods_fineract_m_external_event | OPER 平台运营与安全 | security_excluded | security_reviewed | NONE | — | id |
 | m_external_event_configuration | ods_fineract_m_external_event_configuration | OPER 平台运营与安全 | rule_reference | candidate | NONE | — | type |

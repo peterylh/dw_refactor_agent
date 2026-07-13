@@ -1,5 +1,8 @@
+SET @etl_date = COALESCE(@etl_date, CURDATE());
+
 -- Reviewed application metrics derived from retail_banking_dm.dws_loan_disbursement_daily
-TRUNCATE TABLE retail_banking_dm.ads_loan_disbursement_kpi_daily;
+DELETE FROM retail_banking_dm.ads_loan_disbursement_kpi_daily
+WHERE `stat_date` = CAST(@etl_date AS DATE);
 
 INSERT INTO retail_banking_dm.ads_loan_disbursement_kpi_daily (
     `stat_date`,
@@ -20,4 +23,5 @@ SELECT
     (src.`total_principal`) / nullif((src.`record_count`), 0) AS `average_principal`,
     (src.`total_net_disbursal_amount`) / nullif((src.`total_principal`), 0) AS `net_disbursal_ratio`,
     CURRENT_TIMESTAMP AS `etl_time`
-FROM retail_banking_dm.dws_loan_disbursement_daily AS src;
+FROM retail_banking_dm.dws_loan_disbursement_daily AS src
+WHERE src.`stat_date` = CAST(@etl_date AS DATE);

@@ -179,6 +179,56 @@ def test_companion_uses_companion_sql_and_full_refresh_one(
     ]
 
 
+def test_companion_receives_configured_full_refresh_window(
+    monkeypatch,
+    tmp_path,
+):
+    sql_path, companion_path = _write_demo_project(
+        monkeypatch,
+        tmp_path,
+        model_config=(
+            "execution:\n"
+            "  materialized: incremental\n"
+            "  full_refresh_strategy: companion\n"
+        ),
+        warehouse_execution=(
+            "execution:\n"
+            "  default_slice:\n"
+            "    param: etl_date\n"
+            "    column: stat_date\n"
+            "    period: D\n"
+            "  full_refresh_window:\n"
+            "    start_param: etl_start_date\n"
+            "    end_param: etl_end_date\n"
+        ),
+        companion=True,
+    )
+    planner = ExecutionPlanner("demo")
+    spec = planner.task_spec("dwd_orders", sql_path)
+
+    assert planner.plan_full_refresh(
+        spec,
+        ["2025-03-02", "2025-02-28", "2025-03-01", "2025-03-02"],
+    ) == [
+        TaskInvocation(
+            job_name="dwd_orders",
+            sql_path=companion_path,
+            params={
+                "etl_start_date": "2025-02-28",
+                "etl_end_date": "2025-03-02",
+            },
+            full_refresh=True,
+            strategy="companion",
+        )
+    ]
+
+    with pytest.raises(ExecutionConfigError, match="contiguous"):
+        planner.plan_full_refresh(
+            spec,
+            ["2025-02-28", "2025-03-02"],
+        )
+
+
 def test_legacy_full_refresh_runs_normal_sql_once_with_full_refresh_one(
     monkeypatch,
     tmp_path,
@@ -290,6 +340,28 @@ def test_current_state_capture_rejects_historical_slice(monkeypatch, tmp_path):
 
     invocations = planner.plan_regular_run(spec, [date.today().isoformat()])
     assert invocations[0].params == {"etl_date": date.today().isoformat()}
+
+
+def test_full_refresh_replay_rejects_unsupported_historical_slice(
+    monkeypatch,
+    tmp_path,
+):
+    sql_path, _ = _write_demo_project(
+        monkeypatch,
+        tmp_path,
+        model_config=(
+            "execution:\n"
+            "  materialized: incremental\n"
+            "  historical_replay_supported: false\n"
+        ),
+    )
+    planner = ExecutionPlanner("demo")
+    spec = planner.task_spec("dwd_orders", sql_path)
+
+    with pytest.raises(
+        ExecutionConfigError, match="does not support historical replay"
+    ):
+        planner.plan_full_refresh(spec, ["2000-01-01"])
 
 
 def test_model_slice_overrides_project_default_slice(monkeypatch, tmp_path):
