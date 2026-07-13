@@ -26,6 +26,7 @@
 8. 用户对完全相同的语义上下文只确认一次，可跨 run 复用；资产或上游语义上下文改变后自动失效。
 9. 提供短 `--run` CLI，避免重复输入完整 manifest 路径。
 10. 用户确认后只轻量重建 plan；仅当 analyze 后工作区发生变化时要求完整重跑 analyze。
+11. Semantic-mode set、shadow-run 和 compare 都拒绝消费与当前工作区不一致的陈旧 plan；compare 还必须确认 QA 结果来自同一份 plan。
 
 ## 非目标
 
@@ -293,6 +294,7 @@ Plan 保存本次 analyze 的输入快照，用于保护轻量 replan：
 ```json
 {
   "format_version": 1,
+  "plan_fingerprint": "sha256:...",
   "analysis_snapshot": {
     "partition": "2024-12-31",
     "workspace_fingerprint": "sha256:..."
@@ -301,6 +303,8 @@ Plan 保存本次 analyze 的输入快照，用于保护轻量 replan：
 ```
 
 `analysis_snapshot.workspace_fingerprint` 覆盖 change analysis 使用的全部变化资产和配置。`semantic-mode set` 重新计算当前值；不一致时拒绝轻量 replan并要求完整 analyze。此前系统没有这一检查：analyze 每次从 baseline Git commit 重新计算 changed files，但 analyze 完成后的 shadow-run/compare 不会重新检查工作区。
+
+Fingerprint 输入包含所有可能影响本项目 plan 或 shadow 执行的源码文件：项目 DDL、task、full-refresh task、model、warehouse/config/业务语义文件、全局命名配置，以及 refactor/lineage/DDL derivation/execution/config/SQL rewrite 相关工具源码。生成 artifacts、文档、测试和无关项目文件不参与，避免无关变化使 plan 失效。新增、删除和重命名的相关文件都进入规范化 `{path, content_sha256}` 列表。
 
 `verification.target_semantics` 保存每张受影响物化表的完整解析结果：
 
@@ -333,6 +337,43 @@ Plan 保存本次 analyze 的输入快照，用于保护轻量 replan：
 - `changed`：不生成该表的直接检查。
 
 所有 check 必须能关联一个 `target_semantics` 条目；planner 在持久化前验证这一不变量，避免 checks 与语义来源重复存储后发生漂移。
+
+## Plan 新鲜度与执行溯源
+
+写入 plan 时同时计算并保存顶层 `plan_fingerprint`。其规范化输入为：移除顶层 `plan_fingerprint` 后的完整 plan JSON，以及按路径排序的所有外置 baseline DDL `{path, content_sha256}`；JSON 使用稳定 key 顺序和固定编码后计算 SHA-256。这样 fingerprint 覆盖持久化 plan 与引用内容，同时避免字段自引用。所有后续阶段执行前都必须验证：
+
+1. 当前相关工作区文件重新计算出的 fingerprint 与 `analysis_snapshot.workspace_fingerprint` 一致；
+2. 当前 plan 内容及 baseline DDL refs 与 `plan_fingerprint` 一致。
+
+不一致时阶段以 `stale_plan` 阻断，并要求重新 analyze；不能继续执行或仅给 warning。
+
+实际 shadow-run 完成后，`shadow_run_result.json` 保存：
+
+```json
+{
+  "format_version": 1,
+  "mode": "execute",
+  "status": "completed",
+  "workspace_fingerprint": "sha256:...",
+  "plan_fingerprint": "sha256:..."
+}
+```
+
+Dry-run 结果不能作为 compare 的执行凭据。Compare 除验证当前工作区和 plan 外，还必须读取 shadow-run result，要求：
+
+- `mode=execute` 且 `status=completed`；
+- shadow result 的 workspace fingerprint 等于 plan analysis snapshot；
+- shadow result 的 plan fingerprint 等于当前 plan。
+
+因此：
+
+- analyze 后修改工作区，semantic-mode set 和 shadow-run 都会拒绝；
+- shadow-run 后修改工作区，compare 会拒绝；
+- shadow-run 后重新生成或修改 plan，compare 会拒绝并要求重新 shadow-run；
+- semantic-mode set 轻量 replan 会生成新的 plan fingerprint，之前的 shadow result 自动失效；
+- 重新 analyze 后必须重新执行 shadow-run，旧 QA 执行结果不能复用。
+
+该机制解决本地工作区和 plan 漂移，不负责冻结外部生产数据库。生产锚点数据在 shadow-run 与 compare 之间被其他流程修改，仍属于独立的数据快照一致性问题。
 
 ## 验证状态与 warning
 
@@ -414,6 +455,8 @@ dw-refactor shadow-run --run 20260713_113226_shop
 dw-refactor compare --run 20260713_113226_shop --method all
 ```
 
+`shadow-run` 在重建 QA 前执行 workspace/plan freshness 检查。`compare` 在建立数据库连接前执行 workspace/plan freshness 和 shadow execution provenance 检查；任何一项失败都不得读写数据库。
+
 ## 产物格式
 
 - Manifest 和 plan 都使用新的必填 `format_version=1`；这是第一版显式版本化产物格式。
@@ -426,10 +469,12 @@ dw-refactor compare --run 20260713_113226_shop --method all
 1. 非法 mode、未知表或不属于受影响范围的表：拒绝写入。
 2. Manifest declaration fingerprint stale：按未声明处理并 warning，不静默复用。
 3. Replan 前 workspace fingerprint 变化：拒绝轻量 replan，提示完整 analyze。
-4. 用户声明 equivalent 但无法建立完整 schema/column mapping：blocked。
-5. 受影响图无法拓扑排序：沿用现有 DAG blocker，不生成不可信语义结果。
-6. 无 equivalent 下游边界：尽可能生成 observational leaf checks；checks 全部匹配时为 `passed_with_warnings`，没有 checks 或 observational mismatch 时为 `inconclusive`，不能给出确定性 passed。
-7. 历史 manifest 损坏或版本不匹配：跳过继承并输出 CLI 诊断；当前 manifest 出现相同问题时阻断。
+4. Shadow-run / compare 前 workspace 或 plan fingerprint 变化：以 `stale_plan` 阻断，不访问数据库。
+5. Compare 缺少同 plan 的已完成 execute shadow result：以 `stale_shadow_result` 阻断。
+6. 用户声明 equivalent 但无法建立完整 schema/column mapping：blocked。
+7. 受影响图无法拓扑排序：沿用现有 DAG blocker，不生成不可信语义结果。
+8. 无 equivalent 下游边界：尽可能生成 observational leaf checks；checks 全部匹配时为 `passed_with_warnings`，没有 checks 或 observational mismatch 时为 `inconclusive`，不能给出确定性 passed。
+9. 历史 manifest 损坏或版本不匹配：跳过继承并输出 CLI 诊断；当前 manifest 出现相同问题时阻断。
 
 ## 测试策略
 
@@ -449,6 +494,9 @@ dw-refactor compare --run 20260713_113226_shop --method all
 - stale 声明、损坏历史 manifest、当前 manifest 原子写入与其他表声明保留。
 - `--run` 唯一解析、零/多匹配和与 `--manifest` 互斥。
 - semantic-mode set 的 workspace stale 拒绝和轻量 replan。
+- analyze 后修改 task/DDL/model/config/tool source 时，shadow-run 在任何数据库写入前以 stale plan 拒绝。
+- shadow-run 后修改工作区或 plan 时，compare 在连接数据库前拒绝。
+- compare 拒绝 dry-run、失败执行或 plan fingerprint 不匹配的 shadow result。
 - rename table/column 的 prod/QA projection mapping。
 - 根据 target semantics 汇总 passed / passed_with_warnings / failed / inconclusive / blocked。
 - format version 不匹配时明确拒绝，不存在旧格式兼容分支。
@@ -476,7 +524,10 @@ make test
 6. 实际 shadow-run 和 compare 通过；结果为 `verification_status=passed`。
 7. 再创建相同资产差异的新 run，从历史 manifest 自动复用用户确认。
 8. 再修改一次 DWS SQL，fingerprint 改变，旧确认失效并重新变成 unknown warning。
-9. 验收完成后恢复临时 shop 资产，不把场景改动提交到功能分支。
+9. Analyze 后再次修改 DWS SQL，确认 shadow-run 在重建 QA 前以 stale plan 拒绝。
+10. 重新 analyze 和 shadow-run 后再次修改工作区，确认 compare 在连接数据库前拒绝。
+11. 恢复工作区并重新完成 analyze/shadow-run/compare，确认 plan/shadow fingerprints 一致且验证通过。
+12. 验收完成后恢复临时 shop 资产，不把场景改动提交到功能分支。
 
 同时使用纯表/字段重命名测试确认稳定 identity 能自动得到 equivalent，并能直接比较生产旧名与 QA 新名。
 
@@ -489,11 +540,14 @@ make test
 3. 历史 manifest 复用只接受相同 table identity、context fingerprint 和合法 mode，不引入额外永久 cache 文件。
 4. Fingerprint 不包含 mtime、run_id 或 base commit 字符串，且包含所有声明所需的祖先语义上下文。
 5. `analysis_snapshot` 位于 plan 而非 manifest，轻量 replan 在 workspace 变化时必定拒绝，不消费陈旧 analysis/lineage。
-6. Plan、baseline DDL refs、shadow-run、compare 的 format version 和持久化 schema 同步。
-7. Checks 不重复存储 authority，Compare 只依据 target semantics 解释等值断言和观察性结果。
-8. Warnings 只在 verification/result 顶层保存，target semantics 不保存重复 warning。
-9. 损坏或部分写入的当前 manifest 不会被静默覆盖。
-10. 临时 shop 验收资产完全恢复，Git diff 只包含预期功能、测试和文档。
+6. Workspace fingerprint 覆盖所有 plan/shadow 相关项目资产与工具源码，不包含 artifacts、docs、tests 和无关项目。
+7. Plan fingerprint 覆盖持久化 plan 和 baseline DDL refs；shadow result 准确绑定 workspace 和 plan fingerprints。
+8. Shadow-run / compare freshness 检查发生在任何数据库连接、重建或查询之前。
+9. Plan、baseline DDL refs、shadow-run、compare 的 format version 和持久化 schema 同步。
+10. Checks 不重复存储 authority，Compare 只依据 target semantics 解释等值断言和观察性结果。
+11. Warnings 只在 verification/result 顶层保存，target semantics 不保存重复 warning。
+12. 损坏或部分写入的当前 manifest 不会被静默覆盖。
+13. 临时 shop 验收资产完全恢复，Git diff 只包含预期功能、测试和文档。
 
 ## 验收标准
 
@@ -506,5 +560,6 @@ make test
 7. 相同语义上下文从历史 run manifests 复用确认，任何相关祖先或本地变化使确认失效。
 8. `--run` 和 `dw-refactor` 短入口可用，精确 `--manifest` 入口可用。
 9. 用户确认后只轻量 replan，工作区变化时安全拒绝。
-10. 聚焦测试、完整非 API 测试和 shop 真实 shadow-run/compare 验收全部通过。
-11. 新格式不包含旧产物兼容分支，持久化文件详细 Review 无未解决的高、中优先级问题。
+10. Shadow-run 和 compare 都拒绝陈旧 workspace/plan，compare 只消费同 plan 的已完成 execute shadow result。
+11. 聚焦测试、完整非 API 测试和 shop 真实 shadow-run/compare 验收全部通过。
+12. 新格式不包含旧产物兼容分支，持久化文件详细 Review 无未解决的高、中优先级问题。
