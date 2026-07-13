@@ -8,7 +8,7 @@
 
 系统需要区分以下三种语义模式，并将用户意图、自动判断和上游语义传播纳入最终 Compare 计划：
 
-- `equivalent`：预期基线与当前输出语义等价；比较本表和适用的下游边界。
+- `equivalent`：预期基线与当前输出语义等价；权威比较本表，并在此停止向未修改下游传播。
 - `changed`：预期本表输出语义变化；不要求本表与基线相等，继续在下游寻找验证边界。
 - `unknown`：系统和用户都未确认；继续做可用的下游观察性比较，但必须显著提示风险。
 
@@ -17,14 +17,15 @@
 ## 目标
 
 1. 语义等价的直接修改任务必须进入直接 Compare。
-2. 语义有意变化的表不做错误的等值断言，而是在下游验证声明的不变量。
-3. 无法判断时不阻断默认流程，继续验证下游并返回 warning。
-4. 用户声明优先，不强制填写原因。
-5. 自动判断只接受能够严格证明的有限等价场景，不让普通 SQL diff 或 LLM 猜测成为等价证明。
-6. 上游语义变化必须沿受影响 DAG 传播，避免把“本表 SQL 未变”误当成“本表输出等价”。
-7. 用户对完全相同的语义上下文只确认一次，可跨 run 复用；资产或上游语义上下文改变后自动失效。
-8. 提供短 `--run` CLI，避免重复输入完整 manifest 路径。
-9. 用户确认后只轻量重建 plan；仅当 analyze 后工作区发生变化时要求完整重跑 analyze。
+2. equivalent 表完成完整权威比较后成为传播停止边界，不无条件重算未修改下游。
+3. 语义有意变化的表不做错误的等值断言，而是在下游验证声明的不变量。
+4. 无法判断时不阻断默认流程，继续验证下游并返回 warning。
+5. 用户声明优先，不强制填写原因。
+6. 自动判断只接受能够严格证明的有限等价场景，不让普通 SQL diff 或 LLM 猜测成为等价证明。
+7. 上游语义变化必须沿受影响 DAG 传播，避免把“本表 SQL 未变”误当成“本表输出等价”。
+8. 用户对完全相同的语义上下文只确认一次，可跨 run 复用；资产或上游语义上下文改变后自动失效。
+9. 提供短 `--run` CLI，避免重复输入完整 manifest 路径。
+10. 用户确认后只轻量重建 plan；仅当 analyze 后工作区发生变化时要求完整重跑 analyze。
 
 ## 非目标
 
@@ -133,8 +134,38 @@ default unknown
 对于直接修改且 `resolved_mode=equivalent` 的表：
 
 - 本表加入权威 Compare；
-- 现有受影响下游边界仍加入 Compare，以验证对外输出；
-- 下游边界按上述传播规则解析，不因“任务文件未变”自动忽略上游语义上下文。
+- 本表成为该路径的语义传播停止边界；
+- task、DDL、model 均未修改且不涉及 rename 引用传播的下游，不进入 `jobs_to_run` 或 anchors；
+- 下游自身发生变化时，作为独立直接变化表按自己的 `resolved_mode` 决定是否执行和比较；
+- 用户显式要求额外验证的下游可以加入，但不属于默认最小验证范围。
+
+Equivalent 声明只有在本表能够执行完整 required Compare 时才能建立停止边界。若 schema mapping、时间锚点或其他比较元数据不完整，验证应 blocked，不能静默跳过本表后改用下游证明 equivalent。
+
+## 语义感知的作业选择
+
+`affected_scope` 继续保留直接变化表和完整下游影响范围，供评估、解释和 fingerprint 使用，但不再等同于执行范围。
+
+```text
+jobs_to_run = 所有可执行的直接变化任务
+            union changed/unknown 到选定下游边界之间的任务路径
+            union 用户显式要求的额外验证任务
+```
+
+以下关系不单独选择下游作业：
+
+```text
+直接变化 equivalent 表
+    -> 未修改下游任务
+```
+
+以下关系仍选择下游作业：
+
+- 上游为 `changed` 或 `unknown`，需要沿路径计算下游验证边界；
+- 下游 task、DDL 或 model 自身发生变化；
+- 表/字段 rename 导致下游任务引用发生变化；
+- 用户显式要求额外下游验证。
+
+因此，语义解析在 job selection 之前完成；执行值传播只作用于最终 `jobs_to_run`。未选择的下游继续按现有最小路由从生产读取，不创建 QA 输出。
 
 ## 表和字段重命名的直接 Compare
 
@@ -328,7 +359,7 @@ Unknown 不提供倾向性建议。Agent 或交互层中立展示三种选择：
 ```text
 dws_store_sales_daily 无法自动确认语义。
 
-- equivalent：预期新旧输出相同；比较本表和下游
+- equivalent：预期新旧输出相同；比较本表，未修改下游不重算
 - changed：预期本表语义变化；只验证下游
 - unknown：暂不判断；验证下游并保留风险 warning
 ```
@@ -402,6 +433,8 @@ dw-refactor compare --run 20260713_113226_shop --method all
 - 三态输入解析和非法值。
 - declared / upstream / automatic / default 的优先级。
 - `changed` 与 `unknown` 的多层下游传播和最近 equivalent 边界选择。
+- equivalent 直接表停止传播，未修改下游不进入 jobs 或 anchors。
+- 下游自身变化或 rename 引用传播时，即使上游 equivalent 也独立进入 jobs。
 - 未修改下游因 changed 上游降为 unknown。
 - 用户 equivalent 在 changed 上游后建立边界。
 - 纯注释/格式和稳定 ID 纯 rename 自动 equivalent。
@@ -433,11 +466,12 @@ make test
 1. 对 `dws_store_sales_daily.sql` 制造一个无法由第一版严格规则证明的等价 SQL 改写。
 2. `start` / `analyze --partition 2024-12-31` 后，该表解析为 unknown；DWS 不直接 Compare，下游 checks 为 observational，结果带 warning。
 3. 使用 `semantic-mode set --mode equivalent` 确认后不重跑 lineage/assessment，仅轻量 replan。
-4. 新 plan 同时包含 `dws_store_sales_daily` 的 required count/row_compare 和下游 required checks。
-5. 实际 shadow-run 和 compare 通过；结果为 `verification_status=passed`。
-6. 再创建相同资产差异的新 run，decision cache 自动复用用户确认。
-7. 再修改一次 DWS SQL，fingerprint 改变，旧确认失效并重新变成 unknown warning。
-8. 验收完成后恢复临时 shop 资产，不把场景改动提交到功能分支。
+4. 新 plan 包含 `dws_store_sales_daily` 的 required count/row_compare，并从 `jobs_to_run` 和 anchors 移除未修改的 `ads_store_performance`、`dim_store_metric_snapshot`。
+5. 再对一个下游任务制造独立变化，确认该下游按自己的 resolved mode 重新进入 jobs 和 checks。
+6. 实际 shadow-run 和 compare 通过；结果为 `verification_status=passed`。
+7. 再创建相同资产差异的新 run，decision cache 自动复用用户确认。
+8. 再修改一次 DWS SQL，fingerprint 改变，旧确认失效并重新变成 unknown warning。
+9. 验收完成后恢复临时 shop 资产，不把场景改动提交到功能分支。
 
 同时使用纯表/字段重命名测试确认稳定 identity 能自动得到 equivalent，并能直接比较生产旧名与 QA 新名。
 
@@ -457,13 +491,14 @@ make test
 
 ## 验收标准
 
-1. 直接修改的 equivalent 表和适用下游都生成 required checks。
+1. 直接修改的 equivalent 表生成 required checks，并阻止未修改下游进入 jobs 和 anchors。
 2. changed 表不生成直接等值检查，并在最近 equivalent 下游边界验证。
-3. unknown 不阻断默认流程，但最终结果明确为 warning，Agent 可请求用户三选一。
-4. 上游 changed/unknown 正确使未声明下游降为 unknown。
-5. 用户声明无需 reason，且只在 context fingerprint 有效时生效。
-6. 相同语义上下文跨 run 复用确认，任何相关祖先或本地变化使确认失效。
-7. `--run` 和 `dw-refactor` 短入口可用，旧 `--manifest` 保持可用。
-8. 用户确认后只轻量 replan，工作区变化时安全拒绝。
-9. 聚焦测试、完整非 API 测试和 shop 真实 shadow-run/compare 验收全部通过。
-10. 持久化文件详细 Review 无未解决的高、中优先级问题。
+3. 下游自身变化、rename 引用传播或用户显式选择时，独立进入执行和比较范围。
+4. unknown 不阻断默认流程，但最终结果明确为 warning，Agent 可请求用户三选一。
+5. 上游 changed/unknown 正确使未声明下游降为 unknown。
+6. 用户声明无需 reason，且只在 context fingerprint 有效时生效。
+7. 相同语义上下文跨 run 复用确认，任何相关祖先或本地变化使确认失效。
+8. `--run` 和 `dw-refactor` 短入口可用，旧 `--manifest` 保持可用。
+9. 用户确认后只轻量 replan，工作区变化时安全拒绝。
+10. 聚焦测试、完整非 API 测试和 shop 真实 shadow-run/compare 验收全部通过。
+11. 持久化文件详细 Review 无未解决的高、中优先级问题。
