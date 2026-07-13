@@ -47,7 +47,10 @@ def _configured_path(root: Path, raw_path: str) -> Path:
 
 
 def _project_input_paths(root: Path, project: str) -> set[Path]:
-    project_config = config.PROJECT_CONFIG.get(project)
+    rooted_config = config.core.load_project_config(root)
+    project_config = rooted_config.get(project) or config.PROJECT_CONFIG.get(
+        project
+    )
     if not project_config:
         raise ValueError(
             f"unknown project for workspace fingerprint: {project}"
@@ -77,6 +80,31 @@ def _tool_input_paths(root: Path) -> set[Path]:
         if source_dir.is_dir():
             paths.update(source_dir.rglob("*.py"))
     return paths
+
+
+def _runtime_package_root() -> Path:
+    return Path(__file__).resolve().parents[1]
+
+
+def runtime_tool_file_entries() -> list[dict]:
+    """Hash the tool source actually loaded by the current Python process."""
+    package_root = _runtime_package_root()
+    entries = {}
+    source_prefix = Path("src/dw_refactor_agent")
+    for relative_dir in TOOL_SOURCE_DIRECTORIES:
+        package_relative = Path(relative_dir).relative_to(source_prefix)
+        runtime_dir = package_root / package_relative
+        if not runtime_dir.is_dir():
+            continue
+        for path in runtime_dir.rglob("*.py"):
+            normalized = (
+                source_prefix / path.relative_to(package_root)
+            ).as_posix()
+            entries[normalized] = {
+                "path": normalized,
+                "content_sha256": _content_digest(path),
+            }
+    return [entries[path] for path in sorted(entries)]
 
 
 def _content_digest(path: Path) -> str:
@@ -111,8 +139,9 @@ def workspace_fingerprint(root: Path, project: str) -> str:
     """Hash all inputs that can affect analysis or shadow execution."""
     return sha256_json(
         {
-            "fingerprint_version": 1,
+            "fingerprint_version": 2,
             "project": project,
             "files": workspace_file_entries(root, project),
+            "runtime_tool_files": runtime_tool_file_entries(),
         }
     )

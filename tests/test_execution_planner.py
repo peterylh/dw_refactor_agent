@@ -120,6 +120,31 @@ def test_config_materialized_is_rejected(monkeypatch, tmp_path):
     assert "execution.materialized" in str(exc.value)
 
 
+def test_explicit_project_root_ignores_other_workspace_global_config(
+    monkeypatch, tmp_path
+):
+    _write_demo_project(
+        monkeypatch,
+        tmp_path,
+        model_config="execution:\n  materialized: incremental\n",
+    )
+    monkeypatch.setattr(
+        config.core,
+        "PROJECT_CONFIG",
+        {
+            "demo": {
+                "dir": "warehouses/wrong-workspace",
+                "execution": {"default_slice": {"period": "M"}},
+            }
+        },
+    )
+
+    planner = ExecutionPlanner("demo", project_root=tmp_path)
+
+    assert planner.project_dir == tmp_path / "warehouses" / "demo"
+    assert planner.warehouse_execution["default_slice"]["period"] == "D"
+
+
 def test_incremental_defaults_to_replay_slices_with_full_refresh_zero(
     monkeypatch,
     tmp_path,

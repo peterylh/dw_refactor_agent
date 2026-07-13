@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import re
 from copy import deepcopy
+from dataclasses import dataclass
 from pathlib import Path
 
 from dw_refactor_agent.config import TEXT_ENCODING
@@ -25,6 +26,14 @@ _SAFE_TABLE_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_$]*$")
 
 class StalePlanError(ArtifactFormatError):
     """Raised when the current workspace no longer matches an analysis."""
+
+
+@dataclass(frozen=True)
+class FreshPlanBundle:
+    """One validated executable plan bound to its analyzed asset root."""
+
+    root: Path
+    plan: dict
 
 
 _ANALYSIS_INPUT_NAMES = (
@@ -305,13 +314,14 @@ def load_persisted_verification_plan(plan_path: Path) -> dict:
     return plan
 
 
-def load_verification_plan(plan_path: Path) -> dict:
-    """Load a validated plan and materialize referenced baseline DDL."""
+def _materialize_validated_plan(plan_path: Path, persisted: dict) -> dict:
+    """Materialize DDL from one already validated persisted plan snapshot."""
     plan_path = Path(plan_path)
-    plan = load_persisted_verification_plan(plan_path)
-    executable = deepcopy(plan)
+    executable = deepcopy(persisted)
     try:
-        executable["baseline_ddl"] = _materialize_baseline_ddl(plan_path, plan)
+        executable["baseline_ddl"] = _materialize_baseline_ddl(
+            plan_path, persisted
+        )
     except ArtifactFormatError:
         raise
     except ValueError as exc:
@@ -321,11 +331,19 @@ def load_verification_plan(plan_path: Path) -> dict:
     return executable
 
 
+def load_verification_plan(plan_path: Path) -> dict:
+    """Load a validated plan and materialize referenced baseline DDL."""
+    plan_path = Path(plan_path)
+    persisted = load_persisted_verification_plan(plan_path)
+    return _materialize_validated_plan(plan_path, persisted)
+
+
 def require_fresh_plan(
     plan_path: Path,
     *,
     root: Path,
     project: str,
+    manifest: dict | None = None,
 ) -> dict:
     """Validate the plan, analyzed workspace, and every persisted input."""
     plan_path = Path(plan_path).resolve()
@@ -354,7 +372,7 @@ def require_fresh_plan(
         )
 
     manifest_path = plan_path.parent.parent / "manifest.json"
-    manifest = load_manifest(manifest_path)
+    manifest = manifest or load_manifest(manifest_path)
     if manifest.get("project") != project:
         raise ArtifactFormatError(
             "manifest project does not match the verification plan"
@@ -393,3 +411,19 @@ def require_fresh_plan(
         change_analysis=inputs["change_analysis"],
     )
     return persisted
+
+
+def require_fresh_plan_bundle(plan_path: Path) -> FreshPlanBundle:
+    """Return one executable plan snapshot after enforcing bundle freshness."""
+    plan_path = Path(plan_path).resolve()
+    manifest = load_manifest(plan_path.parent.parent / "manifest.json")
+    persisted = require_fresh_plan(
+        plan_path,
+        root=Path(manifest["root"]).expanduser().resolve(),
+        project=manifest["project"],
+        manifest=manifest,
+    )
+    return FreshPlanBundle(
+        root=Path(manifest["root"]).expanduser().resolve(),
+        plan=_materialize_validated_plan(plan_path, persisted),
+    )

@@ -479,6 +479,26 @@ def test_stable_id_pure_rename_is_automatically_equivalent():
     assert identity["qa_table"] == "dim_store"
 
 
+def test_table_rename_does_not_rewrite_qualified_external_source_table():
+    baseline = _assets(
+        ddl=_ddl("dwd_store", "store_id"),
+        task=(
+            "INSERT INTO shop_dm.dwd_store SELECT store_id FROM ext.dwd_store"
+        ),
+        model="version: 2\nname: dwd_store\nlayer: DWD\n",
+    )
+    current = _assets(
+        ddl=_ddl("dim_store", "STORE_ID"),
+        task=(
+            "INSERT INTO shop_dm.dim_store "
+            "SELECT store_id AS STORE_ID FROM ext.dim_store"
+        ),
+        model="version: 2\nname: dim_store\nlayer: DWD\n",
+    )
+
+    assert automatic_equivalence(baseline, current)[0] is None
+
+
 def test_field_rename_does_not_rewrite_unqualified_source_expression():
     baseline = _assets(
         ddl=_ddl("dwd_store", "store_id"),

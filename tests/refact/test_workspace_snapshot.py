@@ -21,7 +21,10 @@ def configured_root(tmp_path, monkeypatch):
     )
     warehouse = tmp_path / "warehouses" / "shop" / "warehouse.yaml"
     warehouse.parent.mkdir(parents=True)
-    warehouse.write_text("name: shop\n", encoding="utf-8")
+    warehouse.write_text(
+        "name: shop\nnaming_config: ../../naming_config.yaml\n",
+        encoding="utf-8",
+    )
     (tmp_path / "naming_config.yaml").write_text(
         "version: 2\n", encoding="utf-8"
     )
@@ -90,6 +93,34 @@ def test_mtime_does_not_change_workspace_fingerprint(configured_root):
     os.utime(path, (path.stat().st_atime + 10, path.stat().st_mtime + 10))
 
     assert workspace_fingerprint(configured_root, "shop") == before
+
+
+def test_loaded_runtime_tool_change_changes_workspace_fingerprint(
+    configured_root, monkeypatch
+):
+    monkeypatch.setattr(
+        snapshot_module,
+        "runtime_tool_file_entries",
+        lambda: [
+            {
+                "path": "src/dw_refactor_agent/refactor/run.py",
+                "content_sha256": "sha256:before",
+            }
+        ],
+    )
+    before = workspace_fingerprint(configured_root, "shop")
+    monkeypatch.setattr(
+        snapshot_module,
+        "runtime_tool_file_entries",
+        lambda: [
+            {
+                "path": "src/dw_refactor_agent/refactor/run.py",
+                "content_sha256": "sha256:after",
+            }
+        ],
+    )
+
+    assert workspace_fingerprint(configured_root, "shop") != before
 
 
 def test_artifacts_docs_tests_and_other_project_are_excluded(configured_root):

@@ -168,6 +168,8 @@ def _identity_blocker(message: str) -> dict:
         "table_id": "",
         "prod_table": "",
         "qa_table": "",
+        "prod_table_full": "",
+        "qa_table_full": "",
         "column_mapping": [],
         "rename_mapping": {},
         "table_rename_mapping": {},
@@ -264,6 +266,8 @@ def schema_identity_mapping(baseline_ddl: str, current_ddl: str) -> dict:
         "table_id": baseline_table_id,
         "prod_table": baseline_table.short_name,
         "qa_table": current_table.short_name,
+        "prod_table_full": baseline_table.full_name,
+        "qa_table_full": current_table.full_name,
         "column_mapping": column_mapping,
         "rename_mapping": rename_mapping,
         "table_rename_mapping": table_rename_mapping,
@@ -297,6 +301,46 @@ def _task_rename_usage_is_unambiguous(
         for identifier in statement.find_all(exp.Identifier)
     ]
 
+    def relation_parts(table: exp.Table) -> tuple[str, ...]:
+        return tuple(
+            str(part).strip().strip("`").casefold()
+            for part in (table.catalog, table.db, table.name)
+            if str(part).strip()
+        )
+
+    def expected_parts(full_name: str) -> tuple[str, ...]:
+        return tuple(
+            part.strip().strip("`").casefold()
+            for part in str(full_name).split(".")
+            if part.strip()
+        )
+
+    def is_mutation_target(table: exp.Table) -> bool:
+        node = table
+        parent = node.parent
+        if isinstance(parent, exp.Schema) and node.arg_key == "this":
+            node = parent
+            parent = parent.parent
+        return bool(
+            node.arg_key == "this"
+            and isinstance(parent, (exp.Insert, exp.Update, exp.Delete))
+        )
+
+    def renamed_table_usage_is_target(
+        identifier: exp.Identifier,
+        *,
+        renamed_name: str,
+        full_name: str,
+    ) -> bool:
+        if str(identifier.this).casefold() != renamed_name.casefold():
+            return True
+        table = identifier.parent
+        if not isinstance(table, exp.Table):
+            return False
+        if relation_parts(table) == expected_parts(full_name):
+            return True
+        return len(relation_parts(table)) == 1 and is_mutation_target(table)
+
     for old_name, new_name in identity["table_rename_mapping"].items():
         if old_name.casefold() == new_name.casefold():
             continue
@@ -317,6 +361,26 @@ def _task_rename_usage_is_unambiguous(
             isinstance(identifier.parent, exp.Table)
             and str(identifier.this).casefold() == old_name.casefold()
             for identifier in current_identifiers
+        ):
+            return False
+        if any(
+            not renamed_table_usage_is_target(
+                identifier,
+                renamed_name=old_name,
+                full_name=identity["prod_table_full"],
+            )
+            for identifier in baseline_identifiers
+            if isinstance(identifier.parent, exp.Table)
+        ):
+            return False
+        if any(
+            not renamed_table_usage_is_target(
+                identifier,
+                renamed_name=new_name,
+                full_name=identity["qa_table_full"],
+            )
+            for identifier in current_identifiers
+            if isinstance(identifier.parent, exp.Table)
         ):
             return False
 

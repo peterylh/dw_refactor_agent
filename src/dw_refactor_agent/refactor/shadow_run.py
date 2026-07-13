@@ -41,8 +41,8 @@ from dw_refactor_agent.refactor.execution_provenance import (
 )
 from dw_refactor_agent.refactor.plan_artifact import (
     load_persisted_verification_plan,
-    load_verification_plan,
     require_fresh_plan,
+    require_fresh_plan_bundle,
 )
 from dw_refactor_agent.refactor.shadow_manifest import (
     PrefillMode,
@@ -1292,11 +1292,11 @@ def _dry_run_phases(
     plan: dict,
     manifest: dict,
     *,
+    root: Path,
     timing_detail: bool = False,
     parallel: int = 1,
     batch_size: int = 1,
 ) -> list[dict]:
-    root = _project_root()
     baseline_ddl = plan.get("baseline_ddl", {})
     ddl_changes = plan.get("ddl_changes", [])
     jobs_to_run = plan.get("jobs_to_run", [])
@@ -1454,6 +1454,7 @@ def _dry_run_phases(
 def execute_shadow_plan(
     plan: dict,
     *,
+    root: Path,
     dry_run: bool = False,
     timing_detail: bool = False,
     parallel: int = 1,
@@ -1467,7 +1468,7 @@ def execute_shadow_plan(
     def finish_result(result: dict) -> dict:
         return _finish_timing(result, result_timer)
 
-    root = _project_root()
+    root = Path(root).resolve()
     planner = ExecutionPlanner(plan["project"], project_root=root)
     manifest, manifest_phase = _compile_shadow_manifest_phase(
         plan,
@@ -1486,10 +1487,11 @@ def execute_shadow_plan(
         )
 
     if dry_run:
-        _dry_run(plan, manifest)
+        _dry_run(plan, manifest, root=root)
         phases = [manifest_phase] + _dry_run_phases(
             plan,
             manifest,
+            root=root,
             timing_detail=timing_detail,
             parallel=parallel,
             batch_size=batch_size,
@@ -1710,7 +1712,8 @@ def run_shadow_plan(
             raise ArtifactFormatError(
                 f"shadow-run provenance {field} must be a SHA-256 digest"
             )
-    plan = load_verification_plan(plan_path)
+    bundle = require_fresh_plan_bundle(plan_path)
+    plan = bundle.plan
     expected_workspace = (plan.get("analysis_snapshot") or {}).get(
         "workspace_fingerprint"
     )
@@ -1748,6 +1751,7 @@ def run_shadow_plan(
         )
         result = execute_shadow_plan(
             plan,
+            root=bundle.root,
             dry_run=dry_run,
             timing_detail=timing_detail,
             parallel=parallel,
@@ -1789,13 +1793,12 @@ def run_shadow_plan(
     return result
 
 
-def _dry_run(plan: dict, manifest: dict) -> None:
+def _dry_run(plan: dict, manifest: dict, *, root: Path) -> None:
     qa_db = plan["qa_db"]
     prod_db = plan["project_db"]
     baseline_ddl = plan.get("baseline_ddl", {})
     ddl_changes = plan.get("ddl_changes", [])
     jobs_to_run = plan.get("jobs_to_run", [])
-    root = _project_root()
     planner = ExecutionPlanner(plan["project"], project_root=root)
 
     print(f"{'=' * 60}")

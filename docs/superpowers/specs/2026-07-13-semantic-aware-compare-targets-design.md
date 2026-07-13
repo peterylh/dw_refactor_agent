@@ -305,7 +305,7 @@ Plan 保存本次 analyze 的输入快照，用于保护轻量 replan：
 
 `analysis_snapshot.workspace_fingerprint` 覆盖 change analysis 使用的全部变化资产和配置。`semantic-mode set` 重新计算当前值；不一致时拒绝轻量 replan并要求完整 analyze。此前系统没有这一检查：analyze 每次从 baseline Git commit 重新计算 changed files，但 analyze 完成后的 shadow-run/compare 不会重新检查工作区。
 
-Fingerprint 输入包含所有可能影响本项目 plan 或 shadow 执行的源码文件：项目 DDL、task、full-refresh task、model、warehouse/config/业务语义文件、全局命名配置，以及 refactor/lineage/DDL derivation/execution/config/SQL rewrite 相关工具源码。生成 artifacts、文档、测试和无关项目文件不参与，避免无关变化使 plan 失效。新增、删除和重命名的相关文件都进入规范化 `{path, content_sha256}` 列表。
+Fingerprint v2 输入包含所有可能影响本项目 plan 或 shadow 执行的源码文件：项目 DDL、task、full-refresh task、model、warehouse/config/业务语义文件、全局命名配置，以及 refactor/lineage/DDL derivation/execution/config/SQL rewrite 相关工具源码。除项目 root 下的工具源码外，还单独摘要当前 Python 进程实际加载的工具 package 源码；跨 worktree 调用时，只要运行时代码不同就会 stale。生成 artifacts、文档、测试和无关项目文件不参与，避免无关变化使 plan 失效。新增、删除和重命名的相关文件都进入规范化 `{path, content_sha256}` 列表。
 
 `verification.target_semantics` 保存每张受影响物化表的完整解析结果：
 
@@ -344,8 +344,13 @@ Fingerprint 输入包含所有可能影响本项目 plan 或 shadow 执行的源
 
 写入 plan 时同时计算并保存顶层 `plan_fingerprint`。其规范化输入为：移除顶层 `plan_fingerprint` 后的完整 plan JSON，以及按路径排序的所有外置 baseline DDL `{path, content_sha256}`；JSON 使用稳定 key 顺序和固定编码后计算 SHA-256。这样 fingerprint 覆盖持久化 plan 与引用内容，同时避免字段自引用。所有后续阶段执行前都必须验证：
 
-1. 当前相关工作区文件重新计算出的 fingerprint 与 `analysis_snapshot.workspace_fingerprint` 一致；
+1. 当前相关工作区文件及实际加载工具源码重新计算出的 fingerprint 与 `analysis_snapshot.workspace_fingerprint` 一致；
 2. 当前 plan 内容及 baseline DDL refs 与 `plan_fingerprint` 一致。
+
+核心 API 使用 freshness 校验返回的同一个 `FreshPlanBundle`：其中 root 来自已校验
+manifest，执行 plan 是同一份已校验内存 snapshot。Shadow planner、manifest 编译、model
+和 task 读取只使用 bundle root；不得在 freshness 后重新从磁盘加载另一份 plan，也不得
+回退到进程全局 project root。
 
 不一致时阶段以 `stale_plan` 阻断，并要求重新 analyze；不能继续执行或仅给 warning。
 
@@ -489,15 +494,15 @@ dw-refactor compare --run 20260713_113226_shop --method all
 - 下游自身变化或 rename 引用传播时，即使上游 equivalent 也独立进入 jobs。
 - 未修改下游因 changed 上游降为 unknown。
 - 用户 equivalent 在 changed 上游后建立边界。
-- 纯注释/格式和稳定 ID 纯 rename 自动 equivalent。
+- 纯注释/格式和稳定 ID 纯 rename 自动 equivalent；目标 rename 不得归一化同名外部源表。
 - 普通 filter/JOIN/aggregate/SELECT-star 改写保持 automatic null。
 - local/context fingerprint 稳定性、无关变更不失效、祖先变化必失效。
 - 当前 run 声明和历史 run 声明的优先级与复用。
 - stale 声明、损坏历史 manifest、当前 manifest 原子写入与其他表声明保留。
 - `--run` 唯一解析、零/多匹配和与 `--manifest` 互斥。
 - semantic-mode set 的 workspace stale 拒绝和轻量 replan。
-- analyze 后修改 task/DDL/model/config/tool source 时，shadow-run 在任何数据库写入前以 stale plan 拒绝。
-- shadow-run 后修改工作区或 plan 时，compare 在连接数据库前拒绝。
+- analyze 后修改 task/DDL/model/config/tool source 时，shadow-run 在任何数据库写入前以 stale plan 拒绝；直接调用核心 API 同样拒绝。
+- shadow-run 后修改工作区或 plan 时，compare 在连接数据库前拒绝；直接调用核心 API 同样拒绝。
 - compare 拒绝 dry-run、失败执行或 plan fingerprint 不匹配的 shadow result。
 - rename table/column 的 prod/QA projection mapping。
 - 根据 target semantics 汇总 passed / passed_with_warnings / failed / inconclusive / blocked。

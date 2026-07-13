@@ -1,7 +1,9 @@
 import json
+from copy import deepcopy
 
 import pytest
 
+import dw_refactor_agent.refactor.compare as compare_module
 from dw_refactor_agent.refactor.artifact_contract import ArtifactFormatError
 from dw_refactor_agent.refactor.compare import (
     check_row_compare,
@@ -13,7 +15,12 @@ from dw_refactor_agent.refactor.compare import (
 from dw_refactor_agent.refactor.compare import (
     main as compare_main,
 )
-from dw_refactor_agent.refactor.plan_artifact import write_verification_plan
+from dw_refactor_agent.refactor.plan_artifact import (
+    analysis_input_fingerprints,
+    write_verification_plan,
+)
+from dw_refactor_agent.refactor.session import write_manifest
+from dw_refactor_agent.refactor.workspace_snapshot import workspace_fingerprint
 
 
 class FakeCursor:
@@ -32,6 +39,33 @@ class FakeCursor:
 
     def close(self):
         pass
+
+
+def test_compare_core_rejects_stale_bundle_before_shadow_or_database(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(
+        compare_module,
+        "require_fresh_plan_bundle",
+        lambda plan_path: (_ for _ in ()).throw(
+            ArtifactFormatError("core stale bundle")
+        ),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        compare_module,
+        "require_matching_shadow_result",
+        lambda *args: (_ for _ in ()).throw(
+            AssertionError("stale bundle must stop before shadow loading")
+        ),
+    )
+
+    with pytest.raises(ArtifactFormatError, match="core stale bundle"):
+        compare_shadow_results(
+            tmp_path / "verification/plan.json",
+            tmp_path / "verification/shadow_run_result.json",
+            tmp_path / "verification/compare_result.json",
+        )
 
 
 class FakeConn:
@@ -64,22 +98,57 @@ def _semantic_verification(checks, modes=None, warnings=None, **values):
 
 
 def _write_compare_plan(plan_path, verification):
-    return write_verification_plan(
-        plan_path,
-        {
-            "project": "shop",
-            "project_db": "shop_dm",
-            "qa_db": "shop_dm_qa",
-            "baseline_ddl": {},
-            "ddl_changes": [],
-            "jobs_to_run": [],
-            "verification": verification,
-            "analysis_snapshot": {
-                "partition": "2024-12-31",
-                "workspace_fingerprint": "sha256:workspace",
-            },
-        },
+    root = plan_path.parent.parent
+    warehouse_path = root / "warehouses" / "shop" / "warehouse.yaml"
+    warehouse_path.parent.mkdir(parents=True, exist_ok=True)
+    warehouse_path.write_text(
+        "name: shop\ndatabase: shop_dm\nqa_database: shop_dm_qa\n",
+        encoding="utf-8",
     )
+    manifest = {
+        "format_version": 1,
+        "run_id": "test-run",
+        "project": "shop",
+        "root": str(root),
+        "artifacts": {
+            "baseline_lineage": "baseline/lineage.json",
+            "current_lineage": "current/lineage.json",
+            "change_analysis": "analysis/change.json",
+            "verification_plan": "verification/plan.json",
+        },
+        "verification_intent": {"semantic_modes": {}},
+    }
+    write_manifest(root / "manifest.json", manifest)
+    inputs = {
+        "baseline_lineage": {"tables": [], "edges": []},
+        "current_lineage": {"tables": [], "edges": []},
+        "change_analysis": {"changed_files": []},
+    }
+    for artifact_name, value in inputs.items():
+        artifact_path = root / manifest["artifacts"][artifact_name]
+        artifact_path.parent.mkdir(parents=True, exist_ok=True)
+        artifact_path.write_text(json.dumps(value), encoding="utf-8")
+
+    plan = {
+        "project": "shop",
+        "project_db": "shop_dm",
+        "qa_db": "shop_dm_qa",
+        "baseline_ddl": {},
+        "ddl_changes": [],
+        "jobs_to_run": [],
+        "verification": deepcopy(verification),
+        "analysis_snapshot": {
+            "partition": "2024-12-31",
+            "workspace_fingerprint": workspace_fingerprint(root, "shop"),
+            "analysis_inputs": analysis_input_fingerprints(
+                manifest=manifest,
+                baseline_lineage=inputs["baseline_lineage"],
+                current_lineage=inputs["current_lineage"],
+                change_analysis=inputs["change_analysis"],
+            ),
+        },
+    }
+    return write_verification_plan(plan_path, plan)
 
 
 def _write_shadow_result(shadow_path, persisted_plan, **overrides):
@@ -88,7 +157,9 @@ def _write_shadow_result(shadow_path, persisted_plan, **overrides):
         "mode": "execute",
         "status": "completed",
         "execution_id": "execution-123",
-        "workspace_fingerprint": "sha256:workspace",
+        "workspace_fingerprint": persisted_plan["analysis_snapshot"][
+            "workspace_fingerprint"
+        ],
         "plan_fingerprint": persisted_plan["plan_fingerprint"],
     }
     result.update(overrides)
@@ -666,6 +737,14 @@ def test_compare_shadow_results_writes_compare_output(tmp_path, monkeypatch):
         "dw_refactor_agent.refactor.compare.run_checks", fake_run_checks
     )
     monkeypatch.setattr(
+        compare_module,
+        "load_verification_plan",
+        lambda plan_path: (_ for _ in ()).throw(
+            AssertionError("core must compare the validated bundle snapshot")
+        ),
+        raising=False,
+    )
+    monkeypatch.setattr(
         "dw_refactor_agent.refactor.compare.require_qa_execution_marker",
         lambda plan, shadow_result: None,
     )
@@ -684,7 +763,10 @@ def test_compare_shadow_results_writes_compare_output(tmp_path, monkeypatch):
     assert result["precision"] == 0.1
     assert result["format_version"] == 1
     assert result["shadow_execution_id"] == "execution-123"
-    assert result["workspace_fingerprint"] == "sha256:workspace"
+    assert (
+        result["workspace_fingerprint"]
+        == persisted_plan["analysis_snapshot"]["workspace_fingerprint"]
+    )
     assert result["plan_fingerprint"] == persisted_plan["plan_fingerprint"]
     assert result["shadow_result_fingerprint"].startswith("sha256:")
     assert "all_pass" not in result

@@ -35,8 +35,8 @@ from dw_refactor_agent.refactor.execution_provenance import (
 )
 from dw_refactor_agent.refactor.plan_artifact import (
     load_persisted_verification_plan,
-    load_verification_plan,
     require_fresh_plan,
+    require_fresh_plan_bundle,
 )
 
 DEFAULT_ROW_COMPARE_EXCLUDE_COLUMNS = ["etl_time"]
@@ -623,10 +623,9 @@ def run_checks(
 
 
 def require_matching_shadow_result(
-    plan_path: Path, shadow_result_path: Path
+    persisted_plan: dict, shadow_result_path: Path
 ) -> dict:
     """Require completed QA execution from the exact persisted plan."""
-    persisted_plan = load_persisted_verification_plan(plan_path)
     shadow_result_path = Path(shadow_result_path)
     shadow_result = read_json_object(shadow_result_path, "shadow-run result")
     require_format_version(shadow_result, "shadow-run result")
@@ -717,10 +716,9 @@ def compare_shadow_results(
     plan_path = Path(plan_path)
     shadow_result_path = Path(shadow_result_path)
     output_path = Path(output_path)
-    shadow_result = require_matching_shadow_result(
-        plan_path, shadow_result_path
-    )
-    plan = load_verification_plan(plan_path)
+    bundle = require_fresh_plan_bundle(plan_path)
+    plan = bundle.plan
+    shadow_result = require_matching_shadow_result(plan, shadow_result_path)
     with project_execution_lock(plan_path):
         require_qa_execution_marker(plan, shadow_result)
         result = run_checks(

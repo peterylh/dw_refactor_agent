@@ -38,6 +38,7 @@ class ExecutionPlanner:
 
     def __init__(self, project: str, project_root: Path | None = None):
         self.project = project
+        self._has_explicit_project_root = project_root is not None
         self.project_root = Path(project_root or config.core.PROJECT_ROOT)
         self.project_config = self._project_config()
         self.project_dir = self._project_dir()
@@ -196,6 +197,23 @@ class ExecutionPlanner:
         return self.plan_regular_run(spec, self._job_execution_values(job))
 
     def _project_config(self) -> dict:
+        if self._has_explicit_project_root:
+            rooted_config = config.core.load_project_config(self.project_root)
+            raw = rooted_config.get(self.project)
+            if raw:
+                return dict(raw)
+            warehouse_path = (
+                self.project_root
+                / "warehouses"
+                / self.project
+                / "warehouse.yaml"
+            )
+            if warehouse_path.exists():
+                return config.core.load_warehouse_config(
+                    warehouse_path,
+                    project_root=self.project_root,
+                )
+            return {"dir": f"warehouses/{self.project}"}
         raw = config.core.PROJECT_CONFIG.get(self.project)
         if raw:
             return dict(raw)

@@ -12,6 +12,7 @@ from dw_refactor_agent.refactor.plan_artifact import (
     load_persisted_verification_plan,
     load_verification_plan,
     require_fresh_plan,
+    require_fresh_plan_bundle,
     write_verification_plan,
 )
 from dw_refactor_agent.refactor.session import write_manifest
@@ -378,6 +379,29 @@ def test_require_fresh_plan_matches_analysis_workspace_snapshot(
     persisted = require_fresh_plan(plan_path, root=tmp_path, project="demo")
 
     assert persisted["analysis_snapshot"]["partition"] == "2024-12-31"
+
+
+def test_require_fresh_plan_bundle_derives_manifest_root_and_project(
+    tmp_path, monkeypatch
+):
+    _manifest_path, _manifest, plan_path = _write_fresh_run_bundle(tmp_path)
+    observed = []
+
+    def fake_workspace_fingerprint(root, project):
+        observed.append((root, project))
+        return _WORKSPACE_DIGEST
+
+    monkeypatch.setattr(
+        plan_artifact_module,
+        "workspace_fingerprint",
+        fake_workspace_fingerprint,
+    )
+
+    bundle = require_fresh_plan_bundle(plan_path)
+
+    assert bundle.plan["project"] == "demo"
+    assert bundle.root == tmp_path.resolve()
+    assert observed == [(tmp_path.resolve(), "demo")]
 
 
 def test_require_fresh_plan_rejects_workspace_drift(tmp_path, monkeypatch):

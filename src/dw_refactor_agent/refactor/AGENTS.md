@@ -27,7 +27,8 @@
 - `artifact_contract.py`：定义持久化 JSON 的 `format_version`、规范化摘要、原子写入和
   统一读取错误。
 - `workspace_snapshot.py`：按文件路径和原始字节摘要当前项目资产、配置及相关工具源码，
-  保护 analyze 后的 plan 不被工作区漂移静默复用。
+  并单独摘要当前 Python 进程实际加载的工具源码，保护 analyze 后的 plan 不被工作区或
+  跨 worktree 运行时代码漂移静默复用。
 - `semantic_mode.py`：解析 `equivalent` / `changed` / `unknown`、传播上游语义风险、
   复用同一语义上下文的用户声明并选择权威/观察性验证边界。
 - `verification_plan.py`：推导 DDL 变化、最小作业重算集合、执行值、验证锚点与 checks。
@@ -100,7 +101,8 @@ changed files 时必须考虑未提交基线修改。
 
 语义判定优先级为：有效用户声明 > 上游 `changed` / `unknown` 传播 > 严格自动等价 >
 默认 `unknown`。自动规则只接受 AST 相同的注释/格式变化和带稳定 `table_id` /
-`column_id` 的可证纯重命名；普通 SQL diff 不自动判为等价。analyze 对 unknown 表中立
+`column_id` 的可证纯重命名；重命名只能归一化目标表/output 槽位，不能连带改写同名的
+外部源表或任意 model 文本。普通 SQL diff 不自动判为等价。analyze 对 unknown 表中立
 展示三种选择。用户设置后只轻量重建 plan，不要求填写原因。
 
 轻量 replan 只复用当前 plan 绑定的 analysis inputs：baseline/current lineage、
@@ -137,7 +139,10 @@ SQL 路由遵循“最小重算”：ODS、未变化的中间结果和无需 QA 
 写入 QA 库。不要通过复制全部生产数据来绕过 manifest 路由和 prefill 计算。
 
 shadow-run 在连接数据库前重新计算工作区 fingerprint，并校验 plan 本体、analysis
-inputs 及所有外置 DDL。每次尝试先原子写入 `status=running` 和新的 execution ID；
+inputs 及所有外置 DDL；该校验同时位于 `run_shadow_plan()` 核心 API 内，不能通过绕过
+CLI 直接调用而跳过。校验返回的 bundle 绑定 manifest root、同一份内存 plan snapshot
+和实际加载的工具源码；planner、shadow manifest、task/model 读取均使用该 root，不能
+出现“验证 worktree A、执行 worktree B”。每次尝试先原子写入 `status=running` 和新的 execution ID；
 成功执行后再把 execution ID、workspace/plan fingerprint 发布到 QA marker 表。
 同一项目的本机进程（包括不同 worktree）共享互斥锁，避免同时改写 QA 库。dry-run、
 running 或失败结果都不能作为 compare 凭据。
@@ -149,6 +154,8 @@ running 或失败结果都不能作为 compare 凭据。
 缺少可用时间粒度时，planner 可能生成全表比较 warning。compare 还要求同目录的
 `shadow_run_result.json` 来自 execute 模式、状态 completed，并与当前工作区和 plan 的
 fingerprint 完全一致；校验在打开生产/QA 连接前完成。
+`compare_shadow_results()` 核心 API 自身执行同一 bundle 新鲜度校验，直接 Python 调用也
+不能消费陈旧 plan。
 compare 还会读取 QA marker，确认当前共享 QA 数据库确实来自该 execution ID；其他 run
 重建过 QA 后，旧 shadow result 会被拒绝。
 
