@@ -9,6 +9,7 @@ import subprocess
 import sys
 import threading
 import time
+import uuid
 from concurrent.futures import (
     FIRST_COMPLETED,
     ThreadPoolExecutor,
@@ -33,6 +34,10 @@ from dw_refactor_agent.refactor.artifact_contract import (
     FORMAT_VERSION,
     ArtifactFormatError,
     atomic_write_json,
+)
+from dw_refactor_agent.refactor.execution_provenance import (
+    execution_marker_sql,
+    project_execution_lock,
 )
 from dw_refactor_agent.refactor.plan_artifact import (
     load_persisted_verification_plan,
@@ -1720,23 +1725,67 @@ def run_shadow_plan(
             "shadow-run provenance plan_fingerprint does not match the "
             "verification plan"
         )
-    result = execute_shadow_plan(
-        plan,
-        dry_run=dry_run,
-        timing_detail=timing_detail,
-        parallel=parallel,
-        batch_size=batch_size,
-    )
-    result.update(
-        {
-            "format_version": FORMAT_VERSION,
-            "plan": str(plan_path),
-            "project": plan.get("project"),
-            "workspace_fingerprint": workspace_digest,
-            "plan_fingerprint": plan_digest,
-        }
-    )
-    atomic_write_json(output_path, result)
+    execution_id = str(uuid.uuid4())
+    mode = "dry_run" if dry_run else "execute"
+    wrapper_timer = _start_timing()
+    common_result = {
+        "format_version": FORMAT_VERSION,
+        "mode": mode,
+        "plan": str(plan_path),
+        "project": plan.get("project"),
+        "execution_id": execution_id,
+        "workspace_fingerprint": workspace_digest,
+        "plan_fingerprint": plan_digest,
+    }
+    with project_execution_lock(plan_path):
+        atomic_write_json(
+            output_path,
+            {
+                **common_result,
+                "status": "running",
+                "started_at": wrapper_timer["started_at"],
+            },
+        )
+        result = execute_shadow_plan(
+            plan,
+            dry_run=dry_run,
+            timing_detail=timing_detail,
+            parallel=parallel,
+            batch_size=batch_size,
+        )
+        if result.get("status") == "completed" and not dry_run:
+            marker_timer = _start_timing()
+            try:
+                run_sql_text(
+                    execution_marker_sql(
+                        plan["qa_db"],
+                        execution_id=execution_id,
+                        plan_fingerprint=plan_digest,
+                        workspace_fingerprint=workspace_digest,
+                    ),
+                    db=plan["qa_db"],
+                    qa=True,
+                )
+                marker_phase = {
+                    "name": "publish_execution_marker",
+                    "status": "success",
+                }
+            except Exception as exc:
+                result["status"] = "failed"
+                result["error"] = (
+                    f"failed to publish QA execution marker: {exc}"
+                )
+                marker_phase = {
+                    "name": "publish_execution_marker",
+                    "status": "failed",
+                    "error": str(exc),
+                }
+            result.setdefault("phases", []).append(
+                _finish_timing(marker_phase, marker_timer)
+            )
+        result.update(common_result)
+        _finish_timing(result, wrapper_timer)
+        atomic_write_json(output_path, result)
     return result
 
 
@@ -1923,8 +1972,8 @@ def main(argv: list[str] | None = None) -> int:
         if args.output
         else plan_path.parent / "shadow_run_result.json"
     )
-    persisted_plan = load_persisted_verification_plan(plan_path)
     try:
+        persisted_plan = load_persisted_verification_plan(plan_path)
         persisted_plan = require_fresh_plan(
             plan_path,
             root=_project_root(),

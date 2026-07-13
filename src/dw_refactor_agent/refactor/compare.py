@@ -4,8 +4,8 @@
 from __future__ import annotations
 
 import argparse
-import json
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 _src_root = Path(__file__).resolve().parents[2]
@@ -20,13 +20,18 @@ from dw_refactor_agent.config import (
     DORIS_QA_USER,
     DORIS_USER,
     PROJECT_ROOT,
-    TEXT_ENCODING,
 )
 from dw_refactor_agent.refactor.artifact_contract import (
     FORMAT_VERSION,
     ArtifactFormatError,
     atomic_write_json,
+    read_json_object,
     require_format_version,
+    sha256_json,
+)
+from dw_refactor_agent.refactor.execution_provenance import (
+    execution_marker_select_sql,
+    project_execution_lock,
 )
 from dw_refactor_agent.refactor.plan_artifact import (
     load_persisted_verification_plan,
@@ -259,8 +264,8 @@ def check_row_compare(
     compared_cols = qa_columns
     prod_col_list = ", ".join(prod_columns)
     qa_col_list = ", ".join(qa_columns)
-    prod_order_cols = ", ".join(prod_columns[: min(3, len(prod_columns))])
-    qa_order_cols = ", ".join(qa_columns[: min(3, len(qa_columns))])
+    prod_order_cols = ", ".join(prod_columns)
+    qa_order_cols = ", ".join(qa_columns)
     limit_sql = f"LIMIT {sample}" if sample else ""
     prod_where_sql = (
         f"WHERE {prod_partition_col} = '{partition_value}' "
@@ -354,16 +359,49 @@ def check_row_compare(
 
 
 def _terminal_result(
-    status: str, warnings: list[dict], reason: str | None = None
+    status: str,
+    warnings: list[dict],
+    comparison: dict,
+    reason: str | None = None,
 ) -> dict:
+    comparison = dict(comparison)
+    if comparison["required_checks"]:
+        comparison["complete"] = False
     result = {
         "verification_status": status,
         "warnings": warnings,
+        "comparison": comparison,
         "results": [],
     }
     if reason:
         result["reason"] = reason
     return result
+
+
+def _check_id(check: dict) -> str:
+    return f"{check.get('table')}:{check.get('method')}"
+
+
+def _comparison_contract(
+    checks: list[dict],
+    selected_checks: list[dict],
+    *,
+    method: str,
+    sample: int,
+    precision: float,
+) -> dict:
+    sampled_row_check = bool(sample) and any(
+        check.get("method") == "row_compare" for check in selected_checks
+    )
+    return {
+        "method": method,
+        "sample": sample,
+        "precision": precision,
+        "required_checks": [_check_id(check) for check in checks],
+        "executed_checks": [],
+        "complete": len(selected_checks) == len(checks)
+        and not sampled_row_check,
+    }
 
 
 def _check_semantic_modes(
@@ -437,33 +475,44 @@ def run_checks(
     verification = plan.get("verification", {})
     checks = verification.get("checks", [])
     warnings = list(verification.get("warnings") or [])
+    selected_checks = [
+        check for check in checks if method in ("all", check["method"])
+    ]
+    comparison = _comparison_contract(
+        checks,
+        selected_checks,
+        method=method,
+        sample=sample,
+        precision=precision,
+    )
     if verification.get("schema_anchor_status") == "blocked":
         reason = verification.get("schema_anchor_reason") or (
             "verification plan has blocked schema anchor changes"
         )
         print(f"表定义锚点校验被阻断: {reason}")
-        return _terminal_result("blocked", warnings, reason)
+        return _terminal_result("blocked", warnings, comparison, reason)
     if verification.get("data_anchor_status") == "blocked":
         reason = verification.get("data_anchor_reason") or (
             "verification plan has blocked data anchor changes"
         )
         print(f"数据锚点校验被阻断: {reason}")
-        return _terminal_result("blocked", warnings, reason)
+        return _terminal_result("blocked", warnings, comparison, reason)
 
     semantic_modes, semantic_error = _check_semantic_modes(
         checks, verification
     )
     if semantic_error:
         print(f"语义校验计划被阻断: {semantic_error}")
-        return _terminal_result("blocked", warnings, semantic_error)
+        return _terminal_result(
+            "blocked", warnings, comparison, semantic_error
+        )
     warnings = _ensure_unknown_warnings(warnings, semantic_modes)
 
     filtered = [
         _check_with_compare_anchor(
             _check_with_target_semantics(check, verification), verification
         )
-        for check in checks
-        if method in ("all", check["method"])
+        for check in selected_checks
     ]
     if not filtered:
         if not checks and verification.get("data_anchor_status") == "none":
@@ -471,11 +520,14 @@ def run_checks(
                 "verification plan has affected work but no data anchor checks"
             )
             print(f"没有可校验的数据锚点: {reason}")
-            return _terminal_result("inconclusive", warnings, reason)
+            return _terminal_result(
+                "inconclusive", warnings, comparison, reason
+            )
         print(f"没有匹配的校验项 (method={method})")
         return _terminal_result(
             "inconclusive",
             warnings,
+            comparison,
             f"no executable verification checks for method={method}",
         )
 
@@ -531,10 +583,22 @@ def run_checks(
     unknown_present = any(
         result["semantic_mode"] == "unknown" for result in results
     )
+    comparison["executed_checks"] = [
+        f"{result['table']}:{result['method']}" for result in results
+    ]
+    comparison["complete"] = comparison["complete"] and len(results) == len(
+        selected_checks
+    )
+    reason = None
     if equivalent_failed:
         verification_status = "failed"
     elif observational_failed:
         verification_status = "inconclusive"
+    elif not comparison["complete"]:
+        verification_status = "inconclusive"
+        reason = (
+            "comparison did not execute every required check without sampling"
+        )
     elif unknown_present or warnings:
         verification_status = "passed_with_warnings"
     else:
@@ -547,11 +611,15 @@ def run_checks(
     print(f"\n{'=' * 60}")
     print(f"验证状态: {verification_status}")
     print(f"  校验项: {total}  通过: {passed}  失败: {failed}")
-    return {
+    final_result = {
         "verification_status": verification_status,
         "warnings": warnings,
+        "comparison": comparison,
         "results": results,
     }
+    if reason:
+        final_result["reason"] = reason
+    return final_result
 
 
 def require_matching_shadow_result(
@@ -560,16 +628,7 @@ def require_matching_shadow_result(
     """Require completed QA execution from the exact persisted plan."""
     persisted_plan = load_persisted_verification_plan(plan_path)
     shadow_result_path = Path(shadow_result_path)
-    try:
-        shadow_result = json.loads(
-            shadow_result_path.read_text(encoding=TEXT_ENCODING)
-        )
-    except (OSError, ValueError) as exc:
-        raise ArtifactFormatError(
-            f"cannot read shadow-run result: {shadow_result_path}: {exc}"
-        ) from exc
-    if not isinstance(shadow_result, dict):
-        raise ArtifactFormatError("shadow-run result must be a JSON object")
+    shadow_result = read_json_object(shadow_result_path, "shadow-run result")
     require_format_version(shadow_result, "shadow-run result")
     if shadow_result.get("mode") != "execute":
         raise ArtifactFormatError(
@@ -578,6 +637,11 @@ def require_matching_shadow_result(
     if shadow_result.get("status") != "completed":
         raise ArtifactFormatError(
             "shadow-run result must have status=completed; run shadow-run"
+        )
+    execution_id = shadow_result.get("execution_id")
+    if not isinstance(execution_id, str) or not execution_id.strip():
+        raise ArtifactFormatError(
+            "shadow-run result execution_id is required; run shadow-run"
         )
 
     snapshot = persisted_plan.get("analysis_snapshot") or {}
@@ -609,6 +673,37 @@ def require_matching_shadow_result(
     return shadow_result
 
 
+def require_qa_execution_marker(plan: dict, shadow_result: dict) -> None:
+    """Verify that shared QA state belongs to this exact shadow execution."""
+    qa_conn = None
+    cursor = None
+    try:
+        qa_conn = get_pymysql_conn(plan["qa_db"], qa=True)
+        cursor = qa_conn.cursor()
+        cursor.execute(execution_marker_select_sql())
+        marker = cursor.fetchone()
+    except Exception as exc:
+        raise ArtifactFormatError(
+            f"cannot verify QA execution marker: {exc}; run shadow-run again"
+        ) from exc
+    finally:
+        if cursor is not None:
+            cursor.close()
+        if qa_conn is not None:
+            qa_conn.close()
+    expected = (
+        shadow_result.get("execution_id"),
+        shadow_result.get("plan_fingerprint"),
+        shadow_result.get("workspace_fingerprint"),
+    )
+    if not marker or tuple(marker[:3]) != expected:
+        raise ArtifactFormatError(
+            "QA execution marker does not match shadow_run_result; another "
+            "run may have replaced the shared QA database; run shadow-run "
+            "again"
+        )
+
+
 def compare_shadow_results(
     plan_path: Path,
     shadow_result_path: Path,
@@ -622,16 +717,31 @@ def compare_shadow_results(
     plan_path = Path(plan_path)
     shadow_result_path = Path(shadow_result_path)
     output_path = Path(output_path)
-    require_matching_shadow_result(plan_path, shadow_result_path)
-    plan = load_verification_plan(plan_path)
-    result = run_checks(
-        plan,
-        method=method,
-        sample=sample,
-        precision=precision,
+    shadow_result = require_matching_shadow_result(
+        plan_path, shadow_result_path
     )
+    plan = load_verification_plan(plan_path)
+    with project_execution_lock(plan_path):
+        require_qa_execution_marker(plan, shadow_result)
+        result = run_checks(
+            plan,
+            method=method,
+            sample=sample,
+            precision=precision,
+        )
     _print_warnings(result.get("warnings") or [])
-    result["format_version"] = FORMAT_VERSION
+    result.update(
+        {
+            "format_version": FORMAT_VERSION,
+            "workspace_fingerprint": shadow_result["workspace_fingerprint"],
+            "plan_fingerprint": shadow_result["plan_fingerprint"],
+            "shadow_execution_id": shadow_result["execution_id"],
+            "shadow_result_fingerprint": sha256_json(shadow_result),
+            "compared_at": datetime.now(timezone.utc)
+            .astimezone()
+            .isoformat(timespec="seconds"),
+        }
+    )
     atomic_write_json(output_path, result)
     return result
 
@@ -678,8 +788,8 @@ def main(argv: list[str] | None = None) -> int:
         if args.shadow_result
         else plan_path.parent / "shadow_run_result.json"
     )
-    persisted_plan = load_persisted_verification_plan(plan_path)
     try:
+        persisted_plan = load_persisted_verification_plan(plan_path)
         require_fresh_plan(
             plan_path,
             root=PROJECT_ROOT,

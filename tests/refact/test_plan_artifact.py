@@ -7,12 +7,16 @@ import dw_refactor_agent.refactor.plan_artifact as plan_artifact_module
 from dw_refactor_agent.refactor.artifact_contract import ArtifactFormatError
 from dw_refactor_agent.refactor.plan_artifact import (
     StalePlanError,
+    analysis_input_fingerprints,
     calculate_plan_fingerprint,
     load_persisted_verification_plan,
     load_verification_plan,
     require_fresh_plan,
     write_verification_plan,
 )
+from dw_refactor_agent.refactor.session import write_manifest
+
+_WORKSPACE_DIGEST = "sha256:" + "a" * 64
 
 
 def _plan(ddl_by_table):
@@ -24,15 +28,68 @@ def _plan(ddl_by_table):
         "ddl_changes": [],
         "jobs_to_run": [],
         "verification": {"checks": []},
+        "analysis_snapshot": {
+            "partition": None,
+            "workspace_fingerprint": _WORKSPACE_DIGEST,
+        },
     }
 
 
 def _write_persisted_plan(path, payload):
-    persisted = {"format_version": 1, **payload}
+    base = _plan({})
+    base.pop("baseline_ddl")
+    persisted = {"format_version": 1, **base, **payload}
     persisted["plan_fingerprint"] = calculate_plan_fingerprint(persisted)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(persisted), encoding="utf-8")
     return persisted
+
+
+def _write_fresh_run_bundle(tmp_path, *, workspace=_WORKSPACE_DIGEST):
+    run_root = tmp_path / "run"
+    manifest_path = run_root / "manifest.json"
+    manifest = {
+        "format_version": 1,
+        "run_id": "run",
+        "project": "demo",
+        "root": str(tmp_path),
+        "base_git": {"head": "base"},
+        "artifacts": {
+            "baseline_lineage": "baseline/lineage.json",
+            "current_lineage": "current/lineage.json",
+            "change_analysis": "analysis/change.json",
+            "verification_plan": "verification/plan.json",
+        },
+        "verification_intent": {"semantic_modes": {}},
+    }
+    write_manifest(manifest_path, manifest)
+    values = {
+        "baseline_lineage": {"tables": ["baseline"]},
+        "current_lineage": {"tables": ["current"]},
+        "change_analysis": {"changed_files": ["one.sql"]},
+    }
+    for key, value in values.items():
+        path = run_root / manifest["artifacts"][key]
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(value), encoding="utf-8")
+    plan_path = run_root / manifest["artifacts"]["verification_plan"]
+    write_verification_plan(
+        plan_path,
+        {
+            **_plan({}),
+            "analysis_snapshot": {
+                "partition": "2024-12-31",
+                "workspace_fingerprint": workspace,
+                "analysis_inputs": analysis_input_fingerprints(
+                    manifest=manifest,
+                    baseline_lineage=values["baseline_lineage"],
+                    current_lineage=values["current_lineage"],
+                    change_analysis=values["change_analysis"],
+                ),
+            },
+        },
+    )
+    return manifest_path, manifest, plan_path
 
 
 def test_write_verification_plan_externalizes_exact_ddl_and_hashes_bytes(
@@ -46,7 +103,9 @@ def test_write_verification_plan_externalizes_exact_ddl_and_hashes_bytes(
 
     persisted = write_verification_plan(plan_path, _plan({"dwd_order": ddl}))
 
-    ddl_path = plan_path.parent / "baseline_ddl" / "dwd_order.sql"
+    ddl_path = next(
+        (plan_path.parent / "baseline_ddl").glob("dwd_order.*.sql")
+    )
     ddl_bytes = ddl_path.read_bytes()
     ddl_text = ddl_bytes.decode("utf-8")
     on_disk_plan = json.loads(plan_path.read_text(encoding="utf-8"))
@@ -59,7 +118,7 @@ def test_write_verification_plan_externalizes_exact_ddl_and_hashes_bytes(
     assert "baseline_ddl" not in persisted
     assert persisted["baseline_ddl_refs"] == {
         "dwd_order": {
-            "path": "baseline_ddl/dwd_order.sql",
+            "path": f"baseline_ddl/{ddl_path.name}",
             "sha256": hashlib.sha256(ddl_bytes).hexdigest(),
         }
     }
@@ -76,6 +135,28 @@ def test_load_persisted_plan_detects_plan_body_edit(tmp_path):
         load_persisted_verification_plan(plan_path)
 
 
+@pytest.mark.parametrize(
+    "field, value, expected",
+    [
+        ("project", None, "project.*non-empty string"),
+        ("jobs_to_run", {}, "jobs_to_run.*list"),
+        ("ddl_changes", {}, "ddl_changes.*list"),
+        ("verification", [], "verification.*mapping"),
+    ],
+)
+def test_load_persisted_plan_rejects_malformed_core_schema(
+    tmp_path, field, value, expected
+):
+    plan_path = tmp_path / "verification" / "plan.json"
+    persisted = write_verification_plan(plan_path, _plan({}))
+    persisted[field] = value
+    persisted["plan_fingerprint"] = calculate_plan_fingerprint(persisted)
+    plan_path.write_text(json.dumps(persisted), encoding="utf-8")
+
+    with pytest.raises(ArtifactFormatError, match=expected):
+        load_persisted_verification_plan(plan_path)
+
+
 def test_write_verification_plan_preserves_multiline_ddl_exactly(tmp_path):
     plan_path = tmp_path / "verification" / "plan.json"
     ddl = """-- @table_id: abc
@@ -87,7 +168,9 @@ CREATE TABLE demo_dm.dwd_order (
 
     write_verification_plan(plan_path, _plan({"dwd_order": ddl}))
 
-    ddl_path = plan_path.parent / "baseline_ddl" / "dwd_order.sql"
+    ddl_path = next(
+        (plan_path.parent / "baseline_ddl").glob("dwd_order.*.sql")
+    )
     assert ddl_path.read_text(encoding="utf-8") == ddl
 
 
@@ -107,7 +190,23 @@ def test_write_verification_plan_removes_stale_sql_files(tmp_path):
 
     assert not stale_path.exists()
     assert keep_path.exists()
-    assert (ddl_dir / "current.sql").exists()
+    assert list(ddl_dir.glob("current.*.sql"))
+
+
+def test_write_verification_plan_invalidates_downstream_results(tmp_path):
+    plan_path = tmp_path / "verification" / "plan.json"
+    shadow_path = plan_path.parent / "shadow_run_result.json"
+    compare_path = plan_path.parent / "compare_result.json"
+    shadow_path.parent.mkdir(parents=True)
+    shadow_path.write_text('{"status":"completed"}', encoding="utf-8")
+    compare_path.write_text(
+        '{"verification_status":"passed"}', encoding="utf-8"
+    )
+
+    write_verification_plan(plan_path, _plan({}))
+
+    assert not shadow_path.exists()
+    assert not compare_path.exists()
 
 
 def test_write_verification_plan_keeps_stale_files_when_plan_write_fails(
@@ -269,21 +368,11 @@ def test_load_verification_plan_rejects_digest_mismatch(tmp_path):
 def test_require_fresh_plan_matches_analysis_workspace_snapshot(
     tmp_path, monkeypatch
 ):
-    plan_path = tmp_path / "verification" / "plan.json"
-    write_verification_plan(
-        plan_path,
-        {
-            **_plan({}),
-            "analysis_snapshot": {
-                "partition": "2024-12-31",
-                "workspace_fingerprint": "sha256:workspace",
-            },
-        },
-    )
+    _manifest_path, _manifest, plan_path = _write_fresh_run_bundle(tmp_path)
     monkeypatch.setattr(
         plan_artifact_module,
         "workspace_fingerprint",
-        lambda root, project: "sha256:workspace",
+        lambda root, project: _WORKSPACE_DIGEST,
     )
 
     persisted = require_fresh_plan(plan_path, root=tmp_path, project="demo")
@@ -292,22 +381,55 @@ def test_require_fresh_plan_matches_analysis_workspace_snapshot(
 
 
 def test_require_fresh_plan_rejects_workspace_drift(tmp_path, monkeypatch):
-    plan_path = tmp_path / "verification" / "plan.json"
-    write_verification_plan(
-        plan_path,
-        {
-            **_plan({}),
-            "analysis_snapshot": {
-                "partition": "2024-12-31",
-                "workspace_fingerprint": "sha256:before",
-            },
-        },
+    _manifest_path, _manifest, plan_path = _write_fresh_run_bundle(
+        tmp_path, workspace=_WORKSPACE_DIGEST
     )
     monkeypatch.setattr(
         plan_artifact_module,
         "workspace_fingerprint",
-        lambda root, project: "sha256:after",
+        lambda root, project: "sha256:" + "b" * 64,
     )
 
     with pytest.raises(StalePlanError, match="stale_plan.*analyze"):
+        require_fresh_plan(plan_path, root=tmp_path, project="demo")
+
+
+def test_require_fresh_plan_rejects_persisted_analysis_input_drift(
+    tmp_path, monkeypatch
+):
+    _manifest_path, manifest, plan_path = _write_fresh_run_bundle(tmp_path)
+    monkeypatch.setattr(
+        plan_artifact_module,
+        "workspace_fingerprint",
+        lambda root, project: _WORKSPACE_DIGEST,
+    )
+    change_path = (
+        plan_path.parent.parent / manifest["artifacts"]["change_analysis"]
+    )
+    change_path.write_text(
+        json.dumps({"changed_files": ["substituted.sql"]}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        StalePlanError, match="analysis input.*change_analysis"
+    ):
+        require_fresh_plan(plan_path, root=tmp_path, project="demo")
+
+
+def test_require_fresh_plan_rejects_semantic_intent_drift(
+    tmp_path, monkeypatch
+):
+    manifest_path, manifest, plan_path = _write_fresh_run_bundle(tmp_path)
+    monkeypatch.setattr(
+        plan_artifact_module,
+        "workspace_fingerprint",
+        lambda root, project: _WORKSPACE_DIGEST,
+    )
+    manifest["verification_intent"]["semantic_modes"]["dws_sales"] = {
+        "mode": "changed"
+    }
+    write_manifest(manifest_path, manifest)
+
+    with pytest.raises(StalePlanError, match="semantic intent"):
         require_fresh_plan(plan_path, root=tmp_path, project="demo")

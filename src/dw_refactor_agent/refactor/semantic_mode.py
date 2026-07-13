@@ -170,6 +170,9 @@ def _identity_blocker(message: str) -> dict:
         "qa_table": "",
         "column_mapping": [],
         "rename_mapping": {},
+        "table_rename_mapping": {},
+        "column_rename_mapping": {},
+        "rename_mapping_ambiguous": False,
         "compare_blocker": message,
     }
 
@@ -214,9 +217,12 @@ def schema_identity_mapping(baseline_ddl: str, current_ddl: str) -> dict:
         )
 
     column_mapping = []
-    rename_mapping = {}
+    table_rename_mapping = {}
+    column_rename_mapping = {}
     if baseline_table.short_name != current_table.short_name:
-        rename_mapping[baseline_table.short_name] = current_table.short_name
+        table_rename_mapping[baseline_table.short_name] = (
+            current_table.short_name
+        )
     for column in baseline_table.columns:
         column_id = normalize_schema_id(column.column_id)
         current_name = current_columns[column_id]
@@ -228,49 +234,191 @@ def schema_identity_mapping(baseline_ddl: str, current_ddl: str) -> dict:
             }
         )
         if column.name != current_name:
-            rename_mapping[column.name] = current_name
+            column_rename_mapping[column.name] = current_name
+
+    identity_by_name = {}
+    identity_pairs = [
+        (
+            f"table:{baseline_table_id}",
+            baseline_table.short_name,
+            current_table.short_name,
+        )
+    ]
+    identity_pairs.extend(
+        (
+            f"column:{column_id}",
+            baseline_columns[column_id],
+            current_columns[column_id],
+        )
+        for column_id in sorted(baseline_columns)
+    )
+    for identity_key, baseline_name, current_name in identity_pairs:
+        for name in {baseline_name.casefold(), current_name.casefold()}:
+            identity_by_name.setdefault(name, set()).add(identity_key)
+    rename_mapping_ambiguous = any(
+        len(identities) > 1 for identities in identity_by_name.values()
+    )
+    rename_mapping = dict(table_rename_mapping)
+    rename_mapping.update(column_rename_mapping)
     return {
         "table_id": baseline_table_id,
         "prod_table": baseline_table.short_name,
         "qa_table": current_table.short_name,
         "column_mapping": column_mapping,
         "rename_mapping": rename_mapping,
+        "table_rename_mapping": table_rename_mapping,
+        "column_rename_mapping": column_rename_mapping,
+        "rename_mapping_ambiguous": rename_mapping_ambiguous,
         "compare_blocker": None,
     }
 
 
-def _normalized_model_value(value, rename_mapping: dict):
-    canonical_mapping = _canonical_identifier_mapping(rename_mapping)
-    if isinstance(value, dict):
-        normalized = {}
-        for key, item in value.items():
-            normalized_key = canonical_mapping.get(
-                str(key).casefold(), str(key)
+def _task_rename_usage_is_unambiguous(
+    baseline_sql: str | None,
+    current_sql: str | None,
+    identity: dict,
+) -> bool:
+    if baseline_sql is None or current_sql is None:
+        return baseline_sql is None and current_sql is None
+    try:
+        baseline_statements = sqlglot.parse(baseline_sql, dialect="doris")
+        current_statements = sqlglot.parse(current_sql, dialect="doris")
+    except ParseError:
+        return False
+
+    baseline_identifiers = [
+        identifier
+        for statement in baseline_statements
+        for identifier in statement.find_all(exp.Identifier)
+    ]
+    current_identifiers = [
+        identifier
+        for statement in current_statements
+        for identifier in statement.find_all(exp.Identifier)
+    ]
+
+    for old_name, new_name in identity["table_rename_mapping"].items():
+        if old_name.casefold() == new_name.casefold():
+            continue
+        names = {old_name.casefold(), new_name.casefold()}
+        if any(
+            isinstance(identifier.parent, exp.Column)
+            and str(identifier.this).casefold() in names
+            for identifier in baseline_identifiers + current_identifiers
+        ):
+            return False
+        if any(
+            isinstance(identifier.parent, exp.Table)
+            and str(identifier.this).casefold() == new_name.casefold()
+            for identifier in baseline_identifiers
+        ):
+            return False
+        if any(
+            isinstance(identifier.parent, exp.Table)
+            and str(identifier.this).casefold() == old_name.casefold()
+            for identifier in current_identifiers
+        ):
+            return False
+
+    for old_name, new_name in identity["column_rename_mapping"].items():
+        if old_name.casefold() == new_name.casefold():
+            continue
+        if any(
+            str(identifier.this).casefold() == new_name.casefold()
+            for identifier in baseline_identifiers
+        ):
+            return False
+        for identifier in current_identifiers:
+            if str(identifier.this).casefold() != new_name.casefold():
+                continue
+            allowed_output_name = (
+                isinstance(identifier.parent, exp.Alias)
+                and identifier.arg_key == "alias"
+            ) or (
+                isinstance(identifier.parent, exp.Schema)
+                and identifier.arg_key == "expressions"
             )
-            normalized[normalized_key] = _normalized_model_value(
-                item, rename_mapping
-            )
-        return normalized
+            if not allowed_output_name:
+                return False
+    return True
+
+
+_MODEL_COLUMN_REFERENCE_FIELDS = frozenset(
+    {"column", "columns", "key_columns", "output_column", "time_column"}
+)
+
+
+def _normalized_reference_value(value, canonical_mapping: dict):
     if isinstance(value, list):
         return [
-            _normalized_model_value(item, rename_mapping) for item in value
+            _normalized_reference_value(item, canonical_mapping)
+            for item in value
         ]
     if isinstance(value, str):
         return canonical_mapping.get(value.casefold(), value)
     return value
 
 
+def _normalized_model_value(
+    value,
+    *,
+    table_mapping: dict,
+    column_mapping: dict,
+    top_level: bool = True,
+):
+    if not isinstance(value, dict):
+        return value
+    normalized = {}
+    canonical_tables = _canonical_identifier_mapping(table_mapping)
+    canonical_columns = _canonical_identifier_mapping(column_mapping)
+    for key, item in value.items():
+        if top_level and key == "name":
+            normalized[key] = _normalized_reference_value(
+                item, canonical_tables
+            )
+        elif key in _MODEL_COLUMN_REFERENCE_FIELDS:
+            normalized[key] = _normalized_reference_value(
+                item, canonical_columns
+            )
+        elif isinstance(item, dict):
+            normalized[key] = _normalized_model_value(
+                item,
+                table_mapping=table_mapping,
+                column_mapping=column_mapping,
+                top_level=False,
+            )
+        elif isinstance(item, list):
+            normalized[key] = [
+                _normalized_model_value(
+                    child,
+                    table_mapping=table_mapping,
+                    column_mapping=column_mapping,
+                    top_level=False,
+                )
+                if isinstance(child, dict)
+                else child
+                for child in item
+            ]
+        else:
+            normalized[key] = item
+    return normalized
+
+
 def _model_equivalent(
-    baseline_model: str, current_model: str, rename_mapping: dict
+    baseline_model: str, current_model: str, identity: dict
 ) -> bool:
     try:
         baseline = yaml.safe_load(baseline_model)
         current = yaml.safe_load(current_model)
     except yaml.YAMLError:
         return False
+    normalization = {
+        "table_mapping": identity["table_rename_mapping"],
+        "column_mapping": identity["column_rename_mapping"],
+    }
     return _normalized_model_value(
-        baseline, rename_mapping
-    ) == _normalized_model_value(current, rename_mapping)
+        baseline, **normalization
+    ) == _normalized_model_value(current, **normalization)
 
 
 def _optional_sql_equivalent(
@@ -293,12 +441,20 @@ def automatic_equivalence(
     )
     if identity["compare_blocker"] is not None:
         return None, [], identity
+    if identity.get("rename_mapping_ambiguous"):
+        return None, [], identity
     rename_mapping = identity["rename_mapping"]
     if not sql_ast_equivalent(
         baseline_assets["ddl"], current_assets["ddl"], rename_mapping
     ):
         return None, [], identity
     for asset_kind in ("task", "full_refresh_task"):
+        if not _task_rename_usage_is_unambiguous(
+            baseline_assets.get(asset_kind),
+            current_assets.get(asset_kind),
+            identity,
+        ):
+            return None, [], identity
         if not _optional_sql_equivalent(
             baseline_assets.get(asset_kind),
             current_assets.get(asset_kind),
@@ -311,7 +467,7 @@ def automatic_equivalence(
     if baseline_model is None or current_model is None:
         if baseline_model is not None or current_model is not None:
             return None, [], identity
-    elif not _model_equivalent(baseline_model, current_model, rename_mapping):
+    elif not _model_equivalent(baseline_model, current_model, identity):
         return None, [], identity
 
     rule = (
@@ -375,34 +531,59 @@ def _valid_declaration(
     )
 
 
-def _historical_declaration(
+def _historical_declaration_index(
     historical_manifests: list,
-    *,
-    table_name: str,
-    table_id: str,
-    context_fingerprint: str,
-) -> tuple[dict, dict] | tuple[None, None]:
+) -> dict[tuple[str, str], tuple[dict, str | None]]:
+    """Index newest declarations once instead of rescanning per table."""
+    index = {}
     for manifest in historical_manifests or []:
         declarations = (manifest.get("verification_intent") or {}).get(
             "semantic_modes"
         ) or {}
         for declaration in declarations.values():
-            if not _valid_declaration(
-                declaration,
-                table_id=table_id,
-                context_fingerprint=context_fingerprint,
+            if not isinstance(declaration, dict):
+                continue
+            table_id = declaration.get("table_id")
+            context = declaration.get("semantic_context_fingerprint")
+            if (
+                not isinstance(table_id, str)
+                or not isinstance(context, str)
+                or declaration.get("mode") not in VALID_SEMANTIC_MODES
             ):
                 continue
-            inherited = dict(declaration)
-            inherited["table_id"] = table_id
-            inherited["inherited_from_run_id"] = manifest.get("run_id")
-            return (
-                {
-                    "mode": declaration["mode"],
-                    "source": "inherited_user",
-                },
-                {table_name: inherited},
+            index.setdefault(
+                (table_id, context),
+                (declaration, manifest.get("run_id")),
             )
+    return index
+
+
+def _historical_declaration(
+    historical_index: dict,
+    *,
+    table_name: str,
+    table_id: str,
+    context_fingerprint: str,
+) -> tuple[dict, dict] | tuple[None, None]:
+    matched = (historical_index or {}).get((table_id, context_fingerprint))
+    if matched is not None:
+        declaration, run_id = matched
+        if not _valid_declaration(
+            declaration,
+            table_id=table_id,
+            context_fingerprint=context_fingerprint,
+        ):
+            return None, None
+        inherited = dict(declaration)
+        inherited["table_id"] = table_id
+        inherited["inherited_from_run_id"] = run_id
+        return (
+            {
+                "mode": declaration["mode"],
+                "source": "inherited_user",
+            },
+            {table_name: inherited},
+        )
     return None, None
 
 
@@ -411,7 +592,7 @@ def _resolved_declaration(
     fact: dict,
     context_fingerprint: str,
     current_declarations: dict,
-    historical_manifests: list,
+    historical_index: dict,
 ) -> tuple[dict | None, dict, dict | None]:
     current = (current_declarations or {}).get(table_name)
     stale_warning = None
@@ -437,7 +618,7 @@ def _resolved_declaration(
         }
         return None, {}, stale_warning
     declaration, inherited = _historical_declaration(
-        historical_manifests,
+        historical_index,
         table_name=table_name,
         table_id=fact["table_id"],
         context_fingerprint=context_fingerprint,
@@ -527,6 +708,9 @@ def resolve_semantic_graph(
     semantics = {}
     warnings = []
     inherited_declarations = {}
+    historical_index = _historical_declaration_index(
+        historical_manifests or []
+    )
 
     for table_name in topological_order:
         fact = table_facts[table_name]
@@ -563,7 +747,7 @@ def resolve_semantic_graph(
             fact,
             context_fingerprint,
             current_declarations or {},
-            historical_manifests or [],
+            historical_index,
         )
         inherited_declarations.update(inherited)
         if stale_warning is not None:

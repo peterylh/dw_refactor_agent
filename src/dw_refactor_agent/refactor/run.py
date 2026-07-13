@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 import subprocess
 import sys
 from contextlib import contextmanager
@@ -22,9 +21,12 @@ import dw_refactor_agent.lineage.lineage_extractor as lineage_extractor_module
 import dw_refactor_agent.refactor.change_analysis as change_analysis_module
 import dw_refactor_agent.refactor.shadow_run as shadow_run_module
 from dw_refactor_agent.assessment.assess_middle_layer import assess
-from dw_refactor_agent.config import TEXT_ENCODING
 from dw_refactor_agent.config import core as config_core
-from dw_refactor_agent.refactor.artifact_contract import ArtifactFormatError
+from dw_refactor_agent.refactor.artifact_contract import (
+    ArtifactFormatError,
+    atomic_write_json,
+    read_json_object,
+)
 from dw_refactor_agent.refactor.change_analysis import (
     build_change_analysis,
     changed_files_since_head,
@@ -35,7 +37,10 @@ from dw_refactor_agent.refactor.incremental_lineage import (
 )
 from dw_refactor_agent.refactor.issue_diff import diff_assess_results
 from dw_refactor_agent.refactor.plan_artifact import (
+    StalePlanError,
+    analysis_input_fingerprints,
     require_fresh_plan,
+    validate_analysis_input_fingerprints,
     write_verification_plan,
 )
 from dw_refactor_agent.refactor.semantic_mode import resolve_semantic_modes
@@ -65,16 +70,12 @@ def _now() -> datetime:
 
 
 def _write_json(path: Path, data: dict) -> None:
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps(data, ensure_ascii=False, indent=2),
-        encoding=TEXT_ENCODING,
-    )
+    atomic_write_json(Path(path), data)
 
 
 def _read_json(path: Path) -> dict:
-    return json.loads(Path(path).read_text(encoding=TEXT_ENCODING))
+    path = Path(path)
+    return read_json_object(path, path.name)
 
 
 def _sorted_nonempty_strings(values) -> list[str]:
@@ -463,6 +464,61 @@ def _merge_inherited_declarations(
     return updated
 
 
+def _analysis_snapshot(
+    *,
+    manifest: dict,
+    repo_root: Path,
+    baseline_lineage: dict,
+    current_lineage: dict,
+    change_analysis: dict,
+    partition: str | None,
+    workspace_digest: str | None = None,
+) -> dict:
+    return {
+        "partition": partition,
+        "workspace_fingerprint": workspace_digest
+        or workspace_fingerprint(repo_root, manifest["project"]),
+        "analysis_inputs": analysis_input_fingerprints(
+            manifest=manifest,
+            baseline_lineage=baseline_lineage,
+            current_lineage=current_lineage,
+            change_analysis=change_analysis,
+        ),
+    }
+
+
+def _require_snapshot_workspace(
+    snapshot: dict, *, repo_root: Path, project: str
+) -> str:
+    expected = snapshot.get("workspace_fingerprint")
+    actual = workspace_fingerprint(repo_root, project)
+    if expected != actual:
+        raise StalePlanError(
+            "stale_plan: workspace changed after analyze; run analyze again"
+        )
+    return actual
+
+
+def _invalidate_verification_outputs(
+    manifest_path: Path, manifest: dict
+) -> None:
+    """Fail closed before publishing a replacement verification plan."""
+    run_root = Path(manifest_path).parent
+    for artifact_key in (
+        "verification_plan",
+        "shadow_run_result",
+        "compare_result",
+    ):
+        relative_path = manifest["artifacts"].get(artifact_key)
+        if relative_path is None:
+            raise ArtifactFormatError(
+                f"manifest.artifacts.{artifact_key} is required"
+            )
+        path = run_root / relative_path
+        if path.exists():
+            path.unlink()
+
+
 def _build_plan_for_run(
     manifest_path: Path,
     manifest: dict,
@@ -493,18 +549,34 @@ def _build_plan_for_run(
         )
     except ValueError as exc:
         raise SystemExit(str(exc)) from None
-    plan["analysis_snapshot"] = {
-        "partition": partition,
-        "workspace_fingerprint": workspace_fingerprint(
-            repo_root, manifest["project"]
-        ),
-    }
     updated_manifest = _merge_inherited_declarations(
         manifest, semantic_resolution.inherited_declarations
     )
     if updated_manifest is not manifest:
         write_manifest(manifest_path, updated_manifest)
     return plan, updated_manifest
+
+
+def _print_semantic_guidance(plan: dict, run_id: str) -> None:
+    target_semantics = (plan.get("verification") or {}).get(
+        "target_semantics"
+    ) or {}
+    unknown_tables = sorted(
+        table
+        for table, semantics in target_semantics.items()
+        if semantics.get("resolved_mode") == "unknown"
+    )
+    if not unknown_tables:
+        return
+    for table in unknown_tables:
+        print(f"\nWarning: {table} 无法自动确认语义。")
+        print("  equivalent：预期新旧输出相同；比较本表")
+        print("  changed：预期本表语义变化；验证下游边界")
+        print("  unknown：暂不判断；验证下游并保留风险 warning")
+        print(
+            "  设置：dw-refactor semantic-mode set "
+            f"--run {run_id} --table {table} --mode <mode>"
+        )
 
 
 def _analyze(args) -> int:
@@ -514,6 +586,7 @@ def _analyze(args) -> int:
     repo_root = _root_from_manifest(manifest, manifest_path)
 
     with _project_root_context(repo_root) as repo_root:
+        _invalidate_verification_outputs(manifest_path, manifest)
         current_lineage_path = artifact_path(manifest_path, "current_lineage")
         current_cache_path = artifact_path(manifest_path, "current_task_cache")
         lineage_result = build_lineage_artifacts(
@@ -542,7 +615,6 @@ def _analyze(args) -> int:
             artifact_path(manifest_path, "change_analysis"),
             change_analysis,
         )
-
         plan, manifest = _build_plan_for_run(
             manifest_path,
             manifest,
@@ -560,6 +632,14 @@ def _analyze(args) -> int:
             artifact_path(manifest_path, "change_analysis"),
             change_analysis,
         )
+        plan["analysis_snapshot"] = _analysis_snapshot(
+            manifest=manifest,
+            repo_root=repo_root,
+            baseline_lineage=baseline_lineage,
+            current_lineage=current_lineage,
+            change_analysis=change_analysis,
+            partition=args.partition,
+        )
 
         current_assess = assess(
             project,
@@ -575,10 +655,6 @@ def _analyze(args) -> int:
         _write_json(
             artifact_path(manifest_path, "current_assess"), current_assess
         )
-        plan = write_verification_plan(
-            artifact_path(manifest_path, "verification_plan"), plan
-        )
-
         baseline_assess = _read_json(
             artifact_path(manifest_path, "baseline_assess")
         )
@@ -590,6 +666,10 @@ def _analyze(args) -> int:
             verification_plan=plan,
         )
         _write_json(artifact_path(manifest_path, "issue_diff"), issue_diff)
+        plan = write_verification_plan(
+            artifact_path(manifest_path, "verification_plan"), plan
+        )
+        _print_semantic_guidance(plan, manifest["run_id"])
 
     print(f"Analyze complete: {manifest_path}")
     return 0
@@ -660,9 +740,15 @@ def _replan(
     manifest_path: Path,
     manifest: dict,
     partition: str | None,
+    source_snapshot: dict,
 ) -> None:
     repo_root = _root_from_manifest(manifest, manifest_path)
     with _project_root_context(repo_root) as repo_root:
+        _require_snapshot_workspace(
+            source_snapshot,
+            repo_root=repo_root,
+            project=manifest["project"],
+        )
         change_analysis = _read_json(
             artifact_path(manifest_path, "change_analysis")
         )
@@ -672,7 +758,15 @@ def _replan(
         current_lineage = _read_json(
             artifact_path(manifest_path, "current_lineage")
         )
-        plan, _updated_manifest = _build_plan_for_run(
+        validate_analysis_input_fingerprints(
+            source_snapshot,
+            manifest=manifest,
+            baseline_lineage=baseline_lineage,
+            current_lineage=current_lineage,
+            change_analysis=change_analysis,
+            include_intent=False,
+        )
+        plan, updated_manifest = _build_plan_for_run(
             manifest_path,
             manifest,
             repo_root=repo_root,
@@ -680,6 +774,20 @@ def _replan(
             baseline_lineage=baseline_lineage,
             current_lineage=current_lineage,
             partition=partition,
+        )
+        workspace_digest = _require_snapshot_workspace(
+            source_snapshot,
+            repo_root=repo_root,
+            project=manifest["project"],
+        )
+        plan["analysis_snapshot"] = _analysis_snapshot(
+            manifest=updated_manifest,
+            repo_root=repo_root,
+            baseline_lineage=baseline_lineage,
+            current_lineage=current_lineage,
+            change_analysis=change_analysis,
+            partition=partition,
+            workspace_digest=workspace_digest,
         )
         write_verification_plan(
             artifact_path(manifest_path, "verification_plan"), plan
@@ -719,11 +827,13 @@ def _semantic_mode_set(args) -> int:
         updated = deepcopy(manifest)
         intent = updated.setdefault("verification_intent", {})
         intent.setdefault("semantic_modes", {})[table] = declaration
+        _invalidate_verification_outputs(manifest_path, manifest)
         write_manifest(manifest_path, updated)
         _replan(
             manifest_path,
             updated,
             persisted_plan["analysis_snapshot"].get("partition"),
+            persisted_plan["analysis_snapshot"],
         )
     print(f"Semantic mode updated: {table}={args.mode}")
     return 0
@@ -817,7 +927,10 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    return args.func(args)
+    try:
+        return args.func(args)
+    except ArtifactFormatError as exc:
+        raise SystemExit(str(exc)) from None
 
 
 if __name__ == "__main__":

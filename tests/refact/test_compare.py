@@ -7,6 +7,7 @@ from dw_refactor_agent.refactor.compare import (
     check_row_compare,
     compare_shadow_results,
     fmt_val,
+    require_qa_execution_marker,
     run_checks,
 )
 from dw_refactor_agent.refactor.compare import (
@@ -70,6 +71,8 @@ def _write_compare_plan(plan_path, verification):
             "project_db": "shop_dm",
             "qa_db": "shop_dm_qa",
             "baseline_ddl": {},
+            "ddl_changes": [],
+            "jobs_to_run": [],
             "verification": verification,
             "analysis_snapshot": {
                 "partition": "2024-12-31",
@@ -84,6 +87,7 @@ def _write_shadow_result(shadow_path, persisted_plan, **overrides):
         "format_version": 1,
         "mode": "execute",
         "status": "completed",
+        "execution_id": "execution-123",
         "workspace_fingerprint": "sha256:workspace",
         "plan_fingerprint": persisted_plan["plan_fingerprint"],
     }
@@ -209,6 +213,28 @@ def test_row_compare_excludes_configured_columns_case_insensitively():
     assert qa_cursor.executed == [
         "SELECT order_id, amount FROM dws_order ORDER BY order_id, amount ",
     ]
+
+
+def test_row_compare_orders_by_every_compared_column_for_stable_duplicates():
+    columns = [("store_id",), ("stat_date",), ("sku_id",), ("amount",)]
+    prod_cursor = FakeCursor([columns, [(1, "2024-01-01", 2, 10)]])
+    qa_cursor = FakeCursor([[(1, "2024-01-01", 2, 10)]])
+
+    result = check_row_compare(
+        FakeConn([prod_cursor]),
+        FakeConn([qa_cursor]),
+        {"table": "dws_sales", "method": "row_compare"},
+        sample=0,
+        precision=0.01,
+    )
+
+    assert result["match"] is True
+    expected_query = (
+        "SELECT store_id, stat_date, sku_id, amount FROM dws_sales "
+        "ORDER BY store_id, stat_date, sku_id, amount "
+    )
+    assert prod_cursor.executed[-1] == expected_query
+    assert qa_cursor.executed[-1] == expected_query
 
 
 def test_row_compare_defaults_to_ignore_etl_time_for_legacy_checks():
@@ -385,6 +411,49 @@ def test_renamed_row_compare_maps_qa_exclusions_and_projections():
     ]
 
 
+def test_qa_execution_marker_binds_shared_database_to_shadow(monkeypatch):
+    cursor = FakeCursor([("execution-123", "sha256:plan", "sha256:workspace")])
+    connection = FakeConn([cursor])
+    monkeypatch.setattr(
+        "dw_refactor_agent.refactor.compare.get_pymysql_conn",
+        lambda db_name, qa=False: connection,
+    )
+
+    require_qa_execution_marker(
+        {"qa_db": "shop_dm_qa"},
+        {
+            "execution_id": "execution-123",
+            "plan_fingerprint": "sha256:plan",
+            "workspace_fingerprint": "sha256:workspace",
+        },
+    )
+
+    assert connection.closed is True
+    assert "__dw_refactor_execution_marker" in cursor.executed[0]
+
+
+def test_qa_execution_marker_rejects_database_replaced_by_other_run(
+    monkeypatch,
+):
+    connection = FakeConn(
+        [FakeCursor([("other-execution", "sha256:plan", "sha256:workspace")])]
+    )
+    monkeypatch.setattr(
+        "dw_refactor_agent.refactor.compare.get_pymysql_conn",
+        lambda db_name, qa=False: connection,
+    )
+
+    with pytest.raises(ArtifactFormatError, match="another run.*shadow-run"):
+        require_qa_execution_marker(
+            {"qa_db": "shop_dm_qa"},
+            {
+                "execution_id": "execution-123",
+                "plan_fingerprint": "sha256:plan",
+                "workspace_fingerprint": "sha256:workspace",
+            },
+        )
+
+
 def test_run_checks_short_circuit_scenarios(monkeypatch):
     def fail_if_called(db_name, qa=False):
         raise AssertionError("short-circuit plans should not open connections")
@@ -419,6 +488,14 @@ def test_run_checks_short_circuit_scenarios(monkeypatch):
                 "verification_status": "inconclusive",
                 "reason": "no invariant downstream anchor tables",
                 "warnings": [],
+                "comparison": {
+                    "method": "count",
+                    "sample": 0,
+                    "precision": 0.01,
+                    "required_checks": [],
+                    "executed_checks": [],
+                    "complete": True,
+                },
                 "results": [],
             },
         ),
@@ -439,6 +516,14 @@ def test_run_checks_short_circuit_scenarios(monkeypatch):
                 "verification_status": "blocked",
                 "reason": "ADS table definitions must remain unchanged",
                 "warnings": [],
+                "comparison": {
+                    "method": "count",
+                    "sample": 0,
+                    "precision": 0.01,
+                    "required_checks": ["ads_final:count"],
+                    "executed_checks": [],
+                    "complete": False,
+                },
                 "results": [],
             },
         ),
@@ -495,6 +580,66 @@ def test_run_checks_derives_five_state_semantic_result(
     assert "all_pass" not in result
 
 
+def test_filtered_equivalent_checks_are_inconclusive(monkeypatch):
+    prod_conn = FakeConn([FakeCursor([(5,)])])
+    qa_conn = FakeConn([FakeCursor([(5,)])])
+    monkeypatch.setattr(
+        "dw_refactor_agent.refactor.compare.get_pymysql_conn",
+        lambda db_name, qa=False: qa_conn if qa else prod_conn,
+    )
+
+    result = run_checks(
+        {
+            "project_db": "shop_dm",
+            "qa_db": "shop_dm_qa",
+            "verification": _semantic_verification(
+                [
+                    {"table": "dws_order", "method": "count"},
+                    {"table": "dws_order", "method": "row_compare"},
+                ]
+            ),
+        },
+        method="count",
+    )
+
+    assert result["verification_status"] == "inconclusive"
+    assert result["comparison"] == {
+        "method": "count",
+        "sample": 0,
+        "precision": 0.01,
+        "required_checks": ["dws_order:count", "dws_order:row_compare"],
+        "executed_checks": ["dws_order:count"],
+        "complete": False,
+    }
+
+
+def test_sampled_row_compare_cannot_authoritatively_pass(monkeypatch):
+    prod_cursor = FakeCursor([[("order_id",), ("amount",)], [(1, 10)]])
+    qa_cursor = FakeCursor([[(1, 10)]])
+    prod_conn = FakeConn([prod_cursor])
+    qa_conn = FakeConn([qa_cursor])
+    monkeypatch.setattr(
+        "dw_refactor_agent.refactor.compare.get_pymysql_conn",
+        lambda db_name, qa=False: qa_conn if qa else prod_conn,
+    )
+
+    result = run_checks(
+        {
+            "project_db": "shop_dm",
+            "qa_db": "shop_dm_qa",
+            "verification": _semantic_verification(
+                [{"table": "dws_order", "method": "row_compare"}]
+            ),
+        },
+        method="all",
+        sample=1,
+    )
+
+    assert result["verification_status"] == "inconclusive"
+    assert result["comparison"]["complete"] is False
+    assert result["comparison"]["sample"] == 1
+
+
 def test_compare_shadow_results_writes_compare_output(tmp_path, monkeypatch):
     plan_path = tmp_path / "verification" / "plan.json"
     shadow_path = tmp_path / "verification" / "shadow_run_result.json"
@@ -519,6 +664,10 @@ def test_compare_shadow_results_writes_compare_output(tmp_path, monkeypatch):
     monkeypatch.setattr(
         "dw_refactor_agent.refactor.compare.run_checks", fake_run_checks
     )
+    monkeypatch.setattr(
+        "dw_refactor_agent.refactor.compare.require_qa_execution_marker",
+        lambda plan, shadow_result: None,
+    )
 
     result = compare_shadow_results(
         plan_path,
@@ -533,6 +682,10 @@ def test_compare_shadow_results_writes_compare_output(tmp_path, monkeypatch):
     assert result["sample"] == 10
     assert result["precision"] == 0.1
     assert result["format_version"] == 1
+    assert result["shadow_execution_id"] == "execution-123"
+    assert result["workspace_fingerprint"] == "sha256:workspace"
+    assert result["plan_fingerprint"] == persisted_plan["plan_fingerprint"]
+    assert result["shadow_result_fingerprint"].startswith("sha256:")
     assert "all_pass" not in result
     assert json.loads(output_path.read_text(encoding="utf-8")) == result
 
@@ -546,6 +699,7 @@ def test_compare_shadow_results_writes_compare_output(tmp_path, monkeypatch):
         {"plan_fingerprint": "sha256:stale"},
         {"workspace_fingerprint": None},
         {"plan_fingerprint": None},
+        {"execution_id": None},
     ],
 )
 def test_compare_rejects_nonmatching_shadow_before_database(

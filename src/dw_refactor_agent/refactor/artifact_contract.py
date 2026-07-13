@@ -55,6 +55,44 @@ def atomic_write_json(path: Path, value: dict) -> None:
         raise
 
 
+def atomic_write_bytes(path: Path, content: bytes) -> None:
+    """Atomically replace a byte artifact in its target directory."""
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{target.name}.",
+        suffix=".tmp",
+        dir=str(target.parent),
+    )
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        temporary.replace(target)
+    except BaseException:
+        if temporary.exists():
+            temporary.unlink()
+        raise
+
+
+def read_json_object(path: Path, artifact_name: str) -> dict:
+    """Read one persisted JSON object with a stable contract error."""
+    source = Path(path)
+    try:
+        value = json.loads(source.read_text(encoding=TEXT_ENCODING))
+    except (OSError, ValueError) as exc:
+        raise ArtifactFormatError(
+            f"cannot read {artifact_name} {source}: {exc}"
+        ) from exc
+    if not isinstance(value, dict):
+        raise ArtifactFormatError(
+            f"{artifact_name} must be a JSON object: {source}"
+        )
+    return value
+
+
 def require_format_version(value: dict, artifact_name: str) -> None:
     """Require the current explicit artifact format version."""
     actual = value.get("format_version")

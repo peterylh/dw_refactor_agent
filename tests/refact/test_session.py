@@ -156,6 +156,39 @@ def test_manifest_round_trip_and_run_root(tmp_path):
     assert run_root_from_manifest_path(manifest_path) == manifest_path.parent
 
 
+def test_create_run_manifest_never_overwrites_same_second_run(tmp_path):
+    now = _local_datetime(2026, 7, 13, 12, 0, 0)
+
+    first_path, first = create_run_manifest(
+        tmp_path, "shop", now=now, git_info={"head": "first"}
+    )
+    second_path, second = create_run_manifest(
+        tmp_path, "shop", now=now, git_info={"head": "second"}
+    )
+
+    assert first_path != second_path
+    assert first["run_id"] == "20260713_120000_shop"
+    assert second["run_id"] == "20260713_120000_shop_01"
+    assert load_manifest(first_path)["base_git"]["head"] == "first"
+
+
+def test_artifact_path_rejects_manifest_path_escape(tmp_path):
+    manifest_path = tmp_path / "run" / "manifest.json"
+    write_manifest(
+        manifest_path,
+        {
+            "format_version": 1,
+            "run_id": "unsafe",
+            "project": "shop",
+            "root": str(tmp_path),
+            "artifacts": {"verification_plan": "../../outside.json"},
+        },
+    )
+
+    with pytest.raises(ArtifactFormatError, match="artifact path"):
+        load_manifest(manifest_path)
+
+
 @pytest.mark.parametrize(
     "payload", [{"project": "shop"}, {"format_version": 2}]
 )
@@ -274,3 +307,33 @@ def test_load_historical_manifests_skips_corrupt_history_with_diagnostic(
     assert loaded == [(historical_path, historical)]
     assert len(diagnostics) == 1
     assert "20260711_120000_shop" in diagnostics[0]
+
+
+def test_historical_loader_skips_malformed_nested_intent(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(
+        config_core,
+        "PROJECT_CONFIG",
+        {"shop": {"dir": "warehouses/shop"}},
+    )
+    current_path, current = create_run_manifest(
+        tmp_path,
+        "shop",
+        now=_local_datetime(2026, 7, 13, 12, 0, 0),
+        git_info={},
+    )
+    malformed_path, malformed = create_run_manifest(
+        tmp_path,
+        "shop",
+        now=_local_datetime(2026, 7, 12, 12, 0, 0),
+        git_info={},
+    )
+    malformed["verification_intent"] = {"semantic_modes": []}
+    write_manifest(malformed_path, malformed)
+
+    loaded, diagnostics = load_historical_manifests(current_path, current)
+
+    assert loaded == []
+    assert len(diagnostics) == 1
+    assert "verification_intent.semantic_modes" in diagnostics[0]

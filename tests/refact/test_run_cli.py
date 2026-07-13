@@ -338,13 +338,18 @@ def test_analyze_refreshes_current_analysis_diff_and_plan(
     assert persisted_plan["analysis_snapshot"][
         "workspace_fingerprint"
     ].startswith("sha256:")
+    assert set(persisted_plan["analysis_snapshot"]["analysis_inputs"]) == {
+        "baseline_lineage",
+        "current_lineage",
+        "change_analysis",
+        "manifest_context",
+        "verification_intent",
+    }
     assert "baseline_ddl" not in persisted_plan
-    assert persisted_plan["baseline_ddl_refs"]["dwd_order"]["path"] == (
-        "baseline_ddl/dwd_order.sql"
-    )
-    persisted_ddl = (
-        run_root / "verification" / "baseline_ddl" / "dwd_order.sql"
-    ).read_text()
+    ddl_reference = persisted_plan["baseline_ddl_refs"]["dwd_order"]["path"]
+    assert ddl_reference.startswith("baseline_ddl/dwd_order.")
+    assert ddl_reference.endswith(".sql")
+    persisted_ddl = (run_root / "verification" / ddl_reference).read_text()
     assert persisted_ddl == "CREATE TABLE shop_dm.dwd_order (id BIGINT);"
     assert diff_calls == [
         {
@@ -563,6 +568,28 @@ def test_check_subcommand_is_removed():
         raise AssertionError("check subcommand should not be registered")
 
 
+def test_semantic_guidance_is_neutral_and_uses_short_run_selector(capsys):
+    run_cli._print_semantic_guidance(
+        {
+            "verification": {
+                "target_semantics": {
+                    "dws_store_sales_daily": {"resolved_mode": "unknown"},
+                    "ads_sales": {"resolved_mode": "equivalent"},
+                }
+            }
+        },
+        "20260713_113226_shop",
+    )
+
+    output = capsys.readouterr().out
+    assert "dws_store_sales_daily 无法自动确认语义" in output
+    assert "equivalent：预期新旧输出相同" in output
+    assert "changed：预期本表语义变化" in output
+    assert "unknown：暂不判断" in output
+    assert "建议：equivalent" not in output
+    assert "--run 20260713_113226_shop" in output
+
+
 def test_shadow_run_and_compare_delegate_to_plan_handlers(
     tmp_path, monkeypatch
 ):
@@ -775,8 +802,8 @@ def test_semantic_mode_set_preserves_manifest_and_lightly_replans(
     )
     replans = []
 
-    def fake_replan(path, updated_manifest, partition):
-        replans.append((path, updated_manifest, partition))
+    def fake_replan(path, updated_manifest, partition, source_snapshot):
+        replans.append((path, updated_manifest, partition, source_snapshot))
 
     monkeypatch.setattr(run_cli, "_replan", fake_replan)
     monkeypatch.setattr(
@@ -820,6 +847,95 @@ def test_semantic_mode_set_preserves_manifest_and_lightly_replans(
     assert len(replans) == 1
     assert replans[0][0] == manifest_path
     assert replans[0][2] == "2024-12-31"
+    assert replans[0][3] == persisted_plan["analysis_snapshot"]
+
+
+def test_semantic_mode_replan_failure_invalidates_old_verification_outputs(
+    tmp_path, monkeypatch
+):
+    _write_warehouse_config(tmp_path)
+    manifest_path, manifest = create_run_manifest(
+        tmp_path,
+        "shop",
+        now=datetime(2026, 7, 13, 11, 32, 26, tzinfo=timezone.utc),
+        git_info={"head": "base"},
+    )
+    write_manifest(manifest_path, manifest)
+    for artifact_key in (
+        "verification_plan",
+        "shadow_run_result",
+        "compare_result",
+    ):
+        path = manifest_path.parent / manifest["artifacts"][artifact_key]
+        _write_json(path, {"stale": artifact_key})
+    persisted_plan = {
+        "analysis_snapshot": {
+            "partition": "2024-12-31",
+            "workspace_fingerprint": "sha256:workspace",
+        },
+        "verification": {
+            "target_semantics": {
+                "dws_sales": {
+                    "table_id": "id-dws-sales",
+                    "semantic_context_fingerprint": "sha256:context",
+                }
+            }
+        },
+    }
+    monkeypatch.setattr(
+        run_cli,
+        "require_fresh_plan",
+        lambda *args, **kwargs: persisted_plan,
+    )
+    monkeypatch.setattr(
+        run_cli,
+        "_replan",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            RuntimeError("replan failed")
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="replan failed"):
+        run_cli.main(
+            [
+                "semantic-mode",
+                "set",
+                "--manifest",
+                str(manifest_path),
+                "--table",
+                "dws_sales",
+                "--mode",
+                "changed",
+            ]
+        )
+
+    updated = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert (
+        updated["verification_intent"]["semantic_modes"]["dws_sales"]["mode"]
+        == "changed"
+    )
+    for artifact_key in (
+        "verification_plan",
+        "shadow_run_result",
+        "compare_result",
+    ):
+        path = manifest_path.parent / manifest["artifacts"][artifact_key]
+        assert not path.exists()
+
+
+def test_lightweight_replan_rejects_workspace_change(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        run_cli,
+        "workspace_fingerprint",
+        lambda root, project: "sha256:after",
+    )
+
+    with pytest.raises(StalePlanError, match="workspace changed.*analyze"):
+        run_cli._require_snapshot_workspace(
+            {"workspace_fingerprint": "sha256:before"},
+            repo_root=tmp_path,
+            project="shop",
+        )
 
 
 def test_semantic_mode_set_rejects_table_outside_affected_scope(

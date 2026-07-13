@@ -12,6 +12,7 @@ from sqlglot.errors import ErrorLevel
 
 from dw_refactor_agent.lineage.job_dag import JobDAG
 from dw_refactor_agent.refactor.artifact_contract import ArtifactFormatError
+from dw_refactor_agent.refactor.execution_provenance import _lock_path
 from dw_refactor_agent.refactor.plan_artifact import write_verification_plan
 from dw_refactor_agent.refactor.shadow_rewrite import (
     RewriteContext,
@@ -27,6 +28,17 @@ from dw_refactor_agent.refactor.shadow_run import (
 )
 
 TIMING_KEYS = {"started_at", "finished_at", "duration_ms"}
+
+
+def test_project_execution_lock_is_shared_across_worktrees(tmp_path):
+    relative = (
+        "warehouses/shop/artifacts/refactor_runs/run/verification/plan.json"
+    )
+    first = _lock_path(tmp_path / "worktree-one" / relative)
+    second = _lock_path(tmp_path / "worktree-two" / relative)
+
+    assert first == second
+    assert first.name == "shop.shadow_execution.lock"
 
 
 def _without_timing(result: dict) -> dict:
@@ -853,6 +865,7 @@ def test_run_shadow_plan_executes_self_contained(tmp_path, monkeypatch):
     assert result["format_version"] == 1
     assert result["status"] == "completed"
     assert result["mode"] == "execute"
+    assert isinstance(result["execution_id"], str)
     assert result["workspace_fingerprint"] == "sha256:workspace"
     assert (
         result["plan_fingerprint"]
@@ -1200,6 +1213,79 @@ def test_run_shadow_plan_rejects_provenance_not_from_plan(
                 "plan_fingerprint": "sha256:other-plan",
             },
         )
+
+
+def test_shadow_run_publishes_running_attempt_before_execution(
+    tmp_path, monkeypatch
+):
+    plan_path = tmp_path / "verification" / "plan.json"
+    output_path = tmp_path / "verification" / "shadow_run_result.json"
+    _write_shadow_cli_plan(plan_path)
+    observed = {}
+
+    def fake_execute(*args, **kwargs):
+        running = json.loads(output_path.read_text(encoding="utf-8"))
+        observed.update(running)
+        return {
+            "status": "completed",
+            "mode": "execute",
+            "phases": [],
+        }
+
+    marker_sql = []
+    monkeypatch.setattr(
+        "dw_refactor_agent.refactor.shadow_run.execute_shadow_plan",
+        fake_execute,
+    )
+    monkeypatch.setattr(
+        "dw_refactor_agent.refactor.shadow_run.run_sql_text",
+        lambda sql, db="", qa=False: marker_sql.append(sql),
+    )
+
+    result = run_shadow_plan(
+        plan_path,
+        output_path,
+        provenance=_provenance(plan_path),
+    )
+
+    assert observed["status"] == "running"
+    assert observed["execution_id"] == result["execution_id"]
+    assert result["status"] == "completed"
+    assert result["phases"][-1]["name"] == "publish_execution_marker"
+    assert result["execution_id"] in marker_sql[0]
+    assert "CREATE TABLE IF NOT EXISTS" in marker_sql[0]
+
+
+def test_shadow_run_fails_when_execution_marker_cannot_be_published(
+    tmp_path, monkeypatch
+):
+    plan_path = tmp_path / "verification" / "plan.json"
+    output_path = tmp_path / "verification" / "shadow_run_result.json"
+    _write_shadow_cli_plan(plan_path)
+    monkeypatch.setattr(
+        "dw_refactor_agent.refactor.shadow_run.execute_shadow_plan",
+        lambda *args, **kwargs: {
+            "status": "completed",
+            "mode": "execute",
+            "phases": [],
+        },
+    )
+    monkeypatch.setattr(
+        "dw_refactor_agent.refactor.shadow_run.run_sql_text",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            ShadowRunSqlError("marker failed")
+        ),
+    )
+
+    result = run_shadow_plan(
+        plan_path,
+        output_path,
+        provenance=_provenance(plan_path),
+    )
+
+    assert result["status"] == "failed"
+    assert "marker failed" in result["error"]
+    assert result["phases"][-1]["status"] == "failed"
 
 
 def test_shadow_run_standalone_cli_rejects_stale_plan(tmp_path, monkeypatch):

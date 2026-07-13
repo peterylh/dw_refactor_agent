@@ -459,7 +459,7 @@ def test_stable_id_pure_rename_is_automatically_equivalent():
         task="INSERT INTO dwd_store SELECT store_id FROM ods_store",
         model=(
             "version: 2\nname: dwd_store\nlayer: DWD\n"
-            "entities:\n  - name: store_id\n"
+            "entities:\n  - code: STORE\n    key_columns:\n      - store_id\n"
         ),
     )
     current = _assets(
@@ -467,7 +467,7 @@ def test_stable_id_pure_rename_is_automatically_equivalent():
         task="INSERT INTO dim_store SELECT store_id AS STORE_ID FROM ods_store",
         model=(
             "version: 2\nname: dim_store\nlayer: DWD\n"
-            "entities:\n  - name: STORE_ID\n"
+            "entities:\n  - code: STORE\n    key_columns:\n      - STORE_ID\n"
         ),
     )
 
@@ -477,6 +477,77 @@ def test_stable_id_pure_rename_is_automatically_equivalent():
     assert evidence == [{"rule": "stable_id_pure_rename"}]
     assert identity["prod_table"] == "dwd_store"
     assert identity["qa_table"] == "dim_store"
+
+
+def test_field_rename_does_not_rewrite_unqualified_source_expression():
+    baseline = _assets(
+        ddl=_ddl("dwd_store", "store_id"),
+        task="INSERT INTO dwd_store SELECT store_id FROM ods_store",
+        model="version: 2\nname: dwd_store\nlayer: DWD\n",
+    )
+    current = _assets(
+        ddl=_ddl("dwd_store", "renamed_store_id"),
+        task=("INSERT INTO dwd_store SELECT renamed_store_id FROM ods_store"),
+        model="version: 2\nname: dwd_store\nlayer: DWD\n",
+    )
+
+    assert automatic_equivalence(baseline, current)[0] is None
+
+
+def test_field_rename_with_explicit_output_alias_is_automatic():
+    baseline = _assets(
+        ddl=_ddl("dwd_store", "store_id"),
+        task="INSERT INTO dwd_store SELECT store_id FROM ods_store",
+        model="version: 2\nname: dwd_store\nlayer: DWD\n",
+    )
+    current = _assets(
+        ddl=_ddl("dwd_store", "renamed_store_id"),
+        task=(
+            "INSERT INTO dwd_store "
+            "SELECT store_id AS renamed_store_id FROM ods_store"
+        ),
+        model="version: 2\nname: dwd_store\nlayer: DWD\n",
+    )
+
+    assert automatic_equivalence(baseline, current)[0] == "equivalent"
+
+
+def test_field_rename_does_not_rewrite_arbitrary_model_semantics():
+    baseline = _assets(
+        ddl=_ddl("dwd_store", "store_id"),
+        task="INSERT INTO dwd_store SELECT store_id FROM ods_store",
+        model=(
+            "version: 2\nname: dwd_store\nlayer: DWD\ndescription: store_id\n"
+        ),
+    )
+    current = _assets(
+        ddl=_ddl("dwd_store", "renamed_store_id"),
+        task=(
+            "INSERT INTO dwd_store "
+            "SELECT store_id AS renamed_store_id FROM ods_store"
+        ),
+        model=(
+            "version: 2\nname: dwd_store\nlayer: DWD\n"
+            "description: renamed_store_id\n"
+        ),
+    )
+
+    assert automatic_equivalence(baseline, current)[0] is None
+
+
+def test_table_rename_collision_with_column_identity_is_not_automatic():
+    baseline = _assets(
+        ddl=_ddl("dwd_store", "store_id"),
+        task="INSERT INTO dwd_store SELECT store_id FROM ods_store",
+        model="version: 2\nname: dwd_store\nlayer: DWD\n",
+    )
+    current = _assets(
+        ddl=_ddl("store_id", "store_id"),
+        task="INSERT INTO store_id SELECT dwd_store FROM ods_store",
+        model="version: 2\nname: store_id\nlayer: DWD\n",
+    )
+
+    assert automatic_equivalence(baseline, current)[0] is None
 
 
 @pytest.mark.parametrize(

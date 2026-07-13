@@ -6,6 +6,7 @@ from dw_refactor_agent.refactor.artifact_contract import (
     FORMAT_VERSION,
     ArtifactFormatError,
     atomic_write_json,
+    read_json_object,
     require_format_version,
     sha256_json,
 )
@@ -37,3 +38,14 @@ def test_require_format_version_rejects_missing_or_wrong_value(actual):
 
 def test_require_format_version_accepts_current_value():
     require_format_version({"format_version": FORMAT_VERSION}, "plan")
+
+
+@pytest.mark.parametrize("content", ["{broken", "[]", '"text"'])
+def test_read_json_object_reports_corrupt_or_non_object_artifact(
+    tmp_path, content
+):
+    path = tmp_path / "artifact.json"
+    path.write_text(content, encoding="utf-8")
+
+    with pytest.raises(ArtifactFormatError, match="test artifact"):
+        read_json_object(path, "test artifact")

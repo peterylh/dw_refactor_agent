@@ -201,6 +201,7 @@ python warehouses/finance_analytics/generate_ods_data.py
 ```bash
 python -m dw_refactor_agent.refactor.run start --project <project>
 python -m dw_refactor_agent.refactor.run analyze --manifest warehouses/<project>/artifacts/refactor_runs/<run_id>/manifest.json --partition 2025-01-15
+dw-refactor semantic-mode set --run <run_id> --table <table> --mode equivalent|changed|unknown
 python -m dw_refactor_agent.refactor.run shadow-run --manifest warehouses/<project>/artifacts/refactor_runs/<run_id>/manifest.json --dry-run
 python -m dw_refactor_agent.refactor.run shadow-run --manifest warehouses/<project>/artifacts/refactor_runs/<run_id>/manifest.json
 python -m dw_refactor_agent.refactor.run compare --manifest warehouses/<project>/artifacts/refactor_runs/<run_id>/manifest.json --method all
@@ -209,7 +210,10 @@ python -m dw_refactor_agent.refactor.run compare --manifest warehouses/<project>
 每个 run 位于 `warehouses/{project}/artifacts/refactor_runs/{run_id}/`：
 `manifest.json` 是后续命令的稳定入口，`baseline/` 是冻结基线，`current/` 与
 `analysis/` 由 analyze 刷新，`verification/` 保存 plan、shadow-run 和 compare
-结果。资产布局、schema identity 或基线解析语义变化后，旧 run 不再可靠，应重新
+结果。后续命令也可使用精确 `--run <run_id>`，但不会默认选择最新 run。analyze 会按
+`equivalent` / `changed` / `unknown` 解析受影响表语义；unknown 默认继续验证下游并
+保留 warning。用户声明绑定 table identity 与语义上下文，可跨相同上下文的 run
+复用。资产布局、schema identity 或基线解析语义变化后，旧 run 不再可靠，应重新
 执行 `start` 固化基线。
 
 ## 数据集市评估工具 (assessment)
