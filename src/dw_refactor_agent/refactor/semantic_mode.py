@@ -421,7 +421,12 @@ def _resolved_declaration(
             table_id=fact["table_id"],
             context_fingerprint=context_fingerprint,
         ):
-            return {"mode": current["mode"], "source": "user"}, {}, None
+            source = (
+                "inherited_user"
+                if current.get("inherited_from_run_id")
+                else "user"
+            )
+            return {"mode": current["mode"], "source": source}, {}, None
         stale_warning = {
             "type": "stale_semantic_declaration",
             "table": table_name,
@@ -430,6 +435,7 @@ def _resolved_declaration(
                 "table identity or semantic context and was not applied."
             ),
         }
+        return None, {}, stale_warning
     declaration, inherited = _historical_declaration(
         historical_manifests,
         table_name=table_name,

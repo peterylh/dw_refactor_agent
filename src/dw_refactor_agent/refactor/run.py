@@ -33,17 +33,24 @@ from dw_refactor_agent.refactor.incremental_lineage import (
     build_lineage_artifacts,
 )
 from dw_refactor_agent.refactor.issue_diff import diff_assess_results
-from dw_refactor_agent.refactor.plan_artifact import write_verification_plan
+from dw_refactor_agent.refactor.plan_artifact import (
+    require_fresh_plan,
+    write_verification_plan,
+)
+from dw_refactor_agent.refactor.semantic_mode import resolve_semantic_modes
 from dw_refactor_agent.refactor.session import (
     artifact_path,
     create_run_manifest,
+    load_historical_manifests,
     load_manifest,
+    resolve_manifest_path,
     write_manifest,
 )
 from dw_refactor_agent.refactor.shadow_run import run_shadow_plan
 from dw_refactor_agent.refactor.verification_plan import (
     build_verification_plan,
 )
+from dw_refactor_agent.refactor.workspace_snapshot import workspace_fingerprint
 
 NO_CHANGES_SCORE_REASON = (
     "No relevant file, lineage, DDL, or job changes were detected; scoped "
@@ -402,6 +409,14 @@ def _start(args) -> int:
     return 0
 
 
+def _manifest_path_from_args(args) -> Path:
+    return resolve_manifest_path(
+        manifest_path=getattr(args, "manifest", None),
+        run_id=getattr(args, "run", None),
+        root=config.PROJECT_ROOT,
+    )
+
+
 def _previous_cache_path(manifest_path: Path) -> Path:
     current_cache = artifact_path(manifest_path, "current_task_cache")
     if current_cache.exists():
@@ -409,8 +424,90 @@ def _previous_cache_path(manifest_path: Path) -> Path:
     return artifact_path(manifest_path, "baseline_task_cache")
 
 
+def _semantic_resolution_for_run(
+    manifest_path: Path,
+    manifest: dict,
+    *,
+    repo_root: Path,
+    change_analysis: dict,
+    baseline_lineage: dict,
+    current_lineage: dict,
+):
+    history, diagnostics = load_historical_manifests(manifest_path, manifest)
+    for diagnostic in diagnostics:
+        print(f"Warning: {diagnostic}", file=sys.stderr)
+    return resolve_semantic_modes(
+        project=manifest["project"],
+        project_dir=_project_dir(manifest["project"]),
+        change_analysis=change_analysis,
+        baseline_lineage=baseline_lineage,
+        current_lineage=current_lineage,
+        base_ref=manifest.get("base_git", {}).get("head") or "HEAD",
+        repo_root=repo_root,
+        current_manifest=manifest,
+        historical_manifests=history,
+    )
+
+
+def _merge_inherited_declarations(
+    manifest: dict, inherited_declarations: dict
+) -> dict:
+    if not inherited_declarations:
+        return manifest
+    updated = deepcopy(manifest)
+    intent = updated.setdefault("verification_intent", {})
+    semantic_modes = intent.setdefault("semantic_modes", {})
+    for table, declaration in inherited_declarations.items():
+        semantic_modes.setdefault(table, declaration)
+    return updated
+
+
+def _build_plan_for_run(
+    manifest_path: Path,
+    manifest: dict,
+    *,
+    repo_root: Path,
+    change_analysis: dict,
+    baseline_lineage: dict,
+    current_lineage: dict,
+    partition: str | None,
+) -> tuple[dict, dict]:
+    semantic_resolution = _semantic_resolution_for_run(
+        manifest_path,
+        manifest,
+        repo_root=repo_root,
+        change_analysis=change_analysis,
+        baseline_lineage=baseline_lineage,
+        current_lineage=current_lineage,
+    )
+    try:
+        plan = build_verification_plan(
+            manifest["project"],
+            change_analysis,
+            base_ref=manifest.get("base_git", {}).get("head"),
+            repo_root=repo_root,
+            lineage_data=current_lineage,
+            partition=partition,
+            semantic_resolution=semantic_resolution,
+        )
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from None
+    plan["analysis_snapshot"] = {
+        "partition": partition,
+        "workspace_fingerprint": workspace_fingerprint(
+            repo_root, manifest["project"]
+        ),
+    }
+    updated_manifest = _merge_inherited_declarations(
+        manifest, semantic_resolution.inherited_declarations
+    )
+    if updated_manifest is not manifest:
+        write_manifest(manifest_path, updated_manifest)
+    return plan, updated_manifest
+
+
 def _analyze(args) -> int:
-    manifest_path = Path(args.manifest)
+    manifest_path = _manifest_path_from_args(args)
     manifest = load_manifest(manifest_path)
     project = manifest["project"]
     repo_root = _root_from_manifest(manifest, manifest_path)
@@ -445,17 +542,15 @@ def _analyze(args) -> int:
             change_analysis,
         )
 
-        try:
-            plan = build_verification_plan(
-                project,
-                change_analysis,
-                base_ref=manifest.get("base_git", {}).get("head"),
-                repo_root=repo_root,
-                lineage_data=current_lineage,
-                partition=args.partition,
-            )
-        except ValueError as exc:
-            raise SystemExit(str(exc)) from None
+        plan, manifest = _build_plan_for_run(
+            manifest_path,
+            manifest,
+            repo_root=repo_root,
+            change_analysis=change_analysis,
+            baseline_lineage=baseline_lineage,
+            current_lineage=current_lineage,
+            partition=args.partition,
+        )
         change_analysis = _with_rename_mapping(
             change_analysis,
             plan.get("ddl_changes") or [],
@@ -500,7 +595,7 @@ def _analyze(args) -> int:
 
 
 def _shadow_run(args) -> int:
-    manifest_path = Path(args.manifest)
+    manifest_path = _manifest_path_from_args(args)
     manifest = load_manifest(manifest_path)
     repo_root = _root_from_manifest(manifest, manifest_path)
     with _project_root_context(repo_root):
@@ -516,7 +611,7 @@ def _shadow_run(args) -> int:
 
 
 def _compare(args) -> int:
-    manifest_path = Path(args.manifest)
+    manifest_path = _manifest_path_from_args(args)
     compare_shadow_results(
         artifact_path(manifest_path, "verification_plan"),
         artifact_path(manifest_path, "compare_result"),
@@ -525,6 +620,85 @@ def _compare(args) -> int:
         precision=args.precision,
     )
     return 0
+
+
+def _replan(
+    manifest_path: Path,
+    manifest: dict,
+    partition: str | None,
+) -> None:
+    repo_root = _root_from_manifest(manifest, manifest_path)
+    with _project_root_context(repo_root) as repo_root:
+        change_analysis = _read_json(
+            artifact_path(manifest_path, "change_analysis")
+        )
+        baseline_lineage = _read_json(
+            artifact_path(manifest_path, "baseline_lineage")
+        )
+        current_lineage = _read_json(
+            artifact_path(manifest_path, "current_lineage")
+        )
+        plan, _updated_manifest = _build_plan_for_run(
+            manifest_path,
+            manifest,
+            repo_root=repo_root,
+            change_analysis=change_analysis,
+            baseline_lineage=baseline_lineage,
+            current_lineage=current_lineage,
+            partition=partition,
+        )
+        write_verification_plan(
+            artifact_path(manifest_path, "verification_plan"), plan
+        )
+
+
+def _semantic_mode_set(args) -> int:
+    manifest_path = _manifest_path_from_args(args)
+    manifest = load_manifest(manifest_path)
+    repo_root = _root_from_manifest(manifest, manifest_path)
+    with _project_root_context(repo_root):
+        persisted_plan = require_fresh_plan(
+            artifact_path(manifest_path, "verification_plan"),
+            root=repo_root,
+            project=manifest["project"],
+        )
+        target_semantics = (persisted_plan.get("verification") or {}).get(
+            "target_semantics"
+        ) or {}
+        table_by_key = {
+            str(table).casefold(): table for table in target_semantics
+        }
+        table = table_by_key.get(str(args.table).casefold())
+        if table is None:
+            raise SystemExit(
+                f"table is not in affected semantic scope: {args.table}"
+            )
+        semantics = target_semantics[table]
+        declaration = {
+            "table_id": semantics["table_id"],
+            "mode": args.mode,
+            "semantic_context_fingerprint": semantics[
+                "semantic_context_fingerprint"
+            ],
+            "confirmed_at": _now().isoformat(),
+        }
+        updated = deepcopy(manifest)
+        intent = updated.setdefault("verification_intent", {})
+        intent.setdefault("semantic_modes", {})[table] = declaration
+        write_manifest(manifest_path, updated)
+        _replan(
+            manifest_path,
+            updated,
+            persisted_plan["analysis_snapshot"].get("partition"),
+        )
+    print(f"Semantic mode updated: {table}={args.mode}")
+    return 0
+
+
+def _add_manifest_selector(parser: argparse.ArgumentParser) -> None:
+    selector = parser.add_mutually_exclusive_group(required=True)
+    selector.add_argument("--manifest")
+    selector.add_argument("--run")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -543,7 +717,7 @@ def build_parser() -> argparse.ArgumentParser:
         "analyze",
         help="refresh current lineage, issue diff, and validation plan",
     )
-    analyze.add_argument("--manifest", required=True)
+    _add_manifest_selector(analyze)
     analyze.add_argument(
         "--partition",
         default=None,
@@ -552,7 +726,7 @@ def build_parser() -> argparse.ArgumentParser:
     analyze.set_defaults(func=_analyze)
 
     shadow = subparsers.add_parser("shadow-run", help="run QA shadow plan")
-    shadow.add_argument("--manifest", required=True)
+    _add_manifest_selector(shadow)
     shadow.add_argument("--dry-run", action="store_true")
     shadow.add_argument(
         "--timing-detail",
@@ -576,7 +750,7 @@ def build_parser() -> argparse.ArgumentParser:
     shadow.set_defaults(func=_shadow_run)
 
     compare = subparsers.add_parser("compare", help="compare prod and QA")
-    compare.add_argument("--manifest", required=True)
+    _add_manifest_selector(compare)
     compare.add_argument(
         "--method",
         default="all",
@@ -585,6 +759,24 @@ def build_parser() -> argparse.ArgumentParser:
     compare.add_argument("--sample", type=int, default=0)
     compare.add_argument("--precision", type=float, default=0.01)
     compare.set_defaults(func=_compare)
+
+    semantic_mode = subparsers.add_parser(
+        "semantic-mode", help="manage table semantic declarations"
+    )
+    semantic_commands = semantic_mode.add_subparsers(
+        dest="semantic_command", required=True
+    )
+    semantic_set = semantic_commands.add_parser(
+        "set", help="set one affected table semantic mode"
+    )
+    _add_manifest_selector(semantic_set)
+    semantic_set.add_argument("--table", required=True)
+    semantic_set.add_argument(
+        "--mode",
+        required=True,
+        choices=["equivalent", "changed", "unknown"],
+    )
+    semantic_set.set_defaults(func=_semantic_mode_set)
     return parser
 
 

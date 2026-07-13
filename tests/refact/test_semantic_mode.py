@@ -301,6 +301,30 @@ def test_historical_declaration_is_reused_by_table_id_and_context():
     )
 
 
+def test_copied_historical_declaration_keeps_inherited_source():
+    facts = {"dws_sales": _fact("dws_sales", is_direct=True)}
+    first = resolve_semantic_graph(facts, [])
+    declaration = {
+        "table_id": "id-dws_sales",
+        "mode": "equivalent",
+        "semantic_context_fingerprint": first.target_semantics["dws_sales"][
+            "semantic_context_fingerprint"
+        ],
+        "confirmed_at": "2026-07-12T10:00:00+08:00",
+        "inherited_from_run_id": "20260712_100000_shop",
+    }
+
+    result = resolve_semantic_graph(
+        facts,
+        [],
+        current_declarations={"dws_sales": declaration},
+    )
+
+    assert result.target_semantics["dws_sales"]["resolved_source"] == (
+        "inherited_user"
+    )
+
+
 def test_stale_current_declaration_is_audited_but_not_applied():
     result = resolve_semantic_graph(
         {"dws_sales": _fact("dws_sales", is_direct=True)},

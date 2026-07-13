@@ -1,7 +1,10 @@
 import json
 from datetime import datetime, timezone
 
+import pytest
+
 import dw_refactor_agent.refactor.run as run_cli
+from dw_refactor_agent.refactor.semantic_mode import SemanticResolution
 from dw_refactor_agent.refactor.session import (
     create_run_manifest,
     write_manifest,
@@ -55,6 +58,20 @@ def _install_start_fakes(monkeypatch):
         run_cli,
         "_now",
         lambda: _local_datetime(2026, 6, 20, 7, 30),
+    )
+
+
+def _install_empty_semantic_resolution(monkeypatch):
+    monkeypatch.setattr(
+        run_cli,
+        "resolve_semantic_modes",
+        lambda **kwargs: SemanticResolution(
+            target_semantics={},
+            boundaries={"authority": [], "observational": []},
+            selected_tables=(),
+            warnings=(),
+            inherited_declarations={},
+        ),
     )
 
 
@@ -200,6 +217,7 @@ def test_analyze_refreshes_current_analysis_diff_and_plan(
 
     monkeypatch.setattr(run_cli, "build_lineage_artifacts", fake_lineage)
     monkeypatch.setattr(run_cli, "assess", fake_assess)
+    _install_empty_semantic_resolution(monkeypatch)
 
     diff_calls = []
 
@@ -227,7 +245,9 @@ def test_analyze_refreshes_current_analysis_diff_and_plan(
         repo_root=None,
         lineage_data=None,
         partition=None,
+        semantic_resolution=None,
     ):
+        assert isinstance(semantic_resolution, SemanticResolution)
         plan_calls.append(
             {
                 "base_ref": base_ref,
@@ -313,6 +333,10 @@ def test_analyze_refreshes_current_analysis_diff_and_plan(
     persisted_plan = json.loads(
         (run_root / "verification" / "plan.json").read_text()
     )
+    assert persisted_plan["analysis_snapshot"]["partition"] == "2025-01-15"
+    assert persisted_plan["analysis_snapshot"][
+        "workspace_fingerprint"
+    ].startswith("sha256:")
     assert "baseline_ddl" not in persisted_plan
     assert persisted_plan["baseline_ddl_refs"]["dwd_order"]["path"] == (
         "baseline_ddl/dwd_order.sql"
@@ -372,6 +396,7 @@ def test_analyze_reports_partition_requirement_cleanly(tmp_path, monkeypatch):
         repo_root=None,
         lineage_data=None,
         partition=None,
+        semantic_resolution=None,
     ):
         raise ValueError(
             "refactor analyze requires --partition for incremental jobs "
@@ -379,6 +404,7 @@ def test_analyze_reports_partition_requirement_cleanly(tmp_path, monkeypatch):
         )
 
     monkeypatch.setattr(run_cli, "build_lineage_artifacts", fake_lineage)
+    _install_empty_semantic_resolution(monkeypatch)
     monkeypatch.setattr(run_cli, "changed_files_since_head", lambda *args: [])
     monkeypatch.setattr(run_cli, "build_verification_plan", fake_plan)
     monkeypatch.setattr(
@@ -471,6 +497,7 @@ def test_analyze_marks_empty_diff_assessment_not_applicable(
         repo_root=None,
         lineage_data=None,
         partition=None,
+        semantic_resolution=None,
     ):
         return {
             "project": project,
@@ -494,6 +521,7 @@ def test_analyze_marks_empty_diff_assessment_not_applicable(
 
     monkeypatch.setattr(run_cli, "build_lineage_artifacts", fake_lineage)
     monkeypatch.setattr(run_cli, "assess", fake_assess)
+    _install_empty_semantic_resolution(monkeypatch)
     monkeypatch.setattr(run_cli, "changed_files_since_head", lambda *args: [])
     monkeypatch.setattr(run_cli, "build_verification_plan", fake_plan)
 
@@ -636,3 +664,151 @@ def test_shadow_run_cli_reports_handler_failure(tmp_path, monkeypatch):
     monkeypatch.setattr(run_cli, "run_shadow_plan", fake_shadow)
 
     assert run_cli.main(["shadow-run", "--manifest", str(manifest_path)]) == 1
+
+
+def test_manifest_commands_accept_exact_run_selector_and_reject_both():
+    parser = run_cli.build_parser()
+
+    args = parser.parse_args(["analyze", "--run", "20260713_113226_shop"])
+
+    assert args.run == "20260713_113226_shop"
+    assert args.manifest is None
+    with pytest.raises(SystemExit):
+        parser.parse_args(
+            [
+                "analyze",
+                "--run",
+                "20260713_113226_shop",
+                "--manifest",
+                "/tmp/manifest.json",
+            ]
+        )
+
+
+def test_semantic_mode_set_preserves_manifest_and_lightly_replans(
+    tmp_path, monkeypatch
+):
+    _write_warehouse_config(tmp_path)
+    manifest_path, manifest = create_run_manifest(
+        tmp_path,
+        "shop",
+        now=datetime(2026, 7, 13, 11, 32, 26, tzinfo=timezone.utc),
+        git_info={"head": "base"},
+    )
+    manifest["verification_intent"] = {
+        "semantic_modes": {
+            "other_table": {
+                "table_id": "id-other",
+                "mode": "unknown",
+                "semantic_context_fingerprint": "sha256:other",
+                "confirmed_at": "2026-07-12T10:00:00+08:00",
+            }
+        }
+    }
+    write_manifest(manifest_path, manifest)
+    persisted_plan = {
+        "format_version": 1,
+        "plan_fingerprint": "sha256:plan",
+        "analysis_snapshot": {
+            "partition": "2024-12-31",
+            "workspace_fingerprint": "sha256:workspace",
+        },
+        "verification": {
+            "target_semantics": {
+                "dws_store_sales_daily": {
+                    "table_id": "id-dws-store-sales",
+                    "semantic_context_fingerprint": "sha256:context",
+                }
+            }
+        },
+    }
+    monkeypatch.setattr(
+        run_cli,
+        "require_fresh_plan",
+        lambda plan_path, root, project: persisted_plan,
+    )
+    replans = []
+
+    def fake_replan(path, updated_manifest, partition):
+        replans.append((path, updated_manifest, partition))
+
+    monkeypatch.setattr(run_cli, "_replan", fake_replan)
+    monkeypatch.setattr(
+        run_cli,
+        "_now",
+        lambda: datetime(2026, 7, 13, 15, 30, tzinfo=timezone.utc),
+    )
+
+    assert (
+        run_cli.main(
+            [
+                "semantic-mode",
+                "set",
+                "--manifest",
+                str(manifest_path),
+                "--table",
+                "dws_store_sales_daily",
+                "--mode",
+                "equivalent",
+            ]
+        )
+        == 0
+    )
+
+    updated = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert updated["artifacts"] == manifest["artifacts"]
+    assert updated["base_git"] == manifest["base_git"]
+    assert updated["root"] == manifest["root"]
+    assert (
+        updated["verification_intent"]["semantic_modes"]["other_table"]
+        == manifest["verification_intent"]["semantic_modes"]["other_table"]
+    )
+    assert updated["verification_intent"]["semantic_modes"][
+        "dws_store_sales_daily"
+    ] == {
+        "table_id": "id-dws-store-sales",
+        "mode": "equivalent",
+        "semantic_context_fingerprint": "sha256:context",
+        "confirmed_at": "2026-07-13T15:30:00+00:00",
+    }
+    assert len(replans) == 1
+    assert replans[0][0] == manifest_path
+    assert replans[0][2] == "2024-12-31"
+
+
+def test_semantic_mode_set_rejects_table_outside_affected_scope(
+    tmp_path, monkeypatch
+):
+    _write_warehouse_config(tmp_path)
+    manifest_path, manifest = create_run_manifest(
+        tmp_path,
+        "shop",
+        now=datetime(2026, 7, 13, 11, 32, 26, tzinfo=timezone.utc),
+        git_info={},
+    )
+    write_manifest(manifest_path, manifest)
+    monkeypatch.setattr(
+        run_cli,
+        "require_fresh_plan",
+        lambda plan_path, root, project: {
+            "analysis_snapshot": {
+                "partition": "2024-12-31",
+                "workspace_fingerprint": "sha256:workspace",
+            },
+            "verification": {"target_semantics": {}},
+        },
+    )
+
+    with pytest.raises(SystemExit, match="affected semantic scope"):
+        run_cli.main(
+            [
+                "semantic-mode",
+                "set",
+                "--manifest",
+                str(manifest_path),
+                "--table",
+                "missing_table",
+                "--mode",
+                "equivalent",
+            ]
+        )

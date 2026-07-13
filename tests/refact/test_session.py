@@ -9,7 +9,9 @@ from dw_refactor_agent.refactor.artifact_contract import ArtifactFormatError
 from dw_refactor_agent.refactor.session import (
     artifact_path,
     create_run_manifest,
+    load_historical_manifests,
     load_manifest,
+    resolve_manifest_path,
     run_root_from_manifest_path,
     write_manifest,
 )
@@ -165,3 +167,110 @@ def test_load_manifest_rejects_missing_or_wrong_format_version(
 
     with pytest.raises(ArtifactFormatError, match="manifest.*format_version"):
         load_manifest(manifest_path)
+
+
+def test_resolve_manifest_path_finds_unique_run_across_projects(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(
+        config_core,
+        "PROJECT_CONFIG",
+        {
+            "shop": {"dir": "warehouses/shop"},
+            "finance": {"dir": "warehouses/finance"},
+        },
+    )
+    manifest_path, _manifest = create_run_manifest(
+        tmp_path,
+        "shop",
+        now=_local_datetime(2026, 7, 13, 11, 32, 26),
+        git_info={},
+    )
+
+    assert (
+        resolve_manifest_path(
+            manifest_path=None,
+            run_id="20260713_113226_shop",
+            root=tmp_path,
+        )
+        == manifest_path
+    )
+
+
+def test_resolve_manifest_path_rejects_zero_and_multiple_matches(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(
+        config_core,
+        "PROJECT_CONFIG",
+        {
+            "one": {"dir": "warehouses/one"},
+            "two": {"dir": "warehouses/two"},
+        },
+    )
+    with pytest.raises(SystemExit, match="no run.*--manifest"):
+        resolve_manifest_path(
+            manifest_path=None, run_id="same_run", root=tmp_path
+        )
+
+    for project in ("one", "two"):
+        path = (
+            tmp_path
+            / "warehouses"
+            / project
+            / "artifacts/refactor_runs/same_run/manifest.json"
+        )
+        write_manifest(
+            path,
+            {
+                "format_version": 1,
+                "run_id": "same_run",
+                "project": project,
+                "root": str(tmp_path),
+                "artifacts": {},
+            },
+        )
+
+    with pytest.raises(SystemExit, match="multiple.*--manifest"):
+        resolve_manifest_path(
+            manifest_path=None, run_id="same_run", root=tmp_path
+        )
+
+
+def test_load_historical_manifests_skips_corrupt_history_with_diagnostic(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(
+        config_core,
+        "PROJECT_CONFIG",
+        {"shop": {"dir": "warehouses/shop"}},
+    )
+    current_path, current = create_run_manifest(
+        tmp_path,
+        "shop",
+        now=_local_datetime(2026, 7, 13, 12, 0, 0),
+        git_info={},
+    )
+    historical_path, historical = create_run_manifest(
+        tmp_path,
+        "shop",
+        now=_local_datetime(2026, 7, 12, 12, 0, 0),
+        git_info={},
+    )
+    historical["verification_intent"] = {
+        "semantic_modes": {"dws_sales": {"mode": "equivalent"}}
+    }
+    write_manifest(historical_path, historical)
+    corrupt_path = (
+        historical_path.parent.parent
+        / "20260711_120000_shop"
+        / "manifest.json"
+    )
+    corrupt_path.parent.mkdir()
+    corrupt_path.write_text("{broken", encoding="utf-8")
+
+    loaded, diagnostics = load_historical_manifests(current_path, current)
+
+    assert loaded == [(historical_path, historical)]
+    assert len(diagnostics) == 1
+    assert "20260711_120000_shop" in diagnostics[0]

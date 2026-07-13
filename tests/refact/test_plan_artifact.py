@@ -3,11 +3,14 @@ import json
 
 import pytest
 
+import dw_refactor_agent.refactor.plan_artifact as plan_artifact_module
 from dw_refactor_agent.refactor.artifact_contract import ArtifactFormatError
 from dw_refactor_agent.refactor.plan_artifact import (
+    StalePlanError,
     calculate_plan_fingerprint,
     load_persisted_verification_plan,
     load_verification_plan,
+    require_fresh_plan,
     write_verification_plan,
 )
 
@@ -261,3 +264,50 @@ def test_load_verification_plan_rejects_digest_mismatch(tmp_path):
 
     with pytest.raises(ValueError, match="dwd_order.*SHA-256 mismatch"):
         load_verification_plan(plan_path)
+
+
+def test_require_fresh_plan_matches_analysis_workspace_snapshot(
+    tmp_path, monkeypatch
+):
+    plan_path = tmp_path / "verification" / "plan.json"
+    write_verification_plan(
+        plan_path,
+        {
+            **_plan({}),
+            "analysis_snapshot": {
+                "partition": "2024-12-31",
+                "workspace_fingerprint": "sha256:workspace",
+            },
+        },
+    )
+    monkeypatch.setattr(
+        plan_artifact_module,
+        "workspace_fingerprint",
+        lambda root, project: "sha256:workspace",
+    )
+
+    persisted = require_fresh_plan(plan_path, root=tmp_path, project="demo")
+
+    assert persisted["analysis_snapshot"]["partition"] == "2024-12-31"
+
+
+def test_require_fresh_plan_rejects_workspace_drift(tmp_path, monkeypatch):
+    plan_path = tmp_path / "verification" / "plan.json"
+    write_verification_plan(
+        plan_path,
+        {
+            **_plan({}),
+            "analysis_snapshot": {
+                "partition": "2024-12-31",
+                "workspace_fingerprint": "sha256:before",
+            },
+        },
+    )
+    monkeypatch.setattr(
+        plan_artifact_module,
+        "workspace_fingerprint",
+        lambda root, project: "sha256:after",
+    )
+
+    with pytest.raises(StalePlanError, match="stale_plan.*analyze"):
+        require_fresh_plan(plan_path, root=tmp_path, project="demo")

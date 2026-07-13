@@ -16,8 +16,13 @@ from dw_refactor_agent.refactor.artifact_contract import (
     require_format_version,
     sha256_json,
 )
+from dw_refactor_agent.refactor.workspace_snapshot import workspace_fingerprint
 
 _SAFE_TABLE_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_$]*$")
+
+
+class StalePlanError(ArtifactFormatError):
+    """Raised when the current workspace no longer matches an analysis."""
 
 
 def _validate_table_name(table_name: str) -> str:
@@ -186,3 +191,30 @@ def load_verification_plan(plan_path: Path) -> dict:
     executable = deepcopy(plan)
     executable["baseline_ddl"] = _materialize_baseline_ddl(plan_path, plan)
     return executable
+
+
+def require_fresh_plan(
+    plan_path: Path,
+    *,
+    root: Path,
+    project: str,
+) -> dict:
+    """Validate plan bytes, external refs, and the analyzed workspace."""
+    persisted = load_persisted_verification_plan(plan_path)
+    snapshot = persisted.get("analysis_snapshot")
+    if not isinstance(snapshot, dict):
+        raise ArtifactFormatError(
+            "verification plan analysis_snapshot is required; run analyze again"
+        )
+    expected = snapshot.get("workspace_fingerprint")
+    if not isinstance(expected, str) or not expected.startswith("sha256:"):
+        raise ArtifactFormatError(
+            "verification plan analysis_snapshot.workspace_fingerprint is "
+            "required; run analyze again"
+        )
+    actual = workspace_fingerprint(Path(root), project)
+    if expected != actual:
+        raise StalePlanError(
+            "stale_plan: workspace changed after analyze; run analyze again"
+        )
+    return persisted

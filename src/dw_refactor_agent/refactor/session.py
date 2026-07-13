@@ -9,6 +9,7 @@ from pathlib import Path
 from dw_refactor_agent.config import TEXT_ENCODING, refactor_runs_dir
 from dw_refactor_agent.refactor.artifact_contract import (
     FORMAT_VERSION,
+    ArtifactFormatError,
     atomic_write_json,
     require_format_version,
 )
@@ -95,3 +96,70 @@ def artifact_path(manifest_path: Path, artifact_key: str) -> Path:
     manifest = load_manifest(manifest_path)
     rel_path = manifest["artifacts"][artifact_key]
     return run_root_from_manifest_path(manifest_path) / rel_path
+
+
+def resolve_manifest_path(
+    *,
+    manifest_path: str | Path | None,
+    run_id: str | None,
+    root: Path,
+) -> Path:
+    """Resolve one exact manifest path without an implicit latest run."""
+    if bool(manifest_path) == bool(run_id):
+        raise SystemExit("provide exactly one of --manifest or --run")
+    if manifest_path:
+        resolved = Path(manifest_path).expanduser().resolve()
+        if not resolved.is_file():
+            raise SystemExit(f"manifest does not exist: {resolved}")
+        return resolved
+
+    matches = []
+    for project in sorted(config_project_names()):
+        candidate = _refactor_runs_root(Path(root), project) / str(run_id)
+        manifest = candidate / "manifest.json"
+        if manifest.is_file():
+            matches.append(manifest.resolve())
+    if not matches:
+        raise SystemExit(
+            f"no run matches {run_id!r}; pass an exact --manifest path"
+        )
+    if len(matches) > 1:
+        paths = ", ".join(str(path) for path in matches)
+        raise SystemExit(
+            f"multiple runs match {run_id!r}: {paths}; pass --manifest"
+        )
+    return matches[0]
+
+
+def config_project_names() -> list[str]:
+    """Return currently configured warehouse project names."""
+    from dw_refactor_agent.config import core
+
+    return sorted(core.PROJECT_CONFIG)
+
+
+def load_historical_manifests(
+    manifest_path: Path,
+    manifest: dict,
+) -> tuple[list[tuple[Path, dict]], list[str]]:
+    """Load same-project historical manifests newest-first."""
+    current_path = Path(manifest_path).resolve()
+    runs_root = current_path.parent.parent
+    loaded = []
+    diagnostics = []
+    if not runs_root.is_dir():
+        return loaded, diagnostics
+    for run_dir in sorted(runs_root.iterdir(), reverse=True):
+        candidate = run_dir / "manifest.json"
+        if candidate.resolve() == current_path or not candidate.is_file():
+            continue
+        try:
+            historical = load_manifest(candidate)
+            if historical.get("project") != manifest.get("project"):
+                continue
+            loaded.append((candidate.resolve(), historical))
+        except (OSError, json.JSONDecodeError, ArtifactFormatError) as exc:
+            diagnostics.append(
+                f"skipped historical manifest {candidate}: {exc}"
+            )
+    return loaded, diagnostics

@@ -15,6 +15,9 @@ dependencies = [
     "typing_extensions",
 ]
 
+[project.scripts]
+dw-refactor = "dw_refactor_agent.refactor.run:main"
+
 [tool.setuptools.packages.find]
 where = ["src"]
 
