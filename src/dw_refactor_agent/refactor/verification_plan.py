@@ -204,6 +204,7 @@ def build_verification_plan(
     repo_root: Path | None = None,
     lineage_data: dict | None = None,
     partition: str | None = None,
+    semantic_resolution=None,
 ) -> dict:
     cfg = config.PROJECT_CONFIG[project]
     metadata_errors = []
@@ -213,16 +214,25 @@ def build_verification_plan(
     if not isinstance(raw_scope, dict):
         raise ValueError("change_analysis.affected_scope is required")
     scope = _normalized_scope(raw_scope)
-    execution_tasks = set(scope["direct_tables"]) | set(
-        scope["downstream_tables"]
-    )
     modified_jobs = _modified_jobs(change_analysis)
     changed_ddl_tables = _changed_ddl_tables(change_analysis)
-    anchors, self_anchor_tables = _verification_anchor_tables(
-        scope,
-        modified_jobs,
-        changed_ddl_tables,
-    )
+    if semantic_resolution is None:
+        execution_tasks = set(scope["direct_tables"]) | set(
+            scope["downstream_tables"]
+        )
+        anchors, self_anchor_tables = _verification_anchor_tables(
+            scope,
+            modified_jobs,
+            changed_ddl_tables,
+        )
+    else:
+        execution_tasks = set(semantic_resolution.selected_tables)
+        boundaries = semantic_resolution.boundaries
+        anchors = sorted(
+            set(boundaries.get("authority") or [])
+            | set(boundaries.get("observational") or [])
+        )
+        self_anchor_tables = []
     scope["anchor_tables"] = anchors
     changes = _plan_changes(change_analysis, modified_jobs)
 
@@ -275,6 +285,13 @@ def build_verification_plan(
             metadata_errors,
         )
     )
+    if semantic_resolution is not None:
+        verification_warnings.extend(semantic_resolution.warnings)
+        _validate_semantic_anchor_mappings(
+            anchors,
+            semantic_resolution.target_semantics,
+            metadata_errors,
+        )
     if not partition:
         partition_required_jobs = _partition_required_jobs(
             project,
@@ -297,15 +314,11 @@ def build_verification_plan(
         lineage_data,
     )
 
-    checks = []
-    for table in anchors:
-        for method in ("count", "row_compare"):
-            check = {"table": table, "method": method}
-            if method == "row_compare":
-                exclude_columns = _row_compare_exclude_columns(project, table)
-                if exclude_columns is not None:
-                    check["exclude_columns"] = exclude_columns
-            checks.append(check)
+    checks = _verification_checks(
+        project,
+        anchors,
+        semantic_resolution,
+    )
 
     verification = _verification_metadata(
         [] if metadata_errors else checks,
@@ -318,7 +331,20 @@ def build_verification_plan(
         compare_anchors,
         verification_warnings,
         metadata_errors,
+        target_semantics=(
+            semantic_resolution.target_semantics
+            if semantic_resolution is not None
+            else None
+        ),
+        semantic_boundaries=(
+            semantic_resolution.boundaries
+            if semantic_resolution is not None
+            else None
+        ),
     )
+
+    if semantic_resolution is not None:
+        _validate_semantic_check_invariants(verification)
 
     return {
         "project": project,
@@ -330,6 +356,82 @@ def build_verification_plan(
         "jobs_to_run": jobs_to_run,
         "verification": verification,
     }
+
+
+def _validate_semantic_anchor_mappings(
+    anchors: list[str],
+    target_semantics: dict,
+    metadata_errors: list[dict],
+) -> None:
+    for table in anchors:
+        semantics = target_semantics.get(table)
+        if semantics is None:
+            _add_validation_error(
+                metadata_errors,
+                table,
+                "target_semantics",
+                "verification anchor has no target semantics",
+            )
+            continue
+        blocker = semantics.get("compare_blocker")
+        if blocker:
+            _add_validation_error(
+                metadata_errors,
+                table,
+                "schema_identity",
+                blocker,
+            )
+
+
+def _check_table_mapping(check: dict, semantics: dict) -> None:
+    prod_table = semantics.get("prod_table")
+    qa_table = semantics.get("qa_table")
+    if prod_table and qa_table and prod_table != qa_table:
+        check["prod_table"] = prod_table
+        check["qa_table"] = qa_table
+
+
+def _verification_checks(
+    project: str,
+    anchors: list[str],
+    semantic_resolution,
+) -> list[dict]:
+    checks = []
+    for table in anchors:
+        semantics = (
+            semantic_resolution.target_semantics.get(table)
+            if semantic_resolution is not None
+            else None
+        )
+        for method in ("count", "row_compare"):
+            check = {"table": table}
+            if semantics is not None:
+                _check_table_mapping(check, semantics)
+            check["method"] = method
+            if method == "row_compare":
+                if semantics is not None and semantics.get("column_mapping"):
+                    check["column_mapping"] = list(semantics["column_mapping"])
+                exclude_columns = _row_compare_exclude_columns(project, table)
+                if exclude_columns is not None:
+                    check["exclude_columns"] = exclude_columns
+            checks.append(check)
+    return checks
+
+
+def _validate_semantic_check_invariants(verification: dict) -> None:
+    target_semantics = verification.get("target_semantics") or {}
+    for check in verification.get("checks") or []:
+        table = check.get("table")
+        semantics = target_semantics.get(table)
+        if semantics is None:
+            raise ValueError(
+                f"verification check has no target semantics: {table}"
+            )
+        if semantics.get("resolved_mode") == "changed":
+            raise ValueError(
+                f"changed table cannot have a direct verification check: "
+                f"{table}"
+            )
 
 
 def _normalized_scope(scope: dict) -> dict:
@@ -1016,6 +1118,8 @@ def _verification_metadata(
     compare_anchors: dict | None = None,
     warnings: list[dict] | None = None,
     metadata_errors: list[dict] | None = None,
+    target_semantics: dict | None = None,
+    semantic_boundaries: dict | None = None,
 ) -> dict:
     verification = {
         "anchor_tables": sorted(set(anchor_tables)),
@@ -1023,6 +1127,10 @@ def _verification_metadata(
     }
     if compare_anchors is not None:
         verification["compare_anchors"] = compare_anchors
+    if target_semantics is not None:
+        verification["target_semantics"] = target_semantics
+    if semantic_boundaries is not None:
+        verification["semantic_boundaries"] = semantic_boundaries
     combined_warnings = list(warnings or [])
     if blocked_schema_tables:
         verification["schema_anchor_status"] = "blocked"
