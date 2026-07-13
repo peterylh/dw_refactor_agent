@@ -2,12 +2,14 @@ import copy
 import importlib.util
 import re
 import sys
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 import pytest
 import yaml
 
+from dw_refactor_agent.execution import task_run
+from dw_refactor_agent.execution.date_window import resolve_etl_dates
 from dw_refactor_agent.execution.planner import ExecutionPlanner
 
 PROJECT_DIR = Path(__file__).resolve().parents[1] / "warehouses/retail_banking"
@@ -114,6 +116,27 @@ def test_retail_banking_generated_asset_sets_match_manifest():
         len(ods_ddl) + len(mid_ddl) + len(ads_ddl)
         == manifest["counts"]["TOTAL"]
         == 412
+    )
+
+
+def test_retail_banking_physical_table_names_fit_doris_limit():
+    mapping = _load_yaml(MAPPINGS_DIR / "fineract_table_mapping.yaml")
+    ods_names = {item["ods_table"] for item in mapping["mappings"]}
+    builder = _load_tool("retail_asset_inventory_names", "build_assets.py")
+
+    assert max(map(len, ods_names)) <= 64
+    assert len(ods_names) == 277
+    assert (
+        builder._ods_table_name(
+            "m_external_asset_owner_loan_product_configurable_attributes"
+        )
+        == "ods_fineract_m_external_asset_owner_loan_product_config_11bc4520"
+    )
+    assert (
+        builder._ods_table_name(
+            "m_external_asset_owner_transfer_journal_entry_mapping"
+        )
+        == "ods_fineract_m_external_asset_owner_transfer_journal_en_0adfde70"
     )
 
 
@@ -332,6 +355,13 @@ def test_retail_banking_dated_facts_use_safe_etl_date_strategies():
             assert "TRUNCATE TABLE" not in task
             assert f"WHERE `{slice_column}` = CAST(@etl_date AS DATE)" in task
             assert task.count("CAST(@etl_date AS DATE)") >= 2
+            if (
+                model.get("layer") == "DWD"
+                and execution.get("historical_replay_supported") is not False
+            ):
+                assert f"WHERE `{slice_column}` IS NULL;" in task
+                delete_prefix = task.split("INSERT INTO", 1)[0]
+                assert " OR " not in delete_prefix
         else:
             assert execution["full_refresh_strategy"] == "replace_all"
             assert "TRUNCATE TABLE" in task
@@ -365,8 +395,111 @@ def test_retail_banking_all_tasks_plan_for_one_business_date():
             full_count += 1
             assert invocations[0].params == {}
 
-    assert incremental_count == 6
-    assert full_count == 129
+    assert incremental_count == 93
+    assert full_count == 42
+
+
+def test_retail_banking_two_month_bootstrap_runs_each_job_once():
+    planner = ExecutionPlanner("retail_banking")
+    task_paths = sorted((PROJECT_DIR / "mid/tasks").glob("*.sql"))
+    task_paths += sorted((PROJECT_DIR / "ads/tasks").glob("*.sql"))
+    etl_dates = resolve_etl_dates(
+        None,
+        lookback_months=2,
+        end_date="2026-07-13",
+    )
+
+    invocations = []
+    for task_path in task_paths:
+        spec = planner.task_spec(task_path.stem, task_path)
+        invocations.extend(planner.plan_full_refresh(spec, etl_dates))
+
+    assert len(etl_dates) == 62
+    assert len(invocations) == len(task_paths) == 135
+    companion_invocations = [
+        invocation
+        for invocation in invocations
+        if invocation.strategy == "companion"
+    ]
+    assert len(companion_invocations) == 87
+    assert all(
+        invocation.params
+        == {
+            "etl_start_date": "2026-05-13",
+            "etl_end_date": "2026-07-13",
+        }
+        for invocation in companion_invocations
+    )
+    assert all(
+        invocation.sql_path.parent.name == "full_refresh"
+        for invocation in companion_invocations
+    )
+    for invocation in companion_invocations:
+        task = invocation.sql_path.read_text(encoding="utf-8")
+        assert "CAST(@etl_start_date AS DATE)" in task
+        assert "CAST(@etl_end_date AS DATE)" in task
+        assert "TRUNCATE TABLE" in task
+
+    non_companion = [
+        invocation
+        for invocation in invocations
+        if invocation.strategy != "companion"
+    ]
+    assert len(non_companion) == 48
+    assert all(not invocation.params for invocation in non_companion)
+
+
+def test_retail_banking_daily_slices_declare_mutable_history_replay_policy():
+    companion_models = []
+    for model_path in sorted((PROJECT_DIR / "mid/models").glob("*.yaml")):
+        model = _load_yaml(model_path)
+        if model["execution"]["full_refresh_strategy"] == "companion":
+            companion_models.append(model)
+    for model_path in sorted((PROJECT_DIR / "ads/models").glob("*.yaml")):
+        model = _load_yaml(model_path)
+        if model["execution"]["full_refresh_strategy"] == "companion":
+            companion_models.append(model)
+
+    assert len(companion_models) == 87
+    assert all(
+        model["execution"]["late_arriving_policy"]
+        == "replay_original_and_current_business_dates"
+        for model in companion_models
+    )
+
+
+def test_retail_banking_history_replay_skips_only_current_state_captures():
+    planner = ExecutionPlanner("retail_banking")
+    task_paths = sorted((PROJECT_DIR / "mid/tasks").glob("*.sql"))
+    task_paths += sorted((PROJECT_DIR / "ads/tasks").glob("*.sql"))
+    current_date = date.today().isoformat()
+    historical_date = (date.today() - timedelta(days=1)).isoformat()
+    invocations = []
+    skipped = []
+
+    for task_path in task_paths:
+        spec = planner.task_spec(task_path.stem, task_path)
+        for etl_date in [historical_date, current_date]:
+            planned = task_run._plan_regular_invocations(
+                planner,
+                spec,
+                etl_date,
+                skip_unsupported_history=True,
+            )
+            invocations.extend(planned)
+            if not planned:
+                skipped.append((task_path.stem, etl_date))
+
+    assert len(invocations) == 264
+    assert len(skipped) == 6
+    assert {etl_date for _, etl_date in skipped} == {historical_date}
+    assert all(
+        planner.task_spec(
+            name, PROJECT_DIR / f"mid/tasks/{name}.sql"
+        ).historical_replay_supported
+        is False
+        for name, _ in skipped
+    )
 
 
 def test_retail_banking_restricted_projection_preserves_keys_and_masks_pii():

@@ -1,5 +1,10 @@
+SET @etl_date = COALESCE(@etl_date, CURDATE());
+
 -- Human-reviewed semantic target: retail_banking_dm.dwd_survey_response
-TRUNCATE TABLE retail_banking_dm.dwd_survey_response;
+DELETE FROM retail_banking_dm.dwd_survey_response
+WHERE `business_date` = CAST(@etl_date AS DATE);
+DELETE FROM retail_banking_dm.dwd_survey_response
+WHERE `business_date` IS NULL;
 
 INSERT INTO retail_banking_dm.dwd_survey_response (
     `id`,
@@ -24,4 +29,6 @@ SELECT
     src.`a_value`,
     DATE(src.`created_on`) AS `business_date`,
     CURRENT_TIMESTAMP AS `etl_time`
-FROM retail_banking_dm.ods_fineract_m_survey_scorecards AS src;
+FROM retail_banking_dm.ods_fineract_m_survey_scorecards AS src
+WHERE DATE(src.`created_on`) = CAST(@etl_date AS DATE)
+   OR DATE(src.`created_on`) IS NULL;

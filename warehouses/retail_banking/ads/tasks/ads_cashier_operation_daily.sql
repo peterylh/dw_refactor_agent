@@ -1,5 +1,8 @@
+SET @etl_date = COALESCE(@etl_date, CURDATE());
+
 -- Reviewed application metrics derived from retail_banking_dm.dws_cashier_transaction_daily
-TRUNCATE TABLE retail_banking_dm.ads_cashier_operation_daily;
+DELETE FROM retail_banking_dm.ads_cashier_operation_daily
+WHERE `stat_date` = CAST(@etl_date AS DATE);
 
 INSERT INTO retail_banking_dm.ads_cashier_operation_daily (
     `stat_date`,
@@ -20,4 +23,5 @@ SELECT
     src.`total_txn_amount` AS `total_txn_amount`,
     (src.`total_txn_amount`) / nullif((src.`record_count`), 0) AS `average_txn_amount`,
     CURRENT_TIMESTAMP AS `etl_time`
-FROM retail_banking_dm.dws_cashier_transaction_daily AS src;
+FROM retail_banking_dm.dws_cashier_transaction_daily AS src
+WHERE src.`stat_date` = CAST(@etl_date AS DATE);

@@ -1,5 +1,8 @@
+SET @etl_date = COALESCE(@etl_date, CURDATE());
+
 -- Reviewed application metrics derived from retail_banking_dm.dws_deposit_hold_event_daily
-TRUNCATE TABLE retail_banking_dm.ads_deposit_hold_kpi_daily;
+DELETE FROM retail_banking_dm.ads_deposit_hold_kpi_daily
+WHERE `stat_date` = CAST(@etl_date AS DATE);
 
 INSERT INTO retail_banking_dm.ads_deposit_hold_kpi_daily (
     `stat_date`,
@@ -18,4 +21,5 @@ SELECT
     src.`total_amount` AS `total_amount`,
     (src.`total_amount`) / nullif((src.`record_count`), 0) AS `average_hold_amount`,
     CURRENT_TIMESTAMP AS `etl_time`
-FROM retail_banking_dm.dws_deposit_hold_event_daily AS src;
+FROM retail_banking_dm.dws_deposit_hold_event_daily AS src
+WHERE src.`stat_date` = CAST(@etl_date AS DATE);

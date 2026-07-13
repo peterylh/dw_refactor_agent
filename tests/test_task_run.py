@@ -1,11 +1,13 @@
 import json
 import os
 import subprocess
+from datetime import date, timedelta
 
 import pytest
 
 import dw_refactor_agent.config as config
 from dw_refactor_agent.execution import task_run
+from dw_refactor_agent.execution.date_window import resolve_etl_dates
 from dw_refactor_agent.execution.model_config import ExecutionConfigError
 from dw_refactor_agent.execution.planner import ExecutionPlanner
 
@@ -17,6 +19,49 @@ def _completed(stdout: str = "", stderr: str = "", returncode: int = 0):
         stdout=stdout,
         stderr=stderr,
     )
+
+
+def test_resolve_etl_dates_expands_two_calendar_month_window():
+    values = resolve_etl_dates(
+        None,
+        lookback_months=2,
+        end_date="2026-07-13",
+    )
+
+    assert values[0] == "2026-05-13"
+    assert values[-1] == "2026-07-13"
+    assert len(values) == 62
+
+
+def test_resolve_etl_dates_clamps_month_end_and_validates_inputs():
+    values = resolve_etl_dates(
+        None,
+        lookback_months=1,
+        end_date="2025-03-31",
+    )
+
+    assert values[0] == "2025-02-28"
+    assert values[-1] == "2025-03-31"
+    with pytest.raises(ValueError, match="不能与"):
+        resolve_etl_dates(
+            ["2025-03-31"],
+            lookback_months=1,
+        )
+    with pytest.raises(ValueError, match="YYYY-MM-DD"):
+        resolve_etl_dates(["2025-02-30"])
+    with pytest.raises(ValueError, match="只能与"):
+        resolve_etl_dates(None, end_date="2025-03-31")
+
+
+def test_resolve_etl_dates_defaults_window_end_to_today():
+    values = resolve_etl_dates(
+        None,
+        lookback_months=1,
+        today=date(2025, 1, 15),
+    )
+
+    assert values[0] == "2024-12-15"
+    assert values[-1] == "2025-01-15"
 
 
 def _write_execution_project(
@@ -140,6 +185,71 @@ def test_companion_full_refresh_runs_companion_with_full_refresh_one(
     assert calls[0].startswith("SET @full_refresh = 1;\n")
     assert "SELECT @full_refresh;" in calls[0]
     assert "PARTITION" not in calls[0]
+
+
+def test_execution_plan_preflight_rejects_history_before_running_sql(
+    monkeypatch,
+    tmp_path,
+):
+    sql_file = _write_execution_project(
+        monkeypatch,
+        tmp_path,
+        model_config=(
+            "execution:\n"
+            "  materialized: incremental\n"
+            "  historical_replay_supported: false\n"
+        ),
+    )
+    planner = ExecutionPlanner("demo")
+
+    with pytest.raises(
+        ExecutionConfigError, match="does not support historical replay"
+    ):
+        task_run._validate_execution_plan(
+            ["dwd_customer"],
+            {"dwd_customer": sql_file},
+            planner,
+            ["2000-01-01"],
+            full_refresh=False,
+        )
+
+
+def test_history_replay_can_skip_unsupported_current_state_dates(
+    monkeypatch,
+    tmp_path,
+):
+    sql_file = _write_execution_project(
+        monkeypatch,
+        tmp_path,
+        model_config=(
+            "execution:\n"
+            "  materialized: incremental\n"
+            "  historical_replay_supported: false\n"
+        ),
+    )
+    planner = ExecutionPlanner("demo")
+    current_date = date.today().isoformat()
+    historical_date = (date.today() - timedelta(days=1)).isoformat()
+
+    invocation_count = task_run._validate_execution_plan(
+        ["dwd_customer"],
+        {"dwd_customer": sql_file},
+        planner,
+        [historical_date, current_date],
+        full_refresh=False,
+        skip_unsupported_history=True,
+    )
+
+    assert invocation_count == 1
+    assert (
+        task_run._plan_regular_invocations(
+            planner,
+            planner.task_spec("dwd_customer", sql_file),
+            historical_date,
+            skip_unsupported_history=True,
+        )
+        == []
+    )
 
 
 def test_build_job_dag_refreshes_lineage_with_src_pythonpath(

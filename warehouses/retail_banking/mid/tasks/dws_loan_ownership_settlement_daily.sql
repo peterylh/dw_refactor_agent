@@ -1,5 +1,8 @@
+SET @etl_date = COALESCE(@etl_date, CURDATE());
+
 -- Human-reviewed aggregation from dwd_loan_ownership_transfer
-TRUNCATE TABLE retail_banking_dm.dws_loan_ownership_settlement_daily;
+DELETE FROM retail_banking_dm.dws_loan_ownership_settlement_daily
+WHERE `stat_date` = CAST(@etl_date AS DATE);
 
 INSERT INTO retail_banking_dm.dws_loan_ownership_settlement_daily (
     `stat_date`,
@@ -18,6 +21,7 @@ SELECT
     CURRENT_TIMESTAMP AS `etl_time`
 FROM retail_banking_dm.dwd_loan_ownership_transfer AS src
 WHERE src.`settlement_date` IS NOT NULL
+  AND DATE(src.`settlement_date`) = CAST(@etl_date AS DATE)
   AND src.`status` IN ('ACTIVE', 'BUYBACK')
 GROUP BY
     DATE(src.`settlement_date`),

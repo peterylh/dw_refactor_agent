@@ -1,5 +1,5 @@
 version: 2
-name: ods_fineract_m_external_asset_owner_transfer_journal_entry_mapping
+name: ods_fineract_m_external_asset_owner_transfer_journal_en_0adfde70
 layer: ODS
 description: Fineract m_external_asset_owner_transfer_journal_entry_mapping 贴源表
 execution:

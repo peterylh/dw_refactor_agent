@@ -1,5 +1,10 @@
+SET @etl_date = COALESCE(@etl_date, CURDATE());
+
 -- Provisioning detail enriched with its run header and references
-TRUNCATE TABLE retail_banking_dm.dwd_loan_provision_entry;
+DELETE FROM retail_banking_dm.dwd_loan_provision_entry
+WHERE `provision_date` = CAST(@etl_date AS DATE);
+DELETE FROM retail_banking_dm.dwd_loan_provision_entry
+WHERE `provision_date` IS NULL;
 
 INSERT INTO retail_banking_dm.dwd_loan_provision_entry (
     `id`,
@@ -42,4 +47,6 @@ LEFT JOIN retail_banking_dm.ods_fineract_m_provision_category AS category
 LEFT JOIN retail_banking_dm.ods_fineract_acc_gl_account AS liability_account
     ON src.`liability_account` = liability_account.`id`
 LEFT JOIN retail_banking_dm.ods_fineract_acc_gl_account AS expense_account
-    ON src.`expense_account` = expense_account.`id`;
+    ON src.`expense_account` = expense_account.`id`
+WHERE DATE(run.`created_date`) = CAST(@etl_date AS DATE)
+   OR DATE(run.`created_date`) IS NULL;

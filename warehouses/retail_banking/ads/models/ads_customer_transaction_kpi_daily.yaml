@@ -4,8 +4,13 @@ layer: ADS
 description: 客户与参与方 reviewed application data
 table_type: application_fact
 execution:
-  materialized: full
-  full_refresh_strategy: replace_all
+  materialized: incremental
+  full_refresh_strategy: companion
+  slice:
+    param: etl_date
+    column: stat_date
+    period: D
+  late_arriving_policy: replay_original_and_current_business_dates
 data_domain: '01'
 business_area: CLNT
 business_process: customer_management

@@ -1,5 +1,8 @@
+SET @etl_date = COALESCE(@etl_date, CURDATE());
+
 -- Reviewed application metrics derived from retail_banking_dm.dws_loan_provision_run_daily
-TRUNCATE TABLE retail_banking_dm.ads_provision_posting_monitor_daily;
+DELETE FROM retail_banking_dm.ads_provision_posting_monitor_daily
+WHERE `stat_date` = CAST(@etl_date AS DATE);
 
 INSERT INTO retail_banking_dm.ads_provision_posting_monitor_daily (
     `stat_date`,
@@ -27,6 +30,7 @@ SELECT
     1 - (sum(case when coalesce(src.`journal_entry_created`, false) = false then src.`provision_entry_count` else 0 end)) / nullif((sum(src.`provision_entry_count`)), 0) AS `posting_ratio`,
     CURRENT_TIMESTAMP AS `etl_time`
 FROM retail_banking_dm.dws_loan_provision_run_daily AS src
+WHERE src.`stat_date` = CAST(@etl_date AS DATE)
 GROUP BY
     src.`stat_date`,
     src.`office_id`,

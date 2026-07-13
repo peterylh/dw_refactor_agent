@@ -1076,7 +1076,7 @@ mappings:
   sensitivity: internal
   layers:
     ODS:
-    - ods_fineract_m_external_asset_owner_loan_product_configurable_attributes
+    - ods_fineract_m_external_asset_owner_loan_product_config_11bc4520
     DIM: []
     DWD: []
     DWS: []
@@ -1121,7 +1121,7 @@ mappings:
   sensitivity: internal
   layers:
     ODS:
-    - ods_fineract_m_external_asset_owner_transfer_journal_entry_mapping
+    - ods_fineract_m_external_asset_owner_transfer_journal_en_0adfde70
     DIM: []
     DWD: []
     DWS: []

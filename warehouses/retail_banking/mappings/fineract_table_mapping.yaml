@@ -1594,7 +1594,7 @@ mappings:
   sensitivity: internal
   rationale: This is a factless ownership-to-ledger bridge and inherits the journal business date.
 - source_table: m_external_asset_owner_loan_product_configurable_attributes
-  ods_table: ods_fineract_m_external_asset_owner_loan_product_configurable_attributes
+  ods_table: ods_fineract_m_external_asset_owner_loan_product_config_11bc4520
   business_area: LOAN
   data_domain: LOAN
   domain_name: 贷款与信贷
@@ -1659,7 +1659,7 @@ mappings:
   sensitivity: restricted
   rationale: Detail must join its transfer header to obtain loan, owner and effective date context.
 - source_table: m_external_asset_owner_transfer_journal_entry_mapping
-  ods_table: ods_fineract_m_external_asset_owner_transfer_journal_entry_mapping
+  ods_table: ods_fineract_m_external_asset_owner_transfer_journal_en_0adfde70
   business_area: FMAN
   data_domain: FINA
   domain_name: 总账与财务

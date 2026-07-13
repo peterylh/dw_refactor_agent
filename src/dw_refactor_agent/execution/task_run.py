@@ -12,11 +12,11 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
 import subprocess
 import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from datetime import date
 from pathlib import Path
 
 _src_root = Path(__file__).resolve().parents[2]
@@ -35,17 +35,16 @@ from dw_refactor_agent.config import (
     lineage_data_path,
     python_module_env,
 )
+from dw_refactor_agent.execution.date_window import resolve_etl_dates
 from dw_refactor_agent.execution.invocation import TaskInvocation
 from dw_refactor_agent.execution.model_config import ExecutionConfigError
-from dw_refactor_agent.execution.planner import ExecutionPlanner
+from dw_refactor_agent.execution.planner import ExecutionPlanner, TaskSpec
 from dw_refactor_agent.execution.sql_executor import DirectSqlExecutor
 from dw_refactor_agent.execution.thread_pool import shutdown_executor
 from dw_refactor_agent.lineage.job_dag import (
     JobDAG,
     asset_job_dag_from_lineage,
 )
-
-_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
 def _build_job_dag(project: str) -> JobDAG:
@@ -112,9 +111,19 @@ def _run_job(
     mysql_cmd: list[str],
     db_name: str,
     planner: ExecutionPlanner,
+    skip_unsupported_history: bool = False,
 ) -> None:
     spec = planner.task_spec(job_name, sql_file)
-    for invocation in planner.plan_regular_run(spec, [etl_date]):
+    invocations = _plan_regular_invocations(
+        planner,
+        spec,
+        etl_date,
+        skip_unsupported_history=skip_unsupported_history,
+    )
+    if not invocations:
+        print(f"  [{job_name}] 跳过 — 不支持非当天历史回放")
+        return
+    for invocation in invocations:
         _execute_invocation(
             invocation,
             mysql_cmd,
@@ -143,6 +152,50 @@ def _run_job_full_refresh(
             mysql_cmd,
             db_name,
         )
+
+
+def _plan_regular_invocations(
+    planner: ExecutionPlanner,
+    spec: TaskSpec,
+    etl_date: str,
+    *,
+    skip_unsupported_history: bool,
+) -> list[TaskInvocation]:
+    if (
+        skip_unsupported_history
+        and not spec.historical_replay_supported
+        and etl_date != date.today().isoformat()
+    ):
+        return []
+    return planner.plan_regular_run(spec, [etl_date])
+
+
+def _validate_execution_plan(
+    exec_order: list[str],
+    task_files: dict[str, Path],
+    planner: ExecutionPlanner,
+    etl_dates: list[str],
+    *,
+    full_refresh: bool,
+    skip_unsupported_history: bool = False,
+) -> int:
+    """Validate every job/date combination before the first database write."""
+    invocation_count = 0
+    for job_name in exec_order:
+        spec = planner.task_spec(job_name, task_files[job_name])
+        if full_refresh:
+            invocation_count += len(planner.plan_full_refresh(spec, etl_dates))
+            continue
+        for etl_date in etl_dates:
+            invocation_count += len(
+                _plan_regular_invocations(
+                    planner,
+                    spec,
+                    etl_date,
+                    skip_unsupported_history=skip_unsupported_history,
+                )
+            )
+    return invocation_count
 
 
 def _execute_invocation(
@@ -230,6 +283,7 @@ def _run_parallel(
     db_name: str,
     parallel: int,
     planner: ExecutionPlanner,
+    skip_unsupported_history: bool,
 ) -> None:
     deg = dict(in_degree)
     lock = threading.Lock()
@@ -270,6 +324,7 @@ def _run_parallel(
             mysql_cmd,
             db_name,
             planner,
+            skip_unsupported_history,
         )
         fut.add_done_callback(lambda f, j=job_name: on_complete(j, f))
 
@@ -297,6 +352,17 @@ def main():
         "--etl-dates", nargs="*", default=None, help="ETL 日期 (YYYY-MM-DD)"
     )
     parser.add_argument(
+        "--etl-lookback-months",
+        type=int,
+        default=None,
+        help="展开截至 --etl-end-date 向前 N 个日历月的闭区间",
+    )
+    parser.add_argument(
+        "--etl-end-date",
+        default=None,
+        help="日期窗口结束日 (YYYY-MM-DD), 默认当天",
+    )
+    parser.add_argument(
         "--full-refresh", action="store_true", help="全量刷新模式"
     )
     parser.add_argument(
@@ -311,6 +377,16 @@ def main():
     parser.add_argument(
         "--parallel", type=int, default=1, help="并行度, 默认 1 (串行)"
     )
+    parser.add_argument(
+        "--validate-only",
+        action="store_true",
+        help="仅构建并校验完整执行计划，不执行 SQL",
+    )
+    parser.add_argument(
+        "--skip-unsupported-history",
+        action="store_true",
+        help="历史补跑时跳过不支持非当天回放的 current-state 作业",
+    )
     args = parser.parse_args()
 
     project = args.project
@@ -322,18 +398,19 @@ def main():
         print("错误: --parallel 必须 >= 1")
         sys.exit(1)
 
-    if not args.full_refresh:
-        if not args.etl_dates:
-            parser.error("请指定 --etl-dates 或使用 --full-refresh")
-        for d in args.etl_dates:
-            if not _DATE_RE.match(d):
-                print(f"错误: 日期格式无效 '{d}', 需要 YYYY-MM-DD")
-                sys.exit(1)
-    else:
-        for d in args.etl_dates or []:
-            if not _DATE_RE.match(d):
-                print(f"错误: 日期格式无效 '{d}', 需要 YYYY-MM-DD")
-                sys.exit(1)
+    try:
+        etl_dates = resolve_etl_dates(
+            args.etl_dates,
+            lookback_months=args.etl_lookback_months,
+            end_date=args.etl_end_date,
+        )
+    except ValueError as e:
+        parser.error(str(e))
+
+    if not args.full_refresh and not etl_dates and not args.validate_only:
+        parser.error("请指定 --etl-dates 或使用 --full-refresh")
+    if args.full_refresh and args.skip_unsupported_history:
+        parser.error("--skip-unsupported-history 仅用于非全量历史补跑")
 
     task_files = _get_task_files(project)
     task_names = set(task_files.keys())
@@ -388,17 +465,34 @@ def main():
         print(f"\n{'=' * 60}")
         print("全量刷新模式 (按 DAG 拓扑执行)")
         print(f"{'=' * 60}")
+        if args.validate_only and etl_dates is None:
+            all_dates = []
+        else:
+            try:
+                all_dates = _resolve_full_refresh_dates(
+                    project,
+                    db_name,
+                    mysql_cmd,
+                    etl_dates,
+                )
+            except ExecutionConfigError as e:
+                print(f"  {e}")
+                sys.exit(1)
+        print(f"  {len(all_dates)} 个日期")
         try:
-            all_dates = _resolve_full_refresh_dates(
-                project,
-                db_name,
-                mysql_cmd,
-                args.etl_dates,
+            _validate_execution_plan(
+                exec_order,
+                task_files,
+                planner,
+                all_dates,
+                full_refresh=True,
             )
         except ExecutionConfigError as e:
             print(f"  {e}")
             sys.exit(1)
-        print(f"  {len(all_dates)} 个日期")
+        if args.validate_only:
+            print("执行计划校验通过，未执行 SQL")
+            return 0
         for job_name in exec_order:
             try:
                 _run_job_full_refresh(
@@ -420,7 +514,24 @@ def main():
         print(f"全部完成! 共执行 {len(exec_order)} 个作业 (全量刷新)")
         return 0
 
-    for etl_date in args.etl_dates:
+    regular_dates = etl_dates or []
+    try:
+        planned_invocation_count = _validate_execution_plan(
+            exec_order,
+            task_files,
+            planner,
+            regular_dates,
+            full_refresh=False,
+            skip_unsupported_history=args.skip_unsupported_history,
+        )
+    except ExecutionConfigError as e:
+        print(f"  {e}")
+        sys.exit(1)
+    if args.validate_only:
+        print("执行计划校验通过，未执行 SQL")
+        return 0
+
+    for etl_date in regular_dates:
         print(f"\n{'=' * 60}")
         print(f"执行日期: {etl_date}  (并行度: {parallel})")
         print(f"{'=' * 60}")
@@ -434,6 +545,7 @@ def main():
                         mysql_cmd,
                         db_name,
                         planner,
+                        args.skip_unsupported_history,
                     )
                 except (
                     subprocess.TimeoutExpired,
@@ -453,9 +565,10 @@ def main():
                 db_name,
                 parallel,
                 planner,
+                args.skip_unsupported_history,
             )
 
-    total_jobs = len(exec_order) * len(args.etl_dates)
+    total_jobs = planned_invocation_count
     print(f"\n{'=' * 60}")
     print(f"全部完成! 共执行 {total_jobs} 个作业")
     return 0

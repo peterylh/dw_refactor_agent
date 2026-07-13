@@ -131,11 +131,15 @@ done
 
 - `--project`：`shop|finance_analytics`
 - `--etl-dates`：指定 1 个或多个 ETL 日期
+- `--etl-lookback-months`：展开截至 `--etl-end-date` 向前 N 个日历月的闭区间
+- `--etl-end-date`：日期窗口结束日，默认当天
 - `--full-refresh`：全量刷新模式
 - `--job-list`：只执行指定作业
 - `--db-env`：`prod|test`
 - `--refresh-dag`：先重建 `job_dag_{project}.json`
 - `--parallel`：并行度
+- `--validate-only`：仅构建并校验完整计划，不执行 SQL
+- `--skip-unsupported-history`：历史补跑时跳过不支持非当天回放的 current-state 作业
 
 示例：
 
@@ -160,8 +164,11 @@ python -m dw_refactor_agent.execution.task_run --project finance_analytics --etl
 - `--project`：`shop|finance_analytics`
 - `--db-env`：`prod|test`
 - `--etl-dates`：手工指定 ETL 日期
+- `--etl-lookback-months`：初始化截至结束日向前 N 个日历月的闭区间，需配合 `--full-refresh`
+- `--etl-end-date`：日期窗口结束日，默认当天
 - `--full-refresh`：全量刷新模式
 - `--parallel`：初始化与执行并行度
+- `--preserve-ods`：保留已由上游装载的 ODS，只重建并计算 MID/ADS
 
 示例：
 

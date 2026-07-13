@@ -82,6 +82,65 @@ python -m dw_refactor_agent.execution.reinit_project \
   --project retail_banking --etl-dates 2025-01-15
 ```
 
+## Two-month bootstrap and daily operation
+
+For a production bootstrap, first load the required two calendar months into
+ODS with the upstream ingestion process. The checked-in ODS SQL is only smoke
+data and must not replace production ingestion. Then preserve the loaded ODS,
+rebuild MID/ADS, and run the downstream full refresh:
+
+```bash
+python -m dw_refactor_agent.execution.reinit_project \
+  --project retail_banking \
+  --preserve-ods \
+  --full-refresh \
+  --etl-lookback-months 2 \
+  --etl-end-date 2026-07-13 \
+  --parallel 4
+```
+
+The window is an inclusive interval extending two calendar months backwards
+from the end date: this example covers `2026-05-13` through `2026-07-13`.
+Eighty-seven business-dated DWD/DWS/ADS jobs use full-refresh companion SQL that
+filters source rows with `etl_start_date` and `etl_end_date`, so older ODS
+history cannot leak into the initialized facts. Forty-two reference or undated
+models still replace their complete current contents. Six current-state
+captures run once on the real execution day and do not fabricate historical
+snapshots.
+
+After the bootstrap, run one explicit business date per scheduled day, after
+that day's ODS ingestion has completed:
+
+```bash
+python -m dw_refactor_agent.execution.task_run \
+  --project retail_banking \
+  --etl-dates 2026-07-14 \
+  --parallel 4
+```
+
+Six account/balance snapshots are current-state captures. They record only the
+real execution day because the Fineract source does not contain historical
+versions from which earlier snapshots could be reconstructed. Event facts and
+their DWS/ADS outputs retain the business-dated history available in ODS.
+
+Business-dated sources are mutable: a reversal, status correction, amount
+change, or business-date move can affect an older slice. When that happens,
+replay both the original and current business dates explicitly; the same daily
+slice SQL safely replaces those dates and all downstream slices:
+
+```bash
+python -m dw_refactor_agent.execution.task_run \
+  --project retail_banking \
+  --etl-dates 2026-06-20 2026-07-14 \
+  --skip-unsupported-history \
+  --parallel 4
+```
+
+`--skip-unsupported-history` applies only to regular historical replay. It
+skips the six current-state captures for non-execution dates, while still
+running them once when the requested dates include the real execution day. All
+other eligible DWD/DWS/ADS jobs replay both requested business dates.
+
 After loading, every query in `quality/core_reconciliation.sql` must return zero
 rows. It covers GL debit/credit balance, loan/deposit/GL referential integrity,
 and reversal-safe loan aggregation.

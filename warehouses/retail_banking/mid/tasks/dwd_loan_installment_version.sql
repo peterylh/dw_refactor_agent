@@ -1,5 +1,10 @@
+SET @etl_date = COALESCE(@etl_date, CURDATE());
+
 -- Human-reviewed semantic target: retail_banking_dm.dwd_loan_installment_version
-TRUNCATE TABLE retail_banking_dm.dwd_loan_installment_version;
+DELETE FROM retail_banking_dm.dwd_loan_installment_version
+WHERE `business_date` = CAST(@etl_date AS DATE);
+DELETE FROM retail_banking_dm.dwd_loan_installment_version
+WHERE `business_date` IS NULL;
 
 INSERT INTO retail_banking_dm.dwd_loan_installment_version (
     `id`,
@@ -42,4 +47,6 @@ SELECT
     src.`last_modified_on_utc`,
     DATE(src.`duedate`) AS `business_date`,
     CURRENT_TIMESTAMP AS `etl_time`
-FROM retail_banking_dm.ods_fineract_m_loan_repayment_schedule_history AS src;
+FROM retail_banking_dm.ods_fineract_m_loan_repayment_schedule_history AS src
+WHERE DATE(src.`duedate`) = CAST(@etl_date AS DATE)
+   OR DATE(src.`duedate`) IS NULL;

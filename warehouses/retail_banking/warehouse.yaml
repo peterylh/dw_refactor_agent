@@ -14,6 +14,9 @@ verification:
       - load_time
 execution:
   require_explicit_etl_dates: true
+  full_refresh_window:
+    start_param: etl_start_date
+    end_param: etl_end_date
   default_slice:
     param: etl_date
     column: stat_date

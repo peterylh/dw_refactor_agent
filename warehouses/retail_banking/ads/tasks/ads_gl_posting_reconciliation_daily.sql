@@ -1,5 +1,8 @@
+SET @etl_date = COALESCE(@etl_date, CURDATE());
+
 -- Reviewed application metrics derived from retail_banking_dm.dws_gl_journal_posting_daily
-TRUNCATE TABLE retail_banking_dm.ads_gl_posting_reconciliation_daily;
+DELETE FROM retail_banking_dm.ads_gl_posting_reconciliation_daily
+WHERE `stat_date` = CAST(@etl_date AS DATE);
 
 INSERT INTO retail_banking_dm.ads_gl_posting_reconciliation_daily (
     `stat_date`,
@@ -23,6 +26,7 @@ SELECT
     abs(((sum(case when src.`type_enum` = 1 then src.`total_amount` else 0 end)) - (sum(case when src.`type_enum` = 2 then src.`total_amount` else 0 end)))) <= 0.000001 AS `is_balanced`,
     CURRENT_TIMESTAMP AS `etl_time`
 FROM retail_banking_dm.dws_gl_journal_posting_daily AS src
+WHERE src.`stat_date` = CAST(@etl_date AS DATE)
 GROUP BY
     src.`stat_date`,
     src.`transaction_id`,

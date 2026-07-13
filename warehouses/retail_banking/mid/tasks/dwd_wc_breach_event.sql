@@ -1,5 +1,10 @@
+SET @etl_date = COALESCE(@etl_date, CURDATE());
+
 -- Human-reviewed semantic target: retail_banking_dm.dwd_wc_breach_event
-TRUNCATE TABLE retail_banking_dm.dwd_wc_breach_event;
+DELETE FROM retail_banking_dm.dwd_wc_breach_event
+WHERE `business_date` = CAST(@etl_date AS DATE);
+DELETE FROM retail_banking_dm.dwd_wc_breach_event
+WHERE `business_date` IS NULL;
 
 INSERT INTO retail_banking_dm.dwd_wc_breach_event (
     `id`,
@@ -34,4 +39,6 @@ SELECT
     src.`frequency_type`,
     DATE(src.`start_date`) AS `business_date`,
     CURRENT_TIMESTAMP AS `etl_time`
-FROM retail_banking_dm.ods_fineract_m_wc_loan_breach_action AS src;
+FROM retail_banking_dm.ods_fineract_m_wc_loan_breach_action AS src
+WHERE DATE(src.`start_date`) = CAST(@etl_date AS DATE)
+   OR DATE(src.`start_date`) IS NULL;

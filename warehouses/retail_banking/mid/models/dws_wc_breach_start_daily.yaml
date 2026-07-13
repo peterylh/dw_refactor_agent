@@ -4,8 +4,13 @@ layer: DWS
 description: 营运资金贷款 reviewed aggregate
 table_type: aggregate_fact
 execution:
-  materialized: full
-  full_refresh_strategy: replace_all
+  materialized: incremental
+  full_refresh_strategy: companion
+  slice:
+    param: etl_date
+    column: stat_date
+    period: D
+  late_arriving_policy: replay_original_and_current_business_dates
 data_domain: '10'
 business_area: LOAN
 business_process: delinquency_management

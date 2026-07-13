@@ -1,0 +1,69 @@
+SET @etl_end_date = COALESCE(@etl_end_date, CURDATE());
+SET @etl_start_date = COALESCE(@etl_start_date, @etl_end_date);
+
+-- Human-reviewed semantic target: retail_banking_dm.dwd_deposit_charge
+TRUNCATE TABLE retail_banking_dm.dwd_deposit_charge;
+
+INSERT INTO retail_banking_dm.dwd_deposit_charge (
+    `id`,
+    `savings_account_id`,
+    `charge_id`,
+    `is_penalty`,
+    `charge_time_enum`,
+    `charge_due_date`,
+    `fee_on_month`,
+    `fee_on_day`,
+    `fee_interval`,
+    `free_withdrawal_count`,
+    `charge_reset_date`,
+    `charge_calculation_enum`,
+    `calculation_percentage`,
+    `calculation_on_amount`,
+    `amount`,
+    `amount_paid_derived`,
+    `amount_waived_derived`,
+    `amount_writtenoff_derived`,
+    `amount_outstanding_derived`,
+    `is_paid_derived`,
+    `waived`,
+    `is_active`,
+    `inactivated_on_date`,
+    `created_by`,
+    `last_modified_by`,
+    `created_on_utc`,
+    `last_modified_on_utc`,
+    `business_date`,
+    `etl_time`
+)
+SELECT
+    src.`id`,
+    src.`savings_account_id`,
+    src.`charge_id`,
+    src.`is_penalty`,
+    src.`charge_time_enum`,
+    src.`charge_due_date`,
+    src.`fee_on_month`,
+    src.`fee_on_day`,
+    src.`fee_interval`,
+    src.`free_withdrawal_count`,
+    src.`charge_reset_date`,
+    src.`charge_calculation_enum`,
+    src.`calculation_percentage`,
+    src.`calculation_on_amount`,
+    src.`amount`,
+    src.`amount_paid_derived`,
+    src.`amount_waived_derived`,
+    src.`amount_writtenoff_derived`,
+    src.`amount_outstanding_derived`,
+    src.`is_paid_derived`,
+    src.`waived`,
+    src.`is_active`,
+    src.`inactivated_on_date`,
+    src.`created_by`,
+    src.`last_modified_by`,
+    src.`created_on_utc`,
+    src.`last_modified_on_utc`,
+    DATE(src.`charge_due_date`) AS `business_date`,
+    CURRENT_TIMESTAMP AS `etl_time`
+FROM retail_banking_dm.ods_fineract_m_savings_account_charge AS src
+WHERE (DATE(src.`charge_due_date`) IS NULL OR (DATE(src.`charge_due_date`) >= CAST(@etl_start_date AS DATE) AND DATE(src.`charge_due_date`) <= CAST(@etl_end_date AS DATE)));

@@ -1,7 +1,7 @@
 -- Deterministic smoke data for Fineract m_external_asset_owner_loan_product_configurable_attributes
-TRUNCATE TABLE retail_banking_dm.ods_fineract_m_external_asset_owner_loan_product_configurable_attributes;
+TRUNCATE TABLE retail_banking_dm.ods_fineract_m_external_asset_owner_loan_product_config_11bc4520;
 
-INSERT INTO retail_banking_dm.ods_fineract_m_external_asset_owner_loan_product_configurable_attributes (
+INSERT INTO retail_banking_dm.ods_fineract_m_external_asset_owner_loan_product_config_11bc4520 (
     `id`,
     `loan_product_id`,
     `attribute_key`,

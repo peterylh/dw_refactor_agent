@@ -1,5 +1,8 @@
+SET @etl_date = COALESCE(@etl_date, CURDATE());
+
 -- Human-reviewed aggregation from dwd_gl_journal_entry
-TRUNCATE TABLE retail_banking_dm.dws_gl_journal_posting_daily;
+DELETE FROM retail_banking_dm.dws_gl_journal_posting_daily
+WHERE `stat_date` = CAST(@etl_date AS DATE);
 
 INSERT INTO retail_banking_dm.dws_gl_journal_posting_daily (
     `stat_date`,
@@ -24,6 +27,7 @@ SELECT
     CURRENT_TIMESTAMP AS `etl_time`
 FROM retail_banking_dm.dwd_gl_journal_entry AS src
 WHERE src.`entry_date` IS NOT NULL
+  AND DATE(src.`entry_date`) = CAST(@etl_date AS DATE)
   AND src.`reversed` = FALSE
 GROUP BY
     DATE(src.`entry_date`),

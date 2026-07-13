@@ -1,5 +1,8 @@
+SET @etl_date = COALESCE(@etl_date, CURDATE());
+
 -- Reviewed application metrics derived from retail_banking_dm.dws_share_transaction_daily
-TRUNCATE TABLE retail_banking_dm.ads_share_transaction_kpi_daily;
+DELETE FROM retail_banking_dm.ads_share_transaction_kpi_daily
+WHERE `stat_date` = CAST(@etl_date AS DATE);
 
 INSERT INTO retail_banking_dm.ads_share_transaction_kpi_daily (
     `stat_date`,
@@ -24,4 +27,5 @@ SELECT
     (src.`total_amount`) / nullif((src.`total_shares`), 0) AS `average_share_price`,
     src.`total_amount_paid` / nullif((src.`total_amount`), 0) AS `paid_ratio`,
     CURRENT_TIMESTAMP AS `etl_time`
-FROM retail_banking_dm.dws_share_transaction_daily AS src;
+FROM retail_banking_dm.dws_share_transaction_daily AS src
+WHERE src.`stat_date` = CAST(@etl_date AS DATE);

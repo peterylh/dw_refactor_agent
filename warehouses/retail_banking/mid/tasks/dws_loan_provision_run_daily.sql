@@ -1,5 +1,8 @@
+SET @etl_date = COALESCE(@etl_date, CURDATE());
+
 -- Human-reviewed aggregation from dwd_loan_provision_entry
-TRUNCATE TABLE retail_banking_dm.dws_loan_provision_run_daily;
+DELETE FROM retail_banking_dm.dws_loan_provision_run_daily
+WHERE `stat_date` = CAST(@etl_date AS DATE);
 
 INSERT INTO retail_banking_dm.dws_loan_provision_run_daily (
     `stat_date`,
@@ -24,6 +27,7 @@ SELECT
     CURRENT_TIMESTAMP AS `etl_time`
 FROM retail_banking_dm.dwd_loan_provision_entry AS src
 WHERE src.`provision_date` IS NOT NULL
+  AND DATE(src.`provision_date`) = CAST(@etl_date AS DATE)
 GROUP BY
     DATE(src.`provision_date`),
     src.`office_id`,

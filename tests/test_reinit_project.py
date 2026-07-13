@@ -1,3 +1,5 @@
+import subprocess
+
 import pytest
 
 import dw_refactor_agent.config as config
@@ -110,6 +112,16 @@ def test_project_sql_files_ignore_root_and_include_ods_mid_ads_assets(
         "ads_customer.sql",
     ]
 
+    downstream_files = reinit_project._project_sql_files(
+        "demo",
+        "ddl",
+        include_ods=False,
+    )
+    assert [path.name for path in downstream_files] == [
+        "dws_customer.sql",
+        "ads_customer.sql",
+    ]
+
 
 def test_task_run_command_uses_unbuffered_python():
     cmd = reinit_project._task_run_command("shop", "prod", 2)
@@ -124,6 +136,15 @@ def test_task_run_command_uses_unbuffered_python():
     assert "prod" in cmd
     assert "--parallel" in cmd
     assert "2" in cmd
+    assert "--refresh-dag" in cmd
+
+    no_refresh_cmd = reinit_project._task_run_command(
+        "shop",
+        "prod",
+        2,
+        refresh_dag=False,
+    )
+    assert "--refresh-dag" not in no_refresh_cmd
 
 
 def test_reinit_requires_explicit_business_dates_before_rebuild(monkeypatch):
@@ -137,3 +158,44 @@ def test_reinit_requires_explicit_business_dates_before_rebuild(monkeypatch):
         reinit_project._validate_etl_dates_requirement("demo", None)
 
     reinit_project._validate_etl_dates_requirement("demo", ["2025-01-01"])
+
+
+def test_reinit_preflight_failure_happens_before_any_ddl(monkeypatch):
+    monkeypatch.setitem(
+        reinit_project.PROJECT_CONFIG,
+        "demo",
+        {"dir": "demo_project", "db": "demo_db"},
+    )
+    monkeypatch.setattr(
+        reinit_project.sys,
+        "argv",
+        [
+            "reinit_project",
+            "--project",
+            "demo",
+            "--etl-dates",
+            "2025-01-01",
+        ],
+    )
+    ddl_calls = []
+    monkeypatch.setattr(
+        reinit_project,
+        "run_sql",
+        lambda *args, **kwargs: ddl_calls.append((args, kwargs)),
+    )
+    subprocess_calls = []
+
+    def fail_preflight(command, **kwargs):
+        subprocess_calls.append((command, kwargs))
+        return subprocess.CompletedProcess(command, 1)
+
+    monkeypatch.setattr(reinit_project.subprocess, "run", fail_preflight)
+
+    with pytest.raises(SystemExit) as exc:
+        reinit_project.main()
+
+    assert exc.value.code == 1
+    assert ddl_calls == []
+    assert len(subprocess_calls) == 1
+    assert "--validate-only" in subprocess_calls[0][0]
+    assert "--refresh-dag" in subprocess_calls[0][0]

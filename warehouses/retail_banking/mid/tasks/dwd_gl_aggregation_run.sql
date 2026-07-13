@@ -1,5 +1,10 @@
+SET @etl_date = COALESCE(@etl_date, CURDATE());
+
 -- Human-reviewed semantic target: retail_banking_dm.dwd_gl_aggregation_run
-TRUNCATE TABLE retail_banking_dm.dwd_gl_aggregation_run;
+DELETE FROM retail_banking_dm.dwd_gl_aggregation_run
+WHERE `business_date` = CAST(@etl_date AS DATE);
+DELETE FROM retail_banking_dm.dwd_gl_aggregation_run
+WHERE `business_date` IS NULL;
 
 INSERT INTO retail_banking_dm.dwd_gl_aggregation_run (
     `id`,
@@ -26,4 +31,6 @@ SELECT
     src.`last_modified_on_utc`,
     DATE(src.`aggregated_on_date_from`) AS `business_date`,
     CURRENT_TIMESTAMP AS `etl_time`
-FROM retail_banking_dm.ods_fineract_m_journal_entry_aggregation_tracking AS src;
+FROM retail_banking_dm.ods_fineract_m_journal_entry_aggregation_tracking AS src
+WHERE DATE(src.`aggregated_on_date_from`) = CAST(@etl_date AS DATE)
+   OR DATE(src.`aggregated_on_date_from`) IS NULL;
