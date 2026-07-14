@@ -4,6 +4,12 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping
+from dataclasses import dataclass
+
+import pymysql
+
+from dw_refactor_agent.config import DORIS_HOST, DORIS_PORT, DORIS_QA_USER
+from dw_refactor_agent.refactor.artifact_contract import ArtifactFormatError
 
 _DATABASE_IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _SYSTEM_DATABASES = {
@@ -12,6 +18,54 @@ _SYSTEM_DATABASES = {
     "performance_schema",
     "sys",
 }
+EXECUTION_MARKER_TABLE = "dw_refactor_execution_marker"
+MARKER_FORMAT_VERSION = 2
+MARKER_COLUMNS = (
+    "format_version",
+    "marker_key",
+    "project",
+    "run_id",
+    "execution_id",
+    "qa_database",
+    "plan_fingerprint",
+    "workspace_fingerprint",
+    "claimed_at",
+)
+_LEGACY_MARKER_COLUMNS = (
+    "marker_key",
+    "execution_id",
+    "plan_fingerprint",
+    "workspace_fingerprint",
+    "completed_at",
+)
+_FINGERPRINT_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
+
+
+@dataclass(frozen=True)
+class QaSlotOwnership:
+    """Immutable ownership recorded in one claimed QA database."""
+
+    format_version: int
+    project: str
+    run_id: str
+    execution_id: str
+    qa_database: str
+    plan_fingerprint: str
+    workspace_fingerprint: str
+    claimed_at: str
+    claimed_at_epoch: int
+
+
+@dataclass(frozen=True)
+class QaSlotInspection:
+    """Current allocation condition for one configured QA database."""
+
+    project: str
+    database: str
+    availability: str
+    ownership: QaSlotOwnership | None
+    diagnostic: str | None
+    objects: tuple[tuple[str, str], ...]
 
 
 def validate_qa_identifier(value: str) -> str:
@@ -20,6 +74,238 @@ def validate_qa_identifier(value: str) -> str:
     if not _DATABASE_IDENTIFIER.fullmatch(database):
         raise ValueError(f"invalid Doris database identifier: {value!r}")
     return database
+
+
+def _quoted_identifier(value: str) -> str:
+    return f"`{validate_qa_identifier(value)}`"
+
+
+def get_qa_connection(database: str = "information_schema"):
+    """Open an autocommit Doris connection using the restricted QA user."""
+    return pymysql.connect(
+        host=DORIS_HOST,
+        port=DORIS_PORT,
+        user=DORIS_QA_USER,
+        database=validate_qa_identifier(database),
+        charset="utf8mb4",
+        autocommit=True,
+    )
+
+
+def _query_all(connection, sql: str, params=None) -> list[tuple]:
+    cursor = connection.cursor()
+    try:
+        cursor.execute(sql, params)
+        return list(cursor.fetchall())
+    finally:
+        cursor.close()
+
+
+def _invalid_inspection(
+    project: str,
+    database: str,
+    objects: tuple[tuple[str, str], ...],
+    diagnostic: str,
+) -> QaSlotInspection:
+    return QaSlotInspection(
+        project=project,
+        database=database,
+        availability="invalid",
+        ownership=None,
+        diagnostic=diagnostic,
+        objects=objects,
+    )
+
+
+def _normalized_claimed_at(value) -> str:
+    if hasattr(value, "isoformat"):
+        return value.isoformat(sep=" ")
+    return str(value or "").strip()
+
+
+def _ownership_from_row(row: tuple) -> QaSlotOwnership:
+    if len(row) != len(MARKER_COLUMNS) + 1:
+        raise ValueError("marker query returned an unexpected column count")
+    values = dict(zip(MARKER_COLUMNS, row[:-1]))
+    if values["format_version"] != MARKER_FORMAT_VERSION:
+        raise ValueError(
+            f"marker format_version must be {MARKER_FORMAT_VERSION}"
+        )
+    if values["marker_key"] != "current":
+        raise ValueError("marker_key must be current")
+    for field in (
+        "project",
+        "run_id",
+        "execution_id",
+        "qa_database",
+        "plan_fingerprint",
+        "workspace_fingerprint",
+    ):
+        if not isinstance(values[field], str) or not values[field].strip():
+            raise ValueError(f"marker {field} must be a non-empty string")
+    for field in ("plan_fingerprint", "workspace_fingerprint"):
+        if not _FINGERPRINT_RE.fullmatch(values[field]):
+            raise ValueError(f"marker {field} is invalid")
+    claimed_at = _normalized_claimed_at(values["claimed_at"])
+    if not claimed_at:
+        raise ValueError("marker claimed_at is empty")
+    try:
+        claimed_at_epoch = int(row[-1])
+    except (TypeError, ValueError) as exc:
+        raise ValueError("marker claimed_at epoch is invalid") from exc
+    return QaSlotOwnership(
+        format_version=values["format_version"],
+        project=values["project"],
+        run_id=values["run_id"],
+        execution_id=values["execution_id"],
+        qa_database=values["qa_database"],
+        plan_fingerprint=values["plan_fingerprint"],
+        workspace_fingerprint=values["workspace_fingerprint"],
+        claimed_at=claimed_at,
+        claimed_at_epoch=claimed_at_epoch,
+    )
+
+
+def inspect_qa_slot(
+    project: str,
+    database: str,
+    *,
+    connection=None,
+) -> QaSlotInspection:
+    """Inspect one configured slot without mutating any Doris object."""
+    database = validate_qa_identifier(database)
+    owns_connection = connection is None
+    conn = connection or get_qa_connection()
+    try:
+        raw_objects = _query_all(
+            conn,
+            f"SHOW FULL TABLES FROM {_quoted_identifier(database)}",
+        )
+        objects = tuple((str(row[0]), str(row[1])) for row in raw_objects)
+        marker_objects = [
+            item
+            for item in objects
+            if item[0].casefold() == EXECUTION_MARKER_TABLE.casefold()
+        ]
+        if not marker_objects:
+            if not objects:
+                return QaSlotInspection(
+                    project, database, "free", None, None, objects
+                )
+            return _invalid_inspection(
+                project,
+                database,
+                objects,
+                "non-empty QA database has no ownership marker",
+            )
+        if len(marker_objects) != 1:
+            return _invalid_inspection(
+                project,
+                database,
+                objects,
+                "QA database has duplicate ownership marker objects",
+            )
+
+        raw_columns = _query_all(
+            conn,
+            "SHOW COLUMNS FROM "
+            f"{_quoted_identifier(database)}."
+            f"{_quoted_identifier(EXECUTION_MARKER_TABLE)}",
+        )
+        columns = tuple(str(row[0]).casefold() for row in raw_columns)
+        if columns == _LEGACY_MARKER_COLUMNS:
+            return QaSlotInspection(
+                project,
+                database,
+                "legacy",
+                None,
+                "legacy ownership marker schema",
+                objects,
+            )
+        if columns != MARKER_COLUMNS:
+            return _invalid_inspection(
+                project,
+                database,
+                objects,
+                "ownership marker schema does not match the current format",
+            )
+
+        select_columns = ", ".join(
+            _quoted_identifier(column) for column in MARKER_COLUMNS
+        )
+        rows = _query_all(
+            conn,
+            f"SELECT {select_columns}, UNIX_TIMESTAMP(claimed_at) "
+            f"FROM {_quoted_identifier(database)}."
+            f"{_quoted_identifier(EXECUTION_MARKER_TABLE)}",
+        )
+        if len(rows) != 1:
+            return _invalid_inspection(
+                project,
+                database,
+                objects,
+                "ownership marker must contain exactly one row",
+            )
+        try:
+            ownership = _ownership_from_row(rows[0])
+        except ValueError as exc:
+            return _invalid_inspection(project, database, objects, str(exc))
+        if ownership.project != project:
+            return _invalid_inspection(
+                project,
+                database,
+                objects,
+                "marker project does not match configured project",
+            )
+        if ownership.qa_database != database:
+            return _invalid_inspection(
+                project,
+                database,
+                objects,
+                "marker qa_database does not match physical database",
+            )
+        return QaSlotInspection(
+            project, database, "claimed", ownership, None, objects
+        )
+    finally:
+        if owns_connection:
+            conn.close()
+
+
+def require_slot_ownership(
+    *,
+    project: str,
+    run_id: str,
+    execution_id: str,
+    database: str,
+    plan_fingerprint: str,
+    workspace_fingerprint: str,
+    connection=None,
+) -> QaSlotOwnership:
+    """Require the marker in one slot to match every expected owner field."""
+    inspection = inspect_qa_slot(project, database, connection=connection)
+    if inspection.availability != "claimed" or inspection.ownership is None:
+        raise ArtifactFormatError(
+            f"QA slot {database} is not claimed: "
+            f"{inspection.availability} ({inspection.diagnostic or 'no owner'})"
+        )
+    ownership = inspection.ownership
+    expected = {
+        "project": project,
+        "run_id": run_id,
+        "execution_id": execution_id,
+        "qa_database": database,
+        "plan_fingerprint": plan_fingerprint,
+        "workspace_fingerprint": workspace_fingerprint,
+    }
+    for field, expected_value in expected.items():
+        actual = getattr(ownership, field)
+        if actual != expected_value:
+            raise ArtifactFormatError(
+                f"QA slot ownership {field} mismatch: "
+                f"expected {expected_value!r}, got {actual!r}"
+            )
+    return ownership
 
 
 def configured_qa_pool(
