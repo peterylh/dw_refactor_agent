@@ -8,6 +8,7 @@ import tempfile
 from contextlib import contextmanager
 from pathlib import Path
 
+from dw_refactor_agent.config import TEXT_ENCODING
 from dw_refactor_agent.refactor.artifact_contract import ArtifactFormatError
 
 EXECUTION_MARKER_TABLE = "dw_refactor_execution_marker"
@@ -32,7 +33,7 @@ def project_execution_lock(plan_path: Path):
     """Prevent concurrent shadow mutation or compare for one QA project."""
     lock_path = _lock_path(plan_path)
     lock_path.parent.mkdir(parents=True, exist_ok=True)
-    with lock_path.open("a+", encoding="utf-8") as handle:
+    with lock_path.open("a+", encoding=TEXT_ENCODING) as handle:
         try:
             fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError as exc:
