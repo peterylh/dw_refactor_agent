@@ -26,7 +26,11 @@ from dw_refactor_agent.execution.model_config import (
     slice_config_from_mapping,
 )
 from dw_refactor_agent.lineage.asset_graph import build_asset_table_graph
-from dw_refactor_agent.lineage.job_dag import asset_job_dag_from_lineage
+from dw_refactor_agent.lineage.identifiers import (
+    identifier_match_key,
+    table_identity_match_key,
+)
+from dw_refactor_agent.lineage.job_dag import job_dag_from_lineage
 from dw_refactor_agent.sql.doris import extract_doris_partition_column
 
 SUPPORTED_TIME_PERIODS = {"D", "W", "M", "H"}
@@ -145,15 +149,21 @@ def _relative(path: Path) -> str:
         return path.as_posix()
 
 
-def _job_entry(project: str, job_name: str) -> dict | None:
+def _job_entry(
+    project: str,
+    job_name: str,
+    *,
+    target: str | None = None,
+) -> dict | None:
     task_path = _task_path(project, job_name)
     if not task_path:
         return None
+    target_table = target or job_name
     return {
         "job": job_name,
         "file": _relative(task_path),
-        "layer": config.determine_layer(job_name, project),
-        "target": job_name,
+        "layer": config.determine_layer(target_table, project),
+        "target": target_table,
     }
 
 
@@ -165,6 +175,15 @@ def _table_key(name: str) -> str:
     return _short_name(name).casefold()
 
 
+def _dataset_key(project: str, name: str) -> tuple:
+    cfg = config.PROJECT_CONFIG[project]
+    return table_identity_match_key(
+        name,
+        default_catalog=cfg.get("catalog") or "internal",
+        default_db=cfg.get("db") or "",
+    )
+
+
 def _phase2_create_tables(ddl_changes: list[dict]) -> set[str]:
     phase2_creates = set()
     for change in ddl_changes:
@@ -174,6 +193,117 @@ def _phase2_create_tables(ddl_changes: list[dict]) -> set[str]:
         elif change_type == "RENAME":
             phase2_creates.add(_short_name(change.get("new_name")))
     return phase2_creates
+
+
+def _job_target(
+    project: str,
+    job: dict,
+    target_hints: set[str],
+    dataset_type_by_key: dict[tuple, str],
+) -> str:
+    job_name = str(job.get("name") or "")
+    if len(target_hints) > 1:
+        raise ValueError(
+            f"Job {job_name!r} maps to multiple affected outputs: "
+            f"{sorted(target_hints)!r}"
+        )
+    if target_hints:
+        return _short_name(next(iter(target_hints)))
+    outputs = [str(output) for output in job.get("outputs") or [] if output]
+    managed_outputs = [
+        output
+        for output in outputs
+        if dataset_type_by_key.get(_dataset_key(project, output)) == "managed"
+    ]
+    if len(managed_outputs) > 1:
+        raise ValueError(
+            f"Job {job_name!r} has multiple managed outputs; "
+            f"execution target is ambiguous: {sorted(managed_outputs)!r}"
+        )
+    if len(managed_outputs) == 1:
+        return _short_name(managed_outputs[0])
+    if len(outputs) == 1:
+        return _short_name(outputs[0])
+    return job_name
+
+
+def _explicit_job_entries(
+    project: str,
+    execution_tasks: set[str],
+    lineage_data: dict,
+) -> dict[str, dict]:
+    jobs = list(lineage_data.get("jobs") or [])
+    job_by_key = {
+        identifier_match_key(job.get("name")): job
+        for job in jobs
+        if job.get("name")
+    }
+    jobs_by_output_key: dict[tuple, list[dict]] = defaultdict(list)
+    for job in jobs:
+        for output in job.get("outputs") or []:
+            jobs_by_output_key[_dataset_key(project, output)].append(job)
+    dataset_type_by_key = {
+        _dataset_key(project, table.get("full_name")): str(
+            table.get("dataset_type") or ""
+        )
+        for table in lineage_data.get("tables") or []
+        if table.get("full_name")
+    }
+
+    selected: dict[str, dict] = {}
+    target_hints: dict[str, set[str]] = defaultdict(set)
+    for task_or_table in execution_tasks:
+        job = job_by_key.get(identifier_match_key(task_or_table))
+        if job is not None:
+            selected[identifier_match_key(job["name"])] = job
+            continue
+        producers = jobs_by_output_key.get(
+            _dataset_key(project, task_or_table), []
+        )
+        if len(producers) > 1:
+            raise ValueError(
+                f"dataset {task_or_table!r} has multiple producer Jobs: "
+                f"{sorted(producer['name'] for producer in producers)!r}"
+            )
+        for producer in producers:
+            producer_key = identifier_match_key(producer["name"])
+            selected[producer_key] = producer
+            matched_output = next(
+                output
+                for output in producer.get("outputs") or []
+                if _dataset_key(project, output)
+                == _dataset_key(project, task_or_table)
+            )
+            target_hints[producer_key].add(str(matched_output))
+
+    entries = {}
+    for job_key, job in selected.items():
+        job_name = str(job["name"])
+        target = _job_target(
+            project,
+            job,
+            target_hints.get(job_key, set()),
+            dataset_type_by_key,
+        )
+        entry = _job_entry(project, job_name, target=target)
+        if entry:
+            entries[job_name] = entry
+    return entries
+
+
+def _execution_job_entries(
+    project: str,
+    execution_tasks: set[str],
+    lineage_data: dict | None,
+) -> dict[str, dict]:
+    if lineage_data and lineage_data.get("format_version") == 2:
+        return _explicit_job_entries(project, execution_tasks, lineage_data)
+    entries = {}
+    for job_name in execution_tasks:
+        entry = _job_entry(project, job_name)
+        if entry:
+            entries[job_name] = entry
+    return entries
 
 
 def _baseline_needed_tables(
@@ -236,17 +366,21 @@ def build_verification_plan(
     scope["anchor_tables"] = anchors
     changes = _plan_changes(change_analysis, modified_jobs)
 
-    job_entries = {}
-    for job_name in execution_tasks:
-        entry = _job_entry(project, job_name)
-        if entry:
-            job_entries[job_name] = entry
+    job_entries = _execution_job_entries(
+        project,
+        execution_tasks,
+        lineage_data,
+    )
     sorted_jobs = _sort_jobs_for_execution(
         project,
         set(job_entries),
         lineage_data=lineage_data,
     )
     jobs_to_run = [job_entries[job_name] for job_name in sorted_jobs]
+    job_dependencies = _job_dependencies_for_plan(
+        sorted_jobs,
+        lineage_data=lineage_data,
+    )
 
     if base_ref:
         all_baseline_ddl = load_baseline_ddl(
@@ -354,6 +488,7 @@ def build_verification_plan(
         "baseline_ddl": dict(sorted(baseline_ddl.items())),
         "ddl_changes": ddl_changes,
         "jobs_to_run": jobs_to_run,
+        "job_dependencies": job_dependencies,
         "verification": verification,
     }
 
@@ -1211,6 +1346,35 @@ def _sort_jobs_for_execution(
 ) -> list[str]:
     if not jobs:
         return []
-    if not lineage_data or not lineage_data.get("edges"):
+    has_explicit_jobs = bool(
+        lineage_data
+        and lineage_data.get("format_version") == 2
+        and lineage_data.get("jobs")
+    )
+    if not lineage_data or (
+        not has_explicit_jobs and not lineage_data.get("edges")
+    ):
         raise ValueError("lineage data is required to sort jobs_to_run")
-    return asset_job_dag_from_lineage(lineage_data).topological_sort(set(jobs))
+    return job_dag_from_lineage(lineage_data).topological_sort(set(jobs))
+
+
+def _job_dependencies_for_plan(
+    jobs: list[str],
+    *,
+    lineage_data: dict | None,
+) -> dict[str, list[str]]:
+    if not jobs:
+        return {}
+
+    _in_degree, adjacency = job_dag_from_lineage(
+        lineage_data
+    ).compute_in_degree(set(jobs))
+    upstream_by_job = {job: set() for job in jobs}
+    for upstream, downstream_jobs in adjacency.items():
+        for downstream in downstream_jobs:
+            upstream_by_job[downstream].add(upstream)
+
+    return {
+        job: sorted(upstream_by_job[job], key=identifier_match_key)
+        for job in jobs
+    }

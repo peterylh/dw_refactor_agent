@@ -41,9 +41,14 @@ from dw_refactor_agent.execution.model_config import ExecutionConfigError
 from dw_refactor_agent.execution.planner import ExecutionPlanner, TaskSpec
 from dw_refactor_agent.execution.sql_executor import DirectSqlExecutor
 from dw_refactor_agent.execution.thread_pool import shutdown_executor
+from dw_refactor_agent.lineage.identifiers import (
+    identifier_match_key,
+    short_table_name,
+    table_identity_match_key,
+)
 from dw_refactor_agent.lineage.job_dag import (
     JobDAG,
-    asset_job_dag_from_lineage,
+    job_dag_from_lineage,
 )
 
 
@@ -65,7 +70,7 @@ def _build_job_dag(project: str) -> JobDAG:
         )
         lineage_path = _resolve_lineage_data_file(project)
     data = json.loads(lineage_path.read_text(encoding=TEXT_ENCODING))
-    return asset_job_dag_from_lineage(data)
+    return job_dag_from_lineage(data)
 
 
 def _resolve_lineage_data_file(project: str) -> Path:
@@ -81,6 +86,11 @@ def _dag_needs_refresh_for_tasks(dag: JobDAG, task_names: set[str]) -> bool:
     if not task_names:
         return False
 
+    task_keys = {identifier_match_key(name) for name in task_names}
+    if dag.format_version == 2:
+        dag_job_keys = {identifier_match_key(name) for name in dag.jobs}
+        return dag_job_keys != task_keys
+
     target_tables = set(dag._rev)
     if not target_tables:
         for edge in dag._edges:
@@ -91,8 +101,84 @@ def _dag_needs_refresh_for_tasks(dag: JobDAG, task_names: set[str]) -> bool:
     if not target_tables:
         return False
 
-    matched_targets = target_tables & task_names
-    return len(matched_targets) / len(target_tables) < 0.5
+    target_keys = {identifier_match_key(name) for name in target_tables}
+    matched_targets = target_keys & task_keys
+    return len(matched_targets) / len(target_keys) < 0.5
+
+
+def _resolve_requested_jobs(
+    requested_jobs: list[str], task_files: dict[str, Path]
+) -> tuple[set[str], list[str]]:
+    task_name_by_key = {
+        identifier_match_key(job_name): job_name for job_name in task_files
+    }
+    resolved = set()
+    missing = []
+    for requested_job in requested_jobs:
+        job_name = task_name_by_key.get(identifier_match_key(requested_job))
+        if job_name is None:
+            missing.append(requested_job)
+        else:
+            resolved.add(job_name)
+    return resolved, sorted(set(missing), key=identifier_match_key)
+
+
+def _job_model_names_from_lineage(lineage_data: dict) -> dict[str, str]:
+    if lineage_data.get("format_version") != 2:
+        return {}
+    managed_table_keys = {
+        table_identity_match_key(table.get("full_name"))
+        for table in lineage_data.get("tables") or []
+        if table.get("full_name") and table.get("dataset_type") == "managed"
+    }
+    model_names = {}
+    for job in lineage_data.get("jobs") or []:
+        managed_outputs = [
+            output
+            for output in job.get("outputs") or []
+            if table_identity_match_key(output) in managed_table_keys
+        ]
+        if len(managed_outputs) > 1:
+            raise ExecutionConfigError(
+                f"[{job.get('name')}] has multiple managed outputs; "
+                "execution model target is ambiguous: "
+                f"{sorted(managed_outputs)!r}"
+            )
+        if managed_outputs:
+            model_names[identifier_match_key(job.get("name"))] = (
+                short_table_name(managed_outputs[0])
+            )
+    return model_names
+
+
+def _load_job_model_names(project: str) -> dict[str, str]:
+    lineage_path = _resolve_lineage_data_file(project)
+    if not lineage_path.exists():
+        return {}
+    lineage_data = json.loads(lineage_path.read_text(encoding=TEXT_ENCODING))
+    return _job_model_names_from_lineage(lineage_data)
+
+
+def _task_spec(
+    planner: ExecutionPlanner,
+    job_name: str,
+    sql_file: Path,
+    model_names_by_job: dict[str, str] | None,
+) -> TaskSpec:
+    model_name = (model_names_by_job or {}).get(identifier_match_key(job_name))
+    return planner.task_spec(
+        job_name,
+        sql_file,
+        model_name=model_name,
+    )
+
+
+def _save_job_dag(dag: JobDAG, path: Path) -> int:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    dag.save(path)
+    if dag.format_version == 2:
+        return len(dag.data_dependencies)
+    return len(dag._edges)
 
 
 def _get_task_files(project: str) -> dict[str, Path]:
@@ -112,8 +198,14 @@ def _run_job(
     db_name: str,
     planner: ExecutionPlanner,
     skip_unsupported_history: bool = False,
+    model_names_by_job: dict[str, str] | None = None,
 ) -> None:
-    spec = planner.task_spec(job_name, sql_file)
+    spec = _task_spec(
+        planner,
+        job_name,
+        sql_file,
+        model_names_by_job,
+    )
     invocations = _plan_regular_invocations(
         planner,
         spec,
@@ -138,9 +230,15 @@ def _run_job_full_refresh(
     db_name: str,
     planner: ExecutionPlanner,
     all_dates: list[str],
+    model_names_by_job: dict[str, str] | None = None,
 ) -> None:
     """全量刷新模式下的作业执行."""
-    spec = planner.task_spec(job_name, sql_file)
+    spec = _task_spec(
+        planner,
+        job_name,
+        sql_file,
+        model_names_by_job,
+    )
     invocations = planner.plan_full_refresh(spec, all_dates)
     if not invocations:
         print(f"  [{job_name}] 跳过 — 无可执行切片")
@@ -178,11 +276,17 @@ def _validate_execution_plan(
     *,
     full_refresh: bool,
     skip_unsupported_history: bool = False,
+    model_names_by_job: dict[str, str] | None = None,
 ) -> int:
     """Validate every job/date combination before the first database write."""
     invocation_count = 0
     for job_name in exec_order:
-        spec = planner.task_spec(job_name, task_files[job_name])
+        spec = _task_spec(
+            planner,
+            job_name,
+            task_files[job_name],
+            model_names_by_job,
+        )
         if full_refresh:
             invocation_count += len(planner.plan_full_refresh(spec, etl_dates))
             continue
@@ -284,6 +388,7 @@ def _run_parallel(
     parallel: int,
     planner: ExecutionPlanner,
     skip_unsupported_history: bool,
+    model_names_by_job: dict[str, str] | None = None,
 ) -> None:
     deg = dict(in_degree)
     lock = threading.Lock()
@@ -325,6 +430,7 @@ def _run_parallel(
             db_name,
             planner,
             skip_unsupported_history,
+            model_names_by_job,
         )
         fut.add_done_callback(lambda f, j=job_name: on_complete(j, f))
 
@@ -420,22 +526,25 @@ def main():
     if args.refresh_dag or not existing_dag_path.exists():
         print(f"生成 DAG: {dag_path}")
         dag = _build_job_dag(project)
-        dag_path.parent.mkdir(parents=True, exist_ok=True)
-        dag.save(dag_path)
-        print(f"  DAG 已保存: {len(dag._edges)} 条边")
+        dependency_count = _save_job_dag(dag, dag_path)
+        print(f"  DAG 已保存: {dependency_count} 条边")
     else:
         print(f"加载 DAG: {existing_dag_path}")
         dag = JobDAG.load(existing_dag_path)
         if _dag_needs_refresh_for_tasks(dag, task_names):
             print("  DAG 与当前作业不匹配, 重新生成...")
             dag = _build_job_dag(project)
-            dag_path.parent.mkdir(parents=True, exist_ok=True)
-            dag.save(dag_path)
-            print(f"  DAG 已保存: {len(dag._edges)} 条边")
+            dependency_count = _save_job_dag(dag, dag_path)
+            print(f"  DAG 已保存: {dependency_count} 条边")
+
+    try:
+        model_names_by_job = _load_job_model_names(project)
+    except ExecutionConfigError as e:
+        print(f"错误: {e}")
+        sys.exit(1)
 
     if args.job_list is not None:
-        job_set = set(args.job_list)
-        missing = job_set - set(task_files.keys())
+        job_set, missing = _resolve_requested_jobs(args.job_list, task_files)
         if missing:
             print(f"错误: 以下作业不存在: {sorted(missing)}")
             sys.exit(1)
@@ -486,6 +595,7 @@ def main():
                 planner,
                 all_dates,
                 full_refresh=True,
+                model_names_by_job=model_names_by_job,
             )
         except ExecutionConfigError as e:
             print(f"  {e}")
@@ -502,6 +612,7 @@ def main():
                     db_name,
                     planner,
                     all_dates,
+                    model_names_by_job,
                 )
             except (
                 subprocess.TimeoutExpired,
@@ -523,6 +634,7 @@ def main():
             regular_dates,
             full_refresh=False,
             skip_unsupported_history=args.skip_unsupported_history,
+            model_names_by_job=model_names_by_job,
         )
     except ExecutionConfigError as e:
         print(f"  {e}")
@@ -546,6 +658,7 @@ def main():
                         db_name,
                         planner,
                         args.skip_unsupported_history,
+                        model_names_by_job,
                     )
                 except (
                     subprocess.TimeoutExpired,
@@ -566,6 +679,7 @@ def main():
                 parallel,
                 planner,
                 args.skip_unsupported_history,
+                model_names_by_job,
             )
 
     total_jobs = planned_invocation_count

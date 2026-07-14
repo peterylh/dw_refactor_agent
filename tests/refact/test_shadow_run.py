@@ -38,6 +38,39 @@ from dw_refactor_agent.refactor.workspace_snapshot import workspace_fingerprint
 TIMING_KEYS = {"started_at", "finished_at", "duration_ms"}
 
 
+def test_shadow_scheduler_prefers_snapshot_plan_dependencies(monkeypatch):
+    plan = {
+        "project": "demo",
+        "jobs_to_run": [
+            {"job": "Prepare_Sales"},
+            {"job": "Build_Report"},
+        ],
+        "job_dependencies": {
+            "Prepare_Sales": [],
+            "Build_Report": ["Prepare_Sales"],
+        },
+    }
+    monkeypatch.setattr(
+        shadow_run_module.JobDAG,
+        "load",
+        lambda path: (_ for _ in ()).throw(
+            AssertionError("stale project DAG must not be loaded")
+        ),
+    )
+
+    in_degree, adjacency, scheduler, warnings = (
+        shadow_run_module._job_dependencies_from_plan(plan, None)
+    )
+
+    assert in_degree == {"Prepare_Sales": 0, "Build_Report": 1}
+    assert adjacency == {
+        "Prepare_Sales": ["Build_Report"],
+        "Build_Report": [],
+    }
+    assert scheduler == "plan"
+    assert warnings == []
+
+
 def test_project_execution_lock_is_shared_across_worktrees(tmp_path):
     relative = (
         "warehouses/shop/artifacts/refactor_runs/run/verification/plan.json"

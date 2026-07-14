@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 
 import dw_refactor_agent.config as config
+import dw_refactor_agent.refactor.verification_plan as verification_plan_module
 from dw_refactor_agent.ddl_deriver.ddl_deriver import ColumnDef, TableDef
 from dw_refactor_agent.ddl_deriver.schema_ids import SchemaIdentityError
 from dw_refactor_agent.execution.planner import ExecutionPlanner
@@ -1967,7 +1968,6 @@ def test_build_verification_plan_orders_jobs_topologically(
         },
     )
     config.clear_model_metadata_cache()
-
     plan = build_verification_plan(
         "demo",
         {
@@ -2014,6 +2014,212 @@ def test_build_verification_plan_orders_jobs_topologically(
     ]
 
     config.clear_model_metadata_cache()
+
+
+def test_build_verification_plan_maps_output_tables_to_explicit_job_names(
+    tmp_path, monkeypatch
+):
+    project_dir = tmp_path / "demo"
+    (project_dir / "mid" / "ddl").mkdir(parents=True)
+    (project_dir / "mid" / "models").mkdir()
+    (project_dir / "mid" / "tasks").mkdir()
+    for table_name, layer in [
+        ("dwd_order", "DWD"),
+        ("ads_order", "ADS"),
+    ]:
+        (project_dir / "mid" / "ddl" / f"{table_name}.sql").write_text(
+            f"CREATE TABLE demo_dm.{table_name} (id BIGINT) ENGINE=OLAP;",
+            encoding="utf-8",
+        )
+        (project_dir / "mid" / "models" / f"{table_name}.yaml").write_text(
+            f"version: 2\nname: {table_name}\nlayer: {layer}\n",
+            encoding="utf-8",
+        )
+    for job_name in ("Prepare_Sales", "Build_Report"):
+        (project_dir / "mid" / "tasks" / f"{job_name}.sql").write_text(
+            "SELECT 1;",
+            encoding="utf-8",
+        )
+    monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setitem(
+        config.PROJECT_CONFIG,
+        "demo",
+        {
+            "dir": "demo",
+            "db": "demo_dm",
+            "qa_db": "demo_dm_qa",
+            "catalog": "internal",
+        },
+    )
+    config.clear_model_metadata_cache()
+    lineage_data = {
+        "format_version": 2,
+        "tables": [
+            {
+                "name": "ads_order",
+                "full_name": "internal.demo_dm.ads_order",
+                "dataset_type": "managed",
+                "columns": [],
+            },
+            {
+                "name": "dwd_order",
+                "full_name": "internal.demo_dm.dwd_order",
+                "dataset_type": "managed",
+                "columns": [],
+            },
+        ],
+        "jobs": [
+            {
+                "name": "Build_Report",
+                "source_file": "mid/tasks/Build_Report.sql",
+                "inputs": ["internal.demo_dm.dwd_order"],
+                "outputs": ["internal.demo_dm.ads_order"],
+            },
+            {
+                "name": "Prepare_Sales",
+                "source_file": "mid/tasks/Prepare_Sales.sql",
+                "inputs": [],
+                "outputs": ["internal.demo_dm.dwd_order"],
+            },
+        ],
+        "edges": [],
+        "diagnostics": [],
+    }
+
+    plan = build_verification_plan(
+        "demo",
+        {
+            "changed_assets": {
+                "task_jobs": ["prepare_sales"],
+                "ddl_tables": [],
+                "model_tables": [],
+                "config_files": [],
+            },
+            "affected_scope": {
+                "direct_tables": ["dwd_order", "prepare_sales"],
+                "downstream_tables": ["ads_order"],
+                "assessment_tables": ["dwd_order", "ads_order"],
+                "assessment_tasks": ["prepare_sales", "build_report"],
+                "anchor_tables": ["ads_order"],
+            },
+        },
+        lineage_data=lineage_data,
+    )
+
+    assert [
+        (job["job"], job["target"], job["layer"])
+        for job in plan["jobs_to_run"]
+    ] == [
+        ("Prepare_Sales", "dwd_order", "DWD"),
+        ("Build_Report", "ads_order", "ADS"),
+    ]
+    assert plan["job_dependencies"] == {
+        "Build_Report": ["Prepare_Sales"],
+        "Prepare_Sales": [],
+    }
+
+    config.clear_model_metadata_cache()
+
+
+def test_explicit_job_mapping_preserves_qualified_dataset_identity(
+    tmp_path, monkeypatch
+):
+    task_dir = tmp_path / "demo" / "mid" / "tasks"
+    task_dir.mkdir(parents=True)
+    for job_name in ("build_a", "build_b"):
+        (task_dir / f"{job_name}.sql").write_text(
+            "SELECT 1;", encoding="utf-8"
+        )
+    monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setitem(
+        config.PROJECT_CONFIG,
+        "demo",
+        {
+            "dir": "demo",
+            "db": "db_a",
+            "qa_db": "db_a_qa",
+            "catalog": "internal",
+        },
+    )
+    lineage_data = {
+        "format_version": 2,
+        "tables": [
+            {
+                "full_name": "internal.db_a.report",
+                "dataset_type": "managed",
+            },
+            {
+                "full_name": "internal.db_b.report",
+                "dataset_type": "managed",
+            },
+        ],
+        "jobs": [
+            {
+                "name": "build_a",
+                "outputs": ["internal.db_a.report"],
+            },
+            {
+                "name": "build_b",
+                "outputs": ["internal.db_b.report"],
+            },
+        ],
+    }
+
+    entries = verification_plan_module._explicit_job_entries(
+        "demo",
+        {"internal.db_b.report"},
+        lineage_data,
+    )
+
+    assert set(entries) == {"build_b"}
+
+
+def test_explicit_job_mapping_rejects_multiple_managed_targets(
+    tmp_path, monkeypatch
+):
+    task_dir = tmp_path / "demo" / "mid" / "tasks"
+    task_dir.mkdir(parents=True)
+    (task_dir / "multi_output.sql").write_text("SELECT 1;", encoding="utf-8")
+    monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setitem(
+        config.PROJECT_CONFIG,
+        "demo",
+        {
+            "dir": "demo",
+            "db": "demo_dm",
+            "qa_db": "demo_dm_qa",
+            "catalog": "internal",
+        },
+    )
+    lineage_data = {
+        "format_version": 2,
+        "tables": [
+            {
+                "full_name": "internal.demo_dm.output_a",
+                "dataset_type": "managed",
+            },
+            {
+                "full_name": "internal.demo_dm.output_b",
+                "dataset_type": "managed",
+            },
+        ],
+        "jobs": [
+            {
+                "name": "multi_output",
+                "outputs": [
+                    "internal.demo_dm.output_a",
+                    "internal.demo_dm.output_b",
+                ],
+            }
+        ],
+    }
+
+    with pytest.raises(ValueError, match="multiple managed outputs"):
+        verification_plan_module._explicit_job_entries(
+            "demo",
+            {"multi_output"},
+            lineage_data,
+        )
 
 
 def test_strip_insert_data_removes_data_after_first_insert():

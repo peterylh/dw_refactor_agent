@@ -814,7 +814,11 @@ def _execute_shadow_job(
         )
 
     try:
-        spec = planner.task_spec(job_name, file_path)
+        spec = planner.task_spec(
+            job_name,
+            file_path,
+            model_name=job.get("target") or job_name,
+        )
         driver_values = _job_driver_values(job, spec)
     except ExecutionConfigError as exc:
         _log(f"  [FAIL] {job_name}: {exc}")
@@ -1377,7 +1381,11 @@ def _dry_run_phases(
             )
             continue
         try:
-            spec = planner.task_spec(job["job"], file_path)
+            spec = planner.task_spec(
+                job["job"],
+                file_path,
+                model_name=job.get("target") or job["job"],
+            )
             driver_values = _job_driver_values(job, spec)
             for driver_value in driver_values:
                 planned_job = _job_for_driver_value(job, driver_value)
@@ -1870,7 +1878,11 @@ def _dry_run(plan: dict, manifest: dict, *, root: Path) -> None:
             continue
 
         try:
-            spec = planner.task_spec(job_name, file_path)
+            spec = planner.task_spec(
+                job_name,
+                file_path,
+                model_name=job.get("target") or job_name,
+            )
             driver_values = _job_driver_values(job, spec)
         except ExecutionConfigError as exc:
             print(f"    [FAIL] {exc}")

@@ -46,16 +46,26 @@ class ExecutionPlanner:
         self.warehouse_execution = self._warehouse_execution_config()
         self.model_metadata = self._load_model_metadata()
 
-    def task_spec(self, job_name: str, sql_path: Path) -> TaskSpec:
-        raw_model = self.model_metadata.get(job_name, {})
-        raw_execution = execution_config_for_model(job_name, raw_model)
+    def task_spec(
+        self,
+        job_name: str,
+        sql_path: Path,
+        *,
+        model_name: str | None = None,
+    ) -> TaskSpec:
+        execution_model_name = str(model_name or job_name).strip()
+        raw_model = self.model_metadata.get(execution_model_name, {})
+        raw_execution = execution_config_for_model(
+            execution_model_name,
+            raw_model,
+        )
 
         materialized = normalize_materialized(
-            job_name,
+            execution_model_name,
             raw_execution.get("materialized", "incremental"),
         )
         strategy = normalize_strategy(
-            job_name,
+            execution_model_name,
             materialized,
             raw_execution.get("full_refresh_strategy"),
         )
@@ -64,29 +74,38 @@ class ExecutionPlanner:
         # execution metadata.
         if materialized == "full":
             explicit_slice = slice_config_from_mapping(
-                job_name,
+                execution_model_name,
                 raw_execution.get("slice"),
                 label="execution.slice",
             )
             if explicit_slice is not None:
                 raise ExecutionConfigError(
-                    f"[{job_name}] full models cannot define execution.slice"
+                    f"[{execution_model_name}] full models cannot define "
+                    "execution.slice"
                 )
             slice_config = None
         else:
-            slice_config = self._slice_config(job_name, raw_execution)
+            slice_config = self._slice_config(
+                execution_model_name,
+                raw_execution,
+            )
         if (
             materialized == "incremental"
             and strategy == "replay_slices"
             and slice_config is None
         ):
             raise ExecutionConfigError(
-                f"[{job_name}] incremental + replay_slices requires "
+                f"[{execution_model_name}] incremental + replay_slices "
+                "requires "
                 "model execution.slice or warehouse execution.default_slice"
             )
 
         if slice_config is not None:
-            self._validate_slice_column(job_name, Path(sql_path), slice_config)
+            self._validate_slice_column(
+                execution_model_name,
+                Path(sql_path),
+                slice_config,
+            )
 
         companion_path = self._companion_path(Path(sql_path), job_name)
         if strategy == "companion" and companion_path is None:
@@ -229,8 +248,13 @@ class ExecutionPlanner:
         full_refresh: bool = False,
     ) -> list[TaskInvocation]:
         job_name = str(job.get("job") or "").strip()
+        model_name = str(job.get("target") or job_name).strip()
         sql_path = self._job_sql_path(job, project_root=project_root)
-        spec = self.task_spec(job_name, sql_path)
+        spec = self.task_spec(
+            job_name,
+            sql_path,
+            model_name=model_name,
+        )
         if full_refresh:
             return self.plan_full_refresh(
                 spec,

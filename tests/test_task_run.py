@@ -9,7 +9,7 @@ import dw_refactor_agent.config as config
 from dw_refactor_agent.execution import task_run
 from dw_refactor_agent.execution.date_window import resolve_etl_dates
 from dw_refactor_agent.execution.model_config import ExecutionConfigError
-from dw_refactor_agent.execution.planner import ExecutionPlanner
+from dw_refactor_agent.execution.planner import ExecutionPlanner, TaskSpec
 
 
 def _completed(stdout: str = "", stderr: str = "", returncode: int = 0):
@@ -460,6 +460,205 @@ def test_build_job_dag_accepts_structured_lineage_edges(monkeypatch, tmp_path):
     }
 
 
+def test_build_job_dag_v2_uses_job_names_unrelated_to_output_tables(
+    monkeypatch, tmp_path
+):
+    project_dir = tmp_path / "demo_project"
+    lineage_dir = project_dir / "artifacts" / "lineage"
+    lineage_dir.mkdir(parents=True)
+    (lineage_dir / "lineage_data.json").write_text(
+        json.dumps(
+            {
+                "format_version": 2,
+                "tables": [
+                    {
+                        "name": "sales_stage",
+                        "full_name": "internal.demo_db.sales_stage",
+                        "dataset_type": "process",
+                        "columns": [],
+                    },
+                    {
+                        "name": "sales_report",
+                        "full_name": "internal.demo_db.sales_report",
+                        "dataset_type": "managed",
+                        "columns": [],
+                    },
+                ],
+                "jobs": [
+                    {
+                        "name": "build_report",
+                        "source_file": "ads/tasks/build_report.sql",
+                        "inputs": ["internal.demo_db.sales_stage"],
+                        "outputs": ["internal.demo_db.sales_report"],
+                    },
+                    {
+                        "name": "prepare_sales",
+                        "source_file": "mid/tasks/prepare_sales.sql",
+                        "inputs": [],
+                        "outputs": ["internal.demo_db.sales_stage"],
+                    },
+                ],
+                "edges": [],
+                "diagnostics": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setitem(
+        config.PROJECT_CONFIG,
+        "demo",
+        {"dir": "demo_project"},
+    )
+
+    dag = task_run._build_job_dag("demo")
+
+    assert dag._deps == {
+        "build_report": set(),
+        "prepare_sales": {"build_report"},
+    }
+    assert "sales_report" not in dag._deps
+
+
+def test_execution_preflight_uses_output_model_and_job_sql_identity(tmp_path):
+    sql_path = tmp_path / "prepare_sales.sql"
+    sql_path.write_text("SELECT 1;", encoding="utf-8")
+    calls = []
+
+    class RecordingPlanner:
+        def task_spec(self, job_name, path, *, model_name=None):
+            calls.append((job_name, path, model_name))
+            return TaskSpec(
+                job_name=job_name,
+                sql_path=path,
+                materialized="full",
+                full_refresh_strategy="replace_all",
+                slice_param=None,
+                slice_column=None,
+                slice_period=None,
+                companion_path=None,
+                historical_replay_supported=True,
+            )
+
+        @staticmethod
+        def plan_full_refresh(spec, values):
+            return []
+
+    task_run._validate_execution_plan(
+        ["prepare_sales"],
+        {"prepare_sales": sql_path},
+        RecordingPlanner(),
+        [],
+        full_refresh=True,
+        model_names_by_job={"prepare_sales": "dwd_order"},
+    )
+
+    assert calls == [("prepare_sales", sql_path, "dwd_order")]
+
+
+def test_job_model_names_require_one_managed_output():
+    lineage_data = {
+        "format_version": 2,
+        "tables": [
+            {
+                "full_name": "internal.demo_db.stage",
+                "dataset_type": "process",
+            },
+            {
+                "full_name": "internal.demo_db.dwd_order",
+                "dataset_type": "managed",
+            },
+        ],
+        "jobs": [
+            {
+                "name": "prepare_sales",
+                "outputs": [
+                    "internal.demo_db.stage",
+                    "internal.demo_db.dwd_order",
+                ],
+            }
+        ],
+    }
+
+    assert task_run._job_model_names_from_lineage(lineage_data) == {
+        "prepare_sales": "dwd_order"
+    }
+
+
+def test_refresh_dag_writes_v2_artifact_to_configured_project_path(
+    monkeypatch, tmp_path
+):
+    project_dir = tmp_path / "configured_demo"
+    task_dir = project_dir / "mid" / "tasks"
+    task_dir.mkdir(parents=True)
+    task_files = {
+        "Build_Report": task_dir / "Build_Report.sql",
+        "Prepare_Sales": task_dir / "Prepare_Sales.sql",
+    }
+    for path in task_files.values():
+        path.write_text("SELECT 1;", encoding="utf-8")
+    dag = task_run.JobDAG.from_dict(
+        {
+            "format_version": 2,
+            "jobs": ["build_report", "prepare_sales"],
+            "data_dependencies": [
+                {
+                    "upstream_job": "prepare_sales",
+                    "downstream_job": "build_report",
+                    "datasets": ["internal.demo_db.sales_stage"],
+                }
+            ],
+            "deps": {
+                "build_report": [],
+                "prepare_sales": ["build_report"],
+            },
+            "rev": {
+                "build_report": ["prepare_sales"],
+                "prepare_sales": [],
+            },
+        }
+    )
+    monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setitem(
+        task_run.PROJECT_CONFIG,
+        "demo",
+        {
+            "dir": "configured_demo",
+            "db": "demo_db",
+            "qa_db": "demo_db_qa",
+        },
+    )
+    monkeypatch.setattr(task_run, "_get_task_files", lambda _: task_files)
+    monkeypatch.setattr(task_run, "_build_job_dag", lambda _: dag)
+    monkeypatch.setattr(task_run, "ExecutionPlanner", lambda _: object())
+    monkeypatch.setattr(
+        task_run, "_validate_execution_plan", lambda *args, **kwargs: 0
+    )
+    monkeypatch.setattr(task_run, "get_mysql_cmd", lambda _: ["mysql"])
+    monkeypatch.setattr(
+        task_run.sys,
+        "argv",
+        [
+            "task_run",
+            "--project",
+            "demo",
+            "--etl-dates",
+            "2025-01-01",
+            "--refresh-dag",
+            "--validate-only",
+            "--job-list",
+            "build_report",
+            "PREPARE_SALES",
+        ],
+    )
+
+    assert task_run.main() == 0
+    artifact_path = project_dir / "artifacts" / "lineage" / "job_dag.json"
+    artifact = json.loads(artifact_path.read_text(encoding="utf-8"))
+    assert artifact["format_version"] == 2
+    assert artifact["jobs"] == ["build_report", "prepare_sales"]
+
+
 def test_task_run_resolvers_ignore_old_lineage_artifact_paths(
     monkeypatch, tmp_path
 ):
@@ -565,4 +764,31 @@ def test_dag_needs_refresh_keeps_current_dag_with_matching_targets():
             {"dwd_order_detail", "dws_store_sales_daily"},
         )
         is False
+    )
+
+
+def test_dag_refresh_compares_explicit_v2_job_set_case_insensitively():
+    dag = task_run.JobDAG.from_dict(
+        {
+            "format_version": 2,
+            "jobs": ["Build_Report", "Prepare_Sales"],
+            "data_dependencies": [],
+            "deps": {"Build_Report": [], "Prepare_Sales": []},
+            "rev": {"Build_Report": [], "Prepare_Sales": []},
+        }
+    )
+
+    assert (
+        task_run._dag_needs_refresh_for_tasks(
+            dag,
+            {"build_report", "PREPARE_SALES"},
+        )
+        is False
+    )
+    assert (
+        task_run._dag_needs_refresh_for_tasks(
+            dag,
+            {"build_report", "prepare_sales", "new_job"},
+        )
+        is True
     )

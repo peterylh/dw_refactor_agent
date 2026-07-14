@@ -87,6 +87,93 @@ def _write_demo_project(
     return sql_path, companion_path
 
 
+def _rename_execution_model(
+    tmp_path,
+    *,
+    job_name: str,
+    model_name: str,
+) -> None:
+    project_dir = tmp_path / "warehouses" / "demo" / "mid"
+    old_model = project_dir / "models" / f"{job_name}.yaml"
+    model_text = old_model.read_text(encoding="utf-8").replace(
+        f"name: {job_name}",
+        f"name: {model_name}",
+    )
+    old_model.unlink()
+    (project_dir / "models" / f"{model_name}.yaml").write_text(
+        model_text,
+        encoding="utf-8",
+    )
+    old_ddl = project_dir / "ddl" / f"{job_name}.sql"
+    ddl_text = old_ddl.read_text(encoding="utf-8")
+    old_ddl.unlink()
+    (project_dir / "ddl" / f"{model_name}.sql").write_text(
+        ddl_text,
+        encoding="utf-8",
+    )
+
+
+def test_task_spec_uses_model_name_without_changing_job_identity(
+    monkeypatch, tmp_path
+):
+    sql_path, _ = _write_demo_project(
+        monkeypatch,
+        tmp_path,
+        job_name="prepare_sales",
+        model_config="execution:\n  materialized: full\n",
+        warehouse_execution="",
+    )
+    _rename_execution_model(
+        tmp_path,
+        job_name="prepare_sales",
+        model_name="dwd_order",
+    )
+    planner = ExecutionPlanner("demo")
+
+    spec = planner.task_spec(
+        "prepare_sales",
+        sql_path,
+        model_name="dwd_order",
+    )
+
+    assert spec.job_name == "prepare_sales"
+    assert spec.sql_path == sql_path
+    assert spec.materialized == "full"
+
+
+def test_task_spec_validates_slice_against_model_name_ddl(
+    monkeypatch, tmp_path
+):
+    sql_path, _ = _write_demo_project(
+        monkeypatch,
+        tmp_path,
+        job_name="prepare_sales",
+        model_config=(
+            "execution:\n"
+            "  materialized: incremental\n"
+            "  slice:\n"
+            "    param: etl_date\n"
+            "    column: stat_date\n"
+            "    period: D\n"
+        ),
+        warehouse_execution="",
+        ddl_column="other_date",
+    )
+    _rename_execution_model(
+        tmp_path,
+        job_name="prepare_sales",
+        model_name="dwd_order",
+    )
+    planner = ExecutionPlanner("demo")
+
+    with pytest.raises(ExecutionConfigError, match="dwd_order.sql"):
+        planner.task_spec(
+            "prepare_sales",
+            sql_path,
+            model_name="dwd_order",
+        )
+
+
 def test_snapshot_materialized_is_rejected(monkeypatch, tmp_path):
     sql_path, _ = _write_demo_project(
         monkeypatch,

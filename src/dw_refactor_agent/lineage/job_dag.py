@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
-作业 DAG 生成: 基于血缘边构建可序列化的有向无环图,
+作业 DAG 生成: 基于显式 Job 输入输出构建可序列化的有向无环图,
 支持拓扑排序与下游追踪, 供重构验证和正常运行共用。
 
 用法:
-    from dw_refactor_agent.lineage.job_dag import JobDAG
+    from dw_refactor_agent.lineage.job_dag import job_dag_from_lineage
 
-    dag = JobDAG(lineage_data["edges"])
-    order = dag.topological_sort({"dwd_order_detail", "dws_store_sales", "ads_sales"})
+    dag = job_dag_from_lineage(lineage_data)
+    order = dag.topological_sort({"prepare_sales", "build_report"})
     dag.save("warehouses/shop/artifacts/lineage/job_dag.json")
 
     dag2 = JobDAG.load("warehouses/shop/artifacts/lineage/job_dag.json")
@@ -30,11 +30,17 @@ from dw_refactor_agent.lineage.asset_graph import (
     build_asset_self_edges,
     build_asset_table_graph,
 )
+from dw_refactor_agent.lineage.contract import (
+    FORMAT_VERSION,
+    validate_job_dag_v2,
+    validate_lineage_v2,
+)
 from dw_refactor_agent.lineage.identifiers import (
     canonical_qualified_identifier,
     identifier_match_key,
     split_column_ref,
 )
+from dw_refactor_agent.lineage.job_lineage import resolve_job_dependencies
 
 
 class JobDAG:
@@ -45,6 +51,9 @@ class JobDAG:
         edges: list | None = None,
         self_edges: list | None = None,
     ):
+        self._format_version = 1
+        self._jobs: list[str] = []
+        self._data_dependencies: list[dict] = []
         self._edges = edges or []
         self._provided_self_edges = list(self_edges or [])
         self._self_edges: list[dict] = []
@@ -52,6 +61,40 @@ class JobDAG:
         self._rev: dict[str, set[str]] = {}
         self._node_by_key: dict[str, str] = {}
         self._build()
+
+    @classmethod
+    def from_jobs(
+        cls,
+        jobs: list[str],
+        data_dependencies: list[dict],
+    ) -> "JobDAG":
+        """Build a version 2 DAG from explicit Jobs and dataset evidence."""
+        dag = cls.__new__(cls)
+        dag._format_version = FORMAT_VERSION
+        dag._jobs = sorted(jobs, key=identifier_match_key)
+        dag._data_dependencies = [
+            {
+                "upstream_job": dependency["upstream_job"],
+                "downstream_job": dependency["downstream_job"],
+                "datasets": list(dependency["datasets"]),
+            }
+            for dependency in data_dependencies
+        ]
+        dag._edges = []
+        dag._provided_self_edges = []
+        dag._self_edges = []
+        dag._deps = {job: set() for job in dag._jobs}
+        dag._rev = {job: set() for job in dag._jobs}
+        dag._node_by_key = {}
+        for job in dag._jobs:
+            cls._remember_node(dag._node_by_key, job)
+        for dependency in dag._data_dependencies:
+            upstream = dag._resolve_node(dependency["upstream_job"])
+            downstream = dag._resolve_node(dependency["downstream_job"])
+            dag._deps[upstream].add(downstream)
+            dag._rev[downstream].add(upstream)
+        validate_job_dag_v2(dag.to_dict())
+        return dag
 
     # ── 图构建 ──
 
@@ -144,6 +187,8 @@ class JobDAG:
 
     def _rebuild_node_index(self) -> None:
         node_by_key = {}
+        for job in self._jobs:
+            self._remember_node(node_by_key, job)
         for source, targets in self._deps.items():
             self._remember_node(node_by_key, source)
             for target in targets:
@@ -180,6 +225,25 @@ class JobDAG:
     @property
     def self_edges(self) -> list[dict]:
         return [dict(edge) for edge in self._self_edges]
+
+    @property
+    def format_version(self) -> int:
+        return self._format_version
+
+    @property
+    def jobs(self) -> list[str]:
+        return list(self._jobs)
+
+    @property
+    def data_dependencies(self) -> list[dict]:
+        return [
+            {
+                "upstream_job": dependency["upstream_job"],
+                "downstream_job": dependency["downstream_job"],
+                "datasets": list(dependency["datasets"]),
+            }
+            for dependency in self._data_dependencies
+        ]
 
     # ── 遍历 ──
 
@@ -230,12 +294,17 @@ class JobDAG:
     def topological_sort(self, jobs_set: set) -> list:
         in_degree, adj = self.compute_in_degree(jobs_set)
 
-        queue = deque([j for j, d in in_degree.items() if d == 0])
+        queue = deque(
+            sorted(
+                (j for j, degree in in_degree.items() if degree == 0),
+                key=self._node_key,
+            )
+        )
         result = []
         while queue:
             node = queue.popleft()
             result.append(node)
-            for neighbor in adj.get(node, []):
+            for neighbor in sorted(adj.get(node, []), key=self._node_key):
                 in_degree[neighbor] -= 1
                 if in_degree[neighbor] == 0:
                     queue.append(neighbor)
@@ -252,7 +321,10 @@ class JobDAG:
         layers = []
         remaining = set(jobs_set)
         while remaining:
-            current = [j for j in remaining if in_degree.get(j, 0) == 0]
+            current = sorted(
+                (j for j in remaining if in_degree.get(j, 0) == 0),
+                key=self._node_key,
+            )
             if not current:
                 raise ValueError(
                     f"Detected cycle among jobs: {sorted(remaining)}"
@@ -268,6 +340,24 @@ class JobDAG:
     # ── 序列化 ──
 
     def to_dict(self) -> dict:
+        if self._format_version == FORMAT_VERSION:
+            return {
+                "format_version": FORMAT_VERSION,
+                "jobs": list(self._jobs),
+                "data_dependencies": self.data_dependencies,
+                "deps": {
+                    job: sorted(
+                        self._deps.get(job, set()), key=identifier_match_key
+                    )
+                    for job in self._jobs
+                },
+                "rev": {
+                    job: sorted(
+                        self._rev.get(job, set()), key=identifier_match_key
+                    )
+                    for job in self._jobs
+                },
+            }
         return {
             "edges": list(self._edges),
             "self_edges": self.self_edges,
@@ -277,7 +367,23 @@ class JobDAG:
 
     @classmethod
     def from_dict(cls, data: dict):
+        if "format_version" in data:
+            format_version = data["format_version"]
+            if type(format_version) is not int or format_version not in {1, 2}:
+                raise ValueError(
+                    "job DAG format_version must be integer 1 or 2; "
+                    f"received {format_version!r}"
+                )
+        if data.get("format_version") == FORMAT_VERSION:
+            validate_job_dag_v2(data)
+            return cls.from_jobs(
+                list(data["jobs"]),
+                list(data["data_dependencies"]),
+            )
         dag = cls.__new__(cls)
+        dag._format_version = 1
+        dag._jobs = []
+        dag._data_dependencies = []
         dag._edges = list(data.get("edges", []))
         dag._provided_self_edges = []
         dag._self_edges = cls._dedupe_self_edges(
@@ -316,8 +422,11 @@ class JobDAG:
         return records
 
     def save(self, path):
+        data = self.to_dict()
+        if self._format_version == FORMAT_VERSION:
+            validate_job_dag_v2(data)
         with open(path, "w", encoding=TEXT_ENCODING) as f:
-            json.dump(self.to_dict(), f, ensure_ascii=False, indent=2)
+            json.dump(data, f, ensure_ascii=False, indent=2)
 
     @classmethod
     def load(cls, path):
@@ -326,7 +435,7 @@ class JobDAG:
 
 
 def asset_job_dag_from_lineage(lineage_data: dict) -> JobDAG:
-    """Build a table DAG from formal asset dependencies, bypassing transient tables."""
+    """Build the legacy table-node compatibility DAG from lineage edges."""
     _upstream, downstream = build_asset_table_graph(lineage_data or {})
     table_edges = []
     seen = set()
@@ -342,4 +451,25 @@ def asset_job_dag_from_lineage(lineage_data: dict) -> JobDAG:
     return JobDAG(
         table_edges,
         self_edges=build_asset_self_edges(lineage_data or {}),
+    )
+
+
+def job_dag_from_lineage(lineage_data: dict) -> JobDAG:
+    """Build a Job DAG from explicit version 2 Job dataset facts.
+
+    Legacy lineage snapshots continue to use the table-based compatibility
+    graph because they do not contain reliable Job input/output facts.
+    """
+    data = lineage_data or {}
+    if data.get("format_version") != FORMAT_VERSION:
+        return asset_job_dag_from_lineage(data)
+
+    validate_lineage_v2(data)
+    dependencies, _diagnostics = resolve_job_dependencies(
+        data["jobs"],
+        data["tables"],
+    )
+    return JobDAG.from_jobs(
+        [job["name"] for job in data["jobs"]],
+        dependencies,
     )
