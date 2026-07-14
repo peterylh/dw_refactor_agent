@@ -1,4 +1,5 @@
 import importlib
+import json
 
 import pytest
 
@@ -441,6 +442,164 @@ def test_build_import_rows_rejects_unmapped_v2_direct_column_metadata(
     assert "prepare_orders" in message
     assert "internal.shop_dm.ods_order.missing_amount" in message
     assert "internal.shop_dm.process_order.amount" in message
+
+
+@pytest.mark.parametrize(
+    ("source_ref", "target_ref", "source_label", "target_label"),
+    [
+        (
+            {"type": "literal", "value": "ALL"},
+            {"type": "table", "id": "internal.shop_dm.process_order"},
+            "ALL",
+            "internal.shop_dm.process_order",
+        ),
+        (
+            {
+                "type": "column",
+                "id": "internal.shop_dm.ods_order.amount",
+            },
+            {
+                "type": "column",
+                "id": "internal.shop_dm.process_order.amount",
+            },
+            "internal.shop_dm.ods_order.amount",
+            "internal.shop_dm.process_order.amount",
+        ),
+    ],
+    ids=("literal-to-table", "column-to-column"),
+)
+def test_build_import_rows_rejects_unrepresentable_v2_indirect_edges(
+    tmp_path,
+    source_ref,
+    target_ref,
+    source_label,
+    target_label,
+):
+    module = importlib.import_module(
+        "dw_refactor_agent.lineage.import_lineage"
+    )
+    data = _demo_v2_snapshot()
+    data["edges"] = [data["edges"][1]]
+    data["edges"][0]["source"] = source_ref
+    data["edges"][0]["target"] = target_ref
+
+    with pytest.raises(ValueError) as exc_info:
+        module.build_import_rows(
+            data,
+            tasks_dir=tmp_path,
+            context=module.ImportContext(
+                project="shop",
+                snapshot_id=42,
+                datasource_id=1,
+                datasource_name="shop_dm",
+                db_type="doris",
+                host="127.0.0.1:9030",
+            ),
+        )
+
+    message = str(exc_info.value)
+    assert "FILTER" in message
+    assert "PREPARE_ORDERS" in message
+    assert source_label in message
+    assert target_label in message
+
+
+def test_build_import_rows_rejects_unmapped_v2_indirect_metadata(tmp_path):
+    module = importlib.import_module(
+        "dw_refactor_agent.lineage.import_lineage"
+    )
+    data = _demo_v2_snapshot()
+    data["edges"] = [data["edges"][1]]
+    data["edges"][0]["source"]["id"] = (
+        "internal.shop_dm.ods_order.missing_amount"
+    )
+
+    with pytest.raises(ValueError) as exc_info:
+        module.build_import_rows(
+            data,
+            tasks_dir=tmp_path,
+            context=module.ImportContext(
+                project="shop",
+                snapshot_id=42,
+                datasource_id=1,
+                datasource_name="shop_dm",
+                db_type="doris",
+                host="127.0.0.1:9030",
+            ),
+        )
+
+    message = str(exc_info.value)
+    assert "FILTER" in message
+    assert "PREPARE_ORDERS" in message
+    assert "internal.shop_dm.ods_order.missing_amount" in message
+    assert "internal.shop_dm.process_order" in message
+
+
+def test_import_rejects_unmapped_v2_indirect_metadata_before_connecting(
+    monkeypatch, tmp_path
+):
+    module = importlib.import_module(
+        "dw_refactor_agent.lineage.import_lineage"
+    )
+    data = _demo_v2_snapshot()
+    data["edges"] = [data["edges"][1]]
+    data["edges"][0]["source"]["id"] = (
+        "internal.shop_dm.ods_order.missing_amount"
+    )
+    lineage_file = tmp_path / "lineage_data.json"
+    lineage_file.write_text(json.dumps(data), encoding="utf-8")
+    connection_opened = False
+
+    def fail_if_connected(*_args, **_kwargs):
+        nonlocal connection_opened
+        connection_opened = True
+        pytest.fail("database connection must not be opened")
+
+    monkeypatch.setattr(module, "_open_connection", fail_if_connected)
+
+    with pytest.raises(ValueError) as exc_info:
+        module.import_lineage(
+            project="shop",
+            lineage_file=lineage_file,
+            snapshot_id=42,
+        )
+
+    assert connection_opened is False
+    message = str(exc_info.value)
+    assert "FILTER" in message
+    assert "PREPARE_ORDERS" in message
+    assert "internal.shop_dm.ods_order.missing_amount" in message
+    assert "internal.shop_dm.process_order" in message
+
+
+def test_build_import_rows_keeps_v1_indirect_metadata_skip_behavior(tmp_path):
+    module = importlib.import_module(
+        "dw_refactor_agent.lineage.import_lineage"
+    )
+    data = _demo_snapshot()
+    data["edges"] = [data["edges"][1]]
+    data["edges"][0]["source"]["id"] = "ods_order.missing_amount"
+
+    rows = module.build_import_rows(
+        data,
+        tasks_dir=tmp_path,
+        context=module.ImportContext(
+            project="shop",
+            snapshot_id=42,
+            datasource_id=1,
+            datasource_name="shop_dm",
+            db_type="doris",
+            host="127.0.0.1:9030",
+        ),
+    )
+
+    assert rows.indirect_lineage_rows == []
+    assert len(rows.skipped_edges) == 1
+    assert rows.skipped_edges[0].source == "ods_order.missing_amount"
+    assert rows.skipped_edges[0].target == "dwd_order_detail"
+    assert rows.skipped_edges[0].reason == (
+        "source, target, or job metadata is missing"
+    )
 
 
 def test_build_import_rows_matches_mixed_case_edge_refs_to_metadata(tmp_path):

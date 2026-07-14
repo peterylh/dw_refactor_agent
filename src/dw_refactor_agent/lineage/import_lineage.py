@@ -248,6 +248,41 @@ def _validate_v2_direct_edge_shapes(data: dict[str, Any]) -> None:
             )
 
 
+def _raise_v2_indirect_edge_import_error(
+    edge: dict[str, Any], reason: str
+) -> None:
+    source = edge.get("source")
+    target = edge.get("target")
+    target_type = _edge_ref_type(target)
+    if target is None:
+        target = edge.get("target_table")
+        target_type = "table"
+    relation_type = _normalize_relation_type(
+        edge.get("relation_type") or edge.get("condition_type")
+    )
+    raise ValueError(
+        f"lineage v2 {relation_type} edge cannot be imported: "
+        f"job={str(edge.get('job') or '')!r}, "
+        f"source={_edge_ref_id(source)!r} ({_edge_ref_type(source)}), "
+        f"target={_edge_ref_id(target)!r} ({target_type}): "
+        f"{reason}"
+    )
+
+
+def _validate_v2_indirect_edge_shapes(data: dict[str, Any]) -> None:
+    for edge in data.get("edges") or []:
+        if _normalize_relation_type(edge.get("relation_type")) == "DIRECT":
+            continue
+        source_type = _edge_ref_type(edge.get("source"))
+        target_type = _edge_ref_type(edge.get("target"))
+        if source_type != "column" or target_type != "table":
+            _raise_v2_indirect_edge_import_error(
+                edge,
+                "current indirect_lineage schema only represents "
+                "column-to-table non-DIRECT edges",
+            )
+
+
 def _read_task_sql(
     tasks_dir: Path,
     source_file: str,
@@ -315,6 +350,7 @@ def _normalize_import_data(data: dict[str, Any]) -> dict[str, Any]:
     if version == 2:
         validate_lineage_v2(data)
         _validate_v2_direct_edge_shapes(data)
+        _validate_v2_indirect_edge_shapes(data)
         return data
 
     raw_edges = [
@@ -619,6 +655,7 @@ def _build_indirect_lineage_rows(
     job_id_map: dict[str, int],
     rows: LineageImportRows,
     table_lineage_set: set[tuple[int, int, int | None, str]],
+    strict_v2: bool = False,
 ) -> None:
     lineage_id = 1
     for edge in indirect_edges:
@@ -626,6 +663,11 @@ def _build_indirect_lineage_rows(
         target_table = str(edge.get("target_table") or "")
         source_ref = _split_column_ref(source)
         if source_ref is None:
+            if strict_v2:
+                _raise_v2_indirect_edge_import_error(
+                    edge,
+                    "source is not a table.column reference",
+                )
             _skip(
                 rows,
                 kind="indirect",
@@ -645,6 +687,11 @@ def _build_indirect_lineage_rows(
         if not all(
             [source_table_id, source_column_id, target_table_id, job_id]
         ):
+            if strict_v2:
+                _raise_v2_indirect_edge_import_error(
+                    edge,
+                    "source, target, or job metadata is missing",
+                )
             _skip(
                 rows,
                 kind="indirect",
@@ -782,6 +829,7 @@ def build_import_rows(
         job_id_map=job_id_map,
         rows=rows,
         table_lineage_set=table_lineage_set,
+        strict_v2=is_v2,
     )
     rows.table_lineage_rows = _build_table_lineage_rows(
         table_lineage_set,
