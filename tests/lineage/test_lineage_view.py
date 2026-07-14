@@ -447,13 +447,13 @@ def test_lineage_view_scopes_same_name_process_columns_by_job():
                 "name": "job_a",
                 "source_file": "mid/tasks/job_a.sql",
                 "inputs": ["src_a", "t"],
-                "outputs": ["t", "out_a"],
+                "outputs": ["out_a", "t"],
             },
             {
                 "name": "job_b",
                 "source_file": "mid/tasks/job_b.sql",
                 "inputs": ["src_b", "t"],
-                "outputs": ["t", "out_b"],
+                "outputs": ["out_b", "t"],
             },
         ],
         "edges": [
@@ -521,7 +521,10 @@ def test_lineage_view_preindexes_conditions_once_for_all_target_jobs():
                 "name": name,
                 "full_name": name,
                 "dataset_type": "managed",
-                "columns": [{"name": "id", "type": "BIGINT"}],
+                "columns": [
+                    {"name": "id", "type": "BIGINT"},
+                    {"name": "status", "type": "VARCHAR"},
+                ],
             }
             for name in ["out"] + [f"src_{index}" for index in range(4)]
         ],

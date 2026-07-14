@@ -6,7 +6,9 @@ import math
 from typing import Any, Callable
 
 from dw_refactor_agent.lineage.identifiers import (
+    canonical_qualified_identifier,
     identifier_match_key,
+    split_column_ref,
     table_identity_match_key,
 )
 
@@ -116,7 +118,7 @@ def _validate_sorted_unique_strings(
     return values
 
 
-def _validate_table(table: Any, path: str) -> tuple:
+def _validate_table(table: Any, path: str) -> tuple[tuple, set[str]]:
     table = _require_object(table, path)
     _require_exact_keys(table, TABLE_KEYS, path)
     _require_string(table["name"], f"{path}.name")
@@ -145,7 +147,7 @@ def _validate_table(table: Any, path: str) -> tuple:
         if name_key in column_names:
             _fail(column_path, f"duplicate column name {name!r}")
         column_names.add(name_key)
-    return table_identity_match_key(full_name)
+    return table_identity_match_key(full_name), column_names
 
 
 def _validate_job(
@@ -167,12 +169,74 @@ def _validate_job(
     return name, identifier_match_key(name)
 
 
-def _validate_source_ref(value: Any, path: str) -> None:
+def _resolve_table_ref(
+    table_name: str,
+    path: str,
+    table_metadata: dict[tuple, tuple[str, set[str]]],
+) -> tuple:
+    canonical_name = canonical_qualified_identifier(table_name)
+    parts = tuple(
+        identifier_match_key(part)
+        for part in canonical_name.split(".")
+        if part
+    )
+    if not parts:
+        _fail(path, "must reference a non-empty table")
+
+    if len(parts) >= 3:
+        full_key = table_identity_match_key(canonical_name)
+        candidates = [full_key] if full_key in table_metadata else []
+    else:
+        candidates = [
+            table_key
+            for table_key in table_metadata
+            if table_key[-len(parts) :] == parts
+        ]
+
+    if not candidates:
+        _fail(path, f"references missing table {table_name!r}")
+    if len(candidates) > 1:
+        matches = sorted(table_metadata[key][0] for key in candidates)
+        _fail(
+            path,
+            f"references ambiguous table {table_name!r}; matches {matches!r}",
+        )
+    return candidates[0]
+
+
+def _validate_column_ref(
+    ref_id: str,
+    path: str,
+    table_metadata: dict[tuple, tuple[str, set[str]]],
+) -> None:
+    split_ref = split_column_ref(ref_id)
+    if split_ref is None:
+        _fail(
+            path,
+            f"must be a qualified table.column reference; received {ref_id!r}",
+        )
+    table_name, column_name = split_ref
+    table_key = _resolve_table_ref(table_name, path, table_metadata)
+    column_key = identifier_match_key(column_name)
+    table_display, known_columns = table_metadata[table_key]
+    if column_key not in known_columns:
+        _fail(
+            path,
+            f"references missing column {ref_id!r} in table {table_display!r}",
+        )
+
+
+def _validate_source_ref(
+    value: Any,
+    path: str,
+    table_metadata: dict[tuple, tuple[str, set[str]]],
+) -> None:
     value = _require_object(value, path)
     ref_type = _require_string(value.get("type"), f"{path}.type")
     if ref_type == "column":
         _require_exact_keys(value, frozenset({"type", "id"}), path)
-        _require_string(value["id"], f"{path}.id")
+        ref_id = _require_string(value["id"], f"{path}.id")
+        _validate_column_ref(ref_id, f"{path}.id", table_metadata)
         return
     if ref_type == "literal":
         _require_exact_keys(value, frozenset({"type", "value"}), path)
@@ -191,7 +255,11 @@ def _validate_source_ref(value: Any, path: str) -> None:
     )
 
 
-def _validate_target_ref(value: Any, path: str) -> None:
+def _validate_target_ref(
+    value: Any,
+    path: str,
+    table_metadata: dict[tuple, tuple[str, set[str]]],
+) -> None:
     value = _require_object(value, path)
     _require_exact_keys(value, frozenset({"type", "id"}), path)
     ref_type = _require_string(value["type"], f"{path}.type")
@@ -200,14 +268,23 @@ def _validate_target_ref(value: Any, path: str) -> None:
             f"{path}.type",
             f"unsupported value {ref_type!r}; expected column/table",
         )
-    _require_string(value["id"], f"{path}.id")
+    ref_id = _require_string(value["id"], f"{path}.id")
+    if ref_type == "column":
+        _validate_column_ref(ref_id, f"{path}.id", table_metadata)
+    else:
+        _resolve_table_ref(ref_id, f"{path}.id", table_metadata)
 
 
-def _validate_edge(edge: Any, path: str, known_jobs: set) -> None:
+def _validate_edge(
+    edge: Any,
+    path: str,
+    known_jobs: set,
+    table_metadata: dict[tuple, tuple[str, set[str]]],
+) -> None:
     edge = _require_object(edge, path)
     _require_exact_keys(edge, EDGE_KEYS, path)
-    _validate_source_ref(edge["source"], f"{path}.source")
-    _validate_target_ref(edge["target"], f"{path}.target")
+    _validate_source_ref(edge["source"], f"{path}.source", table_metadata)
+    _validate_target_ref(edge["target"], f"{path}.target", table_metadata)
     for field in ("relation_type", "transformation_type"):
         _require_string(edge[field], f"{path}.{field}")
     _require_string(edge["expression"], f"{path}.expression", allow_empty=True)
@@ -254,14 +331,19 @@ def validate_lineage_v2(data: dict) -> None:
 
     tables = _require_array(data["tables"], "lineage.tables")
     known_tables = set()
+    table_metadata = {}
     for index, table in enumerate(tables):
-        table_key = _validate_table(table, f"lineage.tables[{index}]")
+        table_key, column_names = _validate_table(
+            table,
+            f"lineage.tables[{index}]",
+        )
         if table_key in known_tables:
             _fail(
                 f"lineage.tables[{index}].full_name",
                 f"duplicate table {table['full_name']!r}",
             )
         known_tables.add(table_key)
+        table_metadata[table_key] = (table["full_name"], column_names)
 
     jobs = _require_array(data["jobs"], "lineage.jobs")
     known_jobs = set()
@@ -277,7 +359,12 @@ def validate_lineage_v2(data: dict) -> None:
 
     edges = _require_array(data["edges"], "lineage.edges")
     for index, edge in enumerate(edges):
-        _validate_edge(edge, f"lineage.edges[{index}]", known_jobs)
+        _validate_edge(
+            edge,
+            f"lineage.edges[{index}]",
+            known_jobs,
+            table_metadata,
+        )
 
     diagnostics = _require_array(data["diagnostics"], "lineage.diagnostics")
     for index, diagnostic in enumerate(diagnostics):

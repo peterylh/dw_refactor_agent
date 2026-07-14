@@ -242,6 +242,104 @@ def test_v2_edge_refs_must_be_typed_objects(edge_part):
 
 
 @pytest.mark.parametrize(
+    "edge_part, ref_type, ref_id, missing_kind",
+    [
+        (
+            "source",
+            "column",
+            "internal.shop_dm.missing.id",
+            "missing table",
+        ),
+        (
+            "source",
+            "column",
+            "internal.shop_dm.source.missing",
+            "missing column",
+        ),
+        (
+            "target",
+            "column",
+            "internal.shop_dm.missing.id",
+            "missing table",
+        ),
+        (
+            "target",
+            "column",
+            "internal.shop_dm.output.missing",
+            "missing column",
+        ),
+        (
+            "target",
+            "table",
+            "internal.shop_dm.missing",
+            "missing table",
+        ),
+    ],
+)
+def test_v2_edge_refs_must_resolve_to_table_column_metadata(
+    edge_part,
+    ref_type,
+    ref_id,
+    missing_kind,
+):
+    data = valid_lineage_v2()
+    data["edges"][0][edge_part] = {"type": ref_type, "id": ref_id}
+
+    with pytest.raises(LineageContractError) as error:
+        validate_lineage_v2(data)
+
+    message = str(error.value)
+    assert message.startswith(f"lineage.edges[0].{edge_part}.id:")
+    assert missing_kind in message
+
+
+def test_v2_edge_refs_resolve_unique_suffixes_case_insensitively():
+    data = valid_lineage_v2()
+    data["edges"][0]["source"]["id"] = "SHOP_DM.SOURCE.ID"
+    data["edges"][0]["target"]["id"] = "OUTPUT.ID"
+
+    validate_lineage_v2(data)
+
+    data["edges"][0]["target"] = {
+        "type": "table",
+        "id": "SHOP_DM.OUTPUT",
+    }
+    validate_lineage_v2(data)
+
+
+@pytest.mark.parametrize(
+    "alternate_full_name, source_ref",
+    [
+        ("external.other_dm.source", "source.id"),
+        ("external.shop_dm.source", "shop_dm.source.id"),
+    ],
+)
+def test_v2_edge_refs_reject_ambiguous_table_suffixes(
+    alternate_full_name,
+    source_ref,
+):
+    data = valid_lineage_v2()
+    data["tables"].append(
+        {
+            "name": "alternate_source",
+            "full_name": alternate_full_name,
+            "dataset_type": "external",
+            "columns": [{"name": "id", "type": "BIGINT"}],
+        }
+    )
+    data["edges"][0]["source"]["id"] = source_ref
+
+    with pytest.raises(LineageContractError) as error:
+        validate_lineage_v2(data)
+
+    message = str(error.value)
+    assert message.startswith("lineage.edges[0].source.id:")
+    assert "ambiguous table" in message
+    assert "internal.shop_dm.source" in message
+    assert alternate_full_name in message
+
+
+@pytest.mark.parametrize(
     "source",
     [
         {"type": "literal", "value": "ALL"},
@@ -317,6 +415,56 @@ def test_lineage_snapshot_v2_prefers_explicit_jobs_and_fields():
     assert snapshot.jobs[0].outputs == ("internal.shop_dm.output",)
     assert snapshot.edges[0].job == "build_output"
     assert snapshot.edges[0].source_file == ""
+
+
+@pytest.mark.parametrize(
+    "mutate, error_path",
+    [
+        (
+            lambda data: data["edges"][0].__setitem__("job", "missing"),
+            "lineage.edges[0].job:",
+        ),
+        (
+            lambda data: data["edges"][0].__setitem__(
+                "source_file", "mid/tasks/build_output.sql"
+            ),
+            "lineage.edges[0]:",
+        ),
+        (
+            lambda data: data["jobs"][0].__setitem__(
+                "inputs", "internal.shop_dm.source"
+            ),
+            "lineage.jobs[0].inputs:",
+        ),
+        (
+            lambda data: data["edges"][0]["source"].__setitem__(
+                "id", "internal.shop_dm.missing.id"
+            ),
+            "lineage.edges[0].source.id:",
+        ),
+        (
+            lambda data: data["edges"][0]["target"].__setitem__(
+                "id", "internal.shop_dm.output.missing"
+            ),
+            "lineage.edges[0].target.id:",
+        ),
+    ],
+    ids=[
+        "missing-job",
+        "forbidden-edge-field",
+        "malformed-job-inputs",
+        "missing-source-table",
+        "missing-target-column",
+    ],
+)
+def test_lineage_snapshot_v2_validates_before_coercion(mutate, error_path):
+    data = valid_lineage_v2()
+    mutate(data)
+
+    with pytest.raises(LineageContractError) as error:
+        LineageSnapshot.from_dict("shop", data)
+
+    assert str(error.value).startswith(error_path)
 
 
 def test_lineage_snapshot_v1_derives_jobs_and_keeps_transient_safe():

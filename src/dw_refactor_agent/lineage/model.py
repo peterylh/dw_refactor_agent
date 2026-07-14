@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from dw_refactor_agent.lineage.contract import validate_lineage_v2
 from dw_refactor_agent.lineage.identifiers import split_column_ref
 
 
@@ -209,6 +210,8 @@ class LineageSnapshot:
         snapshot_id: str = "",
     ) -> "LineageSnapshot":
         is_v2 = _lineage_format_version(data) == 2
+        if is_v2:
+            validate_lineage_v2(data)
         raw_edges = [
             edge for edge in data.get("edges") or [] if isinstance(edge, dict)
         ]
