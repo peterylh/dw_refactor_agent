@@ -12,6 +12,22 @@ def _strip_sql_suffix(value: str) -> str:
     return value[:-4] if value.endswith(".sql") else value
 
 
+def _job_name_from_source_file(source_file: str) -> str:
+    normalized = str(source_file or "").replace("\\", "/")
+    return _strip_sql_suffix(normalized.rsplit("/", 1)[-1])
+
+
+def _lineage_format_version(data: dict[str, Any]) -> int:
+    if "format_version" not in data:
+        return 1
+    version = data["format_version"]
+    if type(version) is int and version in {1, 2}:
+        return version
+    raise ValueError(
+        f"lineage format_version must be integer 1 or 2; received {version!r}"
+    )
+
+
 @dataclass(frozen=True)
 class LineageColumn:
     name: str
@@ -34,6 +50,7 @@ class LineageTable:
     name: str
     full_name: str = ""
     columns: tuple[LineageColumn, ...] = ()
+    dataset_type: str = "managed"
     is_transient: bool = False
     transient_sources: tuple[str, ...] = ()
     raw: dict[str, Any] = field(
@@ -44,6 +61,7 @@ class LineageTable:
     def from_dict(cls, data: dict[str, Any]) -> "LineageTable":
         raw = dict(data)
         raw.pop("layer", None)
+        is_transient = bool(data.get("is_transient"))
         return cls(
             name=str(data.get("name") or "").strip(),
             full_name=str(data.get("full_name") or ""),
@@ -52,7 +70,11 @@ class LineageTable:
                 for column in data.get("columns") or []
                 if isinstance(column, dict)
             ),
-            is_transient=bool(data.get("is_transient")),
+            dataset_type=str(
+                data.get("dataset_type")
+                or ("temporary" if is_transient else "managed")
+            ),
+            is_transient=is_transient,
             transient_sources=tuple(
                 str(source or "")
                 for source in data.get("transient_sources") or []
@@ -107,13 +129,25 @@ class LineageEdge:
     relation_type: str = "direct"
     transformation_type: str = ""
     expression: str = ""
+    job: str = ""
     source_file: str = ""
     raw: dict[str, Any] = field(
         default_factory=dict, repr=False, compare=False
     )
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "LineageEdge":
+    def from_dict(
+        cls,
+        data: dict[str, Any],
+        *,
+        legacy: bool = True,
+    ) -> "LineageEdge":
+        source_file = str(data.get("source_file") or "") if legacy else ""
+        job = (
+            _job_name_from_source_file(source_file)
+            if legacy
+            else str(data.get("job") or "")
+        )
         return cls(
             source=LineageRef.from_raw(data.get("source")),
             target=LineageRef.from_raw(data.get("target")),
@@ -122,7 +156,8 @@ class LineageEdge:
                 data.get("transformation_type") or ""
             ).lower(),
             expression=str(data.get("expression") or ""),
-            source_file=str(data.get("source_file") or ""),
+            job=job,
+            source_file=source_file,
             raw=dict(data),
         )
 
@@ -130,7 +165,18 @@ class LineageEdge:
 @dataclass(frozen=True)
 class LineageJob:
     name: str
-    source_file: str
+    source_file: str = ""
+    inputs: tuple[str, ...] = ()
+    outputs: tuple[str, ...] = ()
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "LineageJob":
+        return cls(
+            name=str(data.get("name") or "").strip(),
+            source_file=str(data.get("source_file") or ""),
+            inputs=tuple(str(value) for value in data.get("inputs") or []),
+            outputs=tuple(str(value) for value in data.get("outputs") or []),
+        )
 
 
 @dataclass(frozen=True)
@@ -153,6 +199,7 @@ class LineageSnapshot:
         *,
         snapshot_id: str = "",
     ) -> "LineageSnapshot":
+        is_v2 = _lineage_format_version(data) == 2
         raw_edges = [
             edge for edge in data.get("edges") or [] if isinstance(edge, dict)
         ]
@@ -176,14 +223,25 @@ class LineageSnapshot:
                 for table in data.get("tables") or []
                 if isinstance(table, dict)
             ),
-            edges=tuple(LineageEdge.from_dict(edge) for edge in raw_edges),
+            edges=tuple(
+                LineageEdge.from_dict(edge, legacy=not is_v2)
+                for edge in raw_edges
+            ),
             indirect_edges=tuple(dict(edge) for edge in raw_indirect_edges),
-            jobs=tuple(
-                LineageJob(
-                    name=_strip_sql_suffix(source_file.rsplit("/", 1)[-1]),
-                    source_file=source_file,
+            jobs=(
+                tuple(
+                    LineageJob.from_dict(job)
+                    for job in data.get("jobs") or []
+                    if isinstance(job, dict)
                 )
-                for source_file in source_files
+                if is_v2
+                else tuple(
+                    LineageJob(
+                        name=_job_name_from_source_file(source_file),
+                        source_file=source_file,
+                    )
+                    for source_file in source_files
+                )
             ),
             raw=dict(data),
         )
