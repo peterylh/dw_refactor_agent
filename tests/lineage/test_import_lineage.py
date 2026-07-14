@@ -110,6 +110,102 @@ def _demo_v2_snapshot():
     }
 
 
+def _production_shaped_v2_snapshot():
+    source_table = "internal.shop_dm.source_events"
+    target_table = "internal.shop_dm.target_metrics"
+    source_columns = [f"source_{index:03d}" for index in range(310)]
+    column_targets = [f"column_target_{index:03d}" for index in range(310)]
+    expression_targets = [
+        f"expression_target_{index:03d}" for index in range(34)
+    ]
+    literal_targets = [f"literal_target_{index:03d}" for index in range(14)]
+    edges = [
+        {
+            "source": {
+                "type": "column",
+                "id": f"{source_table}.{source_column}",
+            },
+            "target": {
+                "type": "column",
+                "id": f"{target_table}.{target_column}",
+            },
+            "relation_type": "direct",
+            "transformation_type": "passthrough",
+            "expression": source_column,
+            "job": "build_target_metrics",
+        }
+        for source_column, target_column in zip(source_columns, column_targets)
+    ]
+    edges.extend(
+        {
+            "source": {
+                "type": "expression",
+                "expression": f"CURRENT_DATE() + INTERVAL {index} DAY",
+            },
+            "target": {
+                "type": "column",
+                "id": f"{target_table}.{target_column}",
+            },
+            "relation_type": "direct",
+            "transformation_type": "calculation",
+            "expression": f"CURRENT_DATE() + INTERVAL {index} DAY",
+            "job": "build_target_metrics",
+        }
+        for index, target_column in enumerate(expression_targets)
+    )
+    edges.extend(
+        {
+            "source": {"type": "literal", "value": index},
+            "target": {
+                "type": "column",
+                "id": f"{target_table}.{target_column}",
+            },
+            "relation_type": "direct",
+            "transformation_type": "constant",
+            "expression": str(index),
+            "job": "build_target_metrics",
+        }
+        for index, target_column in enumerate(literal_targets)
+    )
+    return {
+        "format_version": 2,
+        "tables": [
+            {
+                "name": "source_events",
+                "full_name": source_table,
+                "dataset_type": "managed",
+                "columns": [
+                    {"name": column_name, "type": "BIGINT"}
+                    for column_name in source_columns
+                ],
+            },
+            {
+                "name": "target_metrics",
+                "full_name": target_table,
+                "dataset_type": "managed",
+                "columns": [
+                    {"name": column_name, "type": "BIGINT"}
+                    for column_name in [
+                        *column_targets,
+                        *expression_targets,
+                        *literal_targets,
+                    ]
+                ],
+            },
+        ],
+        "jobs": [
+            {
+                "name": "build_target_metrics",
+                "source_file": "build_target_metrics.sql",
+                "inputs": [source_table],
+                "outputs": [target_table],
+            }
+        ],
+        "edges": edges,
+        "diagnostics": [],
+    }
+
+
 def test_parser_accepts_test_db_env():
     module = importlib.import_module(
         "dw_refactor_agent.lineage.import_lineage"
@@ -443,30 +539,22 @@ def test_build_import_rows_persists_v2_non_column_direct_sources_losslessly(
     assert rows.skipped_edges == []
 
 
-def test_build_import_rows_accepts_production_shop_v2_direct_sources(
-    tmp_path,
+def test_build_import_rows_accepts_hermetic_production_shaped_v2_sources(
+    monkeypatch, tmp_path
 ):
     module = importlib.import_module(
         "dw_refactor_agent.lineage.import_lineage"
     )
-    lineage_file = config.lineage_data_path("shop")
-    data = json.loads(lineage_file.read_text(encoding="utf-8"))
-    direct_edges = [
-        edge
-        for edge in data["edges"]
-        if edge["relation_type"].lower() == "direct"
-    ]
-    column_edges = [
-        edge for edge in direct_edges if edge["source"]["type"] == "column"
-    ]
-    non_column_edges = [
-        edge
-        for edge in direct_edges
-        if edge["source"]["type"] in {"literal", "expression"}
-    ]
+    monkeypatch.setattr(
+        config,
+        "lineage_data_path",
+        lambda *_args, **_kwargs: pytest.fail(
+            "hermetic importer test must not read generated artifacts"
+        ),
+    )
 
     rows = module.build_import_rows(
-        data,
+        _production_shaped_v2_snapshot(),
         tasks_dir=tmp_path,
         context=module.ImportContext(
             project="shop",
@@ -478,9 +566,11 @@ def test_build_import_rows_accepts_production_shop_v2_direct_sources(
         ),
     )
 
-    assert len(non_column_edges) == 48
-    assert len(rows.column_lineage_rows) == len(column_edges)
-    assert len(rows.non_column_direct_lineage_rows) == len(non_column_edges)
+    assert len(rows.column_lineage_rows) == 310
+    assert len(rows.non_column_direct_lineage_rows) == 48
+    source_types = [row[8] for row in rows.non_column_direct_lineage_rows]
+    assert source_types.count("expression") == 34
+    assert source_types.count("literal") == 14
     assert rows.skipped_edges == []
 
 
@@ -552,6 +642,47 @@ def test_build_import_rows_rejects_unsupported_v2_direct_shape(tmp_path):
     message = str(exc_info.value)
     assert "DIRECT" in message
     assert "CURRENT_DATE()" in message
+    assert "internal.shop_dm.process_order" in message
+
+
+@pytest.mark.parametrize(
+    ("literal_value", "expected_identity"),
+    [(False, "false"), (0, "0"), (None, "null")],
+    ids=("false", "zero", "null"),
+)
+def test_build_import_rows_preserves_falsy_literal_in_direct_shape_error(
+    tmp_path, literal_value, expected_identity
+):
+    module = importlib.import_module(
+        "dw_refactor_agent.lineage.import_lineage"
+    )
+    data = _demo_v2_snapshot()
+    data["edges"] = [data["edges"][0]]
+    data["edges"][0]["source"] = {
+        "type": "literal",
+        "value": literal_value,
+    }
+    data["edges"][0]["target"] = {
+        "type": "table",
+        "id": "internal.shop_dm.process_order",
+    }
+
+    with pytest.raises(ValueError) as exc_info:
+        module.build_import_rows(
+            data,
+            tasks_dir=tmp_path,
+            context=module.ImportContext(
+                project="shop",
+                snapshot_id=42,
+                datasource_id=1,
+                datasource_name="shop_dm",
+                db_type="doris",
+                host="127.0.0.1:9030",
+            ),
+        )
+
+    message = str(exc_info.value)
+    assert f"source='{expected_identity}' (literal)" in message
     assert "internal.shop_dm.process_order" in message
 
 

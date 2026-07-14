@@ -142,6 +142,13 @@ def _edge_ref_type(ref: Any) -> str:
 
 def _edge_ref_id(ref: Any) -> str:
     if isinstance(ref, dict):
+        if ref.get("type") == "literal" and "value" in ref:
+            return json.dumps(
+                ref["value"],
+                ensure_ascii=False,
+                allow_nan=False,
+                separators=(",", ":"),
+            )
         return str(
             ref.get("id") or ref.get("value") or ref.get("expression") or ""
         )
