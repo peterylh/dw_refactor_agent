@@ -9,6 +9,7 @@ from pathlib import Path
 
 from dw_refactor_agent.config import TEXT_ENCODING
 
+TASK_CACHE_FORMAT_VERSION = 2
 TASK_FACT_FIELDS = (
     "input_tables",
     "output_tables",
@@ -77,10 +78,17 @@ def load_task_cache(path: Path | None) -> dict:
     if not path.exists():
         return {}
     data = json.loads(path.read_text(encoding=TEXT_ENCODING))
+    container_version = data.get("format_version")
+    if container_version not in {None, TASK_CACHE_FORMAT_VERSION}:
+        return {}
     return {
         entry["source_file"]: entry
         for entry in data.get("tasks", [])
         if entry.get("source_file")
+        and (
+            container_version == TASK_CACHE_FORMAT_VERSION
+            or entry.get("format_version") == TASK_CACHE_FORMAT_VERSION
+        )
         and all(field in entry for field in TASK_FACT_FIELDS)
     }
 
@@ -95,6 +103,7 @@ def _json_cache_value(value):
 
 def cache_entry_from_result(result: dict, cache_key: str) -> dict:
     entry = {
+        "format_version": TASK_CACHE_FORMAT_VERSION,
         "cache_key": cache_key,
         "source_file": result["source_file"],
         "entries": result.get("entries") or [],

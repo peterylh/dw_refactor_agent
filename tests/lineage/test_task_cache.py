@@ -84,6 +84,7 @@ def test_task_cache_file_and_result_contract_scenarios(tmp_path):
     cache_path.write_text(
         json.dumps(
             {
+                "format_version": 2,
                 "tasks": [
                     {
                         "source_file": "a.sql",
@@ -97,7 +98,7 @@ def test_task_cache_file_and_result_contract_scenarios(tmp_path):
                     {"source_file": "", "cache_key": "ignored"},
                     {"cache_key": "missing-source"},
                     {"source_file": "b.sql", "cache_key": "b"},
-                ]
+                ],
             }
         ),
         encoding="utf-8",
@@ -132,8 +133,8 @@ def test_task_cache_file_and_result_contract_scenarios(tmp_path):
         "stats": {"entry_count": 1},
         "errors": [{"message": "warn"}],
     }
-
     assert cache_entry_from_result(result, "cache-key") == {
+        "format_version": 2,
         "cache_key": "cache-key",
         "source_file": "dwd_order.sql",
         "entries": [{"target": "demo_dm.dwd_order"}],
@@ -149,6 +150,51 @@ def test_task_cache_file_and_result_contract_scenarios(tmp_path):
         "stats": {"entry_count": 1},
         "errors": [{"message": "warn"}],
     }
+
+
+def test_load_task_cache_rejects_unversioned_fact_schema(tmp_path):
+    cache_path = tmp_path / "legacy_task_cache.json"
+    cache_path.write_text(
+        json.dumps(
+            {
+                "tasks": [
+                    {
+                        "source_file": "legacy.sql",
+                        "cache_key": "legacy",
+                        "input_tables": [],
+                        "output_tables": [],
+                        "created_tables": [],
+                        "temporary_tables": [],
+                        "local_lifecycle_tables": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert load_task_cache(cache_path) == {}
+
+
+def test_versioned_cache_entry_survives_unversioned_container(tmp_path):
+    cache_path = tmp_path / "incremental_task_cache.json"
+    entry = cache_entry_from_result(
+        {
+            "source_file": "incremental.sql",
+            "input_tables": [],
+            "output_tables": [],
+            "created_tables": [],
+            "temporary_tables": [],
+            "local_lifecycle_tables": [],
+        },
+        "cache-key",
+    )
+    cache_path.write_text(
+        json.dumps({"tasks": [entry]}),
+        encoding="utf-8",
+    )
+
+    assert load_task_cache(cache_path) == {"incremental.sql": entry}
 
 
 def test_cache_entry_sorts_set_facts_for_json_serialization():

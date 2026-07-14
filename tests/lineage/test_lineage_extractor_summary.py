@@ -49,3 +49,34 @@ def test_format_layer_statistics_summarizes_without_table_names(monkeypatch):
     ]
     assert not any("ods_customer" in line for line in lines)
     assert not any("dwd_order_detail" in line for line in lines)
+
+
+def test_format_lineage_output_statistics_counts_dataset_types_and_warnings():
+    output = {
+        "tables": [
+            {
+                "dataset_type": "managed",
+                "columns": [{"name": "id"}],
+            },
+            {
+                "dataset_type": "process",
+                "columns": [{"name": "id"}, {"name": "amount"}],
+            },
+            {"dataset_type": "temporary", "columns": []},
+            {"dataset_type": "external", "columns": []},
+        ],
+        "edges": [
+            {"relation_type": "direct"},
+            {"relation_type": "group_by"},
+        ],
+        "diagnostics": [{"code": "warning-a"}, {"code": "warning-b"}],
+    }
+
+    assert lineage_extractor.format_lineage_output_statistics(output) == [
+        "  直接血缘: 1 条边",
+        "  间接血缘: 1 条边",
+        "  节点数: 3",
+        "  表数: 4",
+        "  数据集类型: managed=1, process=1, temporary=1, external=1",
+        "  生产者警告: 2",
+    ]

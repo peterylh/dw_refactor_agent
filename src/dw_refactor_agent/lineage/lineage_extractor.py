@@ -40,6 +40,11 @@ from dw_refactor_agent.config import determine_layer as determine_config_layer
 from dw_refactor_agent.config import (
     project_dir as configured_project_dir,
 )
+from dw_refactor_agent.lineage.contract import (
+    FORMAT_VERSION,
+    LineageContractError,
+    validate_lineage_v2,
+)
 from dw_refactor_agent.lineage.identifiers import (
     canonical_identifier,
     canonical_qualified_identifier,
@@ -49,6 +54,10 @@ from dw_refactor_agent.lineage.identifiers import (
     schema_table_match_key,
     table_identity,
     table_identity_match_key,
+)
+from dw_refactor_agent.lineage.job_lineage import (
+    build_job_records,
+    resolve_job_dependencies,
 )
 from dw_refactor_agent.lineage.sql_task_facts import (
     extract_task_table_facts,
@@ -3453,9 +3462,13 @@ def _load_previous_task_cache(path):
 
 
 def _build_task_cache(project, schema, task_cache_entries):
-    from dw_refactor_agent.lineage.task_cache import stable_json_hash
+    from dw_refactor_agent.lineage.task_cache import (
+        TASK_CACHE_FORMAT_VERSION,
+        stable_json_hash,
+    )
 
     return {
+        "format_version": TASK_CACHE_FORMAT_VERSION,
         "project": project,
         "schema_hash": stable_json_hash(schema),
         "tasks": sorted(
@@ -4052,47 +4065,160 @@ def _extract_values_lineage(target_table, insert_or_values, file_path):
     return entries
 
 
-def _normalize_transient_tables(transient_tables):
-    unique = {}
-    for table in transient_tables or []:
-        name = _strip_db(table.get("name", ""))
-        source_file = table.get("source_file", "")
-        if not name:
-            continue
-        normalized = dict(table)
-        normalized["name"] = name
-        normalized["source_file"] = source_file
-        normalized["is_transient"] = bool(normalized.get("is_transient", True))
-        key = (
-            name,
-            source_file,
-            normalized.get("created_statement_index"),
-            normalized.get("dropped_statement_index"),
+def _source_file_match_key(source_file):
+    return str(source_file or "").replace("\\", "/")
+
+
+def _task_fact_table_names(values):
+    names = []
+    for value in values or []:
+        name = value.get("name") if isinstance(value, dict) else value
+        if name:
+            names.append(str(name))
+    return names
+
+
+def _legacy_task_results(all_lineage, transient_tables=None):
+    """Reconstruct explicit Job facts for legacy direct writer callers."""
+    results_by_source = {}
+
+    def result_for(source_file):
+        source_key = _source_file_match_key(source_file)
+        if not source_key:
+            return None
+        return results_by_source.setdefault(
+            source_key,
+            {
+                "source_file": str(source_file),
+                "input_tables": set(),
+                "output_tables": set(),
+                "created_tables": set(),
+                "temporary_tables": set(),
+                "local_lifecycle_tables": [],
+            },
         )
-        unique[key] = normalized
+
+    for entry in all_lineage or []:
+        result = result_for(entry.get("source_file"))
+        if result is None:
+            continue
+        source_table = entry.get("source_table")
+        if source_table and source_table != "UNKNOWN":
+            result["input_tables"].add(source_table)
+        target_table = entry.get("target_table")
+        if target_table:
+            result["output_tables"].add(target_table)
+
+    for table in transient_tables or []:
+        result = result_for(table.get("source_file"))
+        table_name = table.get("name")
+        if result is None or not table_name:
+            continue
+        result["created_tables"].add(table_name)
+        is_local = bool(
+            table.get("is_temporary") or table.get("dropped_in_same_task")
+        )
+        if table.get("is_temporary"):
+            result["temporary_tables"].add(table_name)
+        if is_local:
+            result["local_lifecycle_tables"].append(dict(table))
+            local_table_key = _table_identity_match_key(table_name)
+            result["output_tables"] = {
+                output
+                for output in result["output_tables"]
+                if _table_identity_match_key(output) != local_table_key
+            }
+
+    return [results_by_source[key] for key in sorted(results_by_source)]
+
+
+def _job_for_lineage_entry(entry, jobs_by_source_file):
+    source_file = entry.get("source_file")
+    source_key = _source_file_match_key(source_file)
+    if source_key in jobs_by_source_file:
+        return jobs_by_source_file[source_key]
+    if source_key:
+        message = f"cannot map edge source_file {source_file!r} to a Job"
+    else:
+        message = "cannot map edge without source_file to a Job"
+    raise LineageContractError(f"lineage edge source_file: {message}")
+
+
+def _normalize_producer_diagnostics(diagnostics, jobs, tables):
+    jobs_by_name = {
+        _identifier_match_key(job["name"]): job["name"] for job in jobs
+    }
+    jobs_by_source = {
+        _source_file_match_key(job["source_file"]): job["name"] for job in jobs
+    }
+    tables_by_key = {
+        _table_identity_match_key(table["full_name"]): table["full_name"]
+        for table in tables
+    }
+
+    def job_name(value):
+        text = str(value or "")
+        return jobs_by_name.get(
+            _identifier_match_key(text),
+            jobs_by_source.get(_source_file_match_key(text), text),
+        )
+
+    def job_names(values):
+        by_key = {}
+        for value in values or []:
+            name = job_name(value)
+            by_key.setdefault(_identifier_match_key(name), name)
+        return [by_key[key] for key in sorted(by_key)]
+
+    normalized = []
+    for diagnostic in diagnostics or []:
+        dataset = str(diagnostic.get("dataset") or "")
+        dataset = tables_by_key.get(
+            _table_identity_match_key(dataset),
+            _display_table_name(dataset),
+        )
+        normalized.append(
+            {
+                "code": diagnostic.get("code"),
+                "dataset": dataset,
+                "reason": diagnostic.get("reason"),
+                "consumer_jobs": job_names(
+                    diagnostic.get("consumer_jobs")
+                    or diagnostic.get("consumer_source_files")
+                ),
+                "candidate_producer_jobs": job_names(
+                    diagnostic.get("candidate_producer_jobs")
+                    or diagnostic.get("candidate_producer_source_files")
+                ),
+            }
+        )
     return sorted(
-        unique.values(),
+        normalized,
         key=lambda item: (
-            item.get("source_file", ""),
-            item.get("created_statement_index", -1),
-            item.get("name", ""),
+            _table_identity_match_key(item["dataset"]),
+            item["reason"] or "",
+            tuple(_identifier_match_key(job) for job in item["consumer_jobs"]),
+            tuple(
+                _identifier_match_key(job)
+                for job in item["candidate_producer_jobs"]
+            ),
         ),
     )
 
 
-def _transient_table_occurrence(table):
-    return {
-        "source_file": table.get("source_file", ""),
-        "created_statement_index": table.get("created_statement_index"),
-        "dropped_statement_index": table.get("dropped_statement_index"),
-        "is_ctas": bool(table.get("is_ctas", False)),
-        "is_temporary": bool(table.get("is_temporary", False)),
-        "dropped_in_same_task": bool(table.get("dropped_in_same_task", False)),
-    }
+def build_lineage_output(
+    all_lineage,
+    schema,
+    *,
+    task_results=None,
+    diagnostics=None,
+    transient_tables=None,
+):
+    """Build and validate one strict, Job-aware lineage version 2 artifact.
 
-
-def build_lineage_output(all_lineage, schema, transient_tables=None):
-    """Build serialized lineage output, preserving transient table metadata."""
+    ``transient_tables`` remains an input-only compatibility bridge for legacy
+    direct callers. Version 2 output never serializes that global metadata.
+    """
     schema_lookup = _schema_lookup(schema)
     all_lineage = [
         _canonical_lineage_entry(entry, schema_lookup) for entry in all_lineage
@@ -4157,18 +4283,20 @@ def build_lineage_output(all_lineage, schema, transient_tables=None):
         e for e in all_lineage if e.get("lineage_type") == "indirect"
     ]
 
+    if task_results is None:
+        task_results = _legacy_task_results(
+            all_lineage,
+            transient_tables=transient_tables,
+        )
+    else:
+        task_results = list(task_results)
+    jobs = build_job_records(task_results, _display_table_name)
+    jobs_by_source_file = {
+        _source_file_match_key(job["source_file"]): job["name"] for job in jobs
+    }
+
     tables = {}
     edges = []
-    transient_tables = _normalize_transient_tables(transient_tables)
-    transient_sources_by_table = {}
-    transient_occurrences_by_table = {}
-    for table in transient_tables:
-        transient_sources_by_table.setdefault(table["name"], set()).add(
-            table.get("source_file", "")
-        )
-        transient_occurrences_by_table.setdefault(table["name"], []).append(
-            _transient_table_occurrence(table)
-        )
 
     schema_columns_by_table = schema_lookup.schema_columns_by_table
     schema_type_by_table_col = schema_lookup.schema_type_by_table_col
@@ -4181,43 +4309,105 @@ def build_lineage_output(all_lineage, schema, transient_tables=None):
         col = _canonical_column(col)
         return schema_type_by_table_col.get((tbl, col), "UNKNOWN")
 
-    def _schema_has_table(tbl):
-        tbl = _strip_db(tbl)
-        return tbl in schema_columns_by_table
+    def _table_storage_key(tbl):
+        return _table_identity_match_key(_display_table_name(tbl))
+
+    managed_table_keys = {
+        _table_identity_match_key(_display_table_name(table_name))
+        for table_name in schema_columns_by_table
+    }
+    process_table_keys = set()
+    temporary_table_keys = set()
+    table_names_by_key = {}
+
+    def _remember_table_name(table_name):
+        displayed = _display_table_name(table_name)
+        if not displayed:
+            return None
+        table_key = _table_identity_match_key(displayed)
+        table_names_by_key.setdefault(table_key, displayed)
+        return table_key
+
+    for task_result in task_results:
+        task_temporary_keys = {
+            key
+            for key in (
+                _remember_table_name(table_name)
+                for table_name in _task_fact_table_names(
+                    task_result.get("temporary_tables")
+                )
+            )
+            if key is not None
+        }
+        temporary_table_keys.update(task_temporary_keys)
+        for fact_field in (
+            "input_tables",
+            "output_tables",
+            "created_tables",
+        ):
+            for table_name in _task_fact_table_names(
+                task_result.get(fact_field)
+            ):
+                table_key = _remember_table_name(table_name)
+                if table_key is None:
+                    continue
+                if fact_field == "output_tables" or (
+                    fact_field == "created_tables"
+                    and table_key not in task_temporary_keys
+                ):
+                    process_table_keys.add(table_key)
+        for table_name in _task_fact_table_names(
+            task_result.get("local_lifecycle_tables")
+        ):
+            _remember_table_name(table_name)
+
+    for entry in all_lineage:
+        source_table = entry.get("source_table")
+        if source_table and source_table != "UNKNOWN":
+            _remember_table_name(source_table)
+        target_key = _remember_table_name(entry.get("target_table"))
+        if target_key is not None and target_key not in temporary_table_keys:
+            process_table_keys.add(target_key)
+
+    def _dataset_type(tbl):
+        table_key = _table_identity_match_key(_display_table_name(tbl))
+        if table_key in managed_table_keys:
+            return "managed"
+        if table_key in process_table_keys:
+            return "process"
+        if table_key in temporary_table_keys:
+            return "temporary"
+        return "external"
 
     def _ensure_column_index(tbl):
-        if tbl not in column_objects_by_table:
-            column_objects_by_table[tbl] = {
-                c["name"]: c for c in tables[tbl]["columns"]
+        table_key = _table_storage_key(tbl)
+        if table_key not in column_objects_by_table:
+            column_objects_by_table[table_key] = {
+                _identifier_match_key(c["name"]): c
+                for c in tables[table_key]["columns"]
             }
-            column_names_by_table[tbl] = set(column_objects_by_table[tbl])
-        return column_names_by_table[tbl], column_objects_by_table[tbl]
+            column_names_by_table[table_key] = set(
+                column_objects_by_table[table_key]
+            )
+        return (
+            column_names_by_table[table_key],
+            column_objects_by_table[table_key],
+        )
 
     def _ensure_table(tbl):
         tbl = _strip_db(tbl)
         if not tbl:
             return
-        if tbl not in tables:
-            tables[tbl] = {
+        table_key = _table_storage_key(tbl)
+        if table_key not in tables:
+            tables[table_key] = {
                 "name": tbl,
                 "full_name": _display_table_name(tbl),
+                "dataset_type": _dataset_type(tbl),
                 "columns": [],
             }
-            column_names_by_table[tbl] = set()
-            column_objects_by_table[tbl] = {}
-        if tbl in transient_sources_by_table and not _schema_has_table(tbl):
-            tables[tbl]["is_transient"] = True
-            tables[tbl]["transient_sources"] = sorted(
-                transient_sources_by_table[tbl]
-            )
-            tables[tbl]["transient_occurrences"] = sorted(
-                transient_occurrences_by_table.get(tbl, []),
-                key=lambda item: (
-                    item.get("source_file", ""),
-                    item.get("created_statement_index") or -1,
-                    item.get("dropped_statement_index") or -1,
-                ),
-            )
+            column_names_by_table[table_key] = set()
+            column_objects_by_table[table_key] = {}
 
     def _ensure_column(tbl, col):
         tbl = _strip_db(tbl)
@@ -4226,11 +4416,12 @@ def build_lineage_output(all_lineage, schema, transient_tables=None):
             return
         _ensure_table(tbl)
         column_names, column_objects = _ensure_column_index(tbl)
-        if col not in column_names:
+        column_key = _identifier_match_key(col)
+        if column_key not in column_names:
             column = {"name": col, "type": _schema_column_type(tbl, col)}
-            tables[tbl]["columns"].append(column)
-            column_names.add(col)
-            column_objects[col] = column
+            tables[_table_storage_key(tbl)]["columns"].append(column)
+            column_names.add(column_key)
+            column_objects[column_key] = column
 
     def _direct_source(entry):
         source_type = str(entry.get("source_type") or "").strip()
@@ -4267,7 +4458,10 @@ def build_lineage_output(all_lineage, schema, transient_tables=None):
                 "relation_type": "direct",
                 "transformation_type": _direct_transformation(entry),
                 "expression": entry.get("expression", ""),
-                "source_file": entry.get("source_file", ""),
+                "job": _job_for_lineage_entry(
+                    entry,
+                    jobs_by_source_file,
+                ),
             }
         )
 
@@ -4289,38 +4483,101 @@ def build_lineage_output(all_lineage, schema, transient_tables=None):
                 "relation_type": relation_type,
                 "transformation_type": relation_type,
                 "expression": entry.get("condition_expression", ""),
-                "source_file": entry.get("source_file", ""),
+                "job": _job_for_lineage_entry(
+                    entry,
+                    jobs_by_source_file,
+                ),
             }
         )
 
-    for table in transient_tables:
-        _ensure_table(table.get("name", ""))
+    for table_name in table_names_by_key.values():
+        _ensure_table(table_name)
+
+    for job in jobs:
+        for table_name in (*job["inputs"], *job["outputs"]):
+            _ensure_table(table_name)
 
     for tbl_name, cols in schema_columns_by_table.items():
-        if tbl_name in tables:
+        if _table_storage_key(tbl_name) in tables:
             column_names, column_objects = _ensure_column_index(tbl_name)
             for col_name, col_type in cols:
-                if col_name not in column_names:
+                column_key = _identifier_match_key(col_name)
+                if column_key not in column_names:
                     column = {"name": col_name, "type": col_type}
-                    tables[tbl_name]["columns"].append(column)
-                    column_names.add(col_name)
-                    column_objects[col_name] = column
-                elif column_objects[col_name].get("type") == "UNKNOWN":
-                    column_objects[col_name]["type"] = col_type
+                    tables[_table_storage_key(tbl_name)]["columns"].append(
+                        column
+                    )
+                    column_names.add(column_key)
+                    column_objects[column_key] = column
+                elif column_objects[column_key].get("type") == "UNKNOWN":
+                    column_objects[column_key]["type"] = col_type
 
-    return {
+    serialized_tables = sorted(
+        tables.values(),
+        key=lambda table: _table_identity_match_key(table["full_name"]),
+    )
+    for table in serialized_tables:
+        table["columns"].sort(
+            key=lambda column: _identifier_match_key(column["name"])
+        )
+
+    if diagnostics is None:
+        _dependencies, diagnostics = resolve_job_dependencies(
+            jobs,
+            serialized_tables,
+        )
+    public_diagnostics = _normalize_producer_diagnostics(
+        diagnostics,
+        jobs,
+        serialized_tables,
+    )
+    output = {
+        "format_version": FORMAT_VERSION,
+        "tables": serialized_tables,
+        "jobs": jobs,
         "edges": sorted(
             edges,
             key=lambda e: (
-                e["source_file"],
+                _identifier_match_key(e["job"]),
                 e.get("relation_type", ""),
                 _target_sort_key(e.get("target")),
                 _source_sort_key(e.get("source")),
                 e.get("expression", ""),
             ),
         ),
-        "tables": sorted(tables.values(), key=lambda t: t["name"]),
+        "diagnostics": public_diagnostics,
     }
+    validate_lineage_v2(output)
+    return output
+
+
+def format_lineage_output_statistics(output):
+    """Return structural and version 2 dataset counts for CLI output."""
+    edges = output.get("edges") or []
+    tables = output.get("tables") or []
+    direct_count = sum(
+        1 for edge in edges if edge.get("relation_type") == "direct"
+    )
+    dataset_types = ("managed", "process", "temporary", "external")
+    dataset_counts = {
+        dataset_type: sum(
+            1 for table in tables if table.get("dataset_type") == dataset_type
+        )
+        for dataset_type in dataset_types
+    }
+    return [
+        f"  直接血缘: {direct_count} 条边",
+        f"  间接血缘: {len(edges) - direct_count} 条边",
+        "  节点数: "
+        f"{sum(len(table.get('columns') or []) for table in tables)}",
+        f"  表数: {len(tables)}",
+        "  数据集类型: "
+        + ", ".join(
+            f"{dataset_type}={dataset_counts[dataset_type]}"
+            for dataset_type in dataset_types
+        ),
+        f"  生产者警告: {len(output.get('diagnostics') or [])}",
+    ]
 
 
 def format_layer_statistics(tables):
@@ -4411,7 +4668,6 @@ def main():
 
     # 2. 提取血缘
     all_lineage = []
-    transient_tables = []
     task_files = iter_project_task_files(args.project)
 
     parallel = max(1, int(args.parallel or 1))
@@ -4459,7 +4715,6 @@ def main():
         ),
     )
     all_lineage = extraction_result["lineage"]
-    transient_tables = extraction_result["transient_tables"]
     warning_lines = format_missing_ddl_warnings(
         extraction_result["task_results"],
         extraction_result["missing_ddl_tables"],
@@ -4511,7 +4766,7 @@ def main():
     output = build_lineage_output(
         all_lineage,
         schema,
-        transient_tables=transient_tables,
+        task_results=extraction_result["task_results"],
     )
     for path in output_paths:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -4531,21 +4786,8 @@ def main():
         print("\n血缘提取完成, 但存在严重错误!")
     else:
         print("\n血缘提取完成!")
-    direct_count = sum(
-        1 for edge in output["edges"] if edge.get("relation_type") == "direct"
-    )
-    indirect_count = len(output["edges"]) - direct_count
-    node_count = sum(
-        len(table.get("columns", [])) for table in output["tables"]
-    )
-    transient_count = sum(
-        1 for table in output["tables"] if table.get("is_transient")
-    )
-    print(f"  直接血缘: {direct_count} 条边")
-    print(f"  间接血缘: {indirect_count} 条边")
-    print(f"  节点数: {node_count}")
-    print(f"  表数: {len(output['tables'])}")
-    print(f"  临时表: {transient_count}")
+    for line in format_lineage_output_statistics(output):
+        print(line)
     if STATS["parse_failures"]:
         print(f"  解析失败: {STATS['parse_failures']} 个文件")
     if STATS["lineage_failures"]:
