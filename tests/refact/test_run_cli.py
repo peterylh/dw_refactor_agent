@@ -334,6 +334,7 @@ def test_analyze_refreshes_current_analysis_diff_and_plan(
     persisted_plan = json.loads(
         (run_root / "verification" / "plan.json").read_text()
     )
+    assert persisted_plan["run_id"] == manifest["run_id"]
     assert persisted_plan["analysis_snapshot"]["partition"] == "2025-01-15"
     assert persisted_plan["analysis_snapshot"][
         "workspace_fingerprint"

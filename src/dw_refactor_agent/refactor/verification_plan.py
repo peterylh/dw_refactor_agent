@@ -27,6 +27,7 @@ from dw_refactor_agent.execution.model_config import (
 )
 from dw_refactor_agent.lineage.asset_graph import build_asset_table_graph
 from dw_refactor_agent.lineage.job_dag import asset_job_dag_from_lineage
+from dw_refactor_agent.refactor.qa_pool import configured_qa_pool
 from dw_refactor_agent.sql.doris import extract_doris_partition_column
 
 SUPPORTED_TIME_PERIODS = {"D", "W", "M", "H"}
@@ -350,6 +351,7 @@ def build_verification_plan(
         "project": project,
         "project_db": cfg["db"],
         "qa_db": cfg["qa_db"],
+        "qa_database_pool": list(configured_qa_pool(project, cfg)),
         "changes": changes,
         "baseline_ddl": dict(sorted(baseline_ddl.items())),
         "ddl_changes": ddl_changes,

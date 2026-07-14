@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 import dw_refactor_agent.config as config
 
 
@@ -64,6 +66,62 @@ def test_load_project_config_maps_warehouse_yaml_to_runtime_shape(tmp_path):
             "schema_identity": {"required": True},
         }
     }
+
+
+def test_load_warehouse_config_preserves_qa_database_pool(tmp_path):
+    warehouse_dir = tmp_path / "warehouses" / "demo"
+    warehouse_dir.mkdir(parents=True)
+    warehouse_file = warehouse_dir / "warehouse.yaml"
+    warehouse_file.write_text(
+        "\n".join(
+            [
+                "name: demo",
+                "database: demo_dm",
+                "qa_database: demo_dm_qa",
+                "lineage_database: demo_lineage",
+                "verification:",
+                "  qa_database_pool:",
+                "    - demo_dm_qa",
+                "    - demo_dm_qa_02",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    loaded = config.load_warehouse_config(warehouse_file, tmp_path)
+
+    assert loaded["verification"]["qa_database_pool"] == [
+        "demo_dm_qa",
+        "demo_dm_qa_02",
+    ]
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["[]", "[demo_dm_qa, '']", "demo_dm_qa"],
+)
+def test_load_warehouse_config_rejects_invalid_qa_database_pool(
+    tmp_path, value
+):
+    warehouse_dir = tmp_path / "warehouses" / "demo"
+    warehouse_dir.mkdir(parents=True)
+    warehouse_file = warehouse_dir / "warehouse.yaml"
+    warehouse_file.write_text(
+        "\n".join(
+            [
+                "name: demo",
+                "database: demo_dm",
+                "qa_database: demo_dm_qa",
+                "lineage_database: demo_lineage",
+                "verification:",
+                f"  qa_database_pool: {value}",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="qa_database_pool.*non-empty"):
+        config.load_warehouse_config(warehouse_file, tmp_path)
 
 
 def test_resolve_project_root_prefers_env_then_warehouse_cwd(tmp_path):

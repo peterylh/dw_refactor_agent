@@ -549,6 +549,7 @@ def _build_plan_for_run(
         )
     except ValueError as exc:
         raise SystemExit(str(exc)) from None
+    plan["run_id"] = manifest["run_id"]
     updated_manifest = _merge_inherited_declarations(
         manifest, semantic_resolution.inherited_declarations
     )

@@ -22,9 +22,11 @@ _WORKSPACE_DIGEST = "sha256:" + "a" * 64
 
 def _plan(ddl_by_table):
     return {
+        "run_id": "test-run",
         "project": "demo",
         "project_db": "demo_dm",
         "qa_db": "demo_dm_qa",
+        "qa_database_pool": ["demo_dm_qa"],
         "baseline_ddl": ddl_by_table,
         "ddl_changes": [],
         "jobs_to_run": [],
@@ -34,6 +36,20 @@ def _plan(ddl_by_table):
             "workspace_fingerprint": _WORKSPACE_DIGEST,
         },
     }
+
+
+def test_persisted_plan_rejects_database_outside_pool(tmp_path):
+    plan_path = tmp_path / "verification" / "plan.json"
+    write_verification_plan(
+        plan_path,
+        {
+            **_plan({}),
+            "qa_database_pool": ["other_qa"],
+        },
+    )
+
+    with pytest.raises(ArtifactFormatError, match="qa_db.*pool"):
+        load_persisted_verification_plan(plan_path)
 
 
 def _write_persisted_plan(path, payload):
