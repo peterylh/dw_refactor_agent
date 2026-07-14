@@ -23,6 +23,7 @@ from dw_refactor_agent.lineage.view import LineageView
 
 DATA_DOMAIN_LAYERS = {"DWD"}
 BUSINESS_AREA_LAYERS = {"DWD", "DWS"}
+FIXED_BOUNDARY_ASSET_ROLES = {"ods", "ads"}
 LOGGER = logging.getLogger(__name__)
 GENERATED_KEY_FUNCTIONS = frozenset(
     {
@@ -360,6 +361,46 @@ def _project_dir(project: str) -> Path:
     return Path(__file__).resolve().parent.parent / project
 
 
+def _project_model_asset_roles(project: str) -> dict[str, set[str]]:
+    """Index model names by their independent on-disk asset role."""
+    project_path = _project_dir(project)
+    roles_by_name: dict[str, set[str]] = {}
+    for model_path in iter_project_asset_files(project, "models", "*.yaml"):
+        try:
+            relative_parts = model_path.relative_to(project_path).parts
+        except ValueError:
+            continue
+        if len(relative_parts) < 2 or relative_parts[1] != "models":
+            continue
+        role = str(relative_parts[0]).lower()
+        if role not in {"ods", "mid", "ads"}:
+            continue
+        try:
+            raw = (
+                yaml.safe_load(model_path.read_text(encoding=TEXT_ENCODING))
+                or {}
+            )
+        except (OSError, yaml.YAMLError):
+            raw = {}
+        declared_name = raw.get("name") if isinstance(raw, dict) else None
+        for name in {model_path.stem, str(declared_name or "").strip()}:
+            canonical_name = _canonical_table_name(name)
+            if canonical_name:
+                roles_by_name.setdefault(canonical_name, set()).add(role)
+    return roles_by_name
+
+
+def _model_asset_roles_for_table(
+    table_name: str,
+    roles_by_name: dict[str, set[str]],
+) -> set[str]:
+    identity = _canonical_table_name(table_name)
+    exact_roles = roles_by_name.get(identity)
+    if exact_roles is not None:
+        return exact_roles
+    return roles_by_name.get(_short_table_name(identity).casefold(), set())
+
+
 def _first_project_asset_file(
     project: str,
     asset_kind: str,
@@ -551,6 +592,9 @@ def build_contexts(
     )
     business_semantics_options = _business_semantics_prompt_options(project)
     project_context = _project_context(project)
+    model_asset_roles = (
+        _project_model_asset_roles(project) if use_project_asset_dirs else {}
+    )
     contexts = []
 
     memo = {}
@@ -628,6 +672,23 @@ def build_contexts(
             model_entry.table_name if model_entry else short_name
         )
         layer = str(metadata.get("layer") or "OTHER").upper()
+        fixed_boundary_roles = (
+            _model_asset_roles_for_table(
+                model_table_name,
+                model_asset_roles,
+            )
+            & FIXED_BOUNDARY_ASSET_ROLES
+        )
+        if fixed_boundary_roles:
+            if layer in target_layers:
+                LOGGER.warning(
+                    "Skipping fixed-boundary model %s from %s/models: "
+                    "declared layer %s is not eligible for table inspection",
+                    model_table_name,
+                    "/".join(sorted(fixed_boundary_roles)),
+                    layer,
+                )
+            continue
         if layer not in target_layers:
             continue
 

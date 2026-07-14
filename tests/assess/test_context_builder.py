@@ -489,6 +489,63 @@ def test_build_contexts_reads_default_mid_asset_dirs(
     )
 
 
+def test_build_contexts_excludes_fixed_boundaries_with_wrong_declared_layer(
+    tmp_path,
+    monkeypatch,
+    caplog,
+):
+    project = "context_fixed_boundaries"
+    project_dir = tmp_path / project
+    ods_models = project_dir / "ods" / "models" / "internal" / "demo"
+    mid_models = project_dir / "mid" / "models"
+    ads_models = project_dir / "ads" / "models"
+    for directory in (ods_models, mid_models, ads_models):
+        directory.mkdir(parents=True)
+    for path, metadata in (
+        (ods_models / "orders.yaml", {"name": "orders", "layer": "DWD"}),
+        (
+            mid_models / "order_summary.yaml",
+            {"name": "order_summary", "layer": "DWS"},
+        ),
+        (
+            ads_models / "dashboard.yaml",
+            {"name": "dashboard", "layer": "DWD"},
+        ),
+    ):
+        path.write_text(
+            yaml.safe_dump(metadata, sort_keys=False),
+            encoding="utf-8",
+        )
+    monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setitem(
+        config.PROJECT_CONFIG,
+        project,
+        {"dir": project, "catalog": "internal", "db": "demo"},
+    )
+    metadata = {
+        "orders": {"name": "orders", "layer": "DWD"},
+        "order_summary": {"name": "order_summary", "layer": "DWS"},
+        "dashboard": {"name": "dashboard", "layer": "DWD"},
+    }
+
+    contexts = build_contexts(
+        project,
+        {
+            "tables": [
+                {"name": "orders"},
+                {"name": "order_summary"},
+                {"name": "dashboard"},
+            ],
+            "edges": [],
+        },
+        model_metadata=metadata,
+    )
+
+    assert [context.table_name for context in contexts] == ["order_summary"]
+    assert "Skipping fixed-boundary model orders" in caplog.text
+    assert "Skipping fixed-boundary model dashboard" in caplog.text
+
+
 def test_build_contexts_includes_business_semantics_catalog_options(
     sample_lineage_data, tmp_path, monkeypatch
 ):

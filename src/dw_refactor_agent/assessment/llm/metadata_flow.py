@@ -102,6 +102,7 @@ ResultEnricher = Callable[
     None,
 ]
 MetricResultEligibility = Callable[[TableInspectResult], bool]
+ResultLayerResolver = Callable[[TableContext, TableInspectResult], str]
 
 
 def build_refresh_plan(project: str, *, write_scope: str) -> MetadataFlowPlan:
@@ -157,6 +158,7 @@ def run_inspection_pipeline(
     metric_groups: Optional[Dict[str, Dict[str, List[str]]]] = None,
     expose_layer_hints: bool = True,
     metric_result_is_eligible: Optional[MetricResultEligibility] = None,
+    result_layer_resolver: Optional[ResultLayerResolver] = None,
 ) -> InspectionResultBundle:
     contexts = build_contexts(
         project,
@@ -166,16 +168,25 @@ def run_inspection_pipeline(
         metric_groups=metric_groups,
         expose_layer_hints=expose_layer_hints,
     )
-    metric_contexts = [ctx for ctx in contexts if ctx.layer in METRIC_LAYERS]
-    dwd_contexts = [ctx for ctx in metric_contexts if ctx.layer == "DWD"]
-    dws_contexts = [ctx for ctx in metric_contexts if ctx.layer == "DWS"]
-    metadata_only_contexts = [
-        ctx for ctx in contexts if ctx.layer not in METRIC_LAYERS
+    # Classify every writable model before building metric phases. In a cold
+    # start all mid-layer models can carry the same direct-rule prior, so the
+    # declared context layer cannot be used to decide which tables receive
+    # newly discovered upstream metric groups.
+    initial_results = inspector.inspect_batch(contexts)
+    initial_pairs = list(zip(contexts, initial_results))
+    initial_dwd_pairs = [
+        (ctx, result)
+        for ctx, result in initial_pairs
+        if _result_layer(ctx, result, result_layer_resolver) == "DWD"
+    ]
+    initial_dws_pairs = [
+        (ctx, result)
+        for ctx, result in initial_pairs
+        if _result_layer(ctx, result, result_layer_resolver) == "DWS"
     ]
 
-    dwd_results = inspector.inspect_batch(dwd_contexts)
     detected_groups = {}
-    for ctx, result in zip(dwd_contexts, dwd_results):
+    for ctx, result in initial_dwd_pairs:
         is_eligible = (
             metric_result_is_eligible(result)
             if metric_result_is_eligible is not None
@@ -185,9 +196,50 @@ def run_inspection_pipeline(
             continue
         table_identity = ctx.table_identity or result.table_name
         detected_groups[table_identity] = metric_group_builder(result)
-    _inject_upstream_metric_groups(dws_contexts, detected_groups)
-    dws_results = inspector.inspect_batch(dws_contexts)
-    metadata_only_results = inspector.inspect_batch(metadata_only_contexts)
+
+    # Reinspect only DWS tables whose prompt gained a newly detected upstream
+    # metric group. Other initial classifications remain reusable.
+    dws_contexts_to_reinspect = []
+    for ctx, _ in initial_dws_pairs:
+        previous_groups = dict(ctx.upstream_metric_groups)
+        _inject_upstream_metric_groups([ctx], detected_groups)
+        if ctx.upstream_metric_groups != previous_groups:
+            dws_contexts_to_reinspect.append(ctx)
+    reinspection_results = inspector.inspect_batch(dws_contexts_to_reinspect)
+    reinspected_by_context_id = {
+        id(ctx): result
+        for ctx, result in zip(
+            dws_contexts_to_reinspect,
+            reinspection_results,
+        )
+    }
+    final_pairs = [
+        (ctx, reinspected_by_context_id.get(id(ctx), result))
+        for ctx, result in initial_pairs
+    ]
+    dwd_pairs = [
+        (ctx, result)
+        for ctx, result in final_pairs
+        if _result_layer(ctx, result, result_layer_resolver) == "DWD"
+    ]
+    dws_pairs = [
+        (ctx, result)
+        for ctx, result in final_pairs
+        if _result_layer(ctx, result, result_layer_resolver) == "DWS"
+    ]
+    metadata_only_pairs = [
+        (ctx, result)
+        for ctx, result in final_pairs
+        if _result_layer(ctx, result, result_layer_resolver)
+        not in METRIC_LAYERS
+    ]
+    dwd_contexts = [ctx for ctx, _ in dwd_pairs]
+    dws_contexts = [ctx for ctx, _ in dws_pairs]
+    metadata_only_contexts = [ctx for ctx, _ in metadata_only_pairs]
+    metric_contexts = dwd_contexts + dws_contexts
+    dwd_results = [result for _, result in dwd_pairs]
+    dws_results = [result for _, result in dws_pairs]
+    metadata_only_results = [result for _, result in metadata_only_pairs]
     results = dwd_results + dws_results + metadata_only_results
     contexts_by_name = {ctx.table_name: ctx for ctx in contexts}
     result_enricher(results, contexts_by_name)
@@ -203,6 +255,21 @@ def run_inspection_pipeline(
         metadata_only_results=metadata_only_results,
         results=results,
     )
+
+
+def _result_layer(
+    ctx: TableContext,
+    result: TableInspectResult,
+    resolver: Optional[ResultLayerResolver],
+) -> str:
+    if resolver is not None:
+        resolved_layer = str(resolver(ctx, result) or "").strip().upper()
+        if resolved_layer in WRITABLE_METADATA_LAYERS:
+            return resolved_layer
+    inferred_layer = str(result.inferred_layer or "").strip().upper()
+    if inferred_layer in WRITABLE_METADATA_LAYERS:
+        return inferred_layer
+    return str(ctx.layer or "").strip().upper()
 
 
 def _inject_upstream_metric_groups(

@@ -146,6 +146,7 @@ def test_validate_response_contract_scenarios():
         _assert_validate_layer_sql_consistency,
         _assert_validate_upstream_metric_layer_consistency,
         _assert_validate_columns_flags_unknown_duplicate_and_missing_fields,
+        _assert_validate_columns_matches_identifiers_case_insensitively,
         _assert_validate_columns_requires_all_dws_fact_fields,
         _assert_validate_columns_uses_inferred_metric_layer,
         _assert_validate_metric_relationships_requires_derived_base_metric_in_upstream_atomic,
@@ -162,6 +163,15 @@ def test_validate_response_contract_scenarios():
 
 def test_inspector_cache_and_progress_scenarios(tmp_path_factory, monkeypatch):
     _assert_cache_hit_skips_api(tmp_path_factory.mktemp("cache_hit"))
+    _assert_cache_retains_prompt_variants(
+        tmp_path_factory.mktemp("cache_variants")
+    )
+    _assert_failed_result_does_not_poison_cache(
+        tmp_path_factory.mktemp("cache_failure")
+    )
+    _assert_warning_cache_preserves_status_and_retry_budget(
+        tmp_path_factory.mktemp("cache_warning")
+    )
     with monkeypatch.context() as mp:
         _assert_cache_miss_calls_api(tmp_path_factory.mktemp("cache_miss"), mp)
     with monkeypatch.context() as mp:
@@ -867,15 +877,141 @@ def _assert_validate_layer_sql_consistency():
     )
     result = _inspection_result()
 
-    assert validate_layer_sql_consistency(result, context) == {
-        "inconsistent_layer_sql": [
-            "DWD候选的目标行驱动查询包含GROUP_BY聚合；"
-            "请重新判断DWS或其他合法层级"
-        ]
-    }
+    # Bare lineage GROUP_BY evidence cannot distinguish metric aggregation
+    # from valid DWD deduplication.
+    assert validate_layer_sql_consistency(result, context) == {}
 
     result.inferred_layer = "DWS"
     assert validate_layer_sql_consistency(result, context) == {}
+
+    grouped_dedup_context = TableContext(
+        table_name="deduplicated_event",
+        layer="DWD",
+        ddl="",
+        etl_sql=(
+            "SELECT event_id, event_time FROM source_event "
+            "GROUP BY event_id, event_time"
+        ),
+        upstream_tables=["source_event"],
+        downstream_tables=[],
+    )
+    result.inferred_layer = "DWD"
+    assert validate_layer_sql_consistency(result, grouped_dedup_context) == {}
+
+    latest_record_context = TableContext(
+        table_name="latest_event",
+        layer="DWD",
+        ddl="",
+        etl_sql=(
+            "SELECT event_id, MAX(updated_at) AS updated_at "
+            "FROM source_event GROUP BY event_id"
+        ),
+        upstream_tables=["source_event"],
+        downstream_tables=[],
+    )
+    expected_ambiguous_updated_at = {
+        "ambiguous_min_max_aggregation": [
+            "MAX(updated_at) AS updated_at: "
+            "无法仅凭同名MIN/MAX确定技术选值或业务汇总"
+        ]
+    }
+    assert (
+        validate_layer_sql_consistency(result, latest_record_context)
+        == expected_ambiguous_updated_at
+    )
+
+    last_modified_context = TableContext(
+        table_name="latest_event",
+        layer="DWD",
+        ddl="",
+        etl_sql=(
+            "SELECT event_id, MAX(last_modified_date) AS last_modified_date "
+            "FROM source_event GROUP BY event_id"
+        ),
+        upstream_tables=["source_event"],
+        downstream_tables=[],
+    )
+    assert validate_layer_sql_consistency(result, last_modified_context) == {
+        "ambiguous_min_max_aggregation": [
+            "MAX(last_modified_date) AS last_modified_date: "
+            "无法仅凭同名MIN/MAX确定技术选值或业务汇总"
+        ]
+    }
+
+    business_max_context = TableContext(
+        table_name="store_sales_metrics",
+        layer="DWD",
+        ddl="",
+        etl_sql=(
+            "SELECT store_id, MAX(sale_amount) AS max_sale_amount "
+            "FROM store_sales GROUP BY store_id"
+        ),
+        upstream_tables=["store_sales"],
+        downstream_tables=[],
+    )
+    expected_metric_aggregation_error = {
+        "inconsistent_layer_sql": [
+            "DWD候选的目标行驱动查询包含指标聚合；请重新判断DWS或其他合法层级"
+        ]
+    }
+    assert (
+        validate_layer_sql_consistency(result, business_max_context)
+        == expected_metric_aggregation_error
+    )
+
+    same_name_business_result = _inspection_result(
+        columns={
+            "atomic_metrics": [{"name": "updated_at"}],
+            "derived_metrics": [],
+            "calculated_metrics": [],
+            "dimensions": [{"name": "customer_id"}],
+            "others": [],
+        }
+    )
+    customer_activity_context = TableContext(
+        table_name="customer_activity",
+        layer="DWD",
+        ddl="",
+        etl_sql=(
+            "SELECT customer_id, MAX(updated_at) AS updated_at "
+            "FROM customer_event GROUP BY customer_id"
+        ),
+        upstream_tables=["customer_event"],
+        downstream_tables=[],
+    )
+    assert (
+        validate_layer_sql_consistency(
+            same_name_business_result,
+            customer_activity_context,
+        )
+        == expected_metric_aggregation_error
+    )
+
+    global_metric_context = TableContext(
+        table_name="event_metrics",
+        layer="DWD",
+        ddl="",
+        etl_sql="SELECT COUNT(*) AS event_count FROM source_event",
+        upstream_tables=["source_event"],
+        downstream_tables=[],
+    )
+    assert (
+        validate_layer_sql_consistency(result, global_metric_context)
+        == expected_metric_aggregation_error
+    )
+
+    global_max_context = TableContext(
+        table_name="latest_update_metric",
+        layer="DWD",
+        ddl="",
+        etl_sql="SELECT MAX(updated_at) AS updated_at FROM source_event",
+        upstream_tables=["source_event"],
+        downstream_tables=[],
+    )
+    assert (
+        validate_layer_sql_consistency(result, global_max_context)
+        == expected_metric_aggregation_error
+    )
 
     lookup_aggregate_context = TableContext(
         table_name="instruction_detail",
@@ -915,8 +1051,7 @@ def _assert_validate_layer_sql_consistency():
     )
     assert validate_layer_sql_consistency(result, grouped_cte_context) == {
         "inconsistent_layer_sql": [
-            "DWD候选的目标行驱动查询包含GROUP_BY聚合；"
-            "请重新判断DWS或其他合法层级"
+            "DWD候选的目标行驱动查询包含指标聚合；请重新判断DWS或其他合法层级"
         ]
     }
 
@@ -1363,6 +1498,28 @@ def _assert_validate_columns_flags_unknown_duplicate_and_missing_fields():
     assert validation["missing_columns"] == ["etl_time"]
 
 
+def _assert_validate_columns_matches_identifiers_case_insensitively():
+    result = _inspection_result(inferred_layer="DWD", table_type="fact")
+    result.columns = {
+        "atomic_metrics": [{"name": "pay_amt"}],
+        "derived_metrics": [],
+        "calculated_metrics": [],
+        "dimensions": [{"name": "order_id"}],
+        "others": [{"name": "etl_time"}],
+    }
+
+    validation = validate_columns(
+        result,
+        {"ORDER_ID", "PAY_AMT", "ETL_TIME"},
+    )
+
+    assert validation == {
+        "unknown_columns": [],
+        "duplicate_columns": [],
+        "missing_columns": [],
+    }
+
+
 def _assert_validate_columns_requires_all_dws_fact_fields():
     result = parse_response(
         "dws_store_sales_daily",
@@ -1732,6 +1889,11 @@ def _assert_result_status_from_validation():
     }
     assert result.status == "passed"
 
+    result.validation = {
+        "ambiguous_min_max_aggregation": ["MAX(updated_at) AS updated_at"]
+    }
+    assert result.status == "warning"
+
 
 @pytest.mark.parametrize(
     "confidence",
@@ -1938,6 +2100,257 @@ def _assert_cache_hit_skips_api(tmp_path):
         assert res.reasoning_steps == ["cached"]
 
 
+def _assert_cache_retains_prompt_variants(tmp_path):
+    cache_file = tmp_path / "cache.json"
+    first_inspector = TableInspector(
+        api_key="test",
+        cache_file=cache_file,
+        max_retries=0,
+    )
+    base_context = dict(
+        table_name="store_summary",
+        layer="DWS",
+        ddl="CREATE TABLE store_summary (store_id BIGINT);",
+        etl_sql="SELECT store_id FROM order_detail;",
+        upstream_tables=["order_detail"],
+        downstream_tables=[],
+    )
+    classification_context = TableContext(**base_context)
+    metric_context = TableContext(
+        upstream_metric_groups={
+            "order_detail": {
+                "atomic_metrics": ["subtotal"],
+                "derived_metrics": [],
+                "calculated_metrics": [],
+            }
+        },
+        **base_context,
+    )
+    response = json.dumps(
+        {
+            "choices": [
+                {
+                    "message": {
+                        "content": json.dumps(
+                            {
+                                "inferred_layer": "DWS",
+                                "table_type": "fact",
+                                "confidence": 0.9,
+                                "columns": {
+                                    "atomic_metrics": [],
+                                    "derived_metrics": [],
+                                    "calculated_metrics": [],
+                                    "dimensions": [{"name": "store_id"}],
+                                    "others": [],
+                                },
+                            }
+                        )
+                    }
+                }
+            ]
+        }
+    )
+
+    with patch.object(
+        first_inspector,
+        "_call_api",
+        return_value=response,
+    ) as first_api:
+        first_inspector.inspect(classification_context)
+        first_inspector.inspect(metric_context)
+        assert first_api.call_count == 2
+
+    saved = json.loads(cache_file.read_text())
+    assert len(saved["store_summary"]["variants"]) == 2
+
+    second_inspector = TableInspector(
+        api_key="test",
+        cache_file=cache_file,
+        max_retries=0,
+    )
+    with patch.object(second_inspector, "_call_api") as second_api:
+        second_inspector.inspect(classification_context)
+        second_inspector.inspect(metric_context)
+        second_api.assert_not_called()
+
+
+def _assert_failed_result_does_not_poison_cache(tmp_path):
+    cache_file = tmp_path / "cache.json"
+    context = TableContext(
+        table_name="customer",
+        layer="DWD",
+        ddl="CREATE TABLE customer (customer_id BIGINT);",
+        etl_sql="SELECT customer_id FROM source_customer;",
+        upstream_tables=["source_customer"],
+        downstream_tables=[],
+    )
+    failed_inspector = TableInspector(
+        api_key="test",
+        cache_file=cache_file,
+        max_retries=0,
+    )
+    with patch.object(
+        failed_inspector,
+        "_call_api",
+        side_effect=RuntimeError("temporary outage"),
+    ) as failed_api:
+        failed_result = failed_inspector.inspect(context)
+        assert failed_api.call_count == 1
+    assert failed_result.status == "blocked"
+    assert not cache_file.exists()
+
+    recovered_response = json.dumps(
+        {
+            "choices": [
+                {
+                    "message": {
+                        "content": json.dumps(
+                            {
+                                "inferred_layer": "DIM",
+                                "table_type": "dimension",
+                                "confidence": 0.9,
+                                "columns": {
+                                    "atomic_metrics": [],
+                                    "derived_metrics": [],
+                                    "calculated_metrics": [],
+                                    "dimensions": [{"name": "customer_id"}],
+                                    "others": [],
+                                },
+                            }
+                        )
+                    }
+                }
+            ]
+        }
+    )
+    recovered_inspector = TableInspector(
+        api_key="test",
+        cache_file=cache_file,
+        max_retries=2,
+    )
+    with patch.object(
+        recovered_inspector,
+        "_call_api",
+        return_value=recovered_response,
+    ) as recovered_api:
+        recovered_result = recovered_inspector.inspect(context)
+        assert recovered_api.call_count == 1
+    assert recovered_result.status == "passed"
+
+
+def _assert_warning_cache_preserves_status_and_retry_budget(tmp_path):
+    cache_file = tmp_path / "cache.json"
+    context = TableContext(
+        table_name="latest_event",
+        layer="DWD",
+        ddl=(
+            "CREATE TABLE latest_event (event_id BIGINT, updated_at DATETIME);"
+        ),
+        etl_sql=(
+            "SELECT event_id, MAX(updated_at) AS updated_at "
+            "FROM source_event GROUP BY event_id"
+        ),
+        upstream_tables=["source_event"],
+        downstream_tables=[],
+    )
+    dwd_response = json.dumps(
+        {
+            "choices": [
+                {
+                    "message": {
+                        "content": json.dumps(
+                            {
+                                "inferred_layer": "DWD",
+                                "table_type": "fact",
+                                "confidence": 0.9,
+                                "entities": [
+                                    {
+                                        "code": "EVENT",
+                                        "type": "primary",
+                                        "key_columns": ["event_id"],
+                                    }
+                                ],
+                                "columns": {
+                                    "atomic_metrics": [],
+                                    "derived_metrics": [],
+                                    "calculated_metrics": [],
+                                    "dimensions": [{"name": "event_id"}],
+                                    "others": [{"name": "updated_at"}],
+                                },
+                            }
+                        )
+                    }
+                }
+            ]
+        }
+    )
+    first_inspector = TableInspector(
+        api_key="test",
+        cache_file=cache_file,
+        max_retries=0,
+    )
+    with patch.object(
+        first_inspector,
+        "_call_api",
+        return_value=dwd_response,
+    ) as first_api:
+        first_result = first_inspector.inspect(context)
+        assert first_api.call_count == 1
+    assert first_result.status == "warning"
+
+    cached_inspector = TableInspector(
+        api_key="test",
+        cache_file=cache_file,
+        max_retries=0,
+    )
+    with patch.object(cached_inspector, "_call_api") as cached_api:
+        cached_result = cached_inspector.inspect(context)
+        cached_api.assert_not_called()
+    assert cached_result.status == "warning"
+    assert (
+        cached_result.validation["ambiguous_min_max_aggregation"]
+        == (first_result.validation["ambiguous_min_max_aggregation"])
+    )
+
+    dws_response = json.dumps(
+        {
+            "choices": [
+                {
+                    "message": {
+                        "content": json.dumps(
+                            {
+                                "inferred_layer": "DWS",
+                                "table_type": "fact",
+                                "confidence": 0.9,
+                                "columns": {
+                                    "atomic_metrics": [],
+                                    "derived_metrics": [],
+                                    "calculated_metrics": [],
+                                    "dimensions": [{"name": "event_id"}],
+                                    "others": [{"name": "updated_at"}],
+                                },
+                            }
+                        )
+                    }
+                }
+            ]
+        }
+    )
+    higher_retry_inspector = TableInspector(
+        api_key="test",
+        cache_file=cache_file,
+        max_retries=2,
+    )
+    with patch.object(
+        higher_retry_inspector,
+        "_call_api",
+        return_value=dws_response,
+    ) as higher_retry_api:
+        higher_retry_result = higher_retry_inspector.inspect(context)
+        assert higher_retry_api.call_count == 1
+    assert higher_retry_result.status == "passed"
+
+
 def _assert_cache_miss_calls_api(tmp_path, monkeypatch):
     cache_file = tmp_path / "cache.json"
     inspector = TableInspector(api_key="test", cache_file=cache_file)
@@ -1945,7 +2358,7 @@ def _assert_cache_miss_calls_api(tmp_path, monkeypatch):
     ctx = TableContext(
         table_name="t1",
         layer="DWD",
-        ddl="ddl_new",
+        ddl="CREATE TABLE t1 (pay_amt DECIMAL(12,2));",
         etl_sql="etl1",
         upstream_tables=[],
         downstream_tables=[],
@@ -1966,6 +2379,13 @@ def _assert_cache_miss_calls_api(tmp_path, monkeypatch):
                                     "table_type": "fact",
                                     "confidence": 0.8,
                                     "reasoning_steps": ["api"],
+                                    "entities": [
+                                        {
+                                            "code": "PAYMENT",
+                                            "type": "primary",
+                                            "key_columns": ["pay_amt"],
+                                        }
+                                    ],
                                     "columns": {
                                         "atomic_metrics": [
                                             {
@@ -2776,6 +3196,23 @@ def _assert_cache_hash_includes_context_fields(tmp_path):
     dws_ctx = TableContext(layer="DWS", **base)
 
     assert inspector._compute_hash(dwd_ctx) != inspector._compute_hash(dws_ctx)
+
+    other_model = TableInspector(
+        api_key="test",
+        model="deepseek-v4-pro",
+        cache_file=tmp_path / "cache.json",
+    )
+    other_backend = TableInspector(
+        api_key="test",
+        base_url="https://example.test/chat/completions",
+        cache_file=tmp_path / "cache.json",
+    )
+    assert inspector._compute_hash(dwd_ctx) != other_model._compute_hash(
+        dwd_ctx
+    )
+    assert inspector._compute_hash(dwd_ctx) != other_backend._compute_hash(
+        dwd_ctx
+    )
 
     base = dict(
         table_name="t1",

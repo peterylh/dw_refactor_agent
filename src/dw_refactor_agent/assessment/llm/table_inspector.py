@@ -39,6 +39,7 @@ COLUMN_GROUPS = (
 )
 RESOLUTION_REINSPECTION_ERROR_KEY = "resolution_requires_reinspection"
 DDL_COLUMNS_UNAVAILABLE_ERROR_KEY = "ddl_columns_unavailable"
+AMBIGUOUS_MIN_MAX_WARNING_KEY = "ambiguous_min_max_aggregation"
 VALIDATION_ERROR_KEYS = (
     "unknown_columns",
     "duplicate_columns",
@@ -57,10 +58,35 @@ VALIDATION_ERROR_KEYS = (
     DDL_COLUMNS_UNAVAILABLE_ERROR_KEY,
     RESOLUTION_REINSPECTION_ERROR_KEY,
 )
-VALIDATION_WARNING_KEYS = ()
+VALIDATION_WARNING_KEYS = (AMBIGUOUS_MIN_MAX_WARNING_KEY,)
 DEFAULT_DEEPSEEK_CHAT_COMPLETIONS_URL = (
     "https://api.deepseek.com/chat/completions"
 )
+NON_METRIC_AGGREGATE_FUNCTIONS = {
+    "ANY_VALUE",
+    "ARBITRARY",
+    "FIRST",
+    "FIRST_VALUE",
+    "LAST",
+    "LAST_VALUE",
+}
+KNOWN_METRIC_AGGREGATE_FUNCTIONS = {
+    "APPROX_COUNT_DISTINCT",
+    "APPROX_DISTINCT",
+    "ARRAY_AGG",
+    "AVG",
+    "BITMAP_UNION",
+    "BITMAP_UNION_COUNT",
+    "COUNT",
+    "GROUP_CONCAT",
+    "HLL_UNION",
+    "HLL_UNION_AGG",
+    "MEDIAN",
+    "NDV",
+    "QUANTILE_UNION",
+    "SUM",
+}
+MAX_CACHE_VARIANTS_PER_TABLE = 4
 
 
 def normalize_chat_completions_url(base_url: str | None) -> str:
@@ -501,6 +527,7 @@ def build_retry_prompt(
 - inconsistent_layer_table_types 表示层级与物理表职责组合矛盾；DIM 必须返回 dimension，dimension 必须返回 DIM，DWS 必须返回 fact，DWD 只能返回 fact 或 other。
 - OTHER/fact 不是合法的中间层组合：ODS/ADS 边界已经固定，贴源清洗后的业务事件、关系、状态或快照事实应在 DWD/DWS 中选择；不要用 OTHER 代替 ODS。
 - inconsistent_layer_sql 表示 DWD 候选的目标行驱动查询存在 GROUP BY 并压缩目标粒度；必须根据公共聚合粒度重新判断。仅在 JOIN 辅助子查询中聚合以补充日期/属性、主驱动行仍逐行保留时，可以继续返回 DWD。
+- ambiguous_min_max_aggregation 表示代码无法仅凭同名 MIN/MAX 判断它是技术选值还是业务汇总；如果输出是业务统计结果，应归入指标字段并返回 DWS，如果只是保留实体最新/最早技术状态，可继续返回 DWD，并在字段 reason 中说明技术选值依据。
 - inconsistent_upstream_metric_layers 表示 DWD 候选把上游指标分组中的已治理指标继续作为目标指标发布；即使当前 SQL 没有 GROUP BY，也必须按其公共指标粒度返回 DWS/fact，并保留正确的上游指标依赖关系。
 - invalid_base_metrics / invalid_base_metric_tables 中的 base_metric 必须是字段血缘或上游指标分组中真实存在的原子指标列名，不能编造语义标签。COUNT(*) 或 COUNT(事件键)形成的基础计数应归 atomic_metrics；无法验证上游原子指标时，不要虚构 base_metric/base_metric_table。
 - 不要返回 Markdown，不要返回额外解释。
@@ -845,6 +872,7 @@ def _normalize_validation(value: Any) -> dict[str, list[str]]:
         "inconsistent_layer_table_types",
         "inconsistent_layer_sql",
         "inconsistent_upstream_metric_layers",
+        AMBIGUOUS_MIN_MAX_WARNING_KEY,
         DDL_COLUMNS_UNAVAILABLE_ERROR_KEY,
     ):
         raw_items = value.get(key, []) or []
@@ -905,19 +933,31 @@ def validate_columns(
     for name in grouped_names:
         if not name:
             continue
-        if name in seen:
+        canonical_name = _canonical_column_name(name)
+        if canonical_name in seen:
             duplicates.add(name)
-        seen.add(name)
+        seen.add(canonical_name)
 
-    returned = {name for name in grouped_names if name}
+    returned_by_name = {
+        _canonical_column_name(name): name for name in grouped_names if name
+    }
+    ddl_by_name = {
+        _canonical_column_name(name): name for name in ddl_columns if name
+    }
     validation = {
-        "unknown_columns": sorted(returned - ddl_columns),
+        "unknown_columns": sorted(
+            returned_by_name[name]
+            for name in returned_by_name.keys() - ddl_by_name.keys()
+        ),
         "duplicate_columns": sorted(duplicates),
         "missing_columns": [],
     }
     inferred_layer = str(result.inferred_layer or "").upper()
     if inferred_layer in METRIC_GROUPING_LAYERS and result.is_fact_table:
-        validation["missing_columns"] = sorted(ddl_columns - returned)
+        validation["missing_columns"] = sorted(
+            ddl_by_name[name]
+            for name in ddl_by_name.keys() - returned_by_name.keys()
+        )
     return validation
 
 
@@ -1009,26 +1049,73 @@ def validate_layer_table_type_consistency(
     return {"inconsistent_layer_table_types": issues}
 
 
-def _query_reduces_driving_rows(
+def _select_aggregation_evidence(
     query: Any,
+    metric_output_names: set[str],
+) -> tuple[bool, set[str]]:
+    """Return confirmed metric aggregation and ambiguous MIN/MAX evidence."""
+    try:
+        from sqlglot import exp
+    except Exception:
+        return False, set()
+
+    ambiguous_min_max = set()
+    for projection in query.expressions:
+        for function in projection.find_all(exp.Func):
+            if function.find_ancestor(exp.Window) is not None:
+                continue
+            function_name = str(function.sql_name() or "").upper()
+            if function_name in {"MIN", "MAX"}:
+                source_columns = list(function.find_all(exp.Column))
+                source_name = (
+                    _canonical_column_name(source_columns[0].name)
+                    if len(source_columns) == 1
+                    else ""
+                )
+                output_name = _canonical_column_name(projection.alias_or_name)
+                if (
+                    query.args.get("group") is None
+                    or not source_name
+                    or source_name != output_name
+                    or output_name in metric_output_names
+                ):
+                    return True, ambiguous_min_max
+                ambiguous_min_max.add(
+                    f"{function_name}({source_name}) AS {output_name}"
+                )
+                continue
+            if function_name in KNOWN_METRIC_AGGREGATE_FUNCTIONS:
+                return True, ambiguous_min_max
+            if (
+                isinstance(function, exp.AggFunc)
+                and function_name not in NON_METRIC_AGGREGATE_FUNCTIONS
+            ):
+                return True, ambiguous_min_max
+    return False, ambiguous_min_max
+
+
+def _query_aggregation_evidence(
+    query: Any,
+    metric_output_names: set[str],
     inherited_ctes: dict[str, Any] | None = None,
     seen_ctes: set[str] | None = None,
-) -> bool:
-    """Return whether the target query groups its driving row source.
+) -> tuple[bool, set[str]]:
+    """Return metric and ambiguous aggregation evidence for the driver.
 
     Aggregation inside a joined lookup subquery can enrich a retained driving
-    row without changing the target grain. A GROUP BY in the target SELECT, or
-    in the CTE/subquery used as its FROM source, does reduce the target grain.
+    row without changing the target grain. Pure GROUP BY deduplication and
+    technical MIN/MAX selection remain valid DWD operations, while metric
+    aggregates in the target SELECT or its driving CTE/subquery indicate DWS.
     """
     try:
         from sqlglot import exp
     except Exception:
-        return False
+        return False, set()
 
     while isinstance(query, (exp.Subquery, exp.Paren)):
         query = query.this
     if not isinstance(query, exp.Select):
-        return False
+        return False, set()
 
     ctes = dict(inherited_ctes or {})
     for cte in query.ctes:
@@ -1036,28 +1123,46 @@ def _query_reduces_driving_rows(
         if name:
             ctes[name] = cte.this
 
-    if query.args.get("group") is not None:
-        return True
+    has_metric_aggregation, ambiguous_min_max = _select_aggregation_evidence(
+        query, metric_output_names
+    )
+    if has_metric_aggregation:
+        return True, ambiguous_min_max
 
     from_clause = query.args.get("from") or query.args.get("from_")
     source = getattr(from_clause, "this", None)
     if isinstance(source, exp.Subquery):
-        return _query_reduces_driving_rows(source, ctes, seen_ctes)
+        nested_metric, nested_ambiguous = _query_aggregation_evidence(
+            source,
+            metric_output_names,
+            ctes,
+            seen_ctes,
+        )
+        return nested_metric, ambiguous_min_max | nested_ambiguous
     if not isinstance(source, exp.Table):
-        return False
+        return False, ambiguous_min_max
 
     source_name = str(source.name or "").strip().casefold()
     if not source_name or source_name not in ctes:
-        return False
+        return False, ambiguous_min_max
     seen = set(seen_ctes or ())
     if source_name in seen:
-        return False
+        return False, ambiguous_min_max
     seen.add(source_name)
-    return _query_reduces_driving_rows(ctes[source_name], ctes, seen)
+    nested_metric, nested_ambiguous = _query_aggregation_evidence(
+        ctes[source_name],
+        metric_output_names,
+        ctes,
+        seen,
+    )
+    return nested_metric, ambiguous_min_max | nested_ambiguous
 
 
-def _target_query_reduces_rows(etl_sql: str) -> bool | None:
-    """Inspect INSERT/SELECT driving queries; return None when unavailable."""
+def _target_query_aggregation_evidence(
+    etl_sql: str,
+    metric_output_names: set[str],
+) -> tuple[bool, set[str]] | None:
+    """Inspect INSERT/SELECT driving queries for aggregation evidence."""
     if not str(etl_sql or "").strip():
         return None
     try:
@@ -1085,7 +1190,16 @@ def _target_query_reduces_rows(etl_sql: str) -> bool | None:
             queries.append(statement)
     if not queries:
         return None
-    return any(_query_reduces_driving_rows(query) for query in queries)
+    has_metric_aggregation = False
+    ambiguous_min_max = set()
+    for query in queries:
+        query_metric, query_ambiguous = _query_aggregation_evidence(
+            query,
+            metric_output_names,
+        )
+        has_metric_aggregation = has_metric_aggregation or query_metric
+        ambiguous_min_max.update(query_ambiguous)
+    return has_metric_aggregation, ambiguous_min_max
 
 
 def validate_layer_sql_consistency(
@@ -1095,23 +1209,33 @@ def validate_layer_sql_consistency(
     """Validate that DWD does not reduce the target driving-row grain."""
     if str(result.inferred_layer or "").upper() != "DWD":
         return {}
-    target_reduces_rows = _target_query_reduces_rows(ctx.etl_sql)
-    if target_reduces_rows is None:
-        target_reduces_rows = any(
-            str(condition.get("condition_type") or "").upper() == "GROUP_BY"
-            for edge in (ctx.column_lineage or [])
-            if isinstance(edge, dict)
-            for condition in (edge.get("condition_lineage") or [])
-            if isinstance(condition, dict)
+    metric_output_names = {
+        _canonical_column_name(name)
+        for group_name in (
+            "atomic_metrics",
+            "derived_metrics",
+            "calculated_metrics",
         )
-    if not target_reduces_rows:
-        return {}
-    return {
-        "inconsistent_layer_sql": [
-            "DWD候选的目标行驱动查询包含GROUP_BY聚合；"
-            "请重新判断DWS或其他合法层级"
-        ]
+        for name in _metric_names_from_items(result.columns.get(group_name))
     }
+    evidence = _target_query_aggregation_evidence(
+        ctx.etl_sql,
+        metric_output_names,
+    )
+    if evidence is None:
+        return {}
+    has_metric_aggregation, ambiguous_min_max = evidence
+    validation = {}
+    if has_metric_aggregation:
+        validation["inconsistent_layer_sql"] = [
+            "DWD候选的目标行驱动查询包含指标聚合；请重新判断DWS或其他合法层级"
+        ]
+    elif ambiguous_min_max:
+        validation[AMBIGUOUS_MIN_MAX_WARNING_KEY] = [
+            f"{expression}: 无法仅凭同名MIN/MAX确定技术选值或业务汇总"
+            for expression in sorted(ambiguous_min_max)
+        ]
+    return validation
 
 
 def _metric_names_from_items(raw_metrics: Any) -> list[str]:
@@ -1180,7 +1304,13 @@ def _matching_table_identities(
 
 
 def _canonical_column_name(column_name: Any) -> str:
-    return str(column_name or "").strip().replace("`", "").casefold()
+    return (
+        str(column_name or "")
+        .strip()
+        .replace("`", "")
+        .replace('"', "")
+        .casefold()
+    )
 
 
 def _atomic_metric_tables_for_validation(
@@ -1521,6 +1651,62 @@ class TableInspector:
                     encoding=TEXT_ENCODING,
                 )
 
+    @staticmethod
+    def _cached_result_for_hash(
+        cached_data: Any,
+        current_hash: str,
+    ) -> dict[str, Any] | None:
+        if not isinstance(cached_data, dict):
+            return None
+        if cached_data.get("hash") == current_hash:
+            result = cached_data.get("result")
+            return result if isinstance(result, dict) else None
+        variants = cached_data.get("variants")
+        if not isinstance(variants, dict):
+            return None
+        variant = variants.get(current_hash)
+        if not isinstance(variant, dict):
+            return None
+        result = variant.get("result")
+        return result if isinstance(result, dict) else None
+
+    def _store_cached_result(
+        self,
+        table_name: str,
+        current_hash: str,
+        result: TableInspectResult,
+    ) -> None:
+        result_data = result_to_cache_dict(result)
+        cached_data = self.cache.get(table_name)
+        variants: dict[str, dict[str, Any]] = {}
+        if isinstance(cached_data, dict):
+            raw_variants = cached_data.get("variants")
+            if isinstance(raw_variants, dict):
+                variants.update(
+                    {
+                        str(cache_hash): variant
+                        for cache_hash, variant in raw_variants.items()
+                        if isinstance(variant, dict)
+                    }
+                )
+            previous_hash = str(cached_data.get("hash") or "")
+            previous_result = cached_data.get("result")
+            if previous_hash and isinstance(previous_result, dict):
+                variants.setdefault(
+                    previous_hash,
+                    {"result": previous_result},
+                )
+
+        variants.pop(current_hash, None)
+        variants[current_hash] = {"result": result_data}
+        while len(variants) > MAX_CACHE_VARIANTS_PER_TABLE:
+            variants.pop(next(iter(variants)))
+        self.cache[table_name] = {
+            "hash": current_hash,
+            "result": result_data,
+            "variants": variants,
+        }
+
     def _compute_hash(self, ctx: TableContext) -> str:
         # 缓存 hash 需要包含所有影响 LLM 判断的特征与 prompt schema 版本。
         prompt_layer = _prompt_layer(ctx)
@@ -1533,7 +1719,9 @@ class TableInspector:
             ctx.downstream_table_layers,
         )
         content = (
-            f"{PROMPT_VERSION}|{ctx.table_name}|{prompt_layer}|{ctx.ddl}|"
+            f"{PROMPT_VERSION}|{self.model}|{self.base_url}|temperature=0|"
+            f"max_retries={self.max_retries}|"
+            f"{ctx.table_name}|{prompt_layer}|{ctx.ddl}|"
             f"{ctx.etl_sql}|{ctx.upstream_tables}|{ctx.downstream_tables}|"
             f"{upstream_layers}|{downstream_layers}|"
             f"{ctx.depth_from_ods}|{ctx.upstream_metric_groups}|"
@@ -1603,18 +1791,24 @@ class TableInspector:
 
         with self._cache_lock:
             cached_data = self.cache.get(ctx.table_name)
-            if (
-                isinstance(cached_data, dict)
-                and cached_data.get("hash") == current_hash
-            ):
-                self._emit_progress(
-                    "cache_hit", ctx, progress_context=progress_context
-                )
-                return dict_to_result(
-                    cached_data.get("result", {}),
+            cached_result = self._cached_result_for_hash(
+                cached_data,
+                current_hash,
+            )
+            if cached_result is not None:
+                restored_result = dict_to_result(
+                    cached_result,
                     table_name=ctx.table_name,
                     declared_layer=ctx.layer,
                 )
+                # A transient API/parse failure or validation-blocked result
+                # must not poison future runs or suppress a higher retry
+                # budget. Legacy blocked entries are bypassed as well.
+                if restored_result.status != "blocked":
+                    self._emit_progress(
+                        "cache_hit", ctx, progress_context=progress_context
+                    )
+                    return restored_result
 
         ddl_columns = _extract_ddl_column_names(ctx.ddl)
         prompt = build_prompt(ctx)
@@ -1682,12 +1876,10 @@ class TableInspector:
             )
             prompt = build_retry_prompt(ctx, result, ddl_columns)
 
-        with self._cache_lock:
-            self.cache[ctx.table_name] = {
-                "hash": current_hash,
-                "result": result_to_cache_dict(result),
-            }
-            self._save_cache()
+        if result.status != "blocked":
+            with self._cache_lock:
+                self._store_cached_result(ctx.table_name, current_hash, result)
+                self._save_cache()
 
         return result
 

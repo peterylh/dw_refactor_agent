@@ -88,41 +88,45 @@ def test_inspection_pipeline_preserves_metric_identity_and_confidence(
         "build_contexts",
         lambda *args, **kwargs: dwd_contexts + dws_contexts,
     )
-    seen_dws_groups = []
+    batch_sizes = []
+    seen_reinspection_groups = []
 
     class FakeInspector:
         def inspect_batch(self, contexts):
-            if contexts == dwd_contexts:
-                return [
-                    TableInspectResult(
-                        table_name="orders",
-                        declared_layer="DWD",
-                        inferred_layer="DWD",
-                        table_type="fact",
-                        confidence=0.01 if index == 3 else 0.9,
-                        reasoning_steps=[],
-                        columns={
-                            "atomic_metrics": [{"name": f"metric_{index}"}]
-                        },
+            batch_sizes.append(len(contexts))
+            results = []
+            for context in contexts:
+                if context.table_name == "orders":
+                    index = int(context.table_identity[3])
+                    results.append(
+                        TableInspectResult(
+                            table_name="orders",
+                            declared_layer="DWD",
+                            inferred_layer="DWD",
+                            table_type="fact",
+                            confidence=0.01 if index == 3 else 0.9,
+                            reasoning_steps=[],
+                            columns={
+                                "atomic_metrics": [{"name": f"metric_{index}"}]
+                            },
+                        )
                     )
-                    for index in (1, 2, 3)
-                ]
-            if contexts == dws_contexts:
-                seen_dws_groups.extend(
-                    context.upstream_metric_groups for context in contexts
-                )
-                return [
+                    continue
+                if context.upstream_metric_groups:
+                    seen_reinspection_groups.append(
+                        context.upstream_metric_groups
+                    )
+                results.append(
                     TableInspectResult(
                         table_name=context.table_name,
-                        declared_layer="DWS",
+                        declared_layer=context.layer,
                         inferred_layer="DWS",
                         table_type="fact",
                         confidence=0.9,
                         reasoning_steps=[],
                     )
-                    for context in contexts
-                ]
-            return []
+                )
+            return results
 
     policy = LayerResolutionPolicy(mode="refresh")
     existing = {"orders": {"layer": "DWD", "table_type": "fact"}}
@@ -141,13 +145,103 @@ def test_inspection_pipeline_preserves_metric_identity_and_confidence(
         ),
     )
 
-    assert seen_dws_groups == [
+    assert batch_sizes == [5, 1]
+    assert seen_reinspection_groups == [
         {
             "cat1.db.orders": {
                 "atomic_metrics": ["metric_1"],
                 "derived_metrics": [],
                 "calculated_metrics": [],
             }
-        },
+        }
+    ]
+
+
+def test_inspection_pipeline_reclassifies_cold_start_before_metric_injection(
+    monkeypatch,
+):
+    import dw_refactor_agent.assessment.llm.metadata_flow as flow_module
+
+    detail = TableContext(
+        table_name="orders",
+        table_identity="internal.demo.orders",
+        layer="DWD",
+        ddl="",
+        etl_sql="",
+        upstream_tables=[],
+        downstream_tables=["internal.demo.order_summary"],
+    )
+    summary = TableContext(
+        table_name="order_summary",
+        table_identity="internal.demo.order_summary",
+        layer="DWD",
+        ddl="",
+        etl_sql="",
+        upstream_tables=["internal.demo.orders"],
+        downstream_tables=[],
+    )
+    monkeypatch.setattr(
+        flow_module,
+        "build_contexts",
+        lambda *args, **kwargs: [detail, summary],
+    )
+    batches = []
+
+    class FakeInspector:
+        def inspect_batch(self, contexts):
+            batches.append(
+                [
+                    (context.table_name, dict(context.upstream_metric_groups))
+                    for context in contexts
+                ]
+            )
+            return [
+                TableInspectResult(
+                    table_name=context.table_name,
+                    declared_layer=context.layer,
+                    inferred_layer=("DWD" if context is detail else "DWS"),
+                    table_type="fact",
+                    confidence=0.9,
+                    reasoning_steps=[],
+                    columns={
+                        "atomic_metrics": (
+                            [{"name": "subtotal"}] if context is detail else []
+                        )
+                    },
+                )
+                for context in contexts
+            ]
+
+    bundle = run_inspection_pipeline(
+        "demo",
         {},
+        FakeInspector(),
+        metric_group_builder=lambda result: {
+            "atomic_metrics": [item["name"] for item in result.atomic_metrics],
+            "derived_metrics": [],
+            "calculated_metrics": [],
+        },
+        result_enricher=lambda results, contexts: None,
+    )
+
+    assert [context.table_name for context in bundle.dwd_contexts] == [
+        "orders"
+    ]
+    assert [context.table_name for context in bundle.dws_contexts] == [
+        "order_summary"
+    ]
+    assert batches == [
+        [("orders", {}), ("order_summary", {})],
+        [
+            (
+                "order_summary",
+                {
+                    "internal.demo.orders": {
+                        "atomic_metrics": ["subtotal"],
+                        "derived_metrics": [],
+                        "calculated_metrics": [],
+                    }
+                },
+            )
+        ],
     ]

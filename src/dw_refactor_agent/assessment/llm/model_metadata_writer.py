@@ -2896,6 +2896,11 @@ def run_catalog_discovery(
                 resolution_policy=resolution_policy,
             )
         ),
+        result_layer_resolver=lambda _ctx, result: layer_for_model(
+            result,
+            existing_model=model_metadata.get(result.table_name),
+            policy=resolution_policy,
+        ),
     )
     contexts = inspection.contexts
     dwd_contexts = inspection.dwd_contexts
@@ -3193,6 +3198,13 @@ def run_metadata_write(
                 resolution_policy=plan.resolution_policy,
             )
         ),
+        result_layer_resolver=lambda _ctx, result: layer_for_model(
+            result,
+            existing_model=(plan.base_model_metadata or {}).get(
+                result.table_name
+            ),
+            policy=plan.resolution_policy,
+        ),
     )
     contexts = inspection.contexts
     metric_contexts = inspection.metric_contexts
@@ -3233,9 +3245,9 @@ def run_metadata_write(
         "inspected_table_count": len(contexts),
         "metric_table_count": len(metric_contexts),
         "metadata_only_table_count": len(metadata_only_contexts),
-        "dwd_table_count": sum(1 for c in contexts if c.layer == "DWD"),
-        "dws_table_count": sum(1 for c in contexts if c.layer == "DWS"),
-        "dim_table_count": sum(1 for c in contexts if c.layer == "DIM"),
+        "dwd_table_count": len(inspection.dwd_contexts),
+        "dws_table_count": len(inspection.dws_contexts),
+        "dim_table_count": len(inspection.metadata_only_contexts),
         "fact_table_count": sum(1 for r in results if r.is_fact_table),
         "passed_table_count": sum(1 for r in results if r.status == "passed"),
         "warning_table_count": sum(

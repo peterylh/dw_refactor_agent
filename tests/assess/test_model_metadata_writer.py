@@ -3110,11 +3110,11 @@ def test_run_metadata_write_reuses_table_inspector(
 
     assert result["inspected_table_count"] == 3
     assert result["write_scope"] == "all"
-    assert result["metric_table_count"] == 3
-    assert result["metadata_only_table_count"] == 0
-    assert result["dwd_table_count"] == 2
+    assert result["metric_table_count"] == 2
+    assert result["metadata_only_table_count"] == 1
+    assert result["dwd_table_count"] == 1
     assert result["dws_table_count"] == 1
-    assert result["dim_table_count"] == 0
+    assert result["dim_table_count"] == 1
     assert result["fact_table_count"] == 2
     assert result["atomic_metric_count"] == 1
     assert result["derived_metric_count"] == 2
