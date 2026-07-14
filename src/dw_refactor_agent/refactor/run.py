@@ -48,6 +48,7 @@ from dw_refactor_agent.refactor.qa_pool import (
     inspect_qa_slot,
     parse_age,
     parse_created_before,
+    qa_server_epoch,
     release_qa_slot,
     select_cleanup_slots,
     validate_qa_identifier,
@@ -941,7 +942,7 @@ def _cleanup_cutoff(args) -> int | None:
             age_seconds = parse_age(args.older_than)
         except ValueError as exc:
             raise SystemExit(str(exc)) from None
-        cutoffs.append(int(_now().timestamp()) - age_seconds)
+        cutoffs.append(qa_server_epoch() - age_seconds)
     if args.created_before:
         try:
             cutoffs.append(parse_created_before(args.created_before))
@@ -973,10 +974,9 @@ def _cleanup_delete(args) -> int:
             database = validate_qa_identifier(args.database)
         except ValueError as exc:
             raise SystemExit(str(exc)) from None
-    cutoff_epoch = _cleanup_cutoff(args)
-
     with _project_root_context(Path(args.root)):
         _require_cleanup_project(args.project)
+        cutoff_epoch = _cleanup_cutoff(args)
         inspections = inspect_configured_slots(project=args.project)
         selected = select_cleanup_slots(
             inspections,

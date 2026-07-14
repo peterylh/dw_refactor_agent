@@ -149,6 +149,27 @@ def get_qa_connection(database: str = "information_schema"):
     )
 
 
+def qa_server_epoch(*, connection=None) -> int:
+    """Return the Doris server clock as epoch seconds."""
+    owns_connection = connection is None
+    conn = connection or get_qa_connection()
+    try:
+        rows = _query_all(conn, "SELECT UNIX_TIMESTAMP(NOW())")
+        if len(rows) != 1 or len(rows[0]) != 1:
+            raise ArtifactFormatError(
+                "Doris server clock query returned an unexpected result"
+            )
+        try:
+            return int(rows[0][0])
+        except (TypeError, ValueError) as exc:
+            raise ArtifactFormatError(
+                "Doris server clock query returned an invalid epoch"
+            ) from exc
+    finally:
+        if owns_connection:
+            conn.close()
+
+
 def _query_all(connection, sql: str, params=None) -> list[tuple]:
     cursor = connection.cursor()
     try:

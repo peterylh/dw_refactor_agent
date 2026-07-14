@@ -189,6 +189,46 @@ def test_cleanup_delete_without_yes_is_preview(monkeypatch, capsys):
     assert "would release" in capsys.readouterr().out
 
 
+def test_cleanup_older_than_uses_doris_server_clock(monkeypatch, capsys):
+    inspection = _cleanup_inspection()
+    monkeypatch.setattr(
+        run_cli,
+        "inspect_configured_slots",
+        lambda **kwargs: [inspection],
+        raising=False,
+    )
+    monkeypatch.setattr(
+        run_cli,
+        "qa_server_epoch",
+        lambda: inspection.ownership.claimed_at_epoch + 30 * 60,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        run_cli,
+        "_now",
+        lambda: datetime.fromtimestamp(
+            inspection.ownership.claimed_at_epoch + 24 * 60 * 60,
+            timezone.utc,
+        ),
+    )
+
+    assert (
+        run_cli.main(
+            [
+                "cleanup",
+                "delete",
+                "--project",
+                "shop",
+                "--older-than",
+                "1h",
+            ]
+        )
+        == 0
+    )
+
+    assert "preview selected=0" in capsys.readouterr().out
+
+
 def test_cleanup_delete_previews_legacy_only_by_exact_database(
     monkeypatch, capsys
 ):

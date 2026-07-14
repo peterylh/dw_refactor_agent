@@ -1072,17 +1072,18 @@ PYTHONPATH=src conda run -n dw-refactor-py37 python -m dw_refactor_agent.refacto
 
 Expected: shadow-run claims `shop_dm_qa_02`, never emits DROP/CREATE DATABASE, and persists exact marker ownership. Compare connects to `shop_dm_qa_02` and passes provenance validation; an empty-check plan may return the repository's existing inconclusive exit code 2.
 
-- [ ] **Step 9: Preview and release the real test execution**
+- [ ] **Step 9: Preview cleanup and retain the real test execution**
 
-Read execution ID from `shadow_run_result.json`, run cleanup without `--yes`, verify the marker remains, then repeat with `--yes`:
+Read execution ID from `shadow_run_result.json`, preview cleanup by exact execution and by age without `--yes`, then verify the marker remains:
 
 ```bash
 EXECUTION_ID="$(PYTHONPATH=src conda run -n dw-refactor-py37 python -c 'import json, pathlib, sys; manifest=pathlib.Path(sys.argv[1]); result=manifest.parent / "verification" / "shadow_run_result.json"; print(json.loads(result.read_text(encoding="utf-8"))["execution_id"])' "$MANIFEST_PATH")"
 PYTHONPATH=src conda run -n dw-refactor-py37 python -m dw_refactor_agent.refactor.run cleanup delete --project shop --execution "$EXECUTION_ID"
-PYTHONPATH=src conda run -n dw-refactor-py37 python -m dw_refactor_agent.refactor.run cleanup delete --project shop --execution "$EXECUTION_ID" --yes
+PYTHONPATH=src conda run -n dw-refactor-py37 python -m dw_refactor_agent.refactor.run cleanup delete --project shop --older-than 1s
+PYTHONPATH=src conda run -n dw-refactor-py37 python -m dw_refactor_agent.refactor.run cleanup list --project shop
 ```
 
-Expected: preview changes nothing; release drops marker last; `SHOW DATABASES LIKE 'shop_dm_qa_02'` still returns the database; cleanup list shows it free.
+Expected: both previews select the claimed test slot and change nothing; cleanup list still shows the exact execution as claimed. Leave it for a later explicit manual cleanup rather than releasing it during validation.
 
 - [ ] **Step 10: Commit any verification-driven corrections**
 
