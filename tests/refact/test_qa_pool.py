@@ -12,6 +12,8 @@ from dw_refactor_agent.refactor.qa_pool import (
     claim_qa_slot,
     configured_qa_pool,
     inspect_qa_slot,
+    parse_age,
+    parse_created_before,
     release_qa_slot,
     require_slot_ownership,
     select_cleanup_slots,
@@ -122,6 +124,27 @@ def test_configured_qa_pool_falls_back_to_legacy_qa_database():
 def test_configured_qa_pool_rejects_unsafe_values(pool, expected):
     with pytest.raises(ValueError, match=expected):
         configured_qa_pool("shop", _project_config(pool))
+
+
+@pytest.mark.parametrize(
+    "value, expected",
+    [("30s", 30), ("15m", 900), ("2h", 7200), ("7d", 604800)],
+)
+def test_parse_age_supports_explicit_units(value, expected):
+    assert parse_age(value) == expected
+
+
+@pytest.mark.parametrize("value", ["", "7", "-1d", "1month", "0h"])
+def test_parse_age_rejects_ambiguous_or_nonpositive_values(value):
+    with pytest.raises(ValueError, match="age"):
+        parse_age(value)
+
+
+def test_parse_created_before_requires_timezone():
+    with pytest.raises(ValueError, match="timezone"):
+        parse_created_before("2026-07-01T00:00:00")
+
+    assert parse_created_before("1970-01-01T08:00:01+08:00") == 1
 
 
 def test_get_qa_connection_uses_qa_credentials_and_autocommit(monkeypatch):

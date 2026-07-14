@@ -6,6 +6,7 @@ import hashlib
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import datetime
 
 import pymysql
 
@@ -41,6 +42,14 @@ _LEGACY_MARKER_COLUMNS = (
     "completed_at",
 )
 _FINGERPRINT_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
+_AGE_RE = re.compile(r"^(?P<amount>[1-9][0-9]*)(?P<unit>[smhdw])$")
+_AGE_UNIT_SECONDS = {
+    "s": 1,
+    "m": 60,
+    "h": 60 * 60,
+    "d": 24 * 60 * 60,
+    "w": 7 * 24 * 60 * 60,
+}
 
 
 @dataclass(frozen=True)
@@ -79,6 +88,32 @@ class QaPoolExhaustedError(ArtifactFormatError):
             f"{item.database}={item.availability}" for item in self.inspections
         )
         super().__init__(f"QA database pool is exhausted: {summary}")
+
+
+def parse_age(value: str) -> int:
+    """Parse a positive cleanup age such as ``7d`` into seconds."""
+    match = _AGE_RE.fullmatch(str(value or "").strip().casefold())
+    if match is None:
+        raise ValueError(
+            "invalid cleanup age; use a positive integer plus s, m, h, d, or w"
+        )
+    return int(match.group("amount")) * _AGE_UNIT_SECONDS[match.group("unit")]
+
+
+def parse_created_before(value: str) -> int:
+    """Parse an absolute timezone-aware ISO timestamp into epoch seconds."""
+    raw_value = str(value or "").strip()
+    if raw_value.endswith(("Z", "z")):
+        raw_value = raw_value[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(raw_value)
+    except ValueError as exc:
+        raise ValueError(
+            "invalid created-before timestamp; use ISO 8601 with timezone"
+        ) from exc
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise ValueError("created-before timestamp must include a timezone")
+    return int(parsed.timestamp())
 
 
 def validate_qa_identifier(value: str) -> str:
