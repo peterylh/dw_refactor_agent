@@ -234,10 +234,20 @@ def inspect_qa_slot(
     owns_connection = connection is None
     conn = connection or get_qa_connection()
     try:
-        raw_objects = _query_all(
-            conn,
-            f"SHOW FULL TABLES FROM {_quoted_identifier(database)}",
-        )
+        try:
+            raw_objects = _query_all(
+                conn,
+                f"SHOW FULL TABLES FROM {_quoted_identifier(database)}",
+            )
+        except pymysql.err.OperationalError as exc:
+            if exc.args and exc.args[0] == 1049:
+                return _invalid_inspection(
+                    project,
+                    database,
+                    (),
+                    "configured QA database does not exist",
+                )
+            raise
         objects = tuple((str(row[0]), str(row[1])) for row in raw_objects)
         marker_objects = [
             item

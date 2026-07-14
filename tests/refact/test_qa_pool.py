@@ -186,6 +186,30 @@ def test_inspect_empty_slot_returns_free(scripted_connection):
     )
 
 
+def test_inspect_missing_configured_database_returns_invalid():
+    class MissingDatabaseCursor:
+        def execute(self, sql, params=None):
+            raise qa_pool.pymysql.err.OperationalError(
+                1049, "Unknown database 'missing_qa'"
+            )
+
+        def close(self):
+            pass
+
+    class MissingDatabaseConnection:
+        def cursor(self):
+            return MissingDatabaseCursor()
+
+    result = inspect_qa_slot(
+        "demo",
+        "missing_qa",
+        connection=MissingDatabaseConnection(),
+    )
+
+    assert result.availability == "invalid"
+    assert "does not exist" in result.diagnostic
+
+
 def test_inspect_current_marker_schema_returns_legacy(scripted_connection):
     scripted_connection.add(
         "SHOW FULL TABLES",
