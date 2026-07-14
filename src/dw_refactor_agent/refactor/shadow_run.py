@@ -4,12 +4,12 @@
 from __future__ import annotations
 
 import argparse
-import json
 import re
 import subprocess
 import sys
 import threading
 import time
+import uuid
 from concurrent.futures import (
     FIRST_COMPLETED,
     ThreadPoolExecutor,
@@ -24,13 +24,26 @@ if str(_src_root) not in sys.path:
     sys.path.insert(0, str(_src_root))
 
 import dw_refactor_agent.config as config
-from dw_refactor_agent.config import PROJECT_ROOT, TEXT_ENCODING, get_mysql_cmd
+from dw_refactor_agent.config import PROJECT_ROOT, get_mysql_cmd
 from dw_refactor_agent.execution.model_config import ExecutionConfigError
 from dw_refactor_agent.execution.planner import ExecutionPlanner
 from dw_refactor_agent.execution.sql_executor import ShadowSqlExecutor
 from dw_refactor_agent.execution.thread_pool import shutdown_executor
 from dw_refactor_agent.lineage.job_dag import JobDAG
-from dw_refactor_agent.refactor.plan_artifact import load_verification_plan
+from dw_refactor_agent.refactor.artifact_contract import (
+    FORMAT_VERSION,
+    ArtifactFormatError,
+    atomic_write_json,
+)
+from dw_refactor_agent.refactor.execution_provenance import (
+    execution_marker_sql,
+    project_execution_lock,
+)
+from dw_refactor_agent.refactor.plan_artifact import (
+    load_persisted_verification_plan,
+    require_fresh_plan,
+    require_fresh_plan_bundle,
+)
 from dw_refactor_agent.refactor.shadow_manifest import (
     PrefillMode,
     compile_shadow_manifest,
@@ -1279,11 +1292,11 @@ def _dry_run_phases(
     plan: dict,
     manifest: dict,
     *,
+    root: Path,
     timing_detail: bool = False,
     parallel: int = 1,
     batch_size: int = 1,
 ) -> list[dict]:
-    root = _project_root()
     baseline_ddl = plan.get("baseline_ddl", {})
     ddl_changes = plan.get("ddl_changes", [])
     jobs_to_run = plan.get("jobs_to_run", [])
@@ -1441,6 +1454,7 @@ def _dry_run_phases(
 def execute_shadow_plan(
     plan: dict,
     *,
+    root: Path,
     dry_run: bool = False,
     timing_detail: bool = False,
     parallel: int = 1,
@@ -1454,7 +1468,7 @@ def execute_shadow_plan(
     def finish_result(result: dict) -> dict:
         return _finish_timing(result, result_timer)
 
-    root = _project_root()
+    root = Path(root).resolve()
     planner = ExecutionPlanner(plan["project"], project_root=root)
     manifest, manifest_phase = _compile_shadow_manifest_phase(
         plan,
@@ -1473,10 +1487,11 @@ def execute_shadow_plan(
         )
 
     if dry_run:
-        _dry_run(plan, manifest)
+        _dry_run(plan, manifest, root=root)
         phases = [manifest_phase] + _dry_run_phases(
             plan,
             manifest,
+            root=root,
             timing_detail=timing_detail,
             parallel=parallel,
             batch_size=batch_size,
@@ -1678,6 +1693,7 @@ def run_shadow_plan(
     plan_path: Path,
     output_path: Path,
     *,
+    provenance: dict,
     dry_run: bool = False,
     timing_detail: bool = False,
     parallel: int = 1,
@@ -1686,35 +1702,103 @@ def run_shadow_plan(
     """Run or dry-run a validation plan and write the execution result."""
     plan_path = Path(plan_path)
     output_path = Path(output_path)
-    plan = load_verification_plan(plan_path)
-    result = execute_shadow_plan(
-        plan,
-        dry_run=dry_run,
-        timing_detail=timing_detail,
-        parallel=parallel,
-        batch_size=batch_size,
+    workspace_digest = provenance.get("workspace_fingerprint")
+    plan_digest = provenance.get("plan_fingerprint")
+    for field, value in (
+        ("workspace_fingerprint", workspace_digest),
+        ("plan_fingerprint", plan_digest),
+    ):
+        if not isinstance(value, str) or not value.startswith("sha256:"):
+            raise ArtifactFormatError(
+                f"shadow-run provenance {field} must be a SHA-256 digest"
+            )
+    bundle = require_fresh_plan_bundle(plan_path)
+    plan = bundle.plan
+    expected_workspace = (plan.get("analysis_snapshot") or {}).get(
+        "workspace_fingerprint"
     )
-    result.update(
-        {
-            "plan": str(plan_path),
-            "project": plan.get("project"),
-        }
-    )
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(
-        json.dumps(result, ensure_ascii=False, indent=2),
-        encoding=TEXT_ENCODING,
-    )
+    expected_plan = plan.get("plan_fingerprint")
+    if workspace_digest != expected_workspace:
+        raise ArtifactFormatError(
+            "shadow-run provenance workspace_fingerprint does not match "
+            "the verification plan"
+        )
+    if plan_digest != expected_plan:
+        raise ArtifactFormatError(
+            "shadow-run provenance plan_fingerprint does not match the "
+            "verification plan"
+        )
+    execution_id = str(uuid.uuid4())
+    mode = "dry_run" if dry_run else "execute"
+    wrapper_timer = _start_timing()
+    common_result = {
+        "format_version": FORMAT_VERSION,
+        "mode": mode,
+        "plan": str(plan_path),
+        "project": plan.get("project"),
+        "execution_id": execution_id,
+        "workspace_fingerprint": workspace_digest,
+        "plan_fingerprint": plan_digest,
+    }
+    with project_execution_lock(plan_path):
+        atomic_write_json(
+            output_path,
+            {
+                **common_result,
+                "status": "running",
+                "started_at": wrapper_timer["started_at"],
+            },
+        )
+        result = execute_shadow_plan(
+            plan,
+            root=bundle.root,
+            dry_run=dry_run,
+            timing_detail=timing_detail,
+            parallel=parallel,
+            batch_size=batch_size,
+        )
+        if result.get("status") == "completed" and not dry_run:
+            marker_timer = _start_timing()
+            try:
+                run_sql_text(
+                    execution_marker_sql(
+                        plan["qa_db"],
+                        execution_id=execution_id,
+                        plan_fingerprint=plan_digest,
+                        workspace_fingerprint=workspace_digest,
+                    ),
+                    db=plan["qa_db"],
+                    qa=True,
+                )
+                marker_phase = {
+                    "name": "publish_execution_marker",
+                    "status": "success",
+                }
+            except Exception as exc:
+                result["status"] = "failed"
+                result["error"] = (
+                    f"failed to publish QA execution marker: {exc}"
+                )
+                marker_phase = {
+                    "name": "publish_execution_marker",
+                    "status": "failed",
+                    "error": str(exc),
+                }
+            result.setdefault("phases", []).append(
+                _finish_timing(marker_phase, marker_timer)
+            )
+        result.update(common_result)
+        _finish_timing(result, wrapper_timer)
+        atomic_write_json(output_path, result)
     return result
 
 
-def _dry_run(plan: dict, manifest: dict) -> None:
+def _dry_run(plan: dict, manifest: dict, *, root: Path) -> None:
     qa_db = plan["qa_db"]
     prod_db = plan["project_db"]
     baseline_ddl = plan.get("baseline_ddl", {})
     ddl_changes = plan.get("ddl_changes", [])
     jobs_to_run = plan.get("jobs_to_run", [])
-    root = _project_root()
     planner = ExecutionPlanner(plan["project"], project_root=root)
 
     print(f"{'=' * 60}")
@@ -1891,9 +1975,24 @@ def main(argv: list[str] | None = None) -> int:
         if args.output
         else plan_path.parent / "shadow_run_result.json"
     )
+    try:
+        persisted_plan = load_persisted_verification_plan(plan_path)
+        persisted_plan = require_fresh_plan(
+            plan_path,
+            root=_project_root(),
+            project=persisted_plan["project"],
+        )
+    except ArtifactFormatError as exc:
+        raise SystemExit(str(exc)) from None
+    snapshot = persisted_plan.get("analysis_snapshot") or {}
+    provenance = {
+        "workspace_fingerprint": snapshot.get("workspace_fingerprint"),
+        "plan_fingerprint": persisted_plan.get("plan_fingerprint"),
+    }
     result = run_shadow_plan(
         plan_path,
         output_path,
+        provenance=provenance,
         dry_run=args.dry_run,
         timing_detail=args.timing_detail,
         parallel=args.parallel,

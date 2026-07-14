@@ -4,8 +4,8 @@
 from __future__ import annotations
 
 import argparse
-import json
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 _src_root = Path(__file__).resolve().parents[2]
@@ -19,9 +19,25 @@ from dw_refactor_agent.config import (
     DORIS_PORT,
     DORIS_QA_USER,
     DORIS_USER,
-    TEXT_ENCODING,
+    PROJECT_ROOT,
 )
-from dw_refactor_agent.refactor.plan_artifact import load_verification_plan
+from dw_refactor_agent.refactor.artifact_contract import (
+    FORMAT_VERSION,
+    ArtifactFormatError,
+    atomic_write_json,
+    read_json_object,
+    require_format_version,
+    sha256_json,
+)
+from dw_refactor_agent.refactor.execution_provenance import (
+    execution_marker_select_sql,
+    project_execution_lock,
+)
+from dw_refactor_agent.refactor.plan_artifact import (
+    load_persisted_verification_plan,
+    require_fresh_plan,
+    require_fresh_plan_bundle,
+)
 
 DEFAULT_ROW_COMPARE_EXCLUDE_COLUMNS = ["etl_time"]
 
@@ -65,6 +81,27 @@ def _row_compare_columns(
     return compared_cols, ignored_cols
 
 
+def _check_tables(check: dict) -> tuple[str, str, str]:
+    logical_table = check["table"]
+    return (
+        logical_table,
+        check.get("prod_table") or logical_table,
+        check.get("qa_table") or logical_table,
+    )
+
+
+def _mapped_partition_columns(
+    check: dict, partition_col: str | None
+) -> tuple[str | None, str | None]:
+    if not partition_col:
+        return None, None
+    for mapping in check.get("column_mapping") or []:
+        qa_column = str(mapping.get("qa") or "")
+        if qa_column.casefold() == str(partition_col).casefold():
+            return str(mapping.get("prod") or partition_col), qa_column
+    return partition_col, partition_col
+
+
 def get_pymysql_conn(db_name: str, qa: bool = False):
     return pymysql.connect(
         host=DORIS_HOST,
@@ -92,25 +129,43 @@ def _check_with_compare_anchor(check: dict, verification: dict) -> dict:
     return resolved
 
 
+def _check_with_target_semantics(check: dict, verification: dict) -> dict:
+    resolved = dict(check)
+    semantics = (verification.get("target_semantics") or {}).get(
+        check.get("table")
+    ) or {}
+    if "column_mapping" not in resolved and semantics.get("column_mapping"):
+        resolved["column_mapping"] = list(semantics["column_mapping"])
+    return resolved
+
+
 def check_count(prod_conn, qa_conn, check: dict, precision: float) -> dict:
     """Compare COUNT(*) between production and QA."""
-    table = check["table"]
+    table, prod_table, qa_table = _check_tables(check)
     partition_col = check.get("partition_col")
     partition_value = check.get("partition_value")
+    prod_partition_col, qa_partition_col = _mapped_partition_columns(
+        check, partition_col
+    )
 
     cursor_prod = prod_conn.cursor()
     cursor_qa = qa_conn.cursor()
 
-    if partition_col and partition_value is not None:
-        sql = (
-            f"SELECT COUNT(*) FROM {table} "
-            f"WHERE {partition_col} = '{partition_value}'"
+    if prod_partition_col and partition_value is not None:
+        prod_sql = (
+            f"SELECT COUNT(*) FROM {prod_table} "
+            f"WHERE {prod_partition_col} = '{partition_value}'"
+        )
+        qa_sql = (
+            f"SELECT COUNT(*) FROM {qa_table} "
+            f"WHERE {qa_partition_col} = '{partition_value}'"
         )
     else:
-        sql = f"SELECT COUNT(*) FROM {table}"
-    cursor_prod.execute(sql)
+        prod_sql = f"SELECT COUNT(*) FROM {prod_table}"
+        qa_sql = f"SELECT COUNT(*) FROM {qa_table}"
+    cursor_prod.execute(prod_sql)
     prod_count = cursor_prod.fetchone()[0]
-    cursor_qa.execute(sql)
+    cursor_qa.execute(qa_sql)
     qa_count = cursor_qa.fetchone()[0]
 
     cursor_prod.close()
@@ -122,6 +177,8 @@ def check_count(prod_conn, qa_conn, check: dict, precision: float) -> dict:
 
     return {
         "table": table,
+        "prod_table": prod_table,
+        "qa_table": qa_table,
         "method": "count",
         "partition": partition_value,
         "prod_count": prod_count,
@@ -134,29 +191,63 @@ def check_row_compare(
     prod_conn, qa_conn, check: dict, sample: int, precision: float
 ) -> dict:
     """Compare rows and columns between production and QA."""
-    table = check["table"]
+    table, prod_table, qa_table = _check_tables(check)
     partition_col = check.get("partition_col")
     partition_value = check.get("partition_value")
+    prod_partition_col, qa_partition_col = _mapped_partition_columns(
+        check, partition_col
+    )
 
     cursor_prod = prod_conn.cursor()
     cursor_qa = qa_conn.cursor()
 
-    cursor_prod.execute(f"DESC {table}")
-    all_cols = [row[0] for row in cursor_prod.fetchall()]
-    if not all_cols:
-        cursor_prod.close()
-        cursor_qa.close()
-        return {
-            "table": table,
-            "method": "row_compare",
-            "error": "无列信息",
-            "match": False,
-            "compared_columns": [],
-            "ignored_columns": [],
+    column_mapping = check.get("column_mapping") or []
+    if column_mapping:
+        column_pairs = []
+        for mapping in column_mapping:
+            prod_column = str(mapping.get("prod") or "").strip()
+            qa_column = str(mapping.get("qa") or "").strip()
+            if not prod_column or not qa_column:
+                cursor_prod.close()
+                cursor_qa.close()
+                return {
+                    "table": table,
+                    "method": "row_compare",
+                    "error": "列映射不完整",
+                    "match": False,
+                    "compared_columns": [],
+                    "ignored_columns": [],
+                }
+            column_pairs.append((prod_column, qa_column))
+        excluded = {
+            column.casefold() for column in _exclude_columns_for_check(check)
         }
+        compared_pairs = [
+            pair for pair in column_pairs if pair[1].casefold() not in excluded
+        ]
+        ignored_cols = [
+            qa_column
+            for _, qa_column in column_pairs
+            if qa_column.casefold() in excluded
+        ]
+    else:
+        cursor_prod.execute(f"DESC {prod_table}")
+        all_cols = [row[0] for row in cursor_prod.fetchall()]
+        if not all_cols:
+            cursor_prod.close()
+            cursor_qa.close()
+            return {
+                "table": table,
+                "method": "row_compare",
+                "error": "无列信息",
+                "match": False,
+                "compared_columns": [],
+                "ignored_columns": [],
+            }
+        compared_cols, ignored_cols = _row_compare_columns(all_cols, check)
+        compared_pairs = [(column, column) for column in compared_cols]
 
-    compared_cols, ignored_cols = _row_compare_columns(all_cols, check)
-    if not compared_cols:
+    if not compared_pairs:
         cursor_prod.close()
         cursor_qa.close()
         return {
@@ -168,21 +259,31 @@ def check_row_compare(
             "ignored_columns": ignored_cols,
         }
 
-    col_list = ", ".join(compared_cols)
-    order_cols = ", ".join(compared_cols[: min(3, len(compared_cols))])
+    prod_columns = [pair[0] for pair in compared_pairs]
+    qa_columns = [pair[1] for pair in compared_pairs]
+    compared_cols = qa_columns
+    prod_col_list = ", ".join(prod_columns)
+    qa_col_list = ", ".join(qa_columns)
+    prod_order_cols = ", ".join(prod_columns)
+    qa_order_cols = ", ".join(qa_columns)
     limit_sql = f"LIMIT {sample}" if sample else ""
-    where_sql = (
-        f"WHERE {partition_col} = '{partition_value}' "
-        if partition_col and partition_value is not None
+    prod_where_sql = (
+        f"WHERE {prod_partition_col} = '{partition_value}' "
+        if prod_partition_col and partition_value is not None
+        else ""
+    )
+    qa_where_sql = (
+        f"WHERE {qa_partition_col} = '{partition_value}' "
+        if qa_partition_col and partition_value is not None
         else ""
     )
     prod_sql = (
-        f"SELECT {col_list} FROM {table} "
-        f"{where_sql}ORDER BY {order_cols} {limit_sql}"
+        f"SELECT {prod_col_list} FROM {prod_table} "
+        f"{prod_where_sql}ORDER BY {prod_order_cols} {limit_sql}"
     )
     qa_sql = (
-        f"SELECT {col_list} FROM {table} "
-        f"{where_sql}ORDER BY {order_cols} {limit_sql}"
+        f"SELECT {qa_col_list} FROM {qa_table} "
+        f"{qa_where_sql}ORDER BY {qa_order_cols} {limit_sql}"
     )
 
     cursor_prod.execute(prod_sql)
@@ -242,6 +343,8 @@ def check_row_compare(
 
     return {
         "table": table,
+        "prod_table": prod_table,
+        "qa_table": qa_table,
         "method": "row_compare",
         "partition": partition_value,
         "prod_rows": len(prod_rows),
@@ -253,6 +356,110 @@ def check_row_compare(
         "ignored_columns": ignored_cols,
         "detail": mismatches[:20] if mismatches else [],
     }
+
+
+def _terminal_result(
+    status: str,
+    warnings: list[dict],
+    comparison: dict,
+    reason: str | None = None,
+) -> dict:
+    comparison = dict(comparison)
+    if comparison["required_checks"]:
+        comparison["complete"] = False
+    result = {
+        "verification_status": status,
+        "warnings": warnings,
+        "comparison": comparison,
+        "results": [],
+    }
+    if reason:
+        result["reason"] = reason
+    return result
+
+
+def _check_id(check: dict) -> str:
+    return f"{check.get('table')}:{check.get('method')}"
+
+
+def _comparison_contract(
+    checks: list[dict],
+    selected_checks: list[dict],
+    *,
+    method: str,
+    sample: int,
+    precision: float,
+) -> dict:
+    sampled_row_check = bool(sample) and any(
+        check.get("method") == "row_compare" for check in selected_checks
+    )
+    return {
+        "method": method,
+        "sample": sample,
+        "precision": precision,
+        "required_checks": [_check_id(check) for check in checks],
+        "executed_checks": [],
+        "complete": len(selected_checks) == len(checks)
+        and not sampled_row_check,
+    }
+
+
+def _check_semantic_modes(
+    checks: list[dict], verification: dict
+) -> tuple[dict[str, str], str | None]:
+    target_semantics = verification.get("target_semantics")
+    if not isinstance(target_semantics, dict):
+        return {}, "verification.target_semantics is required"
+    modes = {}
+    for check in checks:
+        table = check.get("table")
+        semantics = target_semantics.get(table)
+        if not isinstance(semantics, dict):
+            return {}, f"verification check has no target semantics: {table}"
+        mode = semantics.get("resolved_mode")
+        if mode not in {"equivalent", "unknown"}:
+            return {}, (
+                f"verification check for {table} has invalid resolved mode: "
+                f"{mode}"
+            )
+        modes[table] = mode
+    return modes, None
+
+
+def _ensure_unknown_warnings(
+    warnings: list[dict], modes: dict[str, str]
+) -> list[dict]:
+    resolved = list(warnings)
+    warned_tables = {
+        warning.get("table")
+        for warning in resolved
+        if isinstance(warning, dict)
+    }
+    for table, mode in sorted(modes.items()):
+        if mode == "unknown" and table not in warned_tables:
+            resolved.append(
+                {
+                    "type": "unknown_table_semantics",
+                    "table": table,
+                    "message": (
+                        "Only observational anchors are compared; passing "
+                        "checks does not prove this table is equivalent."
+                    ),
+                }
+            )
+    return resolved
+
+
+def _print_warnings(warnings: list[dict]) -> None:
+    if not warnings:
+        return
+    print("Warnings:")
+    for warning in warnings:
+        table = warning.get("table")
+        if table is None:
+            table = ", ".join(warning.get("tables") or []) or "-"
+        message = warning.get("message") or warning.get("type") or "warning"
+        print(f"  - {table}: {message}")
 
 
 def run_checks(
@@ -267,33 +474,45 @@ def run_checks(
     qa_db = plan["qa_db"]
     verification = plan.get("verification", {})
     checks = verification.get("checks", [])
+    warnings = list(verification.get("warnings") or [])
+    selected_checks = [
+        check for check in checks if method in ("all", check["method"])
+    ]
+    comparison = _comparison_contract(
+        checks,
+        selected_checks,
+        method=method,
+        sample=sample,
+        precision=precision,
+    )
     if verification.get("schema_anchor_status") == "blocked":
         reason = verification.get("schema_anchor_reason") or (
             "verification plan has blocked schema anchor changes"
         )
         print(f"表定义锚点校验被阻断: {reason}")
-        return {
-            "all_pass": False,
-            "status": "schema_anchor_blocked",
-            "reason": reason,
-            "results": [],
-        }
+        return _terminal_result("blocked", warnings, comparison, reason)
     if verification.get("data_anchor_status") == "blocked":
         reason = verification.get("data_anchor_reason") or (
             "verification plan has blocked data anchor changes"
         )
         print(f"数据锚点校验被阻断: {reason}")
-        return {
-            "all_pass": False,
-            "status": "data_anchor_blocked",
-            "reason": reason,
-            "results": [],
-        }
+        return _terminal_result("blocked", warnings, comparison, reason)
+
+    semantic_modes, semantic_error = _check_semantic_modes(
+        checks, verification
+    )
+    if semantic_error:
+        print(f"语义校验计划被阻断: {semantic_error}")
+        return _terminal_result(
+            "blocked", warnings, comparison, semantic_error
+        )
+    warnings = _ensure_unknown_warnings(warnings, semantic_modes)
 
     filtered = [
-        _check_with_compare_anchor(check, verification)
-        for check in checks
-        if method in ("all", check["method"])
+        _check_with_compare_anchor(
+            _check_with_target_semantics(check, verification), verification
+        )
+        for check in selected_checks
     ]
     if not filtered:
         if not checks and verification.get("data_anchor_status") == "none":
@@ -301,14 +520,16 @@ def run_checks(
                 "verification plan has affected work but no data anchor checks"
             )
             print(f"没有可校验的数据锚点: {reason}")
-            return {
-                "all_pass": False,
-                "status": "no_data_anchor",
-                "reason": reason,
-                "results": [],
-            }
+            return _terminal_result(
+                "inconclusive", warnings, comparison, reason
+            )
         print(f"没有匹配的校验项 (method={method})")
-        return {"all_pass": True, "results": []}
+        return _terminal_result(
+            "inconclusive",
+            warnings,
+            comparison,
+            f"no executable verification checks for method={method}",
+        )
 
     print(f"{'=' * 60}")
     print(f"验证库: {qa_db}")
@@ -321,8 +542,6 @@ def run_checks(
     qa_conn = get_pymysql_conn(qa_db, qa=True)
 
     results = []
-    all_pass = True
-
     try:
         for check in filtered:
             table = check["table"]
@@ -347,25 +566,146 @@ def run_checks(
             else:
                 continue
 
+            result["semantic_mode"] = semantic_modes[table]
             results.append(result)
-            if not result["match"]:
-                all_pass = False
     finally:
         prod_conn.close()
         qa_conn.close()
+
+    equivalent_failed = any(
+        not result["match"] and result["semantic_mode"] == "equivalent"
+        for result in results
+    )
+    observational_failed = any(
+        not result["match"] and result["semantic_mode"] == "unknown"
+        for result in results
+    )
+    unknown_present = any(
+        result["semantic_mode"] == "unknown" for result in results
+    )
+    comparison["executed_checks"] = [
+        f"{result['table']}:{result['method']}" for result in results
+    ]
+    comparison["complete"] = comparison["complete"] and len(results) == len(
+        selected_checks
+    )
+    reason = None
+    if equivalent_failed:
+        verification_status = "failed"
+    elif observational_failed:
+        verification_status = "inconclusive"
+    elif not comparison["complete"]:
+        verification_status = "inconclusive"
+        reason = (
+            "comparison did not execute every required check without sampling"
+        )
+    elif unknown_present or warnings:
+        verification_status = "passed_with_warnings"
+    else:
+        verification_status = "passed"
 
     total = len(results)
     passed = sum(1 for result in results if result["match"])
     failed = total - passed
 
     print(f"\n{'=' * 60}")
-    print(f"{'全部通过!' if all_pass else '存在差异!'}")
+    print(f"验证状态: {verification_status}")
     print(f"  校验项: {total}  通过: {passed}  失败: {failed}")
-    return {"all_pass": all_pass, "results": results}
+    final_result = {
+        "verification_status": verification_status,
+        "warnings": warnings,
+        "comparison": comparison,
+        "results": results,
+    }
+    if reason:
+        final_result["reason"] = reason
+    return final_result
+
+
+def require_matching_shadow_result(
+    persisted_plan: dict, shadow_result_path: Path
+) -> dict:
+    """Require completed QA execution from the exact persisted plan."""
+    shadow_result_path = Path(shadow_result_path)
+    shadow_result = read_json_object(shadow_result_path, "shadow-run result")
+    require_format_version(shadow_result, "shadow-run result")
+    if shadow_result.get("mode") != "execute":
+        raise ArtifactFormatError(
+            "shadow-run result must come from execute mode; run shadow-run"
+        )
+    if shadow_result.get("status") != "completed":
+        raise ArtifactFormatError(
+            "shadow-run result must have status=completed; run shadow-run"
+        )
+    execution_id = shadow_result.get("execution_id")
+    if not isinstance(execution_id, str) or not execution_id.strip():
+        raise ArtifactFormatError(
+            "shadow-run result execution_id is required; run shadow-run"
+        )
+
+    snapshot = persisted_plan.get("analysis_snapshot") or {}
+    expected_workspace = snapshot.get("workspace_fingerprint")
+    if not isinstance(
+        expected_workspace, str
+    ) or not expected_workspace.startswith("sha256:"):
+        raise ArtifactFormatError(
+            "verification plan analysis snapshot fingerprint is invalid; "
+            "run analyze again"
+        )
+    if shadow_result.get("workspace_fingerprint") != expected_workspace:
+        raise ArtifactFormatError(
+            "shadow-run workspace fingerprint does not match the current "
+            "plan; run analyze and shadow-run again"
+        )
+    expected_plan = persisted_plan.get("plan_fingerprint")
+    if not isinstance(expected_plan, str) or not expected_plan.startswith(
+        "sha256:"
+    ):
+        raise ArtifactFormatError(
+            "verification plan fingerprint is invalid; run analyze again"
+        )
+    if shadow_result.get("plan_fingerprint") != expected_plan:
+        raise ArtifactFormatError(
+            "shadow-run plan fingerprint does not match the current plan; "
+            "run shadow-run again"
+        )
+    return shadow_result
+
+
+def require_qa_execution_marker(plan: dict, shadow_result: dict) -> None:
+    """Verify that shared QA state belongs to this exact shadow execution."""
+    qa_conn = None
+    cursor = None
+    try:
+        qa_conn = get_pymysql_conn(plan["qa_db"], qa=True)
+        cursor = qa_conn.cursor()
+        cursor.execute(execution_marker_select_sql())
+        marker = cursor.fetchone()
+    except Exception as exc:
+        raise ArtifactFormatError(
+            f"cannot verify QA execution marker: {exc}; run shadow-run again"
+        ) from exc
+    finally:
+        if cursor is not None:
+            cursor.close()
+        if qa_conn is not None:
+            qa_conn.close()
+    expected = (
+        shadow_result.get("execution_id"),
+        shadow_result.get("plan_fingerprint"),
+        shadow_result.get("workspace_fingerprint"),
+    )
+    if not marker or tuple(marker[:3]) != expected:
+        raise ArtifactFormatError(
+            "QA execution marker does not match shadow_run_result; another "
+            "run may have replaced the shared QA database; run shadow-run "
+            "again"
+        )
 
 
 def compare_shadow_results(
     plan_path: Path,
+    shadow_result_path: Path,
     output_path: Path,
     *,
     method: str = "all",
@@ -374,25 +714,47 @@ def compare_shadow_results(
 ) -> dict:
     """Compare production and QA results for a validation plan."""
     plan_path = Path(plan_path)
+    shadow_result_path = Path(shadow_result_path)
     output_path = Path(output_path)
-    plan = load_verification_plan(plan_path)
-    result = run_checks(
-        plan,
-        method=method,
-        sample=sample,
-        precision=precision,
+    bundle = require_fresh_plan_bundle(plan_path)
+    plan = bundle.plan
+    shadow_result = require_matching_shadow_result(plan, shadow_result_path)
+    with project_execution_lock(plan_path):
+        require_qa_execution_marker(plan, shadow_result)
+        result = run_checks(
+            plan,
+            method=method,
+            sample=sample,
+            precision=precision,
+        )
+    _print_warnings(result.get("warnings") or [])
+    result.update(
+        {
+            "format_version": FORMAT_VERSION,
+            "workspace_fingerprint": shadow_result["workspace_fingerprint"],
+            "plan_fingerprint": shadow_result["plan_fingerprint"],
+            "shadow_execution_id": shadow_result["execution_id"],
+            "shadow_result_fingerprint": sha256_json(shadow_result),
+            "compared_at": datetime.now(timezone.utc)
+            .astimezone()
+            .isoformat(timespec="seconds"),
+        }
     )
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(
-        json.dumps(result, ensure_ascii=False, indent=2),
-        encoding=TEXT_ENCODING,
-    )
+    atomic_write_json(output_path, result)
     return result
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="对比 shadow-run 结果")
     parser.add_argument("--plan", required=True, help="验证计划 JSON 路径")
+    parser.add_argument(
+        "--shadow-result",
+        default=None,
+        help=(
+            "shadow-run 结果 JSON 路径，默认读取 plan 同目录的 "
+            "shadow_run_result.json"
+        ),
+    )
     parser.add_argument(
         "--method", default="all", choices=["count", "row_compare", "all"]
     )
@@ -419,14 +781,34 @@ def main(argv: list[str] | None = None) -> int:
         if args.output
         else plan_path.parent / "compare_result.json"
     )
-    result = compare_shadow_results(
-        plan_path,
-        output_path,
-        method=args.method,
-        sample=args.sample,
-        precision=args.precision,
+    shadow_result_path = (
+        Path(args.shadow_result)
+        if args.shadow_result
+        else plan_path.parent / "shadow_run_result.json"
     )
-    return 0 if result["all_pass"] else 1
+    try:
+        persisted_plan = load_persisted_verification_plan(plan_path)
+        require_fresh_plan(
+            plan_path,
+            root=PROJECT_ROOT,
+            project=persisted_plan["project"],
+        )
+        result = compare_shadow_results(
+            plan_path,
+            shadow_result_path,
+            output_path,
+            method=args.method,
+            sample=args.sample,
+            precision=args.precision,
+        )
+    except ArtifactFormatError as exc:
+        raise SystemExit(str(exc)) from None
+    status = result["verification_status"]
+    if status in {"passed", "passed_with_warnings"}:
+        return 0
+    if status == "inconclusive":
+        return 2
+    return 1
 
 
 if __name__ == "__main__":

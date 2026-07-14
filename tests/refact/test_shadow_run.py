@@ -3,14 +3,24 @@ from __future__ import annotations
 import json
 import threading
 import time
+from copy import deepcopy
 from datetime import datetime
 
+import pytest
 import sqlglot
 from sqlglot import exp
 from sqlglot.errors import ErrorLevel
 
+import dw_refactor_agent.refactor.shadow_run as shadow_run_module
+import dw_refactor_agent.refactor.workspace_snapshot as workspace_snapshot_module
 from dw_refactor_agent.lineage.job_dag import JobDAG
-from dw_refactor_agent.refactor.plan_artifact import write_verification_plan
+from dw_refactor_agent.refactor.artifact_contract import ArtifactFormatError
+from dw_refactor_agent.refactor.execution_provenance import _lock_path
+from dw_refactor_agent.refactor.plan_artifact import (
+    analysis_input_fingerprints,
+    write_verification_plan,
+)
+from dw_refactor_agent.refactor.session import write_manifest
 from dw_refactor_agent.refactor.shadow_rewrite import (
     RewriteContext,
     rewrite_shadow_sql,
@@ -23,8 +33,114 @@ from dw_refactor_agent.refactor.shadow_run import (
     main,
     run_shadow_plan,
 )
+from dw_refactor_agent.refactor.workspace_snapshot import workspace_fingerprint
 
 TIMING_KEYS = {"started_at", "finished_at", "duration_ms"}
+
+
+def test_project_execution_lock_is_shared_across_worktrees(tmp_path):
+    relative = (
+        "warehouses/shop/artifacts/refactor_runs/run/verification/plan.json"
+    )
+    first = _lock_path(tmp_path / "worktree-one" / relative)
+    second = _lock_path(tmp_path / "worktree-two" / relative)
+
+    assert first == second
+    assert first.name == "shop.shadow_execution.lock"
+
+
+def test_run_shadow_plan_core_rejects_stale_bundle_before_loading_plan(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(
+        shadow_run_module,
+        "require_fresh_plan_bundle",
+        lambda plan_path: (_ for _ in ()).throw(
+            ArtifactFormatError("core stale bundle")
+        ),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        shadow_run_module,
+        "load_verification_plan",
+        lambda plan_path: (_ for _ in ()).throw(
+            AssertionError("stale bundle must stop before plan execution")
+        ),
+        raising=False,
+    )
+
+    with pytest.raises(ArtifactFormatError, match="core stale bundle"):
+        run_shadow_plan(
+            tmp_path / "verification/plan.json",
+            tmp_path / "verification/shadow_run_result.json",
+            provenance={
+                "workspace_fingerprint": "sha256:workspace",
+                "plan_fingerprint": "sha256:plan",
+            },
+        )
+
+
+def test_run_shadow_plan_executes_from_validated_bundle_root(
+    tmp_path, monkeypatch
+):
+    bundle_root = tmp_path / "bundle-a"
+    unrelated_root = tmp_path / "workspace-b"
+    plan_path = bundle_root / "verification" / "plan.json"
+    output_path = bundle_root / "verification" / "shadow_run_result.json"
+    _write_shadow_cli_plan(plan_path)
+    observed = {}
+
+    def fake_execute(plan, *, root, **kwargs):
+        observed["root"] = root
+        return {"status": "dry_run", "mode": "dry_run", "phases": []}
+
+    monkeypatch.setattr(
+        shadow_run_module, "_project_root", lambda: unrelated_root
+    )
+    monkeypatch.setattr(shadow_run_module, "execute_shadow_plan", fake_execute)
+
+    result = run_shadow_plan(
+        plan_path,
+        output_path,
+        provenance=_provenance(plan_path),
+        dry_run=True,
+    )
+
+    assert result["status"] == "dry_run"
+    assert observed["root"] == bundle_root.resolve()
+
+
+def test_run_shadow_plan_rejects_different_loaded_tool_runtime(
+    tmp_path, monkeypatch
+):
+    plan_path = tmp_path / "verification" / "plan.json"
+    output_path = tmp_path / "verification" / "shadow_run_result.json"
+    _write_shadow_cli_plan(plan_path)
+    monkeypatch.setattr(
+        workspace_snapshot_module,
+        "runtime_tool_file_entries",
+        lambda: [
+            {
+                "path": "src/dw_refactor_agent/refactor/run.py",
+                "content_sha256": "sha256:different-runtime",
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        shadow_run_module,
+        "execute_shadow_plan",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("runtime mismatch must block execution")
+        ),
+    )
+
+    with pytest.raises(ArtifactFormatError, match="stale_plan.*analyze"):
+        run_shadow_plan(
+            plan_path,
+            output_path,
+            provenance=_provenance(plan_path),
+            dry_run=True,
+        )
 
 
 def _without_timing(result: dict) -> dict:
@@ -79,17 +195,104 @@ def _write_json(path, data):
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2))
 
 
-def _write_shadow_project(tmp_path, project: str) -> None:
+def _provenance(plan_path):
+    persisted_plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    return {
+        "workspace_fingerprint": persisted_plan["analysis_snapshot"][
+            "workspace_fingerprint"
+        ],
+        "plan_fingerprint": persisted_plan["plan_fingerprint"],
+    }
+
+
+def _analysis_snapshot():
+    return {
+        "partition": None,
+        "workspace_fingerprint": "sha256:workspace",
+    }
+
+
+def _write_shadow_cli_plan(plan_path):
+    return _write_fresh_plan_bundle(
+        plan_path,
+        {
+            "project": "shop",
+            "project_db": "shop_dm",
+            "qa_db": "shop_dm_qa",
+            "baseline_ddl": {},
+            "ddl_changes": [],
+            "jobs_to_run": [],
+            "verification": {"checks": []},
+            "analysis_snapshot": _analysis_snapshot(),
+        },
+    )
+
+
+def _write_shadow_project(
+    tmp_path, project: str, *, with_default_slice: bool = False
+) -> None:
     project_dir = tmp_path / "warehouses" / project
     project_dir.mkdir(parents=True, exist_ok=True)
+    execution = ""
+    if with_default_slice:
+        execution = """execution:
+  default_slice:
+    param: etl_date
+    column: stat_date
+    period: D
+"""
     (project_dir / "warehouse.yaml").write_text(
         f"""name: {project}
 catalog: internal
 database: shadow_dm
 qa_database: shadow_dm_qa
+{execution}
 """,
         encoding="utf-8",
     )
+
+
+def _write_fresh_plan_bundle(plan_path, plan):
+    root = plan_path.parent.parent
+    warehouse_path = root / "warehouses" / plan["project"] / "warehouse.yaml"
+    if not warehouse_path.is_file():
+        _write_shadow_project(root, plan["project"], with_default_slice=True)
+
+    manifest = {
+        "format_version": 1,
+        "run_id": "test-run",
+        "project": plan["project"],
+        "root": str(root),
+        "artifacts": {
+            "baseline_lineage": "baseline/lineage.json",
+            "current_lineage": "current/lineage.json",
+            "change_analysis": "analysis/change.json",
+            "verification_plan": "verification/plan.json",
+        },
+        "verification_intent": {"semantic_modes": {}},
+    }
+    write_manifest(root / "manifest.json", manifest)
+    inputs = {
+        "baseline_lineage": {"tables": [], "edges": []},
+        "current_lineage": {"tables": [], "edges": []},
+        "change_analysis": {"changed_files": []},
+    }
+    for artifact_name, value in inputs.items():
+        _write_json(root / manifest["artifacts"][artifact_name], value)
+
+    prepared = deepcopy(plan)
+    snapshot = deepcopy(prepared.get("analysis_snapshot") or {})
+    snapshot["workspace_fingerprint"] = workspace_fingerprint(
+        root, plan["project"]
+    )
+    snapshot["analysis_inputs"] = analysis_input_fingerprints(
+        manifest=manifest,
+        baseline_lineage=inputs["baseline_lineage"],
+        current_lineage=inputs["current_lineage"],
+        change_analysis=inputs["change_analysis"],
+    )
+    prepared["analysis_snapshot"] = snapshot
+    return write_verification_plan(plan_path, prepared)
 
 
 def _write_shadow_job(
@@ -407,7 +610,9 @@ def test_ddl_change_statements_split_semicolon_separated_statements():
     ]
 
 
-def test_execute_shadow_plan_splits_rename_columns_and_waits(monkeypatch):
+def test_execute_shadow_plan_splits_rename_columns_and_waits(
+    tmp_path, monkeypatch
+):
     plan = {
         "project": "shop",
         "project_db": "shop_dm",
@@ -439,7 +644,7 @@ def test_execute_shadow_plan_splits_rename_columns_and_waits(monkeypatch):
         "dw_refactor_agent.refactor.shadow_run.run_sql", fake_run_sql
     )
 
-    result = execute_shadow_plan(plan)
+    result = execute_shadow_plan(plan, root=tmp_path)
 
     alter_calls = [sql for sql, _, _ in calls if sql.startswith("ALTER TABLE")]
     show_calls = [
@@ -497,7 +702,9 @@ def test_execute_shadow_plan_splits_rename_columns_and_waits(monkeypatch):
     ]
 
 
-def test_execute_shadow_plan_runs_case_only_rename_steps_in_order(monkeypatch):
+def test_execute_shadow_plan_runs_case_only_rename_steps_in_order(
+    tmp_path, monkeypatch
+):
     plan = {
         "project": "shop",
         "project_db": "shop_dm",
@@ -541,7 +748,7 @@ def test_execute_shadow_plan_runs_case_only_rename_steps_in_order(monkeypatch):
         "dw_refactor_agent.refactor.shadow_run.run_sql", fake_run_sql
     )
 
-    result = execute_shadow_plan(plan)
+    result = execute_shadow_plan(plan, root=tmp_path)
 
     alter_calls = [sql for sql, _, _ in calls if sql.startswith("ALTER TABLE")]
     show_calls = [
@@ -599,7 +806,9 @@ def test_execute_shadow_plan_runs_case_only_rename_steps_in_order(monkeypatch):
     ]
 
 
-def test_execute_shadow_plan_logs_table_rename_display(monkeypatch, capsys):
+def test_execute_shadow_plan_logs_table_rename_display(
+    tmp_path, monkeypatch, capsys
+):
     plan = {
         "project": "shop",
         "project_db": "shop_dm",
@@ -627,7 +836,7 @@ def test_execute_shadow_plan_logs_table_rename_display(monkeypatch, capsys):
         lambda sql, db="", qa=False: "",
     )
 
-    result = execute_shadow_plan(plan)
+    result = execute_shadow_plan(plan, root=tmp_path)
 
     output = capsys.readouterr().out
     assert result["status"] == "completed"
@@ -678,7 +887,7 @@ def test_wait_for_table_alter_jobs_polls_until_finished(monkeypatch):
     )
 
 
-def test_dry_run_omits_where_for_unpartitioned_checks(capsys):
+def test_dry_run_omits_where_for_unpartitioned_checks(tmp_path, capsys):
     plan = {
         "project": "shop",
         "project_db": "shop_dm",
@@ -698,7 +907,7 @@ def test_dry_run_omits_where_for_unpartitioned_checks(capsys):
         },
     }
 
-    execute_shadow_plan(plan, dry_run=True)
+    execute_shadow_plan(plan, root=tmp_path, dry_run=True)
 
     output = capsys.readouterr().out
     assert "WHERE * = '*'" not in output
@@ -706,7 +915,7 @@ def test_dry_run_omits_where_for_unpartitioned_checks(capsys):
     assert "[row_compare] shop_dm_qa.ads_sales_dashboard" in output
 
 
-def test_dry_run_prints_anchor_tables_from_verification(capsys):
+def test_dry_run_prints_anchor_tables_from_verification(tmp_path, capsys):
     plan = {
         "project": "shop",
         "project_db": "shop_dm",
@@ -720,14 +929,14 @@ def test_dry_run_prints_anchor_tables_from_verification(capsys):
         },
     }
 
-    execute_shadow_plan(plan, dry_run=True)
+    execute_shadow_plan(plan, root=tmp_path, dry_run=True)
 
     output = capsys.readouterr().out
     assert "锚点: ['ads_store_performance']" in output
     assert "无锚点表且无校验配置" not in output
 
 
-def test_dry_run_prints_qa_ddl_changes(capsys):
+def test_dry_run_prints_qa_ddl_changes(tmp_path, capsys):
     plan = {
         "project": "shop",
         "project_db": "shop_dm",
@@ -748,7 +957,7 @@ def test_dry_run_prints_qa_ddl_changes(capsys):
         "verification": {"checks": []},
     }
 
-    execute_shadow_plan(plan, dry_run=True)
+    execute_shadow_plan(plan, root=tmp_path, dry_run=True)
 
     output = capsys.readouterr().out
     assert "[ALTER] shop_dm_qa.dwd_order_detail" in output
@@ -774,7 +983,7 @@ def test_run_shadow_plan_executes_self_contained(tmp_path, monkeypatch):
     )
     plan_path = tmp_path / "verification" / "plan.json"
     output_path = tmp_path / "verification" / "shadow_run_result.json"
-    write_verification_plan(
+    _write_fresh_plan_bundle(
         plan_path,
         {
             "project": "shop",
@@ -792,12 +1001,21 @@ def test_run_shadow_plan_executes_self_contained(tmp_path, monkeypatch):
                 }
             ],
             "verification": {"checks": []},
+            "analysis_snapshot": _analysis_snapshot(),
         },
     )
     calls = []
 
     monkeypatch.setattr(
         "dw_refactor_agent.refactor.shadow_run._project_root", lambda: tmp_path
+    )
+    monkeypatch.setattr(
+        shadow_run_module,
+        "load_verification_plan",
+        lambda plan_path: (_ for _ in ()).throw(
+            AssertionError("core must execute the validated bundle snapshot")
+        ),
+        raising=False,
     )
     monkeypatch.setattr(
         "dw_refactor_agent.refactor.shadow_run.run_sql",
@@ -808,10 +1026,24 @@ def test_run_shadow_plan_executes_self_contained(tmp_path, monkeypatch):
         lambda sql, db="", qa=False: calls.append(("text", sql, db, qa)),
     )
 
-    result = run_shadow_plan(plan_path, output_path)
+    result = run_shadow_plan(
+        plan_path,
+        output_path,
+        provenance=_provenance(plan_path),
+    )
 
+    assert result["format_version"] == 1
     assert result["status"] == "completed"
     assert result["mode"] == "execute"
+    assert isinstance(result["execution_id"], str)
+    assert (
+        result["workspace_fingerprint"]
+        == _provenance(plan_path)["workspace_fingerprint"]
+    )
+    assert (
+        result["plan_fingerprint"]
+        == _provenance(plan_path)["plan_fingerprint"]
+    )
     assert result["job_count"] == 1
     assert result["summary"]["job_count"] == 1
     assert result["summary"]["failed_job_count"] == 0
@@ -856,7 +1088,7 @@ def test_run_shadow_plan_persists_failed_job_result(tmp_path, monkeypatch):
     )
     plan_path = tmp_path / "verification" / "plan.json"
     output_path = tmp_path / "verification" / "shadow_run_result.json"
-    write_verification_plan(
+    _write_fresh_plan_bundle(
         plan_path,
         {
             "project": "shop",
@@ -876,6 +1108,7 @@ def test_run_shadow_plan_persists_failed_job_result(tmp_path, monkeypatch):
             "verification": {
                 "checks": [{"table": "ads_sales_dashboard", "method": "count"}]
             },
+            "analysis_snapshot": _analysis_snapshot(),
         },
     )
 
@@ -893,7 +1126,11 @@ def test_run_shadow_plan_persists_failed_job_result(tmp_path, monkeypatch):
         ),
     )
 
-    result = run_shadow_plan(plan_path, output_path)
+    result = run_shadow_plan(
+        plan_path,
+        output_path,
+        provenance=_provenance(plan_path),
+    )
 
     assert result["status"] == "failed"
     assert result["mode"] == "execute"
@@ -933,7 +1170,7 @@ def test_run_shadow_plan_timing_detail_records_invocation_timings(
     )
     plan_path = tmp_path / "verification" / "plan.json"
     output_path = tmp_path / "verification" / "shadow_run_result.json"
-    write_verification_plan(
+    _write_fresh_plan_bundle(
         plan_path,
         {
             "project": "shop",
@@ -951,6 +1188,7 @@ def test_run_shadow_plan_timing_detail_records_invocation_timings(
                 }
             ],
             "verification": {"checks": []},
+            "analysis_snapshot": _analysis_snapshot(),
         },
     )
 
@@ -966,7 +1204,12 @@ def test_run_shadow_plan_timing_detail_records_invocation_timings(
         lambda sql, db="", qa=False: "",
     )
 
-    result = run_shadow_plan(plan_path, output_path, timing_detail=True)
+    result = run_shadow_plan(
+        plan_path,
+        output_path,
+        provenance=_provenance(plan_path),
+        timing_detail=True,
+    )
 
     phase_by_name = {phase["name"]: phase for phase in result["phases"]}
     job_result = phase_by_name["run_jobs"]["jobs"][0]
@@ -1012,7 +1255,7 @@ def test_execute_shadow_plan_fails_when_job_file_is_missing(
         lambda sql, db="", qa=False: "",
     )
 
-    result = execute_shadow_plan(plan)
+    result = execute_shadow_plan(plan, root=tmp_path)
 
     assert result["status"] == "failed"
     assert result["summary"]["failed_job_count"] == 1
@@ -1030,11 +1273,21 @@ def test_shadow_run_cli_returns_nonzero_for_failed_result(
 ):
     plan_path = tmp_path / "verification" / "plan.json"
     output_path = tmp_path / "verification" / "shadow_run_result.json"
-    _write_json(plan_path, {"project": "shop"})
+    persisted_plan = _write_shadow_cli_plan(plan_path)
+    monkeypatch.setattr(
+        "dw_refactor_agent.refactor.shadow_run.require_fresh_plan",
+        lambda *args, **kwargs: persisted_plan,
+    )
 
     monkeypatch.setattr(
         "dw_refactor_agent.refactor.shadow_run.run_shadow_plan",
-        lambda plan, output, dry_run=False, timing_detail=False, parallel=1, batch_size=1: {
+        lambda plan,
+        output,
+        provenance,
+        dry_run=False,
+        timing_detail=False,
+        parallel=1,
+        batch_size=1: {
             "status": "failed",
             "timing_detail": timing_detail,
             "parallel": parallel,
@@ -1048,19 +1301,32 @@ def test_shadow_run_cli_returns_nonzero_for_failed_result(
 def test_shadow_run_cli_passes_timing_detail_flag(tmp_path, monkeypatch):
     plan_path = tmp_path / "verification" / "plan.json"
     output_path = tmp_path / "verification" / "shadow_run_result.json"
-    _write_json(plan_path, {"project": "shop"})
+    persisted_plan = _write_shadow_cli_plan(plan_path)
     calls = []
+    monkeypatch.setattr(
+        "dw_refactor_agent.refactor.shadow_run.require_fresh_plan",
+        lambda *args, **kwargs: persisted_plan,
+    )
 
     def fake_run_shadow_plan(
         plan,
         output,
+        provenance,
         dry_run=False,
         timing_detail=False,
         parallel=1,
         batch_size=1,
     ):
         calls.append(
-            (plan, output, dry_run, timing_detail, parallel, batch_size)
+            (
+                plan,
+                output,
+                provenance,
+                dry_run,
+                timing_detail,
+                parallel,
+                batch_size,
+            )
         )
         return {"status": "completed"}
 
@@ -1082,7 +1348,143 @@ def test_shadow_run_cli_passes_timing_detail_flag(tmp_path, monkeypatch):
         == 0
     )
 
-    assert calls == [(plan_path, output_path, False, True, 1, 1)]
+    assert calls == [
+        (
+            plan_path,
+            output_path,
+            {
+                "workspace_fingerprint": persisted_plan["analysis_snapshot"][
+                    "workspace_fingerprint"
+                ],
+                "plan_fingerprint": persisted_plan["plan_fingerprint"],
+            },
+            False,
+            True,
+            1,
+            1,
+        )
+    ]
+
+
+def test_run_shadow_plan_rejects_provenance_not_from_plan(
+    tmp_path, monkeypatch
+):
+    plan_path = tmp_path / "verification" / "plan.json"
+    output_path = tmp_path / "verification" / "shadow_run_result.json"
+    _write_shadow_cli_plan(plan_path)
+    monkeypatch.setattr(
+        "dw_refactor_agent.refactor.shadow_run.execute_shadow_plan",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("mismatched provenance must block execution")
+        ),
+    )
+
+    with pytest.raises(ArtifactFormatError, match="does not match"):
+        run_shadow_plan(
+            plan_path,
+            output_path,
+            provenance={
+                "workspace_fingerprint": "sha256:other-workspace",
+                "plan_fingerprint": "sha256:other-plan",
+            },
+        )
+
+
+def test_shadow_run_publishes_running_attempt_before_execution(
+    tmp_path, monkeypatch
+):
+    plan_path = tmp_path / "verification" / "plan.json"
+    output_path = tmp_path / "verification" / "shadow_run_result.json"
+    _write_shadow_cli_plan(plan_path)
+    observed = {}
+
+    def fake_execute(*args, **kwargs):
+        running = json.loads(output_path.read_text(encoding="utf-8"))
+        observed.update(running)
+        return {
+            "status": "completed",
+            "mode": "execute",
+            "phases": [],
+        }
+
+    marker_sql = []
+    monkeypatch.setattr(
+        "dw_refactor_agent.refactor.shadow_run.execute_shadow_plan",
+        fake_execute,
+    )
+    monkeypatch.setattr(
+        "dw_refactor_agent.refactor.shadow_run.run_sql_text",
+        lambda sql, db="", qa=False: marker_sql.append(sql),
+    )
+
+    result = run_shadow_plan(
+        plan_path,
+        output_path,
+        provenance=_provenance(plan_path),
+    )
+
+    assert observed["status"] == "running"
+    assert observed["execution_id"] == result["execution_id"]
+    assert result["status"] == "completed"
+    assert result["phases"][-1]["name"] == "publish_execution_marker"
+    assert result["execution_id"] in marker_sql[0]
+    assert "CREATE TABLE IF NOT EXISTS" in marker_sql[0]
+    assert "shop_dm_qa.dw_refactor_execution_marker" in marker_sql[0]
+    assert "__dw_refactor_execution_marker" not in marker_sql[0]
+
+
+def test_shadow_run_fails_when_execution_marker_cannot_be_published(
+    tmp_path, monkeypatch
+):
+    plan_path = tmp_path / "verification" / "plan.json"
+    output_path = tmp_path / "verification" / "shadow_run_result.json"
+    _write_shadow_cli_plan(plan_path)
+    monkeypatch.setattr(
+        "dw_refactor_agent.refactor.shadow_run.execute_shadow_plan",
+        lambda *args, **kwargs: {
+            "status": "completed",
+            "mode": "execute",
+            "phases": [],
+        },
+    )
+    monkeypatch.setattr(
+        "dw_refactor_agent.refactor.shadow_run.run_sql_text",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            ShadowRunSqlError("marker failed")
+        ),
+    )
+
+    result = run_shadow_plan(
+        plan_path,
+        output_path,
+        provenance=_provenance(plan_path),
+    )
+
+    assert result["status"] == "failed"
+    assert "marker failed" in result["error"]
+    assert result["phases"][-1]["status"] == "failed"
+
+
+def test_shadow_run_standalone_cli_rejects_stale_plan(tmp_path, monkeypatch):
+    plan_path = tmp_path / "verification" / "plan.json"
+    _write_shadow_cli_plan(plan_path)
+    monkeypatch.setattr(
+        "dw_refactor_agent.refactor.shadow_run.require_fresh_plan",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            ArtifactFormatError(
+                "stale_plan: workspace changed after analyze; run analyze again"
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        "dw_refactor_agent.refactor.shadow_run.run_shadow_plan",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("stale plan must block shadow execution")
+        ),
+    )
+
+    with pytest.raises(SystemExit, match="stale_plan.*analyze"):
+        main(["--plan", str(plan_path)])
 
 
 def test_run_shadow_plan_dry_run_persists_phase_summary(
@@ -1142,14 +1544,29 @@ def test_run_shadow_plan_dry_run_persists_phase_summary(
                 {"table": "dws_inventory_daily", "method": "row_compare"},
             ]
         },
+        "analysis_snapshot": _analysis_snapshot(),
     }
-    write_verification_plan(plan_path, plan)
+    _write_fresh_plan_bundle(plan_path, plan)
 
     monkeypatch.setattr(
         "dw_refactor_agent.refactor.shadow_run._project_root", lambda: tmp_path
     )
 
-    result = run_shadow_plan(plan_path, output_path, dry_run=True)
+    result = run_shadow_plan(
+        plan_path,
+        output_path,
+        provenance=_provenance(plan_path),
+        dry_run=True,
+    )
+    assert result["format_version"] == 1
+    assert (
+        result["workspace_fingerprint"]
+        == _provenance(plan_path)["workspace_fingerprint"]
+    )
+    assert (
+        result["plan_fingerprint"]
+        == _provenance(plan_path)["plan_fingerprint"]
+    )
 
     assert result["status"] == "dry_run"
     assert result["mode"] == "dry_run"
@@ -1225,7 +1642,7 @@ def test_run_shadow_plan_dry_run_prints_rewritten_task_ddl_targets(
     )
     plan_path = tmp_path / "verification" / "plan.json"
     output_path = tmp_path / "verification" / "shadow_run_result.json"
-    write_verification_plan(
+    _write_fresh_plan_bundle(
         plan_path,
         {
             "project": "shop",
@@ -1245,6 +1662,7 @@ def test_run_shadow_plan_dry_run_prints_rewritten_task_ddl_targets(
                 }
             ],
             "verification": {"checks": []},
+            "analysis_snapshot": _analysis_snapshot(),
         },
     )
 
@@ -1252,7 +1670,12 @@ def test_run_shadow_plan_dry_run_prints_rewritten_task_ddl_targets(
         "dw_refactor_agent.refactor.shadow_run._project_root", lambda: tmp_path
     )
 
-    run_shadow_plan(plan_path, output_path, dry_run=True)
+    run_shadow_plan(
+        plan_path,
+        output_path,
+        provenance=_provenance(plan_path),
+        dry_run=True,
+    )
 
     stdout = capsys.readouterr().out
     assert "shop_dm.tmp_shadow_test" not in stdout
@@ -1262,6 +1685,7 @@ def test_run_shadow_plan_dry_run_prints_rewritten_task_ddl_targets(
 def test_execute_shadow_plan_runs_job_once_per_execution_value(
     tmp_path, monkeypatch
 ):
+    _write_shadow_project(tmp_path, "shop", with_default_slice=True)
     task_path = tmp_path / "shop" / "mid" / "tasks" / "dws_order.sql"
     task_path.parent.mkdir(parents=True)
     task_path.write_text(
@@ -1302,7 +1726,7 @@ def test_execute_shadow_plan_runs_job_once_per_execution_value(
         ),
     )
 
-    result = execute_shadow_plan(plan)
+    result = execute_shadow_plan(plan, root=tmp_path)
 
     assert result["status"] == "completed"
     assert len(executed_texts) == 2
@@ -1313,6 +1737,7 @@ def test_execute_shadow_plan_runs_job_once_per_execution_value(
 def test_execute_shadow_plan_batches_slices_for_same_job(
     tmp_path, monkeypatch
 ):
+    _write_shadow_project(tmp_path, "shop", with_default_slice=True)
     task_path = tmp_path / "shop" / "mid" / "tasks" / "dws_order.sql"
     task_path.parent.mkdir(parents=True)
     task_path.write_text(
@@ -1357,7 +1782,7 @@ def test_execute_shadow_plan_batches_slices_for_same_job(
         ),
     )
 
-    result = execute_shadow_plan(plan, batch_size=2)
+    result = execute_shadow_plan(plan, root=tmp_path, batch_size=2)
 
     assert result["status"] == "completed"
     assert len(executed_texts) == 2
@@ -1381,6 +1806,7 @@ def test_execute_shadow_plan_batches_slices_for_same_job(
 def test_execute_shadow_plan_runs_same_job_slice_batches_in_parallel(
     tmp_path, monkeypatch
 ):
+    _write_shadow_project(tmp_path, "shop", with_default_slice=True)
     task_path = tmp_path / "shop" / "mid" / "tasks" / "dws_order.sql"
     task_path.parent.mkdir(parents=True)
     task_path.write_text(
@@ -1435,7 +1861,7 @@ def test_execute_shadow_plan_runs_same_job_slice_batches_in_parallel(
         fake_run_sql_text,
     )
 
-    result = execute_shadow_plan(plan, parallel=2)
+    result = execute_shadow_plan(plan, root=tmp_path, parallel=2)
 
     phase_by_name = {phase["name"]: phase for phase in result["phases"]}
     job_result = phase_by_name["run_jobs"]["jobs"][0]
@@ -1520,7 +1946,7 @@ execution:
         fake_run_sql_text,
     )
 
-    result = execute_shadow_plan(plan, parallel=2)
+    result = execute_shadow_plan(plan, root=tmp_path, parallel=2)
 
     assert result["status"] == "completed"
     assert max_active == 2
@@ -1608,7 +2034,7 @@ execution:
         fake_run_sql_text,
     )
 
-    result = execute_shadow_plan(plan, parallel=2)
+    result = execute_shadow_plan(plan, root=tmp_path, parallel=2)
 
     assert result["status"] == "completed"
     assert executed_jobs == ["dws_order", "ads_order"]
@@ -1699,7 +2125,7 @@ execution:
         fake_run_sql_text,
     )
 
-    result = execute_shadow_plan(plan, parallel=2)
+    result = execute_shadow_plan(plan, root=tmp_path, parallel=2)
 
     assert result["status"] == "failed"
     assert executed_jobs == ["dws_order"]
@@ -1713,6 +2139,7 @@ execution:
 def test_execute_shadow_plan_logs_sql_progress_for_each_slice(
     tmp_path, monkeypatch, capsys
 ):
+    _write_shadow_project(tmp_path, "shop", with_default_slice=True)
     task_path = tmp_path / "shop" / "mid" / "tasks" / "dws_order.sql"
     task_path.parent.mkdir(parents=True)
     task_path.write_text(
@@ -1750,7 +2177,7 @@ def test_execute_shadow_plan_logs_sql_progress_for_each_slice(
         lambda *args, **kwargs: "",
     )
 
-    result = execute_shadow_plan(plan)
+    result = execute_shadow_plan(plan, root=tmp_path)
 
     stdout = capsys.readouterr().out
     assert result["status"] == "completed"
@@ -1869,8 +2296,8 @@ execution:
         ),
     )
 
-    result = execute_shadow_plan(plan)
-    dry_run_result = execute_shadow_plan(plan, dry_run=True)
+    result = execute_shadow_plan(plan, root=tmp_path)
+    dry_run_result = execute_shadow_plan(plan, root=tmp_path, dry_run=True)
 
     assert result["status"] == "completed"
     assert len(executed_texts) == 4
@@ -1974,8 +2401,8 @@ execution:
         ),
     )
 
-    result = execute_shadow_plan(plan)
-    dry_run_result = execute_shadow_plan(plan, dry_run=True)
+    result = execute_shadow_plan(plan, root=tmp_path)
+    dry_run_result = execute_shadow_plan(plan, root=tmp_path, dry_run=True)
 
     assert result["status"] == "failed"
     assert executed_texts == []
@@ -2061,7 +2488,7 @@ execution:
         lambda sql, db="", qa=False: calls.append(("text", sql)),
     )
 
-    result = execute_shadow_plan(plan)
+    result = execute_shadow_plan(plan, root=tmp_path)
 
     phase_names = [phase["name"] for phase in result["phases"]]
     assert phase_names == [
@@ -2143,7 +2570,7 @@ execution:
         lambda sql, db="", qa=False: calls.append(sql),
     )
 
-    result = execute_shadow_plan(plan)
+    result = execute_shadow_plan(plan, root=tmp_path)
 
     assert result["status"] == "failed"
     assert calls == []
@@ -2217,7 +2644,7 @@ execution:
         lambda sql, db="", qa=False: rendered.append(sql),
     )
 
-    result = execute_shadow_plan(plan)
+    result = execute_shadow_plan(plan, root=tmp_path)
 
     assert result["status"] == "completed"
     assert any("FROM shadow_dm_qa.sales_audit" in sql for sql in rendered)
@@ -2288,7 +2715,7 @@ execution:
         fake_run_sql_text,
     )
 
-    result = execute_shadow_plan(plan, parallel=2)
+    result = execute_shadow_plan(plan, root=tmp_path, parallel=2)
     run_phase = {phase["name"]: phase for phase in result["phases"]}[
         "run_jobs"
     ]
@@ -2376,7 +2803,7 @@ PARTITION BY RANGE(stat_date) (
         fake_run_sql_text,
     )
 
-    result = execute_shadow_plan(plan, parallel=2)
+    result = execute_shadow_plan(plan, root=tmp_path, parallel=2)
     job_result = {phase["name"]: phase for phase in result["phases"]}[
         "run_jobs"
     ]["jobs"][0]
