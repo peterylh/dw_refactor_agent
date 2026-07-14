@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -12,6 +13,7 @@ from dw_refactor_agent.config import DORIS_HOST, DORIS_PORT, DORIS_QA_USER
 from dw_refactor_agent.refactor.artifact_contract import ArtifactFormatError
 
 _DATABASE_IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_OBJECT_IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_$]*$")
 _SYSTEM_DATABASES = {
     "information_schema",
     "mysql",
@@ -68,6 +70,17 @@ class QaSlotInspection:
     objects: tuple[tuple[str, str], ...]
 
 
+class QaPoolExhaustedError(ArtifactFormatError):
+    """Raised when every configured QA pool slot is unavailable."""
+
+    def __init__(self, inspections: list[QaSlotInspection]):
+        self.inspections = tuple(inspections)
+        summary = ", ".join(
+            f"{item.database}={item.availability}" for item in self.inspections
+        )
+        super().__init__(f"QA database pool is exhausted: {summary}")
+
+
 def validate_qa_identifier(value: str) -> str:
     """Return one safe Doris database identifier or raise ``ValueError``."""
     database = str(value or "").strip()
@@ -78,6 +91,15 @@ def validate_qa_identifier(value: str) -> str:
 
 def _quoted_identifier(value: str) -> str:
     return f"`{validate_qa_identifier(value)}`"
+
+
+def _quoted_object_identifier(value: str) -> str:
+    identifier = str(value or "").strip()
+    if not _OBJECT_IDENTIFIER.fullmatch(identifier):
+        raise ArtifactFormatError(
+            f"unsafe Doris object identifier in QA slot: {value!r}"
+        )
+    return f"`{identifier}`"
 
 
 def get_qa_connection(database: str = "information_schema"):
@@ -306,6 +328,294 @@ def require_slot_ownership(
                 f"expected {expected_value!r}, got {actual!r}"
             )
     return ownership
+
+
+def _rotated_pool(pool: tuple[str, ...], execution_id: str) -> tuple[str, ...]:
+    if not pool:
+        return ()
+    digest = hashlib.sha256(execution_id.encode("utf-8")).digest()
+    start = int.from_bytes(digest[:8], "big") % len(pool)
+    return pool[start:] + pool[:start]
+
+
+def _marker_table_exists_error(exc: Exception) -> bool:
+    code = exc.args[0] if getattr(exc, "args", ()) else None
+    if code == 1050:
+        return True
+    message = " ".join(str(value) for value in getattr(exc, "args", ()))
+    normalized = message.casefold()
+    return EXECUTION_MARKER_TABLE.casefold() in normalized and (
+        "already exists" in normalized or "table exists" in normalized
+    )
+
+
+def _marker_create_sql() -> str:
+    return f"""\
+CREATE TABLE {_quoted_identifier(EXECUTION_MARKER_TABLE)} (
+    format_version TINYINT NOT NULL,
+    marker_key VARCHAR(32) NOT NULL,
+    project VARCHAR(128) NOT NULL,
+    run_id VARCHAR(255) NOT NULL,
+    execution_id VARCHAR(64) NOT NULL,
+    qa_database VARCHAR(128) NOT NULL,
+    plan_fingerprint VARCHAR(80) NOT NULL,
+    workspace_fingerprint VARCHAR(80) NOT NULL,
+    claimed_at DATETIME NOT NULL
+) ENGINE=OLAP
+UNIQUE KEY(format_version, marker_key)
+DISTRIBUTED BY HASH(format_version, marker_key) BUCKETS 1
+PROPERTIES ("replication_num" = "1")"""
+
+
+def _try_claim_slot(
+    database: str,
+    *,
+    project: str,
+    run_id: str,
+    execution_id: str,
+    plan_fingerprint: str,
+    workspace_fingerprint: str,
+) -> QaSlotOwnership | None:
+    """Atomically create and populate one marker; ``None`` means race lost."""
+    database = validate_qa_identifier(database)
+    connection = get_qa_connection(database)
+    try:
+        cursor = connection.cursor()
+        try:
+            try:
+                cursor.execute(_marker_create_sql())
+            except pymysql.MySQLError as exc:
+                if _marker_table_exists_error(exc):
+                    return None
+                raise ArtifactFormatError(
+                    "failed to create QA ownership marker in "
+                    f"{database}: {exc}"
+                ) from exc
+            try:
+                cursor.execute(
+                    f"INSERT INTO {_quoted_identifier(EXECUTION_MARKER_TABLE)} "
+                    "(format_version, marker_key, project, run_id, "
+                    "execution_id, qa_database, plan_fingerprint, "
+                    "workspace_fingerprint, claimed_at) "
+                    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW())",
+                    (
+                        MARKER_FORMAT_VERSION,
+                        "current",
+                        project,
+                        run_id,
+                        execution_id,
+                        database,
+                        plan_fingerprint,
+                        workspace_fingerprint,
+                    ),
+                )
+            except pymysql.MySQLError as exc:
+                raise ArtifactFormatError(
+                    f"failed to write QA ownership marker in {database}; "
+                    "the marker was retained for manual cleanup: "
+                    f"{exc}"
+                ) from exc
+        finally:
+            cursor.close()
+        return require_slot_ownership(
+            project=project,
+            run_id=run_id,
+            execution_id=execution_id,
+            database=database,
+            plan_fingerprint=plan_fingerprint,
+            workspace_fingerprint=workspace_fingerprint,
+            connection=connection,
+        )
+    finally:
+        connection.close()
+
+
+def claim_qa_slot(
+    *,
+    project: str,
+    run_id: str,
+    execution_id: str,
+    pool: tuple[str, ...],
+    plan_fingerprint: str,
+    workspace_fingerprint: str,
+) -> QaSlotOwnership:
+    """Claim the first atomically available slot in deterministic rotation."""
+    normalized_pool = tuple(validate_qa_identifier(value) for value in pool)
+    if not normalized_pool:
+        raise ArtifactFormatError("QA database pool must not be empty")
+    inspections = []
+    for database in _rotated_pool(normalized_pool, execution_id):
+        inspection = inspect_qa_slot(project, database)
+        if inspection.availability != "free":
+            inspections.append(inspection)
+            continue
+        owner = _try_claim_slot(
+            database,
+            project=project,
+            run_id=run_id,
+            execution_id=execution_id,
+            plan_fingerprint=plan_fingerprint,
+            workspace_fingerprint=workspace_fingerprint,
+        )
+        if owner is not None:
+            return owner
+        inspections.append(inspect_qa_slot(project, database))
+    raise QaPoolExhaustedError(inspections)
+
+
+def select_cleanup_slots(
+    inspections: list[QaSlotInspection],
+    *,
+    project: str | None,
+    run_id: str | None,
+    execution_id: str | None,
+    database: str | None,
+    cutoff_epoch: int | None,
+) -> list[QaSlotInspection]:
+    """Select cleanup targets using AND semantics and fail-closed states."""
+    database_key = database.casefold() if database else None
+    selected = []
+    for inspection in inspections:
+        if project is not None and inspection.project != project:
+            continue
+        if (
+            database_key is not None
+            and inspection.database.casefold() != database_key
+        ):
+            continue
+        if inspection.availability in {"legacy", "invalid"}:
+            if (
+                database_key is not None
+                and run_id is None
+                and execution_id is None
+                and cutoff_epoch is None
+            ):
+                selected.append(inspection)
+            continue
+        if inspection.availability != "claimed":
+            continue
+        ownership = inspection.ownership
+        if ownership is None:
+            continue
+        if run_id is not None and ownership.run_id != run_id:
+            continue
+        if execution_id is not None and ownership.execution_id != execution_id:
+            continue
+        if (
+            cutoff_epoch is not None
+            and ownership.claimed_at_epoch > cutoff_epoch
+        ):
+            continue
+        selected.append(inspection)
+    return selected
+
+
+def _drop_qa_object(
+    connection,
+    *,
+    database: str,
+    object_name: str,
+    object_type: str,
+) -> None:
+    normalized_type = object_type.strip().casefold()
+    if normalized_type == "view":
+        kind = "VIEW"
+    elif normalized_type == "base table":
+        kind = "TABLE"
+    else:
+        raise ArtifactFormatError(
+            f"unsupported QA object type for {object_name}: {object_type}"
+        )
+    cursor = connection.cursor()
+    try:
+        cursor.execute(
+            f"DROP {kind} {_quoted_identifier(database)}."
+            f"{_quoted_object_identifier(object_name)}"
+        )
+    finally:
+        cursor.close()
+
+
+def release_qa_slot(
+    inspection: QaSlotInspection,
+    *,
+    configured_pool: tuple[str, ...],
+    protected_databases: set[str],
+) -> dict:
+    """Release one selected slot, deleting its ownership marker last."""
+    database = validate_qa_identifier(inspection.database)
+    database_key = database.casefold()
+    protected = {value.casefold() for value in protected_databases}
+    if database_key in protected:
+        raise ArtifactFormatError(
+            f"refusing to release protected database {database}"
+        )
+    pool_keys = {
+        validate_qa_identifier(value).casefold() for value in configured_pool
+    }
+    if database_key not in pool_keys:
+        raise ArtifactFormatError(
+            f"refusing to release unconfigured QA database {database}"
+        )
+
+    connection = get_qa_connection(database)
+    try:
+        current = inspect_qa_slot(
+            inspection.project, database, connection=connection
+        )
+        if inspection.availability == "claimed":
+            if (
+                current.availability != "claimed"
+                or current.ownership != inspection.ownership
+            ):
+                raise ArtifactFormatError(
+                    f"QA slot {database} ownership changed before cleanup"
+                )
+        elif current != inspection:
+            raise ArtifactFormatError(
+                f"QA slot {database} changed before cleanup"
+            )
+
+        marker = None
+        views = []
+        tables = []
+        for object_name, object_type in current.objects:
+            if object_name.casefold() == EXECUTION_MARKER_TABLE.casefold():
+                marker = (object_name, object_type)
+            elif object_type.strip().casefold() == "view":
+                views.append((object_name, object_type))
+            else:
+                tables.append((object_name, object_type))
+        ordered = sorted(views) + sorted(tables)
+        if marker is not None:
+            ordered.append(marker)
+
+        dropped = []
+        for object_name, object_type in ordered:
+            try:
+                _drop_qa_object(
+                    connection,
+                    database=database,
+                    object_name=object_name,
+                    object_type=object_type,
+                )
+            except ArtifactFormatError:
+                raise
+            except Exception as exc:
+                raise ArtifactFormatError(
+                    f"failed to drop QA object {database}.{object_name}; "
+                    "ownership marker was retained when possible: "
+                    f"{exc}"
+                ) from exc
+            dropped.append(object_name)
+        return {
+            "project": inspection.project,
+            "database": database,
+            "result": "released",
+            "dropped_objects": dropped,
+        }
+    finally:
+        connection.close()
 
 
 def configured_qa_pool(
