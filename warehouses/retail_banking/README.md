@@ -61,9 +61,15 @@ default metadata. Unsupported raw SQL fails closed unless its exact source and
 rationale are recorded in the override file. `generate_assets.py` consumes the
 pinned snapshot plus the adjudicated contracts under `semantic_specs/`,
 preserving IDs through `mappings/schema_identities.yaml`.
-`generate_ods_data.py` creates deterministic,
-synthetic smoke rows for all 277 ODS tables. These rows are test fixtures, not a
-production-scale or statistically representative banking dataset.
+`generate_ods_data.py` creates deterministic, medium-volume synthetic fixtures
+for all 277 ODS tables. Every table contains 1,000-5,000 rows, dates cycle across
+the closed 2026-05-14 through 2026-07-14 window, and INSERT statements are
+batched to keep Doris initialization stable. Primary and in-scope foreign key
+values are derived from the pinned schema metadata, so composite keys remain
+unique and child rows reference generated parent keys. The two documented
+Spring Batch foreign keys remain external because those control-plane tables are
+outside this warehouse. These rows exercise bootstrap and daily-slice behavior;
+they are not statistically representative banking data.
 
 The 277-table ODS scope deliberately excludes six Spring Batch scheduler tables.
 Fineract's separate tenant-store database contributes another four control-plane
