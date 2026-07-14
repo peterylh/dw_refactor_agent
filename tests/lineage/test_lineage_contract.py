@@ -264,6 +264,18 @@ def test_v2_literal_source_must_be_a_json_scalar(value):
         validate_lineage_v2(data)
 
 
+@pytest.mark.parametrize(
+    "value",
+    [float("nan"), float("inf"), float("-inf")],
+)
+def test_v2_literal_source_rejects_non_finite_numbers(value):
+    data = valid_lineage_v2()
+    data["edges"][0]["source"] = {"type": "literal", "value": value}
+
+    with pytest.raises(LineageContractError, match="finite"):
+        validate_lineage_v2(data)
+
+
 def test_v2_diagnostics_use_known_reason_and_jobs():
     data = valid_lineage_v2()
     data["diagnostics"] = [
@@ -340,6 +352,33 @@ def test_lineage_snapshot_v1_derives_jobs_and_keeps_transient_safe():
     assert snapshot.edges[0].source_file == "mid/tasks/build.sql"
 
 
+def test_lineage_snapshot_v1_ignores_v2_dataset_type_for_safe_downgrade():
+    snapshot = LineageSnapshot.from_dict(
+        "shop",
+        {
+            "tables": [
+                {"name": "stage", "dataset_type": "process"},
+                {
+                    "name": "tmp_stage",
+                    "dataset_type": "process",
+                    "is_transient": True,
+                },
+            ],
+            "edges": [],
+        },
+    )
+
+    assert [table.dataset_type for table in snapshot.tables] == [
+        "managed",
+        "temporary",
+    ]
+    assert all("dataset_type" not in table.raw for table in snapshot.tables)
+    assert all("dataset_type" not in table for table in snapshot.raw["tables"])
+    assert all(
+        "dataset_type" not in table for table in snapshot.to_dict()["tables"]
+    )
+
+
 @pytest.mark.parametrize("version", [2.0, "2", True, 3])
 def test_lineage_snapshot_rejects_unsupported_explicit_versions(version):
     data = valid_lineage_v2()
@@ -351,6 +390,61 @@ def test_lineage_snapshot_rejects_unsupported_explicit_versions(version):
 
 def test_valid_job_dag_v2_passes_strict_validation():
     validate_job_dag_v2(valid_job_dag_v2())
+
+
+def test_job_dag_v2_rejects_canonical_cycle_and_reports_jobs():
+    data = {
+        "format_version": 2,
+        "jobs": ["Job_A", "job_b"],
+        "data_dependencies": [
+            {
+                "upstream_job": "JOB_A",
+                "downstream_job": "JOB_B",
+                "datasets": ["internal.shop_dm.ab"],
+            },
+            {
+                "upstream_job": "job_b",
+                "downstream_job": "job_a",
+                "datasets": ["internal.shop_dm.ba"],
+            },
+        ],
+        "deps": {"Job_A": ["JOB_B"], "job_b": ["job_a"]},
+        "rev": {"Job_A": ["JOB_B"], "job_b": ["job_a"]},
+    }
+
+    with pytest.raises(
+        LineageContractError,
+        match="Job_A -> job_b -> Job_A",
+    ):
+        validate_job_dag_v2(data)
+
+
+def test_job_dag_v2_accepts_long_acyclic_chain_without_recursion():
+    jobs = [f"job_{index:04d}" for index in range(1100)]
+    dependencies = []
+    deps = {job: [] for job in jobs}
+    rev = {job: [] for job in jobs}
+    for index, upstream in enumerate(jobs[:-1]):
+        downstream = jobs[index + 1]
+        dependencies.append(
+            {
+                "upstream_job": upstream,
+                "downstream_job": downstream,
+                "datasets": [f"internal.shop_dm.stage_{index:04d}"],
+            }
+        )
+        deps[upstream].append(downstream)
+        rev[downstream].append(upstream)
+
+    validate_job_dag_v2(
+        {
+            "format_version": 2,
+            "jobs": jobs,
+            "data_dependencies": dependencies,
+            "deps": deps,
+            "rev": rev,
+        }
+    )
 
 
 def test_job_dag_v2_rejects_unknown_job_references():

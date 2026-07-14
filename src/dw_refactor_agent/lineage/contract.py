@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from typing import Any, Callable
 
 from dw_refactor_agent.lineage.identifiers import (
@@ -177,6 +178,8 @@ def _validate_source_ref(value: Any, path: str) -> None:
         _require_exact_keys(value, frozenset({"type", "value"}), path)
         if type(value["value"]) not in {str, int, float, bool, type(None)}:
             _fail(f"{path}.value", "must be a JSON scalar")
+        if type(value["value"]) is float and not math.isfinite(value["value"]):
+            _fail(f"{path}.value", "must be a finite JSON number")
         return
     if ref_type == "expression":
         _require_exact_keys(value, frozenset({"type", "expression"}), path)
@@ -334,6 +337,53 @@ def _validate_adjacency(
     return pairs
 
 
+def _validate_acyclic_jobs(jobs: list[str], dependency_pairs: set) -> None:
+    display_by_key = {identifier_match_key(job): job for job in jobs}
+    adjacency = {job_key: [] for job_key in display_by_key}
+    for upstream, downstream in dependency_pairs:
+        adjacency[upstream].append(downstream)
+    for neighbours in adjacency.values():
+        neighbours.sort()
+
+    states = {}
+    for job in jobs:
+        job_key = identifier_match_key(job)
+        if states.get(job_key) is not None:
+            continue
+
+        states[job_key] = "visiting"
+        path = [job_key]
+        path_position = {job_key: 0}
+        stack = [(job_key, 0)]
+        while stack:
+            current, neighbour_index = stack[-1]
+            neighbours = adjacency[current]
+            if neighbour_index >= len(neighbours):
+                stack.pop()
+                path.pop()
+                path_position.pop(current)
+                states[current] = "visited"
+                continue
+
+            downstream = neighbours[neighbour_index]
+            stack[-1] = (current, neighbour_index + 1)
+            if states.get(downstream) == "visiting":
+                cycle_start = path_position[downstream]
+                cycle = path[cycle_start:] + [downstream]
+                displayed_cycle = " -> ".join(
+                    display_by_key[key] for key in cycle
+                )
+                _fail(
+                    "job_dag.data_dependencies",
+                    f"contains Job cycle: {displayed_cycle}",
+                )
+            if states.get(downstream) is None:
+                states[downstream] = "visiting"
+                path_position[downstream] = len(path)
+                path.append(downstream)
+                stack.append((downstream, 0))
+
+
 def validate_job_dag_v2(data: dict) -> None:
     """Validate one strict Job DAG version 2 public artifact.
 
@@ -403,3 +453,4 @@ def validate_job_dag_v2(data: dict) -> None:
             "job_dag.rev",
             "must describe the same edges as data_dependencies",
         )
+    _validate_acyclic_jobs(jobs, dependency_pairs)

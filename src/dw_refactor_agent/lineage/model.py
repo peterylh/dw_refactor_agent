@@ -58,10 +58,22 @@ class LineageTable:
     )
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "LineageTable":
+    def from_dict(
+        cls,
+        data: dict[str, Any],
+        *,
+        legacy: bool = True,
+    ) -> "LineageTable":
         raw = dict(data)
         raw.pop("layer", None)
+        if legacy:
+            raw.pop("dataset_type", None)
         is_transient = bool(data.get("is_transient"))
+        dataset_type = (
+            ("temporary" if is_transient else "managed")
+            if legacy
+            else str(data.get("dataset_type") or "managed")
+        )
         return cls(
             name=str(data.get("name") or "").strip(),
             full_name=str(data.get("full_name") or ""),
@@ -70,10 +82,7 @@ class LineageTable:
                 for column in data.get("columns") or []
                 if isinstance(column, dict)
             ),
-            dataset_type=str(
-                data.get("dataset_type")
-                or ("temporary" if is_transient else "managed")
-            ),
+            dataset_type=dataset_type,
             is_transient=is_transient,
             transient_sources=tuple(
                 str(source or "")
@@ -215,14 +224,18 @@ class LineageSnapshot:
                 if str(edge.get("source_file") or "")
             }
         )
+        tables = tuple(
+            LineageTable.from_dict(table, legacy=not is_v2)
+            for table in data.get("tables") or []
+            if isinstance(table, dict)
+        )
+        raw = dict(data)
+        if not is_v2:
+            raw["tables"] = [dict(table.raw) for table in tables]
         return cls(
             project=project,
             snapshot_id=snapshot_id,
-            tables=tuple(
-                LineageTable.from_dict(table)
-                for table in data.get("tables") or []
-                if isinstance(table, dict)
-            ),
+            tables=tables,
             edges=tuple(
                 LineageEdge.from_dict(edge, legacy=not is_v2)
                 for edge in raw_edges
@@ -243,7 +256,7 @@ class LineageSnapshot:
                     for source_file in source_files
                 )
             ),
-            raw=dict(data),
+            raw=raw,
         )
 
     def to_dict(self) -> dict[str, Any]:
