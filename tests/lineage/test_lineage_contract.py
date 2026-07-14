@@ -2,6 +2,7 @@ from copy import deepcopy
 
 import pytest
 
+import dw_refactor_agent.lineage.contract as lineage_contract
 from dw_refactor_agent.lineage.contract import (
     LineageContractError,
     validate_job_dag_v2,
@@ -305,6 +306,136 @@ def test_v2_edge_refs_resolve_unique_suffixes_case_insensitively():
         "id": "SHOP_DM.OUTPUT",
     }
     validate_lineage_v2(data)
+
+
+@pytest.mark.parametrize(
+    "edge_part, ref_type, ref_id",
+    [
+        (
+            "source",
+            "column",
+            "evil.internal.shop_dm.source.id",
+        ),
+        (
+            "source",
+            "column",
+            "shop_dm..source.id",
+        ),
+        (
+            "target",
+            "column",
+            "evil.internal.shop_dm.output.id",
+        ),
+        (
+            "target",
+            "column",
+            "shop_dm..output.id",
+        ),
+        (
+            "target",
+            "table",
+            "evil.internal.shop_dm.output",
+        ),
+        (
+            "target",
+            "table",
+            "shop_dm..output",
+        ),
+    ],
+)
+def test_v2_edge_refs_reject_invalid_table_qualifier_segments(
+    edge_part,
+    ref_type,
+    ref_id,
+):
+    data = valid_lineage_v2()
+    data["edges"][0][edge_part] = {"type": ref_type, "id": ref_id}
+
+    with pytest.raises(LineageContractError) as error:
+        validate_lineage_v2(data)
+
+    message = str(error.value)
+    assert message.startswith(f"lineage.edges[0].{edge_part}.id:")
+    assert "segments" in message
+
+
+@pytest.mark.parametrize(
+    "full_name",
+    [
+        "evil.internal.shop_dm.source",
+        "internal..shop_dm.source",
+    ],
+)
+def test_v2_table_full_name_rejects_invalid_qualifier_segments(full_name):
+    data = valid_lineage_v2()
+    data["tables"][0]["full_name"] = full_name
+    data["jobs"][0]["inputs"] = []
+    data["edges"][0]["source"] = {"type": "literal", "value": 1}
+
+    with pytest.raises(LineageContractError) as error:
+        validate_lineage_v2(data)
+
+    message = str(error.value)
+    assert message.startswith("lineage.tables[0].full_name:")
+    assert "segments" in message
+
+
+class _IterationCountingDict(dict):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.iterations = 0
+
+    def __iter__(self):
+        self.iterations += 1
+        return super().__iter__()
+
+    def items(self):
+        self.iterations += 1
+        return super().items()
+
+
+def test_table_reference_index_avoids_metadata_rescans():
+    source_key = ("internal", "shop_dm", "source")
+    table_metadata = _IterationCountingDict(
+        {
+            source_key: ("internal.shop_dm.source", {"id"}),
+            ("internal", "shop_dm", "output"): (
+                "internal.shop_dm.output",
+                {"id"},
+            ),
+        }
+    )
+    reference_index = lineage_contract._build_table_reference_index(
+        table_metadata
+    )
+    build_iterations = table_metadata.iterations
+
+    assert build_iterations > 0
+    assert (
+        lineage_contract._resolve_table_ref(
+            "SOURCE",
+            "lineage.edges[0].source.id",
+            reference_index,
+        )
+        == source_key
+    )
+    assert (
+        lineage_contract._resolve_table_ref(
+            "SHOP_DM.SOURCE",
+            "lineage.edges[1].source.id",
+            reference_index,
+        )
+        == source_key
+    )
+    assert (
+        lineage_contract._resolve_table_ref(
+            "INTERNAL.SHOP_DM.SOURCE",
+            "lineage.edges[2].source.id",
+            reference_index,
+        )
+        == source_key
+    )
+    assert table_metadata.iterations == build_iterations
 
 
 @pytest.mark.parametrize(
