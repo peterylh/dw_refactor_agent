@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS lineage_snapshot (
     table_count            BIGINT       NOT NULL DEFAULT 0 COMMENT '表数量',
     column_count           BIGINT       NOT NULL DEFAULT 0 COMMENT '字段数量',
     job_count              BIGINT       NOT NULL DEFAULT 0 COMMENT '作业数量',
+    job_dataset_count      BIGINT       NOT NULL DEFAULT 0 COMMENT '作业输入输出关系数量',
     column_lineage_count   BIGINT       NOT NULL DEFAULT 0 COMMENT '直接字段血缘数量',
     indirect_lineage_count BIGINT       NOT NULL DEFAULT 0 COMMENT '间接血缘数量',
     table_lineage_count    BIGINT       NOT NULL DEFAULT 0 COMMENT '表级血缘数量'

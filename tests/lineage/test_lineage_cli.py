@@ -10,6 +10,55 @@ from tests.lineage.test_lineage_query import (
 )
 
 
+def _valid_lineage_v2():
+    return {
+        "format_version": 2,
+        "tables": [
+            {
+                "name": "source",
+                "full_name": "internal.demo_dm.source",
+                "dataset_type": "managed",
+                "columns": [{"name": "id", "type": "BIGINT"}],
+            },
+            {
+                "name": "output",
+                "full_name": "internal.demo_dm.output",
+                "dataset_type": "managed",
+                "columns": [{"name": "id", "type": "BIGINT"}],
+            },
+        ],
+        "jobs": [
+            {
+                "name": "build_output",
+                "source_file": "build_output.sql",
+                "inputs": ["internal.demo_dm.source"],
+                "outputs": ["internal.demo_dm.output"],
+            }
+        ],
+        "edges": [
+            {
+                "source": {"type": "column", "id": "source.id"},
+                "target": {"type": "column", "id": "output.id"},
+                "relation_type": "direct",
+                "transformation_type": "passthrough",
+                "expression": "id",
+                "job": "build_output",
+            }
+        ],
+        "diagnostics": [],
+    }
+
+
+def _valid_job_dag_v2():
+    return {
+        "format_version": 2,
+        "jobs": ["build_output"],
+        "data_dependencies": [],
+        "deps": {"build_output": []},
+        "rev": {"build_output": []},
+    }
+
+
 @pytest.fixture(autouse=True)
 def demo_project_layers(monkeypatch, tmp_path):
     configure_demo_project_layers(monkeypatch, tmp_path)
@@ -44,6 +93,33 @@ def _write_demo_project_lineage(tmp_path, monkeypatch):
         },
     )
     return path
+
+
+def _write_v2_project_artifacts(
+    tmp_path, monkeypatch, *, lineage=None, dag=None
+):
+    project_dir = tmp_path / "demo_project"
+    lineage_dir = project_dir / "artifacts" / "lineage"
+    lineage_dir.mkdir(parents=True)
+    lineage_path = lineage_dir / "lineage_data.json"
+    lineage_path.write_text(
+        json.dumps(lineage or _valid_lineage_v2(), ensure_ascii=False),
+        encoding="utf-8",
+    )
+    dag_path = lineage_dir / "job_dag.json"
+    dag_path.write_text(
+        json.dumps(dag or _valid_job_dag_v2(), ensure_ascii=False),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setitem(
+        config.PROJECT_CONFIG,
+        "demo",
+        {
+            "dir": "demo_project",
+        },
+    )
+    return lineage_path, dag_path
 
 
 def test_stats_reads_project_lineage_artifact_by_default(
@@ -218,3 +294,46 @@ def test_export_html_writes_selected_local_subgraph(tmp_path, capsys):
     assert "dws_product_sales_daily" in html
     assert "dwd_order_detail" not in html
     assert "ads_unrelated" not in html
+
+
+def test_validate_accepts_strict_lineage_and_job_dag_v2(
+    tmp_path, monkeypatch, capsys
+):
+    lineage_path, dag_path = _write_v2_project_artifacts(tmp_path, monkeypatch)
+
+    exit_code = main(["validate", "--project", "demo"])
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert str(lineage_path) in captured.out
+    assert str(dag_path) in captured.out
+    assert "lineage v2 valid" in captured.out
+    assert "job DAG v2 valid" in captured.out
+
+
+def test_validate_rejects_forbidden_v2_edge_source_file(
+    tmp_path, monkeypatch, capsys
+):
+    lineage = _valid_lineage_v2()
+    lineage["edges"][0]["source_file"] = "build_output.sql"
+    _write_v2_project_artifacts(tmp_path, monkeypatch, lineage=lineage)
+
+    exit_code = main(["validate", "--project", "demo"])
+
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert "source_file" in captured.err
+
+
+def test_validate_strictly_rejects_invalid_job_dag_v2(
+    tmp_path, monkeypatch, capsys
+):
+    dag = _valid_job_dag_v2()
+    dag["edges"] = []
+    _write_v2_project_artifacts(tmp_path, monkeypatch, dag=dag)
+
+    exit_code = main(["validate", "--project", "demo"])
+
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert "edges" in captured.err

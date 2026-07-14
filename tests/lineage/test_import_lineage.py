@@ -48,6 +48,65 @@ def _demo_snapshot():
     }
 
 
+def _demo_v2_snapshot():
+    return {
+        "format_version": 2,
+        "tables": [
+            {
+                "name": "ods_order",
+                "full_name": "internal.shop_dm.ods_order",
+                "dataset_type": "managed",
+                "columns": [{"name": "amount", "type": "DECIMAL(12,2)"}],
+            },
+            {
+                "name": "process_order",
+                "full_name": "internal.shop_dm.process_order",
+                "dataset_type": "process",
+                "columns": [{"name": "amount", "type": "DECIMAL(12,2)"}],
+            },
+        ],
+        "jobs": [
+            {
+                "name": "prepare_orders",
+                "source_file": "prepare_orders.sql",
+                "inputs": ["internal.shop_dm.ods_order"],
+                "outputs": ["internal.shop_dm.process_order"],
+            }
+        ],
+        "edges": [
+            {
+                "source": {
+                    "type": "column",
+                    "id": "internal.shop_dm.ods_order.amount",
+                },
+                "target": {
+                    "type": "column",
+                    "id": "internal.shop_dm.process_order.amount",
+                },
+                "relation_type": "direct",
+                "transformation_type": "passthrough",
+                "expression": "amount",
+                "job": "prepare_orders",
+            },
+            {
+                "source": {
+                    "type": "column",
+                    "id": "internal.shop_dm.ods_order.amount",
+                },
+                "target": {
+                    "type": "table",
+                    "id": "internal.shop_dm.process_order",
+                },
+                "relation_type": "filter",
+                "transformation_type": "condition",
+                "expression": "amount > 0",
+                "job": "PREPARE_ORDERS",
+            },
+        ],
+        "diagnostics": [],
+    }
+
+
 def test_parser_accepts_test_db_env():
     module = importlib.import_module(
         "dw_refactor_agent.lineage.import_lineage"
@@ -143,13 +202,14 @@ def test_build_import_rows_normalizes_snapshot_for_database(tmp_path):
         (1, 42, "shop", "shop_dm", "doris", "127.0.0.1:9030"),
     ]
     assert rows.table_rows == [
-        (1, 42, 1, "ods_order", "shop_dm.ods_order", 0, "[]"),
+        (1, 42, 1, "ods_order", "shop_dm.ods_order", "managed", 0, "[]"),
         (
             2,
             42,
             1,
             "dwd_order_detail",
             "shop_dm.dwd_order_detail",
+            "managed",
             0,
             "[]",
         ),
@@ -192,6 +252,121 @@ def test_build_import_rows_normalizes_snapshot_for_database(tmp_path):
     assert rows.skipped_edges == []
 
 
+def test_build_import_rows_uses_explicit_v2_jobs_and_job_dataset_io(tmp_path):
+    module = importlib.import_module(
+        "dw_refactor_agent.lineage.import_lineage"
+    )
+    tasks_dir = tmp_path / "tasks"
+    tasks_dir.mkdir()
+    (tasks_dir / "prepare_orders.sql").write_text(
+        "CREATE TABLE process_order AS SELECT amount FROM ods_order;",
+        encoding="utf-8",
+    )
+
+    rows = module.build_import_rows(
+        _demo_v2_snapshot(),
+        tasks_dir=tasks_dir,
+        context=module.ImportContext(
+            project="shop",
+            snapshot_id=42,
+            datasource_id=1,
+            datasource_name="shop_dm",
+            db_type="doris",
+            host="127.0.0.1:9030",
+        ),
+    )
+
+    assert rows.table_rows == [
+        (
+            1,
+            42,
+            1,
+            "ods_order",
+            "internal.shop_dm.ods_order",
+            "managed",
+            0,
+            "[]",
+        ),
+        (
+            2,
+            42,
+            1,
+            "process_order",
+            "internal.shop_dm.process_order",
+            "process",
+            0,
+            "[]",
+        ),
+    ]
+    assert rows.job_rows == [
+        (
+            1,
+            42,
+            "prepare_orders",
+            "prepare_orders.sql",
+            "SQL",
+            "CREATE TABLE process_order AS SELECT amount FROM ods_order;",
+        )
+    ]
+    assert rows.job_dataset_rows == [
+        (42, 1, 1, "INPUT"),
+        (42, 1, 2, "OUTPUT"),
+    ]
+    assert rows.column_lineage_rows == [
+        (
+            1,
+            42,
+            1,
+            1,
+            2,
+            2,
+            1,
+            "DIRECT",
+            "passthrough",
+            "amount",
+        )
+    ]
+    assert rows.indirect_lineage_rows == [
+        (1, 42, 1, 1, 2, 1, "FILTER", "amount > 0")
+    ]
+    assert rows.skipped_edges == []
+
+
+def test_build_import_rows_matches_equivalent_v2_table_qualifications(
+    tmp_path,
+):
+    module = importlib.import_module(
+        "dw_refactor_agent.lineage.import_lineage"
+    )
+    data = _demo_v2_snapshot()
+    data["jobs"][0]["inputs"] = ["shop_dm.ods_order"]
+    data["jobs"][0]["outputs"] = ["shop_dm.process_order"]
+    for edge in data["edges"]:
+        edge["source"]["id"] = edge["source"]["id"].replace("internal.", "")
+        edge["target"]["id"] = edge["target"]["id"].replace("internal.", "")
+
+    rows = module.build_import_rows(
+        data,
+        tasks_dir=tmp_path,
+        context=module.ImportContext(
+            project="shop",
+            snapshot_id=42,
+            datasource_id=1,
+            datasource_name="shop_dm",
+            db_type="doris",
+            host="127.0.0.1:9030",
+        ),
+    )
+
+    assert rows.job_dataset_rows == [
+        (42, 1, 1, "INPUT"),
+        (42, 1, 2, "OUTPUT"),
+    ]
+    assert len(rows.column_lineage_rows) == 1
+    assert len(rows.indirect_lineage_rows) == 1
+    assert rows.skipped_edges == []
+
+
 def test_build_import_rows_matches_mixed_case_edge_refs_to_metadata(tmp_path):
     module = importlib.import_module(
         "dw_refactor_agent.lineage.import_lineage"
@@ -225,6 +400,56 @@ def test_build_import_rows_matches_mixed_case_edge_refs_to_metadata(tmp_path):
         (1, 42, 1, 1, 2, 1, "FILTER", "amount > 0")
     ]
     assert rows.skipped_edges == []
+
+
+def test_v1_normalizer_keeps_same_basename_source_paths_as_distinct_jobs(
+    tmp_path,
+):
+    module = importlib.import_module(
+        "dw_refactor_agent.lineage.import_lineage"
+    )
+    data = {
+        "tables": [
+            {
+                "name": table_name,
+                "columns": [{"name": "id", "type": "BIGINT"}],
+            }
+            for table_name in ("src_a", "out_a", "src_b", "out_b")
+        ],
+        "edges": [
+            {
+                "source": "src_a.id",
+                "target": "out_a.id",
+                "relation_type": "direct",
+                "source_file": "mid/tasks/build.sql",
+            },
+            {
+                "source": "src_b.id",
+                "target": "out_b.id",
+                "relation_type": "direct",
+                "source_file": "ads/tasks/build.sql",
+            },
+        ],
+    }
+
+    rows = module.build_import_rows(
+        data,
+        tasks_dir=tmp_path,
+        context=module.ImportContext(
+            project="shop",
+            snapshot_id=42,
+            datasource_id=1,
+            datasource_name="shop_dm",
+            db_type="doris",
+            host="127.0.0.1:9030",
+        ),
+    )
+
+    assert [row[2:4] for row in rows.job_rows] == [
+        ("ads/tasks/build", "ads/tasks/build.sql"),
+        ("mid/tasks/build", "mid/tasks/build.sql"),
+    ]
+    assert [row[6] for row in rows.column_lineage_rows] == [2, 1]
 
 
 def test_bulk_insert_uses_executemany_in_chunks():
@@ -280,6 +505,7 @@ def test_delete_snapshot_rows_does_not_truncate_whole_lineage_database():
         ("DELETE FROM indirect_lineage WHERE snapshot_id = %s", (42,)),
         ("DELETE FROM column_lineage WHERE snapshot_id = %s", (42,)),
         ("DELETE FROM table_lineage WHERE snapshot_id = %s", (42,)),
+        ("DELETE FROM job_dataset WHERE snapshot_id = %s", (42,)),
         ("DELETE FROM job WHERE snapshot_id = %s", (42,)),
         ("DELETE FROM column_info WHERE snapshot_id = %s", (42,)),
         ("DELETE FROM table_info WHERE snapshot_id = %s", (42,)),
@@ -344,3 +570,39 @@ def test_migrate_lineage_schema_leaves_current_table_info_schema():
     assert cursor.execute_calls == [
         ("SHOW COLUMNS FROM table_info", None),
     ]
+
+
+def test_insert_snapshot_row_counts_job_dataset_relationships(tmp_path):
+    module = importlib.import_module(
+        "dw_refactor_agent.lineage.import_lineage"
+    )
+
+    class RecordingCursor:
+        def __init__(self):
+            self.execute_calls = []
+
+        def execute(self, sql, params=None):
+            self.execute_calls.append((sql, params))
+
+    rows = module.LineageImportRows(
+        table_rows=[(1,)],
+        column_rows=[(1,), (2,)],
+        job_rows=[(1,)],
+        job_dataset_rows=[(1,), (2,)],
+    )
+    cursor = RecordingCursor()
+
+    module.insert_snapshot_row(
+        cursor,
+        snapshot_id=42,
+        project="shop",
+        source_path=tmp_path / "lineage_data.json",
+        status="IMPORTED",
+        is_active=0,
+        rows=rows,
+    )
+
+    sql, params = cursor.execute_calls[0]
+    assert "job_dataset_count" in sql
+    assert params[8] == 2
+    assert "job_dataset" in module.VERIFY_TABLES

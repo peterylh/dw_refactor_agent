@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -11,7 +12,11 @@ _src_root = Path(__file__).resolve().parents[2]
 if str(_src_root) not in sys.path:
     sys.path.insert(0, str(_src_root))
 
-from dw_refactor_agent.config import TEXT_ENCODING
+from dw_refactor_agent.config import TEXT_ENCODING, job_dag_path
+from dw_refactor_agent.lineage.contract import (
+    validate_job_dag_v2,
+    validate_lineage_v2,
+)
 from dw_refactor_agent.lineage.formatters import (
     format_column_json,
     format_column_text,
@@ -99,6 +104,25 @@ def _handle_export_html(args: argparse.Namespace) -> int:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(format_table_html(subgraph), encoding=TEXT_ENCODING)
     _write_stdout(f"HTML written: {output_path}")
+    return 0
+
+
+def _handle_validate(args: argparse.Namespace) -> int:
+    store = _lineage_store(args)
+    lineage_path = store._snapshot_path(args.project, args.snapshot_id)
+    dag_path = (
+        Path(args.lineage_dir) / "job_dag.json"
+        if args.lineage_dir
+        else job_dag_path(args.project)
+    )
+
+    with lineage_path.open(encoding=TEXT_ENCODING) as file:
+        validate_lineage_v2(json.load(file))
+    with dag_path.open(encoding=TEXT_ENCODING) as file:
+        validate_job_dag_v2(json.load(file))
+
+    _write_stdout(f"lineage v2 valid: {lineage_path}")
+    _write_stdout(f"job DAG v2 valid: {dag_path}")
     return 0
 
 
@@ -219,6 +243,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="HTML output path",
     )
     html_parser.set_defaults(handler=_handle_export_html)
+
+    validate_parser = subparsers.add_parser(
+        "validate",
+        help="Strictly validate lineage and Job DAG version 2 artifacts",
+    )
+    _add_common_options(validate_parser)
+    validate_parser.set_defaults(handler=_handle_validate)
 
     return parser
 
