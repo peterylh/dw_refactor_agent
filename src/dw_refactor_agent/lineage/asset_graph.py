@@ -62,6 +62,14 @@ def _edge_job(edge: dict) -> str:
     return job_name_from_source_file(source_file) if source_file else ""
 
 
+def _edge_job_scope(edge: dict) -> str:
+    """Return the non-public Job occurrence key carried by an Edge."""
+    job = str(edge.get("job") or "")
+    if job:
+        return job
+    return str(edge.get("source_file") or "").replace("\\", "/").strip()
+
+
 def _edge_source_file(
     edge: dict,
     job_source_files: dict[str, str] | None = None,
@@ -344,16 +352,16 @@ def _scoped_table_graph_data(lineage_data: dict) -> dict:
     provenance = defaultdict(lambda: {"jobs": set(), "source_files": set()})
 
     for edge, source_table, target_table in _iter_table_edges(lineage_data):
-        job = _edge_job(edge)
+        job_scope = _edge_job_scope(edge)
         source_node = _scoped_table_node(
             source_table,
-            job,
+            job_scope,
             "source",
             context,
         )
         target_node = _scoped_table_node(
             target_table,
-            job,
+            job_scope,
             "target",
             context,
         )
@@ -366,6 +374,7 @@ def _scoped_table_graph_data(lineage_data: dict) -> dict:
             display_by_node.setdefault(target_node, target_table)
 
         facts = provenance[(source_node, target_node)]
+        job = _edge_job(edge)
         if job:
             facts["jobs"].add(job)
         source_file = _edge_source_file(edge, context["job_source_files"])
@@ -516,7 +525,7 @@ def _public_edge_record(edge: dict) -> dict:
     return {
         key: value
         for key, value in edge.items()
-        if key not in {"_job", "_source_key", "_target_key"}
+        if key not in {"_job_scope", "_source_key", "_target_key"}
     }
 
 
@@ -527,17 +536,17 @@ def _scoped_column_edges(lineage_data: dict) -> tuple[list[dict], dict]:
         record = _edge_record(edge, context["job_source_files"])
         if not record.get("source") or not record.get("target"):
             continue
-        job = str(record.get("job") or _edge_job(edge))
-        record["_job"] = job
+        job_scope = _edge_job_scope(edge)
+        record["_job_scope"] = job_scope
         record["_source_key"] = _column_scope_key(
             record["source"],
-            job,
+            job_scope,
             "source",
             context,
         )
         record["_target_key"] = _column_scope_key(
             record["target"],
-            job,
+            job_scope,
             "target",
             context,
         )
@@ -604,38 +613,65 @@ def _trace_asset_column_sources(
     return traces
 
 
-def _asset_condition_lineage(
-    lineage_data: dict,
-    table_name: str,
-    incoming: dict[str, list[dict[str, str]]],
-    transient_table_keys: set[str],
-    context: dict,
-    job_name: str = "",
-) -> list[dict]:
-    conditions = []
-    seen = set()
-    typed_condition_edges = [
+def _condition_target_table(edge: dict) -> str:
+    target = edge.get("target")
+    if isinstance(target, dict):
+        return str(target.get("id") or "")
+    return str(edge.get("target_table") or "")
+
+
+def _sorted_condition_edges(lineage_data: dict) -> list[dict]:
+    typed_edges = [
         edge
         for edge in lineage_data.get("edges") or []
         if isinstance(edge.get("target"), dict)
         and (edge.get("target") or {}).get("type") == "table"
         and edge.get("relation_type") != "direct"
     ]
-    legacy_condition_edges = lineage_data.get("indirect_edges") or []
-    indirect_edges = sorted(
-        typed_condition_edges + legacy_condition_edges,
+    return sorted(
+        typed_edges + list(lineage_data.get("indirect_edges") or []),
         key=_condition_sort_key,
     )
 
-    for edge in indirect_edges:
-        if job_name and _job_match_key(_edge_job(edge)) != _job_match_key(
-            job_name
-        ):
+
+def _build_condition_edge_index(
+    lineage_data: dict,
+    context: dict,
+) -> dict[tuple, list[dict]]:
+    indexed = defaultdict(list)
+    for edge in _sorted_condition_edges(lineage_data):
+        target = _condition_target_table(edge)
+        if not target:
             continue
-        if isinstance(edge.get("target"), dict):
-            edge_target = str((edge.get("target") or {}).get("id") or "")
-        else:
-            edge_target = str(edge.get("target_table") or "")
+        key = (
+            _dataset_for(target, context)["key"],
+            _job_match_key(_edge_job_scope(edge)),
+        )
+        indexed[key].append(edge)
+    return dict(indexed)
+
+
+def _asset_condition_lineage(
+    lineage_data: dict,
+    table_name: str,
+    incoming: dict[str, list[dict[str, str]]],
+    transient_table_keys: set[str],
+    context: dict,
+    job_scope: str = "",
+    condition_edges: list[dict] | None = None,
+) -> list[dict]:
+    conditions = []
+    seen = set()
+    indirect_edges = condition_edges
+    if indirect_edges is None:
+        indirect_edges = _sorted_condition_edges(lineage_data)
+
+    for edge in indirect_edges:
+        if job_scope and _job_match_key(
+            _edge_job_scope(edge)
+        ) != _job_match_key(job_scope):
+            continue
+        edge_target = _condition_target_table(edge)
         if not _same_dataset(edge_target, table_name, context):
             continue
         if isinstance(edge.get("source"), dict):
@@ -648,7 +684,7 @@ def _asset_condition_lineage(
         base = _condition_record(edge, context["job_source_files"])
         source_key = _column_scope_key(
             source,
-            str(edge.get("job") or _edge_job(edge)),
+            _edge_job_scope(edge),
             "source",
             context,
         )
@@ -692,6 +728,8 @@ def build_asset_column_lineage(
     }
     edges, context = _scoped_column_edges(lineage_data)
     incoming = _column_incoming_edges(edges)
+    condition_edge_index = _build_condition_edge_index(lineage_data, context)
+    target_dataset_key = _dataset_for(table_name, context)["key"]
     lineage = []
     seen = set()
     conditions_by_job = {}
@@ -703,16 +741,21 @@ def build_asset_column_lineage(
             context,
         ):
             continue
-        job = str(edge.get("job") or edge.get("_job") or "")
-        job_key = _job_match_key(job)
+        job_scope = str(edge.get("_job_scope") or "")
+        job_key = _job_match_key(job_scope)
         if job_key not in conditions_by_job:
+            scoped_condition_edges = condition_edge_index.get(
+                (target_dataset_key, job_key),
+                [],
+            )
             conditions_by_job[job_key] = _asset_condition_lineage(
                 lineage_data,
                 table_name,
                 incoming,
                 transient_table_keys,
                 context,
-                job_name=job,
+                job_scope=job_scope,
+                condition_edges=scoped_condition_edges,
             )
         condition_lineage = conditions_by_job[job_key]
 

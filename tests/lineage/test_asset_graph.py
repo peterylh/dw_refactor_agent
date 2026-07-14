@@ -114,6 +114,46 @@ def test_v1_same_name_transient_tables_safely_stay_in_source_file_jobs():
     } == {"src_b.id"}
 
 
+def test_v1_same_basename_source_files_use_full_path_process_scopes():
+    lineage_data = {
+        "tables": [{"name": "t", "is_transient": True}],
+        "edges": [
+            {
+                "source": f"{source}.id",
+                "target": f"{target}.id",
+                "expression": "id",
+                "source_file": source_file,
+            }
+            for source, target, source_file in (
+                ("src_mid", "t", "mid/tasks/load.sql"),
+                ("t", "out_mid", "mid/tasks/load.sql"),
+                ("src_ads", "t", "ads/tasks/load.sql"),
+                ("t", "out_ads", "ads/tasks/load.sql"),
+            )
+        ],
+        "indirect_edges": [],
+    }
+
+    upstream, downstream = build_asset_table_graph(lineage_data)
+
+    assert downstream == {
+        "src_ads": {"out_ads"},
+        "src_mid": {"out_mid"},
+    }
+    assert upstream == {
+        "out_ads": {"src_ads"},
+        "out_mid": {"src_mid"},
+    }
+    assert {
+        record["source"]
+        for record in build_asset_column_lineage(lineage_data, "out_mid")
+    } == {"src_mid.id"}
+    assert {
+        record["source"]
+        for record in build_asset_column_lineage(lineage_data, "out_ads")
+    } == {"src_ads.id"}
+
+
 def test_unique_shared_process_producer_composes_across_jobs():
     lineage_data = {
         "format_version": 2,

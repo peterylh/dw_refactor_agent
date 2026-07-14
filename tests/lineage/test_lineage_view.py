@@ -1,6 +1,16 @@
 from dw_refactor_agent.lineage.view import LineageView
 
 
+class CountingEdges(list):
+    def __init__(self, values):
+        super().__init__(values)
+        self.iterations = 0
+
+    def __iter__(self):
+        self.iterations += 1
+        return super().__iter__()
+
+
 def test_lineage_view_reuses_indexed_column_lineage():
     lineage_data = {
         "tables": [{"name": "tmp_orders", "is_transient": True}],
@@ -473,3 +483,64 @@ def test_lineage_view_scopes_same_name_process_columns_by_job():
     assert {
         record["source"] for record in view.column_lineage_for_table("out_b")
     } == {"src_b.id"}
+
+
+def test_lineage_view_preindexes_conditions_once_for_all_target_jobs():
+    jobs = [f"job_{index}" for index in range(4)]
+    edges = CountingEdges(
+        [
+            {
+                "source": {"type": "column", "id": f"src_{index}.id"},
+                "target": {"type": "column", "id": "out.id"},
+                "relation_type": "direct",
+                "transformation_type": "passthrough",
+                "expression": "id",
+                "job": job,
+            }
+            for index, job in enumerate(jobs)
+        ]
+        + [
+            {
+                "source": {
+                    "type": "column",
+                    "id": f"src_{index}.status",
+                },
+                "target": {"type": "table", "id": "out"},
+                "relation_type": "filter",
+                "transformation_type": "filter",
+                "expression": "status = 'READY'",
+                "job": job,
+            }
+            for index, job in enumerate(jobs)
+        ]
+    )
+    lineage_data = {
+        "format_version": 2,
+        "tables": [
+            {
+                "name": name,
+                "full_name": name,
+                "dataset_type": "managed",
+                "columns": [{"name": "id", "type": "BIGINT"}],
+            }
+            for name in ["out"] + [f"src_{index}" for index in range(4)]
+        ],
+        "jobs": [
+            {
+                "name": job,
+                "source_file": f"mid/tasks/{job}.sql",
+                "inputs": [f"src_{index}"],
+                "outputs": ["out"],
+            }
+            for index, job in enumerate(jobs)
+        ],
+        "edges": edges,
+        "diagnostics": [],
+    }
+    view = LineageView.from_data("demo", lineage_data)
+    edges.iterations = 0
+
+    records = view.column_lineage_for_table("out")
+
+    assert len(records) == 4
+    assert edges.iterations == 2

@@ -9,6 +9,7 @@ from typing import Any
 
 from dw_refactor_agent.lineage.asset_graph import (
     _asset_condition_lineage,
+    _build_condition_edge_index,
     _column_incoming_edges,
     _dataset_for,
     _is_bypass_node,
@@ -111,6 +112,7 @@ class LineageView:
         self._column_context = None
         self._incoming = None
         self._column_edges_by_target_table = None
+        self._condition_edges_by_target_job = None
         self._lineage_facts_by_table = None
         self._targets_by_source_file = None
         self._table_edge_source_files = None
@@ -195,12 +197,12 @@ class LineageView:
         conditions_by_job = {}
 
         for edge in self._column_edges_by_target_table.get(target_key, []):
-            job = str(edge.get("job") or edge.get("_job") or "")
-            job_key = identifier_match_key(job)
+            job_scope = str(edge.get("_job_scope") or "")
+            job_key = identifier_match_key(job_scope)
             if job_key not in conditions_by_job:
                 conditions_by_job[job_key] = self._condition_lineage_for_table(
                     table_name,
-                    job_name=job,
+                    job_scope=job_scope,
                 )
             condition_lineage = conditions_by_job[job_key]
             if not _is_bypass_node(edge["_source_key"][0]):
@@ -305,6 +307,10 @@ class LineageView:
             self._data
         )
         self._incoming = _column_incoming_edges(self._column_edges)
+        self._condition_edges_by_target_job = _build_condition_edge_index(
+            self._data,
+            self._column_context,
+        )
         self._column_edges_by_target_table = (
             self._index_column_edges_by_target()
         )
@@ -320,16 +326,22 @@ class LineageView:
     def _condition_lineage_for_table(
         self,
         table_name: str,
-        job_name: str = "",
+        job_scope: str = "",
     ) -> list[dict]:
         self._ensure_column_indexes()
+        target_key = _dataset_for(table_name, self._column_context)["key"]
+        condition_edges = self._condition_edges_by_target_job.get(
+            (target_key, identifier_match_key(job_scope)),
+            [],
+        )
         return _asset_condition_lineage(
             self._data,
             table_name,
             self._incoming,
             self._transient_table_keys,
             self._column_context,
-            job_name=job_name,
+            job_scope=job_scope,
+            condition_edges=condition_edges,
         )
 
     def _index_lineage_facts(self) -> dict[str, dict[str, Any]]:
