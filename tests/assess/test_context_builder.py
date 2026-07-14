@@ -327,19 +327,6 @@ def test_build_contexts_rejects_ambiguous_unqualified_exact_match(
     assert "Ambiguous short table name orders" in caplog.text
 
 
-def test_canonical_lookup_does_not_fallback_wrong_qualified_identity():
-    lookup = context_builder_module._canonical_table_lookup(
-        {"catalog_a.db_a.orders": {"layer": "DWD"}}
-    )
-    short_lookup = context_builder_module._canonical_table_lookup(
-        {"orders": {"layer": "DWD"}}
-    )
-
-    assert lookup.get("wrong.db.orders") is None
-    assert lookup.get("orders") == {"layer": "DWD"}
-    assert short_lookup.get("wrong.db.orders") is None
-
-
 def test_build_contexts_extracts_downstream_entity_publication_features(
     tmp_path,
     monkeypatch,

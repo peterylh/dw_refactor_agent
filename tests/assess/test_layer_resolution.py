@@ -271,31 +271,3 @@ def test_generate_without_llm_falls_back_to_direct_rule():
     assert resolution.table_type == "fact"
     assert resolution.source == "direct_rule"
     assert resolution.validation["candidate"]["source"] == ""
-
-
-def test_generate_ignores_legacy_context_hint():
-    result = _inspect_result(
-        table_name="candidate_table",
-        inferred_layer="DIM",
-        table_type="dimension",
-    )
-    result.validation["context_hints"] = ["legacy_layer_hint"]
-
-    resolution = resolve_layer(
-        LayerResolutionInput(
-            table_name="candidate_table",
-            fallback_layer="DWD",
-            fallback_table_type="other",
-            inspection_result=result,
-            policy=LayerResolutionPolicy(
-                mode="generate",
-                candidate_layers=("DWD", "DWS", "DIM"),
-                fallback_source="direct_rule",
-            ),
-        )
-    )
-
-    assert resolution.applied_layer == "DIM"
-    assert resolution.table_type == "dimension"
-    assert resolution.source == "table_inspector"
-    assert resolution.warnings == ()

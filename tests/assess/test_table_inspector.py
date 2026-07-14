@@ -60,6 +60,12 @@ def _inspect_with_responses(inspector, context, responses, monkeypatch):
     return inspector.inspect(context), prompts
 
 
+def _api_response(**payload):
+    return json.dumps(
+        {"choices": [{"message": {"content": json.dumps(payload)}}]}
+    )
+
+
 # ============================================================
 # 1. Prompt 组装测试
 # ============================================================
@@ -854,112 +860,71 @@ def _assert_validate_layer_table_type_consistency():
 
 
 def _assert_validate_layer_sql_consistency():
-    context = TableContext(
-        table_name="entity_daily_metrics",
-        layer="DWD",
-        ddl="",
-        etl_sql="",
-        upstream_tables=["event_detail"],
-        downstream_tables=[],
-        column_lineage=[
-            {
-                "source": "event_detail.entity_id",
-                "target": "entity_daily_metrics.event_count",
-                "condition_lineage": [
-                    {
-                        "source": "event_detail.entity_id",
-                        "condition_type": "GROUP_BY",
-                        "condition_expression": "entity_id",
-                    }
-                ],
-            }
-        ],
-    )
-    result = _inspection_result()
+    def context(sql="", *, column_lineage=None):
+        return TableContext(
+            table_name="candidate_table",
+            layer="DWD",
+            ddl="",
+            etl_sql=sql,
+            upstream_tables=["source_table"],
+            downstream_tables=[],
+            column_lineage=column_lineage or [],
+        )
 
-    # Bare lineage GROUP_BY evidence cannot distinguish metric aggregation
-    # from valid DWD deduplication.
-    assert validate_layer_sql_consistency(result, context) == {}
-
-    result.inferred_layer = "DWS"
-    assert validate_layer_sql_consistency(result, context) == {}
-
-    grouped_dedup_context = TableContext(
-        table_name="deduplicated_event",
-        layer="DWD",
-        ddl="",
-        etl_sql=(
-            "SELECT event_id, event_time FROM source_event "
-            "GROUP BY event_id, event_time"
-        ),
-        upstream_tables=["source_event"],
-        downstream_tables=[],
-    )
-    result.inferred_layer = "DWD"
-    assert validate_layer_sql_consistency(result, grouped_dedup_context) == {}
-
-    latest_record_context = TableContext(
-        table_name="latest_event",
-        layer="DWD",
-        ddl="",
-        etl_sql=(
-            "SELECT event_id, MAX(updated_at) AS updated_at "
-            "FROM source_event GROUP BY event_id"
-        ),
-        upstream_tables=["source_event"],
-        downstream_tables=[],
-    )
-    expected_ambiguous_updated_at = {
-        "ambiguous_min_max_aggregation": [
-            "MAX(updated_at) AS updated_at: "
-            "无法仅凭同名MIN/MAX确定技术选值或业务汇总"
-        ]
-    }
-    assert (
-        validate_layer_sql_consistency(result, latest_record_context)
-        == expected_ambiguous_updated_at
-    )
-
-    last_modified_context = TableContext(
-        table_name="latest_event",
-        layer="DWD",
-        ddl="",
-        etl_sql=(
-            "SELECT event_id, MAX(last_modified_date) AS last_modified_date "
-            "FROM source_event GROUP BY event_id"
-        ),
-        upstream_tables=["source_event"],
-        downstream_tables=[],
-    )
-    assert validate_layer_sql_consistency(result, last_modified_context) == {
-        "ambiguous_min_max_aggregation": [
-            "MAX(last_modified_date) AS last_modified_date: "
-            "无法仅凭同名MIN/MAX确定技术选值或业务汇总"
-        ]
-    }
-
-    business_max_context = TableContext(
-        table_name="store_sales_metrics",
-        layer="DWD",
-        ddl="",
-        etl_sql=(
-            "SELECT store_id, MAX(sale_amount) AS max_sale_amount "
-            "FROM store_sales GROUP BY store_id"
-        ),
-        upstream_tables=["store_sales"],
-        downstream_tables=[],
-    )
-    expected_metric_aggregation_error = {
+    metric_error = {
         "inconsistent_layer_sql": [
             "DWD候选的目标行驱动查询包含指标聚合；请重新判断DWS或其他合法层级"
         ]
     }
+    result = _inspection_result()
+    bare_group_lineage = [
+        {"condition_lineage": [{"condition_type": "GROUP_BY"}]}
+    ]
+    non_metric_sql = (
+        "SELECT event_id, event_time FROM source_event "
+        "GROUP BY event_id, event_time"
+    )
+    joined_lookup_sql = (
+        "SELECT src.id, dates.first_date FROM source src LEFT JOIN ("
+        "SELECT id, MIN(event_date) AS first_date FROM events GROUP BY id"
+        ") dates ON src.id = dates.id"
+    )
     assert (
-        validate_layer_sql_consistency(result, business_max_context)
-        == expected_metric_aggregation_error
+        validate_layer_sql_consistency(
+            result, context(column_lineage=bare_group_lineage)
+        )
+        == validate_layer_sql_consistency(result, context(non_metric_sql))
+        == {}
+    )
+    assert (
+        validate_layer_sql_consistency(result, context(joined_lookup_sql))
+        == {}
+    )
+    assert (
+        validate_layer_sql_consistency(
+            _inspection_result(inferred_layer="DWS"),
+            context("SELECT COUNT(*) FROM source_table"),
+        )
+        == {}
     )
 
-    same_name_business_result = _inspection_result(
+    for column_name in ("updated_at", "last_modified_date"):
+        sql = (
+            f"SELECT event_id, MAX({column_name}) AS {column_name} "
+            "FROM source_event GROUP BY event_id"
+        )
+        assert validate_layer_sql_consistency(result, context(sql)) == {
+            "ambiguous_min_max_aggregation": [
+                f"MAX({column_name}) AS {column_name}: "
+                "无法仅凭同名MIN/MAX确定技术选值或业务汇总"
+            ]
+        }
+
+    confirmed_metric_sql = (
+        "SELECT store_id, MAX(sale_amount) AS max_sale_amount "
+        "FROM store_sales GROUP BY store_id"
+    )
+    same_name_metric_result = _inspection_result(
         columns={
             "atomic_metrics": [{"name": "updated_at"}],
             "derived_metrics": [],
@@ -968,92 +933,27 @@ def _assert_validate_layer_sql_consistency():
             "others": [],
         }
     )
-    customer_activity_context = TableContext(
-        table_name="customer_activity",
-        layer="DWD",
-        ddl="",
-        etl_sql=(
-            "SELECT customer_id, MAX(updated_at) AS updated_at "
-            "FROM customer_event GROUP BY customer_id"
-        ),
-        upstream_tables=["customer_event"],
-        downstream_tables=[],
+    same_name_metric_sql = (
+        "SELECT customer_id, MAX(updated_at) AS updated_at "
+        "FROM customer_event GROUP BY customer_id"
     )
-    assert (
-        validate_layer_sql_consistency(
-            same_name_business_result,
-            customer_activity_context,
+    grouped_cte_sql = (
+        "INSERT INTO entity_daily_metrics "
+        "WITH daily AS ("
+        "SELECT entity_id, metric_date, COUNT(*) AS event_count "
+        "FROM event_detail GROUP BY entity_id, metric_date"
+        ") SELECT * FROM daily"
+    )
+    for case_result, sql in (
+        (result, confirmed_metric_sql),
+        (same_name_metric_result, same_name_metric_sql),
+        (result, "SELECT COUNT(*) AS event_count FROM source_event"),
+        (result, "SELECT MAX(updated_at) AS updated_at FROM source_event"),
+        (result, grouped_cte_sql),
+    ):
+        assert validate_layer_sql_consistency(case_result, context(sql)) == (
+            metric_error
         )
-        == expected_metric_aggregation_error
-    )
-
-    global_metric_context = TableContext(
-        table_name="event_metrics",
-        layer="DWD",
-        ddl="",
-        etl_sql="SELECT COUNT(*) AS event_count FROM source_event",
-        upstream_tables=["source_event"],
-        downstream_tables=[],
-    )
-    assert (
-        validate_layer_sql_consistency(result, global_metric_context)
-        == expected_metric_aggregation_error
-    )
-
-    global_max_context = TableContext(
-        table_name="latest_update_metric",
-        layer="DWD",
-        ddl="",
-        etl_sql="SELECT MAX(updated_at) AS updated_at FROM source_event",
-        upstream_tables=["source_event"],
-        downstream_tables=[],
-    )
-    assert (
-        validate_layer_sql_consistency(result, global_max_context)
-        == expected_metric_aggregation_error
-    )
-
-    lookup_aggregate_context = TableContext(
-        table_name="instruction_detail",
-        layer="DWD",
-        ddl="",
-        etl_sql=(
-            "INSERT INTO instruction_detail "
-            "SELECT src.id, dates.first_date FROM instruction_source src "
-            "LEFT JOIN ("
-            "SELECT instruction_id, MIN(event_date) AS first_date "
-            "FROM instruction_event GROUP BY instruction_id"
-            ") dates ON src.id = dates.instruction_id"
-        ),
-        upstream_tables=["instruction_source", "instruction_event"],
-        downstream_tables=[],
-        column_lineage=context.column_lineage,
-    )
-    result.inferred_layer = "DWD"
-    assert (
-        validate_layer_sql_consistency(result, lookup_aggregate_context) == {}
-    )
-
-    grouped_cte_context = TableContext(
-        table_name="entity_daily_metrics",
-        layer="DWD",
-        ddl="",
-        etl_sql=(
-            "INSERT INTO entity_daily_metrics "
-            "WITH daily AS ("
-            "SELECT entity_id, metric_date, COUNT(*) AS event_count "
-            "FROM event_detail GROUP BY entity_id, metric_date"
-            ") SELECT * FROM daily"
-        ),
-        upstream_tables=["event_detail"],
-        downstream_tables=[],
-        column_lineage=[],
-    )
-    assert validate_layer_sql_consistency(result, grouped_cte_context) == {
-        "inconsistent_layer_sql": [
-            "DWD候选的目标行驱动查询包含指标聚合；请重新判断DWS或其他合法层级"
-        ]
-    }
 
 
 def _assert_validate_upstream_metric_layer_consistency():
@@ -2126,29 +2026,11 @@ def _assert_cache_retains_prompt_variants(tmp_path):
         },
         **base_context,
     )
-    response = json.dumps(
-        {
-            "choices": [
-                {
-                    "message": {
-                        "content": json.dumps(
-                            {
-                                "inferred_layer": "DWS",
-                                "table_type": "fact",
-                                "confidence": 0.9,
-                                "columns": {
-                                    "atomic_metrics": [],
-                                    "derived_metrics": [],
-                                    "calculated_metrics": [],
-                                    "dimensions": [{"name": "store_id"}],
-                                    "others": [],
-                                },
-                            }
-                        )
-                    }
-                }
-            ]
-        }
+    response = _api_response(
+        inferred_layer="DWS",
+        table_type="fact",
+        confidence=0.9,
+        columns={"dimensions": [{"name": "store_id"}]},
     )
 
     with patch.object(
@@ -2199,29 +2081,11 @@ def _assert_failed_result_does_not_poison_cache(tmp_path):
     assert failed_result.status == "blocked"
     assert not cache_file.exists()
 
-    recovered_response = json.dumps(
-        {
-            "choices": [
-                {
-                    "message": {
-                        "content": json.dumps(
-                            {
-                                "inferred_layer": "DIM",
-                                "table_type": "dimension",
-                                "confidence": 0.9,
-                                "columns": {
-                                    "atomic_metrics": [],
-                                    "derived_metrics": [],
-                                    "calculated_metrics": [],
-                                    "dimensions": [{"name": "customer_id"}],
-                                    "others": [],
-                                },
-                            }
-                        )
-                    }
-                }
-            ]
-        }
+    recovered_response = _api_response(
+        inferred_layer="DIM",
+        table_type="dimension",
+        confidence=0.9,
+        columns={"dimensions": [{"name": "customer_id"}]},
     )
     recovered_inspector = TableInspector(
         api_key="test",
@@ -2253,36 +2117,21 @@ def _assert_warning_cache_preserves_status_and_retry_budget(tmp_path):
         upstream_tables=["source_event"],
         downstream_tables=[],
     )
-    dwd_response = json.dumps(
-        {
-            "choices": [
-                {
-                    "message": {
-                        "content": json.dumps(
-                            {
-                                "inferred_layer": "DWD",
-                                "table_type": "fact",
-                                "confidence": 0.9,
-                                "entities": [
-                                    {
-                                        "code": "EVENT",
-                                        "type": "primary",
-                                        "key_columns": ["event_id"],
-                                    }
-                                ],
-                                "columns": {
-                                    "atomic_metrics": [],
-                                    "derived_metrics": [],
-                                    "calculated_metrics": [],
-                                    "dimensions": [{"name": "event_id"}],
-                                    "others": [{"name": "updated_at"}],
-                                },
-                            }
-                        )
-                    }
-                }
-            ]
-        }
+    dwd_response = _api_response(
+        inferred_layer="DWD",
+        table_type="fact",
+        confidence=0.9,
+        entities=[
+            {
+                "code": "EVENT",
+                "type": "primary",
+                "key_columns": ["event_id"],
+            }
+        ],
+        columns={
+            "dimensions": [{"name": "event_id"}],
+            "others": [{"name": "updated_at"}],
+        },
     )
     first_inspector = TableInspector(
         api_key="test",
@@ -2312,29 +2161,14 @@ def _assert_warning_cache_preserves_status_and_retry_budget(tmp_path):
         == (first_result.validation["ambiguous_min_max_aggregation"])
     )
 
-    dws_response = json.dumps(
-        {
-            "choices": [
-                {
-                    "message": {
-                        "content": json.dumps(
-                            {
-                                "inferred_layer": "DWS",
-                                "table_type": "fact",
-                                "confidence": 0.9,
-                                "columns": {
-                                    "atomic_metrics": [],
-                                    "derived_metrics": [],
-                                    "calculated_metrics": [],
-                                    "dimensions": [{"name": "event_id"}],
-                                    "others": [{"name": "updated_at"}],
-                                },
-                            }
-                        )
-                    }
-                }
-            ]
-        }
+    dws_response = _api_response(
+        inferred_layer="DWS",
+        table_type="fact",
+        confidence=0.9,
+        columns={
+            "dimensions": [{"name": "event_id"}],
+            "others": [{"name": "updated_at"}],
+        },
     )
     higher_retry_inspector = TableInspector(
         api_key="test",
@@ -2368,45 +2202,30 @@ def _assert_cache_miss_calls_api(tmp_path, monkeypatch):
     monkeypatch.setattr(
         inspector,
         "_call_api",
-        lambda p: json.dumps(
-            {
-                "choices": [
+        lambda _prompt: _api_response(
+            inferred_layer="DWD",
+            table_type="fact",
+            confidence=0.8,
+            reasoning_steps=["api"],
+            entities=[
+                {
+                    "code": "PAYMENT",
+                    "type": "primary",
+                    "key_columns": ["pay_amt"],
+                }
+            ],
+            columns={
+                "atomic_metrics": [
                     {
-                        "message": {
-                            "content": json.dumps(
-                                {
-                                    "inferred_layer": "DWD",
-                                    "table_type": "fact",
-                                    "confidence": 0.8,
-                                    "reasoning_steps": ["api"],
-                                    "entities": [
-                                        {
-                                            "code": "PAYMENT",
-                                            "type": "primary",
-                                            "key_columns": ["pay_amt"],
-                                        }
-                                    ],
-                                    "columns": {
-                                        "atomic_metrics": [
-                                            {
-                                                "name": "pay_amt",
-                                                "data_type": "DECIMAL(12,2)",
-                                                "business_process": "订单支付",
-                                                "action": "pay",
-                                                "measure": "amt",
-                                                "confidence": 0.9,
-                                            }
-                                        ],
-                                        "derived_metrics": [],
-                                        "dimensions": [],
-                                        "others": [],
-                                    },
-                                }
-                            )
-                        }
+                        "name": "pay_amt",
+                        "data_type": "DECIMAL(12,2)",
+                        "business_process": "订单支付",
+                        "action": "pay",
+                        "measure": "amt",
+                        "confidence": 0.9,
                     }
                 ]
-            }
+            },
         ),
     )
 
