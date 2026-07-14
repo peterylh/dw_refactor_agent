@@ -422,6 +422,7 @@ def test_run_benchmark_prefixless_mid_assets_enter_llm_contexts(
     assert inspector_parallelism == [8]
     assert "combined_final_accuracy" not in report
     assert report["combined_llm_middle_accuracy"] == 1.0
+    assert report["combined_post_retry_middle_accuracy"] == 1.0
     assert report["total_catalog_change_count"] == 2
     assert report["total_business_process_count"] == 1
     assert report["total_semantic_subject_count"] == 1
@@ -430,11 +431,15 @@ def test_run_benchmark_prefixless_mid_assets_enter_llm_contexts(
         ("order_detail", "DWD", False),
         ("order_summary", "DWD", False),
     }
+    project = report["projects"][0]
+    target_project = project["target_project"]
+    assert target_project.startswith("generate_llm_benchmark_")
+    assert "demo" not in target_project
     lineage_path = (
         tmp_path
         / "assets"
         / "warehouses"
-        / "demo_generate_llm_benchmark"
+        / target_project
         / "artifacts"
         / "lineage"
         / "lineage_data.json"
@@ -445,12 +450,12 @@ def test_run_benchmark_prefixless_mid_assets_enter_llm_contexts(
     ).asset_table_graph()
     assert upstream["order_detail"] == {"order_event"}
     assert upstream["order_dashboard"] == {"order_summary"}
-    project = report["projects"][0]
     assert project["source_project"] == "demo"
     assert project["table_count"] == 5
     assert project["middle_table_count"] == 3
     assert "final_accuracy" not in project
     assert project["llm_middle_accuracy"] == 1.0
+    assert project["post_retry_middle_accuracy"] == 1.0
     assert project["metric_count"] == 1
     assert project["entity_table_count"] == 1
     assert project["grain_table_count"] == 1
@@ -481,6 +486,7 @@ def test_llm_layers_use_raw_inspection_results_only():
             "tables": [
                 {
                     "table_name": "order_summary",
+                    "first_attempt_inferred_layer": "DWD",
                     "inferred_layer": "DIM",
                     "table_type": "dimension",
                 }
@@ -489,6 +495,9 @@ def test_llm_layers_use_raw_inspection_results_only():
     }
 
     assert _llm_layers(result) == {"order_summary": "DIM"}
+    assert _llm_layers(result, "first_attempt_inferred_layer") == {
+        "order_summary": "DWD"
+    }
 
 
 def test_runner_script_help_works_without_pythonpath():

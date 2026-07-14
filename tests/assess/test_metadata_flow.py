@@ -121,7 +121,9 @@ def test_inspection_pipeline_reclassifies_and_preserves_metric_identity(
                     TableInspectResult(
                         table_name=context.table_name,
                         declared_layer=context.layer,
-                        inferred_layer="DWS",
+                        inferred_layer=(
+                            "DWS" if context.upstream_metric_groups else "DWD"
+                        ),
                         table_type="fact",
                         confidence=0.9,
                         reasoning_steps=[],
@@ -148,8 +150,10 @@ def test_inspection_pipeline_reclassifies_and_preserves_metric_identity(
 
     assert batch_sizes == [5, 1]
     assert [context.table_name for context in bundle.dws_contexts] == [
-        "summary_1",
-        "summary_3",
+        "summary_1"
+    ]
+    assert "summary_3" in [
+        context.table_name for context in bundle.dwd_contexts
     ]
     assert seen_reinspection_groups == [
         {

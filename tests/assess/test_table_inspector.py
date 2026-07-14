@@ -307,11 +307,10 @@ def _assert_build_prompt_keeps_metadata_contracts_without_project_examples():
         "semantic_subject",
         "行粒度、键约束、聚合位置、时间字段和 JOIN 复用关系",
         "OTHER 不能作为 ODS 的替代返回值",
-        "factless fact",
-        "实体主数据的批次快照与周期事实要分开",
-        "上游已治理公共指标作为输出指标继续发布",
+        "快照、版本、关系和数值字段本身都不是层级证据",
+        "若只用于解释、计算或匹配的参考映射",
+        "直接透传单一明细来源并保持其行粒度",
         "JOIN 聚合子查询若按业务实体与时间粒度产生",
-        "必须把业务参与关系与参数配置映射分开",
         "不得为了填写 base_metric 而虚构上游不存在",
     ]:
         assert contract in prompt
@@ -998,6 +997,26 @@ def _assert_validate_upstream_metric_layer_consistency():
         ]
     }
 
+    passthrough_context = TableContext(
+        table_name="entity_metric_detail",
+        layer="DWD",
+        ddl="",
+        etl_sql=(
+            "SELECT entity_id, metric_count AS published_metric_count "
+            "FROM entity_metrics"
+        ),
+        upstream_tables=["analytics.entity_metrics"],
+        downstream_tables=[],
+        upstream_metric_groups=context.upstream_metric_groups,
+        column_lineage=context.column_lineage,
+    )
+    assert (
+        validate_upstream_metric_layer_consistency(
+            dwd_result, passthrough_context
+        )
+        == {}
+    )
+
     dwd_result.inferred_layer = "DWS"
     assert (
         validate_upstream_metric_layer_consistency(dwd_result, context) == {}
@@ -1352,10 +1371,13 @@ def _assert_result_serialization_handles_system_fields():
     }
 
     result = parse_response("dwd_customer", resp, declared_layer="DWD")
+    result.first_attempt_inferred_layer = "DWD"
     data = result_to_dict(result)
     cached = result_to_cache_dict(result)
 
     assert data["is_violating_declared_layer"] is True
+    assert data["first_attempt_inferred_layer"] == "DWD"
+    assert cached["first_attempt_inferred_layer"] == "DWD"
     assert "is_violating_declared_layer" not in cached
     assert "status" not in cached
 
@@ -2962,7 +2984,7 @@ def _layer_contract_retry_case(scenario):
         }
         markers = (
             "inconsistent_upstream_metric_layers",
-            "上游指标分组中的已治理指标",
+            "独立上游指标源中的公共指标",
         )
 
     return (
@@ -2995,6 +3017,9 @@ def test_inspector_retries_layer_contracts(scenario, tmp_path, monkeypatch):
     assert all(marker in calls[1] for marker in prompt_markers)
     assert result.status == "passed"
     assert result.retry_count == 1
+    assert (
+        result.first_attempt_inferred_layer == responses[0]["inferred_layer"]
+    )
     assert result.inferred_layer == responses[1]["inferred_layer"]
     assert result.table_type == responses[1]["table_type"]
 

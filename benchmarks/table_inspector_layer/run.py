@@ -139,8 +139,8 @@ def _source_database(source_dir: Path, source_project: str) -> str:
     )
 
 
-def _target_database(source_project: str) -> str:
-    return f"{source_project}_benchmark_dm"
+def _target_database(target_project: str) -> str:
+    return f"{target_project}_dm"
 
 
 def _iter_ddl_paths(source_dir: Path) -> List[Path]:
@@ -568,7 +568,7 @@ def build_temp_project(
             f"target benchmark project already exists: {target_dir}"
         )
 
-    database = _target_database(source_project)
+    database = _target_database(target_project)
     expected = _load_expected_models(source_dir)
     mapping = _table_mapping(
         _iter_ddl_paths(source_dir),
@@ -765,7 +765,10 @@ def _has_grain(model: Dict[str, Any]) -> bool:
     return bool(model.get("grain"))
 
 
-def _llm_layers(result: Dict[str, Any]) -> Dict[str, str]:
+def _llm_layers(
+    result: Dict[str, Any],
+    field: str = "inferred_layer",
+) -> Dict[str, str]:
     llm_result = result.get("llm_result") or {}
     layers: Dict[str, str] = {}
     for table_result in llm_result.get("tables") or []:
@@ -776,7 +779,9 @@ def _llm_layers(result: Dict[str, Any]) -> Dict[str, str]:
         ).strip()
         if table:
             layers[table] = str(
-                table_result.get("inferred_layer") or "MISSING"
+                table_result.get(field)
+                or table_result.get("inferred_layer")
+                or "MISSING"
             ).upper()
     return layers
 
@@ -902,18 +907,25 @@ def _summarize_project(
     if not generated_models:
         generated_models = _models_from_updates(result)
 
-    llm_layers = _llm_layers(result)
+    first_attempt_layers = _llm_layers(
+        result,
+        "first_attempt_inferred_layer",
+    )
+    post_retry_layers = _llm_layers(result)
     by_expected: Dict[str, Dict[str, int]] = defaultdict(
         lambda: {
             "total": 0,
             "llm_middle_total": 0,
             "llm_middle_correct": 0,
+            "post_retry_middle_correct": 0,
         }
     )
     confusion: Counter = Counter()
+    post_retry_confusion: Counter = Counter()
     final_layer_counts: Counter = Counter()
     mismatches = []
     llm_middle_correct = 0
+    post_retry_middle_correct = 0
     middle_count = 0
 
     for source_table, target_table in sorted(
@@ -928,7 +940,8 @@ def _summarize_project(
         expected_layer = str(expected.get("layer") or "OTHER").upper()
         final_model = generated_models.get(target_table, {})
         final_layer = str(final_model.get("layer") or "MISSING").upper()
-        llm_layer = llm_layers.get(target_table, "NOT_RUN")
+        first_attempt_layer = first_attempt_layers.get(target_table, "NOT_RUN")
+        post_retry_layer = post_retry_layers.get(target_table, "NOT_RUN")
 
         by_expected[expected_layer]["total"] += 1
         final_layer_counts[final_layer] += 1
@@ -936,11 +949,17 @@ def _summarize_project(
         if expected_layer in MIDDLE_LAYERS:
             middle_count += 1
             by_expected[expected_layer]["llm_middle_total"] += 1
-            confusion[_confusion_key(expected_layer, llm_layer)] += 1
-            if llm_layer == expected_layer:
+            confusion[_confusion_key(expected_layer, first_attempt_layer)] += 1
+            post_retry_confusion[
+                _confusion_key(expected_layer, post_retry_layer)
+            ] += 1
+            if first_attempt_layer == expected_layer:
                 llm_middle_correct += 1
                 by_expected[expected_layer]["llm_middle_correct"] += 1
-            elif llm_layer != expected_layer:
+            if post_retry_layer == expected_layer:
+                post_retry_middle_correct += 1
+                by_expected[expected_layer]["post_retry_middle_correct"] += 1
+            if first_attempt_layer != expected_layer:
                 mismatches.append(
                     {
                         "source_table": source_table,
@@ -949,7 +968,8 @@ def _summarize_project(
                         "expected_table_type": expected.get("table_type"),
                         "final_layer": final_layer,
                         "final_table_type": final_model.get("table_type"),
-                        "llm_middle_layer": llm_layer,
+                        "llm_middle_layer": first_attempt_layer,
+                        "post_retry_middle_layer": post_retry_layer,
                     }
                 )
 
@@ -981,8 +1001,13 @@ def _summarize_project(
         "llm_middle_accuracy": (
             llm_middle_correct / middle_count if middle_count else 0.0
         ),
+        "post_retry_middle_correct_count": post_retry_middle_correct,
+        "post_retry_middle_accuracy": (
+            post_retry_middle_correct / middle_count if middle_count else 0.0
+        ),
         "by_expected_layer": dict(sorted(by_expected.items())),
         "confusion": dict(sorted(confusion.items())),
+        "post_retry_confusion": dict(sorted(post_retry_confusion.items())),
         "final_layer_counts": dict(sorted(final_layer_counts.items())),
         "metric_count": metric_count,
         "metric_table_count": sum(
@@ -999,8 +1024,8 @@ def _summarize_project(
     }
 
 
-def _target_project_name(source_project: str) -> str:
-    return f"{source_project}_generate_llm_benchmark"
+def _target_project_name(_source_project: str) -> str:
+    return f"generate_llm_benchmark_{secrets.token_hex(8)}"
 
 
 def _managed_tmp_root(asset_dir: Optional[Path]) -> Tuple[Path, bool]:
@@ -1094,6 +1119,9 @@ def run_benchmark(
     llm_middle_correct = sum(
         item["llm_middle_correct_count"] for item in summaries
     )
+    post_retry_middle_correct = sum(
+        item["post_retry_middle_correct_count"] for item in summaries
+    )
     report = {
         "benchmark": "generate_llm_cold_start",
         "model": model,
@@ -1107,6 +1135,9 @@ def run_benchmark(
         "total_middle_table_count": total_middle,
         "combined_llm_middle_accuracy": (
             llm_middle_correct / total_middle if total_middle else 0.0
+        ),
+        "combined_post_retry_middle_accuracy": (
+            post_retry_middle_correct / total_middle if total_middle else 0.0
         ),
         "total_catalog_change_count": sum(
             item["catalog_change_count"] for item in summaries
@@ -1138,13 +1169,15 @@ def _print_report(report: Dict[str, Any]) -> None:
     print(f"  base_url: {report.get('base_url') or ''}")
     print(f"  tmp_root: {report['tmp_root']}")
     print(
-        "  combined: llm_middle={:.2%}".format(
+        "  combined: first_attempt={:.2%} post_retry={:.2%}".format(
             report["combined_llm_middle_accuracy"],
+            report["combined_post_retry_middle_accuracy"],
         )
     )
     for project in report["projects"]:
         print(
-            "  {source_project}: llm_middle={llm_middle_accuracy:.2%} "
+            "  {source_project}: first_attempt={llm_middle_accuracy:.2%} "
+            "post_retry={post_retry_middle_accuracy:.2%} "
             "models={generated_model_count} catalog_changes={catalog_change_count}".format(
                 **project
             )

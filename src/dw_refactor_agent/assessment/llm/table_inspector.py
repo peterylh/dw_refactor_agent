@@ -151,6 +151,7 @@ class TableInspectResult:
     )
     validation: dict[str, list[str]] = field(default_factory=dict)
     retry_count: int = 0
+    first_attempt_inferred_layer: str = ""
     inferred_data_domain: str = ""
     inferred_business_area: str = ""
     dimension_role: str = ""
@@ -244,20 +245,16 @@ def build_prompt(ctx: TableContext) -> str:
 - 当前巡检对象仅来自 DWD/DWS/DIM 可写模型候选；ODS 和 ADS 由资产目录边界固定，不参与中间层 LLM 裁决，也不得作为 inferred_layer 返回。
 - 如果原始配置层级是 DWD、DWS 或 DIM，且没有明确的 ads 资产目录、应用报表命名或最终看板用途证据，请优先在 DWD/DWS/DIM 中选择。
 - DWD: 输出行与输入明细保持同一粒度，转换主要是清洗、标准化、去重或逐行增强；目标行驱动查询没有把多行压缩为公共分析粒度，JOIN 聚合结果也没有作为公共业务指标发布。
-- DWS: 目标行驱动查询通过聚合把多行压缩到公共分析粒度，或当前模型消费“上游指标分组”中的公共指标并保持/再发布其汇总粒度；必须返回 fact。JOIN 聚合子查询若按业务实体与时间粒度产生 COUNT/SUM/AVG 等指标，并把这些指标作为目标表的正式分析输出，也属于 DWS；若聚合只补充首末日期、名称、状态、分类等查询辅助属性，且主驱动行仍逐行保留，才不属于目标表聚合。
+- DWS: 目标行驱动查询通过聚合把多行压缩到公共分析粒度，或当前模型消费“上游指标分组”中已经处于公共分析粒度的指标并保持/再发布该粒度；必须返回 fact。JOIN 聚合子查询若按业务实体与时间粒度产生 COUNT/SUM/AVG 等指标，并把这些指标作为目标表的正式分析输出，也属于 DWS；若聚合只补充首末日期、名称、状态、分类等查询辅助属性，且主驱动行仍逐行保留，才不属于目标表聚合。
 - DIM: 具有稳定实体标识和描述性属性，输出以描述性、分类或参考上下文属性为主，并且不表达业务事件或可汇总事实。下游 JOIN 可确认复用，但下游为空不能否定已成立的实体发布职责；生成新键本身不足以证明它是维度表。
 - 当前 SQL 没有压缩主驱动行、且没有上游公共指标证据时，不得仅凭表名、日期字段、snapshot/summary 语义或源系统已物化的余额/汇总字段判为 DWS。继续根据输出行是明细事实、可复用实体还是技术中间结果，在 DWD/fact、DIM/dimension 和 DWD/other 之间判断。
-- 单一上游逐行写入且保留上游稳定记录 ID 时，即使源记录自身带有 summary/snapshot/aggregate 语义，通常仍是 DWD 对源业务事实的标准化；只有当前模型压缩行或明确发布上游公共指标粒度时才是 DWS。
 - OTHER 不能作为 ODS 的替代返回值。ODS/ADS 边界已由资产目录固定；中间层候选若每行表达可识别的业务事件、状态、关系或快照事实，即使 ETL 只是近似贴源的清洗/标准化，也应在 DWD/DWS 中选择。OTHER/other 只用于不表达业务事实、公共指标或可复用实体的纯技术中间结果。
 - 必须区分“内容围绕实体组织”和“已经到达维度发布边界”：单表逐行清洗、标准化、类型转换或标签衍生后的实体数据，如果下游才生成正式实体代理键并保留自然键，则当前表仍是 DWD/other；不能仅因当前表有稳定实体 ID 和描述性属性就提前判为 DIM。
 - 下游生成代理键本身不是硬裁决；但若下游同时保留自然键、没有聚合，当前表又只做实体清洗/属性派生且不表达业务事件或可度量事实，这组证据共同确认下游才是正式维度发布边界，当前表必须返回 DWD/other，不得提前返回 DIM。若当前表承载事件或事实度量，仍应按事实语义判断。
 - 若没有下游实体发布结构特征，稳定实体键 + 以描述性属性为主 + 无事件/度量语义，可以直接构成 DIM 发布边界；不得仅因当前 ETL 是单表逐行标准化或下游引用数为 0 就强制降为 DWD/other。
-- 有效期、当前标志等 SCD 形态不能单独决定 DIM：若每行有独立的变更/历史记录键，并表达一次状态变更、触发原因或变更时点度量，它仍是 DWD 明细事实；若版本围绕实体自然键组织，主要发布可复用描述属性，才是 DIM。
-- 关系桥不能只按“有没有日期”裁决，也不能要求每条关系都必须具有完整生命周期字段。参与、隶属、任职、关联等实体间业务关系，包括成员、担保、所有权、地址归属、组织适用范围等，每行是在断言“谁参与、属于、负责或适用于谁”，关系本身就是 factless fact，应归 DWD/fact；即使只保留当前关系、没有日期或数值度量也不降为 DIM。独立关系记录 ID、发生/生效时间、状态变化和参与角色是增强证据，但不是必要条件。
-- 必须把业务参与关系与参数配置映射分开：若一侧主要是费率、科目、编码、规则、阈值、分类或原因等参考参数，关系用于决定如何计价、计算、入账、解释或匹配，而不是描述业务参与方的成员/责任/归属，则归 DIM/dimension。交易、分录、申请等带独立业务身份的事件对象不是“科目/编码参数”，它与参与方或其他事件的逐条关联仍可构成 DWD/fact。不能仅因它连接了两个实体键就判为 factless fact，也不能仅因没有日期就判为配置维度。
-- 实体主数据的批次快照与周期事实要分开：若查询按实体键用 ROW_NUMBER、RANK、MAX(version_time) 等方式选取截至批次时点的最新版本，目标日期只是 ETL 参数/批次日期，输出仍围绕实体身份和描述属性组织，而不是记录一次业务动作或可汇总状态，则优先返回 DIM/dimension。只有输出主要承载需要按该时间粒度汇总的业务状态度量时才返回 fact；不能仅因复合键含快照日期或存在价格、费率等非加性数值属性判为 DWD/fact。
-- 观察值、比率或指数等数值字段不自动构成事实表；若一行围绕稳定参考键/日期发布外部环境、市场参数、费率、指数、阈值、分类等分析上下文，没有业务参与方之间的动作、交易或状态发生，它应优先视为 DIM/dimension。只有该观察本身就是需要度量的业务过程或周期状态时，才是事实表。
-- 若当前表把上游已治理公共指标作为输出指标继续发布，即使只做逐行 JOIN/改名且当前 SQL 没有 GROUP BY，仍保持的是公共指标粒度，应归 DWS/fact；不能把上游公共指标改称当前表的 atomic metric 后降为 DWD。
+- 快照、版本、关系和数值字段本身都不是层级证据；必须结合目标行粒度、是否表达业务事件/公共指标、以及是否作为描述性上下文复用综合判断。
+- 关系模型若每行表达可识别的业务参与或状态关系，可判为 DWD/fact；若只用于解释、计算或匹配的参考映射，则判为 DIM/dimension。不得仅依赖字段词或是否有日期硬裁决。
+- 若当前表把独立上游指标源 JOIN 到目标分析粒度并继续发布，应保持 DWS/fact；但直接透传单一明细来源并保持其行粒度时，不能仅因字段已被识别为指标就升级为 DWS。
 - 下游引用数为 0 只能作为边界层弱证据，不能覆盖粒度、聚合和资产目录证据。
 
 ## 维表分类标准
@@ -528,7 +525,7 @@ def build_retry_prompt(
 - OTHER/fact 不是合法的中间层组合：ODS/ADS 边界已经固定，贴源清洗后的业务事件、关系、状态或快照事实应在 DWD/DWS 中选择；不要用 OTHER 代替 ODS。
 - inconsistent_layer_sql 表示 DWD 候选的目标行驱动查询存在 GROUP BY 并压缩目标粒度；必须根据公共聚合粒度重新判断。仅在 JOIN 辅助子查询中聚合以补充日期/属性、主驱动行仍逐行保留时，可以继续返回 DWD。
 - ambiguous_min_max_aggregation 表示代码无法仅凭同名 MIN/MAX 判断它是技术选值还是业务汇总；如果输出是业务统计结果，应归入指标字段并返回 DWS，如果只是保留实体最新/最早技术状态，可继续返回 DWD，并在字段 reason 中说明技术选值依据。
-- inconsistent_upstream_metric_layers 表示 DWD 候选把上游指标分组中的已治理指标继续作为目标指标发布；即使当前 SQL 没有 GROUP BY，也必须按其公共指标粒度返回 DWS/fact，并保留正确的上游指标依赖关系。
+- inconsistent_upstream_metric_layers 表示 DWD 候选把独立上游指标源中的公共指标 JOIN 到目标分析粒度并继续发布；应返回 DWS/fact 并保留正确的上游指标依赖关系。单一明细来源的逐行透传不属于此错误。
 - invalid_base_metrics / invalid_base_metric_tables 中的 base_metric 必须是字段血缘或上游指标分组中真实存在的原子指标列名，不能编造语义标签。COUNT(*) 或 COUNT(事件键)形成的基础计数应归 atomic_metrics；无法验证上游原子指标时，不要虚构 base_metric/base_metric_table。
 - 不要返回 Markdown，不要返回额外解释。
 """
@@ -794,6 +791,7 @@ def result_to_dict(result: TableInspectResult) -> dict[str, Any]:
         "validation": result.validation,
         "status": result.status,
         "retry_count": result.retry_count,
+        "first_attempt_inferred_layer": result.first_attempt_inferred_layer,
         "is_violating_declared_layer": result.is_violating_declared_layer,
     }
 
@@ -818,6 +816,7 @@ def result_to_cache_dict(result: TableInspectResult) -> dict[str, Any]:
         "grain": result.grain,
         "validation": result.validation,
         "retry_count": result.retry_count,
+        "first_attempt_inferred_layer": result.first_attempt_inferred_layer,
     }
 
 
@@ -842,6 +841,10 @@ def dict_to_result(
         grain=_normalize_grain(data.get("grain")),
         validation=_normalize_validation(data.get("validation")),
         retry_count=int(data.get("retry_count", 0) or 0),
+        first_attempt_inferred_layer=_valid_layer(
+            data.get("first_attempt_inferred_layer")
+            or data.get("inferred_layer")
+        ),
         inferred_data_domain=_safe_str(data.get("inferred_data_domain")),
         inferred_business_area=_safe_str(
             data.get("inferred_business_area")
@@ -1364,7 +1367,7 @@ def validate_upstream_metric_layer_consistency(
     result: TableInspectResult,
     ctx: TableContext,
 ) -> dict[str, list[str]]:
-    """Prevent a DWD fact from republishing governed upstream metrics."""
+    """Prevent DWD from publishing a joined public-metric grain."""
     if (
         str(result.inferred_layer or "").upper() != "DWD"
         or not result.is_fact_table
@@ -1382,6 +1385,24 @@ def validate_upstream_metric_layer_consistency(
         for name in _metric_names_from_items(result.columns.get(group))
     }
     if not target_metrics:
+        return {}
+
+    upstream_identities = {
+        _canonical_table_identity(table_name)
+        for table_name in ctx.upstream_tables
+        if _canonical_table_identity(table_name)
+    }
+    aggregation_evidence = _target_query_aggregation_evidence(
+        ctx.etl_sql,
+        target_metrics,
+    )
+    if (
+        len(upstream_identities) == 1
+        and aggregation_evidence is not None
+        and not aggregation_evidence[0]
+    ):
+        # A row-preserving pass-through from one detail source remains DWD;
+        # metric classification alone does not create a public DWS grain.
         return {}
 
     upstream_metrics: dict[str, set[str]] = {}
@@ -1813,6 +1834,7 @@ class TableInspector:
         ddl_columns = _extract_ddl_column_names(ctx.ddl)
         prompt = build_prompt(ctx)
         result = None
+        first_attempt_inferred_layer = ""
         for attempt in range(self.max_retries + 1):
             self._emit_progress(
                 "api_call",
@@ -1834,6 +1856,11 @@ class TableInspector:
                     reasoning_steps=[f"分类异常: {str(e)}"],
                     retry_count=attempt,
                 )
+                if attempt == 0:
+                    first_attempt_inferred_layer = result.inferred_layer
+                result.first_attempt_inferred_layer = (
+                    first_attempt_inferred_layer
+                )
                 self._emit_progress(
                     "api_error",
                     ctx,
@@ -1848,6 +1875,9 @@ class TableInspector:
 
             result = parse_response(ctx.table_name, resp_json, ctx.layer)
             result.retry_count = attempt
+            if attempt == 0:
+                first_attempt_inferred_layer = result.inferred_layer
+            result.first_attempt_inferred_layer = first_attempt_inferred_layer
             enrich_metric_relationships(result, ctx)
             result.validation = _merge_validation(
                 validate_columns(result, ddl_columns),

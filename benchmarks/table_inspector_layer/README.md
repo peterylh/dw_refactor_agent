@@ -9,7 +9,7 @@ compares the generated metadata against the source project model YAML files.
 The source projects are never modified. Temporary assets are created under:
 
 ```text
-<tmp_root>/warehouses/{source_project}_generate_llm_benchmark
+<tmp_root>/warehouses/generate_llm_benchmark_{opaque_token}
 ```
 
 By default the temporary root is kept and reported in JSON so generated YAML can
@@ -58,6 +58,8 @@ For each source project, the benchmark creates a temporary project with:
   DDL and task SQL, using the same lineage extractor as normal projects.
 - Layer labels for the target, upstream, and downstream tables are hidden from
   the LLM; the prompt keeps only prefixless names and unlabeled lineage.
+- Temporary project and database names use opaque random tokens, so source
+  project identities do not remain in rewritten DDL or task SQL.
 
 Table prefixes `ods_`, `dwd_`, `dws_`, `ads_`, and `dim_` are removed. SQL line
 comments, DDL `COMMENT` clauses, and direct layer words such as ODS/DWD/DWS/ADS
@@ -74,8 +76,11 @@ alias.
 
 Top-level report fields include:
 
-- `combined_llm_middle_accuracy`: raw LLM `inferred_layer` accuracy over only
-  expected DWD/DWS/DIM tables, before resolver or model-write corrections.
+- `combined_llm_middle_accuracy`: first-attempt LLM `inferred_layer` accuracy
+  over only expected DWD/DWS/DIM tables, before validation-guided retries,
+  resolver, or model-write corrections.
+- `combined_post_retry_middle_accuracy`: LLM accuracy after validation-guided
+  retries but before resolver or model-write corrections.
 - `total_catalog_change_count`: process/subject catalog additions or updates.
 - `total_business_process_count` and `total_semantic_subject_count`: generated
   catalog entry counts.
@@ -98,6 +103,10 @@ check.
 
 DWD, DWS, and DIM tables are the LLM candidate set. Their LLM decision quality
 is reported as `llm_middle_accuracy`.
+
+These bundled projects are regression datasets, not an independent holdout.
+Results measure behavior on the checked-in cases and should not by themselves
+be presented as evidence of cross-project generalization.
 
 Use mismatches as the main review queue for middle-layer decisions. The
 temporary project path in `tmp_root` contains the generated model YAML and split

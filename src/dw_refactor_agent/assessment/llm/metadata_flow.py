@@ -179,12 +179,6 @@ def run_inspection_pipeline(
         for ctx, result in initial_pairs
         if _result_layer(ctx, result, result_layer_resolver) == "DWD"
     ]
-    initial_dws_pairs = [
-        (ctx, result)
-        for ctx, result in initial_pairs
-        if _result_layer(ctx, result, result_layer_resolver) == "DWS"
-    ]
-
     detected_groups = {}
     for ctx, result in initial_dwd_pairs:
         is_eligible = (
@@ -197,19 +191,20 @@ def run_inspection_pipeline(
         table_identity = ctx.table_identity or result.table_name
         detected_groups[table_identity] = metric_group_builder(result)
 
-    # Reinspect only DWS tables whose prompt gained a newly detected upstream
-    # metric group. Other initial classifications remain reusable.
-    dws_contexts_to_reinspect = []
-    for ctx, _ in initial_dws_pairs:
+    # Reinspect every table whose prompt gained a newly detected upstream
+    # metric group. A pass-through DWS may look like DWD before that context is
+    # available, so filtering by the initial classification is circular.
+    contexts_to_reinspect = []
+    for ctx, _ in initial_pairs:
         previous_groups = dict(ctx.upstream_metric_groups)
         _inject_upstream_metric_groups([ctx], detected_groups)
         if ctx.upstream_metric_groups != previous_groups:
-            dws_contexts_to_reinspect.append(ctx)
-    reinspection_results = inspector.inspect_batch(dws_contexts_to_reinspect)
+            contexts_to_reinspect.append(ctx)
+    reinspection_results = inspector.inspect_batch(contexts_to_reinspect)
     reinspected_by_context_id = {
         id(ctx): result
         for ctx, result in zip(
-            dws_contexts_to_reinspect,
+            contexts_to_reinspect,
             reinspection_results,
         )
     }
