@@ -186,18 +186,17 @@ def _validate_table(table: Any, path: str) -> tuple[tuple, set[str]]:
 def _validate_job(
     job: Any,
     path: str,
-    known_tables: set,
+    reference_index: _TableReferenceIndex,
 ) -> tuple[str, Any]:
     job = _require_object(job, path)
     _require_exact_keys(job, JOB_KEYS, path)
     name = _require_string(job["name"], f"{path}.name")
     _require_string(job["source_file"], f"{path}.source_file")
     for field in ("inputs", "outputs"):
-        _validate_sorted_unique_strings(
+        _validate_sorted_unique_table_references(
             job[field],
             f"{path}.{field}",
-            key=table_identity_match_key,
-            known=known_tables,
+            reference_index,
         )
     return name, identifier_match_key(name)
 
@@ -228,6 +227,30 @@ def _resolve_table_ref(
             f"references ambiguous table {table_name!r}; matches {matches!r}",
         )
     return candidates[0]
+
+
+def _validate_sorted_unique_table_references(
+    value: Any,
+    path: str,
+    reference_index: _TableReferenceIndex,
+) -> list[str]:
+    values = _require_array(value, path)
+    normalized = []
+    seen = set()
+    for index, item in enumerate(values):
+        text = _require_string(item, f"{path}[{index}]")
+        table_key = _resolve_table_ref(
+            text,
+            f"{path}[{index}]",
+            reference_index,
+        )
+        if table_key in seen:
+            _fail(path, f"contains duplicate value {text!r}")
+        seen.add(table_key)
+        normalized.append(table_key)
+    if normalized != sorted(normalized):
+        _fail(path, "must be sorted by canonical identifier")
+    return values
 
 
 def _build_table_reference_index(
@@ -345,7 +368,7 @@ def _validate_edge(
 def _validate_diagnostic(
     diagnostic: Any,
     path: str,
-    known_tables: set,
+    reference_index: _TableReferenceIndex,
     known_jobs: set,
 ) -> None:
     diagnostic = _require_object(diagnostic, path)
@@ -354,8 +377,7 @@ def _validate_diagnostic(
     if code != "UNRESOLVED_DATASET_PRODUCER":
         _fail(f"{path}.code", f"unsupported value {code!r}")
     dataset = _require_string(diagnostic["dataset"], f"{path}.dataset")
-    if table_identity_match_key(dataset) not in known_tables:
-        _fail(f"{path}.dataset", f"references missing table {dataset!r}")
+    _resolve_table_ref(dataset, f"{path}.dataset", reference_index)
     reason = _require_string(diagnostic["reason"], f"{path}.reason")
     if reason not in DIAGNOSTIC_REASONS:
         _fail(f"{path}.reason", f"unsupported value {reason!r}")
@@ -401,7 +423,7 @@ def validate_lineage_v2(data: dict) -> None:
         name, name_key = _validate_job(
             job,
             f"lineage.jobs[{index}]",
-            known_tables,
+            reference_index,
         )
         if name_key in known_jobs:
             _fail(f"lineage.jobs[{index}].name", f"duplicate Job {name!r}")
@@ -421,7 +443,7 @@ def validate_lineage_v2(data: dict) -> None:
         _validate_diagnostic(
             diagnostic,
             f"lineage.diagnostics[{index}]",
-            known_tables,
+            reference_index,
             known_jobs,
         )
 

@@ -233,6 +233,71 @@ def test_v2_job_io_must_be_sorted_unique_table_name_arrays(field):
         validate_lineage_v2(data)
 
 
+@pytest.mark.parametrize(
+    "field, invalid_ref",
+    [
+        ("inputs", "evil.internal.shop_dm.source"),
+        ("inputs", "shop_dm..source"),
+        ("outputs", "evil.internal.shop_dm.output"),
+        ("outputs", "shop_dm..output"),
+    ],
+)
+def test_v2_job_io_rejects_invalid_table_qualifier_segments(
+    field,
+    invalid_ref,
+):
+    data = valid_lineage_v2()
+    data["jobs"][0][field] = [invalid_ref]
+
+    with pytest.raises(LineageContractError) as error:
+        validate_lineage_v2(data)
+
+    message = str(error.value)
+    assert message.startswith(f"lineage.jobs[0].{field}[0]:")
+    assert "segments" in message
+
+
+@pytest.mark.parametrize(
+    "field, table_index, short_ref, alternate_full_name",
+    [
+        ("inputs", 0, "source", "external.other_dm.source"),
+        ("outputs", 2, "output", "external.other_dm.output"),
+    ],
+)
+def test_v2_job_io_rejects_ambiguous_short_table_refs(
+    field,
+    table_index,
+    short_ref,
+    alternate_full_name,
+):
+    data = valid_lineage_v2()
+    alternate = deepcopy(data["tables"][table_index])
+    alternate["name"] = f"alternate_{short_ref}"
+    alternate["full_name"] = alternate_full_name
+    data["tables"].append(alternate)
+    data["jobs"][0][field] = [short_ref]
+
+    with pytest.raises(LineageContractError) as error:
+        validate_lineage_v2(data)
+
+    message = str(error.value)
+    assert message.startswith(f"lineage.jobs[0].{field}[0]:")
+    assert "ambiguous table" in message
+    assert data["tables"][table_index]["full_name"] in message
+    assert alternate_full_name in message
+
+
+def test_v2_job_io_unique_refs_share_canonical_duplicate_semantics():
+    data = valid_lineage_v2()
+    data["jobs"][0]["inputs"] = [
+        "source",
+        "INTERNAL.SHOP_DM.SOURCE",
+    ]
+
+    with pytest.raises(LineageContractError, match="duplicate"):
+        validate_lineage_v2(data)
+
+
 @pytest.mark.parametrize("edge_part", ["source", "target"])
 def test_v2_edge_refs_must_be_typed_objects(edge_part):
     data = valid_lineage_v2()
@@ -534,6 +599,76 @@ def test_v2_diagnostics_use_known_reason_and_jobs():
     ]
     with pytest.raises(LineageContractError, match="missing"):
         validate_lineage_v2(data)
+
+
+@pytest.mark.parametrize(
+    "dataset",
+    [
+        "evil.internal.shop_dm.stage",
+        "shop_dm..stage",
+    ],
+)
+def test_v2_diagnostic_dataset_rejects_invalid_qualifier_segments(dataset):
+    data = valid_lineage_v2()
+    data["diagnostics"] = [
+        {
+            "code": "UNRESOLVED_DATASET_PRODUCER",
+            "dataset": dataset,
+            "reason": "not_found",
+            "consumer_jobs": ["build_output"],
+            "candidate_producer_jobs": [],
+        }
+    ]
+
+    with pytest.raises(LineageContractError) as error:
+        validate_lineage_v2(data)
+
+    message = str(error.value)
+    assert message.startswith("lineage.diagnostics[0].dataset:")
+    assert "segments" in message
+
+
+def test_v2_diagnostic_dataset_rejects_ambiguous_short_table_ref():
+    data = valid_lineage_v2()
+    alternate = deepcopy(data["tables"][1])
+    alternate["name"] = "alternate_stage"
+    alternate["full_name"] = "external.other_dm.stage"
+    data["tables"].append(alternate)
+    data["diagnostics"] = [
+        {
+            "code": "UNRESOLVED_DATASET_PRODUCER",
+            "dataset": "stage",
+            "reason": "not_found",
+            "consumer_jobs": ["build_output"],
+            "candidate_producer_jobs": [],
+        }
+    ]
+
+    with pytest.raises(LineageContractError) as error:
+        validate_lineage_v2(data)
+
+    message = str(error.value)
+    assert message.startswith("lineage.diagnostics[0].dataset:")
+    assert "ambiguous table" in message
+    assert "internal.shop_dm.stage" in message
+    assert "external.other_dm.stage" in message
+
+
+def test_v2_job_io_and_diagnostic_accept_quoted_casefold_qualification():
+    data = valid_lineage_v2()
+    data["jobs"][0]["inputs"] = ["`SOURCE`"]
+    data["jobs"][0]["outputs"] = ["`SHOP_DM`.`OUTPUT`"]
+    data["diagnostics"] = [
+        {
+            "code": "UNRESOLVED_DATASET_PRODUCER",
+            "dataset": "`INTERNAL`.`SHOP_DM`.`STAGE`",
+            "reason": "not_found",
+            "consumer_jobs": ["BUILD_OUTPUT"],
+            "candidate_producer_jobs": [],
+        }
+    ]
+
+    validate_lineage_v2(data)
 
 
 def test_lineage_snapshot_v2_prefers_explicit_jobs_and_fields():
