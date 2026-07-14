@@ -128,6 +128,75 @@ def test_build_lineage_output_deduplicates_direct_edges_case_insensitively():
     validate_lineage_v2(output)
 
 
+def test_build_lineage_output_keeps_explicit_column_sources_distinct():
+    output = build_lineage_output(
+        [
+            {
+                "source_type": "column",
+                "source_table": "db.source_a",
+                "source_column": "id",
+                "target_table": "db.output",
+                "target_column": "id",
+                "lineage_type": "direct",
+                "expression": "id",
+                "source_file": "load.sql",
+            },
+            {
+                "source_type": "column",
+                "source_table": "db.source_b",
+                "source_column": "id",
+                "target_table": "db.output",
+                "target_column": "id",
+                "lineage_type": "direct",
+                "expression": "id",
+                "source_file": "load.sql",
+            },
+        ],
+        {},
+        task_results=[
+            _task_result(
+                "load.sql",
+                inputs=["db.source_a", "db.source_b"],
+                outputs=["db.output"],
+            )
+        ],
+    )
+
+    assert len(output["edges"]) == 2
+    assert {edge["source"]["id"] for edge in output["edges"]} == {
+        "db.source_a.id",
+        "db.source_b.id",
+    }
+    validate_lineage_v2(output)
+
+
+def test_build_lineage_output_deduplicates_effective_passthrough():
+    base_entry = {
+        "source_table": "db.source",
+        "source_column": "id",
+        "target_table": "db.output",
+        "target_column": "id",
+        "lineage_type": "direct",
+        "expression": "id",
+        "source_file": "load.sql",
+    }
+    output = build_lineage_output(
+        [base_entry, {**base_entry, "transformation_type": "passthrough"}],
+        {},
+        task_results=[
+            _task_result(
+                "load.sql",
+                inputs=["db.source"],
+                outputs=["db.output"],
+            )
+        ],
+    )
+
+    assert len(output["edges"]) == 1
+    assert output["edges"][0]["transformation_type"] == "passthrough"
+    validate_lineage_v2(output)
+
+
 def test_build_lineage_output_deduplicates_indirect_edges_case_insensitively():
     output = build_lineage_output(
         [

@@ -4223,6 +4223,20 @@ def build_lineage_output(
     all_lineage = [
         _canonical_lineage_entry(entry, schema_lookup) for entry in all_lineage
     ]
+
+    def _direct_source_type(entry):
+        source_type = _identifier_match_key(
+            entry.get("source_type") or "column"
+        )
+        if source_type in {"literal", "expression"}:
+            return source_type
+        return "column"
+
+    def _direct_transformation(entry):
+        if entry.get("transformation_type"):
+            return str(entry["transformation_type"])
+        return _transformation_type_for_expression(entry.get("expression", ""))
+
     edge_table_displays = {}
     edge_column_displays = {}
 
@@ -4241,7 +4255,7 @@ def build_lineage_output(
             )
 
     for entry in all_lineage:
-        source_type = str(entry.get("source_type") or "column")
+        source_type = _direct_source_type(entry)
         if source_type == "column":
             remember_edge_ref(
                 entry.get("source_table", ""),
@@ -4269,6 +4283,29 @@ def build_lineage_output(
             _job_for_lineage_entry(entry, jobs_by_source_file)
         )
 
+    def direct_source_key(entry):
+        source_type = _direct_source_type(entry)
+        if source_type == "literal":
+            return (source_type, entry.get("source_value", ""))
+        if source_type == "expression":
+            return (source_type, entry.get("source_expression", ""))
+        return (
+            source_type,
+            _table_identity_match_key(entry.get("source_table", "")),
+            _identifier_match_key(entry.get("source_column", "")),
+        )
+
+    def direct_semantic_key(entry):
+        return (
+            "direct",
+            entry_job_key(entry),
+            direct_source_key(entry),
+            _table_identity_match_key(entry.get("target_table", "")),
+            _identifier_match_key(entry.get("target_column", "")),
+            _direct_transformation(entry),
+            entry.get("expression", ""),
+        )
+
     unique = []
     seen = set()
     for e in all_lineage:
@@ -4283,29 +4320,8 @@ def build_lineage_output(
                 _relation_type_for_condition(e.get("condition_type", "")),
                 e.get("condition_expression", ""),
             )
-        elif e.get("source_type"):
-            key = (
-                "direct",
-                entry_job_key(e),
-                _identifier_match_key(e.get("source_type", "")),
-                e.get("source_value", ""),
-                e.get("source_expression", ""),
-                _table_identity_match_key(e.get("target_table", "")),
-                _identifier_match_key(e.get("target_column", "")),
-                e.get("transformation_type", ""),
-                e.get("expression", ""),
-            )
         else:
-            key = (
-                "direct",
-                entry_job_key(e),
-                _table_identity_match_key(e.get("source_table", "")),
-                _identifier_match_key(e.get("source_column", "")),
-                _table_identity_match_key(e.get("target_table", "")),
-                _identifier_match_key(e.get("target_column", "")),
-                e.get("transformation_type", ""),
-                e.get("expression", ""),
-            )
+            key = direct_semantic_key(e)
         if key not in seen:
             seen.add(key)
             unique.append(e)
@@ -4476,22 +4492,17 @@ def build_lineage_output(
         _ensure_column(table_display, column_display)
 
     def _direct_source(entry, source_table="", source_column=""):
-        source_type = str(entry.get("source_type") or "").strip()
+        source_type = _direct_source_type(entry)
         if source_type == "literal":
             return _literal_source(entry.get("source_value", ""))
         if source_type == "expression":
             return _expression_source(entry.get("source_expression", ""))
         return _column_source(source_table, source_column)
 
-    def _direct_transformation(entry):
-        if entry.get("transformation_type"):
-            return str(entry["transformation_type"])
-        return _transformation_type_for_expression(entry.get("expression", ""))
-
     for entry in direct_entries:
         tgt_tbl = _strip_db(entry.get("target_table", ""))
         tgt_col = _canonical_column(entry.get("target_column", ""))
-        source_type = str(entry.get("source_type") or "column")
+        source_type = _direct_source_type(entry)
         displayed_src_tbl = ""
         displayed_src_col = ""
         if source_type == "column":
