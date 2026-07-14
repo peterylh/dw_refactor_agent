@@ -4223,37 +4223,88 @@ def build_lineage_output(
     all_lineage = [
         _canonical_lineage_entry(entry, schema_lookup) for entry in all_lineage
     ]
+    edge_table_displays = {}
+    edge_column_displays = {}
+
+    def remember_edge_ref(table_name, column_name=""):
+        table_display = _strip_db(table_name)
+        if not table_display or table_display == "UNKNOWN":
+            return
+        table_key = _table_identity_match_key(table_display)
+        edge_table_displays.setdefault(table_key, table_display)
+        column_display = _canonical_column(column_name)
+        if column_display:
+            column_key = _identifier_match_key(column_display)
+            edge_column_displays.setdefault(
+                (table_key, column_key),
+                (table_display, column_display),
+            )
+
+    for entry in all_lineage:
+        source_type = str(entry.get("source_type") or "column")
+        if source_type == "column":
+            remember_edge_ref(
+                entry.get("source_table", ""),
+                entry.get("source_column", ""),
+            )
+        remember_edge_ref(
+            entry.get("target_table", ""),
+            entry.get("target_column", ""),
+        )
+
+    if task_results is None:
+        task_results = _legacy_task_results(
+            all_lineage,
+            transient_tables=transient_tables,
+        )
+    else:
+        task_results = list(task_results)
+    jobs = build_job_records(task_results, _display_table_name)
+    jobs_by_source_file = {
+        _source_file_match_key(job["source_file"]): job["name"] for job in jobs
+    }
+
+    def entry_job_key(entry):
+        return _identifier_match_key(
+            _job_for_lineage_entry(entry, jobs_by_source_file)
+        )
+
     unique = []
     seen = set()
     for e in all_lineage:
         is_indirect = e.get("lineage_type") == "indirect"
         if is_indirect:
             key = (
-                e.get("source_table", ""),
-                e.get("source_column", ""),
-                e.get("target_table", ""),
-                e.get("condition_type", ""),
+                "indirect",
+                entry_job_key(e),
+                _table_identity_match_key(e.get("source_table", "")),
+                _identifier_match_key(e.get("source_column", "")),
+                _table_identity_match_key(e.get("target_table", "")),
+                _relation_type_for_condition(e.get("condition_type", "")),
                 e.get("condition_expression", ""),
-                e.get("source_file", ""),
             )
         elif e.get("source_type"):
             key = (
-                e.get("source_type", ""),
+                "direct",
+                entry_job_key(e),
+                _identifier_match_key(e.get("source_type", "")),
                 e.get("source_value", ""),
                 e.get("source_expression", ""),
-                e.get("target_table", ""),
-                e.get("target_column", ""),
+                _table_identity_match_key(e.get("target_table", "")),
+                _identifier_match_key(e.get("target_column", "")),
+                e.get("transformation_type", ""),
                 e.get("expression", ""),
-                e.get("source_file", ""),
             )
         else:
             key = (
-                e.get("source_table", ""),
-                e.get("source_column", ""),
-                e.get("target_table", ""),
-                e.get("target_column", ""),
+                "direct",
+                entry_job_key(e),
+                _table_identity_match_key(e.get("source_table", "")),
+                _identifier_match_key(e.get("source_column", "")),
+                _table_identity_match_key(e.get("target_table", "")),
+                _identifier_match_key(e.get("target_column", "")),
+                e.get("transformation_type", ""),
                 e.get("expression", ""),
-                e.get("source_file", ""),
             )
         if key not in seen:
             seen.add(key)
@@ -4282,18 +4333,6 @@ def build_lineage_output(
     indirect_entries = [
         e for e in all_lineage if e.get("lineage_type") == "indirect"
     ]
-
-    if task_results is None:
-        task_results = _legacy_task_results(
-            all_lineage,
-            transient_tables=transient_tables,
-        )
-    else:
-        task_results = list(task_results)
-    jobs = build_job_records(task_results, _display_table_name)
-    jobs_by_source_file = {
-        _source_file_match_key(job["source_file"]): job["name"] for job in jobs
-    }
 
     tables = {}
     edges = []
@@ -4423,15 +4462,26 @@ def build_lineage_output(
             column_names.add(column_key)
             column_objects[column_key] = column
 
-    def _direct_source(entry):
+    def _stored_table_name(tbl):
+        return tables[_table_storage_key(tbl)]["name"]
+
+    def _stored_column_name(tbl, col):
+        return column_objects_by_table[_table_storage_key(tbl)][
+            _identifier_match_key(col)
+        ]["name"]
+
+    for table_display in edge_table_displays.values():
+        _ensure_table(table_display)
+    for table_display, column_display in edge_column_displays.values():
+        _ensure_column(table_display, column_display)
+
+    def _direct_source(entry, source_table="", source_column=""):
         source_type = str(entry.get("source_type") or "").strip()
         if source_type == "literal":
             return _literal_source(entry.get("source_value", ""))
         if source_type == "expression":
             return _expression_source(entry.get("source_expression", ""))
-        return _column_source(
-            entry.get("source_table", ""), entry.get("source_column", "")
-        )
+        return _column_source(source_table, source_column)
 
     def _direct_transformation(entry):
         if entry.get("transformation_type"):
@@ -4442,19 +4492,32 @@ def build_lineage_output(
         tgt_tbl = _strip_db(entry.get("target_table", ""))
         tgt_col = _canonical_column(entry.get("target_column", ""))
         source_type = str(entry.get("source_type") or "column")
+        displayed_src_tbl = ""
+        displayed_src_col = ""
         if source_type == "column":
             src_tbl = _strip_db(entry.get("source_table", ""))
             src_col = _canonical_column(entry.get("source_column", ""))
             if src_tbl == "UNKNOWN":
                 continue
             _ensure_column(src_tbl, src_col)
+            displayed_src_tbl = _stored_table_name(src_tbl)
+            displayed_src_col = _stored_column_name(src_tbl, src_col)
         if not tgt_tbl or not tgt_col:
             continue
         _ensure_column(tgt_tbl, tgt_col)
+        displayed_tgt_tbl = _stored_table_name(tgt_tbl)
+        displayed_tgt_col = _stored_column_name(tgt_tbl, tgt_col)
         edges.append(
             {
-                "source": _direct_source(entry),
-                "target": _column_target(tgt_tbl, tgt_col),
+                "source": _direct_source(
+                    entry,
+                    displayed_src_tbl,
+                    displayed_src_col,
+                ),
+                "target": _column_target(
+                    displayed_tgt_tbl,
+                    displayed_tgt_col,
+                ),
                 "relation_type": "direct",
                 "transformation_type": _direct_transformation(entry),
                 "expression": entry.get("expression", ""),
@@ -4473,13 +4536,19 @@ def build_lineage_output(
             continue
         _ensure_column(src_tbl, src_col)
         _ensure_table(tgt_tbl)
+        displayed_src_tbl = _stored_table_name(src_tbl)
+        displayed_src_col = _stored_column_name(src_tbl, src_col)
+        displayed_tgt_tbl = _stored_table_name(tgt_tbl)
         relation_type = _relation_type_for_condition(
             entry.get("condition_type", "")
         )
         edges.append(
             {
-                "source": _column_source(src_tbl, src_col),
-                "target": _table_target(tgt_tbl),
+                "source": _column_source(
+                    displayed_src_tbl,
+                    displayed_src_col,
+                ),
+                "target": _table_target(displayed_tgt_tbl),
                 "relation_type": relation_type,
                 "transformation_type": relation_type,
                 "expression": entry.get("condition_expression", ""),

@@ -71,6 +71,119 @@ def test_build_lineage_output_emits_job_owned_edges_without_source_file():
     validate_lineage_v2(output)
 
 
+def test_build_lineage_output_deduplicates_direct_edges_case_insensitively():
+    entries = [
+        {
+            "source_table": "db.source",
+            "source_column": "id",
+            "target_table": "db.output",
+            "target_column": "id",
+            "lineage_type": "direct",
+            "expression": "ID",
+            "source_file": "load.sql",
+        },
+        {
+            "source_table": "DB.Source",
+            "source_column": "ID",
+            "target_table": "DB.Output",
+            "target_column": "ID",
+            "lineage_type": "direct",
+            "expression": "ID",
+            "source_file": "load.sql",
+        },
+        {
+            "source_table": "DB.Source",
+            "source_column": "ID",
+            "target_table": "DB.Output",
+            "target_column": "ID",
+            "lineage_type": "direct",
+            "expression": "ID + 0",
+            "source_file": "load.sql",
+        },
+    ]
+
+    output = build_lineage_output(
+        entries,
+        {},
+        task_results=[
+            _task_result(
+                "load.sql",
+                inputs=["DB.Source"],
+                outputs=["DB.Output"],
+            )
+        ],
+    )
+
+    assert len(output["edges"]) == 2
+    assert {edge["expression"] for edge in output["edges"]} == {
+        "ID",
+        "ID + 0",
+    }
+    assert {edge["source"]["id"] for edge in output["edges"]} == {
+        "db.source.id"
+    }
+    assert {edge["target"]["id"] for edge in output["edges"]} == {
+        "db.output.id"
+    }
+    validate_lineage_v2(output)
+
+
+def test_build_lineage_output_deduplicates_indirect_edges_case_insensitively():
+    output = build_lineage_output(
+        [
+            {
+                "source_table": "db.source",
+                "source_column": "id",
+                "target_table": "db.output",
+                "target_column": "",
+                "lineage_type": "indirect",
+                "condition_type": "WHERE",
+                "condition_expression": "ID > 0",
+                "source_file": "load.sql",
+            },
+            {
+                "source_table": "DB.Source",
+                "source_column": "ID",
+                "target_table": "DB.Output",
+                "target_column": "",
+                "lineage_type": "indirect",
+                "condition_type": "WHERE",
+                "condition_expression": "ID > 0",
+                "source_file": "load.sql",
+            },
+            {
+                "source_table": "DB.Source",
+                "source_column": "ID",
+                "target_table": "DB.Output",
+                "target_column": "",
+                "lineage_type": "indirect",
+                "condition_type": "GROUP_BY",
+                "condition_expression": "ID > 0",
+                "source_file": "load.sql",
+            },
+        ],
+        {},
+        task_results=[
+            _task_result(
+                "load.sql",
+                inputs=["DB.Source"],
+                outputs=["DB.Output"],
+            )
+        ],
+    )
+
+    assert len(output["edges"]) == 2
+    assert {edge["relation_type"] for edge in output["edges"]} == {
+        "filter",
+        "group_by",
+    }
+    assert {edge["source"]["id"] for edge in output["edges"]} == {
+        "db.source.id"
+    }
+    assert {edge["target"]["id"] for edge in output["edges"]} == {"db.output"}
+    validate_lineage_v2(output)
+
+
 def test_build_lineage_output_classifies_all_job_datasets():
     output = build_lineage_output(
         [
