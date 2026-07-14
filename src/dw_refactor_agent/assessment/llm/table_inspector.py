@@ -24,7 +24,7 @@ from dw_refactor_agent.assessment.project_facts.time_period import (
 )
 from dw_refactor_agent.config import TEXT_ENCODING
 
-PROMPT_VERSION = "table-inspector-v37"
+PROMPT_VERSION = "table-inspector-v41"
 VALID_LAYERS = {"DWD", "DWS", "DIM", "OTHER"}
 VALID_TABLE_TYPES = {"dimension", "fact", "other"}
 VALID_DIMENSION_ROLES = {"BASE", "ADDT"}
@@ -53,6 +53,7 @@ VALIDATION_ERROR_KEYS = (
     "missing_primary_entities",
     "inconsistent_layer_table_types",
     "inconsistent_layer_sql",
+    "inconsistent_upstream_metric_layers",
     DDL_COLUMNS_UNAVAILABLE_ERROR_KEY,
     RESOLUTION_REINSPECTION_ERROR_KEY,
 )
@@ -201,10 +202,10 @@ def build_prompt(ctx: TableContext) -> str:
 
 ## 数仓分层判定标准
 - ODS (贴源层): 直接同步业务库，通常不含复杂的转化逻辑，数据粒度与源库完全一致。
-- DWD (明细宽表层): 对 ODS 进行数据清洗、维度退化(多表 JOIN 拉宽)，但**保持事务明细粒度，严禁包含聚合(GROUP BY)操作**。
-- DWS (汇总层): 包含明确的聚合操作(GROUP BY/SUM/COUNT)，用于计算公共维度下的周期性指标，具备**被多个下游复用**的特征。
+- DWD (明细宽表层): 对 ODS 进行数据清洗、维度退化(多表 JOIN 拉宽)，但目标行驱动查询必须保持事务明细粒度，不能通过聚合把多行压缩成目标公共分析粒度。
+- DWS (汇总层): 当前模型把多行压缩到公共分析粒度，或明确发布上游已经治理的公共指标及其汇总粒度。DWS 判定依据是公共指标粒度，不是表名中的 summary/snapshot 等词。
 - ADS (应用层): 面向最终报表或业务大屏的定制化数据，可能包含复杂的衍生指标。出度为 0 只能作为弱证据；如果血缘不完整、当前表位于中间层候选目录，或 ETL 显示其仍是公共明细/汇总资产，不得仅凭下游为空判为 ADS。
-- DIM (公共维度表): 记录实体属性，主键通常为单一实体 ID，被其他宽表广泛 LEFT JOIN。
+- DIM (公共维度表): 记录稳定实体或参考上下文的属性，供事实分析切片、解释或关联。下游 LEFT JOIN 是发布边界的确认信号，但血缘不完整或暂时没有下游时，并非成为 DIM 的必要条件。
 
 ## 表类型判定标准
 - table_type 必须依据行粒度、键约束、聚合位置、时间字段和 JOIN 复用关系判断，不能仅依据表名、字段名或是否包含数值字段。
@@ -216,12 +217,21 @@ def build_prompt(ctx: TableContext) -> str:
 ## 中间层候选与边界层规则
 - 当前巡检对象仅来自 DWD/DWS/DIM 可写模型候选；ODS 和 ADS 由资产目录边界固定，不参与中间层 LLM 裁决，也不得作为 inferred_layer 返回。
 - 如果原始配置层级是 DWD、DWS 或 DIM，且没有明确的 ads 资产目录、应用报表命名或最终看板用途证据，请优先在 DWD/DWS/DIM 中选择。
-- DWD: 输出行与输入明细保持同一粒度，转换主要是清洗、标准化、去重或逐行增强，不在任意 CTE、子查询或主查询中把多行压缩为汇总粒度。
-- DWS: 在任意查询阶段通过聚合把多行压缩到公共分析粒度，或发布已聚合的上游指标；必须返回 fact。
-- DIM: 具有稳定实体标识和描述性属性，并通过下游 JOIN 关系体现公共复用；生成新键本身不足以证明它是维度表。
-- 没有聚合的模型不属于 DWS；继续根据输出行是否表达可度量事实、可复用描述性实体或仅为逐行技术加工，在 DWD/fact、DIM/dimension 和 DWD/other 之间判断。
+- DWD: 输出行与输入明细保持同一粒度，转换主要是清洗、标准化、去重或逐行增强；目标行驱动查询没有把多行压缩为公共分析粒度，JOIN 聚合结果也没有作为公共业务指标发布。
+- DWS: 目标行驱动查询通过聚合把多行压缩到公共分析粒度，或当前模型消费“上游指标分组”中的公共指标并保持/再发布其汇总粒度；必须返回 fact。JOIN 聚合子查询若按业务实体与时间粒度产生 COUNT/SUM/AVG 等指标，并把这些指标作为目标表的正式分析输出，也属于 DWS；若聚合只补充首末日期、名称、状态、分类等查询辅助属性，且主驱动行仍逐行保留，才不属于目标表聚合。
+- DIM: 具有稳定实体标识和描述性属性，输出以描述性、分类或参考上下文属性为主，并且不表达业务事件或可汇总事实。下游 JOIN 可确认复用，但下游为空不能否定已成立的实体发布职责；生成新键本身不足以证明它是维度表。
+- 当前 SQL 没有压缩主驱动行、且没有上游公共指标证据时，不得仅凭表名、日期字段、snapshot/summary 语义或源系统已物化的余额/汇总字段判为 DWS。继续根据输出行是明细事实、可复用实体还是技术中间结果，在 DWD/fact、DIM/dimension 和 DWD/other 之间判断。
+- 单一上游逐行写入且保留上游稳定记录 ID 时，即使源记录自身带有 summary/snapshot/aggregate 语义，通常仍是 DWD 对源业务事实的标准化；只有当前模型压缩行或明确发布上游公共指标粒度时才是 DWS。
+- OTHER 不能作为 ODS 的替代返回值。ODS/ADS 边界已由资产目录固定；中间层候选若每行表达可识别的业务事件、状态、关系或快照事实，即使 ETL 只是近似贴源的清洗/标准化，也应在 DWD/DWS 中选择。OTHER/other 只用于不表达业务事实、公共指标或可复用实体的纯技术中间结果。
 - 必须区分“内容围绕实体组织”和“已经到达维度发布边界”：单表逐行清洗、标准化、类型转换或标签衍生后的实体数据，如果下游才生成正式实体代理键并保留自然键，则当前表仍是 DWD/other；不能仅因当前表有稳定实体 ID 和描述性属性就提前判为 DIM。
-- 下游生成代理键本身不是硬裁决。只有在下游同时保留自然键、没有聚合，并且当前表自身不表达业务事件或可度量事实时，才把它作为“当前仍处于实体清洗中间阶段”的强证据；若当前表承载事件或事实度量，仍应按事实语义判断。
+- 下游生成代理键本身不是硬裁决；但若下游同时保留自然键、没有聚合，当前表又只做实体清洗/属性派生且不表达业务事件或可度量事实，这组证据共同确认下游才是正式维度发布边界，当前表必须返回 DWD/other，不得提前返回 DIM。若当前表承载事件或事实度量，仍应按事实语义判断。
+- 若没有下游实体发布结构特征，稳定实体键 + 以描述性属性为主 + 无事件/度量语义，可以直接构成 DIM 发布边界；不得仅因当前 ETL 是单表逐行标准化或下游引用数为 0 就强制降为 DWD/other。
+- 有效期、当前标志等 SCD 形态不能单独决定 DIM：若每行有独立的变更/历史记录键，并表达一次状态变更、触发原因或变更时点度量，它仍是 DWD 明细事实；若版本围绕实体自然键组织，主要发布可复用描述属性，才是 DIM。
+- 关系桥不能只按“有没有日期”裁决，也不能要求每条关系都必须具有完整生命周期字段。参与、隶属、任职、关联等实体间业务关系，包括成员、担保、所有权、地址归属、组织适用范围等，每行是在断言“谁参与、属于、负责或适用于谁”，关系本身就是 factless fact，应归 DWD/fact；即使只保留当前关系、没有日期或数值度量也不降为 DIM。独立关系记录 ID、发生/生效时间、状态变化和参与角色是增强证据，但不是必要条件。
+- 必须把业务参与关系与参数配置映射分开：若一侧主要是费率、科目、编码、规则、阈值、分类或原因等参考参数，关系用于决定如何计价、计算、入账、解释或匹配，而不是描述业务参与方的成员/责任/归属，则归 DIM/dimension。交易、分录、申请等带独立业务身份的事件对象不是“科目/编码参数”，它与参与方或其他事件的逐条关联仍可构成 DWD/fact。不能仅因它连接了两个实体键就判为 factless fact，也不能仅因没有日期就判为配置维度。
+- 实体主数据的批次快照与周期事实要分开：若查询按实体键用 ROW_NUMBER、RANK、MAX(version_time) 等方式选取截至批次时点的最新版本，目标日期只是 ETL 参数/批次日期，输出仍围绕实体身份和描述属性组织，而不是记录一次业务动作或可汇总状态，则优先返回 DIM/dimension。只有输出主要承载需要按该时间粒度汇总的业务状态度量时才返回 fact；不能仅因复合键含快照日期或存在价格、费率等非加性数值属性判为 DWD/fact。
+- 观察值、比率或指数等数值字段不自动构成事实表；若一行围绕稳定参考键/日期发布外部环境、市场参数、费率、指数、阈值、分类等分析上下文，没有业务参与方之间的动作、交易或状态发生，它应优先视为 DIM/dimension。只有该观察本身就是需要度量的业务过程或周期状态时，才是事实表。
+- 若当前表把上游已治理公共指标作为输出指标继续发布，即使只做逐行 JOIN/改名且当前 SQL 没有 GROUP BY，仍保持的是公共指标粒度，应归 DWS/fact；不能把上游公共指标改称当前表的 atomic metric 后降为 DWD。
 - 下游引用数为 0 只能作为边界层弱证据，不能覆盖粒度、聚合和资产目录证据。
 
 ## 维表分类标准
@@ -248,8 +258,9 @@ def build_prompt(ctx: TableContext) -> str:
 - calculated_metrics: 只放度量型衍生指标，即基于一个或多个已有指标，通过公式、规则、模型或二次计算得到的新指标，通常产生新的业务含义。包括比率、分数、差值、绝对值、风险等级、窗口函数、复杂 CASE 规则、多字段组合计算、同一明细行内多个基础要素组合后的结果度量等。即使字段从上游直接透传或上游已经预先算好，只要字段注释、字段级血缘或业务语义表明它是已物化的结果性度量，而不是独立观测到的基础计量，也应按 calculated_metrics 判断。DWS 汇总表中，如果字段是对上游 calculated_metrics 再聚合，也应归 calculated_metrics。尽量填写 expression/derived_from。
 - dimensions: 主键、外键、日期、时间、状态、标签、枚举、布尔标志、退化维度、实体属性，以及用于切片、过滤、分组或公式输入但自身不可独立汇总的字段。
 - others: 审计字段、技术字段、无法判断字段。
-- DWD 事实表只能包含 atomic_metrics；derived_metrics 和 calculated_metrics 都属于 DWD 违规风险。
+- DWD 事实表新增的治理口径原则上只能是 atomic_metrics；derived_metrics 和 calculated_metrics 属于 DWD 违规风险。但源业务事实中已经物化的结果字段不应改变表的结构分层：仍按 DWD/fact 判断并如实分类，由违规报告提示治理问题，不能为了回避违规返回 OTHER。
 - DWS 事实表通常承载 derived_metrics；不要因为 DWS 表包含派生指标而判为违规。
+- COUNT(*) 或 COUNT(事件键)直接形成当前目标粒度的基础计数时，将该输出字段识别为当前表的 atomic metric；条件 COUNT/SUM 也必须依据真实字段血缘描述计算逻辑。不得为了填写 base_metric 而虚构上游不存在的 count、amount、debit、credit 等语义指标名；只有上游真实字段或“上游指标分组”中已治理指标才能作为 base_metric。
 
 ## 度量可加性约束
 - atomic_metrics 必须是可被独立观测、可计数或可按事实粒度直接汇总形成业务总量的基础口径。
@@ -358,13 +369,14 @@ def build_prompt(ctx: TableContext) -> str:
 {json.dumps(ctx.upstream_metric_groups, ensure_ascii=False, indent=2) if ctx.upstream_metric_groups else "无"}
 
 ## 思考步骤
-1. 从键、字段血缘和 ETL 判断输入与输出行粒度，检查所有查询阶段是否发生多行压缩或聚合。
-2. 根据稳定行键、时间语义、可汇总度量和描述性属性，判断输出行是事实、维度实体还是技术中间结果。
-3. 结合上下游 JOIN 与复用关系确认当前表在链路中的发布职责；生成新键或出现日期字段都只能作为辅助证据。
-4. 若下游实体发布结构特征显示下游才生成代理键并保留自然键，检查当前表是否只是实体逐行清洗；满足时当前表应为 DWD/other，而下游才是实体发布边界。
-5. 将下游引用数作为弱证据，并结合资产目录、粒度、聚合和用途判断边界层。
-6. 检查组合一致性：DIM 必须对应 dimension，dimension 必须对应 DIM，DWS 必须对应 fact；DWD 可对应 fact 或 other。
-7. 如果 inferred_layer 是 DWD 或 DWS 且表类型为 fact，再按字段语义、DDL 注释、ETL 表达式和业务过程分组。
+1. 从键、字段血缘和 ETL 判断输入与输出行粒度，检查所有查询阶段是否发生多行压缩或聚合；对 JOIN 聚合先区分“发布业务指标”和“补充查询属性”。
+2. 判断每行是否表达业务事件、周期状态或参与/成员/责任/归属关系；关系桥不要求必须有日期或状态变化。再检查它是否实际只是决定计价、计算、入账、分类或解释方式的参数配置映射，后者才归参考维度。
+3. 检查实体版本语义：批次参数加最新版本筛选不能自动构成周期事实，主要发布实体描述属性时优先判断维度职责。
+4. 结合上下游 JOIN 与复用关系确认当前表在链路中的发布职责；生成新键或出现日期字段都只能作为辅助证据。
+5. 若下游实体发布结构特征显示下游才生成代理键并保留自然键，检查当前表是否只是实体逐行清洗；满足时当前表应为 DWD/other，而下游才是实体发布边界。
+6. 将下游引用数作为弱证据，并结合资产目录、粒度、聚合和用途判断边界层。
+7. 检查组合一致性：DIM 必须对应 dimension，dimension 必须对应 DIM，DWS 必须对应 fact；DWD 可对应 fact 或 other。
+8. 如果 inferred_layer 是 DWD 或 DWS 且表类型为 fact，再按字段语义、DDL 注释、ETL 表达式和业务过程分组；COUNT 和条件聚合必须使用真实字段血缘，不得虚构上游基础指标。
 
 请严格返回 JSON 格式数据，只允许返回下方 JSON schema 中列出的顶层字段: inferred_layer、table_type、inferred_data_domain、inferred_business_area、dimension_role、dimension_content_type、entities、grain、confidence、reasoning_steps、columns。
 不要返回 Markdown，不要返回额外解释，不要新增任何字段。
@@ -487,7 +499,10 @@ def build_retry_prompt(
 - invalid_metric_expressions 中列出的 expression 必须删除 GROUP BY、按...分组、by ... 等粒度说明，只保留指标计算公式。
 - missing_primary_entities 表示 DWD fact 缺少主实体；必须为当前事实行/事件/明细行补充至少一个 type=primary 的 entities 项。
 - inconsistent_layer_table_types 表示层级与物理表职责组合矛盾；DIM 必须返回 dimension，dimension 必须返回 DIM，DWS 必须返回 fact，DWD 只能返回 fact 或 other。
-- inconsistent_layer_sql 表示 DWD 候选的结构化字段血缘显示 CTE、子查询或主查询中存在 GROUP BY 聚合，违反 DWD 保持明细粒度的架构约束；必须根据公共聚合粒度重新判断，不能继续返回 DWD。
+- OTHER/fact 不是合法的中间层组合：ODS/ADS 边界已经固定，贴源清洗后的业务事件、关系、状态或快照事实应在 DWD/DWS 中选择；不要用 OTHER 代替 ODS。
+- inconsistent_layer_sql 表示 DWD 候选的目标行驱动查询存在 GROUP BY 并压缩目标粒度；必须根据公共聚合粒度重新判断。仅在 JOIN 辅助子查询中聚合以补充日期/属性、主驱动行仍逐行保留时，可以继续返回 DWD。
+- inconsistent_upstream_metric_layers 表示 DWD 候选把上游指标分组中的已治理指标继续作为目标指标发布；即使当前 SQL 没有 GROUP BY，也必须按其公共指标粒度返回 DWS/fact，并保留正确的上游指标依赖关系。
+- invalid_base_metrics / invalid_base_metric_tables 中的 base_metric 必须是字段血缘或上游指标分组中真实存在的原子指标列名，不能编造语义标签。COUNT(*) 或 COUNT(事件键)形成的基础计数应归 atomic_metrics；无法验证上游原子指标时，不要虚构 base_metric/base_metric_table。
 - 不要返回 Markdown，不要返回额外解释。
 """
     )
@@ -829,6 +844,7 @@ def _normalize_validation(value: Any) -> dict[str, list[str]]:
         "missing_primary_entities",
         "inconsistent_layer_table_types",
         "inconsistent_layer_sql",
+        "inconsistent_upstream_metric_layers",
         DDL_COLUMNS_UNAVAILABLE_ERROR_KEY,
     ):
         raw_items = value.get(key, []) or []
@@ -983,30 +999,116 @@ def validate_layer_table_type_consistency(
         issues.append(f"DIM/{table_type}: DIM必须与dimension配对")
     if layer == "DWS" and table_type != "fact":
         issues.append(f"DWS/{table_type}: DWS必须与fact配对")
+    if layer == "OTHER" and table_type == "fact":
+        issues.append(
+            "OTHER/fact: OTHER不能作为ODS代理；"
+            "中间层业务事实必须在DWD/DWS中选择"
+        )
     if not issues:
         return {}
     return {"inconsistent_layer_table_types": issues}
+
+
+def _query_reduces_driving_rows(
+    query: Any,
+    inherited_ctes: dict[str, Any] | None = None,
+    seen_ctes: set[str] | None = None,
+) -> bool:
+    """Return whether the target query groups its driving row source.
+
+    Aggregation inside a joined lookup subquery can enrich a retained driving
+    row without changing the target grain. A GROUP BY in the target SELECT, or
+    in the CTE/subquery used as its FROM source, does reduce the target grain.
+    """
+    try:
+        from sqlglot import exp
+    except Exception:
+        return False
+
+    while isinstance(query, (exp.Subquery, exp.Paren)):
+        query = query.this
+    if not isinstance(query, exp.Select):
+        return False
+
+    ctes = dict(inherited_ctes or {})
+    for cte in query.ctes:
+        name = str(cte.alias_or_name or "").strip().casefold()
+        if name:
+            ctes[name] = cte.this
+
+    if query.args.get("group") is not None:
+        return True
+
+    from_clause = query.args.get("from") or query.args.get("from_")
+    source = getattr(from_clause, "this", None)
+    if isinstance(source, exp.Subquery):
+        return _query_reduces_driving_rows(source, ctes, seen_ctes)
+    if not isinstance(source, exp.Table):
+        return False
+
+    source_name = str(source.name or "").strip().casefold()
+    if not source_name or source_name not in ctes:
+        return False
+    seen = set(seen_ctes or ())
+    if source_name in seen:
+        return False
+    seen.add(source_name)
+    return _query_reduces_driving_rows(ctes[source_name], ctes, seen)
+
+
+def _target_query_reduces_rows(etl_sql: str) -> bool | None:
+    """Inspect INSERT/SELECT driving queries; return None when unavailable."""
+    if not str(etl_sql or "").strip():
+        return None
+    try:
+        import sqlglot
+        from sqlglot import exp
+        from sqlglot.errors import ErrorLevel
+
+        statements = sqlglot.parse(
+            etl_sql,
+            dialect="doris",
+            error_level=ErrorLevel.IGNORE,
+        )
+    except Exception:
+        return None
+
+    queries = []
+    for statement in statements:
+        if isinstance(statement, exp.Insert):
+            query = statement.args.get("expression") or statement.args.get(
+                "source"
+            )
+            if query is not None:
+                queries.append(query)
+        elif isinstance(statement, exp.Select):
+            queries.append(statement)
+    if not queries:
+        return None
+    return any(_query_reduces_driving_rows(query) for query in queries)
 
 
 def validate_layer_sql_consistency(
     result: TableInspectResult,
     ctx: TableContext,
 ) -> dict[str, list[str]]:
-    """用结构化血缘验证 DWD 无聚合不变量，不替 LLM 指定目标层。"""
+    """Validate that DWD does not reduce the target driving-row grain."""
     if str(result.inferred_layer or "").upper() != "DWD":
         return {}
-    has_group_by = any(
-        str(condition.get("condition_type") or "").upper() == "GROUP_BY"
-        for edge in (ctx.column_lineage or [])
-        if isinstance(edge, dict)
-        for condition in (edge.get("condition_lineage") or [])
-        if isinstance(condition, dict)
-    )
-    if not has_group_by:
+    target_reduces_rows = _target_query_reduces_rows(ctx.etl_sql)
+    if target_reduces_rows is None:
+        target_reduces_rows = any(
+            str(condition.get("condition_type") or "").upper() == "GROUP_BY"
+            for edge in (ctx.column_lineage or [])
+            if isinstance(edge, dict)
+            for condition in (edge.get("condition_lineage") or [])
+            if isinstance(condition, dict)
+        )
+    if not target_reduces_rows:
         return {}
     return {
         "inconsistent_layer_sql": [
-            "DWD候选的结构化字段血缘包含GROUP_BY聚合；"
+            "DWD候选的目标行驱动查询包含GROUP_BY聚合；"
             "请重新判断DWS或其他合法层级"
         ]
     }
@@ -1058,7 +1160,17 @@ def _matching_table_identities(
     if not wanted:
         return []
     if "." in wanted:
-        return [wanted] if wanted in canonical_identities else []
+        if wanted in canonical_identities:
+            return [wanted]
+        short_matches = sorted(
+            identity
+            for identity in canonical_identities
+            if _canonical_short_table_name(identity)
+            == _canonical_short_table_name(wanted)
+        )
+        if len(short_matches) == 1 and "." not in short_matches[0]:
+            return short_matches
+        return []
     short_name = _canonical_short_table_name(wanted)
     return sorted(
         identity
@@ -1116,6 +1228,81 @@ def _split_column_identifier(identifier: Any) -> tuple[str, str]:
         _canonical_table_identity(table_name),
         _canonical_column_name(column_name),
     )
+
+
+def validate_upstream_metric_layer_consistency(
+    result: TableInspectResult,
+    ctx: TableContext,
+) -> dict[str, list[str]]:
+    """Prevent a DWD fact from republishing governed upstream metrics."""
+    if (
+        str(result.inferred_layer or "").upper() != "DWD"
+        or not result.is_fact_table
+        or not ctx.upstream_metric_groups
+    ):
+        return {}
+
+    target_metrics = {
+        _canonical_column_name(name)
+        for group in (
+            "atomic_metrics",
+            "derived_metrics",
+            "calculated_metrics",
+        )
+        for name in _metric_names_from_items(result.columns.get(group))
+    }
+    if not target_metrics:
+        return {}
+
+    upstream_metrics: dict[str, set[str]] = {}
+    for table_name, groups in (ctx.upstream_metric_groups or {}).items():
+        if not isinstance(groups, dict):
+            continue
+        metric_names = {
+            _canonical_column_name(name)
+            for group in (
+                "atomic_metrics",
+                "derived_metrics",
+                "calculated_metrics",
+            )
+            for name in _metric_names_from_items(groups.get(group))
+        }
+        if metric_names:
+            upstream_metrics[_canonical_table_identity(table_name)] = (
+                metric_names
+            )
+    if not upstream_metrics:
+        return {}
+
+    publications = set()
+    for edge in ctx.column_lineage or []:
+        if not isinstance(edge, dict):
+            continue
+        source_table, source_column = _split_column_identifier(
+            edge.get("source")
+        )
+        _target_table, target_column = _split_column_identifier(
+            edge.get("target")
+        )
+        if target_column not in target_metrics:
+            continue
+        matching_tables = _matching_table_identities(
+            source_table,
+            upstream_metrics,
+        )
+        if len(matching_tables) != 1:
+            continue
+        upstream_table = matching_tables[0]
+        if source_column in upstream_metrics[upstream_table]:
+            publications.add(
+                f"{target_column}<-{upstream_table}.{source_column}"
+            )
+
+    if not publications:
+        return {}
+    return {
+        "inconsistent_upstream_metric_layers": sorted(publications),
+    }
 
 
 def _lineage_base_metric_tables(
@@ -1475,6 +1662,7 @@ class TableInspector:
                 validate_primary_entities(result),
                 validate_layer_table_type_consistency(result),
                 validate_layer_sql_consistency(result, ctx),
+                validate_upstream_metric_layer_consistency(result, ctx),
                 validate_metric_relationships(result, ctx),
             )
             if (
