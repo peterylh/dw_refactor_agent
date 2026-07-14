@@ -16,6 +16,7 @@ from concurrent.futures import (
     as_completed,
     wait,
 )
+from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -35,14 +36,16 @@ from dw_refactor_agent.refactor.artifact_contract import (
     ArtifactFormatError,
     atomic_write_json,
 )
-from dw_refactor_agent.refactor.execution_provenance import (
-    execution_marker_sql,
-    project_execution_lock,
-)
+from dw_refactor_agent.refactor.execution_provenance import run_execution_lock
 from dw_refactor_agent.refactor.plan_artifact import (
     load_persisted_verification_plan,
     require_fresh_plan,
     require_fresh_plan_bundle,
+)
+from dw_refactor_agent.refactor.qa_pool import (
+    QaSlotOwnership,
+    claim_qa_slot,
+    require_slot_ownership,
 )
 from dw_refactor_agent.refactor.shadow_manifest import (
     PrefillMode,
@@ -1187,8 +1190,12 @@ def _shadow_result(
         "status": status,
         "mode": mode,
         "project": plan.get("project"),
+        "run_id": plan.get("run_id"),
         "project_db": plan.get("project_db"),
         "qa_db": plan["qa_db"],
+        "qa_database_pool": list(
+            plan.get("qa_database_pool") or [plan["qa_db"]]
+        ),
         "job_count": len(plan.get("jobs_to_run", [])),
         "summary": _result_summary(plan, phases),
         "phases": phases,
@@ -1307,17 +1314,16 @@ def _dry_run_phases(
         _qa_ddl_change(change, prod_db, qa_db) for change in ddl_changes
     ]
 
-    reset_timer = _start_timing()
-    reset_phase = _finish_timing(
+    selection_timer = _start_timing()
+    selection_phase = _finish_timing(
         {
-            "name": "reset_qa_db",
+            "name": "select_qa_slot",
             "status": "dry_run",
-            "actions": [
-                f"DROP DATABASE IF EXISTS {qa_db}",
-                f"CREATE DATABASE {qa_db}",
-            ],
+            "default_qa_db": qa_db,
+            "qa_database_pool": list(plan.get("qa_database_pool") or [qa_db]),
+            "note": "execute mode claims one available pool slot",
         },
-        reset_timer,
+        selection_timer,
     )
     create_timer = _start_timing()
     create_phase = _finish_timing(
@@ -1448,13 +1454,20 @@ def _dry_run_phases(
         job_phase_timer,
     )
 
-    return [reset_phase, create_phase, prefill_phase, ddl_phase, job_phase]
+    return [
+        selection_phase,
+        create_phase,
+        prefill_phase,
+        ddl_phase,
+        job_phase,
+    ]
 
 
 def execute_shadow_plan(
     plan: dict,
     *,
     root: Path,
+    claimed_ownership: QaSlotOwnership | None = None,
     dry_run: bool = False,
     timing_detail: bool = False,
     parallel: int = 1,
@@ -1509,6 +1522,48 @@ def execute_shadow_plan(
     jobs_to_run = plan.get("jobs_to_run", [])
     phases = [manifest_phase]
 
+    if claimed_ownership is None:
+        raise ArtifactFormatError(
+            "execute-mode shadow plan requires claimed QA slot ownership"
+        )
+    ownership_expectations = {
+        "project": plan.get("project"),
+        "run_id": plan.get("run_id"),
+        "qa_database": plan.get("qa_db"),
+        "plan_fingerprint": plan.get("plan_fingerprint"),
+        "workspace_fingerprint": (plan.get("analysis_snapshot") or {}).get(
+            "workspace_fingerprint"
+        ),
+    }
+    for field, expected in ownership_expectations.items():
+        if (
+            expected is not None
+            and getattr(claimed_ownership, field) != expected
+        ):
+            raise ArtifactFormatError(
+                f"claimed QA slot {field} does not match runtime plan"
+            )
+    try:
+        require_slot_ownership(
+            project=plan["project"],
+            run_id=claimed_ownership.run_id,
+            execution_id=claimed_ownership.execution_id,
+            database=qa_db,
+            plan_fingerprint=claimed_ownership.plan_fingerprint,
+            workspace_fingerprint=claimed_ownership.workspace_fingerprint,
+        )
+    except Exception as exc:
+        ownership_phase = _finish_timing(
+            {
+                "name": "validate_qa_slot_ownership",
+                "status": "failed",
+                "error": str(exc),
+            },
+            _start_timing(),
+        )
+        phases.append(ownership_phase)
+        return finish_result(_failed_shadow_result(plan, phases))
+
     checks = plan.get("verification", {}).get("checks", [])
     if not _plan_anchor_tables(plan) and not checks:
         _log("  警告: 无锚点表且无校验配置")
@@ -1516,34 +1571,7 @@ def execute_shadow_plan(
         _log("    如果只是想确认作业不报错，可继续执行\n")
 
     _log("=" * 60)
-    _log(f"Phase 0: 重置验证数据库 {qa_db}")
-    reset_timer = _start_timing()
-    reset_phase = {
-        "name": "reset_qa_db",
-        "status": "success",
-        "actions": [
-            f"DROP DATABASE IF EXISTS {qa_db}",
-            f"CREATE DATABASE {qa_db}",
-        ],
-    }
-    try:
-        run_sql(
-            f"DROP DATABASE IF EXISTS {qa_db}",
-            "information_schema",
-            qa=True,
-        )
-        run_sql(f"CREATE DATABASE {qa_db}", "information_schema", qa=True)
-    except Exception as exc:
-        _log(f"  [FAIL] 重置验证数据库失败: {exc}")
-        reset_phase["status"] = "failed"
-        reset_phase["error"] = str(exc)
-        _finish_timing(reset_phase, reset_timer)
-        phases.append(reset_phase)
-        return finish_result(_failed_shadow_result(plan, phases))
-    _finish_timing(reset_phase, reset_timer)
-    _log(f"  {qa_db} 已重建 duration={reset_phase['duration_ms']}ms")
-    phases.append(reset_phase)
-
+    _log(f"已领取验证数据库: {qa_db}")
     _log(f"\n{'=' * 60}")
     _log(f"Phase 1: 基线建表 ({len(baseline_ddl)} 张)")
     create_timer = _start_timing()
@@ -1736,11 +1764,14 @@ def run_shadow_plan(
         "mode": mode,
         "plan": str(plan_path),
         "project": plan.get("project"),
+        "run_id": plan.get("run_id"),
         "execution_id": execution_id,
+        "qa_db": plan.get("qa_db"),
+        "qa_database_pool": list(plan.get("qa_database_pool") or []),
         "workspace_fingerprint": workspace_digest,
         "plan_fingerprint": plan_digest,
     }
-    with project_execution_lock(plan_path):
+    with run_execution_lock(plan_path):
         atomic_write_json(
             output_path,
             {
@@ -1749,44 +1780,97 @@ def run_shadow_plan(
                 "started_at": wrapper_timer["started_at"],
             },
         )
-        result = execute_shadow_plan(
-            plan,
-            root=bundle.root,
-            dry_run=dry_run,
-            timing_detail=timing_detail,
-            parallel=parallel,
-            batch_size=batch_size,
-        )
-        if result.get("status") == "completed" and not dry_run:
-            marker_timer = _start_timing()
-            try:
-                run_sql_text(
-                    execution_marker_sql(
-                        plan["qa_db"],
+        if dry_run:
+            result = execute_shadow_plan(
+                plan,
+                root=bundle.root,
+                dry_run=True,
+                timing_detail=timing_detail,
+                parallel=parallel,
+                batch_size=batch_size,
+            )
+        else:
+            preview_planner = ExecutionPlanner(
+                plan["project"], project_root=bundle.root
+            )
+            _, preview_phase = _compile_shadow_manifest_phase(
+                plan,
+                bundle.root,
+                preview_planner,
+                dry_run=False,
+            )
+            if preview_phase.get("status") == "failed":
+                result = _failed_shadow_result(plan, [preview_phase])
+            else:
+                claim_timer = _start_timing()
+                try:
+                    owner = claim_qa_slot(
+                        project=plan["project"],
+                        run_id=plan["run_id"],
                         execution_id=execution_id,
+                        pool=tuple(plan["qa_database_pool"]),
                         plan_fingerprint=plan_digest,
                         workspace_fingerprint=workspace_digest,
-                    ),
-                    db=plan["qa_db"],
-                    qa=True,
-                )
-                marker_phase = {
-                    "name": "publish_execution_marker",
-                    "status": "success",
-                }
-            except Exception as exc:
-                result["status"] = "failed"
-                result["error"] = (
-                    f"failed to publish QA execution marker: {exc}"
-                )
-                marker_phase = {
-                    "name": "publish_execution_marker",
-                    "status": "failed",
-                    "error": str(exc),
-                }
-            result.setdefault("phases", []).append(
-                _finish_timing(marker_phase, marker_timer)
-            )
+                    )
+                    configured_databases = {
+                        database.casefold(): database
+                        for database in plan["qa_database_pool"]
+                    }
+                    configured_database = configured_databases.get(
+                        owner.qa_database.casefold()
+                    )
+                    if configured_database is None:
+                        raise ArtifactFormatError(
+                            f"claimed database {owner.qa_database} is not in "
+                            "the configured QA database pool"
+                        )
+                    if owner.qa_database != configured_database:
+                        raise ArtifactFormatError(
+                            "claimed database spelling does not match the "
+                            "configured QA database pool"
+                        )
+                    claim_phase = _finish_timing(
+                        {
+                            "name": "claim_qa_slot",
+                            "status": "success",
+                            "qa_db": owner.qa_database,
+                            "claimed_at": owner.claimed_at,
+                        },
+                        claim_timer,
+                    )
+                except Exception as exc:
+                    claim_phase = _finish_timing(
+                        {
+                            "name": "claim_qa_slot",
+                            "status": "failed",
+                            "error": str(exc),
+                        },
+                        claim_timer,
+                    )
+                    result = _failed_shadow_result(plan, [claim_phase])
+                    result["error"] = str(exc)
+                else:
+                    runtime_plan = deepcopy(plan)
+                    runtime_plan["qa_db"] = owner.qa_database
+                    common_result["qa_db"] = owner.qa_database
+                    atomic_write_json(
+                        output_path,
+                        {
+                            **common_result,
+                            "status": "running",
+                            "started_at": wrapper_timer["started_at"],
+                        },
+                    )
+                    result = execute_shadow_plan(
+                        runtime_plan,
+                        root=bundle.root,
+                        claimed_ownership=owner,
+                        dry_run=False,
+                        timing_detail=timing_detail,
+                        parallel=parallel,
+                        batch_size=batch_size,
+                    )
+                    result.setdefault("phases", []).insert(0, claim_phase)
         result.update(common_result)
         _finish_timing(result, wrapper_timer)
         atomic_write_json(output_path, result)
@@ -1833,9 +1917,10 @@ def _dry_run(plan: dict, manifest: dict, *, root: Path) -> None:
             "  警告: 无锚点表且无校验配置，后续 compare 命令没有表可对比校验"
         )
 
-    print("\n--- Phase 0: 重置验证库 ---")
-    print(f"  DROP DATABASE IF EXISTS {qa_db}")
-    print(f"  CREATE DATABASE {qa_db}")
+    qa_pool = list(plan.get("qa_database_pool") or [qa_db])
+    print("\n--- Phase 0: 选择验证库 ---")
+    print(f"  候选池: {', '.join(qa_pool)}")
+    print("  execute 模式会原子领取一个可用槽；dry-run 不连接数据库")
 
     print(f"\n--- Phase 1: 基线建表 ({len(baseline_ddl)} 张) ---")
     for table_name in sorted(baseline_ddl):

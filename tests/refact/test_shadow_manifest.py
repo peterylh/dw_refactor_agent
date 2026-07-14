@@ -67,6 +67,34 @@ def _plan(tmp_path, *, baseline_ddl, ddl_changes, jobs):
     }
 
 
+def test_reserved_execution_marker_reference_is_blocked(tmp_path):
+    task = _write_task(
+        tmp_path,
+        "daily_report",
+        "INSERT INTO dm.daily_report "
+        "SELECT * FROM dm.dw_refactor_execution_marker;",
+    )
+    plan = _plan(
+        tmp_path,
+        baseline_ddl={"daily_report": _ddl("daily_report")},
+        ddl_changes=[],
+        jobs=[
+            {
+                "job": "daily_report",
+                "target": "daily_report",
+                "file": task,
+            }
+        ],
+    )
+
+    manifest = compile_shadow_manifest(plan, tmp_path, FakePlanner({}))
+
+    assert any(
+        "reserved" in blocker and "dw_refactor_execution_marker" in blocker
+        for blocker in manifest["blockers"]
+    )
+
+
 def test_schema_only_read_of_renamed_table_uses_qa_without_prefill(tmp_path):
     task = _write_task(
         tmp_path,

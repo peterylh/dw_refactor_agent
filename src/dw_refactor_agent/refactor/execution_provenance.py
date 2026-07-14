@@ -18,18 +18,21 @@ def _lock_path(plan_path: Path) -> Path:
     for parent in plan_path.parents:
         if parent.name == "refactor_runs":
             project_name = parent.parent.parent.name
+            relative = plan_path.relative_to(parent)
+            run_id = relative.parts[0] if relative.parts else "unknown-run"
             safe_project = re.sub(r"[^A-Za-z0-9_.-]", "_", project_name)
+            safe_run_id = re.sub(r"[^A-Za-z0-9_.-]", "_", run_id)
             return (
                 Path(tempfile.gettempdir())
                 / "dw_refactor_agent_locks"
-                / f"{safe_project}.shadow_execution.lock"
+                / f"{safe_project}.{safe_run_id}.shadow_execution.lock"
             )
     return plan_path.parent / ".shadow_execution.lock"
 
 
 @contextmanager
-def project_execution_lock(plan_path: Path):
-    """Prevent concurrent shadow mutation or compare for one QA project."""
+def run_execution_lock(plan_path: Path):
+    """Prevent concurrent artifact mutation for one logical refactor run."""
     lock_path = _lock_path(plan_path)
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     with lock_path.open("a+", encoding="utf-8") as handle:
@@ -37,12 +40,16 @@ def project_execution_lock(plan_path: Path):
             fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError as exc:
             raise ArtifactFormatError(
-                "another shadow-run or compare is active for this project"
+                "another shadow-run or compare is active for this run"
             ) from exc
         try:
             yield
         finally:
             fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+# Temporary compatibility for callers migrated together with compare.
+project_execution_lock = run_execution_lock
 
 
 def execution_marker_sql(

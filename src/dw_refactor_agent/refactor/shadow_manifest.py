@@ -36,6 +36,9 @@ class PrefillMode(Enum):
     FULL = "full"
 
 
+_RESERVED_EXECUTION_MARKER = "dw_refactor_execution_marker"
+
+
 @dataclass(frozen=True)
 class PrefillAction:
     current_table: str
@@ -77,6 +80,21 @@ def _parse_statements(sql_text: str) -> list[exp.Expression]:
         )
         if statement is not None
     ]
+
+
+def _references_reserved_marker(sql_text: str) -> bool:
+    if _RESERVED_EXECUTION_MARKER not in str(sql_text or "").casefold():
+        return False
+    try:
+        return any(
+            _canonical(table.name) == _RESERVED_EXECUTION_MARKER
+            for statement in _parse_statements(sql_text)
+            for table in statement.find_all(exp.Table)
+        )
+    except Exception:
+        # A parse failure must not allow SQL mentioning the reserved marker
+        # to bypass the ownership boundary.
+        return True
 
 
 def _typed_value(value: Any) -> Any:
@@ -386,11 +404,41 @@ def compile_shadow_manifest(plan: dict, root: Path, planner) -> dict:
     blockers = []
     job_analyses = {}
 
+    if any(
+        _canonical(table_name) == _RESERVED_EXECUTION_MARKER
+        or _references_reserved_marker(ddl_text)
+        for table_name, ddl_text in (plan.get("baseline_ddl") or {}).items()
+    ):
+        blockers.append(
+            f"reserved relation {_RESERVED_EXECUTION_MARKER} "
+            "cannot be defined by baseline DDL"
+        )
+    for change in plan.get("ddl_changes") or []:
+        names = (
+            change.get("table_name"),
+            change.get("old_name"),
+            change.get("new_name"),
+        )
+        if any(
+            _canonical(name) == _RESERVED_EXECUTION_MARKER
+            for name in names
+            if name
+        ) or _references_reserved_marker(str(change.get("sql") or "")):
+            blockers.append(
+                f"reserved relation {_RESERVED_EXECUTION_MARKER} "
+                "cannot be changed by refactor DDL"
+            )
+
     for index, job in enumerate(plan.get("jobs_to_run") or []):
         job_name = str(job.get("job") or "")
         spec, invocations, sql_text = _job_runtime(
             job, root, planner, warnings
         )
+        if _references_reserved_marker(sql_text):
+            blockers.append(
+                f"{job_name}: reserved relation "
+                f"{_RESERVED_EXECUTION_MARKER} cannot be read or written"
+            )
         unresolved = unresolved_relations(sql_text)
         if unresolved:
             blockers.append(
