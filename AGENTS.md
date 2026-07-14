@@ -212,7 +212,15 @@ dw-refactor semantic-mode set --run <run_id> --table <table> --mode equivalent|c
 python -m dw_refactor_agent.refactor.run shadow-run --manifest warehouses/<project>/artifacts/refactor_runs/<run_id>/manifest.json --dry-run
 python -m dw_refactor_agent.refactor.run shadow-run --manifest warehouses/<project>/artifacts/refactor_runs/<run_id>/manifest.json
 python -m dw_refactor_agent.refactor.run compare --manifest warehouses/<project>/artifacts/refactor_runs/<run_id>/manifest.json --method all
+dw-refactor cleanup list --project <project>
+dw-refactor cleanup delete --execution <execution_id> --yes
 ```
+
+实际 shadow-run 从 `warehouse.yaml` 的 `verification.qa_database_pool` 中原子领取一个
+DBA 预建的空 QA 库；不会删除或创建数据库，且执行、失败和 compare 后都保留该槽。
+不同 run 可使用不同槽并发执行。只有显式 `cleanup delete` 才释放槽；不带 `--yes` 仅
+预览。可按 run、execution、精确数据库名或带项目范围的时间条件筛选，legacy/invalid
+槽只允许按精确数据库名清理。清理只删除槽内对象，marker 最后删除，数据库本身保留。
 
 每个 run 位于 `warehouses/{project}/artifacts/refactor_runs/{run_id}/`：
 `manifest.json` 是后续命令的稳定入口，`baseline/` 是冻结基线，`current/` 与

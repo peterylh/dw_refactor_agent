@@ -26,6 +26,12 @@ def test_project_config_is_loaded_from_warehouse_yaml():
     }
 
 
+def test_shop_uses_precreated_qa_database_pool():
+    assert config.PROJECT_CONFIG["shop"]["verification"][
+        "qa_database_pool"
+    ] == ["shop_dm_qa", "shop_dm_qa_02"]
+
+
 def test_load_project_config_maps_warehouse_yaml_to_runtime_shape(tmp_path):
     warehouse_dir = tmp_path / "warehouses" / "demo"
     warehouse_dir.mkdir(parents=True)
