@@ -1,3 +1,3 @@
 # ODS data
 
-DDL and metadata cover all active Fineract tenant tables. Deterministic business-scenario seed data is generated separately so referential and accounting invariants can be validated before loading.
+DDL, metadata, and fixture SQL cover only Fineract source tables referenced by generated downstream tasks. Deterministic business-scenario seed data is generated separately so accounting invariants can be validated before loading.

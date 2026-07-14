@@ -22,6 +22,11 @@ TEXT_ENCODING = "utf-8"
 SEMANTIC_SPEC_DIR = PROJECT_DIR / "semantic_specs"
 BENCHMARK_CONTRACT_FILENAME = "benchmark_contract.yaml"
 PRIVATE_GOLD_SCHEMA_REFERENCE = f"{BENCHMARK_CONTRACT_FILENAME}#table_record"
+ODS_REFERENCE_PATTERN = re.compile(
+    r"\b(?:from|join)\s+(?:`?[a-z0-9_]+`?\.)?`?"
+    r"(ods_fineract_[a-z0-9_]+)`?",
+    re.I,
+)
 
 DWS_DEFINITIONS = (
     (
@@ -1302,11 +1307,54 @@ def generate_ods(
     _write(
         data_root / "README.md",
         "# ODS data\n\n"
-        "DDL and metadata cover all active Fineract tenant tables. Deterministic "
-        "business-scenario seed data is generated separately so referential and "
-        "accounting invariants can be validated before loading.\n",
+        "DDL, metadata, and fixture SQL cover only Fineract source tables "
+        "referenced by generated downstream tasks. Deterministic business-scenario "
+        "seed data is generated separately so accounting invariants can be "
+        "validated before loading.\n",
     )
     return count
+
+
+def referenced_ods_tables(task_root: Optional[Path] = None) -> set[str]:
+    """Return the ODS tables referenced by generated downstream task SQL."""
+
+    task_root = task_root or PROJECT_DIR / "mid/tasks"
+    referenced = set()
+    for task_path in task_root.rglob("*.sql"):
+        referenced.update(
+            match.group(1).lower()
+            for match in ODS_REFERENCE_PATTERN.finditer(
+                task_path.read_text(encoding=TEXT_ENCODING)
+            )
+        )
+    return referenced
+
+
+def materialized_ods_mappings(mappings: list[dict]) -> list[dict]:
+    """Select only source mirrors that feed a generated downstream task."""
+
+    referenced = referenced_ods_tables()
+    mapping_by_ods = {item["ods_table"].lower(): item for item in mappings}
+    missing = referenced - set(mapping_by_ods)
+    if missing:
+        raise ValueError(
+            "Downstream tasks reference unknown ODS tables: "
+            + ", ".join(sorted(missing))
+        )
+    declared = {
+        item["ods_table"].lower()
+        for item in mappings
+        if item.get("downstream_targets")
+    }
+    if declared != referenced:
+        raise ValueError(
+            "Declared materialized ODS scope does not match downstream task "
+            f"references; missing={sorted(referenced - declared)}, "
+            f"unused={sorted(declared - referenced)}"
+        )
+    return [
+        item for item in mappings if item["ods_table"].lower() in referenced
+    ]
 
 
 def generate_reviewed_mid(
@@ -2419,9 +2467,10 @@ def generate_manifest(
             "TOTAL": ods_count + mid_count + dws_count + ads_count,
         },
         "generation_policy": {
-            "all_active_sources_have_ods": True,
+            "all_active_sources_have_ods": False,
+            "only_downstream_referenced_sources_have_ods": True,
             "downstream_requires_structural_mapping": True,
-            "candidate_sources_remain_ods_or_component_sources": True,
+            "unused_sources_remain_inventory_only": True,
             "pure_fineract_scope_only": True,
         },
     }
@@ -2433,6 +2482,7 @@ def generate_manifest(
 def generate_complete_layer_mapping(
     *,
     mappings: list[dict],
+    materialized_ods_tables: set[str],
     generated_mid: dict,
     summaries: dict,
     source: dict,
@@ -2484,7 +2534,11 @@ def generate_complete_layer_mapping(
                 "mapping_status": mapping["confidence"],
                 "sensitivity": mapping["sensitivity"],
                 "layers": {
-                    "ODS": [mapping["ods_table"]],
+                    "ODS": (
+                        [mapping["ods_table"]]
+                        if mapping["ods_table"] in materialized_ods_tables
+                        else []
+                    ),
                     "DIM": dim_tables,
                     "DWD": dwd_tables,
                     "DWS": dws_tables,
@@ -2851,7 +2905,10 @@ def generate_benchmark_contract(
                 "status": "candidate_not_gold_v1",
                 "records": records,
                 "expected_asset_counts": {
-                    "ODS": len(mappings),
+                    "ODS": sum(
+                        record["expected"]["layer"] == "ODS"
+                        for record in records
+                    ),
                     "DIM_DWD": len(generated_mid),
                     "DWS": len(summaries),
                     "ADS": len(dws_ads_payload["ads"]),
@@ -2937,9 +2994,6 @@ def generate(
     registry = IdentityRegistry(
         PROJECT_DIR / "mappings/schema_identities.yaml"
     )
-    ods_count = generate_ods(
-        schema_tables=schema_tables, mappings=mappings, registry=registry
-    )
     mid_count, generated_mid = generate_reviewed_mid(
         schema_tables=schema_tables, mappings=mappings, registry=registry
     )
@@ -2948,8 +3002,12 @@ def generate(
         generated_mid=generated_mid, registry=registry
     )
     ads_count, ads_names = generate_ads(summaries=summaries, registry=registry)
+    ods_mappings = materialized_ods_mappings(mappings)
+    ods_count = generate_ods(
+        schema_tables=schema_tables, mappings=ods_mappings, registry=registry
+    )
     active_table_names = (
-        {item["ods_table"] for item in mappings}
+        {item["ods_table"] for item in ods_mappings}
         | set(generated_mid)
         | set(summaries)
     )
@@ -2965,6 +3023,7 @@ def generate(
     )
     generate_complete_layer_mapping(
         mappings=mappings,
+        materialized_ods_tables={item["ods_table"] for item in ods_mappings},
         generated_mid=generated_mid,
         summaries=summaries,
         source=schema,

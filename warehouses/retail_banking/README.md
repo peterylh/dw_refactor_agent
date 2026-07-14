@@ -8,23 +8,24 @@ tenant schema. The source inventory is pinned to Fineract commit
 
 | Layer | Tables | Purpose |
 |---|---:|---|
-| ODS | 277 | One mirror for each analytical tenant application table |
+| ODS | 102 | Mirrors used by reviewed downstream tasks |
 | DIM | 36 | Human-reviewed durable entities, reference data, and bridges |
 | DWD | 68 | Human-reviewed events, relations, balances, and account snapshots |
 | DWS | 18 | Contract-driven aggregates with explicit grain and metric behavior |
 | ADS | 13 | KPI, reconciliation, schedule, and posting-monitor applications |
-| Total | 412 | Physical warehouse tables |
+| Total | 237 | Physical warehouse tables |
 
 The complete source disposition is documented in
 [`docs/fineract_table_mapping.md`](docs/fineract_table_mapping.md) and is also
 available as machine-readable YAML and CSV under `mappings/`.
 `mappings/fineract_layer_mapping.yaml` expands each source through all generated
-ODS/DIM/DWD/DWS/ADS targets. Every analytical source table has an ODS table and
-a documented disposition. A source creates a direct DIM or DWD table only when
-the mapping is marked `confidence: human_reviewed`;
-candidate component, rule, bridge, security, and operational sources remain
-available in ODS without pretending that every operational table is an
-independent analytical fact.
+ODS/DIM/DWD/DWS/ADS targets. The source inventory retains all 277 active tenant
+application tables, while physical ODS assets are generated only for the 102
+tables referenced by reviewed downstream task SQL. A source creates a direct
+DIM or DWD table only when the mapping is marked `confidence: human_reviewed`;
+two additional ODS tables supply inherited business dates to reviewed facts.
+The other 175 candidate, security, rule, and operational sources remain in the
+mapping inventory without unused DDL, models, or fixture SQL.
 
 All managed DDL columns and tables have persistent UUID4 schema identities.
 Most generated tasks use deterministic full replay/replace-all semantics. Six
@@ -62,7 +63,8 @@ rationale are recorded in the override file. `generate_assets.py` consumes the
 pinned snapshot plus the adjudicated contracts under `semantic_specs/`,
 preserving IDs through `mappings/schema_identities.yaml`.
 `generate_ods_data.py` creates deterministic, medium-volume synthetic fixtures
-for all 277 ODS tables. Every table contains 1,000-5,000 rows, dates cycle across
+for all 102 materialized ODS tables. Every table contains 1,000-5,000 rows,
+dates cycle across
 the closed 2026-05-14 through 2026-07-14 window, and INSERT statements are
 batched to keep Doris initialization stable. Primary and in-scope foreign key
 values are derived from the pinned schema metadata, so composite keys remain
@@ -71,11 +73,12 @@ Spring Batch foreign keys remain external because those control-plane tables are
 outside this warehouse. These rows exercise bootstrap and daily-slice behavior;
 they are not statistically representative banking data.
 
-The 277-table ODS scope deliberately excludes six Spring Batch scheduler tables.
-Fineract's separate tenant-store database contributes another four control-plane
-tables. Therefore Fineract owns 287 physical tables in this pinned scope, while
-277 are bank-application tables materialized here; all ten exclusions are listed
-in `mappings/excluded_control_tables.yaml`.
+The inventory of 277 tenant application tables deliberately excludes six Spring
+Batch scheduler tables. Fineract's separate tenant-store database contributes
+another four control-plane tables. Therefore Fineract owns 287 physical tables
+in this pinned scope; 102 downstream-referenced application tables are
+materialized as ODS, and all ten control-plane exclusions are listed in
+`mappings/excluded_control_tables.yaml`.
 
 Validate the generated project with:
 

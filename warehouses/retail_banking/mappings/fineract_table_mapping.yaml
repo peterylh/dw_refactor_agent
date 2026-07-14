@@ -3,7 +3,7 @@ upstream_repository: https://github.com/apache/fineract
 upstream_commit: 45d8e24f82c9c42c46a6762b24e102ad2c723824
 source_database: postgresql
 active_table_count: 277
-analytical_ods_table_count: 277
+analytical_ods_table_count: 102
 excluded_spring_batch_table_count: 6
 excluded_tenant_store_table_count: 4
 fineract_physical_table_count: 287
@@ -86,7 +86,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -95,7 +95,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: acc_gl_journal_entry
   ods_table: ods_fineract_acc_gl_journal_entry
   business_area: FMAN
@@ -107,6 +107,7 @@ mappings:
   target_table: dwd_gl_journal_entry
   downstream_targets:
   - dwd_gl_journal_entry
+  - bridge_asset_owner_gl_entry
   grain: id
   load_strategy: full_replay
   optional_module: false
@@ -178,7 +179,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -187,7 +188,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: batch_custom_job_parameters
   ods_table: ods_fineract_batch_custom_job_parameters
   business_area: OTHR
@@ -199,7 +200,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: security_reviewed
   business_processes:
@@ -208,7 +209,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: restricted
-  rationale: 包含秘密、认证信息或高风险自由文本，仅保留受限 ODS，禁止进入普通分析层。
+  rationale: 包含秘密、认证信息或高风险自由文本，不进入本分析数仓，仅保留源表清单。
 - source_table: c_account_number_format
   ods_table: ods_fineract_c_account_number_format
   business_area: OTHR
@@ -220,7 +221,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -229,7 +230,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: c_cache
   ods_table: ods_fineract_c_cache
   business_area: OTHR
@@ -241,7 +242,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -250,7 +251,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: c_configuration
   ods_table: ods_fineract_c_configuration
   business_area: OTHR
@@ -262,7 +263,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -271,7 +272,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: c_external_service
   ods_table: ods_fineract_c_external_service
   business_area: OTHR
@@ -283,7 +284,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -292,7 +293,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: c_external_service_properties
   ods_table: ods_fineract_c_external_service_properties
   business_area: OTHR
@@ -304,7 +305,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: source row
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: security_reviewed
   business_processes:
@@ -312,7 +313,7 @@ mappings:
   quality_rules:
   - source_row_count_reconciliation
   sensitivity: restricted
-  rationale: 包含密码、令牌或认证凭据，仅保留受限 ODS，禁止进入普通分析层。
+  rationale: 包含秘密、认证信息或高风险自由文本，不进入本分析数仓，仅保留源表清单。
 - source_table: glim_accounts
   ods_table: ods_fineract_glim_accounts
   business_area: LOAN
@@ -324,7 +325,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -334,7 +335,7 @@ mappings:
   - pk_not_null_unique
   - amount_decimal_precision
   sensitivity: restricted
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: gsim_accounts
   ods_table: ods_fineract_gsim_accounts
   business_area: DPST
@@ -346,7 +347,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -355,7 +356,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: restricted
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: interop_identifier
   ods_table: ods_fineract_interop_identifier
   business_area: PAYM
@@ -367,7 +368,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -376,7 +377,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: job
   ods_table: ods_fineract_job
   business_area: OTHR
@@ -388,7 +389,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: security_reviewed
   business_processes:
@@ -397,7 +398,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: restricted
-  rationale: 包含密码、令牌或认证凭据，仅保留受限 ODS，禁止进入普通分析层。
+  rationale: 包含秘密、认证信息或高风险自由文本，不进入本分析数仓，仅保留源表清单。
 - source_table: job_parameters
   ods_table: ods_fineract_job_parameters
   business_area: OTHR
@@ -409,7 +410,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: security_reviewed
   business_processes:
@@ -418,7 +419,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: restricted
-  rationale: 包含秘密、认证信息或高风险自由文本，仅保留受限 ODS，禁止进入普通分析层。
+  rationale: 包含秘密、认证信息或高风险自由文本，不进入本分析数仓，仅保留源表清单。
 - source_table: job_run_history
   ods_table: ods_fineract_job_run_history
   business_area: OTHR
@@ -430,7 +431,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -439,7 +440,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_account_transfer_details
   ods_table: ods_fineract_m_account_transfer_details
   business_area: PAYM
@@ -473,7 +474,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -483,7 +484,7 @@ mappings:
   - pk_not_null_unique
   - amount_decimal_precision
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_account_transfer_standing_instructions_history
   ods_table: ods_fineract_m_account_transfer_standing_instructions_history
   business_area: PAYM
@@ -518,6 +519,7 @@ mappings:
   target_table: dwd_account_transfer_transaction
   downstream_targets:
   - dwd_account_transfer_transaction
+  - dwd_account_transfer_instruction
   grain: id
   load_strategy: full_replay
   optional_module: false
@@ -564,7 +566,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: security_reviewed
   business_processes:
@@ -573,7 +575,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: restricted
-  rationale: 包含密码、令牌或认证凭据，仅保留受限 ODS，禁止进入普通分析层。
+  rationale: 包含秘密、认证信息或高风险自由文本，不进入本分析数仓，仅保留源表清单。
 - source_table: m_appuser
   ods_table: ods_fineract_m_appuser
   business_area: OTHR
@@ -585,7 +587,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: security_reviewed
   business_processes:
@@ -594,7 +596,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: restricted
-  rationale: 包含密码、令牌或认证凭据，仅保留受限 ODS，禁止进入普通分析层。
+  rationale: 包含秘密、认证信息或高风险自由文本，不进入本分析数仓，仅保留源表清单。
 - source_table: m_appuser_previous_password
   ods_table: ods_fineract_m_appuser_previous_password
   business_area: OTHR
@@ -606,7 +608,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: security_reviewed
   business_processes:
@@ -615,7 +617,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: restricted
-  rationale: 包含密码、令牌或认证凭据，仅保留受限 ODS，禁止进入普通分析层。
+  rationale: 包含秘密、认证信息或高风险自由文本，不进入本分析数仓，仅保留源表清单。
 - source_table: m_appuser_role
   ods_table: ods_fineract_m_appuser_role
   business_area: OTHR
@@ -627,7 +629,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: appuser_id, role_id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: security_reviewed
   business_processes:
@@ -636,7 +638,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: restricted
-  rationale: 包含密码、令牌或认证凭据，仅保留受限 ODS，禁止进入普通分析层。
+  rationale: 包含秘密、认证信息或高风险自由文本，不进入本分析数仓，仅保留源表清单。
 - source_table: m_batch_business_steps
   ods_table: ods_fineract_m_batch_business_steps
   business_area: OTHR
@@ -648,7 +650,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -657,7 +659,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_business_date
   ods_table: ods_fineract_m_business_date
   business_area: OTHR
@@ -669,7 +671,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -678,7 +680,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_calendar
   ods_table: ods_fineract_m_calendar
   business_area: CHNL
@@ -712,7 +714,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -721,7 +723,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_calendar_instance
   ods_table: ods_fineract_m_calendar_instance
   business_area: CHNL
@@ -733,7 +735,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -742,7 +744,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_cashier_transactions
   ods_table: ods_fineract_m_cashier_transactions
   business_area: PAYM
@@ -778,7 +780,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -787,7 +789,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_charge
   ods_table: ods_fineract_m_charge
   business_area: OTHR
@@ -935,7 +937,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -944,7 +946,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_client_identifier
   ods_table: ods_fineract_m_client_identifier
   business_area: CLNT
@@ -956,7 +958,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -965,7 +967,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: restricted
-  rationale: 经人工复核不应直接生成分析事实；保留受控 ODS，并按明确的规则、关系或运维用途参与后续模型设计。
+  rationale: 经人工复核不应直接生成分析事实；保留源表映射，待下游模型明确引用后再物化 ODS。
 - source_table: m_client_non_person
   ods_table: ods_fineract_m_client_non_person
   business_area: CLNT
@@ -977,7 +979,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -986,7 +988,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: restricted
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_client_transaction
   ods_table: ods_fineract_m_client_transaction
   business_area: CLNT
@@ -998,6 +1000,7 @@ mappings:
   target_table: dwd_client_transaction
   downstream_targets:
   - dwd_client_transaction
+  - dwd_client_charge_allocation
   grain: id
   load_strategy: full_replay
   optional_module: false
@@ -1044,7 +1047,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -1053,7 +1056,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_code_value
   ods_table: ods_fineract_m_code_value
   business_area: OTHR
@@ -1110,7 +1113,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: security_reviewed
   business_processes:
@@ -1119,7 +1122,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: restricted
-  rationale: 包含密码、令牌或认证凭据，仅保留受限 ODS，禁止进入普通分析层。
+  rationale: 包含秘密、认证信息或高风险自由文本，不进入本分析数仓，仅保留源表清单。
 - source_table: m_creditbureau
   ods_table: ods_fineract_m_creditbureau
   business_area: LOAN
@@ -1153,7 +1156,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: security_reviewed
   business_processes:
@@ -1162,7 +1165,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: restricted
-  rationale: 包含密码、令牌或认证凭据，仅保留受限 ODS，禁止进入普通分析层。
+  rationale: 包含秘密、认证信息或高风险自由文本，不进入本分析数仓，仅保留源表清单。
 - source_table: m_creditbureau_loanproduct_mapping
   ods_table: ods_fineract_m_creditbureau_loanproduct_mapping
   business_area: LOAN
@@ -1174,7 +1177,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -1183,7 +1186,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_creditbureau_token
   ods_table: ods_fineract_m_creditbureau_token
   business_area: LOAN
@@ -1195,7 +1198,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: security_reviewed
   business_processes:
@@ -1204,7 +1207,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: restricted
-  rationale: 包含密码、令牌或认证凭据，仅保留受限 ODS，禁止进入普通分析层。
+  rationale: 包含秘密、认证信息或高风险自由文本，不进入本分析数仓，仅保留源表清单。
 - source_table: m_creditreport
   ods_table: ods_fineract_m_creditreport
   business_area: LOAN
@@ -1216,7 +1219,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: security_reviewed
   business_processes:
@@ -1225,7 +1228,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: restricted
-  rationale: 包含密码、令牌或认证凭据，仅保留受限 ODS，禁止进入普通分析层。
+  rationale: 包含秘密、认证信息或高风险自由文本，不进入本分析数仓，仅保留源表清单。
 - source_table: m_currency
   ods_table: ods_fineract_m_currency
   business_area: OTHR
@@ -1282,7 +1285,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -1291,7 +1294,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_delinquency_range
   ods_table: ods_fineract_m_delinquency_range
   business_area: LOAN
@@ -1348,7 +1351,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -1358,7 +1361,7 @@ mappings:
   - pk_not_null_unique
   - amount_decimal_precision
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_deposit_account_term_and_preclosure
   ods_table: ods_fineract_m_deposit_account_term_and_preclosure
   business_area: DPST
@@ -1370,7 +1373,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -1380,7 +1383,7 @@ mappings:
   - pk_not_null_unique
   - amount_decimal_precision
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_deposit_product_interest_rate_chart
   ods_table: ods_fineract_m_deposit_product_interest_rate_chart
   business_area: DPST
@@ -1392,7 +1395,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: source row
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -1400,7 +1403,7 @@ mappings:
   quality_rules:
   - source_row_count_reconciliation
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_deposit_product_recurring_detail
   ods_table: ods_fineract_m_deposit_product_recurring_detail
   business_area: DPST
@@ -1412,7 +1415,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -1421,7 +1424,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_deposit_product_term_and_preclosure
   ods_table: ods_fineract_m_deposit_product_term_and_preclosure
   business_area: DPST
@@ -1433,7 +1436,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -1443,7 +1446,7 @@ mappings:
   - pk_not_null_unique
   - amount_decimal_precision
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_document
   ods_table: ods_fineract_m_document
   business_area: CHNL
@@ -1455,7 +1458,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -1464,7 +1467,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: restricted
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_entity_datatable_check
   ods_table: ods_fineract_m_entity_datatable_check
   business_area: OTHR
@@ -1476,7 +1479,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -1485,7 +1488,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_entity_relation
   ods_table: ods_fineract_m_entity_relation
   business_area: OTHR
@@ -1497,7 +1500,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -1506,7 +1509,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_entity_to_entity_access
   ods_table: ods_fineract_m_entity_to_entity_access
   business_area: OTHR
@@ -1518,7 +1521,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -1527,7 +1530,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_entity_to_entity_mapping
   ods_table: ods_fineract_m_entity_to_entity_mapping
   business_area: OTHR
@@ -1539,7 +1542,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -1548,7 +1551,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_external_asset_owner
   ods_table: ods_fineract_m_external_asset_owner
   business_area: ASTM
@@ -1604,7 +1607,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -1613,7 +1616,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_external_asset_owner_transfer
   ods_table: ods_fineract_m_external_asset_owner_transfer
   business_area: ASTM
@@ -1625,6 +1628,7 @@ mappings:
   target_table: dwd_loan_ownership_transfer
   downstream_targets:
   - dwd_loan_ownership_transfer
+  - dwd_loan_ownership_transfer_detail
   grain: id
   load_strategy: full_replay
   optional_module: true
@@ -1669,7 +1673,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -1679,7 +1683,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_external_asset_owner_transfer_loan_mapping
   ods_table: ods_fineract_m_external_asset_owner_transfer_loan_mapping
   business_area: LOAN
@@ -1691,7 +1695,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -1700,7 +1704,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_external_event
   ods_table: ods_fineract_m_external_event
   business_area: OTHR
@@ -1712,7 +1716,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: security_reviewed
   business_processes:
@@ -1721,7 +1725,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: restricted
-  rationale: 包含密码、令牌或认证凭据，仅保留受限 ODS，禁止进入普通分析层。
+  rationale: 包含秘密、认证信息或高风险自由文本，不进入本分析数仓，仅保留源表清单。
 - source_table: m_external_event_configuration
   ods_table: ods_fineract_m_external_event_configuration
   business_area: OTHR
@@ -1733,7 +1737,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: type
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -1742,7 +1746,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_family_members
   ods_table: ods_fineract_m_family_members
   business_area: CLNT
@@ -1754,7 +1758,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -1763,7 +1767,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: restricted
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_field_configuration
   ods_table: ods_fineract_m_field_configuration
   business_area: OTHR
@@ -1775,7 +1779,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -1784,7 +1788,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_floating_rates
   ods_table: ods_fineract_m_floating_rates
   business_area: OTHR
@@ -1818,7 +1822,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -1827,7 +1831,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_fund
   ods_table: ods_fineract_m_fund
   business_area: CHNL
@@ -1839,7 +1843,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -1848,7 +1852,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_group
   ods_table: ods_fineract_m_group
   business_area: CLNT
@@ -2016,6 +2020,7 @@ mappings:
   target_table: dim_holiday
   downstream_targets:
   - dim_holiday
+  - bridge_office_holiday
   grain: id
   load_strategy: full_snapshot
   optional_module: false
@@ -2060,7 +2065,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -2069,7 +2074,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_hook_configuration
   ods_table: ods_fineract_m_hook_configuration
   business_area: OTHR
@@ -2081,7 +2086,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: security_reviewed
   business_processes:
@@ -2090,7 +2095,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: restricted
-  rationale: 包含密码、令牌或认证凭据，仅保留受限 ODS，禁止进入普通分析层。
+  rationale: 包含秘密、认证信息或高风险自由文本，不进入本分析数仓，仅保留源表清单。
 - source_table: m_hook_registered_events
   ods_table: ods_fineract_m_hook_registered_events
   business_area: OTHR
@@ -2102,7 +2107,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -2111,7 +2116,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_hook_schema
   ods_table: ods_fineract_m_hook_schema
   business_area: OTHR
@@ -2123,7 +2128,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -2132,7 +2137,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_hook_templates
   ods_table: ods_fineract_m_hook_templates
   business_area: OTHR
@@ -2144,7 +2149,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -2153,7 +2158,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_image
   ods_table: ods_fineract_m_image
   business_area: CHNL
@@ -2165,7 +2170,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -2174,7 +2179,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: restricted
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_import_document
   ods_table: ods_fineract_m_import_document
   business_area: CHNL
@@ -2186,7 +2191,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -2195,7 +2200,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_interest_incentives
   ods_table: ods_fineract_m_interest_incentives
   business_area: OTHR
@@ -2207,7 +2212,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -2217,7 +2222,7 @@ mappings:
   - pk_not_null_unique
   - amount_decimal_precision
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_interest_rate_chart
   ods_table: ods_fineract_m_interest_rate_chart
   business_area: OTHR
@@ -2229,7 +2234,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -2239,7 +2244,7 @@ mappings:
   - pk_not_null_unique
   - amount_decimal_precision
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_interest_rate_slab
   ods_table: ods_fineract_m_interest_rate_slab
   business_area: OTHR
@@ -2251,7 +2256,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -2262,7 +2267,7 @@ mappings:
   - amount_decimal_precision
   - currency_code_valid
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_journal_entry_aggregation_summary
   ods_table: ods_fineract_m_journal_entry_aggregation_summary
   business_area: FMAN
@@ -2344,7 +2349,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: loan_id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -2353,7 +2358,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_loan_amortization_allocation_mapping
   ods_table: ods_fineract_m_loan_amortization_allocation_mapping
   business_area: LOAN
@@ -2365,7 +2370,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -2375,7 +2380,7 @@ mappings:
   - pk_not_null_unique
   - amount_decimal_precision
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_loan_approved_amount_history
   ods_table: ods_fineract_m_loan_approved_amount_history
   business_area: LOAN
@@ -2527,7 +2532,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -2537,7 +2542,7 @@ mappings:
   - pk_not_null_unique
   - amount_decimal_precision
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_loan_collateral
   ods_table: ods_fineract_m_loan_collateral
   business_area: LOAN
@@ -2549,7 +2554,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -2558,7 +2563,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_loan_collateral_management
   ods_table: ods_fineract_m_loan_collateral_management
   business_area: LOAN
@@ -2592,7 +2597,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -2601,7 +2606,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_loan_delinquency_action
   ods_table: ods_fineract_m_loan_delinquency_action
   business_area: LOAN
@@ -2703,7 +2708,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -2713,7 +2718,7 @@ mappings:
   - pk_not_null_unique
   - amount_decimal_precision
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_loan_interest_recalculation_additional_details
   ods_table: ods_fineract_m_loan_interest_recalculation_additional_details
   business_area: LOAN
@@ -2725,7 +2730,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -2735,7 +2740,7 @@ mappings:
   - pk_not_null_unique
   - amount_decimal_precision
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_loan_officer_assignment_history
   ods_table: ods_fineract_m_loan_officer_assignment_history
   business_area: LOAN
@@ -2769,7 +2774,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -2778,7 +2783,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_loan_originator_mapping
   ods_table: ods_fineract_m_loan_originator_mapping
   business_area: LOAN
@@ -2790,7 +2795,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -2799,7 +2804,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_loan_overdue_installment_charge
   ods_table: ods_fineract_m_loan_overdue_installment_charge
   business_area: LOAN
@@ -2811,7 +2816,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -2820,7 +2825,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_loan_payment_allocation_rule
   ods_table: ods_fineract_m_loan_payment_allocation_rule
   business_area: LOAN
@@ -2832,7 +2837,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -2841,7 +2846,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_loan_product_credit_allocation_rule
   ods_table: ods_fineract_m_loan_product_credit_allocation_rule
   business_area: LOAN
@@ -2853,7 +2858,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -2862,7 +2867,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_loan_product_payment_allocation_rule
   ods_table: ods_fineract_m_loan_product_payment_allocation_rule
   business_area: LOAN
@@ -2874,7 +2879,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -2883,7 +2888,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_loan_progressive_model
   ods_table: ods_fineract_m_loan_progressive_model
   business_area: LOAN
@@ -2895,7 +2900,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -2904,7 +2909,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_loan_rate
   ods_table: ods_fineract_m_loan_rate
   business_area: LOAN
@@ -2938,7 +2943,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -2947,7 +2952,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_loan_reamortization_parameter
   ods_table: ods_fineract_m_loan_reamortization_parameter
   business_area: LOAN
@@ -2959,7 +2964,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -2968,7 +2973,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_loan_recalculation_details
   ods_table: ods_fineract_m_loan_recalculation_details
   business_area: LOAN
@@ -3073,7 +3078,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -3082,7 +3087,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_loan_status_change_history
   ods_table: ods_fineract_m_loan_status_change_history
   business_area: LOAN
@@ -3116,7 +3121,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -3125,7 +3130,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_loan_topup
   ods_table: ods_fineract_m_loan_topup
   business_area: LOAN
@@ -3137,7 +3142,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -3147,7 +3152,7 @@ mappings:
   - pk_not_null_unique
   - amount_decimal_precision
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_loan_tranche_charges
   ods_table: ods_fineract_m_loan_tranche_charges
   business_area: LOAN
@@ -3159,7 +3164,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -3168,7 +3173,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_loan_tranche_disbursement_charge
   ods_table: ods_fineract_m_loan_tranche_disbursement_charge
   business_area: LOAN
@@ -3180,7 +3185,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -3189,7 +3194,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_loan_transaction
   ods_table: ods_fineract_m_loan_transaction
   business_area: LOAN
@@ -3201,6 +3206,11 @@ mappings:
   target_table: dwd_loan_transaction
   downstream_targets:
   - dwd_loan_transaction
+  - bridge_guarantee_transaction
+  - bridge_loan_transaction_relation
+  - dwd_loan_charge_allocation
+  - dwd_loan_collateral_pledge
+  - dwd_loan_repayment_allocation
   grain: id
   load_strategy: full_replay
   optional_module: false
@@ -3294,7 +3304,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -3303,7 +3313,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_mandatory_savings_schedule
   ods_table: ods_fineract_m_mandatory_savings_schedule
   business_area: DPST
@@ -3315,7 +3325,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -3325,7 +3335,7 @@ mappings:
   - pk_not_null_unique
   - amount_decimal_precision
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_meeting
   ods_table: ods_fineract_m_meeting
   business_area: CHNL
@@ -3335,7 +3345,8 @@ mappings:
   disposition: component_source
   target_layer: NONE
   target_table: ''
-  downstream_targets: []
+  downstream_targets:
+  - dwd_group_meeting_attendance
   grain: id
   load_strategy: ods_full_snapshot
   optional_module: false
@@ -3346,7 +3357,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 作为已评审下游任务的关联源物化 ODS，但不单独生成 DIM/DWD 模型。
 - source_table: m_note
   ods_table: ods_fineract_m_note
   business_area: CHNL
@@ -3358,7 +3369,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -3367,7 +3378,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: restricted
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_office
   ods_table: ods_fineract_m_office
   business_area: CHNL
@@ -3425,7 +3436,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -3434,7 +3445,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_organisation_currency
   ods_table: ods_fineract_m_organisation_currency
   business_area: OTHR
@@ -3446,7 +3457,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -3456,7 +3467,7 @@ mappings:
   - pk_not_null_unique
   - currency_code_valid
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_password_validation_policy
   ods_table: ods_fineract_m_password_validation_policy
   business_area: OTHR
@@ -3468,7 +3479,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -3477,7 +3488,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_payment_detail
   ods_table: ods_fineract_m_payment_detail
   business_area: PAYM
@@ -3489,7 +3500,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -3498,7 +3509,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: restricted
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_payment_type
   ods_table: ods_fineract_m_payment_type
   business_area: PAYM
@@ -3532,7 +3543,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -3541,7 +3552,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_portfolio_account_associations
   ods_table: ods_fineract_m_portfolio_account_associations
   business_area: OTHR
@@ -3553,7 +3564,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -3562,7 +3573,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_portfolio_command_source
   ods_table: ods_fineract_m_portfolio_command_source
   business_area: OTHR
@@ -3574,7 +3585,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: security_reviewed
   business_processes:
@@ -3583,7 +3594,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: restricted
-  rationale: 包含密码、令牌或认证凭据，仅保留受限 ODS，禁止进入普通分析层。
+  rationale: 包含秘密、认证信息或高风险自由文本，不进入本分析数仓，仅保留源表清单。
 - source_table: m_product_loan
   ods_table: ods_fineract_m_product_loan
   business_area: LOAN
@@ -3619,7 +3630,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: product_loan_id, charge_id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -3628,7 +3639,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_product_loan_configurable_attributes
   ods_table: ods_fineract_m_product_loan_configurable_attributes
   business_area: LOAN
@@ -3640,7 +3651,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -3650,7 +3661,7 @@ mappings:
   - pk_not_null_unique
   - amount_decimal_precision
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_product_loan_floating_rates
   ods_table: ods_fineract_m_product_loan_floating_rates
   business_area: LOAN
@@ -3662,7 +3673,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -3671,7 +3682,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_product_loan_guarantee_details
   ods_table: ods_fineract_m_product_loan_guarantee_details
   business_area: LOAN
@@ -3683,7 +3694,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -3692,7 +3703,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_product_loan_rate
   ods_table: ods_fineract_m_product_loan_rate
   business_area: LOAN
@@ -3704,7 +3715,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: product_loan_id, rate_id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -3713,7 +3724,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_product_loan_recalculation_details
   ods_table: ods_fineract_m_product_loan_recalculation_details
   business_area: LOAN
@@ -3725,7 +3736,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -3734,7 +3745,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_product_loan_variable_installment_config
   ods_table: ods_fineract_m_product_loan_variable_installment_config
   business_area: LOAN
@@ -3746,7 +3757,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -3755,7 +3766,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_product_loan_variations_borrower_cycle
   ods_table: ods_fineract_m_product_loan_variations_borrower_cycle
   business_area: LOAN
@@ -3767,7 +3778,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -3776,7 +3787,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_product_mix
   ods_table: ods_fineract_m_product_mix
   business_area: OTHR
@@ -3788,7 +3799,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -3797,7 +3808,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_provision_category
   ods_table: ods_fineract_m_provision_category
   business_area: LOAN
@@ -3831,7 +3842,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -3840,7 +3851,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_provisioning_criteria_definition
   ods_table: ods_fineract_m_provisioning_criteria_definition
   business_area: LOAN
@@ -3852,7 +3863,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -3861,7 +3872,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_provisioning_history
   ods_table: ods_fineract_m_provisioning_history
   business_area: LOAN
@@ -3873,6 +3884,7 @@ mappings:
   target_table: dwd_loan_provision_run
   downstream_targets:
   - dwd_loan_provision_run
+  - dwd_loan_provision_entry
   grain: id
   load_strategy: full_replay
   optional_module: false
@@ -3917,7 +3929,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -3927,7 +3939,7 @@ mappings:
   - pk_not_null_unique
   - amount_decimal_precision
   sensitivity: restricted
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_report_mailing_job
   ods_table: ods_fineract_m_report_mailing_job
   business_area: OTHR
@@ -3939,7 +3951,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: security_reviewed
   business_processes:
@@ -3948,7 +3960,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: restricted
-  rationale: 包含密码、令牌或认证凭据，仅保留受限 ODS，禁止进入普通分析层。
+  rationale: 包含秘密、认证信息或高风险自由文本，不进入本分析数仓，仅保留源表清单。
 - source_table: m_report_mailing_job_configuration
   ods_table: ods_fineract_m_report_mailing_job_configuration
   business_area: OTHR
@@ -3960,7 +3972,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: security_reviewed
   business_processes:
@@ -3969,7 +3981,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: restricted
-  rationale: 包含密码、令牌或认证凭据，仅保留受限 ODS，禁止进入普通分析层。
+  rationale: 包含秘密、认证信息或高风险自由文本，不进入本分析数仓，仅保留源表清单。
 - source_table: m_report_mailing_job_run_history
   ods_table: ods_fineract_m_report_mailing_job_run_history
   business_area: OTHR
@@ -3981,7 +3993,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -3990,7 +4002,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_role
   ods_table: ods_fineract_m_role
   business_area: OTHR
@@ -4002,7 +4014,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -4011,7 +4023,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_role_permission
   ods_table: ods_fineract_m_role_permission
   business_area: OTHR
@@ -4023,7 +4035,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: role_id, permission_id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -4032,7 +4044,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_savings_account
   ods_table: ods_fineract_m_savings_account
   business_area: DPST
@@ -4115,7 +4127,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -4125,7 +4137,7 @@ mappings:
   - pk_not_null_unique
   - amount_decimal_precision
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_savings_account_interest_rate_slab
   ods_table: ods_fineract_m_savings_account_interest_rate_slab
   business_area: DPST
@@ -4137,7 +4149,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -4148,7 +4160,7 @@ mappings:
   - amount_decimal_precision
   - currency_code_valid
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_savings_account_transaction
   ods_table: ods_fineract_m_savings_account_transaction
   business_area: DPST
@@ -4160,6 +4172,8 @@ mappings:
   target_table: dwd_deposit_transaction
   downstream_targets:
   - dwd_deposit_transaction
+  - dwd_deposit_charge_allocation
+  - dwd_deposit_transaction_tax
   grain: id
   load_strategy: full_replay
   optional_module: false
@@ -4207,7 +4221,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -4217,7 +4231,7 @@ mappings:
   - pk_not_null_unique
   - amount_decimal_precision
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_savings_officer_assignment_history
   ods_table: ods_fineract_m_savings_officer_assignment_history
   business_area: DPST
@@ -4275,7 +4289,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: savings_product_id, charge_id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -4284,7 +4298,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_share_account
   ods_table: ods_fineract_m_share_account
   business_area: ASTM
@@ -4388,6 +4402,7 @@ mappings:
   target_table: dwd_share_transaction
   downstream_targets:
   - dwd_share_transaction
+  - dwd_share_charge_allocation
   grain: id
   load_strategy: full_replay
   optional_module: true
@@ -4435,7 +4450,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: product_id, charge_id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: true
   confidence: candidate
   business_processes:
@@ -4444,7 +4459,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_share_product_dividend_pay_out
   ods_table: ods_fineract_m_share_product_dividend_pay_out
   business_area: ASTM
@@ -4454,7 +4469,8 @@ mappings:
   disposition: component_source
   target_layer: NONE
   target_table: ''
-  downstream_targets: []
+  downstream_targets:
+  - dwd_share_dividend
   grain: id
   load_strategy: ods_full_snapshot
   optional_module: true
@@ -4466,7 +4482,7 @@ mappings:
   - pk_not_null_unique
   - amount_decimal_precision
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 作为已评审下游任务的关联源物化 ODS，但不单独生成 DIM/DWD 模型。
 - source_table: m_share_product_market_price
   ods_table: ods_fineract_m_share_product_market_price
   business_area: ASTM
@@ -4544,7 +4560,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: true
   confidence: candidate
   business_processes:
@@ -4553,7 +4569,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_survey_lookup_tables
   ods_table: ods_fineract_m_survey_lookup_tables
   business_area: CHNL
@@ -4565,7 +4581,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: true
   confidence: candidate
   business_processes:
@@ -4574,7 +4590,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_survey_questions
   ods_table: ods_fineract_m_survey_questions
   business_area: CHNL
@@ -4586,7 +4602,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: true
   confidence: candidate
   business_processes:
@@ -4595,7 +4611,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_survey_responses
   ods_table: ods_fineract_m_survey_responses
   business_area: CHNL
@@ -4607,7 +4623,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: true
   confidence: candidate
   business_processes:
@@ -4616,7 +4632,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_survey_scorecards
   ods_table: ods_fineract_m_survey_scorecards
   business_area: CHNL
@@ -4672,7 +4688,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -4681,7 +4697,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_tax_component_history
   ods_table: ods_fineract_m_tax_component_history
   business_area: OTHR
@@ -4693,7 +4709,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -4702,7 +4718,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_tax_group
   ods_table: ods_fineract_m_tax_group
   business_area: OTHR
@@ -4714,7 +4730,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -4723,7 +4739,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_tax_group_mappings
   ods_table: ods_fineract_m_tax_group_mappings
   business_area: OTHR
@@ -4735,7 +4751,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -4744,7 +4760,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_tellers
   ods_table: ods_fineract_m_tellers
   business_area: PAYM
@@ -4778,7 +4794,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -4787,7 +4803,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_template_m_templatemappers
   ods_table: ods_fineract_m_template_m_templatemappers
   business_area: OTHR
@@ -4799,7 +4815,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: source row
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -4807,7 +4823,7 @@ mappings:
   quality_rules:
   - source_row_count_reconciliation
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_templatemappers
   ods_table: ods_fineract_m_templatemappers
   business_area: OTHR
@@ -4819,7 +4835,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -4828,7 +4844,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_trial_balance
   ods_table: ods_fineract_m_trial_balance
   business_area: OTHR
@@ -4862,7 +4878,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: true
   confidence: candidate
   business_processes:
@@ -4872,7 +4888,7 @@ mappings:
   - pk_not_null_unique
   - amount_decimal_precision
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_wc_delinquency_configuration
   ods_table: ods_fineract_m_wc_delinquency_configuration
   business_area: LOAN
@@ -4884,7 +4900,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: true
   confidence: candidate
   business_processes:
@@ -4893,7 +4909,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_wc_loan
   ods_table: ods_fineract_m_wc_loan
   business_area: LOAN
@@ -4929,7 +4945,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: loan_id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: true
   confidence: candidate
   business_processes:
@@ -4938,7 +4954,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 经人工复核不应直接生成分析事实；保留受控 ODS，并按明确的规则、关系或运维用途参与后续模型设计。
+  rationale: 经人工复核不应直接生成分析事实；保留源表映射，待下游模型明确引用后再物化 ODS。
 - source_table: m_wc_loan_amortization_model
   ods_table: ods_fineract_m_wc_loan_amortization_model
   business_area: LOAN
@@ -4950,7 +4966,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: true
   confidence: candidate
   business_processes:
@@ -4959,7 +4975,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_wc_loan_balance
   ods_table: ods_fineract_m_wc_loan_balance
   business_area: LOAN
@@ -5016,7 +5032,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: true
   confidence: candidate
   business_processes:
@@ -5026,7 +5042,7 @@ mappings:
   - pk_not_null_unique
   - amount_decimal_precision
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_wc_loan_breach_schedule
   ods_table: ods_fineract_m_wc_loan_breach_schedule
   business_area: LOAN
@@ -5038,7 +5054,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: true
   confidence: candidate
   business_processes:
@@ -5048,7 +5064,7 @@ mappings:
   - pk_not_null_unique
   - amount_decimal_precision
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_wc_loan_charge
   ods_table: ods_fineract_m_wc_loan_charge
   business_area: LOAN
@@ -5060,7 +5076,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: true
   confidence: candidate
   business_processes:
@@ -5070,7 +5086,7 @@ mappings:
   - pk_not_null_unique
   - amount_decimal_precision
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_wc_loan_delinquency_action
   ods_table: ods_fineract_m_wc_loan_delinquency_action
   business_area: LOAN
@@ -5082,7 +5098,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: true
   confidence: candidate
   business_processes:
@@ -5091,7 +5107,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_wc_loan_delinquency_range_schedule
   ods_table: ods_fineract_m_wc_loan_delinquency_range_schedule
   business_area: LOAN
@@ -5103,7 +5119,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: true
   confidence: candidate
   business_processes:
@@ -5113,7 +5129,7 @@ mappings:
   - pk_not_null_unique
   - amount_decimal_precision
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_wc_loan_disbursement_detail
   ods_table: ods_fineract_m_wc_loan_disbursement_detail
   business_area: LOAN
@@ -5148,7 +5164,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: true
   confidence: candidate
   business_processes:
@@ -5157,7 +5173,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_wc_loan_note
   ods_table: ods_fineract_m_wc_loan_note
   business_area: LOAN
@@ -5169,7 +5185,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: true
   confidence: candidate
   business_processes:
@@ -5178,7 +5194,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: restricted
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_wc_loan_originator_mapping
   ods_table: ods_fineract_m_wc_loan_originator_mapping
   business_area: LOAN
@@ -5190,7 +5206,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: true
   confidence: candidate
   business_processes:
@@ -5199,7 +5215,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_wc_loan_payment_allocation_rule
   ods_table: ods_fineract_m_wc_loan_payment_allocation_rule
   business_area: LOAN
@@ -5211,7 +5227,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: true
   confidence: candidate
   business_processes:
@@ -5220,7 +5236,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 经人工复核不应直接生成分析事实；保留受控 ODS，并按明确的规则、关系或运维用途参与后续模型设计。
+  rationale: 经人工复核不应直接生成分析事实；保留源表映射，待下游模型明确引用后再物化 ODS。
 - source_table: m_wc_loan_period_payment_rate_change
   ods_table: ods_fineract_m_wc_loan_period_payment_rate_change
   business_area: LOAN
@@ -5232,7 +5248,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: true
   confidence: candidate
   business_processes:
@@ -5241,7 +5257,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_wc_loan_product
   ods_table: ods_fineract_m_wc_loan_product
   business_area: LOAN
@@ -5277,7 +5293,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: true
   confidence: candidate
   business_processes:
@@ -5286,7 +5302,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_wc_loan_product_payment_allocation_rule
   ods_table: ods_fineract_m_wc_loan_product_payment_allocation_rule
   business_area: LOAN
@@ -5298,7 +5314,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: true
   confidence: candidate
   business_processes:
@@ -5307,7 +5323,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_wc_loan_range_delinquency_tag
   ods_table: ods_fineract_m_wc_loan_range_delinquency_tag
   business_area: LOAN
@@ -5319,7 +5335,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: true
   confidence: candidate
   business_processes:
@@ -5329,7 +5345,7 @@ mappings:
   - pk_not_null_unique
   - amount_decimal_precision
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_wc_loan_transaction
   ods_table: ods_fineract_m_wc_loan_transaction
   business_area: LOAN
@@ -5364,7 +5380,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: true
   confidence: candidate
   business_processes:
@@ -5373,7 +5389,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_wc_loan_transaction_relation
   ods_table: ods_fineract_m_wc_loan_transaction_relation
   business_area: LOAN
@@ -5385,7 +5401,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: true
   confidence: candidate
   business_processes:
@@ -5394,7 +5410,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_wc_near_breach
   ods_table: ods_fineract_m_wc_near_breach
   business_area: LOAN
@@ -5406,7 +5422,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: true
   confidence: candidate
   business_processes:
@@ -5415,7 +5431,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: m_working_days
   ods_table: ods_fineract_m_working_days
   business_area: CHNL
@@ -5449,7 +5465,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -5458,7 +5474,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: mix_taxonomy_mapping
   ods_table: ods_fineract_mix_taxonomy_mapping
   business_area: OTHR
@@ -5470,7 +5486,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -5480,7 +5496,7 @@ mappings:
   - pk_not_null_unique
   - currency_code_valid
   sensitivity: restricted
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: mix_xbrl_namespace
   ods_table: ods_fineract_mix_xbrl_namespace
   business_area: OTHR
@@ -5492,7 +5508,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -5501,7 +5517,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: notification_generator
   ods_table: ods_fineract_notification_generator
   business_area: CHNL
@@ -5513,7 +5529,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -5522,7 +5538,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: restricted
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: notification_mapper
   ods_table: ods_fineract_notification_mapper
   business_area: CHNL
@@ -5534,7 +5550,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -5543,7 +5559,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: oauth_access_token
   ods_table: ods_fineract_oauth_access_token
   business_area: OTHR
@@ -5555,7 +5571,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: source row
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: security_reviewed
   business_processes:
@@ -5563,7 +5579,7 @@ mappings:
   quality_rules:
   - source_row_count_reconciliation
   sensitivity: restricted
-  rationale: 包含密码、令牌或认证凭据，仅保留受限 ODS，禁止进入普通分析层。
+  rationale: 包含秘密、认证信息或高风险自由文本，不进入本分析数仓，仅保留源表清单。
 - source_table: oauth_client_details
   ods_table: ods_fineract_oauth_client_details
   business_area: OTHR
@@ -5575,7 +5591,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: client_id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: security_reviewed
   business_processes:
@@ -5584,7 +5600,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: restricted
-  rationale: 包含密码、令牌或认证凭据，仅保留受限 ODS，禁止进入普通分析层。
+  rationale: 包含秘密、认证信息或高风险自由文本，不进入本分析数仓，仅保留源表清单。
 - source_table: oauth_refresh_token
   ods_table: ods_fineract_oauth_refresh_token
   business_area: OTHR
@@ -5596,7 +5612,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: source row
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: security_reviewed
   business_processes:
@@ -5604,7 +5620,7 @@ mappings:
   quality_rules:
   - source_row_count_reconciliation
   sensitivity: restricted
-  rationale: 包含密码、令牌或认证凭据，仅保留受限 ODS，禁止进入普通分析层。
+  rationale: 包含秘密、认证信息或高风险自由文本，不进入本分析数仓，仅保留源表清单。
 - source_table: ppi_likelihoods
   ods_table: ods_fineract_ppi_likelihoods
   business_area: CHNL
@@ -5616,7 +5632,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: true
   confidence: candidate
   business_processes:
@@ -5625,7 +5641,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: ppi_likelihoods_ppi
   ods_table: ods_fineract_ppi_likelihoods_ppi
   business_area: CHNL
@@ -5637,7 +5653,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: true
   confidence: candidate
   business_processes:
@@ -5646,7 +5662,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: ppi_scores
   ods_table: ods_fineract_ppi_scores
   business_area: CHNL
@@ -5658,7 +5674,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: true
   confidence: candidate
   business_processes:
@@ -5667,7 +5683,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: r_enum_value
   ods_table: ods_fineract_r_enum_value
   business_area: OTHR
@@ -5679,7 +5695,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: enum_name, enum_id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -5688,7 +5704,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: ref_loan_transaction_processing_strategy
   ods_table: ods_fineract_ref_loan_transaction_processing_strategy
   business_area: LOAN
@@ -5700,7 +5716,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -5709,7 +5725,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: request_audit_table
   ods_table: ods_fineract_request_audit_table
   business_area: OTHR
@@ -5721,7 +5737,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: security_reviewed
   business_processes:
@@ -5730,7 +5746,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: restricted
-  rationale: 包含密码、令牌或认证凭据，仅保留受限 ODS，禁止进入普通分析层。
+  rationale: 包含秘密、认证信息或高风险自由文本，不进入本分析数仓，仅保留源表清单。
 - source_table: rpt_sequence
   ods_table: ods_fineract_rpt_sequence
   business_area: OTHR
@@ -5742,7 +5758,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -5751,7 +5767,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: scheduled_email_campaign
   ods_table: ods_fineract_scheduled_email_campaign
   business_area: OTHR
@@ -5763,7 +5779,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: security_reviewed
   business_processes:
@@ -5772,7 +5788,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: restricted
-  rationale: 包含密码、令牌或认证凭据，仅保留受限 ODS，禁止进入普通分析层。
+  rationale: 包含秘密、认证信息或高风险自由文本，不进入本分析数仓，仅保留源表清单。
 - source_table: scheduled_email_configuration
   ods_table: ods_fineract_scheduled_email_configuration
   business_area: OTHR
@@ -5784,7 +5800,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: security_reviewed
   business_processes:
@@ -5793,7 +5809,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: restricted
-  rationale: 包含密码、令牌或认证凭据，仅保留受限 ODS，禁止进入普通分析层。
+  rationale: 包含秘密、认证信息或高风险自由文本，不进入本分析数仓，仅保留源表清单。
 - source_table: scheduled_email_messages_outbound
   ods_table: ods_fineract_scheduled_email_messages_outbound
   business_area: OTHR
@@ -5805,7 +5821,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: security_reviewed
   business_processes:
@@ -5814,7 +5830,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: restricted
-  rationale: 包含密码、令牌或认证凭据，仅保留受限 ODS，禁止进入普通分析层。
+  rationale: 包含秘密、认证信息或高风险自由文本，不进入本分析数仓，仅保留源表清单。
 - source_table: scheduler_detail
   ods_table: ods_fineract_scheduler_detail
   business_area: OTHR
@@ -5826,7 +5842,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -5835,7 +5851,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: sms_campaign
   ods_table: ods_fineract_sms_campaign
   business_area: CHNL
@@ -5847,7 +5863,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: security_reviewed
   business_processes:
@@ -5856,7 +5872,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: restricted
-  rationale: 包含秘密、认证信息或高风险自由文本，仅保留受限 ODS，禁止进入普通分析层。
+  rationale: 包含秘密、认证信息或高风险自由文本，不进入本分析数仓，仅保留源表清单。
 - source_table: sms_messages_outbound
   ods_table: ods_fineract_sms_messages_outbound
   business_area: CHNL
@@ -5868,7 +5884,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -5877,7 +5893,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: restricted
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: stretchy_parameter
   ods_table: ods_fineract_stretchy_parameter
   business_area: OTHR
@@ -5889,7 +5905,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -5898,7 +5914,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: stretchy_report
   ods_table: ods_fineract_stretchy_report
   business_area: OTHR
@@ -5910,7 +5926,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -5919,7 +5935,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: stretchy_report_parameter
   ods_table: ods_fineract_stretchy_report_parameter
   business_area: OTHR
@@ -5931,7 +5947,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -5940,7 +5956,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: twofactor_access_token
   ods_table: ods_fineract_twofactor_access_token
   business_area: OTHR
@@ -5952,7 +5968,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: security_reviewed
   business_processes:
@@ -5961,7 +5977,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: restricted
-  rationale: 包含密码、令牌或认证凭据，仅保留受限 ODS，禁止进入普通分析层。
+  rationale: 包含秘密、认证信息或高风险自由文本，不进入本分析数仓，仅保留源表清单。
 - source_table: twofactor_configuration
   ods_table: ods_fineract_twofactor_configuration
   business_area: OTHR
@@ -5973,7 +5989,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: id
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: security_reviewed
   business_processes:
@@ -5982,7 +5998,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: restricted
-  rationale: 包含密码、令牌或认证凭据，仅保留受限 ODS，禁止进入普通分析层。
+  rationale: 包含秘密、认证信息或高风险自由文本，不进入本分析数仓，仅保留源表清单。
 - source_table: x_registered_table
   ods_table: ods_fineract_x_registered_table
   business_area: OTHR
@@ -5994,7 +6010,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: registered_table_name
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -6003,7 +6019,7 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。
 - source_table: x_table_column_code_mappings
   ods_table: ods_fineract_x_table_column_code_mappings
   business_area: OTHR
@@ -6015,7 +6031,7 @@ mappings:
   target_table: ''
   downstream_targets: []
   grain: column_alias_name
-  load_strategy: ods_full_snapshot
+  load_strategy: not_materialized
   optional_module: false
   confidence: candidate
   business_processes:
@@ -6024,4 +6040,4 @@ mappings:
   - source_row_count_reconciliation
   - pk_not_null_unique
   sensitivity: internal
-  rationale: 已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续维度、事实、快照或运维模型的候选组成来源。
+  rationale: 已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，不物化 ODS。

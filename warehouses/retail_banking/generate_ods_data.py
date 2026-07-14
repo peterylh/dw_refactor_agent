@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate deterministic medium-volume fixtures for every Fineract ODS table."""
+"""Generate deterministic fixtures for downstream-referenced Fineract ODS tables."""
 
 from __future__ import annotations
 
@@ -21,10 +21,7 @@ DATE_WINDOW_DAYS = 62
 MIN_ROWS_PER_TABLE = 1000
 MAX_ROWS_PER_TABLE = 5000
 INSERT_BATCH_SIZE = 200
-ROW_COUNT_OVERRIDES = {
-    # Keep the committed fixture aligned with the validated Doris dataset.
-    "ods_fineract_x_table_column_code_mappings": 3463,
-}
+ODS_DDL_ROOT = PROJECT_DIR / "ods/ddl/internal/retail_banking_dm"
 
 
 @dataclass(frozen=True)
@@ -52,8 +49,6 @@ def _varchar_length(source_type: str) -> int:
 
 
 def _target_row_count(ods_table: str) -> int:
-    if ods_table in ROW_COUNT_OVERRIDES:
-        return ROW_COUNT_OVERRIDES[ods_table]
     digest = hashlib.sha256(ods_table.encode(TEXT_ENCODING)).digest()
     span = MAX_ROWS_PER_TABLE - MIN_ROWS_PER_TABLE + 1
     target = MIN_ROWS_PER_TABLE + int.from_bytes(digest[:4], "big") % span
@@ -143,6 +138,41 @@ def _build_context(snapshot: dict, mapping: dict) -> GenerationContext:
         foreign_keys=foreign_keys,
         row_counts=row_counts,
     )
+
+
+def _materialized_mappings(mapping: dict) -> list[dict]:
+    """Return mappings whose generated ODS DDL is present in the project."""
+
+    materialized_tables = {path.stem for path in ODS_DDL_ROOT.glob("*.sql")}
+    mapping_by_ods = {item["ods_table"]: item for item in mapping["mappings"]}
+    unknown = materialized_tables - set(mapping_by_ods)
+    if unknown:
+        raise ValueError(
+            "ODS DDL has no source mapping: " + ", ".join(sorted(unknown))
+        )
+    declared_tables = {
+        item["ods_table"]
+        for item in mapping["mappings"]
+        if item.get("downstream_targets")
+    }
+    if materialized_tables != declared_tables:
+        raise ValueError(
+            "ODS DDL does not match the declared downstream dependency scope; "
+            f"missing={sorted(declared_tables - materialized_tables)}, "
+            f"unused={sorted(materialized_tables - declared_tables)}"
+        )
+    selected = [
+        item
+        for item in mapping["mappings"]
+        if item["ods_table"] in materialized_tables
+    ]
+    expected_count = mapping.get("analytical_ods_table_count")
+    if expected_count is not None and len(selected) != expected_count:
+        raise ValueError(
+            "Materialized ODS DDL count does not match table mapping metadata: "
+            f"{len(selected)} != {expected_count}"
+        )
+    return selected
 
 
 def _date_offset(table_name: str, row_number: int) -> int:
@@ -379,12 +409,13 @@ def generate(*, output_dir: Path) -> tuple[int, int]:
     )
     mapping = _load_yaml(PROJECT_DIR / "mappings/fineract_table_mapping.yaml")
     context = _build_context(snapshot, mapping)
+    materialized_mappings = _materialized_mappings(mapping)
     output_dir.mkdir(parents=True, exist_ok=True)
     for old_path in output_dir.glob("*.sql"):
         old_path.unlink()
     table_count = 0
     row_count = 0
-    for item in mapping["mappings"]:
+    for item in materialized_mappings:
         source_table = item["source_table"]
         rows = context.row_counts[source_table]
         sql = _render_insert(

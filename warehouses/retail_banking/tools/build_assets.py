@@ -1569,6 +1569,38 @@ def _semantic_specs() -> dict[str, dict]:
     return _SEMANTIC_SPEC_CACHE
 
 
+def _materialized_ods_source_tables() -> set[str]:
+    """Return direct and inherited source tables required by reviewed models."""
+
+    specs = _semantic_specs()
+    sources = set(specs)
+    for entry in specs.values():
+        inherited = (entry.get("business_date") or {}).get("inherit_from")
+        if inherited:
+            inherited_source = str(inherited).split(".", 1)[0]
+            if inherited_source != "etl_context":
+                sources.add(inherited_source)
+    return sources
+
+
+def _component_ods_targets() -> dict[str, list[str]]:
+    """Map inherited component sources to the reviewed models that use them."""
+
+    targets: dict[str, set[str]] = {}
+    for entry in _semantic_specs().values():
+        inherited = (entry.get("business_date") or {}).get("inherit_from")
+        if not inherited:
+            continue
+        inherited_source = str(inherited).split(".", 1)[0]
+        if inherited_source == "etl_context":
+            continue
+        targets.setdefault(inherited_source, set()).add(entry["target_table"])
+    return {
+        source_table: sorted(source_targets)
+        for source_table, source_targets in targets.items()
+    }
+
+
 def _ods_table_name(source_table: str) -> str:
     raw_name = f"ods_fineract_{source_table.lower()}"
     if len(raw_name) <= MAX_DORIS_TABLE_NAME_LENGTH:
@@ -1582,13 +1614,14 @@ def build_mapping_entry(table: TableSchema) -> MappingEntry:
     domain = classify_domain(table.name)
     kind = source_kind(table.name)
     semantic_spec = _semantic_specs().get(table.name)
+    materialized_ods = table.name in _materialized_ods_source_tables()
     if table.name in SECURITY_EXCLUDED_TABLES or _has_secret_columns(table):
         disposition = "security_excluded"
         target_layer = "NONE"
         target_table = ""
         confidence = "security_reviewed"
         rationale = (
-            "包含密码、令牌或认证凭据，仅保留受限 ODS，禁止进入普通分析层。"
+            "包含密码、令牌或认证凭据，不进入本分析数仓，仅保留源表清单。"
         )
     elif semantic_spec is not None:
         target_layer = str(semantic_spec["target_layer"])
@@ -1610,8 +1643,8 @@ def build_mapping_entry(table: TableSchema) -> MappingEntry:
         target_table = ""
         confidence = "candidate"
         rationale = (
-            "经人工复核不应直接生成分析事实；保留受控 ODS，并按明确的规则、"
-            "关系或运维用途参与后续模型设计。"
+            "经人工复核不应直接生成分析事实；保留源表映射，待下游模型明确引用"
+            "后再物化 ODS。"
         )
     else:
         disposition = _candidate_disposition(table, kind)
@@ -1620,16 +1653,20 @@ def build_mapping_entry(table: TableSchema) -> MappingEntry:
         if disposition == "security_excluded":
             confidence = "security_reviewed"
             rationale = (
-                "包含秘密、认证信息或高风险自由文本，仅保留受限 ODS，"
-                "禁止进入普通分析层。"
+                "包含秘密、认证信息或高风险自由文本，不进入本分析数仓，"
+                "仅保留源表清单。"
             )
+        elif materialized_ods:
+            confidence = "candidate"
+            rationale = "作为已评审下游任务的关联源物化 ODS，但不单独生成 DIM/DWD 模型。"
         else:
             confidence = "candidate"
             rationale = (
-                "已完成领域和处置分类；未通过独立粒度评审，保留 ODS 并作为后续"
-                "维度、事实、快照或运维模型的候选组成来源。"
+                "已完成领域和处置分类；当前没有下游任务引用，仅保留源表映射，"
+                "不物化 ODS。"
             )
     downstream_targets = [target_table] if target_table else []
+    downstream_targets.extend(_component_ods_targets().get(table.name, []))
     primary_keys = [
         column.name
         for column in table.columns.values()
@@ -1662,6 +1699,8 @@ def build_mapping_entry(table: TableSchema) -> MappingEntry:
             else "full_replay"
             if target_layer == "DWD"
             else "ods_full_snapshot"
+            if materialized_ods
+            else "not_materialized"
         ),
         optional_module=domain.code in {"WCLN", "INVS"}
         or table.name.startswith(("m_share_", "m_survey", "ppi_")),
@@ -1723,7 +1762,7 @@ def write_inventory(
         "upstream_commit": commit,
         "source_database": "postgresql",
         "active_table_count": len(tables),
-        "analytical_ods_table_count": len(tables),
+        "analytical_ods_table_count": len(_materialized_ods_source_tables()),
         "excluded_spring_batch_table_count": 6,
         "excluded_tenant_store_table_count": 4,
         "fineract_physical_table_count": len(tables) + 10,
@@ -1823,6 +1862,7 @@ def write_mapping_markdown(
         f"- 上游仓库：`{metadata['upstream_repository']}`",
         f"- 固定 commit：`{metadata['upstream_commit']}`",
         f"- 活动源表：{metadata['active_table_count']}",
+        f"- 实际物化 ODS：{metadata['analytical_ods_table_count']}",
         f"- 建设下游的源表：{metadata['mapped_downstream_count']}",
         "- 口径：标准 Fineract PostgreSQL clean-install tenant changelog；不包含 tenant-store、custom 示例和历史 upgrade-only changelog。",
         "",
@@ -1862,7 +1902,12 @@ def write_mapping_markdown(
             "| {source} | {ods} | {domain} | {disposition} | {confidence} | {layer} | "
             "{target} | {grain} |".format(
                 source=mapping.source_table,
-                ods=mapping.ods_table,
+                ods=(
+                    mapping.ods_table
+                    if mapping.source_table
+                    in _materialized_ods_source_tables()
+                    else "—"
+                ),
                 domain=f"{mapping.data_domain} {mapping.domain_name}",
                 disposition=mapping.disposition,
                 confidence=mapping.confidence,
