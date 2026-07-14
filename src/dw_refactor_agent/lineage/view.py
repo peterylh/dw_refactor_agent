@@ -8,13 +8,15 @@ from collections import defaultdict
 from typing import Any
 
 from dw_refactor_agent.lineage.asset_graph import (
+    _asset_condition_lineage,
     _column_incoming_edges,
-    _condition_record,
-    _condition_sort_key,
-    _edge_record,
-    _edge_sort_key,
+    _dataset_for,
+    _is_bypass_node,
+    _public_edge_record,
+    _scoped_column_edges,
     _trace_asset_column_sources,
     build_asset_self_edges,
+    build_asset_table_edge_metadata,
     build_asset_table_graph,
     transient_table_names,
 )
@@ -25,7 +27,6 @@ from dw_refactor_agent.lineage.identifiers import (
 from dw_refactor_agent.lineage.model import LineageSnapshot
 from dw_refactor_agent.lineage.table_graph import (
     _table_from_node,
-    build_table_edge_source_files,
     build_table_graph,
     collect_table_self_edges,
 )
@@ -81,6 +82,11 @@ class LineageView:
         self._raw_indirect_edges = [
             dict(edge) for edge in snapshot.indirect_edges
         ]
+        self._job_source_files = {
+            identifier_match_key(job.name): job.source_file
+            for job in snapshot.jobs
+            if job.name
+        }
         self._transient_tables = transient_table_names(self._data)
         self._transient_table_keys = {
             identifier_match_key(table)
@@ -92,18 +98,23 @@ class LineageView:
             self._raw_indirect_edges,
         )
         self._asset_table_graph = build_asset_table_graph(self._data)
+        self._asset_table_edge_metadata = build_asset_table_edge_metadata(
+            self._data
+        )
         self._raw_self_edges = collect_table_self_edges(
             self._raw_edges,
             self._raw_indirect_edges,
+            self._data.get("jobs") or [],
         )
         self._asset_self_edges = build_asset_self_edges(self._data)
         self._column_edges = None
+        self._column_context = None
         self._incoming = None
         self._column_edges_by_target_table = None
-        self._condition_edges_by_target_table = None
         self._lineage_facts_by_table = None
         self._targets_by_source_file = None
         self._table_edge_source_files = None
+        self._column_lineage_cache = {}
 
     @classmethod
     def from_data(cls, project: str, data: dict[str, Any]) -> "LineageView":
@@ -169,24 +180,40 @@ class LineageView:
             if identifier_match_key(edge.get("table", "")) == table_key
         ]
 
-    def _is_transient_table(self, table_name: str) -> bool:
-        return identifier_match_key(table_name) in self._transient_table_keys
-
     def column_lineage_for_table(self, table_name: str) -> list[dict]:
+        table_key = identifier_match_key(table_name)
+        if table_key in self._column_lineage_cache:
+            return [
+                dict(record)
+                for record in self._column_lineage_cache[table_key]
+            ]
+
         self._ensure_column_indexes()
-        condition_lineage = self._condition_lineage_for_table(table_name)
+        target_key = _dataset_for(table_name, self._column_context)["key"]
         lineage = []
         seen = set()
+        conditions_by_job = {}
 
-        target_key = identifier_match_key(table_name)
         for edge in self._column_edges_by_target_table.get(target_key, []):
-            if not self._is_transient_table(_table_from_node(edge["source"])):
-                item = dict(edge)
+            job = str(edge.get("job") or edge.get("_job") or "")
+            job_key = identifier_match_key(job)
+            if job_key not in conditions_by_job:
+                conditions_by_job[job_key] = self._condition_lineage_for_table(
+                    table_name,
+                    job_name=job,
+                )
+            condition_lineage = conditions_by_job[job_key]
+            if not _is_bypass_node(edge["_source_key"][0]):
+                item = _public_edge_record(edge)
                 if condition_lineage:
                     item["condition_lineage"] = condition_lineage
-                key = json.dumps(item, ensure_ascii=False, sort_keys=True)
-                if key not in seen:
-                    seen.add(key)
+                serialized = json.dumps(
+                    item,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                )
+                if serialized not in seen:
+                    seen.add(serialized)
                     lineage.append(item)
                 continue
 
@@ -199,25 +226,33 @@ class LineageView:
                 self._incoming,
                 self._transient_table_keys,
                 set(),
+                edge.get("_source_key"),
             ):
-                if self._is_transient_table(_table_from_node(asset_source)):
-                    continue
                 item = {
                     "source": asset_source,
                     "target": edge["target"],
                     "expression": edge["expression"],
                     "source_file": edge["source_file"],
                     "transient_path": transient_path,
-                    "expression_chain": chain + [edge],
+                    "expression_chain": chain + [_public_edge_record(edge)],
                 }
+                if edge.get("job"):
+                    item["job"] = edge["job"]
                 if condition_lineage:
                     item["condition_lineage"] = condition_lineage
-                key = json.dumps(item, ensure_ascii=False, sort_keys=True)
-                if key not in seen:
-                    seen.add(key)
+                serialized = json.dumps(
+                    item,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                )
+                if serialized not in seen:
+                    seen.add(serialized)
                     lineage.append(item)
 
-        return lineage
+        self._column_lineage_cache[table_key] = lineage
+        return [
+            dict(record) for record in self._column_lineage_cache[table_key]
+        ]
 
     def lineage_facts_for_table(self, table_name: str) -> dict[str, Any]:
         if self._lineage_facts_by_table is None:
@@ -248,104 +283,54 @@ class LineageView:
 
     def table_edge_source_files(self) -> dict[tuple[str, str], set[str]]:
         if self._table_edge_source_files is None:
-            self._table_edge_source_files = build_table_edge_source_files(
-                self._raw_edges,
-                self._raw_indirect_edges,
-            )
+            self._table_edge_source_files = {
+                edge: set(metadata["source_files"])
+                for edge, metadata in self._asset_table_edge_metadata.items()
+            }
         return {
             edge: set(source_files)
             for edge, source_files in self._table_edge_source_files.items()
         }
 
+    def table_edge_jobs(self) -> dict[tuple[str, str], set[str]]:
+        return {
+            edge: set(metadata["jobs"])
+            for edge, metadata in self._asset_table_edge_metadata.items()
+        }
+
     def _ensure_column_indexes(self) -> None:
         if self._column_edges is not None:
             return
-        self._column_edges = sorted(
-            [
-                record
-                for edge in self._raw_edges
-                for record in [_edge_record(edge)]
-                if record.get("source") and record.get("target")
-            ],
-            key=_edge_sort_key,
+        self._column_edges, self._column_context = _scoped_column_edges(
+            self._data
         )
         self._incoming = _column_incoming_edges(self._column_edges)
         self._column_edges_by_target_table = (
             self._index_column_edges_by_target()
         )
-        self._condition_edges_by_target_table = self._index_condition_edges()
 
-    def _index_column_edges_by_target(self) -> dict[str, list[dict]]:
+    def _index_column_edges_by_target(self) -> dict[tuple, list[dict]]:
         grouped = defaultdict(list)
         for edge in self._column_edges:
-            target_table = _table_from_node(edge["target"])
-            if target_table:
-                grouped[identifier_match_key(target_table)].append(edge)
+            target_scope = edge.get("_target_key", ((), ""))[0]
+            if target_scope:
+                grouped[target_scope[-1]].append(edge)
         return dict(grouped)
 
-    def _index_condition_edges(self) -> dict[str, list[dict]]:
-        grouped = defaultdict(list)
-        typed_condition_edges = [
-            edge
-            for edge in self._raw_edges
-            if isinstance(edge.get("target"), dict)
-            and (edge.get("target") or {}).get("type") == "table"
-            and edge.get("relation_type") != "direct"
-        ]
-        condition_edges = sorted(
-            typed_condition_edges + self._raw_indirect_edges,
-            key=_condition_sort_key,
-        )
-        for edge in condition_edges:
-            target = self._condition_target_table(edge)
-            if target:
-                grouped[identifier_match_key(target)].append(edge)
-        return dict(grouped)
-
-    def _condition_lineage_for_table(self, table_name: str) -> list[dict]:
+    def _condition_lineage_for_table(
+        self,
+        table_name: str,
+        job_name: str = "",
+    ) -> list[dict]:
         self._ensure_column_indexes()
-        conditions = []
-        seen = set()
-
-        target_key = identifier_match_key(table_name)
-        for edge in self._condition_edges_by_target_table.get(target_key, []):
-            source = self._condition_source(edge)
-            if not source:
-                continue
-
-            base = _condition_record(edge)
-            if not self._is_transient_table(_table_from_node(source)):
-                item = dict(base)
-                key = json.dumps(item, ensure_ascii=False, sort_keys=True)
-                if key not in seen:
-                    seen.add(key)
-                    conditions.append(item)
-                continue
-
-            for (
-                asset_source,
-                chain,
-                transient_path,
-            ) in _trace_asset_column_sources(
-                source,
-                self._incoming,
-                self._transient_table_keys,
-                set(),
-            ):
-                if self._is_transient_table(_table_from_node(asset_source)):
-                    continue
-                item = {
-                    **base,
-                    "source": asset_source,
-                    "transient_path": transient_path,
-                    "expression_chain": chain,
-                }
-                key = json.dumps(item, ensure_ascii=False, sort_keys=True)
-                if key not in seen:
-                    seen.add(key)
-                    conditions.append(item)
-
-        return conditions
+        return _asset_condition_lineage(
+            self._data,
+            table_name,
+            self._incoming,
+            self._transient_table_keys,
+            self._column_context,
+            job_name=job_name,
+        )
 
     def _index_lineage_facts(self) -> dict[str, dict[str, Any]]:
         grouped = defaultdict(
@@ -365,8 +350,12 @@ class LineageView:
                 continue
 
             facts = grouped[target_table]
-            if edge.source_file:
-                facts["source_files"].add(edge.source_file)
+            source_file = edge.source_file or self._job_source_files.get(
+                identifier_match_key(edge.job),
+                "",
+            )
+            if source_file:
+                facts["source_files"].add(source_file)
 
             if (
                 edge.relation_type == "group_by"
@@ -421,7 +410,13 @@ class LineageView:
             target = self._edge_target_table(edge)
             if not target:
                 continue
-            source_file = _source_file_key(edge.get("source_file", ""))
+            source_file = _source_file_key(
+                edge.get("source_file", "")
+                or self._job_source_files.get(
+                    identifier_match_key(edge.get("job")),
+                    "",
+                )
+            )
             if source_file:
                 targets[source_file].add(target)
 
@@ -434,24 +429,6 @@ class LineageView:
                 targets[source_file].add(target)
 
         return dict(targets)
-
-    @staticmethod
-    def _condition_target_table(edge: dict) -> str:
-        target = edge.get("target")
-        if isinstance(target, dict):
-            if target.get("type") == "table":
-                return str(target.get("id") or "")
-            if target.get("type") == "column":
-                return _table_from_node(str(target.get("id") or ""))
-            return ""
-        return str(edge.get("target_table") or "")
-
-    @staticmethod
-    def _condition_source(edge: dict) -> str:
-        source = edge.get("source")
-        if isinstance(source, dict):
-            return str(source.get("id") or "")
-        return str(source or "")
 
     @staticmethod
     def _edge_target_table(edge: dict) -> str:

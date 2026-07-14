@@ -12,6 +12,7 @@ from dw_refactor_agent.lineage.identifiers import (
     identifier_match_key,
     split_column_ref,
 )
+from dw_refactor_agent.lineage.job_lineage import job_name_from_source_file
 from dw_refactor_agent.lineage.view import LineageView
 
 VALID_DIRECTIONS = {"upstream", "downstream", "both"}
@@ -27,6 +28,7 @@ class TableEdge:
     target: str
     hops: int
     source_files: tuple[str, ...] = ()
+    jobs: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -35,6 +37,8 @@ class TableColumnLineage:
     target: str
     expression: str = ""
     source_file: str = ""
+    job: str = ""
+    jobs: tuple[str, ...] = ()
     transformation_type: str = "passthrough"
     conditions: tuple["ColumnCondition", ...] = ()
 
@@ -55,12 +59,7 @@ class TableSubgraph:
 
     @property
     def jobs(self) -> set[str]:
-        return {
-            source_file
-            for edge in self.edges
-            for source_file in edge.source_files
-            if source_file
-        }
+        return {job for edge in self.edges for job in edge.jobs if job}
 
 
 @dataclass(frozen=True)
@@ -69,6 +68,7 @@ class ColumnCondition:
     condition_type: str
     condition_expression: str
     source_file: str = ""
+    job: str = ""
 
 
 @dataclass(frozen=True)
@@ -77,6 +77,8 @@ class ColumnStep:
     target: str
     expression: str = ""
     source_file: str = ""
+    job: str = ""
+    jobs: tuple[str, ...] = ()
     transformation_type: str = "passthrough"
     conditions: tuple[ColumnCondition, ...] = ()
 
@@ -107,6 +109,16 @@ class ColumnLineage:
             for path in self.paths
             for step in path.steps
             if step.source_file
+        }
+
+    @property
+    def jobs(self) -> set[str]:
+        return {
+            job
+            for path in self.paths
+            for step in path.steps
+            for job in (step.jobs or ((step.job,) if step.job else ()))
+            if job
         }
 
     @property
@@ -171,6 +183,38 @@ def _source_files_for(
             if source_file
         )
     )
+
+
+def _jobs_for(
+    source: str,
+    target: str,
+    table_edge_jobs: dict[tuple[str, str], set[str]],
+) -> tuple[str, ...]:
+    return tuple(
+        sorted(
+            job for job in table_edge_jobs.get((source, target), set()) if job
+        )
+    )
+
+
+def _record_jobs(record: dict) -> tuple[str, ...]:
+    jobs = {
+        _record_job(edge)
+        for edge in record.get("expression_chain") or []
+        if _record_job(edge)
+    }
+    job = _record_job(record)
+    if job:
+        jobs.add(job)
+    return tuple(sorted(jobs))
+
+
+def _record_job(record: dict) -> str:
+    job = str(record.get("job") or "")
+    if job:
+        return job
+    source_file = str(record.get("source_file") or "")
+    return job_name_from_source_file(source_file) if source_file else ""
 
 
 def _column_node(table_name: str, column_name: str) -> str:
@@ -253,6 +297,7 @@ def _conditions_from_record(record: dict) -> tuple[ColumnCondition, ...]:
                 condition_type=condition_type,
                 condition_expression=condition_expression,
                 source_file=str(condition.get("source_file") or ""),
+                job=_record_job(condition),
             )
         )
     return tuple(
@@ -263,6 +308,7 @@ def _conditions_from_record(record: dict) -> tuple[ColumnCondition, ...]:
                 item.source,
                 item.condition_expression,
                 item.source_file,
+                item.job,
             ),
         )
     )
@@ -286,6 +332,8 @@ def _column_steps_for_target(
                 target=target,
                 expression=expression,
                 source_file=str(record.get("source_file") or ""),
+                job=_record_job(record),
+                jobs=_record_jobs(record),
                 transformation_type=_transformation_type(expression),
                 conditions=_conditions_from_record(record),
             )
@@ -316,6 +364,8 @@ def _column_lineage_for_subgraph(
                     target=target,
                     expression=expression,
                     source_file=str(record.get("source_file") or ""),
+                    job=_record_job(record),
+                    jobs=_record_jobs(record),
                     transformation_type=_transformation_type(expression),
                     conditions=_conditions_from_record(record),
                 )
@@ -386,6 +436,8 @@ def _all_column_steps(view: LineageView) -> list[ColumnStep]:
                     target=target,
                     expression=expression,
                     source_file=str(record.get("source_file") or ""),
+                    job=_record_job(record),
+                    jobs=_record_jobs(record),
                     transformation_type=_transformation_type(expression),
                     conditions=_conditions_from_record(record),
                 )
@@ -527,6 +579,7 @@ def build_table_subgraph(
         raise ValueError(f"unknown table: {root}")
 
     table_edge_files = view.table_edge_source_files()
+    table_edge_jobs = view.table_edge_jobs()
     distances = {root: 0}
     selected_edges: set[TableEdge] = set()
     hidden_boundary_edges = 0
@@ -564,6 +617,7 @@ def build_table_subgraph(
                         target,
                         table_edge_files,
                     ),
+                    jobs=_jobs_for(source, target, table_edge_jobs),
                 )
             )
             if neighbor not in distances or next_depth < distances[neighbor]:

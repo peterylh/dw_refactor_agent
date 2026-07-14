@@ -107,8 +107,9 @@ def _self_edge_record(
     edge: dict,
     source_table: str,
     target_table: str,
+    job_source_files: dict[str, str] | None = None,
 ) -> dict:
-    return {
+    record = {
         "table": source_table,
         "source_table": source_table,
         "target_table": target_table,
@@ -116,8 +117,16 @@ def _self_edge_record(
         "target": _edge_target(edge),
         "relation_type": _edge_relation_type(edge),
         "expression": _edge_expression(edge),
-        "source_file": str(edge.get("source_file") or ""),
+        "source_file": str(edge.get("source_file") or "")
+        or (job_source_files or {}).get(
+            identifier_match_key(edge.get("job")),
+            "",
+        ),
     }
+    job = str(edge.get("job") or "")
+    if job:
+        record["job"] = job
+    return record
 
 
 def _dedupe_self_edges(records: list[dict]) -> list[dict]:
@@ -132,10 +141,21 @@ def _dedupe_self_edges(records: list[dict]) -> list[dict]:
     return deduped
 
 
-def collect_table_self_edges(edges: list, indirect_edges: list) -> list[dict]:
+def collect_table_self_edges(
+    edges: list,
+    indirect_edges: list,
+    jobs: list | None = None,
+) -> list[dict]:
     """Return table self-loop lineage facts without adding graph dependencies."""
     records = []
     display_by_key = {}
+    job_source_files = {
+        identifier_match_key(job.get("name")): str(
+            job.get("source_file") or ""
+        )
+        for job in jobs or []
+        if identifier_match_key(job.get("name"))
+    }
 
     for edge in edges:
         src, tgt = _normalize_table_pair(
@@ -149,7 +169,14 @@ def collect_table_self_edges(edges: list, indirect_edges: list) -> list[dict]:
             and tgt
             and identifier_match_key(src) == identifier_match_key(tgt)
         ):
-            records.append(_self_edge_record(edge, src, tgt))
+            records.append(
+                _self_edge_record(
+                    edge,
+                    src,
+                    tgt,
+                    job_source_files,
+                )
+            )
 
     for edge in indirect_edges:
         src, tgt = _normalize_table_pair(
@@ -163,7 +190,14 @@ def collect_table_self_edges(edges: list, indirect_edges: list) -> list[dict]:
             and tgt
             and identifier_match_key(src) == identifier_match_key(tgt)
         ):
-            records.append(_self_edge_record(edge, src, tgt))
+            records.append(
+                _self_edge_record(
+                    edge,
+                    src,
+                    tgt,
+                    job_source_files,
+                )
+            )
 
     return _dedupe_self_edges(records)
 
@@ -202,9 +236,26 @@ def build_table_graph(
     return dict(upstream), dict(downstream)
 
 
-def build_table_edge_source_files(edges: list, indirect_edges: list) -> dict:
+def build_table_edge_source_files(
+    edges: list,
+    indirect_edges: list,
+    jobs: list | None = None,
+) -> dict:
     table_edges = defaultdict(set)
     display_by_key = {}
+    job_source_files = {
+        identifier_match_key(job.get("name")): str(
+            job.get("source_file") or ""
+        )
+        for job in jobs or []
+        if identifier_match_key(job.get("name"))
+    }
+
+    def source_file(edge):
+        return str(edge.get("source_file") or "") or job_source_files.get(
+            identifier_match_key(edge.get("job")),
+            "",
+        )
 
     for edge in edges:
         src, tgt = _normalize_table_pair(
@@ -213,7 +264,7 @@ def build_table_edge_source_files(edges: list, indirect_edges: list) -> dict:
             display_by_key,
         )
         if src and tgt:
-            table_edges[(src, tgt)].add(edge.get("source_file", ""))
+            table_edges[(src, tgt)].add(source_file(edge))
 
     for edge in indirect_edges:
         src, tgt = _normalize_table_pair(
@@ -222,7 +273,7 @@ def build_table_edge_source_files(edges: list, indirect_edges: list) -> dict:
             display_by_key,
         )
         if src and tgt:
-            table_edges[(src, tgt)].add(edge.get("source_file", ""))
+            table_edges[(src, tgt)].add(source_file(edge))
 
     return dict(table_edges)
 
