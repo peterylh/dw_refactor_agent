@@ -3,6 +3,8 @@ import re
 import sys
 import types
 
+import pytest
+
 import dw_refactor_agent.config as config
 
 try:
@@ -296,7 +298,20 @@ def test_generate_jobs_v2_uses_explicit_job_source_file_and_io(
     )
     data = {
         "format_version": 2,
-        "tables": [],
+        "tables": [
+            {
+                "name": "ods_order",
+                "full_name": "internal.shop_dm.ods_order",
+                "dataset_type": "managed",
+                "columns": [{"name": "amount", "type": "DECIMAL(12,2)"}],
+            },
+            {
+                "name": "process_order",
+                "full_name": "internal.shop_dm.process_order",
+                "dataset_type": "process",
+                "columns": [{"name": "amount", "type": "DECIMAL(12,2)"}],
+            },
+        ],
         "jobs": [
             {
                 "name": "schedule_prepare_orders",
@@ -543,6 +558,14 @@ def test_generate_jobs_v2_removes_case_variant_self_input(monkeypatch):
     )
     data = {
         "format_version": 2,
+        "tables": [
+            {
+                "name": "t",
+                "full_name": "internal.shop_dm.t",
+                "dataset_type": "managed",
+                "columns": [],
+            }
+        ],
         "jobs": [
             {
                 "name": "build_t",
@@ -552,6 +575,7 @@ def test_generate_jobs_v2_removes_case_variant_self_input(monkeypatch):
             }
         ],
         "edges": [],
+        "diagnostics": [],
     }
 
     jobs = refresh_html.generate_jobs(
@@ -563,3 +587,51 @@ def test_generate_jobs_v2_removes_case_variant_self_input(monkeypatch):
 
     assert jobs[0]["source"] == []
     assert jobs[0]["target"] == "t"
+
+
+def _call_html_builder(builder, data):
+    if builder == "frontend":
+        return refresh_html.build_frontend_lineage_data(data, "shop")
+    return refresh_html.generate_jobs(
+        data,
+        tasks_dir=None,
+        current_db="shop_dm",
+        project="shop",
+    )
+
+
+@pytest.mark.parametrize("builder", ["frontend", "jobs"])
+@pytest.mark.parametrize("version", [3, "2", True, 2.0])
+def test_html_builders_reject_unsupported_explicit_lineage_versions(
+    monkeypatch, builder, version
+):
+    monkeypatch.setattr(
+        refresh_html,
+        "iter_project_task_files",
+        lambda project: [],
+    )
+    data = {
+        "format_version": version,
+        "tables": [],
+        "jobs": [],
+        "edges": [],
+        "diagnostics": [],
+    }
+
+    with pytest.raises(ValueError, match="format_version"):
+        _call_html_builder(builder, data)
+
+
+@pytest.mark.parametrize("builder", ["frontend", "jobs"])
+def test_html_builders_strictly_reject_malformed_v2(builder):
+    data = {
+        "format_version": 2,
+        "tables": [],
+        "jobs": [],
+        "edges": [],
+        "diagnostics": [],
+        "extension": True,
+    }
+
+    with pytest.raises(ValueError, match="extension"):
+        _call_html_builder(builder, data)

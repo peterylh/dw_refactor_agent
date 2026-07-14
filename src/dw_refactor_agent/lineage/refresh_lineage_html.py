@@ -30,6 +30,7 @@ from dw_refactor_agent.config import (
     lineage_job_html_path,
     task_source_file,
 )
+from dw_refactor_agent.lineage.contract import validate_lineage_v2
 from dw_refactor_agent.lineage.identifiers import (
     canonical_qualified_identifier,
     display_table_name,
@@ -95,10 +96,24 @@ def _edge_ref_id(ref):
     return str(ref or "")
 
 
+def _validated_lineage_version(data):
+    if "format_version" not in data:
+        return 1
+    version = data["format_version"]
+    if type(version) is not int or version not in {1, 2}:
+        raise ValueError(
+            "lineage format_version must be integer 1 or 2; "
+            f"received {version!r}"
+        )
+    if version == 2:
+        validate_lineage_v2(data)
+    return version
+
+
 def build_frontend_lineage_data(data, project):
     """Build lineage payload compatible with the HTML field graph."""
     frontend_data = dict(data)
-    if data.get("format_version") == 2:
+    if _validated_lineage_version(data) == 2:
         return frontend_data
 
     frontend_tables = []
@@ -157,7 +172,7 @@ def build_frontend_lineage_data(data, project):
 
 def generate_jobs(data, tasks_dir, current_db, job_logic=None, project="shop"):
     job_logic = job_logic or {}
-    if data.get("format_version") == 2:
+    if _validated_lineage_version(data) == 2:
         jobs = []
         for job in data.get("jobs") or []:
             job_id = str(job.get("name") or "")

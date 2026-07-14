@@ -139,7 +139,9 @@ def _edge_ref_type(ref: Any) -> str:
 
 def _edge_ref_id(ref: Any) -> str:
     if isinstance(ref, dict):
-        return str(ref.get("id") or ref.get("value") or "")
+        return str(
+            ref.get("id") or ref.get("value") or ref.get("expression") or ""
+        )
     return str(ref or "")
 
 
@@ -218,6 +220,34 @@ def _typed_indirect_edges(
     return indirect_edges
 
 
+def _raise_v2_direct_edge_import_error(
+    edge: dict[str, Any], reason: str
+) -> None:
+    source = edge.get("source")
+    target = edge.get("target")
+    raise ValueError(
+        "lineage v2 DIRECT edge cannot be imported: "
+        f"job={str(edge.get('job') or '')!r}, "
+        f"source={_edge_ref_id(source)!r} ({_edge_ref_type(source)}), "
+        f"target={_edge_ref_id(target)!r} ({_edge_ref_type(target)}): "
+        f"{reason}"
+    )
+
+
+def _validate_v2_direct_edge_shapes(data: dict[str, Any]) -> None:
+    for edge in data.get("edges") or []:
+        if _normalize_relation_type(edge.get("relation_type")) != "DIRECT":
+            continue
+        source_type = _edge_ref_type(edge.get("source"))
+        target_type = _edge_ref_type(edge.get("target"))
+        if source_type != "column" or target_type != "column":
+            _raise_v2_direct_edge_import_error(
+                edge,
+                "current column_lineage schema only represents "
+                "column-to-column DIRECT edges",
+            )
+
+
 def _read_task_sql(
     tasks_dir: Path,
     source_file: str,
@@ -284,6 +314,7 @@ def _normalize_import_data(data: dict[str, Any]) -> dict[str, Any]:
         )
     if version == 2:
         validate_lineage_v2(data)
+        _validate_v2_direct_edge_shapes(data)
         return data
 
     raw_edges = [
@@ -498,6 +529,7 @@ def _build_column_lineage_rows(
     column_id_map: dict[Any, int],
     job_id_map: dict[str, int],
     rows: LineageImportRows,
+    strict_v2: bool = False,
 ) -> set[tuple[int, int, int | None, str]]:
     table_lineage_set: set[tuple[int, int, int | None, str]] = set()
     lineage_id = 1
@@ -507,6 +539,11 @@ def _build_column_lineage_rows(
         source_ref = _split_column_ref(source)
         target_ref = _split_column_ref(target)
         if source_ref is None or target_ref is None:
+            if strict_v2:
+                _raise_v2_direct_edge_import_error(
+                    edge,
+                    "source or target is not a table.column reference",
+                )
             _skip(
                 rows,
                 kind="direct",
@@ -530,6 +567,11 @@ def _build_column_lineage_rows(
                 target_column_id,
             ]
         ):
+            if strict_v2:
+                _raise_v2_direct_edge_import_error(
+                    edge,
+                    "source or target table/column metadata is missing",
+                )
             _skip(
                 rows,
                 kind="direct",
@@ -678,6 +720,7 @@ def build_import_rows(
 ) -> LineageImportRows:
     """Convert one lineage JSON snapshot into database row tuples."""
     data = _normalize_import_data(data)
+    is_v2 = data.get("format_version") == 2
     rows = LineageImportRows()
     rows.datasource_rows.append(
         (
@@ -730,6 +773,7 @@ def build_import_rows(
         column_id_map=column_id_map,
         job_id_map=job_id_map,
         rows=rows,
+        strict_v2=is_v2,
     )
     _build_indirect_lineage_rows(
         indirect_edges,

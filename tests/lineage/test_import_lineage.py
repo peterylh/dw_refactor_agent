@@ -1,5 +1,7 @@
 import importlib
 
+import pytest
+
 import dw_refactor_agent.config as config
 
 
@@ -365,6 +367,80 @@ def test_build_import_rows_matches_equivalent_v2_table_qualifications(
     assert len(rows.column_lineage_rows) == 1
     assert len(rows.indirect_lineage_rows) == 1
     assert rows.skipped_edges == []
+
+
+@pytest.mark.parametrize(
+    "source_ref",
+    [
+        {"type": "literal", "value": "ALL"},
+        {"type": "expression", "expression": "CURRENT_DATE()"},
+    ],
+    ids=("literal", "expression"),
+)
+def test_build_import_rows_rejects_unrepresentable_v2_direct_sources(
+    tmp_path, source_ref
+):
+    module = importlib.import_module(
+        "dw_refactor_agent.lineage.import_lineage"
+    )
+    data = _demo_v2_snapshot()
+    data["edges"] = [data["edges"][0]]
+    data["edges"][0]["source"] = source_ref
+
+    with pytest.raises(ValueError) as exc_info:
+        module.build_import_rows(
+            data,
+            tasks_dir=tmp_path,
+            context=module.ImportContext(
+                project="shop",
+                snapshot_id=42,
+                datasource_id=1,
+                datasource_name="shop_dm",
+                db_type="doris",
+                host="127.0.0.1:9030",
+            ),
+        )
+
+    message = str(exc_info.value)
+    assert "DIRECT" in message
+    assert "prepare_orders" in message
+    assert (
+        str(source_ref.get("value") or source_ref.get("expression")) in message
+    )
+    assert "internal.shop_dm.process_order.amount" in message
+
+
+def test_build_import_rows_rejects_unmapped_v2_direct_column_metadata(
+    tmp_path,
+):
+    module = importlib.import_module(
+        "dw_refactor_agent.lineage.import_lineage"
+    )
+    data = _demo_v2_snapshot()
+    data["edges"] = [data["edges"][0]]
+    data["edges"][0]["source"]["id"] = (
+        "internal.shop_dm.ods_order.missing_amount"
+    )
+
+    with pytest.raises(ValueError) as exc_info:
+        module.build_import_rows(
+            data,
+            tasks_dir=tmp_path,
+            context=module.ImportContext(
+                project="shop",
+                snapshot_id=42,
+                datasource_id=1,
+                datasource_name="shop_dm",
+                db_type="doris",
+                host="127.0.0.1:9030",
+            ),
+        )
+
+    message = str(exc_info.value)
+    assert "DIRECT" in message
+    assert "prepare_orders" in message
+    assert "internal.shop_dm.ods_order.missing_amount" in message
+    assert "internal.shop_dm.process_order.amount" in message
 
 
 def test_build_import_rows_matches_mixed_case_edge_refs_to_metadata(tmp_path):
