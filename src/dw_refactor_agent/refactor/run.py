@@ -929,7 +929,7 @@ def _cleanup_list(args) -> int:
             "project\tdatabase\tavailability\trun_id\texecution_id\t"
             "claimed_at\tage\tdiagnostic"
         )
-        now_epoch = int(_now().timestamp())
+        now_epoch = qa_server_epoch()
         for inspection in inspections:
             _print_slot(inspection, now_epoch=now_epoch)
     return 0

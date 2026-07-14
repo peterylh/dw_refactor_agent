@@ -154,6 +154,11 @@ def test_cleanup_list_filters_by_project_and_run(monkeypatch, capsys):
         lambda **kwargs: [claimed, other],
         raising=False,
     )
+    monkeypatch.setattr(
+        run_cli,
+        "qa_server_epoch",
+        lambda: claimed.ownership.claimed_at_epoch,
+    )
 
     assert (
         run_cli.main(
@@ -164,6 +169,33 @@ def test_cleanup_list_filters_by_project_and_run(monkeypatch, capsys):
     output = capsys.readouterr().out
     assert "shop_dm_qa_02" in output
     assert "other_run_slot" not in output
+
+
+def test_cleanup_list_age_uses_doris_server_clock(monkeypatch, capsys):
+    inspection = _cleanup_inspection()
+    monkeypatch.setattr(
+        run_cli,
+        "inspect_configured_slots",
+        lambda **kwargs: [inspection],
+        raising=False,
+    )
+    monkeypatch.setattr(
+        run_cli,
+        "qa_server_epoch",
+        lambda: inspection.ownership.claimed_at_epoch + 5 * 60,
+    )
+    monkeypatch.setattr(
+        run_cli,
+        "_now",
+        lambda: datetime.fromtimestamp(
+            inspection.ownership.claimed_at_epoch + 24 * 60 * 60,
+            timezone.utc,
+        ),
+    )
+
+    assert run_cli.main(["cleanup", "list", "--project", "shop"]) == 0
+
+    assert "\t300s\t" in capsys.readouterr().out
 
 
 def test_cleanup_delete_without_yes_is_preview(monkeypatch, capsys):
