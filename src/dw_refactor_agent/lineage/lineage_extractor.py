@@ -2912,6 +2912,8 @@ def _task_context_from_statements(
     task_facts = extract_task_table_facts_from_statements(
         statements,
         work_item.source_file,
+        default_catalog=_default_catalog(),
+        default_db=_default_db(),
     )
     task_schema = _task_schema_for_table_names(schema, referenced_tables)
     if not work_item.sql_hash:
@@ -2942,8 +2944,25 @@ def _parse_task_context(work_item, schema, diagnostics=None):
     )
 
 
-def _task_result_from_context(context, entries):
+def _task_fact_result_fields(task_facts):
+    def sorted_tables(field):
+        return sorted(
+            task_facts.get(field) or [],
+            key=_identifier_match_key,
+        )
+
     return {
+        "input_tables": sorted_tables("input_tables"),
+        "output_tables": sorted_tables("output_tables"),
+        "created_tables": sorted_tables("created_tables"),
+        "temporary_tables": sorted_tables("temporary_tables"),
+        "local_lifecycle_tables": task_facts.get("local_lifecycle_tables")
+        or [],
+    }
+
+
+def _task_result_from_context(context, entries):
+    result = {
         "index": context.index,
         "source_file": context.source_file,
         "entries": entries,
@@ -2956,6 +2975,8 @@ def _task_result_from_context(context, entries):
         "stats": dict(STATS),
         "errors": context.diagnostics,
     }
+    result.update(_task_fact_result_fields(context.task_facts))
+    return result
 
 
 def extract_lineage_from_statements(
@@ -3123,8 +3144,10 @@ def _extract_task_work_item(work_item, schema):
             task_facts = extract_task_table_facts(
                 work_item.sql_text,
                 work_item.source_file,
+                default_catalog=_default_catalog(),
+                default_db=_default_db(),
             )
-            return {
+            result = {
                 "index": work_item.index,
                 "source_file": work_item.source_file,
                 "entries": [],
@@ -3137,6 +3160,8 @@ def _extract_task_work_item(work_item, schema):
                 "stats": dict(STATS),
                 "errors": diagnostics,
             }
+            result.update(_task_fact_result_fields(task_facts))
+            return result
 
         context = _task_context_from_statements(
             work_item,
@@ -3171,6 +3196,11 @@ def _task_failure_result(work_item, error, stage="worker"):
         "source_file": work_item.source_file,
         "entries": [],
         "transient_tables": [],
+        "input_tables": [],
+        "output_tables": [],
+        "created_tables": [],
+        "temporary_tables": [],
+        "local_lifecycle_tables": [],
         "missing_ddl_tables": [],
         "missing_source_ddl": [],
         "missing_target_ddl": [],
@@ -3211,6 +3241,11 @@ def _task_result_from_cache(work_item, cached):
         "source_file": work_item.source_file,
         "entries": cached.get("entries") or [],
         "transient_tables": cached.get("transient_tables") or [],
+        "input_tables": cached.get("input_tables") or [],
+        "output_tables": cached.get("output_tables") or [],
+        "created_tables": cached.get("created_tables") or [],
+        "temporary_tables": cached.get("temporary_tables") or [],
+        "local_lifecycle_tables": cached.get("local_lifecycle_tables") or [],
         "missing_ddl_tables": cached.get("missing_ddl_tables") or [],
         "missing_source_ddl": cached.get("missing_source_ddl") or [],
         "missing_target_ddl": cached.get("missing_target_ddl") or [],
@@ -3249,7 +3284,12 @@ def _cache_project_config(project):
 def _extractor_hash_for_cache():
     from dw_refactor_agent.lineage.task_cache import extractor_version_hash
 
-    return extractor_version_hash(__file__)
+    return extractor_version_hash(
+        (
+            __file__,
+            Path(__file__).with_name("sql_task_facts.py"),
+        )
+    )
 
 
 def _task_sql_hash(work_item):

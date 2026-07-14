@@ -466,7 +466,7 @@ def test_parse_task_context_materializes_reusable_task_state():
 
     assert context.source_file == "dwd_order.sql"
     assert context.sql_hash
-    assert context.task_facts["output_tables"] == {"dwd_order"}
+    assert context.task_facts["output_tables"] == {"shop_dm.dwd_order"}
     assert context.referenced_tables == (
         "shop_dm.dwd_order",
         "shop_dm.ods_order",
@@ -601,6 +601,11 @@ def test_extract_lineage_from_task_files_uses_cache_metadata_without_sql_parse(
         parallel=1,
         previous_cache_file=cache_path,
     )
+    assert cold["task_results"][0]["input_tables"] == ["shop_dm.ods_order"]
+    assert cold["task_results"][0]["output_tables"] == ["t1"]
+    assert cold["task_results"][0]["created_tables"] == []
+    assert cold["task_results"][0]["temporary_tables"] == []
+    assert cold["task_results"][0]["local_lifecycle_tables"] == []
     cache_path.write_text(json.dumps(cold["task_cache"]), encoding="utf-8")
 
     original_parse = lineage_extractor.sqlglot.parse
@@ -625,6 +630,8 @@ def test_extract_lineage_from_task_files_uses_cache_metadata_without_sql_parse(
 
     assert warm["errors"] == []
     assert warm["task_results"][0]["cache_hit"] is True
+    assert warm["task_results"][0]["input_tables"] == ["shop_dm.ods_order"]
+    assert warm["task_results"][0]["output_tables"] == ["t1"]
     assert task_parse_count == 0
 
 
@@ -675,7 +682,7 @@ def test_extract_lineage_from_task_files_reports_context_errors_as_worker(
         encoding="utf-8",
     )
 
-    def fail_task_facts(_statements, _source_file):
+    def fail_task_facts(_statements, _source_file, **_kwargs):
         raise RuntimeError("task facts boom")
 
     monkeypatch.setattr(

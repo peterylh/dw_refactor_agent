@@ -9,6 +9,14 @@ from pathlib import Path
 
 from dw_refactor_agent.config import TEXT_ENCODING
 
+TASK_FACT_FIELDS = (
+    "input_tables",
+    "output_tables",
+    "created_tables",
+    "temporary_tables",
+    "local_lifecycle_tables",
+)
+
 
 @dataclass
 class TaskCacheMetadata:
@@ -27,8 +35,15 @@ def stable_json_hash(value) -> str:
     return sha256_text(json.dumps(value, ensure_ascii=False, sort_keys=True))
 
 
-def extractor_version_hash(extractor_file: str | Path) -> str:
-    return sha256_text(Path(extractor_file).read_text(encoding=TEXT_ENCODING))
+def extractor_version_hash(extractor_file) -> str:
+    files = (
+        [extractor_file]
+        if isinstance(extractor_file, (str, Path))
+        else list(extractor_file)
+    )
+    return stable_json_hash(
+        [Path(path).read_text(encoding=TEXT_ENCODING) for path in files]
+    )
 
 
 def cache_project_config(project_config: dict) -> dict:
@@ -66,7 +81,16 @@ def load_task_cache(path: Path | None) -> dict:
         entry["source_file"]: entry
         for entry in data.get("tasks", [])
         if entry.get("source_file")
+        and all(field in entry for field in TASK_FACT_FIELDS)
     }
+
+
+def _json_cache_value(value):
+    if isinstance(value, (set, frozenset)):
+        return sorted(value)
+    if isinstance(value, tuple):
+        return list(value)
+    return value
 
 
 def cache_entry_from_result(result: dict, cache_key: str) -> dict:
@@ -81,6 +105,9 @@ def cache_entry_from_result(result: dict, cache_key: str) -> dict:
         "stats": result.get("stats") or {},
         "errors": result.get("errors") or [],
     }
+    for key in TASK_FACT_FIELDS:
+        if key in result:
+            entry[key] = _json_cache_value(result.get(key) or [])
     for key in (
         "sql_hash",
         "referenced_tables",
