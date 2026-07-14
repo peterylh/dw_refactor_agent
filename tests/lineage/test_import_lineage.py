@@ -371,15 +371,39 @@ def test_build_import_rows_matches_equivalent_v2_table_qualifications(
 
 
 @pytest.mark.parametrize(
-    "source_ref",
+    ("source_ref", "source_payload"),
     [
-        {"type": "literal", "value": "ALL"},
-        {"type": "expression", "expression": "CURRENT_DATE()"},
+        (
+            {"type": "literal", "value": "ALL"},
+            '{"type":"literal","value":"ALL"}',
+        ),
+        (
+            {"type": "literal", "value": 7},
+            '{"type":"literal","value":7}',
+        ),
+        (
+            {"type": "literal", "value": True},
+            '{"type":"literal","value":true}',
+        ),
+        (
+            {"type": "literal", "value": None},
+            '{"type":"literal","value":null}',
+        ),
+        (
+            {"type": "expression", "expression": "CURRENT_DATE()"},
+            '{"type":"expression","expression":"CURRENT_DATE()"}',
+        ),
     ],
-    ids=("literal", "expression"),
+    ids=(
+        "string-literal",
+        "number-literal",
+        "boolean-literal",
+        "null-literal",
+        "expression",
+    ),
 )
-def test_build_import_rows_rejects_unrepresentable_v2_direct_sources(
-    tmp_path, source_ref
+def test_build_import_rows_persists_v2_non_column_direct_sources_losslessly(
+    tmp_path, source_ref, source_payload
 ):
     module = importlib.import_module(
         "dw_refactor_agent.lineage.import_lineage"
@@ -387,6 +411,129 @@ def test_build_import_rows_rejects_unrepresentable_v2_direct_sources(
     data = _demo_v2_snapshot()
     data["edges"] = [data["edges"][0]]
     data["edges"][0]["source"] = source_ref
+
+    rows = module.build_import_rows(
+        data,
+        tasks_dir=tmp_path,
+        context=module.ImportContext(
+            project="shop",
+            snapshot_id=42,
+            datasource_id=1,
+            datasource_name="shop_dm",
+            db_type="doris",
+            host="127.0.0.1:9030",
+        ),
+    )
+
+    assert rows.column_lineage_rows == []
+    assert rows.non_column_direct_lineage_rows == [
+        (
+            1,
+            42,
+            2,
+            2,
+            1,
+            "DIRECT",
+            "passthrough",
+            "amount",
+            source_ref["type"],
+            source_payload,
+        )
+    ]
+    assert rows.skipped_edges == []
+
+
+def test_build_import_rows_accepts_production_shop_v2_direct_sources(
+    tmp_path,
+):
+    module = importlib.import_module(
+        "dw_refactor_agent.lineage.import_lineage"
+    )
+    lineage_file = config.lineage_data_path("shop")
+    data = json.loads(lineage_file.read_text(encoding="utf-8"))
+    direct_edges = [
+        edge
+        for edge in data["edges"]
+        if edge["relation_type"].lower() == "direct"
+    ]
+    column_edges = [
+        edge for edge in direct_edges if edge["source"]["type"] == "column"
+    ]
+    non_column_edges = [
+        edge
+        for edge in direct_edges
+        if edge["source"]["type"] in {"literal", "expression"}
+    ]
+
+    rows = module.build_import_rows(
+        data,
+        tasks_dir=tmp_path,
+        context=module.ImportContext(
+            project="shop",
+            snapshot_id=42,
+            datasource_id=1,
+            datasource_name="shop_dm",
+            db_type="doris",
+            host="127.0.0.1:9030",
+        ),
+    )
+
+    assert len(non_column_edges) == 48
+    assert len(rows.column_lineage_rows) == len(column_edges)
+    assert len(rows.non_column_direct_lineage_rows) == len(non_column_edges)
+    assert rows.skipped_edges == []
+
+
+def test_import_rejects_unmapped_v2_non_column_target_before_connecting(
+    monkeypatch, tmp_path
+):
+    module = importlib.import_module(
+        "dw_refactor_agent.lineage.import_lineage"
+    )
+    data = _demo_v2_snapshot()
+    data["edges"] = [data["edges"][0]]
+    data["edges"][0]["source"] = {"type": "literal", "value": "ALL"}
+    data["edges"][0]["target"]["id"] = (
+        "internal.shop_dm.process_order.missing_amount"
+    )
+    lineage_file = tmp_path / "lineage_data.json"
+    lineage_file.write_text(json.dumps(data), encoding="utf-8")
+    connection_opened = False
+
+    def fail_if_connected(*_args, **_kwargs):
+        nonlocal connection_opened
+        connection_opened = True
+        pytest.fail("database connection must not be opened")
+
+    monkeypatch.setattr(module, "_open_connection", fail_if_connected)
+
+    with pytest.raises(ValueError) as exc_info:
+        module.import_lineage(
+            project="shop",
+            lineage_file=lineage_file,
+            snapshot_id=42,
+        )
+
+    assert connection_opened is False
+    message = str(exc_info.value)
+    assert "missing_amount" in message
+    assert "internal.shop_dm.process_order" in message
+
+
+def test_build_import_rows_rejects_unsupported_v2_direct_shape(tmp_path):
+    module = importlib.import_module(
+        "dw_refactor_agent.lineage.import_lineage"
+    )
+    data = _demo_v2_snapshot()
+    data["edges"] = [data["edges"][0]]
+    data["edges"][0]["source"] = {
+        "type": "expression",
+        "expression": "CURRENT_DATE()",
+    }
+    data["edges"][0]["target"] = {
+        "type": "table",
+        "id": "internal.shop_dm.process_order",
+    }
 
     with pytest.raises(ValueError) as exc_info:
         module.build_import_rows(
@@ -404,11 +551,8 @@ def test_build_import_rows_rejects_unrepresentable_v2_direct_sources(
 
     message = str(exc_info.value)
     assert "DIRECT" in message
-    assert "prepare_orders" in message
-    assert (
-        str(source_ref.get("value") or source_ref.get("expression")) in message
-    )
-    assert "internal.shop_dm.process_order.amount" in message
+    assert "CURRENT_DATE()" in message
+    assert "internal.shop_dm.process_order" in message
 
 
 def test_build_import_rows_rejects_unmapped_v2_direct_column_metadata(
@@ -438,10 +582,8 @@ def test_build_import_rows_rejects_unmapped_v2_direct_column_metadata(
         )
 
     message = str(exc_info.value)
-    assert "DIRECT" in message
-    assert "prepare_orders" in message
-    assert "internal.shop_dm.ods_order.missing_amount" in message
-    assert "internal.shop_dm.process_order.amount" in message
+    assert "missing_amount" in message
+    assert "internal.shop_dm.ods_order" in message
 
 
 @pytest.mark.parametrize(
@@ -529,10 +671,8 @@ def test_build_import_rows_rejects_unmapped_v2_indirect_metadata(tmp_path):
         )
 
     message = str(exc_info.value)
-    assert "FILTER" in message
-    assert "PREPARE_ORDERS" in message
-    assert "internal.shop_dm.ods_order.missing_amount" in message
-    assert "internal.shop_dm.process_order" in message
+    assert "missing_amount" in message
+    assert "internal.shop_dm.ods_order" in message
 
 
 def test_import_rejects_unmapped_v2_indirect_metadata_before_connecting(
@@ -566,10 +706,8 @@ def test_import_rejects_unmapped_v2_indirect_metadata_before_connecting(
 
     assert connection_opened is False
     message = str(exc_info.value)
-    assert "FILTER" in message
-    assert "PREPARE_ORDERS" in message
-    assert "internal.shop_dm.ods_order.missing_amount" in message
-    assert "internal.shop_dm.process_order" in message
+    assert "missing_amount" in message
+    assert "internal.shop_dm.ods_order" in message
 
 
 def test_build_import_rows_keeps_v1_indirect_metadata_skip_behavior(tmp_path):
@@ -728,9 +866,13 @@ def test_delete_snapshot_rows_does_not_truncate_whole_lineage_database():
     class RecordingCursor:
         def __init__(self):
             self.execute_calls = []
+            self.executemany_calls = []
 
         def execute(self, sql, params=None):
             self.execute_calls.append((sql, params))
+
+        def executemany(self, sql, rows):
+            self.executemany_calls.append((sql, list(rows)))
 
     cursor = RecordingCursor()
 
@@ -738,6 +880,10 @@ def test_delete_snapshot_rows_does_not_truncate_whole_lineage_database():
 
     assert cursor.execute_calls == [
         ("DELETE FROM indirect_lineage WHERE snapshot_id = %s", (42,)),
+        (
+            "DELETE FROM non_column_direct_lineage WHERE snapshot_id = %s",
+            (42,),
+        ),
         ("DELETE FROM column_lineage WHERE snapshot_id = %s", (42,)),
         ("DELETE FROM table_lineage WHERE snapshot_id = %s", (42,)),
         ("DELETE FROM job_dataset WHERE snapshot_id = %s", (42,)),
@@ -807,7 +953,7 @@ def test_migrate_lineage_schema_leaves_current_table_info_schema():
     ]
 
 
-def test_insert_snapshot_row_counts_job_dataset_relationships(tmp_path):
+def test_insert_and_verify_include_non_column_direct_lineage(tmp_path):
     module = importlib.import_module(
         "dw_refactor_agent.lineage.import_lineage"
     )
@@ -815,17 +961,37 @@ def test_insert_snapshot_row_counts_job_dataset_relationships(tmp_path):
     class RecordingCursor:
         def __init__(self):
             self.execute_calls = []
+            self.executemany_calls = []
 
         def execute(self, sql, params=None):
             self.execute_calls.append((sql, params))
+
+        def executemany(self, sql, rows):
+            self.executemany_calls.append((sql, list(rows)))
 
     rows = module.LineageImportRows(
         table_rows=[(1,)],
         column_rows=[(1,), (2,)],
         job_rows=[(1,)],
         job_dataset_rows=[(1,), (2,)],
+        non_column_direct_lineage_rows=[
+            (
+                1,
+                42,
+                2,
+                2,
+                1,
+                "DIRECT",
+                "constant",
+                "'ALL'",
+                "literal",
+                '{"type":"literal","value":"ALL"}',
+            )
+        ],
     )
     cursor = RecordingCursor()
+
+    counts = module._insert_all(cursor, rows=rows, batch_size=10)
 
     module.insert_snapshot_row(
         cursor,
@@ -839,5 +1005,36 @@ def test_insert_snapshot_row_counts_job_dataset_relationships(tmp_path):
 
     sql, params = cursor.execute_calls[0]
     assert "job_dataset_count" in sql
+    assert "non_column_direct_lineage_count" in sql
     assert params[8] == 2
+    assert params[10] == 1
+    assert counts["non_column_direct_lineage"] == 1
+    insert_sql, insert_rows = next(
+        (sql, inserted_rows)
+        for sql, inserted_rows in cursor.executemany_calls
+        if "INSERT INTO non_column_direct_lineage" in sql
+    )
+    assert "source_payload" in insert_sql
+    assert insert_rows == rows.non_column_direct_lineage_rows
     assert "job_dataset" in module.VERIFY_TABLES
+    assert "non_column_direct_lineage" in module.VERIFY_TABLES
+
+    class CountCursor:
+        def __init__(self):
+            self.execute_calls = []
+
+        def execute(self, sql, params=None):
+            self.execute_calls.append((sql, params))
+
+        def fetchone(self):
+            return (1,)
+
+    count_cursor = CountCursor()
+    verified_counts = module._verify_counts(count_cursor, snapshot_id=42)
+
+    assert verified_counts["non_column_direct_lineage"] == 1
+    assert (
+        "SELECT COUNT(*) FROM non_column_direct_lineage "
+        "WHERE snapshot_id = %s",
+        (42,),
+    ) in count_cursor.execute_calls

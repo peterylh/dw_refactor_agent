@@ -38,6 +38,7 @@ DEFAULT_BATCH_SIZE = 5000
 LINEAGE_DIR = Path(__file__).resolve().parent
 SNAPSHOT_DELETE_TABLES = (
     "indirect_lineage",
+    "non_column_direct_lineage",
     "column_lineage",
     "table_lineage",
     "job_dataset",
@@ -54,6 +55,7 @@ VERIFY_TABLES = (
     "job",
     "job_dataset",
     "column_lineage",
+    "non_column_direct_lineage",
     "indirect_lineage",
     "table_lineage",
 )
@@ -87,6 +89,7 @@ class LineageImportRows:
     job_rows: list[tuple] = field(default_factory=list)
     job_dataset_rows: list[tuple] = field(default_factory=list)
     column_lineage_rows: list[tuple] = field(default_factory=list)
+    non_column_direct_lineage_rows: list[tuple] = field(default_factory=list)
     indirect_lineage_rows: list[tuple] = field(default_factory=list)
     table_lineage_rows: list[tuple] = field(default_factory=list)
     skipped_edges: list[SkippedEdge] = field(default_factory=list)
@@ -196,6 +199,24 @@ def _typed_direct_column_edges(
     return direct_edges
 
 
+def _typed_non_column_direct_edges(
+    edges: Iterable[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    direct_edges = []
+    for edge in edges:
+        if _normalize_relation_type(edge.get("relation_type")) != "DIRECT":
+            continue
+        if _edge_ref_type(edge.get("source")) not in {
+            "literal",
+            "expression",
+        }:
+            continue
+        if _edge_ref_type(edge.get("target")) != "column":
+            continue
+        direct_edges.append(dict(edge))
+    return direct_edges
+
+
 def _typed_indirect_edges(
     edges: Iterable[dict[str, Any]],
 ) -> list[dict[str, Any]]:
@@ -240,11 +261,16 @@ def _validate_v2_direct_edge_shapes(data: dict[str, Any]) -> None:
             continue
         source_type = _edge_ref_type(edge.get("source"))
         target_type = _edge_ref_type(edge.get("target"))
-        if source_type != "column" or target_type != "column":
+        is_column_edge = source_type == "column" and target_type == "column"
+        is_non_column_edge = (
+            source_type in {"literal", "expression"}
+            and target_type == "column"
+        )
+        if not (is_column_edge or is_non_column_edge):
             _raise_v2_direct_edge_import_error(
                 edge,
-                "current column_lineage schema only represents "
-                "column-to-column DIRECT edges",
+                "supported DIRECT shapes are column-to-column or "
+                "literal/expression-to-column",
             )
 
 
@@ -725,6 +751,64 @@ def _build_indirect_lineage_rows(
         lineage_id += 1
 
 
+def _source_payload(source: dict[str, Any]) -> str:
+    return json.dumps(
+        source,
+        ensure_ascii=False,
+        allow_nan=False,
+        separators=(",", ":"),
+    )
+
+
+def _build_non_column_direct_lineage_rows(
+    direct_edges: Sequence[dict[str, Any]],
+    *,
+    table_id_map: dict[Any, int],
+    column_id_map: dict[Any, int],
+    job_id_map: dict[str, int],
+    rows: LineageImportRows,
+) -> None:
+    lineage_id = 1
+    snapshot_id = rows.datasource_rows[0][1]
+    for edge in direct_edges:
+        source = edge.get("source")
+        target = _edge_ref_id(edge.get("target"))
+        target_ref = _split_column_ref(target)
+        if target_ref is None:
+            _raise_v2_direct_edge_import_error(
+                edge,
+                "target is not a table.column reference",
+            )
+
+        target_table, _target_column = target_ref
+        target_table_id = _table_id_for_ref(table_id_map, target_table)
+        target_column_id = _column_id_for_ref(column_id_map, target)
+        job_id = job_id_map.get(
+            identifier_match_key(str(edge.get("job") or ""))
+        )
+        if not all([target_table_id, target_column_id, job_id]):
+            _raise_v2_direct_edge_import_error(
+                edge,
+                "target table/column or job metadata is missing",
+            )
+
+        rows.non_column_direct_lineage_rows.append(
+            (
+                lineage_id,
+                snapshot_id,
+                target_table_id,
+                target_column_id,
+                job_id,
+                _normalize_relation_type(edge.get("relation_type")),
+                str(edge.get("transformation_type") or ""),
+                str(edge.get("expression") or ""),
+                _edge_ref_type(source),
+                _source_payload(source),
+            )
+        )
+        lineage_id += 1
+
+
 def _build_table_lineage_rows(
     table_lineage_set: set[tuple[int, int, int | None, str]],
     *,
@@ -786,6 +870,9 @@ def build_import_rows(
         edge for edge in data.get("edges") or [] if isinstance(edge, dict)
     ]
     direct_edges = _typed_direct_column_edges(raw_edges)
+    non_column_direct_edges = (
+        _typed_non_column_direct_edges(raw_edges) if is_v2 else []
+    )
     indirect_edges = data.get("indirect_edges") or _typed_indirect_edges(
         raw_edges
     )
@@ -821,6 +908,13 @@ def build_import_rows(
         job_id_map=job_id_map,
         rows=rows,
         strict_v2=is_v2,
+    )
+    _build_non_column_direct_lineage_rows(
+        non_column_direct_edges,
+        table_id_map=table_id_map,
+        column_id_map=column_id_map,
+        job_id_map=job_id_map,
+        rows=rows,
     )
     _build_indirect_lineage_rows(
         indirect_edges,
@@ -982,6 +1076,15 @@ def _insert_all(
             rows.column_lineage_rows,
         ),
         (
+            "non_column_direct_lineage",
+            "INSERT INTO non_column_direct_lineage "
+            "(id, snapshot_id, target_table_id, target_column_id, job_id, "
+            "relation_type, transformation_type, expression, source_type, "
+            "source_payload) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            rows.non_column_direct_lineage_rows,
+        ),
+        (
             "indirect_lineage",
             "INSERT INTO indirect_lineage "
             "(id, snapshot_id, source_table_id, source_column_id, target_table_id, job_id, "
@@ -1021,8 +1124,9 @@ def insert_snapshot_row(
         "INSERT INTO lineage_snapshot "
         "(id, project, source_path, imported_at, status, is_active, "
         "table_count, column_count, job_count, job_dataset_count, "
-        "column_lineage_count, indirect_lineage_count, table_lineage_count) "
-        "VALUES (%s, %s, %s, NOW(), %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+        "column_lineage_count, non_column_direct_lineage_count, "
+        "indirect_lineage_count, table_lineage_count) "
+        "VALUES (%s, %s, %s, NOW(), %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
         (
             snapshot_id,
             project,
@@ -1034,6 +1138,7 @@ def insert_snapshot_row(
             len(rows.job_rows),
             len(rows.job_dataset_rows),
             len(rows.column_lineage_rows),
+            len(rows.non_column_direct_lineage_rows),
             len(rows.indirect_lineage_rows),
             len(rows.table_lineage_rows),
         ),
@@ -1111,11 +1216,13 @@ def import_lineage(
 
             LOGGER.info(
                 "批量导入: tables=%s columns=%s jobs=%s column_edges=%s "
-                "job_datasets=%s indirect_edges=%s table_edges=%s batch_size=%s",
+                "non_column_direct_edges=%s job_datasets=%s "
+                "indirect_edges=%s table_edges=%s batch_size=%s",
                 len(rows.table_rows),
                 len(rows.column_rows),
                 len(rows.job_rows),
                 len(rows.column_lineage_rows),
+                len(rows.non_column_direct_lineage_rows),
                 len(rows.job_dataset_rows),
                 len(rows.indirect_lineage_rows),
                 len(rows.table_lineage_rows),

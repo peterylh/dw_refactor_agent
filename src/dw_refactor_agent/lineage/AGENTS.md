@@ -154,14 +154,16 @@ python -m dw_refactor_agent.lineage.refresh_lineage_html --project finance_analy
 
 ### lineage DDL
 
-`src/dw_refactor_agent/lineage/ddl/` 中维护 lineage 库的快照表与 7 张核心表：
+`src/dw_refactor_agent/lineage/ddl/` 中维护 lineage 库的快照表与 9 张血缘/元数据表：
 
 - `lineage_snapshot`
 - `datasource`
 - `table_info`
 - `column_info`
 - `job`
+- `job_dataset`
 - `column_lineage`
+- `non_column_direct_lineage`
 - `indirect_lineage`
 - `table_lineage`
 

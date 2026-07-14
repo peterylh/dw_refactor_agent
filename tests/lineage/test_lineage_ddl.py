@@ -69,9 +69,36 @@ def test_job_dataset_ddl_uses_snapshot_job_table_io_key_prefix():
     ]
 
 
+def test_non_column_direct_lineage_ddl_persists_lossless_source_payload():
+    sql = Path(
+        "src/dw_refactor_agent/lineage/ddl/non_column_direct_lineage.sql"
+    ).read_text(encoding="utf-8")
+
+    assert _column_names(sql) == [
+        "snapshot_id",
+        "target_table_id",
+        "target_column_id",
+        "source_type",
+        "id",
+        "job_id",
+        "relation_type",
+        "transformation_type",
+        "expression",
+        "source_payload",
+    ]
+    assert _key_columns(sql) == [
+        "snapshot_id",
+        "target_table_id",
+        "target_column_id",
+        "source_type",
+        "id",
+    ]
+
+
 def test_lineage_snapshot_counts_job_dataset_relationships():
     sql = Path(
         "src/dw_refactor_agent/lineage/ddl/lineage_snapshot.sql"
     ).read_text(encoding="utf-8")
 
     assert "job_dataset_count" in _column_names(sql)
+    assert "non_column_direct_lineage_count" in _column_names(sql)
