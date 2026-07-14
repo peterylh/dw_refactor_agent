@@ -546,10 +546,10 @@ def test_build_import_rows_accepts_hermetic_production_shaped_v2_sources(
         "dw_refactor_agent.lineage.import_lineage"
     )
     monkeypatch.setattr(
-        config,
-        "lineage_data_path",
+        module,
+        "_load_lineage_json",
         lambda *_args, **_kwargs: pytest.fail(
-            "hermetic importer test must not read generated artifacts"
+            "hermetic importer test must not load generated artifacts"
         ),
     )
 
