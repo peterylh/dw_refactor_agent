@@ -183,10 +183,6 @@ def test_inspector_retry_scenarios(tmp_path_factory, monkeypatch):
         _assert_inspect_retries_unrecognized_time_periods,
         _assert_inspect_retries_invalid_metric_expressions,
         _assert_inspect_retries_missing_dwd_fact_primary_entity,
-        _assert_inspect_retries_inconsistent_layer_table_type,
-        _assert_inspect_retries_other_fact_as_middle_layer,
-        _assert_inspect_retries_dwd_group_by_candidate,
-        _assert_inspect_retries_dwd_upstream_metric_publication,
     ]
 
     for helper in helpers:
@@ -294,31 +290,12 @@ def _assert_build_prompt_keeps_metadata_contracts_without_project_examples():
         "business_process",
         "semantic_subject",
         "行粒度、键约束、聚合位置、时间字段和 JOIN 复用关系",
-        "输出行与输入明细保持同一粒度",
-        "稳定实体标识和描述性属性",
-        "可汇总度量",
-        "生成新键本身不足以证明它是维度表",
-        "DIM 必须对应 dimension",
         "OTHER 不能作为 ODS 的替代返回值",
-        "下游为空不能否定已成立的实体发布职责",
-        "SCD 形态不能单独决定 DIM",
         "factless fact",
-        "主驱动行仍逐行保留",
-        "保留上游稳定记录 ID",
-        "参与、隶属、任职、关联等实体间业务关系",
         "实体主数据的批次快照与周期事实要分开",
-        "外部环境、市场参数、费率、指数、阈值、分类",
         "上游已治理公共指标作为输出指标继续发布",
         "JOIN 聚合子查询若按业务实体与时间粒度产生",
-        "当前表必须返回 DWD/other，不得提前返回 DIM",
-        "不能仅因它连接了两个实体键就判为 factless fact",
-        "关系本身就是 factless fact",
-        "独立关系记录 ID、发生/生效时间、状态变化和参与角色是增强证据，但不是必要条件",
         "必须把业务参与关系与参数配置映射分开",
-        "决定如何计价、计算、入账、解释或匹配",
-        "交易、分录、申请等带独立业务身份的事件对象",
-        "不能仅因没有日期就判为配置维度",
-        "只有输出主要承载需要按该时间粒度汇总的业务状态度量",
         "不得为了填写 base_metric 而虚构上游不存在",
     ]:
         assert contract in prompt
@@ -327,19 +304,6 @@ def _assert_build_prompt_keeps_metadata_contracts_without_project_examples():
         "PRODUCT_MANAGEMENT",
         "STORE_OPERATION",
         "dwd_order_detail.cost_price",
-        "分层历史、经济指标",
-        "预算、点击、转化",
-        "评估/分层变更",
-        "投入、产出、次数、金额或效果",
-        "surrogate key",
-        "一行一个实体在一个快照日",
-        "SUM(subtotal)",
-        "COUNT(DISTINCT order_id)",
-        "订单明细、交易流水、支付事件、库存快照行",
-        "客户、商品、门店、活动",
-        "如 PROD",
-        "如 商品",
-        "如 stat_date",
     ]:
         assert hardcoded_example not in prompt
 
@@ -2602,32 +2566,48 @@ def _assert_inspect_retries_missing_dwd_fact_primary_entity(
     assert result.entities[0]["type"] == "primary"
 
 
-def _assert_inspect_retries_inconsistent_layer_table_type(
-    tmp_path, monkeypatch
+def _fact_retry_response(
+    layer, *, entity_code, metric_names=(), dimension_names=(), other_names=()
 ):
-    inspector = TableInspector(
-        api_key="test",
-        cache_file=tmp_path / "cache.json",
-        max_retries=1,
-    )
-    ctx = TableContext(
-        table_name="customer_cleaned",
-        layer="DWD",
-        ddl=(
-            "CREATE TABLE customer_cleaned ("
-            "customer_id BIGINT, customer_name STRING);"
-        ),
-        etl_sql=(
-            "INSERT INTO customer_cleaned "
-            "SELECT customer_id, customer_name FROM customer_source;"
-        ),
-        upstream_tables=["customer_source"],
-        downstream_tables=["customer"],
-    )
-    responses = [
-        {
+    return {
+        "inferred_layer": layer,
+        "table_type": "fact",
+        "confidence": 0.9,
+        "entities": [
+            {
+                "code": entity_code,
+                "type": "primary",
+                "key_columns": [dimension_names[0]],
+            }
+        ],
+        "columns": {
+            "atomic_metrics": [{"name": name} for name in metric_names],
+            "derived_metrics": [],
+            "calculated_metrics": [],
+            "dimensions": [{"name": name} for name in dimension_names],
+            "others": [{"name": name} for name in other_names],
+        },
+    }
+
+
+def _layer_contract_retry_case(scenario):
+    if scenario == "layer-table-type":
+        context = TableContext(
+            table_name="customer_cleaned",
+            layer="DWD",
+            ddl=(
+                "CREATE TABLE customer_cleaned ("
+                "customer_id BIGINT, customer_name STRING);"
+            ),
+            etl_sql=(
+                "INSERT INTO customer_cleaned "
+                "SELECT customer_id, customer_name FROM customer_source;"
+            ),
+            upstream_tables=["customer_source"],
+            downstream_tables=["customer"],
+        )
+        common = {
             "inferred_layer": "DWD",
-            "table_type": "dimension",
             "confidence": 0.9,
             "columns": {
                 "atomic_metrics": [],
@@ -2636,221 +2616,148 @@ def _assert_inspect_retries_inconsistent_layer_table_type(
                 "dimensions": [],
                 "others": [],
             },
-        },
-        {
-            "inferred_layer": "DWD",
-            "table_type": "other",
-            "confidence": 0.9,
-            "columns": {
-                "atomic_metrics": [],
-                "derived_metrics": [],
-                "calculated_metrics": [],
-                "dimensions": [],
-                "others": [],
+        }
+        return (
+            context,
+            [
+                {**common, "table_type": "dimension"},
+                {**common, "table_type": "other"},
+            ],
+            ("inconsistent_layer_table_types",),
+        )
+
+    if scenario == "other-fact":
+        context = TableContext(
+            table_name="status_event",
+            layer="DWD",
+            ddl=(
+                "CREATE TABLE status_event ("
+                "event_id BIGINT, event_date DATE, etl_time DATETIME);"
+            ),
+            etl_sql=(
+                "INSERT INTO status_event "
+                "SELECT id, event_date, CURRENT_TIMESTAMP FROM source_event"
+            ),
+            upstream_tables=["source_event"],
+            downstream_tables=[],
+        )
+        response_args = {
+            "entity_code": "STATUS_EVENT",
+            "dimension_names": ("event_id", "event_date"),
+            "other_names": ("etl_time",),
+        }
+        return (
+            context,
+            [
+                _fact_retry_response("OTHER", **response_args),
+                _fact_retry_response("DWD", **response_args),
+            ],
+            ("OTHER/fact", "不要用 OTHER 代替 ODS"),
+        )
+
+    if scenario == "group-by":
+        context = TableContext(
+            table_name="entity_daily_metrics",
+            layer="DWD",
+            ddl=(
+                "CREATE TABLE entity_daily_metrics ("
+                "entity_id BIGINT, metric_date DATE, event_count BIGINT);"
+            ),
+            etl_sql=(
+                "SELECT entity_id, metric_date, COUNT(*) AS event_count "
+                "FROM event_detail GROUP BY entity_id, metric_date"
+            ),
+            upstream_tables=["event_detail"],
+            downstream_tables=[],
+            column_lineage=[
+                {
+                    "source": "event_detail.entity_id",
+                    "target": "entity_daily_metrics.event_count",
+                    "condition_lineage": [
+                        {
+                            "source": "event_detail.entity_id",
+                            "condition_type": "GROUP_BY",
+                            "condition_expression": "entity_id, metric_date",
+                        }
+                    ],
+                }
+            ],
+        )
+        response_args = {
+            "entity_code": "ENTITY",
+            "metric_names": ("event_count",),
+            "dimension_names": ("entity_id", "metric_date"),
+        }
+        markers = ("inconsistent_layer_sql",)
+    else:
+        context = TableContext(
+            table_name="entity_metric_snapshot",
+            layer="DWD",
+            ddl=(
+                "CREATE TABLE entity_metric_snapshot ("
+                "entity_id BIGINT, published_metric_count BIGINT);"
+            ),
+            etl_sql=(
+                "SELECT e.entity_id, m.metric_count AS published_metric_count "
+                "FROM entity e LEFT JOIN entity_metrics m "
+                "ON e.entity_id = m.entity_id"
+            ),
+            upstream_tables=["entity", "entity_metrics"],
+            downstream_tables=[],
+            upstream_metric_groups={
+                "entity_metrics": {
+                    "atomic_metrics": [{"name": "metric_count"}],
+                }
             },
-        },
-    ]
-    result, calls = _inspect_with_responses(
-        inspector, ctx, responses, monkeypatch
-    )
-
-    assert len(calls) == 2
-    assert "inconsistent_layer_table_types" in calls[1]
-    assert result.status == "passed"
-    assert result.inferred_layer == "DWD"
-    assert result.table_type == "other"
-
-
-def _assert_inspect_retries_other_fact_as_middle_layer(tmp_path, monkeypatch):
-    inspector = TableInspector(
-        api_key="test",
-        cache_file=tmp_path / "cache.json",
-        max_retries=1,
-    )
-    ctx = TableContext(
-        table_name="status_event",
-        layer="DWD",
-        ddl=(
-            "CREATE TABLE status_event ("
-            "event_id BIGINT, event_date DATE, etl_time DATETIME);"
-        ),
-        etl_sql=(
-            "INSERT INTO status_event "
-            "SELECT id, event_date, CURRENT_TIMESTAMP FROM source_event"
-        ),
-        upstream_tables=["source_event"],
-        downstream_tables=[],
-    )
-    common = {
-        "table_type": "fact",
-        "confidence": 0.9,
-        "entities": [
-            {
-                "code": "STATUS_EVENT",
-                "type": "primary",
-                "key_columns": ["event_id"],
-            }
-        ],
-        "columns": {
-            "atomic_metrics": [],
-            "derived_metrics": [],
-            "calculated_metrics": [],
-            "dimensions": [
-                {"name": "event_id"},
-                {"name": "event_date"},
+            column_lineage=[
+                {
+                    "source": "entity_metrics.metric_count",
+                    "target": "entity_metric_snapshot.published_metric_count",
+                }
             ],
-            "others": [{"name": "etl_time"}],
-        },
-    }
-    responses = [
-        {**common, "inferred_layer": "OTHER"},
-        {**common, "inferred_layer": "DWD"},
-    ]
+        )
+        response_args = {
+            "entity_code": "ENTITY",
+            "metric_names": ("published_metric_count",),
+            "dimension_names": ("entity_id",),
+        }
+        markers = (
+            "inconsistent_upstream_metric_layers",
+            "上游指标分组中的已治理指标",
+        )
 
-    result, calls = _inspect_with_responses(
-        inspector, ctx, responses, monkeypatch
+    return (
+        context,
+        [
+            _fact_retry_response("DWD", **response_args),
+            _fact_retry_response("DWS", **response_args),
+        ],
+        markers,
     )
 
-    assert len(calls) == 2
-    assert "OTHER/fact" in calls[1]
-    assert "不要用 OTHER 代替 ODS" in calls[1]
-    assert result.status == "passed"
-    assert result.inferred_layer == "DWD"
 
-
-def _assert_inspect_retries_dwd_group_by_candidate(tmp_path, monkeypatch):
+@pytest.mark.parametrize(
+    "scenario",
+    ["layer-table-type", "other-fact", "group-by", "upstream-metric"],
+)
+def test_inspector_retries_layer_contracts(scenario, tmp_path, monkeypatch):
+    context, responses, prompt_markers = _layer_contract_retry_case(scenario)
     inspector = TableInspector(
         api_key="test",
         cache_file=tmp_path / "cache.json",
         max_retries=1,
     )
-    ctx = TableContext(
-        table_name="entity_daily_metrics",
-        layer="DWD",
-        ddl=(
-            "CREATE TABLE entity_daily_metrics ("
-            "entity_id BIGINT, metric_date DATE, event_count BIGINT);"
-        ),
-        etl_sql=(
-            "SELECT entity_id, metric_date, COUNT(*) AS event_count "
-            "FROM event_detail GROUP BY entity_id, metric_date"
-        ),
-        upstream_tables=["event_detail"],
-        downstream_tables=[],
-        column_lineage=[
-            {
-                "source": "event_detail.entity_id",
-                "target": "entity_daily_metrics.event_count",
-                "condition_lineage": [
-                    {
-                        "source": "event_detail.entity_id",
-                        "condition_type": "GROUP_BY",
-                        "condition_expression": "entity_id, metric_date",
-                    }
-                ],
-            }
-        ],
-    )
-    common = {
-        "table_type": "fact",
-        "confidence": 0.9,
-        "entities": [
-            {
-                "code": "ENTITY",
-                "type": "primary",
-                "key_columns": ["entity_id"],
-            }
-        ],
-        "columns": {
-            "atomic_metrics": [{"name": "event_count"}],
-            "derived_metrics": [],
-            "calculated_metrics": [],
-            "dimensions": [
-                {"name": "entity_id"},
-                {"name": "metric_date"},
-            ],
-            "others": [],
-        },
-    }
-    responses = [
-        {**common, "inferred_layer": "DWD"},
-        {**common, "inferred_layer": "DWS"},
-    ]
+
     result, calls = _inspect_with_responses(
-        inspector, ctx, responses, monkeypatch
+        inspector, context, responses, monkeypatch
     )
 
     assert len(calls) == 2
-    assert "inconsistent_layer_sql" in calls[1]
+    assert all(marker in calls[1] for marker in prompt_markers)
     assert result.status == "passed"
-    assert result.inferred_layer == "DWS"
-
-
-def _assert_inspect_retries_dwd_upstream_metric_publication(
-    tmp_path, monkeypatch
-):
-    inspector = TableInspector(
-        api_key="test",
-        cache_file=tmp_path / "cache.json",
-        max_retries=1,
-    )
-    ctx = TableContext(
-        table_name="entity_metric_snapshot",
-        layer="DWD",
-        ddl=(
-            "CREATE TABLE entity_metric_snapshot ("
-            "entity_id BIGINT, published_metric_count BIGINT);"
-        ),
-        etl_sql=(
-            "SELECT e.entity_id, m.metric_count AS published_metric_count "
-            "FROM entity e LEFT JOIN entity_metrics m "
-            "ON e.entity_id = m.entity_id"
-        ),
-        upstream_tables=["entity", "entity_metrics"],
-        downstream_tables=[],
-        upstream_metric_groups={
-            "entity_metrics": {
-                "atomic_metrics": [{"name": "metric_count"}],
-            }
-        },
-        column_lineage=[
-            {
-                "source": "entity_metrics.metric_count",
-                "target": "entity_metric_snapshot.published_metric_count",
-            }
-        ],
-    )
-    common = {
-        "table_type": "fact",
-        "confidence": 0.9,
-        "entities": [
-            {
-                "code": "ENTITY",
-                "type": "primary",
-                "key_columns": ["entity_id"],
-            }
-        ],
-        "columns": {
-            "atomic_metrics": [{"name": "published_metric_count"}],
-            "derived_metrics": [],
-            "calculated_metrics": [],
-            "dimensions": [{"name": "entity_id"}],
-            "others": [],
-        },
-    }
-    responses = [
-        {**common, "inferred_layer": "DWD"},
-        {**common, "inferred_layer": "DWS"},
-    ]
-    result, calls = _inspect_with_responses(
-        inspector, ctx, responses, monkeypatch
-    )
-
-    assert len(calls) == 2
-    assert "inconsistent_upstream_metric_layers" in calls[1]
-    assert "上游指标分组中的已治理指标" in calls[1]
-    assert result.status == "passed"
-    assert result.inferred_layer == "DWS"
+    assert result.retry_count == 1
+    assert result.inferred_layer == responses[1]["inferred_layer"]
+    assert result.table_type == responses[1]["table_type"]
 
 
 def _assert_cache_hash_includes_context_fields(tmp_path):

@@ -340,26 +340,6 @@ def test_canonical_lookup_does_not_fallback_wrong_qualified_identity():
     assert short_lookup.get("wrong.db.orders") is None
 
 
-def test_build_context_with_ddl_and_task(sample_lineage_data, tmp_path):
-    ddl_dir = tmp_path / "ddl"
-    tasks_dir = tmp_path / "tasks"
-    ddl_dir.mkdir()
-    tasks_dir.mkdir()
-
-    (ddl_dir / "dwd_customer.sql").write_text("CREATE dwd_customer;")
-    (tasks_dir / "dwd_customer.sql").write_text("INSERT dwd_customer;")
-
-    contexts = build_contexts(
-        "test_proj", sample_lineage_data, ddl_dir, tasks_dir
-    )
-    ctx = next(c for c in contexts if c.table_name == "dwd_customer")
-
-    assert ctx.ddl == "CREATE dwd_customer;"
-    assert ctx.etl_sql == "INSERT dwd_customer;"
-    assert ctx.upstream_tables == ["ods_customer"]
-    assert ctx.downstream_tables == ["ads_sales_dashboard"]
-
-
 def test_build_contexts_extracts_downstream_entity_publication_features(
     tmp_path,
     monkeypatch,

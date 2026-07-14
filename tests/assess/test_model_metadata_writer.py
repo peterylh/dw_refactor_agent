@@ -4301,12 +4301,45 @@ def _lineage_for_tables(*table_names):
     }
 
 
-def test_generate_single_writer_pass_keeps_base_model_when_llm_blocked(
-    tmp_path, monkeypatch
+@pytest.mark.parametrize(
+    (
+        "project",
+        "existing_contract",
+        "inspection",
+        "expected_reason",
+    ),
+    [
+        (
+            "generate_single_writer_blocked",
+            ("DWS", "fact"),
+            ("OTHER", "dimension", {"unknown_columns": ["ghost_id"]}, 0.2),
+            "validation_blocked",
+        ),
+        (
+            "generate_single_writer_partial_block",
+            ("DWD", "other"),
+            (
+                "DWS",
+                "fact",
+                {"invalid_base_metrics": ["sale_amount:subtotal"]},
+                0.95,
+            ),
+            "validation_blocked_contract_change",
+        ),
+    ],
+    ids=["invalid-columns", "invalid-metrics"],
+)
+def test_generate_single_writer_preserves_base_contract_when_llm_blocked(
+    tmp_path,
+    monkeypatch,
+    project,
+    existing_contract,
+    inspection,
+    expected_reason,
 ):
     import dw_refactor_agent.assessment.llm.model_metadata_writer as writer_module
 
-    project = "generate_single_writer_blocked"
+    existing_layer, existing_table_type = existing_contract
     project_dir = _write_single_writer_project(
         tmp_path,
         monkeypatch,
@@ -4315,11 +4348,12 @@ def test_generate_single_writer_pass_keeps_base_model_when_llm_blocked(
             "dwd_order_detail": {
                 "version": 2,
                 "name": "dwd_order_detail",
-                "layer": "DWS",
-                "table_type": "fact",
+                "layer": existing_layer,
+                "table_type": existing_table_type,
             }
         },
     )
+    inferred_layer, table_type, validation, confidence = inspection
 
     class FakeInspector:
         def __init__(self, api_key, **kwargs):
@@ -4330,10 +4364,10 @@ def test_generate_single_writer_pass_keeps_base_model_when_llm_blocked(
                 TableInspectResult(
                     table_name=ctx.table_name,
                     declared_layer=ctx.layer,
-                    inferred_layer="OTHER",
-                    table_type="dimension",
-                    validation={"unknown_columns": ["ghost_id"]},
-                    confidence=0.2,
+                    inferred_layer=inferred_layer,
+                    table_type=table_type,
+                    validation=validation,
+                    confidence=confidence,
                     reasoning_steps=[],
                 )
                 for ctx in contexts
@@ -4359,77 +4393,11 @@ def test_generate_single_writer_pass_keeps_base_model_when_llm_blocked(
 
     assert result["llm_result"]["blocked_table_count"] == 1
     assert result["llm_result"]["skipped_model_updates"][0]["reason"] == (
-        "validation_blocked"
+        expected_reason
     )
     assert saved["layer"] == "DWD"
     assert saved["table_type"] == "other"
     assert "atomic_metrics" not in saved
-
-
-def test_generate_single_writer_preserves_contract_when_metrics_blocked(
-    tmp_path, monkeypatch
-):
-    import dw_refactor_agent.assessment.llm.model_metadata_writer as writer_module
-
-    project = "generate_single_writer_partial_block"
-    project_dir = _write_single_writer_project(
-        tmp_path,
-        monkeypatch,
-        project,
-        existing_models={
-            "dwd_order_detail": {
-                "version": 2,
-                "name": "dwd_order_detail",
-                "layer": "DWD",
-                "table_type": "other",
-            }
-        },
-    )
-
-    class FakeInspector:
-        def __init__(self, api_key, **kwargs):
-            pass
-
-        def inspect_batch(self, contexts):
-            return [
-                TableInspectResult(
-                    table_name=ctx.table_name,
-                    declared_layer=ctx.layer,
-                    inferred_layer="DWS",
-                    table_type="fact",
-                    validation={
-                        "invalid_base_metrics": ["sale_amount:subtotal"]
-                    },
-                    confidence=0.95,
-                    reasoning_steps=[],
-                )
-                for ctx in contexts
-            ]
-
-    monkeypatch.setattr(
-        writer_module,
-        "load_lineage_data",
-        lambda _project: _lineage_for_tables("dwd_order_detail"),
-    )
-    monkeypatch.setattr(writer_module, "TableInspector", FakeInspector)
-
-    result = run_generate_model_metadata(
-        project,
-        api_key="test",
-        dry_run=False,
-    )
-    saved = yaml.safe_load(
-        (project_dir / "mid" / "models" / "dwd_order_detail.yaml").read_text(
-            encoding="utf-8"
-        )
-    )
-
-    assert result["llm_result"]["blocked_table_count"] == 1
-    assert result["llm_result"]["skipped_model_updates"][0]["reason"] == (
-        "validation_blocked_contract_change"
-    )
-    assert saved["layer"] == "DWD"
-    assert saved["table_type"] == "other"
 
 
 def test_generate_single_writer_pass_keeps_ods_ads_base_models(

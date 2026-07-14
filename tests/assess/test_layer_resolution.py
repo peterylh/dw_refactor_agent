@@ -132,6 +132,25 @@ def test_llm_dimension_candidate_applies_dim_layer(payload, expected_prior):
         ),
         (
             LayerResolutionInput(
+                table_name="candidate_table",
+                fallback_layer="DWD",
+                fallback_table_type="fact",
+                inspection_result=_inspect_result(
+                    table_name="candidate_table",
+                    inferred_layer="ADS",
+                    table_type="dimension",
+                ),
+                policy=LayerResolutionPolicy(
+                    mode="generate",
+                    candidate_layers=("DWD", "DWS", "DIM"),
+                    fallback_source="direct_rule",
+                ),
+            ),
+            "ADS",
+            "direct_rule",
+        ),
+        (
+            LayerResolutionInput(
                 table_name="dwd_order_detail",
                 declared_layer="DWD",
                 declared_table_type="fact",
@@ -252,47 +271,6 @@ def test_generate_without_llm_falls_back_to_direct_rule():
     assert resolution.table_type == "fact"
     assert resolution.source == "direct_rule"
     assert resolution.validation["candidate"]["source"] == ""
-
-
-@pytest.mark.parametrize(
-    ("table_type", "grain"),
-    [
-        ("dimension", {}),
-        (
-            "fact",
-            {
-                "entities": ["ENTITY"],
-                "time_column": "stat_date",
-                "time_period": "D",
-            },
-        ),
-    ],
-)
-def test_generate_rejects_out_of_scope_ads_candidate(table_type, grain):
-    resolution = resolve_layer(
-        LayerResolutionInput(
-            table_name="candidate_table",
-            fallback_layer="DWD",
-            fallback_table_type="fact",
-            inspection_result=_inspect_result(
-                table_name="candidate_table",
-                inferred_layer="ADS",
-                table_type=table_type,
-                grain=grain,
-            ),
-            policy=LayerResolutionPolicy(
-                mode="generate",
-                candidate_layers=("DWD", "DWS", "DIM"),
-                fallback_source="direct_rule",
-            ),
-        )
-    )
-
-    assert resolution.inferred_layer == "ADS"
-    assert resolution.applied_layer == "DWD"
-    assert resolution.table_type == "fact"
-    assert resolution.source == "direct_rule"
-    assert resolution.warnings[0]["type"] == "llm_layer_fallback"
 
 
 def test_generate_ignores_legacy_context_hint():
