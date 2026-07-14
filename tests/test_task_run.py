@@ -618,6 +618,12 @@ def test_refresh_dag_writes_v2_artifact_to_configured_project_path(
             },
         }
     )
+    build_calls = []
+
+    def build_job_dag(project, runnable_jobs=None):
+        build_calls.append((project, runnable_jobs))
+        return dag
+
     monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
     monkeypatch.setitem(
         task_run.PROJECT_CONFIG,
@@ -629,7 +635,7 @@ def test_refresh_dag_writes_v2_artifact_to_configured_project_path(
         },
     )
     monkeypatch.setattr(task_run, "_get_task_files", lambda _: task_files)
-    monkeypatch.setattr(task_run, "_build_job_dag", lambda _: dag)
+    monkeypatch.setattr(task_run, "_build_job_dag", build_job_dag)
     monkeypatch.setattr(task_run, "ExecutionPlanner", lambda _: object())
     monkeypatch.setattr(
         task_run, "_validate_execution_plan", lambda *args, **kwargs: 0
@@ -657,6 +663,7 @@ def test_refresh_dag_writes_v2_artifact_to_configured_project_path(
     artifact = json.loads(artifact_path.read_text(encoding="utf-8"))
     assert artifact["format_version"] == 2
     assert artifact["jobs"] == ["build_report", "prepare_sales"]
+    assert build_calls == [("demo", {"Build_Report", "Prepare_Sales"})]
 
 
 def test_task_run_resolvers_ignore_old_lineage_artifact_paths(

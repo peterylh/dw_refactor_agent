@@ -20,6 +20,7 @@ import json
 import sys
 from collections import defaultdict, deque
 from pathlib import Path
+from typing import Collection
 
 _src_root = Path(__file__).resolve().parents[2]
 if str(_src_root) not in sys.path:
@@ -454,11 +455,18 @@ def asset_job_dag_from_lineage(lineage_data: dict) -> JobDAG:
     )
 
 
-def job_dag_from_lineage(lineage_data: dict) -> JobDAG:
+def job_dag_from_lineage(
+    lineage_data: dict,
+    *,
+    runnable_jobs: Collection[str] | None = None,
+) -> JobDAG:
     """Build a Job DAG from explicit version 2 Job dataset facts.
 
     Legacy lineage snapshots continue to use the table-based compatibility
-    graph because they do not contain reliable Job input/output facts.
+    graph because they do not contain reliable Job input/output facts. When
+    ``runnable_jobs`` is supplied for version 2 data, only those explicit Job
+    records participate in producer resolution and the resulting node set is
+    exactly the supplied execution universe.
     """
     data = lineage_data or {}
     if "format_version" not in data:
@@ -473,11 +481,23 @@ def job_dag_from_lineage(lineage_data: dict) -> JobDAG:
         return asset_job_dag_from_lineage(data)
 
     validate_lineage_v2(data)
+    jobs = data["jobs"]
+    dag_job_names = [job["name"] for job in jobs]
+    if runnable_jobs is not None:
+        dag_job_names = sorted(runnable_jobs, key=identifier_match_key)
+        runnable_job_keys = {
+            identifier_match_key(job_name) for job_name in dag_job_names
+        }
+        jobs = [
+            job
+            for job in jobs
+            if identifier_match_key(job["name"]) in runnable_job_keys
+        ]
     dependencies, _diagnostics = resolve_job_dependencies(
-        data["jobs"],
+        jobs,
         data["tables"],
     )
     return JobDAG.from_jobs(
-        [job["name"] for job in data["jobs"]],
+        dag_job_names,
         dependencies,
     )

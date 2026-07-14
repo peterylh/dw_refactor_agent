@@ -175,6 +175,8 @@ def test_packaged_html_templates_exist():
 
     assert paths["job_template"].exists()
     assert paths["lineage_template"].exists()
+    job_template = paths["job_template"].read_text(encoding="utf-8")
+    assert "job.outputs" in job_template
 
 
 def test_generate_jobs_strips_project_db_and_defaults_logic(
@@ -311,13 +313,22 @@ def test_generate_jobs_v2_uses_explicit_job_source_file_and_io(
                 "dataset_type": "process",
                 "columns": [{"name": "amount", "type": "DECIMAL(12,2)"}],
             },
+            {
+                "name": "process_order_audit",
+                "full_name": "internal.shop_dm.process_order_audit",
+                "dataset_type": "process",
+                "columns": [],
+            },
         ],
         "jobs": [
             {
                 "name": "schedule_prepare_orders",
                 "source_file": "prepare_orders.sql",
                 "inputs": ["internal.shop_dm.ods_order"],
-                "outputs": ["internal.shop_dm.process_order"],
+                "outputs": [
+                    "internal.shop_dm.process_order",
+                    "internal.shop_dm.process_order_audit",
+                ],
             }
         ],
         "edges": [
@@ -352,6 +363,7 @@ def test_generate_jobs_v2_uses_explicit_job_source_file_and_io(
             "file": "prepare_orders.sql",
             "name": "schedule_prepare_orders",
             "source": ["ods_order"],
+            "outputs": ["process_order", "process_order_audit"],
             "target": "process_order",
             "layer": "DWD",
             "logic": "-",

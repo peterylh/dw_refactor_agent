@@ -142,3 +142,33 @@ def test_full_extraction_writes_custom_output_and_cache(tmp_path, monkeypatch):
     assert [entry["source_file"] for entry in cache["tasks"]] == [
         "dwd_order.sql"
     ]
+
+
+def test_full_extraction_excludes_full_refresh_companion_jobs(
+    tmp_path, monkeypatch
+):
+    project_dir = _write_demo_project(tmp_path)
+    companion_dir = project_dir / "mid" / "tasks" / "full_refresh"
+    companion_dir.mkdir()
+    (companion_dir / "dwd_order_full_refresh.sql").write_text(
+        """
+        INSERT INTO demo_dm.dwd_order(order_id, amount)
+        SELECT order_id, amount
+        FROM demo_dm.ods_order;
+        """,
+        encoding="utf-8",
+    )
+    _configure_demo_project(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["lineage_extractor.py", "--project", "demo", "--no-cache"],
+    )
+
+    lineage_extractor.main()
+
+    output_path = project_dir / "artifacts" / "lineage" / "lineage_data.json"
+    output = json.loads(output_path.read_text(encoding="utf-8"))
+    assert [(job["name"], job["source_file"]) for job in output["jobs"]] == [
+        ("dwd_order", "dwd_order.sql")
+    ]

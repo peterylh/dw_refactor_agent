@@ -52,7 +52,10 @@ from dw_refactor_agent.lineage.job_dag import (
 )
 
 
-def _build_job_dag(project: str) -> JobDAG:
+def _build_job_dag(
+    project: str,
+    runnable_jobs: set[str] | None = None,
+) -> JobDAG:
     lineage_path = _resolve_lineage_data_file(project)
     if not lineage_path.exists():
         print("  lineage 数据不存在, 运行 lineage_extractor 生成...")
@@ -70,7 +73,7 @@ def _build_job_dag(project: str) -> JobDAG:
         )
         lineage_path = _resolve_lineage_data_file(project)
     data = json.loads(lineage_path.read_text(encoding=TEXT_ENCODING))
-    return job_dag_from_lineage(data)
+    return job_dag_from_lineage(data, runnable_jobs=runnable_jobs)
 
 
 def _resolve_lineage_data_file(project: str) -> Path:
@@ -184,8 +187,6 @@ def _save_job_dag(dag: JobDAG, path: Path) -> int:
 def _get_task_files(project: str) -> dict[str, Path]:
     files = {}
     for f in iter_project_task_files(project, include_full_refresh=False):
-        if f.stem.endswith("_full_refresh"):
-            continue
         files[f.stem] = f
     return files
 
@@ -525,7 +526,7 @@ def main():
     existing_dag_path = _resolve_job_dag_file(project)
     if args.refresh_dag or not existing_dag_path.exists():
         print(f"生成 DAG: {dag_path}")
-        dag = _build_job_dag(project)
+        dag = _build_job_dag(project, task_names)
         dependency_count = _save_job_dag(dag, dag_path)
         print(f"  DAG 已保存: {dependency_count} 条边")
     else:
@@ -533,7 +534,7 @@ def main():
         dag = JobDAG.load(existing_dag_path)
         if _dag_needs_refresh_for_tasks(dag, task_names):
             print("  DAG 与当前作业不匹配, 重新生成...")
-            dag = _build_job_dag(project)
+            dag = _build_job_dag(project, task_names)
             dependency_count = _save_job_dag(dag, dag_path)
             print(f"  DAG 已保存: {dependency_count} 条边")
 

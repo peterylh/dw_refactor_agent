@@ -4748,7 +4748,10 @@ def main():
 
     # 2. 提取血缘
     all_lineage = []
-    task_files = iter_project_task_files(args.project)
+    task_files = iter_project_task_files(
+        args.project,
+        include_full_refresh=False,
+    )
 
     parallel = max(1, int(args.parallel or 1))
     print(f"Tasks: {len(task_files)} 个文件, 并行度: {parallel}")

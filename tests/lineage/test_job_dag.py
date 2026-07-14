@@ -166,6 +166,45 @@ def test_job_dag_v2_skips_self_reads_and_ambiguous_producers():
     ) == ["CONSUMER", "PRODUCER_A", "PRODUCER_B", "SELF_REFRESH"]
 
 
+def test_job_dag_v2_runnable_universe_excludes_companion_producer():
+    stage = "internal.shop_dm.sales_stage"
+    lineage = _lineage_v2(
+        tables=[
+            _table(stage, "process"),
+            _table("internal.shop_dm.sales_report"),
+        ],
+        jobs=[
+            _job("prepare_sales", outputs=[stage]),
+            _job("prepare_sales_full_refresh", outputs=[stage]),
+            _job(
+                "build_report",
+                inputs=[stage],
+                outputs=["internal.shop_dm.sales_report"],
+            ),
+        ],
+    )
+
+    unfiltered = job_dag_module.job_dag_from_lineage(lineage)
+    filtered = job_dag_module.job_dag_from_lineage(
+        lineage,
+        runnable_jobs={"prepare_sales", "build_report"},
+    )
+
+    assert unfiltered.data_dependencies == []
+    assert filtered.jobs == ["build_report", "prepare_sales"]
+    assert filtered.data_dependencies == [
+        {
+            "upstream_job": "prepare_sales",
+            "downstream_job": "build_report",
+            "datasets": [stage],
+        }
+    ]
+    assert filtered.compute_in_degree(set(filtered.jobs)) == (
+        {"build_report": 1, "prepare_sales": 0},
+        {"build_report": [], "prepare_sales": ["build_report"]},
+    )
+
+
 def test_job_dag_v2_roundtrip_omits_legacy_fields(tmp_path):
     dag = job_dag_module.job_dag_from_lineage(
         _lineage_v2(

@@ -203,9 +203,11 @@ def generate_jobs(data, tasks_dir, current_db, job_logic=None, project="shop"):
                     ),
                 )
                 main_target = targets[main_target_key]
-                sources.pop(main_target_key, None)
+                for target_key in targets:
+                    sources.pop(target_key, None)
             else:
                 main_target = job_id
+            outputs = sorted(targets.values(), key=identifier_match_key)
             jobs.append(
                 OrderedDict(
                     [
@@ -216,6 +218,7 @@ def generate_jobs(data, tasks_dir, current_db, job_logic=None, project="shop"):
                             "source",
                             sorted(sources.values(), key=identifier_match_key),
                         ),
+                        ("outputs", outputs),
                         ("target", main_target),
                         ("layer", determine_layer(main_target, project)),
                         (
