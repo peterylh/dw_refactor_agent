@@ -202,13 +202,6 @@ def _job_target(
     dataset_type_by_key: dict[tuple, str],
 ) -> str:
     job_name = str(job.get("name") or "")
-    if len(target_hints) > 1:
-        raise ValueError(
-            f"Job {job_name!r} maps to multiple affected outputs: "
-            f"{sorted(target_hints)!r}"
-        )
-    if target_hints:
-        return _short_name(next(iter(target_hints)))
     outputs = [str(output) for output in job.get("outputs") or [] if output]
     managed_outputs = [
         output
@@ -220,6 +213,13 @@ def _job_target(
             f"Job {job_name!r} has multiple managed outputs; "
             f"execution target is ambiguous: {sorted(managed_outputs)!r}"
         )
+    if len(target_hints) > 1:
+        raise ValueError(
+            f"Job {job_name!r} maps to multiple affected outputs: "
+            f"{sorted(target_hints)!r}"
+        )
+    if target_hints:
+        return _short_name(next(iter(target_hints)))
     if len(managed_outputs) == 1:
         return _short_name(managed_outputs[0])
     if len(outputs) == 1:

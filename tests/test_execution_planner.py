@@ -174,6 +174,66 @@ def test_task_spec_validates_slice_against_model_name_ddl(
         )
 
 
+def test_task_spec_matches_execution_model_name_case_insensitively(
+    monkeypatch, tmp_path
+):
+    sql_path, _ = _write_demo_project(
+        monkeypatch,
+        tmp_path,
+        job_name="prepare_sales",
+        model_config="execution:\n  materialized: full\n",
+        warehouse_execution="",
+    )
+    _rename_execution_model(
+        tmp_path,
+        job_name="prepare_sales",
+        model_name="dwd_order",
+    )
+    planner = ExecutionPlanner("demo")
+
+    spec = planner.task_spec(
+        "Prepare_Sales",
+        sql_path,
+        model_name="DWD_Order",
+    )
+
+    assert spec.job_name == "Prepare_Sales"
+    assert spec.materialized == "full"
+
+
+def test_task_spec_matches_execution_model_ddl_case_insensitively(
+    monkeypatch, tmp_path
+):
+    sql_path, _ = _write_demo_project(
+        monkeypatch,
+        tmp_path,
+        job_name="prepare_sales",
+        model_config=(
+            "execution:\n"
+            "  materialized: incremental\n"
+            "  slice:\n"
+            "    param: etl_date\n"
+            "    column: missing_date\n"
+            "    period: D\n"
+        ),
+        warehouse_execution="",
+        ddl_column="stat_date",
+    )
+    _rename_execution_model(
+        tmp_path,
+        job_name="prepare_sales",
+        model_name="dwd_order",
+    )
+    planner = ExecutionPlanner("demo")
+
+    with pytest.raises(ExecutionConfigError, match="dwd_order.sql"):
+        planner.task_spec(
+            "Prepare_Sales",
+            sql_path,
+            model_name="DWD_Order",
+        )
+
+
 def test_snapshot_materialized_is_rejected(monkeypatch, tmp_path):
     sql_path, _ = _write_demo_project(
         monkeypatch,

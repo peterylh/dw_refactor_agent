@@ -225,6 +225,22 @@ def test_job_dag_rejects_unsupported_explicit_versions(format_version):
         )
 
 
+@pytest.mark.parametrize("format_version", [0, 3, "2", True])
+def test_job_dag_from_lineage_rejects_unsupported_explicit_versions(
+    format_version,
+):
+    with pytest.raises(ValueError, match="format_version"):
+        job_dag_module.job_dag_from_lineage(
+            {
+                "format_version": format_version,
+                "tables": [],
+                "jobs": [],
+                "edges": [],
+                "diagnostics": [],
+            }
+        )
+
+
 def test_downstream_traversal_scenarios():
     dag = JobDAG(
         _edges(

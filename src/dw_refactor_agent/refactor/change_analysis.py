@@ -10,6 +10,10 @@ from dw_refactor_agent.config import (
     PROJECT_CONFIG,
 )
 from dw_refactor_agent.lineage.asset_graph import build_asset_table_graph
+from dw_refactor_agent.lineage.identifiers import (
+    identifier_match_key,
+    table_identity_match_key,
+)
 
 PROJECT_CONFIG_GLOBAL_DIMENSIONS = [
     "asset_completeness",
@@ -131,24 +135,42 @@ def classify_changed_assets(files: list[str], project_dir: str) -> dict:
     }
 
 
-def _edge_set(lineage_data: dict) -> set[tuple[str, str]]:
+def _downstream_map(
+    project: str, lineage_data: dict
+) -> tuple[dict[tuple, set[tuple]], dict[tuple, str]]:
     _upstream, downstream = build_asset_table_graph(lineage_data or {})
-    edges = set()
+    canonical_downstream = {}
+    display_by_key = {}
     for source, targets in downstream.items():
+        source_key = _project_table_key(project, source)
+        display_by_key.setdefault(source_key, source)
+        canonical_targets = canonical_downstream.setdefault(source_key, set())
         for target in targets:
-            if source and target and source != target:
-                edges.add((source, target))
-    return edges
+            target_key = _project_table_key(project, target)
+            if source_key == target_key:
+                continue
+            display_by_key.setdefault(target_key, target)
+            canonical_targets.add(target_key)
+    return canonical_downstream, display_by_key
 
 
-def _downstream_map(lineage_data: dict) -> dict[str, set[str]]:
-    _upstream, downstream = build_asset_table_graph(lineage_data or {})
-    return {key: set(value) for key, value in downstream.items()}
+def _edge_map(
+    downstream: dict[tuple, set[tuple]],
+    display_by_key: dict[tuple, str],
+) -> dict[tuple[tuple, tuple], tuple[str, str]]:
+    return {
+        (source_key, target_key): (
+            display_by_key[source_key],
+            display_by_key[target_key],
+        )
+        for source_key, targets in downstream.items()
+        for target_key in targets
+    }
 
 
 def _bfs_downstream(
-    seeds: set[str], downstream: dict[str, set[str]]
-) -> set[str]:
+    seeds: set[tuple], downstream: dict[tuple, set[tuple]]
+) -> set[tuple]:
     visited = set(seeds)
     queue = list(seeds)
     while queue:
@@ -159,6 +181,90 @@ def _bfs_downstream(
             visited.add(child)
             queue.append(child)
     return visited - seeds
+
+
+def _project_table_key(project: str, table_name: str) -> tuple:
+    project_cfg = PROJECT_CONFIG.get(project) or {}
+    return table_identity_match_key(
+        table_name,
+        default_catalog=project_cfg.get("catalog") or "internal",
+        default_db=project_cfg.get("db") or "",
+    )
+
+
+def _changed_job_output_tables(
+    project: str,
+    changed_jobs: set[str],
+    lineage_snapshots: tuple[dict, dict],
+) -> set[str]:
+    explicit_snapshots = [
+        snapshot
+        for snapshot in lineage_snapshots
+        if snapshot.get("format_version") == 2
+    ]
+    if not explicit_snapshots:
+        return set(changed_jobs)
+
+    changed_by_key = {
+        identifier_match_key(job_name): job_name for job_name in changed_jobs
+    }
+    matched_jobs = set()
+    output_tables = {}
+    for snapshot in explicit_snapshots:
+        tables_by_key = {
+            _project_table_key(project, table.get("full_name")): table
+            for table in snapshot.get("tables") or []
+            if table.get("full_name")
+        }
+        for job in snapshot.get("jobs") or []:
+            job_key = identifier_match_key(job.get("name"))
+            if job_key not in changed_by_key:
+                continue
+            matched_jobs.add(job_key)
+            managed_outputs = {}
+            for output in job.get("outputs") or []:
+                output_key = _project_table_key(project, output)
+                table = tables_by_key.get(output_key)
+                if table and table.get("dataset_type") == "managed":
+                    managed_outputs.setdefault(
+                        output_key,
+                        str(table.get("full_name") or output),
+                    )
+            if len(managed_outputs) != 1:
+                job_name = changed_by_key[job_key]
+                raise ValueError(
+                    f"changed Job {job_name!r} must resolve to exactly one "
+                    "managed output in each lineage v2 snapshot; found "
+                    f"{len(managed_outputs)}: "
+                    f"{sorted(managed_outputs.values())!r}"
+                )
+            for output_key, output_name in managed_outputs.items():
+                output_tables[output_key] = output_name
+
+    missing_jobs = set(changed_by_key).difference(matched_jobs)
+    if missing_jobs:
+        missing_names = sorted(changed_by_key[key] for key in missing_jobs)
+        raise ValueError(
+            "changed Job must resolve to a managed output in lineage v2; "
+            f"missing Job records: {missing_names!r}"
+        )
+    return set(output_tables.values())
+
+
+def _display_values(
+    project: str,
+    table_keys: set[tuple],
+    *display_maps: dict[tuple, str],
+) -> set[str]:
+    selected = {}
+    for display_map in display_maps:
+        for table_key in table_keys:
+            if table_key in display_map:
+                selected[table_key] = display_map[table_key]
+    if set(selected) != table_keys:
+        missing = sorted(table_keys.difference(selected))
+        raise ValueError(f"missing table display names for keys: {missing!r}")
+    return set(selected.values())
 
 
 def _edge_records(edges: set[tuple[str, str]]) -> list[dict]:
@@ -175,33 +281,73 @@ def build_change_analysis(
     changed_files: list[str],
 ) -> dict:
     changed_assets = classify_changed_assets(changed_files, project)
-    direct_tables = set(changed_assets["ddl_tables"])
-    direct_tables.update(changed_assets["model_tables"])
-    direct_tables.update(changed_assets["task_jobs"])
+    direct_table_names = set(changed_assets["ddl_tables"])
+    direct_table_names.update(changed_assets["model_tables"])
 
-    baseline_downstream = _downstream_map(baseline_lineage)
-    current_downstream = _downstream_map(current_lineage)
-
-    downstream_tables = set()
-    downstream_tables.update(
-        _bfs_downstream(direct_tables, baseline_downstream)
+    baseline_downstream, baseline_display = _downstream_map(
+        project, baseline_lineage
     )
-    downstream_tables.update(
-        _bfs_downstream(direct_tables, current_downstream)
+    current_downstream, current_display = _downstream_map(
+        project, current_lineage
     )
-
-    anchor_tables = set()
-    for table in direct_tables:
-        anchor_tables.update(baseline_downstream.get(table, set()))
-        anchor_tables.update(current_downstream.get(table, set()))
-
-    baseline_edges = _edge_set(baseline_lineage)
-    current_edges = _edge_set(current_lineage)
-    added_edges = current_edges - baseline_edges
-    removed_edges = baseline_edges - current_edges
-    changed_edge_tables = {
-        table for edge in added_edges | removed_edges for table in edge
+    direct_table_names.update(
+        _changed_job_output_tables(
+            project,
+            set(changed_assets["task_jobs"]),
+            (baseline_lineage, current_lineage),
+        )
+    )
+    direct_display = {
+        _project_table_key(project, table_name): table_name
+        for table_name in direct_table_names
     }
+    direct_keys = set(direct_display)
+    direct_tables = _display_values(
+        project,
+        direct_keys,
+        direct_display,
+        baseline_display,
+        current_display,
+    )
+
+    downstream_keys = _bfs_downstream(
+        direct_keys, baseline_downstream
+    ) | _bfs_downstream(direct_keys, current_downstream)
+    downstream_tables = _display_values(
+        project,
+        downstream_keys,
+        baseline_display,
+        current_display,
+    )
+
+    anchor_keys = set()
+    for table_key in direct_keys:
+        anchor_keys.update(baseline_downstream.get(table_key, set()))
+        anchor_keys.update(current_downstream.get(table_key, set()))
+    anchor_tables = _display_values(
+        project,
+        anchor_keys,
+        baseline_display,
+        current_display,
+    )
+
+    baseline_edges = _edge_map(baseline_downstream, baseline_display)
+    current_edges = _edge_map(current_downstream, current_display)
+    added_edge_keys = set(current_edges).difference(baseline_edges)
+    removed_edge_keys = set(baseline_edges).difference(current_edges)
+    added_edges = {current_edges[key] for key in added_edge_keys}
+    removed_edges = {baseline_edges[key] for key in removed_edge_keys}
+    changed_edge_keys = {
+        table_key
+        for edge_key in added_edge_keys | removed_edge_keys
+        for table_key in edge_key
+    }
+    changed_edge_tables = _display_values(
+        project,
+        changed_edge_keys,
+        baseline_display,
+        current_display,
+    )
 
     global_dimensions = []
     config_files = set(changed_assets["config_files"])
@@ -216,8 +362,15 @@ def build_change_analysis(
         global_dimensions.extend(["metadata_health", "naming"])
     global_dimensions = sorted(set(global_dimensions))
 
-    assessment_tables = (
-        direct_tables | downstream_tables | anchor_tables | changed_edge_tables
+    assessment_keys = (
+        direct_keys | downstream_keys | anchor_keys | changed_edge_keys
+    )
+    assessment_tables = _display_values(
+        project,
+        assessment_keys,
+        direct_display,
+        baseline_display,
+        current_display,
     )
 
     return {

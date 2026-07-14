@@ -2221,6 +2221,13 @@ def test_explicit_job_mapping_rejects_multiple_managed_targets(
             lineage_data,
         )
 
+    with pytest.raises(ValueError, match="multiple managed outputs"):
+        verification_plan_module._explicit_job_entries(
+            "demo",
+            {"internal.demo_dm.output_a"},
+            lineage_data,
+        )
+
 
 def test_strip_insert_data_removes_data_after_first_insert():
     ddl = """DROP TABLE IF EXISTS demo_dm.ods_order;

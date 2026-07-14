@@ -19,6 +19,7 @@ from dw_refactor_agent.execution.model_config import (
     normalize_strategy,
     slice_config_from_mapping,
 )
+from dw_refactor_agent.lineage.identifiers import identifier_match_key
 
 
 @dataclass(frozen=True)
@@ -54,7 +55,9 @@ class ExecutionPlanner:
         model_name: str | None = None,
     ) -> TaskSpec:
         execution_model_name = str(model_name or job_name).strip()
-        raw_model = self.model_metadata.get(execution_model_name, {})
+        raw_model = self.model_metadata.get(
+            identifier_match_key(execution_model_name), {}
+        )
         raw_execution = execution_config_for_model(
             execution_model_name,
             raw_model,
@@ -342,7 +345,13 @@ class ExecutionPlanner:
                 name = raw.get("name") or model_path.stem
                 raw = dict(raw)
                 raw["name"] = name
-                metadata[str(name)] = raw
+                name_key = identifier_match_key(name)
+                if name_key in metadata:
+                    raise ExecutionConfigError(
+                        "duplicate model metadata names under "
+                        f"case-insensitive matching: {name!r}"
+                    )
+                metadata[name_key] = raw
         return metadata
 
     def _slice_config(
@@ -381,7 +390,23 @@ class ExecutionPlanner:
         task_dir = sql_path.parent
         if task_dir.name == "full_refresh":
             task_dir = task_dir.parent
-        return task_dir.parent / "ddl" / f"{job_name}.sql"
+        ddl_dir = task_dir.parent / "ddl"
+        candidate = ddl_dir / f"{job_name}.sql"
+        if not ddl_dir.exists():
+            return candidate
+        job_key = identifier_match_key(job_name)
+        matches = [
+            path
+            for path in sorted(ddl_dir.glob("*.sql"))
+            if identifier_match_key(path.stem) == job_key
+        ]
+        if len(matches) > 1:
+            raise ExecutionConfigError(
+                "multiple DDL files match execution model "
+                f"{job_name!r} case-insensitively: "
+                f"{[str(path) for path in matches]!r}"
+            )
+        return matches[0] if matches else candidate
 
     def _companion_path(self, sql_path: Path, job_name: str) -> Path | None:
         task_dir = sql_path.parent

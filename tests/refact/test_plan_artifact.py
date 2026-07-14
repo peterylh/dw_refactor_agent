@@ -28,6 +28,7 @@ def _plan(ddl_by_table):
         "baseline_ddl": ddl_by_table,
         "ddl_changes": [],
         "jobs_to_run": [],
+        "job_dependencies": {},
         "verification": {"checks": []},
         "analysis_snapshot": {
             "partition": None,
@@ -155,6 +156,108 @@ def test_load_persisted_plan_rejects_malformed_core_schema(
     plan_path.write_text(json.dumps(persisted), encoding="utf-8")
 
     with pytest.raises(ArtifactFormatError, match=expected):
+        load_persisted_verification_plan(plan_path)
+
+
+@pytest.mark.parametrize("job_dependencies", [None, [], ["prepare_sales"]])
+def test_load_persisted_plan_requires_job_dependency_mapping(
+    tmp_path, job_dependencies
+):
+    plan_path = tmp_path / "verification" / "plan.json"
+    plan = _plan({})
+    plan["job_dependencies"] = job_dependencies
+    write_verification_plan(plan_path, plan)
+
+    with pytest.raises(
+        ArtifactFormatError, match="job_dependencies must be a mapping"
+    ):
+        load_persisted_verification_plan(plan_path)
+
+
+def test_load_persisted_plan_rejects_missing_job_dependency_snapshot(
+    tmp_path,
+):
+    plan_path = tmp_path / "verification" / "plan.json"
+    plan = _plan({})
+    plan.pop("job_dependencies")
+    write_verification_plan(plan_path, plan)
+
+    with pytest.raises(
+        ArtifactFormatError, match="job_dependencies.*run analyze again"
+    ):
+        load_persisted_verification_plan(plan_path)
+
+
+@pytest.mark.parametrize(
+    "job_dependencies, expected",
+    [
+        (
+            {
+                "Build_Report": ["Prepare_Sales"],
+                "Prepare_Sales": [],
+                "Unknown": [],
+            },
+            "unexpected Job key",
+        ),
+        (
+            {"Build_Report": ["Prepare_Sales"]},
+            "missing Job keys",
+        ),
+        (
+            {
+                "Build_Report": ["Unknown"],
+                "Prepare_Sales": [],
+            },
+            "references unknown Job",
+        ),
+        (
+            {
+                "Build_Report": ["Build_Report"],
+                "Prepare_Sales": [],
+            },
+            "cannot depend on itself",
+        ),
+        (
+            {
+                "Build_Report": ["Prepare_Sales", "prepare_sales"],
+                "Prepare_Sales": [],
+            },
+            "duplicate upstream Job",
+        ),
+    ],
+)
+def test_load_persisted_plan_validates_job_dependency_membership(
+    tmp_path, job_dependencies, expected
+):
+    plan_path = tmp_path / "verification" / "plan.json"
+    plan = _plan({})
+    plan["jobs_to_run"] = [
+        {"job": "Prepare_Sales"},
+        {"job": "Build_Report"},
+    ]
+    plan["job_dependencies"] = job_dependencies
+    write_verification_plan(plan_path, plan)
+
+    with pytest.raises(ArtifactFormatError, match=expected):
+        load_persisted_verification_plan(plan_path)
+
+
+def test_load_persisted_plan_requires_sorted_job_dependencies(tmp_path):
+    plan_path = tmp_path / "verification" / "plan.json"
+    plan = _plan({})
+    plan["jobs_to_run"] = [
+        {"job": "Extract_Source"},
+        {"job": "Prepare_Sales"},
+        {"job": "Build_Report"},
+    ]
+    plan["job_dependencies"] = {
+        "Build_Report": ["Prepare_Sales", "Extract_Source"],
+        "Extract_Source": [],
+        "Prepare_Sales": [],
+    }
+    write_verification_plan(plan_path, plan)
+
+    with pytest.raises(ArtifactFormatError, match="must be sorted"):
         load_persisted_verification_plan(plan_path)
 
 

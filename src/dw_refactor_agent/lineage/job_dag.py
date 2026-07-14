@@ -461,7 +461,15 @@ def job_dag_from_lineage(lineage_data: dict) -> JobDAG:
     graph because they do not contain reliable Job input/output facts.
     """
     data = lineage_data or {}
-    if data.get("format_version") != FORMAT_VERSION:
+    if "format_version" not in data:
+        return asset_job_dag_from_lineage(data)
+    format_version = data["format_version"]
+    if type(format_version) is not int or format_version not in {1, 2}:
+        raise ValueError(
+            "lineage format_version must be integer 1 or 2; "
+            f"received {format_version!r}"
+        )
+    if format_version == 1:
         return asset_job_dag_from_lineage(data)
 
     validate_lineage_v2(data)
