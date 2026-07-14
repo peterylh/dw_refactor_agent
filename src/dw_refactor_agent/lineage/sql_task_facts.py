@@ -7,6 +7,7 @@ from collections import defaultdict
 
 import sqlglot
 from sqlglot import exp
+from sqlglot.optimizer.scope import traverse_scope
 
 from dw_refactor_agent.lineage.identifiers import (
     canonical_qualified_identifier,
@@ -248,27 +249,58 @@ def _statement_target_table_exprs(stmt) -> list:
     return []
 
 
+def _statement_cte_reference_ids(stmt) -> set[int]:
+    cte_reference_ids = set()
+    scoped_table_ids = set()
+    for scope in traverse_scope(stmt):
+        visible_cte_names = {
+            identifier_match_key(name) for name in scope.cte_sources
+        }
+        for table_expr in scope.tables:
+            scoped_table_ids.add(id(table_expr))
+            is_qualified = bool(
+                table_expr.args.get("db") or table_expr.args.get("catalog")
+            )
+            if (
+                not is_qualified
+                and identifier_match_key(table_expr.name) in visible_cte_names
+            ):
+                cte_reference_ids.add(id(table_expr))
+
+    top_level_with = stmt.args.get("with")
+    top_level_cte_names = {
+        identifier_match_key(cte.alias_or_name)
+        for cte in (top_level_with.expressions if top_level_with else [])
+        if cte.alias_or_name
+    }
+    if top_level_cte_names:
+        for table_expr in stmt.find_all(exp.Table):
+            if id(table_expr) in scoped_table_ids:
+                continue
+            is_qualified = bool(
+                table_expr.args.get("db") or table_expr.args.get("catalog")
+            )
+            if (
+                not is_qualified
+                and identifier_match_key(table_expr.name)
+                in top_level_cte_names
+            ):
+                cte_reference_ids.add(id(table_expr))
+    return cte_reference_ids
+
+
 def _statement_input_tables(stmt) -> set[str]:
     target_ids = {
         id(table_expr) for table_expr in _statement_target_table_exprs(stmt)
     }
-    cte_names = {
-        identifier_match_key(cte.alias_or_name)
-        for cte in stmt.find_all(exp.CTE)
-        if cte.alias_or_name
-    }
+    cte_reference_ids = _statement_cte_reference_ids(stmt)
     inputs = set()
     for table_expr in stmt.find_all(exp.Table):
-        if id(table_expr) in target_ids:
+        if id(table_expr) in target_ids or id(table_expr) in cte_reference_ids:
             continue
         table_name = _target_table_name(table_expr)
         short_name = _short_table_name(table_name)
         if not short_name:
-            continue
-        is_qualified = bool(
-            table_expr.args.get("db") or table_expr.args.get("catalog")
-        )
-        if not is_qualified and identifier_match_key(short_name) in cte_names:
             continue
         inputs.add(table_name)
     return inputs

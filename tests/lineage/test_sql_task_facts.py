@@ -112,6 +112,22 @@ SELECT id FROM db.target;
     assert facts["output_tables"] == {"db.target"}
 
 
+def test_nested_cte_does_not_hide_outer_physical_table_with_same_name():
+    facts = extract_task_table_facts(
+        """
+SELECT *
+FROM src
+WHERE id IN (
+    WITH src AS (SELECT id FROM nested_base)
+    SELECT id FROM src
+);
+""",
+        "scope.sql",
+    )
+
+    assert facts["input_tables"] == {"src", "nested_base"}
+
+
 def test_table_aliases_are_not_part_of_task_fact_names():
     facts = extract_task_table_facts(
         """
