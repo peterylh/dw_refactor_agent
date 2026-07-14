@@ -1,7 +1,6 @@
 version: 1
 project: retail_banking
 scope: fineract_direct_dim_dwd_sources
-review_basis: work/retail_banking_dim_dwd_human_review.md
 catalogs:
   business_processes: ../business_processes.yaml
   semantic_subjects: ../semantic_subjects.yaml
