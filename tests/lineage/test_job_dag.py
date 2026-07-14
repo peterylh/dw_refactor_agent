@@ -205,6 +205,49 @@ def test_job_dag_v2_runnable_universe_excludes_companion_producer():
     )
 
 
+def test_job_dag_v2_runnable_universe_rejects_missing_lineage_jobs():
+    lineage = _lineage_v2(
+        tables=[],
+        jobs=[_job("prepare_sales")],
+    )
+
+    with pytest.raises(ValueError) as exc_info:
+        job_dag_module.job_dag_from_lineage(
+            lineage,
+            runnable_jobs={"PREPARE_SALES", "missing_report", "missing_audit"},
+        )
+
+    message = str(exc_info.value)
+    assert "missing_audit" in message
+    assert "missing_report" in message
+    assert "regenerate lineage" in message
+
+
+def test_job_dag_v2_runnable_universe_accepts_casefold_and_empty_set():
+    lineage = _lineage_v2(
+        tables=[],
+        jobs=[_job("Prepare_Sales")],
+    )
+
+    matched = job_dag_module.job_dag_from_lineage(
+        lineage,
+        runnable_jobs={"PREPARE_SALES"},
+    )
+    empty = job_dag_module.job_dag_from_lineage(
+        lineage,
+        runnable_jobs=set(),
+    )
+
+    assert matched.jobs == ["PREPARE_SALES"]
+    assert empty.to_dict() == {
+        "format_version": 2,
+        "jobs": [],
+        "data_dependencies": [],
+        "deps": {},
+        "rev": {},
+    }
+
+
 def test_job_dag_v2_roundtrip_omits_legacy_fields(tmp_path):
     dag = job_dag_module.job_dag_from_lineage(
         _lineage_v2(

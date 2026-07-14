@@ -524,19 +524,23 @@ def main():
 
     dag_path = job_dag_path(project)
     existing_dag_path = _resolve_job_dag_file(project)
-    if args.refresh_dag or not existing_dag_path.exists():
-        print(f"生成 DAG: {dag_path}")
-        dag = _build_job_dag(project, task_names)
-        dependency_count = _save_job_dag(dag, dag_path)
-        print(f"  DAG 已保存: {dependency_count} 条边")
-    else:
-        print(f"加载 DAG: {existing_dag_path}")
-        dag = JobDAG.load(existing_dag_path)
-        if _dag_needs_refresh_for_tasks(dag, task_names):
-            print("  DAG 与当前作业不匹配, 重新生成...")
+    try:
+        if args.refresh_dag or not existing_dag_path.exists():
+            print(f"生成 DAG: {dag_path}")
             dag = _build_job_dag(project, task_names)
             dependency_count = _save_job_dag(dag, dag_path)
             print(f"  DAG 已保存: {dependency_count} 条边")
+        else:
+            print(f"加载 DAG: {existing_dag_path}")
+            dag = JobDAG.load(existing_dag_path)
+            if _dag_needs_refresh_for_tasks(dag, task_names):
+                print("  DAG 与当前作业不匹配, 重新生成...")
+                dag = _build_job_dag(project, task_names)
+                dependency_count = _save_job_dag(dag, dag_path)
+                print(f"  DAG 已保存: {dependency_count} 条边")
+    except (ExecutionConfigError, ValueError) as e:
+        print(f"错误: {e}")
+        return 1
 
     try:
         model_names_by_job = _load_job_model_names(project)

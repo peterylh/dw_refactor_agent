@@ -1,10 +1,16 @@
+import json
+
 import pytest
 
 from dw_refactor_agent.lineage.contract import (
     LineageContractError,
     validate_lineage_v2,
 )
-from dw_refactor_agent.lineage.lineage_extractor import build_lineage_output
+from dw_refactor_agent.lineage.lineage_extractor import (
+    build_lineage_output,
+    build_schema_from_texts,
+    extract_lineage_from_sql,
+)
 
 
 class CountingSchema(dict):
@@ -69,6 +75,87 @@ def test_build_lineage_output_emits_job_owned_edges_without_source_file():
     assert output["edges"][0]["job"] == "prepare"
     assert "source_file" not in output["edges"][0]
     validate_lineage_v2(output)
+
+
+def test_extract_lineage_preserves_json_scalar_literal_types_end_to_end():
+    schema = build_schema_from_texts(
+        [
+            """
+            CREATE TABLE shop_dm.literal_output (
+                int_value BIGINT,
+                float_value DOUBLE,
+                string_value STRING,
+                true_value BOOLEAN,
+                false_value BOOLEAN,
+                null_value STRING,
+                complex_value BIGINT
+            )
+            """
+        ]
+    )
+    sql = """
+    INSERT INTO shop_dm.literal_output (
+        int_value,
+        float_value,
+        string_value,
+        true_value,
+        false_value,
+        null_value,
+        complex_value
+    )
+    SELECT
+        1 AS int_value,
+        1.25 AS float_value,
+        '1' AS string_value,
+        TRUE AS true_value,
+        FALSE AS false_value,
+        NULL AS null_value,
+        1 + 2 AS complex_value
+    """
+    entries = extract_lineage_from_sql(sql, "typed_literals.sql", schema)
+
+    output = build_lineage_output(
+        entries,
+        schema,
+        task_results=[
+            _task_result(
+                "typed_literals.sql",
+                outputs=["shop_dm.literal_output"],
+            )
+        ],
+    )
+    edges_by_column = {
+        edge["target"]["id"].rsplit(".", 1)[-1]: edge
+        for edge in output["edges"]
+    }
+
+    expected_literals = {
+        "int_value": (1, int, "1 AS int_value"),
+        "float_value": (1.25, float, "1.25 AS float_value"),
+        "string_value": ("1", str, "'1' AS string_value"),
+        "true_value": (True, bool, "TRUE AS true_value"),
+        "false_value": (False, bool, "FALSE AS false_value"),
+        "null_value": (None, type(None), "NULL AS null_value"),
+    }
+    for column, (value, value_type, expression) in expected_literals.items():
+        edge = edges_by_column[column]
+        assert edge["source"] == {"type": "literal", "value": value}
+        assert type(edge["source"]["value"]) is value_type
+        assert edge["expression"] == expression
+
+    assert edges_by_column["complex_value"]["source"] == {
+        "type": "expression",
+        "expression": "1 + 2 AS complex_value",
+    }
+    round_tripped = json.loads(json.dumps(output))
+    round_trip_by_column = {
+        edge["target"]["id"].rsplit(".", 1)[-1]: edge["source"]
+        for edge in round_tripped["edges"]
+    }
+    for column, (value, value_type, _expression) in expected_literals.items():
+        assert round_trip_by_column[column]["value"] == value
+        assert type(round_trip_by_column[column]["value"]) is value_type
+    validate_lineage_v2(round_tripped)
 
 
 def test_build_lineage_output_deduplicates_direct_edges_case_insensitively():

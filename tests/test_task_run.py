@@ -666,6 +666,77 @@ def test_refresh_dag_writes_v2_artifact_to_configured_project_path(
     assert build_calls == [("demo", {"Build_Report", "Prepare_Sales"})]
 
 
+@pytest.mark.parametrize("dag_mode", ["generate", "rebuild"])
+def test_task_run_rejects_stale_lineage_missing_runnable_job(
+    monkeypatch, tmp_path, capsys, dag_mode
+):
+    project_dir = tmp_path / "configured_demo"
+    task_dir = project_dir / "mid" / "tasks"
+    lineage_dir = project_dir / "artifacts" / "lineage"
+    task_dir.mkdir(parents=True)
+    lineage_dir.mkdir(parents=True)
+    for job_name in ("Build_Report", "Prepare_Sales"):
+        (task_dir / f"{job_name}.sql").write_text(
+            "SELECT 1;",
+            encoding="utf-8",
+        )
+    (lineage_dir / "lineage_data.json").write_text(
+        json.dumps(
+            {
+                "format_version": 2,
+                "tables": [],
+                "jobs": [
+                    {
+                        "name": "prepare_sales",
+                        "source_file": "Prepare_Sales.sql",
+                        "inputs": [],
+                        "outputs": [],
+                    }
+                ],
+                "edges": [],
+                "diagnostics": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    dag_path = lineage_dir / "job_dag.json"
+    if dag_mode == "rebuild":
+        task_run.JobDAG.from_jobs(["prepare_sales"], []).save(dag_path)
+
+    monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setitem(
+        task_run.PROJECT_CONFIG,
+        "demo",
+        {
+            "dir": "configured_demo",
+            "db": "demo_db",
+            "qa_db": "demo_db_qa",
+        },
+    )
+    monkeypatch.setattr(task_run, "ExecutionPlanner", lambda _: object())
+    monkeypatch.setattr(
+        task_run, "_validate_execution_plan", lambda *args, **kwargs: 0
+    )
+    monkeypatch.setattr(task_run, "get_mysql_cmd", lambda _: ["mysql"])
+    argv = [
+        "task_run",
+        "--project",
+        "demo",
+        "--etl-dates",
+        "2025-01-01",
+        "--validate-only",
+    ]
+    if dag_mode == "generate":
+        argv.append("--refresh-dag")
+    monkeypatch.setattr(task_run.sys, "argv", argv)
+
+    assert task_run.main() == 1
+    captured = capsys.readouterr()
+    assert "Build_Report" in captured.out
+    assert "regenerate lineage" in captured.out
+    assert captured.err == ""
+
+
 def test_task_run_resolvers_ignore_old_lineage_artifact_paths(
     monkeypatch, tmp_path
 ):

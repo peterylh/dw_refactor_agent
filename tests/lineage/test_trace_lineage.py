@@ -133,7 +133,7 @@ class TestTraceLineage:
             {
                 "lineage_type": "direct",
                 "source_type": "literal",
-                "source_value": "1",
+                "source_value": 1,
                 "target_table": "target_tbl",
                 "target_column": "col",
                 "expression": "1 AS col",

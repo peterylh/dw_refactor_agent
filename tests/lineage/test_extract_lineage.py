@@ -146,7 +146,7 @@ def _assert_metric_literal_lineage(entries, schema):
         "metric_code": "literal",
         "measure_index": "literal",
         "updated_at": "expression",
-        "optional_note": "expression",
+        "optional_note": "literal",
     }
     column_source_ids = {
         edge["source"].get("id")

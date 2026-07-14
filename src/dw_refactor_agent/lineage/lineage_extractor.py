@@ -373,12 +373,20 @@ def _transformation_type_for_expression(expression):
 
 def _is_literal_expression(expression):
     node = expression.this if isinstance(expression, exp.Alias) else expression
-    return isinstance(node, exp.Literal)
+    return isinstance(node, (exp.Literal, exp.Boolean, exp.Null))
 
 
 def _literal_value(expression):
     node = expression.this if isinstance(expression, exp.Alias) else expression
+    if isinstance(node, exp.Boolean):
+        return bool(node.this)
+    if isinstance(node, exp.Null):
+        return None
     if isinstance(node, exp.Literal):
+        if node.is_int:
+            return int(node.this)
+        if node.is_number:
+            return float(node.this)
         return str(node.this)
     return ""
 
@@ -4232,6 +4240,10 @@ def build_lineage_output(
             return source_type
         return "column"
 
+    def _literal_source_value_key(entry):
+        value = entry.get("source_value", "")
+        return type(value).__name__, repr(value)
+
     def _direct_transformation(entry):
         if entry.get("transformation_type"):
             return str(entry["transformation_type"])
@@ -4286,7 +4298,7 @@ def build_lineage_output(
     def direct_source_key(entry):
         source_type = _direct_source_type(entry)
         if source_type == "literal":
-            return (source_type, entry.get("source_value", ""))
+            return (source_type, *_literal_source_value_key(entry))
         if source_type == "expression":
             return (source_type, entry.get("source_expression", ""))
         return (
@@ -4333,7 +4345,7 @@ def build_lineage_output(
             e.get("source_type", ""),
             e.get("source_table", ""),
             e.get("source_column", ""),
-            e.get("source_value", ""),
+            _literal_source_value_key(e),
             e.get("source_expression", ""),
             e.get("target_table", ""),
             e.get("target_column", ""),

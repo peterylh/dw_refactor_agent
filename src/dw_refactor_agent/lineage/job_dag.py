@@ -485,6 +485,18 @@ def job_dag_from_lineage(
     dag_job_names = [job["name"] for job in jobs]
     if runnable_jobs is not None:
         dag_job_names = sorted(runnable_jobs, key=identifier_match_key)
+        lineage_job_keys = {identifier_match_key(job["name"]) for job in jobs}
+        missing_jobs = [
+            job_name
+            for job_name in dag_job_names
+            if identifier_match_key(job_name) not in lineage_job_keys
+        ]
+        if missing_jobs:
+            raise ValueError(
+                "runnable Jobs missing from lineage snapshot: "
+                f"{missing_jobs!r}; regenerate lineage before building "
+                "the execution DAG"
+            )
         runnable_job_keys = {
             identifier_match_key(job_name) for job_name in dag_job_names
         }
