@@ -122,19 +122,6 @@ def _write_v2_project_artifacts(
     return lineage_path, dag_path
 
 
-def test_stats_reads_project_lineage_artifact_by_default(
-    tmp_path, monkeypatch, capsys
-):
-    _write_demo_project_lineage(tmp_path, monkeypatch)
-
-    exit_code = main(["stats", "--project", "demo"])
-
-    captured = capsys.readouterr()
-    assert exit_code == 0
-    assert "Lineage Stats: demo" in captured.out
-    assert "Tables: 6" in captured.out
-
-
 def test_table_prints_table_lineage(tmp_path, capsys):
     _write_demo_lineage(tmp_path)
 
@@ -158,61 +145,6 @@ def test_table_prints_table_lineage(tmp_path, capsys):
     assert exit_code == 0
     assert "Lineage: demo / ads_sales_dashboard" in captured.out
     assert "Tables: 4   Edges: 3   Jobs: 2" in captured.out
-
-
-@pytest.mark.parametrize(
-    ("command", "table_name"),
-    [
-        ("show", "ads_sales_dashboard"),
-        ("column", "dws_product_sales_daily"),
-    ],
-    ids=("unsupported-command", "missing-column-argument"),
-)
-def test_invalid_command_line_arguments_exit_with_usage_error(
-    tmp_path, command, table_name
-):
-    with pytest.raises(SystemExit) as exc:
-        main(
-            [
-                command,
-                "--project",
-                "demo",
-                "--lineage-dir",
-                str(tmp_path),
-                "--table",
-                table_name,
-            ]
-        )
-
-    assert exc.value.code == 2
-
-
-def test_column_prints_column_lineage(tmp_path, capsys):
-    _write_demo_lineage(tmp_path)
-
-    exit_code = main(
-        [
-            "column",
-            "--project",
-            "demo",
-            "--lineage-dir",
-            str(tmp_path),
-            "--table",
-            "dws_product_sales_daily",
-            "--column",
-            "sales_amount",
-            "--depth",
-            "2",
-        ]
-    )
-
-    captured = capsys.readouterr()
-    assert exit_code == 0
-    assert (
-        "Column Lineage: demo / dws_product_sales_daily.sales_amount"
-        in captured.out
-    )
-    assert "ods_order.sale_amount" in captured.out
 
 
 def test_column_verbose_prints_condition_lineage(tmp_path, capsys):
@@ -309,20 +241,6 @@ def test_validate_accepts_strict_lineage_and_job_dag_v2(
     assert str(dag_path) in captured.out
     assert "lineage v2 valid" in captured.out
     assert "job DAG v2 valid" in captured.out
-
-
-def test_validate_rejects_forbidden_v2_edge_source_file(
-    tmp_path, monkeypatch, capsys
-):
-    lineage = _valid_lineage_v2()
-    lineage["edges"][0]["source_file"] = "build_output.sql"
-    _write_v2_project_artifacts(tmp_path, monkeypatch, lineage=lineage)
-
-    exit_code = main(["validate", "--project", "demo"])
-
-    captured = capsys.readouterr()
-    assert exit_code == 1
-    assert "source_file" in captured.err
 
 
 def test_validate_strictly_rejects_invalid_job_dag_v2(

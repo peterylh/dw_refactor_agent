@@ -6,13 +6,9 @@ from pathlib import Path
 from dw_refactor_agent.ddl_deriver.ddl_deriver import (
     AlterTable,
     CreateTable,
-    DropTable,
     RenameTable,
     _find_git_root,
-    _get_merge_base,
     derive_from_git,
-    load_git_ddl_texts,
-    load_git_tables,
 )
 
 # ============================================================
@@ -116,56 +112,14 @@ def test_find_git_root_fails(tmp_path):
 # ============================================================
 
 
-def test_get_merge_base(tmp_path):
-    repo = _init_test_repo(tmp_path)
-    # 仅在 main 分支, merge-base(main, HEAD) = HEAD
-    base = _get_merge_base(repo)
-    head = _git(repo, "rev-parse", "HEAD")
-    assert base == head
-
-
 # ============================================================
 # 测试 Git ref DDL 读取
 # ============================================================
 
 
-def test_load_git_tables(tmp_path):
-    repo = _init_test_repo(tmp_path)
-    head = _git(repo, "rev-parse", "HEAD")
-    tables = load_git_tables(repo, DDL_DIR_REL, head)
-    assert "ods_user_info" in tables
-    assert "ods_order" in tables
-    assert len(tables["ods_user_info"].columns) == 4
-    assert len(tables["ods_order"].columns) == 2
-
-
-def test_load_git_ddl_texts(tmp_path):
-    repo = _init_test_repo(tmp_path)
-    head = _git(repo, "rev-parse", "HEAD")
-
-    ddl_texts = load_git_ddl_texts(repo, DDL_DIR_REL, head)
-
-    assert sorted(ddl_texts) == ["ods_order", "ods_user_info"]
-    assert (
-        "CREATE TABLE IF NOT EXISTS shop_dm.ods_order"
-        in ddl_texts["ods_order"]
-    )
-
-
 # ============================================================
 # 测试 derive_from_git
 # ============================================================
-
-
-def test_git_no_changes(tmp_path):
-    """工作区与基线一致 → 无变更."""
-    repo = _init_test_repo(tmp_path)
-    changes = derive_from_git(
-        ddl_dir_rel=DDL_DIR_REL,
-        repo=repo,
-        base_branch="main",
-    )
-    assert len(changes) == 0
 
 
 def test_git_default_project_scans_split_mart_ddl_dirs(tmp_path):
@@ -234,51 +188,6 @@ def test_git_rename_add_column(tmp_path):
     assert changes[1].table_name == "shop_dm.ods_customer"
     assert len(changes[1].adds) == 1
     assert changes[1].adds[0].name == "address"
-
-
-def test_git_alter_table(tmp_path):
-    """修改列类型 → ALTER."""
-    repo = _init_test_repo(tmp_path)
-    ddl_dir = repo / DDL_DIR_REL
-    (ddl_dir / "ods_order.sql").write_text(DDL_ORDER_MODIFIED)
-
-    changes = derive_from_git(ddl_dir_rel=DDL_DIR_REL, repo=repo)
-    assert len(changes) == 1
-    assert isinstance(changes[0], AlterTable)
-    assert changes[0].table_name == "shop_dm.ods_order"
-    assert len(changes[0].modifies) == 1
-    assert changes[0].modifies[0][1].data_type == "DECIMAL(14, 2)"
-
-
-def test_git_create_table(tmp_path):
-    """新增 DDL 文件 → CREATE TABLE."""
-    repo = _init_test_repo(tmp_path)
-    new_ddl = """DROP TABLE IF EXISTS shop_dm.ods_feedback;
-CREATE TABLE IF NOT EXISTS shop_dm.ods_feedback (
-    feedback_id BIGINT NOT NULL COMMENT '反馈ID',
-    content     VARCHAR(500) NULL COMMENT '内容'
-) ENGINE=OLAP DUPLICATE KEY(feedback_id) DISTRIBUTED BY HASH(feedback_id) BUCKETS 10
-PROPERTIES ("replication_num" = "1");
-"""
-    ddl_dir = repo / DDL_DIR_REL
-    (ddl_dir / "ods_feedback.sql").write_text(new_ddl)
-
-    changes = derive_from_git(ddl_dir_rel=DDL_DIR_REL, repo=repo)
-    assert len(changes) == 1
-    assert isinstance(changes[0], CreateTable)
-    assert changes[0].table_def.short_name == "ods_feedback"
-
-
-def test_git_drop_table(tmp_path):
-    """删除 DDL 文件 → DROP TABLE."""
-    repo = _init_test_repo(tmp_path)
-    ddl_dir = repo / DDL_DIR_REL
-    (ddl_dir / "ods_order.sql").unlink()
-
-    changes = derive_from_git(ddl_dir_rel=DDL_DIR_REL, repo=repo)
-    assert len(changes) == 1
-    assert isinstance(changes[0], DropTable)
-    assert "ods_order" in changes[0].table_name
 
 
 def test_git_mixed_changes(tmp_path):

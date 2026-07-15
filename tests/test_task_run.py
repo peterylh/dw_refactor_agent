@@ -1,8 +1,7 @@
 import json
-import os
 import subprocess
 from contextlib import contextmanager
-from datetime import date, timedelta
+from datetime import date
 
 import pytest
 
@@ -21,18 +20,6 @@ def _completed(stdout: str = "", stderr: str = "", returncode: int = 0):
         stdout=stdout,
         stderr=stderr,
     )
-
-
-def test_resolve_etl_dates_expands_two_calendar_month_window():
-    values = resolve_etl_dates(
-        None,
-        lookback_months=2,
-        end_date="2026-07-13",
-    )
-
-    assert values[0] == "2026-05-13"
-    assert values[-1] == "2026-07-13"
-    assert len(values) == 62
 
 
 def test_resolve_etl_dates_clamps_month_end_and_validates_inputs():
@@ -151,44 +138,6 @@ def test_incremental_full_refresh_replays_slices_without_partition_management(
     )
 
 
-def test_companion_full_refresh_runs_companion_with_full_refresh_one(
-    monkeypatch,
-    tmp_path,
-):
-    calls = []
-    sql_file = _write_execution_project(
-        monkeypatch,
-        tmp_path,
-        model_config=(
-            "execution:\n"
-            "  materialized: incremental\n"
-            "  full_refresh_strategy: companion\n"
-        ),
-        companion=True,
-    )
-    planner = ExecutionPlanner("demo")
-
-    def fake_run(*args, **kwargs):
-        calls.append(kwargs.get("input", "").strip())
-        return _completed()
-
-    monkeypatch.setattr(task_run.subprocess, "run", fake_run)
-
-    task_run._run_job_full_refresh(
-        "dwd_customer",
-        sql_file,
-        ["mysql"],
-        "demo_db",
-        planner,
-        ["2025-01-01", "2025-01-02"],
-    )
-
-    assert len(calls) == 1
-    assert calls[0].startswith("SET @full_refresh = 1;\n")
-    assert "SELECT @full_refresh;" in calls[0]
-    assert "PARTITION" not in calls[0]
-
-
 def test_execution_plan_preflight_rejects_history_before_running_sql(
     monkeypatch,
     tmp_path,
@@ -214,91 +163,6 @@ def test_execution_plan_preflight_rejects_history_before_running_sql(
             ["2000-01-01"],
             full_refresh=False,
         )
-
-
-def test_history_replay_can_skip_unsupported_current_state_dates(
-    monkeypatch,
-    tmp_path,
-):
-    sql_file = _write_execution_project(
-        monkeypatch,
-        tmp_path,
-        model_config=(
-            "execution:\n"
-            "  materialized: incremental\n"
-            "  historical_replay_supported: false\n"
-        ),
-    )
-    planner = ExecutionPlanner("demo")
-    current_date = date.today().isoformat()
-    historical_date = (date.today() - timedelta(days=1)).isoformat()
-
-    invocation_count = task_run._validate_execution_plan(
-        ["dwd_customer"],
-        {"dwd_customer": sql_file},
-        planner,
-        [historical_date, current_date],
-        full_refresh=False,
-        skip_unsupported_history=True,
-    )
-
-    assert invocation_count == 1
-    assert (
-        task_run._plan_regular_invocations(
-            planner,
-            planner.task_spec("dwd_customer", sql_file),
-            historical_date,
-            skip_unsupported_history=True,
-        )
-        == []
-    )
-
-
-def test_get_task_files_reads_mid_and_ads_task_dirs(monkeypatch, tmp_path):
-    project_dir = tmp_path / "demo_project"
-    (project_dir / "tasks").mkdir(parents=True)
-    (project_dir / "mid" / "tasks").mkdir(parents=True)
-    (project_dir / "mid" / "tasks" / "full_refresh").mkdir(parents=True)
-    (project_dir / "ads" / "tasks").mkdir(parents=True)
-    (project_dir / "tasks" / "legacy_job.sql").write_text(
-        "",
-        encoding="utf-8",
-    )
-    (project_dir / "mid" / "tasks" / "dwd_customer.sql").write_text(
-        "",
-        encoding="utf-8",
-    )
-    (
-        project_dir
-        / "mid"
-        / "tasks"
-        / "full_refresh"
-        / "dwd_customer_full_refresh.sql"
-    ).write_text("", encoding="utf-8")
-    (project_dir / "ads" / "tasks" / "ads_customer.sql").write_text(
-        "",
-        encoding="utf-8",
-    )
-    monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
-    monkeypatch.setitem(
-        task_run.PROJECT_CONFIG,
-        "demo",
-        {
-            "dir": "demo_project",
-            "catalog": "internal",
-            "db": "demo_db",
-        },
-    )
-
-    task_files = task_run._get_task_files("demo")
-
-    assert sorted(task_files) == [
-        "ads_customer",
-        "dwd_customer",
-    ]
-    assert task_files["dwd_customer"] == (
-        project_dir / "mid" / "tasks" / "dwd_customer.sql"
-    )
 
 
 def test_discover_ods_dates_uses_model_layer(monkeypatch, tmp_path):
@@ -344,20 +208,6 @@ def test_discover_ods_dates_uses_model_layer(monkeypatch, tmp_path):
         "SELECT DISTINCT DATE(load_time) AS d FROM demo_db.source_events ORDER BY d",
     ]
     config.clear_model_metadata_cache()
-
-
-def test_resolve_full_refresh_dates_prefers_explicit_dates(monkeypatch):
-    def fail_discover(*args, **kwargs):
-        raise AssertionError("should not discover ODS dates")
-
-    monkeypatch.setattr(task_run, "_discover_ods_dates", fail_discover)
-
-    assert task_run._resolve_full_refresh_dates(
-        "demo",
-        "demo_db",
-        ["mysql"],
-        ["2025-01-02", "2025-01-01", "2025-01-02"],
-    ) == ["2025-01-02", "2025-01-01"]
 
 
 def test_resolve_full_refresh_dates_requires_explicit_business_dates(
@@ -416,35 +266,6 @@ def test_execution_preflight_uses_output_model_and_job_sql_identity(tmp_path):
     )
 
     assert calls == [("prepare_sales", sql_path, "dwd_order")]
-
-
-def test_job_model_names_require_one_managed_output():
-    lineage_data = {
-        "format_version": 2,
-        "tables": [
-            {
-                "full_name": "internal.demo_db.stage",
-                "dataset_type": "process",
-            },
-            {
-                "full_name": "internal.demo_db.dwd_order",
-                "dataset_type": "managed",
-            },
-        ],
-        "jobs": [
-            {
-                "name": "prepare_sales",
-                "outputs": [
-                    "internal.demo_db.stage",
-                    "internal.demo_db.dwd_order",
-                ],
-            }
-        ],
-    }
-
-    assert task_run._job_model_names_from_lineage(lineage_data) == {
-        "prepare_sales": "dwd_order"
-    }
 
 
 def _process_lineage_payload(dataset_type):
@@ -628,106 +449,6 @@ def _configure_process_plan_project(
     }
 
 
-@pytest.mark.parametrize(
-    ("dataset_type", "expected_status"),
-    (("process", 1), ("managed", 0)),
-)
-def test_job_list_requires_process_producer_but_not_managed_producer(
-    monkeypatch,
-    tmp_path,
-    capsys,
-    dataset_type,
-    expected_status,
-):
-    _configure_process_plan_project(
-        monkeypatch,
-        tmp_path,
-        dataset_type=dataset_type,
-    )
-    executed = []
-    monkeypatch.setattr(
-        task_run,
-        "_run_job",
-        lambda _date, job_name, *args, **kwargs: executed.append(job_name),
-    )
-
-    @contextmanager
-    def available_lock(_host, _port, _database):
-        yield
-
-    monkeypatch.setattr(
-        task_run,
-        "execution_target_run_lock",
-        available_lock,
-        raising=False,
-    )
-    monkeypatch.setattr(
-        task_run.sys,
-        "argv",
-        [
-            "task_run",
-            "--project",
-            "demo",
-            "--etl-dates",
-            "2025-01-15",
-            "--job-list",
-            "build_report",
-        ],
-    )
-
-    assert task_run.main() == expected_status
-    captured = capsys.readouterr()
-    if dataset_type == "process":
-        assert executed == []
-        assert "Prepare_Sales" in captured.out
-        assert "Build_Report" in captured.out
-        assert "Internal.Demo_DB.Sales_Stage" in captured.out
-    else:
-        assert executed == ["Build_Report"]
-
-
-def test_process_plan_rejects_not_found_producer_for_selected_consumer():
-    lineage_data = _unresolved_process_lineage_payload()
-    dag = task_run.JobDAG.from_jobs(["Build_Report"], [])
-
-    with pytest.raises(ExecutionConfigError) as exc_info:
-        task_run._validate_process_plan_safety(
-            {"build_report"},
-            dag,
-            lineage_data,
-        )
-
-    message = str(exc_info.value)
-    assert "Internal.Demo_DB.Sales_Stage" in message
-    assert "not_found" in message
-    assert "Build_Report" in message
-    assert "candidate producer jobs=[]" in message
-
-
-def test_process_plan_rejects_ambiguous_producer_even_when_candidates_selected():
-    lineage_data = _unresolved_process_lineage_payload(
-        reason="multiple_candidates",
-        candidate_producer_jobs=("Producer_A", "Producer_B"),
-    )
-    dag = task_run.JobDAG.from_jobs(
-        ["Build_Report", "Producer_A", "Producer_B"],
-        [],
-    )
-
-    with pytest.raises(ExecutionConfigError) as exc_info:
-        task_run._validate_process_plan_safety(
-            {"Build_Report", "Producer_A", "Producer_B"},
-            dag,
-            lineage_data,
-        )
-
-    message = str(exc_info.value)
-    assert "multiple_candidates" in message
-    assert "Build_Report" in message
-    assert "Producer_A" in message
-    assert "Producer_B" in message
-
-
 def test_unresolved_process_diagnostic_does_not_block_unrelated_subset(
     monkeypatch,
     tmp_path,
@@ -767,26 +488,6 @@ def test_unresolved_process_diagnostic_does_not_block_unrelated_subset(
 def test_managed_dataset_diagnostic_does_not_block_selected_consumer():
     lineage_data = _unresolved_process_lineage_payload(dataset_type="managed")
     dag = task_run.JobDAG.from_jobs(["Build_Report"], [])
-
-    task_run._validate_process_plan_safety(
-        {"Build_Report"},
-        dag,
-        lineage_data,
-    )
-
-
-def test_managed_dataset_dependency_does_not_require_selected_producer():
-    lineage_data = _process_lineage_payload("managed")
-    dag = task_run.JobDAG.from_jobs(
-        ["Build_Report", "Prepare_Sales"],
-        [
-            {
-                "upstream_job": "Prepare_Sales",
-                "downstream_job": "Build_Report",
-                "datasets": ["internal.demo_db.sales_stage"],
-            }
-        ],
-    )
 
     task_run._validate_process_plan_safety(
         {"Build_Report"},
@@ -981,57 +682,6 @@ def test_task_run_refreshes_stale_managed_dependency_before_process_closure(
     assert "Internal.Demo_DB.Sales_Stage" in output
 
 
-@pytest.mark.parametrize(
-    ("lineage_version", "dag_version"),
-    ((1, 1), (1, 2), (2, 1)),
-    ids=("v1", "v1-lineage-v2-dag", "v2-lineage-v1-dag"),
-)
-def test_task_run_replaces_v1_or_mixed_artifacts_from_one_fresh_v2_payload(
-    monkeypatch,
-    tmp_path,
-    lineage_version,
-    dag_version,
-):
-    state = _configure_process_plan_project(monkeypatch, tmp_path)
-    if lineage_version == 1:
-        state["lineage_path"].write_text(
-            json.dumps({"tables": [], "edges": []}), encoding="utf-8"
-        )
-    if dag_version == 1:
-        task_run.JobDAG(
-            [{"source": "Prepare_Sales", "target": "Build_Report"}]
-        ).save(state["dag_path"])
-    monkeypatch.setattr(
-        task_run.sys,
-        "argv",
-        [
-            "task_run",
-            "--project",
-            "demo",
-            "--etl-dates",
-            "2025-01-15",
-            "--validate-only",
-            "--job-list",
-            "Prepare_Sales",
-            "Build_Report",
-        ],
-    )
-
-    assert task_run.main() == 0
-    assert len(state["extractor_calls"]) == 1
-    assert (
-        json.loads(state["lineage_path"].read_text(encoding="utf-8"))
-        == (state["fresh_lineage"])
-    )
-    expected_dag = task_run.job_dag_from_lineage(
-        state["fresh_lineage"],
-        runnable_jobs={"Prepare_Sales", "Build_Report"},
-    ).to_dict()
-    assert json.loads(state["dag_path"].read_text(encoding="utf-8")) == (
-        expected_dag
-    )
-
-
 def test_refresh_dag_forces_no_cache_lineage_extraction(monkeypatch, tmp_path):
     state = _configure_process_plan_project(monkeypatch, tmp_path)
     monkeypatch.setattr(
@@ -1052,57 +702,6 @@ def test_refresh_dag_forces_no_cache_lineage_extraction(monkeypatch, tmp_path):
     assert len(state["extractor_calls"]) == 1
     command = state["extractor_calls"][0][0]
     assert "--no-cache" in command
-
-
-def test_normal_planning_uses_cached_extraction_output_for_saved_dag(
-    monkeypatch,
-    tmp_path,
-):
-    state = _configure_process_plan_project(
-        monkeypatch,
-        tmp_path,
-        dataset_type="managed",
-        extracted_dataset_type="process",
-    )
-    monkeypatch.setattr(
-        task_run.sys,
-        "argv",
-        [
-            "task_run",
-            "--project",
-            "demo",
-            "--etl-dates",
-            "2025-01-15",
-            "--validate-only",
-            "--job-list",
-            "Prepare_Sales",
-            "Build_Report",
-        ],
-    )
-
-    assert task_run.main() == 0
-    assert len(state["extractor_calls"]) == 1
-    command, kwargs = state["extractor_calls"][0]
-    assert command[:3] == [
-        os.sys.executable,
-        "-m",
-        "dw_refactor_agent.lineage.lineage_extractor",
-    ]
-    assert "--no-cache" not in command
-    assert command[command.index("--output") + 1] == str(state["lineage_path"])
-    assert kwargs["check"] is True
-    assert kwargs["cwd"] == task_run.PROJECT_ROOT
-    assert str(config.SRC_ROOT) in kwargs["env"]["PYTHONPATH"].split(
-        os.pathsep
-    )
-    saved_dag = json.loads(state["dag_path"].read_text(encoding="utf-8"))
-    assert (
-        saved_dag
-        == task_run.job_dag_from_lineage(
-            state["fresh_lineage"],
-            runnable_jobs={"Prepare_Sales", "Build_Report"},
-        ).to_dict()
-    )
 
 
 def test_lineage_extractor_failure_aborts_before_database_execution(

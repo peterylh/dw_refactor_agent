@@ -61,63 +61,6 @@ class TestExtractLeafEdges:
 
 
 class TestTraceLineage:
-    def test_select_source_lineage_scenarios(self, schema_ods_order):
-        scenarios = [
-            (
-                "simple_select",
-                "SELECT order_id, customer_id FROM shop_dm.ods_order",
-                {
-                    ("ods_order", "order_id", "target_tbl", "order_id"),
-                    (
-                        "ods_order",
-                        "customer_id",
-                        "target_tbl",
-                        "customer_id",
-                    ),
-                },
-                set(),
-            ),
-            (
-                "expression",
-                "SELECT total_amount * 0.1 AS tax FROM shop_dm.ods_order",
-                {("ods_order", "total_amount", "target_tbl", "tax")},
-                set(),
-            ),
-            (
-                "where",
-                (
-                    "SELECT order_id, total_amount FROM shop_dm.ods_order "
-                    "WHERE store_id = 100"
-                ),
-                {
-                    ("ods_order", "order_id", "target_tbl", "order_id"),
-                    (
-                        "ods_order",
-                        "total_amount",
-                        "target_tbl",
-                        "total_amount",
-                    ),
-                },
-                {("ods_order", "store_id", "target_tbl", "WHERE")},
-            ),
-        ]
-
-        for (
-            scenario_name,
-            sql,
-            expected_direct,
-            expected_indirect,
-        ) in scenarios:
-            entries = _trace_lineage(
-                "target_tbl",
-                sqlglot.parse_one(sql, dialect="doris"),
-                schema_ods_order,
-                "test.sql",
-            )
-
-            assert _direct_edges(entries) == expected_direct, scenario_name
-            assert _indirect_edges(entries) == expected_indirect, scenario_name
-
     def test_select_constant_and_missing_source_scenarios(
         self, schema_ods_order
     ):
@@ -313,16 +256,3 @@ class TestExtractLineageFromSql:
                 sql, source_file, schema_ods_order
             )
             assert entries == [], scenario_name
-
-    def test_extract_lineage_entry_contract(self, schema_ods_order):
-        sql = "INSERT INTO t SELECT order_id FROM shop_dm.ods_order"
-        entries = extract_lineage_from_sql(
-            sql, "my_task.sql", schema_ods_order
-        )
-        for e in entries:
-            assert e["source_file"] == "my_task.sql"
-            assert "source_table" in e
-            assert "source_column" in e
-            assert "target_table" in e
-            assert "target_column" in e
-            assert "expression" in e

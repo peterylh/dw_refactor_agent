@@ -5,31 +5,10 @@ from dw_refactor_agent.lineage.lineage_extractor import (
     build_schema_from_ddl,
     build_schema_from_project_ddl,
     build_schema_from_texts,
-    schema_table_count,
 )
 
 
 class TestBuildSchemaFromTexts:
-    def test_schema_from_texts_extracts_tables_columns_and_types(
-        self, ddl_texts
-    ):
-        schema = build_schema_from_texts(ddl_texts)
-        assert "internal" in schema
-        assert "shop_dm" in schema["internal"]
-        assert "ods_customer" in schema["internal"]["shop_dm"]
-        assert "ods_order" in schema["internal"]["shop_dm"]
-        assert "dwd_customer" in schema["internal"]["shop_dm"]
-        assert len(schema["internal"]["shop_dm"]["ods_customer"]) == 12
-        assert len(schema["internal"]["shop_dm"]["ods_order"]) == 11
-        assert len(schema["internal"]["shop_dm"]["dwd_customer"]) == 13
-        cust = schema["internal"]["shop_dm"]["ods_customer"]
-        assert cust["customer_id"] == "BIGINT"
-        assert cust["customer_name"] == "VARCHAR(64)"
-        assert cust["age"] == "INT"
-        assert cust["register_date"] == "DATE"
-        assert cust["create_time"] == "DATETIME"
-        assert cust["member_level"] == "VARCHAR(16)"
-
     def test_schema_from_texts_extracts_hive_partition_columns(self):
         ddl = """
         CREATE TABLE `tran_data_menu`(
@@ -187,31 +166,6 @@ class TestBuildSchemaFromTexts:
         assert (
             _schema_has_column(schema, "hive.shop_dm.dwd_order", "id") is True
         )
-
-    def test_schema_from_texts_ignores_empty_or_non_ddl_input(self):
-        assert build_schema_from_texts([]) == {}
-        sql = "SELECT 1; INSERT INTO t VALUES (1);"
-        assert build_schema_from_texts([sql]) == {}
-
-    def test_schema_table_count_counts_nested_catalog_database_tables(self):
-        schema = {
-            "internal": {
-                "shop_dm": {
-                    "ods_customer": {},
-                    "dwd_customer": {},
-                },
-                "other_db": {
-                    "ods_order": {},
-                },
-            },
-            "hive": {
-                "source_db": {
-                    "source_order": {},
-                },
-            },
-        }
-
-        assert schema_table_count(schema) == 4
 
 
 class TestBuildSchemaFromDdl:

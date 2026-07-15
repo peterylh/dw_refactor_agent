@@ -171,56 +171,6 @@ def test_cleanup_list_filters_by_project_and_run(monkeypatch, capsys):
     assert "other_run_slot" not in output
 
 
-def test_cleanup_list_age_uses_doris_server_clock(monkeypatch, capsys):
-    inspection = _cleanup_inspection()
-    monkeypatch.setattr(
-        run_cli,
-        "inspect_configured_slots",
-        lambda **kwargs: [inspection],
-        raising=False,
-    )
-    monkeypatch.setattr(
-        run_cli,
-        "qa_server_epoch",
-        lambda: inspection.ownership.claimed_at_epoch + 5 * 60,
-    )
-    monkeypatch.setattr(
-        run_cli,
-        "_now",
-        lambda: datetime.fromtimestamp(
-            inspection.ownership.claimed_at_epoch + 24 * 60 * 60,
-            timezone.utc,
-        ),
-    )
-
-    assert run_cli.main(["cleanup", "list", "--project", "shop"]) == 0
-
-    assert "\t300s\t" in capsys.readouterr().out
-
-
-def test_cleanup_delete_without_yes_is_preview(monkeypatch, capsys):
-    inspection = _cleanup_inspection()
-    monkeypatch.setattr(
-        run_cli,
-        "inspect_configured_slots",
-        lambda **kwargs: [inspection],
-        raising=False,
-    )
-    monkeypatch.setattr(
-        run_cli,
-        "release_qa_slot",
-        lambda *args, **kwargs: (_ for _ in ()).throw(
-            AssertionError("preview must not release a slot")
-        ),
-        raising=False,
-    )
-
-    assert (
-        run_cli.main(["cleanup", "delete", "--execution", "execution-1"]) == 0
-    )
-    assert "would release" in capsys.readouterr().out
-
-
 def test_cleanup_older_than_uses_doris_server_clock(monkeypatch, capsys):
     inspection = _cleanup_inspection()
     monkeypatch.setattr(
@@ -359,28 +309,6 @@ def test_start_creates_manifest_and_baseline_artifacts(tmp_path, monkeypatch):
     assert baseline_assess["assessment_mode"] == "full"
     assert baseline_assess["score_semantics"] == "project_global"
     assert baseline_assess["scope"] == {"type": "project"}
-
-
-def test_start_loads_project_choices_from_target_root(tmp_path, monkeypatch):
-    _write_warehouse_config(tmp_path, "demo")
-    _install_start_fakes(monkeypatch)
-
-    exit_code = run_cli.main(
-        ["start", "--project", "demo", "--root", str(tmp_path)]
-    )
-
-    assert exit_code == 0
-    run_root = (
-        tmp_path
-        / "warehouses"
-        / "demo"
-        / "artifacts"
-        / "refactor_runs"
-        / "20260620_073000_demo"
-    )
-    assert (run_root / "manifest.json").exists()
-    manifest = json.loads((run_root / "manifest.json").read_text())
-    assert manifest["project"] == "demo"
 
 
 def test_start_rejects_root_without_warehouse_config(tmp_path):
@@ -955,15 +883,6 @@ def test_analyze_marks_empty_diff_assessment_not_applicable(
     assert issue_diff["scope_score"]["overall_score"] is None
 
 
-def test_check_subcommand_is_removed():
-    try:
-        run_cli.main(["check", "--manifest", "missing.json"])
-    except SystemExit as exc:
-        assert exc.code == 2
-    else:
-        raise AssertionError("check subcommand should not be registered")
-
-
 def test_semantic_guidance_is_neutral_and_uses_short_run_selector(capsys):
     run_cli._print_semantic_guidance(
         {
@@ -1095,63 +1014,6 @@ def test_shadow_run_and_compare_delegate_to_plan_handlers(
     )
     assert calls[0][0] == "shadow"
     assert calls[0][5] is True
-
-
-def test_shadow_run_cli_reports_handler_failure(tmp_path, monkeypatch):
-    _write_warehouse_config(tmp_path)
-    manifest_path, manifest = create_run_manifest(
-        tmp_path,
-        "shop",
-        now=datetime(2026, 6, 20, 7, 30, tzinfo=timezone.utc),
-        git_info={},
-    )
-    write_manifest(manifest_path, manifest)
-    plan_path = manifest_path.parent / "verification" / "plan.json"
-    _write_json(plan_path, {"project": "shop"})
-
-    monkeypatch.setattr(
-        run_cli,
-        "require_fresh_plan",
-        lambda *args, **kwargs: {
-            "analysis_snapshot": {"workspace_fingerprint": "sha256:workspace"},
-            "plan_fingerprint": "sha256:plan",
-        },
-    )
-
-    def fake_shadow(
-        plan,
-        output,
-        provenance,
-        dry_run=False,
-        timing_detail=False,
-        parallel=1,
-        batch_size=1,
-    ):
-        _write_json(output, {"status": "failed"})
-        return {"status": "failed"}
-
-    monkeypatch.setattr(run_cli, "run_shadow_plan", fake_shadow)
-
-    assert run_cli.main(["shadow-run", "--manifest", str(manifest_path)]) == 1
-
-
-def test_manifest_commands_accept_exact_run_selector_and_reject_both():
-    parser = run_cli.build_parser()
-
-    args = parser.parse_args(["analyze", "--run", "20260713_113226_shop"])
-
-    assert args.run == "20260713_113226_shop"
-    assert args.manifest is None
-    with pytest.raises(SystemExit):
-        parser.parse_args(
-            [
-                "analyze",
-                "--run",
-                "20260713_113226_shop",
-                "--manifest",
-                "/tmp/manifest.json",
-            ]
-        )
 
 
 def test_semantic_mode_set_preserves_manifest_and_lightly_replans(

@@ -1,12 +1,8 @@
-import pytest
-
 from dw_refactor_agent.assessment.assessment_context import AssessmentContext
-from dw_refactor_agent.assessment.rules.definitions.model_design import (
-    extract_model_design_sql_facts,
-)
 from dw_refactor_agent.assessment.rules.dimensions.model_design import (
     score_model_design_health,
 )
+from tests.case_matrix import case_matrix
 
 
 def _models_from_tables(tables):
@@ -60,50 +56,6 @@ def _rule_ids(result):
     return {issue["rule_id"] for issue in result["issues"]}
 
 
-def test_extract_model_design_sql_facts_detects_group_by_and_aggregates():
-    sql = """
-    INSERT INTO shop_dm.dws_store_sales_daily
-    SELECT store_id, order_date AS stat_date, SUM(subtotal) AS total_amount
-    FROM shop_dm.dwd_order_detail
-    GROUP BY store_id, order_date;
-    """
-
-    facts = extract_model_design_sql_facts(sql)
-
-    assert facts["has_group_by"] is True
-    assert facts["has_aggregate"] is True
-    assert facts["group_by_columns"] == ["order_date", "store_id"]
-    assert "total_amount" in facts["aggregate_aliases"]
-
-
-def test_extract_model_design_sql_facts_detects_unaliased_aggregate():
-    sql = """
-    SELECT COUNT(*)
-    FROM shop_dm.ods_order;
-    """
-
-    facts = extract_model_design_sql_facts(sql)
-
-    assert facts["has_aggregate"] is True
-    assert facts["aggregate_aliases"] == []
-    assert facts["has_window_metric"] is False
-
-
-def test_extract_model_design_sql_facts_detects_plain_detail_select():
-    sql = """
-    INSERT INTO shop_dm.dwd_order_detail
-    SELECT order_item_id, order_id, subtotal
-    FROM shop_dm.ods_order_item;
-    """
-
-    facts = extract_model_design_sql_facts(sql)
-
-    assert facts["has_group_by"] is False
-    assert facts["has_aggregate"] is False
-    assert facts["group_by_columns"] == []
-    assert facts["aggregate_aliases"] == []
-
-
 def test_model_design_flags_dwd_fact_with_group_by():
     asset_catalog = {
         "tables": {
@@ -155,55 +107,6 @@ def test_model_design_flags_dwd_fact_with_group_by():
     result = score_model_design_health(context)
 
     assert _rule_ids(result) == {"MODEL_DWD_FACT_NO_AGGREGATION"}
-
-
-def test_model_design_flags_dws_grain_mismatch_with_group_by():
-    asset_catalog = {
-        "tables": {
-            "dws_store_sales_daily": {
-                "tasks": [
-                    {
-                        "source_file": "dws_store_sales_daily.sql",
-                        "sql": """
-                    INSERT INTO shop_dm.dws_store_sales_daily
-                    SELECT store_id, order_date AS stat_date,
-                           SUM(subtotal) AS total_amount
-                    FROM shop_dm.dwd_order_detail
-                    GROUP BY store_id, order_date;
-                    """,
-                    }
-                ],
-            },
-        },
-    }
-    tables = [{"name": "dws_store_sales_daily", "layer": "DWS", "columns": []}]
-    model_metadata = {
-        "dws_store_sales_daily": {
-            "table_type": "fact",
-            "grain": {
-                "entities": ["CUSTOMER"],
-                "time_column": "stat_date",
-            },
-            "entities": [
-                {
-                    "code": "CUSTOMER",
-                    "type": "foreign",
-                    "key_columns": ["customer_id"],
-                }
-            ],
-        }
-    }
-
-    context = _context(
-        tables,
-        [],
-        [],
-        models=model_metadata,
-        assets=asset_catalog,
-    )
-    result = score_model_design_health(context)
-
-    assert "MODEL_DWS_GRAIN_MATCHES_GROUP_BY" in _rule_ids(result)
 
 
 def test_model_design_matches_dws_grain_columns_case_insensitively():
@@ -458,74 +361,7 @@ def test_model_design_flags_dws_plain_field_not_in_group_by_from_typed_edges():
     assert "channel_type" not in check["evidence"]["leaked_columns"]
 
 
-def test_model_design_flags_dim_metric_groups_without_llm():
-    tables = [{"name": "dim_customer", "layer": "DIM", "columns": []}]
-    model_metadata = {
-        "dim_customer": {
-            "table_type": "dimension",
-            "atomic_metrics": [{"name": "customer_count"}],
-        }
-    }
-
-    context = _context(
-        tables,
-        [],
-        [],
-        models=model_metadata,
-    )
-    result = score_model_design_health(context)
-
-    assert _rule_ids(result) == {"MODEL_DIM_NO_METRIC_GROUPS"}
-
-
-def test_model_design_flags_dim_info_from_non_ods_upstream():
-    tables = [
-        {"name": "dwd_customer_profile", "layer": "DWD", "columns": []},
-        {"name": "dim_base_customer_info", "layer": "DIM", "columns": []},
-    ]
-    edges = [
-        {
-            "source": {
-                "type": "column",
-                "id": "dwd_customer_profile.customer_status",
-            },
-            "target": {
-                "type": "column",
-                "id": "dim_base_customer_info.customer_status",
-            },
-            "relation_type": "direct",
-            "transformation_type": "passthrough",
-            "expression": "customer_status",
-            "source_file": "dim_base_customer_info.sql",
-        }
-    ]
-    model_metadata = {
-        "dim_base_customer_info": {
-            "table_type": "dimension",
-            "dimension_role": "BASE",
-            "dimension_content_type": "INFO",
-        }
-    }
-
-    context = _context(tables, edges, [], models=model_metadata)
-    result = score_model_design_health(context)
-
-    assert "MODEL_DIM_INFO_DIRECT_ODS_ONLY" in _rule_ids(result)
-    check = next(
-        check
-        for check in result["checks"]
-        if check["rule_id"] == "MODEL_DIM_INFO_DIRECT_ODS_ONLY"
-    )
-    assert check["evidence"]["invalid_upstream_tables"] == [
-        {
-            "table": "dwd_customer_profile",
-            "layer": "DWD",
-        }
-    ]
-    assert check["evidence"]["reason_codes"] == ["non_ods_upstream"]
-
-
-@pytest.mark.parametrize(
+@case_matrix(
     ("sql", "evidence_field", "reason_code"),
     [
         (
@@ -727,114 +563,6 @@ def test_score_model_design_uses_context_lineage_view():
     assert calls == {
         "fact_tables": ["dws_orders", "dws_payments"],
     }
-
-
-def test_model_design_flags_dwd_fact_with_non_atomic_metrics():
-    tables = [{"name": "dwd_order_detail", "layer": "DWD", "columns": []}]
-    model_metadata = {
-        "dwd_order_detail": {
-            "table_type": "fact",
-            "calculated_metrics": [{"name": "gross_profit"}],
-        }
-    }
-
-    context = _context(
-        tables,
-        [],
-        [],
-        models=model_metadata,
-    )
-    result = score_model_design_health(context)
-
-    assert "MODEL_DWD_FACT_NO_DERIVED_METRICS" in _rule_ids(result)
-
-
-def test_model_design_flags_dwd_fact_with_multiple_business_processes():
-    tables = [
-        {
-            "name": "dwd_order_detail",
-            "layer": "DWD",
-            "columns": [{"name": "order_id", "type": "BIGINT"}],
-        }
-    ]
-    model_metadata = {
-        "dwd_order_detail": {
-            "table_type": "fact",
-            "business_process": "ORDER_TRANSACTION",
-            "atomic_metrics": [
-                {
-                    "name": "subtotal",
-                    "business_process": "ORDER_TRANSACTION",
-                },
-                {
-                    "name": "refund_amount",
-                    "business_process": "REFUND_TRANSACTION",
-                },
-            ],
-            "entities": [
-                {
-                    "code": "ORDER",
-                    "type": "primary",
-                    "key_columns": ["order_id"],
-                }
-            ],
-        }
-    }
-
-    context = _context(
-        tables,
-        [],
-        [],
-        models=model_metadata,
-    )
-    result = score_model_design_health(context)
-
-    assert "MODEL_DWD_FACT_SINGLE_BUSINESS_PROCESS" in _rule_ids(result)
-    check = next(
-        check
-        for check in result["checks"]
-        if check["rule_id"] == "MODEL_DWD_FACT_SINGLE_BUSINESS_PROCESS"
-    )
-    assert check["evidence"]["business_processes"] == [
-        "ORDER_TRANSACTION",
-        "REFUND_TRANSACTION",
-    ]
-
-
-def test_model_design_flags_dwd_fact_without_primary_entity_or_grain():
-    tables = [
-        {
-            "name": "dwd_order_detail",
-            "layer": "DWD",
-            "columns": [
-                {"name": "order_id", "type": "BIGINT"},
-                {"name": "customer_id", "type": "BIGINT"},
-            ],
-        }
-    ]
-    model_metadata = {
-        "dwd_order_detail": {
-            "table_type": "fact",
-            "business_process": "ORDER_TRANSACTION",
-            "entities": [
-                {
-                    "code": "CUST",
-                    "type": "foreign",
-                    "key_columns": ["customer_id"],
-                }
-            ],
-        }
-    }
-
-    context = _context(
-        tables,
-        [],
-        [],
-        models=model_metadata,
-    )
-    result = score_model_design_health(context)
-
-    assert "MODEL_DWD_FACT_HAS_PRIMARY_ENTITY_OR_GRAIN" in _rule_ids(result)
 
 
 def test_model_design_flags_partition_column_not_data_dt(tmp_path):

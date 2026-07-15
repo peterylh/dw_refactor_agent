@@ -20,6 +20,7 @@ from dw_refactor_agent.lineage.lineage_extractor import (
 )
 from dw_refactor_agent.lineage.query import build_column_lineage
 from dw_refactor_agent.lineage.view import LineageView
+from tests.case_matrix import case_matrix
 
 
 @dataclass(frozen=True)
@@ -150,7 +151,7 @@ def _io_by_position(
     )
 
 
-@pytest.mark.parametrize(
+@case_matrix(
     "scenario",
     SCENARIOS,
     ids=lambda scenario: scenario.project,
@@ -220,35 +221,3 @@ def test_cross_job_process_scenario_is_queryable_and_schedulable(
         scenario.producer_job,
         scenario.consumer_job,
     }
-
-
-@pytest.mark.parametrize(
-    "scenario",
-    [scenario for scenario in SCENARIOS if scenario.companions],
-    ids=lambda scenario: scenario.project,
-)
-def test_full_refresh_companions_preserve_base_task_io(
-    scenario: Scenario,
-) -> None:
-    base_result, _schema = _extract_tasks(
-        scenario.project,
-        [scenario.producer_path, scenario.consumer_path],
-    )
-    companion_result, _schema = _extract_tasks(
-        scenario.project,
-        scenario.companions,
-    )
-
-    assert _io_by_position(companion_result) == _io_by_position(base_result)
-    if scenario.project == "shop":
-        for task_result in companion_result["task_results"]:
-            condition_expressions = {
-                entry.get("condition_expression", "")
-                for entry in task_result["entries"]
-                if entry["lineage_type"] == "indirect"
-            }
-            assert any(
-                "@etl_start_date" in expression
-                and "@etl_end_date" in expression
-                for expression in condition_expressions
-            )

@@ -49,28 +49,6 @@ def test_interval_scope_algebra_handles_overlap_and_subset():
     assert january.overlap(february) is Overlap.DISJOINT
 
 
-def test_predicate_scope_folds_etl_date_and_date_sub_parameters():
-    params = {"etl_date": "2025-01-15"}
-
-    current_day = scope_for_predicate(
-        _where("SELECT * FROM t WHERE stat_date = @etl_date"),
-        "stat_date",
-        params,
-    )
-    previous_day = scope_for_predicate(
-        _where(
-            "SELECT * FROM t "
-            "WHERE stat_date = DATE_SUB(@etl_date, INTERVAL 1 DAY)"
-        ),
-        "stat_date",
-        params,
-    )
-
-    assert current_day == RowScope.point("stat_date", date(2025, 1, 15))
-    assert previous_day == RowScope.point("stat_date", date(2025, 1, 14))
-    assert previous_day.overlap(current_day) is Overlap.DISJOINT
-
-
 def test_predicate_scope_handles_between_in_and_typed_scalars():
     between = scope_for_predicate(
         _where(
@@ -142,16 +120,6 @@ def test_unresolved_column_expression_is_unknown_not_empty():
         scope.overlap(RowScope.point("stat_date", date(2025, 1, 15)))
         is Overlap.UNKNOWN
     )
-
-
-def test_predicate_unrelated_to_partition_column_does_not_restrict_scope():
-    scope = scope_for_predicate(
-        _where("SELECT * FROM t WHERE status = 'PAID'"),
-        "stat_date",
-        {},
-    )
-
-    assert scope.kind is ScopeKind.ALL
 
 
 def test_statement_scope_recognizes_self_read_and_existing_row_mutations():

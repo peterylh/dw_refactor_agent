@@ -9,6 +9,7 @@ from dw_refactor_agent.lineage.contract import (
     validate_lineage_v2,
 )
 from dw_refactor_agent.lineage.model import LineageSnapshot
+from tests.case_matrix import case_matrix
 
 
 def valid_lineage_v2():
@@ -88,7 +89,7 @@ def test_valid_lineage_v2_passes_strict_validation():
     validate_lineage_v2(valid_lineage_v2())
 
 
-@pytest.mark.parametrize("version", [2.0, "2", True])
+@case_matrix("version", [2.0, "2", True])
 def test_v2_requires_integer_format_version(version):
     data = valid_lineage_v2()
     data["format_version"] = version
@@ -102,7 +103,7 @@ def test_v2_requires_integer_format_version(version):
         validate_job_dag_v2(dag)
 
 
-@pytest.mark.parametrize(
+@case_matrix(
     "missing_key",
     [
         "format_version",
@@ -125,7 +126,7 @@ def test_v2_requires_exact_top_level_keys(missing_key):
         validate_lineage_v2(data)
 
 
-@pytest.mark.parametrize(
+@case_matrix(
     "record_name, mutate",
     [
         ("table", lambda data: data["tables"][0].update({"extension": True})),
@@ -153,9 +154,7 @@ def test_v2_rejects_unknown_nested_fields(record_name, mutate):
         validate_lineage_v2(data)
 
 
-@pytest.mark.parametrize(
-    "dataset_type", ["managed", "process", "temporary", "external"]
-)
+@case_matrix("dataset_type", ["managed", "process", "temporary", "external"])
 def test_v2_accepts_all_dataset_types(dataset_type):
     data = valid_lineage_v2()
     data["tables"][0]["dataset_type"] = dataset_type
@@ -204,7 +203,7 @@ def test_v2_job_names_are_unique_case_insensitively():
         validate_lineage_v2(data)
 
 
-@pytest.mark.parametrize("field", ["inputs", "outputs"])
+@case_matrix("field", ["inputs", "outputs"])
 def test_v2_job_io_must_be_sorted_unique_table_name_arrays(field):
     data = valid_lineage_v2()
     data["jobs"][0][field] = "internal.shop_dm.source"
@@ -233,7 +232,7 @@ def test_v2_job_io_must_be_sorted_unique_table_name_arrays(field):
         validate_lineage_v2(data)
 
 
-@pytest.mark.parametrize(
+@case_matrix(
     "field, invalid_ref",
     [
         ("inputs", "evil.internal.shop_dm.source"),
@@ -257,7 +256,7 @@ def test_v2_job_io_rejects_invalid_table_qualifier_segments(
     assert "segments" in message
 
 
-@pytest.mark.parametrize(
+@case_matrix(
     "field, table_index, short_ref, alternate_full_name",
     [
         ("inputs", 0, "source", "external.other_dm.source"),
@@ -298,7 +297,7 @@ def test_v2_job_io_unique_refs_share_canonical_duplicate_semantics():
         validate_lineage_v2(data)
 
 
-@pytest.mark.parametrize("edge_part", ["source", "target"])
+@case_matrix("edge_part", ["source", "target"])
 def test_v2_edge_refs_must_be_typed_objects(edge_part):
     data = valid_lineage_v2()
     data["edges"][0][edge_part] = "internal.shop_dm.source.id"
@@ -307,7 +306,7 @@ def test_v2_edge_refs_must_be_typed_objects(edge_part):
         validate_lineage_v2(data)
 
 
-@pytest.mark.parametrize(
+@case_matrix(
     "edge_part, ref_type, ref_id, missing_kind",
     [
         (
@@ -373,7 +372,7 @@ def test_v2_edge_refs_resolve_unique_suffixes_case_insensitively():
     validate_lineage_v2(data)
 
 
-@pytest.mark.parametrize(
+@case_matrix(
     "edge_part, ref_type, ref_id",
     [
         (
@@ -424,7 +423,7 @@ def test_v2_edge_refs_reject_invalid_table_qualifier_segments(
     assert "segments" in message
 
 
-@pytest.mark.parametrize(
+@case_matrix(
     "full_name",
     [
         "evil.internal.shop_dm.source",
@@ -503,7 +502,7 @@ def test_table_reference_index_avoids_metadata_rescans():
     assert table_metadata.iterations == build_iterations
 
 
-@pytest.mark.parametrize(
+@case_matrix(
     "alternate_full_name, source_ref",
     [
         ("external.other_dm.source", "source.id"),
@@ -535,7 +534,7 @@ def test_v2_edge_refs_reject_ambiguous_table_suffixes(
     assert alternate_full_name in message
 
 
-@pytest.mark.parametrize(
+@case_matrix(
     "source",
     [
         {"type": "literal", "value": "ALL"},
@@ -549,7 +548,7 @@ def test_v2_edge_accepts_typed_constant_sources(source):
     validate_lineage_v2(data)
 
 
-@pytest.mark.parametrize("value", [b"bytes", ("tuple",), {"set"}])
+@case_matrix("value", [b"bytes", ("tuple",), {"set"}])
 def test_v2_literal_source_must_be_a_json_scalar(value):
     data = valid_lineage_v2()
     data["edges"][0]["source"] = {"type": "literal", "value": value}
@@ -558,7 +557,7 @@ def test_v2_literal_source_must_be_a_json_scalar(value):
         validate_lineage_v2(data)
 
 
-@pytest.mark.parametrize(
+@case_matrix(
     "value",
     [float("nan"), float("inf"), float("-inf")],
 )
@@ -601,7 +600,7 @@ def test_v2_diagnostics_use_known_reason_and_jobs():
         validate_lineage_v2(data)
 
 
-@pytest.mark.parametrize(
+@case_matrix(
     "dataset",
     [
         "evil.internal.shop_dm.stage",
@@ -683,7 +682,7 @@ def test_lineage_snapshot_v2_prefers_explicit_jobs_and_fields():
     assert snapshot.edges[0].source_file == ""
 
 
-@pytest.mark.parametrize(
+@case_matrix(
     "mutate, error_path",
     [
         (
@@ -793,7 +792,7 @@ def test_lineage_snapshot_v1_ignores_v2_dataset_type_for_safe_downgrade():
     )
 
 
-@pytest.mark.parametrize("version", [2.0, "2", True, 3])
+@case_matrix("version", [2.0, "2", True, 3])
 def test_lineage_snapshot_rejects_unsupported_explicit_versions(version):
     data = valid_lineage_v2()
     data["format_version"] = version

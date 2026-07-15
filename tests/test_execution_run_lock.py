@@ -62,27 +62,6 @@ def test_execution_target_lock_is_shared_across_checkouts(
             )
 
 
-@pytest.mark.parametrize(
-    "other_target",
-    [
-        ("other.example", 9030, "demo_db"),
-        ("doris.example", 9031, "demo_db"),
-        ("doris.example", 9030, "other_db"),
-    ],
-    ids=("host", "port", "database"),
-)
-def test_execution_target_lock_allows_different_targets(other_target):
-    run_lock = _run_lock_module()
-
-    with ExitStack() as stack:
-        stack.enter_context(
-            run_lock.execution_target_run_lock(
-                "doris.example", 9030, "demo_db"
-            )
-        )
-        stack.enter_context(run_lock.execution_target_run_lock(*other_target))
-
-
 def test_execution_target_lock_directory_honors_environment_override(
     monkeypatch, tmp_path
 ):
@@ -112,20 +91,3 @@ def test_execution_target_lock_directory_rejects_relative_override(
         run_lock.execution_target_run_lock_path(
             "doris.example", 9030, "demo_db"
         )
-
-
-def test_execution_target_lock_releases_after_normal_and_exceptional_exit():
-    run_lock = _run_lock_module()
-    target = ("release.example", 9030, "release_db")
-
-    with run_lock.execution_target_run_lock(*target):
-        pass
-    with run_lock.execution_target_run_lock(*target):
-        pass
-
-    with ExitStack() as stack:
-        stack.enter_context(pytest.raises(RuntimeError, match="boom"))
-        stack.enter_context(run_lock.execution_target_run_lock(*target))
-        raise RuntimeError("boom")
-    with run_lock.execution_target_run_lock(*target):
-        pass

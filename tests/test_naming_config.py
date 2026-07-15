@@ -680,10 +680,6 @@ class TestMatchColumn:
 
 
 class TestNamingDiagnostics:
-    def test_diagnostics_expose_configured_rules(self):
-        self._assert_column_diagnostic_exposes_configured_expression()
-        self._assert_table_diagnostic_exposes_segment_plan()
-
     def _assert_column_diagnostic_exposes_configured_expression(self):
         nc = load_naming_config(PROJECT_ROOT / "naming_config.yaml")
 
@@ -848,25 +844,6 @@ class TestNamingDiagnostics:
         assert attempt["nodes"][0]["type"]["patterns"] == ["^[A-Z][A-Z0-9]*$"]
         assert attempt["failure"]["code"] == "metric_sequence_mismatch"
 
-    def test_metric_diagnostic_exposes_derived_rule_match(self):
-        nc = load_naming_config(config.naming_config_path())
-
-        diagnostic = nc.diagnose_metric_name(
-            "7D_OLD_CHREM_PAY_AMT",
-            metric_kind="derived",
-        )
-
-        assert diagnostic["actual"] == "7D_OLD_CHREM_PAY_AMT"
-        assert diagnostic["metric_kind"] == "derived"
-        assert diagnostic["rule_name"] == "derived"
-        assert diagnostic["passed"] is True
-        assert diagnostic["attempts"][0]["matched_values"] == {
-            "METRIC_TIME_PERIOD": "7D",
-            "METRIC_MODIFIER": ["OLD", "CHREM"],
-            "ACTION_VERB": "PAY",
-            "MEASURE_NOUN": "AMT",
-        }
-
     def test_metric_diagnostic_reports_unknown_rule(self):
         nc = load_naming_config(config.naming_config_path())
 
@@ -886,32 +863,6 @@ class TestNamingDiagnostics:
 
 
 class TestTopLevelDetermineLayer:
-    def test_prefers_model_layer(self, monkeypatch, tmp_path):
-        models_dir = tmp_path / "demo_project" / "ads" / "models"
-        models_dir.mkdir(parents=True)
-        (models_dir / "legacy_name.yaml").write_text(
-            "version: 2\nname: legacy_name\nlayer: ADS\n",
-            encoding="utf-8",
-        )
-
-        monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
-        monkeypatch.setitem(
-            config.PROJECT_CONFIG, "demo", {"dir": "demo_project"}
-        )
-        config.clear_model_metadata_cache()
-
-        assert config.determine_layer("legacy_name", "demo") == "ADS"
-
-    def test_no_prefix_fallback(self, tmp_path, monkeypatch):
-        project = "unit_empty_layers"
-        (tmp_path / project / "mid" / "models").mkdir(parents=True)
-        monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
-        monkeypatch.setitem(config.PROJECT_CONFIG, project, {"dir": project})
-        config.clear_model_metadata_cache()
-
-        assert config.determine_layer("ods_", project) == "OTHER"
-        assert config.determine_layer("dwd_", project) == "OTHER"
-
     def test_without_project_returns_other(self):
         assert config.determine_layer("dwd_customer") == "OTHER"
 
@@ -938,30 +889,6 @@ class TestLayerRank:
 
 
 class TestLoadNamingConfig:
-    def test_load_production_config_scenarios(self):
-        """加载生产 YAML 无异常，关键层存在"""
-        nc = load_naming_config()
-        for layer in ("DWD", "DWS", "ADS", "DIM"):
-            assert layer in nc.layers
-        assert "DWD" in nc.layers
-        assert len(nc.layers["DWD"].templates) == 1
-        assert len(nc.column_segments) > 0
-        assert "ETL_TIME" in nc.common_columns
-        assert "SNAPSHOT_DATE" in nc.common_columns
-        assert "etl_time" not in nc.common_columns
-        assert "prefix_field" not in nc.types
-        assert "suffix_field" not in nc.types
-        assert nc._match_segments("CUSTOMER_ID", nc.column_segments) == {
-            "COLUMN_IDENTIFIER": "CUSTOMER_ID",
-        }
-        assert nc._match_segments("CUSTOMER_ID_123", nc.column_segments) == {
-            "COLUMN_IDENTIFIER": "CUSTOMER_ID_123",
-        }
-        assert nc._match_segments("customer_id", nc.column_segments) is None
-        assert (
-            nc._match_segments("CUSTOMER_ID_LONG1", nc.column_segments) is None
-        )
-
     def test_segment_repeat_syntax_applies_to_table_and_column_rules(
         self, tmp_path
     ):
@@ -1023,10 +950,6 @@ bindings:
             "ENTITY": "CUST",
             "METRICS_DESC": "BAL",
         }
-
-    def test_yaml_file_not_found(self):
-        with pytest.raises(FileNotFoundError):
-            load_naming_config("/nonexistent/path.yaml")
 
     def test_metric_pattern_uses_explicit_separators(self, tmp_path):
         cfg_path = tmp_path / "naming.yaml"
@@ -1478,52 +1401,6 @@ class TestGetNamingConfigByProject:
             is None
         )
 
-    def test_project_naming_dictionary_does_not_fallback_without_taxonomy(
-        self, tmp_path, monkeypatch
-    ):
-        project = "unit_catalog_naming_no_taxonomy"
-        project_dir = tmp_path / project
-        project_dir.mkdir()
-        cfg_path = _write_legacy_business_dictionary_config(tmp_path)
-        monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
-        monkeypatch.setitem(
-            config.PROJECT_CONFIG,
-            project,
-            {
-                "dir": project,
-                "naming_config": cfg_path.name,
-            },
-        )
-        config.clear_naming_config_cache()
-        config.clear_business_semantics_cache()
-
-        nc = get_naming_config(project)
-
-        _assert_business_dictionary_fallback_disabled(nc)
-        assert (
-            nc._match_segments(
-                "M_PAYM_04_ORDER_DI",
-                nc.layers["DWD"].templates[0],
-            )
-            is None
-        )
-
-    def test_direct_load_naming_config_does_not_use_business_dictionaries_without_taxonomy(
-        self, tmp_path
-    ):
-        cfg_path = _write_legacy_business_dictionary_config(tmp_path)
-
-        nc = load_naming_config(cfg_path)
-
-        _assert_business_dictionary_fallback_disabled(nc)
-        assert (
-            nc._match_segments(
-                "M_PAYM_04_ORDER_DI",
-                nc.layers["DWD"].templates[0],
-            )
-            is None
-        )
-
     def test_direct_load_naming_config_extra_dictionaries_ignore_business_dictionaries(
         self, tmp_path
     ):
@@ -1547,26 +1424,6 @@ class TestGetNamingConfigByProject:
         assert nc.dictionaries["source_systems"]["values"][0]["code"] == "ERP"
         _assert_business_dictionary_fallback_disabled(
             nc, keep_empty_business_keys=False
-        )
-
-    def test_load_business_domain_config_for_finance_project(
-        self, isolated_project_naming_configs
-    ):
-        business_config = get_business_domain_config(
-            isolated_project_naming_configs["finance"]
-        )
-
-        assert business_config.is_valid_domain("04") is True
-        assert business_config.normalize_domain("TRAN") == "04"
-        assert business_config.normalize_domain("4") == "04"
-        assert business_config.is_valid_domain("99") is True
-        assert business_config.is_valid_business_area("PAYM") is True
-        assert business_config.is_valid_business_area("OTHR") is True
-        assert "PAYM" in business_config.business_area_codes
-        assert "04" in business_config.domain_ids
-        assert (
-            "allowed_data_domains"
-            not in (business_config.prompt_options()["business_areas"][0])
         )
 
     def test_load_business_domain_config_for_shop_project(

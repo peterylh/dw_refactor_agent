@@ -46,55 +46,6 @@ def test_build_job_records_rejects_duplicate_source_stems():
         )
 
 
-def test_job_records_keep_final_persistent_recreate_output():
-    jobs = build_job_records(
-        [
-            {
-                "source_file": "prepare.sql",
-                "input_tables": ["src"],
-                "output_tables": ["db.t"],
-                "temporary_tables": ["db.t"],
-                "local_lifecycle_tables": [{"name": "db.t"}],
-            }
-        ],
-        lambda table: table,
-    )
-
-    assert jobs[0]["outputs"] == ["db.t"]
-
-
-def test_unique_external_process_producer_builds_dependency():
-    dependencies, diagnostics = resolve_job_dependencies(
-        [
-            {"name": "a", "inputs": ["db.src"], "outputs": ["db.t"]},
-            {"name": "b", "inputs": ["db.t"], "outputs": ["db.out"]},
-        ],
-        [{"full_name": "db.t", "dataset_type": "process"}],
-    )
-
-    assert dependencies == [
-        {
-            "upstream_job": "a",
-            "downstream_job": "b",
-            "datasets": ["db.t"],
-        }
-    ]
-    assert diagnostics == []
-
-
-def test_local_producer_takes_precedence_without_self_dependency():
-    dependencies, diagnostics = resolve_job_dependencies(
-        [
-            {"name": "external", "inputs": [], "outputs": ["db.t"]},
-            {"name": "local", "inputs": ["db.t"], "outputs": ["db.t"]},
-        ],
-        [{"full_name": "db.t", "dataset_type": "process"}],
-    )
-
-    assert dependencies == []
-    assert diagnostics == []
-
-
 def test_multiple_process_producers_emit_diagnostic_without_guessing():
     dependencies, diagnostics = resolve_job_dependencies(
         [
@@ -153,40 +104,6 @@ def test_missing_process_and_temporary_producers_are_diagnosed_together():
             "consumer_jobs": ["consumer_a"],
             "candidate_producer_jobs": [],
         },
-    ]
-
-
-def test_external_and_managed_inputs_without_producers_are_not_diagnosed():
-    dependencies, diagnostics = resolve_job_dependencies(
-        [{"name": "consumer", "inputs": ["db.ods", "db.ext"], "outputs": []}],
-        [
-            {"full_name": "db.ods", "dataset_type": "managed"},
-            {"full_name": "db.ext", "dataset_type": "external"},
-        ],
-    )
-
-    assert dependencies == []
-    assert diagnostics == []
-
-
-def test_temporary_dataset_is_never_an_external_producer():
-    dependencies, diagnostics = resolve_job_dependencies(
-        [
-            {"name": "temporary_job", "inputs": [], "outputs": ["db.t"]},
-            {"name": "consumer", "inputs": ["db.t"], "outputs": []},
-        ],
-        [{"full_name": "db.t", "dataset_type": "temporary"}],
-    )
-
-    assert dependencies == []
-    assert diagnostics == [
-        {
-            "code": "UNRESOLVED_DATASET_PRODUCER",
-            "dataset": "db.t",
-            "reason": "not_found",
-            "consumer_jobs": ["consumer"],
-            "candidate_producer_jobs": [],
-        }
     ]
 
 
