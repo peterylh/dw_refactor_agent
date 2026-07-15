@@ -116,6 +116,7 @@ def _create_demo_project(root):
         source / "mid" / "tasks" / "dwd_order_detail.sql",
         """
         -- DWD 明细层 task
+        TRUNCATE TABLE demo_dm.dwd_order_detail;
         INSERT INTO demo_dm.dwd_order_detail
         SELECT order_id FROM demo_dm.ods_order_event;
         """,
@@ -142,6 +143,7 @@ def _create_demo_project(root):
     _write_text(
         source / "mid" / "tasks" / "dim_customer_profile.sql",
         """
+        TRUNCATE TABLE demo_dm.dim_customer_profile;
         INSERT INTO demo_dm.dim_customer_profile
         SELECT order_id FROM demo_dm.ods_order_event;
         """,
@@ -149,6 +151,7 @@ def _create_demo_project(root):
     _write_text(
         source / "ads" / "tasks" / "ads_order_dashboard.sql",
         """
+        TRUNCATE TABLE demo_dm.ads_order_dashboard;
         INSERT INTO demo_dm.ads_order_dashboard
         SELECT stat_date FROM demo_dm.dws_order_summary;
         """,

@@ -358,8 +358,13 @@ python -m dw_refactor_agent.assessment.llm.model_metadata_writer --project shop 
 python -m dw_refactor_agent.assessment.llm.model_metadata_writer --project shop --mode generate --llm
 ```
 
-`--mode generate` 是冷启动重建：不读取现有 models 作为推断先验，正式写入前会清空当前项目
-`models/*.yaml`，再基于业务语义目录、DDL、task SQL 和 lineage 重新生成。缺少三份 split catalog YAML 时会自动补齐骨架；`--dry-run` 不删除或写入文件，只在结果 JSON 中列出 `planned_deleted_model_files` 和 `planned_catalog_written_names`，并用内存中的 catalog skeleton 继续模拟生成。只想维护 catalog 时，使用独立入口 `python -m dw_refactor_agent.assessment.business_semantics_catalog ...`。
+`--mode generate` 是冷启动重建：不读取现有 models 作为推断先验，先基于业务语义目录、DDL、task SQL 和 lineage 生成候选；候选通过发布校验后才替换当前项目 `models/*.yaml`。缺少三份 split catalog YAML 时会自动补齐骨架；`--dry-run` 不删除或写入文件，只在结果 JSON 中列出 `planned_deleted_model_files` 和 `planned_catalog_written_names`，并用内存中的 catalog skeleton 继续模拟生成。只想维护 catalog 时，使用独立入口 `python -m dw_refactor_agent.assessment.business_semantics_catalog ...`。
+
+`generate` 不读取旧 models，也不会用旧执行配置兜底。它会从 task SQL 的 `TRUNCATE`、
+目标表切片 DELETE、ETL 参数和 full-refresh 伴随任务确定性重建 `execution`。所有候选先在
+内存中完成发布校验；执行契约无法闭合、LLM 结果 blocked、实体键无效、实体关系不完整或
+业务过程/语义主题未能写回 catalog 时，结果中的 `publication.status` 为 `blocked`，且不会
+删除或覆盖正式 catalog/models。
 
 ### 指标识别与回写
 

@@ -236,13 +236,16 @@ def _seed_entry_index(
 ) -> dict[str, dict[str, Any]]:
     index: dict[str, dict[str, Any]] = {}
     for entry in entries:
-        code = _normalize_catalog_code(entry.get("code"))
-        if not code:
+        raw_code = str(entry.get("code") or "").strip()
+        canonical_code = _normalize_catalog_code(raw_code)
+        if not canonical_code:
             continue
         seeded = dict(entry)
-        seeded["code"] = code
+        # Catalog codes are governed identifiers.  Match them canonically,
+        # but keep the spelling already committed by human review.
+        seeded["code"] = raw_code
         seeded.pop("tables", None)
-        index[code] = seeded
+        index[canonical_code] = seeded
     return index
 
 
