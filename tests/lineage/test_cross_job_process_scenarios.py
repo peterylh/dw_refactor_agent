@@ -1,8 +1,9 @@
 from dataclasses import dataclass
-from typing import Dict, Sequence, Set, Tuple
+from typing import Dict, Iterator, Sequence, Set, Tuple
 
 import pytest
 
+import dw_refactor_agent.lineage.lineage_extractor as lineage_extractor
 from dw_refactor_agent.config import (
     project_dir as configured_project_dir,
 )
@@ -72,6 +73,28 @@ SCENARIOS = (
         ),
     ),
 )
+
+
+@pytest.fixture(autouse=True)
+def restore_lineage_extractor_project() -> Iterator[None]:
+    project_state = (
+        lineage_extractor.CURRENT_PROJECT,
+        lineage_extractor.CURRENT_CATALOG,
+        lineage_extractor.CURRENT_DB,
+    )
+    try:
+        yield
+    finally:
+        (
+            lineage_extractor.CURRENT_PROJECT,
+            lineage_extractor.CURRENT_CATALOG,
+            lineage_extractor.CURRENT_DB,
+        ) = project_state
+        assert project_state == (
+            lineage_extractor.CURRENT_PROJECT,
+            lineage_extractor.CURRENT_CATALOG,
+            lineage_extractor.CURRENT_DB,
+        )
 
 
 def _extract_tasks(
