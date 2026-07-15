@@ -6,6 +6,7 @@ business_area: SHOP
 description: 门店日销售汇总
 execution:
   materialized: incremental
+  full_refresh_strategy: companion
 calculated_metrics:
 - payment_amount
 atomic_metrics:

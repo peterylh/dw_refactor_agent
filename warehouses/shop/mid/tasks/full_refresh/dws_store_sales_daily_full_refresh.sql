@@ -1,11 +1,7 @@
--- ============================================================
--- 加工作业: DWS 门店日销售汇总表
--- 源表: dwd_order_detail
--- 加工逻辑: 按门店+日期汇总到过程表 -> 清理异常数据 -> 写入目标表
--- 写入模式: 按 stat_date 分区, DELETE + INSERT 按日处理
--- ============================================================
+-- 门店日销售汇总全量窗口作业
+SET @etl_start_date = COALESCE(@etl_start_date, @etl_end_date, CURDATE());
+SET @etl_end_date = COALESCE(@etl_end_date, @etl_start_date, CURDATE());
 
-SET @etl_date = COALESCE(@etl_date, CURDATE());
 DROP TABLE IF EXISTS shop_dm.stage_store_sales_daily;
 
 CREATE TABLE shop_dm.stage_store_sales_daily AS
@@ -19,7 +15,8 @@ SELECT
     SUM(subtotal - discount) AS payment_amount,
     NOW() AS etl_time
 FROM shop_dm.dwd_order_detail
-WHERE IF(@full_refresh = 1, 1 = 1, order_date = CAST(@etl_date AS DATE))
+WHERE order_date BETWEEN CAST(@etl_start_date AS DATE)
+    AND CAST(@etl_end_date AS DATE)
 GROUP BY store_id, order_date
 HAVING COUNT(DISTINCT order_id) <> 0
    AND (
@@ -28,7 +25,8 @@ HAVING COUNT(DISTINCT order_id) <> 0
    );
 
 DELETE FROM shop_dm.dws_store_sales_daily
-WHERE IF(@full_refresh = 1, 1 = 1, stat_date = CAST(@etl_date AS DATE));
+WHERE stat_date BETWEEN CAST(@etl_start_date AS DATE)
+    AND CAST(@etl_end_date AS DATE);
 
 INSERT INTO shop_dm.dws_store_sales_daily (
     store_id,

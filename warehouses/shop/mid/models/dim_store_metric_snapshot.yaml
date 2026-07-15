@@ -5,6 +5,7 @@ table_type: fact
 description: DIM anti-pattern fixture with metric group metadata
 execution:
   materialized: incremental
+  full_refresh_strategy: companion
   slice:
     param: etl_date
     column: snapshot_date
