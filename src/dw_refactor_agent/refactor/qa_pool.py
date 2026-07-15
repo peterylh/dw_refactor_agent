@@ -10,7 +10,12 @@ from datetime import datetime
 
 import pymysql
 
-from dw_refactor_agent.config import DORIS_HOST, DORIS_PORT, DORIS_QA_USER
+from dw_refactor_agent.config import (
+    DORIS_HOST,
+    DORIS_PORT,
+    DORIS_QA_USER,
+    TEXT_ENCODING,
+)
 from dw_refactor_agent.refactor.artifact_contract import ArtifactFormatError
 
 _DATABASE_IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -399,7 +404,7 @@ def require_slot_ownership(
 def _rotated_pool(pool: tuple[str, ...], execution_id: str) -> tuple[str, ...]:
     if not pool:
         return ()
-    digest = hashlib.sha256(execution_id.encode("utf-8")).digest()
+    digest = hashlib.sha256(execution_id.encode(TEXT_ENCODING)).digest()
     start = int.from_bytes(digest[:8], "big") % len(pool)
     return pool[start:] + pool[:start]
 
