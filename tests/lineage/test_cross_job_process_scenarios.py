@@ -1,4 +1,3 @@
-import re
 from dataclasses import dataclass
 from typing import Dict, Iterator, Sequence, Set, Tuple
 
@@ -11,7 +10,6 @@ from dw_refactor_agent.config import (
 from dw_refactor_agent.config import (
     task_source_file,
 )
-from dw_refactor_agent.execution.planner import ExecutionPlanner
 from dw_refactor_agent.lineage.contract import validate_lineage_v2
 from dw_refactor_agent.lineage.job_dag import job_dag_from_lineage
 from dw_refactor_agent.lineage.lineage_extractor import (
@@ -254,126 +252,3 @@ def test_full_refresh_companions_preserve_base_task_io(
                 and "@etl_end_date" in expression
                 for expression in condition_expressions
             )
-
-
-@pytest.mark.parametrize(
-    ("project", "relative_path", "process_table"),
-    [
-        (scenario.project, relative_path, scenario.process_table)
-        for scenario in SCENARIOS
-        for relative_path in (
-            scenario.producer_path,
-            scenario.companions[0],
-        )
-    ],
-    ids=("shop-slice", "shop-window", "retail-slice", "retail-window"),
-)
-def test_process_producer_ctas_is_one_replica_and_immutable(
-    project: str,
-    relative_path: str,
-    process_table: str,
-) -> None:
-    project_path = configured_project_dir(project)
-    assert project_path is not None
-    sql = (project_path / relative_path).read_text(encoding="utf-8")
-    ctas = re.search(
-        rf"CREATE\s+TABLE\s+{re.escape(process_table)}\s+"
-        r'PROPERTIES\s*\(\s*"replication_num"\s*=\s*"1"\s*\)\s+AS\b',
-        sql,
-        flags=re.IGNORECASE | re.DOTALL,
-    )
-
-    assert ctas is not None
-    assert not re.search(
-        rf"\b(?:DELETE\s+FROM|UPDATE|TRUNCATE\s+TABLE|INSERT\s+INTO|"
-        rf"ALTER\s+TABLE|DROP\s+TABLE(?:\s+IF\s+EXISTS)?)\s+"
-        rf"{re.escape(process_table)}\b",
-        sql[ctas.end() :],
-        flags=re.IGNORECASE,
-    )
-
-
-@pytest.mark.parametrize(
-    "relative_path",
-    (SCENARIOS[0].producer_path, SCENARIOS[0].companions[0]),
-    ids=("slice", "window"),
-)
-def test_shop_producer_folds_process_cleanup_into_ctas(
-    relative_path: str,
-) -> None:
-    result, _schema = _extract_tasks("shop", [relative_path])
-    entries = result["task_results"][0]["entries"]
-    process_table = SCENARIOS[0].process_table.rsplit(".", 1)[-1]
-
-    assert [
-        entry
-        for entry in entries
-        if entry.get("source_table") == process_table
-        and entry.get("target_table") == process_table
-    ] == []
-    assert any(
-        entry.get("target_table") == process_table
-        and entry.get("target_column") == "discount_amount"
-        and entry.get("expression")
-        == "COALESCE(SUM(discount), 0.00) AS discount_amount"
-        for entry in entries
-    )
-    assert {
-        entry["condition_expression"]
-        for entry in entries
-        if entry.get("target_table") == process_table
-        and entry.get("condition_type") == "HAVING"
-    } == {
-        "COUNT(DISTINCT order_id) <> 0 AND "
-        "(SUM(subtotal - discount) IS NULL OR "
-        "SUM(subtotal - discount) >= 0)"
-    }
-
-
-def test_shop_full_refresh_uses_one_companion_invocation_per_job() -> None:
-    scenario = next(
-        scenario for scenario in SCENARIOS if scenario.project == "shop"
-    )
-    project_path = configured_project_dir(scenario.project)
-    assert project_path is not None
-    planner = ExecutionPlanner(scenario.project)
-
-    invocations = []
-    for job_name, relative_path in (
-        (scenario.producer_job, scenario.producer_path),
-        (scenario.consumer_job, scenario.consumer_path),
-    ):
-        spec = planner.task_spec(job_name, project_path / relative_path)
-        invocations.extend(
-            planner.plan_full_refresh(spec, ["2025-01-15", "2025-01-16"])
-        )
-
-    window = {
-        "etl_start_date": "2025-01-15",
-        "etl_end_date": "2025-01-16",
-    }
-    assert [
-        (
-            invocation.job_name,
-            invocation.sql_path.relative_to(project_path).as_posix(),
-            invocation.params,
-            invocation.full_refresh,
-            invocation.strategy,
-        )
-        for invocation in invocations
-    ] == [
-        (
-            scenario.producer_job,
-            scenario.companions[0],
-            window,
-            True,
-            "companion",
-        ),
-        (
-            scenario.consumer_job,
-            scenario.companions[1],
-            window,
-            True,
-            "companion",
-        ),
-    ]

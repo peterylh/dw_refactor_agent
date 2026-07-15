@@ -141,10 +141,12 @@ done
 - `--validate-only`：仅构建并校验完整计划，不执行 SQL
 - `--skip-unsupported-history`：历史补跑时跳过不支持非当天回放的 current-state 作业
 
-实际 SQL 执行会在项目 `artifacts/execution/task_run.lock` 上持有非阻塞 advisory
-file lock，覆盖完整 producer→consumer 运行；同一项目的重叠运行会在首个 SQL 写入前失败，
-`--validate-only` 不加锁。分布式调度器必须共享该 lock 文件系统，或在外部实施等价的
-项目级互斥。
+实际 SQL 执行按物理目标 `(host, port, database)` 持有非阻塞 advisory file lock，
+覆盖完整 producer→consumer 运行；同一宿主机上的不同 checkout/worktree 访问同一
+Doris 目标时也会在首个 SQL 写入前互斥，`--validate-only` 不加锁。锁目录默认是系统
+临时目录下的 `dw_refactor_agent/run_locks`，可通过
+`DW_REFACTOR_AGENT_RUN_LOCK_DIR` 覆盖。默认目录只保证同一执行宿主机内互斥；多执行
+宿主机必须把该环境变量指向支持 `flock` 的共享文件系统，或由外部调度器保证等价互斥。
 
 每次 `task_run.py` 规划都会先从当前 task SQL 刷新 lineage，再立即从同一份 v2 payload
 生成并保存 Job DAG；正常模式复用 task 级缓存，`--refresh-dag` 强制 `--no-cache`。

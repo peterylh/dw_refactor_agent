@@ -323,6 +323,49 @@ Job DAG 是从 lineage 快照派生的执行视图，不是核心血缘事实来
 
 旧版 `edges`、`self_edges` 仅在加载旧 DAG 时兼容；版本 2 生成器不再输出这两个字段。
 
+## 执行规划安全边界
+
+`task_run` 每次规划都先针对当前 task SQL 运行 extractor，再从同一份 fresh lineage v2
+payload 生成和保存 Job DAG。普通模式允许复用 task 级抽取缓存；`--refresh-dag` 的实际
+含义是向 extractor 传递 `--no-cache`。执行器不再根据旧 DAG 的 Job 名集合判断是否刷新，
+也不会把旧 lineage 与新 DAG 混合使用。
+
+执行计划同时消费两类既有证据，不重新实现生产者解析：
+
+- 对已经解析的 process `data_dependencies`，选择 consumer 时必须同时选择 producer；
+- 对 lineage 中的 `UNRESOLVED_DATASET_PRODUCER`，只要被选择的 process consumer 命中
+  `not_found` 或 `multiple_candidates`，即使所有候选 Job 都在计划中也必须拒绝执行。
+
+未选择相关 consumer 的无关子集可以继续执行；managed dataset 的依赖或诊断不会被该
+process 安全边界误拦。该检查适用于默认完整 Job 集合和显式 `--job-list`，并发生在任何
+数据库访问和 SQL 写入之前。
+
+## 执行互斥
+
+SQL 执行锁按 Doris 物理目标 `(host, port, database)` 建立，而不是按项目名或 checkout
+路径建立。canonical target 的安全摘要决定锁文件名，因此同一宿主机上的主 checkout 与
+worktree 会竞争同一把锁，不同 host、port 或 database 可以并行。
+
+默认锁目录为 `tempfile.gettempdir()/dw_refactor_agent/run_locks`；
+`DW_REFACTOR_AGENT_RUN_LOCK_DIR` 可以覆盖它。默认仅保证同一执行宿主机内互斥。多执行
+宿主机部署必须把该变量指向支持 `flock` 的共享文件系统，或由外部调度器提供等价互斥。
+
+## 已落地的真实资产场景
+
+`shop` 使用 `stage_store_sales_daily` 在 `dws_store_sales_daily` 与
+`dim_store_metric_snapshot` 两个 Job 之间交接。增量 base SQL 和
+`full_refresh/` 下的窗口 companion SQL 都保持相同 Job I/O。过程表只由一次 CTAS
+写成；原有空折扣和非法汇总行清理由 `COALESCE` 与 `HAVING` 折叠进 CTAS，避免 CTAS 后
+再次更新过程表造成自写血缘和下游读取时刻不一致。CTAS 显式设置
+`PROPERTIES ("replication_num" = "1")`，以兼容单 BE 的 Doris 开发/验证环境。
+
+`retail_banking` 使用 `stage_client_transaction_daily` 在
+`dws_client_transaction_daily` 与 `ads_customer_transaction_kpi_daily` 之间交接，增量与
+窗口 companion 由同一生成器产生。权威来源是
+`semantic_specs/dws_ads.yaml` 的 `process_table_handoff`，
+`tools/generate_assets.py` 负责生成 base/full-refresh producer 和 consumer SQL；不得在
+生成文件上维护第二份手工逻辑。
+
 ## 内存模型调整
 
 ### LineageTable
@@ -423,7 +466,9 @@ io_type       INPUT / OUTPUT
 - `job_dag.py`：从显式 Job 数据依赖生成并读写 DAG v2。
 - `view.py`、`query.py`、HTML 刷新逻辑：通过 Edge Job 获取任务和源文件信息。
 - `import_lineage.py` 及 lineage DDL：导入 `dataset_type`、Job I/O 和 Edge Job。
-- `task_run.py`、refactor 验证：消费显式 Job DAG，同时保留旧 DAG 读取兼容。
+- `task_run.py`：从 fresh lineage 生成显式 Job DAG，并在执行边界 fail closed。
+- `run_lock.py`：按物理 Doris 目标序列化 SQL 执行，不依赖 checkout 路径。
+- refactor 验证：消费显式 Job DAG，同时保留旧 DAG 读取兼容。
 
 ## 测试与验收
 

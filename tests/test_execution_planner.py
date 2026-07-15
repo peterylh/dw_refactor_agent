@@ -401,6 +401,52 @@ def test_companion_receives_configured_full_refresh_window(
         )
 
 
+def test_shop_process_jobs_use_one_window_companion_invocation_each():
+    project_path = config.project_dir("shop")
+    assert project_path is not None
+    planner = ExecutionPlanner("shop")
+    jobs = (
+        (
+            "dws_store_sales_daily",
+            "mid/tasks/dws_store_sales_daily.sql",
+            "mid/tasks/full_refresh/dws_store_sales_daily_full_refresh.sql",
+        ),
+        (
+            "dim_store_metric_snapshot",
+            "mid/tasks/dim_store_metric_snapshot.sql",
+            (
+                "mid/tasks/full_refresh/"
+                "dim_store_metric_snapshot_full_refresh.sql"
+            ),
+        ),
+    )
+
+    invocations = []
+    for job_name, task_path, _companion_path in jobs:
+        spec = planner.task_spec(job_name, project_path / task_path)
+        invocations.extend(
+            planner.plan_full_refresh(spec, ["2025-01-15", "2025-01-16"])
+        )
+
+    window = {
+        "etl_start_date": "2025-01-15",
+        "etl_end_date": "2025-01-16",
+    }
+    assert [
+        (
+            invocation.job_name,
+            invocation.sql_path.relative_to(project_path).as_posix(),
+            invocation.params,
+            invocation.full_refresh,
+            invocation.strategy,
+        )
+        for invocation in invocations
+    ] == [
+        (job_name, companion_path, window, True, "companion")
+        for job_name, _task_path, companion_path in jobs
+    ]
+
+
 def test_legacy_full_refresh_runs_normal_sql_once_with_full_refresh_one(
     monkeypatch,
     tmp_path,

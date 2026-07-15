@@ -4,7 +4,14 @@
 
 **Goal:** Make an existing producer and consumer in both `shop` and `retail_banking` hand data across Jobs through a persistent process table, then prove lineage v2 and Job DAG v2 resolve the handoff correctly.
 
-**Architecture:** Only checked-in warehouse SQL assets and one scenario acceptance test are added or changed. The test reuses the existing extractor, strict contract, Job dependency resolver, DAG builder, and column query instead of adding project-specific lineage code. Retail banking incremental and full-refresh variants keep identical Job I/O.
+**Architecture:** Warehouse process handoffs are verified through the existing
+extractor, strict contract, Job dependency resolver, DAG builder, and column
+query; no project-specific lineage algorithm is added. The delivered safety
+layer also refreshes lineage before every execution plan, fails closed on
+unresolved selected process producers, and locks SQL by physical Doris target.
+Scenario, warehouse-asset guard, execution planner, and run-lock tests live at
+their owning boundaries. Both projects keep base and window-companion Job I/O
+equivalent.
 
 **Tech Stack:** Doris SQL, Python 3.7, sqlglot-based lineage extraction, pytest, lineage v2, Job DAG v2.
 
@@ -16,6 +23,9 @@
   table build and managed DWS materialization.
 - `warehouses/shop/mid/tasks/dim_store_metric_snapshot.sql`: consumes the shop
   process table.
+- `warehouses/shop/mid/tasks/full_refresh/dws_store_sales_daily_full_refresh.sql`
+  and `dim_store_metric_snapshot_full_refresh.sql`: implement the same handoff
+  for one configured date window.
 - `warehouses/retail_banking/mid/tasks/dws_client_transaction_daily.sql`:
   owns the retail banking incremental stage table build and managed DWS
   materialization.
@@ -25,13 +35,43 @@
   owns the full-refresh process-table variant.
 - `warehouses/retail_banking/ads/tasks/full_refresh/ads_customer_transaction_kpi_daily_full_refresh.sql`:
   consumes the full-refresh process table.
+- `warehouses/retail_banking/semantic_specs/dws_ads.yaml`: authoritative
+  `process_table_handoff` contract for generated retail banking SQL.
+- `warehouses/retail_banking/tools/generate_assets.py`: single generator for
+  retail banking base/full-refresh producer and consumer assets.
 - `tests/lineage/test_cross_job_process_scenarios.py`: hermetic acceptance of
   the two checked-in scenarios through existing lineage interfaces.
+- `tests/test_process_table_assets.py`: Doris CTAS and immutable process-output
+  asset guards.
+- `tests/test_execution_planner.py`: real shop companion planning assertions.
+- `src/dw_refactor_agent/execution/task_run.py` and `run_lock.py`: fresh
+  lineage fail-closed planning and physical-target execution serialization.
 
 No managed DDL/model file is created for either process table. No core lineage
 module is expected to change. If the scenarios expose a core defect, add the
 smallest regression in the owning existing test module before changing that
 module.
+
+## Implemented outcome and review hardening
+
+The initial “only assets and one test” scope did not describe the final safety
+surface. The implemented result keeps producer resolution and graph traversal
+unchanged, while adding safeguards only at the execution boundary:
+
+- every plan refreshes current SQL lineage and builds its DAG from the same v2
+  payload;
+- resolved process dependencies require producer closure, and existing
+  `UNRESOLVED_DATASET_PRODUCER` diagnostics block selected consumers;
+- SQL runs serialize by canonical `(host, port, database)` across checkouts on
+  one host, with `DW_REFACTOR_AGENT_RUN_LOCK_DIR` for a shared lock location;
+- shop uses base plus window companions, with cleanup folded into an immutable
+  single-replica CTAS;
+- retail banking uses `semantic_specs/dws_ads.yaml` and
+  `tools/generate_assets.py` as its single generation source; checked-in SQL is
+  generated output, not a second hand-maintained implementation;
+- cross-Job lineage acceptance remains in the lineage scenario module, SQL
+  asset constraints live in `tests/test_process_table_assets.py`, and companion
+  invocation behavior lives in `tests/test_execution_planner.py`.
 
 ### Task 1: Add the hermetic project-scenario acceptance test
 
@@ -94,6 +134,14 @@ SCENARIOS = (
         process_column="stage_store_sales_daily.order_count",
         target_table="dim_store_metric_snapshot",
         target_column="store_order_count",
+        producer_companion=(
+            "mid/tasks/full_refresh/"
+            "dws_store_sales_daily_full_refresh.sql"
+        ),
+        consumer_companion=(
+            "mid/tasks/full_refresh/"
+            "dim_store_metric_snapshot_full_refresh.sql"
+        ),
     ),
     Scenario(
         project="retail_banking",
@@ -195,7 +243,7 @@ def test_checked_in_cross_job_process_table_scenario(scenario):
     )
 ```
 
-- [ ] **Step 3: Assert retail banking base/companion Job I/O equivalence**
+- [ ] **Step 3: Assert both projects' base/companion Job I/O equivalence**
 
 Add a fact-normalization helper and compare the producer and consumer variants:
 
@@ -211,10 +259,12 @@ def _io_by_position(project, relative_paths):
     ]
 
 
-def test_retail_banking_companions_keep_process_job_io_equivalent():
-    scenario = next(
-        item for item in SCENARIOS if item.project == "retail_banking"
-    )
+@pytest.mark.parametrize(
+    "scenario",
+    [item for item in SCENARIOS if item.producer_companion],
+    ids=lambda item: item.project,
+)
+def test_full_refresh_companions_keep_process_job_io_equivalent(scenario):
     base_io = _io_by_position(
         scenario.project,
         (scenario.producer_task, scenario.consumer_task),
@@ -249,25 +299,31 @@ git commit -m "test(lineage): cover cross-job process scenarios"
 **Files:**
 - Modify: `warehouses/shop/mid/tasks/dws_store_sales_daily.sql`
 - Modify: `warehouses/shop/mid/tasks/dim_store_metric_snapshot.sql`
+- Modify: `warehouses/shop/mid/tasks/full_refresh/dws_store_sales_daily_full_refresh.sql`
+- Modify: `warehouses/shop/mid/tasks/full_refresh/dim_store_metric_snapshot_full_refresh.sql`
 - Test: `tests/lineage/test_cross_job_process_scenarios.py`
+- Test: `tests/test_process_table_assets.py`
+- Test: `tests/test_execution_planner.py`
 
-- [ ] **Step 1: Rebuild and clean the process table in the producer**
+- [ ] **Step 1: Build one immutable process-table snapshot in the producer**
 
-Replace the direct aggregation insert and managed-table cleanup with this
-ordering:
+Build both the base slice and full-refresh window with a single-replica CTAS.
+Fold cleanup into its SELECT so nothing mutates the process table after CTAS:
 
 ```sql
 SET @etl_date = COALESCE(@etl_date, CURDATE());
 
 DROP TABLE IF EXISTS shop_dm.stage_store_sales_daily;
-CREATE TABLE shop_dm.stage_store_sales_daily AS
+CREATE TABLE shop_dm.stage_store_sales_daily
+PROPERTIES ("replication_num" = "1")
+AS
 SELECT
     store_id,
     order_date AS stat_date,
     COUNT(DISTINCT order_id) AS order_count,
     COUNT(DISTINCT customer_id) AS customer_count,
     SUM(subtotal) AS total_amount,
-    SUM(discount) AS discount_amount,
+    COALESCE(SUM(discount), 0.00) AS discount_amount,
     SUM(subtotal - discount) AS payment_amount,
     NOW() AS etl_time
 FROM shop_dm.dwd_order_detail
@@ -276,14 +332,12 @@ WHERE IF(
     1 = 1,
     order_date = CAST(@etl_date AS DATE)
 )
-GROUP BY store_id, order_date;
-
-UPDATE shop_dm.stage_store_sales_daily
-SET discount_amount = 0.00
-WHERE discount_amount IS NULL;
-
-DELETE FROM shop_dm.stage_store_sales_daily
-WHERE order_count = 0 OR payment_amount < 0;
+GROUP BY store_id, order_date
+HAVING COUNT(DISTINCT order_id) <> 0
+   AND (
+       SUM(subtotal - discount) IS NULL
+       OR SUM(subtotal - discount) >= 0
+   );
 
 DELETE FROM shop_dm.dws_store_sales_daily
 WHERE IF(
@@ -314,7 +368,9 @@ SELECT
 FROM shop_dm.stage_store_sales_daily;
 ```
 
-Do not drop the stage table after the managed insert.
+Do not mutate or drop the stage table after CTAS. The window companion uses the
+same projection and `HAVING`, replacing the slice predicate with the configured
+`@etl_start_date`/`@etl_end_date` interval.
 
 - [ ] **Step 2: Point the existing consumer to the process table**
 
@@ -327,6 +383,7 @@ LEFT JOIN shop_dm.stage_store_sales_daily ss
 ```
 
 Keep the existing target, slice deletion, store source, metrics, and grain.
+Apply the same source handoff and date window to the consumer companion.
 
 - [ ] **Step 3: Run the shop scenario and SQL-related regression tests**
 
@@ -349,11 +406,19 @@ git commit -m "feat(shop): hand off store metrics through process table"
 ### Task 3: Make the retail banking process table the real Job handoff
 
 **Files:**
-- Modify: `warehouses/retail_banking/mid/tasks/dws_client_transaction_daily.sql`
-- Modify: `warehouses/retail_banking/ads/tasks/ads_customer_transaction_kpi_daily.sql`
-- Modify: `warehouses/retail_banking/mid/tasks/full_refresh/dws_client_transaction_daily_full_refresh.sql`
-- Modify: `warehouses/retail_banking/ads/tasks/full_refresh/ads_customer_transaction_kpi_daily_full_refresh.sql`
+- Modify source: `warehouses/retail_banking/semantic_specs/dws_ads.yaml`
+- Modify generator: `warehouses/retail_banking/tools/generate_assets.py`
+- Regenerate: `warehouses/retail_banking/mid/tasks/dws_client_transaction_daily.sql`
+- Regenerate: `warehouses/retail_banking/ads/tasks/ads_customer_transaction_kpi_daily.sql`
+- Regenerate: `warehouses/retail_banking/mid/tasks/full_refresh/dws_client_transaction_daily_full_refresh.sql`
+- Regenerate: `warehouses/retail_banking/ads/tasks/full_refresh/ads_customer_transaction_kpi_daily_full_refresh.sql`
 - Test: `tests/lineage/test_cross_job_process_scenarios.py`
+
+`semantic_specs/dws_ads.yaml` is authoritative. Set
+`process_table_handoff: stage_client_transaction_daily` on the reviewed DWS
+spec and let `tools/generate_assets.py` render both producer variants and route
+the generated ADS source to that handoff. Do not patch the four generated SQL
+files as an independent implementation.
 
 - [ ] **Step 1: Build the incremental process table and materialize DWS from it**
 
@@ -482,7 +547,6 @@ git commit -m "feat(retail-banking): hand off customer metrics through process t
 - [ ] **Step 1: Generate shop without cache and build its public DAG**
 
 ```bash
-PYTHONPATH=src conda run -n dw-refactor-py37 python -m dw_refactor_agent.lineage.lineage_extractor --project shop --no-cache
 PYTHONPATH=src conda run -n dw-refactor-py37 python -m dw_refactor_agent.execution.task_run --project shop --refresh-dag --validate-only
 PYTHONPATH=src conda run -n dw-refactor-py37 python -m dw_refactor_agent.lineage.refresh_lineage_html --project shop
 PYTHONPATH=src conda run -n dw-refactor-py37 python -m dw_refactor_agent.lineage.lineage_cli validate --project shop
@@ -495,8 +559,7 @@ shop DAG contains `dws_store_sales_daily -> dim_store_metric_snapshot` with
 - [ ] **Step 2: Generate retail banking without cache and build its public DAG**
 
 ```bash
-PYTHONPATH=src conda run -n dw-refactor-py37 python -m dw_refactor_agent.lineage.lineage_extractor --project retail_banking --no-cache
-PYTHONPATH=src conda run -n dw-refactor-py37 python -m dw_refactor_agent.execution.task_run --project retail_banking --etl-dates 2025-01-15 --refresh-dag --validate-only
+PYTHONPATH=src conda run -n dw-refactor-py37 python -m dw_refactor_agent.execution.task_run --project retail_banking --refresh-dag --validate-only
 PYTHONPATH=src conda run -n dw-refactor-py37 python -m dw_refactor_agent.lineage.refresh_lineage_html --project retail_banking
 PYTHONPATH=src conda run -n dw-refactor-py37 python -m dw_refactor_agent.lineage.lineage_cli validate --project retail_banking
 ```
@@ -505,6 +568,10 @@ Expected: all commands exit 0; the retail process dataset has one producer and
 the DAG contains
 `dws_client_transaction_daily -> ads_customer_transaction_kpi_daily` with
 `retail_banking_dm.stage_client_transaction_daily` evidence.
+
+`task_run --refresh-dag` is the no-cache generation entrypoint: it invokes the
+extractor with `--no-cache`, writes fresh lineage, and derives the saved DAG
+from that exact v2 payload before validating the execution plan.
 
 - [ ] **Step 3: Audit evidence and field paths through existing readers**
 
@@ -533,7 +600,7 @@ column, with producer and consumer Job steps.
 - [ ] **Step 1: Run focused lineage and execution regression tests**
 
 ```bash
-make test PYTEST_ARGS='tests/lineage tests/test_task_run.py tests/test_execution_planner.py -q -m "not api"'
+make test PYTEST_ARGS='tests/lineage tests/test_task_run.py tests/test_execution_run_lock.py tests/test_execution_planner.py tests/test_process_table_assets.py -q -m "not api"'
 ```
 
 Expected: PASS.

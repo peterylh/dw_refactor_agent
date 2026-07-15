@@ -40,8 +40,8 @@ from dw_refactor_agent.execution.invocation import TaskInvocation
 from dw_refactor_agent.execution.model_config import ExecutionConfigError
 from dw_refactor_agent.execution.planner import ExecutionPlanner, TaskSpec
 from dw_refactor_agent.execution.run_lock import (
-    ProjectRunLockError,
-    project_run_lock,
+    ExecutionRunLockError,
+    execution_target_run_lock,
 )
 from dw_refactor_agent.execution.sql_executor import DirectSqlExecutor
 from dw_refactor_agent.execution.thread_pool import shutdown_executor
@@ -663,6 +663,11 @@ def main():
     in_degree, adj = dag.compute_in_degree(job_set)
 
     mysql_cmd = get_mysql_cmd(env)
+    execution_target = (
+        DB_ENV_CONFIG[env]["host"],
+        DB_ENV_CONFIG[env]["port"],
+        db_name,
+    )
     planner = ExecutionPlanner(project)
 
     if args.full_refresh:
@@ -699,7 +704,7 @@ def main():
             print("执行计划校验通过，未执行 SQL")
             return 0
         try:
-            with project_run_lock(project):
+            with execution_target_run_lock(*execution_target):
                 for job_name in exec_order:
                     try:
                         _run_job_full_refresh(
@@ -718,7 +723,7 @@ def main():
                     ) as e:
                         print(f"  {e}")
                         sys.exit(1)
-        except ProjectRunLockError as e:
+        except ExecutionRunLockError as e:
             print(f"错误: {e}")
             return 1
         print(f"\n{'=' * 60}")
@@ -744,7 +749,7 @@ def main():
         return 0
 
     try:
-        with project_run_lock(project):
+        with execution_target_run_lock(*execution_target):
             for etl_date in regular_dates:
                 print(f"\n{'=' * 60}")
                 print(f"执行日期: {etl_date}  (并行度: {parallel})")
@@ -783,7 +788,7 @@ def main():
                         args.skip_unsupported_history,
                         model_names_by_job,
                     )
-    except ProjectRunLockError as e:
+    except ExecutionRunLockError as e:
         print(f"错误: {e}")
         return 1
 

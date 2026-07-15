@@ -652,11 +652,14 @@ def test_job_list_requires_process_producer_but_not_managed_producer(
     )
 
     @contextmanager
-    def available_lock(_project):
+    def available_lock(_host, _port, _database):
         yield
 
     monkeypatch.setattr(
-        task_run, "project_run_lock", available_lock, raising=False
+        task_run,
+        "execution_target_run_lock",
+        available_lock,
+        raising=False,
     )
     monkeypatch.setattr(
         task_run.sys,
@@ -840,12 +843,15 @@ def test_task_run_locks_actual_execution_but_not_validation(
     executed = []
 
     @contextmanager
-    def recording_lock(project):
-        lock_entries.append(project)
+    def recording_lock(host, port, database):
+        lock_entries.append((host, port, database))
         yield
 
     monkeypatch.setattr(
-        task_run, "project_run_lock", recording_lock, raising=False
+        task_run,
+        "execution_target_run_lock",
+        recording_lock,
+        raising=False,
     )
     monkeypatch.setattr(
         task_run,
@@ -875,11 +881,17 @@ def test_task_run_locks_actual_execution_but_not_validation(
     monkeypatch.setattr(task_run.sys, "argv", base_argv + ["--validate-only"])
     assert task_run.main() == 0
 
-    assert lock_entries == ["demo"]
+    assert lock_entries == [
+        (
+            task_run.DB_ENV_CONFIG["prod"]["host"],
+            task_run.DB_ENV_CONFIG["prod"]["port"],
+            "demo_db",
+        )
+    ]
     assert executed == ["Prepare_Sales", "Build_Report"]
 
 
-def test_task_run_rejects_busy_project_lock_before_sql(
+def test_task_run_rejects_busy_execution_target_lock_before_sql(
     monkeypatch,
     tmp_path,
     capsys,
@@ -891,14 +903,19 @@ def test_task_run_rejects_busy_project_lock_before_sql(
         pass
 
     @contextmanager
-    def busy_lock(_project):
-        raise BusyLockError("project demo is already executing SQL")
+    def busy_lock(_host, _port, _database):
+        raise BusyLockError("target demo_db is already executing SQL")
         yield
 
     monkeypatch.setattr(
-        task_run, "ProjectRunLockError", BusyLockError, raising=False
+        task_run, "ExecutionRunLockError", BusyLockError, raising=False
     )
-    monkeypatch.setattr(task_run, "project_run_lock", busy_lock, raising=False)
+    monkeypatch.setattr(
+        task_run,
+        "execution_target_run_lock",
+        busy_lock,
+        raising=False,
+    )
     monkeypatch.setattr(
         task_run,
         "_run_job",
@@ -921,7 +938,7 @@ def test_task_run_rejects_busy_project_lock_before_sql(
 
     assert task_run.main() == 1
     assert executed == []
-    assert "project demo is already executing SQL" in capsys.readouterr().out
+    assert "target demo_db is already executing SQL" in capsys.readouterr().out
 
 
 def test_task_run_refreshes_stale_managed_dependency_before_process_closure(

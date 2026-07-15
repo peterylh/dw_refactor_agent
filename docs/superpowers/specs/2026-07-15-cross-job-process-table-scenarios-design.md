@@ -54,7 +54,8 @@ Modify `warehouses/shop/mid/tasks/dws_store_sales_daily.sql`:
 - drop `shop_dm.stage_store_sales_daily` at the start of the stage build;
 - recreate it with CTAS from `shop_dm.dwd_order_detail` for the current ETL
   slice;
-- apply the existing null and invalid-row cleanup to the stage table;
+- fold null cleanup and invalid-row filtering into CTAS with `COALESCE` and
+  `HAVING`, so the process table is not mutated after creation;
 - insert the cleaned stage rows into the existing managed
   `shop_dm.dws_store_sales_daily` table using an explicit column list.
 
@@ -67,8 +68,25 @@ Modify `warehouses/shop/mid/tasks/dim_store_metric_snapshot.sql` so its sales
 metrics come from `shop_dm.stage_store_sales_daily` instead of the managed DWS
 table. Its store attributes continue to come from `shop_dm.dwd_store`.
 
-The shop Jobs do not have companion full-refresh SQL files, so the existing
-`@full_refresh` predicates in their base SQL continue to cover both modes.
+The shop pair has dedicated window companions:
+
+- `mid/tasks/full_refresh/dws_store_sales_daily_full_refresh.sql`;
+- `mid/tasks/full_refresh/dim_store_metric_snapshot_full_refresh.sql`.
+
+The producer companion creates the same process output for the configured
+`@etl_start_date`/`@etl_end_date` window, and the consumer companion reads it
+with the same window. Base and companion variants therefore expose identical
+Job I/O while each full refresh Job runs once for the complete window.
+
+### Doris CTAS constraints
+
+Both shop and retail banking producer variants create the handoff table once
+and do not update, delete, truncate, insert into, alter, or drop it after CTAS.
+This keeps the published process output immutable for the consumer and avoids
+self-write lineage. Each CTAS sets `PROPERTIES ("replication_num" = "1")`
+because the supported Doris development/validation topology may have only one
+BE; relying on the cluster default replication factor would make the handoff
+fail before lineage or execution behavior can be exercised.
 
 ## Retail banking scenario
 
@@ -149,7 +167,7 @@ The acceptance assertions cover:
 4. absence of unresolved-producer diagnostics;
 5. direct field Edges on both sides of the Job boundary;
 6. an end-to-end upstream field path through the process table;
-7. base/full-refresh I/O equivalence for the retail banking pair.
+7. base/full-refresh I/O equivalence for both project pairs.
 
 Production verification then runs, for both projects:
 
@@ -163,16 +181,27 @@ Generated JSON and HTML remain ignored local artifacts and are not force-added.
 
 ## Error and operational behavior
 
-- A missing or ambiguous process producer remains fail closed: no guessed
-  dependency or composed field path is allowed.
-- A stale lineage snapshot missing a runnable Job remains blocked by the
-  existing runnable-Job validation.
+- Every execution plan first refreshes lineage from current SQL and derives the
+  DAG from that same v2 payload. Normal planning may reuse extractor task cache;
+  `--refresh-dag` disables it.
+- A missing or ambiguous selected process producer remains fail closed at the
+  execution boundary as well as in lineage: diagnostics are consumed directly,
+  and candidate producers are never re-resolved or guessed.
 - The process table is rebuilt before each producer execution and intentionally
   remains after the Job, so the downstream Job can read it.
 - The scheduler dependency must serialize producer before consumer; parallel
   execution is safe only after this edge exists.
+- SQL execution is locked by canonical `(host, port, database)`, so separate
+  checkouts on one host cannot concurrently mutate the same Doris target. The
+  default temp-directory lock is host-local; multiple execution hosts require
+  `DW_REFACTOR_AGENT_RUN_LOCK_DIR` on a shared `flock` filesystem or equivalent
+  external scheduling.
 - Because the tables are process assets rather than managed schema assets, the
   schema-ID initialization workflow does not apply to them.
+- Retail banking checked-in SQL is generated from
+  `semantic_specs/dws_ads.yaml` by `tools/generate_assets.py`; the
+  `process_table_handoff` contract is the single source and must remain
+  regeneration-stable.
 
 ## Code Review requirements
 
