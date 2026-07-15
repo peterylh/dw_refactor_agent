@@ -48,8 +48,12 @@ from dw_refactor_agent.assessment.llm.metadata_flow import (
     run_inspection_pipeline,
 )
 from dw_refactor_agent.assessment.llm.table_inspector import (
+    DEFAULT_MIN_CACHEABLE_CONFIDENCE,
+    METRIC_CONTEXT_REINSPECTION_ERROR_KEY,
+    RESOLUTION_REINSPECTION_ERROR_KEY,
     TableInspector,
     TableInspectResult,
+    normalize_chat_completions_url,
 )
 from dw_refactor_agent.assessment.llm.table_inspector import (
     dict_to_result as inspect_dict_to_result,
@@ -94,6 +98,13 @@ from dw_refactor_agent.lineage.table_graph import load_lineage_data
 WRITE_SCOPES = {"all", "table", "metrics", "grain", "business"}
 DATA_DOMAIN_LAYERS = {"DWD"}
 BUSINESS_AREA_LAYERS = {"DWD", "DWS"}
+TABLE_METADATA_BLOCKING_VALIDATION_KEYS = {
+    METRIC_CONTEXT_REINSPECTION_ERROR_KEY,
+    RESOLUTION_REINSPECTION_ERROR_KEY,
+    "inconsistent_layer_table_types",
+    "inconsistent_layer_sql",
+    "inconsistent_upstream_metric_layers",
+}
 DDL_NON_COLUMN_PREFIXES = {
     "AGGREGATE",
     "CREATE",
@@ -126,6 +137,7 @@ def _new_table_inspector(
     max_retries: int = 1,
     parallelism: int = 2,
     request_timeout: int = 60,
+    min_cacheable_confidence: float = DEFAULT_MIN_CACHEABLE_CONFIDENCE,
 ) -> TableInspector:
     kwargs: dict[str, Any] = {
         "model": model,
@@ -133,9 +145,10 @@ def _new_table_inspector(
         "max_retries": max_retries,
         "parallelism": parallelism,
         "request_timeout": request_timeout,
+        "min_cacheable_confidence": min_cacheable_confidence,
     }
     if base_url:
-        kwargs["base_url"] = base_url
+        kwargs["base_url"] = normalize_chat_completions_url(base_url)
     try:
         return TableInspector(api_key, **kwargs)
     except TypeError as exc:
@@ -143,6 +156,7 @@ def _new_table_inspector(
             raise
         kwargs.pop("base_url", None)
         kwargs.pop("request_timeout", None)
+        kwargs.pop("min_cacheable_confidence", None)
         return TableInspector(api_key, **kwargs)
 
 
@@ -228,9 +242,18 @@ def model_path_for_table(
     return project_dir / "mid" / "models" / filename
 
 
-def metric_violations(result: TableInspectResult) -> list[dict[str, Any]]:
+def metric_violations(
+    result: TableInspectResult,
+    *,
+    applied_layer: str | None = None,
+    applied_table_type: str | None = None,
+) -> list[dict[str, Any]]:
     """返回 DWD 事实表中的派生/衍生指标违规项。"""
-    if result.declared_layer != "DWD" or not result.is_fact_table:
+    effective_layer = str(applied_layer or result.inferred_layer or "").upper()
+    effective_table_type = str(
+        applied_table_type or result.table_type or ""
+    ).lower()
+    if effective_layer != "DWD" or effective_table_type != "fact":
         return []
 
     violations = []
@@ -379,7 +402,10 @@ def _update_models_for_results(
                         "status": result.status,
                         "validation": result.validation,
                         "updated": False,
-                        "reason": "validation_blocked",
+                        "reason": update.get(
+                            "reason",
+                            "validation_blocked",
+                        ),
                         "warnings": update.get("warnings", []),
                         "write_scope": write_scope,
                     }
@@ -414,12 +440,25 @@ def write_model_updates_from_plan(
 
 
 def _violation_count(
-    results: list[TableInspectResult], metric_attr: str | None = None
+    results: list[TableInspectResult],
+    metric_attr: str | None = None,
+    *,
+    existing_model_metadata: dict[str, dict[str, Any]] | None = None,
+    resolution_policy: LayerResolutionPolicy | None = None,
 ) -> int:
     """统计 DWD fact 中的非原子指标违规数量。"""
     count = 0
+    existing_model_metadata = existing_model_metadata or {}
     for result in results:
-        if result.declared_layer != "DWD" or not result.is_fact_table:
+        resolution = _layer_resolution_for_model(
+            result,
+            existing_model=existing_model_metadata.get(result.table_name),
+            policy=resolution_policy,
+        )
+        if (
+            resolution.applied_layer != "DWD"
+            or resolution.table_type != "fact"
+        ):
             continue
         if metric_attr:
             count += len(getattr(result, metric_attr))
@@ -659,12 +698,13 @@ def enrich_results_with_related_entities(
     results: list[TableInspectResult], contexts: dict[str, TableContext]
 ) -> None:
     grain_entity_index = _build_grain_entity_index(results)
-    if not grain_entity_index:
-        return
     for result in results:
+        context = contexts.get(result.table_name)
+        if not grain_entity_index:
+            continue
         discovered = discover_related_entities_from_grain(
             result,
-            contexts.get(result.table_name),
+            context,
             grain_entity_index,
         )
         if discovered:
@@ -734,6 +774,77 @@ def layer_for_model(
     ).applied_layer
 
 
+def _resolution_changes_inspection_contract(
+    result: TableInspectResult,
+    resolution: LayerResolution,
+) -> bool:
+    inspected_table_type = str(result.table_type or "").strip().lower()
+    resolved_table_type = str(resolution.table_type or "").strip().lower()
+    if inspected_table_type != resolved_table_type:
+        return True
+    if inspected_table_type != "fact":
+        return False
+    inspected_layer = str(result.inferred_layer or "").strip().upper()
+    resolved_layer = str(resolution.applied_layer or "").strip().upper()
+    return inspected_layer != resolved_layer
+
+
+def _mark_resolution_reinspection_required(
+    result: TableInspectResult,
+    resolution: LayerResolution,
+) -> None:
+    if resolution.validation.get("llm_confidence_below_min"):
+        message = (
+            f"llm_confidence={resolution.llm_confidence} below "
+            f"min_llm_confidence="
+            f"{resolution.validation.get('min_llm_confidence')}"
+        )
+    elif _resolution_changes_inspection_contract(result, resolution):
+        message = (
+            f"inspected={result.inferred_layer}/{result.table_type}, "
+            f"resolved={resolution.applied_layer}/{resolution.table_type}"
+        )
+    else:
+        return
+    validation = dict(result.validation or {})
+    issues = list(validation.get(RESOLUTION_REINSPECTION_ERROR_KEY) or [])
+    if message not in issues:
+        issues.append(message)
+    validation[RESOLUTION_REINSPECTION_ERROR_KEY] = issues
+    result.validation = validation
+
+
+def _inspection_resolution_is_eligible(
+    result: TableInspectResult,
+    resolution: LayerResolution,
+) -> bool:
+    """Return whether LLM-derived semantic fields may be consumed."""
+    return bool(
+        result.status != "blocked"
+        and resolution.source == "table_inspector"
+        and not resolution.validation.get("llm_confidence_below_min")
+        and resolution.llm_confidence is not None
+    )
+
+
+def _metric_result_is_eligible_for_propagation(
+    result: TableInspectResult,
+    *,
+    existing_model: dict[str, Any] | None,
+    resolution_policy: LayerResolutionPolicy,
+) -> bool:
+    resolution = _layer_resolution_for_model(
+        result,
+        existing_model=existing_model,
+        policy=resolution_policy,
+    )
+    return bool(
+        _inspection_resolution_is_eligible(result, resolution)
+        and resolution.applied_layer == "DWD"
+        and resolution.table_type == "fact"
+    )
+
+
 def _dimension_warnings_for_resolution(
     result: TableInspectResult,
     resolution: LayerResolution,
@@ -795,6 +906,32 @@ def _validate_write_scope(write_scope: str) -> str:
 
 def should_write_table_metadata(write_scope: str) -> bool:
     return _validate_write_scope(write_scope) in {"all", "table"}
+
+
+def _blocked_table_metadata_preserves_contract(
+    existing: dict[str, Any],
+    resolution: LayerResolution,
+) -> bool:
+    """Return whether a blocked result can safely fill table metadata only."""
+    if not existing:
+        return True
+    existing_layer = str(existing.get("layer") or "").strip().upper()
+    existing_table_type = str(existing.get("table_type") or "").strip().lower()
+    if not existing_table_type and any(
+        key in existing
+        for key in (
+            "metrics",
+            "atomic_metrics",
+            "derived_metrics",
+            "calculated_metrics",
+        )
+    ):
+        existing_table_type = "fact"
+    return (
+        not existing_layer or existing_layer == resolution.applied_layer
+    ) and (
+        not existing_table_type or existing_table_type == resolution.table_type
+    )
 
 
 def business_metadata_for_result(
@@ -882,15 +1019,18 @@ def _clean_existing_business_metadata_for_layer(
 
 
 def should_write_metric_groups(
-    result: TableInspectResult, write_scope: str = "all"
+    result: TableInspectResult,
+    write_scope: str = "all",
+    *,
+    applied_layer: str | None = None,
+    table_type: str | None = None,
 ) -> bool:
     """判断是否需要按指标分组更新模型 YAML。"""
     if _validate_write_scope(write_scope) not in {"all", "metrics"}:
         return False
-    return (
-        result.declared_layer in METRIC_LAYERS
-        or result.inferred_layer in METRIC_LAYERS
-    )
+    effective_layer = str(applied_layer or result.inferred_layer or "").upper()
+    effective_table_type = str(table_type or result.table_type or "").lower()
+    return effective_layer in METRIC_LAYERS and effective_table_type == "fact"
 
 
 def should_write_grain_metadata(
@@ -1103,38 +1243,82 @@ def update_model_yaml(
         existing_model=existing,
         policy=resolution_policy,
     )
+    if result.status != "blocked":
+        _mark_resolution_reinspection_required(result, resolution)
     resolution_warnings = warnings_for_resolution(result, resolution)
+    requires_reinspection = bool(
+        result.validation.get(RESOLUTION_REINSPECTION_ERROR_KEY)
+    )
+    blocked_contract_change = bool(
+        result.status == "blocked"
+        and not _blocked_table_metadata_preserves_contract(
+            existing,
+            resolution,
+        )
+    )
+    write_blocked_table_metadata_only = (
+        result.status == "blocked"
+        and not requires_reinspection
+        and not blocked_contract_change
+        and not any(
+            result.validation.get(key)
+            for key in TABLE_METADATA_BLOCKING_VALIDATION_KEYS
+        )
+        and result.confidence > 0
+        and resolution.source == "table_inspector"
+        and should_write_table_metadata(write_scope)
+    )
 
-    if result.status == "blocked":
-        can_migrate_grain = write_scope in {"all", "grain"} and any(
-            key in existing
-            for key in (
-                "entities",
-                "entity",
-                "related_entities",
-                "grain",
+    if result.status == "blocked" and not write_blocked_table_metadata_only:
+        can_migrate_grain = (
+            not requires_reinspection
+            and not blocked_contract_change
+            and write_scope in {"all", "grain"}
+            and any(
+                key in existing
+                for key in (
+                    "entities",
+                    "entity",
+                    "related_entities",
+                    "grain",
+                )
             )
         )
         if can_migrate_grain:
             updated = dict(existing)
-            entity_metadata = _canonical_entities_for_write(
-                result,
-                _effective_entities(result)
-                or normalize_entities(
-                    existing.get("entities"),
-                    existing.get("entity"),
-                    existing.get("related_entities"),
-                ),
-                model_layer=str(
-                    updated.get("layer")
-                    or existing.get("layer")
-                    or resolution.applied_layer
-                ),
-                model_table_type=resolution.table_type,
+            existing_layer = str(existing.get("layer") or "").upper()
+            existing_table_type = str(existing.get("table_type") or "").lower()
+            existing_entities = normalize_entities(
+                existing.get("entities"),
+                existing.get("entity"),
+                existing.get("related_entities"),
             )
-            grain_metadata = _effective_grain(
-                result.grain or existing.get("grain")
-            )
+            if not existing_entities:
+                existing_entities = normalize_entities(
+                    [
+                        {
+                            "code": code,
+                            "type": "foreign",
+                            "key_columns": [key],
+                        }
+                        for key, code in _grain_key_entity_pairs(
+                            existing.get("grain") or {}
+                        )
+                    ]
+                )
+            if existing_table_type or existing_layer == "DIM":
+                entity_metadata = _canonical_entities_for_write(
+                    result,
+                    existing_entities,
+                    model_layer=existing_layer,
+                    model_table_type=(
+                        existing_table_type
+                        or ("dimension" if existing_layer == "DIM" else "")
+                    ),
+                )
+            else:
+                entity_metadata = _dedupe_entities(existing_entities)
+            grain_metadata = _effective_grain(existing.get("grain"))
             grain_metadata = _canonical_grain_for_write(
                 grain_metadata,
                 entity_metadata,
@@ -1149,11 +1333,12 @@ def update_model_yaml(
                 updated["grain"] = grain_metadata
             else:
                 updated.pop("grain", None)
-            _clean_existing_business_metadata_for_layer(
-                project,
-                updated,
-                updated.get("layer") or resolution.applied_layer,
-            )
+            if existing_layer:
+                _clean_existing_business_metadata_for_layer(
+                    project,
+                    updated,
+                    existing_layer,
+                )
             changed = updated != existing
             if not dry_run and changed:
                 path.parent.mkdir(parents=True, exist_ok=True)
@@ -1194,7 +1379,15 @@ def update_model_yaml(
             "removed_metric_count": 0,
             "grain_changed": False,
             "updated": False,
-            "reason": "validation_blocked",
+            "reason": (
+                RESOLUTION_REINSPECTION_ERROR_KEY
+                if requires_reinspection
+                else (
+                    "validation_blocked_contract_change"
+                    if blocked_contract_change
+                    else "validation_blocked"
+                )
+            ),
             "warnings": resolution_warnings,
             "write_scope": write_scope,
         }
@@ -1204,21 +1397,6 @@ def update_model_yaml(
 
     existing_metrics = _extract_existing_metric_names(existing)
     existing_groups = _extract_existing_metric_groups(existing)
-    detected_groups = metric_groups_for_model(result)
-    write_table_metadata = should_write_table_metadata(write_scope)
-    write_metric_groups = should_write_metric_groups(result, write_scope)
-    write_grain_metadata = should_write_grain_metadata(result, write_scope)
-    detected_metrics = (
-        metric_names_for_model(result) if write_metric_groups else []
-    )
-
-    updated = dict(existing)
-    previous_layer = existing.get("layer")
-    previous_table_type = existing.get("table_type")
-    previous_data_domain = existing.get("data_domain")
-    previous_business_area = existing.get("business_area")
-    previous_dimension_role = existing.get("dimension_role")
-    previous_dimension_content_type = existing.get("dimension_content_type")
     has_existing_metric_fields = any(
         key in existing
         for key in (
@@ -1228,6 +1406,43 @@ def update_model_yaml(
             "calculated_metrics",
         )
     )
+    write_table_metadata = should_write_table_metadata(write_scope)
+    metric_contract_active = should_write_metric_groups(
+        result,
+        write_scope,
+        applied_layer=resolution.applied_layer,
+        table_type=resolution.table_type,
+    )
+    write_metric_groups = bool(
+        not write_blocked_table_metadata_only
+        and _validate_write_scope(write_scope) in {"all", "metrics"}
+        and (metric_contract_active or has_existing_metric_fields)
+    )
+    detected_groups = (
+        metric_groups_for_model(result)
+        if metric_contract_active
+        else {
+            "atomic_metrics": [],
+            "derived_metrics": [],
+            "calculated_metrics": [],
+        }
+    )
+    write_grain_metadata = (
+        False
+        if write_blocked_table_metadata_only
+        else should_write_grain_metadata(result, write_scope)
+    )
+    detected_metrics = (
+        metric_names_for_model(result) if metric_contract_active else []
+    )
+
+    updated = dict(existing)
+    previous_layer = existing.get("layer")
+    previous_table_type = existing.get("table_type")
+    previous_data_domain = existing.get("data_domain")
+    previous_business_area = existing.get("business_area")
+    previous_dimension_role = existing.get("dimension_role")
+    previous_dimension_content_type = existing.get("dimension_content_type")
     should_write_base_fields = (
         write_table_metadata
         or bool(detected_metrics)
@@ -1340,7 +1555,11 @@ def update_model_yaml(
             "grain",
         )
     )
-    if not write_grain_metadata and has_existing_grain_metadata:
+    if (
+        not write_blocked_table_metadata_only
+        and not write_grain_metadata
+        and has_existing_grain_metadata
+    ):
         write_grain_metadata = _validate_write_scope(write_scope) in {
             "all",
             "grain",
@@ -1451,6 +1670,8 @@ def update_model_yaml(
         "grain_changed": grain_changed,
         "updated": bool(changed and not dry_run),
     }
+    if write_blocked_table_metadata_only:
+        update["reason"] = "validation_blocked_table_metadata_only"
     if include_model_metadata:
         update["model_metadata"] = updated
     return update
@@ -1634,13 +1855,13 @@ def _resolved_catalog_results_from_inspection_results(
 ) -> list[TableInspectResult]:
     resolved_results = []
     for result in results or []:
-        if result.status == "blocked":
-            continue
         resolution = _layer_resolution_for_model(
             result,
             existing_model=model_metadata.get(result.table_name, {}),
             policy=resolution_policy,
         )
+        if not _inspection_resolution_is_eligible(result, resolution):
+            continue
         resolved = replace(
             result,
             inferred_layer=resolution.applied_layer,
@@ -2050,9 +2271,10 @@ def _final_model_metadata_with_refinements(
         refined_metadata = update.get("model_metadata")
         if not isinstance(refined_metadata, dict):
             continue
-        if update.get("status") == "blocked" and update.get("reason") != (
-            "validation_blocked_schema_migration"
-        ):
+        if update.get("status") == "blocked" and update.get("reason") not in {
+            "validation_blocked_schema_migration",
+            "validation_blocked_table_metadata_only",
+        }:
             continue
         final_model_metadata[table_name] = dict(refined_metadata)
     return final_model_metadata
@@ -2081,6 +2303,7 @@ def run_generate_model_metadata(
     update_catalog: bool = True,
     replace_existing_models: bool = True,
     show_progress: bool = False,
+    expose_layer_hints: bool = True,
 ) -> dict[str, Any]:
     write_scope = _validate_write_scope(write_scope)
     if write_scope not in {"all", "table", "business"}:
@@ -2131,6 +2354,7 @@ def run_generate_model_metadata(
             resolution_policy=generate_plan.resolution_policy,
             include_model_metadata=True,
             update_catalog=False,
+            expose_layer_hints=expose_layer_hints,
         )
         final_model_metadata = _final_model_metadata_with_refinements(
             generate_plan.base_model_metadata,
@@ -2382,13 +2606,12 @@ def catalog_discovery_model_mapping(
     existing_metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Return model metadata assignment discovered by table-level LLM."""
-    if result.status == "blocked":
-        return {}
-
     resolution = _layer_resolution_for_model(
         result,
         existing_model=existing_metadata,
     )
+    if not _inspection_resolution_is_eligible(result, resolution):
+        return {}
     layer = resolution.applied_layer
     table_type = resolution.table_type
     catalog = catalog or {}
@@ -2456,6 +2679,8 @@ def _resolved_results_for_catalog_discovery(
             result,
             existing_model=model_metadata.get(result.table_name, {}),
         )
+        if not _inspection_resolution_is_eligible(result, resolution):
+            continue
         resolved.append(
             replace(
                 result,
@@ -2649,6 +2874,7 @@ def run_catalog_discovery(
     if no_cache and cache_file.exists():
         cache_file.unlink()
 
+    resolution_policy = LayerResolutionPolicy(mode="refresh")
     inspector = _new_table_inspector(
         api_key=api_key,
         model=model,
@@ -2657,23 +2883,37 @@ def run_catalog_discovery(
         max_retries=max_retries,
         parallelism=parallelism,
         request_timeout=request_timeout,
+        min_cacheable_confidence=resolution_policy.min_llm_confidence,
     )
     if show_progress:
         inspector.progress_callback = build_progress_callback()
 
+    model_metadata = load_model_metadata(project)
     inspection = run_inspection_pipeline(
         project,
         data,
         inspector,
         metric_group_builder=metric_groups_for_model,
         result_enricher=enrich_results_with_related_entities,
+        base_model_metadata=model_metadata,
+        metric_result_is_eligible=lambda result: (
+            _metric_result_is_eligible_for_propagation(
+                result,
+                existing_model=model_metadata.get(result.table_name),
+                resolution_policy=resolution_policy,
+            )
+        ),
+        result_layer_resolver=lambda _ctx, result: layer_for_model(
+            result,
+            existing_model=model_metadata.get(result.table_name),
+            policy=resolution_policy,
+        ),
     )
     contexts = inspection.contexts
     dwd_contexts = inspection.dwd_contexts
     dws_contexts = inspection.dws_contexts
     metadata_only_contexts = inspection.metadata_only_contexts
     results = inspection.results
-    model_metadata = load_model_metadata(project)
     resolved_results = _resolved_results_for_catalog_discovery(
         results,
         model_metadata,
@@ -2691,10 +2931,9 @@ def run_catalog_discovery(
         result.table_name: result for result in resolved_results
     }
     for result in results:
-        resolved_result = resolved_results_by_table.get(
-            result.table_name,
-            result,
-        )
+        resolved_result = resolved_results_by_table.get(result.table_name)
+        if resolved_result is None:
+            continue
         mapping = catalog_discovery_model_mapping(
             project,
             resolved_result,
@@ -2758,13 +2997,18 @@ def result_for_report(
     resolution_policy: LayerResolutionPolicy | None = None,
 ) -> dict[str, Any]:
     """生成模型元数据回写报告中的单表结果。"""
-    data = inspect_result_to_dict(result)
-    data["violations"] = metric_violations(result)
-    data["metadata_warnings"] = metadata_warnings_for_result(
+    resolution = _layer_resolution_for_model(
         result,
         existing_model=existing_model,
         policy=resolution_policy,
     )
+    data = inspect_result_to_dict(result)
+    data["violations"] = metric_violations(
+        result,
+        applied_layer=resolution.applied_layer,
+        applied_table_type=resolution.table_type,
+    )
+    data["metadata_warnings"] = warnings_for_resolution(result, resolution)
     return data
 
 
@@ -2898,6 +3142,7 @@ def run_metadata_write(
     resolution_policy: LayerResolutionPolicy | None = None,
     include_model_metadata: bool = False,
     update_catalog: bool = True,
+    expose_layer_hints: bool = True,
 ) -> dict[str, Any]:
     """运行项目级 LLM 巡检与模型元数据回写。"""
     write_scope = _validate_write_scope(write_scope)
@@ -2936,6 +3181,7 @@ def run_metadata_write(
         max_retries=max_retries,
         parallelism=parallelism,
         request_timeout=request_timeout,
+        min_cacheable_confidence=plan.resolution_policy.min_llm_confidence,
     )
     if show_progress:
         inspector.progress_callback = build_progress_callback()
@@ -2950,6 +3196,23 @@ def run_metadata_write(
         metric_groups=plan.metric_groups
         if metric_groups is not None
         else None,
+        expose_layer_hints=expose_layer_hints,
+        metric_result_is_eligible=lambda result: (
+            _metric_result_is_eligible_for_propagation(
+                result,
+                existing_model=(plan.base_model_metadata or {}).get(
+                    result.table_name
+                ),
+                resolution_policy=plan.resolution_policy,
+            )
+        ),
+        result_layer_resolver=lambda _ctx, result: layer_for_model(
+            result,
+            existing_model=(plan.base_model_metadata or {}).get(
+                result.table_name
+            ),
+            policy=plan.resolution_policy,
+        ),
     )
     contexts = inspection.contexts
     metric_contexts = inspection.metric_contexts
@@ -2990,9 +3253,9 @@ def run_metadata_write(
         "inspected_table_count": len(contexts),
         "metric_table_count": len(metric_contexts),
         "metadata_only_table_count": len(metadata_only_contexts),
-        "dwd_table_count": sum(1 for c in contexts if c.layer == "DWD"),
-        "dws_table_count": sum(1 for c in contexts if c.layer == "DWS"),
-        "dim_table_count": sum(1 for c in contexts if c.layer == "DIM"),
+        "dwd_table_count": len(inspection.dwd_contexts),
+        "dws_table_count": len(inspection.dws_contexts),
+        "dim_table_count": len(inspection.metadata_only_contexts),
         "fact_table_count": sum(1 for r in results if r.is_fact_table),
         "passed_table_count": sum(1 for r in results if r.status == "passed"),
         "warning_table_count": sum(
@@ -3010,12 +3273,22 @@ def run_metadata_write(
         ),
         "metric_count": sum(len(metric_names_for_model(r)) for r in results),
         "derived_metric_violation_count": _violation_count(
-            results, "derived_metrics"
+            results,
+            "derived_metrics",
+            existing_model_metadata=plan.base_model_metadata,
+            resolution_policy=plan.resolution_policy,
         ),
         "calculated_metric_violation_count": _violation_count(
-            results, "calculated_metrics"
+            results,
+            "calculated_metrics",
+            existing_model_metadata=plan.base_model_metadata,
+            resolution_policy=plan.resolution_policy,
         ),
-        "non_atomic_metric_violation_count": _violation_count(results),
+        "non_atomic_metric_violation_count": _violation_count(
+            results,
+            existing_model_metadata=plan.base_model_metadata,
+            resolution_policy=plan.resolution_policy,
+        ),
         "metadata_warning_count": sum(
             len(report.get("metadata_warnings") or []) for report in reports
         ),
@@ -3112,7 +3385,7 @@ def main() -> None:
             args.project,
             api_key=api_key,
             model=args.model,
-            base_url=args.base_url,
+            base_url=normalize_chat_completions_url(args.base_url),
             max_retries=args.max_retries,
             parallelism=args.parallel,
             request_timeout=args.request_timeout,
@@ -3134,7 +3407,7 @@ def main() -> None:
             args.project,
             api_key=api_key,
             model=args.model,
-            base_url=args.base_url,
+            base_url=normalize_chat_completions_url(args.base_url),
             max_retries=args.max_retries,
             parallelism=args.parallel,
             request_timeout=args.request_timeout,

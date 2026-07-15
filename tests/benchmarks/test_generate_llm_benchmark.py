@@ -7,10 +7,18 @@ from pathlib import Path
 import yaml
 
 from benchmarks.table_inspector_layer.run import (
+    TempProject,
+    _llm_layers,
+    _summarize_project,
+    _table_mapping,
     build_temp_project,
     run_benchmark,
 )
-from dw_refactor_agent.assessment.llm.table_inspector import TableInspectResult
+from dw_refactor_agent.assessment.llm.table_inspector import (
+    METRIC_CONTEXT_REINSPECTION_ERROR_KEY,
+    TableInspectResult,
+)
+from dw_refactor_agent.lineage.view import LineageView
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
@@ -213,6 +221,10 @@ def test_build_temp_project_strips_layer_hints_and_seeds_empty_catalog(
     )
     assert taxonomy["project"] == "demo_generate_llm_benchmark"
     assert taxonomy["data_domains"][0]["code"] == "ORDER"
+    assert "project_context" not in taxonomy
+    assert "Retail order analytics" not in (
+        target / "business_taxonomy.yaml"
+    ).read_text(encoding="utf-8")
 
     processes = yaml.safe_load(
         (target / "business_processes.yaml").read_text(encoding="utf-8")
@@ -248,22 +260,78 @@ def test_build_temp_project_strips_layer_hints_and_seeds_empty_catalog(
     assert "order_detail" in rewritten
 
 
+def test_table_mapping_salts_prefix_collisions():
+    paths = [
+        Path("dim_customer_profile.sql"),
+        Path("dwd_customer_profile.sql"),
+    ]
+    first = _table_mapping(paths, alias_salt=b"a" * 32)
+    second = _table_mapping(paths, alias_salt=b"b" * 32)
+    first_aliases = set(first.values())
+
+    assert len(first_aliases) == 2
+    assert all(
+        alias.startswith("customer_profile_") for alias in first_aliases
+    )
+    assert set(second.values()).isdisjoint(first_aliases)
+
+
+def test_build_temp_project_rewrites_mixed_case_asset_identifiers(tmp_path):
+    source_root = tmp_path / "source"
+    source = _create_demo_project(source_root)
+    ddl_path = source / "mid" / "ddl" / "dwd_order_detail.sql"
+    task_path = source / "mid" / "tasks" / "dwd_order_detail.sql"
+    ddl_path.rename(ddl_path.with_name("DWD_ORDER_DETAIL.sql"))
+    task_path.rename(task_path.with_name("DWD_ORDER_DETAIL.sql"))
+
+    temp_project = build_temp_project(
+        "demo",
+        "demo_generate_llm_benchmark",
+        tmp_path / "assets",
+        source_root=source_root,
+        alias_salt=b"mixed-case-test" * 2,
+    )
+    rewritten_ddl = (
+        temp_project.target_dir / "mid" / "ddl" / "order_detail.sql"
+    ).read_text(encoding="utf-8")
+    rewritten_task = (
+        temp_project.target_dir / "mid" / "tasks" / "order_detail.sql"
+    ).read_text(encoding="utf-8")
+
+    assert temp_project.table_mapping["DWD_ORDER_DETAIL"] == "order_detail"
+    assert temp_project.expected_by_target["order_detail"]["layer"] == "DWD"
+    assert "dwd_order_detail" not in rewritten_ddl.casefold()
+    assert "dwd_order_detail" not in rewritten_task.casefold()
+    assert "order_detail" in rewritten_ddl.casefold()
+    assert "order_event" in rewritten_task.casefold()
+
+
 def test_run_benchmark_prefixless_mid_assets_enter_llm_contexts(
     tmp_path, monkeypatch
 ):
+    import benchmarks.table_inspector_layer.run as benchmark_module
     import dw_refactor_agent.assessment.llm.model_metadata_writer as writer_module
 
     source_root = tmp_path / "source"
     _create_demo_project(source_root)
     seen_contexts = []
+    inspector_parallelism = []
+    lineage_parallelism = []
+    real_write_lineage = benchmark_module._write_extracted_lineage
+
+    def tracking_write_lineage(temp_project, *, parallelism):
+        lineage_parallelism.append(parallelism)
+        return real_write_lineage(temp_project, parallelism=parallelism)
 
     class FakeInspector:
         def __init__(self, *args, **kwargs):
             self.progress_callback = None
+            inspector_parallelism.append(kwargs["parallelism"])
 
         def inspect_batch(self, contexts):
             seen_contexts.extend(
-                (ctx.table_name, ctx.layer) for ctx in contexts
+                (ctx.table_name, ctx.layer, ctx.expose_layer_hints)
+                for ctx in contexts
             )
             results = []
             for ctx in contexts:
@@ -331,14 +399,19 @@ def test_run_benchmark_prefixless_mid_assets_enter_llm_contexts(
             return results
 
     monkeypatch.setattr(writer_module, "TableInspector", FakeInspector)
+    monkeypatch.setattr(
+        benchmark_module,
+        "_write_extracted_lineage",
+        tracking_write_lineage,
+    )
     output = tmp_path / "report.json"
 
     report = run_benchmark(
         projects=["demo"],
         api_key="fake-key",
         model="fake-model",
-        base_url="https://example.test",
-        parallelism=1,
+        base_url="https://api.deepseek.com",
+        parallelism=8,
         max_retries=1,
         request_timeout=5,
         output_path=output,
@@ -347,22 +420,47 @@ def test_run_benchmark_prefixless_mid_assets_enter_llm_contexts(
     )
 
     assert report["benchmark"] == "generate_llm_cold_start"
+    assert report["base_url"] == "https://api.deepseek.com/chat/completions"
+    assert report["layer_hints_visible_to_llm"] is False
+    assert report["parallelism"] == 8
+    assert lineage_parallelism == [1]
+    assert inspector_parallelism == [8]
     assert "combined_final_accuracy" not in report
     assert report["combined_llm_middle_accuracy"] == 1.0
+    assert report["combined_post_retry_middle_accuracy"] == 1.0
     assert report["total_catalog_change_count"] == 2
     assert report["total_business_process_count"] == 1
     assert report["total_semantic_subject_count"] == 1
     assert set(seen_contexts) == {
-        ("customer_profile", "DWD"),
-        ("order_detail", "DWD"),
-        ("order_summary", "DWD"),
+        ("customer_profile", "DWD", False),
+        ("order_detail", "DWD", False),
+        ("order_summary", "DWD", False),
     }
     project = report["projects"][0]
+    target_project = project["target_project"]
+    assert target_project.startswith("generate_llm_benchmark_")
+    assert "demo" not in target_project
+    lineage_path = (
+        tmp_path
+        / "assets"
+        / "warehouses"
+        / target_project
+        / "artifacts"
+        / "lineage"
+        / "lineage_data.json"
+    )
+    lineage = json.loads(lineage_path.read_text(encoding="utf-8"))
+    upstream, _downstream = LineageView.from_data(
+        "", lineage
+    ).asset_table_graph()
+    assert upstream["order_detail"] == {"order_event"}
+    assert upstream["order_dashboard"] == {"order_summary"}
     assert project["source_project"] == "demo"
     assert project["table_count"] == 5
     assert project["middle_table_count"] == 3
     assert "final_accuracy" not in project
     assert project["llm_middle_accuracy"] == 1.0
+    assert project["post_retry_middle_accuracy"] == 1.0
     assert project["metric_count"] == 1
     assert project["entity_table_count"] == 1
     assert project["grain_table_count"] == 1
@@ -376,8 +474,87 @@ def test_run_benchmark_prefixless_mid_assets_enter_llm_contexts(
         "ODS": 1,
     }
     assert project["mismatches"] == []
+    assert project["first_attempt_mismatches"] == []
+    assert project["post_retry_mismatches"] == []
     assert output.exists()
     assert json.loads(output.read_text(encoding="utf-8")) == report
+
+
+def test_llm_layers_use_raw_inspection_results_only():
+    result = {
+        "llm_result": {
+            "model_updates": [
+                {
+                    "table": "order_summary",
+                    "layer": "DWS",
+                    "table_type": "fact",
+                }
+            ],
+            "tables": [
+                {
+                    "table_name": "order_summary",
+                    "first_attempt_inferred_layer": "DWD",
+                    "inferred_layer": "DIM",
+                    "table_type": "dimension",
+                }
+            ],
+        }
+    }
+
+    assert _llm_layers(result) == {"order_summary": "DIM"}
+    assert _llm_layers(result, "first_attempt_inferred_layer") == {
+        "order_summary": "DWD"
+    }
+
+
+def test_project_summary_records_post_retry_only_mismatch(tmp_path):
+    temp_project = TempProject(
+        source_project="demo",
+        target_project="opaque",
+        source_dir=tmp_path,
+        target_dir=tmp_path,
+        database="demo",
+        table_mapping={"sales_summary": "opaque_summary"},
+        expected_by_source={
+            "sales_summary": {"layer": "DWS", "table_type": "fact"}
+        },
+        expected_catalog={
+            "business_processes": [],
+            "semantic_subjects": [],
+        },
+    )
+    result = {
+        "model_updates": [
+            {
+                "table": "opaque_summary",
+                "layer": "DWS",
+                "table_type": "fact",
+            }
+        ],
+        "llm_result": {
+            "tables": [
+                {
+                    "table_name": "opaque_summary",
+                    "first_attempt_inferred_layer": "DWS",
+                    "inferred_layer": "DWS",
+                    "status": "blocked",
+                    "validation": {
+                        METRIC_CONTEXT_REINSPECTION_ERROR_KEY: [
+                            "upstream metric context reinspection failed"
+                        ]
+                    },
+                }
+            ]
+        },
+    }
+
+    summary = _summarize_project(temp_project, result=result, dry_run=True)
+
+    assert summary["first_attempt_mismatches"] == []
+    assert summary["post_retry_mismatches"] == summary["mismatches"]
+    assert summary["mismatches"][0]["source_table"] == "sales_summary"
+    assert summary["mismatches"][0]["post_retry_middle_layer"] == "FAILED"
+    assert summary["post_retry_middle_correct_count"] == 0
 
 
 def test_runner_script_help_works_without_pythonpath():

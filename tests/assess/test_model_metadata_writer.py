@@ -779,7 +779,7 @@ def test_write_model_updates_from_plan_uses_plan_model_paths(
     ).exists()
 
 
-def test_write_model_updates_from_plan_uses_plan_resolution_policy(
+def test_write_model_updates_ignores_legacy_context_hint(
     tmp_path, monkeypatch
 ):
     project = "plan_resolution_policy"
@@ -790,15 +790,23 @@ def test_write_model_updates_from_plan_uses_plan_resolution_policy(
         ddl_tables=["dwd_order_detail"],
     )
     model_path = tmp_path / "models" / "dwd_order_detail.yaml"
+    existing_model = {
+        "version": 2,
+        "name": "dwd_order_detail",
+        "layer": "DWD",
+        "table_type": "fact",
+        "atomic_metrics": ["pay_amt"],
+        "derived_metrics": [_expected_pay_amt_1d_metric()],
+    }
+    model_path.parent.mkdir(parents=True)
+    model_path.write_text(
+        yaml.safe_dump(existing_model, allow_unicode=True, sort_keys=False),
+        encoding="utf-8",
+    )
     plan = build_generate_plan(
         project,
-        write_scope="table",
-        base_model_metadata={
-            "dwd_order_detail": {
-                "layer": "DWD",
-                "table_type": "fact",
-            }
-        },
+        write_scope="all",
+        base_model_metadata={"dwd_order_detail": existing_model},
         model_paths={"dwd_order_detail": model_path},
         planned_deleted_model_files=[],
         replace_existing_models=True,
@@ -806,10 +814,11 @@ def test_write_model_updates_from_plan_uses_plan_resolution_policy(
     result = TableInspectResult(
         table_name="dwd_order_detail",
         declared_layer="DWD",
-        inferred_layer="ADS",
+        inferred_layer="DIM",
         table_type="dimension",
         confidence=0.9,
         reasoning_steps=[],
+        validation={"context_hints": ["legacy_layer_hint"]},
     )
 
     yaml_updates, skipped_updates = write_model_updates_from_plan(
@@ -821,10 +830,10 @@ def test_write_model_updates_from_plan_uses_plan_resolution_policy(
     saved = yaml.safe_load(model_path.read_text(encoding="utf-8"))
 
     assert skipped_updates == []
-    assert yaml_updates[0]["warnings"][0]["type"] == "llm_layer_fallback"
-    assert yaml_updates[0]["warnings"][0]["prior_source"] == "direct_rule"
-    assert saved["layer"] == "DWD"
-    assert saved["table_type"] == "fact"
+    assert yaml_updates[0]["status"] == "passed"
+    assert "resolution_requires_reinspection" not in result.validation
+    assert saved["layer"] == "DIM"
+    assert saved["table_type"] == "dimension"
 
 
 def test_metric_helper_scenarios():
@@ -876,6 +885,77 @@ def test_metric_helper_scenarios():
 
     assert metric_violations(result) == []
     assert metric_violations(_sample_dws_result()) == []
+
+    reclassified_dwd = TableInspectResult(
+        table_name="order_activity",
+        declared_layer="DIM",
+        inferred_layer="DWD",
+        table_type="fact",
+        confidence=0.9,
+        reasoning_steps=[],
+        columns={
+            "atomic_metrics": [],
+            "derived_metrics": [{"name": "order_count_1d"}],
+            "calculated_metrics": [],
+            "dimensions": [],
+            "others": [],
+        },
+    )
+
+    assert metric_violations(reclassified_dwd) == [
+        {
+            "table": "order_activity",
+            "column": "order_count_1d",
+            "metric_type": "derived",
+            "reason": "",
+            "confidence": 0.0,
+        }
+    ]
+    assert (
+        metric_violations(
+            reclassified_dwd,
+            applied_layer="DWD",
+            applied_table_type="other",
+        )
+        == []
+    )
+
+    fallback_to_existing_type = TableInspectResult(
+        table_name="dwd_order_stage",
+        declared_layer="DWD",
+        inferred_layer="OTHER",
+        table_type="fact",
+        confidence=0.9,
+        reasoning_steps=[],
+        columns={
+            "atomic_metrics": [],
+            "derived_metrics": [{"name": "order_count_1d"}],
+            "calculated_metrics": [],
+            "dimensions": [],
+            "others": [],
+        },
+    )
+    existing_model = {"layer": "DWD", "table_type": "other"}
+
+    assert (
+        result_for_report(
+            fallback_to_existing_type,
+            existing_model=existing_model,
+        )["violations"]
+        == []
+    )
+
+    import dw_refactor_agent.assessment.llm.model_metadata_writer as writer_module
+
+    assert (
+        writer_module._violation_count(
+            [fallback_to_existing_type],
+            existing_model_metadata={
+                fallback_to_existing_type.table_name: existing_model
+            },
+        )
+        == 0
+    )
 
 
 def _assert_update_model_yaml_preserves_existing_metadata(
@@ -1383,22 +1463,13 @@ def test_result_for_report_includes_dimension_layer_warning():
     assert report["metadata_warnings"][0]["inferred_layer"] == "DWD"
 
 
-@pytest.mark.parametrize(
-    ("existing_layer", "existing_type", "result_layer", "result_type"),
-    [
-        ("DWD", "fact", "OTHER", "dimension"),
-        ("DIM", "dimension", "DWD", "fact"),
-    ],
-)
-def test_update_model_yaml_uses_resolved_metadata_for_entities(
+def test_update_model_yaml_uses_resolved_metadata_for_aligned_entities(
     tmp_path,
     monkeypatch,
-    existing_layer,
-    existing_type,
-    result_layer,
-    result_type,
 ):
     table_name = "dwd_order_detail"
+    existing_layer = "DIM"
+    existing_type = "dimension"
     project_dir = _write_catalog_project(
         tmp_path,
         monkeypatch,
@@ -1419,8 +1490,8 @@ def test_update_model_yaml_uses_resolved_metadata_for_entities(
         TableInspectResult(
             table_name=table_name,
             declared_layer=existing_layer,
-            inferred_layer=result_layer,
-            table_type=result_type,
+            inferred_layer="DWD",
+            table_type="fact",
             confidence=0.9,
             reasoning_steps=[],
             entities=[
@@ -1446,8 +1517,6 @@ def test_update_model_yaml_uses_resolved_metadata_for_entities(
 
     assert update["layer"] == "DWD"
     assert update["table_type"] == "fact"
-    if result_layer == "OTHER":
-        assert update["warnings"][0]["type"] == "llm_layer_fallback"
     assert saved["layer"] == "DWD"
     assert saved["table_type"] == "fact"
     assert saved["entities"] == [
@@ -1465,7 +1534,7 @@ def test_update_model_yaml_uses_resolved_metadata_for_entities(
     assert "layer_score" not in saved
 
 
-def test_update_model_yaml_missing_table_type_uses_code_prior_on_fallback(
+def test_update_model_yaml_blocks_fallback_that_changes_table_type(
     tmp_path,
     monkeypatch,
 ):
@@ -1510,24 +1579,14 @@ def test_update_model_yaml_missing_table_type_uses_code_prior_on_fallback(
     )
     saved = yaml.safe_load(model_path.read_text(encoding="utf-8"))
 
-    assert update["layer"] == "DWD"
-    assert update["table_type"] == "other"
+    assert update["status"] == "blocked"
+    assert update["changed"] is False
+    assert update["reason"] == "resolution_requires_reinspection"
     assert update["warnings"][0]["type"] == "llm_layer_fallback"
     assert update["warnings"][0]["prior_layer"] == "DWD"
     assert saved["layer"] == "DWD"
-    assert saved["table_type"] == "other"
-    assert saved["entities"] == [
-        {
-            "code": "ORDER",
-            "type": "primary",
-            "key_columns": ["order_id"],
-        },
-        {
-            "code": "CUST",
-            "type": "foreign",
-            "key_columns": ["customer_id"],
-        },
-    ]
+    assert "table_type" not in saved
+    assert "entities" not in saved
     assert "layer_score" not in saved
 
 
@@ -2574,6 +2633,10 @@ def _assert_blocked_schema_migration_keeps_grain_entities_consistent(
                 "key_columns": ["campaign_key"],
             }
         ],
+        grain={
+            "entities": ["CAMPAIGN"],
+            "time_column": "ghost_time",
+        },
         validation={
             "duplicate_columns": ["campaign_id"],
         },
@@ -2582,14 +2645,9 @@ def _assert_blocked_schema_migration_keeps_grain_entities_consistent(
     update_model_yaml("demo", blocked, write_scope="grain")
     saved = yaml.safe_load(model_path.read_text(encoding="utf-8"))
 
-    assert saved["grain"]["entities"] == ["CAMPAIGN"]
-    assert saved["entities"] == [
-        {
-            "code": "CAMPAIGN",
-            "type": "foreign",
-            "key_columns": ["campaign_key"],
-        }
-    ]
+    assert saved["grain"]["entities"] == ["CAMP"]
+    assert saved["grain"]["time_column"] == "start_date"
+    assert "entities" not in saved
 
 
 def _assert_update_model_yaml_replaces_existing_metrics(tmp_path, monkeypatch):
@@ -2748,9 +2806,134 @@ def _assert_update_model_yaml_skips_blocked_results(tmp_path, monkeypatch):
     saved = yaml.safe_load(model_path.read_text(encoding="utf-8"))
 
     assert update["updated"] is False
-    assert update["reason"] == "validation_blocked"
+    assert update["reason"] == "validation_blocked_contract_change"
     assert saved["atomic_metrics"] == ["quantity"]
     assert saved["calculated_metrics"] == ["subtotal"]
+
+
+@pytest.mark.parametrize(
+    (
+        "existing_layer",
+        "existing_type",
+        "inferred_layer",
+        "inferred_type",
+        "confidence",
+        "validation",
+        "expected_reason",
+        "partial_write",
+    ),
+    [
+        (
+            "DWS",
+            "",
+            "DWS",
+            "fact",
+            0.95,
+            {"missing_columns": ["sale_amount"]},
+            "validation_blocked_table_metadata_only",
+            True,
+        ),
+        (
+            "DWD",
+            "fact",
+            "DWD",
+            "fact",
+            0.9,
+            {"ddl_columns_unavailable": ["unavailable"]},
+            "validation_blocked_table_metadata_only",
+            True,
+        ),
+        (
+            "DWD",
+            "fact",
+            "DIM",
+            "dimension",
+            0.9,
+            {"unknown_columns": ["ghost"]},
+            "validation_blocked_contract_change",
+            False,
+        ),
+        (
+            "DWD",
+            "fact",
+            "DWD",
+            "fact",
+            0.9,
+            {
+                "inconsistent_upstream_metric_layers": [
+                    "metric_count<-entity_metrics.metric_count"
+                ]
+            },
+            "validation_blocked",
+            False,
+        ),
+        (
+            "DWD",
+            "fact",
+            "DIM",
+            "dimension",
+            0.01,
+            {},
+            "resolution_requires_reinspection",
+            False,
+        ),
+    ],
+    ids=(
+        "missing-columns",
+        "ddl-unavailable-fact",
+        "cross-contract",
+        "upstream-metric-layer",
+        "low-confidence",
+    ),
+)
+def test_update_model_yaml_blocked_contract_scenarios(
+    tmp_path,
+    existing_layer,
+    existing_type,
+    inferred_layer,
+    inferred_type,
+    confidence,
+    validation,
+    expected_reason,
+    partial_write,
+):
+    existing = {
+        "version": 2,
+        "name": "sales_detail",
+        "layer": existing_layer,
+        "atomic_metrics": ["existing_metric"],
+    }
+    if existing_type:
+        existing["table_type"] = existing_type
+    result = TableInspectResult(
+        table_name="sales_detail",
+        declared_layer=existing_layer,
+        inferred_layer=inferred_layer,
+        table_type=inferred_type,
+        confidence=confidence,
+        reasoning_steps=[],
+        validation=validation,
+    )
+
+    update = update_model_yaml(
+        "demo",
+        result,
+        dry_run=True,
+        existing_model=existing,
+        path=tmp_path / "sales_detail.yaml",
+        include_model_metadata=True,
+    )
+
+    assert result.status == "blocked"
+    assert update["reason"] == expected_reason
+    assert update["metric_changed"] is False
+    if partial_write:
+        assert update["model_metadata"]["table_type"] == "fact"
+        assert update["model_metadata"]["atomic_metrics"] == [
+            "existing_metric"
+        ]
+    else:
+        assert update["model_metadata"] == existing
 
 
 def test_run_metadata_write_reuses_table_inspector(
@@ -2825,11 +3008,11 @@ def test_run_metadata_write_reuses_table_inspector(
 
     assert result["inspected_table_count"] == 3
     assert result["write_scope"] == "all"
-    assert result["metric_table_count"] == 3
-    assert result["metadata_only_table_count"] == 0
-    assert result["dwd_table_count"] == 2
+    assert result["metric_table_count"] == 2
+    assert result["metadata_only_table_count"] == 1
+    assert result["dwd_table_count"] == 1
     assert result["dws_table_count"] == 1
-    assert result["dim_table_count"] == 0
+    assert result["dim_table_count"] == 1
     assert result["fact_table_count"] == 2
     assert result["atomic_metric_count"] == 1
     assert result["derived_metric_count"] == 2
@@ -3072,7 +3255,7 @@ def test_model_metadata_writer_cli_dispatches_refresh_and_generate_modes(
             "--llm",
             "--dry-run",
             "--base-url",
-            "https://example.test/chat/completions",
+            "https://api.deepseek.com",
             "--max-retries",
             "3",
             "--parallel",
@@ -3088,7 +3271,7 @@ def test_model_metadata_writer_cli_dispatches_refresh_and_generate_modes(
     assert calls[-1][0] == "generate"
     assert calls[-1][2]["api_key"] == "test"
     assert calls[-1][2]["base_url"] == (
-        "https://example.test/chat/completions"
+        "https://api.deepseek.com/chat/completions"
     )
     assert calls[-1][2]["max_retries"] == 3
     assert calls[-1][2]["parallelism"] == 4
@@ -4016,12 +4199,45 @@ def _lineage_for_tables(*table_names):
     }
 
 
-def test_generate_single_writer_pass_keeps_base_model_when_llm_blocked(
-    tmp_path, monkeypatch
+@pytest.mark.parametrize(
+    (
+        "project",
+        "existing_contract",
+        "inspection",
+        "expected_reason",
+    ),
+    [
+        (
+            "generate_single_writer_blocked",
+            ("DWS", "fact"),
+            ("OTHER", "dimension", {"unknown_columns": ["ghost_id"]}, 0.2),
+            "validation_blocked",
+        ),
+        (
+            "generate_single_writer_partial_block",
+            ("DWD", "other"),
+            (
+                "DWS",
+                "fact",
+                {"invalid_base_metrics": ["sale_amount:subtotal"]},
+                0.95,
+            ),
+            "validation_blocked_contract_change",
+        ),
+    ],
+    ids=["invalid-columns", "invalid-metrics"],
+)
+def test_generate_single_writer_preserves_base_contract_when_llm_blocked(
+    tmp_path,
+    monkeypatch,
+    project,
+    existing_contract,
+    inspection,
+    expected_reason,
 ):
     import dw_refactor_agent.assessment.llm.model_metadata_writer as writer_module
 
-    project = "generate_single_writer_blocked"
+    existing_layer, existing_table_type = existing_contract
     project_dir = _write_single_writer_project(
         tmp_path,
         monkeypatch,
@@ -4030,11 +4246,12 @@ def test_generate_single_writer_pass_keeps_base_model_when_llm_blocked(
             "dwd_order_detail": {
                 "version": 2,
                 "name": "dwd_order_detail",
-                "layer": "DWS",
-                "table_type": "fact",
+                "layer": existing_layer,
+                "table_type": existing_table_type,
             }
         },
     )
+    inferred_layer, table_type, validation, confidence = inspection
 
     class FakeInspector:
         def __init__(self, api_key, **kwargs):
@@ -4045,10 +4262,10 @@ def test_generate_single_writer_pass_keeps_base_model_when_llm_blocked(
                 TableInspectResult(
                     table_name=ctx.table_name,
                     declared_layer=ctx.layer,
-                    inferred_layer="OTHER",
-                    table_type="dimension",
-                    validation={"unknown_columns": ["ghost_id"]},
-                    confidence=0.2,
+                    inferred_layer=inferred_layer,
+                    table_type=table_type,
+                    validation=validation,
+                    confidence=confidence,
                     reasoning_steps=[],
                 )
                 for ctx in contexts
@@ -4074,7 +4291,7 @@ def test_generate_single_writer_pass_keeps_base_model_when_llm_blocked(
 
     assert result["llm_result"]["blocked_table_count"] == 1
     assert result["llm_result"]["skipped_model_updates"][0]["reason"] == (
-        "validation_blocked"
+        expected_reason
     )
     assert saved["layer"] == "DWD"
     assert saved["table_type"] == "other"
@@ -4413,14 +4630,48 @@ def test_catalog_discovery_mapping_uses_resolved_table_type():
         },
     )
 
-    assert mapping["layer"] == "DWD"
-    assert mapping["table_type"] == "fact"
-    assert "semantic_subject" not in mapping
-    assert "dimension_role" not in mapping
-    assert "dimension_content_type" not in mapping
+    assert mapping == {}
 
 
-def test_run_metadata_write_passes_parallelism(
+def test_catalog_discovery_rejects_low_confidence_semantics():
+    import dw_refactor_agent.assessment.llm.model_metadata_writer as writer_module
+
+    result = TableInspectResult(
+        table_name="customer_detail",
+        declared_layer="DWD",
+        inferred_layer="DIM",
+        table_type="dimension",
+        confidence=0.01,
+        reasoning_steps=[],
+        entities=[
+            {
+                "code": "LOW_CONFIDENCE_ENTITY",
+                "type": "primary",
+                "key_columns": ["customer_id"],
+            }
+        ],
+    )
+    existing = {"layer": "DWD", "table_type": "fact"}
+
+    assert (
+        writer_module.catalog_discovery_model_mapping(
+            "demo",
+            result,
+            {},
+            existing,
+        )
+        == {}
+    )
+    assert (
+        writer_module._resolved_results_for_catalog_discovery(
+            [result],
+            {result.table_name: existing},
+        )
+        == []
+    )
+
+
+def test_run_metadata_write_passes_inspector_configuration(
     monkeypatch, sample_lineage_data, isolated_writer_project
 ):
     import dw_refactor_agent.assessment.llm.model_metadata_writer as writer_module
@@ -4429,9 +4680,18 @@ def test_run_metadata_write_passes_parallelism(
 
     class FakeInspector:
         def __init__(
-            self, api_key, *, model, cache_file, max_retries, parallelism
+            self,
+            api_key,
+            *,
+            model,
+            cache_file,
+            max_retries,
+            parallelism,
+            request_timeout,
+            min_cacheable_confidence,
         ):
             seen["parallelism"] = parallelism
+            seen["min_cacheable_confidence"] = min_cacheable_confidence
 
         def inspect_batch(self, contexts):
             return []
@@ -4442,10 +4702,18 @@ def test_run_metadata_write_passes_parallelism(
     monkeypatch.setattr(writer_module, "TableInspector", FakeInspector)
 
     run_metadata_write(
-        isolated_writer_project, api_key="test", dry_run=True, parallelism=4
+        isolated_writer_project,
+        api_key="test",
+        dry_run=True,
+        parallelism=4,
+        resolution_policy=LayerResolutionPolicy(
+            mode="refresh",
+            min_llm_confidence=0.8,
+        ),
     )
 
     assert seen["parallelism"] == 4
+    assert seen["min_cacheable_confidence"] == 0.8
 
 
 @pytest.mark.parametrize(
