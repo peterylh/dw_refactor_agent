@@ -7,6 +7,9 @@ naming_config: naming_config.yaml
 schema_identity:
   required: true
 verification:
+  qa_database_pool:
+    - shop_dm_qa
+    - shop_dm_qa_02
   week_start: MON
   row_compare:
     exclude_columns:

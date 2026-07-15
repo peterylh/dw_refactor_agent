@@ -43,6 +43,16 @@ from dw_refactor_agent.refactor.plan_artifact import (
     validate_analysis_input_fingerprints,
     write_verification_plan,
 )
+from dw_refactor_agent.refactor.qa_pool import (
+    configured_qa_pool,
+    inspect_qa_slot,
+    parse_age,
+    parse_created_before,
+    qa_server_epoch,
+    release_qa_slot,
+    select_cleanup_slots,
+    validate_qa_identifier,
+)
 from dw_refactor_agent.refactor.semantic_mode import resolve_semantic_modes
 from dw_refactor_agent.refactor.session import (
     artifact_path,
@@ -549,6 +559,7 @@ def _build_plan_for_run(
         )
     except ValueError as exc:
         raise SystemExit(str(exc)) from None
+    plan["run_id"] = manifest["run_id"]
     updated_manifest = _merge_inherited_declarations(
         manifest, semantic_resolution.inherited_declarations
     )
@@ -845,6 +856,185 @@ def _add_manifest_selector(parser: argparse.ArgumentParser) -> None:
     selector.add_argument("--run")
 
 
+def inspect_configured_slots(*, project: str | None = None) -> list:
+    """Inspect only databases explicitly listed in loaded project configs."""
+    inspections = []
+    owners_by_database = {}
+    for project_name in sorted(config.PROJECT_CONFIG):
+        if project is not None and project_name != project:
+            continue
+        project_config = config.PROJECT_CONFIG[project_name]
+        fixture = project_config.get("fixture") or {}
+        if str(fixture.get("execution") or "").casefold() == "disabled":
+            continue
+        try:
+            pool = configured_qa_pool(project_name, project_config)
+        except ValueError as exc:
+            raise ArtifactFormatError(str(exc)) from exc
+        for database in pool:
+            database_key = database.casefold()
+            previous_project = owners_by_database.setdefault(
+                database_key, project_name
+            )
+            if previous_project != project_name:
+                raise ArtifactFormatError(
+                    f"QA database {database} is configured by multiple "
+                    f"projects: {previous_project}, {project_name}"
+                )
+            inspections.append(inspect_qa_slot(project_name, database))
+    return inspections
+
+
+def _require_cleanup_project(project: str | None) -> None:
+    if project is not None and project not in config.PROJECT_CONFIG:
+        raise SystemExit(f"unknown project for cleanup: {project}")
+
+
+def _print_slot(inspection, *, now_epoch: int) -> None:
+    ownership = inspection.ownership
+    run_id = ownership.run_id if ownership is not None else "-"
+    execution_id = ownership.execution_id if ownership is not None else "-"
+    claimed_at = ownership.claimed_at if ownership is not None else "-"
+    age = (
+        f"{max(0, now_epoch - ownership.claimed_at_epoch)}s"
+        if ownership is not None
+        else "-"
+    )
+    diagnostic = inspection.diagnostic or "-"
+    print(
+        f"{inspection.project}\t{inspection.database}\t"
+        f"{inspection.availability}\t{run_id}\t{execution_id}\t"
+        f"{claimed_at}\t{age}\t{diagnostic}"
+    )
+
+
+def _cleanup_list(args) -> int:
+    with _project_root_context(Path(args.root)):
+        _require_cleanup_project(args.project)
+        inspections = inspect_configured_slots(project=args.project)
+        if args.run:
+            inspections = [
+                inspection
+                for inspection in inspections
+                if inspection.ownership is not None
+                and inspection.ownership.run_id == args.run
+            ]
+        if args.project:
+            inspections = [
+                inspection
+                for inspection in inspections
+                if inspection.project == args.project
+            ]
+        print(
+            "project\tdatabase\tavailability\trun_id\texecution_id\t"
+            "claimed_at\tage\tdiagnostic"
+        )
+        now_epoch = qa_server_epoch()
+        for inspection in inspections:
+            _print_slot(inspection, now_epoch=now_epoch)
+    return 0
+
+
+def _cleanup_cutoff(args) -> int | None:
+    cutoffs = []
+    if args.older_than:
+        try:
+            age_seconds = parse_age(args.older_than)
+        except ValueError as exc:
+            raise SystemExit(str(exc)) from None
+        cutoffs.append(qa_server_epoch() - age_seconds)
+    if args.created_before:
+        try:
+            cutoffs.append(parse_created_before(args.created_before))
+        except ValueError as exc:
+            raise SystemExit(str(exc)) from None
+    return min(cutoffs) if cutoffs else None
+
+
+def _cleanup_delete(args) -> int:
+    selectors = (
+        args.run,
+        args.execution,
+        args.database,
+        args.older_than,
+        args.created_before,
+    )
+    if not any(selectors):
+        raise SystemExit(
+            "cleanup delete requires at least one selector: --run, "
+            "--execution, --database, --older-than, or --created-before"
+        )
+    if (args.older_than or args.created_before) and not (
+        args.project or args.all_projects
+    ):
+        raise SystemExit("time cleanup requires --project or --all-projects")
+    database = None
+    if args.database:
+        try:
+            database = validate_qa_identifier(args.database)
+        except ValueError as exc:
+            raise SystemExit(str(exc)) from None
+    with _project_root_context(Path(args.root)):
+        _require_cleanup_project(args.project)
+        cutoff_epoch = _cleanup_cutoff(args)
+        inspections = inspect_configured_slots(project=args.project)
+        selected = select_cleanup_slots(
+            inspections,
+            project=args.project,
+            run_id=args.run,
+            execution_id=args.execution,
+            database=database,
+            cutoff_epoch=cutoff_epoch,
+        )
+        action = "release" if args.yes else "would release"
+        for inspection in selected:
+            print(
+                f"{action}\t{inspection.project}\t{inspection.database}\t"
+                f"{inspection.availability}"
+            )
+        if not args.yes:
+            print(f"preview selected={len(selected)}")
+            return 0
+
+        released = 0
+        blocked = 0
+        failed = 0
+        for inspection in selected:
+            project_config = config.PROJECT_CONFIG[inspection.project]
+            try:
+                configured_pool = configured_qa_pool(
+                    inspection.project, project_config
+                )
+                release_qa_slot(
+                    inspection,
+                    configured_pool=configured_pool,
+                    protected_databases={
+                        str(project_config.get("db") or ""),
+                        str(project_config.get("lineage_db") or ""),
+                    },
+                )
+            except ArtifactFormatError as exc:
+                blocked += 1
+                print(
+                    f"blocked\t{inspection.project}\t"
+                    f"{inspection.database}\t{exc}"
+                )
+            except Exception as exc:
+                failed += 1
+                print(
+                    f"failed\t{inspection.project}\t"
+                    f"{inspection.database}\t{exc}"
+                )
+            else:
+                released += 1
+                print(f"released\t{inspection.project}\t{inspection.database}")
+        print(
+            f"cleanup summary released={released} blocked={blocked} "
+            f"failed={failed}"
+        )
+        return 1 if blocked or failed else 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Refactor run workflow")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -921,6 +1111,35 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["equivalent", "changed", "unknown"],
     )
     semantic_set.set_defaults(func=_semantic_mode_set)
+
+    cleanup = subparsers.add_parser(
+        "cleanup", help="inspect or manually release QA database pool slots"
+    )
+    cleanup_commands = cleanup.add_subparsers(
+        dest="cleanup_command", required=True
+    )
+    cleanup_list = cleanup_commands.add_parser(
+        "list", help="list configured QA database pool slots"
+    )
+    cleanup_list.add_argument("--root", default=str(config.PROJECT_ROOT))
+    cleanup_list.add_argument("--project")
+    cleanup_list.add_argument("--run")
+    cleanup_list.set_defaults(func=_cleanup_list)
+
+    cleanup_delete = cleanup_commands.add_parser(
+        "delete", help="preview or release selected QA pool slots"
+    )
+    cleanup_delete.add_argument("--root", default=str(config.PROJECT_ROOT))
+    project_scope = cleanup_delete.add_mutually_exclusive_group()
+    project_scope.add_argument("--project")
+    project_scope.add_argument("--all-projects", action="store_true")
+    cleanup_delete.add_argument("--run")
+    cleanup_delete.add_argument("--execution")
+    cleanup_delete.add_argument("--database")
+    cleanup_delete.add_argument("--older-than")
+    cleanup_delete.add_argument("--created-before")
+    cleanup_delete.add_argument("--yes", action="store_true")
+    cleanup_delete.set_defaults(func=_cleanup_delete)
     return parser
 
 

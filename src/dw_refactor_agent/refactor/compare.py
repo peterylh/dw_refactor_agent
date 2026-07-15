@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -29,14 +30,15 @@ from dw_refactor_agent.refactor.artifact_contract import (
     require_format_version,
     sha256_json,
 )
-from dw_refactor_agent.refactor.execution_provenance import (
-    execution_marker_select_sql,
-    project_execution_lock,
-)
+from dw_refactor_agent.refactor.execution_provenance import run_execution_lock
 from dw_refactor_agent.refactor.plan_artifact import (
     load_persisted_verification_plan,
     require_fresh_plan,
     require_fresh_plan_bundle,
+)
+from dw_refactor_agent.refactor.qa_pool import (
+    require_slot_ownership,
+    validate_qa_identifier,
 )
 
 DEFAULT_ROW_COMPARE_EXCLUDE_COLUMNS = ["etl_time"]
@@ -642,6 +644,16 @@ def require_matching_shadow_result(
         raise ArtifactFormatError(
             "shadow-run result execution_id is required; run shadow-run"
         )
+    if shadow_result.get("run_id") != persisted_plan.get("run_id"):
+        raise ArtifactFormatError(
+            "shadow-run result run_id does not match the current plan; "
+            "run shadow-run again"
+        )
+    qa_database = shadow_result.get("qa_db")
+    if not isinstance(qa_database, str) or not qa_database.strip():
+        raise ArtifactFormatError(
+            "shadow-run result qa_db is required; run shadow-run again"
+        )
 
     snapshot = persisted_plan.get("analysis_snapshot") or {}
     expected_workspace = snapshot.get("workspace_fingerprint")
@@ -672,37 +684,6 @@ def require_matching_shadow_result(
     return shadow_result
 
 
-def require_qa_execution_marker(plan: dict, shadow_result: dict) -> None:
-    """Verify that shared QA state belongs to this exact shadow execution."""
-    qa_conn = None
-    cursor = None
-    try:
-        qa_conn = get_pymysql_conn(plan["qa_db"], qa=True)
-        cursor = qa_conn.cursor()
-        cursor.execute(execution_marker_select_sql())
-        marker = cursor.fetchone()
-    except Exception as exc:
-        raise ArtifactFormatError(
-            f"cannot verify QA execution marker: {exc}; run shadow-run again"
-        ) from exc
-    finally:
-        if cursor is not None:
-            cursor.close()
-        if qa_conn is not None:
-            qa_conn.close()
-    expected = (
-        shadow_result.get("execution_id"),
-        shadow_result.get("plan_fingerprint"),
-        shadow_result.get("workspace_fingerprint"),
-    )
-    if not marker or tuple(marker[:3]) != expected:
-        raise ArtifactFormatError(
-            "QA execution marker does not match shadow_run_result; another "
-            "run may have replaced the shared QA database; run shadow-run "
-            "again"
-        )
-
-
 def compare_shadow_results(
     plan_path: Path,
     shadow_result_path: Path,
@@ -719,10 +700,33 @@ def compare_shadow_results(
     bundle = require_fresh_plan_bundle(plan_path)
     plan = bundle.plan
     shadow_result = require_matching_shadow_result(plan, shadow_result_path)
-    with project_execution_lock(plan_path):
-        require_qa_execution_marker(plan, shadow_result)
+    try:
+        shadow_database = validate_qa_identifier(shadow_result["qa_db"])
+    except ValueError as exc:
+        raise ArtifactFormatError(
+            f"shadow-run result qa_db is invalid: {exc}"
+        ) from exc
+    configured_databases = {
+        database.casefold(): database for database in plan["qa_database_pool"]
+    }
+    qa_database = configured_databases.get(shadow_database.casefold())
+    if qa_database is None:
+        raise ArtifactFormatError(
+            f"shadow-run database {shadow_database} is not in the plan QA pool"
+        )
+    runtime_plan = deepcopy(plan)
+    runtime_plan["qa_db"] = qa_database
+    with run_execution_lock(plan_path):
+        require_slot_ownership(
+            project=plan["project"],
+            run_id=plan["run_id"],
+            execution_id=shadow_result["execution_id"],
+            database=qa_database,
+            plan_fingerprint=shadow_result["plan_fingerprint"],
+            workspace_fingerprint=shadow_result["workspace_fingerprint"],
+        )
         result = run_checks(
-            plan,
+            runtime_plan,
             method=method,
             sample=sample,
             precision=precision,
@@ -733,6 +737,7 @@ def compare_shadow_results(
             "format_version": FORMAT_VERSION,
             "workspace_fingerprint": shadow_result["workspace_fingerprint"],
             "plan_fingerprint": shadow_result["plan_fingerprint"],
+            "qa_db": qa_database,
             "shadow_execution_id": shadow_result["execution_id"],
             "shadow_result_fingerprint": sha256_json(shadow_result),
             "compared_at": datetime.now(timezone.utc)

@@ -112,6 +112,20 @@ def load_warehouse_config(
     raw_verification = data.get("verification") or {}
     if not isinstance(raw_verification, dict):
         raise ValueError(f"verification 必须是 mapping: {warehouse_file}")
+    if "qa_database_pool" in raw_verification:
+        raw_qa_pool = raw_verification["qa_database_pool"]
+        if (
+            not isinstance(raw_qa_pool, list)
+            or not raw_qa_pool
+            or any(
+                not isinstance(value, str) or not value.strip()
+                for value in raw_qa_pool
+            )
+        ):
+            raise ValueError(
+                "verification.qa_database_pool 必须是 non-empty 字符串列表: "
+                f"{warehouse_file}"
+            )
     raw_execution = data.get("execution") or {}
     if not isinstance(raw_execution, dict):
         raise ValueError(f"execution 必须是 mapping: {warehouse_file}")

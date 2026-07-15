@@ -29,6 +29,49 @@ def model_metadata(monkeypatch):
     )
 
 
+def _build_contexts_for_graph(
+    tmp_path,
+    monkeypatch,
+    *,
+    tables,
+    upstream,
+    model_metadata,
+    metric_groups=None,
+    ddl_files=None,
+    task_files=None,
+    downstream=None,
+):
+    ddl_dir = tmp_path / "ddl"
+    tasks_dir = tmp_path / "tasks"
+    ddl_dir.mkdir()
+    tasks_dir.mkdir()
+    for filename, content in (ddl_files or {}).items():
+        (ddl_dir / filename).write_text(content, encoding="utf-8")
+    for filename, content in (task_files or {}).items():
+        (tasks_dir / filename).write_text(content, encoding="utf-8")
+
+    class FakeLineageView:
+        @classmethod
+        def from_data(cls, project, lineage_data):
+            return cls()
+
+        def asset_table_graph(self):
+            return upstream, downstream or {}
+
+        def column_lineage_for_table(self, table_name):
+            return []
+
+    monkeypatch.setattr(context_builder_module, "LineageView", FakeLineageView)
+    return build_contexts(
+        "test_proj",
+        {"tables": [{"name": name} for name in tables]},
+        ddl_dir,
+        tasks_dir,
+        model_metadata=model_metadata,
+        metric_groups=metric_groups,
+    )
+
+
 def test_extract_dependencies(sample_lineage_data):
     upstream, downstream = extract_dependencies(sample_lineage_data)
 
@@ -181,6 +224,150 @@ def test_build_contexts_reuses_one_lineage_view(
     assert calls["column_tables"] == [ctx.table_name for ctx in contexts]
 
 
+def test_build_contexts_matches_dependency_layers_case_insensitively(
+    tmp_path,
+    monkeypatch,
+):
+    metric_groups = {
+        "atomic_metrics": ["order_count"],
+        "derived_metrics": [],
+        "calculated_metrics": [],
+    }
+
+    context = _build_contexts_for_graph(
+        tmp_path,
+        monkeypatch,
+        tables=["Internal.Demo.DWS_ORDER_DAILY"],
+        upstream={
+            "Internal.Demo.DWS_ORDER_DAILY": {"INTERNAL.DEMO.DWD_ORDER_DETAIL"}
+        },
+        model_metadata={
+            "dwd_order_detail": {"layer": "DWD"},
+            "dws_order_daily": {"layer": "DWS"},
+        },
+        metric_groups={"dwd_order_detail": metric_groups},
+        ddl_files={
+            "dws_order_daily.sql": (
+                "CREATE TABLE dws_order_daily (order_count BIGINT);"
+            )
+        },
+    )[0]
+
+    assert context.table_name == "dws_order_daily"
+    assert context.upstream_table_layers == {
+        "INTERNAL.DEMO.DWD_ORDER_DETAIL": "DWD"
+    }
+    assert context.upstream_metric_groups == {
+        "INTERNAL.DEMO.DWD_ORDER_DETAIL": metric_groups
+    }
+    assert context.ddl.endswith("order_count BIGINT);")
+
+
+def test_build_contexts_keeps_qualified_same_name_tables_isolated(
+    tmp_path,
+    monkeypatch,
+):
+    catalog_a_metrics = {
+        "atomic_metrics": ["gross_amount"],
+        "derived_metrics": [],
+        "calculated_metrics": [],
+    }
+    catalog_b_metrics = {
+        "atomic_metrics": ["balance_amount"],
+        "derived_metrics": [],
+        "calculated_metrics": [],
+    }
+
+    context = _build_contexts_for_graph(
+        tmp_path,
+        monkeypatch,
+        tables=["catalog_a.db_a.order_summary"],
+        upstream={
+            "catalog_a.db_a.order_summary": {"catalog_a.db_a.orders"},
+            "catalog_b.db_b.other_summary": {"catalog_b.db_b.orders"},
+        },
+        model_metadata={
+            "catalog_a.db_a.order_summary": {
+                "name": "order_summary",
+                "layer": "DWS",
+            },
+            "catalog_a.db_a.orders": {"layer": "DWD"},
+            "catalog_b.db_b.orders": {"layer": "DIM"},
+        },
+        metric_groups={
+            "catalog_a.db_a.orders": catalog_a_metrics,
+            "catalog_b.db_b.orders": catalog_b_metrics,
+        },
+    )[0]
+
+    assert context.upstream_tables == ["catalog_a.db_a.orders"]
+    assert context.upstream_table_layers == {"catalog_a.db_a.orders": "DWD"}
+    assert context.upstream_metric_groups == {
+        "catalog_a.db_a.orders": catalog_a_metrics
+    }
+
+
+def test_build_contexts_extracts_downstream_entity_publication_features(
+    tmp_path,
+    monkeypatch,
+):
+    contexts = _build_contexts_for_graph(
+        tmp_path,
+        monkeypatch,
+        tables=["clean_entity", "published_entity", "entity_summary"],
+        upstream={
+            "clean_entity": {"raw_entity"},
+            "published_entity": {"clean_entity"},
+            "entity_summary": {"clean_entity"},
+        },
+        downstream={
+            "clean_entity": {"published_entity", "entity_summary"},
+        },
+        model_metadata={
+            "clean_entity": {"name": "clean_entity", "layer": "DWD"},
+            "published_entity": {
+                "name": "published_entity",
+                "layer": "DIM",
+            },
+            "entity_summary": {
+                "name": "entity_summary",
+                "layer": "DWS",
+            },
+        },
+        task_files={
+            "published_entity.sql": (
+                "INSERT INTO published_entity "
+                "SELECT MD5(CAST(entity_id AS STRING)) AS entity_key, "
+                "entity_id AS entity_natural_key, "
+                "CURRENT_TIMESTAMP AS effective_date, "
+                "CAST('9999-12-31' AS DATETIME) AS expiration_date, "
+                "TRUE AS is_current FROM clean_entity;"
+            ),
+            "entity_summary.sql": (
+                "INSERT INTO entity_summary "
+                "SELECT MD5(CAST(entity_id AS STRING)) AS entity_key, "
+                "SUM(amount) AS total_amount FROM clean_entity "
+                "GROUP BY entity_id;"
+            ),
+        },
+    )
+    context = next(ctx for ctx in contexts if ctx.table_name == "clean_entity")
+
+    assert context.downstream_entity_publication_features == {
+        "published_entity": {
+            "generated_key_columns": ["entity_key"],
+            "natural_key_aliases": ["entity_natural_key"],
+            "added_version_control_columns": [
+                "effective_date",
+                "expiration_date",
+                "is_current",
+            ],
+            "combines_sources_with_union": False,
+            "contains_aggregation": False,
+        }
+    }
+
+
 def test_build_context_without_task(sample_lineage_data, tmp_path):
     ddl_dir = tmp_path / "ddl"
     tasks_dir = tmp_path / "tasks"
@@ -198,6 +385,32 @@ def test_build_context_without_task(sample_lineage_data, tmp_path):
     assert ctx.ddl == "CREATE dwd_order_detail;"
     assert ctx.etl_sql == ""
     assert ctx.downstream_tables == ["dws_store_sales_daily"]
+
+
+def test_build_contexts_warns_without_parsing_tasks_when_lineage_empty(
+    tmp_path,
+    caplog,
+):
+    ddl_dir = tmp_path / "ddl"
+    tasks_dir = tmp_path / "tasks"
+    ddl_dir.mkdir()
+    tasks_dir.mkdir()
+    (tasks_dir / "dwd_order_clean.sql").write_text(
+        "INSERT INTO dwd_order_clean SELECT * FROM ods_order;",
+        encoding="utf-8",
+    )
+
+    context = build_contexts(
+        "test_proj",
+        {"tables": [{"name": "dwd_order_clean"}], "edges": []},
+        ddl_dir,
+        tasks_dir,
+        model_metadata={"dwd_order_clean": {"layer": "DWD"}},
+    )[0]
+
+    assert context.upstream_tables == []
+    assert context.downstream_tables == []
+    assert "lineage graph is empty" in caplog.text.lower()
 
 
 def test_build_contexts_reads_default_mid_asset_dirs(
@@ -241,6 +454,63 @@ def test_build_contexts_reads_default_mid_asset_dirs(
     assert ctx.etl_sql == (
         "INSERT INTO dwd_order_detail SELECT order_id FROM ods_order;"
     )
+
+
+def test_build_contexts_excludes_fixed_boundaries_with_wrong_declared_layer(
+    tmp_path,
+    monkeypatch,
+    caplog,
+):
+    project = "context_fixed_boundaries"
+    project_dir = tmp_path / project
+    ods_models = project_dir / "ods" / "models" / "internal" / "demo"
+    mid_models = project_dir / "mid" / "models"
+    ads_models = project_dir / "ads" / "models"
+    for directory in (ods_models, mid_models, ads_models):
+        directory.mkdir(parents=True)
+    for path, metadata in (
+        (ods_models / "orders.yaml", {"name": "orders", "layer": "DWD"}),
+        (
+            mid_models / "order_summary.yaml",
+            {"name": "order_summary", "layer": "DWS"},
+        ),
+        (
+            ads_models / "dashboard.yaml",
+            {"name": "dashboard", "layer": "DWD"},
+        ),
+    ):
+        path.write_text(
+            yaml.safe_dump(metadata, sort_keys=False),
+            encoding="utf-8",
+        )
+    monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setitem(
+        config.PROJECT_CONFIG,
+        project,
+        {"dir": project, "catalog": "internal", "db": "demo"},
+    )
+    metadata = {
+        "orders": {"name": "orders", "layer": "DWD"},
+        "order_summary": {"name": "order_summary", "layer": "DWS"},
+        "dashboard": {"name": "dashboard", "layer": "DWD"},
+    }
+
+    contexts = build_contexts(
+        project,
+        {
+            "tables": [
+                {"name": "orders"},
+                {"name": "order_summary"},
+                {"name": "dashboard"},
+            ],
+            "edges": [],
+        },
+        model_metadata=metadata,
+    )
+
+    assert [context.table_name for context in contexts] == ["order_summary"]
+    assert "Skipping fixed-boundary model orders" in caplog.text
+    assert "Skipping fixed-boundary model dashboard" in caplog.text
 
 
 def test_build_contexts_includes_business_semantics_catalog_options(

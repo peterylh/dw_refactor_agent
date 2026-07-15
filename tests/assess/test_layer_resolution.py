@@ -17,6 +17,7 @@ def _inspect_result(
     inferred_layer: str = "DWD",
     table_type: str = "fact",
     confidence: float = 0.9,
+    grain=None,
 ) -> TableInspectResult:
     return TableInspectResult(
         table_name=table_name,
@@ -25,6 +26,7 @@ def _inspect_result(
         table_type=table_type,
         confidence=confidence,
         reasoning_steps=[],
+        grain=grain or {},
     )
 
 
@@ -130,6 +132,25 @@ def test_llm_dimension_candidate_applies_dim_layer(payload, expected_prior):
         ),
         (
             LayerResolutionInput(
+                table_name="candidate_table",
+                fallback_layer="DWD",
+                fallback_table_type="fact",
+                inspection_result=_inspect_result(
+                    table_name="candidate_table",
+                    inferred_layer="ADS",
+                    table_type="dimension",
+                ),
+                policy=LayerResolutionPolicy(
+                    mode="generate",
+                    candidate_layers=("DWD", "DWS", "DIM"),
+                    fallback_source="direct_rule",
+                ),
+            ),
+            "ADS",
+            "direct_rule",
+        ),
+        (
+            LayerResolutionInput(
                 table_name="dwd_order_detail",
                 declared_layer="DWD",
                 declared_table_type="fact",
@@ -156,6 +177,33 @@ def test_unusable_llm_layer_falls_back_to_prior(
     assert resolution.source == expected_source
     assert resolution.warnings[0]["type"] == "llm_layer_fallback"
     assert resolution.warnings[0]["candidate_layers"] == ("DWD", "DWS", "DIM")
+
+
+def test_low_confidence_llm_candidate_falls_back_to_prior():
+    resolution = resolve_layer(
+        LayerResolutionInput(
+            table_name="customer_detail",
+            declared_layer="DWD",
+            declared_table_type="fact",
+            inspection_result=_inspect_result(
+                table_name="customer_detail",
+                inferred_layer="DIM",
+                table_type="dimension",
+                confidence=0.01,
+            ),
+            policy=LayerResolutionPolicy(
+                mode="refresh",
+                min_llm_confidence=0.5,
+            ),
+        )
+    )
+
+    assert resolution.applied_layer == "DWD"
+    assert resolution.table_type == "fact"
+    assert resolution.source == "declared"
+    assert resolution.validation["llm_confidence_below_min"] is True
+    assert resolution.warnings[0]["llm_confidence"] == 0.01
+    assert resolution.warnings[0]["min_llm_confidence"] == 0.5
 
 
 @pytest.mark.parametrize(

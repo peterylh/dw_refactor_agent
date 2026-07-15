@@ -3,7 +3,7 @@ upstream_repository: https://github.com/apache/fineract
 upstream_commit: 45d8e24f82c9c42c46a6762b24e102ad2c723824
 source_database: postgresql
 active_table_count: 277
-analytical_ods_table_count: 277
+analytical_ods_table_count: 102
 excluded_spring_batch_table_count: 6
 excluded_tenant_store_table_count: 4
 fineract_physical_table_count: 287

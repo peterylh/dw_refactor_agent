@@ -9,7 +9,6 @@ from dw_refactor_agent.refactor.compare import (
     check_row_compare,
     compare_shadow_results,
     fmt_val,
-    require_qa_execution_marker,
     run_checks,
 )
 from dw_refactor_agent.refactor.compare import (
@@ -130,9 +129,11 @@ def _write_compare_plan(plan_path, verification):
         artifact_path.write_text(json.dumps(value), encoding="utf-8")
 
     plan = {
+        "run_id": "test-run",
         "project": "shop",
         "project_db": "shop_dm",
         "qa_db": "shop_dm_qa",
+        "qa_database_pool": ["shop_dm_qa", "shop_dm_qa_02"],
         "baseline_ddl": {},
         "ddl_changes": [],
         "jobs_to_run": [],
@@ -157,7 +158,9 @@ def _write_shadow_result(shadow_path, persisted_plan, **overrides):
         "format_version": 1,
         "mode": "execute",
         "status": "completed",
+        "run_id": "test-run",
         "execution_id": "execution-123",
+        "qa_db": "shop_dm_qa",
         "workspace_fingerprint": persisted_plan["analysis_snapshot"][
             "workspace_fingerprint"
         ],
@@ -483,50 +486,6 @@ def test_renamed_row_compare_maps_qa_exclusions_and_projections():
     ]
 
 
-def test_qa_execution_marker_binds_shared_database_to_shadow(monkeypatch):
-    cursor = FakeCursor([("execution-123", "sha256:plan", "sha256:workspace")])
-    connection = FakeConn([cursor])
-    monkeypatch.setattr(
-        "dw_refactor_agent.refactor.compare.get_pymysql_conn",
-        lambda db_name, qa=False: connection,
-    )
-
-    require_qa_execution_marker(
-        {"qa_db": "shop_dm_qa"},
-        {
-            "execution_id": "execution-123",
-            "plan_fingerprint": "sha256:plan",
-            "workspace_fingerprint": "sha256:workspace",
-        },
-    )
-
-    assert connection.closed is True
-    assert "dw_refactor_execution_marker" in cursor.executed[0]
-    assert "__dw_refactor_execution_marker" not in cursor.executed[0]
-
-
-def test_qa_execution_marker_rejects_database_replaced_by_other_run(
-    monkeypatch,
-):
-    connection = FakeConn(
-        [FakeCursor([("other-execution", "sha256:plan", "sha256:workspace")])]
-    )
-    monkeypatch.setattr(
-        "dw_refactor_agent.refactor.compare.get_pymysql_conn",
-        lambda db_name, qa=False: connection,
-    )
-
-    with pytest.raises(ArtifactFormatError, match="another run.*shadow-run"):
-        require_qa_execution_marker(
-            {"qa_db": "shop_dm_qa"},
-            {
-                "execution_id": "execution-123",
-                "plan_fingerprint": "sha256:plan",
-                "workspace_fingerprint": "sha256:workspace",
-            },
-        )
-
-
 def test_run_checks_short_circuit_scenarios(monkeypatch):
     def fail_if_called(db_name, qa=False):
         raise AssertionError("short-circuit plans should not open connections")
@@ -746,8 +705,10 @@ def test_compare_shadow_results_writes_compare_output(tmp_path, monkeypatch):
         raising=False,
     )
     monkeypatch.setattr(
-        "dw_refactor_agent.refactor.compare.require_qa_execution_marker",
-        lambda plan, shadow_result: None,
+        compare_module,
+        "require_slot_ownership",
+        lambda **kwargs: None,
+        raising=False,
     )
 
     result = compare_shadow_results(
@@ -774,6 +735,79 @@ def test_compare_shadow_results_writes_compare_output(tmp_path, monkeypatch):
     assert json.loads(output_path.read_text(encoding="utf-8")) == result
 
 
+def test_compare_uses_shadow_result_physical_database(tmp_path, monkeypatch):
+    plan_path = tmp_path / "verification" / "plan.json"
+    shadow_path = tmp_path / "verification" / "shadow_run_result.json"
+    output_path = tmp_path / "verification" / "compare_result.json"
+    persisted = _write_compare_plan(plan_path, _semantic_verification([]))
+    _write_shadow_result(
+        shadow_path,
+        persisted,
+        qa_db="shop_dm_qa_02",
+    )
+    ownership_calls = []
+    checked_plans = []
+    monkeypatch.setattr(
+        compare_module,
+        "require_slot_ownership",
+        lambda **kwargs: ownership_calls.append(kwargs),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        compare_module,
+        "run_checks",
+        lambda plan, **kwargs: checked_plans.append(plan)
+        or {"verification_status": "passed", "warnings": []},
+    )
+
+    result = compare_shadow_results(plan_path, shadow_path, output_path)
+
+    assert checked_plans[0]["qa_db"] == "shop_dm_qa_02"
+    assert ownership_calls == [
+        {
+            "project": "shop",
+            "run_id": "test-run",
+            "execution_id": "execution-123",
+            "database": "shop_dm_qa_02",
+            "plan_fingerprint": persisted["plan_fingerprint"],
+            "workspace_fingerprint": persisted["analysis_snapshot"][
+                "workspace_fingerprint"
+            ],
+        }
+    ]
+    assert result["shadow_execution_id"] == "execution-123"
+    assert result["qa_db"] == "shop_dm_qa_02"
+
+
+def test_compare_rejects_shadow_database_outside_pool_before_connections(
+    tmp_path, monkeypatch
+):
+    plan_path = tmp_path / "verification" / "plan.json"
+    shadow_path = tmp_path / "verification" / "shadow_run_result.json"
+    output_path = tmp_path / "verification" / "compare_result.json"
+    persisted = _write_compare_plan(plan_path, _semantic_verification([]))
+    _write_shadow_result(shadow_path, persisted, qa_db="shop_dm")
+    database_connections = []
+    monkeypatch.setattr(
+        compare_module,
+        "get_pymysql_conn",
+        lambda *args, **kwargs: database_connections.append(args) or None,
+    )
+    monkeypatch.setattr(
+        compare_module,
+        "require_slot_ownership",
+        lambda **kwargs: (_ for _ in ()).throw(
+            AssertionError("pool validation must precede marker connection")
+        ),
+        raising=False,
+    )
+
+    with pytest.raises(ArtifactFormatError, match="not in.*pool"):
+        compare_shadow_results(plan_path, shadow_path, output_path)
+
+    assert database_connections == []
+
+
 @pytest.mark.parametrize(
     "overrides",
     [
@@ -784,6 +818,8 @@ def test_compare_shadow_results_writes_compare_output(tmp_path, monkeypatch):
         {"workspace_fingerprint": None},
         {"plan_fingerprint": None},
         {"execution_id": None},
+        {"run_id": "other-run"},
+        {"qa_db": None},
     ],
 )
 def test_compare_rejects_nonmatching_shadow_before_database(

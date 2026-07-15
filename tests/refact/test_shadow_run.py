@@ -20,6 +20,7 @@ from dw_refactor_agent.refactor.plan_artifact import (
     analysis_input_fingerprints,
     write_verification_plan,
 )
+from dw_refactor_agent.refactor.qa_pool import QaSlotOwnership
 from dw_refactor_agent.refactor.session import write_manifest
 from dw_refactor_agent.refactor.shadow_rewrite import (
     RewriteContext,
@@ -38,14 +39,6 @@ from dw_refactor_agent.refactor.shadow_run import (
 from dw_refactor_agent.refactor.workspace_snapshot import workspace_fingerprint
 
 TIMING_KEYS = {"started_at", "finished_at", "duration_ms"}
-
-
-def execute_shadow_plan(plan, **kwargs):
-    plan.setdefault(
-        "job_dependencies",
-        {job["job"]: [] for job in plan.get("jobs_to_run") or []},
-    )
-    return _execute_shadow_plan(plan, **kwargs)
 
 
 def test_shadow_scheduler_prefers_snapshot_plan_dependencies():
@@ -94,15 +87,23 @@ def test_shadow_scheduler_rejects_missing_dependency_snapshot(tmp_path):
         shadow_run_module._job_dependencies_from_plan(plan, tmp_path)
 
 
-def test_project_execution_lock_is_shared_across_worktrees(tmp_path):
-    relative = (
-        "warehouses/shop/artifacts/refactor_runs/run/verification/plan.json"
+def test_run_execution_lock_matches_across_worktrees_but_differs_by_run(
+    tmp_path,
+):
+    prefix = "warehouses/shop/artifacts/refactor_runs"
+    first = _lock_path(
+        tmp_path / "worktree-one" / prefix / "run-a/verification/plan.json"
     )
-    first = _lock_path(tmp_path / "worktree-one" / relative)
-    second = _lock_path(tmp_path / "worktree-two" / relative)
+    second = _lock_path(
+        tmp_path / "worktree-two" / prefix / "run-a/verification/plan.json"
+    )
+    other = _lock_path(
+        tmp_path / "worktree-two" / prefix / "run-b/verification/plan.json"
+    )
 
     assert first == second
-    assert first.name == "shop.shadow_execution.lock"
+    assert first != other
+    assert first.name == "shop.run-a.shadow_execution.lock"
 
 
 def test_run_shadow_plan_core_rejects_stale_bundle_before_loading_plan(
@@ -268,6 +269,67 @@ def _analysis_snapshot():
     }
 
 
+def _claimed_ownership(plan, database=None):
+    return QaSlotOwnership(
+        2,
+        plan.get("project", "shop"),
+        plan.get("run_id", "test-run"),
+        "execution-1",
+        database or plan["qa_db"],
+        plan.get("plan_fingerprint", "sha256:" + "a" * 64),
+        (plan.get("analysis_snapshot") or {}).get(
+            "workspace_fingerprint", "sha256:" + "b" * 64
+        ),
+        "2026-07-14 12:00:00",
+        1784001600,
+    )
+
+
+def execute_shadow_plan(plan, *, root, dry_run=False, **kwargs):
+    """Exercise the production core with an explicit synthetic claim."""
+    plan.setdefault(
+        "job_dependencies",
+        {job["job"]: [] for job in plan.get("jobs_to_run") or []},
+    )
+    return _execute_shadow_plan(
+        plan,
+        root=root,
+        dry_run=dry_run,
+        claimed_ownership=(None if dry_run else _claimed_ownership(plan)),
+        **kwargs,
+    )
+
+
+@pytest.fixture(autouse=True)
+def _stub_qa_pool_boundary(monkeypatch):
+    monkeypatch.setattr(
+        shadow_run_module,
+        "require_slot_ownership",
+        lambda **kwargs: None,
+        raising=False,
+    )
+
+    def fake_claim(**kwargs):
+        return QaSlotOwnership(
+            2,
+            kwargs["project"],
+            kwargs["run_id"],
+            kwargs["execution_id"],
+            kwargs["pool"][0],
+            kwargs["plan_fingerprint"],
+            kwargs["workspace_fingerprint"],
+            "2026-07-14 12:00:00",
+            1784001600,
+        )
+
+    monkeypatch.setattr(
+        shadow_run_module,
+        "claim_qa_slot",
+        fake_claim,
+        raising=False,
+    )
+
+
 def _write_shadow_cli_plan(plan_path):
     return _write_fresh_plan_bundle(
         plan_path,
@@ -275,6 +337,7 @@ def _write_shadow_cli_plan(plan_path):
             "project": "shop",
             "project_db": "shop_dm",
             "qa_db": "shop_dm_qa",
+            "qa_database_pool": ["shop_dm_qa", "shop_dm_qa_02"],
             "baseline_ddl": {},
             "ddl_changes": [],
             "jobs_to_run": [],
@@ -341,6 +404,8 @@ def _write_fresh_plan_bundle(plan_path, plan):
         "job_dependencies",
         {job["job"]: [] for job in prepared.get("jobs_to_run") or []},
     )
+    prepared.setdefault("run_id", manifest["run_id"])
+    prepared.setdefault("qa_database_pool", [prepared["qa_db"]])
     snapshot = deepcopy(prepared.get("analysis_snapshot") or {})
     snapshot["workspace_fingerprint"] = workspace_fingerprint(
         root, plan["project"]
@@ -873,6 +938,7 @@ def test_execute_shadow_plan_logs_table_rename_display(
         "project": "shop",
         "project_db": "shop_dm",
         "qa_db": "shop_dm_qa",
+        "qa_database_pool": ["shop_dm_qa", "shop_dm_qa_02"],
         "baseline_ddl": {
             "dwd_inventory": ("CREATE TABLE shop_dm.dwd_inventory (id BIGINT)")
         },
@@ -1450,32 +1516,60 @@ def test_run_shadow_plan_rejects_provenance_not_from_plan(
         )
 
 
-def test_shadow_run_publishes_running_attempt_before_execution(
+def test_shadow_run_claims_after_preview_and_uses_physical_database(
     tmp_path, monkeypatch
 ):
     plan_path = tmp_path / "verification" / "plan.json"
     output_path = tmp_path / "verification" / "shadow_run_result.json"
     _write_shadow_cli_plan(plan_path)
     observed = {}
+    preview_databases = []
+    executed_databases = []
 
-    def fake_execute(*args, **kwargs):
+    persisted = json.loads(plan_path.read_text(encoding="utf-8"))
+    owner = QaSlotOwnership(
+        2,
+        "shop",
+        "test-run",
+        "execution-1",
+        "shop_dm_qa_02",
+        persisted["plan_fingerprint"],
+        persisted["analysis_snapshot"]["workspace_fingerprint"],
+        "2026-07-14 12:00:00",
+        1784001600,
+    )
+
+    def fake_preview(plan, *args, **kwargs):
+        preview_databases.append(plan["qa_db"])
+        return {"blockers": [], "warnings": []}, {
+            "name": "compile_shadow_manifest",
+            "status": "success",
+        }
+
+    def fake_execute(plan, *args, **kwargs):
         running = json.loads(output_path.read_text(encoding="utf-8"))
         observed.update(running)
+        executed_databases.append(plan["qa_db"])
         return {
             "status": "completed",
             "mode": "execute",
             "phases": [],
         }
 
-    marker_sql = []
     monkeypatch.setattr(
-        "dw_refactor_agent.refactor.shadow_run.execute_shadow_plan",
+        shadow_run_module,
+        "_compile_shadow_manifest_phase",
+        fake_preview,
+    )
+    monkeypatch.setattr(
+        shadow_run_module,
+        "execute_shadow_plan",
         fake_execute,
     )
     monkeypatch.setattr(
-        "dw_refactor_agent.refactor.shadow_run.run_sql_text",
-        lambda sql, db="", qa=False: marker_sql.append(sql),
+        shadow_run_module, "claim_qa_slot", lambda **kwargs: owner
     )
+    monkeypatch.setattr(shadow_run_module.uuid, "uuid4", lambda: "execution-1")
 
     result = run_shadow_plan(
         plan_path,
@@ -1485,32 +1579,29 @@ def test_shadow_run_publishes_running_attempt_before_execution(
 
     assert observed["status"] == "running"
     assert observed["execution_id"] == result["execution_id"]
+    assert preview_databases == ["shop_dm_qa"]
+    assert executed_databases == ["shop_dm_qa_02"]
     assert result["status"] == "completed"
-    assert result["phases"][-1]["name"] == "publish_execution_marker"
-    assert result["execution_id"] in marker_sql[0]
-    assert "CREATE TABLE IF NOT EXISTS" in marker_sql[0]
-    assert "shop_dm_qa.dw_refactor_execution_marker" in marker_sql[0]
-    assert "__dw_refactor_execution_marker" not in marker_sql[0]
+    assert result["qa_db"] == "shop_dm_qa_02"
+    assert result["phases"][0]["name"] == "claim_qa_slot"
 
 
-def test_shadow_run_fails_when_execution_marker_cannot_be_published(
-    tmp_path, monkeypatch
-):
+def test_shadow_run_fails_when_slot_cannot_be_claimed(tmp_path, monkeypatch):
     plan_path = tmp_path / "verification" / "plan.json"
     output_path = tmp_path / "verification" / "shadow_run_result.json"
     _write_shadow_cli_plan(plan_path)
     monkeypatch.setattr(
-        "dw_refactor_agent.refactor.shadow_run.execute_shadow_plan",
-        lambda *args, **kwargs: {
-            "status": "completed",
-            "mode": "execute",
-            "phases": [],
-        },
+        shadow_run_module,
+        "claim_qa_slot",
+        lambda **kwargs: (_ for _ in ()).throw(
+            ArtifactFormatError("pool exhausted")
+        ),
     )
     monkeypatch.setattr(
-        "dw_refactor_agent.refactor.shadow_run.run_sql_text",
+        shadow_run_module,
+        "execute_shadow_plan",
         lambda *args, **kwargs: (_ for _ in ()).throw(
-            ShadowRunSqlError("marker failed")
+            AssertionError("claim failure must stop execution")
         ),
     )
 
@@ -1521,8 +1612,109 @@ def test_shadow_run_fails_when_execution_marker_cannot_be_published(
     )
 
     assert result["status"] == "failed"
-    assert "marker failed" in result["error"]
+    assert "pool exhausted" in result["error"]
     assert result["phases"][-1]["status"] == "failed"
+
+
+def test_shadow_run_rejects_claim_outside_configured_pool(
+    tmp_path, monkeypatch
+):
+    plan_path = tmp_path / "verification" / "plan.json"
+    output_path = tmp_path / "verification" / "shadow_run_result.json"
+    persisted = _write_shadow_cli_plan(plan_path)
+    owner = QaSlotOwnership(
+        2,
+        "shop",
+        "test-run",
+        "execution-1",
+        "shop_dm",
+        persisted["plan_fingerprint"],
+        persisted["analysis_snapshot"]["workspace_fingerprint"],
+        "2026-07-14 12:00:00",
+        1784001600,
+    )
+    monkeypatch.setattr(
+        shadow_run_module, "claim_qa_slot", lambda **kwargs: owner
+    )
+    monkeypatch.setattr(
+        shadow_run_module,
+        "execute_shadow_plan",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("pool-external database must not execute")
+        ),
+    )
+
+    result = run_shadow_plan(
+        plan_path,
+        output_path,
+        provenance=_provenance(plan_path),
+    )
+
+    assert result["status"] == "failed"
+    assert "configured QA database pool" in result["error"]
+
+
+def test_shadow_run_dry_run_never_claims_database(tmp_path, monkeypatch):
+    plan_path = tmp_path / "verification" / "plan.json"
+    output_path = tmp_path / "verification" / "shadow_run_result.json"
+    _write_shadow_cli_plan(plan_path)
+    monkeypatch.setattr(
+        shadow_run_module,
+        "claim_qa_slot",
+        lambda **kwargs: (_ for _ in ()).throw(
+            AssertionError("dry-run must not claim a database")
+        ),
+    )
+
+    result = run_shadow_plan(
+        plan_path,
+        output_path,
+        provenance=_provenance(plan_path),
+        dry_run=True,
+    )
+
+    assert result["mode"] == "dry_run"
+    assert result["qa_database_pool"] == ["shop_dm_qa", "shop_dm_qa_02"]
+
+
+def test_execute_shadow_plan_validates_ownership_before_database_writes(
+    tmp_path, monkeypatch
+):
+    plan = {
+        "project": "shop",
+        "run_id": "test-run",
+        "project_db": "shop_dm",
+        "qa_db": "shop_dm_qa",
+        "baseline_ddl": {
+            "dwd_order": "CREATE TABLE shop_dm.dwd_order (id BIGINT)"
+        },
+        "ddl_changes": [],
+        "jobs_to_run": [],
+        "verification": {"checks": []},
+    }
+    monkeypatch.setattr(
+        shadow_run_module,
+        "require_slot_ownership",
+        lambda **kwargs: (_ for _ in ()).throw(
+            ArtifactFormatError("ownership mismatch")
+        ),
+    )
+    monkeypatch.setattr(
+        shadow_run_module,
+        "run_sql",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("ownership failure must precede database writes")
+        ),
+    )
+
+    result = _execute_shadow_plan(
+        plan,
+        root=tmp_path,
+        claimed_ownership=_claimed_ownership(plan),
+    )
+
+    assert result["status"] == "failed"
+    assert result["phases"][-1]["name"] == "validate_qa_slot_ownership"
 
 
 def test_shadow_run_standalone_cli_rejects_stale_plan(tmp_path, monkeypatch):
@@ -1573,6 +1765,7 @@ def test_run_shadow_plan_dry_run_persists_phase_summary(
         "project": "shop",
         "project_db": "shop_dm",
         "qa_db": "shop_dm_qa",
+        "qa_database_pool": ["shop_dm_qa", "shop_dm_qa_02"],
         "baseline_ddl": {
             "dwd_inventory": "CREATE TABLE shop_dm.dwd_inventory (id INT)"
         },
@@ -1640,16 +1833,16 @@ def test_run_shadow_plan_dry_run_persists_phase_summary(
     phase_names = [phase["name"] for phase in result["phases"]]
     assert phase_names == [
         "compile_shadow_manifest",
-        "reset_qa_db",
+        "select_qa_slot",
         "create_baseline_tables",
         "prefill_baseline_data",
         "apply_ddl_changes",
         "run_jobs",
     ]
     phase_by_name = {phase["name"]: phase for phase in result["phases"]}
-    assert phase_by_name["reset_qa_db"]["actions"] == [
-        "DROP DATABASE IF EXISTS shop_dm_qa",
-        "CREATE DATABASE shop_dm_qa",
+    assert phase_by_name["select_qa_slot"]["qa_database_pool"] == [
+        "shop_dm_qa",
+        "shop_dm_qa_02",
     ]
     assert phase_by_name["create_baseline_tables"]["tables"] == [
         {"table": "dwd_inventory", "status": "dry_run"}
@@ -2561,7 +2754,6 @@ execution:
     phase_names = [phase["name"] for phase in result["phases"]]
     assert phase_names == [
         "compile_shadow_manifest",
-        "reset_qa_db",
         "create_baseline_tables",
         "prefill_baseline_data",
         "apply_ddl_changes",

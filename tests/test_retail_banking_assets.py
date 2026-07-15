@@ -3,7 +3,9 @@ import importlib.util
 import re
 import shutil
 import sys
+from collections import defaultdict
 from datetime import date, timedelta
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -27,14 +29,30 @@ def _stems(path, suffix):
     return {item.stem for item in path.glob(f"*.{suffix}")}
 
 
-def _load_tool(module_name, filename):
-    tool_path = PROJECT_DIR / f"tools/{filename}"
-    spec = importlib.util.spec_from_file_location(module_name, tool_path)
+def _referenced_ods_tables():
+    pattern = re.compile(
+        r"\b(?:from|join)\s+(?:`?[a-z0-9_]+`?\.)?`?"
+        r"(ods_fineract_[a-z0-9_]+)`?",
+        re.I,
+    )
+    return {
+        match.group(1).lower()
+        for task_path in (PROJECT_DIR / "mid/tasks").rglob("*.sql")
+        for match in pattern.finditer(task_path.read_text(encoding="utf-8"))
+    }
+
+
+def _load_module(module_name, path):
+    spec = importlib.util.spec_from_file_location(module_name, path)
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
     sys.modules[module_name] = module
     spec.loader.exec_module(module)
     return module
+
+
+def _load_tool(module_name, filename):
+    return _load_module(module_name, PROJECT_DIR / f"tools/{filename}")
 
 
 def test_retail_banking_mapping_covers_active_fineract_schema():
@@ -47,6 +65,11 @@ def test_retail_banking_mapping_covers_active_fineract_schema():
     assert schema["upstream_commit"] == mapping["upstream_commit"]
     assert source_tables == mapped_tables
     assert len(source_tables) == schema["active_table_count"] == 277
+    assert (
+        schema["analytical_ods_table_count"]
+        == mapping["analytical_ods_table_count"]
+        == 102
+    )
     assert all(item["disposition"] for item in mapping["mappings"])
     assert all(item["rationale"] for item in mapping["mappings"])
     assert all(
@@ -78,7 +101,11 @@ def test_retail_banking_generated_asset_sets_match_manifest():
     manifest = _load_yaml(MAPPINGS_DIR / "generated_asset_manifest.yaml")
     mappings = mapping["mappings"]
 
-    ods_expected = {item["ods_table"] for item in mappings}
+    mapped_ods = {item["ods_table"] for item in mappings}
+    mapped_materialized_ods = {
+        item["ods_table"] for item in mappings if item["downstream_targets"]
+    }
+    ods_expected = _referenced_ods_tables()
     direct_expected = {
         item["target_table"] for item in mappings if item["target_table"]
     }
@@ -103,11 +130,13 @@ def test_retail_banking_generated_asset_sets_match_manifest():
     ads_models = _stems(PROJECT_DIR / "ads/models", "yaml")
     ads_tasks = _stems(PROJECT_DIR / "ads/tasks", "sql")
 
+    assert ods_expected <= mapped_ods
+    assert mapped_materialized_ods == ods_expected
     assert ods_ddl == ods_models == ods_data == ods_expected
     assert reviewed_expected <= mid_ddl
     assert mid_ddl == mid_models == mid_tasks
     assert ads_ddl == ads_models == ads_tasks
-    assert len(ods_ddl) == manifest["counts"]["ODS"] == 277
+    assert len(ods_ddl) == manifest["counts"]["ODS"] == 102
     assert len(direct_expected) == 100
     assert len(snapshot_expected) == 4
     assert len(reviewed_expected) == manifest["counts"]["DIM_DWD"] == 104
@@ -116,7 +145,7 @@ def test_retail_banking_generated_asset_sets_match_manifest():
     assert (
         len(ods_ddl) + len(mid_ddl) + len(ads_ddl)
         == manifest["counts"]["TOTAL"]
-        == 412
+        == 237
     )
 
 
@@ -152,7 +181,16 @@ def test_retail_banking_complete_layer_mapping_covers_every_source():
 
     assert set(by_source) == {item["source_table"] for item in source_mapping}
     assert layer_mapping["source_table_count"] == 277
-    assert all(len(item["layers"]["ODS"]) == 1 for item in by_source.values())
+    materialized_ods = {
+        ods_table
+        for item in by_source.values()
+        for ods_table in item["layers"]["ODS"]
+    }
+    assert materialized_ods == _referenced_ods_tables()
+    assert (
+        sum(bool(item["layers"]["ODS"]) for item in by_source.values()) == 102
+    )
+    assert all(len(item["layers"]["ODS"]) <= 1 for item in by_source.values())
     assert any(item["layers"]["DWS"] for item in by_source.values())
     assert any(item["layers"]["ADS"] for item in by_source.values())
 
@@ -611,16 +649,239 @@ def test_retail_banking_doris_keys_are_ordered_schema_prefixes():
     assert violations == []
 
 
-def test_retail_banking_gl_smoke_data_balances_by_transaction_and_date():
-    gl_data = (
-        PROJECT_DIR
-        / "ods/data/internal/retail_banking_dm"
-        / "ods_fineract_acc_gl_journal_entry.sql"
-    ).read_text(encoding="utf-8")
+def test_retail_banking_ods_fixture_volume_is_deterministic_and_bounded():
+    generator = _load_module(
+        "retail_ods_fixture_generator",
+        PROJECT_DIR / "generate_ods_data.py",
+    )
+    snapshot = _load_yaml(MAPPINGS_DIR / "fineract_schema_snapshot.yaml")
+    mapping = _load_yaml(MAPPINGS_DIR / "fineract_table_mapping.yaml")
+    context = generator._build_context(snapshot, mapping)
+    materialized_mappings = generator._materialized_mappings(mapping)
+    targets = {
+        item["ods_table"]: context.row_counts[item["source_table"]]
+        for item in materialized_mappings
+    }
 
-    assert gl_data.count("'GL-00000001'") == 2
-    assert gl_data.count("'2025-01-15'") >= 2
-    assert "'2025-01-16'" not in gl_data
+    assert len(targets) == 102
+    assert min(targets.values()) >= 1000
+    assert max(targets.values()) <= 5000
+    assert sum(targets.values()) == 317485
+    assert (
+        context.row_counts
+        == generator._build_context(snapshot, mapping).row_counts
+    )
+
+
+def test_retail_banking_ods_fixture_primary_and_foreign_keys_are_valid():
+    generator = _load_module(
+        "retail_ods_fixture_key_validator",
+        PROJECT_DIR / "generate_ods_data.py",
+    )
+    snapshot = _load_yaml(MAPPINGS_DIR / "fineract_schema_snapshot.yaml")
+    mapping = _load_yaml(MAPPINGS_DIR / "fineract_table_mapping.yaml")
+    context = generator._build_context(snapshot, mapping)
+    materialized_sources = {
+        item["source_table"]
+        for item in generator._materialized_mappings(mapping)
+    }
+    parent_key_values = {}
+
+    for table_name in sorted(materialized_sources):
+        schema = context.schemas[table_name]
+        primary_key = schema["primary_key"]
+        if not primary_key:
+            continue
+        keys = {
+            tuple(
+                generator._value_for(
+                    context,
+                    table_name,
+                    context.columns[table_name][column_name],
+                    row_number,
+                )
+                for column_name in primary_key
+            )
+            for row_number in range(1, context.row_counts[table_name] + 1)
+        }
+        assert len(keys) == context.row_counts[table_name], table_name
+
+    external_foreign_keys = set()
+    for table_name in sorted(materialized_sources):
+        schema = context.schemas[table_name]
+        for foreign_key in schema["foreign_keys"]:
+            referenced_table = foreign_key["referenced_table"]
+            if referenced_table not in materialized_sources:
+                external_foreign_keys.add(
+                    (
+                        table_name,
+                        tuple(foreign_key["base_columns"]),
+                        referenced_table,
+                        tuple(foreign_key["referenced_columns"]),
+                    )
+                )
+                continue
+            base_column = foreign_key["base_columns"][0]
+            referenced_column = foreign_key["referenced_columns"][0]
+            parent_key = (referenced_table, referenced_column)
+            if parent_key not in parent_key_values:
+                parent_key_values[parent_key] = {
+                    generator._value_for(
+                        context,
+                        referenced_table,
+                        context.columns[referenced_table][referenced_column],
+                        row_number,
+                    )
+                    for row_number in range(
+                        1, context.row_counts[referenced_table] + 1
+                    )
+                }
+            child_values = {
+                generator._value_for(
+                    context,
+                    table_name,
+                    context.columns[table_name][base_column],
+                    row_number,
+                )
+                for row_number in range(1, context.row_counts[table_name] + 1)
+            }
+            assert child_values <= parent_key_values[parent_key], (
+                table_name,
+                foreign_key["name"],
+            )
+
+    assert {
+        (
+            "m_journal_entry_aggregation_summary",
+            ("job_execution_id",),
+            "batch_job_execution",
+            ("job_execution_id",),
+        ),
+        (
+            "m_journal_entry_aggregation_tracking",
+            ("job_execution_id",),
+            "batch_job_execution",
+            ("job_execution_id",),
+        ),
+    } <= external_foreign_keys
+
+
+def test_retail_banking_ods_fixture_integer_values_fit_source_types():
+    generator = _load_module(
+        "retail_ods_fixture_integer_validator",
+        PROJECT_DIR / "generate_ods_data.py",
+    )
+    snapshot = _load_yaml(MAPPINGS_DIR / "fineract_schema_snapshot.yaml")
+    mapping = _load_yaml(MAPPINGS_DIR / "fineract_table_mapping.yaml")
+    context = generator._build_context(snapshot, mapping)
+    materialized_sources = {
+        item["source_table"]
+        for item in generator._materialized_mappings(mapping)
+    }
+    bounds = {
+        "TINYINT": (-128, 127),
+        "SMALLINT": (-32768, 32767),
+        "INT": (-2147483648, 2147483647),
+        "INTEGER": (-2147483648, 2147483647),
+        "BIGINT": (-9223372036854775808, 9223372036854775807),
+    }
+
+    for table_name in sorted(materialized_sources):
+        schema = context.schemas[table_name]
+        for column in schema["columns"]:
+            source_type = " ".join(str(column["source_type"]).upper().split())
+            integer_type = next(
+                (
+                    type_name
+                    for type_name in bounds
+                    if source_type.startswith(type_name)
+                ),
+                None,
+            )
+            if integer_type is None:
+                continue
+            lower, upper = bounds[integer_type]
+            for row_number in range(1, context.row_counts[table_name] + 1):
+                value = int(
+                    generator._value_for(
+                        context,
+                        table_name,
+                        column,
+                        row_number,
+                    )
+                )
+                assert lower <= value <= upper, (
+                    table_name,
+                    column["name"],
+                    value,
+                )
+
+
+def test_retail_banking_committed_ods_matches_generator():
+    generator = _load_module(
+        "retail_ods_fixture_content_validator",
+        PROJECT_DIR / "generate_ods_data.py",
+    )
+    snapshot = _load_yaml(MAPPINGS_DIR / "fineract_schema_snapshot.yaml")
+    mapping = _load_yaml(MAPPINGS_DIR / "fineract_table_mapping.yaml")
+    context = generator._build_context(snapshot, mapping)
+    data_dir = PROJECT_DIR / "ods/data/internal/retail_banking_dm"
+
+    for item in generator._materialized_mappings(mapping):
+        source_table = item["source_table"]
+        expected = generator._render_insert(
+            item,
+            context.schemas[source_table],
+            context.row_counts[source_table],
+            context,
+        )
+        assert (data_dir / f"{item['ods_table']}.sql").read_text(
+            encoding="utf-8"
+        ) == expected
+
+
+def test_retail_banking_gl_fixture_balances_by_transaction_and_date():
+    generator = _load_module(
+        "retail_ods_gl_fixture_generator",
+        PROJECT_DIR / "generate_ods_data.py",
+    )
+    snapshot = _load_yaml(MAPPINGS_DIR / "fineract_schema_snapshot.yaml")
+    mapping = _load_yaml(MAPPINGS_DIR / "fineract_table_mapping.yaml")
+    context = generator._build_context(snapshot, mapping)
+    table_name = "acc_gl_journal_entry"
+    columns = context.columns[table_name]
+    row_count = context.row_counts[table_name]
+    balances = defaultdict(Decimal)
+
+    for row_number in range(1, row_count + 1):
+        key = tuple(
+            generator._value_for(
+                context, table_name, columns[column_name], row_number
+            )
+            for column_name in (
+                "entry_date",
+                "transaction_id",
+                "currency_code",
+            )
+        )
+        type_enum = generator._value_for(
+            context, table_name, columns["type_enum"], row_number
+        )
+        amount = Decimal(
+            generator._value_for(
+                context, table_name, columns["amount"], row_number
+            )
+        )
+        assert type_enum in {"1", "2"}
+        balances[key] += amount if type_enum == "1" else -amount
+
+    assert row_count % 2 == 0
+    assert len(balances) == row_count // 2
+    assert set(balances.values()) == {Decimal("0")}
+    assert {key[0] for key in balances} == {
+        f"'{(date(2026, 5, 14) + timedelta(days=offset)).isoformat()}'"
+        for offset in range(62)
+    }
 
 
 def test_retail_banking_private_gold_is_external_and_fully_validated(tmp_path):
@@ -641,8 +902,8 @@ def test_retail_banking_private_gold_is_external_and_fully_validated(tmp_path):
     assert not (PROJECT_DIR / "benchmark/private_gold.yaml").exists()
     assert gold["status"] == "candidate_not_gold_v1"
     assert gold["schema"] == "benchmark_contract.yaml#table_record"
-    assert len(gold["records"]) == 412
-    assert len({record["asset_id"] for record in gold["records"]}) == 412
+    assert len(gold["records"]) == 237
+    assert len({record["asset_id"] for record in gold["records"]}) == 237
 
     legacy_schema_gold = copy.deepcopy(gold)
     legacy_schema_gold["schema"] = "gold_schema.yaml#table_record"
@@ -828,12 +1089,12 @@ def test_prefixless_bundle_physically_separates_answers(tmp_path):
         path.read_text(encoding="utf-8")
         for path in sorted((output / "public").rglob("*.sql"))
     )
-    assert manifest["counts"] == {"ddl": 412, "tasks": 135}
-    assert manifest["constraint_counts"]["tables"] == 412
-    assert manifest["constraint_counts"]["unique_constraints"] == 118
-    assert manifest["constraint_counts"]["foreign_keys"] == 561
-    assert manifest["constraint_counts"]["external_foreign_keys"] == 2
-    assert manifest["constraint_counts"]["source_foreign_keys"] == 563
+    assert manifest["counts"] == {"ddl": 237, "tasks": 135}
+    assert manifest["constraint_counts"]["tables"] == 237
+    assert manifest["constraint_counts"]["unique_constraints"] == 54
+    assert manifest["constraint_counts"]["foreign_keys"] == 183
+    assert manifest["constraint_counts"]["external_foreign_keys"] == 119
+    assert manifest["constraint_counts"]["source_foreign_keys"] == 302
     assert manifest["evaluator_gold_included"] is True
     assert not re.search(
         r"\b(?:ods|dim|dwd|dws|ads)_[a-z0-9_]+", public_sql, re.I
@@ -862,7 +1123,7 @@ def test_prefixless_bundle_physically_separates_answers(tmp_path):
         for table in constraints["tables"]
         for foreign_key in table["external_foreign_keys"]
     ]
-    assert len(external_foreign_keys) == 2
+    assert len(external_foreign_keys) == 119
     assert all(
         foreign_key["referenced_external_table"].startswith("external_asset_")
         for foreign_key in external_foreign_keys

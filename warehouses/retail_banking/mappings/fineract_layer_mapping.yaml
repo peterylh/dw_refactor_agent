@@ -57,8 +57,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_acc_gl_financial_activity_account
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -118,8 +117,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_acc_rule_tags
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -132,8 +130,7 @@ mappings:
   mapping_status: security_reviewed
   sensitivity: restricted
   layers:
-    ODS:
-    - ods_fineract_batch_custom_job_parameters
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -146,8 +143,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_c_account_number_format
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -160,8 +156,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_c_cache
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -174,8 +169,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_c_configuration
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -188,8 +182,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_c_external_service
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -202,8 +195,7 @@ mappings:
   mapping_status: security_reviewed
   sensitivity: restricted
   layers:
-    ODS:
-    - ods_fineract_c_external_service_properties
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -216,8 +208,7 @@ mappings:
   mapping_status: candidate
   sensitivity: restricted
   layers:
-    ODS:
-    - ods_fineract_glim_accounts
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -230,8 +221,7 @@ mappings:
   mapping_status: candidate
   sensitivity: restricted
   layers:
-    ODS:
-    - ods_fineract_gsim_accounts
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -244,8 +234,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_interop_identifier
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -258,8 +247,7 @@ mappings:
   mapping_status: security_reviewed
   sensitivity: restricted
   layers:
-    ODS:
-    - ods_fineract_job
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -272,8 +260,7 @@ mappings:
   mapping_status: security_reviewed
   sensitivity: restricted
   layers:
-    ODS:
-    - ods_fineract_job_parameters
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -286,8 +273,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_job_run_history
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -317,8 +303,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_account_transfer_standing_instructions
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -378,8 +363,7 @@ mappings:
   mapping_status: security_reviewed
   sensitivity: restricted
   layers:
-    ODS:
-    - ods_fineract_m_adhoc
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -392,8 +376,7 @@ mappings:
   mapping_status: security_reviewed
   sensitivity: restricted
   layers:
-    ODS:
-    - ods_fineract_m_appuser
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -406,8 +389,7 @@ mappings:
   mapping_status: security_reviewed
   sensitivity: restricted
   layers:
-    ODS:
-    - ods_fineract_m_appuser_previous_password
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -420,8 +402,7 @@ mappings:
   mapping_status: security_reviewed
   sensitivity: restricted
   layers:
-    ODS:
-    - ods_fineract_m_appuser_role
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -434,8 +415,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_batch_business_steps
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -448,8 +428,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_business_date
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -477,8 +456,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_calendar_history
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -491,8 +469,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_calendar_instance
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -522,8 +499,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_cashiers
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -626,8 +602,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_client_collateral_management
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -640,8 +615,7 @@ mappings:
   mapping_status: candidate
   sensitivity: restricted
   layers:
-    ODS:
-    - ods_fineract_m_client_identifier
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -654,8 +628,7 @@ mappings:
   mapping_status: candidate
   sensitivity: restricted
   layers:
-    ODS:
-    - ods_fineract_m_client_non_person
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -700,8 +673,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_code
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -744,8 +716,7 @@ mappings:
   mapping_status: security_reviewed
   sensitivity: restricted
   layers:
-    ODS:
-    - ods_fineract_m_command
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -773,8 +744,7 @@ mappings:
   mapping_status: security_reviewed
   sensitivity: restricted
   layers:
-    ODS:
-    - ods_fineract_m_creditbureau_configuration
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -787,8 +757,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_creditbureau_loanproduct_mapping
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -801,8 +770,7 @@ mappings:
   mapping_status: security_reviewed
   sensitivity: restricted
   layers:
-    ODS:
-    - ods_fineract_m_creditbureau_token
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -815,8 +783,7 @@ mappings:
   mapping_status: security_reviewed
   sensitivity: restricted
   layers:
-    ODS:
-    - ods_fineract_m_creditreport
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -859,8 +826,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_delinquency_bucket_mappings
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -905,8 +871,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_deposit_account_recurring_detail
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -919,8 +884,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_deposit_account_term_and_preclosure
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -933,8 +897,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_deposit_product_interest_rate_chart
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -947,8 +910,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_deposit_product_recurring_detail
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -961,8 +923,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_deposit_product_term_and_preclosure
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -975,8 +936,7 @@ mappings:
   mapping_status: candidate
   sensitivity: restricted
   layers:
-    ODS:
-    - ods_fineract_m_document
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -989,8 +949,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_entity_datatable_check
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -1003,8 +962,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_entity_relation
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -1017,8 +975,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_entity_to_entity_access
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -1031,8 +988,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_entity_to_entity_mapping
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -1075,8 +1031,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_external_asset_owner_loan_product_config_11bc4520
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -1120,8 +1075,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_external_asset_owner_transfer_journal_en_0adfde70
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -1134,8 +1088,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_external_asset_owner_transfer_loan_mapping
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -1148,8 +1101,7 @@ mappings:
   mapping_status: security_reviewed
   sensitivity: restricted
   layers:
-    ODS:
-    - ods_fineract_m_external_event
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -1162,8 +1114,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_external_event_configuration
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -1176,8 +1127,7 @@ mappings:
   mapping_status: candidate
   sensitivity: restricted
   layers:
-    ODS:
-    - ods_fineract_m_family_members
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -1190,8 +1140,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_field_configuration
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -1219,8 +1168,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_floating_rates_periods
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -1233,8 +1181,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_fund
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -1382,8 +1329,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_hook
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -1396,8 +1342,7 @@ mappings:
   mapping_status: security_reviewed
   sensitivity: restricted
   layers:
-    ODS:
-    - ods_fineract_m_hook_configuration
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -1410,8 +1355,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_hook_registered_events
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -1424,8 +1368,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_hook_schema
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -1438,8 +1381,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_hook_templates
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -1452,8 +1394,7 @@ mappings:
   mapping_status: candidate
   sensitivity: restricted
   layers:
-    ODS:
-    - ods_fineract_m_image
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -1466,8 +1407,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_import_document
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -1480,8 +1420,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_interest_incentives
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -1494,8 +1433,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_interest_rate_chart
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -1508,8 +1446,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_interest_rate_slab
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -1575,8 +1512,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_loan_account_locks
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -1589,8 +1525,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_loan_amortization_allocation_mapping
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -1694,8 +1629,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_loan_charge_tax_details
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -1708,8 +1642,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_loan_collateral
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -1737,8 +1670,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_loan_credit_allocation_rule
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -1816,8 +1748,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_loan_installment_delinquency_tag
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -1830,8 +1761,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_loan_interest_recalculation_additional_details
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -1859,8 +1789,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_loan_originator
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -1873,8 +1802,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_loan_originator_mapping
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -1887,8 +1815,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_loan_overdue_installment_charge
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -1901,8 +1828,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_loan_payment_allocation_rule
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -1915,8 +1841,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_loan_product_credit_allocation_rule
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -1929,8 +1854,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_loan_product_payment_allocation_rule
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -1943,8 +1867,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_loan_progressive_model
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -1972,8 +1895,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_loan_reage_parameter
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -1986,8 +1908,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_loan_reamortization_parameter
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -2062,8 +1983,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_loan_reschedule_request_term_variations_mapping
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -2091,8 +2011,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_loan_term_variations
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -2105,8 +2024,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_loan_topup
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -2119,8 +2037,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_loan_tranche_charges
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -2133,8 +2050,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_loan_tranche_disbursement_charge
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -2211,8 +2127,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_loanproduct_provisioning_mapping
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -2225,8 +2140,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_mandatory_savings_schedule
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -2253,8 +2167,7 @@ mappings:
   mapping_status: candidate
   sensitivity: restricted
   layers:
-    ODS:
-    - ods_fineract_m_note
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -2299,8 +2212,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_organisation_creditbureau
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -2313,8 +2225,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_organisation_currency
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -2327,8 +2238,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_password_validation_policy
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -2341,8 +2251,7 @@ mappings:
   mapping_status: candidate
   sensitivity: restricted
   layers:
-    ODS:
-    - ods_fineract_m_payment_detail
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -2370,8 +2279,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_permission
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -2384,8 +2292,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_portfolio_account_associations
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -2398,8 +2305,7 @@ mappings:
   mapping_status: security_reviewed
   sensitivity: restricted
   layers:
-    ODS:
-    - ods_fineract_m_portfolio_command_source
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -2427,8 +2333,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_product_loan_charge
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -2441,8 +2346,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_product_loan_configurable_attributes
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -2455,8 +2359,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_product_loan_floating_rates
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -2469,8 +2372,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_product_loan_guarantee_details
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -2483,8 +2385,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_product_loan_rate
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -2497,8 +2398,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_product_loan_recalculation_details
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -2511,8 +2411,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_product_loan_variable_installment_config
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -2525,8 +2424,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_product_loan_variations_borrower_cycle
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -2539,8 +2437,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_product_mix
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -2568,8 +2465,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_provisioning_criteria
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -2582,8 +2478,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_provisioning_criteria_definition
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -2626,8 +2521,7 @@ mappings:
   mapping_status: candidate
   sensitivity: restricted
   layers:
-    ODS:
-    - ods_fineract_m_repayment_with_post_dated_checks
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -2640,8 +2534,7 @@ mappings:
   mapping_status: security_reviewed
   sensitivity: restricted
   layers:
-    ODS:
-    - ods_fineract_m_report_mailing_job
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -2654,8 +2547,7 @@ mappings:
   mapping_status: security_reviewed
   sensitivity: restricted
   layers:
-    ODS:
-    - ods_fineract_m_report_mailing_job_configuration
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -2668,8 +2560,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_report_mailing_job_run_history
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -2682,8 +2573,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_role
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -2696,8 +2586,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_role_permission
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -2760,8 +2649,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_savings_account_interest_rate_chart
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -2774,8 +2662,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_savings_account_interest_rate_slab
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -2820,8 +2707,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_savings_interest_incentives
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -2864,8 +2750,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_savings_product_charge
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -2973,8 +2858,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_share_product_charge
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -3046,8 +2930,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_survey_components
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -3060,8 +2943,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_survey_lookup_tables
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -3074,8 +2956,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_survey_questions
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -3088,8 +2969,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_survey_responses
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -3132,8 +3012,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_tax_component
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -3146,8 +3025,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_tax_component_history
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -3160,8 +3038,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_tax_group
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -3174,8 +3051,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_tax_group_mappings
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -3203,8 +3079,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_template
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -3217,8 +3092,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_template_m_templatemappers
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -3231,8 +3105,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_templatemappers
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -3260,8 +3133,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_wc_breach_configuration
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -3274,8 +3146,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_wc_delinquency_configuration
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -3306,8 +3177,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_wc_loan_account_locks
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -3320,8 +3190,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_wc_loan_amortization_model
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -3365,8 +3234,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_wc_loan_breach_reset_history
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -3379,8 +3247,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_wc_loan_breach_schedule
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -3393,8 +3260,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_wc_loan_charge
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -3407,8 +3273,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_wc_loan_delinquency_action
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -3421,8 +3286,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_wc_loan_delinquency_range_schedule
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -3450,8 +3314,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_wc_loan_near_breach_action
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -3464,8 +3327,7 @@ mappings:
   mapping_status: candidate
   sensitivity: restricted
   layers:
-    ODS:
-    - ods_fineract_m_wc_loan_note
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -3478,8 +3340,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_wc_loan_originator_mapping
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -3492,8 +3353,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_wc_loan_payment_allocation_rule
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -3506,8 +3366,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_wc_loan_period_payment_rate_change
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -3535,8 +3394,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_wc_loan_product_configurable_attributes
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -3549,8 +3407,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_wc_loan_product_payment_allocation_rule
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -3563,8 +3420,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_wc_loan_range_delinquency_tag
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -3594,8 +3450,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_wc_loan_transaction_allocation
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -3608,8 +3463,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_wc_loan_transaction_relation
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -3622,8 +3476,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_m_wc_near_breach
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -3651,8 +3504,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_mix_taxonomy
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -3665,8 +3517,7 @@ mappings:
   mapping_status: candidate
   sensitivity: restricted
   layers:
-    ODS:
-    - ods_fineract_mix_taxonomy_mapping
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -3679,8 +3530,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_mix_xbrl_namespace
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -3693,8 +3543,7 @@ mappings:
   mapping_status: candidate
   sensitivity: restricted
   layers:
-    ODS:
-    - ods_fineract_notification_generator
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -3707,8 +3556,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_notification_mapper
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -3721,8 +3569,7 @@ mappings:
   mapping_status: security_reviewed
   sensitivity: restricted
   layers:
-    ODS:
-    - ods_fineract_oauth_access_token
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -3735,8 +3582,7 @@ mappings:
   mapping_status: security_reviewed
   sensitivity: restricted
   layers:
-    ODS:
-    - ods_fineract_oauth_client_details
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -3749,8 +3595,7 @@ mappings:
   mapping_status: security_reviewed
   sensitivity: restricted
   layers:
-    ODS:
-    - ods_fineract_oauth_refresh_token
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -3763,8 +3608,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_ppi_likelihoods
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -3777,8 +3621,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_ppi_likelihoods_ppi
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -3791,8 +3634,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_ppi_scores
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -3805,8 +3647,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_r_enum_value
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -3819,8 +3660,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_ref_loan_transaction_processing_strategy
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -3833,8 +3673,7 @@ mappings:
   mapping_status: security_reviewed
   sensitivity: restricted
   layers:
-    ODS:
-    - ods_fineract_request_audit_table
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -3847,8 +3686,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_rpt_sequence
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -3861,8 +3699,7 @@ mappings:
   mapping_status: security_reviewed
   sensitivity: restricted
   layers:
-    ODS:
-    - ods_fineract_scheduled_email_campaign
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -3875,8 +3712,7 @@ mappings:
   mapping_status: security_reviewed
   sensitivity: restricted
   layers:
-    ODS:
-    - ods_fineract_scheduled_email_configuration
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -3889,8 +3725,7 @@ mappings:
   mapping_status: security_reviewed
   sensitivity: restricted
   layers:
-    ODS:
-    - ods_fineract_scheduled_email_messages_outbound
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -3903,8 +3738,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_scheduler_detail
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -3917,8 +3751,7 @@ mappings:
   mapping_status: security_reviewed
   sensitivity: restricted
   layers:
-    ODS:
-    - ods_fineract_sms_campaign
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -3931,8 +3764,7 @@ mappings:
   mapping_status: candidate
   sensitivity: restricted
   layers:
-    ODS:
-    - ods_fineract_sms_messages_outbound
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -3945,8 +3777,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_stretchy_parameter
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -3959,8 +3790,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_stretchy_report
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -3973,8 +3803,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_stretchy_report_parameter
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -3987,8 +3816,7 @@ mappings:
   mapping_status: security_reviewed
   sensitivity: restricted
   layers:
-    ODS:
-    - ods_fineract_twofactor_access_token
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -4001,8 +3829,7 @@ mappings:
   mapping_status: security_reviewed
   sensitivity: restricted
   layers:
-    ODS:
-    - ods_fineract_twofactor_configuration
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -4015,8 +3842,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_x_registered_table
+    ODS: []
     DIM: []
     DWD: []
     DWS: []
@@ -4029,8 +3855,7 @@ mappings:
   mapping_status: candidate
   sensitivity: internal
   layers:
-    ODS:
-    - ods_fineract_x_table_column_code_mappings
+    ODS: []
     DIM: []
     DWD: []
     DWS: []

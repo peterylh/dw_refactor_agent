@@ -2716,13 +2716,6 @@ tables:
       load_time: 56a95d4d-4def-4b62-88eb-18ae4593523a
       office_id: b12f03df-7fdc-46e2-b071-2479ab076f55
     table_id: 8c1cc7fd-9edc-489f-8a21-82299fc9f1be
-  ods_fineract_acc_gl_financial_activity_account:
-    columns:
-      financial_activity_type: f919242f-6558-4b74-8fc5-39dfbaebfad4
-      gl_account_id: a1dcf634-ab58-421c-8ca5-7d3bd241a8ca
-      id: d94da710-28b1-47fb-bcca-aeb5ff55461d
-      load_time: ba62f387-afc9-4efe-b3e6-413c76003229
-    table_id: 80a6537b-9ec9-4377-a6dc-ac318c8251ea
   ods_fineract_acc_gl_journal_entry:
     columns:
       account_id: b08345b7-3f00-4944-93c8-50132b8eb147
@@ -2791,140 +2784,6 @@ tables:
       product_type: e5679b71-9d6d-441b-b7e9-6b161d8e2dbd
       write_off_reason_id: a39dbee7-0b7f-4fd1-918c-530a1bc76683
     table_id: 3897ab20-9db9-4762-a01a-44e2eede5122
-  ods_fineract_acc_rule_tags:
-    columns:
-      acc_rule_id: 3c86a3e6-6cc2-4efb-bb4b-3959016b4e97
-      acc_type_enum: af66f233-0591-4cd3-8df9-a9673de9b5dc
-      id: 00d2c5a5-0629-4d34-87af-0d6fbf84889f
-      load_time: 2c44f555-20ad-46b3-8ae9-66c7d4334a88
-      tag_id: aa469caa-c103-404b-8913-d935269ef9ec
-    table_id: 6b585cb8-db3f-44a3-840c-da2b3dba662d
-  ods_fineract_batch_custom_job_parameters:
-    columns:
-      id: 0f036817-8850-43f4-bafa-20ba5d605134
-      load_time: 2d3dc009-8866-4799-9356-0da300ebd8a2
-      parameter_json: 1f16f360-ebce-4b44-b513-4c4e9e2fa4e7
-    table_id: 2b7a27dd-a4f9-43fe-82e0-118ad6fdc200
-  ods_fineract_c_account_number_format:
-    columns:
-      account_type_enum: 79f54b9b-fbac-4260-a864-205baa2280f2
-      id: 5f1cce05-c713-445a-93e4-ebf0f4031c84
-      load_time: 68439dcb-67a4-41f7-9dd7-8e9c21d5455d
-      prefix_character: af1ed524-3143-401b-844e-005567082269
-      prefix_type_enum: d0977354-a20b-465c-9386-f3fc86adf212
-    table_id: 9ade747c-c028-454d-b85c-b86f0eab932b
-  ods_fineract_c_cache:
-    columns:
-      cache_type_enum: a977dde1-ab32-4ee4-a662-0db0c642eeef
-      id: f6091868-582c-4593-a0f1-4cc8302998f4
-      load_time: e4555fa9-f857-40b5-a883-3810e8cb5308
-    table_id: 173a9a73-d035-4d53-86ef-acc856b3ea8c
-  ods_fineract_c_configuration:
-    columns:
-      date_value: 6adfd637-a781-4641-be3e-918613d069bf
-      description: 5ff0ed85-d67f-4b59-8064-b4e7a45bca1e
-      enabled: fec9d0e5-e18d-47ac-a6aa-e1cad9f0bdd7
-      id: 3ab65903-776f-4c0b-b13f-2d5d4455e579
-      is_trap_door: 66ae5ffa-4f45-4ecb-8706-39da10f19318
-      load_time: 07998927-eee8-4732-bd03-69716a67859c
-      name: 2021236c-710c-4b9b-92f5-e3333077ad4f
-      string_value: f7af0be0-8efc-4bc9-94a9-dbc9396107da
-      value: 1a57f25a-6a36-47b8-b23f-8edc5390fc98
-    table_id: fb3174c0-4389-466b-bce7-958ecb780e8b
-  ods_fineract_c_external_service:
-    columns:
-      id: 3638e754-d7da-47d5-a59b-3625f3d202a7
-      load_time: 22186041-b6e8-4491-9c53-cbb223d8073a
-      name: bf3f6bc2-b4fc-48b3-a850-9b43aaec9039
-    table_id: 3c82f136-d2f2-464a-9686-dfc01f79065d
-  ods_fineract_c_external_service_properties:
-    columns:
-      external_service_id: 16a18fc6-c66c-491e-8df0-274875ec2e88
-      load_time: c9213735-e73b-4564-8d81-a7c06ddeaf0b
-      name: 30f97e07-b8f7-4310-9e7e-c70e03f2c735
-      value: 6c7b879f-9f2f-4948-840f-ba9d8267a301
-    table_id: 2b5fa734-1f77-4492-be11-be8d05b527e5
-  ods_fineract_glim_accounts:
-    columns:
-      accepting_child: aa84e0e6-e0a8-4f28-8dbc-e494e5b38097
-      account_number: 0122e216-edb8-4e04-8af0-bb2efe86bd0d
-      application_id: 9d69ee59-3b72-47c6-9e8d-6a53d0b69b04
-      child_accounts_count: 4e4c4225-8cb2-4adf-94af-678444af5106
-      group_id: 564ff9fa-00fb-4f6b-8a98-7ab8277bebcc
-      id: a13ebb0b-d0ea-4b97-8584-bb6c0c3bd895
-      load_time: 18b61c14-9fe6-4a4e-90a4-a12e9c81da93
-      loan_status_id: 76335401-a56c-46f5-9316-50f92a271ffe
-      principal_amount: fc154b1d-812a-4d8a-9994-bfb9358d7129
-    table_id: 48ce7bf0-89be-49fa-910a-53e032505235
-  ods_fineract_gsim_accounts:
-    columns:
-      accepting_child: e0813d02-0d8b-4612-a4c7-c9e5d6bb0dbc
-      account_number: 6576c244-4f3b-47b8-8740-5aa4cd4fcab2
-      application_id: 39a1aee7-f33b-4433-a131-447795c46b35
-      child_accounts_count: 1af28340-4788-42f2-8fde-6caca84be379
-      group_id: f64af11a-7dc0-49be-9b82-b4474df9e1ff
-      id: 167a8dc1-f660-4487-bfe2-9904b810ea66
-      load_time: f73a021d-5f7e-46ed-a157-f27c0c70774c
-      parent_deposit: 6e31e120-c5ad-4fc1-af03-5fde1b8285af
-      savings_status_id: 0ea1354a-db5d-4949-9f22-8bd76e0941fb
-    table_id: d0d3ceb7-dffd-430e-b90d-ef33a91f31e9
-  ods_fineract_interop_identifier:
-    columns:
-      a_value: b2c75eb9-7a18-4368-b0dd-86c49308464c
-      account_id: e3706cae-a126-427c-8dbc-5492d02dd2e5
-      created_by: 7a38b3ae-e24b-4786-b2af-c98aa4cfbe97
-      created_on: 2e9a2aa3-2c88-4eb9-a1eb-898a1861c259
-      id: 03090668-1997-4d11-85f4-19e23b5221fd
-      load_time: 4afb06a8-395f-4ceb-98ff-65928c970efd
-      modified_by: c8339529-0631-41ca-8380-1c93211edf7f
-      modified_on: 121942ff-dc74-4f63-98d5-9eda74a48163
-      sub_value_or_type: 85691e6b-523d-4dcc-b912-03ebcbd497f5
-      type: 89bd8688-c10a-4938-af68-8adcd65c6f44
-    table_id: 95e2ba5d-dfdf-454b-a612-c48930dd479d
-  ods_fineract_job:
-    columns:
-      create_time: 18fcde3d-33e9-40db-8a20-8ea7931300da
-      cron_expression: c07a856c-51b8-46ea-89fd-6080c3500287
-      currently_running: c0b88482-3fc7-4660-b527-b38a758aad90
-      display_name: 733907b7-3b18-4ddb-ab51-e1eff14b79f7
-      group_name: 27b7369e-9439-4792-97da-9eb857ba1cdb
-      id: c0b997b1-19d6-46e8-9139-36d8f1d27478
-      initializing_errorlog: 74353409-d7ee-4eef-856b-83e306e0b36c
-      is_active: a61af23f-cc62-4267-9a1c-afa265f9b08e
-      is_misfired: 9e77da88-35a8-4142-90ef-12c3b9c48194
-      is_mismatched_job: 678457a1-5e7c-420b-b405-5f05a67f03a0
-      job_key: 7d4b6ef4-a29a-454e-b556-4495ed0393c1
-      load_time: 465f3b4e-cb15-41da-86f9-a16e15c77d5f
-      name: c90dd425-9ea4-4cc0-851a-646344b53ba2
-      next_run_time: da458b8c-6755-4f12-99d4-bd3f28a48172
-      node_id: 24e81d4f-c055-46b5-843d-756f7f7a49c1
-      previous_run_start_time: e1264f13-a8dc-4b51-9995-ce435da40cd1
-      scheduler_group: e93ae03e-9523-424e-91ac-071d45dd4779
-      short_name: 571619ea-659f-4f54-bb37-bed169a4a242
-      task_priority: 19803999-6d66-4f21-aee0-7796b9c6943e
-      updates_allowed: 1e4b6600-7eed-4f32-a33a-935c60589d00
-    table_id: 55d91968-3ed6-4ff2-adf8-2f4a0a5b65ba
-  ods_fineract_job_parameters:
-    columns:
-      id: 904b2acf-475f-4fa6-93f2-0beb851fe12d
-      job_id: 4b257575-69c5-4e0a-ac07-894f29777b68
-      load_time: 9ca52906-5464-430d-afdc-d20fcc9c2854
-      parameter_name: f9b98cb2-4e6b-40fb-baa2-41d83c1c297a
-      parameter_value: 880dd21c-adbf-48e2-aa4f-5f5eda17db7b
-    table_id: 8eed5c35-0394-41e4-b61a-24fcc93f55c4
-  ods_fineract_job_run_history:
-    columns:
-      end_time: 9bdaaedd-9b04-405b-845a-3a2cd573af8c
-      error_log: 7df5a1e4-94aa-4bfb-b3af-c2da6d0155ac
-      error_message: bc7aec32-f056-4941-ab10-80105d1c9a9a
-      id: cbf8b779-e28c-4bc5-a0b9-ca08927e168d
-      job_id: 7dd8fa76-37e6-4ee1-9788-5cbb439d8675
-      load_time: 88e3890b-c36b-4d1f-8e8a-dd7648ae45c1
-      start_time: 4f7307ed-a342-4abf-8621-48d4c2e11968
-      status: 923759a3-1e2c-47ff-a46a-fc0ebd2418ae
-      trigger_type: b78510f7-1997-46e7-83d5-c8f0272d1a19
-      version: 2dbe0201-63cc-4172-a64d-ca0f71f9d09e
-    table_id: 875adb98-2f86-43b1-a3b6-dd55995be6fb
   ods_fineract_m_account_transfer_details:
     columns:
       from_client_id: 40790e09-661d-422c-b4fa-c980db1d3670
@@ -2939,25 +2798,6 @@ tables:
       to_savings_account_id: b124164e-dcad-476e-8443-0ea0d8fdb4db
       transfer_type: 18efbbc0-3b7a-45ac-9e3b-955d1447e700
     table_id: 57671423-d01c-456a-89a7-285680734a24
-  ods_fineract_m_account_transfer_standing_instructions:
-    columns:
-      account_transfer_details_id: 45622167-2f0e-4f32-8951-f22d1aa8fd8f
-      amount: 3cc1e6e0-2197-401d-a756-9aa8f79920d3
-      id: f6c427b8-9c7a-41fa-8cef-7c807cfe190f
-      instruction_type: 44fccf48-6e7a-4e0b-a411-e83389cdcdf5
-      last_run_date: b1611012-73fe-4f02-a17e-4085b2b622d2
-      load_time: 99ec3efe-f9a1-495b-bb54-d933df218913
-      name: cc6e0f0d-acfa-4943-9063-f24e06d51b60
-      priority: 2a50456d-0df6-4acc-a9ba-ce215a11238f
-      recurrence_frequency: a07d9020-fe6c-4eee-8a19-f48cdbf2a3e6
-      recurrence_interval: f1b36070-f7ca-4c7b-ae30-c26c2cb1bd9e
-      recurrence_on_day: ca704691-3d5b-46b9-8338-c0ae6bba3207
-      recurrence_on_month: 18747506-7db7-457f-84c3-49522a9b35bd
-      recurrence_type: 757db3de-bfb1-4148-b9e7-cfe44ca0ad82
-      status: b952de67-f1a8-4add-b045-acc7f3292a84
-      valid_from: c0ad7ffb-c2ac-4f96-9b97-f4191e17da57
-      valid_till: 178559c8-84c4-4573-bb81-448fd24fb2f3
-    table_id: 334e5de8-e48f-43ff-8880-6cfc2443cb45
   ods_fineract_m_account_transfer_standing_instructions_history:
     columns:
       amount: a6e97d58-7164-46da-b602-a4cbb3c8be85
@@ -3006,87 +2846,6 @@ tables:
       updated_by: 7939bad7-dbbf-41c6-a6f1-9e8c72f98168
       updated_on: 57a9713d-49a5-4725-a421-3b4309476d46
     table_id: 939eef75-370b-485e-bc00-e5cac0b0b7a5
-  ods_fineract_m_adhoc:
-    columns:
-      created_date: 07dbc650-b31a-410a-9b88-6249a8f13313
-      createdby_id: f057f141-ba5e-454d-860b-740ae8899a9a
-      email: 12269dda-44fe-4eba-8f2a-aad7383133f8
-      id: 652e8e40-4389-4dfb-802a-130de1399b89
-      is_active: b49be4a9-2736-448a-8b65-f59ecb1916c7
-      last_run: f02589ed-f322-478b-8332-08e783c62ed4
-      lastmodified_date: 2c228c1a-c523-4f86-b4c9-b649ca3ced0f
-      lastmodifiedby_id: 953176b2-ee90-498f-ae34-042d1f5f852c
-      load_time: 869c8cd4-cbb4-437e-934d-20ecd4bbafa0
-      name: a7018475-7b13-4293-a18a-a74d0ed33a0f
-      query: 85526b77-fb87-4d8c-b800-8c1d46e36f35
-      report_run_every: 7e0580a0-51d8-482c-bcbe-5b1a64913a01
-      report_run_frequency_code: 6e5f9d45-15c9-426c-839e-a1afd7f4b010
-      table_fields: 33b49107-e27a-48e6-95c2-da49175e557a
-      table_name: c1dd4808-9491-4451-84ab-a0d1360ba552
-    table_id: 906af93f-9844-4bd8-8659-c4ab0be7753c
-  ods_fineract_m_appuser:
-    columns:
-      cannot_change_password: 2f28e1d5-9df0-4a59-a295-a7438cbaf5b6
-      email: cb414588-25a2-43cd-8ca4-3c132f67fe36
-      enabled: fe234208-5c17-40dd-a12f-07a2dc1b81e5
-      failed_login_attempts: 3d240cef-64ac-458c-a0d6-8f0ce353bd0b
-      firstname: 9c7c0063-fcb6-4543-86c0-0f4e3ff12db4
-      firsttime_login_remaining: a23ff271-3420-4d74-ab20-69d9b77ceb41
-      id: dfd1fca4-8785-4899-806f-76076e3998f7
-      is_deleted: 50692ea0-8c60-4fee-96fc-4026e5b9013d
-      is_login_retries_enabled: 239f2039-4da8-4750-bfeb-cdd67ddfff8a
-      is_password_reset_enabled: 96814859-98ed-4515-a335-bc7ea20350d4
-      last_time_password_updated: 8c935c8f-66e0-41b0-aec7-5b29e9c56df2
-      lastname: d101f468-9492-4e35-8222-af01fd6086da
-      load_time: d90f3fb8-c7e5-4842-b445-14f6dc7ace12
-      nonexpired: ceb748a0-54d5-4f69-af1f-2853d45fedf3
-      nonexpired_credentials: a0e230a1-0b49-4db8-8e11-235ff7a37e8b
-      nonlocked: c65b4214-0ee9-4477-9211-13db03afdd8a
-      office_id: 11a8baec-d4ba-40fc-a6eb-09eb99c8c7f9
-      password: b09e68d2-4577-4fce-b260-6efcec3ff1dd
-      password_never_expires: 94b0fac1-8746-4efd-8b98-4839e16b69c0
-      password_reset_required: 56db85f9-e006-422f-bb38-76e4ac7053fb
-      staff_id: 2bf22a2c-6899-4bab-bff1-f5a8d659f8e2
-      temporary_password: 0a65cfcd-29f0-4cbc-acd1-1b7ab0e486e4
-      temporary_password_expiry_time: 9de1d9b5-d235-4a32-981c-c261dfdc3036
-      username: f7746079-efe8-490d-b4e7-f7064f67afa8
-    table_id: 507f67a1-455d-4957-8c52-e1160e2eccb7
-  ods_fineract_m_appuser_previous_password:
-    columns:
-      id: b4315c09-1d69-4bc4-bbf8-5ea51e439918
-      load_time: 241c4af0-0782-41ae-910c-3c0857be40d6
-      password: c3fd0362-087d-432b-9dc7-54ca06c55dab
-      removal_date: 4eeb9279-a3ff-43a4-b21d-1d8c456d4ca1
-      user_id: d2bba7a1-73da-4c20-995d-0e621d3611d8
-    table_id: aefc4a6c-c40b-4c07-84b3-a63eb2f18e8b
-  ods_fineract_m_appuser_role:
-    columns:
-      appuser_id: cdb0bd4b-4fef-4ecc-9b1a-1bc78fcf6bcd
-      load_time: 8a45167d-faea-4838-9c11-1c97cb424371
-      role_id: d200d53f-fd36-405c-8589-81c15dbf71cf
-    table_id: 57807a82-2339-47d9-935d-e8c4caa80412
-  ods_fineract_m_batch_business_steps:
-    columns:
-      id: 363fc284-6980-4428-b8be-451f866f4763
-      job_name: 4439e668-69c6-4e1f-ba15-5927f6cf7bd3
-      load_time: 1105391e-889a-4fe9-8f97-378ebe4384d4
-      step_name: 400012de-34cd-4e11-af97-4ebd633d69a1
-      step_order: 62e8b675-9c1c-4585-aa60-4d955098c83f
-    table_id: dd4594d8-939b-4321-942e-94e67d3ad30f
-  ods_fineract_m_business_date:
-    columns:
-      created_by: 0aef4fab-db12-483a-a65f-d8cd91ddc1cf
-      created_date: e43a874b-0a6e-4184-bf3b-dc159b21ec2b
-      created_on_utc: 085c5ee9-4a38-44ad-a1b9-45911a55e368
-      date: 2d703dde-046d-4d25-875e-a35a3430054a
-      id: 08e82019-a312-47df-81c9-0c4e8b2b6ba0
-      last_modified_by: 347eecb1-abbe-47af-90ed-0f86f649767f
-      last_modified_on_utc: 8441dd24-ab7d-4b34-ad79-86dddcb8434d
-      lastmodified_date: eccfdc2f-f7d9-41af-a93f-74046080f0e6
-      load_time: bc0e86ec-d634-41cc-9834-bd2c08e8b65a
-      type: fcddaf29-6fa6-4569-85d0-900d214790f3
-      version: 08cbcb59-3288-433e-a630-7bbb68849b32
-    table_id: 64053e77-8605-4e52-b55a-a03f75a16733
   ods_fineract_m_calendar:
     columns:
       calendar_type_enum: cfe56efd-07ae-4da3-8803-2d3a7c0912cd
@@ -3111,32 +2870,6 @@ tables:
       start_date: 991940ce-84ef-4c74-bfe9-0e6da873a35e
       title: 324cb553-6a2d-426a-8efd-a1902b7d2e4a
     table_id: 0d1fd8b0-1e73-49b5-a627-c78dbc18b06b
-  ods_fineract_m_calendar_history:
-    columns:
-      calendar_id: ddba4f44-bbbf-4b91-b55e-52ec1ce75bdc
-      calendar_type_enum: ed1c5cb0-5606-497d-ae4f-3b19c5723432
-      description: 5ee5f40e-3644-4465-b670-aadbad3cf673
-      duration: c062a626-f2cf-427f-ae8c-c613350302cf
-      end_date: d99e410a-a59d-4855-8546-ac2331975f1d
-      first_reminder: 67dd9d73-87d6-421c-b200-1de286a73160
-      id: 59b67889-fb88-4654-b315-ba61c3070e23
-      load_time: 75c5f390-2390-41a0-bed5-36d166a3043e
-      location: f28fc4e6-b187-4a6a-964e-bd4aea7c2085
-      recurrence: da7bfbc4-31a2-4c28-8572-dbffe16b8b3a
-      remind_by_enum: 512a9eba-5300-4d25-a9cd-c98f2f9be2fb
-      repeating: a88f7aa4-9167-4338-82ba-151a4cb33a20
-      second_reminder: cdf8707e-ef2a-4ee0-972e-87aa16592624
-      start_date: 28bc334c-839c-41ee-8d3a-6b8361ebaaf7
-      title: d87261e2-33b8-43a9-8343-c75c4c12171f
-    table_id: dde42ec9-6099-41ca-9322-4d5dc35ef143
-  ods_fineract_m_calendar_instance:
-    columns:
-      calendar_id: 401748cc-450c-48ca-b981-d0d1ede1a5c7
-      entity_id: d96cc315-b317-454c-b660-832c00dfcfa6
-      entity_type_enum: 011b75f6-8350-4a0c-b119-5573e06f99bd
-      id: 7e134ada-1aae-4e98-bb4a-0652debb0f00
-      load_time: e7887021-5440-4546-b66d-f404408d907d
-    table_id: c8160e9d-c38b-46e6-a40b-e478040d3458
   ods_fineract_m_cashier_transactions:
     columns:
       cashier_id: 78783448-eee1-4f3e-a1e2-cbbea5ce5ba6
@@ -3151,19 +2884,6 @@ tables:
       txn_note: 86eb1d35-5410-46ca-9ba1-20008f9b6d22
       txn_type: 00bb6023-a825-4fe3-8e0a-181478db3755
     table_id: a4a9e376-7ba1-4b50-8c17-6e184e026ec8
-  ods_fineract_m_cashiers:
-    columns:
-      description: 064ea1ce-27c3-42b0-8e26-07174602735d
-      end_date: 8a90c68d-eede-4e22-b3c5-73a6a0656cf0
-      end_time: 71a11fb8-3d87-42a1-8e6c-595c910364c8
-      full_day: 222cbaad-0935-479d-8e08-b4955426d633
-      id: 337b26b6-b13b-4f2c-8d61-8fc7938e2636
-      load_time: 41b2854d-1a6b-45b7-996e-c78700aea3cf
-      staff_id: c9de4db2-8bd3-404b-a7a9-4a4be2196258
-      start_date: 8f647251-999c-4327-9f0c-5d58869a7a6f
-      start_time: 90e28f57-80ed-462d-ac1c-c963461ceb7f
-      teller_id: 036cba16-e5e1-4247-9a58-0a538771ef20
-    table_id: b426a99b-4f76-44dd-805f-0686626d0851
   ods_fineract_m_charge:
     columns:
       amount: ea0103c0-5072-41a0-a4fc-acec1a51e538
@@ -3290,42 +3010,6 @@ tables:
       id: 99f1da5d-3855-4677-95d5-35cd990d028f
       load_time: 29fbb48a-434e-4d6d-879e-7ee8fa14495c
     table_id: 0505a8b4-9b35-40c7-9505-ee7809c1bdc0
-  ods_fineract_m_client_collateral_management:
-    columns:
-      client_id: bf521df5-f7ba-4dc6-a332-3ed224eda465
-      collateral_id: afe2c1b6-665e-498f-8e5f-5ce0b6d6c69d
-      id: 6250adb2-3a76-4362-9cad-089e799aa104
-      load_time: 7338a9f7-ce28-44a3-96ff-7f8c12809081
-      quantity: f88cf981-639e-4257-a5a4-f3509f1c1575
-    table_id: 4bea2ec0-7ef9-4973-a884-fda1a7a83d1d
-  ods_fineract_m_client_identifier:
-    columns:
-      active: b64c8ae8-dd7e-4669-9753-db7557cdc225
-      client_id: 9d706940-e500-47ef-93ff-30afe3eb7beb
-      created_by: 63c098cd-9e6a-4f79-a580-08397db4e415
-      created_date: a06e7e3e-5b3a-428c-aa9f-6e5070f72b0a
-      created_on_utc: daf89bdb-442a-47d5-ad41-2b12c91836e6
-      description: 02dd6b36-f829-4604-839a-8c7789cea4d6
-      document_key: c2b880dc-d20f-4d10-9d82-48e5e15f7e30
-      document_type_id: 792394b9-0e24-4666-b254-ea7194ec0848
-      id: bdb1325c-b41e-4541-b9ab-ebe2eb4a354a
-      last_modified_by: 81ec56f3-5258-4dd0-a0be-dc12dcd42285
-      last_modified_on_utc: b75a4cdf-7941-4d0e-8dd7-27493f70f935
-      lastmodified_date: 4c9ba44d-f5cd-4046-93b0-356528e8cff5
-      load_time: 0ff82ff9-d89c-48ed-a1d4-95ce7790567e
-      status: 4a2fc23b-2d13-44bc-a08d-3fe5834cef1e
-    table_id: 3b541f71-a0de-4bb9-bc3d-c3cd47e4df8c
-  ods_fineract_m_client_non_person:
-    columns:
-      client_id: 688e4ed5-c6b5-48c4-b227-613c6e6a569d
-      constitution_cv_id: 932182da-f285-41d4-9da4-0536f00b43ee
-      id: be2b3508-ff9f-48a3-916c-3bef88322b55
-      incorp_no: dfeed965-c3ec-4dff-8e11-0e313c1c2255
-      incorp_validity_till: 7842717e-2aa2-4b6c-ae04-2f9be1b8cfee
-      load_time: 5fc542c2-152b-49e3-ba01-40b905470cd5
-      main_business_line_cv_id: cc296bcd-5fb9-423b-9bdc-016d47bbfc98
-      remarks: c6a60a35-784e-41aa-8a2e-29068a2ffd13
-    table_id: 61fc1480-d903-45a1-8050-33cfa15cb31c
   ods_fineract_m_client_transaction:
     columns:
       amount: a2616d4b-e97c-4fe2-8b46-7fc949f40b9a
@@ -3358,13 +3042,6 @@ tables:
       to_office_id: 5f10cab0-bf50-454e-93f6-c5a88b38740c
       transfer_type: 0d455121-1558-4378-9fd6-48bf99c988e5
     table_id: 89e77e93-0098-4005-9cda-d7ece67de1c5
-  ods_fineract_m_code:
-    columns:
-      code_name: 0467ffde-8693-4e45-9f0d-5679c7171765
-      id: ed92d724-5f46-4ca6-a6ad-fa199b7b6ac0
-      is_system_defined: c7d48e6f-0166-4f63-8ab6-5b6b11e5e125
-      load_time: ec3d133d-6fcb-4dc6-af4e-e3fe7a8db20b
-    table_id: a7930dc2-080f-4c39-8bd2-f755f955e4cc
   ods_fineract_m_code_value:
     columns:
       code_description: 9e4a85e9-d7fb-4e56-92c6-12a335ff4020
@@ -3388,28 +3065,6 @@ tables:
       quality: cfca7449-1a96-467a-a22e-99f27f2959e9
       unit_type: 007ccc3c-7621-4265-9255-52d4f395895b
     table_id: 1a13ac57-8036-425d-a324-5d3c37098582
-  ods_fineract_m_command:
-    columns:
-      approved_at: 648b0cc3-ea6b-438c-8dff-ac9c6ad02a3c
-      approved_by_username: bb85cd60-8b23-49f1-9a85-ccee690e3cfe
-      command_id: 974abfcf-b490-4bb8-a866-b49f243ec9fe
-      created_at: 8a7cf037-8400-470b-89ad-bc7956577b66
-      error: 1ab1e8df-71e2-4391-bf25-d25d3787cf05
-      executed_at: c9079de6-abbd-42f7-a4d7-6d7117323bbf
-      executed_by_username: c731fe50-a31e-4681-9c63-e37b4a210510
-      id: ccbe0abd-8649-471a-a5a1-e238f326abe9
-      idempotency_key: 6c94bba2-c195-4388-8178-a39d964a1efd
-      initiated_by_username: ac510fe5-23c6-42dc-822c-da0de1679b08
-      ip_address: 4d2eee2d-d454-44ac-a5ba-c08f875ada29
-      load_time: 958af428-5e7d-40aa-a37a-ed95640d8eaf
-      rejected_at: 3a67a269-8a17-4993-aca3-2c68c295b319
-      rejected_by_username: c401840b-1ccb-4584-9c0e-fa3a10b71cff
-      request: 4ab6b483-b258-42dd-9fc3-ede99eb54432
-      response: 17ba9580-4670-45c2-83de-51ce48277eeb
-      state: 7a3456e9-050e-4b92-95fb-5238c2abe4a6
-      tenant_id: b7be5825-5eab-464f-9131-46c13f511646
-      updated_at: ab498695-4aa1-4040-888e-5f5d7ae0a51a
-    table_id: a4dadad1-8e93-4303-b941-5616267a3885
   ods_fineract_m_creditbureau:
     columns:
       country: db9eb9a3-9930-458f-8080-4b1179d1375e
@@ -3419,45 +3074,6 @@ tables:
       name: 6e946fe2-20fd-4d50-ab06-bcc790ed90c2
       product: 9e0a0aae-9c11-4ff8-b7c0-d90ea1e9c78d
     table_id: 889649a7-2472-493b-b28b-05e1c9a7b520
-  ods_fineract_m_creditbureau_configuration:
-    columns:
-      configkey: bfd1cf8d-9469-47ba-89ad-aa9337ab7c53
-      description: f23ad0b1-068e-43ca-80ec-5371871f40e3
-      id: ef5b43a0-1125-4adc-b90c-b6169fec8427
-      load_time: 7e66c58a-265d-4a3e-8b6d-d95c1addb68c
-      organisation_creditbureau_id: 01b27d81-ba67-47c7-89a5-fb637040d813
-      value: 161f8929-6577-4ea0-8ef1-2edcf7fb1078
-    table_id: fbe87e13-c738-4b16-9f9c-8c725f217d69
-  ods_fineract_m_creditbureau_loanproduct_mapping:
-    columns:
-      id: f21c52fc-c237-417a-839d-c4e288715e96
-      is_active: bc779958-1862-4139-af30-7e6b1df9cb39
-      is_creditcheck_mandatory: 95c057a9-5a94-4cf0-9123-810e2fa384ad
-      load_time: e577f0a7-ffac-4176-a341-dbb07b7ccf21
-      loan_product_id: 1b4e5244-989f-4c7f-b6bf-8aa39b0995d7
-      organisation_creditbureau_id: 5cc06256-16e7-4b68-8edf-9af24333dcdc
-      skip_creditcheck_in_failure: 3681a1d0-8d70-4de7-a73b-c71612b9c106
-      stale_period: 576123aa-41e5-4875-8cab-24c9cd80d083
-    table_id: 80fa079a-4374-4665-90cc-753320f7ade4
-  ods_fineract_m_creditbureau_token:
-    columns:
-      expires_in: 92c46607-93e2-4f8e-83a9-f19c18e1bb34
-      expiry_date: e060e750-6e4c-425f-a2c0-7e6092b065bd
-      id: 19c83451-4813-4eed-84d6-2f8a0378a789
-      issued: 9d096405-641e-46e1-b6b0-293d0bb4b96f
-      load_time: 3c9551d1-7a6f-4a72-9bf8-ee511016f07c
-      token: 24c2cdfa-0191-4d97-9226-36dafb407289
-      token_type: e69d461f-e02b-4caa-bd53-f9cb1fafea0c
-      username: 1aafdbb9-f07c-45bd-b5b0-e285b82f4452
-    table_id: cefcfb3d-fa5b-4863-9394-773762b11e44
-  ods_fineract_m_creditreport:
-    columns:
-      credit_bureau_id: 18137f9b-12c1-42cf-a26e-3835c22782e4
-      credit_reports: 6a97da77-e5cd-4672-809d-94458cc65dd2
-      id: de0fd6fa-960f-4041-8c58-7e4841485bb7
-      load_time: 2b0486d5-f4cf-43b2-b9cb-765f98c18568
-      national_id: 6fc49316-34ed-4411-8a02-31baecfde86b
-    table_id: e9b831e8-efff-4372-b22c-4849e282e2a9
   ods_fineract_m_currency:
     columns:
       code: 2bb84370-1216-4b8a-9287-f8c10727682f
@@ -3481,18 +3097,6 @@ tables:
       name: f4f6b6d7-6e09-4c1a-87ec-88e77479997d
       version: 193b7bb4-6cba-418b-881b-11bbe8a73240
     table_id: c9ae75d8-5e5a-4d06-9e64-1e30e04454ee
-  ods_fineract_m_delinquency_bucket_mappings:
-    columns:
-      created_by: 8e8100d1-d546-4880-a5ed-66dac5e9273a
-      created_on_utc: e31a51ef-d659-4d08-be55-e11cfd8acdf9
-      delinquency_bucket_id: b6f9266a-22f9-475a-b976-49a89bba7512
-      delinquency_range_id: a4c54f60-8cfe-46f4-b785-d51bf441d192
-      id: fcfd7d53-3c27-435e-90b9-ad57420d9980
-      last_modified_by: ef9fa752-11f9-4722-93b5-52818c70d2a6
-      last_modified_on_utc: a813cb85-1e99-4486-adef-e4e456c34541
-      load_time: c2d8d4cb-8ff1-43d9-a1db-dd062435907f
-      version: b8f82c94-92a6-4cfe-828f-9850b8bec69a
-    table_id: 4949296d-534d-4a09-a7ac-2a3baf3e2fac
   ods_fineract_m_delinquency_range:
     columns:
       classification: 991cbe38-a530-4eef-a798-fc94280f2ee9
@@ -3521,128 +3125,6 @@ tables:
       transaction_date: bb52d854-bba5-4cc6-88b7-130dc241a725
       transaction_type_enum: 7e3d00e6-bba7-4501-bd59-aa402e986436
     table_id: 589a0506-6cc5-41c6-b9fa-ed9057bda429
-  ods_fineract_m_deposit_account_recurring_detail:
-    columns:
-      adjust_advance_towards_future_payments: 77e46072-e5cc-465e-b0dc-dc9ba382df21
-      allow_withdrawal: b0e5eafa-5f7e-4931-ba32-053040b6676d
-      id: eb84ee1e-2d78-40c2-9c39-7aa4c15245c9
-      is_calendar_inherited: 4986db01-b3f9-4364-bf31-aa6da7bc69be
-      is_mandatory: 24db8b9c-bfe7-4154-b3b2-bb651e9dc7ea
-      load_time: 89d4aa3f-2fa8-4789-9f38-0fe4395dbd5d
-      mandatory_recommended_deposit_amount: ca75ff34-43fe-4db0-a006-f64a0cfa82d6
-      no_of_overdue_installments: a9890d31-eae3-4be7-b490-027469536afe
-      savings_account_id: f3fc3f10-66b1-4f03-be44-6308672dc8c9
-      total_overdue_amount: 5fd56059-fb92-433d-80fe-2914ec27b3e8
-    table_id: 37eead6f-ec0b-4409-8e00-fa2999aae40f
-  ods_fineract_m_deposit_account_term_and_preclosure:
-    columns:
-      deposit_amount: f06f52e8-b2f3-462e-8635-9fe38770103e
-      deposit_period: dcc5f723-f6b9-4974-aa2f-2ad0a35159f9
-      deposit_period_frequency_enum: 673a88c9-3e9f-4b9d-9462-10aca676cd88
-      expected_firstdepositon_date: 0746a6e5-5346-4d00-9718-0b24bfc7b85d
-      id: 33d26036-394d-4d98-870a-232e04aa6390
-      in_multiples_of_deposit_term: cf6e4e9f-ecc5-4677-99c8-6cebe73e5a54
-      in_multiples_of_deposit_term_type_enum: f2660034-20fe-43f4-ae9c-4ee411b1fae4
-      load_time: f05d279b-e625-4058-9a0f-31f40569f4c0
-      maturity_amount: 33738b10-bbcf-4594-8f68-fa6c1525fe2a
-      maturity_date: 674d1844-2f39-4028-9df0-c4884b7a102a
-      max_deposit_term: 61dcfa9a-43a6-43cc-9589-ffb6a07cf365
-      max_deposit_term_type_enum: 82bb5b82-d508-4941-b2da-ccdee6973283
-      min_deposit_term: a2af428a-0bf4-4ca1-be0e-430bca46a83a
-      min_deposit_term_type_enum: b70d362b-fd97-446d-bffa-f776b3e39023
-      on_account_closure_enum: 7d718fde-f68a-4249-be98-d00daa7f71b6
-      pre_closure_penal_applicable: 089385c4-75cb-4a99-9412-e90972632672
-      pre_closure_penal_interest: bd6549f5-90b4-4e3b-932e-ae20d1c4bc3a
-      pre_closure_penal_interest_on_enum: 8e140a05-adef-428b-92c5-dad0a30ada3a
-      savings_account_id: 1a6e5dc2-555f-4540-8e15-a0fc1a929103
-      transfer_interest_to_linked_account: e4281265-54d9-4833-b8db-7ec5b2cbdfb9
-      transfer_to_savings_account_id: d9d40799-4393-47c8-93ac-88944854e0a6
-    table_id: 5bfddfac-90d0-4cb0-88a3-63381610c4c7
-  ods_fineract_m_deposit_product_interest_rate_chart:
-    columns:
-      deposit_product_id: e4d81473-49e0-4940-aa15-ff78a772191d
-      interest_rate_chart_id: 1772672a-78ee-4ca0-8700-28e8f508d9b6
-      load_time: 0a4f83fa-4622-426c-9b40-6580b19b615c
-    table_id: da721278-246d-4bfd-a2d0-634aebdf5dcc
-  ods_fineract_m_deposit_product_recurring_detail:
-    columns:
-      adjust_advance_towards_future_payments: b427ccbd-7bd0-48a4-90b1-7fc62cae9a62
-      allow_withdrawal: 73ab3e50-fe53-4ecb-8177-f4f3c831d9d3
-      id: 932ab5fc-5180-4cfd-b3d0-d590ec70e460
-      is_mandatory: 8ff741f3-6e47-4ca4-a8fa-810b17996a09
-      load_time: 5428ce99-6e97-4054-9fa0-f641ff0fbc49
-      savings_product_id: 1788683e-61d8-4d17-a1a4-14cb426e9ccd
-    table_id: cf55c84f-976a-4920-b0b2-95cda4d6032b
-  ods_fineract_m_deposit_product_term_and_preclosure:
-    columns:
-      deposit_amount: bd2037ae-662f-4fc8-bc09-16e9b93d858c
-      id: 86024097-90ab-4e3b-b6ff-2bc448d3a90f
-      in_multiples_of_deposit_term: 4fb2809f-cf86-4ccf-b503-be4d85f046e4
-      in_multiples_of_deposit_term_type_enum: 115d065a-f7ee-4684-aa10-913a3c5f2c11
-      load_time: 3d044bdd-4166-4e55-a20a-959fa56d83db
-      max_deposit_amount: 9ab80168-6990-4168-8e88-19eb77fce565
-      max_deposit_term: 59ad1473-a496-49a1-a86b-b40668b81319
-      max_deposit_term_type_enum: 07188dc5-9d8d-4370-9a87-ebf537a92374
-      min_deposit_amount: a92d0072-b87b-409b-819d-394eb32498b8
-      min_deposit_term: ffeebb65-8783-4a17-baa3-331b3cb6c38e
-      min_deposit_term_type_enum: a4bed8c5-db9c-45dc-b085-bc747e425063
-      pre_closure_penal_applicable: e615d52b-7dc9-4dd6-a404-7b4c710feb33
-      pre_closure_penal_interest: 648ed73b-eeb2-41a7-9c8b-c6c4ca8f6183
-      pre_closure_penal_interest_on_enum: 4289a8e8-3007-43c9-9852-d925573abea6
-      savings_product_id: 3a6ecada-c6ab-4fd4-8fb5-4f36bb605e33
-    table_id: defe71b6-8b09-4493-bb76-1f9b4a7bad39
-  ods_fineract_m_document:
-    columns:
-      description: 278380f4-0924-4c2c-8924-92c0cea150d0
-      file_name: d174510c-8f8a-4a20-a9bb-db657e0c42f7
-      id: 0aad2be9-bfba-4ec0-831c-178bf32fee30
-      load_time: 0f330092-8f17-4584-a13d-a0cb60984d84
-      location: 1c56b654-eac1-4fa2-bbed-4001494d7d3e
-      name: 06a0c6da-c7d9-4bf0-b2f9-d6320ff35550
-      parent_entity_id: 3829fdfe-e840-4302-aefd-e661cf4b9e02
-      parent_entity_type: 1bb65e24-b754-41d3-8411-1da33eb96ab8
-      size: f6246458-fc96-4eee-87c5-56122a83f71f
-      storage_type_enum: 07b008a6-6a9e-4db5-bfd2-b54873b6d2ba
-      type: 71d4c5d5-624b-4901-871e-d3b3673b226d
-    table_id: e5e3a92d-e989-4514-bed9-2a6687e7ddd4
-  ods_fineract_m_entity_datatable_check:
-    columns:
-      application_table_name: f2731c83-4625-401f-ba93-02b181561ef7
-      id: 5efaf7d9-0c34-4462-ab07-ef839e825b7a
-      load_time: 88b48a17-9061-4c4e-aaac-98db6503b50a
-      product_id: 944d4c38-4a27-4b15-8995-285c6d7261ba
-      status_enum: 9d2268c9-91ae-4263-a443-d2dc41337d3f
-      system_defined: c473ae92-ee63-48c3-912e-aae12da45ff1
-      x_registered_table_name: 14557c4c-f32c-43c7-869f-24c326c71382
-    table_id: dc04cc1e-0d84-47d6-a0e6-e535a6d4b3a9
-  ods_fineract_m_entity_relation:
-    columns:
-      code_name: 1164be25-b347-4948-9319-a70efc75e66e
-      from_entity_type: 9abb51a0-3dd5-4e9c-b383-067a724aa809
-      id: c3951d99-4e6d-4cdc-90ad-90650e53ee0a
-      load_time: b4d48d6f-de7c-41b0-b98f-67822e01eac5
-      to_entity_type: 62ef5614-76c8-40b2-a366-f2e06dd820b3
-    table_id: d7ddf3c8-0541-49c8-aefb-d3f474b56748
-  ods_fineract_m_entity_to_entity_access:
-    columns:
-      access_type_code_value_id: bdebda42-4be2-4309-b49b-bd1366402d9d
-      entity_id: a553c9d5-3c6f-4742-8e45-f7ce8558092c
-      entity_type: dbc58e2f-43dc-4262-9a8f-60e95d07104f
-      id: 8409013b-119e-4317-af5d-bf418131ee63
-      load_time: 5461a9c6-39d0-44ad-b6f7-7f18bb4eafe9
-      second_entity_id: 39a47144-7031-45cb-9f4e-38b1f984070d
-      second_entity_type: d4d0c3db-827c-44de-ab77-3cb85e143661
-    table_id: 7e00ff7f-25a4-4ba7-b903-ec4e2c7bcfc3
-  ods_fineract_m_entity_to_entity_mapping:
-    columns:
-      end_date: 859ebaa5-31b2-4a1f-ba82-633397193819
-      from_id: 307d98a1-87b0-47d4-a34a-6895c87424ec
-      id: c7215644-8166-4c64-9b65-13903710c05e
-      load_time: a30bed12-fba0-4dc9-a634-c9ad5c87ee15
-      rel_id: ba3b3d0a-3983-4b01-87c6-8a79b1b27578
-      start_date: 8110f33e-72d6-4f45-8640-0f7d67870fc1
-      to_id: 4c95e21f-3602-49b7-9201-d221cb54b816
-    table_id: 1ec1d46c-eb24-4940-8785-85ace21106e0
   ods_fineract_m_external_asset_owner:
     columns:
       created_by: e2405ad6-2e78-4863-9675-a7f16f04a974
@@ -3664,18 +3146,6 @@ tables:
       load_time: d2764e56-135d-4c05-ab76-a8fa1deab30e
       owner_id: ef7e47fb-2fca-4965-88d6-a91d7ff0a9c9
     table_id: 7e9a66dd-6ed5-44e3-ba2f-ad67b6833193
-  ods_fineract_m_external_asset_owner_loan_product_config_11bc4520:
-    columns:
-      attribute_key: 43ac32b4-82d3-4619-b620-cb5fbc992aaf
-      attribute_value: 3237fc95-44e5-43be-b639-3a379cadd52c
-      created_by: 4fdb72ef-9940-42b6-adcb-74d9c405675a
-      created_on_utc: 13c38872-03d2-4e67-9bb7-7e14bdb87d3c
-      id: bdd44d87-324c-47ad-9a59-0e51721a78ba
-      last_modified_by: 65d57ca3-73f9-4d96-9087-40acb09d5760
-      last_modified_on_utc: 98498769-83b6-4db2-8455-b08376f8e47d
-      load_time: e8c1a0bb-dc15-4df1-997f-7d658d14c0ae
-      loan_product_id: 17a30a56-732a-4567-a343-b4897daf88eb
-    table_id: ebe5513a-e9eb-4d22-8a49-38c76393c8bc
   ods_fineract_m_external_asset_owner_transfer:
     columns:
       created_by: 8716c50e-1345-4125-8f67-a6bedb3ca2e9
@@ -3713,78 +3183,6 @@ tables:
       total_outstanding_derived: fa607dd4-2cab-46fe-9ad4-62cc138632c3
       total_overpaid_derived: d875ca79-361e-49f0-9e26-7362a1ac418b
     table_id: 688ad3f6-9800-45e6-91c5-a557dab16c0e
-  ods_fineract_m_external_asset_owner_transfer_journal_en_0adfde70:
-    columns:
-      created_by: 69a84c30-dc11-4ef4-a27d-4fb6df6f2ac5
-      created_on_utc: d0147e55-19c8-443c-9487-cb67e819bff8
-      id: fa31dad0-a58e-47f0-a2cc-b511ffbf9d50
-      journal_entry_id: 8fcf0679-31a3-4cad-9531-446c13ee5819
-      last_modified_by: 0797aa71-0602-4303-ad78-71171838558d
-      last_modified_on_utc: f6607e8a-c049-4b0a-aeef-b968785b8eb3
-      load_time: 7d84699c-21e5-48ab-86ad-9d86d1ab8274
-      owner_transfer_id: 1504a67a-caf5-43b3-ab99-17d3ccbc493a
-    table_id: 989d2ba3-ff33-4e47-8f22-88a662b08524
-  ods_fineract_m_external_asset_owner_transfer_loan_mapping:
-    columns:
-      created_by: 586e69d6-42ec-4f6b-847e-debf05d6c276
-      created_on_utc: 7bda7793-055a-4710-9065-38574e0fd781
-      id: 8c4dc346-e84b-4885-97ca-b3a42b064c80
-      last_modified_by: cd4a73e9-5812-495a-8364-647ce5dfae11
-      last_modified_on_utc: ec1adb44-2d9a-41db-af3b-3485ceb0e417
-      load_time: 53c475eb-8437-4807-adf5-5fa5db94c002
-      loan_id: d3488952-ad2f-4a25-b9e3-f10fb8f95017
-      owner_transfer_id: 678293c2-e8e1-43a4-9e49-37040adaebee
-    table_id: 9593cbfa-d6b3-4893-ad87-ae1b9598d336
-  ods_fineract_m_external_event:
-    columns:
-      aggregate_root_id: dea8c628-f824-4dbe-817f-31127d7358c1
-      business_date: 78ffbc08-4f2a-45d6-99ce-a245900f1a42
-      category: ede7fdcf-904c-408f-9a4e-863725789b67
-      created_at: 44351362-c80f-4b15-a282-bc36847118ee
-      data: 81e06be9-b7cf-4a78-ba21-a0df16d5d7a0
-      id: 00ca68a9-63c9-47b2-bfba-81d361fdff21
-      idempotency_key: 8af318f3-1a3a-4b3b-995b-a93aca700d37
-      load_time: fc941871-f5d9-4d47-8f6c-d76ac6c8aa09
-      schema: 91ab5fc2-447c-4a4e-9abb-413e8cbb4db4
-      sent_at: 56f604e6-94da-49dd-8a10-1aa03de16ca3
-      status: 974f474c-01c2-4432-8b33-79c7af2c2154
-      type: c7253be6-d295-4746-a1c4-5ee7b940e78e
-    table_id: 7de96aef-8389-45ff-87fd-964c7ddeedaa
-  ods_fineract_m_external_event_configuration:
-    columns:
-      enabled: 6fdf0e92-21ef-4bcc-98ec-8c7fc440aca4
-      load_time: 98f71164-2c70-4e09-aed3-4b75a35a1e0d
-      type: b1bbecb0-a3f4-402b-b560-baf90725bec5
-    table_id: f543be0b-1b6c-45f0-911e-dfba394263f2
-  ods_fineract_m_family_members:
-    columns:
-      age: 77d32881-87aa-495c-8f8f-39e7650b7efd
-      client_id: 732cf1af-2e4f-4179-bf14-b3870e52f2e4
-      date_of_birth: 69694a94-6610-47fe-b77f-feb57d38d12f
-      firstname: fe4a4f9c-94b5-4333-b50d-ef36faa29ecb
-      gender_cv_id: d21719b6-abc3-40cb-9c1e-3c01955088f9
-      id: 74bf14f8-4a55-46df-ab5d-0c531fff0c9f
-      is_dependent: dbf03673-0a98-4377-9f1d-d14fc255dff3
-      lastname: 3639e9f3-367b-4647-9717-178ee416b5a0
-      load_time: 332370fc-cfac-4e85-9bbe-b4cfd4bf38f9
-      marital_status_cv_id: 3a82e4c4-b985-4a68-89a6-19aeeb3a64ad
-      middlename: 4ddf4880-5d9f-47dd-8962-f36c7640c1ce
-      mobile_number: 0aac2522-11c6-4ea3-9c64-e3373f92fe2e
-      profession_cv_id: 85e47eea-4dd2-4b78-89a4-5e7cb47f6878
-      qualification: c840b61b-ce7d-4fd7-8ee0-8c53acdc0ac2
-      relationship_cv_id: 8658af08-89bf-4f0d-9621-137e2948af96
-    table_id: 55e89c97-eaa1-4888-b031-5dd4dcfddab8
-  ods_fineract_m_field_configuration:
-    columns:
-      entity: 6fca9853-4843-4ef9-8e74-aab224a70605
-      field: 3d8b1b95-e939-431c-af18-38a00a4ae015
-      id: a557198b-b98f-4883-a47a-d9818fffb071
-      is_enabled: f895d92d-827a-44d1-b66a-0da45616624b
-      is_mandatory: 29959fdd-e2fe-46fe-8068-d62b1f77d13c
-      load_time: e620fad8-3fbf-4a8e-aa0a-c1df61abe47b
-      subentity: 86e6aa3b-7559-4bc1-b900-27ba80308a89
-      validation_regex: e069b1b1-da1e-4548-9d9e-fc70714ebd11
-    table_id: 95b27404-d281-4bd0-b18d-28d2c1970463
   ods_fineract_m_floating_rates:
     columns:
       created_by: 56973b88-7b4c-4b83-8bb2-f6377b9e30d7
@@ -3799,29 +3197,6 @@ tables:
       load_time: b6ba8eda-9686-4774-8b24-b303c30ceaec
       name: 2bcd4da3-841f-444c-90e8-849b66097048
     table_id: be698106-e9e6-4bf8-af81-a6884a040441
-  ods_fineract_m_floating_rates_periods:
-    columns:
-      created_by: 88f3a186-2d98-4305-aa8f-c80efbdc9eda
-      created_date: 45d7dadc-a045-4c91-9153-0fc0172d986e
-      created_on_utc: 89f34c27-8a76-439a-90ca-faf653b49d25
-      floating_rates_id: 509be613-1cda-4705-914c-cf0ffa48099a
-      from_date: 1698f821-dcd2-4241-bd85-dbb03022eeb5
-      id: 38fab045-d903-418b-a999-0668efab1c6f
-      interest_rate: bfb0b15d-4d78-4013-b5e8-34e863273b3f
-      is_active: 28b4ea4b-f541-41f4-8387-7142316d5802
-      is_differential_to_base_lending_rate: c295cd09-0b28-4e60-9a11-2d83d34a6c3a
-      last_modified_by: 656b0ddd-52ce-4131-9eb1-dada2d811d9b
-      last_modified_on_utc: 93e8c0c3-316d-45ba-9235-982cc648c599
-      lastmodified_date: bd7f3a15-4351-4e67-8216-a0288f1b3ff2
-      load_time: 1fb0347b-5d15-47e6-a0f6-e3945d0de232
-    table_id: d74e893f-7ae5-4bc0-8eb5-b6b7a0ef5c9e
-  ods_fineract_m_fund:
-    columns:
-      external_id: f72edfca-10c3-450e-8bf4-6ab75ec0e40f
-      id: 5db2b734-6d38-4cfc-8d99-2f13f978236b
-      load_time: f57080ec-93f7-4f66-ab73-a198d4554a4a
-      name: 0d291a1a-8736-4469-b9e2-9607eeaddc93
-    table_id: d558e911-b389-40cf-9a66-189f48ef96e8
   ods_fineract_m_group:
     columns:
       account_no: 703d4626-22cc-444b-adc4-8483e22c771f
@@ -3929,109 +3304,6 @@ tables:
       load_time: 86b2dac4-1352-4667-8d40-90621fdb7241
       office_id: bcffe686-c70d-41c7-b5ed-7ac1c4bfdde8
     table_id: 0ad7fdb3-a19c-4aec-8c17-c1c0ba4a11ac
-  ods_fineract_m_hook:
-    columns:
-      created_date: 3886d1b6-9a48-4de6-bc74-2bba938fdec1
-      createdby_id: a6b09c5e-9466-4ab2-8a53-4fc0534b2ab5
-      id: ef4608a7-4758-4dfc-a296-d790ad954d95
-      is_active: 29c9df01-5873-4475-b6cc-23eb87edabd0
-      lastmodified_date: 14c83b4e-5903-4360-8dfd-be5a09505977
-      lastmodifiedby_id: e690abea-00d7-4769-8c18-16609a5cdc7e
-      load_time: 2db1955a-96b2-4682-bb66-3454a7156610
-      name: 64859f9e-782e-43c3-8351-42ba9316affa
-      template_id: 3b402c0f-f625-4105-a10a-63e167cc8bcf
-      ugd_template_id: b5f9de5d-9160-4a94-8ee0-5cb342b9ca91
-    table_id: 5a7357e4-7e4a-49ea-aef9-3c733bd11fbc
-  ods_fineract_m_hook_configuration:
-    columns:
-      field_name: 264f3542-ae2b-4c44-a5ab-e4ec0cb2d558
-      field_type: e2db2f32-143c-482f-be69-426677e9296a
-      field_value: 7e894dca-f628-48f6-991f-18de7fd2aa3b
-      hook_id: 9fc8aeb4-1f3c-4330-b5ef-fe9e03e3d545
-      id: 5a554ce7-2a39-4688-8ac8-a22571c45005
-      load_time: 9bf0b65a-f155-4c3b-ac74-79ecf29d631c
-    table_id: a82e61b0-d7a8-4a18-8744-7cc816a4fcef
-  ods_fineract_m_hook_registered_events:
-    columns:
-      action_name: 66a117a9-8639-44be-a81e-04ffd58931e8
-      entity_name: c2219a3e-4f6b-43d0-ae59-ba15bedaaf26
-      hook_id: 1f642208-2957-4661-93f2-675137be1e31
-      id: 8c3e0298-af53-4706-a00c-09be83d3a118
-      load_time: 46219e9f-b608-4dd3-9d38-ac275438f757
-    table_id: c395530a-33ba-4c97-bbde-9695a1b7280d
-  ods_fineract_m_hook_schema:
-    columns:
-      field_name: feb91151-ea60-4438-a2e2-3e15f5547b0d
-      field_type: ba6f2795-c151-476e-a2b8-43e27255b369
-      hook_template_id: 245e7759-9f98-4239-be5d-7662056dc178
-      id: 5d595e0a-2fd7-4f52-bcdd-4a32b46a689e
-      load_time: 56daaa74-c9aa-418b-ba46-7fee59dbd8fc
-      optional: c7241db6-3ea0-46a5-8611-5720d35c7c98
-      placeholder: 08739fbc-0a3a-4fc6-9812-1f083246e303
-    table_id: 62995f14-585c-4863-9fb2-c88f94b8182d
-  ods_fineract_m_hook_templates:
-    columns:
-      id: 6c9e2469-7458-4df9-91ed-b7089ae54297
-      load_time: dd6f8122-dab3-4e03-8d59-e9ccebf7cffb
-      name: fed6a74b-17da-4975-a9f1-19d475966660
-    table_id: 4da85f50-e21a-4b48-8473-f2be653189ba
-  ods_fineract_m_image:
-    columns:
-      id: e25d59a1-4be6-4e23-992a-19178c2136a1
-      load_time: d1d7639a-7f7e-488b-ab25-c7f90340fcf7
-      location: 59776efd-0a62-4b5e-ae11-5eeaa3162838
-      storage_type_enum: 6b226635-8bac-4bdd-9724-ec7ad4c5bb69
-    table_id: 4ba96e8e-2d39-4b8e-8a1d-cbf5b7180ba5
-  ods_fineract_m_import_document:
-    columns:
-      completed: 3594878c-1d7a-440b-9f5c-87f78749df16
-      createdby_id: 9521e071-29d7-4c5f-a552-810dc3cb7cc2
-      document_id: 7740baee-25f6-45d6-8f69-6eec7e882630
-      end_time: ec2e626c-fe65-4fed-91ef-b9e00991812a
-      entity_type: 9436feaf-9524-4f59-829c-48f593a65be5
-      failure_count: 48c407ff-03ef-4282-bfd4-00e2894a70dc
-      id: 192641f0-d57e-479e-8ab8-64c81bd71300
-      import_time: 0e6b046a-a072-489f-8745-32fb10e9ee66
-      load_time: 772faf06-6638-47f6-bb85-08e41ec52491
-      success_count: 53912df2-7c78-4ca3-ab2a-f6f7f596e96d
-      total_records: 1f131153-4417-48df-8996-51fa13f9aff2
-    table_id: 6e702467-c7f2-4945-a61d-2bf48a0f05e3
-  ods_fineract_m_interest_incentives:
-    columns:
-      amount: f9419d72-1d7d-42ad-b77b-62512425a731
-      attribute_name: 1becd834-2923-42cc-9724-f81765089a25
-      attribute_value: 4a035335-c038-44b5-af1a-7ccf0cf8ef43
-      condition_type: 93bc87a5-7220-4bd8-be88-b5311e010b80
-      entiry_type: 0881bb03-188f-4c9f-96d6-7fc377ca51b3
-      id: 5a959c94-88f8-4694-a68b-11fd5423c1a2
-      incentive_type: 018657cb-9045-4f33-884d-606ec76baec6
-      interest_rate_slab_id: 981efe6e-dc80-4a4d-9490-ff800fc9c19e
-      load_time: 50104f9c-ac3d-464a-bbbf-063e49eb6e10
-    table_id: 1b75e460-4151-4c37-8d26-7d17bc5e5431
-  ods_fineract_m_interest_rate_chart:
-    columns:
-      description: fd9e1e6a-9b96-4ea6-952e-ebf6e04f921f
-      end_date: c92305cb-349a-438c-bc3b-99726f772b22
-      from_date: 13cfe1d2-9e59-4b06-8fa9-ed3a253f9a3d
-      id: a129bff0-ea8a-4d54-a9d0-f81a5bf35b0e
-      is_primary_grouping_by_amount: 62a10cc4-82ff-478c-a4b0-d652ddf3a46f
-      load_time: de99c434-3c2f-4556-8b7d-9dd79d95e783
-      name: 3b6e1dd6-65e0-4dcc-8c2c-6ff68b62e45c
-    table_id: 714a13f6-e6a8-46d7-89fd-3fa5e124843a
-  ods_fineract_m_interest_rate_slab:
-    columns:
-      amount_range_from: 5ea40288-d5ea-4f89-a85c-ccf6faf01c0f
-      amount_range_to: 3628813b-9d9b-40f9-93f5-8d0d0acdb615
-      annual_interest_rate: e3e1fb9b-83f2-44ab-810b-d0682f767cf2
-      currency_code: 365b50a3-f6c6-490f-ba6e-aba860e0be71
-      description: cc73573d-34ff-4171-a182-c9f50f999394
-      from_period: 9d6e66d0-3d62-412e-8357-13dbfa8565cf
-      id: b9d34582-83ff-4498-ba5d-76c34b927584
-      interest_rate_chart_id: 118614b5-c2e0-49d4-acd4-97cce5fa7408
-      load_time: 760fa342-040c-4d64-ac75-7736dd5c3061
-      period_type_enum: 6d75bd7f-0a1b-4526-aa96-7584be513367
-      to_period: c285b893-e82a-4480-9187-e6e8152944b2
-    table_id: 55a79259-68c2-476b-ae3f-39717977e6f7
   ods_fineract_m_journal_entry_aggregation_summary:
     columns:
       aggregated_on_date: 638c4303-5636-42c6-8d28-fd0b6bfab18a
@@ -4220,32 +3492,6 @@ tables:
       writeoff_reason_cv_id: 7a0ee03b-618d-4309-88b6-42578d22febb
       writtenoffon_date: 070c6ff1-a5ca-4ca2-a50a-f99c81050cef
     table_id: df7e0ae5-5561-43e5-9cad-723760747973
-  ods_fineract_m_loan_account_locks:
-    columns:
-      error: 63fc079b-92eb-4c69-ae2b-fd03fae6cfb0
-      load_time: b92fab7a-754e-4b41-bc2d-72feee83db3e
-      loan_id: 4e48c0e3-5c7d-4533-9346-23bd75b243c3
-      lock_owner: c3fb835f-a19c-4d88-966d-caeff6557324
-      lock_placed_on: 63fc1ebc-9735-4a68-9841-b6c9f9fa7834
-      lock_placed_on_cob_business_date: a8e7dfca-523d-4253-97b2-f4b154674bc1
-      stacktrace: 0272c4c9-0856-4f9f-831c-fdd856a4c3d8
-      version: 129710b3-b0f9-4b0a-94bf-599ec54ca523
-    table_id: f58fd1fb-5bef-4d5f-acf7-5496a2717503
-  ods_fineract_m_loan_amortization_allocation_mapping:
-    columns:
-      amortization_loan_transaction_id: 01081856-cc88-470f-964c-fda94c4011ed
-      amortization_type: cf42285a-414e-4fe3-a777-99873232a167
-      amount: 42801ef5-89bd-4cc5-a2ef-b6a05f5fbf6c
-      base_loan_transaction_id: 898b3203-bf12-43ed-bc00-3bb4b460ea18
-      created_by: 7b603f4e-a7ba-4496-83af-70a66172d8a8
-      created_on_utc: a4f9f477-eb1d-4e65-80db-f39285bd3644
-      date: 275a5195-6b59-4049-af36-9241fc848901
-      id: 4b0c7544-0b3b-4325-aa54-ec3969fd6a6f
-      last_modified_by: a426ec8e-d28a-4859-952c-be745c34dc09
-      last_modified_on_utc: 00af0ed0-a5b7-4511-866b-4be3aef45a29
-      load_time: 705de3ed-b9a7-42f1-98d1-651807a00502
-      loan_id: e07deb85-c58e-4a66-bc36-b28ea40feb54
-    table_id: fc9f55d6-cdc9-4a61-b096-3e2cca88c6fd
   ods_fineract_m_loan_approved_amount_history:
     columns:
       created_by: 4a2682a5-e4d4-4aa7-a04a-8fabbc97caa6
@@ -4348,23 +3594,6 @@ tables:
       loan_charge_id: 0aa8b9c0-e65d-432a-96e6-75f32132a44b
       loan_transaction_id: 8450b531-6bcb-4153-9325-db1faeb8c0dc
     table_id: 53d64138-4251-407c-b41e-30bf0aa6d642
-  ods_fineract_m_loan_charge_tax_details:
-    columns:
-      amount: 4de8e2c3-fe15-4648-bbd0-eb952a14478a
-      id: ae26d385-a862-4344-b7a4-0131452e20d0
-      load_time: a9fa3468-02d1-48ad-b7d9-432c9b0ce3ca
-      loan_charge_id: ce77119c-5bd7-4b30-a29b-8f2f62d18129
-      tax_component_id: 18df22e1-333a-47c7-b3ae-1bf08ecc849b
-    table_id: f677883e-bb4c-4787-8875-de7cca0cac46
-  ods_fineract_m_loan_collateral:
-    columns:
-      description: 8eacb4b9-3835-471b-af5d-225fa4a4fe0c
-      id: 6ecbf434-a82c-4f88-888a-c5462ada1bac
-      load_time: 7781ae5b-d44f-41df-925a-3637e7b67fbc
-      loan_id: e5d99141-36bb-495b-80cf-6963dfe347e4
-      type_cv_id: 6cfa0c49-1a36-4a8e-9025-34520d1a5301
-      value: 0691ecdf-a25a-44a7-9bc0-5f46f66c9d56
-    table_id: 72feeca6-37a2-4258-8195-67162e4e5290
   ods_fineract_m_loan_collateral_management:
     columns:
       client_collateral_id: 39c6f0c8-a23c-4837-bd21-0b4626127caa
@@ -4375,18 +3604,6 @@ tables:
       quantity: 0d354a6c-cfeb-4956-9eec-31e42965c39e
       transaction_id: e4186ca8-37b6-4a50-a8af-485049ccb0ff
     table_id: 9527161a-24df-4b1e-9f62-abe974db1b6a
-  ods_fineract_m_loan_credit_allocation_rule:
-    columns:
-      allocation_types: fca78828-f529-4f13-a4f8-a9623cd8484c
-      created_by: 578f4a29-e0b0-4e88-8c24-f3e4579ca053
-      created_on_utc: 99ceb507-7730-44e7-abe0-69d7bac1b825
-      id: 96329f4c-ee4e-4c61-85fb-86ad7a6e9ba8
-      last_modified_by: e49844b4-9ecd-4587-9a3e-b9e887e05e5b
-      last_modified_on_utc: c16ffdee-a15e-4242-b0c6-c22c99fb42f8
-      load_time: fa5f6192-b43f-4b9b-9c9b-c888e66460c6
-      loan_id: ee48f488-4fad-41f6-91ef-0c7567de5d5a
-      transaction_type: 49e851dd-6f53-43c4-80f7-c2c6484214af
-    table_id: 971517b5-0ae3-43cf-b367-9d51a2d023d7
   ods_fineract_m_loan_delinquency_action:
     columns:
       action: b6f0cb9a-3397-455b-b251-488ea360339c
@@ -4441,31 +3658,6 @@ tables:
       loan_schedule_id: 79ce1845-3304-414d-8e65-478f6bc3b4ec
       waived: 2d890d43-0b95-40f8-b835-54f9b8e9f7f3
     table_id: 4004b5a7-c338-4339-9336-c6cb0203776e
-  ods_fineract_m_loan_installment_delinquency_tag:
-    columns:
-      addedon_date: ffa10f51-f683-4be5-a0ea-e00b95a6479b
-      created_by: 312f1715-253f-4f9b-8b52-9a6cc53eb41a
-      created_on_utc: 1d1589ee-e01b-4560-9238-8f60438e0c00
-      delinquency_range_id: 7ddf071a-3780-4702-8dd7-5ebaccbe73a9
-      first_overdue_date: a1ae183c-77e4-4548-955c-f04e597569a2
-      id: 59a08db4-369a-46d4-a4a0-c12b78f52960
-      installment_id: a4815415-f5c6-4d5f-8321-505f96e2c997
-      last_modified_by: 042ca8a3-5630-4fe8-ad5a-fafbba47b3d9
-      last_modified_on_utc: 6d944f52-883c-4b95-a681-afd8e1919133
-      liftedon_date: 0189b1b6-66c8-46d0-bab4-90a4f8ba78cb
-      load_time: 06cae9f8-1069-4b09-9a9b-97f18ca58c0b
-      loan_id: 8f2b45a2-fe03-4c5b-afd0-8a24513a5b7d
-      outstanding_amount: 99b9f420-88d7-4fbc-a736-c83bfc6b8cfe
-      version: f6d7af1b-9731-4016-8f41-dea870831da7
-    table_id: 8aff4337-fd2b-439d-a65f-ea78bae9a44b
-  ods_fineract_m_loan_interest_recalculation_additional_details:
-    columns:
-      amount: 3c470ff5-a08e-4c33-a0c8-cd91fff17ccc
-      effective_date: c32210e0-8966-422e-923d-61428800a06f
-      id: 46d2c0dc-2145-469d-a25e-7f712d3742d1
-      load_time: 1f822e59-024a-4032-bbe0-7502cb585c0a
-      loan_repayment_schedule_id: c5a4dbf6-0bd4-4ecb-9895-8bc9b7e82dc0
-    table_id: ea47cf94-518f-4443-8de9-4ca925c84174
   ods_fineract_m_loan_officer_assignment_history:
     columns:
       created_date: a493d8ea-65cf-4d5d-9940-1771a9e29395
@@ -4479,122 +3671,12 @@ tables:
       loan_officer_id: 34d27ff7-98c3-4440-ae6f-90afc0fdfae7
       start_date: 5a97bba5-497e-43dd-b317-62bcef849e24
     table_id: 1da07b66-c139-4322-a5e4-b62d426c327f
-  ods_fineract_m_loan_originator:
-    columns:
-      channel_type_cv_id: 8428e12c-befa-4339-bbc2-036bc1ff0252
-      created_by: c63d096d-0308-434e-a811-83a6cd49a246
-      created_on_utc: c7e0fb06-1d75-4b1e-9270-16428bf11482
-      external_id: 07e6273b-c823-483e-bf3a-eeddaaae5eed
-      id: 29ea590d-1115-46b2-b934-6f56f7f5e4d3
-      last_modified_by: c6b1469e-4d88-454e-af8c-991c5efbddf5
-      last_modified_on_utc: 6828609b-a913-430e-8153-062ad3d9f51c
-      load_time: 8d880b1d-adda-4e3f-8bd4-6fc746503fb9
-      name: bd6e564e-35d0-4e6c-9bcd-8e9d3b6d42d6
-      originator_type_cv_id: e6e29134-0572-4b35-8bcd-5befcede9803
-      status: 2e5ea0cc-46ac-4171-bfca-6af9818b7a93
-    table_id: f4b9d42f-a91f-47ce-8ee2-c400a0a61acc
-  ods_fineract_m_loan_originator_mapping:
-    columns:
-      created_by: 36c01cdd-5575-49ca-815b-868bafd8f31e
-      created_on_utc: b99ff547-dbaa-4f94-81e8-0c7bf6bc3acd
-      id: 82c19d03-6d56-44b1-90c8-6857e489a1f4
-      last_modified_by: 538ac88a-4f13-422d-a953-893e7611fa5d
-      last_modified_on_utc: a70d8797-161e-475d-b217-89e207a27bf3
-      load_time: 70449885-06ca-4038-87e0-a0cacf00b924
-      loan_id: 833529a4-98a9-4d71-a8a3-c732f5e38f37
-      originator_id: ce3d5fe5-0c5e-48f3-9904-a2cc3d7fea1a
-    table_id: 82a84ca6-f5d8-445d-b07f-f8bfd30787a5
-  ods_fineract_m_loan_overdue_installment_charge:
-    columns:
-      frequency_number: 80068337-2688-4aa7-8f1d-d60cfa9c8b08
-      id: 2cba12c6-818c-4e79-b6c6-6f78ffbfeb94
-      load_time: 9c3a43ba-c49c-44a1-80b4-f66094f6d613
-      loan_charge_id: 1c81bf8c-eb64-4ef6-981c-5f220b0088da
-      loan_schedule_id: 610e8ba2-61be-4846-a2a2-799b75b40adb
-    table_id: 23928c0a-29be-472a-97b7-eef708169ed9
-  ods_fineract_m_loan_payment_allocation_rule:
-    columns:
-      allocation_types: 1c05fb99-90df-48f0-8aad-381f0566dce0
-      created_by: dbc91fe4-d614-45a4-a9bb-2aa15214fee8
-      created_on_utc: 3345ca50-f0d7-44b5-add3-42d03b9a0f39
-      future_installment_allocation_rule: be791ea8-46b0-4653-be9b-683783a19b02
-      id: e869dc6c-e577-4b09-8c6a-a82ba91e51b3
-      last_modified_by: 8d4cb5d5-4483-4a5e-9d20-0f4e3d905b00
-      last_modified_on_utc: 179ecb19-2e26-4fff-978b-4a3715be6324
-      load_time: 02b6e38b-0d34-4ac0-bc1d-19408c25666a
-      loan_id: 50c4dd55-f2cb-47b9-943b-b9f9e72a3c5c
-      transaction_type: a0106ab5-3152-4258-9061-d15902c2a520
-    table_id: ad462d7e-6e27-4d1e-8d38-16828041fd5a
-  ods_fineract_m_loan_product_credit_allocation_rule:
-    columns:
-      allocation_types: ff0f54b4-f363-45c4-89e8-e20e98e8f193
-      created_by: c2ade063-9bb5-4545-938c-9b1160b5c327
-      created_on_utc: 37d4797f-748d-4163-a343-6581bcda7535
-      id: 5039c56b-32a4-416c-bdda-a27c8f67dec3
-      last_modified_by: 7d96ab15-d590-42cb-b331-7cb3ea9161dc
-      last_modified_on_utc: 8fe459b8-5d16-4c5a-916f-fd76f066d660
-      load_time: 852afe93-9904-46de-8bd4-08231b5c89b6
-      loan_product_id: 82b7123e-db97-4b7d-b062-2f58a657b599
-      transaction_type: da57ec24-eb36-473f-be0a-7f2901fd57be
-    table_id: a9e5df4f-6178-4c17-92ba-90c7568a7b74
-  ods_fineract_m_loan_product_payment_allocation_rule:
-    columns:
-      allocation_types: c3478e89-d1bd-4e16-a01b-fb617a4891f0
-      created_by: 88ac4c58-a24b-4d91-b9b5-7082f6acaf72
-      created_on_utc: 8653fb2a-04d3-4387-9a99-6e0a26e14165
-      future_installment_allocation_rule: cb06065f-7a42-4041-9508-c5840fb9bcb4
-      id: d53f32a1-4589-4e08-9a91-12b964aa6f36
-      last_modified_by: 0f44a5e0-714f-46f0-94d5-7d33b24ad467
-      last_modified_on_utc: ea017254-01fb-4225-8dfc-9ba7a04b2a59
-      load_time: c28aa52b-e7bf-4095-b306-93c7fc71379f
-      loan_product_id: 0f95e944-67aa-486d-b6d0-6c145ab61736
-      transaction_type: a01de84e-d28a-4c7c-8345-3258f375c11b
-    table_id: 1ce1b227-3380-4307-bccd-48cbae5af7ee
-  ods_fineract_m_loan_progressive_model:
-    columns:
-      business_date: a4e12f0a-c8d8-4306-bfb0-86780a546a06
-      id: 8f9f6a55-4f5e-40fc-8a95-9efa84838c63
-      json_model: 628cd024-ccaa-4bd6-922c-122a8294f012
-      json_model_version: aa81d26d-d00b-4ebe-9d05-2dd406c8fe41
-      last_modified_on_utc: 74ff6420-1c3e-4269-a365-9ca808620416
-      load_time: 003caafa-199e-43a3-8333-59c9ffee9f27
-      loan_id: 414b8721-afef-498c-a553-5e5b7899599a
-      version: 33c7c610-6f78-40ec-8389-c4ed68f100da
-    table_id: 1d01aadb-7037-4bc6-8e3b-b33760d1a021
   ods_fineract_m_loan_rate:
     columns:
       load_time: d108c3bb-0db3-4dae-9b1c-000d9ce9039b
       loan_id: fbe57933-60cc-4787-95bc-d40c5f7874fe
       rate_id: c8a6a64f-4275-4411-b871-797714d2f64e
     table_id: 96389107-4650-414c-9928-5c9a330a8070
-  ods_fineract_m_loan_reage_parameter:
-    columns:
-      created_by: 42f4af55-2051-433e-adbf-687644a56289
-      created_on_utc: a50b39d3-72c9-4490-88c5-d91673f6f08e
-      frequency_number: 9e57bcab-ca99-48bc-81f1-4fcc5cc7d9f2
-      frequency_type: 32adaa40-5fce-43a6-a3c2-09601cf09dad
-      id: ac4e222c-4e2f-4708-8953-a12d3067ad02
-      interest_handling_type: 12b40e72-f9e4-4264-9821-444537e4960d
-      last_modified_by: f6ebb62d-c34c-4d02-9318-108ec7089dd1
-      last_modified_on_utc: 13a917e8-1927-4b37-9a20-99f9ed6d7cc5
-      load_time: b8fa3f31-c900-4f7c-86c1-d25a72046515
-      loan_transaction_id: 238cee67-a3e6-405d-a7d7-aa9e037c475b
-      number_of_installments: c3859604-dff5-4b35-8a78-46430ff66d48
-      reage_reason_code_value_id: 766c65df-1263-442f-aab8-1b1de7583d91
-      start_date: 7a6821cd-d3fd-4f42-a84b-0d58a9149abe
-    table_id: f0565def-bdbe-4f6a-871b-4494a3ec0f06
-  ods_fineract_m_loan_reamortization_parameter:
-    columns:
-      created_by: ee8c1baa-671b-4f96-8ac7-405e6ee645f0
-      created_on_utc: b195cf02-a3ce-4d5b-9596-70ffab20815b
-      id: 027a755c-1781-4a49-bac9-ef6c7a6e364b
-      interest_handling_type: 75e5615d-296f-49a6-9467-c12c531e2a61
-      last_modified_by: 086e4a82-ebb4-4b81-a72a-4a5ad4f83f8e
-      last_modified_on_utc: 652cd286-d9b7-4e96-bf51-167ea5e2d809
-      load_time: c1b3a958-dcaa-43ab-bb6a-f2fc40bb7bee
-      loan_transaction_id: 6691a976-d53a-4343-9ccc-0b5db57657a0
-      reamortization_reason_code_value_id: 4ab45feb-fcc3-43f7-969a-092d3204d3bb
-    table_id: 05baa1c5-a998-4394-9d41-8599545835b5
   ods_fineract_m_loan_recalculation_details:
     columns:
       allow_compounding_on_eod: 983cb566-9406-44d9-9036-a933a77badbe
@@ -4702,13 +3784,6 @@ tables:
       submitted_by_user_id: f6b9cb75-b2ca-43a5-ab8e-0d97d9a6477a
       submitted_on_date: 6cf5082c-47b5-4e03-ae48-7bfb76a59ba4
     table_id: 89c5e67e-1fca-4157-9aa3-6028d5708afa
-  ods_fineract_m_loan_reschedule_request_term_variations_mapping:
-    columns:
-      id: 05659dc7-d760-4e9c-92de-3c09f3a4d07a
-      load_time: c3b97960-4ca5-4415-b380-9b2020012469
-      loan_reschedule_request_id: 41ccdcb2-2b41-4393-9f8b-2015651daf9f
-      loan_term_variations_id: d9a4b51b-c44b-4cfd-9435-04dac48111b2
-    table_id: ff5804de-ed43-482f-b116-9fa28958d39d
   ods_fineract_m_loan_status_change_history:
     columns:
       created_by: 6755c602-cbde-4755-ade0-6402eb9e291c
@@ -4721,47 +3796,6 @@ tables:
       status_change_business_date: 8b3c8d72-1bf0-4ee3-ab64-fcc5c78e991c
       status_code: 5737ceeb-c3b5-470f-99c0-5820336d50ce
     table_id: ac9b42f7-4d2e-460c-ad46-c381abf94e5d
-  ods_fineract_m_loan_term_variations:
-    columns:
-      applicable_date: c87d19c4-6de7-4359-89f0-1af85687ea97
-      applied_on_loan_status: 09748ab7-e717-4fd0-9611-808c6f5c97ff
-      created_by: a9e67624-b029-4762-af11-de80b5e8ea93
-      created_on_utc: d80fef17-0623-443f-ba87-c3262b477947
-      date_value: bca0ab2d-d53b-42cd-b278-4e86099fe37f
-      decimal_value: 9de0393d-a609-4f90-96a2-7025ee704a1c
-      id: 1aed09f7-e38e-4537-8fd9-e87d9cb5d44c
-      is_active: e22f7d17-ecb5-4ee6-99e9-daa05e863aef
-      is_specific_to_installment: b02ccc89-0931-4d65-b56f-20b3c0ca1d1b
-      last_modified_by: 185f5866-127a-482c-a5d5-e1110e362c00
-      last_modified_on_utc: 611d90e8-aa99-4774-a12f-03f4f9de2370
-      load_time: 5899daa3-19d4-42b3-b453-3b3321c2b5c1
-      loan_id: e7cd9c3a-857d-4e09-a0f0-b2b71b0cd3a6
-      parent_id: 6a12c7f6-bc6b-4914-8e13-3a3a3a9269ee
-      term_type: cc0a4b3d-caf4-44be-87d7-7315d954a760
-    table_id: 5eac9922-6e71-40cb-91a3-4a6a8af41e19
-  ods_fineract_m_loan_topup:
-    columns:
-      account_transfer_details_id: 1eaa40cb-1632-4366-946f-01d64e454342
-      closure_loan_id: 6a6a9212-c65c-4d43-b14b-a9f278e0a277
-      id: c622a0eb-d639-4e31-b9a6-185943054256
-      load_time: c62bf0f4-8c8e-4736-9375-a530adf9c366
-      loan_id: 6f94036f-6b92-41e4-8874-96a2112367d8
-      topup_amount: 3f57e6e5-9f7a-4f28-a7b7-d028c789b40c
-    table_id: c5f8ad8a-dceb-434d-8da7-738ffd209b0a
-  ods_fineract_m_loan_tranche_charges:
-    columns:
-      charge_id: 40a057f7-92d0-499c-a79e-842ec84b656e
-      id: 45608e90-ff7a-43d7-8378-e012a3f8fbf3
-      load_time: 5c0dc674-fff6-4ee5-9e6c-7d483d940fd9
-      loan_id: efaec21f-1908-41fb-82ff-ded5cb4f88d0
-    table_id: e7964fb0-086a-49c8-b315-470024dab929
-  ods_fineract_m_loan_tranche_disbursement_charge:
-    columns:
-      disbursement_detail_id: c02cd1bb-873b-410f-a528-51d87d85b371
-      id: 2a256025-f973-4c03-9197-7dd5f3de9a9c
-      load_time: 5a888750-2602-480a-bd21-7da7013a395c
-      loan_charge_id: 08da2175-0f4c-430c-8687-d418fc482f26
-    table_id: 75cea5fe-e10a-4ffa-8e68-82a1ce7d0c26
   ods_fineract_m_loan_transaction:
     columns:
       amount: 1073bfc6-3acc-4b82-ab9c-87692be69680
@@ -4834,34 +3868,6 @@ tables:
       product_id: f0412311-4dda-4c57-8329-b69011eca667
       reseve_amount: 710fbdb8-8e2a-434a-bc84-c4d3a398ee25
     table_id: dcdfdf6b-90e7-473b-b41a-53aa194f71a7
-  ods_fineract_m_loanproduct_provisioning_mapping:
-    columns:
-      criteria_id: 0e435cbc-c24f-43ad-9154-9d5e830db83b
-      id: 59945e09-101e-4977-a7da-327b96ec253b
-      load_time: 2695a459-1490-4070-a621-0cf7741097fa
-      product_id: 464b3741-9481-48e4-8336-2a6adb0ad6bf
-    table_id: 8a138db6-2dc0-44fd-ae44-425dca7cc59f
-  ods_fineract_m_mandatory_savings_schedule:
-    columns:
-      completed_derived: 82a0ea1f-4d16-453b-8887-dac90cb67847
-      created_by: a656f102-9a5e-42f0-8515-70306eda1e8f
-      created_date: 4839b196-8289-4a9e-95c7-048abd52e16c
-      created_on_utc: f4a848b1-6283-4ad0-9efc-265b88544b1d
-      deposit_amount: fa59c2a7-4ac3-4824-a3fe-cffccd5f670b
-      deposit_amount_completed_derived: 9088e761-311a-4a97-973c-87fd1196373f
-      duedate: 91871123-2b40-45eb-987a-baad4cce0f18
-      fromdate: 65b0e449-85a9-4693-9680-c28c72186012
-      id: 5d3cac82-13f5-4cbc-a164-85bc1e384733
-      installment: 10f7b665-803a-433c-927e-cdf81a6faf50
-      last_modified_by: 021ca1fd-661c-40c6-8ac5-110dd38c85c8
-      last_modified_on_utc: 19d749b9-5aa6-4744-9f16-9859e11174f7
-      lastmodified_date: c618ee6b-1ef4-4133-806f-a76e9606bd62
-      load_time: 3391fa4b-1a82-4e4b-b8e2-63ab3d4d2b20
-      obligations_met_on_date: d9c5e718-7dd6-4a2f-8416-e5a51f09faf2
-      savings_account_id: 51a265dd-24fe-4b0c-aed1-8d106801fcd0
-      total_paid_in_advance_derived: f5f9cb79-9ee8-4eb2-a53c-f2c03e15fa27
-      total_paid_late_derived: 580b54cd-6f72-48e7-b470-6a36148192fb
-    table_id: 1a6ae2fe-2384-4749-8836-64741d6f19af
   ods_fineract_m_meeting:
     columns:
       calendar_instance_id: d5963f61-07e1-4db2-959f-13efa23f078d
@@ -4869,26 +3875,6 @@ tables:
       load_time: f7aa2255-6747-49aa-a4c8-b73f93fadbea
       meeting_date: 8f44fd78-9625-4ef5-9b13-82ce1c357b8f
     table_id: c6d5b9c7-9e35-4688-9065-f32025e1423d
-  ods_fineract_m_note:
-    columns:
-      client_id: 7e37b6bd-39ec-408d-8693-cf679809c541
-      created_by: e7b99f9c-42df-4c56-8019-66f1d36943a3
-      created_date: 05c125f5-299e-4166-878b-cc15dfe6e4c3
-      created_on_utc: 5b6c2ec4-86b1-4bb6-b9f8-295f294fedc8
-      group_id: 45060335-40fb-48bc-9c43-38e29591bf37
-      id: c881921b-be9f-442f-b743-ab4fa3d2a7ed
-      last_modified_by: f7928d0e-1dad-4fc4-8280-fed36f92783f
-      last_modified_on_utc: d468a74c-6f3f-4599-ab49-93fbd4bbf04e
-      lastmodified_date: 7b30355e-168e-4c7b-ba8d-54bc24be70bc
-      load_time: 1c015283-e5ad-4f30-9bbb-a3bd3776e579
-      loan_id: 58f8974d-fbf3-4aeb-91d5-81cefdeafeba
-      loan_transaction_id: f69892b6-f897-4b09-9c38-d01d9a11f991
-      note: 41d01e7a-5389-4500-8987-440dab9ad7b5
-      note_type_enum: e2ce0406-7179-4787-b256-2a56177f9c0b
-      savings_account_id: d5e82aa4-06ff-4719-941a-f8c4d761e50f
-      savings_account_transaction_id: aa510107-34aa-4952-b354-26ca0b736cdc
-      share_account_id: 9be055e2-7c2a-4925-9921-35f291f3edb0
-    table_id: f481b198-b611-41eb-84d2-a9ffa4cd65a0
   ods_fineract_m_office:
     columns:
       external_id: f1bcb563-119d-4390-a7ba-a6704dcb2743
@@ -4911,45 +3897,6 @@ tables:
       transaction_amount: 378da515-8dc5-4b69-99f7-887dde48d9b1
       transaction_date: 14b5cc0a-35d1-42cc-ba6c-e2eba18f5914
     table_id: fdc3dcc6-d355-4c17-9b12-d3fd188bf1aa
-  ods_fineract_m_organisation_creditbureau:
-    columns:
-      alias: e69d268b-1751-42ed-a48e-6988ccbdd0ca
-      creditbureau_id: 8cbfa7cc-07af-460a-bd8a-7b06a49ccbb0
-      id: 8172d0b3-c755-4824-82c2-0b3e4dfa10e4
-      is_active: ee17a515-c940-41b3-bbc9-b0f8f93042ab
-      load_time: 4e0943b8-0ae2-4954-8d45-0c0c88b25801
-    table_id: bf66d95b-50c5-4b30-afae-bfdd65512070
-  ods_fineract_m_organisation_currency:
-    columns:
-      code: fcae21ae-22c1-48bc-a4b6-d041219469c2
-      currency_multiplesof: a8a02f7c-ddc3-48aa-9e8b-4860b707bbc6
-      decimal_places: b2bfdfbb-f9e5-4bf2-ab55-1ba4b0d5eae8
-      display_symbol: 5204c9b7-6f3a-49b8-afa9-4b9f072bf24a
-      id: 28ce7383-6236-4618-af15-b1ca706e816b
-      internationalized_name_code: db742e8e-0673-4dfe-b59f-c0507507a26b
-      load_time: cf318ef2-6786-4a40-8f5e-1258ed093a4e
-      name: dc2b6567-3774-46d0-a8fc-6d2848cc2ae1
-    table_id: fff6ed92-f286-460f-8f95-e05b38dc6d78
-  ods_fineract_m_password_validation_policy:
-    columns:
-      active: a8ef6260-3650-4c69-a42d-49b1d0886ef5
-      description: c382bc87-4557-4a12-8112-05110fec0d2c
-      id: a6c83dcb-e9c9-4d45-92cb-81d67a23df84
-      key: 9c14fcfd-c0b4-4950-ba45-f523b06e0478
-      load_time: b3269c9a-86f2-41d9-8691-b73666da4de5
-      regex: f05c2ccc-71eb-4681-ac03-b43640157296
-    table_id: fa9fc752-9597-4ec3-b55d-1149c8540159
-  ods_fineract_m_payment_detail:
-    columns:
-      account_number: 482d543a-f230-4bf7-b38c-5d7663dffaec
-      bank_number: 8ee2e858-a6c6-4026-bb26-99e6b244e10d
-      check_number: d6004866-43c2-49f2-a67b-a45687daff81
-      id: 9f6ef938-31a9-4a1f-a2e5-4e851456cd2a
-      load_time: 686e02ca-0c3d-4958-919f-c62d030d7a3a
-      payment_type_id: 5a4d7d7d-d6b2-43df-9513-9368854af3e3
-      receipt_number: dc67c372-9a52-4fab-b3f8-b04fa527bd25
-      routing_code: 9c9036a2-9594-47a2-bf6e-030906612c75
-    table_id: 711bec84-a2ce-4a1f-8fad-fa953d50c529
   ods_fineract_m_payment_type:
     columns:
       code_name: 3ec5a0e2-dd26-4e01-ade8-cbc066aa69fb
@@ -4961,63 +3908,6 @@ tables:
       order_position: ed76bce5-fa0e-4acb-8870-caf373562b44
       value: a327bc7a-467c-4b30-8552-f9a761ed83d0
     table_id: daf44da4-dfa7-4d75-8acb-4438c65b2033
-  ods_fineract_m_permission:
-    columns:
-      action_name: 1c63040c-ef53-463d-b064-96089c0b32da
-      can_maker_checker: ead1b558-baf9-4b90-a5e5-ae1311175e12
-      code: f0b9f084-9bc6-4224-8ccb-1399919419a4
-      entity_name: 1d84cad0-9478-490b-954d-1a9ead3790dc
-      grouping: 70e16c50-a5e4-4527-8c64-1a0415d067b0
-      id: dffce11f-64df-4497-96de-436c47f17c4a
-      load_time: c67d4446-657e-4189-ab8e-5303f0f66c67
-    table_id: 48e116d6-80c4-4df9-a21b-1884eeead511
-  ods_fineract_m_portfolio_account_associations:
-    columns:
-      association_type_enum: af7e440d-debe-4299-9c1d-31dbffd78f7b
-      id: 22a3a7b2-c854-4cb6-8e8a-a3c005cfaaf3
-      is_active: d1f65b94-13ec-4782-8cef-f3124bdca926
-      linked_loan_account_id: fc1a27cd-6fdc-4c0d-a8f9-1aa5e0d2cdc2
-      linked_savings_account_id: 629eaefe-ea75-432c-89b7-3f8cf73e4c6f
-      load_time: 7f89bfb2-bdfa-466a-a2ea-c001fcc07dd2
-      loan_account_id: 4a77b2cc-2771-4818-a9e3-346a145ffdb3
-      savings_account_id: ad968aee-2690-4234-9703-2f1a6fddfb06
-    table_id: 923474a2-af92-4810-b418-94011017caf3
-  ods_fineract_m_portfolio_command_source:
-    columns:
-      action_name: 58319eb8-9c16-4b0d-83cc-f41f202d1d9d
-      api_get_url: da75d87b-f024-41d4-92a3-fb172b7399f9
-      checked_on_date: fb77b0b8-1c43-40fe-a0a8-ff94b46d75eb
-      checked_on_date_utc: 4fae12bc-39df-4411-8796-b19025e05c8b
-      checker_id: 6a1561d5-dd38-4814-8ac1-fe9e6379d31e
-      client_id: 53d08061-cd4f-4cec-88ea-910a2d2f6da5
-      client_ip: ad19f5c1-681c-42a7-85a9-7baa05fc917d
-      command_as_json: a24f27f7-e5ff-4a01-b1af-7a755ac534b5
-      creditbureau_id: 180b6985-24e1-460b-8535-82b47ee7efa8
-      entity_name: c0336b40-05e6-4573-a265-1e173b419584
-      group_id: 62b72b21-b871-4fc1-a68f-1485a075e172
-      id: 9f61dbdc-6da9-4945-b14d-b2496430b88b
-      idempotency_key: 34620053-d287-4bc6-bffe-56ac37a7c15e
-      is_sanitized: feaeb7b0-a841-4a30-b7e9-9554f50adc4d
-      job_name: 78c7b8d8-2e8f-4a2f-a06d-c61acdd53ff3
-      load_time: 58986cad-c388-4064-8827-3afd980a6ce0
-      loan_external_id: 97cb744d-9b75-44c6-84ad-862a98e568d3
-      loan_id: 2f0e7ab9-1062-4a62-b853-36f6816e7d0e
-      made_on_date: 3488ad5a-488c-47c9-abc8-c164b33307f3
-      made_on_date_utc: 1440afee-e1a9-4583-b021-e14ac2c40c1a
-      maker_id: eb481d78-e284-4091-abdd-fd2500a16f9a
-      office_id: 98145a61-e0ce-45c5-907b-4318cc20845e
-      organisation_creditbureau_id: c328bfe4-40c6-4f21-8e49-64ad6b96ab5e
-      product_id: 87905105-0f3a-4d62-9f96-a83ea1105684
-      resource_external_id: 0b1bcc5d-f756-4b8d-9fb9-b87f69abc3ec
-      resource_id: 15726834-5d6c-46a0-b2bf-934f4e3b5876
-      result: 141bc752-7381-4024-8731-4ff7917e8f4b
-      result_status_code: efecd485-a166-4455-82e5-641d4fd7a7ea
-      savings_account_id: 9e63df94-34e6-406e-b0c9-336809f27da3
-      status: 9ff2b33d-4a89-41ba-b920-408b8046cb78
-      subresource_external_id: 2e89c355-792d-4ae9-893e-89ff4e870d06
-      subresource_id: 9e4de5c4-4464-4c67-a8ed-2638df9599cc
-      transaction_id: dd4b63a9-16d6-470a-96ab-8d2ad95b57b0
-    table_id: 4dafdf8a-eb8e-475e-83b4-e56463bda4e6
   ods_fineract_m_product_loan:
     columns:
       account_moves_out_of_npa_only_on_arrears_completion: 14160df9-2302-4889-8737-4e366c2c46c6
@@ -5111,103 +4001,6 @@ tables:
       sync_expected_with_disbursement_date: 4ec08669-be56-4f8c-92e4-40b47c744640
       use_borrower_cycle: d903d15a-46f9-4686-9a10-c6b8fb9c9b9f
     table_id: 693654a6-a7fa-47c0-bea2-9a7916d58200
-  ods_fineract_m_product_loan_charge:
-    columns:
-      charge_id: 5d3675fd-d00c-41a5-83d8-35be6be6766b
-      load_time: 7393b016-d228-4054-8a0a-8ee74a35108a
-      product_loan_id: da82b753-22b3-4769-9a35-a5d607c501f6
-    table_id: 2c705dee-f599-4ef5-8af1-87a64b890db5
-  ods_fineract_m_product_loan_configurable_attributes:
-    columns:
-      amortization_method_enum: afe47b4c-7179-472c-af1b-1b447922eb53
-      arrearstolerance_amount: 12681a5f-3417-4775-ae1f-9127f42e4209
-      grace_on_arrears_ageing: 12f3dd58-cdf6-4f37-8169-d44bab12c7c6
-      id: 77475db7-748f-4b17-9cbd-ef76e8a8ca6f
-      interest_calculated_in_period_enum: 913812d9-3c03-45e5-9450-35f4f571394b
-      interest_method_enum: 7a443809-414e-4ede-8858-36c7ab3ec264
-      load_time: fdfa2e69-be61-4495-8c3e-67978435b94d
-      loan_product_id: 4211df5e-fc9f-4373-aecb-8be8ba34f6ca
-      loan_transaction_strategy_code: 2e3867e3-234e-477c-a082-057a34cb9e2c
-      moratorium: b62584fd-3205-46ec-ae74-5e133fa5822e
-      repay_every: a80905f7-ebb3-4955-87ed-046d7b551ff2
-    table_id: 267c79b5-b839-4918-af00-c781d68ad959
-  ods_fineract_m_product_loan_floating_rates:
-    columns:
-      default_differential_lending_rate: 67729cb7-29e6-4655-870f-4f17df1cfe1d
-      floating_rates_id: b805bc66-47df-41ac-a91e-98da4cba37ff
-      id: 26d9dbaa-9322-4304-b31d-f45c67eea92f
-      interest_rate_differential: fb7fe26f-1ee0-42c3-972c-4d25cf7ee251
-      is_floating_interest_rate_calculation_allowed: 275d24af-63be-4ad1-b876-679da5764092
-      load_time: b0d7e7ae-1856-45d5-810d-2631ec3f65f0
-      loan_product_id: 44b8eeb2-bbb0-428d-a24a-afd407084117
-      max_differential_lending_rate: 9acc9c4f-f8a0-4102-8101-6d14c4008a23
-      min_differential_lending_rate: 6cdb9b1b-e518-4904-9c84-045b95cda30e
-    table_id: 0d095ad3-d2a7-4c11-b617-2b16ecf60f9c
-  ods_fineract_m_product_loan_guarantee_details:
-    columns:
-      id: 113decfc-4054-4371-993d-749b4979722e
-      load_time: ea0f27bd-6f84-4ba1-a74c-ecbabdba4f11
-      loan_product_id: 30ba73d8-f720-45e7-812b-c96031128d45
-      mandatory_guarantee: c7b44c45-84d4-4a70-ab50-24085a67bfd4
-      minimum_guarantee_from_guarantor_funds: f4fc3f92-9df6-463d-b7eb-be509f6a64d1
-      minimum_guarantee_from_own_funds: 7edd9947-ecda-483c-9ef1-c59c5e0606b9
-    table_id: 68757933-a20d-484e-8cb0-3d50811078f7
-  ods_fineract_m_product_loan_rate:
-    columns:
-      load_time: 55b70f54-b885-4ecc-85ca-6a39532a9300
-      product_loan_id: 72b187d4-558c-4bdf-8c74-9157c6d36203
-      rate_id: 3363d651-fa28-4ac6-9082-c653806164ad
-    table_id: a6304bdc-47ab-4066-8e0b-76293363dab7
-  ods_fineract_m_product_loan_recalculation_details:
-    columns:
-      allow_compounding_on_eod: e2d643ea-02d2-435b-94d0-cf7d3b4d3260
-      arrears_based_on_original_schedule: ee3b3e4c-3667-46cf-8900-34ae80c92477
-      compound_type_enum: 5433d3d6-973f-4cb5-b9fd-fc0f8bd24647
-      compounding_frequency_interval: d246aac9-d703-4ebb-9824-8bd2896da769
-      compounding_frequency_nth_day_enum: 4054c3c7-52b7-41e8-96cd-99b2ae7bd9d8
-      compounding_frequency_on_day: bb6f1498-1ab3-4de8-8d9f-676504b244a4
-      compounding_frequency_type_enum: 7c23b4d0-abbe-4968-a252-1228f51be376
-      compounding_frequency_weekday_enum: c7b25bed-e4c8-4b12-a535-1894057b1c63
-      disallow_interest_calc_on_past_due: 98b555b7-7c28-4023-93b1-3080bfdafb9d
-      id: cd4b79c5-b35b-4693-8ce6-df6f978f821f
-      is_compounding_to_be_posted_as_transaction: 368720cf-71dc-40d4-903f-a2153fab35b8
-      load_time: a87f3a7f-f541-47de-9d5c-fb05c9c7b5b1
-      pre_close_interest_calculation_strategy: 6a1971ce-1991-423e-9a98-54c8a3d3ab9b
-      product_id: 5bf85a7e-3d78-4814-a9fd-a166f0c56a5b
-      reschedule_strategy_enum: e7e18bd3-e859-4d51-b2a2-ed12bcf79166
-      rest_frequency_interval: 5ac41ede-4bda-4161-b879-9090c7f6f515
-      rest_frequency_nth_day_enum: 1ce1af0f-d432-48ee-93c8-8cd7645c8375
-      rest_frequency_on_day: 80ff2bcf-12a2-441f-ba42-760af4428cc2
-      rest_frequency_type_enum: cd94111f-a428-4d24-8f70-d837fb67cd49
-      rest_frequency_weekday_enum: ecf42acc-25d0-4d06-b5ba-b6e903f8669d
-    table_id: 28bbb6c5-4fc5-44a9-814b-1312e58a97d5
-  ods_fineract_m_product_loan_variable_installment_config:
-    columns:
-      id: f2ff871d-51ec-4328-b124-f1fcb0a679ae
-      load_time: 14d7fa54-0e22-4766-bf80-d148789d0d1b
-      loan_product_id: feace056-c7e1-4d1c-b005-2caf79fb6fc2
-      maximum_gap: 680d5701-a26e-483e-84d5-c02a52e2df17
-      minimum_gap: f9235d71-f92d-4aa2-9f9b-84406d6d81c0
-    table_id: 127f9951-409f-48be-958b-a8978b49aa4b
-  ods_fineract_m_product_loan_variations_borrower_cycle:
-    columns:
-      borrower_cycle_number: 99f1a0b3-e8b5-4142-a681-cddf9b407120
-      default_value: e9c38cf8-e9e6-49cf-a467-3870cfd61239
-      id: a1eaf54d-113d-4903-b270-f6e8b455e583
-      load_time: 183d4435-e2a4-49f9-a60e-fe5b20acf858
-      loan_product_id: 4713c3b6-6a7a-42d1-934c-f8b7debd63aa
-      max_value: 7e4b2649-6032-422d-8163-819a5ae74c5d
-      min_value: 9a84ce7f-5d8c-487d-9ad1-36c3889c3d26
-      param_type: 5563291b-5bed-424a-89f8-f7a41bd469a4
-      value_condition: ae23d3d2-feef-47d6-8e2b-e80c43601ce3
-    table_id: 502cbc1e-442c-4405-8975-56c49e6e580f
-  ods_fineract_m_product_mix:
-    columns:
-      id: 7e5661dc-915a-4d32-b5e9-cc5d2961087c
-      load_time: 4437925f-d258-40fb-ae2c-fe449c1e7072
-      product_id: d248b64e-fe5a-47aa-8279-236b8542e927
-      restricted_product_id: 96dd2602-1251-4a26-ad62-23df3778cc04
-    table_id: 7679d7c1-269a-46d4-9b29-2f4e477b68e0
   ods_fineract_m_provision_category:
     columns:
       category_name: f74cb1e5-0d96-45b1-9318-b73257cb7781
@@ -5215,28 +4008,6 @@ tables:
       id: 0ef2779e-5e24-4339-8610-c197dd38c683
       load_time: faae5170-13f0-49d9-a49e-0dc411f58546
     table_id: f9971162-fb66-483b-b5eb-74044328713f
-  ods_fineract_m_provisioning_criteria:
-    columns:
-      created_date: 3078e778-5dbd-4a8c-b8c9-b05748f764a5
-      createdby_id: 9442ac01-8f7b-48a9-ad38-bf3267e726d0
-      criteria_name: 80b2bae4-b2b9-4eab-86dd-68812af0bc1c
-      id: d5996cfb-29e3-49df-a1b7-fffd961a1a36
-      lastmodified_date: 3a302ad0-15a3-4441-8805-9b1f85395190
-      lastmodifiedby_id: 7f2a9497-3913-464a-ac7b-8cf813167878
-      load_time: 35d5edc0-e689-43e4-9d7f-9a6d0541b9de
-    table_id: 63cae07c-01ed-46bd-8300-298a4ff80003
-  ods_fineract_m_provisioning_criteria_definition:
-    columns:
-      category_id: c5fd629d-7718-408b-90c8-60993ddf24b9
-      criteria_id: 9d73375f-d0ca-4d07-bfc4-324cc48acddb
-      expense_account: f19de6f5-8bf9-4f22-9ea9-f8bac9451bf4
-      id: a9043997-284d-4c3e-921d-51341c16b6f6
-      liability_account: 435555cc-a5f3-4479-852f-cff49be45fa1
-      load_time: 6074a710-64f9-49dd-b2d4-6a23b1295300
-      max_age: 733a0e57-03cd-4598-905f-2304bfb043ad
-      min_age: 75a60bcb-8588-4a5f-b8bc-474e9fe01001
-      provision_percentage: 612d8d60-a207-4b1b-9196-cc604798ee2e
-    table_id: 681a8c64-7cc4-40db-9c65-97fe6d53ced8
   ods_fineract_m_provisioning_history:
     columns:
       created_date: 70147795-a7ea-415f-9bfb-a629da33a081
@@ -5261,79 +4032,6 @@ tables:
       percentage: 7b17fe60-9f7c-4361-b9c5-c9d2ae126941
       product_apply: 17e933d4-a63d-4bf7-9fcb-1a5b365e06ea
     table_id: 71ea992e-7b4a-4044-b3cf-6495d8c2f638
-  ods_fineract_m_repayment_with_post_dated_checks:
-    columns:
-      account_no: 00fddf43-28f4-4aa4-9c6b-869fe8d1cd58
-      amount: 09405770-3d67-4426-96af-f8c310a84c3f
-      bank_name: 1911329a-4fab-47f9-b878-7960bd2ab90a
-      check_no: 2a23dcd4-fcda-4a17-ae67-35ec180c1ed6
-      id: d5747308-8064-4393-9f36-f8adf82916f9
-      load_time: 5c530028-a148-449a-9265-107c04679ac0
-      loan_id: eb5116e6-45af-4273-9b27-6fb28adcb9ad
-      repayment_date: 9f00c545-74fe-4630-8e81-73d4b5297a35
-      repayment_id: ad9c8573-d5a4-469f-be17-bee85fb3883b
-      status: 5924a63d-50d5-4a86-bb7a-e2e685c1d056
-    table_id: 3fa8ff86-2993-4447-a8c7-621edde803ec
-  ods_fineract_m_report_mailing_job:
-    columns:
-      created_date: d6e03b48-7432-41a8-811d-1df59c58fd32
-      createdby_id: e3ed2f17-bef0-48d1-a3dd-583d3546588e
-      description: 1474db9b-bcd6-4213-b577-fadc928f85c6
-      email_attachment_file_format: 38781593-4d73-438c-adda-b209b597834c
-      email_message: 97166343-8af4-4aa5-b824-6d4c0dd0888f
-      email_recipients: 40ed8792-6b89-4520-93f1-5c0ed766bc72
-      email_subject: 068b0749-5fbc-49f4-9ecd-cc19e37020fa
-      id: 0d7286aa-4330-4bbd-9323-bf6529c08782
-      is_active: 7c2a61ee-dcee-45ea-9fce-65aeea194a33
-      is_deleted: c75109d0-957e-4687-b816-bbee7b5c52f2
-      lastmodified_date: c2c908d5-42e8-45d8-8b6c-24336fa165e3
-      lastmodifiedby_id: 4d89012a-3a66-428c-bf12-eec579cbadaf
-      load_time: ba3a6d19-0aac-4fe4-b497-5b09d3396e39
-      name: d4f5e11b-eade-4885-83f2-b481fc49dc59
-      next_run_datetime: dbce428d-371d-4f9c-bfab-593c877f8ace
-      number_of_runs: 0221f2a0-08e6-482b-9a3e-a9aeac9c3f08
-      previous_run_datetime: c3a672e7-ce85-48c9-92b9-24e44d0c5e5b
-      previous_run_error_log: f84904eb-6716-4c8e-945d-d37417dde0c3
-      previous_run_error_message: 5163ff10-36e7-40ee-b88d-dcf06adc8829
-      previous_run_status: a5ef5ae3-1aeb-4a40-befc-0ab78f0c702e
-      recurrence: 3df566e8-cabf-4591-a2a4-25d02beeef51
-      run_as_userid: 4c3dd43c-07b1-466a-af5c-e53b22862535
-      start_datetime: 5eff535c-2250-4788-8ea2-83d50518305c
-      stretchy_report_id: 55ae300b-dd8e-483c-b1c8-52dcf42ddca7
-      stretchy_report_param_map: e3b01316-7c14-4f7a-87c9-e83cb969fc7a
-    table_id: d0e88bec-b076-41d0-a93a-b889e0e7b20e
-  ods_fineract_m_report_mailing_job_configuration:
-    columns:
-      id: 7a4f5ba8-be30-4f19-a542-d6839c7f2fbf
-      load_time: adaeea56-c844-4514-a841-c836a69dae17
-      name: f23cecf0-ff46-4a83-8737-9ab185e74dfa
-      value: 0be49b38-cfed-45a8-bbf2-c7f798914662
-    table_id: 1a4d14b3-0e39-4114-94a6-03ab82a73760
-  ods_fineract_m_report_mailing_job_run_history:
-    columns:
-      end_datetime: 316add4e-74c8-4ce2-8252-03d6bee6d737
-      error_log: bfc8ec1e-dbcb-4b8b-a743-b6dea45c7ffd
-      error_message: aaf420a5-b882-4e0e-aa47-dfe66c843ec7
-      id: 4735d534-02f8-4ec7-bc1c-12e2bc485420
-      job_id: 6aff86b2-6d38-4791-9b85-82233902f3a2
-      load_time: 9e46521d-e9a4-4320-a1e4-662a06dffa87
-      start_datetime: c210b14c-1f81-45d7-863f-8e06fc73eb3f
-      status: aef2f301-4325-49f1-b850-10e3660d020d
-    table_id: 86d765f4-1c9e-4c22-8bfe-e04468f108b3
-  ods_fineract_m_role:
-    columns:
-      description: c4b8d3bb-c99f-4b85-8954-ac6881cebca3
-      id: cf470bff-a514-45a8-8357-97f6cafba06f
-      is_disabled: dac99097-0eb8-462a-aff6-1c8a8283b4cc
-      load_time: 253bfb08-9d92-4266-b9d3-31bf8660b409
-      name: f7ad8b90-0371-4628-8c26-f859ccc67c90
-    table_id: 185ddc50-3641-4c67-976d-2a62cce00c24
-  ods_fineract_m_role_permission:
-    columns:
-      load_time: c72e8795-62f5-440a-9385-7c0bb449e8b2
-      permission_id: cd51e5b0-d63a-4bd3-9091-bbbc12690e18
-      role_id: 3dc256a1-2715-4024-b2a7-51b12d206146
-    table_id: 2139dfc0-8d27-479d-be8b-f466583ff72e
   ods_fineract_m_savings_account:
     columns:
       account_balance_derived: 0325955d-e508-416a-b265-7b6d10b08f0a
@@ -5449,31 +4147,6 @@ tables:
       savings_account_charge_id: 485f3ef1-9b79-4793-81ca-4d640f5beb3f
       savings_account_transaction_id: cbe64ce4-496e-40b8-a4fc-01285a25560f
     table_id: aecc94c6-b65a-462f-9c51-6419b0789815
-  ods_fineract_m_savings_account_interest_rate_chart:
-    columns:
-      description: 51e763cf-2aad-4727-9052-1618d9b7fb9b
-      end_date: f6c4a38e-d99a-4123-91f5-18af7bd16b95
-      from_date: 4684a708-7426-46c7-8ad8-4334b8e9c056
-      id: f10a21f8-c816-47a4-8207-b9a00be0c8bf
-      is_primary_grouping_by_amount: afab851d-47f6-488e-b600-99b435110ecc
-      load_time: 01e3ec9e-59dc-4fb7-afc2-5af7095b14d1
-      name: 0b654fef-107f-4ca2-b714-7ec2747c4768
-      savings_account_id: 7e2c3f10-2c3c-43ff-9e20-0581d06888fa
-    table_id: 286653ca-ecb8-49c8-918b-7125286644ea
-  ods_fineract_m_savings_account_interest_rate_slab:
-    columns:
-      amount_range_from: efbd9a1c-4a3f-4622-b731-5a4c7b566224
-      amount_range_to: 08cb18d2-c099-43a4-95ff-d80af2cccf63
-      annual_interest_rate: 55a52e53-875b-448d-b5c4-7dd69779f92e
-      currency_code: 492040b0-b60f-433c-9447-bb0ea3e01e43
-      description: c1ecb92f-334c-4756-b476-c6aa95b83098
-      from_period: f47124c7-7cfa-4e1c-9145-b3811de272a9
-      id: c24ba65c-cef9-4f24-948b-c87ac133712a
-      load_time: 86b94597-e7f4-420c-b642-56c46f0b2c37
-      period_type_enum: 8e945921-ca3c-46ba-84b8-b4ec50b21b60
-      savings_account_interest_rate_chart_id: c319bae6-4283-4c99-b1e9-0abc70d0e3f7
-      to_period: cec5e2c8-01b5-4925-8a87-33e2b6b9b4d0
-    table_id: 284cc132-ea38-4d6f-99ce-3c84c5b1c83b
   ods_fineract_m_savings_account_transaction:
     columns:
       amount: 99f59949-cace-4b9a-8bf7-98569f8ba701
@@ -5514,18 +4187,6 @@ tables:
       savings_transaction_id: e9a138ed-2a01-4fc8-bda9-658584c519eb
       tax_component_id: c72d4211-a810-4acd-8356-8f1d180fd9d0
     table_id: b9a8f39e-be33-476f-aa08-1eaa5e606e62
-  ods_fineract_m_savings_interest_incentives:
-    columns:
-      amount: 50e8cafe-d0c2-4718-9e28-7f91cd4c2fee
-      attribute_name: d2c1ae64-13a9-4882-93fb-c66ed2b22421
-      attribute_value: cad3cc94-7d71-4aba-9343-dbeb22f1a668
-      condition_type: d01a7853-54b3-4cce-9d39-9cc873fd681f
-      deposit_account_interest_rate_slab_id: 67a96ca4-0141-4da7-bce8-db200048dd65
-      entiry_type: fa5733e7-0580-4e40-94d2-945f4c246710
-      id: 61f06b5b-c212-4409-b3b1-3ce41ecf35e2
-      incentive_type: 47ddf7c7-9a37-46bb-b8d8-8cb23659cc61
-      load_time: 779420ad-c0ca-4b65-828f-3455c0681426
-    table_id: 7de595f4-29d0-4c1e-b70b-0972f59f8bb6
   ods_fineract_m_savings_officer_assignment_history:
     columns:
       account_id: a937e1d2-56cd-4980-85c4-a35a2328672c
@@ -5580,12 +4241,6 @@ tables:
       withdrawal_fee_type_enum: 92ba1d9e-1839-4de9-bd6b-2c59928873bc
       withhold_tax: 9779beb0-e2cd-484a-a254-a931dac0abee
     table_id: a2c986da-888a-423b-871a-a276ed70488b
-  ods_fineract_m_savings_product_charge:
-    columns:
-      charge_id: ad62f90b-24b4-4b05-a40b-de92dd4fd3dd
-      load_time: 6faa971c-4e03-4013-9097-f20439c94d28
-      savings_product_id: 7c046d77-cd65-45e6-9978-489aecccabeb
-    table_id: aaf3146b-3b95-4156-877e-f8b0b885f943
   ods_fineract_m_share_account:
     columns:
       account_no: 998ef77e-0c2d-4f71-8fcf-24cb8c39c9b3
@@ -5708,12 +4363,6 @@ tables:
       totalsubscribed_shares: 6c09d02b-b8b0-4746-8918-a1f43211c7de
       unit_price: d6104426-93ae-421a-a29d-7cec47a7356c
     table_id: 749fe0a9-0330-4034-9355-3d0e76aa0eef
-  ods_fineract_m_share_product_charge:
-    columns:
-      charge_id: 09432853-df40-42ee-8f81-f59d1cc7e193
-      load_time: 72e04133-f383-41ac-8481-fed1a97aad53
-      product_id: fcd1841c-8825-42c5-a783-66efd60e8bb0
-    table_id: d933803c-8716-429a-b526-49e3bcbf69c5
   ods_fineract_m_share_product_dividend_pay_out:
     columns:
       amount: 3f0115dc-a86b-4e6b-b508-edf65f8da636
@@ -5767,47 +4416,6 @@ tables:
       staff_id: a9e504e1-6b68-457d-ae9e-ed871c989783
       start_date: e56407dd-abce-4b7a-8d92-76ff831cf46c
     table_id: cb64c368-adbb-42a6-8f89-cc4b11e54a6a
-  ods_fineract_m_survey_components:
-    columns:
-      a_key: 2a691cda-907a-4680-b5ff-273cb14e151f
-      a_text: 7ab93158-3249-4f17-bfe9-1eb9bee60a52
-      description: efb0e9cf-3dd2-4716-a528-a000147b9e03
-      id: 85f3a362-1062-4f78-b15f-472aaf6ddffb
-      load_time: ea7c1797-b863-443d-8da8-175afd360472
-      sequence_no: ac031bc5-c82d-49d8-aec7-f533b407eaa9
-      survey_id: 5edbfcc6-30dd-45fe-ada2-0851295dcd0d
-    table_id: 3238939c-407f-4329-94d2-eab5289ad0be
-  ods_fineract_m_survey_lookup_tables:
-    columns:
-      a_key: d9209268-b148-4a63-b3be-defd6cadb0ad
-      description: d639e94f-8183-48e0-8f06-73ffacd83c94
-      id: 7b45b0fd-ae16-46fe-8554-cce8b5bd3dd9
-      load_time: 1bbf4088-3cbe-478c-a4ac-e9a5c3c3d38c
-      score: 04d06e15-c3c0-4c51-8ed4-df7bd539bdaf
-      survey_id: 873951ad-a6c5-401f-9b34-23dc35cfc270
-      value_from: 51b34d85-76c3-4930-8c0c-e56c192a3be3
-      value_to: 9cfb2b9c-a03e-4bb3-bf58-0c3608ad3370
-    table_id: c7925951-f652-430b-869f-9b9a4b3ee8bb
-  ods_fineract_m_survey_questions:
-    columns:
-      a_key: f63d40c9-7deb-42b1-bf18-ae465a1648aa
-      a_text: d5a4679a-93fe-498f-8fd4-58c5bd50d7c5
-      component_key: f91febfb-5baa-4a14-86d7-a2f76d877a59
-      description: 58a10de8-7519-48ac-94ad-075c09eaf3e8
-      id: 7f849ffd-0025-4992-a808-3df6a4a3c4e0
-      load_time: 39e56e64-8cf8-42e8-a843-bb578dcdcad6
-      sequence_no: 10677171-1431-4e09-99c7-3c9743440ead
-      survey_id: 18c7b8d4-3f8d-4a05-9124-051fda60ca15
-    table_id: db3b8c67-29bc-4db4-85dd-99445fd894b7
-  ods_fineract_m_survey_responses:
-    columns:
-      a_text: 2db87832-ee52-44d3-b723-2732a8506bd3
-      a_value: b8999ef7-5edd-4561-9341-d4747a8038c3
-      id: 62a04f1f-ac1a-48bd-b7a3-2bc5448ec8c6
-      load_time: dd92b6a4-4476-40bc-a650-f1953f7555ac
-      question_id: a1fee5ed-d82a-42b1-bd6a-0e8a18bad724
-      sequence_no: 328ead10-5f46-4447-939c-81b44b6f16af
-    table_id: 5e9232e5-d0df-45b9-a8c9-f5790c394980
   ods_fineract_m_survey_scorecards:
     columns:
       a_value: 8370ff47-ee11-49ff-b0d7-ea4ae3526656
@@ -5831,58 +4439,6 @@ tables:
       valid_from: 5a08f8ee-fe4e-48e7-8612-e582f2d43570
       valid_to: badbf82d-ea55-4db3-92e2-3009e82bf301
     table_id: cbaee6e2-5a10-478f-8782-a71c6aaa6a41
-  ods_fineract_m_tax_component:
-    columns:
-      created_date: 6a872655-2783-4901-8ec9-2e9decc193a9
-      createdby_id: 73f5bff9-8acd-40ad-a626-f55f07e561e8
-      credit_account_id: 25853071-86dc-4a92-8c34-98ffa9e04b3c
-      credit_account_type_enum: ebbb74dd-c55a-4e8b-8a20-b595d41d4ad3
-      debit_account_id: 55c2adab-dd66-484f-a610-507aa8badc2f
-      debit_account_type_enum: eb3fa336-24df-472b-8e04-7cfa6ebd5b6a
-      id: cc0b0900-0643-4e47-ab39-369b070fe31e
-      lastmodified_date: 3864aa25-2fd4-4db6-9f2d-2d00c8b11b35
-      lastmodifiedby_id: cdf49d11-a7f2-4714-aabe-fccf22bb6079
-      load_time: 1ad071ef-f757-4536-b218-567d67ffe061
-      name: 7d09e815-f6d6-4593-9211-c53b20e7b41a
-      percentage: 2eb6cb6f-322b-4805-8b30-13544ed92cda
-      start_date: 812eb5b1-94f4-4695-84fb-d9afecc28ce4
-    table_id: 05c69c5d-e236-48cf-9100-174cbf16846d
-  ods_fineract_m_tax_component_history:
-    columns:
-      created_date: 94e9b497-2033-4c74-8c7b-8248f69adbb6
-      createdby_id: 953cbb7b-e2e4-472f-a9e8-b409d02ecda9
-      end_date: c2f20d62-e460-4047-88f9-78d9a0ce4205
-      id: 4f2c186d-b6f5-4192-94da-9a69ffeda27f
-      lastmodified_date: 1a6218af-a30e-4744-a306-cf306a76a8a1
-      lastmodifiedby_id: 4481db05-d271-48cc-af55-317dda7ffe65
-      load_time: fe2d8cbd-d003-450f-9e88-4549dc230371
-      percentage: f0e58628-0e5f-4c1d-9aec-2544a8bb06c2
-      start_date: 378862e0-c67a-4ce8-932f-04f1272797c7
-      tax_component_id: 088cd482-db17-43dd-86c2-e0ca7ab7425e
-    table_id: c05d8ae6-6cc4-4d17-8a64-96cae32878db
-  ods_fineract_m_tax_group:
-    columns:
-      created_date: 52ff7ad1-d9b6-40ea-88d0-7a554c2cafff
-      createdby_id: e3fc270d-d9b4-4a74-8eb4-eac29b5bd883
-      id: f8db56bc-5624-4c25-ab0e-b4ea3ffcb4ce
-      lastmodified_date: 4f0cd62e-9ec8-4f2c-a4a8-a91f8e319e7f
-      lastmodifiedby_id: d45e067a-ec9d-407b-b990-8fc01eff3299
-      load_time: e7a3c1c9-bb5e-44e4-8327-1cf79f790044
-      name: 4b6f1af8-4cfa-4f60-94e1-e798b2695d21
-    table_id: 47911fb3-7a85-4795-b6e6-d322733a6bed
-  ods_fineract_m_tax_group_mappings:
-    columns:
-      created_date: 064542f1-5bdf-48a8-b851-e4b08640b301
-      createdby_id: b955fb28-2e94-4c9a-8b52-96c426996313
-      end_date: f90cc2c6-9a68-4e8d-9a7f-0c79bfc85924
-      id: deaa6944-8389-4440-a195-8eaee04eb846
-      lastmodified_date: 4f983646-d49e-4009-abab-b3ee63469653
-      lastmodifiedby_id: 5f32f485-2941-4f53-9fa3-e0d80d10bd4a
-      load_time: 88f73e85-abd1-490f-aaa1-36758a19b6d6
-      start_date: a59ff86d-2ff3-4c13-a187-63ddbf66c12b
-      tax_component_id: fb3fac48-6e6f-4525-9225-cc127f8b9c69
-      tax_group_id: ebcca8e7-8f34-4887-af7f-9346704a196b
-    table_id: fc9972b0-b96f-4ebb-960b-99e980d8cf12
   ods_fineract_m_tellers:
     columns:
       credit_account_id: 175b02f7-e1e5-48e4-bad2-f7d29febc146
@@ -5896,29 +4452,6 @@ tables:
       valid_from: e1bf1cf0-25c9-4a58-bb98-b8d4a34af419
       valid_to: 3dc3cc00-8d8f-47bd-b14e-1ff31b941ddc
     table_id: 057d8210-08cc-46e9-8270-752832a315ea
-  ods_fineract_m_template:
-    columns:
-      entity: a007f378-1b62-4459-83c1-3f8f3b10dea8
-      id: 26cf46b5-f2fb-4844-b69c-f1df33360ba5
-      load_time: a7efc37c-039f-4744-90e6-4443d9aa9aa7
-      name: 22e186f4-ae9d-4d17-8ba8-eb350d42f356
-      text: 29f3a642-5db6-4039-af65-e8e245ebe91a
-      type: 6fbcec34-2e6d-4e1d-9d74-7ff82d0d2430
-    table_id: 0c31d268-5d9a-46d2-ad05-0a38a1e28a2b
-  ods_fineract_m_template_m_templatemappers:
-    columns:
-      load_time: 4f563be1-9459-4b74-a393-582c37d02471
-      m_template_id: 80d28d5d-95e0-4429-aa32-e3ce87475717
-      mappers_id: 02b1bdcd-c579-4456-92ad-67f884f6b55c
-    table_id: 52bc3e1a-28f8-4cad-b7f7-08faf2055f71
-  ods_fineract_m_templatemappers:
-    columns:
-      id: 6198a0ad-2199-42b4-a1c2-c8eca4bd6836
-      load_time: a0fe2678-990c-40ff-b076-b05c71a2f0d8
-      mapperkey: 5564eb00-3ff5-4b19-8c01-d8c4349d154d
-      mapperorder: 3cf4cb81-b66f-4a81-8053-910bff4ccc43
-      mappervalue: 78d2be1f-c97b-4f6f-b6c3-1457ac36a900
-    table_id: 0b4c91d0-bd09-4e93-bf75-d6aa1cc3a891
   ods_fineract_m_trial_balance:
     columns:
       account_id: 4e035019-1f85-46cf-8650-e4e8c556d842
@@ -5929,30 +4462,6 @@ tables:
       load_time: 5c9a7a73-4c28-4d49-93f5-b7ab9d013fde
       office_id: 93d74dd2-b77c-43cd-b6ce-703a9abccffb
     table_id: 6ac05d4a-171b-4513-aab2-0eebda3afbab
-  ods_fineract_m_wc_breach_configuration:
-    columns:
-      breach_amount: 88e83e86-e574-4b42-9aa5-4a4a1f9bce70
-      breach_amount_calculation_type: 48976209-bc10-4ddd-84ce-48c38623412e
-      breach_frequency: d7e64975-a2b5-4fe5-9023-67b4add1c679
-      breach_frequency_type: 6bebba9e-f944-4e2b-b236-7e8a2d5017da
-      id: 90c7a38d-f6b0-47dc-aef2-90b14444b179
-      load_time: a02cf3a6-f865-4bd0-b4e8-76ea32ba67c0
-      name: e96d4d4f-af7c-4eff-bc91-e8bd21cd1bc9
-    table_id: 0aab352c-3c22-44d3-bad5-1f803d9f074c
-  ods_fineract_m_wc_delinquency_configuration:
-    columns:
-      bucket_id: 76cf4d63-650c-4452-bac7-73178aaefb83
-      created_by: 57f1b43b-2e95-4e03-a561-0f54b144ca21
-      created_on_utc: 1e68ad59-a4e4-4c88-8ba0-3f008e249c01
-      frequency: c183e30c-856a-48e9-8a22-f6ef16c8b472
-      frequency_type: 8b39877e-be3b-4f42-8bc2-43c39d837b84
-      id: 557d7490-06e2-4266-ae03-41d9100963e1
-      last_modified_by: a85198fb-ed93-4231-9c5f-2ed7fc5d8007
-      last_modified_on_utc: 51ffe3b7-c883-40dd-949f-848d0819209b
-      load_time: bde74142-9d04-483d-b596-6277dae800aa
-      minimum_payment: 1bb44989-907a-4805-b191-33b9b4d23bf4
-      minimum_payment_type: 97830665-2283-437c-951b-178923389929
-    table_id: 9f679219-e506-4551-8b06-08338dd54dcc
   ods_fineract_m_wc_loan:
     columns:
       account_no: 19563f31-91b6-4c4e-8b68-269c0b7e96c4
@@ -6003,28 +4512,6 @@ tables:
       version: f4ec6049-e55f-42a6-9240-0956213a4431
       wc_loan_product_id: 0b19ea84-ae3d-4e9c-86e3-8fe131c072ca
     table_id: 02e95c76-ea71-4a8c-bec6-9269097efaeb
-  ods_fineract_m_wc_loan_account_locks:
-    columns:
-      error: 69772b98-a81d-4557-9da3-6bc0d5b9fa6f
-      load_time: 82a90216-c437-4656-906f-4b4ff3395e7c
-      loan_id: a9dd1995-490b-464c-8bd7-0bfbe82dcc42
-      lock_owner: fc3ed517-3e89-4f02-975f-40b5c3786980
-      lock_placed_on: e58759aa-0554-44b9-9a4b-b01cc9719659
-      lock_placed_on_cob_business_date: 01c4d53d-aec5-4d61-84ec-d87231edfb1e
-      stacktrace: c1924e72-a886-4e01-9867-fa79536d011f
-      version: da3c437c-b86a-4221-8a81-007bffe95b0b
-    table_id: 78a0e038-5e98-4776-873a-f77c4b1c9abd
-  ods_fineract_m_wc_loan_amortization_model:
-    columns:
-      business_date: 673835e9-3010-45fc-a78d-99abba1f4982
-      id: 81f676a8-8d8e-44e0-8ec6-6b21fb49b9f2
-      json_model: 17574264-5f05-43ce-94b2-278660a80313
-      json_model_version: e43f5b18-1404-42e5-8b85-fcde5eea359d
-      last_modified_on_utc: d774865e-e9a1-4ad5-977f-db076c09ca2d
-      load_time: b877b7b3-d3d1-4edf-a372-7e2f90e12b58
-      loan_id: aaff33f6-34b0-4fa7-85f8-ded5c4c10a30
-      version: 35b6896a-568e-495e-b8d3-4fc97ed7953f
-    table_id: d062a34a-7fd2-465e-8913-9782079a3faf
   ods_fineract_m_wc_loan_balance:
     columns:
       created_by: 98b9c3f8-9cbd-4540-90ec-c0a8275c609d
@@ -6064,101 +4551,6 @@ tables:
       start_date: d607d5c3-d2a2-43e9-83e1-466bcd08f44a
       wc_loan_id: 41697b2c-ea69-4aa6-97cf-af0daf5f60e8
     table_id: bb3e9cf3-11e4-4609-83c2-74d97cd3f4e7
-  ods_fineract_m_wc_loan_breach_reset_history:
-    columns:
-      breach: 5e8a9c7d-4606-42c5-af33-e1459609f556
-      breach_action_id: f0e20582-86bd-447c-b5ed-d04243b2bd13
-      breach_schedule_id: 63e9a2cc-fbd4-45e2-a3e4-cb5b91956331
-      created_by: 25bfc272-05d4-4898-9133-30e7785f2b12
-      created_on_utc: 134f9030-a619-4229-a2ae-e2c61e9617e0
-      id: 1c0e344f-3180-4e6d-b48e-38daf0f320b4
-      last_modified_by: 65504c75-e9d4-435b-a34f-9e0d20ace693
-      last_modified_on_utc: 45e504c9-e616-4a03-b400-6e9be0faa0f8
-      load_time: bcaede65-d328-4ba3-bd0e-b10b9475a414
-      min_payment_amount: 42738f89-9c5f-4ae6-aa3b-3590c0312ef7
-      near_breach: 2ed8c707-61cc-40c7-a982-081b9c122008
-      outstanding_amount: cec92d7c-b18f-411d-a88c-81b2fa9143ae
-    table_id: 479a4a03-b2ee-493e-ad31-3e0b26b6c28b
-  ods_fineract_m_wc_loan_breach_schedule:
-    columns:
-      breach: 3e69b60d-9fdf-4b81-85d8-e1c606bffc57
-      created_by: cd000562-3bd0-4f08-9c06-eccf37eac3fe
-      created_on_utc: a733dd07-709c-45e8-b75c-677d1917acec
-      from_date: e950d0a4-e24f-4766-94b2-c941f9c6011d
-      id: 1ae94b2d-777b-4d12-966b-17e94b7a1c4c
-      last_modified_by: 0f344e9b-9e34-4355-831c-eec09427a0b8
-      last_modified_on_utc: 8334fc5b-f55c-4ace-b07c-8d7663a8ed3d
-      load_time: 5bc0ceff-e852-418b-a8d1-1f820820afdd
-      min_payment_amount: 5e03841b-b4ed-4c05-ac2b-c0a276aa72c2
-      near_breach: 2cd880ec-aa67-411c-8a46-ba5691075eb9
-      number_of_days: a260874b-552b-456a-b922-f5bd31e42ddb
-      outstanding_amount: bc0c45c6-416d-471e-a040-841f8840804c
-      paid_amount: 1a04f989-ceda-4398-bebc-9c4025f7bc32
-      period_number: e636ee3f-0efe-4734-8a93-60b3296c2d28
-      reset: 9119b90d-c06b-4e0d-86c5-3050dcb960db
-      to_date: e58c4703-ebea-4f59-a229-090411453596
-      wc_loan_id: 86675a5b-4949-42b4-aa21-5df10391f750
-    table_id: 2e311393-bbfe-4273-ac2c-7aef751c7187
-  ods_fineract_m_wc_loan_charge:
-    columns:
-      amount: 1d375c44-1fb5-4e86-85b6-ac7760f2c664
-      amount_paid: bb0bf0fc-b1c2-4913-9714-02150379f7c7
-      calculation_on_amount: 6f425178-8b72-4b3a-b6e2-971118aba550
-      charge_calculation_type: befdbd95-49d9-454e-86eb-fd52e3d61fa9
-      charge_id: 38d158b7-532a-417a-bc54-c2777806df08
-      charge_payment_mode: f7e1304f-912f-4064-b3e6-ac3f53a06509
-      charge_time_type: 46d3c66a-2ce1-42be-8f81-b4ed3c24723a
-      created_by: acec2eae-6b38-4165-a74c-c9d586c71d57
-      created_on_utc: eb1d3db3-b1e8-4400-98bc-c201633040d8
-      due_date: 370d5c1f-5f85-4623-8605-2e0455463538
-      external_id: 44fe2230-e149-4932-b8a9-9bd6a909c0f2
-      id: 514660f8-72b0-43ed-a7a3-c9f86f81a1b6
-      is_active: a4c2b78a-8866-41e5-aab4-c937a368aad1
-      is_paid: ca12e417-e6c1-4bfa-a89e-ae52e4f9ef73
-      is_penalty: 641bce8d-ef2c-40d5-9188-dff3fd699b02
-      last_modified_by: d949c9c3-b89c-437d-b821-8332077df750
-      last_modified_on_utc: 143150a4-2281-436e-9adf-f49ff069d4f4
-      load_time: 85699b3b-0e67-4dfc-9478-a1a342caba87
-      loan_id: dd75292e-2828-46dc-9ce2-c54673600789
-      submitted_on_date: 2fbcd361-c888-417c-b01d-650f5bc528ab
-    table_id: 5408076a-c2ce-4b63-9bec-5c47aa152937
-  ods_fineract_m_wc_loan_delinquency_action:
-    columns:
-      action: b7ca9f64-6d75-41d9-9f39-86ac3440b1b9
-      created_by: abd018d7-e2d0-47c8-b7c4-bc552f92d122
-      created_on_utc: 6c6c1450-67d4-4055-8a1b-1f977a4fbd22
-      end_date: 7a4f6651-6681-44a7-b6c4-def93ead5e76
-      frequency: c9975d56-60ae-4477-b768-f62f37d86fcc
-      frequency_type: eb282481-b246-4987-b0d1-a24320a74ac7
-      id: dd415885-6ff3-4888-8886-afcc17848d82
-      last_modified_by: 28b9d411-ef6e-48e1-948f-02b1b6d04563
-      last_modified_on_utc: 79e3e9b0-01a8-4219-9abf-febb320c50f6
-      load_time: dc9accc3-92f1-4192-b4fd-141a2c15e665
-      minimum_payment: f17e9588-9b5a-44cb-82fb-973bac78800b
-      minimum_payment_type: dfd6b080-d229-420d-98ce-b7e58f5442a9
-      start_date: 7a4b5d44-afd0-4323-9dc7-38cecb18beae
-      wc_loan_id: 651a0c66-ee08-46fe-9f35-5812b2b4151d
-    table_id: 004afd02-91a3-4673-95c6-82070e1f5f49
-  ods_fineract_m_wc_loan_delinquency_range_schedule:
-    columns:
-      created_by: 20720b53-f35c-4dc2-97c0-e4a7d6d9d909
-      created_on_utc: cc649c80-bf06-4cac-9a96-98bde5437aee
-      delinquent_amount: 4f77632d-7d7c-4130-9c0f-b9eeae4fb11f
-      delinquent_days: 09077c8e-18d1-4e09-be60-edad4c3cfdf9
-      expected_amount: 2dedf813-ef6f-42c1-9058-9f2241b5396f
-      from_date: 1229bd1f-e057-4385-824d-420229f8e179
-      id: 861d3700-fda2-4467-9a36-939e069dfa75
-      last_modified_by: 1b551a6e-4ec6-4918-8802-49a99561fcd6
-      last_modified_on_utc: 1f2c2942-c8a9-4ef4-8868-1bbb2a7f7922
-      load_time: f68c3547-45ac-4378-9e0e-71ad4f6415a7
-      min_payment_criteria_met: 4d3c267c-e2d4-45f3-837c-a2973b33e9e8
-      outstanding_amount: cacd6655-d5ba-4e9d-af2e-b1d8b09e8d9b
-      paid_amount: 3755f07a-4127-492c-b39c-53fa2d69f009
-      period_number: a95afd2b-c67e-4c00-96d6-3453aaf3dc7e
-      to_date: d5615c98-0f50-4b93-abe3-fb7ece7576d6
-      version: f6e1132c-ef59-45ea-bac7-4d28486f1c83
-      wc_loan_id: 4d06bfdd-8160-49ea-ba2b-c0adc0667983
-    table_id: 48854109-4a8f-48c3-b69b-dc2b5e01edf0
   ods_fineract_m_wc_loan_disbursement_detail:
     columns:
       actual_amount: 54120d46-eb94-4648-b084-0942db745ae9
@@ -6171,70 +4563,6 @@ tables:
       load_time: ea49ffc4-36c5-4771-bd80-951876faab96
       wc_loan_id: 5466503c-ec50-4845-b5b2-d99ec4b5f7e5
     table_id: 74a52263-da26-45b2-b3f8-e16dd387ea8c
-  ods_fineract_m_wc_loan_near_breach_action:
-    columns:
-      action: c3fdf482-8c73-4d36-9d39-23e14cb61561
-      created_by: ae6d1f27-a6ba-4ac3-ad1e-d15211dcef79
-      created_on_utc: 30a9127f-6edb-4e10-846e-0c9736252c72
-      frequency: 4fdf6c51-c54b-4f98-afde-dbf4fb4c0a53
-      frequency_type: 8c65c85d-0382-4e1c-8f14-2e219d7cc393
-      id: f0ac3c4b-351c-4858-b1c1-578c73686cc6
-      last_modified_by: b3149da8-1f6f-49c0-921e-ff2e3ff00305
-      last_modified_on_utc: c9d935e7-f322-4973-89f8-ce8e9786cfb3
-      load_time: 1a132527-e1ea-4cde-b15e-93565dce7d7a
-      threshold: 8a874db2-557a-40b3-be47-d67eb5775263
-      wc_loan_id: 78425317-fa91-4ae2-982a-ca883b6f139d
-    table_id: 1de381c0-1a25-4cff-9a2b-d0a356f1e832
-  ods_fineract_m_wc_loan_note:
-    columns:
-      created_by: 94e86d2d-3263-4a3b-86cf-544f87c03de3
-      created_on_utc: 445dc519-5421-42d4-8039-10a33e7fd744
-      id: e0caf0cb-e8d0-4b6a-bbe2-a42a9473f0c7
-      last_modified_by: 65382a86-7b06-445b-96ce-26e083d2b63c
-      last_modified_on_utc: 9449c4f6-fcc7-457c-be41-21e3239b344d
-      load_time: 47824c79-4d1a-4b2e-a2aa-e55f3571e7d5
-      note: c07e10a1-4f20-4b29-b2aa-695bfb97a497
-      wc_loan_id: 66a80653-959c-4811-b66b-4bc96b6bacd3
-    table_id: 0ccb53e1-ef5b-4cd0-92bd-f36d6ad228b5
-  ods_fineract_m_wc_loan_originator_mapping:
-    columns:
-      created_by: 445c7dd6-10e2-45f6-96de-219cdc22940e
-      created_on_utc: 5673c53a-43ce-467f-a63b-20260fadbc01
-      id: 6f156658-f460-4169-98d4-c412f1617232
-      last_modified_by: 08f483a6-0801-4536-9793-69f1eb5a1c9c
-      last_modified_on_utc: 0e890f56-65d5-43b1-a00f-b7f7630a37c0
-      load_time: bbc67a0a-3202-440a-b461-8c4f870f504f
-      loan_id: cabf5592-46e6-4711-9f8e-3ebfa90b072f
-      originator_id: 754b826c-3f5f-4bfd-b4c0-db7997849854
-    table_id: 4a37c893-9b5c-44be-a1db-bfe25e37c013
-  ods_fineract_m_wc_loan_payment_allocation_rule:
-    columns:
-      allocation_types: 4103dbf4-bcc1-4ed1-a081-188972e59cb1
-      created_by: d2113882-a14c-430e-9f5a-4e7ab40856dd
-      created_on_utc: fe77b9b1-2499-407e-8de7-7faa6e2076b4
-      id: c1335486-7758-4f09-ab78-dddbe54c5f68
-      last_modified_by: 9a6a7e6c-bf3e-47af-a726-8572e6ddf98b
-      last_modified_on_utc: 2962ad5b-0fbc-4f70-b23b-6d6908e01f7d
-      load_time: 18712092-f930-40da-87c9-6df5f24e8ae1
-      transaction_type: cd03889f-bf74-49c6-ae19-f62733cbd589
-      wc_loan_id: 5c7849b4-58e4-44be-8a62-2aae4dcd9b70
-    table_id: c68a796f-dea2-42ed-97c9-6126947b0886
-  ods_fineract_m_wc_loan_period_payment_rate_change:
-    columns:
-      created_by: 53890992-1a9a-4686-8a19-2a1514a30512
-      created_on_utc: eedce486-379d-4d55-b61d-7e3ab151c97f
-      effective_date: 1d0fcfba-983e-40ce-98d6-466f1df75c9b
-      id: f097fac4-9c75-4d46-8274-8105021d5b6d
-      is_reversed: 7b0f0934-6bec-49d7-911d-fa9b88b3eed3
-      last_modified_by: e59b3c69-cd9c-426e-8381-72aa0ec3bfe9
-      last_modified_on_utc: 0b58ced2-c4ee-4039-bd69-c0f3a0b58560
-      load_time: 2d611609-6b12-415b-9f2a-d0c8a03e25ca
-      new_rate: 7c7a29d6-1f0e-4baf-bb0e-d1cd48828347
-      previous_rate: cb6c89fb-b398-496a-9d7a-241d8f94b243
-      reversed_on_date: 6e116087-3e0a-45e4-99eb-21725b49a862
-      version: ada15e0f-db4e-4015-afae-9396a2075524
-      wc_loan_id: d6e0c950-d305-40bb-9907-182018a1108e
-    table_id: 4489fb64-99f5-4745-9090-0002613ce8ae
   ods_fineract_m_wc_loan_product:
     columns:
       accounting_type: 44348ca8-922e-48fa-95b9-83263c53e909
@@ -6268,45 +4596,6 @@ tables:
       short_name: 165c45a5-ea79-4daa-bbbc-1192cb87f4c3
       start_date: 0ec3c98f-182a-42b4-bce5-e721cb69f58b
     table_id: f14ef31f-5750-4b82-a9d1-f3cd0440e3d0
-  ods_fineract_m_wc_loan_product_configurable_attributes:
-    columns:
-      breach_overridable: 525c615b-257f-44e7-8921-a5b4f459a21c
-      delinquency_bucket_classification_overridable: 13ce65bc-411b-4064-a680-5550ef30bac2
-      discount_default_overridable: ca42e928-e504-4db2-ad92-4f7e5d867c9d
-      id: ebfc1f54-2947-4d9e-96d2-740b3be182e7
-      load_time: 54f67303-5ff6-437b-9643-b21b6fa7dbaa
-      period_payment_frequency_overridable: 6005ef31-2452-438d-9046-f8731fd3b46c
-      period_payment_frequency_type_overridable: 2a618634-2899-41b3-abfd-e3b6106e01af
-      wc_loan_product_id: b6401731-6c0a-483a-a58a-fc2d81267293
-    table_id: dc9f0048-8bd1-4de8-a120-8f0cf46a2830
-  ods_fineract_m_wc_loan_product_payment_allocation_rule:
-    columns:
-      allocation_types: cc78bf05-da77-4e6f-abd1-386bf2725f44
-      created_by: fd241842-70e6-465b-8784-2630baae30bc
-      created_on_utc: ea27e700-b1df-42c8-afe9-5bb19ca29e29
-      id: c75b6d18-72f3-4cd2-89c1-83220f8135a9
-      last_modified_by: b28cffcd-afc8-41a5-a1aa-7fa4c42c1005
-      last_modified_on_utc: ad3d7d8b-769c-46c7-ba78-19de2a918ee7
-      load_time: 96dc984c-f320-411e-8b91-c03b7c98a88b
-      transaction_type: c1443bed-3c21-4667-948b-a9f46fc6f8c8
-      wc_loan_product_id: 2aa82919-54ed-4e24-954e-558ac2011cee
-    table_id: 7b48b7b4-4175-429f-bb05-4a5df4e8fc59
-  ods_fineract_m_wc_loan_range_delinquency_tag:
-    columns:
-      addedon_date: 1b617335-26b9-4422-a024-0913db88c005
-      created_by: 3266549f-0313-47cd-8f05-97e1e02dca24
-      created_on_utc: 80322a75-bcef-448f-a61d-c1496b1b47ac
-      delinquency_range_id: 2e96c7b4-5db5-41ee-a8af-c73f5301fe7d
-      id: e12bd531-4dd7-4610-a96c-589cf6d066c9
-      last_modified_by: 96ccc4c4-a5e5-4175-b963-30e2ee2c38fd
-      last_modified_on_utc: 67f174a9-d399-4643-9f24-4f38496a062c
-      liftedon_date: c2f48afe-50cf-4bfc-83ef-45e9037e283c
-      load_time: 3f50427c-9ec6-4210-a26a-c14737ae56e3
-      loan_id: b551c2bb-7717-4559-b728-ec8fff342864
-      outstanding_amount: 49b9f5d9-679e-4a86-8294-28901736d836
-      range_id: 793b2530-1742-44e6-94c6-5b550c48d9fe
-      version: f3b0b2fe-03c7-4b2e-828c-f8d8e1ab4947
-    table_id: 680a1271-a770-4687-b654-8c33c9f73642
   ods_fineract_m_wc_loan_transaction:
     columns:
       classification_cv_id: 28294b12-a260-48b3-b3e7-89e3472d4ae6
@@ -6328,42 +4617,6 @@ tables:
       version: f6be5a84-d726-446c-9841-862086fba201
       wc_loan_id: bf9b7f09-c51a-46ad-a05a-f2bf20b12bc9
     table_id: 127df2a8-60b2-4445-8ab2-3c3aed73394d
-  ods_fineract_m_wc_loan_transaction_allocation:
-    columns:
-      created_by: b0087cce-870a-485b-8143-af4ccf0c0b8e
-      created_on_utc: e90917ec-c93c-4350-89f5-4a29eedfa464
-      fee_charges_portion: 7e63634b-502a-4835-a0db-a8045d2691d8
-      id: ea963e5c-8660-4ba6-8ede-11b5191b99b3
-      last_modified_by: 37bbff5a-1c7f-4ecf-9bd3-863b70976068
-      last_modified_on_utc: ce44bf10-0cd3-40b4-b5a6-0678a1ae515b
-      load_time: c6bb2671-a299-495f-ba89-efb0a7d43e4a
-      penalty_charges_portion: fa84e92b-c09c-423f-ba85-fde98ea7a305
-      principal_portion: bbf410ed-d5e1-4fec-ad90-a05d50fe2a86
-      version: 038933fb-25dd-4977-8f13-e2e2983424fe
-      wc_loan_transaction_id: bd2ba8de-3eeb-4e27-8b21-dc6fec5a3d63
-    table_id: 8a338e22-bf19-4b14-b174-3152b56d0ba7
-  ods_fineract_m_wc_loan_transaction_relation:
-    columns:
-      created_by: a14c73e4-9243-419d-83d4-9079fc8e89ea
-      created_on_utc: 45264a92-6d13-4bae-82ec-4e9133d9f9da
-      from_loan_transaction_id: 9e860ddc-cc2c-4540-8ded-7a04cf074405
-      id: 9ce00f3a-f52b-4ce2-a636-e4f8679eb1cc
-      last_modified_by: ea0bd6a7-a886-475d-a1af-2c7e38416e86
-      last_modified_on_utc: 5e436c67-f200-4478-867e-1557e832d9b8
-      load_time: 03a4ea7a-ef5a-425e-a629-e172e1cd4c97
-      relation_type_enum: 738ea365-45eb-4804-bb20-8992eb0bcb89
-      to_loan_charge_id: 6f96b284-eabb-41d0-a35a-2c032ff18b5c
-      to_loan_transaction_id: 8695ae91-25a1-45dd-8585-4b10e0742925
-    table_id: b8b1531b-e880-4bf3-8c9a-b0a23cec6d26
-  ods_fineract_m_wc_near_breach:
-    columns:
-      id: 52d869c8-997f-4aa2-9f7a-e83c830dbd88
-      load_time: 2627b5f9-f7e5-4c71-8724-b9bcbaae17e2
-      near_breach_frequency: 5c0444b8-4bd4-4a38-90ce-29cf925bee50
-      near_breach_frequency_type: bce7aded-49c3-4178-bb7e-36c58d242af9
-      near_breach_name: fbd1119b-efc2-4e70-869f-de9ac384e65a
-      near_breach_threshold: 1d2caf04-993f-48b5-a985-c3a128bed197
-    table_id: 230ef339-9950-41e3-b51d-f98493995366
   ods_fineract_m_working_days:
     columns:
       extend_term_daily_repayments: 7ca0d729-fa1d-49c2-8974-96843ee0435d
@@ -6373,314 +4626,4 @@ tables:
       recurrence: 0652ef95-ac91-4e86-89a7-a64e8543949c
       repayment_rescheduling_enum: 9600967c-eb75-4cbf-a863-bdab821cf271
     table_id: 5981a8c9-de0a-4084-a43e-d2be728d28f7
-  ods_fineract_mix_taxonomy:
-    columns:
-      description: bcf6e8b7-08f4-4170-8502-ad03040cc7e4
-      dimension: 66616583-73f9-48d0-86f7-057fbdb01fd7
-      id: 6642695c-187e-449e-846e-ba091c0015f6
-      load_time: 4aa9e622-9b45-46f4-93fa-fbb10554287a
-      name: b5e51642-95a4-4df9-98ac-485074ff78f5
-      namespace_id: 5dfb4c49-1617-40ed-926a-b3dd554fb9ed
-      need_mapping: 68630c22-4358-46e1-9059-7e4a824874c7
-      type: c5711579-85c8-48f8-a26d-4588057b1ce5
-    table_id: 48587429-32c4-4485-872f-1866784b2b49
-  ods_fineract_mix_taxonomy_mapping:
-    columns:
-      config: 8ef42300-c568-43f7-a6ae-086f753bb43a
-      currency: ea676542-f09d-428b-815d-991bedbbd98a
-      id: df29007e-051a-4c05-b99d-893379cbe3da
-      identifier: cabd8445-3139-48d6-915d-299b9c84b93a
-      last_update_date: a69a157b-af7d-4f69-8d1d-116610f32eb1
-      load_time: 8e2efe83-6c5a-4c85-be33-c9506115455d
-    table_id: 9a7cda0c-660e-47dd-a9fb-39f2b009e0a9
-  ods_fineract_mix_xbrl_namespace:
-    columns:
-      id: 83fbe7ea-8b0b-42b3-bcf4-35f06d3ed91c
-      load_time: 6929a225-1d45-45b4-a650-714242de1f8e
-      prefix: 12383738-eab4-4c13-b41d-43976719de53
-      url: 70bb6b4d-6b25-4640-92a4-6062321f8776
-    table_id: 9d75de3f-09b3-4be0-b9e2-6ebc524db93d
-  ods_fineract_notification_generator:
-    columns:
-      action: bd8dc4d6-167a-487a-95fd-940ad105ad12
-      actor: 81c5cb72-ce31-4b18-995f-942bcdc72eea
-      created_at: a6db8f22-019a-404b-bd44-3c957d24ee8f
-      id: a7aaae32-5ebc-41e4-83cd-4b4e5a923d13
-      is_system_generated: eeed669e-59ef-4338-96b2-75507d326e63
-      load_time: f0002231-a2c2-4bdd-8279-cbbe58431757
-      notification_content: fe0501f1-3e27-4816-85a9-2c9311840a99
-      object_identifier: 1cee1248-05b1-475d-b742-314d78ff3f7d
-      object_type: 3c98faa3-ed72-4a33-8e8d-06e2685f7bd4
-    table_id: 71f09373-e8ee-4647-976a-726fed345f30
-  ods_fineract_notification_mapper:
-    columns:
-      created_at: 2b7ed814-2ebc-414f-a3ad-4bcec28fda85
-      id: 9ac1a56b-d562-4a05-8c7a-5ffbcdd6331f
-      is_read: d3e1652f-f78b-4f07-aff1-4f46c478bd42
-      load_time: a4fdb3f5-c2d9-42d8-8fce-1c0f14773779
-      notification_id: 0325078d-b790-4e31-ba1b-d68f2b78f9e4
-      user_id: fa68c89d-a0de-4c85-a7b0-b8f9de3ad4dc
-    table_id: f516ff19-bb54-41c8-9eb3-7618bb8c7d3e
-  ods_fineract_oauth_access_token:
-    columns:
-      authentication: cceaf0ae-8adc-4cbd-bc31-19edda1b8d6d
-      authentication_id: 2fd3099f-121a-4aa0-bde7-c30b1a452cd5
-      client_id: 9ec91268-dfb4-4aaa-b4b1-67445a776f7b
-      load_time: 148f342f-7091-47b7-9bf8-338855925600
-      refresh_token: ed96af33-36c8-4d9f-b837-a144ab378f81
-      token: edc87f01-5830-4294-a10f-292ff2d8c03c
-      token_id: 4f239d58-8ad8-49f2-9c4b-1bf70480c394
-      user_name: 24e7655e-21aa-4687-b87a-792e836ce8ab
-    table_id: 8c8af3d3-4a46-4e26-817d-2754b36f8f80
-  ods_fineract_oauth_client_details:
-    columns:
-      access_token_validity: 1216d051-2fc2-475f-a8a9-d9c8aae94ea5
-      additional_information: 1d06ebd3-b9fe-4f6d-9dd5-cc05afb94a87
-      authorities: acf78850-24ee-4b6a-a4f4-a7db8974216c
-      authorized_grant_types: e5a0df69-c2f1-4ea3-9dad-cd1aad0ccf6d
-      autoapprove: cc23efc3-4d43-415c-8719-f96f1856eb1b
-      client_id: 2ca8d13f-8548-4f5d-aa97-524f24ecbc56
-      client_secret: 4a15192c-f698-4118-9b74-b11b497ab1f3
-      load_time: c97413a3-2642-4a9a-99ff-6a5896b4ac4e
-      refresh_token_validity: d416ec4e-48eb-4e06-87da-040e4d03d802
-      resource_ids: e9e07126-ca7f-4c2d-b248-1cb5d8ba79e5
-      scope: 8044e13d-c1c9-4861-86a7-6903a3d95ed2
-      web_server_redirect_uri: ccfa6eae-5718-443c-829f-a47f160ac677
-    table_id: d99671f4-7dee-4a77-b253-b6fe13440325
-  ods_fineract_oauth_refresh_token:
-    columns:
-      authentication: 0b7ae495-9ac1-445a-b650-88e4d932168c
-      load_time: 6b3713ae-5bdb-4f24-9cb5-643d07de9699
-      token: dd7dbad7-7e92-46ac-b2e9-8bb6a067252a
-      token_id: 48fb63a4-f895-4df0-8d8c-d89cc3b3eb2f
-    table_id: e134fe53-f41a-46a7-858e-f749c286214d
-  ods_fineract_ppi_likelihoods:
-    columns:
-      code: 4c891c55-e691-4529-a960-a1213f9d94e0
-      id: 7e7020b0-939a-4049-bb7c-8896a4fd5a7d
-      load_time: 84acbd26-de28-4b87-a15f-d1d55501f9dd
-      name: ad2513d4-1e7c-4323-a256-7f5c6fbb4c7e
-    table_id: ee305375-25c1-4515-bc3b-a4a6c782ee87
-  ods_fineract_ppi_likelihoods_ppi:
-    columns:
-      enabled: 71da2c57-8235-4e4a-8be9-724737e2662c
-      id: edc546a7-8e87-45a0-96ba-cf7d05e95d46
-      likelihood_id: e9eb5d9c-7d64-4251-b25e-53d5894131ce
-      load_time: 3207e6bf-46af-40f0-a15e-d3a8c5343bc9
-      ppi_name: 46d7079e-6e7a-4343-b9dc-a0606420e3a4
-    table_id: 3f17ad2f-e1df-43c6-b9e9-f1e21eaeeebe
-  ods_fineract_ppi_scores:
-    columns:
-      id: 35832721-d447-451e-b8bf-85842340bb49
-      load_time: 77b70729-eb1f-4f13-bb3d-efb445085efd
-      score_from: db34f8d1-33fb-40d8-84fb-4d1e7918ac98
-      score_to: 3e803afa-ce72-4276-82df-d88fa78c8eac
-    table_id: ed748703-2053-4e73-b3d0-cb8932cacb10
-  ods_fineract_r_enum_value:
-    columns:
-      enum_id: 09b9b029-d013-47a4-a9a4-c6d5bb9dd679
-      enum_message_property: 56023cca-993f-4219-a885-beac65c2dd66
-      enum_name: e1fde96d-c526-4ad5-8637-8dde38fdd6f8
-      enum_type: c8a102fc-9607-4b47-830b-e972dade85c4
-      enum_value: 016eeb76-9252-4d96-9a46-c030982d4ddc
-      load_time: 3ceaf44e-3654-40e2-ae3e-d12c78c75438
-    table_id: 4b50c9cf-2826-4ddf-ac8c-029d975a9d78
-  ods_fineract_ref_loan_transaction_processing_strategy:
-    columns:
-      code: 93fd7f3a-fd64-47ca-bbed-2ae3f573c3d4
-      id: 5b4b9dea-55f0-448b-9e5e-399e8b284f12
-      load_time: e16bac0b-d037-405e-ab45-111a7323d100
-      name: fb7c82eb-a2ac-4d99-bdc3-9f6b964d549f
-      sort_order: 81d3cf73-5623-4a8b-af22-a9dad14e25ad
-    table_id: dbae9f77-555b-4ade-9e22-9b045a883947
-  ods_fineract_request_audit_table:
-    columns:
-      account_number: aeffd61b-c593-4616-b721-30dd3d425f76
-      authentication_token: 7c1d88e5-4e79-45a9-8cf8-c6e212a0796c
-      client_id: 89bffdb1-ec05-471c-adee-6a7dcd3e35ed
-      created_date: 7fc73c41-cd9c-4f24-8415-e78d63cd3fb4
-      email: 741ff8a1-60d8-4036-b7e5-23b335c8a87c
-      firstname: 4085603d-2f75-4110-b277-dcda6c06ff31
-      id: e652912e-c4a8-4e66-967d-7d56cd20b7cd
-      lastname: 44620b62-1020-419a-b23c-993ec89d3010
-      load_time: e437b099-c069-4758-aa8f-11d6218d45be
-      mobile_number: 9a3b4806-e3ed-4c4d-8ba6-e661e1d52c48
-      password: 72a43d1b-0ba4-48c8-a7c3-a6b1a0cd4057
-      username: c26d5287-4525-4be3-8cf1-707c56b49217
-    table_id: 5269492a-e4ad-4a57-83e7-0f4101cc9ae1
-  ods_fineract_rpt_sequence:
-    columns:
-      id: c1d10f70-28a4-408d-860d-4b6fecc426ea
-      load_time: 981a18f3-8268-4323-9cf6-a2ea124d60bf
-    table_id: 8a7d1bb0-fc3a-4ac2-a740-8c180bd3b6ab
-  ods_fineract_scheduled_email_campaign:
-    columns:
-      approvedon_date: 52f5776a-dd59-48e1-8fe1-8706db2061bd
-      approvedon_userid: f6fd7fe1-a4a0-4e50-990a-d63146abdcff
-      business_rule_id: 94ee2ac9-cc18-4965-946a-f288854af792
-      campaign_name: c1ab5bd2-b232-4415-833f-68bfe963b4e1
-      campaign_type: 79bf2422-e57a-4d21-9dfb-ce93ce84073a
-      closedon_date: 60dbb89d-bb72-4541-a4c3-8386f6240375
-      closedon_userid: 4c00206a-1538-4b2a-b8b6-2c3dffb07a01
-      email_attachment_file_format: 35c42e6b-a3b4-4fcb-8527-2dcae38be0ed
-      email_message: 3c3c6ad4-28d9-477a-9adf-16f7c18958ba
-      email_subject: 7263b835-90be-4432-b4c3-65fda107990b
-      id: 309eb3d9-c26c-4320-ab13-52a91b49e937
-      is_visible: a1868efd-bdfa-4edf-b3b4-74a5d12e432a
-      last_trigger_date: 9a69bf46-c5bc-4d11-8336-91727b372a11
-      load_time: c4dde2a4-3926-47a6-bf34-edb0052c31ec
-      next_trigger_date: 56c1279d-ca5e-4af7-8697-39b533c3b876
-      param_value: 1688e660-af91-488f-880a-fe03207a53c8
-      previous_run_error_log: 93f4af38-40e3-45d0-a001-4c0aa726c139
-      previous_run_error_message: df09cb30-6f1e-448a-b6d2-45fecaf00f07
-      previous_run_status: 03b9fd0f-e17b-4153-a404-f8c4f57ca50a
-      recurrence: 58c5fb5c-0326-4be9-b004-aa3d08f7aae1
-      recurrence_start_date: 9f6cf37b-65cc-407d-b4d7-9c7e25c2b886
-      status_enum: f9b9df2f-7cec-428f-94bf-63003005a778
-      stretchy_report_id: 1f4a4338-0388-4c2a-8143-abbac79eaf7c
-      stretchy_report_param_map: 9f0ec2cb-72e4-4ea1-bf09-3949c53ca18f
-      submittedon_date: 509433bf-6998-47b9-90d5-4266ee2d981d
-      submittedon_userid: 6a837da2-935e-4185-8d59-44463bc772a2
-    table_id: 36fb9855-04a1-43bf-92c3-be618bcb1062
-  ods_fineract_scheduled_email_configuration:
-    columns:
-      id: 03e2b52d-e6ff-46bf-ae76-a29e9832471a
-      load_time: 11307520-63d2-420c-9db9-ca41155385a2
-      name: e4ad4c39-fbc8-4223-8ad3-2c7cc8edffc8
-      value: 0e17b40c-fbfb-4589-a24c-70a59cb8f7b1
-    table_id: e8b0ed83-7532-4b3e-9f9f-fc97a6181056
-  ods_fineract_scheduled_email_messages_outbound:
-    columns:
-      campaign_name: 3ec9fbfa-861a-432f-b005-9b1cdf6d1ea7
-      client_id: ecdb0afc-6398-4e9b-a63a-a0280e3271ba
-      email_address: 77098d7f-0dc0-477a-94ca-727a24f99c39
-      email_campaign_id: 97aed8c9-3e2b-4aba-9516-f3878d486966
-      email_subject: 9b4279db-267a-48c5-b190-aa5ddf6984b9
-      error_message: bd842849-a48b-4b94-8404-b79bd13a2099
-      group_id: b0eeae53-e288-4054-a175-e048271a0fbd
-      id: 274ca256-79d6-4cfe-a89d-642e7414f01c
-      load_time: fbab27ee-0c95-4bc6-93f7-4b4de37427d4
-      message: d10e6ba4-7663-477f-8d8f-b11c2c3fe7d0
-      staff_id: a8a77518-08af-49e7-97d8-dea629025a3d
-      status_enum: 38ee0a12-bff1-49e5-a3ad-3c235e27fb8e
-      submittedon_date: e45f4613-0bf4-4f00-924c-ea4ea766321b
-    table_id: d24c48b4-a243-40e5-9cef-0207a7288bc8
-  ods_fineract_scheduler_detail:
-    columns:
-      execute_misfired_jobs: da3efd1f-81a5-487f-b668-6d99651ad36c
-      id: 4654adb0-d8e6-4c5d-9289-e1650b519993
-      is_suspended: 11f3e995-d29b-43e9-8720-f2b2ea02ab82
-      load_time: 6b9a4f5d-f4af-4824-9717-ec3d43e6f540
-      reset_scheduler_on_bootup: e5eadffe-f7a2-4931-8144-c06ac75364af
-    table_id: 218b3d30-0614-43a6-a994-3f18aa7ca6f8
-  ods_fineract_sms_campaign:
-    columns:
-      approvedon_date: ca22e324-9d94-42b3-b2a5-883bdac00feb
-      approvedon_userid: 1c2248e2-aae7-4516-9ee5-246b4089d16b
-      campaign_name: 2aabd950-de05-4fb9-b086-04d3d454503c
-      campaign_trigger_type: e4a1ffd7-9893-4a9f-b255-b0760802f70d
-      campaign_type: 86cf5729-b367-4f54-bf3f-d4ee692774d5
-      closedon_date: e38f1e82-e72e-40d5-a74d-1ff8dc8dc121
-      closedon_userid: 22b1a6ba-879d-4c30-bfdf-9047bf5d1c5c
-      id: d3678a8c-0a35-4431-b817-0e5bceab3692
-      is_notification: 7e1b70cc-4c03-4edc-8d19-db7fd9cb1131
-      is_visible: f678b9a5-e9a8-4518-b012-868e4da7bced
-      last_trigger_date: 523336d2-2557-4078-92ee-d5ebd4c5bdc9
-      load_time: 4cf9ba0a-7db7-4f04-870a-267830fb6c7d
-      message: 23eebed4-2bb2-41ce-9e14-87765ff997b2
-      next_trigger_date: 726ee8d1-fee9-4f30-b11f-047327922b7e
-      param_value: bdf428bf-90b2-4f0b-80d3-ff35a3c66543
-      provider_id: 09a8f3f5-c1a5-4d09-925f-d8cba8185f16
-      recurrence: 6e411c2e-e79e-4fdf-8750-aa3a64f5d69e
-      recurrence_start_date: ef96b990-c2a3-451d-bcba-b721905ba92e
-      report_id: 7a4450da-3425-4ab9-b6bf-44b60a66338e
-      status_enum: 4b506abd-24c5-45e1-a091-8ac19c6d808e
-      submittedon_date: 30b03570-e846-420d-b070-6d494bdc985f
-      submittedon_userid: f4152031-a6fa-4629-889c-3c4d05a4409b
-    table_id: beeefc4b-3281-403c-bee6-efb35d174c57
-  ods_fineract_sms_messages_outbound:
-    columns:
-      campaign_id: 51534ebe-b2b4-478a-a533-21f59d295dc2
-      client_id: 1383c9e6-591b-49c4-b4a6-3da1b617a2a3
-      delivered_on_date: 0375e222-dc6e-432d-b4b6-a24714de6114
-      external_id: 03470841-8ac8-461f-ad44-137deede2b2a
-      group_id: ca98552e-2706-4bc6-8098-d37587f1c28d
-      id: 5e98f71d-c63b-47bc-a863-a661c0f1fb9f
-      is_notification: 28b1d076-53a4-458f-be8f-eafef32a8bb5
-      load_time: a46620e1-c122-4b0f-a463-3e944f9f7755
-      message: 37ec4b62-c3af-442d-baca-06568a5ea724
-      mobile_no: 1c7e50a8-23b5-47a3-84b5-7c74705e9ad7
-      staff_id: 69ec9e55-aa9a-4b5d-ba4e-7c26a5d12067
-      status_enum: 0944004b-7fda-49ff-be9a-e1488ddf3914
-      submittedon_date: bc8dedcf-03b7-43ea-bcd4-ba3d439ce4e2
-    table_id: 9afaf40f-3d3e-4995-993f-6a3d8aa21ecb
-  ods_fineract_stretchy_parameter:
-    columns:
-      id: e39cec8d-a152-412a-8f65-11d78f305fa2
-      load_time: e14ca01b-0d83-41c7-a560-1c0766fbb63a
-      parameter_FormatType: db3c1e65-e616-4000-ac5e-e209e7a9cff2
-      parameter_default: 25f3ca2d-1a50-4067-9dae-c954782a0ab8
-      parameter_displayType: cfd5d758-74d8-4aa9-98d7-1df986da872b
-      parameter_label: 3d4c7312-636f-4ed9-bd01-82e79e6ebb2f
-      parameter_name: 8a8ac84c-6f70-4508-b0e9-9272b2b3728a
-      parameter_sql: dd78e148-52ec-4e7b-82de-48984ac13f03
-      parameter_variable: 0eb1d3b2-585d-4523-9c27-a5bbbc6be3c6
-      parent_id: e5d0c168-9537-4aaa-b1df-d319e0284d0e
-      selectAll: 4706c5c8-ca5b-4786-b819-796818c0af4a
-      selectOne: 8495558e-d4ba-4738-b03b-3867641efab8
-      special: 15007abb-18c7-432c-afa9-96a10c792267
-    table_id: 0ebbc16c-90fc-4e69-9f38-fdf3287f8c7d
-  ods_fineract_stretchy_report:
-    columns:
-      core_report: c670d0ab-bf76-4393-92b0-74c23fa4ff4e
-      description: a7b18cd8-95e1-40f2-aa7a-fd31cbf98630
-      id: db22308c-4263-47b0-8f9e-665ec197e238
-      load_time: 9e802d33-aeda-411b-b90d-a5c0fd5c838c
-      report_category: 28c63c3e-efc9-4487-b460-e75d9742ad3e
-      report_name: 25e72c32-5b17-4986-a8a8-9836ca13f058
-      report_sql: c53c4641-70e0-48a7-a5c5-644f7ce7c02b
-      report_subtype: d459b755-679b-4520-a682-8c63772f6955
-      report_type: bac4cacc-125c-48bd-9534-bb1a7db20e43
-      self_service_user_report: 0929083b-5362-4336-8b00-962fce1308ea
-      use_report: c60e280b-3654-45e2-899c-9fd20c17d7c8
-    table_id: efb6f2d6-2c72-4e8d-a5ea-971acb913f36
-  ods_fineract_stretchy_report_parameter:
-    columns:
-      id: b2b35f68-0d00-4768-96c9-b0d1a2b75fca
-      load_time: cdc14200-14dd-427f-a30d-f3762cdedabf
-      parameter_id: 3c408280-2a97-485b-842c-ccda3d8a19bb
-      report_id: 0acaa408-d2bb-464a-b145-ee85e6dced95
-      report_parameter_name: 9c2e32da-484d-4209-a540-8ceaf83058a4
-    table_id: 6625a2a4-4108-4f57-8acc-ee79456052dc
-  ods_fineract_twofactor_access_token:
-    columns:
-      appuser_id: 930e76e7-b746-404d-a6f9-a8d968b3e8da
-      enabled: 044098bc-624f-49f9-8285-1511cc878340
-      id: 505b6c53-b96b-41b4-9ace-e8a3a2970179
-      load_time: f59cccc8-d5da-4c32-9a09-7545d7baa531
-      token: b4db1b71-bd7c-4deb-b022-72a74db1f650
-      valid_from: eea84336-2dba-4afa-9654-080e1f13099f
-      valid_to: 69aa1694-4aae-4e4b-b56f-66c4e6cbede8
-    table_id: d475a4d6-ee25-4c46-ac2f-9ee7382072ab
-  ods_fineract_twofactor_configuration:
-    columns:
-      id: cdf349ff-101a-4f36-9938-bcb6aa5fe3a4
-      load_time: 305ed66f-4b30-4121-8011-66d4009a5edc
-      name: ee0dddc3-c5e1-44be-9476-9c1fb64e6047
-      value: d11c5000-ac8c-46e0-a208-11753bde64ac
-    table_id: 5cc8ea54-8ccc-451a-a1e1-840fc35f3e24
-  ods_fineract_x_registered_table:
-    columns:
-      application_table_name: effa20ba-7a68-4fb4-8b21-3e71a9e292ea
-      category: 4683ddb6-3148-46cf-96b5-bf0e0e4ae72b
-      entity_subtype: bd2d7327-ac66-4ecf-9ae8-e9dd8b27ff81
-      load_time: 637552e0-27fb-4266-9f4d-d263f7aad911
-      registered_table_name: 2a18e9cb-263a-451b-92b7-32c6e9a1825c
-    table_id: f7af76a6-839b-4279-bf32-aa340c77c8ad
-  ods_fineract_x_table_column_code_mappings:
-    columns:
-      code_id: c63c6dd1-be2d-4d26-b4d0-c3f9f2d7c65e
-      column_alias_name: e5d05353-d507-4284-b53a-f492471cf2d4
-      load_time: 212e49b8-fba5-461c-b373-12503ea990ff
-    table_id: 0774727b-f001-4a7f-b62e-3c28c4c4b047
 version: 1

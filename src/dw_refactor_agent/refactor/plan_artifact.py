@@ -19,6 +19,7 @@ from dw_refactor_agent.refactor.artifact_contract import (
     require_format_version,
     sha256_json,
 )
+from dw_refactor_agent.refactor.qa_pool import validate_qa_identifier
 from dw_refactor_agent.refactor.session import load_manifest
 from dw_refactor_agent.refactor.workspace_snapshot import workspace_fingerprint
 
@@ -377,12 +378,32 @@ def _validate_job_dependencies(
 
 
 def _validate_persisted_plan_schema(plan: dict) -> None:
-    for field in ("project", "project_db", "qa_db"):
+    for field in ("run_id", "project", "project_db", "qa_db"):
         value = plan.get(field)
         if not isinstance(value, str) or not value.strip():
             raise ArtifactFormatError(
                 f"verification plan {field} must be a non-empty string"
             )
+    pool = plan.get("qa_database_pool")
+    if not isinstance(pool, list) or not pool:
+        raise ArtifactFormatError(
+            "verification plan qa_database_pool must be a non-empty list"
+        )
+    try:
+        normalized_pool = [validate_qa_identifier(value) for value in pool]
+    except ValueError as exc:
+        raise ArtifactFormatError(
+            f"verification plan qa_database_pool is invalid: {exc}"
+        ) from exc
+    canonical_pool = [value.casefold() for value in normalized_pool]
+    if len(canonical_pool) != len(set(canonical_pool)):
+        raise ArtifactFormatError(
+            "verification plan qa_database_pool contains duplicate names"
+        )
+    if plan["qa_db"].casefold() not in set(canonical_pool):
+        raise ArtifactFormatError(
+            "verification plan qa_db must be a member of qa_database_pool"
+        )
     for field in ("ddl_changes", "jobs_to_run"):
         if not isinstance(plan.get(field), list):
             raise ArtifactFormatError(

@@ -37,9 +37,12 @@
 - `shadow_scope.py`：表示并合并旁路读取、写入和预填充所需的行范围。
 - `shadow_manifest.py`：运行时编译表路由、producer、作业依赖、prefill action、blocker 与 warning。
 - `shadow_rewrite.py`：按编译后的路由上下文重写 SQL 表引用，生产读穿与 QA 读写规则以此处为准。
-- `execution_provenance.py`：提供跨 worktree 的项目级本机互斥锁和 QA execution marker SQL。
-- `shadow_run.py`：重建 QA 库、建表、预填充必要数据、应用 DDL 并按 DAG 执行作业。
-- `compare.py`：按 plan 中的 checks 对比生产库与 QA 库的行数或逐行数据。
+- `qa_pool.py`：校验固定 QA 数据库池、检查/原子领取 ownership marker，并按 marker-last
+  规则释放槽。
+- `execution_provenance.py`：提供跨 worktree 的 run 级本机产物互斥锁；跨机器的数据库
+  领取互斥由 Doris marker 表保证。
+- `shadow_run.py`：领取一个预建 QA 槽、建表、预填充必要数据、应用 DDL 并按 DAG 执行作业。
+- `compare.py`：按 shadow result 中的实际 QA 槽和 plan checks 对比生产库与 QA 库。
 
 表层级只读取模型 YAML 的 `layer`，不得通过表名前缀兜底推断。表名、字段名、
 catalog 和 database/schema 的内部匹配遵循血缘模块的大小写不敏感规则。
@@ -73,6 +76,11 @@ python -m dw_refactor_agent.refactor.run shadow-run \
 python -m dw_refactor_agent.refactor.run compare \
   --manifest warehouses/<project>/artifacts/refactor_runs/<run_id>/manifest.json \
   --method all
+
+# 5. 查看并在确认后手工释放 QA 槽
+dw-refactor cleanup list --project <project>
+dw-refactor cleanup delete --execution <execution_id>
+dw-refactor cleanup delete --execution <execution_id> --yes
 ```
 
 ### start
@@ -127,12 +135,20 @@ change analysis、manifest 固定上下文和用户 semantic intent 都有独立
 
 实际执行顺序为：
 
-1. 编译 shadow manifest，发现 blocker 时停止。
-2. Phase 0 重建 QA 库。
-3. Phase 1 校验 `baseline_ddl_refs` 并用引用的 SQL 文件创建必要的基线表。
-4. 按 manifest 的 `prefill_actions` 从生产库预填充自读、DDL-only 等必要数据。
-5. Phase 2 应用 `ddl_changes`。
-6. Phase 3 按 DAG 运行 `jobs_to_run`。
+1. 使用 plan 默认 QA 名称预编译 shadow manifest，发现 blocker 时停止且不领取槽。
+2. 生成 execution ID，从 `verification.qa_database_pool` 原子领取一个预建空库。
+3. 用实际槽重新编译 manifest，并在第一条业务 SQL 前回读完整 ownership。
+4. Phase 1 校验 `baseline_ddl_refs` 并用引用的 SQL 文件创建必要的基线表。
+5. 按 manifest 的 `prefill_actions` 从生产库预填充自读、DDL-only 等必要数据。
+6. Phase 2 应用 `ddl_changes`。
+7. Phase 3 按 DAG 运行 `jobs_to_run`。
+
+实际执行和 compare 不得 `DROP DATABASE` / `CREATE DATABASE`。QA 账户只需对 DBA 预建
+池成员拥有表级读写/DDL 权限。marker 表
+`dw_refactor_execution_marker` 在 baseline DDL、prefill、DDL change 和 job 之前创建；
+任何仓库 DDL 或任务 SQL 引用该保留表都必须成为 blocker。marker 只记录不可变的
+format version、project、run ID、execution ID、实际数据库、plan/workspace fingerprint
+与领取时间，不维护 status、heartbeat、lease 或 TTL。
 
 SQL 路由遵循“最小重算”：ODS、未变化的中间结果和无需 QA materialization 的关系
 从生产库读取；已由本次计划重算且已 ready 的中间结果从 QA 库读取；作业输出统一
@@ -142,10 +158,23 @@ shadow-run 在连接数据库前重新计算工作区 fingerprint，并校验 pl
 inputs 及所有外置 DDL；该校验同时位于 `run_shadow_plan()` 核心 API 内，不能通过绕过
 CLI 直接调用而跳过。校验返回的 bundle 绑定 manifest root、同一份内存 plan snapshot
 和实际加载的工具源码；planner、shadow manifest、task/model 读取均使用该 root，不能
-出现“验证 worktree A、执行 worktree B”。每次尝试先原子写入 `status=running` 和新的 execution ID；
-成功执行后再把 execution ID、workspace/plan fingerprint 发布到 QA marker 表。
-同一项目的本机进程（包括不同 worktree）共享互斥锁，避免同时改写 QA 库。dry-run、
-running 或失败结果都不能作为 compare 凭据。
+出现“验证 worktree A、执行 worktree B”。dry-run 不连接数据库或领取槽；实际执行先在
+Doris 中不带 `IF NOT EXISTS` 创建 marker 表，跨机器竞争同一槽时只有一个执行成功，
+失败者尝试下一个槽。不同 run 的本机产物锁互不阻塞；同一 run 跨 worktree 共享锁。
+领取后无论执行成功或失败都保留槽，等待显式 cleanup。dry-run、running 或失败结果都
+不能作为 compare 凭据。
+
+### cleanup
+
+`cleanup list` 只扫描当前配置中可执行项目的 pool member，不猜测其他数据库。输出
+`free`、`claimed`、`legacy`、`invalid`；这些是槽可用性，不是 execution 生命周期。
+
+`cleanup delete` 支持 `--run`、`--execution`、`--database`、`--older-than` 和
+`--created-before`，多个选择器按 AND 组合。时间条件必须配合 `--project` 或显式
+`--all-projects`；绝对时间必须含时区。不带 `--yes` 只打印 `would release`。legacy
+和 invalid 不参与 ID/时间批量选择，只能用精确 `--database`。释放顺序为 view、普通
+table、ownership marker；普通对象失败时 marker 必须保留。数据库不删除，释放后回到
+`free`。没有 lease/status，因此用户应避免清理仍在执行的 claimed 槽。
 
 ### compare
 
@@ -156,8 +185,10 @@ running 或失败结果都不能作为 compare 凭据。
 fingerprint 完全一致；校验在打开生产/QA 连接前完成。
 `compare_shadow_results()` 核心 API 自身执行同一 bundle 新鲜度校验，直接 Python 调用也
 不能消费陈旧 plan。
-compare 还会读取 QA marker，确认当前共享 QA 数据库确实来自该 execution ID；其他 run
-重建过 QA 后，旧 shadow result 会被拒绝。
+compare 从 shadow result 读取实际 `qa_db`，先确认它属于 plan 的
+`qa_database_pool`，再回读 marker，逐项确认 project、run ID、execution ID、数据库、
+plan fingerprint 和 workspace fingerprint。所有 ownership 检查在生产/QA 数据查询
+连接前完成；槽被 cleanup、marker 损坏或任一字段不一致时旧 shadow result 都会被拒绝。
 
 表/字段纯重命名时，count 分别读取 `prod_table` 与 `qa_table`；row compare 按稳定
 `column_id` 构造两侧独立 projection。排除列按当前/QA 字段名解释，再映射到生产列。
@@ -259,7 +290,9 @@ artifact schema。
   新 DDL 先原子写入，plan 原子发布成功后才清理旧 plan 不再引用的 `.sql`，从而保证
   任意时刻已发布 plan 的 refs 都可读取。
 - `plan.json`：由 `analyze` 生成，是 shadow-run 与 compare 的共同输入。核心字段包括
-  `changes`、`baseline_ddl_refs`、`ddl_changes`、`jobs_to_run` 与 `verification`。
+  `run_id`、`qa_database_pool`、`changes`、`baseline_ddl_refs`、`ddl_changes`、
+  `jobs_to_run` 与 `verification`。`qa_db` 仅是 dry-run/default 路由，实际物理库由领取结果
+  决定。
   每个 baseline DDL 引用记录相对 `plan.json` 的 `path` 和文件字节的 `sha256`；
   shadow-run / compare 在继续前校验路径、文件存在性和摘要。内嵌 `baseline_ddl`
   的旧 plan 不再兼容，应重新运行 analyze（基线语义已变化时应新建 run）。
@@ -271,7 +304,7 @@ artifact schema。
 - `shadow_run_result.json`：每次 shadow-run（包括 dry-run）覆盖写入，记录模式、状态、
   各 phase、作业/调用与可选耗时详情。运行时 shadow manifest 不单独落盘；其
   JSON 可序列化摘要嵌入本结果的 `shadow_manifest` 字段；结果还保存 execution ID、
-  workspace 与 plan fingerprint。
+  workspace 与 plan fingerprint，以及实际领取的 `qa_db` 和完整 run/execution 绑定。
 - `compare_result.json`：每次 compare 原子覆盖写入，保存 `format_version`、
   `verification_status`、顶层 warnings、comparison 完整性、逐项 count / row_compare
   结果，以及绑定的 shadow execution/result fingerprint。没有合法数据锚点为
@@ -279,7 +312,7 @@ artifact schema。
 
 manifest、plan、shadow result 和 compare result 均使用显式 `format_version=1`；写入
 采用同目录临时文件、flush/fsync 后原子替换。版本错误、JSON 损坏、DDL 摘要不符、
-analyze inputs 或工作区变化、semantic intent 与 plan 不一致、QA marker 或 shadow/plan
+analyze inputs 或工作区变化、semantic intent 与 plan 不一致、QA pool/marker 或 shadow/plan
 溯源不一致都必须 fail closed。
 
 ## 修改与验证要求

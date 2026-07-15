@@ -260,8 +260,10 @@ def test_build_verification_plan_uses_baseline_ddl_changes_and_jobs(
             "dir": "demo",
             "db": "demo_dm",
             "qa_db": "demo_dm_qa",
+            "lineage_db": "demo_lineage",
             "catalog": "internal",
             "verification": {
+                "qa_database_pool": ["demo_dm_qa", "demo_dm_qa_02"],
                 "row_compare": {
                     "exclude_columns": ["etl_time"],
                     "tables": {
@@ -269,7 +271,7 @@ def test_build_verification_plan_uses_baseline_ddl_changes_and_jobs(
                             "exclude_columns": ["etl_time", "update_time"]
                         }
                     },
-                }
+                },
             },
         },
     )
@@ -326,6 +328,7 @@ def test_build_verification_plan_uses_baseline_ddl_changes_and_jobs(
     assert plan["project"] == "demo"
     assert plan["project_db"] == "demo_dm"
     assert plan["qa_db"] == "demo_dm_qa"
+    assert plan["qa_database_pool"] == ["demo_dm_qa", "demo_dm_qa_02"]
     assert "affected_scope" not in plan
     assert "modified_jobs" not in plan
     assert "downstream_tables" not in plan

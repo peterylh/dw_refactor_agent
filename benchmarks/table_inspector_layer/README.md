@@ -9,7 +9,7 @@ compares the generated metadata against the source project model YAML files.
 The source projects are never modified. Temporary assets are created under:
 
 ```text
-<tmp_root>/warehouses/{source_project}_generate_llm_benchmark
+<tmp_root>/warehouses/generate_llm_benchmark_{opaque_token}
 ```
 
 By default the temporary root is kept and reported in JSON so generated YAML can
@@ -48,24 +48,40 @@ For each source project, the benchmark creates a temporary project with:
 - `warehouse.yaml` pointing to the benchmark project and ODS database.
 - `naming_config.yaml` copied from the source project.
 - `business_taxonomy.yaml` copied only for artificial taxonomy inputs:
-  `data_domains`, `business_areas`, and `project_context`.
+  `data_domains` and `business_areas`. Source `project_context` is omitted so
+  project-specific layer decisions cannot enter the LLM prompt.
 - Empty `business_processes.yaml` and `semantic_subjects.yaml`, so process and
   subject discovery can be measured rather than seeded.
 - Rewritten ODS, MID, and ADS DDL.
 - Rewritten MID and ADS task SQL, including `full_refresh` companions.
-- A minimal `artifacts/lineage/lineage_data.json` with tables and empty edges,
-  because the writer currently expects a lineage snapshot.
+- An `artifacts/lineage/lineage_data.json` snapshot extracted from the rewritten
+  DDL and task SQL, using the same lineage extractor as normal projects.
+- Layer labels for the target, upstream, and downstream tables are hidden from
+  the LLM; the prompt keeps only prefixless names and unlabeled lineage.
+- Temporary project and database names use opaque random tokens, so source
+  project identities do not remain in rewritten DDL or task SQL.
 
 Table prefixes `ods_`, `dwd_`, `dws_`, `ads_`, and `dim_` are removed. SQL line
 comments, DDL `COMMENT` clauses, and direct layer words such as ODS/DWD/DWS/ADS
 and their Chinese equivalents are removed. Business function words are kept.
+Prefix matching and SQL identifier rewriting are case-insensitive. When two
+tables collapse to the same prefixless name, every colliding table receives an
+opaque HMAC suffix keyed by a fresh in-memory salt for that benchmark run. The
+salt is not written to assets or reports, and generated assets/prompts do not
+contain the source-to-target mapping. For post-run scoring and audit, mismatch
+entries in the JSON report include both the source name and its opaque target
+alias.
 
 ## Metrics
 
 Top-level report fields include:
 
-- `combined_llm_middle_accuracy`: LLM middle-layer decision accuracy over only
-  expected DWD/DWS/DIM tables.
+- `combined_llm_middle_accuracy`: first-attempt LLM `inferred_layer` accuracy
+  over only expected DWD/DWS/DIM tables, before validation-guided retries,
+  resolver, or model-write corrections.
+- `combined_post_retry_middle_accuracy`: LLM accuracy after validation-guided
+  retries but before resolver or model-write corrections. Failed metric-context
+  reinspections are reported as `FAILED` and count as incorrect.
 - `total_catalog_change_count`: process/subject catalog additions or updates.
 - `total_business_process_count` and `total_semantic_subject_count`: generated
   catalog entry counts.
@@ -89,6 +105,11 @@ check.
 DWD, DWS, and DIM tables are the LLM candidate set. Their LLM decision quality
 is reported as `llm_middle_accuracy`.
 
-Use mismatches as the main review queue for middle-layer decisions. The
+These bundled projects are regression datasets, not an independent holdout.
+Results measure behavior on the checked-in cases and should not by themselves
+be presented as evidence of cross-project generalization.
+
+Use `mismatches` as the combined review queue for middle-layer decisions;
+`first_attempt_mismatches` and `post_retry_mismatches` isolate each phase. The
 temporary project path in `tmp_root` contains the generated model YAML and split
 catalog files for manual inspection.
