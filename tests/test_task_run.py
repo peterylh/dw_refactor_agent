@@ -253,39 +253,6 @@ def test_history_replay_can_skip_unsupported_current_state_dates(
     )
 
 
-def test_build_job_dag_refreshes_lineage_with_src_pythonpath(
-    monkeypatch, tmp_path
-):
-    lineage_path = tmp_path / "lineage_data.json"
-    calls = []
-
-    def fake_run(cmd, **kwargs):
-        calls.append((cmd, kwargs))
-        lineage_path.write_text(
-            json.dumps({"tables": [], "edges": []}),
-            encoding="utf-8",
-        )
-        return _completed()
-
-    monkeypatch.setattr(
-        task_run, "_resolve_lineage_data_file", lambda _: lineage_path
-    )
-    monkeypatch.setattr(task_run.subprocess, "run", fake_run)
-
-    dag = task_run._build_job_dag("shop")
-
-    assert dag._edges == []
-    cmd, kwargs = calls[0]
-    assert cmd[:3] == [
-        os.sys.executable,
-        "-m",
-        "dw_refactor_agent.lineage.lineage_extractor",
-    ]
-    assert str(config.SRC_ROOT) in kwargs["env"]["PYTHONPATH"].split(
-        os.pathsep
-    )
-
-
 def test_get_task_files_reads_mid_and_ads_task_dirs(monkeypatch, tmp_path):
     project_dir = tmp_path / "demo_project"
     (project_dir / "tasks").mkdir(parents=True)
@@ -414,113 +381,6 @@ def test_resolve_full_refresh_dates_requires_explicit_business_dates(
         )
 
 
-def test_build_job_dag_accepts_structured_lineage_edges(monkeypatch, tmp_path):
-    project_dir = tmp_path / "demo_project"
-    lineage_dir = project_dir / "artifacts" / "lineage"
-    lineage_dir.mkdir(parents=True)
-    (lineage_dir / "lineage_data.json").write_text(
-        """
-        {
-          "edges": [
-            {
-              "source": {"type": "column", "id": "ods_order.order_id"},
-              "target": {"type": "column", "id": "dwd_order_detail.order_id"}
-            },
-            {
-              "source": {"type": "column", "id": "dwd_order_detail.order_id"},
-              "target": {"type": "table", "id": "dws_order_summary"},
-              "relation_type": "filter"
-            },
-            {
-              "source": {"type": "literal", "value": "1"},
-              "target": {"type": "column", "id": "dwd_order_detail.flag"}
-            },
-            {
-              "source": {"type": "column", "id": "dwd_order_detail.order_id"},
-              "target": {"type": "column", "id": "dwd_order_detail.order_id"}
-            }
-          ]
-        }
-        """,
-        encoding="utf-8",
-    )
-    monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
-    monkeypatch.setitem(
-        config.PROJECT_CONFIG,
-        "demo",
-        {
-            "dir": "demo_project",
-        },
-    )
-
-    dag = task_run._build_job_dag("demo")
-
-    assert dag._deps == {
-        "ods_order": {"dwd_order_detail"},
-        "dwd_order_detail": {"dws_order_summary"},
-    }
-
-
-def test_build_job_dag_v2_uses_job_names_unrelated_to_output_tables(
-    monkeypatch, tmp_path
-):
-    project_dir = tmp_path / "demo_project"
-    lineage_dir = project_dir / "artifacts" / "lineage"
-    lineage_dir.mkdir(parents=True)
-    (lineage_dir / "lineage_data.json").write_text(
-        json.dumps(
-            {
-                "format_version": 2,
-                "tables": [
-                    {
-                        "name": "sales_stage",
-                        "full_name": "internal.demo_db.sales_stage",
-                        "dataset_type": "process",
-                        "columns": [],
-                    },
-                    {
-                        "name": "sales_report",
-                        "full_name": "internal.demo_db.sales_report",
-                        "dataset_type": "managed",
-                        "columns": [],
-                    },
-                ],
-                "jobs": [
-                    {
-                        "name": "build_report",
-                        "source_file": "ads/tasks/build_report.sql",
-                        "inputs": ["internal.demo_db.sales_stage"],
-                        "outputs": ["internal.demo_db.sales_report"],
-                    },
-                    {
-                        "name": "prepare_sales",
-                        "source_file": "mid/tasks/prepare_sales.sql",
-                        "inputs": [],
-                        "outputs": ["internal.demo_db.sales_stage"],
-                    },
-                ],
-                "edges": [],
-                "diagnostics": [],
-            }
-        ),
-        encoding="utf-8",
-    )
-    monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
-    monkeypatch.setitem(
-        config.PROJECT_CONFIG,
-        "demo",
-        {"dir": "demo_project"},
-    )
-
-    dag = task_run._build_job_dag("demo")
-
-    assert dag._deps == {
-        "build_report": set(),
-        "prepare_sales": {"build_report"},
-    }
-    assert "sales_report" not in dag._deps
-
-
 def test_execution_preflight_uses_output_model_and_job_sql_identity(tmp_path):
     sql_path = tmp_path / "prepare_sales.sql"
     sql_path.write_text("SELECT 1;", encoding="utf-8")
@@ -586,323 +446,21 @@ def test_job_model_names_require_one_managed_output():
     }
 
 
-def test_refresh_dag_writes_v2_artifact_to_configured_project_path(
-    monkeypatch, tmp_path
-):
-    project_dir = tmp_path / "configured_demo"
-    task_dir = project_dir / "mid" / "tasks"
-    task_dir.mkdir(parents=True)
-    task_files = {
-        "Build_Report": task_dir / "Build_Report.sql",
-        "Prepare_Sales": task_dir / "Prepare_Sales.sql",
-    }
-    for path in task_files.values():
-        path.write_text("SELECT 1;", encoding="utf-8")
-    dag = task_run.JobDAG.from_dict(
-        {
-            "format_version": 2,
-            "jobs": ["build_report", "prepare_sales"],
-            "data_dependencies": [
-                {
-                    "upstream_job": "prepare_sales",
-                    "downstream_job": "build_report",
-                    "datasets": ["internal.demo_db.sales_stage"],
-                }
-            ],
-            "deps": {
-                "build_report": [],
-                "prepare_sales": ["build_report"],
-            },
-            "rev": {
-                "build_report": ["prepare_sales"],
-                "prepare_sales": [],
-            },
-        }
-    )
-    build_calls = []
-
-    def build_job_dag(project, runnable_jobs=None):
-        build_calls.append((project, runnable_jobs))
-        return dag
-
-    monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
-    monkeypatch.setitem(
-        task_run.PROJECT_CONFIG,
-        "demo",
-        {
-            "dir": "configured_demo",
-            "db": "demo_db",
-            "qa_db": "demo_db_qa",
-        },
-    )
-    monkeypatch.setattr(task_run, "_get_task_files", lambda _: task_files)
-    monkeypatch.setattr(task_run, "_build_job_dag", build_job_dag)
-    monkeypatch.setattr(task_run, "ExecutionPlanner", lambda _: object())
-    monkeypatch.setattr(
-        task_run, "_validate_execution_plan", lambda *args, **kwargs: 0
-    )
-    monkeypatch.setattr(task_run, "get_mysql_cmd", lambda _: ["mysql"])
-    monkeypatch.setattr(
-        task_run.sys,
-        "argv",
-        [
-            "task_run",
-            "--project",
-            "demo",
-            "--etl-dates",
-            "2025-01-01",
-            "--refresh-dag",
-            "--validate-only",
-            "--job-list",
-            "build_report",
-            "PREPARE_SALES",
-        ],
-    )
-
-    assert task_run.main() == 0
-    artifact_path = project_dir / "artifacts" / "lineage" / "job_dag.json"
-    artifact = json.loads(artifact_path.read_text(encoding="utf-8"))
-    assert artifact["format_version"] == 2
-    assert artifact["jobs"] == ["build_report", "prepare_sales"]
-    assert build_calls == [("demo", {"Build_Report", "Prepare_Sales"})]
-
-
-@pytest.mark.parametrize("dag_mode", ["generate", "rebuild"])
-def test_task_run_rejects_stale_lineage_missing_runnable_job(
-    monkeypatch, tmp_path, capsys, dag_mode
-):
-    project_dir = tmp_path / "configured_demo"
-    task_dir = project_dir / "mid" / "tasks"
-    lineage_dir = project_dir / "artifacts" / "lineage"
-    task_dir.mkdir(parents=True)
-    lineage_dir.mkdir(parents=True)
-    for job_name in ("Build_Report", "Prepare_Sales"):
-        (task_dir / f"{job_name}.sql").write_text(
-            "SELECT 1;",
-            encoding="utf-8",
-        )
-    (lineage_dir / "lineage_data.json").write_text(
-        json.dumps(
-            {
-                "format_version": 2,
-                "tables": [],
-                "jobs": [
-                    {
-                        "name": "prepare_sales",
-                        "source_file": "Prepare_Sales.sql",
-                        "inputs": [],
-                        "outputs": [],
-                    }
-                ],
-                "edges": [],
-                "diagnostics": [],
-            }
-        ),
-        encoding="utf-8",
-    )
-    dag_path = lineage_dir / "job_dag.json"
-    if dag_mode == "rebuild":
-        task_run.JobDAG.from_jobs(["prepare_sales"], []).save(dag_path)
-
-    monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
-    monkeypatch.setitem(
-        task_run.PROJECT_CONFIG,
-        "demo",
-        {
-            "dir": "configured_demo",
-            "db": "demo_db",
-            "qa_db": "demo_db_qa",
-        },
-    )
-    monkeypatch.setattr(task_run, "ExecutionPlanner", lambda _: object())
-    monkeypatch.setattr(
-        task_run, "_validate_execution_plan", lambda *args, **kwargs: 0
-    )
-    monkeypatch.setattr(task_run, "get_mysql_cmd", lambda _: ["mysql"])
-    argv = [
-        "task_run",
-        "--project",
-        "demo",
-        "--etl-dates",
-        "2025-01-01",
-        "--validate-only",
-    ]
-    if dag_mode == "generate":
-        argv.append("--refresh-dag")
-    monkeypatch.setattr(task_run.sys, "argv", argv)
-
-    assert task_run.main() == 1
-    captured = capsys.readouterr()
-    assert "Build_Report" in captured.out
-    assert "regenerate lineage" in captured.out
-    assert captured.err == ""
-
-
-def test_task_run_resolvers_ignore_old_lineage_artifact_paths(
-    monkeypatch, tmp_path
-):
-    project_dir = tmp_path / "demo_project"
-    (project_dir / "artifacts" / "lineage").mkdir(parents=True)
-    old_lineage_dir = tmp_path / "lineage"
-    old_lineage_dir.mkdir()
-    (old_lineage_dir / "lineage_data_demo.json").write_text(
-        "{}",
-        encoding="utf-8",
-    )
-    (old_lineage_dir / "job_dag_demo.json").write_text(
-        "{}",
-        encoding="utf-8",
-    )
-    monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
-    monkeypatch.setitem(
-        config.PROJECT_CONFIG,
-        "demo",
-        {
-            "dir": "demo_project",
-        },
-    )
-
-    assert task_run._resolve_lineage_data_file("demo") == (
-        project_dir / "artifacts" / "lineage" / "lineage_data.json"
-    )
-    assert task_run._resolve_job_dag_file("demo") == (
-        project_dir / "artifacts" / "lineage" / "job_dag.json"
-    )
-
-
-def test_build_job_dag_collapses_transient_tables(monkeypatch, tmp_path):
-    project_dir = tmp_path / "demo_project"
-    lineage_dir = project_dir / "artifacts" / "lineage"
-    lineage_dir.mkdir(parents=True)
-    (lineage_dir / "lineage_data.json").write_text(
-        """
-        {
-          "tables": [
-            {"name": "dwd_orders", "layer": "DWD", "columns": []},
-            {"name": "tmp_orders_stage", "layer": "OTHER", "columns": [], "is_transient": true},
-            {"name": "dws_orders", "layer": "DWS", "columns": []}
-          ],
-          "edges": [
-            {
-              "source": {"type": "column", "id": "dwd_orders.order_id"},
-              "target": {"type": "column", "id": "tmp_orders_stage.order_id"}
-            },
-            {
-              "source": {"type": "column", "id": "tmp_orders_stage.order_id"},
-              "target": {"type": "column", "id": "dws_orders.order_id"}
-            }
-          ]
-        }
-        """,
-        encoding="utf-8",
-    )
-    monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
-    monkeypatch.setitem(
-        config.PROJECT_CONFIG,
-        "demo",
-        {
-            "dir": "demo_project",
-        },
-    )
-
-    dag = task_run._build_job_dag("demo")
-
-    assert dag._deps == {"dwd_orders": {"dws_orders"}}
-    assert "tmp_orders_stage" not in dag._deps
-    assert "tmp_orders_stage" not in dag._rev
-
-
-def test_dag_needs_refresh_when_loaded_targets_do_not_match_tasks():
-    dag = task_run.JobDAG(
-        [
-            {"source": "M_SHOP_04_ORDER_DI", "target": "I_SHOP_CATG_SALE_MS"},
-            {"source": "M_SHOP_04_ORDER_DI", "target": "I_SHOP_STORE_SALE_DS"},
-        ]
-    )
-
-    assert (
-        task_run._dag_needs_refresh_for_tasks(
-            dag,
-            {"dwd_order_detail", "dws_store_sales_daily"},
-        )
-        is True
-    )
-
-
-def test_dag_needs_refresh_keeps_current_dag_with_matching_targets():
-    dag = task_run.JobDAG(
-        [
-            {"source": "ods_order", "target": "dwd_order_detail"},
-            {"source": "dwd_order_detail", "target": "dws_store_sales_daily"},
-        ]
-    )
-
-    assert (
-        task_run._dag_needs_refresh_for_tasks(
-            dag,
-            {"dwd_order_detail", "dws_store_sales_daily"},
-        )
-        is False
-    )
-
-
-def test_dag_refresh_compares_explicit_v2_job_set_case_insensitively():
-    dag = task_run.JobDAG.from_dict(
-        {
-            "format_version": 2,
-            "jobs": ["Build_Report", "Prepare_Sales"],
-            "data_dependencies": [],
-            "deps": {"Build_Report": [], "Prepare_Sales": []},
-            "rev": {"Build_Report": [], "Prepare_Sales": []},
-        }
-    )
-
-    assert (
-        task_run._dag_needs_refresh_for_tasks(
-            dag,
-            {"build_report", "PREPARE_SALES"},
-        )
-        is False
-    )
-    assert (
-        task_run._dag_needs_refresh_for_tasks(
-            dag,
-            {"build_report", "prepare_sales", "new_job"},
-        )
-        is True
-    )
-
-
-def _configure_process_plan_project(
-    monkeypatch,
-    tmp_path,
-    *,
-    dataset_type="process",
-):
-    project_dir = tmp_path / "demo_project"
-    task_dir = project_dir / "mid" / "tasks"
-    lineage_dir = project_dir / "artifacts" / "lineage"
-    task_dir.mkdir(parents=True)
-    lineage_dir.mkdir(parents=True)
-    for job_name in ("Prepare_Sales", "Build_Report"):
-        (task_dir / "{}.sql".format(job_name)).write_text(
-            "SELECT 1;", encoding="utf-8"
-        )
-
+def _process_lineage_payload(dataset_type):
     process_dataset = "Internal.Demo_DB.Sales_Stage"
-    lineage_data = {
+    return {
         "format_version": 2,
         "tables": [
-            {
-                "name": "Sales_Stage",
-                "full_name": process_dataset,
-                "dataset_type": dataset_type,
-                "columns": [],
-            },
             {
                 "name": "Sales_Report",
                 "full_name": "internal.demo_db.sales_report",
                 "dataset_type": "managed",
+                "columns": [],
+            },
+            {
+                "name": "Sales_Stage",
+                "full_name": process_dataset,
+                "dataset_type": dataset_type,
                 "columns": [],
             },
         ],
@@ -923,10 +481,32 @@ def _configure_process_plan_project(
         "edges": [],
         "diagnostics": [],
     }
-    (lineage_dir / "lineage_data.json").write_text(
-        json.dumps(lineage_data), encoding="utf-8"
+
+
+def _configure_process_plan_project(
+    monkeypatch,
+    tmp_path,
+    *,
+    dataset_type="process",
+    extracted_dataset_type=None,
+):
+    project_dir = tmp_path / "demo_project"
+    task_dir = project_dir / "mid" / "tasks"
+    lineage_dir = project_dir / "artifacts" / "lineage"
+    task_dir.mkdir(parents=True)
+    lineage_dir.mkdir(parents=True)
+    for job_name in ("Prepare_Sales", "Build_Report"):
+        (task_dir / "{}.sql".format(job_name)).write_text(
+            "SELECT 1;", encoding="utf-8"
+        )
+
+    stale_lineage = _process_lineage_payload(dataset_type)
+    fresh_lineage = _process_lineage_payload(
+        extracted_dataset_type or dataset_type
     )
-    task_run.JobDAG.from_jobs(
+    lineage_path = lineage_dir / "lineage_data.json"
+    lineage_path.write_text(json.dumps(stale_lineage), encoding="utf-8")
+    stale_dag = task_run.JobDAG.from_jobs(
         ["Build_Report", "Prepare_Sales"],
         [
             {
@@ -935,7 +515,9 @@ def _configure_process_plan_project(
                 "datasets": ["internal.demo_db.sales_stage"],
             }
         ],
-    ).save(lineage_dir / "job_dag.json")
+    )
+    dag_path = lineage_dir / "job_dag.json"
+    stale_dag.save(dag_path)
 
     monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
     monkeypatch.setitem(
@@ -952,6 +534,22 @@ def _configure_process_plan_project(
     monkeypatch.setattr(
         task_run, "_validate_execution_plan", lambda *args, **kwargs: 0
     )
+    extractor_calls = []
+
+    def fake_extractor(cmd, **kwargs):
+        extractor_calls.append((cmd, kwargs))
+        lineage_path.write_text(json.dumps(fresh_lineage), encoding="utf-8")
+        return _completed()
+
+    monkeypatch.setattr(task_run.subprocess, "run", fake_extractor)
+    return {
+        "project_dir": project_dir,
+        "lineage_path": lineage_path,
+        "dag_path": dag_path,
+        "stale_lineage": stale_lineage,
+        "fresh_lineage": fresh_lineage,
+        "extractor_calls": extractor_calls,
+    }
 
 
 @pytest.mark.parametrize(
@@ -1102,3 +700,208 @@ def test_task_run_rejects_busy_project_lock_before_sql(
     assert task_run.main() == 1
     assert executed == []
     assert "project demo is already executing SQL" in capsys.readouterr().out
+
+
+def test_task_run_refreshes_stale_managed_dependency_before_process_closure(
+    monkeypatch,
+    tmp_path,
+    capsys,
+):
+    state = _configure_process_plan_project(
+        monkeypatch,
+        tmp_path,
+        dataset_type="managed",
+        extracted_dataset_type="process",
+    )
+    executed = []
+    monkeypatch.setattr(
+        task_run,
+        "_run_job",
+        lambda _date, job_name, *args, **kwargs: executed.append(job_name),
+    )
+    monkeypatch.setattr(
+        task_run.sys,
+        "argv",
+        [
+            "task_run",
+            "--project",
+            "demo",
+            "--etl-dates",
+            "2025-01-15",
+            "--job-list",
+            "Build_Report",
+        ],
+    )
+
+    assert task_run.main() == 1
+    assert len(state["extractor_calls"]) == 1
+    assert executed == []
+    output = capsys.readouterr().out
+    assert "Prepare_Sales" in output
+    assert "Build_Report" in output
+    assert "Internal.Demo_DB.Sales_Stage" in output
+
+
+@pytest.mark.parametrize(
+    ("lineage_version", "dag_version"),
+    ((1, 1), (1, 2), (2, 1)),
+    ids=("v1", "v1-lineage-v2-dag", "v2-lineage-v1-dag"),
+)
+def test_task_run_replaces_v1_or_mixed_artifacts_from_one_fresh_v2_payload(
+    monkeypatch,
+    tmp_path,
+    lineage_version,
+    dag_version,
+):
+    state = _configure_process_plan_project(monkeypatch, tmp_path)
+    if lineage_version == 1:
+        state["lineage_path"].write_text(
+            json.dumps({"tables": [], "edges": []}), encoding="utf-8"
+        )
+    if dag_version == 1:
+        task_run.JobDAG(
+            [{"source": "Prepare_Sales", "target": "Build_Report"}]
+        ).save(state["dag_path"])
+    monkeypatch.setattr(
+        task_run.sys,
+        "argv",
+        [
+            "task_run",
+            "--project",
+            "demo",
+            "--etl-dates",
+            "2025-01-15",
+            "--validate-only",
+            "--job-list",
+            "Prepare_Sales",
+            "Build_Report",
+        ],
+    )
+
+    assert task_run.main() == 0
+    assert len(state["extractor_calls"]) == 1
+    assert (
+        json.loads(state["lineage_path"].read_text(encoding="utf-8"))
+        == (state["fresh_lineage"])
+    )
+    expected_dag = task_run.job_dag_from_lineage(
+        state["fresh_lineage"],
+        runnable_jobs={"Prepare_Sales", "Build_Report"},
+    ).to_dict()
+    assert json.loads(state["dag_path"].read_text(encoding="utf-8")) == (
+        expected_dag
+    )
+
+
+def test_refresh_dag_forces_no_cache_lineage_extraction(monkeypatch, tmp_path):
+    state = _configure_process_plan_project(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        task_run.sys,
+        "argv",
+        [
+            "task_run",
+            "--project",
+            "demo",
+            "--etl-dates",
+            "2025-01-15",
+            "--validate-only",
+            "--refresh-dag",
+        ],
+    )
+
+    assert task_run.main() == 0
+    assert len(state["extractor_calls"]) == 1
+    command = state["extractor_calls"][0][0]
+    assert "--no-cache" in command
+
+
+def test_normal_planning_uses_cached_extraction_output_for_saved_dag(
+    monkeypatch,
+    tmp_path,
+):
+    state = _configure_process_plan_project(
+        monkeypatch,
+        tmp_path,
+        dataset_type="managed",
+        extracted_dataset_type="process",
+    )
+    monkeypatch.setattr(
+        task_run.sys,
+        "argv",
+        [
+            "task_run",
+            "--project",
+            "demo",
+            "--etl-dates",
+            "2025-01-15",
+            "--validate-only",
+            "--job-list",
+            "Prepare_Sales",
+            "Build_Report",
+        ],
+    )
+
+    assert task_run.main() == 0
+    assert len(state["extractor_calls"]) == 1
+    command, kwargs = state["extractor_calls"][0]
+    assert command[:3] == [
+        os.sys.executable,
+        "-m",
+        "dw_refactor_agent.lineage.lineage_extractor",
+    ]
+    assert "--no-cache" not in command
+    assert command[command.index("--output") + 1] == str(state["lineage_path"])
+    assert kwargs["check"] is True
+    assert kwargs["cwd"] == task_run.PROJECT_ROOT
+    assert str(config.SRC_ROOT) in kwargs["env"]["PYTHONPATH"].split(
+        os.pathsep
+    )
+    saved_dag = json.loads(state["dag_path"].read_text(encoding="utf-8"))
+    assert (
+        saved_dag
+        == task_run.job_dag_from_lineage(
+            state["fresh_lineage"],
+            runnable_jobs={"Prepare_Sales", "Build_Report"},
+        ).to_dict()
+    )
+
+
+def test_lineage_extractor_failure_aborts_before_database_execution(
+    monkeypatch,
+    tmp_path,
+    capsys,
+):
+    _configure_process_plan_project(monkeypatch, tmp_path)
+    database_setup = []
+    executed = []
+
+    def fail_extractor(cmd, **_kwargs):
+        raise subprocess.CalledProcessError(2, cmd)
+
+    monkeypatch.setattr(task_run.subprocess, "run", fail_extractor)
+    monkeypatch.setattr(
+        task_run,
+        "get_mysql_cmd",
+        lambda env: database_setup.append(env) or ["mysql"],
+    )
+    monkeypatch.setattr(
+        task_run,
+        "_run_job",
+        lambda _date, job_name, *args, **kwargs: executed.append(job_name),
+    )
+    monkeypatch.setattr(
+        task_run.sys,
+        "argv",
+        [
+            "task_run",
+            "--project",
+            "demo",
+            "--etl-dates",
+            "2025-01-15",
+        ],
+    )
+
+    assert task_run.main() == 1
+    assert database_setup == []
+    assert executed == []
+    assert "lineage extraction failed" in capsys.readouterr().out

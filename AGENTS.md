@@ -134,9 +134,9 @@ done
 - `--etl-lookback-months`：展开截至 `--etl-end-date` 向前 N 个日历月的闭区间
 - `--etl-end-date`：日期窗口结束日，默认当天
 - `--full-refresh`：全量刷新模式
-- `--job-list`：只执行指定作业
+- `--job-list`：只执行指定作业；若包含 process dataset consumer，必须同时包含其 producer
 - `--db-env`：`prod|test`
-- `--refresh-dag`：先重建 `job_dag_{project}.json`
+- `--refresh-dag`：禁用 task cache，强制重新提取当前 SQL lineage 后生成 DAG
 - `--parallel`：并行度
 - `--validate-only`：仅构建并校验完整计划，不执行 SQL
 - `--skip-unsupported-history`：历史补跑时跳过不支持非当天回放的 current-state 作业
@@ -145,6 +145,10 @@ done
 file lock，覆盖完整 producer→consumer 运行；同一项目的重叠运行会在首个 SQL 写入前失败，
 `--validate-only` 不加锁。分布式调度器必须共享该 lock 文件系统，或在外部实施等价的
 项目级互斥。
+
+每次 `task_run.py` 规划都会先从当前 task SQL 刷新 lineage，再立即从同一份 v2 payload
+生成并保存 Job DAG；正常模式复用 task 级缓存，`--refresh-dag` 强制 `--no-cache`。
+extractor 失败会在任何数据库读取或写入前终止规划。
 
 示例：
 

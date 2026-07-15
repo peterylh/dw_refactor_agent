@@ -56,61 +56,56 @@ from dw_refactor_agent.lineage.job_dag import (
 )
 
 
-def _build_job_dag(
+def _refresh_lineage_and_build_job_dag(
     project: str,
-    runnable_jobs: set[str] | None = None,
-) -> JobDAG:
+    runnable_jobs: set[str],
+    *,
+    no_cache: bool,
+) -> tuple[dict, JobDAG]:
+    """Refresh lineage from current SQL and save its exact Job DAG."""
     lineage_path = _resolve_lineage_data_file(project)
-    if not lineage_path.exists():
-        print("  lineage 数据不存在, 运行 lineage_extractor 生成...")
+    command = [
+        sys.executable,
+        "-m",
+        "dw_refactor_agent.lineage.lineage_extractor",
+        "--project",
+        project,
+        "--output",
+        str(lineage_path),
+    ]
+    if no_cache:
+        command.append("--no-cache")
+    print(
+        "刷新 lineage 并生成 DAG"
+        + (" (禁用 task cache)" if no_cache else " (使用 task cache)")
+        + f": {project}"
+    )
+    try:
         subprocess.run(
-            [
-                sys.executable,
-                "-m",
-                "dw_refactor_agent.lineage.lineage_extractor",
-                "--project",
-                project,
-            ],
+            command,
             check=True,
             cwd=PROJECT_ROOT,
             env=python_module_env(),
         )
-        lineage_path = _resolve_lineage_data_file(project)
+    except (OSError, subprocess.CalledProcessError) as exc:
+        raise ExecutionConfigError(
+            f"lineage extraction failed for project {project!r}: {exc}"
+        ) from exc
+
     data = json.loads(lineage_path.read_text(encoding=TEXT_ENCODING))
-    return job_dag_from_lineage(data, runnable_jobs=runnable_jobs)
+    if data.get("format_version") != 2:
+        raise ExecutionConfigError(
+            "lineage extractor did not produce a version 2 payload"
+        )
+    dag = job_dag_from_lineage(data, runnable_jobs=runnable_jobs)
+    dag_path = job_dag_path(project)
+    dependency_count = _save_job_dag(dag, dag_path)
+    print(f"  DAG 已保存: {dependency_count} 条边 -> {dag_path}")
+    return data, dag
 
 
 def _resolve_lineage_data_file(project: str) -> Path:
     return lineage_data_path(project)
-
-
-def _resolve_job_dag_file(project: str) -> Path:
-    return job_dag_path(project)
-
-
-def _dag_needs_refresh_for_tasks(dag: JobDAG, task_names: set[str]) -> bool:
-    """Return True when a loaded DAG looks unrelated to current task names."""
-    if not task_names:
-        return False
-
-    task_keys = {identifier_match_key(name) for name in task_names}
-    if dag.format_version == 2:
-        dag_job_keys = {identifier_match_key(name) for name in dag.jobs}
-        return dag_job_keys != task_keys
-
-    target_tables = set(dag._rev)
-    if not target_tables:
-        for edge in dag._edges:
-            target = JobDAG._edge_table(edge.get("target"))
-            if target:
-                target_tables.add(target)
-
-    if not target_tables:
-        return False
-
-    target_keys = {identifier_match_key(name) for name in target_tables}
-    matched_targets = target_keys & task_keys
-    return len(matched_targets) / len(target_keys) < 0.5
 
 
 def _resolve_requested_jobs(
@@ -215,13 +210,6 @@ def _job_model_names_from_lineage(lineage_data: dict) -> dict[str, str]:
                 short_table_name(managed_outputs[0])
             )
     return model_names
-
-
-def _load_lineage_data(project: str) -> dict:
-    lineage_path = _resolve_lineage_data_file(project)
-    if not lineage_path.exists():
-        return {}
-    return json.loads(lineage_path.read_text(encoding=TEXT_ENCODING))
 
 
 def _task_spec(
@@ -535,13 +523,20 @@ def main():
         "--full-refresh", action="store_true", help="全量刷新模式"
     )
     parser.add_argument(
-        "--job-list", nargs="*", default=None, help="作业清单, 默认全部"
+        "--job-list",
+        nargs="*",
+        default=None,
+        help=(
+            "作业清单, 默认全部; 选择 process dataset consumer 时必须同时选择其 producer"
+        ),
     )
     parser.add_argument(
         "--db-env", default="prod", choices=list(DB_ENV_CONFIG.keys())
     )
     parser.add_argument(
-        "--refresh-dag", action="store_true", help="重新生成 DAG 文件"
+        "--refresh-dag",
+        action="store_true",
+        help="规划始终刷新当前 SQL lineage; 此选项额外禁用 task cache",
     )
     parser.add_argument(
         "--parallel", type=int, default=1, help="并行度, 默认 1 (串行)"
@@ -584,28 +579,17 @@ def main():
     task_files = _get_task_files(project)
     task_names = set(task_files.keys())
 
-    dag_path = job_dag_path(project)
-    existing_dag_path = _resolve_job_dag_file(project)
     try:
-        if args.refresh_dag or not existing_dag_path.exists():
-            print(f"生成 DAG: {dag_path}")
-            dag = _build_job_dag(project, task_names)
-            dependency_count = _save_job_dag(dag, dag_path)
-            print(f"  DAG 已保存: {dependency_count} 条边")
-        else:
-            print(f"加载 DAG: {existing_dag_path}")
-            dag = JobDAG.load(existing_dag_path)
-            if _dag_needs_refresh_for_tasks(dag, task_names):
-                print("  DAG 与当前作业不匹配, 重新生成...")
-                dag = _build_job_dag(project, task_names)
-                dependency_count = _save_job_dag(dag, dag_path)
-                print(f"  DAG 已保存: {dependency_count} 条边")
+        lineage_data, dag = _refresh_lineage_and_build_job_dag(
+            project,
+            task_names,
+            no_cache=args.refresh_dag,
+        )
     except (ExecutionConfigError, ValueError) as e:
         print(f"错误: {e}")
         return 1
 
     try:
-        lineage_data = _load_lineage_data(project)
         model_names_by_job = _job_model_names_from_lineage(lineage_data)
     except ExecutionConfigError as e:
         print(f"错误: {e}")
