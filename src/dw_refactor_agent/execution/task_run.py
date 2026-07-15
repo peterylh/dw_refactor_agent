@@ -125,62 +125,98 @@ def _resolve_requested_jobs(
     return resolved, sorted(set(missing), key=identifier_match_key)
 
 
-def _validate_process_dependency_closure(
+def _validate_process_plan_safety(
     job_set: set[str],
     dag: JobDAG,
     lineage_data: dict,
 ) -> None:
-    """Require selected process consumers to include their resolved producer."""
+    """Fail closed for incomplete or unresolved process-table producers."""
     if dag.format_version != 2:
-        return
-    selected_job_keys = {identifier_match_key(job) for job in job_set}
-    unclosed_dependencies = [
-        dependency
-        for dependency in dag.data_dependencies
-        if identifier_match_key(dependency["downstream_job"])
-        in selected_job_keys
-        and identifier_match_key(dependency["upstream_job"])
-        not in selected_job_keys
-    ]
-    if not unclosed_dependencies:
         return
     if lineage_data.get("format_version") != 2:
         raise ExecutionConfigError(
-            "cannot validate --job-list process dependencies without "
+            "cannot validate process-table execution safety without "
             "lineage v2 table metadata; regenerate lineage"
         )
 
+    selected_job_keys = {identifier_match_key(job) for job in job_set}
     process_tables_by_key = {
         table_identity_match_key(table["full_name"]): table["full_name"]
         for table in lineage_data.get("tables") or []
         if table.get("full_name") and table.get("dataset_type") == "process"
     }
-    missing = []
-    for dependency in unclosed_dependencies:
+
+    missing_resolved_producers = []
+    for dependency in dag.data_dependencies:
         upstream_job = dependency["upstream_job"]
         downstream_job = dependency["downstream_job"]
+        if (
+            identifier_match_key(downstream_job) not in selected_job_keys
+            or identifier_match_key(upstream_job) in selected_job_keys
+        ):
+            continue
         for dataset in dependency["datasets"]:
             process_dataset = process_tables_by_key.get(
                 table_identity_match_key(dataset)
             )
             if process_dataset:
-                missing.append((upstream_job, downstream_job, process_dataset))
+                missing_resolved_producers.append(
+                    (upstream_job, downstream_job, process_dataset)
+                )
 
-    if not missing:
+    unresolved_producers = []
+    for diagnostic in lineage_data.get("diagnostics") or []:
+        if diagnostic.get("code") != "UNRESOLVED_DATASET_PRODUCER":
+            continue
+        process_dataset = process_tables_by_key.get(
+            table_identity_match_key(diagnostic.get("dataset"))
+        )
+        if not process_dataset:
+            continue
+        selected_consumers = [
+            consumer
+            for consumer in diagnostic.get("consumer_jobs") or []
+            if identifier_match_key(consumer) in selected_job_keys
+        ]
+        if not selected_consumers:
+            continue
+        unresolved_producers.append(
+            (
+                process_dataset,
+                diagnostic.get("reason"),
+                selected_consumers,
+                list(diagnostic.get("candidate_producer_jobs") or []),
+            )
+        )
+
+    if not missing_resolved_producers and not unresolved_producers:
         return
-    missing.sort(
+    missing_resolved_producers.sort(
         key=lambda item: (
             identifier_match_key(item[1]),
             identifier_match_key(item[0]),
             table_identity_match_key(item[2]),
         )
     )
-    details = "; ".join(
+    unresolved_producers.sort(
+        key=lambda item: (
+            table_identity_match_key(item[0]),
+            item[1] or "",
+            tuple(identifier_match_key(job) for job in item[2]),
+            tuple(identifier_match_key(job) for job in item[3]),
+        )
+    )
+    details = [
         "producer={!r}, consumer={!r}, process dataset={!r}".format(*item)
-        for item in missing
+        for item in missing_resolved_producers
+    ]
+    details.extend(
+        "unresolved process dataset={!r}, reason={!r}, "
+        "consumer jobs={!r}, candidate producer jobs={!r}".format(*item)
+        for item in unresolved_producers
     )
     raise ExecutionConfigError(
-        "incomplete --job-list process-table dependency: {}".format(details)
+        "unsafe process-table execution plan: {}".format("; ".join(details))
     )
 
 
@@ -527,7 +563,8 @@ def main():
         nargs="*",
         default=None,
         help=(
-            "作业清单, 默认全部; 选择 process dataset consumer 时必须同时选择其 producer"
+            "作业清单, 默认全部; process consumer 必须包含已解析 producer, "
+            "未解析 producer 会阻止执行"
         ),
     )
     parser.add_argument(
@@ -600,13 +637,14 @@ def main():
         if missing:
             print(f"错误: 以下作业不存在: {sorted(missing)}")
             sys.exit(1)
-        try:
-            _validate_process_dependency_closure(job_set, dag, lineage_data)
-        except ExecutionConfigError as e:
-            print(f"错误: {e}")
-            return 1
     else:
         job_set = set(task_files.keys())
+
+    try:
+        _validate_process_plan_safety(job_set, dag, lineage_data)
+    except ExecutionConfigError as e:
+        print(f"错误: {e}")
+        return 1
 
     if not job_set:
         print("没有作业需要执行")

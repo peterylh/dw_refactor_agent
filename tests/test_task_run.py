@@ -11,6 +11,7 @@ from dw_refactor_agent.execution import task_run
 from dw_refactor_agent.execution.date_window import resolve_etl_dates
 from dw_refactor_agent.execution.model_config import ExecutionConfigError
 from dw_refactor_agent.execution.planner import ExecutionPlanner, TaskSpec
+from dw_refactor_agent.lineage.contract import validate_lineage_v2
 
 
 def _completed(stdout: str = "", stderr: str = "", returncode: int = 0):
@@ -483,38 +484,113 @@ def _process_lineage_payload(dataset_type):
     }
 
 
+def _unresolved_process_lineage_payload(
+    *,
+    reason="not_found",
+    dataset_type="process",
+    candidate_producer_jobs=(),
+    include_unrelated_job=False,
+):
+    process_dataset = "Internal.Demo_DB.Sales_Stage"
+    tables = [
+        {
+            "name": "Sales_Report",
+            "full_name": "internal.demo_db.sales_report",
+            "dataset_type": "managed",
+            "columns": [],
+        },
+        {
+            "name": "Sales_Stage",
+            "full_name": process_dataset,
+            "dataset_type": dataset_type,
+            "columns": [],
+        },
+    ]
+    jobs = [
+        {
+            "name": "Build_Report",
+            "source_file": "mid/tasks/Build_Report.sql",
+            "inputs": [process_dataset],
+            "outputs": ["internal.demo_db.sales_report"],
+        }
+    ]
+    jobs.extend(
+        {
+            "name": job_name,
+            "source_file": "mid/tasks/{}.sql".format(job_name),
+            "inputs": [],
+            "outputs": [process_dataset],
+        }
+        for job_name in candidate_producer_jobs
+    )
+    if include_unrelated_job:
+        tables.append(
+            {
+                "name": "Unrelated_Output",
+                "full_name": "internal.demo_db.unrelated_output",
+                "dataset_type": "managed",
+                "columns": [],
+            }
+        )
+        jobs.append(
+            {
+                "name": "Unrelated_Job",
+                "source_file": "mid/tasks/Unrelated_Job.sql",
+                "inputs": [],
+                "outputs": ["internal.demo_db.unrelated_output"],
+            }
+        )
+    lineage_data = {
+        "format_version": 2,
+        "tables": tables,
+        "jobs": jobs,
+        "edges": [],
+        "diagnostics": [
+            {
+                "code": "UNRESOLVED_DATASET_PRODUCER",
+                "dataset": process_dataset,
+                "reason": reason,
+                "consumer_jobs": ["Build_Report"],
+                "candidate_producer_jobs": list(candidate_producer_jobs),
+            }
+        ],
+    }
+    validate_lineage_v2(lineage_data)
+    return lineage_data
+
+
 def _configure_process_plan_project(
     monkeypatch,
     tmp_path,
     *,
     dataset_type="process",
     extracted_dataset_type=None,
+    extracted_lineage=None,
 ):
     project_dir = tmp_path / "demo_project"
     task_dir = project_dir / "mid" / "tasks"
     lineage_dir = project_dir / "artifacts" / "lineage"
     task_dir.mkdir(parents=True)
     lineage_dir.mkdir(parents=True)
-    for job_name in ("Prepare_Sales", "Build_Report"):
+    fresh_lineage = extracted_lineage or _process_lineage_payload(
+        extracted_dataset_type or dataset_type
+    )
+    task_names = {job["name"] for job in fresh_lineage["jobs"]}
+    for job_name in task_names:
         (task_dir / "{}.sql".format(job_name)).write_text(
             "SELECT 1;", encoding="utf-8"
         )
 
-    stale_lineage = _process_lineage_payload(dataset_type)
-    fresh_lineage = _process_lineage_payload(
-        extracted_dataset_type or dataset_type
+    stale_lineage = (
+        fresh_lineage
+        if extracted_lineage is not None
+        else _process_lineage_payload(dataset_type)
     )
     lineage_path = lineage_dir / "lineage_data.json"
     lineage_path.write_text(json.dumps(stale_lineage), encoding="utf-8")
-    stale_dag = task_run.JobDAG.from_jobs(
-        ["Build_Report", "Prepare_Sales"],
-        [
-            {
-                "upstream_job": "Prepare_Sales",
-                "downstream_job": "Build_Report",
-                "datasets": ["internal.demo_db.sales_stage"],
-            }
-        ],
+    stale_dag = task_run.job_dag_from_lineage(
+        stale_lineage,
+        runnable_jobs=task_names,
     )
     dag_path = lineage_dir / "job_dag.json"
     stale_dag.save(dag_path)
@@ -605,6 +681,152 @@ def test_job_list_requires_process_producer_but_not_managed_producer(
         assert "Internal.Demo_DB.Sales_Stage" in captured.out
     else:
         assert executed == ["Build_Report"]
+
+
+def test_process_plan_rejects_not_found_producer_for_selected_consumer():
+    lineage_data = _unresolved_process_lineage_payload()
+    dag = task_run.JobDAG.from_jobs(["Build_Report"], [])
+
+    with pytest.raises(ExecutionConfigError) as exc_info:
+        task_run._validate_process_plan_safety(
+            {"build_report"},
+            dag,
+            lineage_data,
+        )
+
+    message = str(exc_info.value)
+    assert "Internal.Demo_DB.Sales_Stage" in message
+    assert "not_found" in message
+    assert "Build_Report" in message
+    assert "candidate producer jobs=[]" in message
+
+
+def test_process_plan_rejects_ambiguous_producer_even_when_candidates_selected():
+    lineage_data = _unresolved_process_lineage_payload(
+        reason="multiple_candidates",
+        candidate_producer_jobs=("Producer_A", "Producer_B"),
+    )
+    dag = task_run.JobDAG.from_jobs(
+        ["Build_Report", "Producer_A", "Producer_B"],
+        [],
+    )
+
+    with pytest.raises(ExecutionConfigError) as exc_info:
+        task_run._validate_process_plan_safety(
+            {"Build_Report", "Producer_A", "Producer_B"},
+            dag,
+            lineage_data,
+        )
+
+    message = str(exc_info.value)
+    assert "multiple_candidates" in message
+    assert "Build_Report" in message
+    assert "Producer_A" in message
+    assert "Producer_B" in message
+
+
+def test_unresolved_process_diagnostic_does_not_block_unrelated_subset(
+    monkeypatch,
+    tmp_path,
+):
+    lineage_data = _unresolved_process_lineage_payload(
+        include_unrelated_job=True
+    )
+    _configure_process_plan_project(
+        monkeypatch,
+        tmp_path,
+        extracted_lineage=lineage_data,
+    )
+    executed = []
+    monkeypatch.setattr(
+        task_run,
+        "_run_job",
+        lambda _date, job_name, *args, **kwargs: executed.append(job_name),
+    )
+    monkeypatch.setattr(
+        task_run.sys,
+        "argv",
+        [
+            "task_run",
+            "--project",
+            "demo",
+            "--etl-dates",
+            "2025-01-15",
+            "--job-list",
+            "Unrelated_Job",
+        ],
+    )
+
+    assert task_run.main() == 0
+    assert executed == ["Unrelated_Job"]
+
+
+def test_managed_dataset_diagnostic_does_not_block_selected_consumer():
+    lineage_data = _unresolved_process_lineage_payload(dataset_type="managed")
+    dag = task_run.JobDAG.from_jobs(["Build_Report"], [])
+
+    task_run._validate_process_plan_safety(
+        {"Build_Report"},
+        dag,
+        lineage_data,
+    )
+
+
+def test_managed_dataset_dependency_does_not_require_selected_producer():
+    lineage_data = _process_lineage_payload("managed")
+    dag = task_run.JobDAG.from_jobs(
+        ["Build_Report", "Prepare_Sales"],
+        [
+            {
+                "upstream_job": "Prepare_Sales",
+                "downstream_job": "Build_Report",
+                "datasets": ["internal.demo_db.sales_stage"],
+            }
+        ],
+    )
+
+    task_run._validate_process_plan_safety(
+        {"Build_Report"},
+        dag,
+        lineage_data,
+    )
+
+
+def test_default_plan_rejects_unresolved_process_consumer_before_sql(
+    monkeypatch,
+    tmp_path,
+    capsys,
+):
+    lineage_data = _unresolved_process_lineage_payload()
+    _configure_process_plan_project(
+        monkeypatch,
+        tmp_path,
+        extracted_lineage=lineage_data,
+    )
+    executed = []
+    monkeypatch.setattr(
+        task_run,
+        "_run_job",
+        lambda _date, job_name, *args, **kwargs: executed.append(job_name),
+    )
+    monkeypatch.setattr(
+        task_run.sys,
+        "argv",
+        [
+            "task_run",
+            "--project",
+            "demo",
+            "--etl-dates",
+            "2025-01-15",
+        ],
+    )
+
+    assert task_run.main() == 1
+    assert executed == []
+    output = capsys.readouterr().out
+    assert "Internal.Demo_DB.Sales_Stage" in output
+    assert "not_found" in output
+    assert "Build_Report" in output
 
 
 @pytest.mark.parametrize("full_refresh", (False, True))
