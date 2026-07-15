@@ -11,6 +11,7 @@ import re
 import sys
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass, field
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
@@ -4232,8 +4233,28 @@ def build_lineage_output(
         _canonical_lineage_entry(entry, schema_lookup) for entry in all_lineage
     ]
 
+    @lru_cache(maxsize=None)
+    def cached_identifier_match_key(value):
+        return _identifier_match_key(value)
+
+    @lru_cache(maxsize=None)
+    def cached_table_identity_match_key(value):
+        return _table_identity_match_key(value)
+
+    @lru_cache(maxsize=None)
+    def cached_display_table_name(value):
+        return _display_table_name(value)
+
+    @lru_cache(maxsize=None)
+    def cached_short_table_name(value):
+        return _strip_db(value)
+
+    @lru_cache(maxsize=None)
+    def cached_column_name(value):
+        return _canonical_column(value)
+
     def _direct_source_type(entry):
-        source_type = _identifier_match_key(
+        source_type = cached_identifier_match_key(
             entry.get("source_type") or "column"
         )
         if source_type in {"literal", "expression"}:
@@ -4253,14 +4274,14 @@ def build_lineage_output(
     edge_column_displays = {}
 
     def remember_edge_ref(table_name, column_name=""):
-        table_display = _strip_db(table_name)
+        table_display = cached_short_table_name(table_name)
         if not table_display or table_display == "UNKNOWN":
             return
-        table_key = _table_identity_match_key(table_display)
+        table_key = cached_table_identity_match_key(table_display)
         edge_table_displays.setdefault(table_key, table_display)
-        column_display = _canonical_column(column_name)
+        column_display = cached_column_name(column_name)
         if column_display:
-            column_key = _identifier_match_key(column_display)
+            column_key = cached_identifier_match_key(column_display)
             edge_column_displays.setdefault(
                 (table_key, column_key),
                 (table_display, column_display),
@@ -4285,13 +4306,13 @@ def build_lineage_output(
         )
     else:
         task_results = list(task_results)
-    jobs = build_job_records(task_results, _display_table_name)
+    jobs = build_job_records(task_results, cached_display_table_name)
     jobs_by_source_file = {
         _source_file_match_key(job["source_file"]): job["name"] for job in jobs
     }
 
     def entry_job_key(entry):
-        return _identifier_match_key(
+        return cached_identifier_match_key(
             _job_for_lineage_entry(entry, jobs_by_source_file)
         )
 
@@ -4303,8 +4324,8 @@ def build_lineage_output(
             return (source_type, entry.get("source_expression", ""))
         return (
             source_type,
-            _table_identity_match_key(entry.get("source_table", "")),
-            _identifier_match_key(entry.get("source_column", "")),
+            cached_table_identity_match_key(entry.get("source_table", "")),
+            cached_identifier_match_key(entry.get("source_column", "")),
         )
 
     def direct_semantic_key(entry):
@@ -4312,8 +4333,8 @@ def build_lineage_output(
             "direct",
             entry_job_key(entry),
             direct_source_key(entry),
-            _table_identity_match_key(entry.get("target_table", "")),
-            _identifier_match_key(entry.get("target_column", "")),
+            cached_table_identity_match_key(entry.get("target_table", "")),
+            cached_identifier_match_key(entry.get("target_column", "")),
             _direct_transformation(entry),
             entry.get("expression", ""),
         )
@@ -4326,9 +4347,9 @@ def build_lineage_output(
             key = (
                 "indirect",
                 entry_job_key(e),
-                _table_identity_match_key(e.get("source_table", "")),
-                _identifier_match_key(e.get("source_column", "")),
-                _table_identity_match_key(e.get("target_table", "")),
+                cached_table_identity_match_key(e.get("source_table", "")),
+                cached_identifier_match_key(e.get("source_column", "")),
+                cached_table_identity_match_key(e.get("target_table", "")),
                 _relation_type_for_condition(e.get("condition_type", "")),
                 e.get("condition_expression", ""),
             )
@@ -4354,6 +4375,9 @@ def build_lineage_output(
             e.get("expression", ""),
         ),
     )
+    # Avoid retaining large build-only indexes through edge serialization and
+    # strict contract validation, where peak memory is otherwise highest.
+    del seen, unique
 
     direct_entries = [
         e for e in all_lineage if e.get("lineage_type") != "indirect"
@@ -4372,15 +4396,16 @@ def build_lineage_output(
     column_objects_by_table = {}
 
     def _schema_column_type(tbl, col):
-        tbl = _strip_db(tbl)
-        col = _canonical_column(col)
+        tbl = cached_short_table_name(tbl)
+        col = cached_column_name(col)
         return schema_type_by_table_col.get((tbl, col), "UNKNOWN")
 
+    @lru_cache(maxsize=None)
     def _table_storage_key(tbl):
-        return _table_identity_match_key(_display_table_name(tbl))
+        return cached_table_identity_match_key(cached_display_table_name(tbl))
 
     managed_table_keys = {
-        _table_identity_match_key(_display_table_name(table_name))
+        _table_storage_key(table_name)
         for table_name in schema_columns_by_table
     }
     process_table_keys = set()
@@ -4388,10 +4413,10 @@ def build_lineage_output(
     table_names_by_key = {}
 
     def _remember_table_name(table_name):
-        displayed = _display_table_name(table_name)
+        displayed = cached_display_table_name(table_name)
         if not displayed:
             return None
-        table_key = _table_identity_match_key(displayed)
+        table_key = cached_table_identity_match_key(displayed)
         table_names_by_key.setdefault(table_key, displayed)
         return table_key
 
@@ -4435,9 +4460,10 @@ def build_lineage_output(
         target_key = _remember_table_name(entry.get("target_table"))
         if target_key is not None and target_key not in temporary_table_keys:
             process_table_keys.add(target_key)
+    del all_lineage, task_results
 
     def _dataset_type(tbl):
-        table_key = _table_identity_match_key(_display_table_name(tbl))
+        table_key = _table_storage_key(tbl)
         if table_key in managed_table_keys:
             return "managed"
         if table_key in process_table_keys:
@@ -4450,7 +4476,7 @@ def build_lineage_output(
         table_key = _table_storage_key(tbl)
         if table_key not in column_objects_by_table:
             column_objects_by_table[table_key] = {
-                _identifier_match_key(c["name"]): c
+                cached_identifier_match_key(c["name"]): c
                 for c in tables[table_key]["columns"]
             }
             column_names_by_table[table_key] = set(
@@ -4462,14 +4488,14 @@ def build_lineage_output(
         )
 
     def _ensure_table(tbl):
-        tbl = _strip_db(tbl)
+        tbl = cached_short_table_name(tbl)
         if not tbl:
             return
         table_key = _table_storage_key(tbl)
         if table_key not in tables:
             tables[table_key] = {
                 "name": tbl,
-                "full_name": _display_table_name(tbl),
+                "full_name": cached_display_table_name(tbl),
                 "dataset_type": _dataset_type(tbl),
                 "columns": [],
             }
@@ -4477,13 +4503,13 @@ def build_lineage_output(
             column_objects_by_table[table_key] = {}
 
     def _ensure_column(tbl, col):
-        tbl = _strip_db(tbl)
-        col = _canonical_column(col)
+        tbl = cached_short_table_name(tbl)
+        col = cached_column_name(col)
         if not tbl or not col:
             return
         _ensure_table(tbl)
         column_names, column_objects = _ensure_column_index(tbl)
-        column_key = _identifier_match_key(col)
+        column_key = cached_identifier_match_key(col)
         if column_key not in column_names:
             column = {"name": col, "type": _schema_column_type(tbl, col)}
             tables[_table_storage_key(tbl)]["columns"].append(column)
@@ -4495,7 +4521,7 @@ def build_lineage_output(
 
     def _stored_column_name(tbl, col):
         return column_objects_by_table[_table_storage_key(tbl)][
-            _identifier_match_key(col)
+            cached_identifier_match_key(col)
         ]["name"]
 
     for table_display in edge_table_displays.values():
@@ -4512,14 +4538,14 @@ def build_lineage_output(
         return _column_source(source_table, source_column)
 
     for entry in direct_entries:
-        tgt_tbl = _strip_db(entry.get("target_table", ""))
-        tgt_col = _canonical_column(entry.get("target_column", ""))
+        tgt_tbl = cached_short_table_name(entry.get("target_table", ""))
+        tgt_col = cached_column_name(entry.get("target_column", ""))
         source_type = _direct_source_type(entry)
         displayed_src_tbl = ""
         displayed_src_col = ""
         if source_type == "column":
-            src_tbl = _strip_db(entry.get("source_table", ""))
-            src_col = _canonical_column(entry.get("source_column", ""))
+            src_tbl = cached_short_table_name(entry.get("source_table", ""))
+            src_col = cached_column_name(entry.get("source_column", ""))
             if src_tbl == "UNKNOWN":
                 continue
             _ensure_column(src_tbl, src_col)
@@ -4552,9 +4578,9 @@ def build_lineage_output(
         )
 
     for entry in indirect_entries:
-        src_tbl = _strip_db(entry.get("source_table", ""))
-        src_col = _canonical_column(entry.get("source_column", ""))
-        tgt_tbl = _strip_db(entry.get("target_table", ""))
+        src_tbl = cached_short_table_name(entry.get("source_table", ""))
+        src_col = cached_column_name(entry.get("source_column", ""))
+        tgt_tbl = cached_short_table_name(entry.get("target_table", ""))
         if src_tbl == "UNKNOWN":
             continue
         _ensure_column(src_tbl, src_col)
@@ -4581,6 +4607,7 @@ def build_lineage_output(
                 ),
             }
         )
+    del direct_entries, indirect_entries
 
     for table_name in table_names_by_key.values():
         _ensure_table(table_name)
@@ -4593,7 +4620,7 @@ def build_lineage_output(
         if _table_storage_key(tbl_name) in tables:
             column_names, column_objects = _ensure_column_index(tbl_name)
             for col_name, col_type in cols:
-                column_key = _identifier_match_key(col_name)
+                column_key = cached_identifier_match_key(col_name)
                 if column_key not in column_names:
                     column = {"name": col_name, "type": col_type}
                     tables[_table_storage_key(tbl_name)]["columns"].append(
@@ -4606,11 +4633,11 @@ def build_lineage_output(
 
     serialized_tables = sorted(
         tables.values(),
-        key=lambda table: _table_identity_match_key(table["full_name"]),
+        key=lambda table: cached_table_identity_match_key(table["full_name"]),
     )
     for table in serialized_tables:
         table["columns"].sort(
-            key=lambda column: _identifier_match_key(column["name"])
+            key=lambda column: cached_identifier_match_key(column["name"])
         )
 
     if diagnostics is None:
@@ -4630,7 +4657,7 @@ def build_lineage_output(
         "edges": sorted(
             edges,
             key=lambda e: (
-                _identifier_match_key(e["job"]),
+                cached_identifier_match_key(e["job"]),
                 e.get("relation_type", ""),
                 _target_sort_key(e.get("target")),
                 _source_sort_key(e.get("source")),
