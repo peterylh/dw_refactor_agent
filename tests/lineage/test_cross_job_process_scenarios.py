@@ -184,17 +184,35 @@ def test_cross_job_process_scenario_is_queryable_and_schedulable(
         }
     ]
 
+    view = LineageView.from_data(scenario.project, data)
+    target_column = f"{scenario.target_table}.{scenario.target_column}"
+    matching_records = [
+        record
+        for record in view.column_lineage_for_table(scenario.target_table)
+        if record["source"] == scenario.upstream_column
+        and record["target"] == target_column
+        and scenario.process_column in record.get("transient_path", [])
+    ]
+    assert len(matching_records) == 1
+    assert {
+        step["job"] for step in matching_records[0]["expression_chain"]
+    } == {scenario.producer_job, scenario.consumer_job}
+
     target_lineage = build_column_lineage(
-        LineageView.from_data(scenario.project, data),
+        view,
         scenario.target_table,
         scenario.target_column,
         direction="upstream",
         depth=4,
     )
-    required_columns = {scenario.upstream_column, scenario.process_column}
+    required_columns = {scenario.upstream_column, target_column}
     assert any(
         required_columns <= set(path.nodes) for path in target_lineage.paths
     )
+    assert target_lineage.jobs == {
+        scenario.producer_job,
+        scenario.consumer_job,
+    }
 
 
 @pytest.mark.parametrize(
