@@ -1,6 +1,7 @@
 import copy
 import importlib.util
 import re
+import shutil
 import sys
 from datetime import date, timedelta
 from pathlib import Path
@@ -235,6 +236,39 @@ def test_retail_banking_dws_and_ads_use_explicit_reviewed_semantics():
     assert "coalesce(src.`journal_entry_created`, false) = false" in (
         provision_monitor_sql
     )
+
+
+def test_retail_generator_preserves_process_handoff_tasks(
+    monkeypatch, tmp_path
+):
+    generated_project = tmp_path / "retail_banking"
+    shutil.copytree(PROJECT_DIR, generated_project)
+    generator = _load_tool(
+        "retail_asset_generator_process_handoff", "generate_assets.py"
+    )
+    monkeypatch.setattr(generator, "PROJECT_DIR", generated_project)
+    monkeypatch.setattr(
+        generator,
+        "SEMANTIC_SPEC_DIR",
+        generated_project / "semantic_specs",
+    )
+    monkeypatch.setattr(generator, "REPOSITORY_ROOT", tmp_path)
+
+    generator.generate()
+
+    task_paths = (
+        "mid/tasks/dws_client_transaction_daily.sql",
+        "mid/tasks/full_refresh/dws_client_transaction_daily_full_refresh.sql",
+        "ads/tasks/ads_customer_transaction_kpi_daily.sql",
+        (
+            "ads/tasks/full_refresh/"
+            "ads_customer_transaction_kpi_daily_full_refresh.sql"
+        ),
+    )
+    for relative_path in task_paths:
+        assert (generated_project / relative_path).read_text(
+            encoding="utf-8"
+        ) == (PROJECT_DIR / relative_path).read_text(encoding="utf-8")
 
 
 def test_retail_banking_current_state_snapshots_retain_daily_slices():

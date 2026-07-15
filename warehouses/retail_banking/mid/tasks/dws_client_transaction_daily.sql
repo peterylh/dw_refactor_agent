@@ -3,7 +3,9 @@ SET @etl_date = COALESCE(@etl_date, CURDATE());
 -- Human-reviewed aggregation from dwd_client_transaction
 DROP TABLE IF EXISTS retail_banking_dm.stage_client_transaction_daily;
 
-CREATE TABLE retail_banking_dm.stage_client_transaction_daily AS
+CREATE TABLE retail_banking_dm.stage_client_transaction_daily
+PROPERTIES ("replication_num" = "1")
+AS
 SELECT
     DATE(src.`transaction_date`) AS `stat_date`,
     src.`office_id` AS `office_id`,

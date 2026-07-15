@@ -4,7 +4,9 @@ SET @etl_end_date = COALESCE(@etl_end_date, @etl_start_date, CURDATE());
 
 DROP TABLE IF EXISTS shop_dm.stage_store_sales_daily;
 
-CREATE TABLE shop_dm.stage_store_sales_daily AS
+CREATE TABLE shop_dm.stage_store_sales_daily
+PROPERTIES ("replication_num" = "1")
+AS
 SELECT
     store_id,
     order_date AS stat_date,

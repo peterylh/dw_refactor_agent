@@ -137,6 +137,19 @@ def test_semantic_spec_sources_resolve_to_physical_or_canonical_assets():
             )
 
 
+def test_process_table_handoff_is_declared_once_on_its_dws_source():
+    spec = _load_yaml(SPEC_PATH)
+
+    assert {
+        table["name"]: table["process_table_handoff"]
+        for table in spec["dws"]
+        if table.get("process_table_handoff")
+    } == {
+        "dws_client_transaction_daily": "stage_client_transaction_daily",
+    }
+    assert all("process_table_handoff" not in table for table in spec["ads"])
+
+
 def test_canonical_processes_are_closed_over_business_process_catalog():
     spec = _load_yaml(SPEC_PATH)
     catalog = _load_yaml(PROJECT_ROOT / "business_processes.yaml")

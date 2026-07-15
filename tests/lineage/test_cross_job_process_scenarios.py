@@ -1,3 +1,4 @@
+import re
 from dataclasses import dataclass
 from typing import Dict, Iterator, Sequence, Set, Tuple
 
@@ -253,6 +254,43 @@ def test_full_refresh_companions_preserve_base_task_io(
                 and "@etl_end_date" in expression
                 for expression in condition_expressions
             )
+
+
+@pytest.mark.parametrize(
+    ("project", "relative_path", "process_table"),
+    [
+        (scenario.project, relative_path, scenario.process_table)
+        for scenario in SCENARIOS
+        for relative_path in (
+            scenario.producer_path,
+            scenario.companions[0],
+        )
+    ],
+    ids=("shop-slice", "shop-window", "retail-slice", "retail-window"),
+)
+def test_process_producer_ctas_is_one_replica_and_immutable(
+    project: str,
+    relative_path: str,
+    process_table: str,
+) -> None:
+    project_path = configured_project_dir(project)
+    assert project_path is not None
+    sql = (project_path / relative_path).read_text(encoding="utf-8")
+    ctas = re.search(
+        rf"CREATE\s+TABLE\s+{re.escape(process_table)}\s+"
+        r'PROPERTIES\s*\(\s*"replication_num"\s*=\s*"1"\s*\)\s+AS\b',
+        sql,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+
+    assert ctas is not None
+    assert not re.search(
+        rf"\b(?:DELETE\s+FROM|UPDATE|TRUNCATE\s+TABLE|INSERT\s+INTO|"
+        rf"ALTER\s+TABLE|DROP\s+TABLE(?:\s+IF\s+EXISTS)?)\s+"
+        rf"{re.escape(process_table)}\b",
+        sql[ctas.end() :],
+        flags=re.IGNORECASE,
+    )
 
 
 @pytest.mark.parametrize(

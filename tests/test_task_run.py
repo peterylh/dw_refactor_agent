@@ -1,6 +1,7 @@
 import json
 import os
 import subprocess
+from contextlib import contextmanager
 from datetime import date, timedelta
 
 import pytest
@@ -870,3 +871,234 @@ def test_dag_refresh_compares_explicit_v2_job_set_case_insensitively():
         )
         is True
     )
+
+
+def _configure_process_plan_project(
+    monkeypatch,
+    tmp_path,
+    *,
+    dataset_type="process",
+):
+    project_dir = tmp_path / "demo_project"
+    task_dir = project_dir / "mid" / "tasks"
+    lineage_dir = project_dir / "artifacts" / "lineage"
+    task_dir.mkdir(parents=True)
+    lineage_dir.mkdir(parents=True)
+    for job_name in ("Prepare_Sales", "Build_Report"):
+        (task_dir / "{}.sql".format(job_name)).write_text(
+            "SELECT 1;", encoding="utf-8"
+        )
+
+    process_dataset = "Internal.Demo_DB.Sales_Stage"
+    lineage_data = {
+        "format_version": 2,
+        "tables": [
+            {
+                "name": "Sales_Stage",
+                "full_name": process_dataset,
+                "dataset_type": dataset_type,
+                "columns": [],
+            },
+            {
+                "name": "Sales_Report",
+                "full_name": "internal.demo_db.sales_report",
+                "dataset_type": "managed",
+                "columns": [],
+            },
+        ],
+        "jobs": [
+            {
+                "name": "Build_Report",
+                "source_file": "mid/tasks/Build_Report.sql",
+                "inputs": [process_dataset],
+                "outputs": ["internal.demo_db.sales_report"],
+            },
+            {
+                "name": "Prepare_Sales",
+                "source_file": "mid/tasks/Prepare_Sales.sql",
+                "inputs": [],
+                "outputs": [process_dataset],
+            },
+        ],
+        "edges": [],
+        "diagnostics": [],
+    }
+    (lineage_dir / "lineage_data.json").write_text(
+        json.dumps(lineage_data), encoding="utf-8"
+    )
+    task_run.JobDAG.from_jobs(
+        ["Build_Report", "Prepare_Sales"],
+        [
+            {
+                "upstream_job": "Prepare_Sales",
+                "downstream_job": "Build_Report",
+                "datasets": ["internal.demo_db.sales_stage"],
+            }
+        ],
+    ).save(lineage_dir / "job_dag.json")
+
+    monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setitem(
+        task_run.PROJECT_CONFIG,
+        "demo",
+        {
+            "dir": "demo_project",
+            "db": "demo_db",
+            "qa_db": "demo_db_qa",
+        },
+    )
+    monkeypatch.setattr(task_run, "get_mysql_cmd", lambda _: ["mysql"])
+    monkeypatch.setattr(task_run, "ExecutionPlanner", lambda _: object())
+    monkeypatch.setattr(
+        task_run, "_validate_execution_plan", lambda *args, **kwargs: 0
+    )
+
+
+@pytest.mark.parametrize(
+    ("dataset_type", "expected_status"),
+    (("process", 1), ("managed", 0)),
+)
+def test_job_list_requires_process_producer_but_not_managed_producer(
+    monkeypatch,
+    tmp_path,
+    capsys,
+    dataset_type,
+    expected_status,
+):
+    _configure_process_plan_project(
+        monkeypatch,
+        tmp_path,
+        dataset_type=dataset_type,
+    )
+    executed = []
+    monkeypatch.setattr(
+        task_run,
+        "_run_job",
+        lambda _date, job_name, *args, **kwargs: executed.append(job_name),
+    )
+
+    @contextmanager
+    def available_lock(_project):
+        yield
+
+    monkeypatch.setattr(
+        task_run, "project_run_lock", available_lock, raising=False
+    )
+    monkeypatch.setattr(
+        task_run.sys,
+        "argv",
+        [
+            "task_run",
+            "--project",
+            "demo",
+            "--etl-dates",
+            "2025-01-15",
+            "--job-list",
+            "build_report",
+        ],
+    )
+
+    assert task_run.main() == expected_status
+    captured = capsys.readouterr()
+    if dataset_type == "process":
+        assert executed == []
+        assert "Prepare_Sales" in captured.out
+        assert "Build_Report" in captured.out
+        assert "Internal.Demo_DB.Sales_Stage" in captured.out
+    else:
+        assert executed == ["Build_Report"]
+
+
+@pytest.mark.parametrize("full_refresh", (False, True))
+def test_task_run_locks_actual_execution_but_not_validation(
+    monkeypatch,
+    tmp_path,
+    full_refresh,
+):
+    _configure_process_plan_project(monkeypatch, tmp_path)
+    lock_entries = []
+    executed = []
+
+    @contextmanager
+    def recording_lock(project):
+        lock_entries.append(project)
+        yield
+
+    monkeypatch.setattr(
+        task_run, "project_run_lock", recording_lock, raising=False
+    )
+    monkeypatch.setattr(
+        task_run,
+        "_run_job",
+        lambda _date, job_name, *args, **kwargs: executed.append(job_name),
+    )
+    monkeypatch.setattr(
+        task_run,
+        "_run_job_full_refresh",
+        lambda job_name, *args, **kwargs: executed.append(job_name),
+    )
+    base_argv = [
+        "task_run",
+        "--project",
+        "demo",
+        "--etl-dates",
+        "2025-01-15",
+        "--job-list",
+        "Prepare_Sales",
+        "Build_Report",
+    ]
+    if full_refresh:
+        base_argv.append("--full-refresh")
+
+    monkeypatch.setattr(task_run.sys, "argv", base_argv)
+    assert task_run.main() == 0
+    monkeypatch.setattr(task_run.sys, "argv", base_argv + ["--validate-only"])
+    assert task_run.main() == 0
+
+    assert lock_entries == ["demo"]
+    assert executed == ["Prepare_Sales", "Build_Report"]
+
+
+def test_task_run_rejects_busy_project_lock_before_sql(
+    monkeypatch,
+    tmp_path,
+    capsys,
+):
+    _configure_process_plan_project(monkeypatch, tmp_path)
+    executed = []
+
+    class BusyLockError(RuntimeError):
+        pass
+
+    @contextmanager
+    def busy_lock(_project):
+        raise BusyLockError("project demo is already executing SQL")
+        yield
+
+    monkeypatch.setattr(
+        task_run, "ProjectRunLockError", BusyLockError, raising=False
+    )
+    monkeypatch.setattr(task_run, "project_run_lock", busy_lock, raising=False)
+    monkeypatch.setattr(
+        task_run,
+        "_run_job",
+        lambda _date, job_name, *args, **kwargs: executed.append(job_name),
+    )
+    monkeypatch.setattr(
+        task_run.sys,
+        "argv",
+        [
+            "task_run",
+            "--project",
+            "demo",
+            "--etl-dates",
+            "2025-01-15",
+            "--job-list",
+            "Prepare_Sales",
+            "Build_Report",
+        ],
+    )
+
+    assert task_run.main() == 1
+    assert executed == []
+    assert "project demo is already executing SQL" in capsys.readouterr().out

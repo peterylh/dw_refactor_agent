@@ -1730,14 +1730,10 @@ def _render_reviewed_dws_task(
     parameter_sql: str,
     reset_sql: str,
     conditions: list[str],
+    process_table_handoff: Optional[str] = None,
 ) -> str:
-    return (
-        parameter_sql
-        + f"-- Human-reviewed aggregation from {', '.join(source_names)}\n"
-        f"{reset_sql}\n\n"
-        f"INSERT INTO {DATABASE}.{name} (\n    "
-        + ",\n    ".join(f"`{item}`" for item in insert_names)
-        + "\n)\nSELECT\n    "
+    aggregate_select = (
+        "SELECT\n    "
         + ",\n    ".join(select_parts)
         + f"\nFROM {DATABASE}.{source_names[0]} AS src\n"
         + (f"{joins}\n" if joins else "")
@@ -1746,6 +1742,33 @@ def _render_reviewed_dws_task(
         + "\nGROUP BY\n    "
         + ",\n    ".join(group_by_expressions)
         + ";\n"
+    )
+    if process_table_handoff:
+        return (
+            parameter_sql
+            + f"-- Human-reviewed aggregation from {', '.join(source_names)}\n"
+            f"DROP TABLE IF EXISTS {DATABASE}.{process_table_handoff};\n\n"
+            f"CREATE TABLE {DATABASE}.{process_table_handoff}\n"
+            'PROPERTIES ("replication_num" = "1")\n'
+            "AS\n"
+            + aggregate_select
+            + "\n"
+            + reset_sql
+            + "\n\n"
+            + f"INSERT INTO {DATABASE}.{name} (\n    "
+            + ",\n    ".join(f"`{item}`" for item in insert_names)
+            + "\n)\nSELECT\n    "
+            + ",\n    ".join(f"src.`{item}`" for item in insert_names)
+            + f"\nFROM {DATABASE}.{process_table_handoff} AS src;\n"
+        )
+    return (
+        parameter_sql
+        + f"-- Human-reviewed aggregation from {', '.join(source_names)}\n"
+        f"{reset_sql}\n\n"
+        f"INSERT INTO {DATABASE}.{name} (\n    "
+        + ",\n    ".join(f"`{item}`" for item in insert_names)
+        + "\n)\n"
+        + aggregate_select
     )
 
 
@@ -2023,6 +2046,7 @@ def generate_summaries(
             ),
             reset_sql=reset_sql,
             conditions=conditions,
+            process_table_handoff=spec.get("process_table_handoff"),
         )
         _write(PROJECT_DIR / "mid/tasks" / f"{name}.sql", task)
         if supports_daily_slice:
@@ -2046,6 +2070,7 @@ def generate_summaries(
                     parameter_sql=_full_refresh_window_setup(),
                     reset_sql=f"TRUNCATE TABLE {DATABASE}.{name};",
                     conditions=full_conditions,
+                    process_table_handoff=spec.get("process_table_handoff"),
                 ),
             )
         result[name] = (mapping, columns)
@@ -2117,7 +2142,7 @@ def _ads_task(
 def _render_reviewed_ads_task(
     *,
     ads_name: str,
-    dws_name: str,
+    source_name: str,
     insert_names: list[str],
     select_parts: list[str],
     grain_columns: list[str],
@@ -2128,13 +2153,13 @@ def _render_reviewed_ads_task(
 ) -> str:
     return (
         parameter_sql
-        + f"-- Reviewed application metrics derived from {DATABASE}.{dws_name}\n"
+        + f"-- Reviewed application metrics derived from {DATABASE}.{source_name}\n"
         f"{reset_sql}\n\n"
         f"INSERT INTO {DATABASE}.{ads_name} (\n    "
         + ",\n    ".join(f"`{name}`" for name in insert_names)
         + "\n)\nSELECT\n    "
         + ",\n    ".join(select_parts)
-        + f"\nFROM {DATABASE}.{dws_name} AS src"
+        + f"\nFROM {DATABASE}.{source_name} AS src"
         + where_sql
         + (
             "\nGROUP BY\n    "
@@ -2160,6 +2185,9 @@ def generate_ads(
         [ddl_root, model_root, task_root, task_root / "full_refresh"]
     )
     payload = _dws_ads_specs()
+    dws_specs_by_name = {
+        str(item["name"]): item for item in payload.get("dws") or []
+    }
     generated_names: set[str] = set()
     for spec in payload.get("ads") or []:
         ads_name = str(spec["name"])
@@ -2169,6 +2197,10 @@ def generate_ads(
                 f"ADS {ads_name} has unavailable sources: {source_names}"
             )
         dws_name = source_names[0]
+        dws_spec = dws_specs_by_name[dws_name]
+        task_source_name = str(
+            dws_spec.get("process_table_handoff") or dws_name
+        )
         item = summaries[dws_name]
         mapping, columns = item
         dws_model = _load_yaml(PROJECT_DIR / "mid/models" / f"{dws_name}.yaml")
@@ -2353,7 +2385,7 @@ def generate_ads(
         )
         task_sql = _render_reviewed_ads_task(
             ads_name=ads_name,
-            dws_name=dws_name,
+            source_name=task_source_name,
             insert_names=insert_names,
             select_parts=select_parts,
             grain_columns=grain_columns,
@@ -2379,7 +2411,7 @@ def generate_ads(
                 task_root / "full_refresh" / f"{ads_name}_full_refresh.sql",
                 _render_reviewed_ads_task(
                     ads_name=ads_name,
-                    dws_name=dws_name,
+                    source_name=task_source_name,
                     insert_names=insert_names,
                     select_parts=select_parts,
                     grain_columns=grain_columns,

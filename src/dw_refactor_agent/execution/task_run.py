@@ -39,6 +39,10 @@ from dw_refactor_agent.execution.date_window import resolve_etl_dates
 from dw_refactor_agent.execution.invocation import TaskInvocation
 from dw_refactor_agent.execution.model_config import ExecutionConfigError
 from dw_refactor_agent.execution.planner import ExecutionPlanner, TaskSpec
+from dw_refactor_agent.execution.run_lock import (
+    ProjectRunLockError,
+    project_run_lock,
+)
 from dw_refactor_agent.execution.sql_executor import DirectSqlExecutor
 from dw_refactor_agent.execution.thread_pool import shutdown_executor
 from dw_refactor_agent.lineage.identifiers import (
@@ -126,6 +130,65 @@ def _resolve_requested_jobs(
     return resolved, sorted(set(missing), key=identifier_match_key)
 
 
+def _validate_process_dependency_closure(
+    job_set: set[str],
+    dag: JobDAG,
+    lineage_data: dict,
+) -> None:
+    """Require selected process consumers to include their resolved producer."""
+    if dag.format_version != 2:
+        return
+    selected_job_keys = {identifier_match_key(job) for job in job_set}
+    unclosed_dependencies = [
+        dependency
+        for dependency in dag.data_dependencies
+        if identifier_match_key(dependency["downstream_job"])
+        in selected_job_keys
+        and identifier_match_key(dependency["upstream_job"])
+        not in selected_job_keys
+    ]
+    if not unclosed_dependencies:
+        return
+    if lineage_data.get("format_version") != 2:
+        raise ExecutionConfigError(
+            "cannot validate --job-list process dependencies without "
+            "lineage v2 table metadata; regenerate lineage"
+        )
+
+    process_tables_by_key = {
+        table_identity_match_key(table["full_name"]): table["full_name"]
+        for table in lineage_data.get("tables") or []
+        if table.get("full_name") and table.get("dataset_type") == "process"
+    }
+    missing = []
+    for dependency in unclosed_dependencies:
+        upstream_job = dependency["upstream_job"]
+        downstream_job = dependency["downstream_job"]
+        for dataset in dependency["datasets"]:
+            process_dataset = process_tables_by_key.get(
+                table_identity_match_key(dataset)
+            )
+            if process_dataset:
+                missing.append((upstream_job, downstream_job, process_dataset))
+
+    if not missing:
+        return
+    missing.sort(
+        key=lambda item: (
+            identifier_match_key(item[1]),
+            identifier_match_key(item[0]),
+            table_identity_match_key(item[2]),
+        )
+    )
+    details = "; ".join(
+        "producer={!r}, consumer={!r}, process dataset={!r}".format(*item)
+        for item in missing
+    )
+    raise ExecutionConfigError(
+        "incomplete --job-list process-table dependency: {}".format(details)
+    )
+
+
 def _job_model_names_from_lineage(lineage_data: dict) -> dict[str, str]:
     if lineage_data.get("format_version") != 2:
         return {}
@@ -154,12 +217,11 @@ def _job_model_names_from_lineage(lineage_data: dict) -> dict[str, str]:
     return model_names
 
 
-def _load_job_model_names(project: str) -> dict[str, str]:
+def _load_lineage_data(project: str) -> dict:
     lineage_path = _resolve_lineage_data_file(project)
     if not lineage_path.exists():
         return {}
-    lineage_data = json.loads(lineage_path.read_text(encoding=TEXT_ENCODING))
-    return _job_model_names_from_lineage(lineage_data)
+    return json.loads(lineage_path.read_text(encoding=TEXT_ENCODING))
 
 
 def _task_spec(
@@ -543,7 +605,8 @@ def main():
         return 1
 
     try:
-        model_names_by_job = _load_job_model_names(project)
+        lineage_data = _load_lineage_data(project)
+        model_names_by_job = _job_model_names_from_lineage(lineage_data)
     except ExecutionConfigError as e:
         print(f"错误: {e}")
         sys.exit(1)
@@ -553,6 +616,11 @@ def main():
         if missing:
             print(f"错误: 以下作业不存在: {sorted(missing)}")
             sys.exit(1)
+        try:
+            _validate_process_dependency_closure(job_set, dag, lineage_data)
+        except ExecutionConfigError as e:
+            print(f"错误: {e}")
+            return 1
     else:
         job_set = set(task_files.keys())
 
@@ -608,24 +676,29 @@ def main():
         if args.validate_only:
             print("执行计划校验通过，未执行 SQL")
             return 0
-        for job_name in exec_order:
-            try:
-                _run_job_full_refresh(
-                    job_name,
-                    task_files[job_name],
-                    mysql_cmd,
-                    db_name,
-                    planner,
-                    all_dates,
-                    model_names_by_job,
-                )
-            except (
-                subprocess.TimeoutExpired,
-                RuntimeError,
-                ExecutionConfigError,
-            ) as e:
-                print(f"  {e}")
-                sys.exit(1)
+        try:
+            with project_run_lock(project):
+                for job_name in exec_order:
+                    try:
+                        _run_job_full_refresh(
+                            job_name,
+                            task_files[job_name],
+                            mysql_cmd,
+                            db_name,
+                            planner,
+                            all_dates,
+                            model_names_by_job,
+                        )
+                    except (
+                        subprocess.TimeoutExpired,
+                        RuntimeError,
+                        ExecutionConfigError,
+                    ) as e:
+                        print(f"  {e}")
+                        sys.exit(1)
+        except ProjectRunLockError as e:
+            print(f"错误: {e}")
+            return 1
         print(f"\n{'=' * 60}")
         print(f"全部完成! 共执行 {len(exec_order)} 个作业 (全量刷新)")
         return 0
@@ -648,44 +721,49 @@ def main():
         print("执行计划校验通过，未执行 SQL")
         return 0
 
-    for etl_date in regular_dates:
-        print(f"\n{'=' * 60}")
-        print(f"执行日期: {etl_date}  (并行度: {parallel})")
-        print(f"{'=' * 60}")
-        if parallel == 1:
-            for job_name in exec_order:
-                try:
-                    _run_job(
+    try:
+        with project_run_lock(project):
+            for etl_date in regular_dates:
+                print(f"\n{'=' * 60}")
+                print(f"执行日期: {etl_date}  (并行度: {parallel})")
+                print(f"{'=' * 60}")
+                if parallel == 1:
+                    for job_name in exec_order:
+                        try:
+                            _run_job(
+                                etl_date,
+                                job_name,
+                                task_files[job_name],
+                                mysql_cmd,
+                                db_name,
+                                planner,
+                                args.skip_unsupported_history,
+                                model_names_by_job,
+                            )
+                        except (
+                            subprocess.TimeoutExpired,
+                            RuntimeError,
+                            ExecutionConfigError,
+                        ) as e:
+                            print(f"  {e}")
+                            sys.exit(1)
+                else:
+                    _run_parallel(
                         etl_date,
-                        job_name,
-                        task_files[job_name],
+                        job_set,
+                        task_files,
+                        in_degree,
+                        adj,
                         mysql_cmd,
                         db_name,
+                        parallel,
                         planner,
                         args.skip_unsupported_history,
                         model_names_by_job,
                     )
-                except (
-                    subprocess.TimeoutExpired,
-                    RuntimeError,
-                    ExecutionConfigError,
-                ) as e:
-                    print(f"  {e}")
-                    sys.exit(1)
-        else:
-            _run_parallel(
-                etl_date,
-                job_set,
-                task_files,
-                in_degree,
-                adj,
-                mysql_cmd,
-                db_name,
-                parallel,
-                planner,
-                args.skip_unsupported_history,
-                model_names_by_job,
-            )
+    except ProjectRunLockError as e:
+        print(f"错误: {e}")
+        return 1
 
     total_jobs = planned_invocation_count
     print(f"\n{'=' * 60}")

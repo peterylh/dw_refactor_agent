@@ -141,6 +141,11 @@ done
 - `--validate-only`：仅构建并校验完整计划，不执行 SQL
 - `--skip-unsupported-history`：历史补跑时跳过不支持非当天回放的 current-state 作业
 
+实际 SQL 执行会在项目 `artifacts/execution/task_run.lock` 上持有非阻塞 advisory
+file lock，覆盖完整 producer→consumer 运行；同一项目的重叠运行会在首个 SQL 写入前失败，
+`--validate-only` 不加锁。分布式调度器必须共享该 lock 文件系统，或在外部实施等价的
+项目级互斥。
+
 示例：
 
 ```bash
