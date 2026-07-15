@@ -2,9 +2,12 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
+import hmac
 import json
 import os
 import re
+import secrets
 import shutil
 import sys
 import tempfile
@@ -22,12 +25,19 @@ if str(REPO_ROOT) not in sys.path:
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
+from dw_refactor_agent.assessment.llm.table_inspector import (  # noqa: E402
+    METRIC_CONTEXT_REINSPECTION_ERROR_KEY,
+    normalize_chat_completions_url,
+)
+
 DEFAULT_PROJECTS = ("shop", "finance_analytics")
 DEFAULT_MODEL = "deepseek-v4-pro"
 DEFAULT_BASE_URL = "https://api.deepseek.com"
 DEFAULT_PARALLELISM = 4
 DEFAULT_MAX_RETRIES = 1
 DEFAULT_REQUEST_TIMEOUT = 240
+ANONYMOUS_ALIAS_DIGEST_LENGTH = 8
+ANONYMOUS_ALIAS_SALT_BYTES = 32
 CATALOG = "internal"
 LAYER_PREFIXES = ("ods_", "dwd_", "dws_", "ads_", "dim_")
 FIXED_LAYERS = {"ODS", "ADS"}
@@ -76,9 +86,9 @@ class TempProject:
     @property
     def expected_by_target(self) -> Dict[str, Dict[str, Any]]:
         return {
-            new: self.expected_by_source[old]
+            new: _expected_model(self.expected_by_source, old)
             for old, new in self.table_mapping.items()
-            if old in self.expected_by_source
+            if _expected_model(self.expected_by_source, old)
         }
 
 
@@ -113,6 +123,10 @@ def _short_table_name(value: Any) -> str:
     return text.split(".")[-1].strip()
 
 
+def _canonical_table_name(value: Any) -> str:
+    return _short_table_name(value).casefold()
+
+
 def _source_project_dir(source_root: Path, source_project: str) -> Path:
     return Path(source_root) / "warehouses" / source_project
 
@@ -126,8 +140,8 @@ def _source_database(source_dir: Path, source_project: str) -> str:
     )
 
 
-def _target_database(source_project: str) -> str:
-    return f"{source_project}_benchmark_dm"
+def _target_database(target_project: str) -> str:
+    return f"{target_project}_dm"
 
 
 def _iter_ddl_paths(source_dir: Path) -> List[Path]:
@@ -170,7 +184,7 @@ def _load_expected_models(source_dir: Path) -> Dict[str, Dict[str, Any]]:
         table = _short_table_name(data.get("name") or path.stem)
         if not table:
             continue
-        expected[table] = {
+        expected[_canonical_table_name(table)] = {
             "layer": str(data.get("layer") or "OTHER").upper(),
             "table_type": str(data.get("table_type") or "other").lower(),
             "path": str(path),
@@ -209,29 +223,65 @@ def _catalog_codes(entries: Any) -> List[str]:
 
 
 def strip_layer_prefix(name: str) -> str:
+    canonical_name = str(name or "").casefold()
     for prefix in LAYER_PREFIXES:
-        if name.startswith(prefix):
+        if canonical_name.startswith(prefix):
             return name[len(prefix) :]
     return name
 
 
-def functional_table_name(table_name: str, used: set) -> str:
+def _functional_table_base(table_name: str) -> str:
     base = strip_layer_prefix(table_name)
-    base = re.sub(r"__+", "_", base).strip("_") or table_name
-    candidate = base
-    index = 2
-    while candidate in used:
-        candidate = f"{base}_{index}"
-        index += 1
-    used.add(candidate)
-    return candidate
+    normalized = re.sub(r"__+", "_", base).strip("_") or table_name
+    return normalized.casefold()
 
 
-def _table_mapping(ddl_paths: Iterable[Path]) -> Dict[str, str]:
-    used = set()
+def _anonymous_collision_alias(
+    table_name: str,
+    base: str,
+    *,
+    alias_salt: bytes,
+) -> str:
+    token = hmac.new(
+        alias_salt,
+        table_name.casefold().encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()[:ANONYMOUS_ALIAS_DIGEST_LENGTH]
+    return f"{base}_{token}"
+
+
+def _validated_alias_salt(alias_salt: bytes | None) -> bytes:
+    salt = (
+        secrets.token_bytes(ANONYMOUS_ALIAS_SALT_BYTES)
+        if alias_salt is None
+        else alias_salt
+    )
+    if not isinstance(salt, bytes) or len(salt) < 16:
+        raise ValueError("alias_salt must contain at least 16 bytes")
+    return salt
+
+
+def _table_mapping(
+    ddl_paths: Iterable[Path],
+    *,
+    alias_salt: bytes,
+) -> Dict[str, str]:
+    table_names = sorted({path.stem for path in ddl_paths}, key=str.casefold)
+    tables_by_base: Dict[str, List[str]] = defaultdict(list)
+    for table_name in table_names:
+        tables_by_base[_functional_table_base(table_name)].append(table_name)
+
     mapping: Dict[str, str] = {}
-    for path in ddl_paths:
-        mapping[path.stem] = functional_table_name(path.stem, used)
+    for base, colliding_tables in tables_by_base.items():
+        if len(colliding_tables) == 1:
+            mapping[colliding_tables[0]] = base
+            continue
+        for table_name in colliding_tables:
+            mapping[table_name] = _anonymous_collision_alias(
+                table_name,
+                base,
+                alias_salt=alias_salt,
+            )
     return mapping
 
 
@@ -240,6 +290,7 @@ def _replace_identifier(text: str, old: str, new: str) -> str:
         r"(?<![A-Za-z0-9_]){}(?![A-Za-z0-9_])".format(re.escape(old)),
         new,
         text,
+        flags=re.IGNORECASE,
     )
 
 
@@ -289,7 +340,15 @@ def sanitize_sql(
 
 
 def _expected_layer(expected: Dict[str, Dict[str, Any]], table: str) -> str:
-    return str((expected.get(table) or {}).get("layer") or "OTHER").upper()
+    return str(
+        _expected_model(expected, table).get("layer") or "OTHER"
+    ).upper()
+
+
+def _expected_model(
+    expected: Dict[str, Dict[str, Any]], table: str
+) -> Dict[str, Any]:
+    return expected.get(_canonical_table_name(table), {})
 
 
 def _asset_role_for_expected_layer(layer: str) -> str:
@@ -364,7 +423,7 @@ def _write_target_taxonomy(
         "version": taxonomy.get("version") or 1,
         "project": target_project,
     }
-    for key in ("source", "project_context", "data_domains", "business_areas"):
+    for key in ("source", "data_domains", "business_areas"):
         if key in taxonomy:
             payload[key] = taxonomy[key]
     _write_yaml(target_dir / "business_taxonomy.yaml", payload)
@@ -410,11 +469,22 @@ def _task_base_table(
     stem: str, table_mapping: Dict[str, str]
 ) -> Tuple[str, str]:
     suffix = "_full_refresh"
-    if stem.endswith(suffix) and stem[: -len(suffix)] in table_mapping:
-        source_table = stem[: -len(suffix)]
+    mapping_by_name = {
+        _canonical_table_name(source_table): source_table
+        for source_table in table_mapping
+    }
+    canonical_stem = stem.casefold()
+    if canonical_stem.endswith(suffix):
+        base_stem = stem[: -len(suffix)]
+        source_table = mapping_by_name.get(
+            _canonical_table_name(base_stem), ""
+        )
+        if not source_table:
+            return "", ""
         return source_table, f"{table_mapping[source_table]}{suffix}"
-    if stem in table_mapping:
-        return stem, table_mapping[stem]
+    source_table = mapping_by_name.get(_canonical_table_name(stem), "")
+    if source_table:
+        return source_table, table_mapping[source_table]
     return "", ""
 
 
@@ -480,42 +550,13 @@ def _copy_rewritten_tasks(
         )
 
 
-def _write_minimal_lineage(
-    target_dir: Path,
-    table_mapping: Dict[str, str],
-    expected: Dict[str, Dict[str, Any]],
-) -> None:
-    tables = []
-    for old, new in sorted(table_mapping.items(), key=lambda item: item[1]):
-        layer = _expected_layer(expected, old)
-        tables.append(
-            {
-                "name": new,
-                "layer": layer if layer in FIXED_LAYERS else "OTHER",
-            }
-        )
-    lineage_dir = target_dir / "artifacts" / "lineage"
-    lineage_dir.mkdir(parents=True, exist_ok=True)
-    (lineage_dir / "lineage_data.json").write_text(
-        json.dumps(
-            {
-                "tables": tables,
-                "edges": [],
-                "indirect_edges": [],
-            },
-            ensure_ascii=False,
-            indent=2,
-        ),
-        encoding="utf-8",
-    )
-
-
 def build_temp_project(
     source_project: str,
     target_project: str,
     tmp_root: Path,
     *,
     source_root: Path = REPO_ROOT,
+    alias_salt: bytes | None = None,
 ) -> TempProject:
     """Build a cold-start benchmark project under tmp_root/warehouses."""
     source_dir = _source_project_dir(Path(source_root), source_project)
@@ -528,9 +569,12 @@ def build_temp_project(
             f"target benchmark project already exists: {target_dir}"
         )
 
-    database = _target_database(source_project)
+    database = _target_database(target_project)
     expected = _load_expected_models(source_dir)
-    mapping = _table_mapping(_iter_ddl_paths(source_dir))
+    mapping = _table_mapping(
+        _iter_ddl_paths(source_dir),
+        alias_salt=_validated_alias_salt(alias_salt),
+    )
     database_mapping = {_source_database(source_dir, source_project): database}
 
     _copy_required_project_files(
@@ -551,8 +595,6 @@ def build_temp_project(
         expected,
         database_mapping,
     )
-    _write_minimal_lineage(target_dir, mapping, expected)
-
     return TempProject(
         source_project=source_project,
         target_project=target_project,
@@ -617,6 +659,53 @@ def _register_target_project(
     _clear_config_caches()
 
 
+def _write_extracted_lineage(
+    temp_project: TempProject,
+    *,
+    parallelism: int,
+) -> None:
+    from dw_refactor_agent.lineage import lineage_extractor
+
+    runtime_config, _ = _runtime_modules()
+    project = temp_project.target_project
+    previous_project = lineage_extractor.CURRENT_PROJECT
+    try:
+        lineage_extractor.configure_project(project)
+        schema = lineage_extractor.build_schema_from_project_ddl(project)
+        task_files = lineage_extractor.iter_project_task_files(project)
+        extraction = lineage_extractor.extract_lineage_from_task_files(
+            task_files,
+            temp_project.target_dir,
+            schema,
+            parallel=max(1, int(parallelism or 1)),
+            source_file_for_path=lambda path: (
+                lineage_extractor.task_source_file(project, path)
+            ),
+        )
+        fatal_diagnostics = lineage_extractor._fatal_diagnostics(
+            extraction["errors"]
+        )
+        if fatal_diagnostics:
+            raise RuntimeError(
+                f"benchmark lineage extraction failed for {project}: "
+                f"{len(fatal_diagnostics)} fatal diagnostics"
+            )
+
+        output = lineage_extractor.build_lineage_output(
+            extraction["lineage"],
+            schema,
+            transient_tables=extraction["transient_tables"],
+        )
+        output_path = runtime_config.lineage_data_path(project)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(
+            json.dumps(output, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+    finally:
+        lineage_extractor.configure_project(previous_project)
+
+
 def _read_generated_models(target_project: str) -> Dict[str, Dict[str, Any]]:
     runtime_config, _ = _runtime_modules()
     runtime_config.clear_model_metadata_cache()
@@ -677,39 +766,32 @@ def _has_grain(model: Dict[str, Any]) -> bool:
     return bool(model.get("grain"))
 
 
-def _layer_from_item(item: Dict[str, Any]) -> str:
-    layer = str(
-        item.get("layer")
-        or item.get("applied_layer")
-        or item.get("final_layer")
-        or ""
-    ).upper()
-    if layer:
-        return layer
-    if str(item.get("table_type") or "").lower() == "dimension":
-        return "DIM"
-    return str(item.get("inferred_layer") or "MISSING").upper()
-
-
-def _llm_layers(result: Dict[str, Any]) -> Dict[str, str]:
+def _llm_layers(
+    result: Dict[str, Any],
+    field: str = "inferred_layer",
+) -> Dict[str, str]:
     llm_result = result.get("llm_result") or {}
     layers: Dict[str, str] = {}
-    for update in llm_result.get("model_updates") or []:
-        if not isinstance(update, dict):
-            continue
-        table = str(
-            update.get("table") or update.get("table_name") or ""
-        ).strip()
-        if table:
-            layers[table] = _layer_from_item(update)
     for table_result in llm_result.get("tables") or []:
         if not isinstance(table_result, dict):
             continue
         table = str(
             table_result.get("table") or table_result.get("table_name") or ""
         ).strip()
-        if table and table not in layers:
-            layers[table] = _layer_from_item(table_result)
+        if table:
+            validation = table_result.get("validation") or {}
+            if (
+                field == "inferred_layer"
+                and isinstance(validation, dict)
+                and validation.get(METRIC_CONTEXT_REINSPECTION_ERROR_KEY)
+            ):
+                layers[table] = "FAILED"
+                continue
+            layers[table] = str(
+                table_result.get(field)
+                or table_result.get("inferred_layer")
+                or "MISSING"
+            ).upper()
     return layers
 
 
@@ -834,30 +916,43 @@ def _summarize_project(
     if not generated_models:
         generated_models = _models_from_updates(result)
 
-    llm_layers = _llm_layers(result)
+    first_attempt_layers = _llm_layers(
+        result,
+        "first_attempt_inferred_layer",
+    )
+    post_retry_layers = _llm_layers(result)
     by_expected: Dict[str, Dict[str, int]] = defaultdict(
         lambda: {
             "total": 0,
             "llm_middle_total": 0,
             "llm_middle_correct": 0,
+            "post_retry_middle_correct": 0,
         }
     )
     confusion: Counter = Counter()
+    post_retry_confusion: Counter = Counter()
     final_layer_counts: Counter = Counter()
     mismatches = []
+    first_attempt_mismatches = []
+    post_retry_mismatches = []
     llm_middle_correct = 0
+    post_retry_middle_correct = 0
     middle_count = 0
 
     for source_table, target_table in sorted(
         temp_project.table_mapping.items()
     ):
-        expected = temp_project.expected_by_source.get(source_table)
+        expected = _expected_model(
+            temp_project.expected_by_source,
+            source_table,
+        )
         if not expected:
             continue
         expected_layer = str(expected.get("layer") or "OTHER").upper()
         final_model = generated_models.get(target_table, {})
         final_layer = str(final_model.get("layer") or "MISSING").upper()
-        llm_layer = llm_layers.get(target_table, "NOT_RUN")
+        first_attempt_layer = first_attempt_layers.get(target_table, "NOT_RUN")
+        post_retry_layer = post_retry_layers.get(target_table, "NOT_RUN")
 
         by_expected[expected_layer]["total"] += 1
         final_layer_counts[final_layer] += 1
@@ -865,22 +960,34 @@ def _summarize_project(
         if expected_layer in MIDDLE_LAYERS:
             middle_count += 1
             by_expected[expected_layer]["llm_middle_total"] += 1
-            confusion[_confusion_key(expected_layer, llm_layer)] += 1
-            if llm_layer == expected_layer:
+            confusion[_confusion_key(expected_layer, first_attempt_layer)] += 1
+            post_retry_confusion[
+                _confusion_key(expected_layer, post_retry_layer)
+            ] += 1
+            if first_attempt_layer == expected_layer:
                 llm_middle_correct += 1
                 by_expected[expected_layer]["llm_middle_correct"] += 1
-            elif llm_layer != expected_layer:
-                mismatches.append(
-                    {
-                        "source_table": source_table,
-                        "target_table": target_table,
-                        "expected_layer": expected_layer,
-                        "expected_table_type": expected.get("table_type"),
-                        "final_layer": final_layer,
-                        "final_table_type": final_model.get("table_type"),
-                        "llm_middle_layer": llm_layer,
-                    }
-                )
+            if post_retry_layer == expected_layer:
+                post_retry_middle_correct += 1
+                by_expected[expected_layer]["post_retry_middle_correct"] += 1
+            mismatch = {
+                "source_table": source_table,
+                "target_table": target_table,
+                "expected_layer": expected_layer,
+                "expected_table_type": expected.get("table_type"),
+                "final_layer": final_layer,
+                "final_table_type": final_model.get("table_type"),
+                "llm_middle_layer": first_attempt_layer,
+                "post_retry_middle_layer": post_retry_layer,
+            }
+            first_attempt_mismatch = first_attempt_layer != expected_layer
+            post_retry_mismatch = post_retry_layer != expected_layer
+            if first_attempt_mismatch:
+                first_attempt_mismatches.append(mismatch)
+            if post_retry_mismatch:
+                post_retry_mismatches.append(mismatch)
+            if first_attempt_mismatch or post_retry_mismatch:
+                mismatches.append(mismatch)
 
     table_count = sum(item["total"] for item in by_expected.values())
     metric_count = sum(
@@ -910,8 +1017,13 @@ def _summarize_project(
         "llm_middle_accuracy": (
             llm_middle_correct / middle_count if middle_count else 0.0
         ),
+        "post_retry_middle_correct_count": post_retry_middle_correct,
+        "post_retry_middle_accuracy": (
+            post_retry_middle_correct / middle_count if middle_count else 0.0
+        ),
         "by_expected_layer": dict(sorted(by_expected.items())),
         "confusion": dict(sorted(confusion.items())),
+        "post_retry_confusion": dict(sorted(post_retry_confusion.items())),
         "final_layer_counts": dict(sorted(final_layer_counts.items())),
         "metric_count": metric_count,
         "metric_table_count": sum(
@@ -924,12 +1036,14 @@ def _summarize_project(
             1 for model in generated_models.values() if _has_grain(model)
         ),
         "mismatches": mismatches,
+        "first_attempt_mismatches": first_attempt_mismatches,
+        "post_retry_mismatches": post_retry_mismatches,
         "catalog_summary": catalog_summary,
     }
 
 
-def _target_project_name(source_project: str) -> str:
-    return f"{source_project}_generate_llm_benchmark"
+def _target_project_name(_source_project: str) -> str:
+    return f"generate_llm_benchmark_{secrets.token_hex(8)}"
 
 
 def _managed_tmp_root(asset_dir: Optional[Path]) -> Tuple[Path, bool]:
@@ -963,6 +1077,7 @@ def run_benchmark(
             "DEEPSEEK_API_KEY is required for generate --llm benchmark "
             "unless api_key is injected by a test"
         )
+    base_url = normalize_chat_completions_url(base_url)
 
     runtime_config, runtime_writer = _runtime_modules()
     if metadata_runner is None:
@@ -984,6 +1099,14 @@ def run_benchmark(
                 source_root=source_root,
             )
             _register_target_project(temp_project, tmp_root)
+            # The benchmark project exists only in this process's runtime
+            # config. Spawned lineage workers cannot rediscover it from the
+            # source repository, so extract this small temporary graph in the
+            # current process and reserve parallelism for the LLM calls.
+            _write_extracted_lineage(
+                temp_project,
+                parallelism=1,
+            )
             result = metadata_runner(
                 temp_project.target_project,
                 api_key=api_key,
@@ -997,6 +1120,7 @@ def run_benchmark(
                 update_catalog=True,
                 replace_existing_models=True,
                 show_progress=show_progress,
+                expose_layer_hints=False,
             )
             summaries.append(
                 _summarize_project(
@@ -1013,10 +1137,14 @@ def run_benchmark(
     llm_middle_correct = sum(
         item["llm_middle_correct_count"] for item in summaries
     )
+    post_retry_middle_correct = sum(
+        item["post_retry_middle_correct_count"] for item in summaries
+    )
     report = {
         "benchmark": "generate_llm_cold_start",
         "model": model,
         "base_url": base_url,
+        "layer_hints_visible_to_llm": False,
         "parallelism": parallelism,
         "request_timeout": request_timeout,
         "dry_run": dry_run,
@@ -1025,6 +1153,9 @@ def run_benchmark(
         "total_middle_table_count": total_middle,
         "combined_llm_middle_accuracy": (
             llm_middle_correct / total_middle if total_middle else 0.0
+        ),
+        "combined_post_retry_middle_accuracy": (
+            post_retry_middle_correct / total_middle if total_middle else 0.0
         ),
         "total_catalog_change_count": sum(
             item["catalog_change_count"] for item in summaries
@@ -1056,13 +1187,15 @@ def _print_report(report: Dict[str, Any]) -> None:
     print(f"  base_url: {report.get('base_url') or ''}")
     print(f"  tmp_root: {report['tmp_root']}")
     print(
-        "  combined: llm_middle={:.2%}".format(
+        "  combined: first_attempt={:.2%} post_retry={:.2%}".format(
             report["combined_llm_middle_accuracy"],
+            report["combined_post_retry_middle_accuracy"],
         )
     )
     for project in report["projects"]:
         print(
-            "  {source_project}: llm_middle={llm_middle_accuracy:.2%} "
+            "  {source_project}: first_attempt={llm_middle_accuracy:.2%} "
+            "post_retry={post_retry_middle_accuracy:.2%} "
             "models={generated_model_count} catalog_changes={catalog_change_count}".format(
                 **project
             )

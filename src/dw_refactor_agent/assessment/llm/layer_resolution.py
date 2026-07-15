@@ -6,10 +6,13 @@ the same flow; they differ only in which prior is available and how strong that
 prior is expected to be. ODS/ADS are fixed boundaries and should normally be
 filtered before table inspection; the fixed-boundary branch here is a defensive
 fallback. Evidence scoring is intentionally left as a future extension point.
+SQL, DDL, lineage, and naming evidence belongs in the inspector prompt; the
+resolver must not reinterpret those features with benchmark-specific rules.
 """
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -32,8 +35,8 @@ class LayerResolutionPolicy:
 
     refresh has a strong prior from existing model declarations. generate has a
     weaker prior from direct rules, except fixed ODS/ADS boundaries which are
-    authoritative and should not need an LLM candidate. When a candidate exists,
-    it is resolved by code rather than applied directly.
+    authoritative and should not need an LLM candidate. A usable middle-layer
+    candidate is accepted without feature-based remapping.
     """
 
     mode: Literal["refresh", "generate"]
@@ -129,14 +132,20 @@ def resolve_layer(payload: LayerResolutionInput) -> LayerResolution:
     if result is not None:
         llm_layer = candidate_layer
         table_type = candidate_table_type
-        if not _usable_candidate_layer(llm_layer, policy):
+        llm_confidence = _inspection_confidence(result)
+        if not _usable_candidate_layer(
+            llm_layer,
+            policy,
+            confidence=llm_confidence,
+        ):
             warnings.append(
                 {
                     "type": "llm_layer_fallback",
                     "severity": "warning",
                     "message": (
                         "LLM candidate layer is empty, OTHER, invalid, "
-                        "or outside the configured candidates; "
+                        "outside the configured candidates, or below the "
+                        "minimum confidence; "
                         "falling back to the configured prior"
                     ),
                     "inferred_layer": str(
@@ -145,6 +154,8 @@ def resolve_layer(payload: LayerResolutionInput) -> LayerResolution:
                     "prior_layer": prior_layer,
                     "prior_source": policy.fallback_source,
                     "candidate_layers": _candidate_layers(policy),
+                    "llm_confidence": llm_confidence,
+                    "min_llm_confidence": policy.min_llm_confidence,
                 }
             )
             resolution = LayerResolution(
@@ -213,9 +224,12 @@ def _inspection_confidence(result: TableInspectResult | None) -> float | None:
     if result is None:
         return None
     try:
-        return float(result.confidence)
+        confidence = float(result.confidence)
     except (TypeError, ValueError):
         return None
+    if not math.isfinite(confidence) or not 0.0 <= confidence <= 1.0:
+        return None
+    return confidence
 
 
 def _candidate_layers(policy: LayerResolutionPolicy) -> tuple[str, ...]:
@@ -232,11 +246,15 @@ def _candidate_layers(policy: LayerResolutionPolicy) -> tuple[str, ...]:
 def _usable_candidate_layer(
     layer: str,
     policy: LayerResolutionPolicy,
+    *,
+    confidence: float | None,
 ) -> bool:
     if not layer or layer == "OTHER":
         return False
     candidates = _candidate_layers(policy)
-    return not candidates or layer in candidates
+    if candidates and layer not in candidates:
+        return False
+    return confidence is not None and confidence >= policy.min_llm_confidence
 
 
 def _prior_layer(payload: LayerResolutionInput) -> str:
