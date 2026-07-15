@@ -48,16 +48,31 @@ def _ddl_column_names(asset: dict[str, Any]) -> list[str]:
     ]
 
 
+def _target_table_pattern(table_name: str) -> str:
+    return (
+        r"(?:`?[A-Za-z_][A-Za-z0-9_]*`?\.)*`?" + re.escape(table_name) + r"`?"
+    )
+
+
+def _has_target_truncate(table_name: str, task_sql: str) -> bool:
+    return bool(
+        re.search(
+            rf"\bTRUNCATE\s+TABLE\s+"
+            rf"{_target_table_pattern(table_name)}(?=\s|;|$)",
+            task_sql,
+            flags=re.IGNORECASE,
+        )
+    )
+
+
 def _slice_binding(
     table_name: str,
     asset: dict[str, Any],
     task_sql: str,
 ) -> dict[str, str]:
-    table_pattern = (
-        r"(?:`?[A-Za-z_][A-Za-z0-9_]*`?\.)*`?" + re.escape(table_name) + r"`?"
-    )
     delete_pattern = re.compile(
-        rf"\bDELETE\s+FROM\s+{table_pattern}\s+WHERE\s+(.*?);",
+        rf"\bDELETE\s+FROM\s+{_target_table_pattern(table_name)}"
+        rf"\s+WHERE\s+(.*?);",
         flags=re.IGNORECASE | re.DOTALL,
     )
     for delete_match in delete_pattern.finditer(task_sql):
@@ -70,7 +85,8 @@ def _slice_binding(
             binding = re.search(
                 rf"(?<![A-Za-z0-9_`])"
                 rf"(?:`?[A-Za-z_][A-Za-z0-9_]*`?\.)?`?"
-                rf"{re.escape(column)}`?\s*=\s*[^;]{{0,120}}?"
+                rf"{re.escape(column)}`?\s*=\s*"
+                rf"(?:(?!\b(?:AND|OR)\b)[^;]){{0,120}}?"
                 r"@([A-Za-z_][A-Za-z0-9_]*)",
                 predicate,
                 flags=re.IGNORECASE | re.DOTALL,
@@ -114,7 +130,7 @@ def infer_execution_mapping(
         return execution
 
     task_sql = _task_sql(main_tasks)
-    if re.search(r"\bTRUNCATE\s+TABLE\b", task_sql, flags=re.IGNORECASE):
+    if _has_target_truncate(table_name, task_sql):
         return {
             "materialized": "full",
             "full_refresh_strategy": "replace_all",
@@ -163,9 +179,7 @@ def _validate_execution(
     materialized = str(execution.get("materialized") or "").lower()
     strategy = str(execution.get("full_refresh_strategy") or "").lower()
     task_sql = _task_sql(main_tasks)
-    has_truncate = bool(
-        re.search(r"\bTRUNCATE\s+TABLE\b", task_sql, flags=re.IGNORECASE)
-    )
+    has_truncate = _has_target_truncate(table_name, task_sql)
     expected_materialized = "full" if has_truncate else "incremental"
     if materialized != expected_materialized:
         return [
@@ -320,8 +334,13 @@ def _validate_entities(
         entity_type = str(entity.get("type") or "").strip().lower()
         relationship_type = str(relationship.get("type") or "").strip()
         from_entity = str(relationship.get("from_entity") or "").strip()
-        if entity_type == "foreign" and (
-            not relationship_type or not from_entity
+        is_dimension = str(metadata.get("table_type") or "").lower() == (
+            "dimension"
+        )
+        if (
+            is_dimension
+            and entity_type == "foreign"
+            and (not relationship_type or not from_entity)
         ):
             errors.append(
                 _error(
@@ -482,12 +501,12 @@ def validate_generate_candidate(
     """Validate a complete candidate before generate replaces models."""
     errors = []
     inspections = {
-        str(item.get("table_name") or ""): item
+        str(item.get("table_name") or "").casefold(): item
         for item in (llm_result or {}).get("tables") or []
         if isinstance(item, dict)
     }
     blocked_tables = sorted(
-        table_name
+        str(inspection.get("table_name") or table_name)
         for table_name, inspection in inspections.items()
         if str(inspection.get("status") or "").lower() == "blocked"
     )
@@ -500,11 +519,30 @@ def validate_generate_candidate(
             )
         )
 
+    blocked_table_keys = {
+        table_name.casefold() for table_name in blocked_tables
+    }
+    if llm_result is not None:
+        for table_name, metadata in sorted(model_metadata.items()):
+            layer = str(metadata.get("layer") or "").upper()
+            if (
+                layer in {"DWD", "DWS", "DIM"}
+                and table_name.casefold() not in inspections
+            ):
+                errors.append(
+                    _error(
+                        "llm_inspection_missing",
+                        table_name,
+                        "LLM generate requires inspection coverage for every "
+                        "MID model",
+                    )
+                )
+
     for table_name, metadata in sorted(model_metadata.items()):
         asset = assets.get(table_name) or {}
         errors.extend(_validate_execution(table_name, metadata, asset))
-        inspection = inspections.get(table_name)
-        if inspection and table_name not in blocked_tables:
+        inspection = inspections.get(table_name.casefold())
+        if inspection and table_name.casefold() not in blocked_table_keys:
             errors.extend(_validate_entities(table_name, metadata, asset))
             errors.extend(
                 _validate_semantics(

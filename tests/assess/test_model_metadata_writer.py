@@ -3118,7 +3118,8 @@ def test_run_generate_model_metadata_derives_execution_from_task_sql(
         (ddl_dir / f"{table_name}.sql").write_text(
             (
                 f"CREATE TABLE {table_name} "
-                "(id BIGINT, date DATE, business_date DATE);\n"
+                "(id BIGINT, date DATE, processing_status INT, "
+                "business_date DATE);\n"
             ),
             encoding="utf-8",
         )
@@ -3129,8 +3130,10 @@ def test_run_generate_model_metadata_derives_execution_from_task_sql(
     )
     daily_sql = (
         "SET @etl_date = COALESCE(@etl_date, CURDATE());\n"
+        "TRUNCATE TABLE demo.staging_cleanup;\n"
         "DELETE FROM demo.{table} "
-        "WHERE business_date = CAST(@etl_date AS DATE);\n"
+        "WHERE processing_status = 1 "
+        "AND business_date = CAST(@etl_date AS DATE);\n"
         "INSERT INTO demo.{table} SELECT 1, @etl_date;\n"
     )
     (task_dir / "dwd_daily.sql").write_text(
@@ -3355,6 +3358,114 @@ def test_generate_publication_blocks_unresolved_business_processes(
     ]
 
 
+def test_generate_publication_requires_complete_llm_mid_coverage(tmp_path):
+    task_path = tmp_path / "dwd_order_detail.sql"
+    task_path.write_text(
+        "TRUNCATE TABLE dwd_order_detail;\n",
+        encoding="utf-8",
+    )
+    validation = validate_generate_candidate(
+        {
+            "dwd_order_detail": {
+                "name": "dwd_order_detail",
+                "layer": "DWD",
+                "table_type": "fact",
+                "execution": {
+                    "materialized": "full",
+                    "full_refresh_strategy": "replace_all",
+                },
+            }
+        },
+        {
+            "dwd_order_detail": {
+                "ddl": {"columns": [{"name": "id"}]},
+                "tasks": [{"path": str(task_path), "is_full_refresh": False}],
+            }
+        },
+        llm_result={"tables": []},
+        catalog={},
+    )
+
+    assert validation["errors"] == [
+        {
+            "type": "llm_inspection_missing",
+            "table": "dwd_order_detail",
+            "message": (
+                "LLM generate requires inspection coverage for every MID model"
+            ),
+        }
+    ]
+
+
+def test_generate_publication_allows_fact_foreign_entities_without_relationship(
+    tmp_path,
+):
+    task_path = tmp_path / "dwd_order_detail.sql"
+    task_path.write_text(
+        "TRUNCATE TABLE dwd_order_detail;\n",
+        encoding="utf-8",
+    )
+    validation = validate_generate_candidate(
+        {
+            "dwd_order_detail": {
+                "name": "dwd_order_detail",
+                "layer": "DWD",
+                "table_type": "fact",
+                "execution": {
+                    "materialized": "full",
+                    "full_refresh_strategy": "replace_all",
+                },
+                "entities": [
+                    {
+                        "code": "ORDER_DETAIL",
+                        "type": "primary",
+                        "key_columns": ["id"],
+                    },
+                    {
+                        "code": "CUSTOMER",
+                        "type": "foreign",
+                        "key_columns": ["customer_id"],
+                    },
+                ],
+                "business_process": "ORDER",
+            }
+        },
+        {
+            "dwd_order_detail": {
+                "ddl": {
+                    "columns": [
+                        {"name": "id"},
+                        {"name": "customer_id"},
+                    ]
+                },
+                "tasks": [{"path": str(task_path), "is_full_refresh": False}],
+            }
+        },
+        llm_result={
+            "tables": [
+                {
+                    "table_name": "dwd_order_detail",
+                    "status": "passed",
+                    "table_type": "fact",
+                    "columns": {
+                        "atomic_metrics": [
+                            {"name": "id", "business_process": "ORDER"}
+                        ]
+                    },
+                }
+            ]
+        },
+        catalog={"business_processes": [{"code": "ORDER"}]},
+    )
+
+    assert validation == {
+        "status": "passed",
+        "error_count": 0,
+        "errors": [],
+        "blocked_tables": [],
+    }
+
+
 def test_generate_publication_validates_entity_keys_and_grain_references():
     validation = validate_generate_candidate(
         {
@@ -3443,6 +3554,41 @@ def test_generate_file_set_publication_rolls_back_on_replace_failure(
     assert model_path.read_text(encoding="utf-8") == "model: old\n"
     assert list(tmp_path.glob(".*.staged")) == []
     assert list(tmp_path.glob(".*.backup")) == []
+
+
+def test_generate_asset_collection_does_not_read_existing_model_yaml(
+    tmp_path, monkeypatch
+):
+    import dw_refactor_agent.assessment.llm.model_metadata_writer as writer_module
+
+    project = "generate_ignores_existing_model_content"
+    project_dir = _write_catalog_project(
+        tmp_path,
+        monkeypatch,
+        project,
+        catalog=_catalog_payload(),
+        ddl_tables=["dwd_order_detail"],
+        models={
+            "dwd_order_detail": {
+                "name": "dwd_order_detail",
+                "layer": "ADS",
+            }
+        },
+    )
+    original_read_text = Path.read_text
+
+    def reject_model_read(self, *args, **kwargs):
+        if "models" in self.parts and self.suffix == ".yaml":
+            raise OSError("existing model content must not be read")
+        return original_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", reject_model_read)
+
+    assets = writer_module._generate_model_table_assets(project)
+
+    assert assets["dwd_order_detail"]["ddl"]["exists"] is True
+    assert assets["dwd_order_detail"]["model"] is None
+    assert (project_dir / "mid" / "models" / "dwd_order_detail.yaml").exists()
 
 
 def test_run_generate_model_metadata_uses_asset_role_for_prefixless_base(

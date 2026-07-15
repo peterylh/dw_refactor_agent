@@ -1744,6 +1744,7 @@ def _generate_model_table_assets(project: str) -> dict[str, TableAsset]:
         [],
         {},
         _project_dir(project),
+        include_models=False,
     ).tables
 
 
