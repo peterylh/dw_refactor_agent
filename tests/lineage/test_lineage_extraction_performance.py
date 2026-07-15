@@ -305,40 +305,52 @@ def test_collect_statement_table_names_includes_targets_sources_and_cte_sources(
     } <= names
 
 
-def test_slice_schema_keeps_matching_short_and_qualified_tables():
+def test_unqualified_table_uses_current_database_only(monkeypatch):
+    monkeypatch.setattr(lineage_extractor, "CURRENT_CATALOG", "internal")
+    monkeypatch.setattr(lineage_extractor, "CURRENT_DB", "cdm")
     schema = {
         "internal": {
-            "shop_dm": {
-                "ods_order": {"order_id": "BIGINT"},
-                "dwd_order": {"order_id": "BIGINT"},
-                "unused": {"id": "BIGINT"},
-            }
-        },
-        "hive": {
-            "archive": {
-                "ods_order": {"order_id": "BIGINT"},
-            }
-        },
+            "cdm": {
+                "tdm_corp_label_measure_check_result": {"id": "BIGINT"},
+                "out": {"id": "BIGINT"},
+            },
+            "tdm": {
+                "tdm_corp_label_measure_check_result": {"id": "BIGINT"},
+            },
+        }
     }
 
     sliced = lineage_extractor.slice_schema(
         schema,
-        {"shop_dm.ods_order", "dwd_order"},
+        {"tdm_corp_label_measure_check_result", "out"},
     )
 
     assert sliced == {
         "internal": {
-            "shop_dm": {
-                "ods_order": {"order_id": "BIGINT"},
-                "dwd_order": {"order_id": "BIGINT"},
+            "cdm": {
+                "tdm_corp_label_measure_check_result": {"id": "BIGINT"},
+                "out": {"id": "BIGINT"},
             }
-        },
-        "hive": {
-            "archive": {
-                "ods_order": {"order_id": "BIGINT"},
-            }
-        },
+        }
     }
+
+    diagnostics = []
+    entries = lineage_extractor.extract_lineage_from_sql(
+        """
+        INSERT INTO out(id)
+        SELECT id FROM tdm_corp_label_measure_check_result
+        """,
+        "out.sql",
+        schema,
+        diagnostics=diagnostics,
+    )
+
+    assert diagnostics == []
+    assert any(
+        entry.get("source_table") == "tdm_corp_label_measure_check_result"
+        and entry.get("target_table") == "out"
+        for entry in entries
+    )
 
 
 def test_schema_table_count_counts_catalog_database_table_shape():

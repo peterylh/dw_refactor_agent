@@ -708,37 +708,18 @@ def _normalized_skip_table_names(table_names):
 def slice_schema(schema, table_names):
     """Return a schema containing only tables referenced by a task."""
     requested_identities = set()
-    requested_db_table_identities = set()
-    requested_short_names = set()
     for table_name in table_names or []:
         catalog, database, table = _table_identity(table_name)
         if not table:
             continue
-        requested_short_names.add(_identifier_match_key(table))
         requested_identities.add(
             _schema_table_match_key(catalog, database, table)
         )
-        if database:
-            requested_db_table_identities.add(
-                (
-                    _identifier_match_key(database),
-                    _identifier_match_key(table),
-                )
-            )
 
     sliced = {}
     for catalog, database, table, columns in _iter_schema_tables(schema):
         full_name_key = _schema_table_match_key(catalog, database, table)
-        db_table_key = (
-            _identifier_match_key(database),
-            _identifier_match_key(table),
-        )
-        table_key = _identifier_match_key(table)
-        if (
-            full_name_key in requested_identities
-            or db_table_key in requested_db_table_identities
-            or table_key in requested_short_names
-        ):
+        if full_name_key in requested_identities:
             sliced.setdefault(catalog, {}).setdefault(database, {})[table] = (
                 dict(columns or {})
             )
