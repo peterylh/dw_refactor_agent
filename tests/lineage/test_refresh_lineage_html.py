@@ -3,6 +3,8 @@ import re
 import sys
 import types
 
+import pytest
+
 import dw_refactor_agent.config as config
 
 try:
@@ -67,6 +69,7 @@ except ModuleNotFoundError:
     sys.modules["yaml"] = fake_yaml
 
 import dw_refactor_agent.lineage.refresh_lineage_html as refresh_html
+from dw_refactor_agent.lineage.contract import validate_lineage_v2
 
 
 def test_resolve_lineage_data_path_prefers_project_artifact(
@@ -172,6 +175,8 @@ def test_packaged_html_templates_exist():
 
     assert paths["job_template"].exists()
     assert paths["lineage_template"].exists()
+    job_template = paths["job_template"].read_text(encoding="utf-8")
+    assert "job.outputs" in job_template
 
 
 def test_generate_jobs_strips_project_db_and_defaults_logic(
@@ -275,6 +280,96 @@ def test_generate_jobs_includes_full_refresh_tasks(tmp_path, monkeypatch):
     ]
     assert jobs[1]["file"] == "full_refresh/dwd_product_full_refresh.sql"
     assert jobs[1]["target"] == "dwd_product"
+
+
+def test_generate_jobs_v2_uses_explicit_job_source_file_and_io(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(
+        refresh_html,
+        "determine_layer",
+        lambda table_name, project: (
+            "DWD" if table_name == "process_order" else "OTHER"
+        ),
+    )
+    tasks_dir = tmp_path / "tasks"
+    tasks_dir.mkdir()
+    (tasks_dir / "prepare_orders.sql").write_text(
+        "CREATE TABLE shop_dm.process_order AS SELECT amount FROM shop_dm.ods_order;",
+        encoding="utf-8",
+    )
+    data = {
+        "format_version": 2,
+        "tables": [
+            {
+                "name": "ods_order",
+                "full_name": "internal.shop_dm.ods_order",
+                "dataset_type": "managed",
+                "columns": [{"name": "amount", "type": "DECIMAL(12,2)"}],
+            },
+            {
+                "name": "process_order",
+                "full_name": "internal.shop_dm.process_order",
+                "dataset_type": "process",
+                "columns": [{"name": "amount", "type": "DECIMAL(12,2)"}],
+            },
+            {
+                "name": "process_order_audit",
+                "full_name": "internal.shop_dm.process_order_audit",
+                "dataset_type": "process",
+                "columns": [],
+            },
+        ],
+        "jobs": [
+            {
+                "name": "schedule_prepare_orders",
+                "source_file": "prepare_orders.sql",
+                "inputs": ["internal.shop_dm.ods_order"],
+                "outputs": [
+                    "internal.shop_dm.process_order",
+                    "internal.shop_dm.process_order_audit",
+                ],
+            }
+        ],
+        "edges": [
+            {
+                "source": {
+                    "type": "column",
+                    "id": "internal.shop_dm.ods_order.amount",
+                },
+                "target": {
+                    "type": "column",
+                    "id": "internal.shop_dm.process_order.amount",
+                },
+                "relation_type": "direct",
+                "transformation_type": "passthrough",
+                "expression": "amount",
+                "job": "schedule_prepare_orders",
+            }
+        ],
+        "diagnostics": [],
+    }
+
+    jobs = refresh_html.generate_jobs(
+        data,
+        tasks_dir=tasks_dir,
+        current_db="shop_dm",
+        project="shop",
+    )
+
+    assert jobs == [
+        {
+            "id": "schedule_prepare_orders",
+            "file": "prepare_orders.sql",
+            "name": "schedule_prepare_orders",
+            "source": ["ods_order"],
+            "outputs": ["process_order", "process_order_audit"],
+            "target": "process_order",
+            "layer": "DWD",
+            "logic": "-",
+        }
+    ]
+    assert "source_file" not in data["edges"][0]
 
 
 def test_generate_jobs_default_project_tasks_ignore_root_and_include_mid_ads(
@@ -409,3 +504,146 @@ def test_build_frontend_lineage_data_normalizes_structured_edges(monkeypatch):
         "layer": "ODS",
         "type": "BIGINT",
     } in frontend_data["nodes"]
+
+
+def test_build_frontend_lineage_data_preserves_strict_v2_payload(monkeypatch):
+    monkeypatch.setattr(
+        refresh_html,
+        "determine_layer",
+        lambda table_name, project: "OTHER",
+    )
+    data = {
+        "format_version": 2,
+        "tables": [
+            {
+                "name": "source",
+                "full_name": "internal.shop_dm.source",
+                "dataset_type": "managed",
+                "columns": [{"name": "id", "type": "BIGINT"}],
+            },
+            {
+                "name": "output",
+                "full_name": "internal.shop_dm.output",
+                "dataset_type": "managed",
+                "columns": [{"name": "id", "type": "BIGINT"}],
+            },
+        ],
+        "jobs": [
+            {
+                "name": "build_output",
+                "source_file": "build_output.sql",
+                "inputs": ["internal.shop_dm.source"],
+                "outputs": ["internal.shop_dm.output"],
+            }
+        ],
+        "edges": [
+            {
+                "source": {
+                    "type": "column",
+                    "id": "internal.shop_dm.source.id",
+                },
+                "target": {
+                    "type": "column",
+                    "id": "internal.shop_dm.output.id",
+                },
+                "relation_type": "direct",
+                "transformation_type": "passthrough",
+                "expression": "id",
+                "job": "build_output",
+            }
+        ],
+        "diagnostics": [],
+    }
+
+    frontend_data = refresh_html.build_frontend_lineage_data(data, "shop")
+
+    validate_lineage_v2(frontend_data)
+    assert frontend_data == data
+    assert "source_file" not in frontend_data["edges"][0]
+
+
+def test_generate_jobs_v2_removes_case_variant_self_input(monkeypatch):
+    monkeypatch.setattr(
+        refresh_html,
+        "determine_layer",
+        lambda table_name, project: "DWD",
+    )
+    data = {
+        "format_version": 2,
+        "tables": [
+            {
+                "name": "t",
+                "full_name": "internal.shop_dm.t",
+                "dataset_type": "managed",
+                "columns": [],
+            }
+        ],
+        "jobs": [
+            {
+                "name": "build_t",
+                "source_file": "build_t.sql",
+                "inputs": ["INTERNAL.SHOP_DM.T"],
+                "outputs": ["internal.shop_dm.t"],
+            }
+        ],
+        "edges": [],
+        "diagnostics": [],
+    }
+
+    jobs = refresh_html.generate_jobs(
+        data,
+        tasks_dir=None,
+        current_db="shop_dm",
+        project="shop",
+    )
+
+    assert jobs[0]["source"] == []
+    assert jobs[0]["target"] == "t"
+
+
+def _call_html_builder(builder, data):
+    if builder == "frontend":
+        return refresh_html.build_frontend_lineage_data(data, "shop")
+    return refresh_html.generate_jobs(
+        data,
+        tasks_dir=None,
+        current_db="shop_dm",
+        project="shop",
+    )
+
+
+@pytest.mark.parametrize("builder", ["frontend", "jobs"])
+@pytest.mark.parametrize("version", [3, "2", True, 2.0])
+def test_html_builders_reject_unsupported_explicit_lineage_versions(
+    monkeypatch, builder, version
+):
+    monkeypatch.setattr(
+        refresh_html,
+        "iter_project_task_files",
+        lambda project: [],
+    )
+    data = {
+        "format_version": version,
+        "tables": [],
+        "jobs": [],
+        "edges": [],
+        "diagnostics": [],
+    }
+
+    with pytest.raises(ValueError, match="format_version"):
+        _call_html_builder(builder, data)
+
+
+@pytest.mark.parametrize("builder", ["frontend", "jobs"])
+def test_html_builders_strictly_reject_malformed_v2(builder):
+    data = {
+        "format_version": 2,
+        "tables": [],
+        "jobs": [],
+        "edges": [],
+        "diagnostics": [],
+        "extension": True,
+    }
+
+    with pytest.raises(ValueError, match="extension"):
+        _call_html_builder(builder, data)

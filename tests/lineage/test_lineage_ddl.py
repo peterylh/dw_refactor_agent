@@ -36,3 +36,69 @@ def test_lineage_ddl_key_columns_are_schema_prefixes():
         key_columns = _key_columns(sql)
 
         assert _column_names(sql)[: len(key_columns)] == key_columns, ddl_file
+
+
+def test_table_info_persists_dataset_type_with_legacy_compatibility_columns():
+    sql = Path("src/dw_refactor_agent/lineage/ddl/table_info.sql").read_text(
+        encoding="utf-8"
+    )
+
+    columns = _column_names(sql)
+
+    assert "dataset_type" in columns
+    assert "is_transient" in columns
+    assert "transient_sources" in columns
+
+
+def test_job_dataset_ddl_uses_snapshot_job_table_io_key_prefix():
+    sql = Path("src/dw_refactor_agent/lineage/ddl/job_dataset.sql").read_text(
+        encoding="utf-8"
+    )
+
+    assert _column_names(sql) == [
+        "snapshot_id",
+        "job_id",
+        "table_id",
+        "io_type",
+    ]
+    assert _key_columns(sql) == [
+        "snapshot_id",
+        "job_id",
+        "table_id",
+        "io_type",
+    ]
+
+
+def test_non_column_direct_lineage_ddl_persists_lossless_source_payload():
+    sql = Path(
+        "src/dw_refactor_agent/lineage/ddl/non_column_direct_lineage.sql"
+    ).read_text(encoding="utf-8")
+
+    assert _column_names(sql) == [
+        "snapshot_id",
+        "target_table_id",
+        "target_column_id",
+        "source_type",
+        "id",
+        "job_id",
+        "relation_type",
+        "transformation_type",
+        "expression",
+        "source_payload",
+    ]
+    assert _key_columns(sql) == [
+        "snapshot_id",
+        "target_table_id",
+        "target_column_id",
+        "source_type",
+        "id",
+    ]
+
+
+def test_lineage_snapshot_counts_job_dataset_relationships():
+    sql = Path(
+        "src/dw_refactor_agent/lineage/ddl/lineage_snapshot.sql"
+    ).read_text(encoding="utf-8")
+
+    assert "job_dataset_count" in _column_names(sql)
+    assert "non_column_direct_lineage_count" in _column_names(sql)

@@ -30,9 +30,13 @@ from dw_refactor_agent.config import (
     lineage_job_html_path,
     task_source_file,
 )
+from dw_refactor_agent.lineage.contract import validate_lineage_v2
 from dw_refactor_agent.lineage.identifiers import (
     canonical_qualified_identifier,
+    display_table_name,
+    identifier_match_key,
     split_column_ref,
+    table_identity_match_key,
 )
 
 LINEAGE_DIR = Path(__file__).parent
@@ -92,9 +96,26 @@ def _edge_ref_id(ref):
     return str(ref or "")
 
 
+def _validated_lineage_version(data):
+    if "format_version" not in data:
+        return 1
+    version = data["format_version"]
+    if type(version) is not int or version not in {1, 2}:
+        raise ValueError(
+            "lineage format_version must be integer 1 or 2; "
+            f"received {version!r}"
+        )
+    if version == 2:
+        validate_lineage_v2(data)
+    return version
+
+
 def build_frontend_lineage_data(data, project):
     """Build lineage payload compatible with the HTML field graph."""
     frontend_data = dict(data)
+    if _validated_lineage_version(data) == 2:
+        return frontend_data
+
     frontend_tables = []
     for table in data.get("tables") or []:
         normalized_table = dict(table)
@@ -150,12 +171,73 @@ def build_frontend_lineage_data(data, project):
 
 
 def generate_jobs(data, tasks_dir, current_db, job_logic=None, project="shop"):
+    job_logic = job_logic or {}
+    if _validated_lineage_version(data) == 2:
+        jobs = []
+        for job in data.get("jobs") or []:
+            job_id = str(job.get("name") or "")
+            source_file = str(job.get("source_file") or "")
+
+            def dataset_displays(values):
+                displays = {}
+                for dataset in values or []:
+                    display = display_table_name(
+                        dataset,
+                        default_db=current_db,
+                        strip_current_db=True,
+                    )
+                    if display:
+                        displays.setdefault(
+                            table_identity_match_key(dataset), display
+                        )
+                return displays
+
+            sources = dataset_displays(job.get("inputs"))
+            targets = dataset_displays(job.get("outputs"))
+            if targets:
+                main_target_key = max(
+                    targets,
+                    key=lambda key: (
+                        _layer_priority(targets[key], project),
+                        identifier_match_key(targets[key]),
+                    ),
+                )
+                main_target = targets[main_target_key]
+                for target_key in targets:
+                    sources.pop(target_key, None)
+            else:
+                main_target = job_id
+            outputs = sorted(targets.values(), key=identifier_match_key)
+            jobs.append(
+                OrderedDict(
+                    [
+                        ("id", job_id),
+                        ("file", source_file),
+                        ("name", job_id),
+                        (
+                            "source",
+                            sorted(sources.values(), key=identifier_match_key),
+                        ),
+                        ("outputs", outputs),
+                        ("target", main_target),
+                        ("layer", determine_layer(main_target, project)),
+                        (
+                            "logic",
+                            job_logic.get(
+                                job_id,
+                                job_logic.get(Path(source_file).stem, "-"),
+                            ),
+                        ),
+                    ]
+                )
+            )
+        return jobs
+
     file_edges = {}
     for e in data["edges"]:
         fname = e.get("source_file", "")
         file_edges.setdefault(fname, []).append(e)
 
-    job_logic = job_logic or {}
     jobs = []
 
     def _edge_ref_table(ref):

@@ -19,6 +19,7 @@ from dw_refactor_agent.execution.model_config import (
     normalize_strategy,
     slice_config_from_mapping,
 )
+from dw_refactor_agent.lineage.identifiers import identifier_match_key
 
 
 @dataclass(frozen=True)
@@ -46,16 +47,28 @@ class ExecutionPlanner:
         self.warehouse_execution = self._warehouse_execution_config()
         self.model_metadata = self._load_model_metadata()
 
-    def task_spec(self, job_name: str, sql_path: Path) -> TaskSpec:
-        raw_model = self.model_metadata.get(job_name, {})
-        raw_execution = execution_config_for_model(job_name, raw_model)
+    def task_spec(
+        self,
+        job_name: str,
+        sql_path: Path,
+        *,
+        model_name: str | None = None,
+    ) -> TaskSpec:
+        execution_model_name = str(model_name or job_name).strip()
+        raw_model = self.model_metadata.get(
+            identifier_match_key(execution_model_name), {}
+        )
+        raw_execution = execution_config_for_model(
+            execution_model_name,
+            raw_model,
+        )
 
         materialized = normalize_materialized(
-            job_name,
+            execution_model_name,
             raw_execution.get("materialized", "incremental"),
         )
         strategy = normalize_strategy(
-            job_name,
+            execution_model_name,
             materialized,
             raw_execution.get("full_refresh_strategy"),
         )
@@ -64,29 +77,38 @@ class ExecutionPlanner:
         # execution metadata.
         if materialized == "full":
             explicit_slice = slice_config_from_mapping(
-                job_name,
+                execution_model_name,
                 raw_execution.get("slice"),
                 label="execution.slice",
             )
             if explicit_slice is not None:
                 raise ExecutionConfigError(
-                    f"[{job_name}] full models cannot define execution.slice"
+                    f"[{execution_model_name}] full models cannot define "
+                    "execution.slice"
                 )
             slice_config = None
         else:
-            slice_config = self._slice_config(job_name, raw_execution)
+            slice_config = self._slice_config(
+                execution_model_name,
+                raw_execution,
+            )
         if (
             materialized == "incremental"
             and strategy == "replay_slices"
             and slice_config is None
         ):
             raise ExecutionConfigError(
-                f"[{job_name}] incremental + replay_slices requires "
+                f"[{execution_model_name}] incremental + replay_slices "
+                "requires "
                 "model execution.slice or warehouse execution.default_slice"
             )
 
         if slice_config is not None:
-            self._validate_slice_column(job_name, Path(sql_path), slice_config)
+            self._validate_slice_column(
+                execution_model_name,
+                Path(sql_path),
+                slice_config,
+            )
 
         companion_path = self._companion_path(Path(sql_path), job_name)
         if strategy == "companion" and companion_path is None:
@@ -229,8 +251,13 @@ class ExecutionPlanner:
         full_refresh: bool = False,
     ) -> list[TaskInvocation]:
         job_name = str(job.get("job") or "").strip()
+        model_name = str(job.get("target") or job_name).strip()
         sql_path = self._job_sql_path(job, project_root=project_root)
-        spec = self.task_spec(job_name, sql_path)
+        spec = self.task_spec(
+            job_name,
+            sql_path,
+            model_name=model_name,
+        )
         if full_refresh:
             return self.plan_full_refresh(
                 spec,
@@ -318,7 +345,13 @@ class ExecutionPlanner:
                 name = raw.get("name") or model_path.stem
                 raw = dict(raw)
                 raw["name"] = name
-                metadata[str(name)] = raw
+                name_key = identifier_match_key(name)
+                if name_key in metadata:
+                    raise ExecutionConfigError(
+                        "duplicate model metadata names under "
+                        f"case-insensitive matching: {name!r}"
+                    )
+                metadata[name_key] = raw
         return metadata
 
     def _slice_config(
@@ -357,7 +390,23 @@ class ExecutionPlanner:
         task_dir = sql_path.parent
         if task_dir.name == "full_refresh":
             task_dir = task_dir.parent
-        return task_dir.parent / "ddl" / f"{job_name}.sql"
+        ddl_dir = task_dir.parent / "ddl"
+        candidate = ddl_dir / f"{job_name}.sql"
+        if not ddl_dir.exists():
+            return candidate
+        job_key = identifier_match_key(job_name)
+        matches = [
+            path
+            for path in sorted(ddl_dir.glob("*.sql"))
+            if identifier_match_key(path.stem) == job_key
+        ]
+        if len(matches) > 1:
+            raise ExecutionConfigError(
+                "multiple DDL files match execution model "
+                f"{job_name!r} case-insensitively: "
+                f"{[str(path) for path in matches]!r}"
+            )
+        return matches[0] if matches else candidate
 
     def _companion_path(self, sql_path: Path, job_name: str) -> Path | None:
         task_dir = sql_path.parent

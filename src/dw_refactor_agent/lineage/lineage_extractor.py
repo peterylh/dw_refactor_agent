@@ -11,6 +11,7 @@ import re
 import sys
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass, field
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
@@ -40,6 +41,11 @@ from dw_refactor_agent.config import determine_layer as determine_config_layer
 from dw_refactor_agent.config import (
     project_dir as configured_project_dir,
 )
+from dw_refactor_agent.lineage.contract import (
+    FORMAT_VERSION,
+    LineageContractError,
+    validate_lineage_v2,
+)
 from dw_refactor_agent.lineage.identifiers import (
     canonical_identifier,
     canonical_qualified_identifier,
@@ -49,6 +55,10 @@ from dw_refactor_agent.lineage.identifiers import (
     schema_table_match_key,
     table_identity,
     table_identity_match_key,
+)
+from dw_refactor_agent.lineage.job_lineage import (
+    build_job_records,
+    resolve_job_dependencies,
 )
 from dw_refactor_agent.lineage.sql_task_facts import (
     extract_task_table_facts,
@@ -364,12 +374,20 @@ def _transformation_type_for_expression(expression):
 
 def _is_literal_expression(expression):
     node = expression.this if isinstance(expression, exp.Alias) else expression
-    return isinstance(node, exp.Literal)
+    return isinstance(node, (exp.Literal, exp.Boolean, exp.Null))
 
 
 def _literal_value(expression):
     node = expression.this if isinstance(expression, exp.Alias) else expression
+    if isinstance(node, exp.Boolean):
+        return bool(node.this)
+    if isinstance(node, exp.Null):
+        return None
     if isinstance(node, exp.Literal):
+        if node.is_int:
+            return int(node.this)
+        if node.is_number:
+            return float(node.this)
         return str(node.this)
     return ""
 
@@ -2912,6 +2930,8 @@ def _task_context_from_statements(
     task_facts = extract_task_table_facts_from_statements(
         statements,
         work_item.source_file,
+        default_catalog=_default_catalog(),
+        default_db=_default_db(),
     )
     task_schema = _task_schema_for_table_names(schema, referenced_tables)
     if not work_item.sql_hash:
@@ -2942,8 +2962,54 @@ def _parse_task_context(work_item, schema, diagnostics=None):
     )
 
 
-def _task_result_from_context(context, entries):
+def _task_fact_result_fields(task_facts):
+    def sorted_tables(field):
+        return sorted(
+            task_facts.get(field) or [],
+            key=_identifier_match_key,
+        )
+
     return {
+        "input_tables": sorted_tables("input_tables"),
+        "output_tables": sorted_tables("output_tables"),
+        "created_tables": sorted_tables("created_tables"),
+        "temporary_tables": sorted_tables("temporary_tables"),
+        "local_lifecycle_tables": task_facts.get("local_lifecycle_tables")
+        or [],
+    }
+
+
+def _persistent_created_table_schemas(context):
+    """Return schemas for CTAS/create outputs that survive this task."""
+    output_keys = {
+        _table_identity_match_key(table_name)
+        for table_name in context.task_facts.get("output_tables") or []
+    }
+    records = {}
+    for table_name in context.task_facts.get("created_tables") or []:
+        table_key = _table_identity_match_key(table_name)
+        if table_key not in output_keys:
+            continue
+        for catalog, database, table, columns in _iter_matching_schema_tables(
+            context.task_schema,
+            table_name,
+        ):
+            clean_columns = {
+                _canonical_column(column_name): str(column_type or "UNKNOWN")
+                for column_name, column_type in (columns or {}).items()
+                if _canonical_column(column_name)
+            }
+            if not clean_columns:
+                continue
+            records[table_key] = {
+                "name": _qualified_table_name(catalog, database, table),
+                "columns": clean_columns,
+            }
+    return [records[key] for key in sorted(records)]
+
+
+def _task_result_from_context(context, entries):
+    result = {
         "index": context.index,
         "source_file": context.source_file,
         "entries": entries,
@@ -2955,7 +3021,10 @@ def _task_result_from_context(context, entries):
         "sql_hash": context.sql_hash,
         "stats": dict(STATS),
         "errors": context.diagnostics,
+        "process_table_schemas": _persistent_created_table_schemas(context),
     }
+    result.update(_task_fact_result_fields(context.task_facts))
+    return result
 
 
 def extract_lineage_from_statements(
@@ -3123,8 +3192,10 @@ def _extract_task_work_item(work_item, schema):
             task_facts = extract_task_table_facts(
                 work_item.sql_text,
                 work_item.source_file,
+                default_catalog=_default_catalog(),
+                default_db=_default_db(),
             )
-            return {
+            result = {
                 "index": work_item.index,
                 "source_file": work_item.source_file,
                 "entries": [],
@@ -3136,7 +3207,14 @@ def _extract_task_work_item(work_item, schema):
                 "sql_hash": work_item.sql_hash,
                 "stats": dict(STATS),
                 "errors": diagnostics,
+                "process_table_schemas": [],
             }
+            result.update(_task_fact_result_fields(task_facts))
+            result["schema_slice_hash"] = _schema_slice_hash_for_tables(
+                schema,
+                result["referenced_tables"],
+            )
+            return result
 
         context = _task_context_from_statements(
             work_item,
@@ -3145,7 +3223,12 @@ def _extract_task_work_item(work_item, schema):
             diagnostics=diagnostics,
         )
         entries = extract_lineage_from_context(context)
-        return _task_result_from_context(context, entries)
+        result = _task_result_from_context(context, entries)
+        result["schema_slice_hash"] = _schema_slice_hash_for_tables(
+            schema,
+            result["referenced_tables"],
+        )
+        return result
     finally:
         STATS.update(previous_stats)
 
@@ -3171,6 +3254,11 @@ def _task_failure_result(work_item, error, stage="worker"):
         "source_file": work_item.source_file,
         "entries": [],
         "transient_tables": [],
+        "input_tables": [],
+        "output_tables": [],
+        "created_tables": [],
+        "temporary_tables": [],
+        "local_lifecycle_tables": [],
         "missing_ddl_tables": [],
         "missing_source_ddl": [],
         "missing_target_ddl": [],
@@ -3184,6 +3272,7 @@ def _task_failure_result(work_item, error, stage="worker"):
                 "error": _diagnostic_error(error),
             }
         ],
+        "process_table_schemas": [],
     }
 
 
@@ -3211,12 +3300,18 @@ def _task_result_from_cache(work_item, cached):
         "source_file": work_item.source_file,
         "entries": cached.get("entries") or [],
         "transient_tables": cached.get("transient_tables") or [],
+        "input_tables": cached.get("input_tables") or [],
+        "output_tables": cached.get("output_tables") or [],
+        "created_tables": cached.get("created_tables") or [],
+        "temporary_tables": cached.get("temporary_tables") or [],
+        "local_lifecycle_tables": cached.get("local_lifecycle_tables") or [],
         "missing_ddl_tables": cached.get("missing_ddl_tables") or [],
         "missing_source_ddl": cached.get("missing_source_ddl") or [],
         "missing_target_ddl": cached.get("missing_target_ddl") or [],
         "referenced_tables": cached.get("referenced_tables") or [],
         "stats": cached.get("stats") or {},
         "errors": cached.get("errors") or [],
+        "process_table_schemas": cached.get("process_table_schemas") or [],
         "cache_hit": True,
     }
     for key in (
@@ -3249,7 +3344,12 @@ def _cache_project_config(project):
 def _extractor_hash_for_cache():
     from dw_refactor_agent.lineage.task_cache import extractor_version_hash
 
-    return extractor_version_hash(__file__)
+    return extractor_version_hash(
+        (
+            __file__,
+            Path(__file__).with_name("sql_task_facts.py"),
+        )
+    )
 
 
 def _task_sql_hash(work_item):
@@ -3264,6 +3364,95 @@ def _schema_slice_hash_for_tables(schema, referenced_tables):
     if referenced_tables:
         return stable_json_hash(slice_schema(schema, referenced_tables))
     return stable_json_hash(_copy_schema(schema))
+
+
+def _cache_can_seed_process_table_schemas(
+    work_item,
+    cached,
+    project,
+    extractor_hash,
+):
+    if not cached or "process_table_schemas" not in cached:
+        return False
+    sql_hash = work_item.sql_hash or _task_sql_hash(work_item)
+    return (
+        cached.get("sql_hash") == sql_hash
+        and cached.get("extractor_hash") == extractor_hash
+        and cached.get("project_config") == _cache_project_config(project)
+    )
+
+
+def _process_table_schema_catalog(task_results, schema=None):
+    """Return schemas supplied by one unambiguous persistent creator."""
+    formal_keys = {
+        _schema_table_match_key(catalog, database, table)
+        for catalog, database, table, _columns in _iter_schema_tables(schema)
+    }
+    consumers = {}
+    for result in task_results or []:
+        source_file = str(result.get("source_file") or "")
+        for table_name in result.get("input_tables") or []:
+            consumers.setdefault(
+                _table_identity_match_key(table_name),
+                set(),
+            ).add(source_file)
+
+    candidates = {}
+    for result in task_results or []:
+        source_file = str(result.get("source_file") or "")
+        output_keys = {
+            _table_identity_match_key(table_name)
+            for table_name in result.get("output_tables") or []
+        }
+        for record in result.get("process_table_schemas") or []:
+            table_name = record.get("name")
+            columns = record.get("columns") or {}
+            table_key = _table_identity_match_key(table_name)
+            external_consumers = consumers.get(table_key, set()) - {
+                source_file
+            }
+            if (
+                not table_key[2]
+                or table_key in formal_keys
+                or table_key not in output_keys
+                or not columns
+                or not external_consumers
+            ):
+                continue
+            candidates.setdefault(table_key, {})[source_file] = {
+                "name": table_name,
+                "columns": dict(columns),
+            }
+
+    catalog = []
+    for table_key in sorted(candidates):
+        by_source = candidates[table_key]
+        if len(by_source) != 1:
+            continue
+        catalog.append(next(iter(by_source.values())))
+    return catalog
+
+
+def _schema_with_process_table_catalog(schema, catalog):
+    if not catalog:
+        return schema
+    combined = _copy_schema(schema)
+    formal_keys = {
+        _schema_table_match_key(catalog_name, database, table)
+        for catalog_name, database, table, _columns in _iter_schema_tables(
+            schema
+        )
+    }
+    for record in catalog or []:
+        table_name = record.get("name")
+        if _table_identity_match_key(table_name) in formal_keys:
+            continue
+        _register_task_table_schema(
+            combined,
+            table_name,
+            record.get("columns") or {},
+        )
+    return combined
 
 
 def _cache_key_from_cached_metadata(
@@ -3351,10 +3540,12 @@ def _task_cache_metadata_from_result(
         or work_item.sql_hash
         or _task_sql_hash(work_item)
     )
-    schema_slice_hash = _schema_slice_hash_for_tables(
-        schema,
-        referenced_tables,
-    )
+    schema_slice_hash = result.get("schema_slice_hash")
+    if not schema_slice_hash:
+        schema_slice_hash = _schema_slice_hash_for_tables(
+            schema,
+            referenced_tables,
+        )
     return TaskCacheMetadata(
         sql_hash=sql_hash,
         referenced_tables=referenced_tables,
@@ -3413,9 +3604,13 @@ def _load_previous_task_cache(path):
 
 
 def _build_task_cache(project, schema, task_cache_entries):
-    from dw_refactor_agent.lineage.task_cache import stable_json_hash
+    from dw_refactor_agent.lineage.task_cache import (
+        TASK_CACHE_FORMAT_VERSION,
+        stable_json_hash,
+    )
 
     return {
+        "format_version": TASK_CACHE_FORMAT_VERSION,
         "project": project,
         "schema_hash": stable_json_hash(schema),
         "tasks": sorted(
@@ -3498,6 +3693,84 @@ def _extract_task_work_items_parallel(
         )
 
 
+def _extract_task_work_items(
+    work_items,
+    schema,
+    parallel,
+    progress_callback=None,
+):
+    if len(work_items) <= 1 or parallel == 1:
+        return _extract_task_work_items_serial(
+            work_items,
+            schema,
+            progress_callback,
+        )
+    return _extract_task_work_items_parallel(
+        work_items,
+        schema,
+        parallel,
+        progress_callback,
+    )
+
+
+def _propagate_process_table_schemas(
+    task_results,
+    work_items_by_index,
+    schema,
+    parallel,
+    initial_schema,
+    initial_catalog,
+):
+    """Re-extract consumers until cross-Job process schemas reach a fixpoint."""
+    results_by_index = {result["index"]: result for result in task_results}
+    final_schema = schema
+    max_rounds = len(work_items_by_index) + 1
+    for _round in range(max_rounds):
+        catalog = _process_table_schema_catalog(
+            results_by_index.values(),
+            schema=schema,
+        )
+        if _round == 0 and catalog == initial_catalog:
+            return (
+                [
+                    results_by_index[index]
+                    for index in sorted(results_by_index)
+                ],
+                initial_schema,
+            )
+        final_schema = _schema_with_process_table_catalog(schema, catalog)
+        stale_items = []
+        for index, result in sorted(results_by_index.items()):
+            if "schema_slice_hash" not in result:
+                continue
+            expected_hash = _schema_slice_hash_for_tables(
+                final_schema,
+                result.get("referenced_tables") or [],
+            )
+            if result.get("schema_slice_hash") != expected_hash:
+                stale_items.append(work_items_by_index[index])
+        if not stale_items:
+            return (
+                [
+                    results_by_index[index]
+                    for index in sorted(results_by_index)
+                ],
+                final_schema,
+            )
+
+        refreshed = _extract_task_work_items(
+            stale_items,
+            final_schema,
+            parallel,
+        )
+        for result in refreshed:
+            results_by_index[result["index"]] = result
+
+    raise RuntimeError(
+        "cross-Job process table schema propagation did not converge"
+    )
+
+
 def extract_lineage_from_task_files(
     task_files,
     tasks_dir,
@@ -3521,7 +3794,27 @@ def extract_lineage_from_task_files(
     )
     extractor_hash = _extractor_hash_for_cache() if cache_enabled else None
     work_items_by_index = {item.index: item for item in work_items}
-    task_cache_entries = []
+
+    cached_schema_seeds = []
+    if cache_enabled:
+        for work_item in work_items:
+            work_item.sql_hash = _task_sql_hash(work_item)
+            cached = previous_cache.get(work_item.source_file)
+            if _cache_can_seed_process_table_schemas(
+                work_item,
+                cached,
+                cache_project,
+                extractor_hash,
+            ):
+                cached_schema_seeds.append(cached)
+    initial_catalog = _process_table_schema_catalog(
+        cached_schema_seeds,
+        schema=schema,
+    )
+    extraction_schema = _schema_with_process_table_catalog(
+        schema,
+        initial_catalog,
+    )
 
     total = len(work_items)
     completed = 0
@@ -3531,13 +3824,12 @@ def extract_lineage_from_task_files(
         if not cache_enabled:
             uncached_work_items.append(work_item)
             continue
-        work_item.sql_hash = _task_sql_hash(work_item)
         cached = previous_cache.get(work_item.source_file)
         if cached:
             cache_key = _cache_key_from_cached_metadata(
                 work_item,
                 cached,
-                schema,
+                extraction_schema,
                 cache_project,
                 extractor_hash,
             )
@@ -3546,9 +3838,6 @@ def extract_lineage_from_task_files(
         if cached and cached.get("cache_key") == work_item.cache_key:
             result = _task_result_from_cache(work_item, cached)
             cached_results.append(result)
-            task_cache_entries.append(
-                _cache_entry_from_result(result, work_item.cache_key)
-            )
             completed += 1
             _notify_progress(progress_callback, completed, total, result)
         else:
@@ -3559,36 +3848,39 @@ def extract_lineage_from_task_files(
         completed += 1
         _notify_progress(progress_callback, completed, total, result)
 
-    if len(uncached_work_items) <= 1 or parallel == 1:
-        computed_results = _extract_task_work_items_serial(
-            uncached_work_items,
-            schema,
-            notify_uncached_progress,
-        )
-    else:
-        computed_results = _extract_task_work_items_parallel(
-            uncached_work_items,
-            schema,
-            parallel,
-            notify_uncached_progress,
-        )
-    for result in computed_results:
-        if cache_enabled:
-            work_item = work_items_by_index.get(result["index"])
+    computed_results = _extract_task_work_items(
+        uncached_work_items,
+        extraction_schema,
+        parallel,
+        notify_uncached_progress,
+    )
+    task_results = sorted(
+        [*cached_results, *computed_results],
+        key=lambda result: result["index"],
+    )
+    task_results, extraction_schema = _propagate_process_table_schemas(
+        task_results,
+        work_items_by_index,
+        schema,
+        parallel,
+        extraction_schema,
+        initial_catalog,
+    )
+
+    task_cache_entries = []
+    if cache_enabled:
+        for result in task_results:
+            work_item = work_items_by_index[result["index"]]
             cache_key, cache_result = _cache_metadata_for_result(
                 result,
                 work_item,
-                schema,
+                extraction_schema,
                 cache_project,
                 extractor_hash,
             )
             task_cache_entries.append(
                 _cache_entry_from_result(cache_result, cache_key)
             )
-    task_results = sorted(
-        [*cached_results, *computed_results],
-        key=lambda result: result["index"],
-    )
 
     all_lineage = []
     transient_tables = []
@@ -3613,7 +3905,11 @@ def extract_lineage_from_task_files(
         "missing_target_ddl": sorted(missing_target_ddl),
         "task_results": task_results,
         "task_cache": (
-            _build_task_cache(cache_project, schema, task_cache_entries)
+            _build_task_cache(
+                cache_project,
+                extraction_schema,
+                task_cache_entries,
+            )
             if cache_enabled
             else None
         ),
@@ -4012,83 +4308,287 @@ def _extract_values_lineage(target_table, insert_or_values, file_path):
     return entries
 
 
-def _normalize_transient_tables(transient_tables):
-    unique = {}
-    for table in transient_tables or []:
-        name = _strip_db(table.get("name", ""))
-        source_file = table.get("source_file", "")
-        if not name:
-            continue
-        normalized = dict(table)
-        normalized["name"] = name
-        normalized["source_file"] = source_file
-        normalized["is_transient"] = bool(normalized.get("is_transient", True))
-        key = (
-            name,
-            source_file,
-            normalized.get("created_statement_index"),
-            normalized.get("dropped_statement_index"),
+def _source_file_match_key(source_file):
+    return str(source_file or "").replace("\\", "/")
+
+
+def _task_fact_table_names(values):
+    names = []
+    for value in values or []:
+        name = value.get("name") if isinstance(value, dict) else value
+        if name:
+            names.append(str(name))
+    return names
+
+
+def _legacy_task_results(all_lineage, transient_tables=None):
+    """Reconstruct explicit Job facts for legacy direct writer callers."""
+    results_by_source = {}
+
+    def result_for(source_file):
+        source_key = _source_file_match_key(source_file)
+        if not source_key:
+            return None
+        return results_by_source.setdefault(
+            source_key,
+            {
+                "source_file": str(source_file),
+                "input_tables": set(),
+                "output_tables": set(),
+                "created_tables": set(),
+                "temporary_tables": set(),
+                "local_lifecycle_tables": [],
+            },
         )
-        unique[key] = normalized
+
+    for entry in all_lineage or []:
+        result = result_for(entry.get("source_file"))
+        if result is None:
+            continue
+        source_table = entry.get("source_table")
+        if source_table and source_table != "UNKNOWN":
+            result["input_tables"].add(source_table)
+        target_table = entry.get("target_table")
+        if target_table:
+            result["output_tables"].add(target_table)
+
+    for table in transient_tables or []:
+        result = result_for(table.get("source_file"))
+        table_name = table.get("name")
+        if result is None or not table_name:
+            continue
+        result["created_tables"].add(table_name)
+        is_local = bool(
+            table.get("is_temporary") or table.get("dropped_in_same_task")
+        )
+        if table.get("is_temporary"):
+            result["temporary_tables"].add(table_name)
+        if is_local:
+            result["local_lifecycle_tables"].append(dict(table))
+            local_table_key = _table_identity_match_key(table_name)
+            result["output_tables"] = {
+                output
+                for output in result["output_tables"]
+                if _table_identity_match_key(output) != local_table_key
+            }
+
+    return [results_by_source[key] for key in sorted(results_by_source)]
+
+
+def _job_for_lineage_entry(entry, jobs_by_source_file):
+    source_file = entry.get("source_file")
+    source_key = _source_file_match_key(source_file)
+    if source_key in jobs_by_source_file:
+        return jobs_by_source_file[source_key]
+    if source_key:
+        message = f"cannot map edge source_file {source_file!r} to a Job"
+    else:
+        message = "cannot map edge without source_file to a Job"
+    raise LineageContractError(f"lineage edge source_file: {message}")
+
+
+def _normalize_producer_diagnostics(diagnostics, jobs, tables):
+    jobs_by_name = {
+        _identifier_match_key(job["name"]): job["name"] for job in jobs
+    }
+    jobs_by_source = {
+        _source_file_match_key(job["source_file"]): job["name"] for job in jobs
+    }
+    tables_by_key = {
+        _table_identity_match_key(table["full_name"]): table["full_name"]
+        for table in tables
+    }
+
+    def job_name(value):
+        text = str(value or "")
+        return jobs_by_name.get(
+            _identifier_match_key(text),
+            jobs_by_source.get(_source_file_match_key(text), text),
+        )
+
+    def job_names(values):
+        by_key = {}
+        for value in values or []:
+            name = job_name(value)
+            by_key.setdefault(_identifier_match_key(name), name)
+        return [by_key[key] for key in sorted(by_key)]
+
+    normalized = []
+    for diagnostic in diagnostics or []:
+        dataset = str(diagnostic.get("dataset") or "")
+        dataset = tables_by_key.get(
+            _table_identity_match_key(dataset),
+            _display_table_name(dataset),
+        )
+        normalized.append(
+            {
+                "code": diagnostic.get("code"),
+                "dataset": dataset,
+                "reason": diagnostic.get("reason"),
+                "consumer_jobs": job_names(
+                    diagnostic.get("consumer_jobs")
+                    or diagnostic.get("consumer_source_files")
+                ),
+                "candidate_producer_jobs": job_names(
+                    diagnostic.get("candidate_producer_jobs")
+                    or diagnostic.get("candidate_producer_source_files")
+                ),
+            }
+        )
     return sorted(
-        unique.values(),
+        normalized,
         key=lambda item: (
-            item.get("source_file", ""),
-            item.get("created_statement_index", -1),
-            item.get("name", ""),
+            _table_identity_match_key(item["dataset"]),
+            item["reason"] or "",
+            tuple(_identifier_match_key(job) for job in item["consumer_jobs"]),
+            tuple(
+                _identifier_match_key(job)
+                for job in item["candidate_producer_jobs"]
+            ),
         ),
     )
 
 
-def _transient_table_occurrence(table):
-    return {
-        "source_file": table.get("source_file", ""),
-        "created_statement_index": table.get("created_statement_index"),
-        "dropped_statement_index": table.get("dropped_statement_index"),
-        "is_ctas": bool(table.get("is_ctas", False)),
-        "is_temporary": bool(table.get("is_temporary", False)),
-        "dropped_in_same_task": bool(table.get("dropped_in_same_task", False)),
-    }
+def build_lineage_output(
+    all_lineage,
+    schema,
+    *,
+    task_results=None,
+    diagnostics=None,
+    transient_tables=None,
+):
+    """Build and validate one strict, Job-aware lineage version 2 artifact.
 
-
-def build_lineage_output(all_lineage, schema, transient_tables=None):
-    """Build serialized lineage output, preserving transient table metadata."""
+    ``transient_tables`` remains an input-only compatibility bridge for legacy
+    direct callers. Version 2 output never serializes that global metadata.
+    """
     schema_lookup = _schema_lookup(schema)
     all_lineage = [
         _canonical_lineage_entry(entry, schema_lookup) for entry in all_lineage
     ]
+
+    @lru_cache(maxsize=None)
+    def cached_identifier_match_key(value):
+        return _identifier_match_key(value)
+
+    @lru_cache(maxsize=None)
+    def cached_table_identity_match_key(value):
+        return _table_identity_match_key(value)
+
+    @lru_cache(maxsize=None)
+    def cached_display_table_name(value):
+        return _display_table_name(value)
+
+    @lru_cache(maxsize=None)
+    def cached_short_table_name(value):
+        return _strip_db(value)
+
+    @lru_cache(maxsize=None)
+    def cached_column_name(value):
+        return _canonical_column(value)
+
+    def _direct_source_type(entry):
+        source_type = cached_identifier_match_key(
+            entry.get("source_type") or "column"
+        )
+        if source_type in {"literal", "expression"}:
+            return source_type
+        return "column"
+
+    def _literal_source_value_key(entry):
+        value = entry.get("source_value", "")
+        return type(value).__name__, repr(value)
+
+    def _direct_transformation(entry):
+        if entry.get("transformation_type"):
+            return str(entry["transformation_type"])
+        return _transformation_type_for_expression(entry.get("expression", ""))
+
+    edge_table_displays = {}
+    edge_column_displays = {}
+
+    def remember_edge_ref(table_name, column_name=""):
+        table_display = cached_short_table_name(table_name)
+        if not table_display or table_display == "UNKNOWN":
+            return
+        table_key = cached_table_identity_match_key(table_display)
+        edge_table_displays.setdefault(table_key, table_display)
+        column_display = cached_column_name(column_name)
+        if column_display:
+            column_key = cached_identifier_match_key(column_display)
+            edge_column_displays.setdefault(
+                (table_key, column_key),
+                (table_display, column_display),
+            )
+
+    for entry in all_lineage:
+        source_type = _direct_source_type(entry)
+        if source_type == "column":
+            remember_edge_ref(
+                entry.get("source_table", ""),
+                entry.get("source_column", ""),
+            )
+        remember_edge_ref(
+            entry.get("target_table", ""),
+            entry.get("target_column", ""),
+        )
+
+    if task_results is None:
+        task_results = _legacy_task_results(
+            all_lineage,
+            transient_tables=transient_tables,
+        )
+    else:
+        task_results = list(task_results)
+    jobs = build_job_records(task_results, cached_display_table_name)
+    jobs_by_source_file = {
+        _source_file_match_key(job["source_file"]): job["name"] for job in jobs
+    }
+
+    def entry_job_key(entry):
+        return cached_identifier_match_key(
+            _job_for_lineage_entry(entry, jobs_by_source_file)
+        )
+
+    def direct_source_key(entry):
+        source_type = _direct_source_type(entry)
+        if source_type == "literal":
+            return (source_type, *_literal_source_value_key(entry))
+        if source_type == "expression":
+            return (source_type, entry.get("source_expression", ""))
+        return (
+            source_type,
+            cached_table_identity_match_key(entry.get("source_table", "")),
+            cached_identifier_match_key(entry.get("source_column", "")),
+        )
+
+    def direct_semantic_key(entry):
+        return (
+            "direct",
+            entry_job_key(entry),
+            direct_source_key(entry),
+            cached_table_identity_match_key(entry.get("target_table", "")),
+            cached_identifier_match_key(entry.get("target_column", "")),
+            _direct_transformation(entry),
+            entry.get("expression", ""),
+        )
+
     unique = []
     seen = set()
     for e in all_lineage:
         is_indirect = e.get("lineage_type") == "indirect"
         if is_indirect:
             key = (
-                e.get("source_table", ""),
-                e.get("source_column", ""),
-                e.get("target_table", ""),
-                e.get("condition_type", ""),
+                "indirect",
+                entry_job_key(e),
+                cached_table_identity_match_key(e.get("source_table", "")),
+                cached_identifier_match_key(e.get("source_column", "")),
+                cached_table_identity_match_key(e.get("target_table", "")),
+                _relation_type_for_condition(e.get("condition_type", "")),
                 e.get("condition_expression", ""),
-                e.get("source_file", ""),
-            )
-        elif e.get("source_type"):
-            key = (
-                e.get("source_type", ""),
-                e.get("source_value", ""),
-                e.get("source_expression", ""),
-                e.get("target_table", ""),
-                e.get("target_column", ""),
-                e.get("expression", ""),
-                e.get("source_file", ""),
             )
         else:
-            key = (
-                e.get("source_table", ""),
-                e.get("source_column", ""),
-                e.get("target_table", ""),
-                e.get("target_column", ""),
-                e.get("expression", ""),
-                e.get("source_file", ""),
-            )
+            key = direct_semantic_key(e)
         if key not in seen:
             seen.add(key)
             unique.append(e)
@@ -4100,7 +4600,7 @@ def build_lineage_output(all_lineage, schema, transient_tables=None):
             e.get("source_type", ""),
             e.get("source_table", ""),
             e.get("source_column", ""),
-            e.get("source_value", ""),
+            _literal_source_value_key(e),
             e.get("source_expression", ""),
             e.get("target_table", ""),
             e.get("target_column", ""),
@@ -4109,6 +4609,9 @@ def build_lineage_output(all_lineage, schema, transient_tables=None):
             e.get("expression", ""),
         ),
     )
+    # Avoid retaining large build-only indexes through edge serialization and
+    # strict contract validation, where peak memory is otherwise highest.
+    del seen, unique
 
     direct_entries = [
         e for e in all_lineage if e.get("lineage_type") != "indirect"
@@ -4119,16 +4622,6 @@ def build_lineage_output(all_lineage, schema, transient_tables=None):
 
     tables = {}
     edges = []
-    transient_tables = _normalize_transient_tables(transient_tables)
-    transient_sources_by_table = {}
-    transient_occurrences_by_table = {}
-    for table in transient_tables:
-        transient_sources_by_table.setdefault(table["name"], set()).add(
-            table.get("source_file", "")
-        )
-        transient_occurrences_by_table.setdefault(table["name"], []).append(
-            _transient_table_occurrence(table)
-        )
 
     schema_columns_by_table = schema_lookup.schema_columns_by_table
     schema_type_by_table_col = schema_lookup.schema_type_by_table_col
@@ -4137,150 +4630,307 @@ def build_lineage_output(all_lineage, schema, transient_tables=None):
     column_objects_by_table = {}
 
     def _schema_column_type(tbl, col):
-        tbl = _strip_db(tbl)
-        col = _canonical_column(col)
+        tbl = cached_short_table_name(tbl)
+        col = cached_column_name(col)
         return schema_type_by_table_col.get((tbl, col), "UNKNOWN")
 
-    def _schema_has_table(tbl):
-        tbl = _strip_db(tbl)
-        return tbl in schema_columns_by_table
+    @lru_cache(maxsize=None)
+    def _table_storage_key(tbl):
+        return cached_table_identity_match_key(cached_display_table_name(tbl))
+
+    managed_table_keys = {
+        _table_storage_key(table_name)
+        for table_name in schema_columns_by_table
+    }
+    process_table_keys = set()
+    temporary_table_keys = set()
+    table_names_by_key = {}
+
+    def _remember_table_name(table_name):
+        displayed = cached_display_table_name(table_name)
+        if not displayed:
+            return None
+        table_key = cached_table_identity_match_key(displayed)
+        table_names_by_key.setdefault(table_key, displayed)
+        return table_key
+
+    for task_result in task_results:
+        task_temporary_keys = {
+            key
+            for key in (
+                _remember_table_name(table_name)
+                for table_name in _task_fact_table_names(
+                    task_result.get("temporary_tables")
+                )
+            )
+            if key is not None
+        }
+        temporary_table_keys.update(task_temporary_keys)
+        for fact_field in (
+            "input_tables",
+            "output_tables",
+            "created_tables",
+        ):
+            for table_name in _task_fact_table_names(
+                task_result.get(fact_field)
+            ):
+                table_key = _remember_table_name(table_name)
+                if table_key is None:
+                    continue
+                if fact_field == "output_tables" or (
+                    fact_field == "created_tables"
+                    and table_key not in task_temporary_keys
+                ):
+                    process_table_keys.add(table_key)
+        for table_name in _task_fact_table_names(
+            task_result.get("local_lifecycle_tables")
+        ):
+            _remember_table_name(table_name)
+
+    for entry in all_lineage:
+        source_table = entry.get("source_table")
+        if source_table and source_table != "UNKNOWN":
+            _remember_table_name(source_table)
+        target_key = _remember_table_name(entry.get("target_table"))
+        if target_key is not None and target_key not in temporary_table_keys:
+            process_table_keys.add(target_key)
+    del all_lineage, task_results
+
+    def _dataset_type(tbl):
+        table_key = _table_storage_key(tbl)
+        if table_key in managed_table_keys:
+            return "managed"
+        if table_key in process_table_keys:
+            return "process"
+        if table_key in temporary_table_keys:
+            return "temporary"
+        return "external"
 
     def _ensure_column_index(tbl):
-        if tbl not in column_objects_by_table:
-            column_objects_by_table[tbl] = {
-                c["name"]: c for c in tables[tbl]["columns"]
+        table_key = _table_storage_key(tbl)
+        if table_key not in column_objects_by_table:
+            column_objects_by_table[table_key] = {
+                cached_identifier_match_key(c["name"]): c
+                for c in tables[table_key]["columns"]
             }
-            column_names_by_table[tbl] = set(column_objects_by_table[tbl])
-        return column_names_by_table[tbl], column_objects_by_table[tbl]
+            column_names_by_table[table_key] = set(
+                column_objects_by_table[table_key]
+            )
+        return (
+            column_names_by_table[table_key],
+            column_objects_by_table[table_key],
+        )
 
     def _ensure_table(tbl):
-        tbl = _strip_db(tbl)
+        tbl = cached_short_table_name(tbl)
         if not tbl:
             return
-        if tbl not in tables:
-            tables[tbl] = {
+        table_key = _table_storage_key(tbl)
+        if table_key not in tables:
+            tables[table_key] = {
                 "name": tbl,
-                "full_name": _display_table_name(tbl),
+                "full_name": cached_display_table_name(tbl),
+                "dataset_type": _dataset_type(tbl),
                 "columns": [],
             }
-            column_names_by_table[tbl] = set()
-            column_objects_by_table[tbl] = {}
-        if tbl in transient_sources_by_table and not _schema_has_table(tbl):
-            tables[tbl]["is_transient"] = True
-            tables[tbl]["transient_sources"] = sorted(
-                transient_sources_by_table[tbl]
-            )
-            tables[tbl]["transient_occurrences"] = sorted(
-                transient_occurrences_by_table.get(tbl, []),
-                key=lambda item: (
-                    item.get("source_file", ""),
-                    item.get("created_statement_index") or -1,
-                    item.get("dropped_statement_index") or -1,
-                ),
-            )
+            column_names_by_table[table_key] = set()
+            column_objects_by_table[table_key] = {}
 
     def _ensure_column(tbl, col):
-        tbl = _strip_db(tbl)
-        col = _canonical_column(col)
+        tbl = cached_short_table_name(tbl)
+        col = cached_column_name(col)
         if not tbl or not col:
             return
         _ensure_table(tbl)
         column_names, column_objects = _ensure_column_index(tbl)
-        if col not in column_names:
+        column_key = cached_identifier_match_key(col)
+        if column_key not in column_names:
             column = {"name": col, "type": _schema_column_type(tbl, col)}
-            tables[tbl]["columns"].append(column)
-            column_names.add(col)
-            column_objects[col] = column
+            tables[_table_storage_key(tbl)]["columns"].append(column)
+            column_names.add(column_key)
+            column_objects[column_key] = column
 
-    def _direct_source(entry):
-        source_type = str(entry.get("source_type") or "").strip()
+    def _stored_table_name(tbl):
+        return tables[_table_storage_key(tbl)]["name"]
+
+    def _stored_column_name(tbl, col):
+        return column_objects_by_table[_table_storage_key(tbl)][
+            cached_identifier_match_key(col)
+        ]["name"]
+
+    for table_display in edge_table_displays.values():
+        _ensure_table(table_display)
+    for table_display, column_display in edge_column_displays.values():
+        _ensure_column(table_display, column_display)
+
+    def _direct_source(entry, source_table="", source_column=""):
+        source_type = _direct_source_type(entry)
         if source_type == "literal":
             return _literal_source(entry.get("source_value", ""))
         if source_type == "expression":
             return _expression_source(entry.get("source_expression", ""))
-        return _column_source(
-            entry.get("source_table", ""), entry.get("source_column", "")
-        )
-
-    def _direct_transformation(entry):
-        if entry.get("transformation_type"):
-            return str(entry["transformation_type"])
-        return _transformation_type_for_expression(entry.get("expression", ""))
+        return _column_source(source_table, source_column)
 
     for entry in direct_entries:
-        tgt_tbl = _strip_db(entry.get("target_table", ""))
-        tgt_col = _canonical_column(entry.get("target_column", ""))
-        source_type = str(entry.get("source_type") or "column")
+        tgt_tbl = cached_short_table_name(entry.get("target_table", ""))
+        tgt_col = cached_column_name(entry.get("target_column", ""))
+        source_type = _direct_source_type(entry)
+        displayed_src_tbl = ""
+        displayed_src_col = ""
         if source_type == "column":
-            src_tbl = _strip_db(entry.get("source_table", ""))
-            src_col = _canonical_column(entry.get("source_column", ""))
+            src_tbl = cached_short_table_name(entry.get("source_table", ""))
+            src_col = cached_column_name(entry.get("source_column", ""))
             if src_tbl == "UNKNOWN":
                 continue
             _ensure_column(src_tbl, src_col)
+            displayed_src_tbl = _stored_table_name(src_tbl)
+            displayed_src_col = _stored_column_name(src_tbl, src_col)
         if not tgt_tbl or not tgt_col:
             continue
         _ensure_column(tgt_tbl, tgt_col)
+        displayed_tgt_tbl = _stored_table_name(tgt_tbl)
+        displayed_tgt_col = _stored_column_name(tgt_tbl, tgt_col)
         edges.append(
             {
-                "source": _direct_source(entry),
-                "target": _column_target(tgt_tbl, tgt_col),
+                "source": _direct_source(
+                    entry,
+                    displayed_src_tbl,
+                    displayed_src_col,
+                ),
+                "target": _column_target(
+                    displayed_tgt_tbl,
+                    displayed_tgt_col,
+                ),
                 "relation_type": "direct",
                 "transformation_type": _direct_transformation(entry),
                 "expression": entry.get("expression", ""),
-                "source_file": entry.get("source_file", ""),
+                "job": _job_for_lineage_entry(
+                    entry,
+                    jobs_by_source_file,
+                ),
             }
         )
 
     for entry in indirect_entries:
-        src_tbl = _strip_db(entry.get("source_table", ""))
-        src_col = _canonical_column(entry.get("source_column", ""))
-        tgt_tbl = _strip_db(entry.get("target_table", ""))
+        src_tbl = cached_short_table_name(entry.get("source_table", ""))
+        src_col = cached_column_name(entry.get("source_column", ""))
+        tgt_tbl = cached_short_table_name(entry.get("target_table", ""))
         if src_tbl == "UNKNOWN":
             continue
         _ensure_column(src_tbl, src_col)
         _ensure_table(tgt_tbl)
+        displayed_src_tbl = _stored_table_name(src_tbl)
+        displayed_src_col = _stored_column_name(src_tbl, src_col)
+        displayed_tgt_tbl = _stored_table_name(tgt_tbl)
         relation_type = _relation_type_for_condition(
             entry.get("condition_type", "")
         )
         edges.append(
             {
-                "source": _column_source(src_tbl, src_col),
-                "target": _table_target(tgt_tbl),
+                "source": _column_source(
+                    displayed_src_tbl,
+                    displayed_src_col,
+                ),
+                "target": _table_target(displayed_tgt_tbl),
                 "relation_type": relation_type,
                 "transformation_type": relation_type,
                 "expression": entry.get("condition_expression", ""),
-                "source_file": entry.get("source_file", ""),
+                "job": _job_for_lineage_entry(
+                    entry,
+                    jobs_by_source_file,
+                ),
             }
         )
+    del direct_entries, indirect_entries
 
-    for table in transient_tables:
-        _ensure_table(table.get("name", ""))
+    for table_name in table_names_by_key.values():
+        _ensure_table(table_name)
+
+    for job in jobs:
+        for table_name in (*job["inputs"], *job["outputs"]):
+            _ensure_table(table_name)
 
     for tbl_name, cols in schema_columns_by_table.items():
-        if tbl_name in tables:
+        if _table_storage_key(tbl_name) in tables:
             column_names, column_objects = _ensure_column_index(tbl_name)
             for col_name, col_type in cols:
-                if col_name not in column_names:
+                column_key = cached_identifier_match_key(col_name)
+                if column_key not in column_names:
                     column = {"name": col_name, "type": col_type}
-                    tables[tbl_name]["columns"].append(column)
-                    column_names.add(col_name)
-                    column_objects[col_name] = column
-                elif column_objects[col_name].get("type") == "UNKNOWN":
-                    column_objects[col_name]["type"] = col_type
+                    tables[_table_storage_key(tbl_name)]["columns"].append(
+                        column
+                    )
+                    column_names.add(column_key)
+                    column_objects[column_key] = column
+                elif column_objects[column_key].get("type") == "UNKNOWN":
+                    column_objects[column_key]["type"] = col_type
 
-    return {
+    serialized_tables = sorted(
+        tables.values(),
+        key=lambda table: cached_table_identity_match_key(table["full_name"]),
+    )
+    for table in serialized_tables:
+        table["columns"].sort(
+            key=lambda column: cached_identifier_match_key(column["name"])
+        )
+
+    if diagnostics is None:
+        _dependencies, diagnostics = resolve_job_dependencies(
+            jobs,
+            serialized_tables,
+        )
+    public_diagnostics = _normalize_producer_diagnostics(
+        diagnostics,
+        jobs,
+        serialized_tables,
+    )
+    output = {
+        "format_version": FORMAT_VERSION,
+        "tables": serialized_tables,
+        "jobs": jobs,
         "edges": sorted(
             edges,
             key=lambda e: (
-                e["source_file"],
+                cached_identifier_match_key(e["job"]),
                 e.get("relation_type", ""),
                 _target_sort_key(e.get("target")),
                 _source_sort_key(e.get("source")),
                 e.get("expression", ""),
             ),
         ),
-        "tables": sorted(tables.values(), key=lambda t: t["name"]),
+        "diagnostics": public_diagnostics,
     }
+    validate_lineage_v2(output)
+    return output
+
+
+def format_lineage_output_statistics(output):
+    """Return structural and version 2 dataset counts for CLI output."""
+    edges = output.get("edges") or []
+    tables = output.get("tables") or []
+    direct_count = sum(
+        1 for edge in edges if edge.get("relation_type") == "direct"
+    )
+    dataset_types = ("managed", "process", "temporary", "external")
+    dataset_counts = {
+        dataset_type: sum(
+            1 for table in tables if table.get("dataset_type") == dataset_type
+        )
+        for dataset_type in dataset_types
+    }
+    return [
+        f"  直接血缘: {direct_count} 条边",
+        f"  间接血缘: {len(edges) - direct_count} 条边",
+        "  节点数: "
+        f"{sum(len(table.get('columns') or []) for table in tables)}",
+        f"  表数: {len(tables)}",
+        "  数据集类型: "
+        + ", ".join(
+            f"{dataset_type}={dataset_counts[dataset_type]}"
+            for dataset_type in dataset_types
+        ),
+        f"  生产者警告: {len(output.get('diagnostics') or [])}",
+    ]
 
 
 def format_layer_statistics(tables):
@@ -4371,8 +5021,10 @@ def main():
 
     # 2. 提取血缘
     all_lineage = []
-    transient_tables = []
-    task_files = iter_project_task_files(args.project)
+    task_files = iter_project_task_files(
+        args.project,
+        include_full_refresh=False,
+    )
 
     parallel = max(1, int(args.parallel or 1))
     print(f"Tasks: {len(task_files)} 个文件, 并行度: {parallel}")
@@ -4419,7 +5071,6 @@ def main():
         ),
     )
     all_lineage = extraction_result["lineage"]
-    transient_tables = extraction_result["transient_tables"]
     warning_lines = format_missing_ddl_warnings(
         extraction_result["task_results"],
         extraction_result["missing_ddl_tables"],
@@ -4471,7 +5122,7 @@ def main():
     output = build_lineage_output(
         all_lineage,
         schema,
-        transient_tables=transient_tables,
+        task_results=extraction_result["task_results"],
     )
     for path in output_paths:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -4491,21 +5142,8 @@ def main():
         print("\n血缘提取完成, 但存在严重错误!")
     else:
         print("\n血缘提取完成!")
-    direct_count = sum(
-        1 for edge in output["edges"] if edge.get("relation_type") == "direct"
-    )
-    indirect_count = len(output["edges"]) - direct_count
-    node_count = sum(
-        len(table.get("columns", [])) for table in output["tables"]
-    )
-    transient_count = sum(
-        1 for table in output["tables"] if table.get("is_transient")
-    )
-    print(f"  直接血缘: {direct_count} 条边")
-    print(f"  间接血缘: {indirect_count} 条边")
-    print(f"  节点数: {node_count}")
-    print(f"  表数: {len(output['tables'])}")
-    print(f"  临时表: {transient_count}")
+    for line in format_lineage_output_statistics(output):
+        print(line)
     if STATS["parse_failures"]:
         print(f"  解析失败: {STATS['parse_failures']} 个文件")
     if STATS["lineage_failures"]:

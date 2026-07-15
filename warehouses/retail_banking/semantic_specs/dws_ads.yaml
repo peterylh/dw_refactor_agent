@@ -36,6 +36,7 @@ dws:
     name: dws_client_transaction_daily
     decision: revise
     source: [dwd_client_transaction]
+    process_table_handoff: stage_client_transaction_daily
     canonical_process: customer_management
     business_date: {column: transaction_date, output_column: stat_date, kind: event_date}
     grain: {columns: [stat_date, office_id, client_id, currency_code, transaction_type_enum], description: "one day, office, customer, currency and transaction type"}

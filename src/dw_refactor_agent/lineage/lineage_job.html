@@ -21,7 +21,7 @@
         <th>Job</th>
         <th>Layer</th>
         <th>Source</th>
-        <th>Target</th>
+        <th>Outputs</th>
       </tr>
     </thead>
     <tbody id="jobs"></tbody>
@@ -38,7 +38,9 @@
         <td><code>${job.name || job.id || ""}</code></td>
         <td>${job.layer || ""}</td>
         <td>${(job.source || []).join(", ")}</td>
-        <td><code>${job.target || ""}</code></td>
+        <td>${(job.outputs || (job.target ? [job.target] : []))
+          .map((output) => "<code>" + output + "</code>")
+          .join(", ")}</td>
       </tr>
     `).join("");
   </script>

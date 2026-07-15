@@ -1,3 +1,7 @@
+import json
+
+import pytest
+
 from dw_refactor_agent.lineage.lineage_extractor import (
     extract_lineage_from_task_files,
     format_missing_ddl_warnings,
@@ -42,6 +46,152 @@ def _assert_missing_result(
 
 def _shop_schema(tables):
     return {"internal": {"shop_dm": tables}}
+
+
+@pytest.mark.parametrize("parallel", [1, 2])
+def test_cross_job_process_schema_propagates_before_missing_ddl_checks(
+    tmp_path,
+    parallel,
+):
+    tasks_dir = tmp_path / "tasks"
+    tasks_dir.mkdir()
+    task_sql = {
+        "producer.sql": """
+            DROP TABLE IF EXISTS shop_dm.Stage_A;
+            CREATE TABLE shop_dm.Stage_A AS
+            SELECT order_id, amount
+            FROM shop_dm.ods_order;
+        """,
+        "middle.sql": """
+            DROP TABLE IF EXISTS shop_dm.STAGE_B;
+            CREATE TABLE shop_dm.STAGE_B AS
+            SELECT a.*
+            FROM shop_dm.stage_a AS a;
+        """,
+        "consumer.sql": """
+            INSERT INTO shop_dm.ads_order(order_id, amount)
+            SELECT b.*
+            FROM shop_dm.stage_b AS b;
+        """,
+    }
+    task_files = {}
+    for name, sql in task_sql.items():
+        task_file = tasks_dir / name
+        task_file.write_text(sql, encoding="utf-8")
+        task_files[name] = task_file
+
+    result = extract_lineage_from_task_files(
+        [
+            task_files["consumer.sql"],
+            task_files["middle.sql"],
+            task_files["producer.sql"],
+        ],
+        tasks_dir,
+        _shop_schema(
+            {
+                "ods_order": {
+                    "order_id": "BIGINT",
+                    "amount": "DECIMAL(18, 2)",
+                },
+                "ads_order": {
+                    "order_id": "BIGINT",
+                    "amount": "DECIMAL(18, 2)",
+                },
+            }
+        ),
+        parallel=parallel,
+    )
+
+    by_source = {
+        task_result["source_file"]: task_result
+        for task_result in result["task_results"]
+    }
+    assert result["missing_ddl_tables"] == []
+    assert by_source["middle.sql"]["missing_source_ddl"] == []
+    assert by_source["consumer.sql"]["missing_source_ddl"] == []
+    assert result["errors"] == []
+    assert {
+        (
+            entry.get("source_table"),
+            entry.get("source_column"),
+            entry.get("target_table"),
+            entry.get("target_column"),
+        )
+        for entry in by_source["consumer.sql"]["entries"]
+        if entry.get("lineage_type") == "direct"
+    } == {
+        ("STAGE_B", "order_id", "ads_order", "order_id"),
+        ("STAGE_B", "amount", "ads_order", "amount"),
+    }
+
+
+def test_process_schema_change_invalidates_cached_downstream_task(tmp_path):
+    tasks_dir = tmp_path / "tasks"
+    tasks_dir.mkdir()
+    producer = tasks_dir / "producer.sql"
+    consumer = tasks_dir / "consumer.sql"
+    cache_path = tmp_path / "task_cache.json"
+    producer.write_text(
+        """
+        CREATE TABLE shop_dm.stage_a AS
+        SELECT order_id FROM shop_dm.ods_order;
+        """,
+        encoding="utf-8",
+    )
+    consumer.write_text(
+        """
+        CREATE TABLE shop_dm.stage_b AS
+        SELECT * FROM shop_dm.stage_a;
+        """,
+        encoding="utf-8",
+    )
+    schema = _shop_schema(
+        {
+            "ods_order": {
+                "order_id": "BIGINT",
+                "amount": "DECIMAL(18, 2)",
+            }
+        }
+    )
+
+    cold = extract_lineage_from_task_files(
+        [consumer, producer],
+        tasks_dir,
+        schema,
+        previous_cache_file=cache_path,
+    )
+    cache_path.write_text(json.dumps(cold["task_cache"]), encoding="utf-8")
+    producer.write_text(
+        """
+        CREATE TABLE shop_dm.stage_a AS
+        SELECT order_id, amount FROM shop_dm.ods_order;
+        """,
+        encoding="utf-8",
+    )
+
+    warm = extract_lineage_from_task_files(
+        [consumer, producer],
+        tasks_dir,
+        schema,
+        previous_cache_file=cache_path,
+    )
+
+    by_source = {
+        task_result["source_file"]: task_result
+        for task_result in warm["task_results"]
+    }
+    assert warm["missing_ddl_tables"] == []
+    assert "cache_hit" not in by_source["producer.sql"]
+    assert "cache_hit" not in by_source["consumer.sql"]
+    assert by_source["consumer.sql"]["process_table_schemas"] == [
+        {
+            "name": "internal.shop_dm.stage_b",
+            "columns": {
+                "order_id": "UNKNOWN",
+                "amount": "UNKNOWN",
+            },
+        }
+    ]
 
 
 def test_extract_lineage_ignores_non_persistent_or_declared_tables(tmp_path):

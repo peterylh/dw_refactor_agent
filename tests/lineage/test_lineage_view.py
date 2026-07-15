@@ -1,6 +1,16 @@
 from dw_refactor_agent.lineage.view import LineageView
 
 
+class CountingEdges(list):
+    def __init__(self, values):
+        super().__init__(values)
+        self.iterations = 0
+
+    def __iter__(self):
+        self.iterations += 1
+        return super().__iter__()
+
+
 def test_lineage_view_reuses_indexed_column_lineage():
     lineage_data = {
         "tables": [{"name": "tmp_orders", "is_transient": True}],
@@ -309,3 +319,231 @@ def test_lineage_view_exposes_self_edges_separately_from_table_graphs():
         }
     ]
     assert view.self_edges_for_table("DWD_ORDERS") == view.asset_self_edges()
+
+
+def test_lineage_view_resolves_v2_edge_job_to_source_file():
+    lineage_data = {
+        "format_version": 2,
+        "tables": [
+            {
+                "name": "src",
+                "full_name": "src",
+                "dataset_type": "managed",
+                "columns": [{"name": "id", "type": "BIGINT"}],
+            },
+            {
+                "name": "out",
+                "full_name": "out",
+                "dataset_type": "managed",
+                "columns": [{"name": "id", "type": "BIGINT"}],
+            },
+        ],
+        "jobs": [
+            {
+                "name": "publish",
+                "source_file": "mid/tasks/publish.sql",
+                "inputs": ["src"],
+                "outputs": ["out"],
+            }
+        ],
+        "edges": [
+            {
+                "source": {"type": "column", "id": "src.id"},
+                "target": {"type": "column", "id": "out.id"},
+                "relation_type": "direct",
+                "transformation_type": "passthrough",
+                "expression": "id",
+                "job": "publish",
+            }
+        ],
+        "diagnostics": [],
+    }
+
+    view = LineageView.from_data("demo", lineage_data)
+
+    assert view.column_lineage_for_table("out") == [
+        {
+            "source": "src.id",
+            "target": "out.id",
+            "expression": "id",
+            "job": "publish",
+            "source_file": "mid/tasks/publish.sql",
+        }
+    ]
+    assert view.lineage_facts_for_table("out")["source_files"] == [
+        "mid/tasks/publish.sql"
+    ]
+    assert view.targets_by_source_file("mid/tasks/publish.sql") == {"out"}
+    assert view.table_edge_source_files() == {
+        ("src", "out"): {"mid/tasks/publish.sql"}
+    }
+
+
+def test_lineage_view_resolves_v2_self_edge_job_to_source_file():
+    lineage_data = {
+        "format_version": 2,
+        "tables": [
+            {
+                "name": "out",
+                "full_name": "out",
+                "dataset_type": "managed",
+                "columns": [{"name": "id", "type": "BIGINT"}],
+            }
+        ],
+        "jobs": [
+            {
+                "name": "refresh",
+                "source_file": "mid/tasks/refresh.sql",
+                "inputs": ["out"],
+                "outputs": ["out"],
+            }
+        ],
+        "edges": [
+            {
+                "source": {"type": "column", "id": "out.id"},
+                "target": {"type": "column", "id": "out.id"},
+                "relation_type": "direct",
+                "transformation_type": "passthrough",
+                "expression": "id",
+                "job": "refresh",
+            }
+        ],
+        "diagnostics": [],
+    }
+
+    view = LineageView.from_data("demo", lineage_data)
+
+    expected = [
+        {
+            "table": "out",
+            "source_table": "out",
+            "target_table": "out",
+            "source": {"type": "column", "id": "out.id"},
+            "target": {"type": "column", "id": "out.id"},
+            "relation_type": "direct",
+            "expression": "id",
+            "job": "refresh",
+            "source_file": "mid/tasks/refresh.sql",
+        }
+    ]
+    assert view.raw_self_edges() == expected
+    assert view.asset_self_edges() == expected
+
+
+def test_lineage_view_scopes_same_name_process_columns_by_job():
+    lineage_data = {
+        "format_version": 2,
+        "tables": [
+            {
+                "name": name,
+                "full_name": name,
+                "dataset_type": "process" if name == "t" else "managed",
+                "columns": [{"name": "id", "type": "BIGINT"}],
+            }
+            for name in ("src_a", "src_b", "t", "out_a", "out_b")
+        ],
+        "jobs": [
+            {
+                "name": "job_a",
+                "source_file": "mid/tasks/job_a.sql",
+                "inputs": ["src_a", "t"],
+                "outputs": ["out_a", "t"],
+            },
+            {
+                "name": "job_b",
+                "source_file": "mid/tasks/job_b.sql",
+                "inputs": ["src_b", "t"],
+                "outputs": ["out_b", "t"],
+            },
+        ],
+        "edges": [
+            {
+                "source": {"type": "column", "id": f"{source}.id"},
+                "target": {"type": "column", "id": f"{target}.id"},
+                "relation_type": "direct",
+                "transformation_type": "passthrough",
+                "expression": "id",
+                "job": job,
+            }
+            for source, target, job in (
+                ("src_a", "t", "job_a"),
+                ("t", "out_a", "job_a"),
+                ("src_b", "t", "job_b"),
+                ("t", "out_b", "job_b"),
+            )
+        ],
+        "diagnostics": [],
+    }
+
+    view = LineageView.from_data("demo", lineage_data)
+
+    assert {
+        record["source"] for record in view.column_lineage_for_table("out_a")
+    } == {"src_a.id"}
+    assert {
+        record["source"] for record in view.column_lineage_for_table("out_b")
+    } == {"src_b.id"}
+
+
+def test_lineage_view_preindexes_conditions_once_for_all_target_jobs():
+    jobs = [f"job_{index}" for index in range(4)]
+    edges = CountingEdges(
+        [
+            {
+                "source": {"type": "column", "id": f"src_{index}.id"},
+                "target": {"type": "column", "id": "out.id"},
+                "relation_type": "direct",
+                "transformation_type": "passthrough",
+                "expression": "id",
+                "job": job,
+            }
+            for index, job in enumerate(jobs)
+        ]
+        + [
+            {
+                "source": {
+                    "type": "column",
+                    "id": f"src_{index}.status",
+                },
+                "target": {"type": "table", "id": "out"},
+                "relation_type": "filter",
+                "transformation_type": "filter",
+                "expression": "status = 'READY'",
+                "job": job,
+            }
+            for index, job in enumerate(jobs)
+        ]
+    )
+    lineage_data = {
+        "format_version": 2,
+        "tables": [
+            {
+                "name": name,
+                "full_name": name,
+                "dataset_type": "managed",
+                "columns": [
+                    {"name": "id", "type": "BIGINT"},
+                    {"name": "status", "type": "VARCHAR"},
+                ],
+            }
+            for name in ["out"] + [f"src_{index}" for index in range(4)]
+        ],
+        "jobs": [
+            {
+                "name": job,
+                "source_file": f"mid/tasks/{job}.sql",
+                "inputs": [f"src_{index}"],
+                "outputs": ["out"],
+            }
+            for index, job in enumerate(jobs)
+        ],
+        "edges": edges,
+        "diagnostics": [],
+    }
+    view = LineageView.from_data("demo", lineage_data)
+    edges.iterations = 0
+
+    records = view.column_lineage_for_table("out")
+
+    assert len(records) == 4
+    assert edges.iterations == 2

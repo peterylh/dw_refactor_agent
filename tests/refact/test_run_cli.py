@@ -623,6 +623,147 @@ def test_analyze_refreshes_current_analysis_diff_and_plan(
     ]
 
 
+def test_analyze_maps_changed_job_to_managed_output_before_table_bfs(
+    tmp_path, monkeypatch
+):
+    _write_warehouse_config(tmp_path)
+    manifest_path, manifest = create_run_manifest(
+        tmp_path,
+        "shop",
+        now=datetime(2026, 6, 20, 7, 30, tzinfo=timezone.utc),
+        git_info={"branch": "main", "head": "abc123", "dirty": False},
+    )
+    write_manifest(manifest_path, manifest)
+    run_root = manifest_path.parent
+
+    def lineage_snapshot(dwd_table, ads_table, build_job):
+        return {
+            "format_version": 2,
+            "tables": [
+                {
+                    "name": dwd_table.rsplit(".", 1)[-1],
+                    "full_name": dwd_table,
+                    "dataset_type": "managed",
+                    "columns": [],
+                },
+                {
+                    "name": ads_table.rsplit(".", 1)[-1],
+                    "full_name": ads_table,
+                    "dataset_type": "managed",
+                    "columns": [],
+                },
+            ],
+            "jobs": [
+                {
+                    "name": build_job,
+                    "source_file": (
+                        f"warehouses/shop/ads/tasks/{build_job}.sql"
+                    ),
+                    "inputs": [dwd_table],
+                    "outputs": [ads_table],
+                },
+                {
+                    "name": "Prepare_Sales",
+                    "source_file": (
+                        "warehouses/shop/mid/tasks/Prepare_Sales.sql"
+                    ),
+                    "inputs": [],
+                    "outputs": [dwd_table],
+                },
+            ],
+            "edges": [
+                {
+                    "source": {"type": "column", "id": f"{dwd_table}.id"},
+                    "target": {"type": "column", "id": f"{ads_table}.id"},
+                    "relation_type": "DIRECT",
+                    "transformation_type": "IDENTITY",
+                    "expression": "id",
+                    "job": build_job,
+                }
+            ],
+            "diagnostics": [],
+        }
+
+    baseline_lineage = lineage_snapshot(
+        "internal.shop_dm.DWD_Order",
+        "internal.shop_dm.ADS_Old",
+        "Build_Old",
+    )
+    current_lineage = lineage_snapshot(
+        "internal.shop_dm.dwd_order",
+        "internal.shop_dm.ads_new",
+        "Build_New",
+    )
+    _write_json(run_root / "baseline" / "lineage_data.json", baseline_lineage)
+    _write_json(
+        run_root / "baseline" / "assess_result.json",
+        {"project": "shop", "overall_score": 100.0, "dimensions": {}},
+    )
+    _write_json(run_root / "baseline" / "task_lineage_cache.json", {})
+
+    def fake_lineage(
+        project, output_path, cache_path, previous_cache_path=None
+    ):
+        _write_json(output_path, current_lineage)
+        _write_json(cache_path, {"project": project, "tasks": []})
+        return {"lineage": current_lineage}
+
+    observed_analysis = []
+
+    def fake_plan(project, analysis, **kwargs):
+        observed_analysis.append(analysis)
+        return {
+            "project": project,
+            "project_db": "shop_dm",
+            "qa_db": "shop_dm_qa",
+            "baseline_ddl": {},
+            "ddl_changes": [],
+            "jobs_to_run": [],
+            "job_dependencies": {},
+            "verification": {"checks": []},
+        }
+
+    monkeypatch.setattr(run_cli, "build_lineage_artifacts", fake_lineage)
+    monkeypatch.setattr(
+        run_cli,
+        "changed_files_since_head",
+        lambda *args: ["warehouses/shop/mid/tasks/Prepare_Sales.sql"],
+    )
+    monkeypatch.setattr(run_cli, "build_verification_plan", fake_plan)
+    monkeypatch.setattr(
+        run_cli,
+        "assess",
+        lambda project, **kwargs: {
+            "project": project,
+            "overall_score": 100.0,
+            "scope_plan": {"dimensions": {}},
+            "dimensions": {},
+        },
+    )
+    monkeypatch.setattr(
+        run_cli,
+        "diff_assess_results",
+        lambda *args, **kwargs: {"summary": {}},
+    )
+    _install_empty_semantic_resolution(monkeypatch)
+
+    exit_code = run_cli.main(["analyze", "--manifest", str(manifest_path)])
+
+    assert exit_code == 0
+    assert len(observed_analysis) == 1
+    scope = observed_analysis[0]["affected_scope"]
+    assert scope["direct_tables"] == ["internal.shop_dm.dwd_order"]
+    assert scope["downstream_tables"] == [
+        "internal.shop_dm.ADS_Old",
+        "internal.shop_dm.ads_new",
+    ]
+    assert scope["anchor_tables"] == [
+        "internal.shop_dm.ADS_Old",
+        "internal.shop_dm.ads_new",
+    ]
+    assert "Prepare_Sales" not in scope["assessment_tables"]
+
+
 def test_analyze_reports_partition_requirement_cleanly(tmp_path, monkeypatch):
     _write_warehouse_config(tmp_path)
     manifest_path, manifest = create_run_manifest(

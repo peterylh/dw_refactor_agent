@@ -205,7 +205,11 @@ def _job_runtime(job: dict, root: Path, planner, warnings: list[str]):
         return None, [], ""
     sql_text = path.read_text(encoding=TEXT_ENCODING)
     try:
-        spec = planner.task_spec(job["job"], path)
+        spec = planner.task_spec(
+            job["job"],
+            path,
+            model_name=job.get("target") or job["job"],
+        )
         invocations = planner.plan_shadow_job(job, project_root=root)
     except Exception as exc:
         warnings.append(f"[{job.get('job')}] scope planning degraded: {exc}")

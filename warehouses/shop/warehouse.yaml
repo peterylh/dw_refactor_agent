@@ -19,6 +19,9 @@ execution:
     param: etl_date
     column: stat_date
     period: D
+  full_refresh_window:
+    start_param: etl_start_date
+    end_param: etl_end_date
 default_dialect: doris
 ods_source_catalog_dialects:
   internal: doris

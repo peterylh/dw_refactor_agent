@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from dw_refactor_agent.config import TEXT_ENCODING
+from dw_refactor_agent.lineage.identifiers import identifier_match_key
 from dw_refactor_agent.refactor.artifact_contract import (
     FORMAT_VERSION,
     ArtifactFormatError,
@@ -270,6 +271,112 @@ def _materialize_baseline_ddl(plan_path: Path, plan: dict) -> dict:
     return ddl_by_table
 
 
+def _plan_jobs_by_key(jobs_to_run: list) -> dict[str, str]:
+    jobs_by_key = {}
+    for index, entry in enumerate(jobs_to_run):
+        if not isinstance(entry, dict):
+            raise ArtifactFormatError(
+                f"verification plan jobs_to_run[{index}] must be a mapping"
+            )
+        job_name = entry.get("job")
+        if not isinstance(job_name, str) or not job_name.strip():
+            raise ArtifactFormatError(
+                f"verification plan jobs_to_run[{index}].job must be a "
+                "non-empty string"
+            )
+        job_key = identifier_match_key(job_name)
+        if job_key in jobs_by_key:
+            raise ArtifactFormatError(
+                "verification plan jobs_to_run contains duplicate Job "
+                f"{job_name!r}"
+            )
+        jobs_by_key[job_key] = job_name
+    return jobs_by_key
+
+
+def _validate_job_dependencies(
+    plan: dict, jobs_by_key: dict[str, str]
+) -> None:
+    if "job_dependencies" not in plan:
+        raise ArtifactFormatError(
+            "verification plan job_dependencies is required; run analyze again"
+        )
+    dependencies = plan["job_dependencies"]
+    if not isinstance(dependencies, dict):
+        raise ArtifactFormatError(
+            "verification plan job_dependencies must be a mapping"
+        )
+
+    dependency_keys = {}
+    for raw_job_name in dependencies:
+        if not isinstance(raw_job_name, str) or not raw_job_name.strip():
+            raise ArtifactFormatError(
+                "verification plan job_dependencies keys must be "
+                "non-empty strings"
+            )
+        job_key = identifier_match_key(raw_job_name)
+        if job_key in dependency_keys:
+            raise ArtifactFormatError(
+                "verification plan job_dependencies contains duplicate Job "
+                f"key {raw_job_name!r}"
+            )
+        dependency_keys[job_key] = raw_job_name
+
+    unexpected = set(dependency_keys).difference(jobs_by_key)
+    if unexpected:
+        unexpected_names = sorted(dependency_keys[key] for key in unexpected)
+        raise ArtifactFormatError(
+            "verification plan job_dependencies contains unexpected Job "
+            f"key(s): {unexpected_names!r}"
+        )
+    missing = set(jobs_by_key).difference(dependency_keys)
+    if missing:
+        missing_names = sorted(jobs_by_key[key] for key in missing)
+        raise ArtifactFormatError(
+            "verification plan job_dependencies is missing Job keys: "
+            f"{missing_names!r}"
+        )
+
+    for downstream_key, raw_downstream in dependency_keys.items():
+        upstreams = dependencies[raw_downstream]
+        if not isinstance(upstreams, list):
+            raise ArtifactFormatError(
+                "verification plan job_dependencies values must be lists; "
+                f"received {type(upstreams).__name__} for {raw_downstream!r}"
+            )
+        upstream_keys = []
+        seen_upstreams = set()
+        for index, upstream in enumerate(upstreams):
+            if not isinstance(upstream, str) or not upstream.strip():
+                raise ArtifactFormatError(
+                    "verification plan job_dependencies upstream Jobs must "
+                    f"be non-empty strings: {raw_downstream!r}[{index}]"
+                )
+            upstream_key = identifier_match_key(upstream)
+            if upstream_key not in jobs_by_key:
+                raise ArtifactFormatError(
+                    "verification plan job_dependencies references unknown "
+                    f"Job {upstream!r}"
+                )
+            if upstream_key == downstream_key:
+                raise ArtifactFormatError(
+                    "verification plan Job cannot depend on itself: "
+                    f"{raw_downstream!r}"
+                )
+            if upstream_key in seen_upstreams:
+                raise ArtifactFormatError(
+                    "verification plan job_dependencies contains duplicate "
+                    f"upstream Job {upstream!r} for {raw_downstream!r}"
+                )
+            seen_upstreams.add(upstream_key)
+            upstream_keys.append(upstream_key)
+        if upstream_keys != sorted(upstream_keys):
+            raise ArtifactFormatError(
+                "verification plan job_dependencies upstream Jobs must be "
+                f"sorted for {raw_downstream!r}"
+            )
+
+
 def _validate_persisted_plan_schema(plan: dict) -> None:
     for field in ("run_id", "project", "project_db", "qa_db"):
         value = plan.get(field)
@@ -302,6 +409,8 @@ def _validate_persisted_plan_schema(plan: dict) -> None:
             raise ArtifactFormatError(
                 f"verification plan {field} must be a list"
             )
+    jobs_by_key = _plan_jobs_by_key(plan["jobs_to_run"])
+    _validate_job_dependencies(plan, jobs_by_key)
     verification = plan.get("verification")
     if not isinstance(verification, dict):
         raise ArtifactFormatError(

@@ -15,9 +15,11 @@ from dw_refactor_agent.refactor.shadow_rewrite import rewrite_shadow_sql
 class FakePlanner:
     def __init__(self, specs):
         self.specs = specs
+        self.task_spec_calls = []
 
-    def task_spec(self, job_name, sql_path):
-        raw = self.specs.get(job_name, {})
+    def task_spec(self, job_name, sql_path, *, model_name=None):
+        self.task_spec_calls.append((job_name, model_name))
+        raw = self.specs.get(model_name or job_name, {})
         return SimpleNamespace(
             materialized=raw.get("materialized", "full"),
             slice_param=raw.get("slice_param"),
@@ -27,7 +29,11 @@ class FakePlanner:
 
     def plan_shadow_job(self, job, *, project_root=None, full_refresh=False):
         root = Path(project_root)
-        spec = self.task_spec(job["job"], root / job["file"])
+        spec = self.task_spec(
+            job["job"],
+            root / job["file"],
+            model_name=job.get("target"),
+        )
         values = job.get("execution_values") or [None]
         return [
             TaskInvocation(
@@ -65,6 +71,35 @@ def _plan(tmp_path, *, baseline_ddl, ddl_changes, jobs):
         "ddl_changes": ddl_changes,
         "jobs_to_run": jobs,
     }
+
+
+def test_shadow_manifest_uses_target_model_without_renaming_job(tmp_path):
+    task = _write_task(
+        tmp_path,
+        "prepare_sales",
+        "INSERT INTO dm.dwd_order SELECT 1;",
+    )
+    plan = _plan(
+        tmp_path,
+        baseline_ddl={"dwd_order": _ddl("dwd_order")},
+        ddl_changes=[],
+        jobs=[
+            {
+                "job": "prepare_sales",
+                "target": "dwd_order",
+                "file": task,
+            }
+        ],
+    )
+    planner = FakePlanner({"dwd_order": {"materialized": "full"}})
+
+    manifest = compile_shadow_manifest(plan, tmp_path, planner)
+
+    assert planner.task_spec_calls == [
+        ("prepare_sales", "dwd_order"),
+        ("prepare_sales", "dwd_order"),
+    ]
+    assert "prepare_sales" in manifest["jobs"]
 
 
 def test_reserved_execution_marker_reference_is_blocked(tmp_path):

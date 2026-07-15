@@ -134,12 +134,27 @@ done
 - `--etl-lookback-months`：展开截至 `--etl-end-date` 向前 N 个日历月的闭区间
 - `--etl-end-date`：日期窗口结束日，默认当天
 - `--full-refresh`：全量刷新模式
-- `--job-list`：只执行指定作业
+- `--job-list`：只执行指定作业；若包含 process dataset consumer，必须同时包含已解析的 producer
 - `--db-env`：`prod|test`
-- `--refresh-dag`：先重建 `job_dag_{project}.json`
+- `--refresh-dag`：禁用 task cache，强制重新提取当前 SQL lineage 后生成 DAG
 - `--parallel`：并行度
 - `--validate-only`：仅构建并校验完整计划，不执行 SQL
 - `--skip-unsupported-history`：历史补跑时跳过不支持非当天回放的 current-state 作业
+
+实际 SQL 执行按物理目标 `(host, port, database)` 持有非阻塞 advisory file lock，
+覆盖完整 producer→consumer 运行；同一宿主机上的不同 checkout/worktree 访问同一
+Doris 目标时也会在首个 SQL 写入前互斥，`--validate-only` 不加锁。锁目录默认是系统
+临时目录下的 `dw_refactor_agent/run_locks`，可通过
+`DW_REFACTOR_AGENT_RUN_LOCK_DIR` 覆盖。覆盖值必须是绝对路径，所有执行器必须配置同一
+绝对目录；默认目录只保证同一执行宿主机内互斥。多执行宿主机必须把该绝对目录放在支持
+`flock` 的共享文件系统上，或由外部调度器保证等价互斥。
+
+每次 `task_run.py` 规划都会先从当前 task SQL 刷新 lineage，再立即从同一份 v2 payload
+生成并保存 Job DAG；正常模式复用 task 级缓存，`--refresh-dag` 强制 `--no-cache`。
+extractor 失败会在任何数据库读取或写入前终止规划。
+若任一已选 process dataset consumer 的 producer 无法唯一解析（`not_found` 或
+`multiple_candidates`），无论是完整计划还是 `--job-list` 子集都会在 SQL 执行前失败；
+未选择该 consumer 的无关子集不受影响。
 
 示例：
 

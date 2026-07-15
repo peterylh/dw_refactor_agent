@@ -41,6 +41,52 @@ from dw_refactor_agent.refactor.workspace_snapshot import workspace_fingerprint
 TIMING_KEYS = {"started_at", "finished_at", "duration_ms"}
 
 
+def test_shadow_scheduler_prefers_snapshot_plan_dependencies():
+    plan = {
+        "project": "demo",
+        "jobs_to_run": [
+            {"job": "Prepare_Sales"},
+            {"job": "Build_Report"},
+        ],
+        "job_dependencies": {
+            "Prepare_Sales": [],
+            "Build_Report": ["Prepare_Sales"],
+        },
+    }
+    in_degree, adjacency, scheduler, warnings = (
+        shadow_run_module._job_dependencies_from_plan(plan, None)
+    )
+
+    assert in_degree == {"Prepare_Sales": 0, "Build_Report": 1}
+    assert adjacency == {
+        "Prepare_Sales": ["Build_Report"],
+        "Build_Report": [],
+    }
+    assert scheduler == "plan"
+    assert warnings == []
+
+
+def test_shadow_scheduler_rejects_missing_dependency_snapshot(tmp_path):
+    project = "stale_scheduler"
+    _write_shadow_job_dag(
+        tmp_path,
+        project,
+        ("Prepare_Sales", "Build_Report"),
+    )
+    plan = {
+        "project": project,
+        "jobs_to_run": [
+            {"job": "Prepare_Sales"},
+            {"job": "Build_Report"},
+        ],
+    }
+
+    with pytest.raises(
+        ArtifactFormatError, match="job_dependencies.*run analyze again"
+    ):
+        shadow_run_module._job_dependencies_from_plan(plan, tmp_path)
+
+
 def test_run_execution_lock_matches_across_worktrees_but_differs_by_run(
     tmp_path,
 ):
@@ -241,6 +287,10 @@ def _claimed_ownership(plan, database=None):
 
 def execute_shadow_plan(plan, *, root, dry_run=False, **kwargs):
     """Exercise the production core with an explicit synthetic claim."""
+    plan.setdefault(
+        "job_dependencies",
+        {job["job"]: [] for job in plan.get("jobs_to_run") or []},
+    )
     return _execute_shadow_plan(
         plan,
         root=root,
@@ -350,6 +400,10 @@ def _write_fresh_plan_bundle(plan_path, plan):
         _write_json(root / manifest["artifacts"][artifact_name], value)
 
     prepared = deepcopy(plan)
+    prepared.setdefault(
+        "job_dependencies",
+        {job["job"]: [] for job in prepared.get("jobs_to_run") or []},
+    )
     prepared.setdefault("run_id", manifest["run_id"])
     prepared.setdefault("qa_database_pool", [prepared["qa_db"]])
     snapshot = deepcopy(prepared.get("analysis_snapshot") or {})
@@ -2209,6 +2263,10 @@ execution:
                 "target": "dws_order",
             },
         ],
+        "job_dependencies": {
+            "ads_order": ["dws_order"],
+            "dws_order": [],
+        },
         "verification": {"checks": []},
     }
     executed_jobs = []
@@ -2300,6 +2358,10 @@ execution:
                 "target": "dws_order",
             },
         ],
+        "job_dependencies": {
+            "ads_order": ["dws_order"],
+            "dws_order": [],
+        },
         "verification": {"checks": []},
     }
     executed_jobs = []

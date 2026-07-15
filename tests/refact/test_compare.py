@@ -137,6 +137,7 @@ def _write_compare_plan(plan_path, verification):
         "baseline_ddl": {},
         "ddl_changes": [],
         "jobs_to_run": [],
+        "job_dependencies": {},
         "verification": deepcopy(verification),
         "analysis_snapshot": {
             "partition": "2024-12-31",

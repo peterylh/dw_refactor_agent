@@ -287,6 +287,10 @@ def test_build_column_lineage_traces_specific_column_upstream_by_depth():
         "dwd_order_detail.sql",
         "dws_product_sales_daily.sql",
     }
+    assert lineage.jobs == {
+        "dwd_order_detail",
+        "dws_product_sales_daily",
+    }
     assert [
         (
             condition.source,
@@ -355,3 +359,164 @@ def test_build_column_lineage_traces_specific_column_downstream_by_depth():
         "dws_product_sales_daily.sales_amount",
         "ads_sales_dashboard.sales_amount",
     )
+
+
+def test_v2_query_records_expose_job_and_resolved_source_file():
+    view = LineageView.from_data(
+        "demo",
+        {
+            "format_version": 2,
+            "tables": [
+                {
+                    "name": "dwd_order_detail",
+                    "full_name": "dwd_order_detail",
+                    "dataset_type": "managed",
+                    "columns": [{"name": "sale_amount", "type": "DECIMAL"}],
+                },
+                {
+                    "name": "ads_sales_dashboard",
+                    "full_name": "ads_sales_dashboard",
+                    "dataset_type": "managed",
+                    "columns": [{"name": "sales_amount", "type": "DECIMAL"}],
+                },
+            ],
+            "jobs": [
+                {
+                    "name": "publish_dashboard",
+                    "source_file": "ads/tasks/publish_dashboard.sql",
+                    "inputs": ["dwd_order_detail"],
+                    "outputs": ["ads_sales_dashboard"],
+                }
+            ],
+            "edges": [
+                {
+                    "source": {
+                        "type": "column",
+                        "id": "dwd_order_detail.sale_amount",
+                    },
+                    "target": {
+                        "type": "column",
+                        "id": "ads_sales_dashboard.sales_amount",
+                    },
+                    "relation_type": "direct",
+                    "transformation_type": "passthrough",
+                    "expression": "sale_amount",
+                    "job": "publish_dashboard",
+                }
+            ],
+            "diagnostics": [],
+        },
+    )
+
+    subgraph = build_table_subgraph(
+        view,
+        "ads_sales_dashboard",
+        direction="upstream",
+        depth=1,
+    )
+    assert subgraph.edges[0].jobs == ("publish_dashboard",)
+    assert subgraph.edges[0].source_files == (
+        "ads/tasks/publish_dashboard.sql",
+    )
+    assert subgraph.jobs == {"publish_dashboard"}
+
+    lineage = build_column_lineage(
+        view,
+        "ads_sales_dashboard",
+        "sales_amount",
+        direction="upstream",
+        depth=1,
+    )
+    assert lineage.paths[0].steps[0].job == "publish_dashboard"
+    assert lineage.paths[0].steps[0].source_file == (
+        "ads/tasks/publish_dashboard.sql"
+    )
+    assert lineage.jobs == {"publish_dashboard"}
+
+
+def test_v2_query_composes_only_the_unique_shared_process_producer():
+    view = LineageView.from_data(
+        "demo",
+        {
+            "format_version": 2,
+            "tables": [
+                {
+                    "name": name,
+                    "full_name": name,
+                    "dataset_type": "process" if name == "t" else "managed",
+                    "columns": [{"name": column, "type": "DECIMAL"}],
+                }
+                for name, column in (
+                    ("dwd_order_detail", "sale_amount"),
+                    ("t", "sale_amount"),
+                    ("ads_sales_dashboard", "sales_amount"),
+                )
+            ],
+            "jobs": [
+                {
+                    "name": "prepare",
+                    "source_file": "mid/tasks/prepare.sql",
+                    "inputs": ["dwd_order_detail"],
+                    "outputs": ["t"],
+                },
+                {
+                    "name": "publish",
+                    "source_file": "ads/tasks/publish.sql",
+                    "inputs": ["t"],
+                    "outputs": ["ads_sales_dashboard"],
+                },
+            ],
+            "edges": [
+                {
+                    "source": {
+                        "type": "column",
+                        "id": "dwd_order_detail.sale_amount",
+                    },
+                    "target": {"type": "column", "id": "t.sale_amount"},
+                    "relation_type": "direct",
+                    "transformation_type": "passthrough",
+                    "expression": "sale_amount",
+                    "job": "prepare",
+                },
+                {
+                    "source": {"type": "column", "id": "t.sale_amount"},
+                    "target": {
+                        "type": "column",
+                        "id": "ads_sales_dashboard.sales_amount",
+                    },
+                    "relation_type": "direct",
+                    "transformation_type": "passthrough",
+                    "expression": "sale_amount",
+                    "job": "publish",
+                },
+            ],
+            "diagnostics": [],
+        },
+    )
+
+    subgraph = build_table_subgraph(
+        view,
+        "ads_sales_dashboard",
+        direction="upstream",
+        depth=1,
+    )
+    assert subgraph.edges[0].jobs == ("prepare", "publish")
+    assert subgraph.edges[0].source_files == (
+        "ads/tasks/publish.sql",
+        "mid/tasks/prepare.sql",
+    )
+
+    lineage = build_column_lineage(
+        view,
+        "ads_sales_dashboard",
+        "sales_amount",
+        direction="upstream",
+        depth=2,
+    )
+    assert lineage.paths[0].nodes == (
+        "dwd_order_detail.sale_amount",
+        "ads_sales_dashboard.sales_amount",
+    )
+    assert lineage.paths[0].steps[0].job == "publish"
+    assert lineage.paths[0].steps[0].jobs == ("prepare", "publish")
+    assert lineage.jobs == {"prepare", "publish"}

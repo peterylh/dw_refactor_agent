@@ -433,7 +433,7 @@ def test_finance_analytics_ods_assets_are_under_catalog_database_dir():
 def test_project_layer_assets_are_under_mid_and_ads_dirs():
     expectations = {
         "shop": {
-            "mid": {"ddl": 15, "tasks": 20, "models": 15},
+            "mid": {"ddl": 15, "tasks": 22, "models": 15},
             "ads": {"ddl": 6, "tasks": 7, "models": 6},
         },
         "finance_analytics": {

@@ -24,13 +24,12 @@ _src_root = Path(__file__).resolve().parents[2]
 if str(_src_root) not in sys.path:
     sys.path.insert(0, str(_src_root))
 
-import dw_refactor_agent.config as config
 from dw_refactor_agent.config import PROJECT_ROOT, get_mysql_cmd
 from dw_refactor_agent.execution.model_config import ExecutionConfigError
 from dw_refactor_agent.execution.planner import ExecutionPlanner
 from dw_refactor_agent.execution.sql_executor import ShadowSqlExecutor
 from dw_refactor_agent.execution.thread_pool import shutdown_executor
-from dw_refactor_agent.lineage.job_dag import JobDAG
+from dw_refactor_agent.lineage.identifiers import identifier_match_key
 from dw_refactor_agent.refactor.artifact_contract import (
     FORMAT_VERSION,
     ArtifactFormatError,
@@ -659,36 +658,21 @@ def _execute_invocation_batch(
     executor.execute_batch([invocation for _driver_value, invocation in batch])
 
 
-def _job_dag_artifact_path(project: str, root: Path) -> Path:
-    cfg = config.core.PROJECT_CONFIG.get(project)
-    if cfg and cfg.get("dir"):
-        project_dir = Path(cfg["dir"])
-        if not project_dir.is_absolute():
-            project_dir = Path(root) / project_dir
-    else:
-        project_dir = Path(root) / "warehouses" / project
-    return project_dir / "artifacts" / "lineage" / "job_dag.json"
-
-
-def _serial_job_dependencies(
-    jobs_to_run: list[dict],
-) -> tuple[dict[str, int], dict[str, list[str]]]:
-    job_names = [job["job"] for job in jobs_to_run]
-    in_degree = dict.fromkeys(job_names, 0)
-    adj = {job_name: [] for job_name in job_names}
-    for upstream, downstream in zip(job_names, job_names[1:]):
-        adj[upstream].append(downstream)
-        in_degree[downstream] += 1
-    return in_degree, adj
-
-
 def _job_dependencies_from_plan(
     plan: dict,
     root: Path,
 ) -> tuple[dict[str, int], dict[str, list[str]], str, list[str]]:
     jobs_to_run = plan.get("jobs_to_run", [])
     job_names = [job["job"] for job in jobs_to_run]
-    job_set = set(job_names)
+    jobs_by_key = {
+        identifier_match_key(job_name): job_name for job_name in job_names
+    }
+    job_dependencies = plan.get("job_dependencies")
+    if not isinstance(job_dependencies, dict):
+        raise ArtifactFormatError(
+            "verification plan job_dependencies snapshot is required; "
+            "run analyze again"
+        )
     if len(job_names) <= 1:
         return (
             dict.fromkeys(job_names, 0),
@@ -697,32 +681,19 @@ def _job_dependencies_from_plan(
             [],
         )
 
-    job_dependencies = plan.get("job_dependencies")
-    if isinstance(job_dependencies, dict):
-        in_degree = dict.fromkeys(job_names, 0)
-        adj = {job_name: [] for job_name in job_names}
-        for downstream, upstreams in job_dependencies.items():
-            if downstream not in job_set:
+    in_degree = dict.fromkeys(job_names, 0)
+    adj = {job_name: [] for job_name in job_names}
+    for downstream, upstreams in job_dependencies.items():
+        resolved_downstream = jobs_by_key.get(identifier_match_key(downstream))
+        if resolved_downstream is None:
+            continue
+        for upstream in upstreams or []:
+            resolved_upstream = jobs_by_key.get(identifier_match_key(upstream))
+            if resolved_upstream is None:
                 continue
-            for upstream in upstreams or []:
-                if upstream not in job_set:
-                    continue
-                adj[upstream].append(downstream)
-                in_degree[downstream] += 1
-        return in_degree, adj, "plan", []
-
-    dag_path = _job_dag_artifact_path(str(plan.get("project") or ""), root)
-    if dag_path.exists():
-        dag = JobDAG.load(dag_path)
-        in_degree, adj = dag.compute_in_degree(job_set)
-        return in_degree, adj, "lineage_dag", []
-
-    in_degree, adj = _serial_job_dependencies(jobs_to_run)
-    warning = (
-        f"job DAG artifact not found: {dag_path}; "
-        "falling back to serial jobs_to_run order"
-    )
-    return in_degree, adj, "serial_fallback", [warning]
+            adj[resolved_upstream].append(resolved_downstream)
+            in_degree[resolved_downstream] += 1
+    return in_degree, adj, "plan", []
 
 
 def _augment_manifest_dependencies(
@@ -817,7 +788,11 @@ def _execute_shadow_job(
         )
 
     try:
-        spec = planner.task_spec(job_name, file_path)
+        spec = planner.task_spec(
+            job_name,
+            file_path,
+            model_name=job.get("target") or job_name,
+        )
         driver_values = _job_driver_values(job, spec)
     except ExecutionConfigError as exc:
         _log(f"  [FAIL] {job_name}: {exc}")
@@ -1383,7 +1358,11 @@ def _dry_run_phases(
             )
             continue
         try:
-            spec = planner.task_spec(job["job"], file_path)
+            spec = planner.task_spec(
+                job["job"],
+                file_path,
+                model_name=job.get("target") or job["job"],
+            )
             driver_values = _job_driver_values(job, spec)
             for driver_value in driver_values:
                 planned_job = _job_for_driver_value(job, driver_value)
@@ -1955,7 +1934,11 @@ def _dry_run(plan: dict, manifest: dict, *, root: Path) -> None:
             continue
 
         try:
-            spec = planner.task_spec(job_name, file_path)
+            spec = planner.task_spec(
+                job_name,
+                file_path,
+                model_name=job.get("target") or job_name,
+            )
             driver_values = _job_driver_values(job, spec)
         except ExecutionConfigError as exc:
             print(f"    [FAIL] {exc}")

@@ -1,4 +1,16 @@
-from dw_refactor_agent.lineage.lineage_extractor import build_lineage_output
+import json
+
+import pytest
+
+from dw_refactor_agent.lineage.contract import (
+    LineageContractError,
+    validate_lineage_v2,
+)
+from dw_refactor_agent.lineage.lineage_extractor import (
+    build_lineage_output,
+    build_schema_from_texts,
+    extract_lineage_from_sql,
+)
 
 
 class CountingSchema(dict):
@@ -9,6 +21,486 @@ class CountingSchema(dict):
     def values(self):
         self.values_calls += 1
         return super().values()
+
+
+def _task_result(
+    source_file,
+    *,
+    inputs=(),
+    outputs=(),
+    created=(),
+    temporary=(),
+    local_lifecycle=(),
+):
+    return {
+        "source_file": source_file,
+        "input_tables": list(inputs),
+        "output_tables": list(outputs),
+        "created_tables": list(created),
+        "temporary_tables": list(temporary),
+        "local_lifecycle_tables": list(local_lifecycle),
+    }
+
+
+def test_build_lineage_output_emits_job_owned_edges_without_source_file():
+    output = build_lineage_output(
+        [
+            {
+                "source_table": "dwd_orders",
+                "source_column": "order_id",
+                "target_table": "dws_orders",
+                "target_column": "order_id",
+                "lineage_type": "direct",
+                "expression": "order_id",
+                "source_file": "mid/tasks/prepare.sql",
+            }
+        ],
+        {
+            "shop_dm": {
+                "dwd_orders": {"order_id": "BIGINT"},
+                "dws_orders": {"order_id": "BIGINT"},
+            }
+        },
+        task_results=[
+            _task_result(
+                "mid/tasks/prepare.sql",
+                inputs=["shop_dm.dwd_orders"],
+                outputs=["shop_dm.dws_orders"],
+            )
+        ],
+    )
+
+    assert output["format_version"] == 2
+    assert output["jobs"][0]["name"] == "prepare"
+    assert output["edges"][0]["job"] == "prepare"
+    assert "source_file" not in output["edges"][0]
+    validate_lineage_v2(output)
+
+
+def test_extract_lineage_preserves_json_scalar_literal_types_end_to_end():
+    schema = build_schema_from_texts(
+        [
+            """
+            CREATE TABLE shop_dm.literal_output (
+                int_value BIGINT,
+                float_value DOUBLE,
+                string_value STRING,
+                true_value BOOLEAN,
+                false_value BOOLEAN,
+                null_value STRING,
+                complex_value BIGINT
+            )
+            """
+        ]
+    )
+    sql = """
+    INSERT INTO shop_dm.literal_output (
+        int_value,
+        float_value,
+        string_value,
+        true_value,
+        false_value,
+        null_value,
+        complex_value
+    )
+    SELECT
+        1 AS int_value,
+        1.25 AS float_value,
+        '1' AS string_value,
+        TRUE AS true_value,
+        FALSE AS false_value,
+        NULL AS null_value,
+        1 + 2 AS complex_value
+    """
+    entries = extract_lineage_from_sql(sql, "typed_literals.sql", schema)
+
+    output = build_lineage_output(
+        entries,
+        schema,
+        task_results=[
+            _task_result(
+                "typed_literals.sql",
+                outputs=["shop_dm.literal_output"],
+            )
+        ],
+    )
+    edges_by_column = {
+        edge["target"]["id"].rsplit(".", 1)[-1]: edge
+        for edge in output["edges"]
+    }
+
+    expected_literals = {
+        "int_value": (1, int, "1 AS int_value"),
+        "float_value": (1.25, float, "1.25 AS float_value"),
+        "string_value": ("1", str, "'1' AS string_value"),
+        "true_value": (True, bool, "TRUE AS true_value"),
+        "false_value": (False, bool, "FALSE AS false_value"),
+        "null_value": (None, type(None), "NULL AS null_value"),
+    }
+    for column, (value, value_type, expression) in expected_literals.items():
+        edge = edges_by_column[column]
+        assert edge["source"] == {"type": "literal", "value": value}
+        assert type(edge["source"]["value"]) is value_type
+        assert edge["expression"] == expression
+
+    assert edges_by_column["complex_value"]["source"] == {
+        "type": "expression",
+        "expression": "1 + 2 AS complex_value",
+    }
+    round_tripped = json.loads(json.dumps(output))
+    round_trip_by_column = {
+        edge["target"]["id"].rsplit(".", 1)[-1]: edge["source"]
+        for edge in round_tripped["edges"]
+    }
+    for column, (value, value_type, _expression) in expected_literals.items():
+        assert round_trip_by_column[column]["value"] == value
+        assert type(round_trip_by_column[column]["value"]) is value_type
+    validate_lineage_v2(round_tripped)
+
+
+def test_build_lineage_output_deduplicates_direct_edges_case_insensitively():
+    entries = [
+        {
+            "source_table": "db.source",
+            "source_column": "id",
+            "target_table": "db.output",
+            "target_column": "id",
+            "lineage_type": "direct",
+            "expression": "ID",
+            "source_file": "load.sql",
+        },
+        {
+            "source_table": "DB.Source",
+            "source_column": "ID",
+            "target_table": "DB.Output",
+            "target_column": "ID",
+            "lineage_type": "direct",
+            "expression": "ID",
+            "source_file": "load.sql",
+        },
+        {
+            "source_table": "DB.Source",
+            "source_column": "ID",
+            "target_table": "DB.Output",
+            "target_column": "ID",
+            "lineage_type": "direct",
+            "expression": "ID + 0",
+            "source_file": "load.sql",
+        },
+    ]
+
+    output = build_lineage_output(
+        entries,
+        {},
+        task_results=[
+            _task_result(
+                "load.sql",
+                inputs=["DB.Source"],
+                outputs=["DB.Output"],
+            )
+        ],
+    )
+
+    assert len(output["edges"]) == 2
+    assert {edge["expression"] for edge in output["edges"]} == {
+        "ID",
+        "ID + 0",
+    }
+    assert {edge["source"]["id"] for edge in output["edges"]} == {
+        "db.source.id"
+    }
+    assert {edge["target"]["id"] for edge in output["edges"]} == {
+        "db.output.id"
+    }
+    validate_lineage_v2(output)
+
+
+def test_build_lineage_output_keeps_explicit_column_sources_distinct():
+    output = build_lineage_output(
+        [
+            {
+                "source_type": "column",
+                "source_table": "db.source_a",
+                "source_column": "id",
+                "target_table": "db.output",
+                "target_column": "id",
+                "lineage_type": "direct",
+                "expression": "id",
+                "source_file": "load.sql",
+            },
+            {
+                "source_type": "column",
+                "source_table": "db.source_b",
+                "source_column": "id",
+                "target_table": "db.output",
+                "target_column": "id",
+                "lineage_type": "direct",
+                "expression": "id",
+                "source_file": "load.sql",
+            },
+        ],
+        {},
+        task_results=[
+            _task_result(
+                "load.sql",
+                inputs=["db.source_a", "db.source_b"],
+                outputs=["db.output"],
+            )
+        ],
+    )
+
+    assert len(output["edges"]) == 2
+    assert {edge["source"]["id"] for edge in output["edges"]} == {
+        "db.source_a.id",
+        "db.source_b.id",
+    }
+    validate_lineage_v2(output)
+
+
+def test_build_lineage_output_deduplicates_effective_passthrough():
+    base_entry = {
+        "source_table": "db.source",
+        "source_column": "id",
+        "target_table": "db.output",
+        "target_column": "id",
+        "lineage_type": "direct",
+        "expression": "id",
+        "source_file": "load.sql",
+    }
+    output = build_lineage_output(
+        [base_entry, {**base_entry, "transformation_type": "passthrough"}],
+        {},
+        task_results=[
+            _task_result(
+                "load.sql",
+                inputs=["db.source"],
+                outputs=["db.output"],
+            )
+        ],
+    )
+
+    assert len(output["edges"]) == 1
+    assert output["edges"][0]["transformation_type"] == "passthrough"
+    validate_lineage_v2(output)
+
+
+def test_build_lineage_output_deduplicates_indirect_edges_case_insensitively():
+    output = build_lineage_output(
+        [
+            {
+                "source_table": "db.source",
+                "source_column": "id",
+                "target_table": "db.output",
+                "target_column": "",
+                "lineage_type": "indirect",
+                "condition_type": "WHERE",
+                "condition_expression": "ID > 0",
+                "source_file": "load.sql",
+            },
+            {
+                "source_table": "DB.Source",
+                "source_column": "ID",
+                "target_table": "DB.Output",
+                "target_column": "",
+                "lineage_type": "indirect",
+                "condition_type": "WHERE",
+                "condition_expression": "ID > 0",
+                "source_file": "load.sql",
+            },
+            {
+                "source_table": "DB.Source",
+                "source_column": "ID",
+                "target_table": "DB.Output",
+                "target_column": "",
+                "lineage_type": "indirect",
+                "condition_type": "GROUP_BY",
+                "condition_expression": "ID > 0",
+                "source_file": "load.sql",
+            },
+        ],
+        {},
+        task_results=[
+            _task_result(
+                "load.sql",
+                inputs=["DB.Source"],
+                outputs=["DB.Output"],
+            )
+        ],
+    )
+
+    assert len(output["edges"]) == 2
+    assert {edge["relation_type"] for edge in output["edges"]} == {
+        "filter",
+        "group_by",
+    }
+    assert {edge["source"]["id"] for edge in output["edges"]} == {
+        "db.source.id"
+    }
+    assert {edge["target"]["id"] for edge in output["edges"]} == {"db.output"}
+    validate_lineage_v2(output)
+
+
+def test_build_lineage_output_classifies_all_job_datasets():
+    output = build_lineage_output(
+        [
+            {
+                "source_table": "ext_orders",
+                "source_column": "order_id",
+                "target_table": "process_orders",
+                "target_column": "order_id",
+                "lineage_type": "direct",
+                "expression": "order_id",
+                "source_file": "prepare.sql",
+            },
+            {
+                "source_table": "process_orders",
+                "source_column": "order_id",
+                "target_table": "dws_orders",
+                "target_column": "order_id",
+                "lineage_type": "direct",
+                "expression": "order_id",
+                "source_file": "load.sql",
+            },
+        ],
+        {"shop_dm": {"dws_orders": {"order_id": "BIGINT"}}},
+        task_results=[
+            _task_result(
+                "prepare.sql",
+                inputs=["ext_orders"],
+                outputs=["process_orders"],
+                created=["process_orders", "temp_stage"],
+                temporary=["temp_stage"],
+                local_lifecycle=[{"name": "temp_stage"}],
+            ),
+            _task_result(
+                "load.sql",
+                inputs=["process_orders"],
+                outputs=["dws_orders"],
+            ),
+        ],
+    )
+
+    tables = {table["name"]: table for table in output["tables"]}
+    assert {name: table["dataset_type"] for name, table in tables.items()} == {
+        "dws_orders": "managed",
+        "ext_orders": "external",
+        "process_orders": "process",
+        "temp_stage": "temporary",
+    }
+    table_full_names = {table["full_name"] for table in output["tables"]}
+    assert {
+        dataset
+        for job in output["jobs"]
+        for dataset in (*job["inputs"], *job["outputs"])
+    } <= table_full_names
+    validate_lineage_v2(output)
+
+
+def test_build_lineage_output_emits_producer_diagnostics_with_jobs():
+    output = build_lineage_output(
+        [],
+        {},
+        task_results=[
+            _task_result("producer_a.sql", outputs=["db.process_t"]),
+            _task_result("producer_b.sql", outputs=["DB.PROCESS_T"]),
+            _task_result("consumer.sql", inputs=["db.process_t"]),
+        ],
+    )
+
+    assert output["diagnostics"] == [
+        {
+            "code": "UNRESOLVED_DATASET_PRODUCER",
+            "dataset": "db.process_t",
+            "reason": "multiple_candidates",
+            "consumer_jobs": ["consumer"],
+            "candidate_producer_jobs": ["producer_a", "producer_b"],
+        }
+    ]
+    assert all("source_file" not in item for item in output["diagnostics"])
+    validate_lineage_v2(output)
+
+
+def test_build_lineage_output_rejects_case_insensitive_duplicate_job_names():
+    with pytest.raises(ValueError, match="duplicate Job name.*load"):
+        build_lineage_output(
+            [],
+            {},
+            task_results=[
+                _task_result("mid/tasks/Load.sql"),
+                _task_result("ads/tasks/load.sql"),
+            ],
+        )
+
+
+def test_build_lineage_output_rejects_unowned_legacy_edge():
+    with pytest.raises(LineageContractError, match="source_file"):
+        build_lineage_output(
+            [
+                {
+                    "source_table": "src",
+                    "source_column": "id",
+                    "target_table": "out",
+                    "target_column": "id",
+                    "expression": "id",
+                }
+            ],
+            {},
+        )
+
+
+def test_build_lineage_output_rejects_source_less_edge_with_one_explicit_job():
+    with pytest.raises(LineageContractError, match="source_file"):
+        build_lineage_output(
+            [
+                {
+                    "source_table": "src",
+                    "source_column": "id",
+                    "target_table": "out",
+                    "target_column": "id",
+                    "expression": "id",
+                }
+            ],
+            {},
+            task_results=[
+                _task_result(
+                    "load.sql",
+                    inputs=["src"],
+                    outputs=["out"],
+                )
+            ],
+        )
+
+
+def test_legacy_temporary_metadata_removes_output_case_insensitively():
+    output = build_lineage_output(
+        [
+            {
+                "source_table": "src",
+                "source_column": "id",
+                "target_table": "Tmp_T",
+                "target_column": "id",
+                "expression": "id",
+                "source_file": "prepare.sql",
+            }
+        ],
+        {},
+        transient_tables=[
+            {
+                "name": "tmp_t",
+                "source_file": "prepare.sql",
+                "is_temporary": True,
+            }
+        ],
+    )
+
+    assert output["jobs"][0]["outputs"] == []
+    tmp_table = next(
+        table
+        for table in output["tables"]
+        if table["name"].casefold() == "tmp_t"
+    )
+    assert tmp_table["dataset_type"] == "temporary"
+    validate_lineage_v2(output)
 
 
 def test_build_lineage_output_indexes_schema_column_types_once():
@@ -51,6 +543,7 @@ def test_build_lineage_output_indexes_schema_column_types_once():
         schema,
     )
 
+    validate_lineage_v2(output)
     assert schema.values_calls <= 1
     dws_orders = next(
         table for table in output["tables"] if table["name"] == "dws_orders"
@@ -63,7 +556,7 @@ def test_build_lineage_output_indexes_schema_column_types_once():
     }
 
 
-def test_build_lineage_output_marks_transient_tables():
+def test_build_lineage_output_marks_temporary_tables_without_legacy_metadata():
     output = build_lineage_output(
         [
             {
@@ -91,16 +584,15 @@ def test_build_lineage_output_marks_transient_tables():
                 "dws_orders": {"order_id": "BIGINT"},
             }
         },
-        transient_tables=[
-            {
-                "name": "tmp_orders_stage",
-                "source_file": "dws_orders.sql",
-                "created_statement_index": 0,
-                "dropped_statement_index": 2,
-                "is_ctas": True,
-                "is_transient": True,
-                "dropped_in_same_task": True,
-            }
+        task_results=[
+            _task_result(
+                "dws_orders.sql",
+                inputs=["dwd_orders", "tmp_orders_stage"],
+                outputs=["dws_orders"],
+                created=["tmp_orders_stage"],
+                temporary=["tmp_orders_stage"],
+                local_lifecycle=[{"name": "tmp_orders_stage"}],
+            )
         ],
     )
 
@@ -111,21 +603,12 @@ def test_build_lineage_output_marks_transient_tables():
     )
     assert "nodes" not in output
     assert "transient_tables" not in output
-    assert tmp_table["is_transient"] is True
-    assert tmp_table["transient_sources"] == ["dws_orders.sql"]
-    assert tmp_table["transient_occurrences"] == [
-        {
-            "source_file": "dws_orders.sql",
-            "created_statement_index": 0,
-            "dropped_statement_index": 2,
-            "is_ctas": True,
-            "is_temporary": False,
-            "dropped_in_same_task": True,
-        }
-    ]
+    assert tmp_table["dataset_type"] == "temporary"
+    assert set(tmp_table) == {"name", "full_name", "dataset_type", "columns"}
+    validate_lineage_v2(output)
 
 
-def test_build_lineage_output_keeps_transient_table_without_edges_in_tables():
+def test_build_lineage_output_keeps_temporary_table_without_edges_in_tables():
     output = build_lineage_output(
         [],
         {
@@ -133,16 +616,13 @@ def test_build_lineage_output_keeps_transient_table_without_edges_in_tables():
                 "dws_orders": {"order_id": "BIGINT"},
             }
         },
-        transient_tables=[
-            {
-                "name": "tmp_orders_stage",
-                "source_file": "tmp_orders_stage.sql",
-                "created_statement_index": 0,
-                "dropped_statement_index": 1,
-                "is_ctas": True,
-                "is_transient": True,
-                "dropped_in_same_task": True,
-            }
+        task_results=[
+            _task_result(
+                "tmp_orders_stage.sql",
+                created=["tmp_orders_stage"],
+                temporary=["tmp_orders_stage"],
+                local_lifecycle=[{"name": "tmp_orders_stage"}],
+            )
         ],
     )
 
@@ -151,21 +631,11 @@ def test_build_lineage_output_keeps_transient_table_without_edges_in_tables():
         {
             "name": "tmp_orders_stage",
             "full_name": "shop_dm.tmp_orders_stage",
+            "dataset_type": "temporary",
             "columns": [],
-            "is_transient": True,
-            "transient_sources": ["tmp_orders_stage.sql"],
-            "transient_occurrences": [
-                {
-                    "source_file": "tmp_orders_stage.sql",
-                    "created_statement_index": 0,
-                    "dropped_statement_index": 1,
-                    "is_ctas": True,
-                    "is_temporary": False,
-                    "dropped_in_same_task": True,
-                }
-            ],
         },
     ]
+    validate_lineage_v2(output)
 
 
 def test_build_lineage_output_uses_typed_edges_for_direct_and_group_by():
@@ -211,7 +681,7 @@ def test_build_lineage_output_uses_typed_edges_for_direct_and_group_by():
             "relation_type": "direct",
             "transformation_type": "aggregation",
             "expression": "SUM(amount) AS total_amount",
-            "source_file": "dws_orders.sql",
+            "job": "dws_orders",
         },
         {
             "source": {"type": "column", "id": "dwd_orders.order_date"},
@@ -219,10 +689,11 @@ def test_build_lineage_output_uses_typed_edges_for_direct_and_group_by():
             "relation_type": "group_by",
             "transformation_type": "group_by",
             "expression": "order_date",
-            "source_file": "dws_orders.sql",
+            "job": "dws_orders",
         },
     ]
     assert "indirect_edges" not in output
+    validate_lineage_v2(output)
 
 
 def test_build_lineage_output_hides_internal_catalog_but_keeps_external():
@@ -265,3 +736,4 @@ def test_build_lineage_output_hides_internal_catalog_but_keeps_external():
         "hive.shop_dm.dwd_orders.order_id"
     )
     assert output["edges"][0]["target"]["id"] == "dws_orders.order_id"
+    validate_lineage_v2(output)

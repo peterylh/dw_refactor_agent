@@ -1,19 +1,11 @@
 SET @etl_date = COALESCE(@etl_date, CURDATE());
 
 -- Human-reviewed aggregation from dwd_client_transaction
-DELETE FROM retail_banking_dm.dws_client_transaction_daily
-WHERE `stat_date` = CAST(@etl_date AS DATE);
+DROP TABLE IF EXISTS retail_banking_dm.stage_client_transaction_daily;
 
-INSERT INTO retail_banking_dm.dws_client_transaction_daily (
-    `stat_date`,
-    `office_id`,
-    `client_id`,
-    `currency_code`,
-    `transaction_type_enum`,
-    `record_count`,
-    `total_amount`,
-    `etl_time`
-)
+CREATE TABLE retail_banking_dm.stage_client_transaction_daily
+PROPERTIES ("replication_num" = "1")
+AS
 SELECT
     DATE(src.`transaction_date`) AS `stat_date`,
     src.`office_id` AS `office_id`,
@@ -33,3 +25,27 @@ GROUP BY
     src.`client_id`,
     src.`currency_code`,
     src.`transaction_type_enum`;
+
+DELETE FROM retail_banking_dm.dws_client_transaction_daily
+WHERE `stat_date` = CAST(@etl_date AS DATE);
+
+INSERT INTO retail_banking_dm.dws_client_transaction_daily (
+    `stat_date`,
+    `office_id`,
+    `client_id`,
+    `currency_code`,
+    `transaction_type_enum`,
+    `record_count`,
+    `total_amount`,
+    `etl_time`
+)
+SELECT
+    src.`stat_date`,
+    src.`office_id`,
+    src.`client_id`,
+    src.`currency_code`,
+    src.`transaction_type_enum`,
+    src.`record_count`,
+    src.`total_amount`,
+    src.`etl_time`
+FROM retail_banking_dm.stage_client_transaction_daily AS src;

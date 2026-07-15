@@ -1,5 +1,7 @@
 import subprocess
 
+import pytest
+
 from dw_refactor_agent.refactor.change_analysis import (
     build_change_analysis,
     changed_files_since_head,
@@ -196,3 +198,119 @@ def test_build_change_analysis_uses_baseline_and_current_downstream():
     assert result["lineage_diff"]["removed_edges"] == [
         {"source": "dwd_order", "target": "dws_order"}
     ]
+
+
+@pytest.mark.parametrize(
+    "tables, outputs",
+    [
+        (
+            [
+                {
+                    "full_name": "internal.shop_dm.stage_sales",
+                    "dataset_type": "process",
+                }
+            ],
+            ["internal.shop_dm.stage_sales"],
+        ),
+        (
+            [
+                {
+                    "full_name": "internal.shop_dm.dwd_order",
+                    "dataset_type": "managed",
+                },
+                {
+                    "full_name": "internal.shop_dm.dwd_order_audit",
+                    "dataset_type": "managed",
+                },
+            ],
+            [
+                "internal.shop_dm.dwd_order",
+                "internal.shop_dm.dwd_order_audit",
+            ],
+        ),
+    ],
+)
+def test_changed_job_requires_one_managed_output_per_lineage_snapshot(
+    tables, outputs
+):
+    lineage = {
+        "format_version": 2,
+        "tables": tables,
+        "jobs": [
+            {
+                "name": "Prepare_Sales",
+                "source_file": "mid/tasks/prepare_sales.sql",
+                "inputs": [],
+                "outputs": outputs,
+            }
+        ],
+        "edges": [],
+        "diagnostics": [],
+    }
+
+    with pytest.raises(ValueError, match="changed Job.*managed output"):
+        build_change_analysis(
+            "shop",
+            lineage,
+            lineage,
+            ["warehouses/shop/mid/tasks/prepare_sales.sql"],
+        )
+
+
+def test_change_analysis_uses_canonical_identity_across_snapshot_casing():
+    baseline = {
+        "tables": [],
+        "edges": [
+            {
+                "source": {
+                    "type": "column",
+                    "id": "internal.shop_dm.DWD_Order.id",
+                },
+                "target": {
+                    "type": "column",
+                    "id": "internal.shop_dm.ADS_Order.id",
+                },
+            }
+        ],
+    }
+    current = {
+        "tables": [],
+        "edges": [
+            {
+                "source": {
+                    "type": "column",
+                    "id": "internal.shop_dm.dwd_order.id",
+                },
+                "target": {
+                    "type": "column",
+                    "id": "internal.shop_dm.ads_order.id",
+                },
+            }
+        ],
+    }
+
+    result = build_change_analysis(
+        "shop",
+        baseline,
+        current,
+        ["warehouses/shop/mid/ddl/dwd_order.sql"],
+    )
+
+    assert result["affected_scope"]["direct_tables"] == [
+        "internal.shop_dm.dwd_order"
+    ]
+    assert result["affected_scope"]["downstream_tables"] == [
+        "internal.shop_dm.ads_order"
+    ]
+    assert result["affected_scope"]["anchor_tables"] == [
+        "internal.shop_dm.ads_order"
+    ]
+    assert result["affected_scope"]["assessment_tables"] == [
+        "internal.shop_dm.ads_order",
+        "internal.shop_dm.dwd_order",
+    ]
+    assert result["lineage_diff"] == {
+        "added_edges": [],
+        "removed_edges": [],
+        "changed_tables": [],
+    }

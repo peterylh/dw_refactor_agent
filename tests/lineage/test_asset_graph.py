@@ -12,6 +12,337 @@ from dw_refactor_agent.lineage.table_graph import (
 )
 
 
+def _column_edge(source, target, job):
+    return {
+        "source": {"type": "column", "id": f"{source}.id"},
+        "target": {"type": "column", "id": f"{target}.id"},
+        "relation_type": "direct",
+        "transformation_type": "passthrough",
+        "expression": "id",
+        "job": job,
+    }
+
+
+def _v2_tables(*names):
+    return [
+        {
+            "name": name,
+            "full_name": name,
+            "dataset_type": "process" if name == "t" else "managed",
+            "columns": [{"name": "id", "type": "BIGINT"}],
+        }
+        for name in names
+    ]
+
+
+def two_local_t_jobs_v2():
+    return {
+        "format_version": 2,
+        "tables": _v2_tables("src_a", "src_b", "t", "out_a", "out_b"),
+        "jobs": [
+            {
+                "name": "job_a",
+                "source_file": "mid/tasks/job_a.sql",
+                "inputs": ["src_a", "t"],
+                "outputs": ["t", "out_a"],
+            },
+            {
+                "name": "job_b",
+                "source_file": "mid/tasks/job_b.sql",
+                "inputs": ["src_b", "t"],
+                "outputs": ["t", "out_b"],
+            },
+        ],
+        "edges": [
+            _column_edge("src_a", "t", "job_a"),
+            _column_edge("t", "out_a", "job_a"),
+            _column_edge("src_b", "t", "job_b"),
+            _column_edge("t", "out_b", "job_b"),
+        ],
+        "diagnostics": [],
+    }
+
+
+def test_same_name_local_process_tables_do_not_cross_jobs():
+    upstream, downstream = build_asset_table_graph(two_local_t_jobs_v2())
+
+    assert downstream["src_a"] == {"out_a"}
+    assert downstream["src_b"] == {"out_b"}
+    assert upstream["out_a"] == {"src_a"}
+    assert upstream["out_b"] == {"src_b"}
+    assert "out_b" not in downstream["src_a"]
+    assert "out_a" not in downstream["src_b"]
+
+
+def test_v1_same_name_transient_tables_safely_stay_in_source_file_jobs():
+    lineage_data = {
+        "tables": [{"name": "t", "is_transient": True}],
+        "edges": [
+            {
+                "source": f"{source}.id",
+                "target": f"{target}.id",
+                "expression": "id",
+                "source_file": f"mid/tasks/{job}.sql",
+            }
+            for source, target, job in (
+                ("src_a", "t", "job_a"),
+                ("t", "out_a", "job_a"),
+                ("src_b", "t", "job_b"),
+                ("t", "out_b", "job_b"),
+            )
+        ],
+        "indirect_edges": [],
+    }
+
+    upstream, downstream = build_asset_table_graph(lineage_data)
+
+    assert downstream == {
+        "src_a": {"out_a"},
+        "src_b": {"out_b"},
+    }
+    assert upstream == {
+        "out_a": {"src_a"},
+        "out_b": {"src_b"},
+    }
+    assert {
+        record["source"]
+        for record in build_asset_column_lineage(lineage_data, "out_a")
+    } == {"src_a.id"}
+    assert {
+        record["source"]
+        for record in build_asset_column_lineage(lineage_data, "out_b")
+    } == {"src_b.id"}
+
+
+def test_v1_same_basename_source_files_use_full_path_process_scopes():
+    lineage_data = {
+        "tables": [{"name": "t", "is_transient": True}],
+        "edges": [
+            {
+                "source": f"{source}.id",
+                "target": f"{target}.id",
+                "expression": "id",
+                "source_file": source_file,
+            }
+            for source, target, source_file in (
+                ("src_mid", "t", "mid/tasks/load.sql"),
+                ("t", "out_mid", "mid/tasks/load.sql"),
+                ("src_ads", "t", "ads/tasks/load.sql"),
+                ("t", "out_ads", "ads/tasks/load.sql"),
+            )
+        ],
+        "indirect_edges": [],
+    }
+
+    upstream, downstream = build_asset_table_graph(lineage_data)
+
+    assert downstream == {
+        "src_ads": {"out_ads"},
+        "src_mid": {"out_mid"},
+    }
+    assert upstream == {
+        "out_ads": {"src_ads"},
+        "out_mid": {"src_mid"},
+    }
+    assert {
+        record["source"]
+        for record in build_asset_column_lineage(lineage_data, "out_mid")
+    } == {"src_mid.id"}
+    assert {
+        record["source"]
+        for record in build_asset_column_lineage(lineage_data, "out_ads")
+    } == {"src_ads.id"}
+
+
+def test_unique_shared_process_producer_composes_across_jobs():
+    lineage_data = {
+        "format_version": 2,
+        "tables": _v2_tables("src", "t", "out"),
+        "jobs": [
+            {
+                "name": "prepare",
+                "source_file": "mid/tasks/prepare.sql",
+                "inputs": ["src"],
+                "outputs": ["t"],
+            },
+            {
+                "name": "publish",
+                "source_file": "mid/tasks/publish.sql",
+                "inputs": ["t"],
+                "outputs": ["out"],
+            },
+        ],
+        "edges": [
+            _column_edge("src", "t", "prepare"),
+            _column_edge("t", "out", "publish"),
+        ],
+        "diagnostics": [],
+    }
+
+    upstream, downstream = build_asset_table_graph(lineage_data)
+
+    assert upstream == {"out": {"src"}}
+    assert downstream == {"src": {"out"}}
+
+
+def test_multiple_shared_process_producers_do_not_compose_a_path():
+    lineage_data = {
+        "format_version": 2,
+        "tables": _v2_tables("src_a", "src_b", "t", "out"),
+        "jobs": [
+            {
+                "name": "producer_a",
+                "source_file": "mid/tasks/producer_a.sql",
+                "inputs": ["src_a"],
+                "outputs": ["t"],
+            },
+            {
+                "name": "producer_b",
+                "source_file": "mid/tasks/producer_b.sql",
+                "inputs": ["src_b"],
+                "outputs": ["t"],
+            },
+            {
+                "name": "consumer",
+                "source_file": "mid/tasks/consumer.sql",
+                "inputs": ["t"],
+                "outputs": ["out"],
+            },
+        ],
+        "edges": [
+            _column_edge("src_a", "t", "producer_a"),
+            _column_edge("src_b", "t", "producer_b"),
+            _column_edge("t", "out", "consumer"),
+        ],
+        "diagnostics": [],
+    }
+
+    upstream, downstream = build_asset_table_graph(lineage_data)
+
+    assert "out" not in downstream.get("src_a", set())
+    assert "out" not in downstream.get("src_b", set())
+    assert "src_a" not in upstream.get("out", set())
+    assert "src_b" not in upstream.get("out", set())
+
+
+def test_missing_shared_process_producer_does_not_compose_a_path():
+    lineage_data = {
+        "format_version": 2,
+        "tables": _v2_tables("t", "out"),
+        "jobs": [
+            {
+                "name": "consumer",
+                "source_file": "mid/tasks/consumer.sql",
+                "inputs": ["t"],
+                "outputs": ["out"],
+            }
+        ],
+        "edges": [_column_edge("t", "out", "consumer")],
+        "diagnostics": [
+            {
+                "code": "UNRESOLVED_DATASET_PRODUCER",
+                "dataset": "t",
+                "reason": "not_found",
+                "consumer_jobs": ["consumer"],
+                "candidate_producer_jobs": [],
+            }
+        ],
+    }
+
+    upstream, downstream = build_asset_table_graph(lineage_data)
+
+    assert upstream.get("out", set()) == set()
+    assert "out" not in downstream.get("t", set())
+
+
+def test_same_name_local_process_conditions_stay_in_their_jobs():
+    lineage_data = two_local_t_jobs_v2()
+    lineage_data["edges"].extend(
+        [
+            {
+                "source": {"type": "column", "id": f"{source}.status"},
+                "target": {"type": "column", "id": "t.status"},
+                "relation_type": "direct",
+                "transformation_type": "passthrough",
+                "expression": "status",
+                "job": job,
+            }
+            for source, job in (("src_a", "job_a"), ("src_b", "job_b"))
+        ]
+    )
+    lineage_data["edges"].extend(
+        [
+            {
+                "source": {"type": "column", "id": "t.status"},
+                "target": {"type": "table", "id": output},
+                "relation_type": "filter",
+                "transformation_type": "filter",
+                "expression": "status = 'READY'",
+                "job": job,
+            }
+            for output, job in (("out_a", "job_a"), ("out_b", "job_b"))
+        ]
+    )
+
+    out_a = build_asset_column_lineage(lineage_data, "out_a")
+    out_b = build_asset_column_lineage(lineage_data, "out_b")
+
+    assert {
+        condition["source"]
+        for record in out_a
+        for condition in record["condition_lineage"]
+    } == {"src_a.status"}
+    assert {
+        condition["source"]
+        for record in out_b
+        for condition in record["condition_lineage"]
+    } == {"src_b.status"}
+
+
+def test_v2_conditions_attach_only_to_column_edges_from_the_same_job():
+    lineage_data = {
+        "format_version": 2,
+        "tables": _v2_tables("src_a", "src_b", "out"),
+        "jobs": [
+            {
+                "name": job,
+                "source_file": f"mid/tasks/{job}.sql",
+                "inputs": [source],
+                "outputs": ["out"],
+            }
+            for source, job in (("src_a", "job_a"), ("src_b", "job_b"))
+        ],
+        "edges": [
+            _column_edge(source, "out", job)
+            for source, job in (("src_a", "job_a"), ("src_b", "job_b"))
+        ]
+        + [
+            {
+                "source": {"type": "column", "id": f"{source}.status"},
+                "target": {"type": "table", "id": "out"},
+                "relation_type": "filter",
+                "transformation_type": "filter",
+                "expression": "status = 'READY'",
+                "job": job,
+            }
+            for source, job in (("src_a", "job_a"), ("src_b", "job_b"))
+        ],
+        "diagnostics": [],
+    }
+
+    lineage = build_asset_column_lineage(lineage_data, "out")
+
+    assert {
+        record["job"]: {
+            condition["source"] for condition in record["condition_lineage"]
+        }
+        for record in lineage
+    } == {
+        "job_a": {"src_a.status"},
+        "job_b": {"src_b.status"},
+    }
+
+
 def test_build_table_graph_keeps_transient_tables_raw():
     lineage_data = {
         "edges": [
@@ -81,6 +412,25 @@ def test_build_table_graph_merges_table_nodes_case_insensitively():
         ("TMP_Orders_Stage", "DWS_Orders"): {"dws.sql"},
         ("DWD_Orders", "DWS_Orders"): {"dws.sql"},
     }
+
+
+def test_table_edge_source_files_resolve_v2_jobs():
+    assert build_table_edge_source_files(
+        [
+            {
+                "source": {"type": "column", "id": "src.id"},
+                "target": {"type": "column", "id": "out.id"},
+                "job": "publish",
+            }
+        ],
+        [],
+        jobs=[
+            {
+                "name": "publish",
+                "source_file": "mid/tasks/publish.sql",
+            }
+        ],
+    ) == {("src", "out"): {"mid/tasks/publish.sql"}}
 
 
 def test_table_graph_exposes_self_edges_without_dependency_noise():
