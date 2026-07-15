@@ -90,11 +90,6 @@ def restore_lineage_extractor_project() -> Iterator[None]:
             lineage_extractor.CURRENT_CATALOG,
             lineage_extractor.CURRENT_DB,
         ) = project_state
-        assert project_state == (
-            lineage_extractor.CURRENT_PROJECT,
-            lineage_extractor.CURRENT_CATALOG,
-            lineage_extractor.CURRENT_DB,
-        )
 
 
 def _extract_tasks(
