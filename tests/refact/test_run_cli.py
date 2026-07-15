@@ -4,7 +4,12 @@ from datetime import datetime, timezone
 import pytest
 
 import dw_refactor_agent.refactor.run as run_cli
+from dw_refactor_agent.refactor.artifact_contract import ArtifactFormatError
 from dw_refactor_agent.refactor.plan_artifact import StalePlanError
+from dw_refactor_agent.refactor.qa_pool import (
+    QaSlotInspection,
+    QaSlotOwnership,
+)
 from dw_refactor_agent.refactor.semantic_mode import SemanticResolution
 from dw_refactor_agent.refactor.session import (
     create_run_manifest,
@@ -74,6 +79,255 @@ def _install_empty_semantic_resolution(monkeypatch):
             inherited_declarations={},
         ),
     )
+
+
+def _cleanup_inspection(availability="claimed"):
+    owner = None
+    if availability == "claimed":
+        owner = QaSlotOwnership(
+            2,
+            "shop",
+            "run-1",
+            "execution-1",
+            "shop_dm_qa_02",
+            "sha256:" + "a" * 64,
+            "sha256:" + "b" * 64,
+            "2026-07-14 12:00:00",
+            1784001600,
+        )
+    return QaSlotInspection(
+        "shop",
+        "shop_dm_qa_02" if owner else "shop_dm_qa",
+        availability,
+        owner,
+        "legacy marker" if availability == "legacy" else None,
+        (),
+    )
+
+
+def test_cleanup_slot_discovery_skips_disabled_fixture_projects(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        run_cli.config,
+        "PROJECT_CONFIG",
+        {
+            "shop": {
+                "db": "shop_dm",
+                "qa_db": "shop_dm_qa",
+                "lineage_db": "shop_lineage",
+            },
+            "shop_fixture": {
+                "db": "shop_dm",
+                "qa_db": "shop_dm_qa",
+                "lineage_db": "shop_lineage",
+                "fixture": {"execution": "disabled"},
+            },
+        },
+    )
+    calls = []
+    monkeypatch.setattr(
+        run_cli,
+        "inspect_qa_slot",
+        lambda project, database: calls.append((project, database))
+        or _cleanup_inspection("free"),
+    )
+
+    run_cli.inspect_configured_slots()
+
+    assert calls == [("shop", "shop_dm_qa")]
+
+
+def test_cleanup_list_filters_by_project_and_run(monkeypatch, capsys):
+    claimed = _cleanup_inspection()
+    other = QaSlotInspection(
+        "finance_analytics",
+        "other_run_slot",
+        "free",
+        None,
+        None,
+        (),
+    )
+    monkeypatch.setattr(
+        run_cli,
+        "inspect_configured_slots",
+        lambda **kwargs: [claimed, other],
+        raising=False,
+    )
+    monkeypatch.setattr(
+        run_cli,
+        "qa_server_epoch",
+        lambda: claimed.ownership.claimed_at_epoch,
+    )
+
+    assert (
+        run_cli.main(
+            ["cleanup", "list", "--project", "shop", "--run", "run-1"]
+        )
+        == 0
+    )
+    output = capsys.readouterr().out
+    assert "shop_dm_qa_02" in output
+    assert "other_run_slot" not in output
+
+
+def test_cleanup_list_age_uses_doris_server_clock(monkeypatch, capsys):
+    inspection = _cleanup_inspection()
+    monkeypatch.setattr(
+        run_cli,
+        "inspect_configured_slots",
+        lambda **kwargs: [inspection],
+        raising=False,
+    )
+    monkeypatch.setattr(
+        run_cli,
+        "qa_server_epoch",
+        lambda: inspection.ownership.claimed_at_epoch + 5 * 60,
+    )
+    monkeypatch.setattr(
+        run_cli,
+        "_now",
+        lambda: datetime.fromtimestamp(
+            inspection.ownership.claimed_at_epoch + 24 * 60 * 60,
+            timezone.utc,
+        ),
+    )
+
+    assert run_cli.main(["cleanup", "list", "--project", "shop"]) == 0
+
+    assert "\t300s\t" in capsys.readouterr().out
+
+
+def test_cleanup_delete_without_yes_is_preview(monkeypatch, capsys):
+    inspection = _cleanup_inspection()
+    monkeypatch.setattr(
+        run_cli,
+        "inspect_configured_slots",
+        lambda **kwargs: [inspection],
+        raising=False,
+    )
+    monkeypatch.setattr(
+        run_cli,
+        "release_qa_slot",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("preview must not release a slot")
+        ),
+        raising=False,
+    )
+
+    assert (
+        run_cli.main(["cleanup", "delete", "--execution", "execution-1"]) == 0
+    )
+    assert "would release" in capsys.readouterr().out
+
+
+def test_cleanup_older_than_uses_doris_server_clock(monkeypatch, capsys):
+    inspection = _cleanup_inspection()
+    monkeypatch.setattr(
+        run_cli,
+        "inspect_configured_slots",
+        lambda **kwargs: [inspection],
+        raising=False,
+    )
+    monkeypatch.setattr(
+        run_cli,
+        "qa_server_epoch",
+        lambda: inspection.ownership.claimed_at_epoch + 30 * 60,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        run_cli,
+        "_now",
+        lambda: datetime.fromtimestamp(
+            inspection.ownership.claimed_at_epoch + 24 * 60 * 60,
+            timezone.utc,
+        ),
+    )
+
+    assert (
+        run_cli.main(
+            [
+                "cleanup",
+                "delete",
+                "--project",
+                "shop",
+                "--older-than",
+                "1h",
+            ]
+        )
+        == 0
+    )
+
+    assert "preview selected=0" in capsys.readouterr().out
+
+
+def test_cleanup_delete_previews_legacy_only_by_exact_database(
+    monkeypatch, capsys
+):
+    inspection = _cleanup_inspection("legacy")
+    monkeypatch.setattr(
+        run_cli,
+        "inspect_configured_slots",
+        lambda **kwargs: [inspection],
+        raising=False,
+    )
+
+    assert (
+        run_cli.main(
+            [
+                "cleanup",
+                "delete",
+                "--project",
+                "shop",
+                "--database",
+                "shop_dm_qa",
+            ]
+        )
+        == 0
+    )
+    assert "would release" in capsys.readouterr().out
+
+
+def test_cleanup_delete_rejects_unbounded_yes():
+    with pytest.raises(SystemExit, match="selector"):
+        run_cli.main(["cleanup", "delete", "--yes"])
+
+
+def test_time_cleanup_requires_project_or_all_projects():
+    with pytest.raises(SystemExit, match="--project.*--all-projects"):
+        run_cli.main(["cleanup", "delete", "--older-than", "7d", "--yes"])
+
+
+def test_cleanup_delete_continues_after_blocked_release(monkeypatch, capsys):
+    inspection = _cleanup_inspection()
+    monkeypatch.setattr(
+        run_cli,
+        "inspect_configured_slots",
+        lambda **kwargs: [inspection],
+        raising=False,
+    )
+    monkeypatch.setattr(
+        run_cli,
+        "release_qa_slot",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            ArtifactFormatError("ownership changed")
+        ),
+        raising=False,
+    )
+
+    assert (
+        run_cli.main(
+            [
+                "cleanup",
+                "delete",
+                "--execution",
+                "execution-1",
+                "--yes",
+            ]
+        )
+        == 1
+    )
+    assert "blocked=1" in capsys.readouterr().out
 
 
 def test_start_creates_manifest_and_baseline_artifacts(tmp_path, monkeypatch):
@@ -334,6 +588,7 @@ def test_analyze_refreshes_current_analysis_diff_and_plan(
     persisted_plan = json.loads(
         (run_root / "verification" / "plan.json").read_text()
     )
+    assert persisted_plan["run_id"] == manifest["run_id"]
     assert persisted_plan["analysis_snapshot"]["partition"] == "2025-01-15"
     assert persisted_plan["analysis_snapshot"][
         "workspace_fingerprint"
