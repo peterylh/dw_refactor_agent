@@ -84,7 +84,7 @@ def test_task_cache_file_and_result_contract_scenarios(tmp_path):
     cache_path.write_text(
         json.dumps(
             {
-                "format_version": 2,
+                "format_version": 3,
                 "tasks": [
                     {
                         "source_file": "a.sql",
@@ -94,6 +94,7 @@ def test_task_cache_file_and_result_contract_scenarios(tmp_path):
                         "created_tables": [],
                         "temporary_tables": [],
                         "local_lifecycle_tables": [],
+                        "process_table_schemas": [],
                     },
                     {"source_file": "", "cache_key": "ignored"},
                     {"cache_key": "missing-source"},
@@ -113,6 +114,7 @@ def test_task_cache_file_and_result_contract_scenarios(tmp_path):
             "created_tables": [],
             "temporary_tables": [],
             "local_lifecycle_tables": [],
+            "process_table_schemas": [],
         },
     }
     assert load_task_cache(tmp_path / "missing.json") == {}
@@ -132,9 +134,10 @@ def test_task_cache_file_and_result_contract_scenarios(tmp_path):
         "missing_target_ddl": ["missing_target"],
         "stats": {"entry_count": 1},
         "errors": [{"message": "warn"}],
+        "process_table_schemas": [],
     }
     assert cache_entry_from_result(result, "cache-key") == {
-        "format_version": 2,
+        "format_version": 3,
         "cache_key": "cache-key",
         "source_file": "dwd_order.sql",
         "entries": [{"target": "demo_dm.dwd_order"}],
@@ -149,6 +152,7 @@ def test_task_cache_file_and_result_contract_scenarios(tmp_path):
         "missing_target_ddl": ["missing_target"],
         "stats": {"entry_count": 1},
         "errors": [{"message": "warn"}],
+        "process_table_schemas": [],
     }
 
 
@@ -186,6 +190,7 @@ def test_versioned_cache_entry_survives_unversioned_container(tmp_path):
             "created_tables": [],
             "temporary_tables": [],
             "local_lifecycle_tables": [],
+            "process_table_schemas": [],
         },
         "cache-key",
     )
@@ -206,6 +211,7 @@ def test_cache_entry_sorts_set_facts_for_json_serialization():
             "created_tables": {"out"},
             "temporary_tables": set(),
             "local_lifecycle_tables": [],
+            "process_table_schemas": [],
         },
         "cache-key",
     )

@@ -9,7 +9,7 @@ from pathlib import Path
 
 from dw_refactor_agent.config import TEXT_ENCODING
 
-TASK_CACHE_FORMAT_VERSION = 2
+TASK_CACHE_FORMAT_VERSION = 3
 TASK_FACT_FIELDS = (
     "input_tables",
     "output_tables",
@@ -17,6 +17,7 @@ TASK_FACT_FIELDS = (
     "temporary_tables",
     "local_lifecycle_tables",
 )
+TASK_SCHEMA_FIELDS = ("process_table_schemas",)
 
 
 @dataclass
@@ -89,7 +90,10 @@ def load_task_cache(path: Path | None) -> dict:
             container_version == TASK_CACHE_FORMAT_VERSION
             or entry.get("format_version") == TASK_CACHE_FORMAT_VERSION
         )
-        and all(field in entry for field in TASK_FACT_FIELDS)
+        and all(
+            field in entry
+            for field in (*TASK_FACT_FIELDS, *TASK_SCHEMA_FIELDS)
+        )
     }
 
 
@@ -117,6 +121,8 @@ def cache_entry_from_result(result: dict, cache_key: str) -> dict:
     for key in TASK_FACT_FIELDS:
         if key in result:
             entry[key] = _json_cache_value(result.get(key) or [])
+    for key in TASK_SCHEMA_FIELDS:
+        entry[key] = result.get(key) or []
     for key in (
         "sql_hash",
         "referenced_tables",

@@ -606,7 +606,7 @@ def test_extract_lineage_from_task_files_uses_cache_metadata_without_sql_parse(
     assert cold["task_results"][0]["created_tables"] == []
     assert cold["task_results"][0]["temporary_tables"] == []
     assert cold["task_results"][0]["local_lifecycle_tables"] == []
-    assert cold["task_cache"]["format_version"] == 2
+    assert cold["task_cache"]["format_version"] == 3
     cache_path.write_text(json.dumps(cold["task_cache"]), encoding="utf-8")
 
     original_parse = lineage_extractor.sqlglot.parse

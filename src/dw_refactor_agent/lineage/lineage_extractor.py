@@ -2979,6 +2979,35 @@ def _task_fact_result_fields(task_facts):
     }
 
 
+def _persistent_created_table_schemas(context):
+    """Return schemas for CTAS/create outputs that survive this task."""
+    output_keys = {
+        _table_identity_match_key(table_name)
+        for table_name in context.task_facts.get("output_tables") or []
+    }
+    records = {}
+    for table_name in context.task_facts.get("created_tables") or []:
+        table_key = _table_identity_match_key(table_name)
+        if table_key not in output_keys:
+            continue
+        for catalog, database, table, columns in _iter_matching_schema_tables(
+            context.task_schema,
+            table_name,
+        ):
+            clean_columns = {
+                _canonical_column(column_name): str(column_type or "UNKNOWN")
+                for column_name, column_type in (columns or {}).items()
+                if _canonical_column(column_name)
+            }
+            if not clean_columns:
+                continue
+            records[table_key] = {
+                "name": _qualified_table_name(catalog, database, table),
+                "columns": clean_columns,
+            }
+    return [records[key] for key in sorted(records)]
+
+
 def _task_result_from_context(context, entries):
     result = {
         "index": context.index,
@@ -2992,6 +3021,7 @@ def _task_result_from_context(context, entries):
         "sql_hash": context.sql_hash,
         "stats": dict(STATS),
         "errors": context.diagnostics,
+        "process_table_schemas": _persistent_created_table_schemas(context),
     }
     result.update(_task_fact_result_fields(context.task_facts))
     return result
@@ -3177,8 +3207,13 @@ def _extract_task_work_item(work_item, schema):
                 "sql_hash": work_item.sql_hash,
                 "stats": dict(STATS),
                 "errors": diagnostics,
+                "process_table_schemas": [],
             }
             result.update(_task_fact_result_fields(task_facts))
+            result["schema_slice_hash"] = _schema_slice_hash_for_tables(
+                schema,
+                result["referenced_tables"],
+            )
             return result
 
         context = _task_context_from_statements(
@@ -3188,7 +3223,12 @@ def _extract_task_work_item(work_item, schema):
             diagnostics=diagnostics,
         )
         entries = extract_lineage_from_context(context)
-        return _task_result_from_context(context, entries)
+        result = _task_result_from_context(context, entries)
+        result["schema_slice_hash"] = _schema_slice_hash_for_tables(
+            schema,
+            result["referenced_tables"],
+        )
+        return result
     finally:
         STATS.update(previous_stats)
 
@@ -3232,6 +3272,7 @@ def _task_failure_result(work_item, error, stage="worker"):
                 "error": _diagnostic_error(error),
             }
         ],
+        "process_table_schemas": [],
     }
 
 
@@ -3270,6 +3311,7 @@ def _task_result_from_cache(work_item, cached):
         "referenced_tables": cached.get("referenced_tables") or [],
         "stats": cached.get("stats") or {},
         "errors": cached.get("errors") or [],
+        "process_table_schemas": cached.get("process_table_schemas") or [],
         "cache_hit": True,
     }
     for key in (
@@ -3322,6 +3364,95 @@ def _schema_slice_hash_for_tables(schema, referenced_tables):
     if referenced_tables:
         return stable_json_hash(slice_schema(schema, referenced_tables))
     return stable_json_hash(_copy_schema(schema))
+
+
+def _cache_can_seed_process_table_schemas(
+    work_item,
+    cached,
+    project,
+    extractor_hash,
+):
+    if not cached or "process_table_schemas" not in cached:
+        return False
+    sql_hash = work_item.sql_hash or _task_sql_hash(work_item)
+    return (
+        cached.get("sql_hash") == sql_hash
+        and cached.get("extractor_hash") == extractor_hash
+        and cached.get("project_config") == _cache_project_config(project)
+    )
+
+
+def _process_table_schema_catalog(task_results, schema=None):
+    """Return schemas supplied by one unambiguous persistent creator."""
+    formal_keys = {
+        _schema_table_match_key(catalog, database, table)
+        for catalog, database, table, _columns in _iter_schema_tables(schema)
+    }
+    consumers = {}
+    for result in task_results or []:
+        source_file = str(result.get("source_file") or "")
+        for table_name in result.get("input_tables") or []:
+            consumers.setdefault(
+                _table_identity_match_key(table_name),
+                set(),
+            ).add(source_file)
+
+    candidates = {}
+    for result in task_results or []:
+        source_file = str(result.get("source_file") or "")
+        output_keys = {
+            _table_identity_match_key(table_name)
+            for table_name in result.get("output_tables") or []
+        }
+        for record in result.get("process_table_schemas") or []:
+            table_name = record.get("name")
+            columns = record.get("columns") or {}
+            table_key = _table_identity_match_key(table_name)
+            external_consumers = consumers.get(table_key, set()) - {
+                source_file
+            }
+            if (
+                not table_key[2]
+                or table_key in formal_keys
+                or table_key not in output_keys
+                or not columns
+                or not external_consumers
+            ):
+                continue
+            candidates.setdefault(table_key, {})[source_file] = {
+                "name": table_name,
+                "columns": dict(columns),
+            }
+
+    catalog = []
+    for table_key in sorted(candidates):
+        by_source = candidates[table_key]
+        if len(by_source) != 1:
+            continue
+        catalog.append(next(iter(by_source.values())))
+    return catalog
+
+
+def _schema_with_process_table_catalog(schema, catalog):
+    if not catalog:
+        return schema
+    combined = _copy_schema(schema)
+    formal_keys = {
+        _schema_table_match_key(catalog_name, database, table)
+        for catalog_name, database, table, _columns in _iter_schema_tables(
+            schema
+        )
+    }
+    for record in catalog or []:
+        table_name = record.get("name")
+        if _table_identity_match_key(table_name) in formal_keys:
+            continue
+        _register_task_table_schema(
+            combined,
+            table_name,
+            record.get("columns") or {},
+        )
+    return combined
 
 
 def _cache_key_from_cached_metadata(
@@ -3409,10 +3540,12 @@ def _task_cache_metadata_from_result(
         or work_item.sql_hash
         or _task_sql_hash(work_item)
     )
-    schema_slice_hash = _schema_slice_hash_for_tables(
-        schema,
-        referenced_tables,
-    )
+    schema_slice_hash = result.get("schema_slice_hash")
+    if not schema_slice_hash:
+        schema_slice_hash = _schema_slice_hash_for_tables(
+            schema,
+            referenced_tables,
+        )
     return TaskCacheMetadata(
         sql_hash=sql_hash,
         referenced_tables=referenced_tables,
@@ -3560,6 +3693,84 @@ def _extract_task_work_items_parallel(
         )
 
 
+def _extract_task_work_items(
+    work_items,
+    schema,
+    parallel,
+    progress_callback=None,
+):
+    if len(work_items) <= 1 or parallel == 1:
+        return _extract_task_work_items_serial(
+            work_items,
+            schema,
+            progress_callback,
+        )
+    return _extract_task_work_items_parallel(
+        work_items,
+        schema,
+        parallel,
+        progress_callback,
+    )
+
+
+def _propagate_process_table_schemas(
+    task_results,
+    work_items_by_index,
+    schema,
+    parallel,
+    initial_schema,
+    initial_catalog,
+):
+    """Re-extract consumers until cross-Job process schemas reach a fixpoint."""
+    results_by_index = {result["index"]: result for result in task_results}
+    final_schema = schema
+    max_rounds = len(work_items_by_index) + 1
+    for _round in range(max_rounds):
+        catalog = _process_table_schema_catalog(
+            results_by_index.values(),
+            schema=schema,
+        )
+        if _round == 0 and catalog == initial_catalog:
+            return (
+                [
+                    results_by_index[index]
+                    for index in sorted(results_by_index)
+                ],
+                initial_schema,
+            )
+        final_schema = _schema_with_process_table_catalog(schema, catalog)
+        stale_items = []
+        for index, result in sorted(results_by_index.items()):
+            if "schema_slice_hash" not in result:
+                continue
+            expected_hash = _schema_slice_hash_for_tables(
+                final_schema,
+                result.get("referenced_tables") or [],
+            )
+            if result.get("schema_slice_hash") != expected_hash:
+                stale_items.append(work_items_by_index[index])
+        if not stale_items:
+            return (
+                [
+                    results_by_index[index]
+                    for index in sorted(results_by_index)
+                ],
+                final_schema,
+            )
+
+        refreshed = _extract_task_work_items(
+            stale_items,
+            final_schema,
+            parallel,
+        )
+        for result in refreshed:
+            results_by_index[result["index"]] = result
+
+    raise RuntimeError(
+        "cross-Job process table schema propagation did not converge"
+    )
+
+
 def extract_lineage_from_task_files(
     task_files,
     tasks_dir,
@@ -3583,7 +3794,27 @@ def extract_lineage_from_task_files(
     )
     extractor_hash = _extractor_hash_for_cache() if cache_enabled else None
     work_items_by_index = {item.index: item for item in work_items}
-    task_cache_entries = []
+
+    cached_schema_seeds = []
+    if cache_enabled:
+        for work_item in work_items:
+            work_item.sql_hash = _task_sql_hash(work_item)
+            cached = previous_cache.get(work_item.source_file)
+            if _cache_can_seed_process_table_schemas(
+                work_item,
+                cached,
+                cache_project,
+                extractor_hash,
+            ):
+                cached_schema_seeds.append(cached)
+    initial_catalog = _process_table_schema_catalog(
+        cached_schema_seeds,
+        schema=schema,
+    )
+    extraction_schema = _schema_with_process_table_catalog(
+        schema,
+        initial_catalog,
+    )
 
     total = len(work_items)
     completed = 0
@@ -3593,13 +3824,12 @@ def extract_lineage_from_task_files(
         if not cache_enabled:
             uncached_work_items.append(work_item)
             continue
-        work_item.sql_hash = _task_sql_hash(work_item)
         cached = previous_cache.get(work_item.source_file)
         if cached:
             cache_key = _cache_key_from_cached_metadata(
                 work_item,
                 cached,
-                schema,
+                extraction_schema,
                 cache_project,
                 extractor_hash,
             )
@@ -3608,9 +3838,6 @@ def extract_lineage_from_task_files(
         if cached and cached.get("cache_key") == work_item.cache_key:
             result = _task_result_from_cache(work_item, cached)
             cached_results.append(result)
-            task_cache_entries.append(
-                _cache_entry_from_result(result, work_item.cache_key)
-            )
             completed += 1
             _notify_progress(progress_callback, completed, total, result)
         else:
@@ -3621,36 +3848,39 @@ def extract_lineage_from_task_files(
         completed += 1
         _notify_progress(progress_callback, completed, total, result)
 
-    if len(uncached_work_items) <= 1 or parallel == 1:
-        computed_results = _extract_task_work_items_serial(
-            uncached_work_items,
-            schema,
-            notify_uncached_progress,
-        )
-    else:
-        computed_results = _extract_task_work_items_parallel(
-            uncached_work_items,
-            schema,
-            parallel,
-            notify_uncached_progress,
-        )
-    for result in computed_results:
-        if cache_enabled:
-            work_item = work_items_by_index.get(result["index"])
+    computed_results = _extract_task_work_items(
+        uncached_work_items,
+        extraction_schema,
+        parallel,
+        notify_uncached_progress,
+    )
+    task_results = sorted(
+        [*cached_results, *computed_results],
+        key=lambda result: result["index"],
+    )
+    task_results, extraction_schema = _propagate_process_table_schemas(
+        task_results,
+        work_items_by_index,
+        schema,
+        parallel,
+        extraction_schema,
+        initial_catalog,
+    )
+
+    task_cache_entries = []
+    if cache_enabled:
+        for result in task_results:
+            work_item = work_items_by_index[result["index"]]
             cache_key, cache_result = _cache_metadata_for_result(
                 result,
                 work_item,
-                schema,
+                extraction_schema,
                 cache_project,
                 extractor_hash,
             )
             task_cache_entries.append(
                 _cache_entry_from_result(cache_result, cache_key)
             )
-    task_results = sorted(
-        [*cached_results, *computed_results],
-        key=lambda result: result["index"],
-    )
 
     all_lineage = []
     transient_tables = []
@@ -3675,7 +3905,11 @@ def extract_lineage_from_task_files(
         "missing_target_ddl": sorted(missing_target_ddl),
         "task_results": task_results,
         "task_cache": (
-            _build_task_cache(cache_project, schema, task_cache_entries)
+            _build_task_cache(
+                cache_project,
+                extraction_schema,
+                task_cache_entries,
+            )
             if cache_enabled
             else None
         ),
