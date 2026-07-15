@@ -10,6 +10,7 @@ from dw_refactor_agent.refactor.artifact_contract import (
     require_format_version,
     sha256_json,
 )
+from tests.case_matrix import case_matrix
 
 
 def test_atomic_write_json_replaces_complete_document(tmp_path):
@@ -30,7 +31,7 @@ def test_sha256_json_is_independent_of_mapping_order():
     assert sha256_json({"a": 1}).startswith("sha256:")
 
 
-@pytest.mark.parametrize("actual", [None, 0, 2, "1"])
+@case_matrix("actual", [None, 0, 2, "1"])
 def test_require_format_version_rejects_missing_or_wrong_value(actual):
     with pytest.raises(ArtifactFormatError, match="plan.*format_version"):
         require_format_version({"format_version": actual}, "plan")

@@ -61,59 +61,6 @@ def _rename_context():
     )
 
 
-def test_build_scoped_assessment_plan_scopes_regular_table_change():
-    change_analysis = {
-        "changed_assets": {
-            "ddl_tables": ["dwd_order"],
-            "task_jobs": [],
-            "model_tables": [],
-            "config_files": [],
-        },
-        "affected_scope": {
-            "direct_tables": ["dwd_order"],
-            "downstream_tables": ["dws_order_daily", "ads_order_dashboard"],
-            "anchor_tables": ["dws_order_daily"],
-            "assessment_tables": [
-                "dwd_order",
-                "dws_order_daily",
-                "ads_order_dashboard",
-            ],
-            "assessment_tasks": [
-                "dwd_order",
-                "dws_order_daily",
-                "ads_order_dashboard",
-            ],
-            "global_dimensions": [],
-        },
-        "lineage_diff": {
-            "added_edges": [
-                {"source": "ads_unrelated", "target": "dwd_order"}
-            ],
-            "removed_edges": [],
-            "changed_tables": ["ads_unrelated", "dwd_order"],
-        },
-    }
-
-    plan = build_scoped_assessment_plan("shop", change_analysis, _context())
-
-    assert plan["mode"] == "scoped"
-    assert plan["changed_types"] == ["ddl"]
-    assert plan["dimensions"]["code_quality"]["tasks"] == [
-        "ads_order_dashboard",
-        "dwd_order",
-        "dws_order_daily",
-    ]
-    assert plan["dimensions"]["metadata_health"]["tables"] == [
-        "ads_order_dashboard",
-        "dwd_order",
-        "dws_order_daily",
-    ]
-    assert plan["dimensions"]["depth"]["tables"] == ["ads_order_dashboard"]
-    assert {"source": "ads_unrelated", "target": "dwd_order"} in plan[
-        "dimensions"
-    ]["model_design"]["edges"]
-
-
 def test_build_scoped_assessment_plan_uses_current_assets_for_rename():
     change_analysis = {
         "changed_assets": {

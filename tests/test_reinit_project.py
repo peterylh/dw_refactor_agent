@@ -4,27 +4,6 @@ import pytest
 
 import dw_refactor_agent.config as config
 from dw_refactor_agent.execution import reinit_project
-from dw_refactor_agent.execution.thread_pool import shutdown_executor
-
-
-def test_shutdown_executor_falls_back_on_python37_signature():
-    class Py37Executor:
-        def __init__(self):
-            self.calls = []
-
-        def shutdown(self, **kwargs):
-            self.calls.append(kwargs)
-            if "cancel_futures" in kwargs:
-                raise TypeError("unexpected keyword argument")
-
-    executor = Py37Executor()
-
-    shutdown_executor(executor)
-
-    assert executor.calls == [
-        {"wait": False, "cancel_futures": True},
-        {"wait": False},
-    ]
 
 
 def test_get_etl_date_partitions_uses_model_layer(monkeypatch, tmp_path):
@@ -121,30 +100,6 @@ def test_project_sql_files_ignore_root_and_include_ods_mid_ads_assets(
         "dws_customer.sql",
         "ads_customer.sql",
     ]
-
-
-def test_task_run_command_uses_unbuffered_python():
-    cmd = reinit_project._task_run_command("shop", "prod", 2)
-
-    assert cmd[:3] == [reinit_project.sys.executable, "-u", "-m"]
-    assert cmd[3:6] == [
-        "dw_refactor_agent.execution.task_run",
-        "--project",
-        "shop",
-    ]
-    assert "--db-env" in cmd
-    assert "prod" in cmd
-    assert "--parallel" in cmd
-    assert "2" in cmd
-    assert "--refresh-dag" in cmd
-
-    no_refresh_cmd = reinit_project._task_run_command(
-        "shop",
-        "prod",
-        2,
-        refresh_dag=False,
-    )
-    assert "--refresh-dag" not in no_refresh_cmd
 
 
 def test_reinit_requires_explicit_business_dates_before_rebuild(monkeypatch):

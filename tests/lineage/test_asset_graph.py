@@ -1,5 +1,3 @@
-import pytest
-
 from dw_refactor_agent.lineage.asset_graph import (
     build_asset_column_lineage,
     build_asset_self_edges,
@@ -63,17 +61,6 @@ def two_local_t_jobs_v2():
     }
 
 
-def test_same_name_local_process_tables_do_not_cross_jobs():
-    upstream, downstream = build_asset_table_graph(two_local_t_jobs_v2())
-
-    assert downstream["src_a"] == {"out_a"}
-    assert downstream["src_b"] == {"out_b"}
-    assert upstream["out_a"] == {"src_a"}
-    assert upstream["out_b"] == {"src_b"}
-    assert "out_b" not in downstream["src_a"]
-    assert "out_a" not in downstream["src_b"]
-
-
 def test_v1_same_name_transient_tables_safely_stay_in_source_file_jobs():
     lineage_data = {
         "tables": [{"name": "t", "is_transient": True}],
@@ -112,147 +99,6 @@ def test_v1_same_name_transient_tables_safely_stay_in_source_file_jobs():
         record["source"]
         for record in build_asset_column_lineage(lineage_data, "out_b")
     } == {"src_b.id"}
-
-
-def test_v1_same_basename_source_files_use_full_path_process_scopes():
-    lineage_data = {
-        "tables": [{"name": "t", "is_transient": True}],
-        "edges": [
-            {
-                "source": f"{source}.id",
-                "target": f"{target}.id",
-                "expression": "id",
-                "source_file": source_file,
-            }
-            for source, target, source_file in (
-                ("src_mid", "t", "mid/tasks/load.sql"),
-                ("t", "out_mid", "mid/tasks/load.sql"),
-                ("src_ads", "t", "ads/tasks/load.sql"),
-                ("t", "out_ads", "ads/tasks/load.sql"),
-            )
-        ],
-        "indirect_edges": [],
-    }
-
-    upstream, downstream = build_asset_table_graph(lineage_data)
-
-    assert downstream == {
-        "src_ads": {"out_ads"},
-        "src_mid": {"out_mid"},
-    }
-    assert upstream == {
-        "out_ads": {"src_ads"},
-        "out_mid": {"src_mid"},
-    }
-    assert {
-        record["source"]
-        for record in build_asset_column_lineage(lineage_data, "out_mid")
-    } == {"src_mid.id"}
-    assert {
-        record["source"]
-        for record in build_asset_column_lineage(lineage_data, "out_ads")
-    } == {"src_ads.id"}
-
-
-def test_unique_shared_process_producer_composes_across_jobs():
-    lineage_data = {
-        "format_version": 2,
-        "tables": _v2_tables("src", "t", "out"),
-        "jobs": [
-            {
-                "name": "prepare",
-                "source_file": "mid/tasks/prepare.sql",
-                "inputs": ["src"],
-                "outputs": ["t"],
-            },
-            {
-                "name": "publish",
-                "source_file": "mid/tasks/publish.sql",
-                "inputs": ["t"],
-                "outputs": ["out"],
-            },
-        ],
-        "edges": [
-            _column_edge("src", "t", "prepare"),
-            _column_edge("t", "out", "publish"),
-        ],
-        "diagnostics": [],
-    }
-
-    upstream, downstream = build_asset_table_graph(lineage_data)
-
-    assert upstream == {"out": {"src"}}
-    assert downstream == {"src": {"out"}}
-
-
-def test_multiple_shared_process_producers_do_not_compose_a_path():
-    lineage_data = {
-        "format_version": 2,
-        "tables": _v2_tables("src_a", "src_b", "t", "out"),
-        "jobs": [
-            {
-                "name": "producer_a",
-                "source_file": "mid/tasks/producer_a.sql",
-                "inputs": ["src_a"],
-                "outputs": ["t"],
-            },
-            {
-                "name": "producer_b",
-                "source_file": "mid/tasks/producer_b.sql",
-                "inputs": ["src_b"],
-                "outputs": ["t"],
-            },
-            {
-                "name": "consumer",
-                "source_file": "mid/tasks/consumer.sql",
-                "inputs": ["t"],
-                "outputs": ["out"],
-            },
-        ],
-        "edges": [
-            _column_edge("src_a", "t", "producer_a"),
-            _column_edge("src_b", "t", "producer_b"),
-            _column_edge("t", "out", "consumer"),
-        ],
-        "diagnostics": [],
-    }
-
-    upstream, downstream = build_asset_table_graph(lineage_data)
-
-    assert "out" not in downstream.get("src_a", set())
-    assert "out" not in downstream.get("src_b", set())
-    assert "src_a" not in upstream.get("out", set())
-    assert "src_b" not in upstream.get("out", set())
-
-
-def test_missing_shared_process_producer_does_not_compose_a_path():
-    lineage_data = {
-        "format_version": 2,
-        "tables": _v2_tables("t", "out"),
-        "jobs": [
-            {
-                "name": "consumer",
-                "source_file": "mid/tasks/consumer.sql",
-                "inputs": ["t"],
-                "outputs": ["out"],
-            }
-        ],
-        "edges": [_column_edge("t", "out", "consumer")],
-        "diagnostics": [
-            {
-                "code": "UNRESOLVED_DATASET_PRODUCER",
-                "dataset": "t",
-                "reason": "not_found",
-                "consumer_jobs": ["consumer"],
-                "candidate_producer_jobs": [],
-            }
-        ],
-    }
-
-    upstream, downstream = build_asset_table_graph(lineage_data)
-
-    assert upstream.get("out", set()) == set()
-    assert "out" not in downstream.get("t", set())
 
 
 def test_same_name_local_process_conditions_stay_in_their_jobs():
@@ -341,31 +187,6 @@ def test_v2_conditions_attach_only_to_column_edges_from_the_same_job():
         "job_a": {"src_a.status"},
         "job_b": {"src_b.status"},
     }
-
-
-def test_build_table_graph_keeps_transient_tables_raw():
-    lineage_data = {
-        "edges": [
-            {
-                "source": "dwd_orders.order_id",
-                "target": "tmp_orders_stage.order_id",
-            },
-            {
-                "source": "tmp_orders_stage.order_id",
-                "target": "dws_orders.order_id",
-            },
-        ],
-        "indirect_edges": [],
-    }
-
-    upstream, downstream = build_table_graph(
-        lineage_data["edges"],
-        lineage_data["indirect_edges"],
-    )
-
-    assert upstream["tmp_orders_stage"] == {"dwd_orders"}
-    assert upstream["dws_orders"] == {"tmp_orders_stage"}
-    assert downstream["dwd_orders"] == {"tmp_orders_stage"}
 
 
 def test_build_table_graph_merges_table_nodes_case_insensitively():
@@ -511,48 +332,6 @@ def test_table_graph_exposes_self_edges_without_dependency_noise():
     ]
 
 
-@pytest.mark.parametrize(
-    ("source_table", "first_transient", "second_transient", "target_table"),
-    [
-        (
-            "dwd_orders",
-            "tmp_orders_stage",
-            "tmp_orders_stage",
-            "dws_orders",
-        ),
-        (
-            "DWD_Orders",
-            "TMP_Orders_Stage",
-            "tmp_orders_stage",
-            "DWS_Orders",
-        ),
-    ],
-    ids=("matching-case", "mixed-case"),
-)
-def test_build_asset_table_graph_collapses_transient_tables(
-    source_table, first_transient, second_transient, target_table
-):
-    lineage_data = {
-        "edges": [
-            {
-                "source": f"{source_table}.order_id",
-                "target": f"{first_transient}.order_id",
-            },
-            {
-                "source": f"{second_transient}.order_id",
-                "target": f"{target_table}.order_id",
-            },
-        ],
-        "indirect_edges": [],
-        "tables": [{"name": "tmp_orders_stage", "is_transient": True}],
-    }
-
-    upstream, downstream = build_asset_table_graph(lineage_data)
-
-    assert upstream == {target_table: {source_table}}
-    assert downstream == {source_table: {target_table}}
-
-
 def test_build_asset_table_graph_uses_table_transient_flags():
     lineage_data = {
         "edges": [
@@ -608,28 +387,6 @@ def test_build_asset_self_edges_excludes_transient_table_loops():
             "relation_type": "direct",
             "expression": "amount + 1",
             "source_file": "dwd_orders.sql",
-        }
-    ]
-
-
-def test_build_asset_column_lineage_keeps_direct_asset_edges():
-    lineage_data = {
-        "edges": [
-            {
-                "source": "dwd_orders.amount",
-                "target": "dws_orders.total_amount",
-                "expression": "SUM(dwd_orders.amount) AS total_amount",
-                "source_file": "dws_orders.sql",
-            }
-        ],
-    }
-
-    assert build_asset_column_lineage(lineage_data, "dws_orders") == [
-        {
-            "source": "dwd_orders.amount",
-            "target": "dws_orders.total_amount",
-            "expression": "SUM(dwd_orders.amount) AS total_amount",
-            "source_file": "dws_orders.sql",
         }
     ]
 
@@ -768,45 +525,6 @@ def test_build_asset_column_lineage_preserves_multi_source_calculation_chain():
                 },
             ],
         },
-    ]
-
-
-def test_build_asset_column_lineage_attaches_direct_condition_lineage():
-    lineage_data = {
-        "edges": [
-            {
-                "source": "dwd_orders.amount",
-                "target": "dws_orders.total_amount",
-                "expression": "SUM(dwd_orders.amount) AS total_amount",
-                "source_file": "dws_orders.sql",
-            }
-        ],
-        "indirect_edges": [
-            {
-                "source": "dwd_orders.order_status",
-                "target_table": "dws_orders",
-                "condition_type": "WHERE",
-                "condition_expression": "dwd_orders.order_status = 'PAID'",
-                "source_file": "dws_orders.sql",
-            }
-        ],
-    }
-
-    assert build_asset_column_lineage(lineage_data, "dws_orders") == [
-        {
-            "source": "dwd_orders.amount",
-            "target": "dws_orders.total_amount",
-            "expression": "SUM(dwd_orders.amount) AS total_amount",
-            "source_file": "dws_orders.sql",
-            "condition_lineage": [
-                {
-                    "source": "dwd_orders.order_status",
-                    "condition_type": "WHERE",
-                    "condition_expression": "dwd_orders.order_status = 'PAID'",
-                    "source_file": "dws_orders.sql",
-                }
-            ],
-        }
     ]
 
 

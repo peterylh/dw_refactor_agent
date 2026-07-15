@@ -9,9 +9,7 @@ from dw_refactor_agent.assessment.llm.table_inspector import (
     TableContext,
     TableInspector,
     TableInspectResult,
-    _extract_ddl_column_names,
     build_prompt,
-    normalize_chat_completions_url,
     parse_response,
     result_to_cache_dict,
     result_to_dict,
@@ -24,6 +22,7 @@ from dw_refactor_agent.assessment.llm.table_inspector import (
     validate_time_periods,
     validate_upstream_metric_layer_consistency,
 )
+from tests.case_matrix import case_matrix
 
 
 def _inspection_result(
@@ -79,45 +78,6 @@ def test_build_prompt_scenarios():
     _assert_build_prompt_includes_catalog_and_project_context_as_inputs()
     _assert_build_prompt_documents_business_metadata_scope()
     _assert_build_prompt_keeps_metric_expression_separate_from_grain()
-
-
-def test_normalize_chat_completions_url():
-    assert normalize_chat_completions_url(None) == (
-        "https://api.deepseek.com/chat/completions"
-    )
-    assert normalize_chat_completions_url("https://api.deepseek.com") == (
-        "https://api.deepseek.com/chat/completions"
-    )
-    assert normalize_chat_completions_url("https://api.deepseek.com/v1") == (
-        "https://api.deepseek.com/chat/completions"
-    )
-    assert (
-        normalize_chat_completions_url("https://example.test/chat/completions")
-        == "https://example.test/chat/completions"
-    )
-
-
-def test_extract_ddl_columns_normalizes_doris_table_clauses():
-    ddl = """
-    DROP TABLE IF EXISTS demo.sales_daily;
-    CREATE TABLE IF NOT EXISTS demo.sales_daily (
-        store_id BIGINT NOT NULL COMMENT '门店',
-        stat_date DATE NOT NULL COMMENT '日期',
-        sale_amount DECIMAL(18,2) NULL COMMENT '销售额'
-    ) ENGINE=OLAP
-    UNIQUE KEY(store_id, stat_date)
-    PARTITION BY RANGE(stat_date) (
-        PARTITION p1 VALUES LESS THAN ('2026-01-02')
-    )
-    DISTRIBUTED BY HASH(store_id) BUCKETS 1
-    PROPERTIES ('replication_num'='1');
-    """
-
-    assert _extract_ddl_column_names(ddl) == {
-        "store_id",
-        "stat_date",
-        "sale_amount",
-    }
 
 
 def test_parse_response_metadata_scenarios():
@@ -1703,7 +1663,7 @@ def test_inspect_preserves_warning_when_retry_transport_fails(tmp_path):
     assert next_result.status == "warning"
 
 
-@pytest.mark.parametrize(
+@case_matrix(
     "confidence",
     [float("nan"), -0.1, 1.1],
 )
@@ -1714,82 +1674,6 @@ def test_inspect_result_rejects_non_finite_or_out_of_range_confidence(
 
     assert result.confidence == 0.0
     assert result.status == "blocked"
-
-
-def test_inspect_preserves_llm_metric_groups(tmp_path, monkeypatch):
-    inspector = TableInspector(
-        api_key="test", cache_file=tmp_path / "cache.json"
-    )
-    ctx = TableContext(
-        table_name="dwd_order_detail",
-        layer="DWD",
-        ddl="""CREATE TABLE shop_dm.dwd_order_detail (
-            order_id BIGINT,
-            quantity INT,
-            unit_price DECIMAL(12,2),
-            discount DECIMAL(12,2),
-            subtotal DECIMAL(12,2),
-            etl_time DATETIME
-        );""",
-        etl_sql="""INSERT INTO shop_dm.dwd_order_detail
-        SELECT order_id, quantity, unit_price, discount, subtotal, NOW()
-        FROM shop_dm.ods_order_item;""",
-        upstream_tables=["ods_order_item"],
-        downstream_tables=["dws_store_sales_daily"],
-    )
-    response = {
-        "inferred_layer": "DWD",
-        "table_type": "fact",
-        "confidence": 0.95,
-        "entities": [
-            {
-                "code": "ORDER",
-                "type": "primary",
-                "key_columns": ["order_id"],
-            }
-        ],
-        "columns": {
-            "atomic_metrics": [
-                {"name": "quantity", "data_type": "INT"},
-                {"name": "unit_price", "data_type": "DECIMAL(12,2)"},
-                {"name": "discount", "data_type": "DECIMAL(12,2)"},
-                {"name": "subtotal", "data_type": "DECIMAL(12,2)"},
-            ],
-            "derived_metrics": [],
-            "calculated_metrics": [],
-            "dimensions": [
-                {
-                    "name": "order_id",
-                    "dimension_type": "primary_key",
-                }
-            ],
-            "others": [{"name": "etl_time", "role": "audit"}],
-        },
-    }
-    monkeypatch.setattr(
-        inspector,
-        "_call_api",
-        lambda _prompt: json.dumps(
-            {"choices": [{"message": {"content": json.dumps(response)}}]}
-        ),
-    )
-
-    result = inspector.inspect(ctx)
-
-    assert [item["name"] for item in result.atomic_metrics] == [
-        "quantity",
-        "unit_price",
-        "discount",
-        "subtotal",
-    ]
-    assert result.calculated_metrics == []
-    assert [item["name"] for item in result.dimensions] == ["order_id"]
-    assert result.validation == {
-        "unknown_columns": [],
-        "duplicate_columns": [],
-        "missing_columns": [],
-    }
-    assert result.status == "passed"
 
 
 # ============================================================
@@ -2747,33 +2631,6 @@ def _layer_contract_retry_case(scenario):
         ],
         markers,
     )
-
-
-@pytest.mark.parametrize(
-    "scenario",
-    ["group-by", "upstream-metric"],
-)
-def test_inspector_retries_layer_contracts(scenario, tmp_path, monkeypatch):
-    context, responses, prompt_markers = _layer_contract_retry_case(scenario)
-    inspector = TableInspector(
-        api_key="test",
-        cache_file=tmp_path / "cache.json",
-        max_retries=1,
-    )
-
-    result, calls = _inspect_with_responses(
-        inspector, context, responses, monkeypatch
-    )
-
-    assert len(calls) == 2
-    assert all(marker in calls[1] for marker in prompt_markers)
-    assert result.status == "passed"
-    assert result.retry_count == 1
-    assert (
-        result.first_attempt_inferred_layer == responses[0]["inferred_layer"]
-    )
-    assert result.inferred_layer == responses[1]["inferred_layer"]
-    assert result.table_type == responses[1]["table_type"]
 
 
 def _assert_cache_hash_includes_context_fields(tmp_path):

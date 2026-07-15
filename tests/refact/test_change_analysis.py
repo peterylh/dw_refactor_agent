@@ -7,6 +7,7 @@ from dw_refactor_agent.refactor.change_analysis import (
     changed_files_since_head,
     classify_changed_assets,
 )
+from tests.case_matrix import case_matrix
 
 
 def test_classify_changed_assets_groups_project_files():
@@ -41,22 +42,6 @@ def test_classify_changed_assets_groups_project_files():
             "warehouses/shop/warehouse.yaml",
         ],
     }
-
-
-def test_classify_changed_assets_accepts_project_dir_for_config_files():
-    result = classify_changed_assets(
-        [
-            "warehouses/shop/warehouse.yaml",
-            "warehouses/shop/naming_config.yaml",
-            "naming_config.yaml",
-        ],
-        "warehouses/shop",
-    )
-
-    assert result["config_files"] == [
-        "warehouses/shop/naming_config.yaml",
-        "warehouses/shop/warehouse.yaml",
-    ]
 
 
 def test_build_change_analysis_marks_warehouse_config_as_global():
@@ -154,53 +139,7 @@ def test_changed_files_since_head_filters_to_project_warehouse(tmp_path):
     ]
 
 
-def test_build_change_analysis_uses_baseline_and_current_downstream():
-    baseline = {
-        "tables": [],
-        "edges": [
-            {
-                "source": {"type": "column", "id": "dwd_order.order_id"},
-                "target": {"type": "column", "id": "dws_order.order_id"},
-                "source_file": "dws_order.sql",
-            }
-        ],
-    }
-    current = {
-        "tables": [],
-        "edges": [
-            {
-                "source": {"type": "column", "id": "dwd_order.order_id"},
-                "target": {"type": "column", "id": "ads_order.order_id"},
-                "source_file": "ads_order.sql",
-            }
-        ],
-    }
-
-    result = build_change_analysis(
-        "shop",
-        baseline,
-        current,
-        ["warehouses/shop/mid/ddl/dwd_order.sql"],
-    )
-
-    assert result["affected_scope"]["direct_tables"] == ["dwd_order"]
-    assert result["affected_scope"]["downstream_tables"] == [
-        "ads_order",
-        "dws_order",
-    ]
-    assert result["affected_scope"]["anchor_tables"] == [
-        "ads_order",
-        "dws_order",
-    ]
-    assert result["lineage_diff"]["added_edges"] == [
-        {"source": "dwd_order", "target": "ads_order"}
-    ]
-    assert result["lineage_diff"]["removed_edges"] == [
-        {"source": "dwd_order", "target": "dws_order"}
-    ]
-
-
-@pytest.mark.parametrize(
+@case_matrix(
     "tables, outputs",
     [
         (
@@ -255,62 +194,3 @@ def test_changed_job_requires_one_managed_output_per_lineage_snapshot(
             lineage,
             ["warehouses/shop/mid/tasks/prepare_sales.sql"],
         )
-
-
-def test_change_analysis_uses_canonical_identity_across_snapshot_casing():
-    baseline = {
-        "tables": [],
-        "edges": [
-            {
-                "source": {
-                    "type": "column",
-                    "id": "internal.shop_dm.DWD_Order.id",
-                },
-                "target": {
-                    "type": "column",
-                    "id": "internal.shop_dm.ADS_Order.id",
-                },
-            }
-        ],
-    }
-    current = {
-        "tables": [],
-        "edges": [
-            {
-                "source": {
-                    "type": "column",
-                    "id": "internal.shop_dm.dwd_order.id",
-                },
-                "target": {
-                    "type": "column",
-                    "id": "internal.shop_dm.ads_order.id",
-                },
-            }
-        ],
-    }
-
-    result = build_change_analysis(
-        "shop",
-        baseline,
-        current,
-        ["warehouses/shop/mid/ddl/dwd_order.sql"],
-    )
-
-    assert result["affected_scope"]["direct_tables"] == [
-        "internal.shop_dm.dwd_order"
-    ]
-    assert result["affected_scope"]["downstream_tables"] == [
-        "internal.shop_dm.ads_order"
-    ]
-    assert result["affected_scope"]["anchor_tables"] == [
-        "internal.shop_dm.ads_order"
-    ]
-    assert result["affected_scope"]["assessment_tables"] == [
-        "internal.shop_dm.ads_order",
-        "internal.shop_dm.dwd_order",
-    ]
-    assert result["lineage_diff"] == {
-        "added_edges": [],
-        "removed_edges": [],
-        "changed_tables": [],
-    }

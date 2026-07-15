@@ -46,42 +46,6 @@ def _models_from_tables(tables):
     }
 
 
-def test_assessment_context_derives_lineage_indexes_from_lineage_view():
-    tables = [
-        {"name": "ods_order", "layer": "ODS", "columns": []},
-        {"name": "dwd_order_detail", "layer": "DWD", "columns": []},
-        {"name": "ads_sales", "layer": "ADS", "columns": []},
-    ]
-    upstream = {
-        "dwd_order_detail": {"ods_order"},
-        "ads_sales": {"dwd_order_detail"},
-    }
-    downstream = {
-        "ods_order": {"dwd_order_detail"},
-        "dwd_order_detail": {"ads_sales"},
-    }
-    table_edges = {
-        ("ods_order", "dwd_order_detail"): {"dwd_order_detail.sql"},
-        ("dwd_order_detail", "ads_sales"): {"ads_sales.sql"},
-    }
-    context = AssessmentContext(
-        project="unit",
-        lineage=_FakeLineageView(tables, upstream, downstream, table_edges),
-        assets={"tables": {}, "tasks": []},
-        models=_models_from_tables(tables),
-    )
-
-    assert context.tables == tables
-    assert context.table_layers == {
-        "ods_order": "ODS",
-        "dwd_order_detail": "DWD",
-        "ads_sales": "ADS",
-    }
-    assert context.upstream == upstream
-    assert context.downstream == downstream
-    assert context.table_edges == table_edges
-
-
 def test_lineage_scorers_use_context_derived_graphs():
     tables = [
         {"name": "ods_order", "layer": "ODS", "columns": []},

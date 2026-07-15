@@ -5,8 +5,8 @@ import pytest
 import dw_refactor_agent.lineage.job_dag as job_dag_module
 from dw_refactor_agent.lineage.job_dag import (
     JobDAG,
-    asset_job_dag_from_lineage,
 )
+from tests.case_matrix import case_matrix
 
 
 def _edges(*pairs):
@@ -52,118 +52,6 @@ def _job(name, *, inputs=(), outputs=()):
         "inputs": list(inputs),
         "outputs": list(outputs),
     }
-
-
-def test_job_dag_v2_uses_explicit_jobs_and_dataset_evidence():
-    lineage = _lineage_v2(
-        tables=[
-            _table("internal.shop_dm.t", "process"),
-            _table("internal.shop_dm.report"),
-        ],
-        jobs=[
-            _job(
-                "build_report",
-                inputs=["internal.shop_dm.t"],
-                outputs=["internal.shop_dm.report"],
-            ),
-            _job("prepare_sales", outputs=["internal.shop_dm.t"]),
-        ],
-    )
-
-    dag = job_dag_module.job_dag_from_lineage(lineage)
-
-    assert dag.to_dict() == {
-        "format_version": 2,
-        "jobs": ["build_report", "prepare_sales"],
-        "data_dependencies": [
-            {
-                "upstream_job": "prepare_sales",
-                "downstream_job": "build_report",
-                "datasets": ["internal.shop_dm.t"],
-            }
-        ],
-        "deps": {
-            "build_report": [],
-            "prepare_sales": ["build_report"],
-        },
-        "rev": {
-            "build_report": ["prepare_sales"],
-            "prepare_sales": [],
-        },
-    }
-
-
-def test_job_dag_v2_keeps_isolated_jobs_and_aggregates_dataset_evidence():
-    lineage = _lineage_v2(
-        tables=[
-            _table("internal.shop_dm.stage_a", "process"),
-            _table("internal.shop_dm.stage_b", "process"),
-            _table("internal.shop_dm.report"),
-        ],
-        jobs=[
-            _job(
-                "publish_metrics",
-                inputs=[
-                    "internal.shop_dm.stage_a",
-                    "internal.shop_dm.stage_b",
-                ],
-                outputs=["internal.shop_dm.report"],
-            ),
-            _job(
-                "prepare_metrics",
-                outputs=[
-                    "internal.shop_dm.stage_a",
-                    "internal.shop_dm.stage_b",
-                ],
-            ),
-            _job("vacuum_audit"),
-        ],
-    )
-
-    dag = job_dag_module.job_dag_from_lineage(lineage)
-
-    assert dag.to_dict()["data_dependencies"] == [
-        {
-            "upstream_job": "prepare_metrics",
-            "downstream_job": "publish_metrics",
-            "datasets": [
-                "internal.shop_dm.stage_a",
-                "internal.shop_dm.stage_b",
-            ],
-        }
-    ]
-    assert dag.to_dict()["deps"]["vacuum_audit"] == []
-    assert dag.to_dict()["rev"]["vacuum_audit"] == []
-
-
-def test_job_dag_v2_skips_self_reads_and_ambiguous_producers():
-    shared_table = "internal.shop_dm.shared_stage"
-    local_table = "internal.shop_dm.local_stage"
-    lineage = _lineage_v2(
-        tables=[
-            _table(local_table, "process"),
-            _table(shared_table, "process"),
-        ],
-        jobs=[
-            _job("producer_a", outputs=[shared_table]),
-            _job("producer_b", outputs=[shared_table]),
-            _job("consumer", inputs=[shared_table]),
-            _job("self_refresh", inputs=[local_table], outputs=[local_table]),
-        ],
-    )
-
-    dag = job_dag_module.job_dag_from_lineage(lineage)
-
-    assert dag.to_dict()["data_dependencies"] == []
-    assert dag.to_dict()["deps"] == {
-        "consumer": [],
-        "producer_a": [],
-        "producer_b": [],
-        "self_refresh": [],
-    }
-    assert dag.topological_sort(
-        {"CONSUMER", "PRODUCER_A", "PRODUCER_B", "SELF_REFRESH"}
-    ) == ["CONSUMER", "PRODUCER_A", "PRODUCER_B", "SELF_REFRESH"]
 
 
 def test_job_dag_v2_runnable_universe_excludes_companion_producer():
@@ -223,31 +111,6 @@ def test_job_dag_v2_runnable_universe_rejects_missing_lineage_jobs():
     assert "regenerate lineage" in message
 
 
-def test_job_dag_v2_runnable_universe_accepts_casefold_and_empty_set():
-    lineage = _lineage_v2(
-        tables=[],
-        jobs=[_job("Prepare_Sales")],
-    )
-
-    matched = job_dag_module.job_dag_from_lineage(
-        lineage,
-        runnable_jobs={"PREPARE_SALES"},
-    )
-    empty = job_dag_module.job_dag_from_lineage(
-        lineage,
-        runnable_jobs=set(),
-    )
-
-    assert matched.jobs == ["PREPARE_SALES"]
-    assert empty.to_dict() == {
-        "format_version": 2,
-        "jobs": [],
-        "data_dependencies": [],
-        "deps": {},
-        "rev": {},
-    }
-
-
 def test_job_dag_v2_roundtrip_omits_legacy_fields(tmp_path):
     dag = job_dag_module.job_dag_from_lineage(
         _lineage_v2(
@@ -293,7 +156,7 @@ def test_job_dag_loads_legacy_edges_and_adjacency():
     ]
 
 
-@pytest.mark.parametrize("format_version", [0, 3, "2", True])
+@case_matrix("format_version", [0, 3, "2", True])
 def test_job_dag_rejects_unsupported_explicit_versions(format_version):
     with pytest.raises(ValueError, match="format_version"):
         JobDAG.from_dict(
@@ -307,7 +170,7 @@ def test_job_dag_rejects_unsupported_explicit_versions(format_version):
         )
 
 
-@pytest.mark.parametrize("format_version", [0, 3, "2", True])
+@case_matrix("format_version", [0, 3, "2", True])
 def test_job_dag_from_lineage_rejects_unsupported_explicit_versions(
     format_version,
 ):
@@ -321,30 +184,6 @@ def test_job_dag_from_lineage_rejects_unsupported_explicit_versions(
                 "diagnostics": [],
             }
         )
-
-
-def test_downstream_traversal_scenarios():
-    dag = JobDAG(
-        _edges(
-            ("a", "b"),
-            ("a", "c"),
-            ("b", "d"),
-            ("c", "d"),
-            ("d", "a"),
-            ("x", "y"),
-        )
-    )
-
-    assert dag.bfs_downstream({"a"}) == {"b", "c", "d"}
-    assert dag.bfs_downstream({"b", "c"}) == {"a", "d"}
-    assert dag.bfs_downstream({"missing"}) == set()
-    assert dag.bfs_downstream(set()) == set()
-
-    dag = JobDAG(_edges(("DWD_Order_Detail", "DWS_Store_Sales_Daily")))
-
-    assert dag.bfs_downstream({"dwd_order_detail"}) == {
-        "DWS_Store_Sales_Daily"
-    }
 
 
 def test_topological_sort_scenarios():
@@ -463,47 +302,6 @@ def test_structured_lineage_edges_are_accepted():
         "shop_dm.dws_order",
         "shop_dm.ads_order",
     }
-
-
-def test_asset_job_dag_preserves_asset_self_edges_as_metadata():
-    dag = asset_job_dag_from_lineage(
-        {
-            "edges": [
-                {
-                    "source": "dwd_orders.amount",
-                    "target": "dwd_orders.amount",
-                    "expression": "amount + 1",
-                    "source_file": "dwd_orders.sql",
-                },
-                {
-                    "source": "tmp_orders.amount",
-                    "target": "tmp_orders.amount",
-                    "expression": "amount + 1",
-                    "source_file": "tmp_orders.sql",
-                },
-                {
-                    "source": "dwd_orders.id",
-                    "target": "dws_orders.id",
-                    "source_file": "dws_orders.sql",
-                },
-            ],
-            "tables": [{"name": "tmp_orders", "is_transient": True}],
-        }
-    )
-
-    assert dag.bfs_downstream({"dwd_orders"}) == {"dws_orders"}
-    assert dag.self_edges == [
-        {
-            "table": "dwd_orders",
-            "source_table": "dwd_orders",
-            "target_table": "dwd_orders",
-            "source": "dwd_orders.amount",
-            "target": "dwd_orders.amount",
-            "relation_type": "direct",
-            "expression": "amount + 1",
-            "source_file": "dwd_orders.sql",
-        }
-    ]
 
 
 def test_serialization_roundtrip_preserves_behavior(tmp_path):

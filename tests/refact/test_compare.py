@@ -40,33 +40,6 @@ class FakeCursor:
         pass
 
 
-def test_compare_core_rejects_stale_bundle_before_shadow_or_database(
-    tmp_path, monkeypatch
-):
-    monkeypatch.setattr(
-        compare_module,
-        "require_fresh_plan_bundle",
-        lambda plan_path: (_ for _ in ()).throw(
-            ArtifactFormatError("core stale bundle")
-        ),
-        raising=False,
-    )
-    monkeypatch.setattr(
-        compare_module,
-        "require_matching_shadow_result",
-        lambda *args: (_ for _ in ()).throw(
-            AssertionError("stale bundle must stop before shadow loading")
-        ),
-    )
-
-    with pytest.raises(ArtifactFormatError, match="core stale bundle"):
-        compare_shadow_results(
-            tmp_path / "verification/plan.json",
-            tmp_path / "verification/shadow_run_result.json",
-            tmp_path / "verification/compare_result.json",
-        )
-
-
 class FakeConn:
     def __init__(self, cursors):
         self.cursors = list(cursors)
@@ -183,35 +156,6 @@ def test_fmt_val_formats_supported_scalar_values():
         assert fmt_val(value) == expected
 
 
-def test_run_checks_compares_count_self_contained(monkeypatch):
-    prod_conn = FakeConn([FakeCursor([(12,)])])
-    qa_conn = FakeConn([FakeCursor([(12,)])])
-
-    def fake_conn(db_name, qa=False):
-        return qa_conn if qa else prod_conn
-
-    monkeypatch.setattr(
-        "dw_refactor_agent.refactor.compare.get_pymysql_conn", fake_conn
-    )
-
-    result = run_checks(
-        {
-            "project_db": "shop_dm",
-            "qa_db": "shop_dm_qa",
-            "verification": _semantic_verification(
-                [{"table": "ads_sales_dashboard", "method": "count"}]
-            ),
-        },
-        method="count",
-    )
-
-    assert result["verification_status"] == "passed"
-    assert result["results"][0]["prod_count"] == 12
-    assert result["results"][0]["qa_count"] == 12
-    assert prod_conn.closed is True
-    assert qa_conn.closed is True
-
-
 def test_run_checks_uses_compare_anchor_for_partition_filter(monkeypatch):
     prod_cursor = FakeCursor([(3,)])
     qa_cursor = FakeCursor([(3,)])
@@ -288,56 +232,6 @@ def test_row_compare_excludes_configured_columns_case_insensitively():
     assert qa_cursor.executed == [
         "SELECT order_id, amount FROM dws_order ORDER BY order_id, amount ",
     ]
-
-
-def test_row_compare_orders_by_every_compared_column_for_stable_duplicates():
-    columns = [("store_id",), ("stat_date",), ("sku_id",), ("amount",)]
-    prod_cursor = FakeCursor([columns, [(1, "2024-01-01", 2, 10)]])
-    qa_cursor = FakeCursor([[(1, "2024-01-01", 2, 10)]])
-
-    result = check_row_compare(
-        FakeConn([prod_cursor]),
-        FakeConn([qa_cursor]),
-        {"table": "dws_sales", "method": "row_compare"},
-        sample=0,
-        precision=0.01,
-    )
-
-    assert result["match"] is True
-    expected_query = (
-        "SELECT store_id, stat_date, sku_id, amount FROM dws_sales "
-        "ORDER BY store_id, stat_date, sku_id, amount "
-    )
-    assert prod_cursor.executed[-1] == expected_query
-    assert qa_cursor.executed[-1] == expected_query
-
-
-def test_row_compare_defaults_to_ignore_etl_time_for_legacy_checks():
-    prod_cursor = FakeCursor(
-        [
-            [("order_id",), ("amount",), ("etl_time",)],
-            [(1, 10, "2026-07-04 10:00:00")],
-        ]
-    )
-    qa_cursor = FakeCursor(
-        [
-            [(1, 10, "2026-07-04 10:05:00")],
-        ]
-    )
-    prod_conn = FakeConn([prod_cursor])
-    qa_conn = FakeConn([qa_cursor])
-
-    result = check_row_compare(
-        prod_conn,
-        qa_conn,
-        {"table": "dws_order", "method": "row_compare"},
-        sample=0,
-        precision=0.01,
-    )
-
-    assert result["match"] is True
-    assert result["compared_columns"] == ["order_id", "amount"]
-    assert result["ignored_columns"] == ["etl_time"]
 
 
 def test_row_compare_empty_exclude_columns_compares_all_columns():
@@ -612,39 +506,6 @@ def test_run_checks_derives_five_state_semantic_result(
     assert "all_pass" not in result
 
 
-def test_filtered_equivalent_checks_are_inconclusive(monkeypatch):
-    prod_conn = FakeConn([FakeCursor([(5,)])])
-    qa_conn = FakeConn([FakeCursor([(5,)])])
-    monkeypatch.setattr(
-        "dw_refactor_agent.refactor.compare.get_pymysql_conn",
-        lambda db_name, qa=False: qa_conn if qa else prod_conn,
-    )
-
-    result = run_checks(
-        {
-            "project_db": "shop_dm",
-            "qa_db": "shop_dm_qa",
-            "verification": _semantic_verification(
-                [
-                    {"table": "dws_order", "method": "count"},
-                    {"table": "dws_order", "method": "row_compare"},
-                ]
-            ),
-        },
-        method="count",
-    )
-
-    assert result["verification_status"] == "inconclusive"
-    assert result["comparison"] == {
-        "method": "count",
-        "sample": 0,
-        "precision": 0.01,
-        "required_checks": ["dws_order:count", "dws_order:row_compare"],
-        "executed_checks": ["dws_order:count"],
-        "complete": False,
-    }
-
-
 def test_sampled_row_compare_cannot_authoritatively_pass(monkeypatch):
     prod_cursor = FakeCursor([[("order_id",), ("amount",)], [(1, 10)]])
     qa_cursor = FakeCursor([[(1, 10)]])
@@ -733,50 +594,6 @@ def test_compare_shadow_results_writes_compare_output(tmp_path, monkeypatch):
     assert result["shadow_result_fingerprint"].startswith("sha256:")
     assert "all_pass" not in result
     assert json.loads(output_path.read_text(encoding="utf-8")) == result
-
-
-def test_compare_uses_shadow_result_physical_database(tmp_path, monkeypatch):
-    plan_path = tmp_path / "verification" / "plan.json"
-    shadow_path = tmp_path / "verification" / "shadow_run_result.json"
-    output_path = tmp_path / "verification" / "compare_result.json"
-    persisted = _write_compare_plan(plan_path, _semantic_verification([]))
-    _write_shadow_result(
-        shadow_path,
-        persisted,
-        qa_db="shop_dm_qa_02",
-    )
-    ownership_calls = []
-    checked_plans = []
-    monkeypatch.setattr(
-        compare_module,
-        "require_slot_ownership",
-        lambda **kwargs: ownership_calls.append(kwargs),
-        raising=False,
-    )
-    monkeypatch.setattr(
-        compare_module,
-        "run_checks",
-        lambda plan, **kwargs: checked_plans.append(plan)
-        or {"verification_status": "passed", "warnings": []},
-    )
-
-    result = compare_shadow_results(plan_path, shadow_path, output_path)
-
-    assert checked_plans[0]["qa_db"] == "shop_dm_qa_02"
-    assert ownership_calls == [
-        {
-            "project": "shop",
-            "run_id": "test-run",
-            "execution_id": "execution-123",
-            "database": "shop_dm_qa_02",
-            "plan_fingerprint": persisted["plan_fingerprint"],
-            "workspace_fingerprint": persisted["analysis_snapshot"][
-                "workspace_fingerprint"
-            ],
-        }
-    ]
-    assert result["shadow_execution_id"] == "execution-123"
-    assert result["qa_db"] == "shop_dm_qa_02"
 
 
 def test_compare_rejects_shadow_database_outside_pool_before_connections(

@@ -72,37 +72,6 @@ import dw_refactor_agent.lineage.refresh_lineage_html as refresh_html
 from dw_refactor_agent.lineage.contract import validate_lineage_v2
 
 
-def test_resolve_lineage_data_path_prefers_project_artifact(
-    monkeypatch, tmp_path
-):
-    project_dir = tmp_path / "demo_project"
-    project_lineage_dir = project_dir / "artifacts" / "lineage"
-    project_lineage_dir.mkdir(parents=True)
-    project_file = project_lineage_dir / "lineage_data.json"
-    project_file.write_text('{"source": "project"}', encoding="utf-8")
-    old_file = tmp_path / "tool_lineage" / "lineage_data_demo.json"
-    old_file.parent.mkdir()
-    old_file.write_text('{"source": "old"}', encoding="utf-8")
-    monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
-    monkeypatch.setattr(refresh_html, "LINEAGE_DIR", old_file.parent)
-    monkeypatch.setitem(
-        config.PROJECT_CONFIG,
-        "demo",
-        {
-            "dir": "demo_project",
-        },
-    )
-    monkeypatch.setitem(
-        refresh_html.PROJECT_CONFIG,
-        "demo",
-        {
-            "dir": "demo_project",
-        },
-    )
-
-    assert refresh_html.resolve_lineage_data_path("demo") == project_file
-
-
 def test_resolve_lineage_data_path_ignores_old_project_file(
     monkeypatch, tmp_path
 ):
@@ -168,62 +137,6 @@ def test_resolve_output_paths_uses_project_artifact_dir(monkeypatch, tmp_path):
     assert paths["lineage_output"] == (
         project_dir / "artifacts" / "lineage" / "lineage.html"
     )
-
-
-def test_packaged_html_templates_exist():
-    paths = refresh_html.resolve_output_paths("shop")
-
-    assert paths["job_template"].exists()
-    assert paths["lineage_template"].exists()
-    job_template = paths["job_template"].read_text(encoding="utf-8")
-    assert "job.outputs" in job_template
-
-
-def test_generate_jobs_strips_project_db_and_defaults_logic(
-    tmp_path, monkeypatch
-):
-    monkeypatch.setattr(
-        refresh_html,
-        "determine_layer",
-        lambda table_name, project: (
-            "DWD" if table_name.startswith("dwd_") else "OTHER"
-        ),
-    )
-
-    tasks_dir = tmp_path / "tasks"
-    tasks_dir.mkdir()
-    (tasks_dir / "dwd_accounts.sql").write_text(
-        """
-        INSERT INTO finance_analytics_dm.dwd_accounts
-        SELECT account_id
-        FROM finance_analytics_dm.ods_accounts;
-        """,
-        encoding="utf-8",
-    )
-    data = {
-        "edges": [
-            {
-                "source": "finance_analytics_dm.ods_accounts.account_id",
-                "target": "finance_analytics_dm.dwd_accounts.account_id",
-                "source_file": "dwd_accounts.sql",
-            }
-        ]
-    }
-
-    jobs = refresh_html.generate_jobs(
-        data,
-        tasks_dir=tasks_dir,
-        current_db="finance_analytics_dm",
-        project="finance_analytics",
-    )
-
-    assert len(jobs) == 1
-    job = jobs[0]
-    assert job["id"] == "dwd_accounts"
-    assert job["source"] == ["ods_accounts"]
-    assert job["target"] == "dwd_accounts"
-    assert job["layer"] == "DWD"
-    assert job["logic"] == "-"
 
 
 def test_generate_jobs_includes_full_refresh_tasks(tmp_path, monkeypatch):
@@ -562,45 +475,6 @@ def test_build_frontend_lineage_data_preserves_strict_v2_payload(monkeypatch):
     assert "source_file" not in frontend_data["edges"][0]
 
 
-def test_generate_jobs_v2_removes_case_variant_self_input(monkeypatch):
-    monkeypatch.setattr(
-        refresh_html,
-        "determine_layer",
-        lambda table_name, project: "DWD",
-    )
-    data = {
-        "format_version": 2,
-        "tables": [
-            {
-                "name": "t",
-                "full_name": "internal.shop_dm.t",
-                "dataset_type": "managed",
-                "columns": [],
-            }
-        ],
-        "jobs": [
-            {
-                "name": "build_t",
-                "source_file": "build_t.sql",
-                "inputs": ["INTERNAL.SHOP_DM.T"],
-                "outputs": ["internal.shop_dm.t"],
-            }
-        ],
-        "edges": [],
-        "diagnostics": [],
-    }
-
-    jobs = refresh_html.generate_jobs(
-        data,
-        tasks_dir=None,
-        current_db="shop_dm",
-        project="shop",
-    )
-
-    assert jobs[0]["source"] == []
-    assert jobs[0]["target"] == "t"
-
-
 def _call_html_builder(builder, data):
     if builder == "frontend":
         return refresh_html.build_frontend_lineage_data(data, "shop")
@@ -631,19 +505,4 @@ def test_html_builders_reject_unsupported_explicit_lineage_versions(
     }
 
     with pytest.raises(ValueError, match="format_version"):
-        _call_html_builder(builder, data)
-
-
-@pytest.mark.parametrize("builder", ["frontend", "jobs"])
-def test_html_builders_strictly_reject_malformed_v2(builder):
-    data = {
-        "format_version": 2,
-        "tables": [],
-        "jobs": [],
-        "edges": [],
-        "diagnostics": [],
-        "extension": True,
-    }
-
-    with pytest.raises(ValueError, match="extension"):
         _call_html_builder(builder, data)

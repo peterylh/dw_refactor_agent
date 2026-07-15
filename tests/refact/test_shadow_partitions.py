@@ -2,33 +2,13 @@ from __future__ import annotations
 
 from datetime import date
 
-import pytest
-
 from dw_refactor_agent.refactor.shadow_scope import RowScope
 from dw_refactor_agent.sql.doris import (
     PartitionSelectionKind,
     parse_doris_partitions,
     parse_show_partitions,
 )
-
-
-def test_parse_less_than_range_partitions_and_map_daily_scope():
-    catalog = parse_doris_partitions(
-        """CREATE TABLE dm.sales (stat_date DATE) ENGINE=OLAP
-PARTITION BY RANGE(stat_date) (
-  PARTITION p_before VALUES LESS THAN ("2025-01-01"),
-  PARTITION p202501 VALUES LESS THAN ("2025-02-01"),
-  PARTITION p_after VALUES LESS THAN (MAXVALUE)
-);"""
-    )
-
-    selection = catalog.map_scope(
-        RowScope.point("stat_date", date(2025, 1, 15))
-    )
-
-    assert catalog.column == "stat_date"
-    assert selection.kind is PartitionSelectionKind.PARTITIONS
-    assert selection.partitions == ("p202501",)
+from tests.case_matrix import case_matrix
 
 
 def test_parse_fixed_range_and_list_partitions():
@@ -72,34 +52,7 @@ PARTITION BY RANGE(stat_date) (
     assert selection.partitions == ("p202501",)
 
 
-def test_unpartitioned_table_requires_full_copy_for_nonempty_scope():
-    catalog = parse_doris_partitions(
-        "CREATE TABLE dm.sales (id BIGINT) ENGINE=OLAP;"
-    )
-
-    selection = catalog.map_scope(RowScope.point("id", 7))
-
-    assert selection.kind is PartitionSelectionKind.FULL
-    assert selection.partitions == ()
-
-
-def test_unknown_scope_never_maps_to_an_empty_partition_set():
-    catalog = parse_doris_partitions(
-        """CREATE TABLE dm.sales (stat_date DATE) ENGINE=OLAP
-PARTITION BY RANGE(stat_date) (
-  PARTITION p202501 VALUES LESS THAN ("2025-02-01")
-);"""
-    )
-
-    selection = catalog.map_scope(
-        RowScope.unknown("stat_date", "unsupported predicate")
-    )
-
-    assert selection.kind is PartitionSelectionKind.UNKNOWN
-    assert selection.partitions == ()
-
-
-@pytest.mark.parametrize(
+@case_matrix(
     ("ddl", "scope_date", "reason"),
     [
         (

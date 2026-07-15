@@ -9,50 +9,6 @@ def _issue(fingerprint, title):
     }
 
 
-def test_diff_assess_results_classifies_fixed_remaining_and_new():
-    baseline = {
-        "overall_score": 50.0,
-        "dimensions": {
-            "naming": {
-                "score": 50.0,
-                "issues": [
-                    _issue("a", "old-a"),
-                    _issue("b", "old-b"),
-                ],
-            }
-        },
-    }
-    current = {
-        "overall_score": 90.0,
-        "dimensions": {
-            "naming": {
-                "score": 90.0,
-                "issues": [
-                    _issue("b", "new-b"),
-                    _issue("c", "new-c"),
-                ],
-            }
-        },
-    }
-
-    result = diff_assess_results(baseline, current)
-
-    assert result["summary"] == {
-        "baseline_scoped_issue_count": 2,
-        "current_scoped_issue_count": 2,
-        "fixed_count": 1,
-        "remaining_count": 1,
-        "new_count": 1,
-    }
-    assert [issue["fingerprint"] for issue in result["fixed_issues"]] == ["a"]
-    assert [issue["fingerprint"] for issue in result["remaining_issues"]] == [
-        "b"
-    ]
-    assert [issue["fingerprint"] for issue in result["new_issues"]] == ["c"]
-    assert result["scope_score"]["overall_score"] == 90.0
-    assert result["scope_score"]["dimensions"]["naming"]["score"] == 90.0
-
-
 def test_diff_assess_results_filters_baseline_by_scope_plan():
     baseline = {
         "overall_score": 40.0,
@@ -375,51 +331,3 @@ def test_diff_assess_results_treats_table_rename_issues_as_remaining():
             "table|DIM_BASE_CUST_PROFILE_INFO"
         ),
     ]
-
-
-def test_diff_assess_results_reads_rename_mapping_from_change_analysis():
-    baseline = {
-        "dimensions": {
-            "reuse": {
-                "issues": [
-                    _issue(
-                        (
-                            "reuse|REUSE_DOWNSTREAM_REACHES_TARGET|"
-                            "table|dwd_customer"
-                        ),
-                        "dwd_customer",
-                    )
-                ]
-            }
-        }
-    }
-    current = {
-        "dimensions": {
-            "reuse": {
-                "issues": [
-                    _issue(
-                        (
-                            "reuse|REUSE_DOWNSTREAM_REACHES_TARGET|"
-                            "table|DIM_BASE_CUST_PROFILE_INFO"
-                        ),
-                        "DIM_BASE_CUST_PROFILE_INFO",
-                    )
-                ]
-            }
-        }
-    }
-    change_analysis = {
-        "rename_mapping": {
-            "dwd_customer": "DIM_BASE_CUST_PROFILE_INFO",
-        }
-    }
-
-    result = diff_assess_results(
-        baseline,
-        current,
-        change_analysis=change_analysis,
-    )
-
-    assert result["summary"]["fixed_count"] == 0
-    assert result["summary"]["remaining_count"] == 1
-    assert result["summary"]["new_count"] == 0

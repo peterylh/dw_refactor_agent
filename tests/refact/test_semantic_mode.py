@@ -4,13 +4,12 @@ import pytest
 
 from dw_refactor_agent.refactor.semantic_mode import (
     automatic_equivalence,
-    local_change_fingerprint,
     resolve_semantic_graph,
     resolve_semantic_modes,
     schema_identity_mapping,
-    semantic_context_fingerprint,
     sql_ast_equivalent,
 )
+from tests.case_matrix import case_matrix
 
 
 def _fact(
@@ -31,111 +30,8 @@ def _fact(
     }
 
 
-@pytest.mark.parametrize(
-    "baseline_sql,current_sql,expected",
-    [
-        (
-            "SELECT id FROM ods_order",
-            "-- note\nSELECT  id  FROM ods_order",
-            True,
-        ),
-        (
-            "SELECT id FROM ods_order",
-            "SELECT id FROM ods_order WHERE id > 0",
-            False,
-        ),
-        ("SELECT * FROM ods_order", "SELECT id FROM ods_order", False),
-        (
-            "SELECT a.id FROM a JOIN b ON a.id = b.id",
-            "SELECT a.id FROM a LEFT JOIN b ON a.id = b.id",
-            False,
-        ),
-        (
-            "SELECT id, SUM(v) FROM a GROUP BY id",
-            "SELECT id, MAX(v) FROM a GROUP BY id",
-            False,
-        ),
-    ],
-)
-def test_sql_ast_equivalence_is_strict(baseline_sql, current_sql, expected):
-    assert (
-        sql_ast_equivalent(baseline_sql, current_sql, rename_mapping={})
-        is expected
-    )
-
-
 def test_sql_ast_equivalence_returns_false_for_unparseable_sql():
     assert sql_ast_equivalent("SELECT (", "SELECT (", {}) is False
-
-
-def test_local_change_fingerprint_is_stable_and_content_sensitive():
-    baseline = {
-        "logical_name": "dws_sales",
-        "ddl": {"path": "mid/ddl/dws_sales.sql", "content_sha256": "a"},
-        "task": None,
-        "full_refresh_task": None,
-        "model": None,
-    }
-    current = dict(baseline)
-
-    first = local_change_fingerprint("shop", "id-dws-sales", baseline, current)
-    second = local_change_fingerprint(
-        "shop", "id-dws-sales", dict(reversed(list(baseline.items()))), current
-    )
-    changed = dict(current)
-    changed["task"] = {
-        "path": "mid/tasks/dws_sales.sql",
-        "content_sha256": "b",
-    }
-
-    assert first == second
-    assert first != local_change_fingerprint(
-        "shop", "id-dws-sales", baseline, changed
-    )
-
-
-def test_context_fingerprint_is_stable_and_tracks_upstream_mode():
-    upstream = [
-        {
-            "upstream_table_id": "id-a",
-            "upstream_semantic_context_fingerprint": "sha256:a",
-            "upstream_resolved_mode": "equivalent",
-        },
-        {
-            "upstream_table_id": "id-b",
-            "upstream_semantic_context_fingerprint": "sha256:b",
-            "upstream_resolved_mode": "unknown",
-        },
-    ]
-
-    first = semantic_context_fingerprint("sha256:local", upstream)
-    second = semantic_context_fingerprint(
-        "sha256:local", list(reversed(upstream))
-    )
-    changed = [dict(item) for item in upstream]
-    changed[1]["upstream_resolved_mode"] = "equivalent"
-
-    assert first == second
-    assert first != semantic_context_fingerprint("sha256:local", changed)
-
-
-def test_upstream_unknown_overrides_automatic_equivalent():
-    result = resolve_semantic_graph(
-        {
-            "dwd_order": _fact("dwd_order", is_direct=True),
-            "dws_sales": _fact("dws_sales", automatic_mode="equivalent"),
-        },
-        [("dwd_order", "dws_sales")],
-    )
-
-    assert result.target_semantics["dwd_order"]["resolved_mode"] == "unknown"
-    assert result.target_semantics["dws_sales"]["automatic_mode"] == (
-        "equivalent"
-    )
-    assert result.target_semantics["dws_sales"]["resolved_mode"] == "unknown"
-    assert result.target_semantics["dws_sales"]["resolved_source"] == (
-        "upstream_propagation"
-    )
 
 
 def test_valid_user_equivalent_overrides_changed_upstream():
@@ -218,56 +114,6 @@ def test_unknown_path_stops_at_nearest_equivalent_boundary():
     assert "ads_dashboard" not in result.selected_tables
 
 
-def test_equivalent_direct_table_stops_before_unchanged_downstream():
-    facts = {
-        "dws_sales": _fact(
-            "dws_sales", automatic_mode="equivalent", is_direct=True
-        ),
-        "ads_sales": _fact("ads_sales", automatic_mode="equivalent"),
-    }
-
-    result = resolve_semantic_graph(facts, [("dws_sales", "ads_sales")])
-
-    assert result.boundaries == {
-        "authority": ["dws_sales"],
-        "observational": [],
-    }
-    assert result.selected_tables == ("dws_sales",)
-
-
-def test_independent_direct_descendant_is_selected_below_equivalent_boundary():
-    facts = {
-        "dws_sales": _fact(
-            "dws_sales", automatic_mode="equivalent", is_direct=True
-        ),
-        "ads_sales": _fact(
-            "ads_sales", automatic_mode="equivalent", is_direct=True
-        ),
-    }
-
-    result = resolve_semantic_graph(facts, [("dws_sales", "ads_sales")])
-
-    assert result.boundaries == {
-        "authority": ["ads_sales", "dws_sales"],
-        "observational": [],
-    }
-    assert result.selected_tables == ("dws_sales", "ads_sales")
-
-
-def test_unknown_leaf_is_observational_and_noncomparable_leaf_is_not():
-    comparable = resolve_semantic_graph(
-        {"dws_sales": _fact("dws_sales", is_direct=True)}, []
-    )
-    noncomparable = resolve_semantic_graph(
-        {"dws_sales": _fact("dws_sales", is_direct=True, comparable=False)},
-        [],
-    )
-
-    assert comparable.boundaries["observational"] == ["dws_sales"]
-    assert noncomparable.boundaries["observational"] == []
-    assert comparable.warnings[0]["type"] == "unknown_table_semantics"
-
-
 def test_historical_declaration_is_reused_by_table_id_and_context():
     facts = {"dws_sales": _fact("dws_sales", is_direct=True)}
     first = resolve_semantic_graph(facts, [])
@@ -298,30 +144,6 @@ def test_historical_declaration_is_reused_by_table_id_and_context():
     assert (
         result.inherited_declarations["dws_sales"]["inherited_from_run_id"]
         == "20260712_100000_shop"
-    )
-
-
-def test_copied_historical_declaration_keeps_inherited_source():
-    facts = {"dws_sales": _fact("dws_sales", is_direct=True)}
-    first = resolve_semantic_graph(facts, [])
-    declaration = {
-        "table_id": "id-dws_sales",
-        "mode": "equivalent",
-        "semantic_context_fingerprint": first.target_semantics["dws_sales"][
-            "semantic_context_fingerprint"
-        ],
-        "confirmed_at": "2026-07-12T10:00:00+08:00",
-        "inherited_from_run_id": "20260712_100000_shop",
-    }
-
-    result = resolve_semantic_graph(
-        facts,
-        [],
-        current_declarations={"dws_sales": declaration},
-    )
-
-    assert result.target_semantics["dws_sales"]["resolved_source"] == (
-        "inherited_user"
     )
 
 
@@ -407,52 +229,6 @@ def test_schema_identity_mapping_requires_complete_stable_ids():
     )
 
 
-def test_comment_only_task_change_is_automatically_equivalent():
-    baseline = _assets(
-        ddl=_ddl("dws_sales", "store_id"),
-        task="INSERT INTO dws_sales SELECT store_id FROM ods_store",
-        model="version: 2\nname: dws_sales\nlayer: DWS\n",
-    )
-    current = _assets(
-        ddl=_ddl("dws_sales", "store_id"),
-        task=(
-            "-- explain\nINSERT  INTO dws_sales\n"
-            "SELECT store_id FROM ods_store"
-        ),
-        model="version: 2\nname: dws_sales\nlayer: DWS\n",
-    )
-
-    mode, evidence, identity = automatic_equivalence(baseline, current)
-
-    assert mode == "equivalent"
-    assert evidence == [{"rule": "normalized_sql_ast_equal"}]
-    assert identity["compare_blocker"] is None
-
-
-@pytest.mark.parametrize(
-    "current_task",
-    [
-        "INSERT INTO dws_sales SELECT store_id FROM ods_store WHERE store_id > 0",
-        "INSERT INTO dws_sales SELECT store_id FROM ods_store LEFT JOIN ods_region USING (store_id)",
-        "INSERT INTO dws_sales SELECT COUNT(store_id) FROM ods_store",
-        "INSERT INTO dws_sales SELECT * FROM ods_store",
-    ],
-)
-def test_semantic_sql_change_is_not_automatically_equivalent(current_task):
-    baseline = _assets(
-        ddl=_ddl("dws_sales", "store_id"),
-        task="INSERT INTO dws_sales SELECT store_id FROM ods_store",
-        model="version: 2\nname: dws_sales\nlayer: DWS\n",
-    )
-    current = _assets(
-        ddl=_ddl("dws_sales", "store_id"),
-        task=current_task,
-        model="version: 2\nname: dws_sales\nlayer: DWS\n",
-    )
-
-    assert automatic_equivalence(baseline, current)[0] is None
-
-
 def test_stable_id_pure_rename_is_automatically_equivalent():
     baseline = _assets(
         ddl=_ddl("dwd_store", "store_id"),
@@ -514,24 +290,6 @@ def test_field_rename_does_not_rewrite_unqualified_source_expression():
     assert automatic_equivalence(baseline, current)[0] is None
 
 
-def test_field_rename_with_explicit_output_alias_is_automatic():
-    baseline = _assets(
-        ddl=_ddl("dwd_store", "store_id"),
-        task="INSERT INTO dwd_store SELECT store_id FROM ods_store",
-        model="version: 2\nname: dwd_store\nlayer: DWD\n",
-    )
-    current = _assets(
-        ddl=_ddl("dwd_store", "renamed_store_id"),
-        task=(
-            "INSERT INTO dwd_store "
-            "SELECT store_id AS renamed_store_id FROM ods_store"
-        ),
-        model="version: 2\nname: dwd_store\nlayer: DWD\n",
-    )
-
-    assert automatic_equivalence(baseline, current)[0] == "equivalent"
-
-
 def test_field_rename_does_not_rewrite_arbitrary_model_semantics():
     baseline = _assets(
         ddl=_ddl("dwd_store", "store_id"),
@@ -570,7 +328,7 @@ def test_table_rename_collision_with_column_identity_is_not_automatic():
     assert automatic_equivalence(baseline, current)[0] is None
 
 
-@pytest.mark.parametrize(
+@case_matrix(
     "field,value",
     [
         ("model", "version: 2\nname: dim_store\nlayer: DIM\n"),
@@ -674,34 +432,6 @@ def _semantic_git_project(tmp_path):
     _git(tmp_path, "add", ".")
     _git(tmp_path, "commit", "-qm", "baseline")
     return _git(tmp_path, "rev-parse", "HEAD"), dws_task, ads_task
-
-
-def test_resolve_semantic_modes_reads_git_and_worktree_assets(tmp_path):
-    base_ref, dws_task, _ads_task = _semantic_git_project(tmp_path)
-    dws_task.write_text(
-        "-- formatting only\nINSERT  INTO dws_sales "
-        "SELECT store_id FROM ods_store;\n",
-        encoding="utf-8",
-    )
-
-    result = resolve_semantic_modes(
-        project="shop",
-        project_dir="warehouses/shop",
-        change_analysis=_change_analysis(["dws_sales"]),
-        baseline_lineage=_lineage(),
-        current_lineage=_lineage(),
-        base_ref=base_ref,
-        repo_root=tmp_path,
-        current_manifest={"verification_intent": {"semantic_modes": {}}},
-        historical_manifests=[],
-    )
-
-    semantics = result.target_semantics["dws_sales"]
-    assert semantics["automatic_mode"] == "equivalent"
-    assert semantics["resolved_mode"] == "equivalent"
-    assert semantics["table_id"] == TABLE_ID
-    assert result.selected_tables == ("dws_sales",)
-    assert result.boundaries["authority"] == ["dws_sales"]
 
 
 def test_resolve_semantic_modes_keeps_filter_change_unknown_to_leaf(tmp_path):

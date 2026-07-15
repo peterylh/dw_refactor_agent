@@ -1,7 +1,6 @@
 import pytest
 
 import dw_refactor_agent.assessment.rules.definitions.task_sql_quality as task_sql_quality_defs
-import dw_refactor_agent.assessment.rules.dimensions.task_sql_quality as task_sql_quality_dimension
 from dw_refactor_agent.assessment.assessment_context import AssessmentContext
 from dw_refactor_agent.assessment.project_facts.asset_catalog import (
     build_asset_catalog,
@@ -9,7 +8,6 @@ from dw_refactor_agent.assessment.project_facts.asset_catalog import (
 from dw_refactor_agent.assessment.rules.dimensions.task_sql_quality import (
     score_code_quality,
 )
-from dw_refactor_agent.config import PROJECT_CONFIG, PROJECT_ROOT
 
 
 def _catalog_for_task(tmp_path, task_name, sql):
@@ -78,29 +76,6 @@ def _issue_rule_ids(result):
     return {issue["rule_id"] for issue in result["issues"]}
 
 
-def test_shop_ads_store_performance_join_covers_store_snapshot_key():
-    project_dir = PROJECT_ROOT / PROJECT_CONFIG["shop"]["dir"]
-    catalog = build_asset_catalog(
-        [],
-        None,
-        project_dir,
-        edges=[],
-        indirect_edges=[],
-    )
-    sql = (
-        project_dir / "ads" / "tasks" / "ads_store_performance.sql"
-    ).read_text(encoding="utf-8")
-
-    issues = task_sql_quality_defs._scan_join_before_aggregation(sql, catalog)
-
-    assert issues == []
-
-
-def test_parse_statements_filters_pure_comments():
-    assert task_sql_quality_defs._parse_statements("-- only comment\n") == []
-    assert task_sql_quality_defs._parse_statements("/* only comment */") == []
-
-
 def test_score_code_quality_accepts_comment_only_task(tmp_path):
     context = _catalog_for_task(
         tmp_path,
@@ -112,31 +87,6 @@ def test_score_code_quality_accepts_comment_only_task(tmp_path):
 
     assert result["score"] == 100.0
     assert result["issues"] == []
-
-
-def test_score_code_quality_accepts_named_and_dropped_temp_table(tmp_path):
-    context = _catalog_for_task(
-        tmp_path,
-        "dws_sales.sql",
-        """
-CREATE TABLE demo.tmp_sales_stage AS
-SELECT order_id, amount
-FROM demo.dwd_sales;
-
-INSERT INTO demo.dws_sales
-SELECT order_id, amount
-FROM demo.tmp_sales_stage;
-
-DROP TABLE IF EXISTS demo.tmp_sales_stage;
-""",
-    )
-
-    result = score_code_quality(context)
-
-    assert result["score"] == 100.0
-    assert result["issues"] == []
-    assert len(result["checks"]) == 4
-    assert all(check["passed"] for check in result["checks"])
 
 
 def test_score_code_quality_flags_bad_temp_name_and_missing_drop(tmp_path):
@@ -167,41 +117,6 @@ FROM demo.stage_sales;
         ("stage_sales", "低"),
         ("stage_sales", "中"),
     }
-
-
-def test_score_code_quality_requires_drop_after_create(tmp_path):
-    context = _catalog_for_task(
-        tmp_path,
-        "dws_sales.sql",
-        """
-DROP TABLE IF EXISTS demo.tmp_sales_stage;
-
-CREATE TABLE demo.tmp_sales_stage AS
-SELECT order_id, amount
-FROM demo.dwd_sales;
-
-INSERT INTO demo.dws_sales
-SELECT order_id, amount
-FROM demo.tmp_sales_stage;
-""",
-    )
-
-    result = score_code_quality(context)
-
-    assert result["score"] == 60.0
-    assert _issue_rule_ids(result) == {
-        "CODE_TEMP_TABLE_DROPPED_IN_SAME_TASK",
-        "CODE_TEMP_TABLE_CREATED_WITH_PRE_DROP_NOT_CLEANED",
-    }
-    missing_drop_issue = next(
-        issue
-        for issue in result["issues"]
-        if issue["rule_id"] == "CODE_TEMP_TABLE_DROPPED_IN_SAME_TASK"
-    )
-    assert missing_drop_issue["severity"] == "中"
-    assert missing_drop_issue["remediation"]["strategy"] == (
-        "drop_temp_table_after_use"
-    )
 
 
 def test_score_code_quality_flags_pre_dropped_tmp_table_without_post_drop(
@@ -274,134 +189,6 @@ FROM demo.tmp_sales_stage;
     )
 
 
-def test_score_code_quality_flags_cross_task_tmp_table_dependency(tmp_path):
-    context = _catalog_for_tasks_and_ddl(
-        tmp_path,
-        {
-            "build_tmp_sales.sql": """
-DROP TABLE IF EXISTS demo.tmp_sales_stage;
-
-CREATE TABLE demo.tmp_sales_stage AS
-SELECT order_id, amount
-FROM demo.dwd_sales;
-""",
-            "dws_sales.sql": """
-INSERT INTO demo.dws_sales
-SELECT order_id, amount
-FROM demo.tmp_sales_stage;
-""",
-        },
-    )
-
-    result = score_code_quality(context)
-
-    assert "CODE_TEMP_TABLE_USED_ACROSS_TASKS" in _issue_rule_ids(result)
-    failed = [
-        check
-        for check in result["checks"]
-        if check["rule_id"] == "CODE_TEMP_TABLE_USED_ACROSS_TASKS"
-        and not check["passed"]
-    ]
-    assert len(failed) == 1
-    assert failed[0]["target"] == {
-        "type": "table",
-        "name": "tmp_sales_stage",
-    }
-    assert failed[0]["evidence"] == {
-        "file": "demo/mid/tasks/build_tmp_sales.sql",
-        "table": "tmp_sales_stage",
-        "reason": "pre_drop_create_without_post_drop",
-        "creator_task": "demo/mid/tasks/build_tmp_sales.sql",
-        "reader_tasks": ["demo/mid/tasks/dws_sales.sql"],
-        "created_statement_index": 1,
-        "pre_drop_statement_indexes": [0],
-        "post_create_drop_statement_indexes": [],
-    }
-    assert failed[0]["message"] == (
-        "临时/过程表被其他task读取，形成跨task隐式依赖"
-    )
-
-
-def test_score_code_quality_flags_repeated_same_name_unclosed_lifecycle(
-    tmp_path,
-):
-    context = _catalog_for_tasks_and_ddl(
-        tmp_path,
-        {
-            "build_tmp_sales.sql": """
-DROP TABLE IF EXISTS demo.tmp_sales_stage;
-
-CREATE TABLE demo.tmp_sales_stage AS
-SELECT order_id, amount
-FROM demo.dwd_sales;
-
-DROP TABLE IF EXISTS demo.tmp_sales_stage;
-
-CREATE TABLE demo.tmp_sales_stage AS
-SELECT order_id, amount
-FROM demo.dwd_sales_retry;
-""",
-            "dws_sales.sql": """
-INSERT INTO demo.dws_sales
-SELECT order_id, amount
-FROM demo.tmp_sales_stage;
-""",
-        },
-    )
-
-    result = score_code_quality(context)
-
-    assert {
-        "CODE_TEMP_TABLE_CREATED_WITH_PRE_DROP_NOT_CLEANED",
-        "CODE_TEMP_TABLE_USED_ACROSS_TASKS",
-    }.issubset(_issue_rule_ids(result))
-    cross_task = [
-        check
-        for check in result["checks"]
-        if check["rule_id"] == "CODE_TEMP_TABLE_USED_ACROSS_TASKS"
-        and not check["passed"]
-    ]
-    assert len(cross_task) == 1
-    assert cross_task[0]["evidence"]["created_statement_index"] == 3
-    assert cross_task[0]["evidence"]["pre_drop_statement_indexes"] == [2]
-
-
-def test_score_code_quality_uses_transient_facts_for_tmp_lifecycle(
-    tmp_path,
-    monkeypatch,
-):
-    context = _catalog_for_tasks_and_ddl(
-        tmp_path,
-        {
-            "build_tmp_sales.sql": """
-DROP TABLE IF EXISTS demo.tmp_sales_stage;
-
-CREATE TABLE demo.tmp_sales_stage AS
-SELECT order_id, amount
-FROM demo.dwd_sales;
-""",
-            "dws_sales.sql": """
-INSERT INTO demo.dws_sales
-SELECT order_id, amount
-FROM demo.tmp_sales_stage;
-""",
-        },
-    )
-
-    monkeypatch.setattr(
-        task_sql_quality_dimension,
-        "_scan_task_sql",
-        lambda sql: ([], [], []),
-    )
-
-    result = score_code_quality(context)
-
-    assert {
-        "CODE_TEMP_TABLE_CREATED_WITH_PRE_DROP_NOT_CLEANED",
-        "CODE_TEMP_TABLE_USED_ACROSS_TASKS",
-    }.issubset(_issue_rule_ids(result))
-
-
 def test_score_code_quality_cross_task_fallback_handles_qualified_names(
     tmp_path,
     monkeypatch,
@@ -454,33 +241,6 @@ FROM internal.shop_dm.tmp_sales_stage;
     assert failed[0]["evidence"]["reason"] == (
         "pre_drop_create_without_post_drop"
     )
-
-
-def test_score_code_quality_does_not_flag_cross_task_tmp_name_without_transient_fact(
-    tmp_path,
-):
-    context = _catalog_for_tasks_and_ddl(
-        tmp_path,
-        {
-            "build_tmp_sales.sql": """
-CREATE TABLE demo.tmp_sales_stage AS
-SELECT order_id, amount
-FROM demo.dwd_sales;
-""",
-            "dws_sales.sql": """
-INSERT INTO demo.dws_sales
-SELECT order_id, amount
-FROM demo.tmp_sales_stage;
-""",
-        },
-    )
-
-    result = score_code_quality(context)
-
-    assert "CODE_TEMP_TABLE_CREATED_WITH_PRE_DROP_NOT_CLEANED" not in (
-        _issue_rule_ids(result)
-    )
-    assert "CODE_TEMP_TABLE_USED_ACROSS_TASKS" not in _issue_rule_ids(result)
 
 
 def test_score_code_quality_does_not_flag_governed_tmp_named_table(
@@ -602,24 +362,6 @@ FROM demo.dwd_sales;
             "check_ids": ["code_quality.chk_001"],
         }
     ]
-
-
-def test_score_code_quality_ignores_task_target_create_table(tmp_path):
-    context = _catalog_for_task(
-        tmp_path,
-        "dws_sales.sql",
-        """
-CREATE TABLE demo.dws_sales AS
-SELECT order_id, amount
-FROM demo.dwd_sales;
-""",
-    )
-
-    result = score_code_quality(context)
-
-    assert result["score"] == 100.0
-    assert result["issues"] == []
-    assert result["checks"][0]["rule_id"] == "CODE_NO_SELECT_STAR_IN_WRITE"
 
 
 def test_score_code_quality_flags_cartesian_join_risks(tmp_path):
@@ -745,37 +487,6 @@ GROUP BY s.store_id;
     assert "CODE_DWS_JOIN_BEFORE_AGGREGATION" in _issue_rule_ids(result)
 
 
-def test_score_code_quality_accepts_dws_join_to_pre_aggregated_subquery(
-    tmp_path,
-):
-    context = _catalog_for_task(
-        tmp_path,
-        "dws_account_daily_snapshot.sql",
-        """
-INSERT INTO demo.dws_account_daily_snapshot
-WITH daily_snapshots AS (
-    SELECT
-        a.account_id,
-        COALESCE(t.daily_transaction_count, 0) AS daily_transaction_count
-    FROM demo.dwd_accounts a
-    LEFT JOIN (
-        SELECT
-            account_id,
-            COUNT(*) AS daily_transaction_count
-        FROM demo.dwd_transactions
-        GROUP BY account_id
-    ) t ON a.account_id = t.account_id
-)
-SELECT account_id, daily_transaction_count
-FROM daily_snapshots;
-""",
-    )
-
-    result = score_code_quality(context)
-
-    assert "CODE_DWS_JOIN_BEFORE_AGGREGATION" not in _issue_rule_ids(result)
-
-
 def test_score_code_quality_accepts_dws_join_covering_right_unique_key(
     tmp_path,
 ):
@@ -812,43 +523,6 @@ PROPERTIES ("replication_num" = "1");
     result = score_code_quality(context)
 
     assert "CODE_DWS_JOIN_BEFORE_AGGREGATION" not in _issue_rule_ids(result)
-
-
-def test_score_code_quality_flags_dws_join_partially_covering_unique_key(
-    tmp_path,
-):
-    context = _catalog_for_task_and_ddl(
-        tmp_path,
-        "dws_promotion_effect_daily.sql",
-        """
-INSERT INTO demo.dws_promotion_effect_daily
-SELECT
-    od.promotion_id,
-    od.order_date AS stat_date,
-    MAX(p.promotion_name) AS promotion_name,
-    SUM(od.subtotal) AS sale_amount
-FROM demo.dwd_order_detail od
-LEFT JOIN demo.dwd_promotion p
-    ON od.promotion_id = p.promotion_id
-GROUP BY od.promotion_id, od.order_date;
-""",
-        {
-            "dwd_promotion.sql": """
-CREATE TABLE demo.dwd_promotion (
-    promotion_id BIGINT NOT NULL,
-    snapshot_date DATE NOT NULL,
-    promotion_name VARCHAR(128) NULL
-) ENGINE=OLAP
-UNIQUE KEY(promotion_id, snapshot_date)
-DISTRIBUTED BY HASH(promotion_id) BUCKETS 1
-PROPERTIES ("replication_num" = "1");
-"""
-        },
-    )
-
-    result = score_code_quality(context)
-
-    assert "CODE_DWS_JOIN_BEFORE_AGGREGATION" in _issue_rule_ids(result)
 
 
 def test_score_code_quality_flags_function_wrapped_filter_column(

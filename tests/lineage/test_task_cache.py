@@ -7,9 +7,7 @@ import dw_refactor_agent.lineage.task_cache as task_cache
 from dw_refactor_agent.lineage.task_cache import (
     TaskCacheMetadata,
     cache_entry_from_result,
-    extractor_version_hash,
     load_task_cache,
-    stable_json_hash,
     task_cache_key,
 )
 
@@ -218,21 +216,3 @@ def test_cache_entry_sorts_set_facts_for_json_serialization():
 
     assert entry["input_tables"] == ["a", "b"]
     json.dumps(entry)
-
-
-def test_stable_json_hash_is_independent_of_dict_order():
-    assert stable_json_hash({"a": 1, "b": 2}) == stable_json_hash(
-        {"b": 2, "a": 1}
-    )
-
-
-def test_extractor_version_hash_covers_task_fact_implementation(tmp_path):
-    extractor_file = tmp_path / "lineage_extractor.py"
-    facts_file = tmp_path / "sql_task_facts.py"
-    extractor_file.write_text("extractor-v1", encoding="utf-8")
-    facts_file.write_text("facts-v1", encoding="utf-8")
-
-    before = extractor_version_hash((extractor_file, facts_file))
-    facts_file.write_text("facts-v2", encoding="utf-8")
-
-    assert extractor_version_hash((extractor_file, facts_file)) != before

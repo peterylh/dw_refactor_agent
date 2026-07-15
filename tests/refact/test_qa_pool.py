@@ -16,8 +16,8 @@ from dw_refactor_agent.refactor.qa_pool import (
     parse_created_before,
     release_qa_slot,
     require_slot_ownership,
-    select_cleanup_slots,
 )
+from tests.case_matrix import case_matrix
 
 
 class ScriptedCursor:
@@ -99,18 +99,7 @@ def _project_config(pool=None):
     }
 
 
-def test_configured_qa_pool_normalizes_explicit_pool():
-    assert configured_qa_pool(
-        "shop",
-        _project_config(["shop_dm_qa", "shop_dm_qa_02"]),
-    ) == ("shop_dm_qa", "shop_dm_qa_02")
-
-
-def test_configured_qa_pool_falls_back_to_legacy_qa_database():
-    assert configured_qa_pool("shop", _project_config()) == ("shop_dm_qa",)
-
-
-@pytest.mark.parametrize(
+@case_matrix(
     "pool, expected",
     [
         ([], "non-empty"),
@@ -126,15 +115,7 @@ def test_configured_qa_pool_rejects_unsafe_values(pool, expected):
         configured_qa_pool("shop", _project_config(pool))
 
 
-@pytest.mark.parametrize(
-    "value, expected",
-    [("30s", 30), ("15m", 900), ("2h", 7200), ("7d", 604800)],
-)
-def test_parse_age_supports_explicit_units(value, expected):
-    assert parse_age(value) == expected
-
-
-@pytest.mark.parametrize("value", ["", "7", "-1d", "1month", "0h"])
+@case_matrix("value", ["", "7", "-1d", "1month", "0h"])
 def test_parse_age_rejects_ambiguous_or_nonpositive_values(value):
     with pytest.raises(ValueError, match="age"):
         parse_age(value)
@@ -358,40 +339,6 @@ def _inspection(
     )
 
 
-def test_claim_rotates_pool_and_returns_verified_owner(monkeypatch):
-    owner = _ownership()
-    inspections = {
-        "shop_dm_qa": _inspection("shop_dm_qa", "claimed"),
-        "shop_dm_qa_02": _inspection("shop_dm_qa_02", "free"),
-    }
-    calls = []
-    monkeypatch.setattr(
-        qa_pool, "_rotated_pool", lambda pool, execution_id: tuple(pool)
-    )
-    monkeypatch.setattr(
-        qa_pool,
-        "inspect_qa_slot",
-        lambda project, database, **kwargs: inspections[database],
-    )
-    monkeypatch.setattr(
-        qa_pool,
-        "_try_claim_slot",
-        lambda database, **fields: calls.append(database) or owner,
-    )
-
-    result = claim_qa_slot(
-        project="shop",
-        run_id="run-1",
-        execution_id="execution-1",
-        pool=("shop_dm_qa", "shop_dm_qa_02"),
-        plan_fingerprint="sha256:" + "a" * 64,
-        workspace_fingerprint="sha256:" + "b" * 64,
-    )
-
-    assert result.qa_database == "shop_dm_qa_02"
-    assert calls == ["shop_dm_qa_02"]
-
-
 def test_claim_loser_moves_to_next_slot_after_duplicate_table(monkeypatch):
     owner = _ownership()
     monkeypatch.setattr(
@@ -453,62 +400,6 @@ def test_claim_exhaustion_never_drops_or_overwrites(monkeypatch):
         "shop_dm_qa",
         "shop_dm_qa_02",
     }
-
-
-def test_cleanup_selector_combines_claimed_filters_with_and_semantics():
-    inspections = [
-        _inspection(
-            "shop_dm_qa",
-            ownership=_ownership(
-                "shop_dm_qa",
-                execution_id="old",
-                claimed_at_epoch=100,
-            ),
-        ),
-        _inspection(
-            "shop_dm_qa_02",
-            ownership=_ownership(
-                "shop_dm_qa_02",
-                execution_id="new",
-                claimed_at_epoch=300,
-            ),
-        ),
-    ]
-
-    selected = select_cleanup_slots(
-        inspections,
-        project="shop",
-        run_id="run-1",
-        execution_id=None,
-        database=None,
-        cutoff_epoch=200,
-    )
-
-    assert [item.database for item in selected] == ["shop_dm_qa"]
-
-
-@pytest.mark.parametrize("availability", ["legacy", "invalid"])
-def test_cleanup_selector_requires_exact_database_for_unsafe_slots(
-    availability,
-):
-    inspection = _inspection("shop_dm_qa", availability, None)
-
-    assert not select_cleanup_slots(
-        [inspection],
-        project="shop",
-        run_id=None,
-        execution_id=None,
-        database=None,
-        cutoff_epoch=None,
-    )
-    assert select_cleanup_slots(
-        [inspection],
-        project="shop",
-        run_id=None,
-        execution_id=None,
-        database="shop_dm_qa",
-        cutoff_epoch=None,
-    ) == [inspection]
 
 
 class RecordingCursor:

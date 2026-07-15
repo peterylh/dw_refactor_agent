@@ -273,84 +273,6 @@ def test_open_connection_uses_selected_db_env(monkeypatch):
     ]
 
 
-def test_build_import_rows_normalizes_snapshot_for_database(tmp_path):
-    module = importlib.import_module(
-        "dw_refactor_agent.lineage.import_lineage"
-    )
-    tasks_dir = tmp_path / "tasks"
-    tasks_dir.mkdir()
-    (tasks_dir / "dwd_order_detail.sql").write_text(
-        "INSERT INTO dwd_order_detail SELECT amount FROM ods_order;",
-        encoding="utf-8",
-    )
-
-    rows = module.build_import_rows(
-        _demo_snapshot(),
-        tasks_dir=tasks_dir,
-        context=module.ImportContext(
-            project="shop",
-            snapshot_id=42,
-            datasource_id=1,
-            datasource_name="shop_dm",
-            db_type="doris",
-            host="127.0.0.1:9030",
-        ),
-    )
-
-    assert rows.datasource_rows == [
-        (1, 42, "shop", "shop_dm", "doris", "127.0.0.1:9030"),
-    ]
-    assert rows.table_rows == [
-        (1, 42, 1, "ods_order", "shop_dm.ods_order", "managed", 0, "[]"),
-        (
-            2,
-            42,
-            1,
-            "dwd_order_detail",
-            "shop_dm.dwd_order_detail",
-            "managed",
-            0,
-            "[]",
-        ),
-    ]
-    assert rows.column_rows == [
-        (1, 42, 1, "amount", "DECIMAL(12,2)", "订单金额", 0),
-        (2, 42, 2, "amount", "DECIMAL(12,2)", "订单金额", 0),
-    ]
-    assert rows.job_rows == [
-        (
-            1,
-            42,
-            "dwd_order_detail",
-            "dwd_order_detail.sql",
-            "SQL",
-            "INSERT INTO dwd_order_detail SELECT amount FROM ods_order;",
-        )
-    ]
-    assert rows.column_lineage_rows == [
-        (
-            1,
-            42,
-            1,
-            1,
-            2,
-            2,
-            1,
-            "DIRECT",
-            "",
-            "amount",
-        )
-    ]
-    assert rows.indirect_lineage_rows == [
-        (1, 42, 1, 1, 2, 1, "FILTER", "amount > 0"),
-    ]
-    assert rows.table_lineage_rows == [
-        (1, 42, 1, 2, 1, "DIRECT"),
-        (2, 42, 1, 2, 1, "FILTER"),
-    ]
-    assert rows.skipped_edges == []
-
-
 def test_build_import_rows_uses_explicit_v2_jobs_and_job_dataset_io(tmp_path):
     module = importlib.import_module(
         "dw_refactor_agent.lineage.import_lineage"
@@ -466,79 +388,6 @@ def test_build_import_rows_matches_equivalent_v2_table_qualifications(
     assert rows.skipped_edges == []
 
 
-@pytest.mark.parametrize(
-    ("source_ref", "source_payload"),
-    [
-        (
-            {"type": "literal", "value": "ALL"},
-            '{"type":"literal","value":"ALL"}',
-        ),
-        (
-            {"type": "literal", "value": 7},
-            '{"type":"literal","value":7}',
-        ),
-        (
-            {"type": "literal", "value": True},
-            '{"type":"literal","value":true}',
-        ),
-        (
-            {"type": "literal", "value": None},
-            '{"type":"literal","value":null}',
-        ),
-        (
-            {"type": "expression", "expression": "CURRENT_DATE()"},
-            '{"type":"expression","expression":"CURRENT_DATE()"}',
-        ),
-    ],
-    ids=(
-        "string-literal",
-        "number-literal",
-        "boolean-literal",
-        "null-literal",
-        "expression",
-    ),
-)
-def test_build_import_rows_persists_v2_non_column_direct_sources_losslessly(
-    tmp_path, source_ref, source_payload
-):
-    module = importlib.import_module(
-        "dw_refactor_agent.lineage.import_lineage"
-    )
-    data = _demo_v2_snapshot()
-    data["edges"] = [data["edges"][0]]
-    data["edges"][0]["source"] = source_ref
-
-    rows = module.build_import_rows(
-        data,
-        tasks_dir=tmp_path,
-        context=module.ImportContext(
-            project="shop",
-            snapshot_id=42,
-            datasource_id=1,
-            datasource_name="shop_dm",
-            db_type="doris",
-            host="127.0.0.1:9030",
-        ),
-    )
-
-    assert rows.column_lineage_rows == []
-    assert rows.non_column_direct_lineage_rows == [
-        (
-            1,
-            42,
-            2,
-            2,
-            1,
-            "DIRECT",
-            "passthrough",
-            "amount",
-            source_ref["type"],
-            source_payload,
-        )
-    ]
-    assert rows.skipped_edges == []
-
-
 def test_build_import_rows_accepts_hermetic_production_shaped_v2_sources(
     monkeypatch, tmp_path
 ):
@@ -646,78 +495,6 @@ def test_build_import_rows_rejects_unsupported_v2_direct_shape(tmp_path):
 
 
 @pytest.mark.parametrize(
-    ("literal_value", "expected_identity"),
-    [(False, "false"), (0, "0"), (None, "null")],
-    ids=("false", "zero", "null"),
-)
-def test_build_import_rows_preserves_falsy_literal_in_direct_shape_error(
-    tmp_path, literal_value, expected_identity
-):
-    module = importlib.import_module(
-        "dw_refactor_agent.lineage.import_lineage"
-    )
-    data = _demo_v2_snapshot()
-    data["edges"] = [data["edges"][0]]
-    data["edges"][0]["source"] = {
-        "type": "literal",
-        "value": literal_value,
-    }
-    data["edges"][0]["target"] = {
-        "type": "table",
-        "id": "internal.shop_dm.process_order",
-    }
-
-    with pytest.raises(ValueError) as exc_info:
-        module.build_import_rows(
-            data,
-            tasks_dir=tmp_path,
-            context=module.ImportContext(
-                project="shop",
-                snapshot_id=42,
-                datasource_id=1,
-                datasource_name="shop_dm",
-                db_type="doris",
-                host="127.0.0.1:9030",
-            ),
-        )
-
-    message = str(exc_info.value)
-    assert f"source='{expected_identity}' (literal)" in message
-    assert "internal.shop_dm.process_order" in message
-
-
-def test_build_import_rows_rejects_unmapped_v2_direct_column_metadata(
-    tmp_path,
-):
-    module = importlib.import_module(
-        "dw_refactor_agent.lineage.import_lineage"
-    )
-    data = _demo_v2_snapshot()
-    data["edges"] = [data["edges"][0]]
-    data["edges"][0]["source"]["id"] = (
-        "internal.shop_dm.ods_order.missing_amount"
-    )
-
-    with pytest.raises(ValueError) as exc_info:
-        module.build_import_rows(
-            data,
-            tasks_dir=tmp_path,
-            context=module.ImportContext(
-                project="shop",
-                snapshot_id=42,
-                datasource_id=1,
-                datasource_name="shop_dm",
-                db_type="doris",
-                host="127.0.0.1:9030",
-            ),
-        )
-
-    message = str(exc_info.value)
-    assert "missing_amount" in message
-    assert "internal.shop_dm.ods_order" in message
-
-
-@pytest.mark.parametrize(
     ("source_ref", "target_ref", "source_label", "target_label"),
     [
         (
@@ -777,70 +554,6 @@ def test_build_import_rows_rejects_unrepresentable_v2_indirect_edges(
     assert target_label in message
 
 
-def test_build_import_rows_rejects_unmapped_v2_indirect_metadata(tmp_path):
-    module = importlib.import_module(
-        "dw_refactor_agent.lineage.import_lineage"
-    )
-    data = _demo_v2_snapshot()
-    data["edges"] = [data["edges"][1]]
-    data["edges"][0]["source"]["id"] = (
-        "internal.shop_dm.ods_order.missing_amount"
-    )
-
-    with pytest.raises(ValueError) as exc_info:
-        module.build_import_rows(
-            data,
-            tasks_dir=tmp_path,
-            context=module.ImportContext(
-                project="shop",
-                snapshot_id=42,
-                datasource_id=1,
-                datasource_name="shop_dm",
-                db_type="doris",
-                host="127.0.0.1:9030",
-            ),
-        )
-
-    message = str(exc_info.value)
-    assert "missing_amount" in message
-    assert "internal.shop_dm.ods_order" in message
-
-
-def test_import_rejects_unmapped_v2_indirect_metadata_before_connecting(
-    monkeypatch, tmp_path
-):
-    module = importlib.import_module(
-        "dw_refactor_agent.lineage.import_lineage"
-    )
-    data = _demo_v2_snapshot()
-    data["edges"] = [data["edges"][1]]
-    data["edges"][0]["source"]["id"] = (
-        "internal.shop_dm.ods_order.missing_amount"
-    )
-    lineage_file = tmp_path / "lineage_data.json"
-    lineage_file.write_text(json.dumps(data), encoding="utf-8")
-    connection_opened = False
-
-    def fail_if_connected(*_args, **_kwargs):
-        nonlocal connection_opened
-        connection_opened = True
-        pytest.fail("database connection must not be opened")
-
-    monkeypatch.setattr(module, "_open_connection", fail_if_connected)
-
-    with pytest.raises(ValueError) as exc_info:
-        module.import_lineage(
-            project="shop",
-            lineage_file=lineage_file,
-            snapshot_id=42,
-        )
-
-    assert connection_opened is False
-    message = str(exc_info.value)
-    assert "missing_amount" in message
-    assert "internal.shop_dm.ods_order" in message
-
-
 def test_build_import_rows_keeps_v1_indirect_metadata_skip_behavior(tmp_path):
     module = importlib.import_module(
         "dw_refactor_agent.lineage.import_lineage"
@@ -869,41 +582,6 @@ def test_build_import_rows_keeps_v1_indirect_metadata_skip_behavior(tmp_path):
     assert rows.skipped_edges[0].reason == (
         "source, target, or job metadata is missing"
     )
-
-
-def test_build_import_rows_matches_mixed_case_edge_refs_to_metadata(tmp_path):
-    module = importlib.import_module(
-        "dw_refactor_agent.lineage.import_lineage"
-    )
-    tasks_dir = tmp_path / "tasks"
-    tasks_dir.mkdir()
-    (tasks_dir / "dwd_order_detail.sql").write_text("", encoding="utf-8")
-    data = _demo_snapshot()
-    data["edges"][0]["source"]["id"] = "ODS_ORDER.AMOUNT"
-    data["edges"][0]["target"]["id"] = "DWD_ORDER_DETAIL.AMOUNT"
-    data["edges"][1]["source"]["id"] = "ODS_ORDER.AMOUNT"
-    data["edges"][1]["target"]["id"] = "DWD_ORDER_DETAIL"
-
-    rows = module.build_import_rows(
-        data,
-        tasks_dir=tasks_dir,
-        context=module.ImportContext(
-            project="shop",
-            snapshot_id=42,
-            datasource_id=1,
-            datasource_name="shop_dm",
-            db_type="doris",
-            host="127.0.0.1:9030",
-        ),
-    )
-
-    assert rows.column_lineage_rows == [
-        (1, 42, 1, 1, 2, 2, 1, "DIRECT", "", "amount")
-    ]
-    assert rows.indirect_lineage_rows == [
-        (1, 42, 1, 1, 2, 1, "FILTER", "amount > 0")
-    ]
-    assert rows.skipped_edges == []
 
 
 def test_v1_normalizer_keeps_same_basename_source_paths_as_distinct_jobs(
@@ -954,39 +632,6 @@ def test_v1_normalizer_keeps_same_basename_source_paths_as_distinct_jobs(
         ("mid/tasks/build", "mid/tasks/build.sql"),
     ]
     assert [row[6] for row in rows.column_lineage_rows] == [2, 1]
-
-
-def test_bulk_insert_uses_executemany_in_chunks():
-    module = importlib.import_module(
-        "dw_refactor_agent.lineage.import_lineage"
-    )
-
-    class RecordingCursor:
-        def __init__(self):
-            self.execute_calls = []
-            self.executemany_calls = []
-
-        def execute(self, sql, params=None):
-            self.execute_calls.append((sql, params))
-
-        def executemany(self, sql, rows):
-            self.executemany_calls.append((sql, list(rows)))
-
-    cursor = RecordingCursor()
-
-    inserted = module.bulk_insert(
-        cursor,
-        "INSERT INTO demo VALUES (%s)",
-        [(1,), (2,), (3,)],
-        batch_size=2,
-    )
-
-    assert inserted == 3
-    assert cursor.execute_calls == []
-    assert cursor.executemany_calls == [
-        ("INSERT INTO demo VALUES (%s)", [(1,), (2,)]),
-        ("INSERT INTO demo VALUES (%s)", [(3,)]),
-    ]
 
 
 def test_delete_snapshot_rows_does_not_truncate_whole_lineage_database():

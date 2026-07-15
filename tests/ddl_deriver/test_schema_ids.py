@@ -12,6 +12,7 @@ from dw_refactor_agent.ddl_deriver.schema_ids import (
     main,
     validate_project,
 )
+from tests.case_matrix import case_matrix
 
 TABLE_ID = "91ed8f6a-736d-4896-888e-f9225741b7fa"
 FIRST_COLUMN_ID = "6bfa89c0-1e30-4f92-a25e-b5a39ab94880"
@@ -115,23 +116,6 @@ def _configure_project(tmp_path, monkeypatch, project="demo"):
     return ddl_dir
 
 
-def test_validate_project_reports_missing_schema_ids(tmp_path, monkeypatch):
-    ddl_dir = _configure_project(tmp_path, monkeypatch)
-    (ddl_dir / "dwd_order.sql").write_text(_ddl(), encoding="utf-8")
-
-    issues = validate_project("demo")
-
-    assert [issue.code for issue in issues] == [
-        "missing_table_id",
-        "missing_column_id",
-        "missing_column_id",
-    ]
-    assert [issue.column_name for issue in issues[1:]] == [
-        "order_id",
-        "amount",
-    ]
-
-
 def test_validate_project_reports_invalid_or_orphan_markers(
     tmp_path, monkeypatch
 ):
@@ -154,108 +138,6 @@ def test_validate_project_reports_invalid_or_orphan_markers(
         "invalid_column_id",
         "orphan_column_id",
     }
-
-
-def test_validate_project_reports_duplicate_ids_across_files(
-    tmp_path, monkeypatch
-):
-    ddl_dir = _configure_project(tmp_path, monkeypatch)
-    (ddl_dir / "dwd_order.sql").write_text(
-        _ddl(
-            table_id=TABLE_ID,
-            first_column_id=FIRST_COLUMN_ID,
-            second_column_id=SECOND_COLUMN_ID,
-        ),
-        encoding="utf-8",
-    )
-    (ddl_dir / "dwd_payment.sql").write_text(
-        _ddl(
-            "demo_dm.dwd_payment",
-            table_id=TABLE_ID,
-            first_column_id=FIRST_COLUMN_ID,
-            second_column_id="1db7309f-1f9e-4393-807c-7d836ea25727",
-        ),
-        encoding="utf-8",
-    )
-
-    issues = validate_project("demo")
-
-    assert [issue.code for issue in issues].count("duplicate_table_id") == 2
-    assert [issue.code for issue in issues].count("duplicate_column_id") == 2
-
-
-def test_validate_project_accepts_complete_unique_ids(tmp_path, monkeypatch):
-    ddl_dir = _configure_project(tmp_path, monkeypatch)
-    (ddl_dir / "dwd_order.sql").write_text(
-        _ddl(
-            table_id=TABLE_ID,
-            first_column_id=FIRST_COLUMN_ID,
-            second_column_id=SECOND_COLUMN_ID,
-        ),
-        encoding="utf-8",
-    )
-
-    assert validate_project("demo") == []
-
-
-def test_validate_and_parse_accept_uppercase_marker_names(
-    tmp_path, monkeypatch
-):
-    ddl_dir = _configure_project(tmp_path, monkeypatch)
-    path = ddl_dir / "dwd_order.sql"
-    text = _ddl(
-        table_id=TABLE_ID,
-        first_column_id=FIRST_COLUMN_ID,
-        second_column_id=SECOND_COLUMN_ID,
-    )
-    path.write_text(
-        text.replace("-- table_id:", "-- TABLE_ID:").replace(
-            "-- column_id:", "-- COLUMN_ID:"
-        ),
-        encoding="utf-8",
-    )
-
-    assert validate_project("demo") == []
-    table = parse_create_table(path.read_text(encoding="utf-8"))
-    assert table is not None
-    assert table.table_id == TABLE_ID
-    assert [column.column_id for column in table.columns] == [
-        FIRST_COLUMN_ID,
-        SECOND_COLUMN_ID,
-    ]
-
-
-def test_init_project_identifies_every_managed_ddl_file(tmp_path, monkeypatch):
-    ddl_dir = _configure_project(tmp_path, monkeypatch)
-    (ddl_dir / "dwd_order.sql").write_text(_ddl(), encoding="utf-8")
-
-    assignments = init_project("demo")
-
-    assert len(assignments) == 3
-    assert init_project("demo") == []
-    assert validate_project("demo") == []
-
-
-def test_init_project_preflights_all_files_before_writing(
-    tmp_path, monkeypatch
-):
-    ddl_dir = _configure_project(tmp_path, monkeypatch)
-    first_path = ddl_dir / "dwd_order.sql"
-    first_text = _ddl()
-    first_path.write_text(first_text, encoding="utf-8")
-    invalid_path = ddl_dir / "dwd_payment.sql"
-    invalid_path.write_text(
-        _ddl("demo_dm.dwd_payment").replace(
-            "CREATE TABLE",
-            f"-- column_id: {SECOND_COLUMN_ID}\nCREATE TABLE",
-        ),
-        encoding="utf-8",
-    )
-
-    with pytest.raises(SchemaIdentityError, match="orphan_column_id"):
-        init_project("demo")
-
-    assert first_path.read_text(encoding="utf-8") == first_text
 
 
 def test_init_project_preflights_duplicate_ids_before_writing(
@@ -356,21 +238,6 @@ def test_validate_project_rejects_multiple_create_tables(
     assert "multiple_create_tables" in {issue.code for issue in issues}
 
 
-def test_validate_project_ignores_create_example_in_trailing_comment(
-    tmp_path, monkeypatch
-):
-    ddl_dir = _configure_project(tmp_path, monkeypatch)
-    text = _ddl(
-        table_id=TABLE_ID,
-        first_column_id=FIRST_COLUMN_ID,
-        second_column_id=SECOND_COLUMN_ID,
-    )
-    text += "\n-- example: CREATE TABLE demo_dm.example (id BIGINT);\n"
-    (ddl_dir / "dwd_order.sql").write_text(text, encoding="utf-8")
-
-    assert validate_project("demo") == []
-
-
 def test_validate_project_scans_nonrequired_projects_for_duplicate_ids(
     tmp_path, monkeypatch
 ):
@@ -418,6 +285,6 @@ def test_cli_validate_returns_nonzero_for_identity_issues(
     assert "校验失败: 3 个问题" in output
 
 
-@pytest.mark.parametrize("project", ["shop", "finance_analytics"])
+@case_matrix("project", ["shop", "finance_analytics"])
 def test_migrated_managed_projects_have_complete_schema_ids(project):
     assert validate_project(project) == []

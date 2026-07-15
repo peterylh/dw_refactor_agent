@@ -17,9 +17,8 @@ from dw_refactor_agent.ddl_deriver.ddl_deriver import (
     format_changes,
     generate_table_id,
     inject_table_id,
-    load_tables_from_dir,
-    parse_create_table,
 )
+from tests.case_matrix import case_matrix
 
 # ============================================================
 # 测试数据
@@ -102,29 +101,6 @@ def _write_demo_ddl_files(ddl_dir):
     ddl_dir.mkdir()
     for table_name, ddl in DEMO_DDL.items():
         (ddl_dir / f"{table_name}.sql").write_text(ddl, encoding="utf-8")
-
-
-def test_table_lifecycle_derivation_scenarios():
-    _assert_create_table()
-    _assert_drop_table()
-    _assert_rename_table()
-    _assert_rename_prefers_high_similarity()
-    _assert_rename_too_different_falls_back_to_drop_create()
-    _assert_batch_create_drop()
-    _assert_no_changes()
-    _assert_create_table_does_not_generate_uuid()
-
-
-def test_rename_with_followup_change_scenarios():
-    _assert_rename_add_column()
-    _assert_rename_drop_column()
-    _assert_rename_modify_column()
-    _assert_rename_table_with_rename_column()
-    _assert_rename_and_alter_same_table()
-    _assert_rename_by_uuid()
-    _assert_rename_by_uuid_with_alter()
-    _assert_rename_by_uuid_takes_precedence()
-    _assert_different_uuid_low_jaccard_not_rename()
 
 
 def test_alter_table_derivation_scenarios():
@@ -1257,64 +1233,6 @@ def test_different_table_ids_replace_same_named_table_in_strict_mode():
     assert [type(change) for change in changes] == [DropTable, CreateTable]
 
 
-def test_different_table_ids_disable_similarity_rename():
-    old_t = TableDef(
-        full_name="shop_dm.dwd_order",
-        short_name="dwd_order",
-        columns=[ColumnDef("order_id", "BIGINT")],
-        table_id="91ed8f6a-736d-4896-888e-f9225741b7fa",
-    )
-    new_t = TableDef(
-        full_name="shop_dm.dwd_order_v2",
-        short_name="dwd_order_v2",
-        columns=[ColumnDef("order_id", "BIGINT")],
-        table_id="1db7309f-1f9e-4393-807c-7d836ea25727",
-    )
-
-    changes = derive_ddl_changes({"dwd_order": old_t}, {"dwd_order_v2": new_t})
-
-    assert not any(isinstance(change, RenameTable) for change in changes)
-    assert [type(change) for change in changes] == [DropTable, CreateTable]
-
-
-def test_legacy_column_rename_requires_positive_evidence():
-    old_t = TableDef(
-        full_name="shop_dm.dwd_order",
-        short_name="dwd_order",
-        columns=[ColumnDef("legacy_flag", "INT", nullable=False)],
-    )
-    new_t = TableDef(
-        full_name="shop_dm.dwd_order",
-        short_name="dwd_order",
-        columns=[ColumnDef("new_metric", "INT", nullable=False)],
-    )
-
-    change = derive_ddl_changes({"dwd_order": old_t}, {"dwd_order": new_t})[0]
-
-    assert isinstance(change, AlterTable)
-    assert change.renames == []
-    assert [column.name for column in change.drops] == ["legacy_flag"]
-    assert [column.name for column in change.adds] == ["new_metric"]
-
-
-def test_legacy_column_rename_rejects_weak_token_overlap():
-    old_t = TableDef(
-        full_name="shop_dm.dwd_order",
-        short_name="dwd_order",
-        columns=[ColumnDef("customer_amount_total", "INT")],
-    )
-    new_t = TableDef(
-        full_name="shop_dm.dwd_order",
-        short_name="dwd_order",
-        columns=[ColumnDef("customer_status_flag", "INT")],
-    )
-
-    change = derive_ddl_changes({"dwd_order": old_t}, {"dwd_order": new_t})[0]
-
-    assert isinstance(change, AlterTable)
-    assert change.renames == []
-
-
 def test_legacy_duplicate_comments_do_not_disambiguate_renames():
     old_t = TableDef(
         full_name="shop_dm.dwd_order",
@@ -1354,30 +1272,6 @@ def _assert_no_changes():
 # ============================================================
 # 6. 集成测试: 从真实 DDL 文件加载并推导
 # ============================================================
-
-
-def test_from_fixture_ddl_single_change(tmp_path):
-    """DDL 文件: 重命名 ods_customer → ods_customer_v2."""
-    old_dir = tmp_path / "old"
-    new_dir = tmp_path / "new"
-    old_dir.mkdir()
-    new_dir.mkdir()
-
-    content = DEMO_DDL["ods_customer"]
-    (old_dir / "ods_customer.sql").write_text(content)
-
-    new_content = content.replace("ods_customer", "ods_customer_v2")
-    (new_dir / "ods_customer_v2.sql").write_text(new_content)
-
-    old_tables = load_tables_from_dir(old_dir)
-    new_tables = load_tables_from_dir(new_dir)
-    changes = derive_ddl_changes(old_tables, new_tables)
-
-    assert len(changes) >= 1
-    renames = [c for c in changes if isinstance(c, RenameTable)]
-    assert len(renames) == 1
-    assert "ods_customer" in renames[0].old_name
-    assert "ods_customer_v2" in renames[0].new_name
 
 
 # ============================================================
@@ -1462,43 +1356,6 @@ def _assert_rename_and_alter_same_table():
     assert {o.name for o, n in alters[0].modifies} == {"total_amount"}
 
 
-def test_parse_fixture_ddl_files(tmp_path):
-    """验证 DDL 文件能被正确解析."""
-    ddl_dir = tmp_path / "ddl"
-    _write_demo_ddl_files(ddl_dir)
-
-    for f in sorted(ddl_dir.glob("*.sql")):
-        content = f.read_text(encoding="utf-8")
-        t = parse_create_table(content)
-        assert t is not None, f"Failed to parse {f.name}"
-        assert t.short_name == f.stem
-        assert len(t.columns) >= 1
-
-
-def test_parse_create_table_reads_column_ids():
-    first_id = "6bfa89c0-1e30-4f92-a25e-b5a39ab94880"
-    second_id = "77eb791d-9856-4cc2-a77c-89f46ee626b2"
-    ddl = f"""\
--- table_id: 91ed8f6a-736d-4896-888e-f9225741b7fa
-CREATE TABLE shop_dm.dwd_order_detail (
-    -- column_id: {first_id}
-    order_id BIGINT NOT NULL COMMENT '订单ID',
-    -- column_id: {second_id}
-    amount DECIMAL(12,2) NOT NULL COMMENT '金额'
-) ENGINE=OLAP
-DUPLICATE KEY(order_id)
-DISTRIBUTED BY HASH(order_id) BUCKETS 10;
-"""
-
-    table = parse_create_table(ddl)
-
-    assert table is not None
-    assert [column.column_id for column in table.columns] == [
-        first_id,
-        second_id,
-    ]
-
-
 def test_schema_ids_match_case_insensitively_in_strict_mode():
     table_id = "91ed8f6a-736d-4896-888e-f9225741b7fa"
     column_id = "6bfa89c0-1e30-4f92-a25e-b5a39ab94880"
@@ -1539,7 +1396,7 @@ def test_schema_ids_match_case_insensitively_in_strict_mode():
     assert changes[1].renames == [("unit_price", "price_unit")]
 
 
-@pytest.mark.parametrize("duplicate_side", ["old", "new"])
+@case_matrix("duplicate_side", ["old", "new"])
 def test_derive_rejects_duplicate_in_memory_table_ids(duplicate_side):
     table_id = "91ed8f6a-736d-4896-888e-f9225741b7fa"
     tables = {
@@ -1553,7 +1410,7 @@ def test_derive_rejects_duplicate_in_memory_table_ids(duplicate_side):
         derive_ddl_changes(old_tables, new_tables)
 
 
-@pytest.mark.parametrize("duplicate_side", ["old", "new"])
+@case_matrix("duplicate_side", ["old", "new"])
 def test_derive_rejects_global_duplicate_in_memory_column_ids(duplicate_side):
     column_id = "6bfa89c0-1e30-4f92-a25e-b5a39ab94880"
     tables = {

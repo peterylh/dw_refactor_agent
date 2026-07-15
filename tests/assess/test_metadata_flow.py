@@ -1,5 +1,3 @@
-import pytest
-
 from dw_refactor_agent.assessment.llm.context_builder import TableContext
 from dw_refactor_agent.assessment.llm.layer_resolution import (
     LayerResolutionPolicy,
@@ -12,9 +10,10 @@ from dw_refactor_agent.assessment.llm.table_inspector import (
     METRIC_CONTEXT_REINSPECTION_ERROR_KEY,
     TableInspectResult,
 )
+from tests.case_matrix import case_matrix
 
 
-@pytest.mark.parametrize(
+@case_matrix(
     ("upstream_tables", "detected_tables", "expected_tables"),
     [
         (

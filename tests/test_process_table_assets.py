@@ -1,8 +1,7 @@
 import re
 
-import pytest
-
 from dw_refactor_agent.config import project_dir as configured_project_dir
+from tests.case_matrix import case_matrix
 
 PROCESS_PRODUCER_TASKS = (
     (
@@ -37,7 +36,7 @@ def _task_sql(project: str, relative_path: str) -> str:
     return (project_path / relative_path).read_text(encoding="utf-8")
 
 
-@pytest.mark.parametrize(
+@case_matrix(
     ("project", "relative_path", "process_table"),
     PROCESS_PRODUCER_TASKS,
     ids=("shop-slice", "shop-window", "retail-slice", "retail-window"),
@@ -65,7 +64,7 @@ def test_process_producer_ctas_is_one_replica_and_immutable(
     )
 
 
-@pytest.mark.parametrize(
+@case_matrix(
     "relative_path",
     (
         "mid/tasks/dws_store_sales_daily.sql",
