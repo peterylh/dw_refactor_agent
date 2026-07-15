@@ -158,6 +158,7 @@ def run_inspection_pipeline(
     base_model_metadata: Optional[Dict[str, Dict[str, Any]]] = None,
     metric_groups: Optional[Dict[str, Dict[str, List[str]]]] = None,
     expose_layer_hints: bool = True,
+    use_model_metadata_asset_roles: bool = False,
     metric_result_is_eligible: Optional[MetricResultEligibility] = None,
     result_layer_resolver: Optional[ResultLayerResolver] = None,
 ) -> InspectionResultBundle:
@@ -168,6 +169,7 @@ def run_inspection_pipeline(
         model_metadata=base_model_metadata,
         metric_groups=metric_groups,
         expose_layer_hints=expose_layer_hints,
+        use_model_metadata_asset_roles=use_model_metadata_asset_roles,
     )
     # Classify every writable model before building metric phases. In a cold
     # start all mid-layer models can carry the same direct-rule prior, so the

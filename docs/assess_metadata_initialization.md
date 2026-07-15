@@ -108,7 +108,10 @@ python -m dw_refactor_agent.assessment.llm.model_metadata_writer --project shop 
 `incremental`，并从目标表 DELETE 条件提取 `execution.slice`；存在 full-refresh
 伴随任务时使用 `companion`，否则使用 `replay_slices`。候选存在无法解析的执行契约、
 blocked LLM 巡检、无效实体引用或未闭合的业务语义引用时，`publication.status=blocked`，
-catalog 和正式 models 均保持不变。发布校验通过后才会替换当前项目 models。
+catalog 和正式 models 均保持不变。DWD/DWS 没有 task SQL、事实表业务过程缺失或有歧义、
+实体缺少有效键、grain 引用未知实体/字段也属于发布阻断项。generate 的巡检资产角色只从
+内存候选构建，不读取旧 model YAML；发布校验通过后，catalog 与 models 先全部暂存，再统一
+替换，普通文件写入异常会回滚整组文件。
 
 只想维护业务语义目录时，使用独立入口：
 

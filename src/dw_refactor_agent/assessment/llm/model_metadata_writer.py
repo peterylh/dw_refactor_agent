@@ -16,9 +16,11 @@ import os
 import re
 import sys
 import threading
+from contextlib import suppress
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Callable
+from uuid import uuid4
 
 import yaml
 
@@ -70,10 +72,12 @@ from dw_refactor_agent.assessment.project_facts.asset_catalog import (
     build_asset_catalog,
 )
 from dw_refactor_agent.assessment.project_facts.business_semantics import (
+    LEGACY_BUSINESS_SEMANTICS_FILE_NAME,
     _infer_table_type,
     _layer_from_table_name,
     _materialized_for_layer,
     _normalize_catalog_code,
+    _split_catalog_payloads,
     build_business_semantics_catalog_from_inspection,
     build_initial_business_semantics_catalog,
     catalog_mapping_for_model,
@@ -2221,6 +2225,8 @@ def _write_generated_model_metadata(
     dry_run: bool,
     delete_existing: bool,
     refinement_updates: list[dict[str, Any]] | None = None,
+    additional_rendered_files: dict[Path, str] | None = None,
+    additional_deleted_files: list[Path] | None = None,
 ) -> tuple[list[dict[str, Any]], list[str]]:
     existing_model_files = _model_files(project) if delete_existing else []
     deleted_model_files: list[str] = []
@@ -2268,37 +2274,157 @@ def _write_generated_model_metadata(
         model_updates.append(update)
 
     if not dry_run:
-        staged_models: list[tuple[Path, Path]] = []
-        try:
-            for path, rendered in rendered_models:
-                path.parent.mkdir(parents=True, exist_ok=True)
-                staged_path = path.with_name(
-                    f".{path.name}.generate-{os.getpid()}.tmp"
-                )
-                staged_path.write_text(rendered, encoding=TEXT_ENCODING)
-                staged_models.append((staged_path, path))
-
-            for staged_path, path in staged_models:
-                staged_path.replace(path)
-
-            target_paths = {
-                path.resolve()
-                for path in plan.write_targets.model_paths.values()
-            }
-            for path in existing_model_files:
-                deleted_model_files.append(str(path))
-                if path.resolve() not in target_paths and path.exists():
-                    path.unlink()
-        finally:
-            for staged_path, _path in staged_models:
-                if staged_path.exists():
-                    staged_path.unlink()
+        rendered_files = dict(additional_rendered_files or {})
+        rendered_files.update(dict(rendered_models))
+        target_paths = {
+            path.resolve() for path in plan.write_targets.model_paths.values()
+        }
+        obsolete_model_files = [
+            path
+            for path in existing_model_files
+            if path.resolve() not in target_paths
+        ]
+        deleted_model_files.extend(str(path) for path in existing_model_files)
+        _transactional_publish_files(
+            rendered_files,
+            delete_paths=(
+                obsolete_model_files + list(additional_deleted_files or [])
+            ),
+        )
 
         import dw_refactor_agent.config as _config
 
         _config.clear_model_metadata_cache()
+        if additional_rendered_files or additional_deleted_files:
+            _config.clear_business_semantics_cache()
+            _config.clear_naming_config_cache()
 
     return model_updates, deleted_model_files
+
+
+def _transactional_publish_files(
+    rendered_files: dict[Path, str],
+    *,
+    delete_paths: list[Path],
+) -> None:
+    """Publish a generated file set with rollback on ordinary exceptions."""
+    token = uuid4().hex
+    staged_files: list[tuple[Path, Path]] = []
+    backups: list[tuple[Path, Path]] = []
+    installed_paths: list[Path] = []
+    publication_succeeded = False
+    rendered_paths = set(rendered_files)
+    deletion_targets = [
+        path for path in delete_paths if path not in rendered_paths
+    ]
+    try:
+        for path, rendered in sorted(
+            rendered_files.items(), key=lambda item: str(item[0])
+        ):
+            path.parent.mkdir(parents=True, exist_ok=True)
+            staged_path = path.with_name(f".{path.name}.{token}.staged")
+            staged_path.write_text(rendered, encoding=TEXT_ENCODING)
+            staged_files.append((staged_path, path))
+
+        targets = [path for _staged, path in staged_files]
+        targets.extend(path for path in deletion_targets if path.exists())
+        for path in targets:
+            if not path.exists():
+                continue
+            backup_path = path.with_name(f".{path.name}.{token}.backup")
+            path.replace(backup_path)
+            backups.append((backup_path, path))
+
+        for staged_path, path in staged_files:
+            staged_path.replace(path)
+            installed_paths.append(path)
+        publication_succeeded = True
+    except Exception:
+        for path in reversed(installed_paths):
+            if path.exists():
+                path.unlink()
+        for backup_path, path in reversed(backups):
+            if path.exists():
+                path.unlink()
+            if backup_path.exists():
+                backup_path.replace(path)
+        raise
+    finally:
+        for staged_path, _path in staged_files:
+            if staged_path.exists():
+                with suppress(OSError):
+                    staged_path.unlink()
+        if publication_succeeded:
+            for backup_path, _path in backups:
+                if backup_path.exists():
+                    with suppress(OSError):
+                        backup_path.unlink()
+
+
+def _render_generated_catalog_files(
+    project: str,
+    catalog: dict[str, Any],
+    *,
+    enabled: bool,
+) -> tuple[dict[Path, str], list[Path], list[str]]:
+    if not enabled:
+        return {}, [], []
+    paths = business_semantics_paths(project)
+    payloads = _split_catalog_payloads(catalog)
+    rendered_files: dict[Path, str] = {}
+    written_names = []
+    for name, path in sorted(paths.items()):
+        rendered = yaml.safe_dump(
+            payloads[name],
+            allow_unicode=True,
+            sort_keys=False,
+        )
+        existing = (
+            path.read_text(encoding=TEXT_ENCODING) if path.exists() else None
+        )
+        if existing == rendered:
+            continue
+        rendered_files[path] = rendered
+        written_names.append(name)
+    legacy_path = (
+        next(iter(paths.values())).parent / LEGACY_BUSINESS_SEMANTICS_FILE_NAME
+    )
+    deleted_files = [legacy_path] if legacy_path.exists() else []
+    return rendered_files, deleted_files, written_names
+
+
+def _published_catalog_reports(
+    catalog_report: dict[str, Any],
+    catalog_update_report: dict[str, Any],
+    *,
+    written_names: list[str],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    catalog_report = dict(catalog_report)
+    planned_init = set(
+        catalog_report.get("planned_catalog_written_names") or []
+    )
+    catalog_report["catalog_init_written_names"] = [
+        name for name in written_names if name in planned_init
+    ]
+    catalog_report["planned_catalog_written_names"] = []
+
+    catalog_update_report = dict(catalog_update_report)
+    update = catalog_update_report.get("catalog_update")
+    if isinstance(update, dict):
+        update = dict(update)
+        planned_names = set(update.get("planned_written_names") or [])
+        update["dry_run"] = False
+        update["updated"] = True
+        update["written_names"] = [
+            name for name in written_names if name in planned_names
+        ]
+        update["planned_written_names"] = []
+        catalog_update_report["catalog_update"] = update
+        catalog_update_report["catalog_updates"] = list(
+            catalog_update_report.get("planned_catalog_updates") or []
+        )
+        catalog_update_report["planned_catalog_updates"] = []
+    return catalog_report, catalog_update_report
 
 
 def _merge_final_update_with_refinement(
@@ -2479,22 +2605,19 @@ def run_generate_model_metadata(
     )
     publication_blocked = publication_validation["status"] == "blocked"
     should_publish = not dry_run and not publication_blocked
-
+    catalog_rendered_files: dict[Path, str] = {}
+    catalog_deleted_files: list[Path] = []
+    catalog_written_names: list[str] = []
     if should_publish:
-        catalog, catalog_report = _generate_metadata_catalog_for_plan(
+        (
+            catalog_rendered_files,
+            catalog_deleted_files,
+            catalog_written_names,
+        ) = _render_generated_catalog_files(
             project,
-            dry_run=False,
-            update_catalog=update_catalog,
+            candidate_catalog,
+            enabled=update_catalog,
         )
-        if api_key and update_catalog:
-            catalog_update_report = _merge_llm_catalog_discoveries(
-                project,
-                llm_result=llm_result,
-                base_catalog=catalog,
-                model_metadata=generate_plan.base_model_metadata,
-                resolution_policy=generate_plan.resolution_policy,
-                dry_run=False,
-            )
 
     _strip_internal_model_metadata(llm_result)
 
@@ -2506,7 +2629,15 @@ def run_generate_model_metadata(
         dry_run=not should_publish,
         delete_existing=replace_existing_models,
         refinement_updates=refinement_updates,
+        additional_rendered_files=catalog_rendered_files,
+        additional_deleted_files=catalog_deleted_files,
     )
+    if should_publish:
+        catalog_report, catalog_update_report = _published_catalog_reports(
+            catalog_report,
+            catalog_update_report,
+            written_names=catalog_written_names,
+        )
 
     changed_updates = [update for update in model_updates if update["changed"]]
     result = {
@@ -3350,6 +3481,7 @@ def run_metadata_write(
         if metric_groups is not None
         else None,
         expose_layer_hints=expose_layer_hints,
+        use_model_metadata_asset_roles=plan.mode == "generate",
         metric_result_is_eligible=lambda result: (
             _metric_result_is_eligible_for_propagation(
                 result,

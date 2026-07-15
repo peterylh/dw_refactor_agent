@@ -62,8 +62,13 @@ def _slice_binding(
     )
     for delete_match in delete_pattern.finditer(task_sql):
         predicate = delete_match.group(1)
-        for column in _ddl_column_names(asset):
+        for column in sorted(
+            _ddl_column_names(asset),
+            key=len,
+            reverse=True,
+        ):
             binding = re.search(
+                rf"(?<![A-Za-z0-9_`])"
                 rf"(?:`?[A-Za-z_][A-Za-z0-9_]*`?\.)?`?"
                 rf"{re.escape(column)}`?\s*=\s*[^;]{{0,120}}?"
                 r"@([A-Za-z_][A-Za-z0-9_]*)",
@@ -143,6 +148,15 @@ def _validate_execution(
 ) -> list[dict[str, str]]:
     main_tasks = _task_facts(asset, full_refresh=False)
     if not main_tasks:
+        layer = str(metadata.get("layer") or "").upper()
+        if layer in {"DWD", "DWS"}:
+            return [
+                _error(
+                    "execution_task_missing",
+                    table_name,
+                    f"{layer} execution cannot be inferred without task SQL",
+                )
+            ]
         return []
 
     execution = metadata.get("execution") or {}
@@ -198,16 +212,15 @@ def _validate_execution(
             )
         )
     slice_config = execution.get("slice") or {}
-    if strategy == "replay_slices" and not slice_config:
+    if not slice_config:
+        strategy_label = f"{strategy} model" if strategy else "model"
         errors.append(
             _error(
                 "execution_slice_missing",
                 table_name,
-                "incremental replay_slices model requires execution.slice",
+                f"incremental {strategy_label} requires execution.slice",
             )
         )
-        return errors
-    if not slice_config:
         return errors
     for field in ("param", "column", "period"):
         if not str(slice_config.get(field) or "").strip():
@@ -272,11 +285,29 @@ def _validate_entities(
         )
 
     ddl_columns = {name.casefold() for name in _ddl_column_names(asset)}
+    entity_codes = {
+        _canonical_code(entity.get("code"))
+        for entity in entities
+        if isinstance(entity, dict) and entity.get("code")
+    }
     for entity in entities:
         if not isinstance(entity, dict):
             continue
         code = str(entity.get("code") or "").strip() or "<missing>"
-        for key_column in entity.get("key_columns") or []:
+        key_columns = [
+            str(column).strip()
+            for column in entity.get("key_columns") or []
+            if str(column).strip()
+        ]
+        if not key_columns:
+            errors.append(
+                _error(
+                    "entity_key_missing",
+                    table_name,
+                    f"entity {code} requires at least one key column",
+                )
+            )
+        for key_column in key_columns:
             if str(key_column).strip().casefold() not in ddl_columns:
                 errors.append(
                     _error(
@@ -286,14 +317,58 @@ def _validate_entities(
                     )
                 )
         relationship = entity.get("relationship") or {}
-        if relationship.get("type") and not relationship.get("from_entity"):
+        entity_type = str(entity.get("type") or "").strip().lower()
+        relationship_type = str(relationship.get("type") or "").strip()
+        from_entity = str(relationship.get("from_entity") or "").strip()
+        if entity_type == "foreign" and (
+            not relationship_type or not from_entity
+        ):
             errors.append(
                 _error(
                     "entity_relationship_origin_missing",
                     table_name,
-                    f"entity {code} relationship.from_entity is required",
+                    f"foreign entity {code} requires relationship.type and "
+                    "relationship.from_entity",
                 )
             )
+        elif from_entity and _canonical_code(from_entity) not in entity_codes:
+            errors.append(
+                _error(
+                    "entity_relationship_origin_unknown",
+                    table_name,
+                    f"entity {code} relationship.from_entity={from_entity} "
+                    "is not declared",
+                )
+            )
+
+    grain = metadata.get("grain") or {}
+    for entity_code in grain.get("entities") or []:
+        if _canonical_code(entity_code) not in entity_codes:
+            errors.append(
+                _error(
+                    "grain_entity_unknown",
+                    table_name,
+                    f"grain entity {entity_code} is not declared",
+                )
+            )
+    for column in grain.get("additional_key_columns") or []:
+        if str(column).strip().casefold() not in ddl_columns:
+            errors.append(
+                _error(
+                    "grain_column_missing",
+                    table_name,
+                    f"grain additional key {column} is absent from DDL",
+                )
+            )
+    time_column = str(grain.get("time_column") or "").strip()
+    if time_column and time_column.casefold() not in ddl_columns:
+        errors.append(
+            _error(
+                "grain_column_missing",
+                table_name,
+                f"grain time_column={time_column} is absent from DDL",
+            )
+        )
     return errors
 
 
@@ -357,18 +432,33 @@ def _validate_semantics(
             )
 
     process = str(metadata.get("business_process") or "").strip()
-    if (
-        table_type == "fact"
-        and len(_inspection_process_codes(inspection)) == 1
-        and not process
-    ):
-        errors.append(
-            _error(
-                "business_process_missing",
-                table_name,
-                "single inspected business process was not written to model",
+    if table_type == "fact":
+        inspected_processes = _inspection_process_codes(inspection)
+        if not inspected_processes:
+            errors.append(
+                _error(
+                    "business_process_missing",
+                    table_name,
+                    "fact inspection did not identify a business process",
+                )
             )
-        )
+        elif len(inspected_processes) > 1:
+            errors.append(
+                _error(
+                    "business_process_ambiguous",
+                    table_name,
+                    "fact inspection identified multiple business processes: "
+                    + ", ".join(inspected_processes),
+                )
+            )
+        elif _canonical_code(process) != inspected_processes[0]:
+            errors.append(
+                _error(
+                    "business_process_missing",
+                    table_name,
+                    "the inspected business process was not written to model",
+                )
+            )
     if process and not _catalog_has_code(
         catalog, "business_processes", process
     ):

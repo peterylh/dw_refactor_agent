@@ -1,10 +1,14 @@
 import json
 import sys
+from pathlib import Path
 
 import pytest
 import yaml
 
 import dw_refactor_agent.config as config
+from dw_refactor_agent.assessment.llm.generation_contract import (
+    validate_generate_candidate,
+)
 from dw_refactor_agent.assessment.llm.layer_resolution import (
     LayerResolutionPolicy,
 )
@@ -159,10 +163,17 @@ def _write_catalog_project(
 ):
     project_dir = tmp_path / project
     ddl_dir = project_dir / "mid" / "ddl"
+    task_dir = project_dir / "mid" / "tasks"
     ddl_dir.mkdir(parents=True, exist_ok=True)
+    task_dir.mkdir(parents=True, exist_ok=True)
     for table_name in ddl_tables:
         (ddl_dir / f"{table_name}.sql").write_text(
             (f"CREATE TABLE {table_name} (id BIGINT, customer_id BIGINT);\n"),
+            encoding="utf-8",
+        )
+        (task_dir / f"{table_name}.sql").write_text(
+            f"TRUNCATE TABLE {table_name};\n"
+            f"INSERT INTO {table_name} SELECT 1, 1;\n",
             encoding="utf-8",
         )
     if models:
@@ -3086,7 +3097,10 @@ def test_run_generate_model_metadata_missing_catalog_writes_skeleton_and_models(
     assert result["model_update_count"] == 1
     assert model["name"] == "dwd_order_detail"
     assert model["layer"] == "DWD"
-    assert model["execution"]["materialized"] == "incremental"
+    assert model["execution"] == {
+        "materialized": "full",
+        "full_refresh_strategy": "replace_all",
+    }
     assert "config" not in model
 
 
@@ -3102,7 +3116,10 @@ def test_run_generate_model_metadata_derives_execution_from_task_sql(
     full_refresh_dir.mkdir(parents=True)
     for table_name in ("dwd_full", "dwd_daily", "dwd_companion"):
         (ddl_dir / f"{table_name}.sql").write_text(
-            (f"CREATE TABLE {table_name} (id BIGINT, business_date DATE);\n"),
+            (
+                f"CREATE TABLE {table_name} "
+                "(id BIGINT, date DATE, business_date DATE);\n"
+            ),
             encoding="utf-8",
         )
     (task_dir / "dwd_full.sql").write_text(
@@ -3193,7 +3210,7 @@ def test_run_generate_model_metadata_blocks_unresolved_execution_contract(
         },
     )
     task_dir = project_dir / "mid" / "tasks"
-    task_dir.mkdir(parents=True)
+    task_dir.mkdir(parents=True, exist_ok=True)
     (task_dir / "dwd_order_detail.sql").write_text(
         "INSERT INTO demo.dwd_order_detail SELECT 1, 1;\n",
         encoding="utf-8",
@@ -3215,6 +3232,217 @@ def test_run_generate_model_metadata_blocks_unresolved_execution_contract(
     ]
     assert result["deleted_model_files"] == []
     assert saved["execution"] == {"materialized": "full"}
+
+
+def test_run_generate_model_metadata_blocks_dwd_without_task_sql(
+    tmp_path, monkeypatch
+):
+    project = "generate_execution_task_missing"
+    project_dir = _write_catalog_project(
+        tmp_path,
+        monkeypatch,
+        project,
+        catalog=_catalog_payload(),
+        ddl_tables=["dwd_order_detail"],
+        models={
+            "dwd_order_detail": {
+                "version": 2,
+                "name": "dwd_order_detail",
+                "layer": "DWD",
+                "table_type": "fact",
+                "execution": {"materialized": "full"},
+            }
+        },
+    )
+    (project_dir / "mid" / "tasks" / "dwd_order_detail.sql").unlink()
+    model_path = project_dir / "mid" / "models" / "dwd_order_detail.yaml"
+
+    result = run_generate_model_metadata(project, dry_run=False)
+    saved = yaml.safe_load(model_path.read_text(encoding="utf-8"))
+
+    assert result["publication"]["status"] == "blocked"
+    assert result["publication"]["validation"]["errors"] == [
+        {
+            "type": "execution_task_missing",
+            "table": "dwd_order_detail",
+            "message": "DWD execution cannot be inferred without task SQL",
+        }
+    ]
+    assert saved["execution"] == {"materialized": "full"}
+
+
+@pytest.mark.parametrize(
+    ("process_codes", "expected_error", "expected_message"),
+    [
+        (
+            [],
+            "business_process_missing",
+            "fact inspection did not identify a business process",
+        ),
+        (
+            ["ORDER", "REFUND"],
+            "business_process_ambiguous",
+            (
+                "fact inspection identified multiple business processes: "
+                "ORDER, REFUND"
+            ),
+        ),
+    ],
+    ids=("missing", "ambiguous"),
+)
+def test_generate_publication_blocks_unresolved_business_processes(
+    tmp_path,
+    process_codes,
+    expected_error,
+    expected_message,
+):
+    task_path = tmp_path / "dwd_order_detail.sql"
+    task_path.write_text(
+        "TRUNCATE TABLE dwd_order_detail;\n",
+        encoding="utf-8",
+    )
+    validation = validate_generate_candidate(
+        {
+            "dwd_order_detail": {
+                "name": "dwd_order_detail",
+                "layer": "DWD",
+                "table_type": "fact",
+                "execution": {
+                    "materialized": "full",
+                    "full_refresh_strategy": "replace_all",
+                },
+            }
+        },
+        {
+            "dwd_order_detail": {
+                "ddl": {"columns": [{"name": "id"}]},
+                "tasks": [{"path": str(task_path), "is_full_refresh": False}],
+            }
+        },
+        llm_result={
+            "tables": [
+                {
+                    "table_name": "dwd_order_detail",
+                    "status": "passed",
+                    "table_type": "fact",
+                    "columns": {
+                        "atomic_metrics": [
+                            {
+                                "name": f"metric_{index}",
+                                "business_process": code,
+                            }
+                            for index, code in enumerate(process_codes)
+                        ]
+                    },
+                }
+            ]
+        },
+        catalog={
+            "business_processes": [
+                {"code": "ORDER"},
+                {"code": "REFUND"},
+            ]
+        },
+    )
+
+    assert validation["status"] == "blocked"
+    assert validation["errors"] == [
+        {
+            "type": expected_error,
+            "table": "dwd_order_detail",
+            "message": expected_message,
+        }
+    ]
+
+
+def test_generate_publication_validates_entity_keys_and_grain_references():
+    validation = validate_generate_candidate(
+        {
+            "dim_customer": {
+                "name": "dim_customer",
+                "layer": "DIM",
+                "table_type": "dimension",
+                "execution": {
+                    "materialized": "full",
+                    "full_refresh_strategy": "replace_all",
+                },
+                "entities": [
+                    {
+                        "code": "CUSTOMER",
+                        "type": "primary",
+                        "key_columns": [],
+                    }
+                ],
+                "semantic_subject": "CUSTOMER",
+                "grain": {
+                    "entities": ["GHOST"],
+                    "additional_key_columns": ["ghost_id"],
+                    "time_column": "ghost_date",
+                },
+            }
+        },
+        {
+            "dim_customer": {
+                "ddl": {"columns": [{"name": "customer_id"}]},
+                "tasks": [],
+            }
+        },
+        llm_result={
+            "tables": [
+                {
+                    "table_name": "dim_customer",
+                    "status": "passed",
+                    "table_type": "dimension",
+                    "columns": {},
+                }
+            ]
+        },
+        catalog={"semantic_subjects": [{"code": "CUSTOMER"}]},
+    )
+
+    assert validation["status"] == "blocked"
+    assert {error["type"] for error in validation["errors"]} == {
+        "entity_key_missing",
+        "grain_entity_unknown",
+        "grain_column_missing",
+    }
+
+
+def test_generate_file_set_publication_rolls_back_on_replace_failure(
+    tmp_path, monkeypatch
+):
+    import dw_refactor_agent.assessment.llm.model_metadata_writer as writer_module
+
+    catalog_path = tmp_path / "business_processes.yaml"
+    model_path = tmp_path / "dwd_order_detail.yaml"
+    catalog_path.write_text("catalog: old\n", encoding="utf-8")
+    model_path.write_text("model: old\n", encoding="utf-8")
+    original_replace = Path.replace
+    staged_replace_count = 0
+
+    def flaky_replace(self, target):
+        nonlocal staged_replace_count
+        if self.name.endswith(".staged"):
+            staged_replace_count += 1
+            if staged_replace_count == 2:
+                raise OSError("simulated replacement failure")
+        return original_replace(self, target)
+
+    monkeypatch.setattr(Path, "replace", flaky_replace)
+
+    with pytest.raises(OSError, match="simulated replacement failure"):
+        writer_module._transactional_publish_files(
+            {
+                catalog_path: "catalog: new\n",
+                model_path: "model: new\n",
+            },
+            delete_paths=[],
+        )
+
+    assert catalog_path.read_text(encoding="utf-8") == "catalog: old\n"
+    assert model_path.read_text(encoding="utf-8") == "model: old\n"
+    assert list(tmp_path.glob(".*.staged")) == []
+    assert list(tmp_path.glob(".*.backup")) == []
 
 
 def test_run_generate_model_metadata_uses_asset_role_for_prefixless_base(
@@ -3792,10 +4020,17 @@ def _write_single_writer_project(
 ):
     project_dir = tmp_path / project
     mid_ddl_dir = project_dir / "mid" / "ddl"
+    mid_task_dir = project_dir / "mid" / "tasks"
     mid_ddl_dir.mkdir(parents=True, exist_ok=True)
+    mid_task_dir.mkdir(parents=True, exist_ok=True)
     for table_name in mid_tables:
         (mid_ddl_dir / f"{table_name}.sql").write_text(
             f"CREATE TABLE {table_name} (id BIGINT);\n",
+            encoding="utf-8",
+        )
+        (mid_task_dir / f"{table_name}.sql").write_text(
+            f"TRUNCATE TABLE {table_name};\n"
+            f"INSERT INTO {table_name} SELECT 1;\n",
             encoding="utf-8",
         )
     if include_ods_ads:
@@ -3984,6 +4219,18 @@ def test_generate_single_writer_pass_keeps_ods_ads_base_models(
                     table_type="fact",
                     confidence=0.9,
                     reasoning_steps=[],
+                    columns={
+                        "atomic_metrics": [
+                            {
+                                "name": "id",
+                                "business_process": "ORDER_TRANSACTION",
+                            }
+                        ],
+                        "derived_metrics": [],
+                        "calculated_metrics": [],
+                        "dimensions": [],
+                        "others": [],
+                    },
                 )
                 for ctx in contexts
             ]
@@ -4159,7 +4406,12 @@ def test_generate_single_writer_pass_reports_final_metadata_changes_for_llm_refi
                     confidence=0.9,
                     reasoning_steps=[],
                     columns={
-                        "atomic_metrics": [{"name": "order_count"}],
+                        "atomic_metrics": [
+                            {
+                                "name": "order_count",
+                                "business_process": "ORDER_TRANSACTION",
+                            }
+                        ],
                         "derived_metrics": [],
                         "calculated_metrics": [],
                         "dimensions": [],
