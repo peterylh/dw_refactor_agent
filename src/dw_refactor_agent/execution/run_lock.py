@@ -42,7 +42,15 @@ def _canonical_execution_target(host, port, database) -> tuple[str, str, str]:
 def _execution_run_lock_dir() -> Path:
     override = str(os.environ.get(RUN_LOCK_DIR_ENV) or "").strip()
     if override:
-        return Path(override).expanduser()
+        override_path = Path(override).expanduser()
+        if not override_path.is_absolute():
+            raise ValueError(
+                "{} must be an absolute path: {!r}".format(
+                    RUN_LOCK_DIR_ENV,
+                    override,
+                )
+            )
+        return override_path
     return Path(tempfile.gettempdir()) / "dw_refactor_agent" / "run_locks"
 
 

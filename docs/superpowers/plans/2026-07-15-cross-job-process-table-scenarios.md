@@ -63,7 +63,8 @@ unchanged, while adding safeguards only at the execution boundary:
 - resolved process dependencies require producer closure, and existing
   `UNRESOLVED_DATASET_PRODUCER` diagnostics block selected consumers;
 - SQL runs serialize by canonical `(host, port, database)` across checkouts on
-  one host, with `DW_REFACTOR_AGENT_RUN_LOCK_DIR` for a shared lock location;
+  one host, with the same absolute `DW_REFACTOR_AGENT_RUN_LOCK_DIR` on every
+  executor when a shared lock location is required;
 - shop uses base plus window companions, with cleanup folded into an immutable
   single-replica CTAS;
 - retail banking uses `semantic_specs/dws_ads.yaml` and

@@ -145,8 +145,9 @@ done
 覆盖完整 producer→consumer 运行；同一宿主机上的不同 checkout/worktree 访问同一
 Doris 目标时也会在首个 SQL 写入前互斥，`--validate-only` 不加锁。锁目录默认是系统
 临时目录下的 `dw_refactor_agent/run_locks`，可通过
-`DW_REFACTOR_AGENT_RUN_LOCK_DIR` 覆盖。默认目录只保证同一执行宿主机内互斥；多执行
-宿主机必须把该环境变量指向支持 `flock` 的共享文件系统，或由外部调度器保证等价互斥。
+`DW_REFACTOR_AGENT_RUN_LOCK_DIR` 覆盖。覆盖值必须是绝对路径，所有执行器必须配置同一
+绝对目录；默认目录只保证同一执行宿主机内互斥。多执行宿主机必须把该绝对目录放在支持
+`flock` 的共享文件系统上，或由外部调度器保证等价互斥。
 
 每次 `task_run.py` 规划都会先从当前 task SQL 刷新 lineage，再立即从同一份 v2 payload
 生成并保存 Job DAG；正常模式复用 task 级缓存，`--refresh-dag` 强制 `--no-cache`。

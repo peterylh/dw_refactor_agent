@@ -97,6 +97,23 @@ def test_execution_target_lock_directory_honors_environment_override(
     assert lock_path.parent == override
 
 
+@pytest.mark.parametrize("override", [".locks", "foo/bar"])
+def test_execution_target_lock_directory_rejects_relative_override(
+    monkeypatch,
+    override,
+):
+    run_lock = _run_lock_module()
+    monkeypatch.setenv("DW_REFACTOR_AGENT_RUN_LOCK_DIR", override)
+
+    with pytest.raises(
+        ValueError,
+        match=("DW_REFACTOR_AGENT_RUN_LOCK_DIR must be an absolute path"),
+    ):
+        run_lock.execution_target_run_lock_path(
+            "doris.example", 9030, "demo_db"
+        )
+
+
 def test_execution_target_lock_releases_after_normal_and_exceptional_exit():
     run_lock = _run_lock_module()
     target = ("release.example", 9030, "release_db")

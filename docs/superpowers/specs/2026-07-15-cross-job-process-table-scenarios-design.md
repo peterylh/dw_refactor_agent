@@ -193,9 +193,11 @@ Generated JSON and HTML remain ignored local artifacts and are not force-added.
   execution is safe only after this edge exists.
 - SQL execution is locked by canonical `(host, port, database)`, so separate
   checkouts on one host cannot concurrently mutate the same Doris target. The
-  default temp-directory lock is host-local; multiple execution hosts require
-  `DW_REFACTOR_AGENT_RUN_LOCK_DIR` on a shared `flock` filesystem or equivalent
-  external scheduling.
+  default temp-directory lock is host-local. An override through
+  `DW_REFACTOR_AGENT_RUN_LOCK_DIR` must be the same absolute path on every
+  executor; relative paths are rejected instead of being resolved against each
+  checkout. Multiple execution hosts additionally require that directory on a
+  shared `flock` filesystem or equivalent external scheduling.
 - Because the tables are process assets rather than managed schema assets, the
   schema-ID initialization workflow does not apply to them.
 - Retail banking checked-in SQL is generated from
