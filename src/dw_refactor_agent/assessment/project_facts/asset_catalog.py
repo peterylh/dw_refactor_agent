@@ -508,6 +508,7 @@ def build_asset_catalog(
     *,
     edges: list | None = None,
     indirect_edges: list | None = None,
+    include_models: bool = True,
 ) -> AssetCatalog:
     """Collect project asset facts without assigning scores."""
     project_path = Path(project_dir) if project_dir else None
@@ -621,7 +622,9 @@ def build_asset_catalog(
                     if ddl_layer and ddl_layer != "OTHER":
                         asset.layer = ddl_layer
 
-        models_dirs = _asset_dirs(project_path, "models")
+        models_dirs = (
+            _asset_dirs(project_path, "models") if include_models else []
+        )
         if models_dirs:
             for models_dir in models_dirs:
                 for model_path in sorted(models_dir.glob("*.yaml")):

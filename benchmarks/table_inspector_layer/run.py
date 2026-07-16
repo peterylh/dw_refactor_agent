@@ -995,6 +995,16 @@ def _summarize_project(
     )
     catalog_summary = _catalog_summary(temp_project, result, dry_run=dry_run)
     status_counts = _table_status_counts(result)
+    publication = (
+        result.get("publication")
+        if isinstance(result.get("publication"), dict)
+        else {}
+    )
+    publication_validation = (
+        publication.get("validation")
+        if isinstance(publication.get("validation"), dict)
+        else {}
+    )
     return {
         "source_project": temp_project.source_project,
         "target_project": temp_project.target_project,
@@ -1009,6 +1019,12 @@ def _summarize_project(
         "blocked_table_count": status_counts["blocked"],
         "warning_count": status_counts["warning"],
         "metadata_warning_count": status_counts["metadata_warning"],
+        "publication_status": str(publication.get("status") or "unknown"),
+        "published": bool(publication.get("published")),
+        "publication_error_count": int(
+            publication_validation.get("error_count") or 0
+        ),
+        "publication_errors": publication_validation.get("errors") or [],
         "catalog_change_count": int(result.get("catalog_change_count") or 0),
         "catalog_update": result.get("catalog_update"),
         "planned_catalog_updates": result.get("planned_catalog_updates") or [],
@@ -1167,6 +1183,12 @@ def run_benchmark(
         "total_semantic_subject_count": sum(
             item["catalog_summary"]["semantic_subject_count"]
             for item in summaries
+        ),
+        "published_project_count": sum(
+            1 for item in summaries if item["published"]
+        ),
+        "blocked_project_count": sum(
+            1 for item in summaries if item["publication_status"] == "blocked"
         ),
         "projects": summaries,
     }

@@ -16,9 +16,11 @@ import os
 import re
 import sys
 import threading
+from contextlib import suppress
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Callable
+from uuid import uuid4
 
 import yaml
 
@@ -29,6 +31,10 @@ if str(_src_root) not in sys.path:
 from dw_refactor_agent.assessment.llm.context_builder import (
     TableContext,
     build_contexts,
+)
+from dw_refactor_agent.assessment.llm.generation_contract import (
+    infer_execution_mapping,
+    validate_generate_candidate,
 )
 from dw_refactor_agent.assessment.llm.layer_resolution import (
     LayerResolution,
@@ -66,10 +72,12 @@ from dw_refactor_agent.assessment.project_facts.asset_catalog import (
     build_asset_catalog,
 )
 from dw_refactor_agent.assessment.project_facts.business_semantics import (
+    LEGACY_BUSINESS_SEMANTICS_FILE_NAME,
     _infer_table_type,
     _layer_from_table_name,
     _materialized_for_layer,
     _normalize_catalog_code,
+    _split_catalog_payloads,
     build_business_semantics_catalog_from_inspection,
     build_initial_business_semantics_catalog,
     catalog_mapping_for_model,
@@ -1736,6 +1744,7 @@ def _generate_model_table_assets(project: str) -> dict[str, TableAsset]:
         [],
         {},
         _project_dir(project),
+        include_models=False,
     ).tables
 
 
@@ -1791,13 +1800,14 @@ def _catalog_entries_by_code(
     for entry in catalog.get(key) or []:
         if not isinstance(entry, dict):
             continue
-        code = _normalize_catalog_code(entry.get("code"))
-        if not code:
+        raw_code = str(entry.get("code") or "").strip()
+        canonical_code = _normalize_catalog_code(raw_code)
+        if not canonical_code:
             continue
         normalized = dict(entry)
-        normalized["code"] = code
+        normalized["code"] = raw_code
         normalized.pop("tables", None)
-        entries[code] = normalized
+        entries[canonical_code] = normalized
     return entries
 
 
@@ -1949,6 +1959,61 @@ def _merge_llm_catalog_discoveries(
     }
 
 
+def _catalog_candidate_from_llm_result(
+    project: str,
+    *,
+    llm_result: dict[str, Any],
+    base_catalog: dict[str, Any],
+    model_metadata: dict[str, dict[str, Any]],
+    resolution_policy: LayerResolutionPolicy,
+    update_catalog: bool,
+) -> tuple[dict[str, Any], list[TableInspectResult]]:
+    resolved_results = _resolved_catalog_results_from_llm_result(
+        llm_result,
+        model_metadata=model_metadata,
+        resolution_policy=resolution_policy,
+    )
+    if not update_catalog:
+        return base_catalog, resolved_results
+    candidate = build_business_semantics_catalog_from_inspection(
+        project,
+        resolved_results,
+        base_catalog=base_catalog,
+    )
+    return candidate, resolved_results
+
+
+def _apply_catalog_assignments_to_generated_models(
+    project: str,
+    model_metadata: dict[str, dict[str, Any]],
+    *,
+    catalog: dict[str, Any],
+    results: list[TableInspectResult],
+) -> dict[str, dict[str, Any]]:
+    updated_models = {
+        table_name: dict(metadata)
+        for table_name, metadata in model_metadata.items()
+    }
+    for result in results:
+        existing = updated_models.get(result.table_name)
+        if existing is None:
+            continue
+        mapping = catalog_discovery_model_mapping(
+            project,
+            result,
+            catalog,
+            existing,
+        )
+        if not mapping:
+            continue
+        updated_models[result.table_name] = _catalog_model_payload(
+            table_name=result.table_name,
+            existing=existing,
+            mapping=mapping,
+        )
+    return updated_models
+
+
 def _asset_role_from_generate_asset(
     project: str,
     asset: TableAsset,
@@ -1988,6 +2053,7 @@ def _generate_model_mapping(
     catalog: dict[str, Any],
     table_name: str,
     *,
+    asset: dict[str, Any] | None = None,
     asset_role: str = "",
 ) -> dict[str, Any]:
     mapping = catalog_mapping_for_model(catalog, table_name, {})
@@ -2020,15 +2086,19 @@ def _generate_model_mapping(
     )
     layer = resolution.applied_layer
     table_type = resolution.table_type
-    materialized = str(
-        mapping.get("materialized") or _materialized_for_layer(layer)
-    ).strip()
+    execution = infer_execution_mapping(
+        table_name,
+        asset or {},
+        layer=layer,
+    )
+    materialized = str(execution.get("materialized") or "").strip()
     mapping.update(
         {
             "table": table_name,
             "layer": layer,
             "table_type": table_type or "other",
             "materialized": materialized,
+            "execution": execution,
         }
     )
     return mapping
@@ -2096,11 +2166,13 @@ def plan_generate_model_metadata(
     write_scope = _validate_write_scope(write_scope)
     if write_scope not in {"all", "table", "business"}:
         raise ValueError("generate 仅支持 write_scope=all/table/business")
+    if replace_existing_models is not True:
+        raise ValueError(
+            "generate 冷启动必须替换现有 models，不能读取旧 model YAML"
+        )
 
     model_files = _model_files(project)
-    planned_deleted_model_files = (
-        [str(path) for path in model_files] if replace_existing_models else []
-    )
+    planned_deleted_model_files = [str(path) for path in model_files]
     model_metadata: dict[str, dict[str, Any]] = {}
     model_paths: dict[str, Path] = {}
     model_updates = []
@@ -2112,6 +2184,7 @@ def plan_generate_model_metadata(
         mapping = _generate_model_mapping(
             catalog,
             table_name,
+            asset=asset,
             asset_role=_asset_role_from_generate_asset(project, asset),
         )
         path = _generated_model_path_for_table(
@@ -2119,9 +2192,7 @@ def plan_generate_model_metadata(
             table_name,
             mapping.get("layer"),
         )
-        existing = (
-            {} if replace_existing_models else _existing_model_data(path)
-        )
+        existing: dict[str, Any] = {}
         updated = _catalog_model_payload(
             table_name=table_name,
             existing=existing,
@@ -2155,15 +2226,11 @@ def _write_generated_model_metadata(
     dry_run: bool,
     delete_existing: bool,
     refinement_updates: list[dict[str, Any]] | None = None,
+    additional_rendered_files: dict[Path, str] | None = None,
+    additional_deleted_files: list[Path] | None = None,
 ) -> tuple[list[dict[str, Any]], list[str]]:
+    existing_model_files = _model_files(project) if delete_existing else []
     deleted_model_files: list[str] = []
-    if delete_existing and not dry_run:
-        for path in _model_files(project):
-            path.unlink()
-            deleted_model_files.append(str(path))
-        import dw_refactor_agent.config as _config
-
-        _config.clear_model_metadata_cache()
 
     refinements_by_table = {
         str(update.get("table") or ""): update
@@ -2171,6 +2238,7 @@ def _write_generated_model_metadata(
         if isinstance(update, dict) and str(update.get("table") or "")
     }
     model_updates = []
+    rendered_models: list[tuple[Path, str]] = []
     for table_name, metadata in sorted(final_model_metadata.items()):
         path = plan.write_targets.model_paths.get(table_name)
         if path is None:
@@ -2194,23 +2262,170 @@ def _write_generated_model_metadata(
                 refinements_by_table[table_name],
             )
         if update["changed"] and not dry_run:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(
-                yaml.safe_dump(
-                    metadata,
-                    allow_unicode=True,
-                    sort_keys=False,
-                ),
-                encoding=TEXT_ENCODING,
+            rendered_models.append(
+                (
+                    path,
+                    yaml.safe_dump(
+                        metadata,
+                        allow_unicode=True,
+                        sort_keys=False,
+                    ),
+                )
             )
         model_updates.append(update)
 
     if not dry_run:
+        rendered_files = dict(additional_rendered_files or {})
+        rendered_files.update(dict(rendered_models))
+        target_paths = {
+            path.resolve() for path in plan.write_targets.model_paths.values()
+        }
+        obsolete_model_files = [
+            path
+            for path in existing_model_files
+            if path.resolve() not in target_paths
+        ]
+        deleted_model_files.extend(str(path) for path in existing_model_files)
+        _transactional_publish_files(
+            rendered_files,
+            delete_paths=(
+                obsolete_model_files + list(additional_deleted_files or [])
+            ),
+        )
+
         import dw_refactor_agent.config as _config
 
         _config.clear_model_metadata_cache()
+        if additional_rendered_files or additional_deleted_files:
+            _config.clear_business_semantics_cache()
+            _config.clear_naming_config_cache()
 
     return model_updates, deleted_model_files
+
+
+def _transactional_publish_files(
+    rendered_files: dict[Path, str],
+    *,
+    delete_paths: list[Path],
+) -> None:
+    """Publish a generated file set with rollback on ordinary exceptions."""
+    token = uuid4().hex
+    staged_files: list[tuple[Path, Path]] = []
+    backups: list[tuple[Path, Path]] = []
+    installed_paths: list[Path] = []
+    publication_succeeded = False
+    rendered_paths = set(rendered_files)
+    deletion_targets = [
+        path for path in delete_paths if path not in rendered_paths
+    ]
+    try:
+        for path, rendered in sorted(
+            rendered_files.items(), key=lambda item: str(item[0])
+        ):
+            path.parent.mkdir(parents=True, exist_ok=True)
+            staged_path = path.with_name(f".{path.name}.{token}.staged")
+            staged_path.write_text(rendered, encoding=TEXT_ENCODING)
+            staged_files.append((staged_path, path))
+
+        targets = [path for _staged, path in staged_files]
+        targets.extend(path for path in deletion_targets if path.exists())
+        for path in targets:
+            if not path.exists():
+                continue
+            backup_path = path.with_name(f".{path.name}.{token}.backup")
+            path.replace(backup_path)
+            backups.append((backup_path, path))
+
+        for staged_path, path in staged_files:
+            staged_path.replace(path)
+            installed_paths.append(path)
+        publication_succeeded = True
+    except Exception:
+        for path in reversed(installed_paths):
+            if path.exists():
+                path.unlink()
+        for backup_path, path in reversed(backups):
+            if path.exists():
+                path.unlink()
+            if backup_path.exists():
+                backup_path.replace(path)
+        raise
+    finally:
+        for staged_path, _path in staged_files:
+            if staged_path.exists():
+                with suppress(OSError):
+                    staged_path.unlink()
+        if publication_succeeded:
+            for backup_path, _path in backups:
+                if backup_path.exists():
+                    with suppress(OSError):
+                        backup_path.unlink()
+
+
+def _render_generated_catalog_files(
+    project: str,
+    catalog: dict[str, Any],
+    *,
+    enabled: bool,
+) -> tuple[dict[Path, str], list[Path], list[str]]:
+    if not enabled:
+        return {}, [], []
+    paths = business_semantics_paths(project)
+    payloads = _split_catalog_payloads(catalog)
+    rendered_files: dict[Path, str] = {}
+    written_names = []
+    for name, path in sorted(paths.items()):
+        rendered = yaml.safe_dump(
+            payloads[name],
+            allow_unicode=True,
+            sort_keys=False,
+        )
+        existing = (
+            path.read_text(encoding=TEXT_ENCODING) if path.exists() else None
+        )
+        if existing == rendered:
+            continue
+        rendered_files[path] = rendered
+        written_names.append(name)
+    legacy_path = (
+        next(iter(paths.values())).parent / LEGACY_BUSINESS_SEMANTICS_FILE_NAME
+    )
+    deleted_files = [legacy_path] if legacy_path.exists() else []
+    return rendered_files, deleted_files, written_names
+
+
+def _published_catalog_reports(
+    catalog_report: dict[str, Any],
+    catalog_update_report: dict[str, Any],
+    *,
+    written_names: list[str],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    catalog_report = dict(catalog_report)
+    planned_init = set(
+        catalog_report.get("planned_catalog_written_names") or []
+    )
+    catalog_report["catalog_init_written_names"] = [
+        name for name in written_names if name in planned_init
+    ]
+    catalog_report["planned_catalog_written_names"] = []
+
+    catalog_update_report = dict(catalog_update_report)
+    update = catalog_update_report.get("catalog_update")
+    if isinstance(update, dict):
+        update = dict(update)
+        planned_names = set(update.get("planned_written_names") or [])
+        update["dry_run"] = False
+        update["updated"] = True
+        update["written_names"] = [
+            name for name in written_names if name in planned_names
+        ]
+        update["planned_written_names"] = []
+        catalog_update_report["catalog_update"] = update
+        catalog_update_report["catalog_updates"] = list(
+            catalog_update_report.get("planned_catalog_updates") or []
+        )
+        catalog_update_report["planned_catalog_updates"] = []
+    return catalog_report, catalog_update_report
 
 
 def _merge_final_update_with_refinement(
@@ -2302,9 +2517,11 @@ def run_generate_model_metadata(
     if write_scope not in {"all", "table", "business"}:
         raise ValueError("generate 仅支持 write_scope=all/table/business")
 
+    # Always plan against an in-memory catalog first.  Generate publishes the
+    # catalog and models only after the complete candidate passes validation.
     catalog, catalog_report = _generate_metadata_catalog_for_plan(
         project,
-        dry_run=dry_run,
+        dry_run=True,
         update_catalog=update_catalog,
     )
     base_plan = plan_generate_model_metadata(
@@ -2328,6 +2545,8 @@ def run_generate_model_metadata(
         for table_name, metadata in generate_plan.base_model_metadata.items()
     }
     catalog_update_report = _empty_catalog_update_report()
+    candidate_catalog = catalog
+    resolved_catalog_results: list[TableInspectResult] = []
     if api_key:
         llm_result = run_metadata_write(
             project,
@@ -2353,6 +2572,22 @@ def run_generate_model_metadata(
             generate_plan.base_model_metadata,
             llm_result,
         )
+        candidate_catalog, resolved_catalog_results = (
+            _catalog_candidate_from_llm_result(
+                project,
+                llm_result=llm_result,
+                base_catalog=catalog,
+                model_metadata=generate_plan.base_model_metadata,
+                resolution_policy=generate_plan.resolution_policy,
+                update_catalog=update_catalog,
+            )
+        )
+        final_model_metadata = _apply_catalog_assignments_to_generated_models(
+            project,
+            final_model_metadata,
+            catalog=candidate_catalog,
+            results=resolved_catalog_results,
+        )
         if update_catalog:
             catalog_update_report = _merge_llm_catalog_discoveries(
                 project,
@@ -2360,19 +2595,50 @@ def run_generate_model_metadata(
                 base_catalog=catalog,
                 model_metadata=generate_plan.base_model_metadata,
                 resolution_policy=generate_plan.resolution_policy,
-                dry_run=dry_run,
+                dry_run=True,
             )
-        _strip_internal_model_metadata(llm_result)
+
+    publication_validation = validate_generate_candidate(
+        final_model_metadata,
+        _generate_model_table_assets(project),
+        llm_result=llm_result,
+        catalog=candidate_catalog,
+    )
+    publication_blocked = publication_validation["status"] == "blocked"
+    should_publish = not dry_run and not publication_blocked
+    catalog_rendered_files: dict[Path, str] = {}
+    catalog_deleted_files: list[Path] = []
+    catalog_written_names: list[str] = []
+    if should_publish:
+        (
+            catalog_rendered_files,
+            catalog_deleted_files,
+            catalog_written_names,
+        ) = _render_generated_catalog_files(
+            project,
+            candidate_catalog,
+            enabled=update_catalog,
+        )
+
+    _strip_internal_model_metadata(llm_result)
 
     refinement_updates = (llm_result or {}).get("model_updates") or []
     model_updates, deleted_model_files = _write_generated_model_metadata(
         project,
         generate_plan,
         final_model_metadata,
-        dry_run=dry_run,
+        dry_run=not should_publish,
         delete_existing=replace_existing_models,
         refinement_updates=refinement_updates,
+        additional_rendered_files=catalog_rendered_files,
+        additional_deleted_files=catalog_deleted_files,
     )
+    if should_publish:
+        catalog_report, catalog_update_report = _published_catalog_reports(
+            catalog_report,
+            catalog_update_report,
+            written_names=catalog_written_names,
+        )
 
     changed_updates = [update for update in model_updates if update["changed"]]
     result = {
@@ -2392,6 +2658,15 @@ def run_generate_model_metadata(
         "model_change_count": len(changed_updates),
         "llm_result": llm_result,
         "inspection_result": llm_result,
+        "publication": {
+            "status": (
+                "blocked"
+                if publication_blocked
+                else ("dry_run" if dry_run else "published")
+            ),
+            "published": should_publish,
+            "validation": publication_validation,
+        },
         "flow": {
             "mode": "generate",
             "prior_source": "direct_rule",
@@ -2457,8 +2732,13 @@ def _catalog_model_payload(
         or existing.get("table_type")
         or _infer_table_type(table_name, layer)
     ).strip()
+    mapped_execution = mapping.get("execution")
+    if isinstance(mapped_execution, dict):
+        execution_payload = dict(mapped_execution)
+    else:
+        execution_payload = dict(existing.get("execution") or {})
     materialized = _materialized_for_write(
-        (existing.get("execution") or {}).get("materialized")
+        execution_payload.get("materialized")
         or mapping.get("materialized")
         or "",
         layer,
@@ -2470,7 +2750,6 @@ def _catalog_model_payload(
     updated["layer"] = layer
     updated["table_type"] = table_type or "other"
     if materialized:
-        execution_payload = dict(updated.get("execution") or {})
         execution_payload["materialized"] = materialized
         updated["execution"] = execution_payload
         _drop_deprecated_execution_config(updated)
@@ -2522,11 +2801,16 @@ def _catalog_model_payload(
 
 def _business_processes_from_result(result: TableInspectResult) -> list[str]:
     codes = []
-    for metrics in (
+    metric_groups = (
         result.atomic_metrics,
         result.derived_metrics,
         result.calculated_metrics,
-    ):
+    )
+    if not any(metric_groups):
+        table_process = _normalize_catalog_code(result.business_process)
+        if table_process:
+            codes.append(table_process)
+    for metrics in metric_groups:
         for metric in metrics:
             code = _normalize_catalog_code(metric.get("business_process"))
             if code and code not in codes:
@@ -2581,15 +2865,23 @@ def _semantic_subject_from_result(result: TableInspectResult) -> str:
 
 
 def _catalog_has_code(catalog: dict[str, Any], key: str, code: str) -> bool:
+    return bool(_catalog_entry_code(catalog, key, code))
+
+
+def _catalog_entry_code(
+    catalog: dict[str, Any],
+    key: str,
+    code: str,
+) -> str:
     wanted = _normalize_catalog_code(code)
     if not wanted:
-        return False
+        return ""
     for entry in catalog.get(key) or []:
         if not isinstance(entry, dict):
             continue
         if _normalize_catalog_code(entry.get("code")) == wanted:
-            return True
-    return False
+            return str(entry.get("code") or "").strip()
+    return ""
 
 
 def catalog_discovery_model_mapping(
@@ -2619,12 +2911,13 @@ def catalog_discovery_model_mapping(
     mapping.update(business_metadata_for_result(project, result, layer))
     if table_type == "dimension":
         semantic_subject = _semantic_subject_from_result(result)
-        if _catalog_has_code(
+        catalog_subject = _catalog_entry_code(
             catalog,
             "semantic_subjects",
             semantic_subject,
-        ):
-            mapping["semantic_subject"] = semantic_subject
+        )
+        if catalog_subject:
+            mapping["semantic_subject"] = catalog_subject
         else:
             mapping.update(
                 _existing_catalog_assignment(
@@ -2642,12 +2935,17 @@ def catalog_discovery_model_mapping(
 
     if table_type == "fact":
         processes = _business_processes_from_result(result)
-        if len(processes) == 1 and _catalog_has_code(
-            catalog,
-            "business_processes",
-            processes[0],
-        ):
-            mapping["business_process"] = processes[0]
+        catalog_process = (
+            _catalog_entry_code(
+                catalog,
+                "business_processes",
+                processes[0],
+            )
+            if len(processes) == 1
+            else ""
+        )
+        if catalog_process:
+            mapping["business_process"] = catalog_process
         else:
             mapping.update(
                 _existing_catalog_assignment(
@@ -3189,6 +3487,7 @@ def run_metadata_write(
         if metric_groups is not None
         else None,
         expose_layer_hints=expose_layer_hints,
+        use_model_metadata_asset_roles=plan.mode == "generate",
         metric_result_is_eligible=lambda result: (
             _metric_result_is_eligible_for_propagation(
                 result,
@@ -3487,6 +3786,15 @@ def main() -> None:
                 model_update_count=result.get("model_update_count", 0),
             )
         )
+        publication = result.get("publication") or {}
+        if not args.dry_run and publication.get("status") == "blocked":
+            error_count = len(
+                (publication.get("validation") or {}).get("errors") or []
+            )
+            raise SystemExit(
+                f"冷启动生成发布被阻断（{error_count} 个校验错误），"
+                "原有 catalog 与 models 未改动"
+            )
         return
     if "catalog" in result:
         catalog = result.get("catalog") or {}

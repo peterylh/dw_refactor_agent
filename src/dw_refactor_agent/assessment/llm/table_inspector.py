@@ -24,7 +24,7 @@ from dw_refactor_agent.assessment.project_facts.time_period import (
 )
 from dw_refactor_agent.config import TEXT_ENCODING
 
-PROMPT_VERSION = "table-inspector-v42"
+PROMPT_VERSION = "table-inspector-v43"
 VALID_LAYERS = {"DWD", "DWS", "DIM", "OTHER"}
 VALID_TABLE_TYPES = {"dimension", "fact", "other"}
 VALID_DIMENSION_ROLES = {"BASE", "ADDT"}
@@ -111,6 +111,15 @@ def _empty_columns() -> dict[str, list[dict[str, Any]]]:
     return {group: [] for group in COLUMN_GROUPS}
 
 
+def _valid_business_process(value: Any) -> str:
+    if not isinstance(value, str):
+        return ""
+    text = value.strip()
+    if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*", text):
+        return ""
+    return text
+
+
 def _format_layered_tables(
     tables: list[str],
     layers: dict[str, str],
@@ -149,6 +158,7 @@ class TableInspectResult:
     table_type: str  # "dimension" | "fact" | "other"
     confidence: float
     reasoning_steps: list[str]
+    business_process: str = ""
     columns: dict[str, list[dict[str, Any]]] = field(
         default_factory=_empty_columns
     )
@@ -166,6 +176,7 @@ class TableInspectResult:
 
     def __post_init__(self) -> None:
         self.confidence = _safe_float(self.confidence)
+        self.business_process = _valid_business_process(self.business_process)
         self.entities = normalize_entities(
             self.entities,
             self.entity,
@@ -270,11 +281,15 @@ def build_prompt(ctx: TableContext) -> str:
 若当前表不是维度表，dimension_role 和 dimension_content_type 都返回空字符串。
 
 ## 业务过程与语义主题边界
-- business_process 只适用于事实表或汇总事实表，用来描述发生了什么可度量业务事件/活动；判断依据应是事件动作、事实行、度量字段、时间粒度和可汇总口径，而不是表名里出现的业务名词。
+- 顶层 business_process 只适用于事实表或汇总事实表，用来描述整张表发生了什么业务事件/活动；判断依据应是事件动作、事实行、度量字段、时间粒度和可汇总口径，而不是表名里出现的业务名词。
+- 必须先依据前述分层和表类型规则独立确定 table_type，再填写 business_process；是否能填写业务过程不能反过来作为判成 fact 的证据。
+- 只要已经独立确定 table_type=fact，就必须判断顶层 business_process。即使表没有指标字段，只要每行能表达明确的事件发生、业务参与关系、状态变化或周期观察事实，也应根据行级业务事实填写唯一的业务过程 code。
+- 稳定实体档案、描述属性、主数据或逐行实体清洗，即使包含状态、日期和外键，也不能为了填写 business_process 而改判 fact；它们仍按既有证据判断为 dimension/other，并返回空字符串。
+- 如果多个过程都成立且无法确定唯一主过程，顶层 business_process 返回空字符串；不得为了通过校验而任选一个。dimension/other 的顶层 business_process 必须返回空字符串。
 - dimension 表不得为了填充业务过程而生成“实体主语 + 管理/运营”式过程名；若表只表达管理/运营/主数据/资料维护/属性集合，它们更可能是语义主题、业务主题或实体管理域。
 - semantic_subject 表示维度/实体属性表的语义主题，通常对应维表主实体编码；它不是业务过程，也不应被写入指标字段的 business_process。
 - 表名或描述中含有 MANAGEMENT、OPERATION、PROFILE、MASTER、INFO 等模式时，必须先检查是否存在可度量业务事件；没有事件事实和指标时，优先视为语义主题/业务主题，不要归为严格的业务过程。
-- 字段级 business_process 若需要填写，应是可代码化的大写下划线短语，表达“动作/事件 + 业务结果或业务对象”的过程；不能仅由实体主语、管理/运营词或表主题词组成。
+- 字段级 business_process 若需要填写，应是可代码化的大写下划线短语，表达“动作/事件 + 业务结果或业务对象”的过程；不能仅由实体主语、管理/运营词或表主题词组成。字段级过程与顶层过程共同作为一致性证据，不能用顶层字段掩盖指标属于多个过程的歧义。
 - 如果提供了已确认业务语义目录，business_process 和 entities[].code 应优先复用目录中的 code；若没有合适 code，可以返回新的大写下划线候选，但必须由当前表的事件事实、指标口径或主实体证据支撑。
 - 本次巡检 JSON 不返回 semantic_subject 顶层字段；这条规则用于避免把维表主题误填到指标字段的 business_process。catalog 初始化或 models 回写时可将 dimension 表主实体转为 semantic_subject。
 
@@ -365,7 +380,7 @@ def build_prompt(ctx: TableContext) -> str:
     if ctx.business_semantics_options:
         prompt += f"""## 已确认业务语义目录
 请把下列目录作为人工确认过的治理输入使用。
-- 事实表/汇总事实表的指标字段若能匹配某个业务过程，business_process 必须优先复用目录中的 code。
+- 事实表/汇总事实表的顶层 business_process 和指标字段若能匹配某个业务过程，必须优先复用目录中的 code。
 - 维度表的 entities[].code 若能匹配某个语义主题，必须优先复用目录中的 code。
 - 若没有合适 code，可以返回新的大写下划线候选；不要为了贴合目录而把维度主题填成业务过程。
 
@@ -404,13 +419,14 @@ def build_prompt(ctx: TableContext) -> str:
 7. 检查组合一致性：DIM 必须对应 dimension，dimension 必须对应 DIM，DWS 必须对应 fact；DWD 可对应 fact 或 other。
 8. 如果 inferred_layer 是 DWD 或 DWS 且表类型为 fact，再按字段语义、DDL 注释、ETL 表达式和业务过程分组；COUNT 和条件聚合必须使用真实字段血缘，不得虚构上游基础指标。
 
-请严格返回 JSON 格式数据，只允许返回下方 JSON schema 中列出的顶层字段: inferred_layer、table_type、inferred_data_domain、inferred_business_area、dimension_role、dimension_content_type、entities、grain、confidence、reasoning_steps、columns。
+请严格返回 JSON 格式数据，只允许返回下方 JSON schema 中列出的顶层字段: inferred_layer、table_type、business_process、inferred_data_domain、inferred_business_area、dimension_role、dimension_content_type、entities、grain、confidence、reasoning_steps、columns。
 不要返回 Markdown，不要返回额外解释，不要新增任何字段。
 如果不需要做字段分组，columns 下五个数组都返回空数组。
 
 {{
   "inferred_layer": "DWD|DWS|DIM|OTHER",
   "table_type": "dimension|fact|other",
+  "business_process": "事实表唯一的表级业务过程 code；不适用、无法判断唯一过程时为空字符串",
   "inferred_data_domain": "已确认数据域编号；未提供字典、不适用或不确定时为空字符串",
   "inferred_business_area": "已确认业务板块简写；未提供字典、不适用或不确定时为空字符串",
   "dimension_role": "BASE|ADDT",
@@ -743,6 +759,9 @@ def parse_response(
             declared_layer=str(declared_layer or ""),
             inferred_layer=_valid_layer(data.get("inferred_layer")),
             table_type=_valid_table_type(data.get("table_type")),
+            business_process=_valid_business_process(
+                data.get("business_process")
+            ),
             confidence=_safe_float(data.get("confidence")),
             reasoning_steps=list(data.get("reasoning_steps", []) or []),
             columns=_normalize_columns(data.get("columns")),
@@ -780,6 +799,7 @@ def result_to_dict(result: TableInspectResult) -> dict[str, Any]:
         "declared_layer": result.declared_layer,
         "inferred_layer": result.inferred_layer,
         "table_type": result.table_type,
+        "business_process": result.business_process,
         "inferred_data_domain": result.inferred_data_domain,
         "inferred_business_area": result.inferred_business_area,
         "dimension_role": result.dimension_role,
@@ -806,6 +826,7 @@ def result_to_cache_dict(result: TableInspectResult) -> dict[str, Any]:
         "declared_layer": result.declared_layer,
         "inferred_layer": result.inferred_layer,
         "table_type": result.table_type,
+        "business_process": result.business_process,
         "inferred_data_domain": result.inferred_data_domain,
         "inferred_business_area": result.inferred_business_area,
         "dimension_role": result.dimension_role,
@@ -831,6 +852,7 @@ def dict_to_result(
         declared_layer=str(data.get("declared_layer") or declared_layer),
         inferred_layer=_valid_layer(data.get("inferred_layer")),
         table_type=_valid_table_type(data.get("table_type")),
+        business_process=_valid_business_process(data.get("business_process")),
         confidence=_safe_float(data.get("confidence")),
         reasoning_steps=list(data.get("reasoning_steps", []) or []),
         columns=_normalize_columns(data.get("columns")),

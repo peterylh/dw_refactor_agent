@@ -233,6 +233,35 @@ def test_build_catalog_from_inspection_clusters_llm_processes_and_subjects(
             "others": [],
         },
     )
+    fact_without_metrics = TableInspectResult(
+        table_name="dwd_transfer_instruction",
+        declared_layer="DWD",
+        inferred_layer="DWD",
+        table_type="fact",
+        business_process="ACCOUNT_TRANSFER",
+        confidence=0.9,
+        reasoning_steps=["账户划转指令事实"],
+        inferred_data_domain="4",
+        inferred_business_area="SHOP",
+    )
+    fact_with_unassigned_metric = TableInspectResult(
+        table_name="dwd_unassigned_event",
+        declared_layer="DWD",
+        inferred_layer="DWD",
+        table_type="fact",
+        business_process="UNASSIGNED_EVENT",
+        confidence=0.9,
+        reasoning_steps=["指标尚未归属业务过程"],
+        columns={
+            "atomic_metrics": [
+                {"name": "event_amount", "business_process": ""}
+            ],
+            "derived_metrics": [],
+            "calculated_metrics": [],
+            "dimensions": [],
+            "others": [],
+        },
+    )
     dimension = TableInspectResult(
         table_name="dwd_customer_profile",
         declared_layer="DWD",
@@ -254,16 +283,22 @@ def test_build_catalog_from_inspection_clusters_llm_processes_and_subjects(
 
     catalog = build_business_semantics_catalog_from_inspection(
         project,
-        [fact, dimension],
+        [fact, fact_without_metrics, fact_with_unassigned_metric, dimension],
     )
 
     assert catalog["business_processes"] == [
+        {
+            "code": "ACCOUNT_TRANSFER",
+            "name": "Account Transfer",
+            "data_domain": "04",
+            "business_area": "SHOP",
+        },
         {
             "code": "TRANSACTION_EVENT",
             "name": "Transaction Event",
             "data_domain": "04",
             "business_area": "SHOP",
-        }
+        },
     ]
     assert catalog["semantic_subjects"] == [
         {

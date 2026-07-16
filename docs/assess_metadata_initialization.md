@@ -103,7 +103,15 @@ python -m dw_refactor_agent.assessment.llm.model_metadata_writer --project shop 
 `generate --dry-run` 不写 catalog、不写 model 文件、不删除旧 models；结果 JSON 会通过
 `planned_catalog_written_names` 和 `planned_deleted_model_files` 报告计划写入或删除的文件，并使用内存中的 catalog skeleton 继续模拟生成。
 加 `--llm` 时，dry-run 会基于内存中的冷启动基础 models 构建巡检上下文，不读取当前磁盘上的旧 model 作为分层先验。
-正式执行时会先替换当前项目 models，再根据 DDL、catalog 与表名生成基础模型 YAML。
+正式执行会先在内存中生成完整候选并运行发布校验。执行配置从 task SQL 确定性推导：
+对目标表执行 `TRUNCATE TABLE` 对应 `full/replace_all`，按 ETL 参数删除目标切片的任务对应
+`incremental`，并从目标表 DELETE 条件提取 `execution.slice`；存在 full-refresh
+伴随任务时使用 `companion`，否则使用 `replay_slices`。候选存在无法解析的执行契约、
+blocked LLM 巡检、无效实体引用或未闭合的业务语义引用时，`publication.status=blocked`，
+catalog 和正式 models 均保持不变。DWD/DWS 没有 task SQL、LLM 未覆盖全部 MID 候选、事实表业务过程缺失或有歧义、
+实体缺少有效键、grain 引用未知实体/字段也属于发布阻断项。generate 的巡检资产角色只从
+DDL/task 和内存候选构建，不扫描旧 model YAML；发布校验通过后，catalog 与 models 先全部暂存，再统一
+替换，普通文件写入异常会回滚整组文件。
 
 只想维护业务语义目录时，使用独立入口：
 

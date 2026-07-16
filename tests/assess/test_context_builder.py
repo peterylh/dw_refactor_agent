@@ -399,6 +399,36 @@ def test_build_contexts_excludes_fixed_boundaries_with_wrong_declared_layer(
     assert "Skipping fixed-boundary model dashboard" in caplog.text
 
 
+def test_generate_context_roles_ignore_stale_model_directories(
+    tmp_path,
+    monkeypatch,
+):
+    project = "context_generate_roles"
+    stale_model_dir = (
+        tmp_path / project / "ods" / "models" / "internal" / "demo"
+    )
+    stale_model_dir.mkdir(parents=True)
+    (stale_model_dir / "orders.yaml").write_text(
+        yaml.safe_dump({"name": "orders", "layer": "DWD"}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setitem(
+        config.PROJECT_CONFIG,
+        project,
+        {"dir": project, "catalog": "internal", "db": "demo"},
+    )
+
+    contexts = build_contexts(
+        project,
+        {"tables": [{"name": "orders"}], "edges": []},
+        model_metadata={"orders": {"name": "orders", "layer": "DWD"}},
+        use_model_metadata_asset_roles=True,
+    )
+
+    assert [context.table_name for context in contexts] == ["orders"]
+
+
 def test_build_contexts_includes_business_semantics_catalog_options(
     sample_lineage_data, tmp_path, monkeypatch
 ):

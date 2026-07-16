@@ -390,6 +390,33 @@ def _project_model_asset_roles(project: str) -> dict[str, set[str]]:
     return roles_by_name
 
 
+def _metadata_asset_roles(
+    model_metadata: dict[str, dict],
+) -> dict[str, set[str]]:
+    """Build asset roles from an explicit metadata snapshot only."""
+    roles_by_name: dict[str, set[str]] = {}
+    for table_name, metadata in model_metadata.items():
+        if not isinstance(metadata, dict):
+            continue
+        layer = str(metadata.get("layer") or "").upper()
+        if layer == "ODS":
+            role = "ods"
+        elif layer == "ADS":
+            role = "ads"
+        elif layer in {"DWD", "DWS", "DIM"}:
+            role = "mid"
+        else:
+            continue
+        for name in {
+            str(table_name or "").strip(),
+            str(metadata.get("name") or "").strip(),
+        }:
+            canonical_name = _canonical_table_name(name)
+            if canonical_name:
+                roles_by_name.setdefault(canonical_name, set()).add(role)
+    return roles_by_name
+
+
 def _model_asset_roles_for_table(
     table_name: str,
     roles_by_name: dict[str, set[str]],
@@ -531,6 +558,7 @@ def build_contexts(
     model_metadata: dict | None = None,
     metric_groups: dict[str, dict[str, list[str]]] | None = None,
     expose_layer_hints: bool = True,
+    use_model_metadata_asset_roles: bool = False,
 ) -> list[TableContext]:
     """为 DWD/DWS/DIM 层所有表构建分类上下文"""
     use_project_asset_dirs = ddl_dir is None
@@ -565,9 +593,10 @@ def build_contexts(
         if metric_groups is not None
         else _load_model_metric_groups(project)
     )
+    explicit_model_metadata = model_metadata is not None
     model_metadata = (
         model_metadata
-        if model_metadata is not None
+        if explicit_model_metadata
         else load_model_metadata(project)
     )
     canonical_model_metadata = _canonical_table_lookup(
@@ -592,9 +621,14 @@ def build_contexts(
     )
     business_semantics_options = _business_semantics_prompt_options(project)
     project_context = _project_context(project)
-    model_asset_roles = (
-        _project_model_asset_roles(project) if use_project_asset_dirs else {}
-    )
+    if not use_project_asset_dirs:
+        model_asset_roles = {}
+    elif explicit_model_metadata and use_model_metadata_asset_roles:
+        # Generate passes an in-memory cold-start candidate.  Its inspection
+        # boundary must not depend on stale YAML files still present on disk.
+        model_asset_roles = _metadata_asset_roles(model_metadata)
+    else:
+        model_asset_roles = _project_model_asset_roles(project)
     contexts = []
 
     memo = {}

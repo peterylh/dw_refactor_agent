@@ -10,6 +10,7 @@ from dw_refactor_agent.assessment.llm.table_inspector import (
     TableInspector,
     TableInspectResult,
     build_prompt,
+    dict_to_result,
     parse_response,
     result_to_cache_dict,
     result_to_dict,
@@ -100,6 +101,39 @@ def test_parse_response_metadata_scenarios():
         helper()
 
 
+@pytest.mark.parametrize(
+    "business_process",
+    (["ACCOUNT_TRANSFER"], {"code": "ACCOUNT_TRANSFER"}, "ACCOUNT-TRANSFER"),
+)
+def test_parse_response_rejects_invalid_table_business_process(
+    business_process,
+):
+    payload = {
+        "table_name": "dwd_transfer_instruction",
+        "declared_layer": "DWD",
+        "inferred_layer": "DWD",
+        "table_type": "fact",
+        "business_process": business_process,
+        "confidence": 0.9,
+        "reasoning_steps": [],
+    }
+    response = {
+        "choices": [
+            {"message": {"content": json.dumps(payload, ensure_ascii=False)}}
+        ]
+    }
+
+    parsed = parse_response(
+        "dwd_transfer_instruction",
+        response,
+        declared_layer="DWD",
+    )
+    restored = dict_to_result(payload)
+
+    assert parsed.business_process == ""
+    assert restored.business_process == ""
+
+
 def test_validate_response_contract_scenarios():
     helpers = [
         _assert_validate_time_periods_flags_unrecognized_values,
@@ -188,6 +222,7 @@ def _assert_build_prompt_exposes_context_and_json_contract():
     for field in [
         "inferred_layer",
         "table_type",
+        "business_process",
         "entities",
         "grain",
         "atomic_metrics",
@@ -336,6 +371,7 @@ def _assert_build_prompt_documents_business_metadata_scope():
         assert expected_section in prompt
         assert "inferred_data_domain" in prompt
         assert "inferred_business_area" in prompt
+        assert "是否能填写业务过程不能反过来作为判成 fact 的证据" in prompt
 
 
 def _assert_build_prompt_keeps_metric_expression_separate_from_grain():
@@ -439,6 +475,7 @@ def _assert_parse_business_domain_response():
                         {
                             "inferred_layer": "DWD",
                             "table_type": "fact",
+                            "business_process": "ACCOUNT_TRANSFER",
                             "inferred_data_domain": "04",
                             "inferred_business_area": "PAYM",
                             "confidence": 0.9,
@@ -456,6 +493,10 @@ def _assert_parse_business_domain_response():
 
     assert result.inferred_data_domain == "04"
     assert result.inferred_business_area == "PAYM"
+    assert result.business_process == "ACCOUNT_TRANSFER"
+    assert dict_to_result(cached).business_process == "ACCOUNT_TRANSFER"
+    assert data["business_process"] == "ACCOUNT_TRANSFER"
+    assert cached["business_process"] == "ACCOUNT_TRANSFER"
     assert data["inferred_data_domain"] == "04"
     assert data["inferred_business_area"] == "PAYM"
     assert cached["inferred_data_domain"] == "04"
