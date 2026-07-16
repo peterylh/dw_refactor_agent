@@ -6,6 +6,10 @@ from collections import defaultdict
 from pathlib import Path
 
 from dw_refactor_agent.assessment.assessment_context import AssessmentContext
+from dw_refactor_agent.assessment.project_facts.asset_catalog import (
+    AssetCatalog,
+    TaskAsset,
+)
 from dw_refactor_agent.assessment.result_model import finalize_dimension
 from dw_refactor_agent.assessment.rules.definitions.task_sql_quality import (
     CODE_QUALITY_RULES,
@@ -23,12 +27,12 @@ from dw_refactor_agent.assessment.scoped_plan import scoped_names
 from dw_refactor_agent.config import TEXT_ENCODING
 
 
-def _governed_table_names(asset_catalog: dict) -> set[str]:
+def _governed_table_names(asset_catalog: AssetCatalog) -> set[str]:
     governed = set()
-    for table_name, asset in (asset_catalog.get("tables") or {}).items():
-        ddl = asset.get("ddl") or {}
-        model = asset.get("model") or {}
-        if ddl.get("exists") or model.get("exists"):
+    for table_name, asset in asset_catalog.tables.items():
+        if (asset.ddl and asset.ddl.exists) or (
+            asset.model and asset.model.exists
+        ):
             governed.add(_short_table_name(table_name).lower())
     return governed
 
@@ -40,7 +44,7 @@ def _normalized_path(value) -> str:
 def _task_file_matches(
     *,
     project_dir,
-    task: dict,
+    task: TaskAsset,
     task_path: Path,
     scoped_task_files: set[str],
 ) -> bool:
@@ -49,7 +53,7 @@ def _task_file_matches(
 
     file_name = _display_file_path(project_dir, task_path)
     candidates = {
-        _normalized_path(task.get("file")),
+        _normalized_path(task.file),
         _normalized_path(file_name),
         _normalized_path(task_path),
     }
@@ -81,16 +85,18 @@ def score_code_quality(
     """Score task SQL code quality checks."""
     rule_selection = normalize_rule_selection(rule_selection)
     asset_catalog = context.assets
-    project_dir = asset_catalog.get("project_dir")
+    project_dir = asset_catalog.project_dir
     targets = []
     task_names = scoped_names(scope, "tasks")
     task_files = scoped_names(scope, "task_files")
 
-    for task in asset_catalog.get("tasks") or []:
-        expected_table = _short_table_name(task.get("expected_table") or "")
+    for task in asset_catalog.tasks:
+        expected_table = _short_table_name(task.expected_table)
         if task_names is not None and expected_table not in task_names:
             continue
-        task_path = Path(task["path"])
+        if task.path is None:
+            continue
+        task_path = task.path
         if task_files is not None and not _task_file_matches(
             project_dir=project_dir,
             task=task,
@@ -122,7 +128,7 @@ def score_code_quality(
                 "drop_indexes_by_table": drop_indexes_by_table,
                 "write_statements": write_statements,
                 "source_tables": source_tables,
-                "transient_tables": list(task.get("transient_tables") or []),
+                "transient_tables": list(task.transient_tables),
                 "expected_table": expected_table,
             }
         )

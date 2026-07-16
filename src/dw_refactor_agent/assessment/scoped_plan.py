@@ -10,6 +10,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import dw_refactor_agent.config as config
+from dw_refactor_agent.assessment.project_facts.asset_catalog import TaskAsset
 
 DEFAULT_DIMENSIONS = [
     "reuse",
@@ -40,11 +41,11 @@ def _sorted(values) -> list[str]:
     return sorted(str(value) for value in values if str(value or "").strip())
 
 
-def _short_task_name(task: dict) -> str:
-    name = str(task.get("expected_table") or "").strip()
+def _short_task_name(task: TaskAsset) -> str:
+    name = task.expected_table.strip()
     if name:
         return name
-    file_name = Path(str(task.get("file") or "")).stem
+    file_name = Path(task.file).stem
     if file_name.endswith("_full_refresh"):
         return file_name[: -len("_full_refresh")]
     return file_name
@@ -169,8 +170,7 @@ def _current_table_names(context) -> set[str]:
 
 def _current_task_names(context) -> set[str]:
     tasks = set()
-    asset_catalog = context.assets or {}
-    for task in asset_catalog.get("tasks") or []:
+    for task in context.assets.tasks:
         task_name = _short_task_name(task)
         if task_name:
             tasks.add(task_name)
@@ -244,12 +244,12 @@ def _asset_closure(
 ) -> dict:
     tables = set(base_tables)
     tasks = set(base_tasks)
-    asset_catalog = context.assets or {}
-    assets = asset_catalog.get("tables") or {}
-    all_tasks = list(asset_catalog.get("tasks") or [])
+    assets = context.assets.tables
+    all_tasks = list(context.assets.tasks)
 
     for table_name in list(tables):
-        for task in (assets.get(table_name) or {}).get("tasks") or []:
+        asset = assets.get(table_name)
+        for task in asset.tasks if asset else []:
             task_name = _short_task_name(task)
             if task_name:
                 tasks.add(task_name)
@@ -259,7 +259,7 @@ def _asset_closure(
         changed = False
         for task in all_tasks:
             task_name = _short_task_name(task)
-            outputs = set(task.get("output_tables") or [])
+            outputs = set(task.output_tables)
             if task_name in tasks:
                 before = len(tables)
                 tables.update(outputs)

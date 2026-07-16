@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import re
 from collections import defaultdict
+from collections.abc import Iterator, Mapping
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 import yaml
 
@@ -19,6 +22,244 @@ _MODEL_ROLE_EXPECTED_LAYERS = {
     "mid": ["DIM", "DWD", "DWS"],
     "ads": ["ADS"],
 }
+
+
+class _RecordMapping(Mapping):
+    """Read-only mapping compatibility for migrated domain records."""
+
+    _mapping_fields: tuple[str, ...] = ()
+
+    def __getitem__(self, key: str) -> Any:
+        if key not in self._mapping_fields:
+            raise KeyError(key)
+        return getattr(self, key)
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._mapping_fields)
+
+    def __len__(self) -> int:
+        return len(self._mapping_fields)
+
+
+@dataclass
+class DdlAsset(_RecordMapping):
+    """DDL facts associated with one governed table."""
+
+    exists: bool
+    path: Path | None
+    file_stem: str | None
+    declared_name: str
+    columns: list[dict] = field(default_factory=list)
+    key_type: str = ""
+    key_columns: list[str] = field(default_factory=list)
+    partition_column: str = ""
+
+    _mapping_fields = (
+        "exists",
+        "path",
+        "file_stem",
+        "declared_name",
+        "columns",
+        "key_type",
+        "key_columns",
+        "partition_column",
+    )
+
+    @classmethod
+    def from_mapping(cls, value: Mapping[str, Any]) -> "DdlAsset":
+        raw_path = value.get("path")
+        return cls(
+            exists=bool(value.get("exists")),
+            path=Path(raw_path) if raw_path else None,
+            file_stem=value.get("file_stem"),
+            declared_name=str(value.get("declared_name") or ""),
+            columns=list(value.get("columns") or []),
+            key_type=str(value.get("key_type") or ""),
+            key_columns=list(value.get("key_columns") or []),
+            partition_column=str(value.get("partition_column") or ""),
+        )
+
+
+@dataclass
+class ModelAsset(_RecordMapping):
+    """Model-YAML facts associated with one governed table."""
+
+    exists: bool
+    path: Path | None
+    file_stem: str | None
+    declared_name: str
+    metadata: dict[str, Any] = field(default_factory=dict)
+    asset_role: str = ""
+    expected_layers: list[str] = field(default_factory=list)
+
+    _mapping_fields = (
+        "exists",
+        "path",
+        "file_stem",
+        "declared_name",
+        "metadata",
+        "asset_role",
+        "expected_layers",
+    )
+
+    @classmethod
+    def from_mapping(cls, value: Mapping[str, Any]) -> "ModelAsset":
+        raw_path = value.get("path")
+        return cls(
+            exists=bool(value.get("exists")),
+            path=Path(raw_path) if raw_path else None,
+            file_stem=value.get("file_stem"),
+            declared_name=str(value.get("declared_name") or ""),
+            metadata=dict(value.get("metadata") or {}),
+            asset_role=str(value.get("asset_role") or ""),
+            expected_layers=list(value.get("expected_layers") or []),
+        )
+
+
+@dataclass
+class TaskAsset(_RecordMapping):
+    """Task-SQL facts associated with one or more governed tables."""
+
+    path: Path | None = None
+    file: str = ""
+    expected_table: str = ""
+    output_tables: set[str] = field(default_factory=set)
+    transient_tables: list[dict] = field(default_factory=list)
+    lineage_targets: set[str] = field(default_factory=set)
+    is_full_refresh: bool = False
+    source_file: str = ""
+    sql: str = ""
+
+    _mapping_fields = (
+        "path",
+        "file",
+        "expected_table",
+        "output_tables",
+        "transient_tables",
+        "lineage_targets",
+        "is_full_refresh",
+        "source_file",
+        "sql",
+    )
+
+    @classmethod
+    def from_mapping(cls, value: Mapping[str, Any]) -> "TaskAsset":
+        raw_path = value.get("path")
+        return cls(
+            path=Path(raw_path) if raw_path else None,
+            file=str(value.get("file") or ""),
+            expected_table=str(value.get("expected_table") or ""),
+            output_tables=set(value.get("output_tables") or []),
+            transient_tables=list(value.get("transient_tables") or []),
+            lineage_targets=set(value.get("lineage_targets") or []),
+            is_full_refresh=bool(value.get("is_full_refresh")),
+            source_file=str(value.get("source_file") or ""),
+            sql=str(value.get("sql") or ""),
+        )
+
+
+@dataclass
+class TableAsset(_RecordMapping):
+    """All discovered assets and facts for one logical table."""
+
+    name: str
+    layer: str = "OTHER"
+    columns: list[dict] = field(default_factory=list)
+    lineage_table: dict[str, Any] | None = None
+    ddl: DdlAsset | None = None
+    model: ModelAsset | None = None
+    tasks: list[TaskAsset] = field(default_factory=list)
+
+    _mapping_fields = (
+        "name",
+        "layer",
+        "columns",
+        "lineage_table",
+        "ddl",
+        "model",
+        "tasks",
+    )
+
+    @classmethod
+    def from_mapping(
+        cls, value: Mapping[str, Any], *, default_name: str = ""
+    ) -> "TableAsset":
+        raw_ddl = value.get("ddl")
+        raw_model = value.get("model")
+        return cls(
+            name=str(value.get("name") or default_name),
+            layer=str(value.get("layer") or "OTHER"),
+            columns=list(value.get("columns") or []),
+            lineage_table=(
+                dict(value["lineage_table"])
+                if isinstance(value.get("lineage_table"), Mapping)
+                else None
+            ),
+            ddl=(
+                raw_ddl
+                if isinstance(raw_ddl, DdlAsset)
+                else DdlAsset.from_mapping(raw_ddl)
+                if isinstance(raw_ddl, Mapping) and raw_ddl
+                else None
+            ),
+            model=(
+                raw_model
+                if isinstance(raw_model, ModelAsset)
+                else ModelAsset.from_mapping(raw_model)
+                if isinstance(raw_model, Mapping) and raw_model
+                else None
+            ),
+            tasks=[
+                task
+                if isinstance(task, TaskAsset)
+                else TaskAsset.from_mapping(task)
+                for task in value.get("tasks") or []
+            ],
+        )
+
+
+@dataclass
+class AssetCatalog(_RecordMapping):
+    """Prepared project assets shared by all assessment dimensions."""
+
+    project_dir: Path | None = None
+    tables: dict[str, TableAsset] = field(default_factory=dict)
+    tasks: list[TaskAsset] = field(default_factory=list)
+
+    _mapping_fields = ("project_dir", "tables", "tasks")
+
+    @classmethod
+    def from_mapping(cls, value: Mapping[str, Any]) -> "AssetCatalog":
+        raw_project_dir = value.get("project_dir")
+        return cls(
+            project_dir=Path(raw_project_dir) if raw_project_dir else None,
+            tables={
+                str(name): table
+                if isinstance(table, TableAsset)
+                else TableAsset.from_mapping(table, default_name=str(name))
+                for name, table in (value.get("tables") or {}).items()
+            },
+            tasks=[
+                task
+                if isinstance(task, TaskAsset)
+                else TaskAsset.from_mapping(task)
+                for task in value.get("tasks") or []
+            ],
+        )
+
+
+def ensure_asset_catalog(
+    value: AssetCatalog | Mapping[str, Any],
+) -> AssetCatalog:
+    """Normalize compatibility mappings at the assessment boundary."""
+    if isinstance(value, AssetCatalog):
+        return value
+    if isinstance(value, Mapping):
+        return AssetCatalog.from_mapping(value)
+    raise TypeError(
+        "asset catalog must be AssetCatalog or a mapping; "
+        f"received {type(value).__name__}"
+    )
 
 
 def _short_table_name(table_name: str) -> str:
@@ -267,23 +508,15 @@ def build_asset_catalog(
     *,
     edges: list | None = None,
     indirect_edges: list | None = None,
-) -> dict:
+) -> AssetCatalog:
     """Collect project asset facts without assigning scores."""
     project_path = Path(project_dir) if project_dir else None
-    assets = {}
+    assets: dict[str, TableAsset] = {}
 
-    def ensure_asset(name: str) -> dict:
+    def ensure_asset(name: str) -> TableAsset:
         short_name = _short_table_name(name)
         if short_name not in assets:
-            assets[short_name] = dict(
-                name=short_name,
-                layer="OTHER",
-                columns=[],
-                lineage_table=None,
-                ddl=None,
-                model=None,
-                tasks=[],
-            )
+            assets[short_name] = TableAsset(name=short_name)
         return assets[short_name]
 
     task_dirs = _asset_dirs(project_path, "tasks") if project_path else []
@@ -334,8 +567,8 @@ def build_asset_catalog(
         ) and name not in persistent_lineage_tables:
             continue
         asset = ensure_asset(name)
-        asset["lineage_table"] = dict(table)
-        asset["columns"] = list(table.get("columns") or [])
+        asset.lineage_table = dict(table)
+        asset.columns = list(table.get("columns") or [])
 
     for name, metadata in (model_metadata or {}).items():
         if not isinstance(metadata, dict):
@@ -344,17 +577,15 @@ def build_asset_catalog(
         if not declared_name:
             continue
         asset = ensure_asset(declared_name)
-        asset["model"] = dict(
+        asset.model = ModelAsset(
             exists=True,
             path=None,
             file_stem=None,
             declared_name=declared_name,
-            metadata=metadata,
-            asset_role="",
-            expected_layers=[],
+            metadata=dict(metadata),
         )
         if metadata.get("layer"):
-            asset["layer"] = str(metadata["layer"]).upper()
+            asset.layer = str(metadata["layer"]).upper()
 
     if project_path:
         ddl_dirs = _asset_dirs(project_path, "ddl")
@@ -371,7 +602,7 @@ def build_asset_catalog(
                         continue
                     asset = ensure_asset(declared_name)
                     columns = list(table.get("columns") or []) if table else []
-                    asset["ddl"] = dict(
+                    asset.ddl = DdlAsset(
                         exists=True,
                         path=ddl_path,
                         file_stem=ddl_path.stem,
@@ -385,10 +616,10 @@ def build_asset_catalog(
                             ddl_path.read_text(encoding=TEXT_ENCODING)
                         ),
                     )
-                    asset["columns"] = columns
+                    asset.columns = columns
                     ddl_layer = (table or {}).get("layer")
                     if ddl_layer and ddl_layer != "OTHER":
-                        asset["layer"] = ddl_layer
+                        asset.layer = ddl_layer
 
         models_dirs = _asset_dirs(project_path, "models")
         if models_dirs:
@@ -411,7 +642,7 @@ def build_asset_catalog(
                     asset = ensure_asset(declared_name)
                     metadata = (model_metadata or {}).get(declared_name) or raw
                     asset_role = _model_asset_role(project_path, model_path)
-                    asset["model"] = dict(
+                    asset.model = ModelAsset(
                         exists=True,
                         path=model_path,
                         file_stem=model_path.stem,
@@ -423,7 +654,7 @@ def build_asset_catalog(
                         ),
                     )
                     if metadata.get("layer"):
-                        asset["layer"] = str(metadata["layer"]).upper()
+                        asset.layer = str(metadata["layer"]).upper()
 
         task_facts = []
         if task_dirs:
@@ -440,7 +671,7 @@ def build_asset_catalog(
                     relative_source = task_path.relative_to(
                         task_dir
                     ).as_posix()
-                    fact = dict(
+                    fact = TaskAsset(
                         path=task_path,
                         file=_relative_asset_path(project_path, task_path),
                         expected_table=expected,
@@ -468,13 +699,13 @@ def build_asset_catalog(
                     ):
                         linked_names.add(expected)
                     for table_name in linked_names:
-                        ensure_asset(table_name)["tasks"].append(fact)
+                        ensure_asset(table_name).tasks.append(fact)
         else:
             task_facts = []
     else:
         task_facts = []
 
-    return dict(
+    return AssetCatalog(
         project_dir=project_path,
         tables=assets,
         tasks=task_facts,
@@ -482,21 +713,21 @@ def build_asset_catalog(
 
 
 def _related_files_for_table(
-    asset_catalog: dict, table_name: str
+    asset_catalog: AssetCatalog | Mapping[str, Any], table_name: str
 ) -> list[str]:
-    project_dir = asset_catalog.get("project_dir")
+    asset_catalog = ensure_asset_catalog(asset_catalog)
+    project_dir = asset_catalog.project_dir
     if not project_dir:
         return []
-    asset = (asset_catalog.get("tables") or {}).get(table_name) or {}
+    asset = asset_catalog.tables.get(table_name)
+    if asset is None:
+        return []
     files = []
-    ddl = asset.get("ddl") or {}
-    if ddl.get("path"):
-        files.append(_display_file_path(project_dir, ddl["path"]))
-    for task in sorted(
-        asset.get("tasks") or [], key=lambda item: item["file"]
-    ):
-        files.append(_display_file_path(project_dir, task["path"]))
-    model = asset.get("model") or {}
-    if model.get("path"):
-        files.append(_display_file_path(project_dir, model["path"]))
+    if asset.ddl and asset.ddl.path:
+        files.append(_display_file_path(project_dir, asset.ddl.path))
+    for task in sorted(asset.tasks, key=lambda item: item.file):
+        if task.path:
+            files.append(_display_file_path(project_dir, task.path))
+    if asset.model and asset.model.path:
+        files.append(_display_file_path(project_dir, asset.model.path))
     return files

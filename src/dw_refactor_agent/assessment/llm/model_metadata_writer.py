@@ -62,6 +62,7 @@ from dw_refactor_agent.assessment.llm.table_inspector import (
     result_to_dict as inspect_result_to_dict,
 )
 from dw_refactor_agent.assessment.project_facts.asset_catalog import (
+    TableAsset,
     build_asset_catalog,
 )
 from dw_refactor_agent.assessment.project_facts.business_semantics import (
@@ -1677,17 +1678,14 @@ def update_model_yaml(
     return update
 
 
-def _catalog_table_assets(project: str) -> dict[str, dict[str, Any]]:
+def _catalog_table_assets(project: str) -> dict[str, TableAsset]:
     project_cfg = PROJECT_CONFIG[project]
     project_dir = PROJECT_ROOT / project_cfg["dir"]
-    return (
-        build_asset_catalog(
-            [],
-            load_model_metadata(project),
-            project_dir,
-        ).get("tables")
-        or {}
-    )
+    return build_asset_catalog(
+        [],
+        load_model_metadata(project),
+        project_dir,
+    ).tables
 
 
 def _project_dir(project: str) -> Path:
@@ -1733,15 +1731,12 @@ def _generated_model_path_for_table(
     return project_dir / "mid" / "models" / filename
 
 
-def _generate_model_table_assets(project: str) -> dict[str, dict[str, Any]]:
-    return (
-        build_asset_catalog(
-            [],
-            {},
-            _project_dir(project),
-        ).get("tables")
-        or {}
-    )
+def _generate_model_table_assets(project: str) -> dict[str, TableAsset]:
+    return build_asset_catalog(
+        [],
+        {},
+        _project_dir(project),
+    ).tables
 
 
 def _ensure_metadata_catalog_skeleton(
@@ -1956,10 +1951,9 @@ def _merge_llm_catalog_discoveries(
 
 def _asset_role_from_generate_asset(
     project: str,
-    asset: dict[str, Any],
+    asset: TableAsset,
 ) -> str:
-    ddl = asset.get("ddl") or {}
-    ddl_path = ddl.get("path")
+    ddl_path = asset.ddl.path if asset.ddl else None
     if not ddl_path:
         return ""
     try:
@@ -2113,8 +2107,7 @@ def plan_generate_model_metadata(
     for table_name, asset in sorted(
         _generate_model_table_assets(project).items()
     ):
-        ddl = asset.get("ddl") or {}
-        if not ddl.get("exists"):
+        if not asset.ddl or not asset.ddl.exists:
             continue
         mapping = _generate_model_mapping(
             catalog,
@@ -2813,8 +2806,7 @@ def run_catalog_metadata_write(
 
     updates = []
     for table_name, asset in sorted(_catalog_table_assets(project).items()):
-        ddl = asset.get("ddl") or {}
-        if not ddl.get("exists"):
+        if not asset.ddl or not asset.ddl.exists:
             continue
         mapping = catalog_mapping_for_model(
             catalog,

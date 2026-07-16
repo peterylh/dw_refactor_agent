@@ -5,7 +5,10 @@ from types import SimpleNamespace
 
 from dw_refactor_agent.execution.invocation import TaskInvocation
 from dw_refactor_agent.refactor.shadow_manifest import (
+    CompiledShadowManifest,
     PrefillMode,
+    ShadowJob,
+    ShadowRelation,
     compile_shadow_manifest,
     manifest_summary,
 )
@@ -95,6 +98,9 @@ def test_reserved_execution_marker_reference_is_blocked(tmp_path):
 
     manifest = compile_shadow_manifest(plan, tmp_path, FakePlanner({}))
 
+    assert isinstance(manifest, CompiledShadowManifest)
+    assert isinstance(manifest.relations["daily_report"], ShadowRelation)
+    assert isinstance(manifest.jobs["daily_report"], ShadowJob)
     assert any(
         "reserved" in blocker and "dw_refactor_execution_marker" in blocker
         for blocker in manifest["blockers"]

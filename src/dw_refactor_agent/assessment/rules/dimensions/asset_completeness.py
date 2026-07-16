@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 from dw_refactor_agent.assessment.assessment_context import AssessmentContext
+from dw_refactor_agent.assessment.project_facts.asset_catalog import (
+    TableAsset,
+    TaskAsset,
+)
 from dw_refactor_agent.assessment.result_model import finalize_dimension
 from dw_refactor_agent.assessment.rules.engine.filtering import selected_rules
 from dw_refactor_agent.assessment.rules.engine.runner import RuleRunner
@@ -13,8 +17,8 @@ from dw_refactor_agent.assessment.scoring.config import (
 )
 
 
-def _logical_task_key(task: dict) -> str:
-    return str(task.get("expected_table") or task.get("file") or "")
+def _logical_task_key(task: TaskAsset) -> str:
+    return task.expected_table or task.file
 
 
 def score_asset_completeness(
@@ -28,17 +32,15 @@ def score_asset_completeness(
     table_scope = scoped_names(scope, "tables")
     task_scope = scoped_names(scope, "tasks")
 
-    assets = asset_catalog.get("tables") or {}
+    assets = asset_catalog.tables
     table_targets = []
     for name, asset in sorted(assets.items()):
         if table_scope is not None and name not in table_scope:
             continue
-        has_ddl = bool(asset.get("ddl"))
-        has_model = bool(asset.get("model"))
-        tasks = asset.get("tasks") or []
-        has_output_task = any(
-            name in task.get("output_tables", set()) for task in tasks
-        )
+        has_ddl = bool(asset.ddl)
+        has_model = bool(asset.model)
+        tasks = asset.tasks
+        has_output_task = any(name in task.output_tables for task in tasks)
         table_targets.append(
             {
                 "kind": "table",
@@ -53,13 +55,13 @@ def score_asset_completeness(
     task_outputs = sorted(
         {
             output
-            for task in asset_catalog.get("tasks") or []
-            for output in task.get("output_tables", set())
+            for task in asset_catalog.tasks
+            for output in task.output_tables
         }
     )
     task_targets = [
         {"kind": "task", "task": task}
-        for task in asset_catalog.get("tasks") or []
+        for task in asset_catalog.tasks
         if task_scope is None or _logical_task_key(task) in task_scope
     ]
 
@@ -70,17 +72,17 @@ def score_asset_completeness(
             {
                 "kind": "output",
                 "output": output,
-                "asset": assets.get(output, {}),
+                "asset": assets.get(output, TableAsset(name=output)),
             }
         )
 
     writers_by_output = {}
-    for task in asset_catalog.get("tasks") or []:
-        for output in task.get("output_tables") or set():
+    for task in asset_catalog.tasks:
+        for output in task.output_tables:
             writers_by_output.setdefault(output, {}).setdefault(
                 _logical_task_key(task),
                 set(),
-            ).add(task["file"])
+            ).add(task.file)
 
     for output, writers_by_key in sorted(writers_by_output.items()):
         if table_scope is not None and output not in table_scope:

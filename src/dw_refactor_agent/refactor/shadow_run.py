@@ -47,8 +47,11 @@ from dw_refactor_agent.refactor.qa_pool import (
     require_slot_ownership,
 )
 from dw_refactor_agent.refactor.shadow_manifest import (
+    CompiledShadowManifest,
     PrefillMode,
+    ShadowJob,
     compile_shadow_manifest,
+    ensure_compiled_shadow_manifest,
     manifest_summary,
 )
 
@@ -699,15 +702,14 @@ def _job_dependencies_from_plan(
 def _augment_manifest_dependencies(
     in_degree: dict[str, int],
     adj: dict[str, list[str]],
-    manifest: dict,
+    manifest: CompiledShadowManifest,
 ) -> bool:
     augmented = False
-    producers = manifest.get("producers") or {}
-    for consumer, job_manifest in (manifest.get("jobs") or {}).items():
+    for consumer, job_manifest in manifest.jobs.items():
         if consumer not in in_degree:
             continue
-        for table in job_manifest.get("required_qa_tables") or []:
-            producer = producers.get(table)
+        for table in job_manifest.required_qa_tables:
+            producer = manifest.producers.get(table)
             if (
                 not producer
                 or producer == consumer
@@ -747,7 +749,7 @@ def _skipped_shadow_job_result(
 def _execute_shadow_job(
     job: dict,
     *,
-    job_manifest: dict,
+    job_manifest: ShadowJob,
     job_index: int,
     job_count: int,
     root: Path,
@@ -766,7 +768,7 @@ def _execute_shadow_job(
     invocation_count = 0
     invocation_results = [] if timing_detail else None
     job_timer = _start_timing()
-    invocation_parallel = 1 if job_manifest.get("self_read") else parallel
+    invocation_parallel = 1 if job_manifest.self_read else parallel
 
     _log(f"\n  --- {job_index}/{job_count}: [{layer}] {job_name} ---")
     file_path = root / job_file
@@ -864,7 +866,7 @@ def _execute_shadow_job(
             with qa_ready_lock:
                 qa_ready_snapshot = set(qa_ready_tables)
             executor = ShadowSqlExecutor(
-                context=job_manifest["context"],
+                context=job_manifest.context,
                 qa_ready_tables=qa_ready_snapshot,
                 run_sql_text=run_sql_text,
             )
@@ -959,7 +961,7 @@ def _execute_shadow_job(
         )
 
     with qa_ready_lock:
-        qa_ready_tables.update(job_manifest.get("outputs") or {job_name})
+        qa_ready_tables.update(job_manifest.outputs or {job_name})
 
     return _finish_timing(
         _job_result(
@@ -978,7 +980,7 @@ def _execute_shadow_job(
 def _run_shadow_jobs(
     plan: dict,
     *,
-    manifest: dict,
+    manifest: CompiledShadowManifest,
     root: Path,
     qa_db: str,
     planner: ExecutionPlanner,
@@ -1037,7 +1039,7 @@ def _run_shadow_jobs(
         future = executor_pool.submit(
             _execute_shadow_job,
             job_by_name[job_name],
-            job_manifest=(manifest.get("jobs") or {}).get(job_name, {}),
+            job_manifest=manifest.jobs[job_name],
             job_index=index_by_name[job_name],
             job_count=job_count,
             root=root,
@@ -1196,18 +1198,20 @@ def _compile_shadow_manifest_phase(
     planner: ExecutionPlanner,
     *,
     dry_run: bool,
-) -> tuple[dict | None, dict]:
+) -> tuple[CompiledShadowManifest | None, dict]:
     timer = _start_timing()
     try:
-        manifest = compile_shadow_manifest(plan, root, planner)
-        blockers = list(manifest.get("blockers") or [])
+        manifest = ensure_compiled_shadow_manifest(
+            compile_shadow_manifest(plan, root, planner)
+        )
+        blockers = list(manifest.blockers)
         phase = {
             "name": "compile_shadow_manifest",
             "status": "failed"
             if blockers
             else ("dry_run" if dry_run else "success"),
             "blockers": blockers,
-            "warnings": list(manifest.get("warnings") or []),
+            "warnings": list(manifest.warnings),
         }
         plan["_shadow_manifest_summary"] = manifest_summary(manifest)
         return manifest, _finish_timing(phase, timer)
@@ -1236,7 +1240,7 @@ def _prefill_sql(action, prod_db: str, qa_db: str) -> str:
 
 
 def _prefill_phase(
-    manifest: dict,
+    manifest: CompiledShadowManifest,
     prod_db: str,
     qa_db: str,
     *,
@@ -1249,7 +1253,7 @@ def _prefill_phase(
         "status": "dry_run" if dry_run else "success",
         "actions": results,
     }
-    for action in manifest.get("prefill_actions") or []:
+    for action in manifest.prefill_actions:
         sql = _prefill_sql(action, prod_db, qa_db)
         result = {
             **action.to_dict(),
@@ -1272,7 +1276,7 @@ def _prefill_phase(
 
 def _dry_run_phases(
     plan: dict,
-    manifest: dict,
+    manifest: CompiledShadowManifest,
     *,
     root: Path,
     timing_detail: bool = False,
@@ -1856,7 +1860,9 @@ def run_shadow_plan(
     return result
 
 
-def _dry_run(plan: dict, manifest: dict, *, root: Path) -> None:
+def _dry_run(
+    plan: dict, manifest: CompiledShadowManifest, *, root: Path
+) -> None:
     qa_db = plan["qa_db"]
     prod_db = plan["project_db"]
     baseline_ddl = plan.get("baseline_ddl", {})
@@ -1905,7 +1911,7 @@ def _dry_run(plan: dict, manifest: dict, *, root: Path) -> None:
     for table_name in sorted(baseline_ddl):
         print(f"  [CREATE] {qa_db}.{table_name}")
 
-    actions = manifest.get("prefill_actions") or []
+    actions = manifest.prefill_actions
     print(f"\n--- Phase 1.5: 基线数据预填 ({len(actions)} 条) ---")
     for action in actions:
         print(f"  {_prefill_sql(action, prod_db, qa_db)}")
@@ -1963,9 +1969,9 @@ def _dry_run(plan: dict, manifest: dict, *, root: Path) -> None:
                 continue
 
             for invocation in invocations:
-                job_manifest = (manifest.get("jobs") or {}).get(job_name, {})
+                job_manifest = manifest.jobs[job_name]
                 executor = ShadowSqlExecutor(
-                    context=job_manifest["context"],
+                    context=job_manifest.context,
                     qa_ready_tables=set(qa_ready_tables),
                     run_sql_text=run_sql_text,
                 )
@@ -1982,8 +1988,7 @@ def _dry_run(plan: dict, manifest: dict, *, root: Path) -> None:
                     print(f"    ... ({total} 行)")
 
             qa_ready_tables.update(
-                (manifest.get("jobs") or {}).get(job_name, {}).get("outputs")
-                or {job_name}
+                manifest.jobs[job_name].outputs or {job_name}
             )
 
     if checks:

@@ -3,6 +3,10 @@ import pytest
 import dw_refactor_agent.assessment.rules.definitions.task_sql_quality as task_sql_quality_defs
 from dw_refactor_agent.assessment.assessment_context import AssessmentContext
 from dw_refactor_agent.assessment.project_facts.asset_catalog import (
+    AssetCatalog,
+    DdlAsset,
+    TableAsset,
+    TaskAsset,
     build_asset_catalog,
 )
 from dw_refactor_agent.assessment.rules.dimensions.task_sql_quality import (
@@ -74,6 +78,29 @@ def _catalog_for_tasks_and_ddl(tmp_path, task_sql_by_name, ddl_files=None):
 
 def _issue_rule_ids(result):
     return {issue["rule_id"] for issue in result["issues"]}
+
+
+def test_asset_catalog_uses_formal_domain_records(tmp_path):
+    context = _catalog_for_task_and_ddl(
+        tmp_path,
+        "dwd_orders.sql",
+        "INSERT INTO demo.dwd_orders SELECT 1 AS order_id;",
+        {
+            "dwd_orders.sql": (
+                "CREATE TABLE demo.dwd_orders (order_id BIGINT) "
+                "ENGINE=OLAP DUPLICATE KEY(order_id) "
+                "DISTRIBUTED BY HASH(order_id) BUCKETS 1;"
+            )
+        },
+    )
+
+    assert isinstance(context.assets, AssetCatalog)
+    assert isinstance(context.assets.tables["dwd_orders"], TableAsset)
+    assert isinstance(context.assets.tables["dwd_orders"].ddl, DdlAsset)
+    assert isinstance(context.assets.tasks[0], TaskAsset)
+    assert (
+        context.assets.tables["dwd_orders"].tasks[0] is context.assets.tasks[0]
+    )
 
 
 def test_score_code_quality_accepts_comment_only_task(tmp_path):
