@@ -2,6 +2,7 @@ import json
 
 import pytest
 
+import dw_refactor_agent.lineage.lineage_extractor as lineage_extractor
 from dw_refactor_agent.lineage.contract import (
     LineageContractError,
     validate_lineage_v2,
@@ -736,4 +737,116 @@ def test_build_lineage_output_hides_internal_catalog_but_keeps_external():
         "hive.shop_dm.dwd_orders.order_id"
     )
     assert output["edges"][0]["target"]["id"] == "dws_orders.order_id"
+    validate_lineage_v2(output)
+
+
+def test_build_lineage_output_qualifies_ambiguous_same_name_edge_refs(
+    monkeypatch,
+):
+    monkeypatch.setattr(lineage_extractor, "CURRENT_CATALOG", "internal")
+    monkeypatch.setattr(lineage_extractor, "CURRENT_DB", "cdm")
+    table_name = "tdm_corp_label_measure_check_result"
+    schema = {
+        "internal": {
+            "cdm": {table_name: {"CHECK_ID": "STRING"}},
+            "tdm": {table_name: {"CHECK_ID": "STRING"}},
+        }
+    }
+
+    output = build_lineage_output(
+        [
+            {
+                "source_table": f"tdm.{table_name}",
+                "source_column": "CHECK_ID",
+                "target_table": f"cdm.{table_name}",
+                "target_column": "CHECK_ID",
+                "lineage_type": "direct",
+                "expression": "CHECK_ID",
+                "source_file": "measure_check.sql",
+            }
+        ],
+        schema,
+        task_results=[
+            _task_result(
+                "measure_check.sql",
+                inputs=[f"tdm.{table_name}"],
+                outputs=[f"cdm.{table_name}"],
+            )
+        ],
+    )
+
+    assert output["edges"] == [
+        {
+            "source": {
+                "type": "column",
+                "id": f"tdm.{table_name}.CHECK_ID",
+            },
+            "target": {
+                "type": "column",
+                "id": f"cdm.{table_name}.CHECK_ID",
+            },
+            "relation_type": "direct",
+            "transformation_type": "passthrough",
+            "expression": "CHECK_ID",
+            "job": "measure_check",
+        }
+    ]
+    validate_lineage_v2(output)
+
+
+def test_build_lineage_output_qualifies_cross_catalog_job_and_edge_refs(
+    monkeypatch,
+):
+    monkeypatch.setattr(lineage_extractor, "CURRENT_CATALOG", "internal")
+    monkeypatch.setattr(lineage_extractor, "CURRENT_DB", "cdm")
+    table_name = "measure_check_result"
+    schema = {
+        "internal": {"cdm": {table_name: {"CHECK_ID": "STRING"}}},
+        "hive": {"cdm": {table_name: {"CHECK_ID": "STRING"}}},
+    }
+    entries = [
+        {
+            "source_table": f"hive.cdm.{table_name}",
+            "source_column": "CHECK_ID",
+            "target_table": f"internal.cdm.{table_name}",
+            "target_column": "CHECK_ID",
+            "lineage_type": "direct",
+            "expression": "CHECK_ID",
+            "source_file": "measure_check.sql",
+        },
+        {
+            "source_table": f"hive.cdm.{table_name}",
+            "source_column": "CHECK_ID",
+            "target_table": f"internal.cdm.{table_name}",
+            "lineage_type": "indirect",
+            "condition_type": "WHERE",
+            "condition_expression": "CHECK_ID IS NOT NULL",
+            "source_file": "measure_check.sql",
+        },
+    ]
+
+    output = build_lineage_output(
+        entries,
+        schema,
+        task_results=[
+            _task_result(
+                "measure_check.sql",
+                inputs=[f"hive.cdm.{table_name}"],
+                outputs=[f"internal.cdm.{table_name}"],
+            )
+        ],
+    )
+
+    assert output["jobs"][0]["inputs"] == [f"hive.cdm.{table_name}"]
+    assert output["jobs"][0]["outputs"] == [f"internal.cdm.{table_name}"]
+    assert output["edges"][0]["source"]["id"] == (
+        f"hive.cdm.{table_name}.CHECK_ID"
+    )
+    assert output["edges"][0]["target"]["id"] == (
+        f"internal.cdm.{table_name}.CHECK_ID"
+    )
+    assert output["edges"][1]["source"]["id"] == (
+        f"hive.cdm.{table_name}.CHECK_ID"
+    )
+    assert output["edges"][1]["target"]["id"] == (f"internal.cdm.{table_name}")
     validate_lineage_v2(output)

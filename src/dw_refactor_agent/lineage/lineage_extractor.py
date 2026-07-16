@@ -310,7 +310,8 @@ def _canonical_lineage_entry(entry, schema=None):
 
 
 def _node_id(table_name, column_name):
-    return f"{_strip_db(table_name)}.{_canonical_column(column_name)}"
+    table_name = _canonical_qualified_identifier(table_name)
+    return f"{table_name}.{_canonical_column(column_name)}"
 
 
 def _column_source(table_name, column_name):
@@ -322,7 +323,10 @@ def _column_target(table_name, column_name):
 
 
 def _table_target(table_name):
-    return {"type": "table", "id": _strip_db(table_name)}
+    return {
+        "type": "table",
+        "id": _canonical_qualified_identifier(table_name),
+    }
 
 
 def _literal_source(value):
@@ -4675,6 +4679,35 @@ def build_lineage_output(
         target_key = _remember_table_name(entry.get("target_table"))
         if target_key is not None and target_key not in temporary_table_keys:
             process_table_keys.add(target_key)
+    table_keys_by_short_name = {}
+    table_keys_by_database_name = {}
+    for table_key in table_names_by_key:
+        table_keys_by_short_name.setdefault(table_key[2], set()).add(table_key)
+        table_keys_by_database_name.setdefault(table_key[1:], set()).add(
+            table_key
+        )
+
+    def _unique_table_reference(table_name, preferred_reference):
+        table_key = _table_storage_key(table_name)
+        if len(table_keys_by_short_name[table_key[2]]) == 1:
+            return preferred_reference
+        if len(table_keys_by_database_name[table_key[1:]]) == 1:
+            return cached_display_table_name(table_name)
+        catalog, database, name = _table_identity(table_name)
+        return _qualified_table_name(catalog, database, name)
+
+    for job in jobs:
+        for io_field in ("inputs", "outputs"):
+            references_by_key = {
+                _table_storage_key(table_name): _unique_table_reference(
+                    table_name,
+                    cached_display_table_name(table_name),
+                )
+                for table_name in job[io_field]
+            }
+            job[io_field] = [
+                references_by_key[key] for key in sorted(references_by_key)
+            ]
     del all_lineage, task_results
 
     def _dataset_type(tbl):
@@ -4731,8 +4764,10 @@ def build_lineage_output(
             column_names.add(column_key)
             column_objects[column_key] = column
 
-    def _stored_table_name(tbl):
-        return tables[_table_storage_key(tbl)]["name"]
+    def _stored_table_reference(tbl):
+        table_key = _table_storage_key(tbl)
+        table = tables[table_key]
+        return _unique_table_reference(tbl, table["name"])
 
     def _stored_column_name(tbl, col):
         return column_objects_by_table[_table_storage_key(tbl)][
@@ -4764,12 +4799,12 @@ def build_lineage_output(
             if src_tbl == "UNKNOWN":
                 continue
             _ensure_column(src_tbl, src_col)
-            displayed_src_tbl = _stored_table_name(src_tbl)
+            displayed_src_tbl = _stored_table_reference(src_tbl)
             displayed_src_col = _stored_column_name(src_tbl, src_col)
         if not tgt_tbl or not tgt_col:
             continue
         _ensure_column(tgt_tbl, tgt_col)
-        displayed_tgt_tbl = _stored_table_name(tgt_tbl)
+        displayed_tgt_tbl = _stored_table_reference(tgt_tbl)
         displayed_tgt_col = _stored_column_name(tgt_tbl, tgt_col)
         edges.append(
             {
@@ -4800,9 +4835,9 @@ def build_lineage_output(
             continue
         _ensure_column(src_tbl, src_col)
         _ensure_table(tgt_tbl)
-        displayed_src_tbl = _stored_table_name(src_tbl)
+        displayed_src_tbl = _stored_table_reference(src_tbl)
         displayed_src_col = _stored_column_name(src_tbl, src_col)
-        displayed_tgt_tbl = _stored_table_name(tgt_tbl)
+        displayed_tgt_tbl = _stored_table_reference(tgt_tbl)
         relation_type = _relation_type_for_condition(
             entry.get("condition_type", "")
         )
