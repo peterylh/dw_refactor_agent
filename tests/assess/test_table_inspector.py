@@ -2854,29 +2854,38 @@ def test_inspect_batch_runs_with_configured_parallelism(monkeypatch):
     assert 1 < max_active <= 2
 
 
-def test_inspect_batch_propagates_result_callback_error(monkeypatch):
-    inspector = TableInspector(api_key="test", cache_file=None, parallelism=1)
-    ctx = TableContext(
-        table_name="t1",
-        layer="DWD",
-        ddl="CREATE TABLE t1 (id BIGINT);",
-        etl_sql="",
-        upstream_tables=[],
-        downstream_tables=[],
+@pytest.mark.parametrize("parallelism", [1, 2])
+def test_inspect_batch_propagates_result_callback_error(
+    monkeypatch, parallelism
+):
+    inspector = TableInspector(
+        api_key="test", cache_file=None, parallelism=parallelism
     )
-    result = TableInspectResult(
-        table_name="t1",
-        declared_layer="DWD",
-        inferred_layer="DWD",
-        table_type="fact",
-        confidence=0.9,
-        reasoning_steps=[],
-    )
-    monkeypatch.setattr(
-        inspector,
-        "inspect",
-        lambda _ctx, *, progress_context=None: result,
-    )
+    contexts = [
+        TableContext(
+            table_name=f"t{i}",
+            layer="DWD",
+            ddl=f"CREATE TABLE t{i} (id BIGINT);",
+            etl_sql="",
+            upstream_tables=[],
+            downstream_tables=[],
+        )
+        for i in range(4)
+    ]
+    inspected = []
+
+    def fake_inspect(ctx, *, progress_context=None):
+        inspected.append(ctx.table_name)
+        return TableInspectResult(
+            table_name=ctx.table_name,
+            declared_layer=ctx.layer,
+            inferred_layer="DWD",
+            table_type="fact",
+            confidence=0.9,
+            reasoning_steps=[],
+        )
+
+    monkeypatch.setattr(inspector, "inspect", fake_inspect)
 
     def fail_callback(_result):
         raise OSError("checkpoint disk full")
@@ -2884,7 +2893,9 @@ def test_inspect_batch_propagates_result_callback_error(monkeypatch):
     inspector.result_callback = fail_callback
 
     with pytest.raises(OSError, match="checkpoint disk full"):
-        inspector.inspect_batch([ctx])
+        inspector.inspect_batch(contexts)
+
+    assert 1 <= len(inspected) <= parallelism
 
 
 # ============================================================

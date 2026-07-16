@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import errno
 import fcntl
+import hashlib
 import json
 import threading
 from contextlib import suppress
@@ -148,6 +149,8 @@ class GenerateModelCheckpoint:
             return
         for path in self.root.glob("*.yaml"):
             path.unlink()
+        for path in self.root.glob(".*.pending"):
+            path.unlink()
 
     def _load_existing_manifest(self) -> dict[str, Any]:
         if not self.manifest_path.exists():
@@ -170,6 +173,17 @@ class GenerateModelCheckpoint:
         finally:
             if staged_path.exists():
                 staged_path.unlink()
+
+    @staticmethod
+    def _content_digest(content: str) -> str:
+        return hashlib.sha256(content.encode(TEXT_ENCODING)).hexdigest()
+
+    @classmethod
+    def _file_digest(cls, path: Path) -> str | None:
+        try:
+            return cls._content_digest(path.read_text(encoding=TEXT_ENCODING))
+        except OSError:
+            return None
 
     def _write_manifest(self) -> None:
         self._manifest["updated_at"] = _utc_timestamp()
@@ -199,8 +213,29 @@ class GenerateModelCheckpoint:
             return
         table_name = str(pending.get("table") or "")
         entry = pending.get("entry")
+        staged_name = str(pending.get("staged_name") or "")
+        expected_digest = str(pending.get("content_sha256") or "")
         checkpoint_path = self.root / f"{table_name}.yaml"
-        if table_name and isinstance(entry, dict) and checkpoint_path.exists():
+        staged_path = (
+            self.root / staged_name
+            if staged_name and Path(staged_name).name == staged_name
+            else None
+        )
+        if (
+            staged_path is not None
+            and staged_path.exists()
+            and expected_digest
+        ):
+            if self._file_digest(staged_path) == expected_digest:
+                staged_path.replace(checkpoint_path)
+            else:
+                staged_path.unlink()
+        if (
+            table_name
+            and isinstance(entry, dict)
+            and expected_digest
+            and self._file_digest(checkpoint_path) == expected_digest
+        ):
             tables = manifest.setdefault("tables", {})
             if isinstance(tables, dict):
                 tables[table_name] = entry
@@ -232,6 +267,15 @@ class GenerateModelCheckpoint:
         validation: dict[str, Any] | None = None,
     ) -> Path:
         checkpoint_path = self.root / f"{table_name}.yaml"
+        rendered_metadata = yaml.safe_dump(
+            metadata,
+            allow_unicode=True,
+            sort_keys=False,
+        )
+        content_digest = self._content_digest(rendered_metadata)
+        staged_path = checkpoint_path.with_name(
+            f".{checkpoint_path.name}.{uuid4().hex}.pending"
+        )
         previous = self._manifest["tables"].get(table_name) or {}
         entry = {
             "target_path": str(self._target_path(table_name)),
@@ -250,19 +294,21 @@ class GenerateModelCheckpoint:
                 entry[key] = value
             elif key in previous:
                 entry[key] = previous[key]
+        staged_path.write_text(rendered_metadata, encoding=TEXT_ENCODING)
         self._manifest["pending_write"] = {
             "table": table_name,
             "entry": entry,
+            "staged_name": staged_path.name,
+            "content_sha256": content_digest,
         }
-        self._write_manifest()
-        self._atomic_write(
-            checkpoint_path,
-            yaml.safe_dump(
-                metadata,
-                allow_unicode=True,
-                sort_keys=False,
-            ),
-        )
+        try:
+            self._write_manifest()
+        except BaseException:
+            self._manifest.pop("pending_write", None)
+            with suppress(OSError):
+                staged_path.unlink()
+            raise
+        staged_path.replace(checkpoint_path)
         self._manifest["tables"][table_name] = entry
         self._manifest.pop("pending_write", None)
         self._refresh_manifest_counts(self._manifest)

@@ -669,12 +669,9 @@ def _checkpoint_plan(writer_module, project):
     )
 
 
-def test_generate_checkpoint_rejects_overlapping_project_run(
-    tmp_path, monkeypatch
-):
+def _checkpoint_project(tmp_path, monkeypatch, project):
     import dw_refactor_agent.assessment.llm.model_metadata_writer as writer_module
 
-    project = "generate_checkpoint_lock"
     project_dir = _write_catalog_project(
         tmp_path,
         monkeypatch,
@@ -682,7 +679,14 @@ def test_generate_checkpoint_rejects_overlapping_project_run(
         catalog=_catalog_payload(),
         ddl_tables=["dwd_first"],
     )
-    plan = _checkpoint_plan(writer_module, project)
+    return project_dir, _checkpoint_plan(writer_module, project)
+
+
+def test_generate_checkpoint_rejects_overlapping_project_run(
+    tmp_path, monkeypatch
+):
+    project = "generate_checkpoint_lock"
+    project_dir, plan = _checkpoint_project(tmp_path, monkeypatch, project)
     first = GenerateModelCheckpoint(
         project,
         project_dir=project_dir,
@@ -712,20 +716,12 @@ def test_generate_checkpoint_rejects_overlapping_project_run(
 def test_generate_checkpoint_records_processed_inspection_status(
     tmp_path, monkeypatch
 ):
-    import dw_refactor_agent.assessment.llm.model_metadata_writer as writer_module
-
     project = "generate_checkpoint_processed_status"
-    project_dir = _write_catalog_project(
-        tmp_path,
-        monkeypatch,
-        project,
-        catalog=_catalog_payload(),
-        ddl_tables=["dwd_first"],
-    )
+    project_dir, plan = _checkpoint_project(tmp_path, monkeypatch, project)
     checkpoint = GenerateModelCheckpoint(
         project,
         project_dir=project_dir,
-        plan=_checkpoint_plan(writer_module, project),
+        plan=plan,
     )
     checkpoint.write_inspection_result(
         TableInspectResult(
@@ -753,20 +749,12 @@ def test_generate_checkpoint_records_processed_inspection_status(
 def test_generate_checkpoint_recovers_journaled_yaml_write(
     tmp_path, monkeypatch
 ):
-    import dw_refactor_agent.assessment.llm.model_metadata_writer as writer_module
-
     project = "generate_checkpoint_recovery"
-    project_dir = _write_catalog_project(
-        tmp_path,
-        monkeypatch,
-        project,
-        catalog=_catalog_payload(),
-        ddl_tables=["dwd_first"],
-    )
+    project_dir, plan = _checkpoint_project(tmp_path, monkeypatch, project)
     checkpoint = GenerateModelCheckpoint(
         project,
         project_dir=project_dir,
-        plan=_checkpoint_plan(writer_module, project),
+        plan=plan,
     )
     original_write_manifest = checkpoint._write_manifest
     write_count = 0
@@ -809,6 +797,107 @@ def test_generate_checkpoint_recovers_journaled_yaml_write(
     assert recovered["checkpoint_model_count"] == 1
     assert recovered["inspected_table_count"] == 1
     assert recovered["tables"]["dwd_first"]["inspection_status"] == "passed"
+
+
+def test_generate_checkpoint_recovers_staged_write_over_old_yaml(
+    tmp_path, monkeypatch
+):
+    project = "generate_checkpoint_staged_recovery"
+    project_dir, plan = _checkpoint_project(tmp_path, monkeypatch, project)
+    checkpoint = GenerateModelCheckpoint(
+        project,
+        project_dir=project_dir,
+        plan=plan,
+    )
+    checkpoint._write_model(
+        "dwd_first",
+        {"version": 2, "name": "dwd_first", "layer": "DWD"},
+        stage="first",
+    )
+    checkpoint_path = project_dir / "mid_checkpoints" / "dwd_first.yaml"
+    old_content = checkpoint_path.read_text(encoding="utf-8")
+    original_replace = Path.replace
+
+    def interrupt_before_yaml_replace(path, target):
+        if path.name.endswith(".pending") and Path(target) == checkpoint_path:
+            raise OSError("simulated yaml replace interruption")
+        return original_replace(path, target)
+
+    with monkeypatch.context() as replace_patch:
+        replace_patch.setattr(Path, "replace", interrupt_before_yaml_replace)
+        with pytest.raises(
+            OSError, match="simulated yaml replace interruption"
+        ):
+            checkpoint._write_model(
+                "dwd_first",
+                {"version": 2, "name": "dwd_first", "layer": "DWS"},
+                stage="second",
+            )
+    checkpoint.close()
+
+    checkpoint_dir = project_dir / "mid_checkpoints"
+    interrupted = json.loads(
+        (checkpoint_dir / "manifest.json").read_text(encoding="utf-8")
+    )
+    pending = interrupted["pending_write"]
+    staged_path = checkpoint_dir / pending["staged_name"]
+    assert checkpoint_path.read_text(encoding="utf-8") == old_content
+    assert staged_path.exists()
+    assert pending["content_sha256"]
+
+    recovered = GenerateModelCheckpoint.recover_existing(project_dir)
+
+    assert (
+        yaml.safe_load(checkpoint_path.read_text(encoding="utf-8"))["layer"]
+        == "DWS"
+    )
+    assert recovered["tables"]["dwd_first"]["revision"] == 2
+
+
+def test_generate_reports_checkpoint_finalization_failure_after_publish(
+    tmp_path, monkeypatch
+):
+    import dw_refactor_agent.assessment.llm.model_metadata_writer as writer_module
+
+    project = "generate_checkpoint_finish_failure"
+    project_dir = _write_catalog_project(
+        tmp_path,
+        monkeypatch,
+        project,
+        catalog=_catalog_payload(),
+        ddl_tables=["dwd_first"],
+    )
+
+    def fail_finish(self, **kwargs):
+        raise OSError("simulated final manifest failure")
+
+    monkeypatch.setattr(
+        writer_module,
+        "run_metadata_write",
+        lambda *args, **kwargs: {"model_updates": [], "tables": []},
+    )
+    monkeypatch.setattr(
+        writer_module,
+        "validate_generate_candidate",
+        lambda *args, **kwargs: {
+            "status": "passed",
+            "errors": [],
+            "warnings": [],
+        },
+    )
+    monkeypatch.setattr(GenerateModelCheckpoint, "finish", fail_finish)
+
+    result = run_generate_model_metadata(
+        project,
+        api_key="test",
+        dry_run=False,
+        update_catalog=False,
+    )
+
+    assert result["publication"]["status"] == "published"
+    assert result["checkpoint"]["status"] == "finalization_failed"
+    assert "simulated final manifest failure" in result["checkpoint"]["error"]
+    assert (project_dir / "mid" / "models" / "dwd_first.yaml").exists()
 
 
 def test_run_generate_model_metadata_missing_catalog_writes_skeleton_and_models(

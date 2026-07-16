@@ -350,6 +350,7 @@ def run_generate_model_metadata(
                 checkpoint.close()
             raise
 
+    checkpoint_finalization_error = None
     try:
         publication_validation = validate_generate_candidate(
             final_model_metadata,
@@ -387,11 +388,17 @@ def run_generate_model_metadata(
             additional_deleted_files=catalog_deleted_files,
         )
         if checkpoint:
-            checkpoint.finish(
-                status="blocked" if publication_blocked else "published",
-                published=should_publish,
-                validation=publication_validation,
-            )
+            try:
+                checkpoint.finish(
+                    status="blocked" if publication_blocked else "published",
+                    published=should_publish,
+                    validation=publication_validation,
+                )
+            except Exception as exc:
+                checkpoint.close()
+                if not should_publish:
+                    raise
+                checkpoint_finalization_error = f"{type(exc).__name__}: {exc}"
     except BaseException:
         if checkpoint:
             checkpoint.close()
@@ -404,6 +411,21 @@ def run_generate_model_metadata(
         )
 
     changed_updates = [update for update in model_updates if update["changed"]]
+    checkpoint_report = (
+        checkpoint.report()
+        if checkpoint
+        else {
+            "enabled": False,
+            "status": "disabled",
+        }
+    )
+    if checkpoint_finalization_error:
+        checkpoint_report.update(
+            {
+                "status": "finalization_failed",
+                "error": checkpoint_finalization_error,
+            }
+        )
     result = {
         "project": project,
         "source": "direct_model_generation",
@@ -430,14 +452,7 @@ def run_generate_model_metadata(
             "published": should_publish,
             "validation": publication_validation,
         },
-        "checkpoint": (
-            checkpoint.report()
-            if checkpoint
-            else {
-                "enabled": False,
-                "status": "disabled",
-            }
-        ),
+        "checkpoint": checkpoint_report,
         "flow": {
             "mode": "generate",
             "prior_source": "direct_rule",

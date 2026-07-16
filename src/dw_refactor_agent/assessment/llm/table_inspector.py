@@ -6,7 +6,7 @@ import math
 import re
 import threading
 import urllib.request
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
@@ -2036,6 +2036,7 @@ class TableInspector:
         self, contexts: list[TableContext]
     ) -> list[TableInspectResult]:
         total = len(contexts)
+        batch_failed = threading.Event()
 
         def inspect_safely(
             item: tuple[int, TableContext],
@@ -2062,8 +2063,12 @@ class TableInspector:
                     progress_context=progress_context,
                     error=str(e),
                 )
-            if self.result_callback:
-                self.result_callback(result)
+            if self.result_callback and not batch_failed.is_set():
+                try:
+                    self.result_callback(result)
+                except BaseException:
+                    batch_failed.set()
+                    raise
             self._emit_progress(
                 "finish",
                 ctx,
@@ -2083,6 +2088,41 @@ class TableInspector:
             ]
 
         max_workers = min(self.parallelism, len(contexts))
-        indexed_contexts = list(enumerate(contexts, start=1))
+        indexed_contexts = iter(enumerate(contexts, start=1))
+        results_by_index: dict[int, TableInspectResult] = {}
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            return list(executor.map(inspect_safely, indexed_contexts))
+            pending = {}
+
+            def submit_next() -> bool:
+                if batch_failed.is_set():
+                    return False
+                try:
+                    item = next(indexed_contexts)
+                except StopIteration:
+                    return False
+                pending[executor.submit(inspect_safely, item)] = item[0]
+                return True
+
+            for _ in range(max_workers):
+                submit_next()
+
+            try:
+                while pending:
+                    done, _ = wait(
+                        tuple(pending),
+                        return_when=FIRST_COMPLETED,
+                    )
+                    completed = [
+                        (pending.pop(future), future) for future in done
+                    ]
+                    for index, future in completed:
+                        results_by_index[index] = future.result()
+                    for _ in completed:
+                        submit_next()
+            except BaseException:
+                batch_failed.set()
+                for future in pending:
+                    future.cancel()
+                raise
+
+        return [results_by_index[index] for index in range(1, total + 1)]
