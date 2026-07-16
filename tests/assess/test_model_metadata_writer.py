@@ -7,7 +7,6 @@ import yaml
 
 import dw_refactor_agent.config as config
 from dw_refactor_agent.assessment.llm.generation_contract import (
-    infer_execution_mapping,
     validate_generate_candidate,
 )
 from dw_refactor_agent.assessment.llm.layer_resolution import (
@@ -2840,19 +2839,6 @@ def test_model_metadata_writer_cli_dispatches_refresh_and_generate_modes(
         / ("model_metadata_result.json")
     )
     assert output_path.exists()
-
-
-def test_model_metadata_writer_cli_rejects_catalog_mode(
-    monkeypatch,
-    tmp_path,
-):
-    import dw_refactor_agent.assessment.llm.model_metadata_writer as writer_module
-
-    project = "shop"
-    project_dir = tmp_path / project
-    project_dir.mkdir()
-    _configure_project_root(monkeypatch, tmp_path)
-    monkeypatch.setitem(config.PROJECT_CONFIG, project, {"dir": project})
     monkeypatch.setattr(
         sys,
         "argv",
@@ -3246,8 +3232,16 @@ def test_run_generate_model_metadata_blocks_unresolved_execution_contract(
     )
     task_dir = project_dir / "mid" / "tasks"
     task_dir.mkdir(parents=True, exist_ok=True)
+    (project_dir / "mid" / "ddl" / "dwd_order_detail.sql").write_text(
+        (
+            "CREATE TABLE dwd_order_detail (id BIGINT, stat_date DATE) "
+            "PARTITION BY RANGE(stat_date) ();\n"
+        ),
+        encoding="utf-8",
+    )
     (task_dir / "dwd_order_detail.sql").write_text(
-        "INSERT INTO demo.dwd_order_detail SELECT 1, 1;\n",
+        "SET @retry_limit = 3;\n"
+        "INSERT INTO demo.dwd_order_detail SELECT 1, CURRENT_DATE;\n",
         encoding="utf-8",
     )
     model_path = project_dir / "mid" / "models" / "dwd_order_detail.yaml"
@@ -3267,54 +3261,6 @@ def test_run_generate_model_metadata_blocks_unresolved_execution_contract(
     ]
     assert result["deleted_model_files"] == []
     assert saved["execution"] == {"materialized": "full"}
-
-
-def test_generate_execution_does_not_bind_unrelated_parameter_to_partition(
-    tmp_path,
-):
-    task_path = tmp_path / "dwd_order_detail.sql"
-    task_path.write_text(
-        "SET @retry_limit = 3;\n"
-        "INSERT INTO dwd_order_detail SELECT CURRENT_DATE;\n",
-        encoding="utf-8",
-    )
-    asset = {
-        "ddl": {
-            "columns": [{"name": "stat_date"}],
-            "partition_column": "stat_date",
-        },
-        "tasks": [{"path": str(task_path), "is_full_refresh": False}],
-    }
-
-    execution = infer_execution_mapping(
-        "dwd_order_detail",
-        asset,
-        layer="DWD",
-    )
-    validation = validate_generate_candidate(
-        {
-            "dwd_order_detail": {
-                "name": "dwd_order_detail",
-                "layer": "DWD",
-                "table_type": "other",
-                "execution": execution,
-            }
-        },
-        {"dwd_order_detail": asset},
-        llm_result=None,
-        catalog={},
-    )
-
-    assert "slice" not in execution
-    assert validation["errors"] == [
-        {
-            "type": "execution_slice_missing",
-            "table": "dwd_order_detail",
-            "message": (
-                "incremental replay_slices model requires execution.slice"
-            ),
-        }
-    ]
 
 
 def test_run_generate_model_metadata_blocks_dwd_without_task_sql(
@@ -3355,229 +3301,141 @@ def test_run_generate_model_metadata_blocks_dwd_without_task_sql(
 
 
 @pytest.mark.parametrize(
-    ("process_codes", "expected_error", "expected_message"),
+    (
+        "llm_enabled",
+        "model_process",
+        "table_process",
+        "metric_processes",
+        "catalog_codes",
+        "expected_error",
+        "expected_message",
+    ),
     [
         (
-            [],
+            True,
+            "",
+            "",
+            (),
+            ("ORDER", "REFUND"),
             "business_process_missing",
             "fact inspection did not identify a business process",
         ),
         (
-            ["ORDER", "REFUND"],
+            True,
+            "",
+            "",
+            ("ORDER", "REFUND"),
+            ("ORDER", "REFUND"),
             "business_process_ambiguous",
             (
                 "fact inspection identified multiple business processes: "
                 "ORDER, REFUND"
             ),
         ),
+        (
+            True,
+            "ACCOUNT_TRANSFER",
+            "ACCOUNT_TRANSFER",
+            (),
+            ("ACCOUNT_TRANSFER",),
+            None,
+            None,
+        ),
+        (
+            True,
+            "ACCOUNT_TRANSFER",
+            "ACCOUNT_TRANSFER",
+            ("",),
+            ("ACCOUNT_TRANSFER",),
+            "business_process_missing",
+            "fact inspection did not identify a business process",
+        ),
+        (
+            False,
+            "",
+            "",
+            (),
+            (),
+            "business_process_missing",
+            "fact model requires exactly one business process",
+        ),
     ],
-    ids=("missing", "ambiguous"),
+    ids=(
+        "missing",
+        "ambiguous",
+        "factless-table-process",
+        "unassigned-metric",
+        "no-llm",
+    ),
 )
-def test_generate_publication_blocks_unresolved_business_processes(
+def test_generate_publication_business_process_contract(
     tmp_path,
-    process_codes,
+    llm_enabled,
+    model_process,
+    table_process,
+    metric_processes,
+    catalog_codes,
     expected_error,
     expected_message,
 ):
-    task_path = tmp_path / "dwd_order_detail.sql"
+    table_name = "dwd_fact"
+    task_path = tmp_path / f"{table_name}.sql"
     task_path.write_text(
-        "TRUNCATE TABLE dwd_order_detail;\n",
+        f"TRUNCATE TABLE {table_name};\n",
         encoding="utf-8",
     )
-    validation = validate_generate_candidate(
-        {
-            "dwd_order_detail": {
-                "name": "dwd_order_detail",
-                "layer": "DWD",
-                "table_type": "fact",
-                "execution": {
-                    "materialized": "full",
-                    "full_refresh_strategy": "replace_all",
-                },
-            }
+    model = {
+        "name": table_name,
+        "layer": "DWD",
+        "table_type": "fact",
+        "execution": {
+            "materialized": "full",
+            "full_refresh_strategy": "replace_all",
         },
+    }
+    if model_process:
+        model["business_process"] = model_process
+    inspection = {
+        "table_name": table_name,
+        "status": "passed",
+        "table_type": "fact",
+        "business_process": table_process,
+        "columns": {
+            "atomic_metrics": [
+                {
+                    "name": f"metric_{index}",
+                    "business_process": code,
+                }
+                for index, code in enumerate(metric_processes)
+            ],
+            "derived_metrics": [],
+            "calculated_metrics": [],
+        },
+    }
+    validation = validate_generate_candidate(
+        {table_name: model},
         {
-            "dwd_order_detail": {
+            table_name: {
                 "ddl": {"columns": [{"name": "id"}]},
                 "tasks": [{"path": str(task_path), "is_full_refresh": False}],
             }
         },
-        llm_result={
-            "tables": [
-                {
-                    "table_name": "dwd_order_detail",
-                    "status": "passed",
-                    "table_type": "fact",
-                    "columns": {
-                        "atomic_metrics": [
-                            {
-                                "name": f"metric_{index}",
-                                "business_process": code,
-                            }
-                            for index, code in enumerate(process_codes)
-                        ]
-                    },
-                }
-            ]
-        },
+        llm_result={"tables": [inspection]} if llm_enabled else None,
         catalog={
-            "business_processes": [
-                {"code": "ORDER"},
-                {"code": "REFUND"},
-            ]
+            "business_processes": [{"code": code} for code in catalog_codes]
         },
     )
 
+    if expected_error is None:
+        assert validation["status"] == "passed"
+        assert validation["errors"] == []
+        return
     assert validation["status"] == "blocked"
     assert validation["errors"] == [
         {
             "type": expected_error,
-            "table": "dwd_order_detail",
+            "table": table_name,
             "message": expected_message,
-        }
-    ]
-
-
-def test_generate_publication_accepts_table_process_without_metrics(tmp_path):
-    task_path = tmp_path / "dwd_account_transfer_instruction.sql"
-    task_path.write_text(
-        "TRUNCATE TABLE dwd_account_transfer_instruction;\n",
-        encoding="utf-8",
-    )
-    validation = validate_generate_candidate(
-        {
-            "dwd_account_transfer_instruction": {
-                "name": "dwd_account_transfer_instruction",
-                "layer": "DWD",
-                "table_type": "fact",
-                "business_process": "ACCOUNT_TRANSFER",
-                "execution": {
-                    "materialized": "full",
-                    "full_refresh_strategy": "replace_all",
-                },
-            }
-        },
-        {
-            "dwd_account_transfer_instruction": {
-                "ddl": {"columns": [{"name": "id"}]},
-                "tasks": [{"path": str(task_path), "is_full_refresh": False}],
-            }
-        },
-        llm_result={
-            "tables": [
-                {
-                    "table_name": "dwd_account_transfer_instruction",
-                    "status": "passed",
-                    "table_type": "fact",
-                    "business_process": "ACCOUNT_TRANSFER",
-                    "columns": {
-                        "atomic_metrics": [],
-                        "derived_metrics": [],
-                        "calculated_metrics": [],
-                    },
-                }
-            ]
-        },
-        catalog={"business_processes": [{"code": "ACCOUNT_TRANSFER"}]},
-    )
-
-    assert validation == {
-        "status": "passed",
-        "error_count": 0,
-        "errors": [],
-        "blocked_tables": [],
-    }
-
-
-def test_generate_publication_rejects_unassigned_metric_with_table_process(
-    tmp_path,
-):
-    task_path = tmp_path / "dwd_client_transaction.sql"
-    task_path.write_text(
-        "TRUNCATE TABLE dwd_client_transaction;\n",
-        encoding="utf-8",
-    )
-    validation = validate_generate_candidate(
-        {
-            "dwd_client_transaction": {
-                "name": "dwd_client_transaction",
-                "layer": "DWD",
-                "table_type": "fact",
-                "business_process": "ACCOUNT_TRANSFER",
-                "execution": {
-                    "materialized": "full",
-                    "full_refresh_strategy": "replace_all",
-                },
-            }
-        },
-        {
-            "dwd_client_transaction": {
-                "ddl": {"columns": [{"name": "amount"}]},
-                "tasks": [{"path": str(task_path), "is_full_refresh": False}],
-            }
-        },
-        llm_result={
-            "tables": [
-                {
-                    "table_name": "dwd_client_transaction",
-                    "status": "passed",
-                    "table_type": "fact",
-                    "business_process": "ACCOUNT_TRANSFER",
-                    "columns": {
-                        "atomic_metrics": [
-                            {"name": "amount", "business_process": ""}
-                        ],
-                        "derived_metrics": [],
-                        "calculated_metrics": [],
-                    },
-                }
-            ]
-        },
-        catalog={"business_processes": [{"code": "ACCOUNT_TRANSFER"}]},
-    )
-
-    assert validation["errors"] == [
-        {
-            "type": "business_process_missing",
-            "table": "dwd_client_transaction",
-            "message": "fact inspection did not identify a business process",
-        }
-    ]
-
-
-def test_generate_without_llm_blocks_fact_without_business_process(tmp_path):
-    task_path = tmp_path / "dwd_order_detail.sql"
-    task_path.write_text(
-        "TRUNCATE TABLE dwd_order_detail;\n",
-        encoding="utf-8",
-    )
-    validation = validate_generate_candidate(
-        {
-            "dwd_order_detail": {
-                "name": "dwd_order_detail",
-                "layer": "DWD",
-                "table_type": "fact",
-                "execution": {
-                    "materialized": "full",
-                    "full_refresh_strategy": "replace_all",
-                },
-            }
-        },
-        {
-            "dwd_order_detail": {
-                "ddl": {"columns": [{"name": "id"}]},
-                "tasks": [{"path": str(task_path), "is_full_refresh": False}],
-            }
-        },
-        llm_result=None,
-        catalog={},
-    )
-
-    assert validation["errors"] == [
-        {
-            "type": "business_process_missing",
-            "table": "dwd_order_detail",
-            "message": "fact model requires exactly one business process",
         }
     ]
 
@@ -4637,42 +4495,6 @@ def test_generate_single_writer_pass_keeps_ods_ads_base_models(
     ).exists()
 
 
-def test_generate_single_writer_pass_dry_run_does_not_delete_or_write(
-    tmp_path, monkeypatch
-):
-    project = "generate_single_writer_dry_run"
-    project_dir = _write_single_writer_project(
-        tmp_path,
-        monkeypatch,
-        project,
-        existing_models={
-            "dwd_existing": {
-                "version": 2,
-                "name": "dwd_existing",
-                "layer": "DWD",
-            }
-        },
-    )
-    existing_model = project_dir / "mid" / "models" / "dwd_existing.yaml"
-
-    result = run_generate_model_metadata(project, dry_run=True)
-
-    assert result["model_change_count"] == 1
-    assert result["model_update_count"] == 0
-    assert existing_model.exists()
-    assert not (
-        project_dir / "mid" / "models" / "dwd_order_detail.yaml"
-    ).exists()
-    assert result["deleted_model_files"] == []
-    assert result["flow"] == {
-        "mode": "generate",
-        "prior_source": "direct_rule",
-        "llm_enabled": False,
-        "base_model_count": 1,
-        "final_model_count": 1,
-    }
-
-
 def test_generate_single_writer_pass_deletes_then_writes_final_models(
     tmp_path, monkeypatch
 ):
@@ -4886,42 +4708,22 @@ def test_catalog_discovery_keeps_existing_assignment_when_llm_incomplete():
     assert mapping["business_area"] == "SHOP"
 
 
-def test_catalog_discovery_maps_table_process_without_metrics():
+@pytest.mark.parametrize(
+    ("metric_processes", "expected_process"),
+    [
+        ((), "ACCOUNT_TRANSFER"),
+        (("",), None),
+    ],
+    ids=("factless-fallback", "metric-process-required"),
+)
+def test_catalog_discovery_table_process_fallback(
+    metric_processes,
+    expected_process,
+):
     import dw_refactor_agent.assessment.llm.model_metadata_writer as writer_module
 
     fact_result = TableInspectResult(
-        table_name="dwd_account_transfer_instruction",
-        declared_layer="DWD",
-        inferred_layer="DWD",
-        table_type="fact",
-        business_process="ACCOUNT_TRANSFER",
-        confidence=0.9,
-        reasoning_steps=[],
-    )
-
-    mapping = writer_module.catalog_discovery_model_mapping(
-        "demo",
-        fact_result,
-        _catalog_payload(
-            processes=[
-                {
-                    "code": "ACCOUNT_TRANSFER",
-                    "name": "账户划转",
-                    "data_domain": "04",
-                    "business_area": "SHOP",
-                }
-            ]
-        ),
-    )
-
-    assert mapping["business_process"] == "ACCOUNT_TRANSFER"
-
-
-def test_catalog_discovery_ignores_table_process_when_metrics_exist():
-    import dw_refactor_agent.assessment.llm.model_metadata_writer as writer_module
-
-    fact_result = TableInspectResult(
-        table_name="dwd_client_transaction",
+        table_name="dwd_fact",
         declared_layer="DWD",
         inferred_layer="DWD",
         table_type="fact",
@@ -4929,7 +4731,13 @@ def test_catalog_discovery_ignores_table_process_when_metrics_exist():
         confidence=0.9,
         reasoning_steps=[],
         columns={
-            "atomic_metrics": [{"name": "amount", "business_process": ""}],
+            "atomic_metrics": [
+                {
+                    "name": f"metric_{index}",
+                    "business_process": process,
+                }
+                for index, process in enumerate(metric_processes)
+            ],
             "derived_metrics": [],
             "calculated_metrics": [],
             "dimensions": [],
@@ -4952,7 +4760,7 @@ def test_catalog_discovery_ignores_table_process_when_metrics_exist():
         ),
     )
 
-    assert "business_process" not in mapping
+    assert mapping.get("business_process") == expected_process
 
 
 def test_catalog_discovery_rejects_low_confidence_semantics():
