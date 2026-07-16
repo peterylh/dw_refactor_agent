@@ -32,9 +32,16 @@
 - `warehouses/{project}/artifacts/lineage/lineage_data.json`
 - `warehouses/{project}/artifacts/lineage/task_lineage_cache.json`
 
-实现按职责拆分：`lineage_extractor.py` 保留兼容入口、SQL 语句处理与任务编排，
-`lineage_projection.py` 负责 SELECT 投影、派生表和 `*` 展开，
-`lineage_output.py` 负责组装并校验 version 2 lineage 输出及 CLI 统计信息。
+实现按职责拆分：
+
+- `lineage_extractor.py` 保留兼容 facade、项目上下文、基础标识符 helper 与 CLI 入口。
+- `lineage_schema.py` 负责 schema lookup、DDL 解析和任务级 schema 变更。
+- `lineage_projection.py` 负责 SELECT 投影、派生表和 `*` 展开。
+- `lineage_trace.py` 负责字段追踪、间接血缘、诊断与语句 handler。
+- `lineage_tasks.py` 负责任务解析、缓存、过程表 schema 传播与串并行编排。
+- `lineage_output.py` 负责组装并校验 version 2 lineage 输出及 CLI 统计信息。
+- `runtime_binding.py` 负责拆分模块与兼容 facade 之间的运行时绑定，确保旧导入路径、
+  monkeypatch、pickle 和进程池调用保持可用。
 
 全量提取默认启用 task 级血缘缓存；未变化的 task 会按 SQL、相关 DDL schema 切片、
 项目 catalog/database 与 extractor 代码版本复用缓存结果。

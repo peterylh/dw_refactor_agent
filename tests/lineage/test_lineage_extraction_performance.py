@@ -1,6 +1,8 @@
+import importlib.util
 import inspect
 import json
 import pickle
+import sys
 import types
 from pathlib import Path
 
@@ -8,8 +10,22 @@ import sqlglot
 
 import dw_refactor_agent.lineage.lineage_extractor as lineage_extractor
 import dw_refactor_agent.lineage.task_cache as task_cache
-from dw_refactor_agent.lineage import lineage_output, lineage_projection
+from dw_refactor_agent.lineage import (
+    lineage_output,
+    lineage_projection,
+    lineage_schema,
+    lineage_tasks,
+    lineage_trace,
+)
 from dw_refactor_agent.lineage.lineage_extractor import build_schema_from_texts
+
+_SPLIT_IMPLEMENTATION_MODULES = (
+    lineage_schema,
+    lineage_projection,
+    lineage_trace,
+    lineage_tasks,
+    lineage_output,
+)
 
 
 def _schema_table_count(schema):
@@ -17,7 +33,7 @@ def _schema_table_count(schema):
     return sum(1 for _ in lineage_extractor._iter_schema_tables(mapping))
 
 
-def test_extractor_hash_includes_split_projection_module(monkeypatch):
+def test_extractor_hash_includes_split_modules(monkeypatch):
     captured = {}
 
     def capture_paths(paths):
@@ -35,10 +51,30 @@ def test_extractor_hash_includes_split_projection_module(monkeypatch):
     )
     assert [Path(path).name for path in captured["paths"]] == [
         "lineage_extractor.py",
+        "lineage_schema.py",
+        "lineage_trace.py",
+        "lineage_tasks.py",
         "lineage_projection.py",
         "runtime_binding.py",
         "sql_task_facts.py",
     ]
+
+
+def test_split_lineage_modules_stay_below_policy_limit():
+    module_paths = (
+        Path(lineage_extractor.__file__),
+        Path(lineage_schema.__file__),
+        Path(lineage_trace.__file__),
+        Path(lineage_tasks.__file__),
+        Path(lineage_projection.__file__),
+        Path(lineage_output.__file__),
+    )
+
+    assert {
+        path.name: len(path.read_text(encoding="utf-8").splitlines())
+        for path in module_paths
+        if len(path.read_text(encoding="utf-8").splitlines()) >= 3000
+    } == {}
 
 
 def test_projection_peer_calls_observe_facade_monkeypatch(monkeypatch):
@@ -58,6 +94,24 @@ def test_split_projection_module_is_directly_callable():
     query = sqlglot.parse_one("SELECT order_id")
 
     assert lineage_projection._projection_output_names(query) == ["order_id"]
+
+
+def test_split_core_modules_are_directly_callable():
+    schema = lineage_schema.build_schema_from_texts(
+        ["CREATE TABLE shop_dm.orders (order_id BIGINT)"]
+    )
+    update = sqlglot.parse_one(
+        "UPDATE shop_dm.orders SET order_id = 1",
+        dialect="doris",
+    )
+
+    assert lineage_schema.schema_table_count(schema) == 1
+    assert lineage_trace.update_to_select(update).expressions[0].alias == (
+        "order_id"
+    )
+    assert lineage_tasks._task_fact_result_fields(
+        {"input_tables": {"shop_dm.orders"}}
+    )["input_tables"] == ["shop_dm.orders"]
 
 
 def test_split_projection_bindings_are_runtime_local(monkeypatch):
@@ -85,37 +139,128 @@ def test_split_projection_bindings_are_runtime_local(monkeypatch):
 
 
 def test_split_facade_functions_remain_picklable():
-    functions = (
-        lineage_extractor._projection_output_names,
-        lineage_extractor._expand_query_star_projections,
-        lineage_extractor.build_lineage_output,
-        lineage_extractor.format_layer_statistics,
-    )
-
-    for function in functions:
-        assert pickle.loads(pickle.dumps(function)) is function
+    for module in _SPLIT_IMPLEMENTATION_MODULES:
+        for name in module._EXPORTED_FUNCTIONS:
+            facade = getattr(lineage_extractor, name)
+            assert pickle.loads(pickle.dumps(facade)) is facade
 
 
 def test_split_facade_functions_preserve_callable_metadata():
-    pairs = (
-        (
-            lineage_extractor._expand_query_star_projections,
-            lineage_projection._expand_query_star_projections,
-        ),
-        (
-            lineage_extractor.build_lineage_output,
-            lineage_output.build_lineage_output,
-        ),
-        (
-            lineage_extractor.warn_multiple_producer_datasets,
-            lineage_output.warn_multiple_producer_datasets,
-        ),
+    for module in _SPLIT_IMPLEMENTATION_MODULES:
+        for name in module._EXPORTED_FUNCTIONS:
+            facade = getattr(lineage_extractor, name)
+            implementation = getattr(module, name)
+            assert inspect.signature(facade) == inspect.signature(
+                implementation
+            )
+            assert facade.__doc__ == implementation.__doc__
+            assert facade.__annotations__ == implementation.__annotations__
+
+
+def test_split_task_classes_keep_extractor_pickle_identity():
+    work_item = lineage_extractor.TaskWorkItem(
+        index=1,
+        source_file="orders.sql",
+        sql_text="SELECT 1",
     )
 
-    for facade, implementation in pairs:
-        assert inspect.signature(facade) == inspect.signature(implementation)
-        assert facade.__doc__ == implementation.__doc__
-        assert facade.__annotations__ == implementation.__annotations__
+    assert issubclass(
+        lineage_extractor.TaskWorkItem,
+        lineage_tasks.TaskWorkItem,
+    )
+    assert pickle.loads(pickle.dumps(work_item)) == work_item
+
+
+def test_split_facades_keep_classes_and_stats_runtime_local():
+    alternate_name = (
+        "dw_refactor_agent.lineage.lineage_extractor_alternate_test"
+    )
+    spec = importlib.util.spec_from_file_location(
+        alternate_name,
+        lineage_extractor.__file__,
+    )
+    alternate = importlib.util.module_from_spec(spec)
+    sys.modules[alternate_name] = alternate
+    try:
+        spec.loader.exec_module(alternate)
+        canonical_item = lineage_extractor.TaskWorkItem(
+            index=1,
+            source_file="orders.sql",
+            sql_text="SELECT 1",
+        )
+
+        assert lineage_extractor.TaskWorkItem.__module__ == (
+            lineage_extractor.__name__
+        )
+        assert alternate.TaskWorkItem.__module__ == alternate_name
+        assert lineage_extractor.STATS is not alternate.STATS
+
+        lineage_extractor._reset_stats()
+        alternate._reset_stats()
+        alternate.STATS["parse_failures"] = 3
+        assert lineage_extractor.STATS["parse_failures"] == 0
+
+        payload = pickle.dumps(canonical_item)
+        sys.modules.pop(alternate_name)
+        assert pickle.loads(payload) == canonical_item
+    finally:
+        sys.modules.pop(alternate_name, None)
+
+
+def test_split_schema_non_function_dependencies_observe_facade_monkeypatch(
+    monkeypatch,
+):
+    class PatchedLookup:
+        def __init__(self, schema):
+            self.schema = schema
+
+        def table_name(self, table_name):
+            return table_name
+
+        def column_name(self, _table_name, column_name):
+            return column_name
+
+    class NeverAggregate:
+        @staticmethod
+        def search(_expression):
+            return None
+
+    captured = {}
+
+    class CapturingMappingSchema:
+        def __init__(self, mapping, dialect, normalize):
+            captured["mapping"] = mapping
+            captured["dialect"] = dialect
+            captured["normalize"] = normalize
+
+    monkeypatch.setattr(lineage_extractor, "_SchemaLookup", PatchedLookup)
+    monkeypatch.setattr(
+        lineage_extractor,
+        "AGGREGATE_PATTERN",
+        NeverAggregate(),
+    )
+    monkeypatch.setattr(
+        lineage_extractor,
+        "LINEAGE_DIALECT",
+        "custom-dialect",
+    )
+    monkeypatch.setattr(
+        lineage_schema,
+        "MappingSchema",
+        CapturingMappingSchema,
+    )
+
+    lookup = lineage_extractor._schema_lookup({"table": {}})
+    assert isinstance(lookup, PatchedLookup)
+    assert (
+        lineage_extractor._transformation_type_for_expression("SUM(amount)")
+        == "passthrough"
+    )
+    assert isinstance(
+        lineage_extractor._lineage_schema({}),
+        CapturingMappingSchema,
+    )
+    assert captured["dialect"] == "custom-dialect"
 
 
 def test_extract_lineage_prunes_schema_before_calling_sqlglot_lineage(

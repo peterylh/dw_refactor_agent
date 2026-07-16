@@ -853,3 +853,8 @@ def call(name, runtime, *args, **kwargs):
 def preserve_facade_metadata(namespace):
     """Restore output signatures and docs on extractor wrappers."""
     _BINDINGS.preserve_metadata(namespace, _EXPORTED_FUNCTIONS)
+
+
+def install_facade(namespace):
+    """Install output compatibility exports on the extractor facade."""
+    _BINDINGS.install_facade(namespace, _EXPORTED_FUNCTIONS)

@@ -55,6 +55,41 @@ class RuntimeBindings:
             )
             facade.__signature__ = signature(implementation)
 
+    def install_facade(self, namespace, names):
+        """Install compact, pickle-safe wrappers in a facade module."""
+        module_name = namespace["__name__"]
+        for name in names:
+            implementation = self._implementations[name]
+
+            def facade(*args, __name=name, **kwargs):
+                return self.call(
+                    __name,
+                    namespace["__lineage_runtime__"],
+                    *args,
+                    **kwargs,
+                )
+
+            facade.__name__ = name
+            facade.__qualname__ = name
+            facade.__module__ = module_name
+            facade.__doc__ = implementation.__doc__
+            facade.__annotations__ = dict(
+                getattr(implementation, "__annotations__", {})
+            )
+            facade.__signature__ = signature(implementation)
+            facade.__lineage_runtime_binding__ = (self, name)
+            namespace[name] = facade
+
+    def delegate(self, name):
+        """Return a helper that resolves one dependency through the facade."""
+
+        def delegated(*args, **kwargs):
+            return getattr(self.runtime(), name)(*args, **kwargs)
+
+        delegated.__name__ = name
+        delegated.__qualname__ = name
+        return delegated
+
     def _dispatcher(self, name):
         implementation = self._implementations[name]
 
