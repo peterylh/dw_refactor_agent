@@ -1,6 +1,35 @@
 import logging
 
 import dw_refactor_agent.lineage.lineage_extractor as lineage_extractor
+from dw_refactor_agent.lineage import lineage_output
+from dw_refactor_agent.lineage.lineage_extractor import build_schema_from_texts
+
+
+def test_split_output_module_is_directly_callable():
+    schema = build_schema_from_texts(
+        [
+            """
+            CREATE TABLE shop_dm.src_orders (order_id BIGINT);
+            CREATE TABLE shop_dm.dst_orders (order_id BIGINT);
+            """
+        ]
+    )
+    output = lineage_output.build_lineage_output(
+        [
+            {
+                "source_table": "src_orders",
+                "source_column": "order_id",
+                "target_table": "dst_orders",
+                "target_column": "order_id",
+                "expression": "order_id",
+                "source_file": "dst_orders.sql",
+            }
+        ],
+        schema,
+    )
+
+    assert output["edges"][0]["source"]["id"] == "src_orders.order_id"
+    assert output["edges"][0]["target"]["id"] == "dst_orders.order_id"
 
 
 def test_format_layer_statistics_summarizes_without_table_names(monkeypatch):

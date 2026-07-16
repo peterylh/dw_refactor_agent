@@ -32,6 +32,10 @@
 - `warehouses/{project}/artifacts/lineage/lineage_data.json`
 - `warehouses/{project}/artifacts/lineage/task_lineage_cache.json`
 
+实现按职责拆分：`lineage_extractor.py` 保留兼容入口、SQL 语句处理与任务编排，
+`lineage_projection.py` 负责 SELECT 投影、派生表和 `*` 展开，
+`lineage_output.py` 负责组装并校验 version 2 lineage 输出及 CLI 统计信息。
+
 全量提取默认启用 task 级血缘缓存；未变化的 task 会按 SQL、相关 DDL schema 切片、
 项目 catalog/database 与 extractor 代码版本复用缓存结果。
 
