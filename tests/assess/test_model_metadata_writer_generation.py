@@ -9,6 +9,10 @@ import dw_refactor_agent.config as config
 from dw_refactor_agent.assessment.llm.generation_contract import (
     validate_generate_candidate,
 )
+from dw_refactor_agent.assessment.llm.model_metadata_checkpoint import (
+    GenerateCheckpointLockError,
+    GenerateModelCheckpoint,
+)
 from dw_refactor_agent.assessment.llm.model_metadata_writer import (
     run_generate_model_metadata,
     run_metadata_write,
@@ -640,6 +644,171 @@ def test_run_generate_model_metadata_checkpoints_each_completed_table(
     assert manifest["tables"]["dwd_first"]["inspection_status"] == "passed"
     assert not (project_dir / "mid" / "models" / "dwd_first.yaml").exists()
     assert not (project_dir / "mid" / "models" / "dwd_second.yaml").exists()
+    released = GenerateModelCheckpoint(
+        project,
+        project_dir=project_dir,
+        plan=_checkpoint_plan(writer_module, project),
+    )
+    released.close()
+
+
+def _checkpoint_plan(writer_module, project):
+    base_plan = writer_module.plan_generate_model_metadata(
+        project,
+        _catalog_payload(),
+        replace_existing_models=True,
+        write_scope="all",
+    )
+    return writer_module.build_generate_plan(
+        project,
+        write_scope="all",
+        base_model_metadata=base_plan.model_metadata,
+        model_paths=base_plan.model_paths,
+        planned_deleted_model_files=base_plan.planned_deleted_model_files,
+        replace_existing_models=True,
+    )
+
+
+def test_generate_checkpoint_rejects_overlapping_project_run(
+    tmp_path, monkeypatch
+):
+    import dw_refactor_agent.assessment.llm.model_metadata_writer as writer_module
+
+    project = "generate_checkpoint_lock"
+    project_dir = _write_catalog_project(
+        tmp_path,
+        monkeypatch,
+        project,
+        catalog=_catalog_payload(),
+        ddl_tables=["dwd_first"],
+    )
+    plan = _checkpoint_plan(writer_module, project)
+    first = GenerateModelCheckpoint(
+        project,
+        project_dir=project_dir,
+        plan=plan,
+    )
+    try:
+        with pytest.raises(
+            GenerateCheckpointLockError,
+            match="another generate --llm run is active",
+        ):
+            GenerateModelCheckpoint(
+                project,
+                project_dir=project_dir,
+                plan=plan,
+            )
+    finally:
+        first.close()
+
+    second = GenerateModelCheckpoint(
+        project,
+        project_dir=project_dir,
+        plan=plan,
+    )
+    second.close()
+
+
+def test_generate_checkpoint_records_processed_inspection_status(
+    tmp_path, monkeypatch
+):
+    import dw_refactor_agent.assessment.llm.model_metadata_writer as writer_module
+
+    project = "generate_checkpoint_processed_status"
+    project_dir = _write_catalog_project(
+        tmp_path,
+        monkeypatch,
+        project,
+        catalog=_catalog_payload(),
+        ddl_tables=["dwd_first"],
+    )
+    checkpoint = GenerateModelCheckpoint(
+        project,
+        project_dir=project_dir,
+        plan=_checkpoint_plan(writer_module, project),
+    )
+    checkpoint.write_inspection_result(
+        TableInspectResult(
+            table_name="dwd_first",
+            declared_layer="DWD",
+            inferred_layer="DWD",
+            table_type="fact",
+            confidence=0.1,
+            reasoning_steps=[],
+        )
+    )
+    checkpoint.close()
+    manifest = json.loads(
+        (project_dir / "mid_checkpoints" / "manifest.json").read_text(
+            encoding="utf-8"
+        )
+    )
+
+    assert manifest["tables"]["dwd_first"]["inspection_status"] == "blocked"
+    assert manifest["tables"]["dwd_first"]["validation"][
+        "resolution_requires_reinspection"
+    ]
+
+
+def test_generate_checkpoint_recovers_journaled_yaml_write(
+    tmp_path, monkeypatch
+):
+    import dw_refactor_agent.assessment.llm.model_metadata_writer as writer_module
+
+    project = "generate_checkpoint_recovery"
+    project_dir = _write_catalog_project(
+        tmp_path,
+        monkeypatch,
+        project,
+        catalog=_catalog_payload(),
+        ddl_tables=["dwd_first"],
+    )
+    checkpoint = GenerateModelCheckpoint(
+        project,
+        project_dir=project_dir,
+        plan=_checkpoint_plan(writer_module, project),
+    )
+    original_write_manifest = checkpoint._write_manifest
+    write_count = 0
+
+    def fail_final_manifest():
+        nonlocal write_count
+        write_count += 1
+        if write_count == 2:
+            raise OSError("simulated manifest interruption")
+        original_write_manifest()
+
+    monkeypatch.setattr(
+        checkpoint,
+        "_write_manifest",
+        fail_final_manifest,
+    )
+    with pytest.raises(OSError, match="simulated manifest interruption"):
+        checkpoint.write_inspection_result(
+            TableInspectResult(
+                table_name="dwd_first",
+                declared_layer="DWD",
+                inferred_layer="DWD",
+                table_type="fact",
+                confidence=0.9,
+                reasoning_steps=[],
+            )
+        )
+    checkpoint.close()
+
+    checkpoint_dir = project_dir / "mid_checkpoints"
+    interrupted = json.loads(
+        (checkpoint_dir / "manifest.json").read_text(encoding="utf-8")
+    )
+    assert (checkpoint_dir / "dwd_first.yaml").exists()
+    assert interrupted["pending_write"]["table"] == "dwd_first"
+
+    recovered = GenerateModelCheckpoint.recover_existing(project_dir)
+
+    assert "pending_write" not in recovered
+    assert recovered["checkpoint_model_count"] == 1
+    assert recovered["inspected_table_count"] == 1
+    assert recovered["tables"]["dwd_first"]["inspection_status"] == "passed"
 
 
 def test_run_generate_model_metadata_missing_catalog_writes_skeleton_and_models(

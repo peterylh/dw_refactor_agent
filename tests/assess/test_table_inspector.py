@@ -2854,6 +2854,39 @@ def test_inspect_batch_runs_with_configured_parallelism(monkeypatch):
     assert 1 < max_active <= 2
 
 
+def test_inspect_batch_propagates_result_callback_error(monkeypatch):
+    inspector = TableInspector(api_key="test", cache_file=None, parallelism=1)
+    ctx = TableContext(
+        table_name="t1",
+        layer="DWD",
+        ddl="CREATE TABLE t1 (id BIGINT);",
+        etl_sql="",
+        upstream_tables=[],
+        downstream_tables=[],
+    )
+    result = TableInspectResult(
+        table_name="t1",
+        declared_layer="DWD",
+        inferred_layer="DWD",
+        table_type="fact",
+        confidence=0.9,
+        reasoning_steps=[],
+    )
+    monkeypatch.setattr(
+        inspector,
+        "inspect",
+        lambda _ctx, *, progress_context=None: result,
+    )
+
+    def fail_callback(_result):
+        raise OSError("checkpoint disk full")
+
+    inspector.result_callback = fail_callback
+
+    with pytest.raises(OSError, match="checkpoint disk full"):
+        inspector.inspect_batch([ctx])
+
+
 # ============================================================
 # 4. 集成测试 (标记 api)
 # ============================================================

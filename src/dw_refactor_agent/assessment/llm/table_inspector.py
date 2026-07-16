@@ -2063,15 +2063,7 @@ class TableInspector:
                     error=str(e),
                 )
             if self.result_callback:
-                try:
-                    self.result_callback(result)
-                except Exception as e:
-                    self._emit_progress(
-                        "result_callback_error",
-                        ctx,
-                        progress_context=progress_context,
-                        error=str(e),
-                    )
+                self.result_callback(result)
             self._emit_progress(
                 "finish",
                 ctx,

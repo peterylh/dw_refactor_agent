@@ -288,102 +288,114 @@ def run_generate_model_metadata(
     candidate_catalog = catalog
     resolved_catalog_results: list[TableInspectResult] = []
     if api_key:
-        llm_result = run_metadata_write(
-            project,
-            api_key=api_key,
-            model=model,
-            base_url=base_url,
-            max_retries=max_retries,
-            parallelism=parallelism,
-            request_timeout=request_timeout,
-            no_cache=no_cache,
-            dry_run=True,
-            write_scope=write_scope,
-            show_progress=show_progress,
-            model_metadata=generate_plan.base_model_metadata,
-            metric_groups=generate_plan.metric_groups,
-            model_paths=generate_plan.write_targets.model_paths,
-            resolution_policy=generate_plan.resolution_policy,
-            include_model_metadata=True,
-            update_catalog=False,
-            expose_layer_hints=expose_layer_hints,
-            result_callback=(
-                checkpoint.write_inspection_result if checkpoint else None
-            ),
-        )
-        final_model_metadata = _final_model_metadata_with_refinements(
-            generate_plan.base_model_metadata,
-            llm_result,
-        )
-        candidate_catalog, resolved_catalog_results = (
-            _catalog_candidate_from_llm_result(
+        try:
+            llm_result = run_metadata_write(
                 project,
-                llm_result=llm_result,
-                base_catalog=catalog,
-                model_metadata=generate_plan.base_model_metadata,
-                resolution_policy=generate_plan.resolution_policy,
-                update_catalog=update_catalog,
-            )
-        )
-        final_model_metadata = _apply_catalog_assignments_to_generated_models(
-            project,
-            final_model_metadata,
-            catalog=candidate_catalog,
-            results=resolved_catalog_results,
-        )
-        if update_catalog:
-            catalog_update_report = _merge_llm_catalog_discoveries(
-                project,
-                llm_result=llm_result,
-                base_catalog=catalog,
-                model_metadata=generate_plan.base_model_metadata,
-                resolution_policy=generate_plan.resolution_policy,
+                api_key=api_key,
+                model=model,
+                base_url=base_url,
+                max_retries=max_retries,
+                parallelism=parallelism,
+                request_timeout=request_timeout,
+                no_cache=no_cache,
                 dry_run=True,
+                write_scope=write_scope,
+                show_progress=show_progress,
+                model_metadata=generate_plan.base_model_metadata,
+                metric_groups=generate_plan.metric_groups,
+                model_paths=generate_plan.write_targets.model_paths,
+                resolution_policy=generate_plan.resolution_policy,
+                include_model_metadata=True,
+                update_catalog=False,
+                expose_layer_hints=expose_layer_hints,
+                result_callback=(
+                    checkpoint.write_inspection_result if checkpoint else None
+                ),
             )
-        if checkpoint:
-            checkpoint.write_final_candidates(final_model_metadata)
+            final_model_metadata = _final_model_metadata_with_refinements(
+                generate_plan.base_model_metadata,
+                llm_result,
+            )
+            candidate_catalog, resolved_catalog_results = (
+                _catalog_candidate_from_llm_result(
+                    project,
+                    llm_result=llm_result,
+                    base_catalog=catalog,
+                    model_metadata=generate_plan.base_model_metadata,
+                    resolution_policy=generate_plan.resolution_policy,
+                    update_catalog=update_catalog,
+                )
+            )
+            final_model_metadata = (
+                _apply_catalog_assignments_to_generated_models(
+                    project,
+                    final_model_metadata,
+                    catalog=candidate_catalog,
+                    results=resolved_catalog_results,
+                )
+            )
+            if update_catalog:
+                catalog_update_report = _merge_llm_catalog_discoveries(
+                    project,
+                    llm_result=llm_result,
+                    base_catalog=catalog,
+                    model_metadata=generate_plan.base_model_metadata,
+                    resolution_policy=generate_plan.resolution_policy,
+                    dry_run=True,
+                )
+            if checkpoint:
+                checkpoint.write_final_candidates(final_model_metadata)
+        except BaseException:
+            if checkpoint:
+                checkpoint.close()
+            raise
 
-    publication_validation = validate_generate_candidate(
-        final_model_metadata,
-        _generate_model_table_assets(project),
-        llm_result=llm_result,
-        catalog=candidate_catalog,
-    )
-    publication_blocked = publication_validation["status"] == "blocked"
-    should_publish = not dry_run and not publication_blocked
-    catalog_rendered_files: dict[Path, str] = {}
-    catalog_deleted_files: list[Path] = []
-    catalog_written_names: list[str] = []
-    if should_publish:
-        (
-            catalog_rendered_files,
-            catalog_deleted_files,
-            catalog_written_names,
-        ) = _render_generated_catalog_files(
+    try:
+        publication_validation = validate_generate_candidate(
+            final_model_metadata,
+            _generate_model_table_assets(project),
+            llm_result=llm_result,
+            catalog=candidate_catalog,
+        )
+        publication_blocked = publication_validation["status"] == "blocked"
+        should_publish = not dry_run and not publication_blocked
+        catalog_rendered_files: dict[Path, str] = {}
+        catalog_deleted_files: list[Path] = []
+        catalog_written_names: list[str] = []
+        if should_publish:
+            (
+                catalog_rendered_files,
+                catalog_deleted_files,
+                catalog_written_names,
+            ) = _render_generated_catalog_files(
+                project,
+                candidate_catalog,
+                enabled=update_catalog,
+            )
+
+        _strip_internal_model_metadata(llm_result)
+
+        refinement_updates = (llm_result or {}).get("model_updates") or []
+        model_updates, deleted_model_files = _write_generated_model_metadata(
             project,
-            candidate_catalog,
-            enabled=update_catalog,
+            generate_plan,
+            final_model_metadata,
+            dry_run=not should_publish,
+            delete_existing=replace_existing_models,
+            refinement_updates=refinement_updates,
+            additional_rendered_files=catalog_rendered_files,
+            additional_deleted_files=catalog_deleted_files,
         )
-
-    _strip_internal_model_metadata(llm_result)
-
-    refinement_updates = (llm_result or {}).get("model_updates") or []
-    model_updates, deleted_model_files = _write_generated_model_metadata(
-        project,
-        generate_plan,
-        final_model_metadata,
-        dry_run=not should_publish,
-        delete_existing=replace_existing_models,
-        refinement_updates=refinement_updates,
-        additional_rendered_files=catalog_rendered_files,
-        additional_deleted_files=catalog_deleted_files,
-    )
-    if checkpoint:
-        checkpoint.finish(
-            status="blocked" if publication_blocked else "published",
-            published=should_publish,
-            validation=publication_validation,
-        )
+        if checkpoint:
+            checkpoint.finish(
+                status="blocked" if publication_blocked else "published",
+                published=should_publish,
+                validation=publication_validation,
+            )
+    except BaseException:
+        if checkpoint:
+            checkpoint.close()
+        raise
     if should_publish:
         catalog_report, catalog_update_report = _published_catalog_reports(
             catalog_report,
@@ -703,8 +715,6 @@ def _format_progress_message(event: dict[str, Any]) -> str:
         )
     if event_name == "unexpected_error":
         return f"{table_label} 巡检异常: {event.get('error')}"
-    if event_name == "result_callback_error":
-        return f"{table_label} 逐表结果落盘失败: {event.get('error')}"
     if event_name == "finish":
         metric_count = (
             int(event.get("atomic_metric_count", 0) or 0)
