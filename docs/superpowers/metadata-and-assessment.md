@@ -62,6 +62,22 @@ Model 是表级元数据的权威来源，主要记录：
 - DIM 不写指标分组；
 - 无法通过校验的表标记为 blocked，不部分写入。
 
+## 实现模块边界
+
+模型元数据命令仍以
+`dw_refactor_agent.assessment.llm.model_metadata_writer` 作为稳定 CLI 和兼容导入入口。
+内部实现按职责拆分：
+
+- `model_metadata_writer.py`：CLI 参数、项目级工作流编排、报告汇总和兼容导出；
+- `model_metadata_updates.py`：巡检上下文、层级解析、指标与实体/grain 规范化、Model YAML 更新；
+- `model_metadata_generation.py`：冷启动候选规划、Catalog 合并、文件渲染和事务化发布；
+- `model_metadata_catalog.py`：Catalog 到 Model 的确定性映射与目录发现结果回写；
+- `model_metadata_runtime.py`：跨模块共享的运行时项目根目录解析。
+
+新增逻辑应放入对应职责模块，避免把纯映射、文件发布或 YAML 规范化逻辑重新放回 CLI
+入口。测试按相同边界拆分为 updates、generation 和 catalog 三组，共享样例与 fixture
+集中在 `model_metadata_writer_test_support.py`。
+
 ## 评估架构
 
 评估过程分为四层：

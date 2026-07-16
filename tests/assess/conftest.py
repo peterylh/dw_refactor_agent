@@ -2,6 +2,10 @@
 
 import pytest
 
+from tests.assess.model_metadata_writer_test_support import (  # noqa: F401
+    isolated_writer_project,
+)
+
 # ============================================================
 # 样本 DDL — 维度表
 # ============================================================
