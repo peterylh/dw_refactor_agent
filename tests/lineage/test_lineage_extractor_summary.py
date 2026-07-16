@@ -81,6 +81,7 @@ def test_format_lineage_output_statistics_counts_dataset_types_and_warnings():
         "  表数: 4",
         "  数据集类型: managed=1, process=1, temporary=1, external=1",
         "  生产者警告: 2",
+        "  多输出作业警告: 0",
     ]
 
 
@@ -100,9 +101,43 @@ def test_format_lineage_output_statistics_deduplicates_multiple_producer_warning
         ],
     }
 
-    assert lineage_extractor.format_lineage_output_statistics(output)[-1] == (
-        "  生产者警告: 1"
-    )
+    assert lineage_extractor.format_lineage_output_statistics(output)[-2:] == [
+        "  生产者警告: 1",
+        "  多输出作业警告: 0",
+    ]
+
+
+def test_format_lineage_output_statistics_counts_multi_output_job_warning():
+    output = {
+        "tables": [
+            {
+                "full_name": "internal.demo_dm.output_a",
+                "dataset_type": "managed",
+                "columns": [],
+            },
+            {
+                "full_name": "internal.demo_dm.output_b",
+                "dataset_type": "managed",
+                "columns": [],
+            },
+        ],
+        "jobs": [
+            {
+                "name": "multi_output",
+                "outputs": [
+                    "internal.demo_dm.output_a",
+                    "internal.demo_dm.output_b",
+                ],
+            }
+        ],
+        "edges": [],
+        "diagnostics": [],
+    }
+
+    assert lineage_extractor.format_lineage_output_statistics(output)[-2:] == [
+        "  生产者警告: 0",
+        "  多输出作业警告: 1",
+    ]
 
 
 def test_warn_multiple_producer_datasets_logs_actionable_warning(caplog):
@@ -117,4 +152,43 @@ def test_warn_multiple_producer_datasets_logs_actionable_warning(caplog):
     assert [record.levelno for record in caplog.records] == [logging.WARNING]
     assert [record.getMessage() for record in caplog.records] == [
         "数据集 internal.demo_dm.shared 由多个作业生产: job_a, job_b"
+    ]
+
+
+def test_warn_jobs_with_multiple_non_process_outputs_is_actionable(caplog):
+    jobs = [
+        {
+            "name": "multi_output",
+            "outputs": [
+                "internal.demo_dm.output_a",
+                "internal.demo_dm.process_stage",
+                "internal.demo_dm.output_b",
+            ],
+        }
+    ]
+    tables = [
+        {
+            "full_name": "internal.demo_dm.output_a",
+            "dataset_type": "managed",
+        },
+        {
+            "full_name": "internal.demo_dm.output_b",
+            "dataset_type": "managed",
+        },
+        {
+            "full_name": "internal.demo_dm.process_stage",
+            "dataset_type": "process",
+        },
+    ]
+
+    with caplog.at_level(logging.WARNING):
+        lineage_extractor.warn_jobs_with_multiple_non_process_outputs(
+            jobs,
+            tables,
+        )
+
+    assert [record.levelno for record in caplog.records] == [logging.WARNING]
+    assert [record.getMessage() for record in caplog.records] == [
+        "作业 multi_output 写入多个非临时、非过程数据集: "
+        "internal.demo_dm.output_a, internal.demo_dm.output_b"
     ]

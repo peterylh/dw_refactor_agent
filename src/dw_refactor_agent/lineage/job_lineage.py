@@ -7,6 +7,7 @@ from pathlib import PurePosixPath
 from typing import Callable, Sequence
 
 from dw_refactor_agent.lineage.identifiers import (
+    canonical_qualified_identifier,
     identifier_match_key,
     table_identity_match_key,
 )
@@ -29,6 +30,58 @@ def _fact_names(values) -> set:
 
 def _table_key(table_name: str) -> tuple:
     return table_identity_match_key(table_name)
+
+
+def _table_reference_parts(table_name: str) -> tuple[str, ...]:
+    return tuple(
+        identifier_match_key(part)
+        for part in canonical_qualified_identifier(table_name).split(".")
+        if part
+    )
+
+
+def _dataset_reference_indexes(
+    tables: Sequence[dict],
+) -> tuple[dict, dict, dict]:
+    dataset_types_by_key = {}
+    keys_by_database_table = defaultdict(set)
+    keys_by_table = defaultdict(set)
+    for table in tables or []:
+        full_name = table.get("full_name")
+        if not full_name:
+            continue
+        dataset_key = _table_key(full_name)
+        dataset_types_by_key.setdefault(
+            dataset_key,
+            table.get("dataset_type"),
+        )
+        keys_by_database_table[dataset_key[1:]].add(dataset_key)
+        keys_by_table[dataset_key[2]].add(dataset_key)
+    return (
+        dataset_types_by_key,
+        keys_by_database_table,
+        keys_by_table,
+    )
+
+
+def _resolve_dataset_type(
+    table_reference: str,
+    dataset_types_by_key: dict,
+    keys_by_database_table: dict,
+    keys_by_table: dict,
+) -> str | None:
+    parts = _table_reference_parts(table_reference)
+    if len(parts) == 1:
+        candidates = keys_by_table.get(parts[0], set())
+    elif len(parts) == 2:
+        candidates = keys_by_database_table.get(parts, set())
+    elif len(parts) == 3 and parts in dataset_types_by_key:
+        candidates = {parts}
+    else:
+        candidates = set()
+    if len(candidates) != 1:
+        return None
+    return dataset_types_by_key[next(iter(candidates))]
 
 
 def _sorted_display_tables(values, display_table: Callable[[str], str]):
@@ -129,6 +182,52 @@ def find_multiple_producer_datasets(jobs: Sequence[dict]) -> list[dict]:
             }
         )
     return warnings
+
+
+def find_jobs_with_multiple_non_process_outputs(
+    jobs: Sequence[dict],
+    tables: Sequence[dict],
+) -> list[dict]:
+    """Return Jobs writing multiple managed or external datasets."""
+    (
+        dataset_types_by_key,
+        keys_by_database_table,
+        keys_by_table,
+    ) = _dataset_reference_indexes(tables)
+    warnings = []
+    for job in jobs or []:
+        outputs_by_key = {}
+        for output in job.get("outputs") or []:
+            dataset = str(output or "")
+            if not dataset:
+                continue
+            dataset_key = _table_key(dataset)
+            dataset_type = _resolve_dataset_type(
+                dataset,
+                dataset_types_by_key,
+                keys_by_database_table,
+                keys_by_table,
+            )
+            if dataset_type not in {
+                "managed",
+                "external",
+            }:
+                continue
+            outputs_by_key.setdefault(dataset_key, dataset)
+        if len(outputs_by_key) <= 1:
+            continue
+        warnings.append(
+            {
+                "job": str(job.get("name") or ""),
+                "output_datasets": [
+                    outputs_by_key[key] for key in sorted(outputs_by_key)
+                ],
+            }
+        )
+    return sorted(
+        warnings,
+        key=lambda warning: identifier_match_key(warning["job"]),
+    )
 
 
 def resolve_job_dependencies(

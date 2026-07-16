@@ -2,6 +2,7 @@ import pytest
 
 from dw_refactor_agent.lineage.job_lineage import (
     build_job_records,
+    find_jobs_with_multiple_non_process_outputs,
     find_multiple_producer_datasets,
     job_name_from_source_file,
     resolve_job_dependencies,
@@ -65,6 +66,67 @@ def test_find_multiple_producer_datasets_is_case_insensitive_and_sorted():
         {
             "dataset": "DB.SHARED",
             "producer_jobs": ["producer_a", "producer_b"],
+        }
+    ]
+
+
+def test_find_jobs_with_multiple_non_process_outputs_filters_dataset_types():
+    warnings = find_jobs_with_multiple_non_process_outputs(
+        [
+            {
+                "name": "multi_output",
+                "outputs": [
+                    "DB.OUTPUT_B",
+                    "db.process_stage",
+                    "db.output_a",
+                    "db.temp_stage",
+                ],
+            },
+            {"name": "single_output", "outputs": ["db.output_a"]},
+        ],
+        [
+            {"full_name": "db.output_a", "dataset_type": "managed"},
+            {"full_name": "db.output_b", "dataset_type": "managed"},
+            {
+                "full_name": "db.process_stage",
+                "dataset_type": "process",
+            },
+            {"full_name": "db.temp_stage", "dataset_type": "temporary"},
+        ],
+    )
+
+    assert warnings == [
+        {
+            "job": "multi_output",
+            "output_datasets": ["db.output_a", "DB.OUTPUT_B"],
+        }
+    ]
+
+
+def test_find_jobs_with_multiple_non_process_outputs_resolves_short_references():
+    warnings = find_jobs_with_multiple_non_process_outputs(
+        [
+            {
+                "name": "multi_output",
+                "outputs": ["output_b", "output_a"],
+            }
+        ],
+        [
+            {
+                "full_name": "internal.demo.output_a",
+                "dataset_type": "managed",
+            },
+            {
+                "full_name": "internal.demo.output_b",
+                "dataset_type": "managed",
+            },
+        ],
+    )
+
+    assert warnings == [
+        {
+            "job": "multi_output",
+            "output_datasets": ["output_a", "output_b"],
         }
     ]
 

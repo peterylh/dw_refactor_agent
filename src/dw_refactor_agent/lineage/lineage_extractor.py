@@ -59,6 +59,7 @@ from dw_refactor_agent.lineage.identifiers import (
 )
 from dw_refactor_agent.lineage.job_lineage import (
     build_job_records,
+    find_jobs_with_multiple_non_process_outputs,
     find_multiple_producer_datasets,
     resolve_job_dependencies,
 )
@@ -4927,8 +4928,10 @@ def format_lineage_output_statistics(output):
     """Return structural and version 2 dataset counts for CLI output."""
     edges = output.get("edges") or []
     tables = output.get("tables") or []
-    multiple_producer_count = len(
-        find_multiple_producer_datasets(output.get("jobs") or [])
+    jobs = output.get("jobs") or []
+    multiple_producer_count = len(find_multiple_producer_datasets(jobs))
+    multiple_non_process_output_count = len(
+        find_jobs_with_multiple_non_process_outputs(jobs, tables)
     )
     other_producer_diagnostic_count = sum(
         1
@@ -4960,6 +4963,7 @@ def format_lineage_output_statistics(output):
             for dataset_type in dataset_types
         ),
         f"  生产者警告: {producer_warning_count}",
+        f"  多输出作业警告: {multiple_non_process_output_count}",
     ]
 
 
@@ -4970,6 +4974,19 @@ def warn_multiple_producer_datasets(jobs: Sequence[dict]) -> None:
             "数据集 %s 由多个作业生产: %s",
             warning["dataset"],
             ", ".join(warning["producer_jobs"]),
+        )
+
+
+def warn_jobs_with_multiple_non_process_outputs(
+    jobs: Sequence[dict],
+    tables: Sequence[dict],
+) -> None:
+    """Log Jobs writing multiple non-temporary, non-process datasets."""
+    for warning in find_jobs_with_multiple_non_process_outputs(jobs, tables):
+        LOGGER.warning(
+            "作业 %s 写入多个非临时、非过程数据集: %s",
+            warning["job"],
+            ", ".join(warning["output_datasets"]),
         )
 
 
@@ -5168,6 +5185,10 @@ def main():
         task_results=extraction_result["task_results"],
     )
     warn_multiple_producer_datasets(output["jobs"])
+    warn_jobs_with_multiple_non_process_outputs(
+        output["jobs"],
+        output["tables"],
+    )
     for path in output_paths:
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "w", encoding=TEXT_ENCODING) as fp:
