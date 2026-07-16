@@ -34,6 +34,18 @@ Run tests with the Python 3.7 environment:
 make test
 ```
 
+Check Python code duplication independently of the regular lint gate:
+
+```bash
+make lint-duplicates
+```
+
+The duplication check uses Pylint's `duplicate-code` checker across production
+code, tests, scripts, benchmarks, and warehouse Python utilities. It ignores
+comments, docstrings, imports, and function signatures, and reports duplicated
+blocks of at least eight effective lines together with the overall duplication
+percentage. Override `DUPLICATE_PATHS` when a narrower scan is useful.
+
 By default, the Makefile runs commands through the named conda environment and
 then executes `$CONDA_PREFIX/bin/python` inside that environment. This keeps the
 default portable across machines with different conda install paths, while

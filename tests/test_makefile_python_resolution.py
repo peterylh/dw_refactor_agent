@@ -168,7 +168,8 @@ exit 87
 
     assert result.returncode == 0, result.stdout + result.stderr
     marker_lines = marker.read_text().splitlines()
-    assert len(marker_lines) == 3
+    assert len(marker_lines) == 4
     assert all(
         line.startswith("conda-env-python -m pip") for line in marker_lines
     )
+    assert any(line.endswith("pylint==2.17.7") for line in marker_lines)
