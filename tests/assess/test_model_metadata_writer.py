@@ -7,6 +7,7 @@ import yaml
 
 import dw_refactor_agent.config as config
 from dw_refactor_agent.assessment.llm.generation_contract import (
+    infer_execution_mapping,
     validate_generate_candidate,
 )
 from dw_refactor_agent.assessment.llm.layer_resolution import (
@@ -3268,6 +3269,54 @@ def test_run_generate_model_metadata_blocks_unresolved_execution_contract(
     assert saved["execution"] == {"materialized": "full"}
 
 
+def test_generate_execution_does_not_bind_unrelated_parameter_to_partition(
+    tmp_path,
+):
+    task_path = tmp_path / "dwd_order_detail.sql"
+    task_path.write_text(
+        "SET @retry_limit = 3;\n"
+        "INSERT INTO dwd_order_detail SELECT CURRENT_DATE;\n",
+        encoding="utf-8",
+    )
+    asset = {
+        "ddl": {
+            "columns": [{"name": "stat_date"}],
+            "partition_column": "stat_date",
+        },
+        "tasks": [{"path": str(task_path), "is_full_refresh": False}],
+    }
+
+    execution = infer_execution_mapping(
+        "dwd_order_detail",
+        asset,
+        layer="DWD",
+    )
+    validation = validate_generate_candidate(
+        {
+            "dwd_order_detail": {
+                "name": "dwd_order_detail",
+                "layer": "DWD",
+                "table_type": "other",
+                "execution": execution,
+            }
+        },
+        {"dwd_order_detail": asset},
+        llm_result=None,
+        catalog={},
+    )
+
+    assert "slice" not in execution
+    assert validation["errors"] == [
+        {
+            "type": "execution_slice_missing",
+            "table": "dwd_order_detail",
+            "message": (
+                "incremental replay_slices model requires execution.slice"
+            ),
+        }
+    ]
+
+
 def test_run_generate_model_metadata_blocks_dwd_without_task_sql(
     tmp_path, monkeypatch
 ):
@@ -3385,6 +3434,150 @@ def test_generate_publication_blocks_unresolved_business_processes(
             "type": expected_error,
             "table": "dwd_order_detail",
             "message": expected_message,
+        }
+    ]
+
+
+def test_generate_publication_accepts_table_process_without_metrics(tmp_path):
+    task_path = tmp_path / "dwd_account_transfer_instruction.sql"
+    task_path.write_text(
+        "TRUNCATE TABLE dwd_account_transfer_instruction;\n",
+        encoding="utf-8",
+    )
+    validation = validate_generate_candidate(
+        {
+            "dwd_account_transfer_instruction": {
+                "name": "dwd_account_transfer_instruction",
+                "layer": "DWD",
+                "table_type": "fact",
+                "business_process": "ACCOUNT_TRANSFER",
+                "execution": {
+                    "materialized": "full",
+                    "full_refresh_strategy": "replace_all",
+                },
+            }
+        },
+        {
+            "dwd_account_transfer_instruction": {
+                "ddl": {"columns": [{"name": "id"}]},
+                "tasks": [{"path": str(task_path), "is_full_refresh": False}],
+            }
+        },
+        llm_result={
+            "tables": [
+                {
+                    "table_name": "dwd_account_transfer_instruction",
+                    "status": "passed",
+                    "table_type": "fact",
+                    "business_process": "ACCOUNT_TRANSFER",
+                    "columns": {
+                        "atomic_metrics": [],
+                        "derived_metrics": [],
+                        "calculated_metrics": [],
+                    },
+                }
+            ]
+        },
+        catalog={"business_processes": [{"code": "ACCOUNT_TRANSFER"}]},
+    )
+
+    assert validation == {
+        "status": "passed",
+        "error_count": 0,
+        "errors": [],
+        "blocked_tables": [],
+    }
+
+
+def test_generate_publication_rejects_unassigned_metric_with_table_process(
+    tmp_path,
+):
+    task_path = tmp_path / "dwd_client_transaction.sql"
+    task_path.write_text(
+        "TRUNCATE TABLE dwd_client_transaction;\n",
+        encoding="utf-8",
+    )
+    validation = validate_generate_candidate(
+        {
+            "dwd_client_transaction": {
+                "name": "dwd_client_transaction",
+                "layer": "DWD",
+                "table_type": "fact",
+                "business_process": "ACCOUNT_TRANSFER",
+                "execution": {
+                    "materialized": "full",
+                    "full_refresh_strategy": "replace_all",
+                },
+            }
+        },
+        {
+            "dwd_client_transaction": {
+                "ddl": {"columns": [{"name": "amount"}]},
+                "tasks": [{"path": str(task_path), "is_full_refresh": False}],
+            }
+        },
+        llm_result={
+            "tables": [
+                {
+                    "table_name": "dwd_client_transaction",
+                    "status": "passed",
+                    "table_type": "fact",
+                    "business_process": "ACCOUNT_TRANSFER",
+                    "columns": {
+                        "atomic_metrics": [
+                            {"name": "amount", "business_process": ""}
+                        ],
+                        "derived_metrics": [],
+                        "calculated_metrics": [],
+                    },
+                }
+            ]
+        },
+        catalog={"business_processes": [{"code": "ACCOUNT_TRANSFER"}]},
+    )
+
+    assert validation["errors"] == [
+        {
+            "type": "business_process_missing",
+            "table": "dwd_client_transaction",
+            "message": "fact inspection did not identify a business process",
+        }
+    ]
+
+
+def test_generate_without_llm_blocks_fact_without_business_process(tmp_path):
+    task_path = tmp_path / "dwd_order_detail.sql"
+    task_path.write_text(
+        "TRUNCATE TABLE dwd_order_detail;\n",
+        encoding="utf-8",
+    )
+    validation = validate_generate_candidate(
+        {
+            "dwd_order_detail": {
+                "name": "dwd_order_detail",
+                "layer": "DWD",
+                "table_type": "fact",
+                "execution": {
+                    "materialized": "full",
+                    "full_refresh_strategy": "replace_all",
+                },
+            }
+        },
+        {
+            "dwd_order_detail": {
+                "ddl": {"columns": [{"name": "id"}]},
+                "tasks": [{"path": str(task_path), "is_full_refresh": False}],
+            }
+        },
+        llm_result=None,
+        catalog={},
+    )
+
+    assert validation["errors"] == [
+        {
+            "type": "business_process_missing",
+            "table": "dwd_order_detail",
+            "message": "fact model requires exactly one business process",
         }
     ]
 
@@ -4691,6 +4884,75 @@ def test_catalog_discovery_keeps_existing_assignment_when_llm_incomplete():
     assert mapping["semantic_subject"] == "CUSTOMER"
     assert mapping["data_domain"] == "04"
     assert mapping["business_area"] == "SHOP"
+
+
+def test_catalog_discovery_maps_table_process_without_metrics():
+    import dw_refactor_agent.assessment.llm.model_metadata_writer as writer_module
+
+    fact_result = TableInspectResult(
+        table_name="dwd_account_transfer_instruction",
+        declared_layer="DWD",
+        inferred_layer="DWD",
+        table_type="fact",
+        business_process="ACCOUNT_TRANSFER",
+        confidence=0.9,
+        reasoning_steps=[],
+    )
+
+    mapping = writer_module.catalog_discovery_model_mapping(
+        "demo",
+        fact_result,
+        _catalog_payload(
+            processes=[
+                {
+                    "code": "ACCOUNT_TRANSFER",
+                    "name": "账户划转",
+                    "data_domain": "04",
+                    "business_area": "SHOP",
+                }
+            ]
+        ),
+    )
+
+    assert mapping["business_process"] == "ACCOUNT_TRANSFER"
+
+
+def test_catalog_discovery_ignores_table_process_when_metrics_exist():
+    import dw_refactor_agent.assessment.llm.model_metadata_writer as writer_module
+
+    fact_result = TableInspectResult(
+        table_name="dwd_client_transaction",
+        declared_layer="DWD",
+        inferred_layer="DWD",
+        table_type="fact",
+        business_process="ACCOUNT_TRANSFER",
+        confidence=0.9,
+        reasoning_steps=[],
+        columns={
+            "atomic_metrics": [{"name": "amount", "business_process": ""}],
+            "derived_metrics": [],
+            "calculated_metrics": [],
+            "dimensions": [],
+            "others": [],
+        },
+    )
+
+    mapping = writer_module.catalog_discovery_model_mapping(
+        "demo",
+        fact_result,
+        _catalog_payload(
+            processes=[
+                {
+                    "code": "ACCOUNT_TRANSFER",
+                    "name": "账户划转",
+                    "data_domain": "04",
+                    "business_area": "SHOP",
+                }
+            ]
+        ),
+    )
+
+    assert "business_process" not in mapping
 
 
 def test_catalog_discovery_rejects_low_confidence_semantics():

@@ -102,15 +102,6 @@ def _slice_binding(
                 "period": period,
             }
 
-    ddl = asset.get("ddl") or {}
-    partition_column = str(ddl.get("partition_column") or "").strip()
-    parameter = re.search(r"@([A-Za-z_][A-Za-z0-9_]*)", task_sql)
-    if partition_column and parameter:
-        return {
-            "param": parameter.group(1),
-            "column": partition_column,
-            "period": DEFAULT_SLICE_PERIOD,
-        }
     return {}
 
 
@@ -394,26 +385,32 @@ def _validate_entities(
 def _inspection_process_codes(inspection: dict[str, Any]) -> list[str]:
     process_codes = []
     columns = inspection.get("columns") or {}
+    metric_items = []
     for group in ("atomic_metrics", "derived_metrics", "calculated_metrics"):
         for metric in columns.get(group) or []:
             if not isinstance(metric, dict):
                 continue
+            metric_items.append(metric)
             code = _canonical_code(metric.get("business_process"))
             if code and code not in process_codes:
                 process_codes.append(code)
+    if not metric_items:
+        table_process = _canonical_code(inspection.get("business_process"))
+        if table_process:
+            process_codes.append(table_process)
     return process_codes
 
 
 def _validate_semantics(
     table_name: str,
     metadata: dict[str, Any],
-    inspection: dict[str, Any],
+    inspection: dict[str, Any] | None,
     catalog: dict[str, Any],
 ) -> list[dict[str, str]]:
     errors = []
     entities = metadata.get("entities") or []
     table_type = str(metadata.get("table_type") or "").lower()
-    if table_type == "dimension":
+    if inspection is not None and table_type == "dimension":
         primary_codes = [
             str(entity.get("code") or "").strip()
             for entity in entities
@@ -452,8 +449,20 @@ def _validate_semantics(
 
     process = str(metadata.get("business_process") or "").strip()
     if table_type == "fact":
-        inspected_processes = _inspection_process_codes(inspection)
-        if not inspected_processes:
+        inspected_processes = (
+            _inspection_process_codes(inspection)
+            if inspection is not None
+            else []
+        )
+        if inspection is None and not process:
+            errors.append(
+                _error(
+                    "business_process_missing",
+                    table_name,
+                    "fact model requires exactly one business process",
+                )
+            )
+        elif inspection is not None and not inspected_processes:
             errors.append(
                 _error(
                     "business_process_missing",
@@ -461,7 +470,7 @@ def _validate_semantics(
                     "fact inspection did not identify a business process",
                 )
             )
-        elif len(inspected_processes) > 1:
+        elif inspection is not None and len(inspected_processes) > 1:
             errors.append(
                 _error(
                     "business_process_ambiguous",
@@ -470,7 +479,10 @@ def _validate_semantics(
                     + ", ".join(inspected_processes),
                 )
             )
-        elif _canonical_code(process) != inspected_processes[0]:
+        elif (
+            inspection is not None
+            and _canonical_code(process) != inspected_processes[0]
+        ):
             errors.append(
                 _error(
                     "business_process_missing",
@@ -549,6 +561,15 @@ def validate_generate_candidate(
                     table_name,
                     metadata,
                     inspection,
+                    catalog,
+                )
+            )
+        elif llm_result is None:
+            errors.extend(
+                _validate_semantics(
+                    table_name,
+                    metadata,
+                    None,
                     catalog,
                 )
             )

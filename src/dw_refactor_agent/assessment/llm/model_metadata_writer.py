@@ -2801,11 +2801,16 @@ def _catalog_model_payload(
 
 def _business_processes_from_result(result: TableInspectResult) -> list[str]:
     codes = []
-    for metrics in (
+    metric_groups = (
         result.atomic_metrics,
         result.derived_metrics,
         result.calculated_metrics,
-    ):
+    )
+    if not any(metric_groups):
+        table_process = _normalize_catalog_code(result.business_process)
+        if table_process:
+            codes.append(table_process)
+    for metrics in metric_groups:
         for metric in metrics:
             code = _normalize_catalog_code(metric.get("business_process"))
             if code and code not in codes:

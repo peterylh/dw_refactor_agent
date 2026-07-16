@@ -388,7 +388,14 @@ def build_business_semantics_catalog_from_inspection(
         if table_type != "fact":
             continue
         process_codes = []
-        for item in _iter_metric_items(result):
+        metric_items = list(_iter_metric_items(result))
+        if not metric_items:
+            table_process = _normalize_catalog_code(
+                _result_value(result, "business_process", "")
+            )
+            if table_process:
+                process_codes.append(table_process)
+        for item in metric_items:
             code = _normalize_catalog_code(item.get("business_process"))
             if code and code not in process_codes:
                 process_codes.append(code)
