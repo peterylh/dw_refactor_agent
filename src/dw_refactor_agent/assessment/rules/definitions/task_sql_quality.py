@@ -8,6 +8,10 @@ from pathlib import Path
 import sqlglot
 from sqlglot import exp
 
+from dw_refactor_agent.assessment.project_facts.asset_catalog import (
+    AssetCatalog,
+    TaskAsset,
+)
 from dw_refactor_agent.assessment.result_model import (
     SEVERITY_HIGH,
     SEVERITY_LOW,
@@ -746,26 +750,28 @@ def _right_join_condition_columns(join: exp.Join) -> set[str]:
 
 
 def _unique_key_columns_for_table(
-    asset_catalog: dict | None,
+    asset_catalog: AssetCatalog | None,
     table_name: str,
 ) -> set[str]:
-    table_asset = ((asset_catalog or {}).get("tables") or {}).get(
-        _short_table_name(table_name)
-    ) or {}
-    ddl = table_asset.get("ddl") or {}
-    key_type = str(ddl.get("key_type") or "").upper()
+    table_asset = (
+        asset_catalog.tables.get(_short_table_name(table_name))
+        if asset_catalog
+        else None
+    )
+    ddl = table_asset.ddl if table_asset else None
+    key_type = ddl.key_type.upper() if ddl else ""
     if key_type not in {"PRIMARY", "UNIQUE"}:
         return set()
     return {
         _short_table_name(column).lower()
-        for column in ddl.get("key_columns") or []
+        for column in ddl.key_columns
         if _short_table_name(column)
     }
 
 
 def _join_is_proven_many_to_one(
     join: exp.Join,
-    asset_catalog: dict | None,
+    asset_catalog: AssetCatalog | None,
 ) -> bool:
     right_table = _join_right_table_name(join)
     unique_key_columns = _unique_key_columns_for_table(
@@ -779,7 +785,7 @@ def _join_is_proven_many_to_one(
 
 def _unproven_join_count(
     select_expr: exp.Select,
-    asset_catalog: dict | None,
+    asset_catalog: AssetCatalog | None,
 ) -> int:
     return sum(
         1
@@ -790,7 +796,7 @@ def _unproven_join_count(
 
 def _scan_join_before_aggregation(
     sql: str,
-    asset_catalog: dict | None = None,
+    asset_catalog: AssetCatalog | None = None,
 ) -> list[dict]:
     issues = []
     for statement_index, statement in enumerate(_parse_statements(sql)):
@@ -880,12 +886,12 @@ def _temp_name_is_valid(table_name: str) -> bool:
     return "temp" in lowered or "tmp" in lowered
 
 
-def _is_dws_task(task: dict, asset_catalog: dict) -> bool:
-    expected_table = _short_table_name(task.get("expected_table") or "")
+def _is_dws_task(task: TaskAsset, asset_catalog: AssetCatalog) -> bool:
+    expected_table = _short_table_name(task.expected_table)
     if expected_table.lower().startswith("dws_"):
         return True
-    table_asset = (asset_catalog.get("tables") or {}).get(expected_table) or {}
-    return str(table_asset.get("layer") or "").upper() == "DWS"
+    table_asset = asset_catalog.tables.get(expected_table)
+    return bool(table_asset and table_asset.layer.upper() == "DWS")
 
 
 def _unclosed_transient_table_issues(

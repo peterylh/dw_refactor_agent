@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dw_refactor_agent.assessment.assessment_context import AssessmentContext
 from dw_refactor_agent.assessment.project_facts.asset_catalog import (
+    AssetCatalog,
+    TaskAsset,
     _tables_for_naming,
 )
 from dw_refactor_agent.assessment.result_model import finalize_dimension
@@ -30,31 +32,29 @@ def _empty_file_score() -> dict:
     )
 
 
-def _task_name(task: dict) -> str:
-    return str(task.get("expected_table") or task.get("file") or "")
+def _task_name(task: TaskAsset) -> str:
+    return task.expected_table or task.file
 
 
 def _score_file_naming_conventions(
-    asset_catalog: dict,
+    asset_catalog: AssetCatalog,
     rule_selection: RuleSelection | None = None,
     scope: dict | None = None,
 ) -> dict:
-    project_dir = asset_catalog.get("project_dir")
+    project_dir = asset_catalog.project_dir
     if not project_dir:
         return _empty_file_score()
 
     table_scope = scoped_names(scope, "tables")
     task_scope = scoped_names(scope, "tasks")
-    table_targets = list((asset_catalog.get("tables") or {}).values())
+    table_targets = list(asset_catalog.tables.values())
     if table_scope is not None:
         table_targets = [
-            target
-            for target in table_targets
-            if target.get("name") in table_scope
+            target for target in table_targets if target.name in table_scope
         ]
     task_targets = [
         {"task": task}
-        for task in asset_catalog.get("tasks") or []
+        for task in asset_catalog.tasks
         if task_scope is None or _task_name(task) in task_scope
     ]
     runner = RuleRunner(rule_selection)
@@ -91,15 +91,15 @@ def _prepare_naming_context(
     nc = assessment_context.naming_config
     model_metadata = assessment_context.models
     business_domain_config = assessment_context.business_domain_config
-    if catalog.get("project_dir"):
+    if catalog.project_dir:
         naming_tables = [
             dict(
                 name=name,
-                layer=asset.get("layer", "OTHER"),
-                columns=asset.get("columns") or [],
+                layer=asset.layer,
+                columns=asset.columns,
             )
-            for name, asset in catalog.get("tables", {}).items()
-            if asset.get("ddl")
+            for name, asset in catalog.tables.items()
+            if asset.ddl
         ]
     else:
         naming_tables = _tables_for_naming(tables, None, model_metadata)

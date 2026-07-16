@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from dw_refactor_agent.assessment.project_facts.asset_catalog import (
+    TableAsset,
+    TaskAsset,
+)
 from dw_refactor_agent.assessment.result_model import make_check
 from dw_refactor_agent.assessment.rules.engine.base import AssessRule
 
@@ -99,10 +103,10 @@ class AssetTaskOutputHasDdlRule(_AssetCompletenessRule):
         asset = target["asset"]
         return self.check(
             target["output"],
-            bool(asset.get("ddl")),
+            bool(asset.ddl),
             "Task产出表缺少DDL",
             expected="Task产出表存在DDL",
-            actual="已存在DDL" if asset.get("ddl") else "未找到DDL",
+            actual="已存在DDL" if asset.ddl else "未找到DDL",
         )
 
 
@@ -116,10 +120,10 @@ class AssetTaskOutputHasModelRule(_AssetCompletenessRule):
         asset = target["asset"]
         return self.check(
             target["output"],
-            bool(asset.get("model")),
+            bool(asset.model),
             "Task产出表缺少Model",
             expected="Task产出表存在Model",
-            actual="已存在Model" if asset.get("model") else "未找到Model",
+            actual="已存在Model" if asset.model else "未找到Model",
         )
 
 
@@ -130,10 +134,11 @@ class AssetTaskSingleOutputRule(_AssetCompletenessRule):
     def evaluate(self, target: dict, rule_context: dict) -> dict | None:
         if target["kind"] != "task":
             return None
-        outputs = sorted(set(target["task"].get("output_tables") or set()))
+        task: TaskAsset = target["task"]
+        outputs = sorted(task.output_tables)
         actual = f"实际产出={outputs}"
         return self.check(
-            target["task"]["file"],
+            task.file,
             len(outputs) == 1,
             "Task必须有且只有一个持久产出表",
             target_type="task",
@@ -178,13 +183,14 @@ class AssetTaskLineageMatchesOutputRule(_AssetCompletenessRule):
     def evaluate(self, target: dict, rule_context: dict) -> dict | None:
         if target["kind"] != "task":
             return None
-        outputs = set(target["task"].get("output_tables") or set())
-        lineage_targets = set(target["task"].get("lineage_targets") or set())
+        task: TaskAsset = target["task"]
+        outputs = set(task.output_tables)
+        lineage_targets = set(task.lineage_targets)
         actual = (
             f"实际产出={sorted(outputs)}，血缘目标={sorted(lineage_targets)}"
         )
         return self.check(
-            target["task"]["file"],
+            task.file,
             bool(outputs) and lineage_targets == outputs,
             actual,
             target_type="task",
@@ -209,6 +215,5 @@ ASSET_COMPLETENESS_RULE_CLASSES = [
 ]
 
 
-def _asset_requires_task(asset: dict) -> bool:
-    layer = str(asset.get("layer") or "OTHER").upper()
-    return layer != "ODS"
+def _asset_requires_task(asset: TableAsset) -> bool:
+    return asset.layer.upper() != "ODS"

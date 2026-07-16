@@ -39,15 +39,15 @@ def score_metadata_health(
             rules=rules,
         )
 
-    if asset_catalog and asset_catalog.get("tables"):
+    if asset_catalog.tables:
         tables_by_name = {
             name: dict(
                 name=name,
-                layer=asset.get("layer", "OTHER"),
-                columns=asset.get("columns") or [],
+                layer=asset.layer,
+                columns=asset.columns,
             )
-            for name, asset in asset_catalog.get("tables", {}).items()
-            if asset.get("ddl") or asset.get("lineage_table")
+            for name, asset in asset_catalog.tables.items()
+            if asset.ddl or asset.lineage_table
         }
     else:
         tables_by_name = {table["name"]: table for table in tables}
@@ -59,7 +59,7 @@ def score_metadata_health(
             continue
         if table_scope is not None and table_name not in table_scope:
             continue
-        asset = (asset_catalog.get("tables") or {}).get(table_name) or {}
+        asset = asset_catalog.tables.get(table_name)
         table = tables_by_name.get(table_name)
         columns = _table_column_names(table) if table else set()
         entities = model_entities(metadata)
@@ -76,7 +76,7 @@ def score_metadata_health(
                 "entity_codes": entity_codes,
                 "primary_code": entity_codes[0] if entity_codes else "",
                 "grain": grain,
-                "model": asset.get("model") or {},
+                "model": asset.model if asset and asset.model else {},
                 "grain_entities": (
                     _as_string_list(grain.get("entities"))
                     if isinstance(grain, dict)
@@ -90,7 +90,7 @@ def score_metadata_health(
     rule_context = {
         "business_domain_config": business_domain_config,
         "naming_config": nc,
-        "project_dir": asset_catalog.get("project_dir"),
+        "project_dir": asset_catalog.project_dir,
     }
     checks = []
     for target in targets:

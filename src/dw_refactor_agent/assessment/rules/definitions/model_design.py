@@ -9,6 +9,10 @@ import sqlglot
 from sqlglot import exp
 
 from dw_refactor_agent.assessment.llm.table_inspector import VALID_TABLE_TYPES
+from dw_refactor_agent.assessment.project_facts.asset_catalog import (
+    AssetCatalog,
+    TaskAsset,
+)
 from dw_refactor_agent.assessment.project_facts.business_metadata import (
     _business_area_applies,
     _data_domain_applies,
@@ -1092,11 +1096,11 @@ def _is_fact_table(model_metadata: dict | None, table_name: str) -> bool:
     return _table_type(model_metadata, table_name) == "fact"
 
 
-def _task_sql_text(task: dict) -> str:
-    sql_text = str(task.get("sql") or "")
+def _task_sql_text(task: TaskAsset) -> str:
+    sql_text = task.sql
     if sql_text:
         return sql_text
-    path = task.get("path")
+    path = task.path
     if not path:
         return ""
     try:
@@ -1105,21 +1109,22 @@ def _task_sql_text(task: dict) -> str:
         return ""
 
 
-def _task_source_file(task: dict) -> str:
-    return str(
-        task.get("source_file") or task.get("file") or task.get("path") or ""
-    )
+def _task_source_file(task: TaskAsset) -> str:
+    return task.source_file or task.file or str(task.path or "")
 
 
-def _table_tasks(asset_catalog: dict | None, table_name: str) -> list[dict]:
+def _table_tasks(
+    asset_catalog: AssetCatalog | None, table_name: str
+) -> list[TaskAsset]:
     if not asset_catalog:
         return []
-    table_asset = (asset_catalog.get("tables") or {}).get(table_name) or {}
-    tasks = table_asset.get("tasks") or []
-    return [task for task in tasks if isinstance(task, dict)]
+    table_asset = asset_catalog.tables.get(table_name)
+    return list(table_asset.tasks) if table_asset else []
 
 
-def _table_sql_facts(asset_catalog: dict | None, table_name: str) -> dict:
+def _table_sql_facts(
+    asset_catalog: AssetCatalog | None, table_name: str
+) -> dict:
     group_by_columns = set()
     group_output_columns = set()
     aggregate_aliases = set()
@@ -1168,7 +1173,7 @@ def _lineage_facts_from_edges(edges: list | None, table_name: str) -> dict:
 
 
 def _combined_design_facts(
-    asset_catalog: dict | None,
+    asset_catalog: AssetCatalog | None,
     lineage_view: LineageView,
     table_name: str,
 ) -> dict:
@@ -1401,18 +1406,18 @@ def _has_event_key(table: dict, metadata: dict) -> bool:
 
 
 def _table_partition_column(
-    asset_catalog: dict | None,
+    asset_catalog: AssetCatalog | None,
     table_name: str,
 ) -> str:
     if not asset_catalog:
         return ""
-    table_asset = (asset_catalog.get("tables") or {}).get(table_name) or {}
-    ddl = table_asset.get("ddl") or {}
-    partition_column = str(ddl.get("partition_column") or "").strip()
+    table_asset = asset_catalog.tables.get(table_name)
+    ddl = table_asset.ddl if table_asset else None
+    partition_column = ddl.partition_column.strip() if ddl else ""
     if partition_column:
         return partition_column
 
-    path = ddl.get("path")
+    path = ddl.path if ddl else None
     if not path:
         return ""
     try:

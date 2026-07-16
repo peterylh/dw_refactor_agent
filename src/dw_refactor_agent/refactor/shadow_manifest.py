@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Iterator, Mapping
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime
 from enum import Enum
 from pathlib import Path
@@ -39,6 +40,23 @@ class PrefillMode(Enum):
 _RESERVED_EXECUTION_MARKER = "dw_refactor_execution_marker"
 
 
+class _RecordMapping(Mapping):
+    """Read-only mapping compatibility for migrated manifest records."""
+
+    _mapping_fields: tuple[str, ...] = ()
+
+    def __getitem__(self, key: str) -> Any:
+        if key not in self._mapping_fields:
+            raise KeyError(key)
+        return getattr(self, key)
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._mapping_fields)
+
+    def __len__(self) -> int:
+        return len(self._mapping_fields)
+
+
 @dataclass(frozen=True)
 class PrefillAction:
     current_table: str
@@ -55,6 +73,184 @@ class PrefillAction:
             "partitions": list(self.partitions),
             "reason": self.reason,
         }
+
+    @classmethod
+    def from_mapping(cls, value: Mapping[str, Any]) -> "PrefillAction":
+        raw_mode = value.get("mode") or PrefillMode.FULL.value
+        mode = (
+            raw_mode
+            if isinstance(raw_mode, PrefillMode)
+            else PrefillMode(raw_mode)
+        )
+        return cls(
+            current_table=str(value.get("current_table") or ""),
+            baseline_table=str(value.get("baseline_table") or ""),
+            mode=mode,
+            partitions=tuple(value.get("partitions") or ()),
+            reason=str(value.get("reason") or ""),
+        )
+
+
+@dataclass(frozen=True)
+class ShadowRelation(_RecordMapping):
+    """Current-to-baseline identity and schema state for one relation."""
+
+    current_table: str
+    baseline_table: str
+    baseline_ddl: str = ""
+    schema_changed: bool = False
+    phase2_qa_only: bool = False
+    dropped: bool = False
+
+    _mapping_fields = (
+        "current_table",
+        "baseline_table",
+        "baseline_ddl",
+        "schema_changed",
+        "phase2_qa_only",
+        "dropped",
+    )
+
+    @classmethod
+    def from_mapping(cls, value: Mapping[str, Any]) -> "ShadowRelation":
+        return cls(
+            current_table=str(value.get("current_table") or ""),
+            baseline_table=str(value.get("baseline_table") or ""),
+            baseline_ddl=str(value.get("baseline_ddl") or ""),
+            schema_changed=bool(value.get("schema_changed")),
+            phase2_qa_only=bool(value.get("phase2_qa_only")),
+            dropped=bool(value.get("dropped")),
+        )
+
+    def to_dict(self) -> dict:
+        result = {
+            "current_table": self.current_table,
+            "baseline_table": self.baseline_table,
+            "baseline_ddl": self.baseline_ddl,
+            "schema_changed": self.schema_changed,
+            "phase2_qa_only": self.phase2_qa_only,
+        }
+        if self.dropped:
+            result["dropped"] = True
+        return result
+
+
+@dataclass(frozen=True)
+class ShadowJob(_RecordMapping):
+    """Execution routes and readiness requirements for one shadow job."""
+
+    context: RewriteContext
+    outputs: frozenset[str] = field(default_factory=frozenset)
+    required_qa_tables: frozenset[str] = field(default_factory=frozenset)
+    self_read: bool = False
+
+    _mapping_fields = (
+        "context",
+        "outputs",
+        "required_qa_tables",
+        "self_read",
+    )
+
+    @classmethod
+    def from_mapping(cls, value: Mapping[str, Any]) -> "ShadowJob":
+        context = value.get("context")
+        if not isinstance(context, RewriteContext):
+            raise TypeError("shadow job context must be RewriteContext")
+        return cls(
+            context=context,
+            outputs=frozenset(value.get("outputs") or []),
+            required_qa_tables=frozenset(
+                value.get("required_qa_tables") or []
+            ),
+            self_read=bool(value.get("self_read")),
+        )
+
+
+@dataclass
+class CompiledShadowManifest(_RecordMapping):
+    """Aggregate root for all routing and prefill decisions of a shadow run."""
+
+    relations: dict[str, ShadowRelation] = field(default_factory=dict)
+    jobs: dict[str, ShadowJob] = field(default_factory=dict)
+    prefill_actions: list[PrefillAction] = field(default_factory=list)
+    prefilled_tables: set[str] = field(default_factory=set)
+    producers: dict[str, str] = field(default_factory=dict)
+    phase2_qa_only_tables: set[str] = field(default_factory=set)
+    blockers: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+
+    _mapping_fields = (
+        "relations",
+        "jobs",
+        "prefill_actions",
+        "prefilled_tables",
+        "producers",
+        "phase2_qa_only_tables",
+        "blockers",
+        "warnings",
+    )
+
+    @classmethod
+    def from_mapping(
+        cls, value: Mapping[str, Any]
+    ) -> "CompiledShadowManifest":
+        return cls(
+            relations={
+                str(name): relation
+                if isinstance(relation, ShadowRelation)
+                else ShadowRelation.from_mapping(relation)
+                for name, relation in (value.get("relations") or {}).items()
+            },
+            jobs={
+                str(name): job
+                if isinstance(job, ShadowJob)
+                else ShadowJob.from_mapping(job)
+                for name, job in (value.get("jobs") or {}).items()
+            },
+            prefill_actions=[
+                action
+                if isinstance(action, PrefillAction)
+                else PrefillAction.from_mapping(action)
+                for action in value.get("prefill_actions") or []
+            ],
+            prefilled_tables=set(value.get("prefilled_tables") or []),
+            producers=dict(value.get("producers") or {}),
+            phase2_qa_only_tables=set(
+                value.get("phase2_qa_only_tables") or []
+            ),
+            blockers=list(value.get("blockers") or []),
+            warnings=list(value.get("warnings") or []),
+        )
+
+
+def ensure_compiled_shadow_manifest(
+    value: CompiledShadowManifest | Mapping[str, Any],
+) -> CompiledShadowManifest:
+    """Normalize compatibility mappings at the shadow execution boundary."""
+    if isinstance(value, CompiledShadowManifest):
+        return value
+    if isinstance(value, Mapping):
+        return CompiledShadowManifest.from_mapping(value)
+    raise TypeError(
+        "compiled shadow manifest must be CompiledShadowManifest or a mapping; "
+        f"received {type(value).__name__}"
+    )
+
+
+@dataclass
+class _ShadowJobAnalysis:
+    """Intermediate compiler facts for one job."""
+
+    index: int
+    job: dict
+    sql_text: str
+    outputs: set[str]
+    write_coverage: RowScope
+    read_scopes: dict[str, RowScope]
+    data_names: set[str]
+    schema_names: set[str]
+    existing_scopes: dict[str, RowScope]
+    write_coverage_by_output: dict[str, RowScope] = field(default_factory=dict)
 
 
 def _canonical(value: str) -> str:
@@ -108,16 +304,16 @@ def _typed_value(value: Any) -> Any:
         return value
 
 
-def _relation_entries(plan: dict) -> tuple[dict, dict, set[str]]:
+def _relation_entries(
+    plan: dict,
+) -> tuple[dict[str, ShadowRelation], dict[str, str], set[str]]:
     baseline_ddl = plan.get("baseline_ddl") or {}
     relations = {
-        _canonical(table): {
-            "current_table": _short_name(table),
-            "baseline_table": _short_name(table),
-            "baseline_ddl": ddl,
-            "schema_changed": False,
-            "phase2_qa_only": False,
-        }
+        _canonical(table): ShadowRelation(
+            current_table=_short_name(table),
+            baseline_table=_short_name(table),
+            baseline_ddl=ddl,
+        )
         for table, ddl in baseline_ddl.items()
     }
     old_to_current = {}
@@ -129,57 +325,59 @@ def _relation_entries(plan: dict) -> tuple[dict, dict, set[str]]:
             new_name = _short_name(change.get("new_name"))
             old_key = _canonical(old_name)
             new_key = _canonical(new_name)
-            previous = relations.pop(old_key, None) or {
-                "baseline_table": old_name,
-                "baseline_ddl": baseline_ddl.get(old_name, ""),
-            }
-            relations[new_key] = {
-                **previous,
-                "current_table": new_name,
-                "baseline_table": previous.get("baseline_table") or old_name,
-                "schema_changed": True,
-                "phase2_qa_only": True,
-            }
+            previous = relations.pop(old_key, None) or ShadowRelation(
+                current_table=old_name,
+                baseline_table=old_name,
+                baseline_ddl=baseline_ddl.get(old_name, ""),
+            )
+            relations[new_key] = ShadowRelation(
+                current_table=new_name,
+                baseline_table=previous.baseline_table or old_name,
+                baseline_ddl=previous.baseline_ddl,
+                schema_changed=True,
+                phase2_qa_only=True,
+                dropped=previous.dropped,
+            )
             old_to_current[old_key] = new_key
             phase2_only.add(new_key)
         elif change_type == "CREATE":
             name = _short_name(change.get("table_name"))
             key = _canonical(name)
-            relations[key] = {
-                "current_table": name,
-                "baseline_table": "",
-                "baseline_ddl": "",
-                "schema_changed": True,
-                "phase2_qa_only": True,
-            }
+            relations[key] = ShadowRelation(
+                current_table=name,
+                baseline_table="",
+                schema_changed=True,
+                phase2_qa_only=True,
+            )
             phase2_only.add(key)
         elif change_type == "ALTER":
             name = _short_name(change.get("table_name"))
             key = _canonical(name)
             relation = relations.setdefault(
                 key,
-                {
-                    "current_table": name,
-                    "baseline_table": name,
-                    "baseline_ddl": baseline_ddl.get(name, ""),
-                    "phase2_qa_only": False,
-                },
+                ShadowRelation(
+                    current_table=name,
+                    baseline_table=name,
+                    baseline_ddl=baseline_ddl.get(name, ""),
+                ),
             )
-            relation["schema_changed"] = True
+            relations[key] = replace(relation, schema_changed=True)
         elif change_type == "DROP":
             name = _short_name(change.get("table_name"))
             key = _canonical(name)
             relation = relations.setdefault(
                 key,
-                {
-                    "current_table": name,
-                    "baseline_table": name,
-                    "baseline_ddl": baseline_ddl.get(name, ""),
-                    "phase2_qa_only": False,
-                },
+                ShadowRelation(
+                    current_table=name,
+                    baseline_table=name,
+                    baseline_ddl=baseline_ddl.get(name, ""),
+                ),
             )
-            relation["schema_changed"] = True
-            relation["dropped"] = True
+            relations[key] = replace(
+                relation,
+                schema_changed=True,
+                dropped=True,
+            )
     for old_name in list(old_to_current):
         current_name = old_to_current[old_name]
         visited = {old_name}
@@ -262,8 +460,8 @@ def _write_coverage(spec, invocations) -> RowScope:
     return RowScope.from_points(column, tuple(values))
 
 
-def _scope_column(relation: dict) -> str:
-    ddl = relation.get("baseline_ddl") or ""
+def _scope_column(relation: ShadowRelation) -> str:
+    ddl = relation.baseline_ddl
     if not ddl:
         return "__rows__"
     try:
@@ -288,7 +486,7 @@ def _analysis_param_sets(invocations) -> list[dict]:
 def _read_scopes(
     sql_text: str,
     invocations,
-    relations: dict,
+    relations: dict[str, ShadowRelation],
     old_to_current: dict,
     prod_db: str,
     qa_db: str,
@@ -337,7 +535,7 @@ def _existing_mutation_scopes(
     sql_text: str,
     invocations,
     outputs: set[str],
-    relations: dict,
+    relations: dict[str, ShadowRelation],
 ) -> dict[str, RowScope]:
     scopes = {}
     params_sets = _analysis_param_sets(invocations)
@@ -369,9 +567,12 @@ def _existing_mutation_scopes(
 
 
 def _prefill_action(
-    current_name: str, relation: dict, scope: RowScope, reasons: list[str]
+    current_name: str,
+    relation: ShadowRelation,
+    scope: RowScope,
+    reasons: list[str],
 ) -> PrefillAction:
-    ddl = relation.get("baseline_ddl") or ""
+    ddl = relation.baseline_ddl
     if not ddl:
         raise ValueError("baseline DDL is unavailable")
     try:
@@ -384,21 +585,23 @@ def _prefill_action(
         and selection.kind is PartitionSelectionKind.PARTITIONS
     ):
         return PrefillAction(
-            relation["current_table"],
-            relation["baseline_table"],
+            relation.current_table,
+            relation.baseline_table,
             PrefillMode.PARTITIONS,
             selection.partitions,
             reason,
         )
     return PrefillAction(
-        relation["current_table"],
-        relation["baseline_table"],
+        relation.current_table,
+        relation.baseline_table,
         PrefillMode.FULL,
         reason=reason,
     )
 
 
-def compile_shadow_manifest(plan: dict, root: Path, planner) -> dict:
+def compile_shadow_manifest(
+    plan: dict, root: Path, planner
+) -> CompiledShadowManifest:
     """Compile relation identity, routes, readiness, and prefill actions."""
     root = Path(root)
     prod_db = plan["project_db"]
@@ -406,7 +609,7 @@ def compile_shadow_manifest(plan: dict, root: Path, planner) -> dict:
     relations, old_to_current, phase2_only = _relation_entries(plan)
     warnings = []
     blockers = []
-    job_analyses = {}
+    job_analyses: dict[str, _ShadowJobAnalysis] = {}
 
     if any(
         _canonical(table_name) == _RESERVED_EXECUTION_MARKER
@@ -454,24 +657,25 @@ def compile_shadow_manifest(plan: dict, root: Path, planner) -> dict:
         outputs = {name for name in outputs if name}
         created_relations = _created_relations(sql_text)
         for output in outputs:
-            if (relations.get(output) or {}).get(
-                "dropped"
-            ) and output not in created_relations:
+            relation = relations.get(output)
+            if (
+                relation
+                and relation.dropped
+                and output not in created_relations
+            ):
                 blockers.append(
                     f"{job_name}: write target {output} is dropped in Phase 2"
                 )
         for output in outputs:
             relations.setdefault(
                 output,
-                {
-                    "current_table": output,
-                    "baseline_table": output,
-                    "baseline_ddl": (plan.get("baseline_ddl") or {}).get(
+                ShadowRelation(
+                    current_table=output,
+                    baseline_table=output,
+                    baseline_ddl=(plan.get("baseline_ddl") or {}).get(
                         output, ""
                     ),
-                    "schema_changed": False,
-                    "phase2_qa_only": False,
-                },
+                ),
             )
         read_scopes, data_names, schema_names = _read_scopes(
             sql_text,
@@ -483,28 +687,29 @@ def compile_shadow_manifest(plan: dict, root: Path, planner) -> dict:
         )
         for original_name in schema_names:
             current_name = old_to_current.get(original_name, original_name)
-            if (relations.get(current_name) or {}).get("dropped"):
+            relation = relations.get(current_name)
+            if relation and relation.dropped:
                 blockers.append(
                     f"{job_name}: schema source {current_name} "
                     "is dropped in Phase 2"
                 )
-        job_analyses[job_name] = {
-            "index": index,
-            "job": job,
-            "sql_text": sql_text,
-            "outputs": outputs,
-            "write_coverage": _write_coverage(spec, invocations),
-            "read_scopes": read_scopes,
-            "data_names": data_names,
-            "schema_names": schema_names,
-            "existing_scopes": _existing_mutation_scopes(
+        job_analyses[job_name] = _ShadowJobAnalysis(
+            index=index,
+            job=job,
+            sql_text=sql_text,
+            outputs=outputs,
+            write_coverage=_write_coverage(spec, invocations),
+            read_scopes=read_scopes,
+            data_names=data_names,
+            schema_names=schema_names,
+            existing_scopes=_existing_mutation_scopes(
                 sql_text, invocations, outputs, relations
             ),
-        }
+        )
 
     producers = {}
     for job_name, analysis in job_analyses.items():
-        for output in analysis["outputs"]:
+        for output in analysis.outputs:
             previous = producers.setdefault(output, job_name)
             if previous != job_name:
                 blockers.append(
@@ -512,18 +717,17 @@ def compile_shadow_manifest(plan: dict, root: Path, planner) -> dict:
                 )
 
     for job_name, analysis in job_analyses.items():
-        primary_output = _canonical(analysis["job"].get("target") or job_name)
-        primary_coverage = analysis.pop("write_coverage")
-        analysis["write_coverage_by_output"] = {
+        primary_output = _canonical(analysis.job.get("target") or job_name)
+        analysis.write_coverage_by_output = {
             output: (
-                primary_coverage
+                analysis.write_coverage
                 if output == primary_output
                 else RowScope.unknown(
                     _scope_column(relations[output]),
                     f"secondary output coverage from {job_name} is unknown",
                 )
             )
-            for output in analysis["outputs"]
+            for output in analysis.outputs
         }
 
     prefill_scopes = {}
@@ -535,7 +739,7 @@ def compile_shadow_manifest(plan: dict, root: Path, planner) -> dict:
         if scope.kind is ScopeKind.EMPTY:
             return
         relation = relations.get(current_name)
-        if relation is None or not relation.get("baseline_table"):
+        if relation is None or not relation.baseline_table:
             blockers.append(
                 f"{current_name}: data is required but no baseline table exists ({reason})"
             )
@@ -547,10 +751,10 @@ def compile_shadow_manifest(plan: dict, root: Path, planner) -> dict:
         prefill_reasons.setdefault(current_name, []).append(reason)
 
     for job_name, analysis in job_analyses.items():
-        for current_name, scope in analysis["read_scopes"].items():
+        for current_name, scope in analysis.read_scopes.items():
             if current_name not in relations:
                 continue
-            if relations[current_name].get("dropped"):
+            if relations[current_name].dropped:
                 blockers.append(
                     f"{job_name}: data source {current_name} "
                     "is dropped in Phase 2"
@@ -568,16 +772,14 @@ def compile_shadow_manifest(plan: dict, root: Path, planner) -> dict:
                 )
                 continue
             producer_analysis = job_analyses[producer]
-            coverage = producer_analysis["write_coverage_by_output"][
-                current_name
-            ]
+            coverage = producer_analysis.write_coverage_by_output[current_name]
             if scope.is_subset_of(coverage) is not True:
                 request_prefill(
                     current_name,
                     scope,
                     f"read by {job_name} exceeds {producer} write coverage",
                 )
-        for current_name, scope in analysis["existing_scopes"].items():
+        for current_name, scope in analysis.existing_scopes.items():
             request_prefill(
                 current_name,
                 scope,
@@ -608,7 +810,7 @@ def compile_shadow_manifest(plan: dict, root: Path, planner) -> dict:
         schema_routes = {}
         data_routes = {}
         required_ready = set()
-        for occurrence in analyze_occurrences(analysis["sql_text"]):
+        for occurrence in analyze_occurrences(analysis.sql_text):
             if occurrence.database and _canonical(occurrence.database) not in {
                 _canonical(prod_db),
                 _canonical(qa_db),
@@ -617,9 +819,7 @@ def compile_shadow_manifest(plan: dict, root: Path, planner) -> dict:
             original = _canonical(occurrence.table)
             current = old_to_current.get(original, original)
             relation = relations.get(current)
-            display = (
-                relation["current_table"] if relation else occurrence.table
-            )
+            display = relation.current_table if relation else occurrence.table
             if occurrence.role is ReferenceRole.WRITE:
                 write_routes[original] = RelationRoute(qa_db, display)
             elif occurrence.role is ReferenceRole.SCHEMA_READ:
@@ -650,29 +850,32 @@ def compile_shadow_manifest(plan: dict, root: Path, planner) -> dict:
             current_job=job_name,
             strict=True,
         )
-        manifest_jobs[job_name] = {
-            "context": context,
-            "outputs": set(analysis["outputs"]),
-            "required_qa_tables": required_ready,
-            "self_read": bool(
-                set(analysis["read_scopes"]).intersection(analysis["outputs"])
+        manifest_jobs[job_name] = ShadowJob(
+            context=context,
+            outputs=frozenset(analysis.outputs),
+            required_qa_tables=frozenset(required_ready),
+            self_read=bool(
+                set(analysis.read_scopes).intersection(analysis.outputs)
             ),
-        }
+        )
 
-    return {
-        "relations": relations,
-        "jobs": manifest_jobs,
-        "prefill_actions": prefill_actions,
-        "prefilled_tables": prefilled_tables,
-        "producers": dict(producers),
-        "phase2_qa_only_tables": phase2_only,
-        "blockers": sorted(set(blockers)),
-        "warnings": warnings,
-    }
+    return CompiledShadowManifest(
+        relations=relations,
+        jobs=manifest_jobs,
+        prefill_actions=prefill_actions,
+        prefilled_tables=prefilled_tables,
+        producers=dict(producers),
+        phase2_qa_only_tables=phase2_only,
+        blockers=sorted(set(blockers)),
+        warnings=warnings,
+    )
 
 
-def manifest_summary(manifest: dict) -> dict:
+def manifest_summary(
+    manifest: CompiledShadowManifest | Mapping[str, Any],
+) -> dict:
     """Return the JSON-serializable part of a compiled manifest."""
+    manifest = ensure_compiled_shadow_manifest(manifest)
 
     def route_summary(routes: dict[str, RelationRoute]) -> dict:
         return {
@@ -684,31 +887,29 @@ def manifest_summary(manifest: dict) -> dict:
         }
 
     return {
-        "relations": manifest.get("relations", {}),
+        "relations": {
+            name: relation.to_dict()
+            for name, relation in manifest.relations.items()
+        },
         "jobs": {
             name: {
-                "outputs": sorted(job.get("outputs") or []),
-                "required_qa_tables": sorted(
-                    job.get("required_qa_tables") or []
-                ),
-                "self_read": bool(job.get("self_read")),
+                "outputs": sorted(job.outputs),
+                "required_qa_tables": sorted(job.required_qa_tables),
+                "self_read": job.self_read,
                 "routes": {
-                    "write": route_summary(job["context"].write_routes),
-                    "schema_read": route_summary(job["context"].schema_routes),
-                    "data_read": route_summary(job["context"].data_routes),
+                    "write": route_summary(job.context.write_routes),
+                    "schema_read": route_summary(job.context.schema_routes),
+                    "data_read": route_summary(job.context.data_routes),
                 },
             }
-            for name, job in (manifest.get("jobs") or {}).items()
+            for name, job in manifest.jobs.items()
         },
         "prefill_actions": [
-            action.to_dict()
-            for action in manifest.get("prefill_actions") or []
+            action.to_dict() for action in manifest.prefill_actions
         ],
-        "prefilled_tables": sorted(manifest.get("prefilled_tables") or []),
-        "producers": dict(manifest.get("producers") or {}),
-        "phase2_qa_only_tables": sorted(
-            manifest.get("phase2_qa_only_tables") or []
-        ),
-        "blockers": list(manifest.get("blockers") or []),
-        "warnings": list(manifest.get("warnings") or []),
+        "prefilled_tables": sorted(manifest.prefilled_tables),
+        "producers": dict(manifest.producers),
+        "phase2_qa_only_tables": sorted(manifest.phase2_qa_only_tables),
+        "blockers": list(manifest.blockers),
+        "warnings": list(manifest.warnings),
     }

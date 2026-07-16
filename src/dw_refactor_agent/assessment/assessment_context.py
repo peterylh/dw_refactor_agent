@@ -7,7 +7,9 @@ from pathlib import Path
 from typing import Any
 
 from dw_refactor_agent.assessment.project_facts.asset_catalog import (
+    AssetCatalog,
     build_asset_catalog,
+    ensure_asset_catalog,
 )
 from dw_refactor_agent.config import determine_layer
 from dw_refactor_agent.lineage.table_graph import build_table_layer_map
@@ -27,12 +29,10 @@ class _cached_property:
         return instance.__dict__[self.name]
 
 
-def _empty_asset_catalog(project_dir: Path | None = None) -> dict:
-    return {
-        "project_dir": Path(project_dir) if project_dir else None,
-        "tables": {},
-        "tasks": [],
-    }
+def _empty_asset_catalog(project_dir: Path | None = None) -> AssetCatalog:
+    return AssetCatalog(
+        project_dir=Path(project_dir) if project_dir else None,
+    )
 
 
 @dataclass
@@ -41,10 +41,13 @@ class AssessmentContext:
 
     project: str
     lineage: LineageView
-    assets: dict
+    assets: AssetCatalog
     models: dict | None = None
     naming_config: Any = None
     business_domain_config: Any = None
+
+    def __post_init__(self) -> None:
+        self.assets = ensure_asset_catalog(self.assets)
 
     @_cached_property
     def tables(self) -> list:
@@ -114,7 +117,7 @@ class AssessmentContext:
         project_dir: Path | None = None,
         business_domain_config: Any = None,
         naming_config: Any = None,
-        assets: dict | None = None,
+        assets: AssetCatalog | dict | None = None,
     ) -> "AssessmentContext":
         tables = tables or []
         edges = edges or []
