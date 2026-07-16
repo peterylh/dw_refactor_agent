@@ -94,6 +94,43 @@ def build_job_records(
     )
 
 
+def _producer_index(jobs: Sequence[dict]) -> tuple[dict, dict]:
+    producers_by_key = defaultdict(set)
+    display_by_key = {}
+    for job in jobs or []:
+        job_name = str(job.get("name") or "")
+        if not job_name:
+            continue
+        for output in job.get("outputs") or []:
+            dataset = str(output or "")
+            if not dataset:
+                continue
+            dataset_key = _table_key(dataset)
+            producers_by_key[dataset_key].add(job_name)
+            display_by_key.setdefault(dataset_key, dataset)
+    return producers_by_key, display_by_key
+
+
+def find_multiple_producer_datasets(jobs: Sequence[dict]) -> list[dict]:
+    """Return datasets written by more than one explicit Job."""
+    producers_by_key, display_by_key = _producer_index(jobs)
+    warnings = []
+    for dataset_key in sorted(producers_by_key):
+        producer_jobs = sorted(
+            producers_by_key[dataset_key],
+            key=identifier_match_key,
+        )
+        if len(producer_jobs) <= 1:
+            continue
+        warnings.append(
+            {
+                "dataset": display_by_key[dataset_key],
+                "producer_jobs": producer_jobs,
+            }
+        )
+    return warnings
+
+
 def resolve_job_dependencies(
     jobs: Sequence[dict],
     tables: Sequence[dict],
@@ -108,10 +145,7 @@ def resolve_job_dependencies(
         if full_name:
             table_by_key.setdefault(_table_key(full_name), table)
 
-    producers_by_key = defaultdict(set)
-    for job in jobs or []:
-        for output in job.get("outputs") or []:
-            producers_by_key[_table_key(output)].add(job["name"])
+    producers_by_key, _ = _producer_index(jobs)
 
     dependency_datasets = defaultdict(dict)
     unresolved_consumers = defaultdict(set)
