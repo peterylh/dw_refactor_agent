@@ -555,6 +555,93 @@ def test_run_generate_model_metadata_dry_run_llm_uses_generated_model_baseline(
     assert saved["layer"] == "DWS"
 
 
+def test_run_generate_model_metadata_checkpoints_each_completed_table(
+    tmp_path, monkeypatch
+):
+    import dw_refactor_agent.assessment.llm.model_metadata_writer as writer_module
+
+    project = "generate_metadata_partial_checkpoint"
+    project_dir = _write_catalog_project(
+        tmp_path,
+        monkeypatch,
+        project,
+        catalog=_catalog_payload(),
+        ddl_tables=["dwd_first", "dwd_second"],
+    )
+    lineage_data = {
+        "tables": [
+            {
+                "name": table_name,
+                "columns": [
+                    {"name": "id", "type": "BIGINT"},
+                    {"name": "customer_id", "type": "BIGINT"},
+                ],
+            }
+            for table_name in ("dwd_first", "dwd_second")
+        ],
+        "edges": [],
+        "indirect_edges": [],
+    }
+
+    class FailingInspector:
+        def __init__(self, api_key, **kwargs):
+            self.progress_callback = None
+            self.result_callback = None
+
+        def inspect_batch(self, contexts):
+            ctx = contexts[0]
+            result = TableInspectResult(
+                table_name=ctx.table_name,
+                declared_layer=ctx.layer,
+                inferred_layer="DWD",
+                table_type="fact",
+                confidence=0.9,
+                reasoning_steps=[],
+                columns={
+                    "atomic_metrics": [],
+                    "derived_metrics": [],
+                    "calculated_metrics": [],
+                    "dimensions": [],
+                    "others": ["id", "customer_id"],
+                },
+            )
+            self.result_callback(result)
+            raise RuntimeError("simulated process interruption")
+
+    monkeypatch.setattr(
+        writer_module, "load_lineage_data", lambda _: lineage_data
+    )
+    monkeypatch.setattr(writer_module, "TableInspector", FailingInspector)
+    checkpoint_dir = project_dir / "mid_checkpoints"
+    checkpoint_dir.mkdir()
+    stale_model = checkpoint_dir / "stale.yaml"
+    stale_model.write_text("name: stale\n", encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="simulated process interruption"):
+        run_generate_model_metadata(
+            project,
+            api_key="test",
+            dry_run=False,
+        )
+
+    checkpoint_model = checkpoint_dir / "dwd_first.yaml"
+    missing_model = checkpoint_dir / "dwd_second.yaml"
+    manifest = json.loads(
+        (checkpoint_dir / "manifest.json").read_text(encoding="utf-8")
+    )
+
+    assert checkpoint_model.exists()
+    assert not missing_model.exists()
+    assert not stale_model.exists()
+    assert manifest["status"] == "running"
+    assert manifest["table_count"] == 2
+    assert manifest["checkpoint_model_count"] == 1
+    assert manifest["inspected_table_count"] == 1
+    assert manifest["tables"]["dwd_first"]["inspection_status"] == "passed"
+    assert not (project_dir / "mid" / "models" / "dwd_first.yaml").exists()
+    assert not (project_dir / "mid" / "models" / "dwd_second.yaml").exists()
+
+
 def test_run_generate_model_metadata_missing_catalog_writes_skeleton_and_models(
     tmp_path, monkeypatch
 ):

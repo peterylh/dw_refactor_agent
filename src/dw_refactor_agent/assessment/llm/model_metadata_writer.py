@@ -38,6 +38,9 @@ from dw_refactor_agent.assessment.llm.metadata_flow import (
     catalog_plan_for_refresh,
     run_inspection_pipeline,
 )
+from dw_refactor_agent.assessment.llm.model_metadata_checkpoint import (
+    GenerateModelCheckpoint,
+)
 from dw_refactor_agent.assessment.llm.table_inspector import (
     DEFAULT_MIN_CACHEABLE_CONFIDENCE,
     METRIC_CONTEXT_REINSPECTION_ERROR_KEY,
@@ -267,6 +270,15 @@ def run_generate_model_metadata(
         planned_deleted_model_files=base_plan.planned_deleted_model_files,
         replace_existing_models=replace_existing_models,
     )
+    checkpoint = None
+    if api_key and not dry_run:
+        checkpoint = GenerateModelCheckpoint(
+            project,
+            project_dir=_project_dir(project),
+            plan=generate_plan,
+        )
+        if show_progress:
+            print(f"冷启动检查点目录: {checkpoint.root}", flush=True)
     llm_result: dict[str, Any] | None = None
     final_model_metadata = {
         table_name: dict(metadata)
@@ -295,6 +307,9 @@ def run_generate_model_metadata(
             include_model_metadata=True,
             update_catalog=False,
             expose_layer_hints=expose_layer_hints,
+            result_callback=(
+                checkpoint.write_inspection_result if checkpoint else None
+            ),
         )
         final_model_metadata = _final_model_metadata_with_refinements(
             generate_plan.base_model_metadata,
@@ -325,6 +340,8 @@ def run_generate_model_metadata(
                 resolution_policy=generate_plan.resolution_policy,
                 dry_run=True,
             )
+        if checkpoint:
+            checkpoint.write_final_candidates(final_model_metadata)
 
     publication_validation = validate_generate_candidate(
         final_model_metadata,
@@ -361,6 +378,12 @@ def run_generate_model_metadata(
         additional_rendered_files=catalog_rendered_files,
         additional_deleted_files=catalog_deleted_files,
     )
+    if checkpoint:
+        checkpoint.finish(
+            status="blocked" if publication_blocked else "published",
+            published=should_publish,
+            validation=publication_validation,
+        )
     if should_publish:
         catalog_report, catalog_update_report = _published_catalog_reports(
             catalog_report,
@@ -395,6 +418,14 @@ def run_generate_model_metadata(
             "published": should_publish,
             "validation": publication_validation,
         },
+        "checkpoint": (
+            checkpoint.report()
+            if checkpoint
+            else {
+                "enabled": False,
+                "status": "disabled",
+            }
+        ),
         "flow": {
             "mode": "generate",
             "prior_source": "direct_rule",
@@ -672,6 +703,8 @@ def _format_progress_message(event: dict[str, Any]) -> str:
         )
     if event_name == "unexpected_error":
         return f"{table_label} 巡检异常: {event.get('error')}"
+    if event_name == "result_callback_error":
+        return f"{table_label} 逐表结果落盘失败: {event.get('error')}"
     if event_name == "finish":
         metric_count = (
             int(event.get("atomic_metric_count", 0) or 0)
@@ -773,6 +806,7 @@ def run_metadata_write(
     include_model_metadata: bool = False,
     update_catalog: bool = True,
     expose_layer_hints: bool = True,
+    result_callback: (Callable[[TableInspectResult], None] | None) = None,
 ) -> dict[str, Any]:
     """运行项目级 LLM 巡检与模型元数据回写。"""
     write_scope = _validate_write_scope(write_scope)
@@ -815,6 +849,7 @@ def run_metadata_write(
     )
     if show_progress:
         inspector.progress_callback = build_progress_callback()
+    inspector.result_callback = result_callback
 
     inspection = run_inspection_pipeline(
         project,

@@ -2016,7 +2016,9 @@ def _assert_progress_callback_reports_batch_events(tmp_path, monkeypatch):
         parallelism=1,
     )
     events = []
+    completed_results = []
     inspector.progress_callback = events.append
+    inspector.result_callback = completed_results.append
 
     ctx = TableContext(
         table_name="t1",
@@ -2076,6 +2078,7 @@ def _assert_progress_callback_reports_batch_events(tmp_path, monkeypatch):
     assert events[0]["total"] == 1
     assert events[-1]["status"] == "passed"
     assert events[-1]["atomic_metric_count"] == 1
+    assert completed_results == [result]
 
 
 def _assert_progress_callback_reports_cache_hit(tmp_path):
