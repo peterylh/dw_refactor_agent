@@ -2166,11 +2166,13 @@ def plan_generate_model_metadata(
     write_scope = _validate_write_scope(write_scope)
     if write_scope not in {"all", "table", "business"}:
         raise ValueError("generate 仅支持 write_scope=all/table/business")
+    if replace_existing_models is not True:
+        raise ValueError(
+            "generate 冷启动必须替换现有 models，不能读取旧 model YAML"
+        )
 
     model_files = _model_files(project)
-    planned_deleted_model_files = (
-        [str(path) for path in model_files] if replace_existing_models else []
-    )
+    planned_deleted_model_files = [str(path) for path in model_files]
     model_metadata: dict[str, dict[str, Any]] = {}
     model_paths: dict[str, Path] = {}
     model_updates = []
@@ -2190,9 +2192,7 @@ def plan_generate_model_metadata(
             table_name,
             mapping.get("layer"),
         )
-        existing = (
-            {} if replace_existing_models else _existing_model_data(path)
-        )
+        existing: dict[str, Any] = {}
         updated = _catalog_model_payload(
             table_name=table_name,
             existing=existing,

@@ -86,7 +86,7 @@ def _create_demo_project(root):
     ddl_by_table = {
         "ods_order_event": "CREATE TABLE IF NOT EXISTS demo_dm.ods_order_event (order_id BIGINT COMMENT 'ODS 原始层订单') ENGINE=OLAP DUPLICATE KEY(order_id) DISTRIBUTED BY HASH(order_id) BUCKETS 1 PROPERTIES ('replication_num'='1');",
         "dwd_order_detail": "CREATE TABLE IF NOT EXISTS demo_dm.dwd_order_detail (order_id BIGINT COMMENT 'DWD 明细层订单') ENGINE=OLAP DUPLICATE KEY(order_id) DISTRIBUTED BY HASH(order_id) BUCKETS 1 PROPERTIES ('replication_num'='1');",
-        "dws_order_summary": "CREATE TABLE IF NOT EXISTS demo_dm.dws_order_summary (stat_date DATE COMMENT 'DWS 汇总层') ENGINE=OLAP DUPLICATE KEY(stat_date) DISTRIBUTED BY HASH(stat_date) BUCKETS 1 PROPERTIES ('replication_num'='1');",
+        "dws_order_summary": "CREATE TABLE IF NOT EXISTS demo_dm.dws_order_summary (stat_date DATE COMMENT 'DWS 汇总层', order_count BIGINT COMMENT '订单数') ENGINE=OLAP DUPLICATE KEY(stat_date) DISTRIBUTED BY HASH(stat_date) BUCKETS 1 PROPERTIES ('replication_num'='1');",
         "dim_customer_profile": "CREATE TABLE IF NOT EXISTS demo_dm.dim_customer_profile (customer_id BIGINT COMMENT 'DIM 维度层') ENGINE=OLAP DUPLICATE KEY(customer_id) DISTRIBUTED BY HASH(customer_id) BUCKETS 1 PROPERTIES ('replication_num'='1');",
         "ads_order_dashboard": "CREATE TABLE IF NOT EXISTS demo_dm.ads_order_dashboard (stat_date DATE COMMENT 'ADS 应用层') ENGINE=OLAP DUPLICATE KEY(stat_date) DISTRIBUTED BY HASH(stat_date) BUCKETS 1 PROPERTIES ('replication_num'='1');",
     }
@@ -124,8 +124,11 @@ def _create_demo_project(root):
     _write_text(
         source / "mid" / "tasks" / "dws_order_summary.sql",
         """
+        SET @etl_date = COALESCE(@etl_date, CURDATE());
+        DELETE FROM demo_dm.dws_order_summary
+        WHERE stat_date = CAST(@etl_date AS DATE);
         INSERT INTO demo_dm.dws_order_summary
-        SELECT CURRENT_DATE, COUNT(*) FROM demo_dm.dwd_order_detail;
+        SELECT @etl_date, COUNT(*) FROM demo_dm.dwd_order_detail;
         """,
     )
     _write_text(
@@ -355,7 +358,21 @@ def test_run_benchmark_prefixless_mid_assets_enter_llm_contexts(
                     inferred_layer = "DWS"
                     table_type = "fact"
                     entities = []
-                    columns = None
+                    columns = {
+                        "atomic_metrics": [],
+                        "derived_metrics": [
+                            {
+                                "name": "order_count",
+                                "data_type": "BIGINT",
+                                "business_process": "ORDER_SALES",
+                            }
+                        ],
+                        "calculated_metrics": [],
+                        "dimensions": [
+                            {"name": "stat_date", "data_type": "DATE"}
+                        ],
+                        "others": [],
+                    }
                     grain = {
                         "entities": [],
                         "time_column": "stat_date",
@@ -434,6 +451,8 @@ def test_run_benchmark_prefixless_mid_assets_enter_llm_contexts(
     assert report["total_catalog_change_count"] == 2
     assert report["total_business_process_count"] == 1
     assert report["total_semantic_subject_count"] == 1
+    assert report["published_project_count"] == 1
+    assert report["blocked_project_count"] == 0
     assert set(seen_contexts) == {
         ("customer_profile", "DWD", False),
         ("order_detail", "DWD", False),
@@ -464,9 +483,13 @@ def test_run_benchmark_prefixless_mid_assets_enter_llm_contexts(
     assert "final_accuracy" not in project
     assert project["llm_middle_accuracy"] == 1.0
     assert project["post_retry_middle_accuracy"] == 1.0
-    assert project["metric_count"] == 1
+    assert project["metric_count"] == 2
     assert project["entity_table_count"] == 1
     assert project["grain_table_count"] == 1
+    assert project["publication_status"] == "published"
+    assert project["published"] is True
+    assert project["publication_error_count"] == 0
+    assert project["publication_errors"] == []
     assert project["catalog_summary"]["business_process_overlap_count"] == 1
     assert project["catalog_summary"]["semantic_subject_overlap_count"] == 1
     assert project["final_layer_counts"] == {
@@ -549,6 +572,19 @@ def test_project_summary_records_post_retry_only_mismatch(tmp_path):
                 }
             ]
         },
+        "publication": {
+            "status": "blocked",
+            "published": False,
+            "validation": {
+                "error_count": 1,
+                "errors": [
+                    {
+                        "type": "llm_inspection_blocked",
+                        "table": "opaque_summary",
+                    }
+                ],
+            },
+        },
     }
 
     summary = _summarize_project(temp_project, result=result, dry_run=True)
@@ -558,6 +594,15 @@ def test_project_summary_records_post_retry_only_mismatch(tmp_path):
     assert summary["mismatches"][0]["source_table"] == "sales_summary"
     assert summary["mismatches"][0]["post_retry_middle_layer"] == "FAILED"
     assert summary["post_retry_middle_correct_count"] == 0
+    assert summary["publication_status"] == "blocked"
+    assert summary["published"] is False
+    assert summary["publication_error_count"] == 1
+    assert summary["publication_errors"] == [
+        {
+            "type": "llm_inspection_blocked",
+            "table": "opaque_summary",
+        }
+    ]
 
 
 def test_runner_script_help_works_without_pythonpath():

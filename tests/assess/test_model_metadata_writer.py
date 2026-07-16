@@ -2986,6 +2986,37 @@ def test_run_generate_model_metadata_dry_run_missing_catalog_uses_in_memory_skel
     ).exists()
 
 
+def test_run_generate_model_metadata_rejects_reusing_existing_models(
+    tmp_path, monkeypatch
+):
+    project = "generate_metadata_reuse_rejected"
+    _write_catalog_project(
+        tmp_path,
+        monkeypatch,
+        project,
+        catalog=_catalog_payload(),
+        ddl_tables=["dwd_order_detail"],
+        models={
+            "dwd_order_detail": {
+                "version": 2,
+                "name": "dwd_order_detail",
+                "layer": "DWS",
+                "table_type": "fact",
+            }
+        },
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="generate 冷启动必须替换现有 models",
+    ):
+        run_generate_model_metadata(
+            project,
+            dry_run=True,
+            replace_existing_models=False,
+        )
+
+
 def test_run_generate_model_metadata_dry_run_llm_uses_generated_model_baseline(
     tmp_path, monkeypatch
 ):

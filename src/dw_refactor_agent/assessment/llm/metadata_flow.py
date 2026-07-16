@@ -128,6 +128,10 @@ def build_generate_plan(
     planned_deleted_model_files: List[str],
     replace_existing_models: bool,
 ) -> MetadataFlowPlan:
+    if replace_existing_models is not True:
+        raise ValueError(
+            "generate 冷启动必须替换现有 models，不能读取旧 model YAML"
+        )
     return MetadataFlowPlan(
         mode="generate",
         prior_source="direct_rule",
