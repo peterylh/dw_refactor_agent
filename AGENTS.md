@@ -451,6 +451,10 @@ make test CONDA_ENV=my-py37-env
 
 参见 [docs/development/python_coding_standards.md](docs/development/python_coding_standards.md)。
 
+非自动生成的 Python 文件（包括生产代码和测试代码）物理行数超过 **3000 行**时，
+必须按职责拆分。若修改前文件已超过该阈值，本次涉及该文件的功能开发、修复或重构必须
+同时完成拆分，不得继续扩大单文件规模。自动生成文件和第三方 vendored 代码不适用。
+
 ## SQL 数据开发规范
 
 参见 [docs/development/sql_dev_standards.md](docs/development/sql_dev_standards.md)。
