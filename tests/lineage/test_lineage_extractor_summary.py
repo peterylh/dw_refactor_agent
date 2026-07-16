@@ -1,3 +1,5 @@
+import logging
+
 import dw_refactor_agent.lineage.lineage_extractor as lineage_extractor
 
 
@@ -79,4 +81,40 @@ def test_format_lineage_output_statistics_counts_dataset_types_and_warnings():
         "  表数: 4",
         "  数据集类型: managed=1, process=1, temporary=1, external=1",
         "  生产者警告: 2",
+    ]
+
+
+def test_format_lineage_output_statistics_deduplicates_multiple_producer_warning():
+    output = {
+        "tables": [],
+        "edges": [],
+        "jobs": [
+            {"name": "job_a", "outputs": ["internal.demo_dm.shared"]},
+            {"name": "job_b", "outputs": ["INTERNAL.DEMO_DM.SHARED"]},
+        ],
+        "diagnostics": [
+            {
+                "reason": "multiple_candidates",
+                "dataset": "internal.demo_dm.shared",
+            }
+        ],
+    }
+
+    assert lineage_extractor.format_lineage_output_statistics(output)[-1] == (
+        "  生产者警告: 1"
+    )
+
+
+def test_warn_multiple_producer_datasets_logs_actionable_warning(caplog):
+    jobs = [
+        {"name": "job_b", "outputs": ["internal.demo_dm.shared"]},
+        {"name": "job_a", "outputs": ["INTERNAL.DEMO_DM.SHARED"]},
+    ]
+
+    with caplog.at_level(logging.WARNING):
+        lineage_extractor.warn_multiple_producer_datasets(jobs)
+
+    assert [record.levelno for record in caplog.records] == [logging.WARNING]
+    assert [record.getMessage() for record in caplog.records] == [
+        "数据集 internal.demo_dm.shared 由多个作业生产: job_a, job_b"
     ]

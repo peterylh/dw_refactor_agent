@@ -7,13 +7,14 @@
 
 import argparse
 import json
+import logging
 import re
 import sys
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Sequence, Tuple
 
 _src_root = Path(__file__).resolve().parents[2]
 if str(_src_root) not in sys.path:
@@ -58,6 +59,7 @@ from dw_refactor_agent.lineage.identifiers import (
 )
 from dw_refactor_agent.lineage.job_lineage import (
     build_job_records,
+    find_multiple_producer_datasets,
     resolve_job_dependencies,
 )
 from dw_refactor_agent.lineage.sql_task_facts import (
@@ -85,6 +87,7 @@ CURRENT_CATALOG = "internal"
 CURRENT_DB = "shop_dm"
 LINEAGE_DIALECT = "doris, normalization_strategy=lowercase"
 DDL_DIALECTS_WITH_PARTITIONED_BY = {"hive", "spark"}
+LOGGER = logging.getLogger(__name__)
 
 
 def configure_project(project_name):
@@ -4924,6 +4927,17 @@ def format_lineage_output_statistics(output):
     """Return structural and version 2 dataset counts for CLI output."""
     edges = output.get("edges") or []
     tables = output.get("tables") or []
+    multiple_producer_count = len(
+        find_multiple_producer_datasets(output.get("jobs") or [])
+    )
+    other_producer_diagnostic_count = sum(
+        1
+        for diagnostic in output.get("diagnostics") or []
+        if diagnostic.get("reason") != "multiple_candidates"
+    )
+    producer_warning_count = (
+        multiple_producer_count + other_producer_diagnostic_count
+    )
     direct_count = sum(
         1 for edge in edges if edge.get("relation_type") == "direct"
     )
@@ -4945,8 +4959,18 @@ def format_lineage_output_statistics(output):
             f"{dataset_type}={dataset_counts[dataset_type]}"
             for dataset_type in dataset_types
         ),
-        f"  生产者警告: {len(output.get('diagnostics') or [])}",
+        f"  生产者警告: {producer_warning_count}",
     ]
+
+
+def warn_multiple_producer_datasets(jobs: Sequence[dict]) -> None:
+    """Log one warning for every dataset written by multiple Jobs."""
+    for warning in find_multiple_producer_datasets(jobs):
+        LOGGER.warning(
+            "数据集 %s 由多个作业生产: %s",
+            warning["dataset"],
+            ", ".join(warning["producer_jobs"]),
+        )
 
 
 def format_layer_statistics(tables):
@@ -4986,6 +5010,9 @@ def format_layer_statistics(tables):
 
 
 def main():
+    logging.basicConfig(
+        level=logging.WARNING, format="%(levelname)s: %(message)s"
+    )
     parser = argparse.ArgumentParser(description="SQL 血缘采集器")
     parser.add_argument(
         "--project",
@@ -5140,6 +5167,7 @@ def main():
         schema,
         task_results=extraction_result["task_results"],
     )
+    warn_multiple_producer_datasets(output["jobs"])
     for path in output_paths:
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "w", encoding=TEXT_ENCODING) as fp:

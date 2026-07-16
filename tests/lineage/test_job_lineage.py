@@ -2,6 +2,7 @@ import pytest
 
 from dw_refactor_agent.lineage.job_lineage import (
     build_job_records,
+    find_multiple_producer_datasets,
     job_name_from_source_file,
     resolve_job_dependencies,
 )
@@ -44,6 +45,28 @@ def test_build_job_records_rejects_duplicate_source_stems():
             ],
             lambda table: table,
         )
+
+
+def test_find_multiple_producer_datasets_is_case_insensitive_and_sorted():
+    warnings = find_multiple_producer_datasets(
+        [
+            {
+                "name": "producer_b",
+                "outputs": ["DB.SHARED", "db.only_b"],
+            },
+            {
+                "name": "producer_a",
+                "outputs": ["db.shared", "db.only_a"],
+            },
+        ]
+    )
+
+    assert warnings == [
+        {
+            "dataset": "DB.SHARED",
+            "producer_jobs": ["producer_a", "producer_b"],
+        }
+    ]
 
 
 def test_multiple_process_producers_emit_diagnostic_without_guessing():
