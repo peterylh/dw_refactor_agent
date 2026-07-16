@@ -1,15 +1,121 @@
+import inspect
 import json
+import pickle
 import types
+from pathlib import Path
 
 import sqlglot
 
 import dw_refactor_agent.lineage.lineage_extractor as lineage_extractor
+import dw_refactor_agent.lineage.task_cache as task_cache
+from dw_refactor_agent.lineage import lineage_output, lineage_projection
 from dw_refactor_agent.lineage.lineage_extractor import build_schema_from_texts
 
 
 def _schema_table_count(schema):
     mapping = getattr(schema, "mapping", schema)
     return sum(1 for _ in lineage_extractor._iter_schema_tables(mapping))
+
+
+def test_extractor_hash_includes_split_projection_module(monkeypatch):
+    captured = {}
+
+    def capture_paths(paths):
+        captured["paths"] = tuple(paths)
+        return "split-extractor-hash"
+
+    monkeypatch.setattr(
+        task_cache,
+        "extractor_version_hash",
+        capture_paths,
+    )
+
+    assert (
+        lineage_extractor._extractor_hash_for_cache() == "split-extractor-hash"
+    )
+    assert [Path(path).name for path in captured["paths"]] == [
+        "lineage_extractor.py",
+        "lineage_projection.py",
+        "runtime_binding.py",
+        "sql_task_facts.py",
+    ]
+
+
+def test_projection_peer_calls_observe_facade_monkeypatch(monkeypatch):
+    query = sqlglot.parse_one("SELECT order_id")
+    monkeypatch.setattr(
+        lineage_extractor,
+        "_projection_output_name",
+        lambda _projection: "patched_order_id",
+    )
+
+    assert lineage_extractor._projection_output_names(query) == [
+        "patched_order_id"
+    ]
+
+
+def test_split_projection_module_is_directly_callable():
+    query = sqlglot.parse_one("SELECT order_id")
+
+    assert lineage_projection._projection_output_names(query) == ["order_id"]
+
+
+def test_split_projection_bindings_are_runtime_local(monkeypatch):
+    query = sqlglot.parse_one("SELECT order_id")
+    monkeypatch.setattr(
+        lineage_extractor,
+        "_projection_output_name",
+        lambda _projection: "canonical_order_id",
+    )
+    alternate_runtime = types.SimpleNamespace(
+        _projection_output_name=lambda _projection: "alternate_order_id",
+    )
+
+    assert lineage_extractor._projection_output_names(query) == [
+        "canonical_order_id"
+    ]
+    assert lineage_projection.call(
+        "_projection_output_names",
+        alternate_runtime,
+        query,
+    ) == ["alternate_order_id"]
+    assert lineage_extractor._projection_output_names(query) == [
+        "canonical_order_id"
+    ]
+
+
+def test_split_facade_functions_remain_picklable():
+    functions = (
+        lineage_extractor._projection_output_names,
+        lineage_extractor._expand_query_star_projections,
+        lineage_extractor.build_lineage_output,
+        lineage_extractor.format_layer_statistics,
+    )
+
+    for function in functions:
+        assert pickle.loads(pickle.dumps(function)) is function
+
+
+def test_split_facade_functions_preserve_callable_metadata():
+    pairs = (
+        (
+            lineage_extractor._expand_query_star_projections,
+            lineage_projection._expand_query_star_projections,
+        ),
+        (
+            lineage_extractor.build_lineage_output,
+            lineage_output.build_lineage_output,
+        ),
+        (
+            lineage_extractor.warn_multiple_producer_datasets,
+            lineage_output.warn_multiple_producer_datasets,
+        ),
+    )
+
+    for facade, implementation in pairs:
+        assert inspect.signature(facade) == inspect.signature(implementation)
+        assert facade.__doc__ == implementation.__doc__
+        assert facade.__annotations__ == implementation.__annotations__
 
 
 def test_extract_lineage_prunes_schema_before_calling_sqlglot_lineage(
