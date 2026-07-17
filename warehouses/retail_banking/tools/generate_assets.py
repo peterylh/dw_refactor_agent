@@ -733,7 +733,6 @@ def _model(
         if is_etl_snapshot:
             execution.update(
                 {
-                    "snapshot_mode": "current_state_capture",
                     "historical_replay_supported": False,
                     "source_contract": "ODS current state at execution time",
                 }

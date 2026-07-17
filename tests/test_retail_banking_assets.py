@@ -332,7 +332,6 @@ def test_retail_banking_current_state_snapshots_retain_daily_slices():
             "column": "snapshot_date",
             "period": "D",
         }
-        assert model["execution"]["snapshot_mode"] == "current_state_capture"
         assert model["execution"]["historical_replay_supported"] is False
 
     share_price = _load_yaml(
