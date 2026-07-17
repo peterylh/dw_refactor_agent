@@ -1,11 +1,13 @@
-"""Per-table MID checkpoints for long-running cold-start generation."""
+"""Resumable MID inspections for long-running cold-start generation."""
 
 from __future__ import annotations
 
 import copy
+import csv
 import errno
 import fcntl
 import hashlib
+import io
 import json
 import threading
 from contextlib import suppress
@@ -13,8 +15,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
-
-import yaml
 
 from dw_refactor_agent.assessment.llm.metadata_flow import MetadataFlowPlan
 from dw_refactor_agent.assessment.llm.model_metadata_updates import (
@@ -28,10 +28,20 @@ from dw_refactor_agent.assessment.llm.table_inspector import (
 from dw_refactor_agent.config import TEXT_ENCODING
 
 MID_LAYERS = {"DWD", "DWS", "DIM"}
-CHECKPOINT_MANIFEST_VERSION = 2
+CHECKPOINT_MANIFEST_VERSION = 3
+RESUMABLE_CHECKPOINT_MANIFEST_VERSIONS = {2, 3}
 MAX_CHECKPOINT_VARIANTS_PER_TABLE = 4
 MAX_CHECKPOINT_INVALIDATIONS_PER_TABLE = 8
 INSPECTION_RESULT_SUFFIX = ".inspection.json"
+LLM_LAYER_CLASSIFICATION_REPORT_NAME = "llm_layer_classification.csv"
+LLM_LAYER_CLASSIFICATION_FIELDS = (
+    "table_name",
+    "declared_layer",
+    "inferred_layer",
+    "table_type",
+    "confidence",
+    "inspection_status",
+)
 
 
 class GenerateCheckpointLockError(RuntimeError):
@@ -257,7 +267,8 @@ class GenerateModelCheckpoint:
     ) -> bool:
         return bool(
             resume_enabled
-            and manifest.get("version") == CHECKPOINT_MANIFEST_VERSION
+            and manifest.get("version")
+            in RESUMABLE_CHECKPOINT_MANIFEST_VERSIONS
             and manifest.get("project") == self.project
             and manifest.get("mode") == "generate"
             and isinstance(manifest.get("tables"), dict)
@@ -342,6 +353,9 @@ class GenerateModelCheckpoint:
             return
         for path in self.root.glob("*.yaml"):
             path.unlink()
+        layer_report_path = self.root / LLM_LAYER_CLASSIFICATION_REPORT_NAME
+        if layer_report_path.exists():
+            layer_report_path.unlink()
         for path in self.root.glob(f"*{INSPECTION_RESULT_SUFFIX}"):
             if path.name not in preserved_result_names:
                 path.unlink()
@@ -405,7 +419,8 @@ class GenerateModelCheckpoint:
             if isinstance(item, dict)
             and item.get("stage") != "resume_candidate"
         ]
-        manifest["checkpoint_model_count"] = len(active_entries)
+        manifest.pop("checkpoint_model_count", None)
+        manifest["processed_table_count"] = len(active_entries)
         manifest["inspected_table_count"] = sum(
             1
             for item in active_entries
@@ -461,8 +476,22 @@ class GenerateModelCheckpoint:
         table_name = str(pending.get("table") or "")
         entry = pending.get("entry")
         file_specs = self._pending_file_specs(pending, table_name)
-        files_recovered = bool(file_specs)
+        recoverable_specs = []
         for spec in file_specs:
+            target_name = str(spec.get("target_name") or "")
+            if Path(target_name).suffix.lower() != ".yaml":
+                recoverable_specs.append(spec)
+                continue
+            for name in (
+                str(spec.get("staged_name") or ""),
+                target_name,
+            ):
+                legacy_path = self._safe_root_file(name)
+                if legacy_path is not None and legacy_path.exists():
+                    legacy_path.unlink()
+
+        files_recovered = bool(recoverable_specs)
+        for spec in recoverable_specs:
             staged_path = self._safe_root_file(
                 str(spec.get("staged_name") or "")
             )
@@ -528,25 +557,15 @@ class GenerateModelCheckpoint:
             "content_sha256": self._content_digest(content),
         }
 
-    def _write_model(
+    def _write_inspection_result(
         self,
-        table_name: str,
-        metadata: dict[str, Any],
-        *,
-        stage: str,
-        inspection_result: TableInspectResult | None = None,
-    ) -> Path:
-        checkpoint_path = self.root / f"{table_name}.yaml"
-        rendered_metadata = yaml.safe_dump(
-            metadata,
-            allow_unicode=True,
-            sort_keys=False,
-        )
+        inspection_result: TableInspectResult,
+    ) -> None:
+        table_name = inspection_result.table_name
         previous = self._manifest["tables"].get(table_name) or {}
         entry = {
             "target_path": str(self._target_path(table_name)),
-            "checkpoint_path": str(checkpoint_path),
-            "stage": stage,
+            "stage": "inspected",
             "updated_at": _utc_timestamp(),
             "revision": int(previous.get("revision") or 0) + 1,
             "inspection_variants": dict(
@@ -558,146 +577,173 @@ class GenerateModelCheckpoint:
             "resumed_context_hashes": list(
                 previous.get("resumed_context_hashes") or []
             ),
+            "inspection_status": inspection_result.status,
+            "confidence": inspection_result.confidence,
+            "retry_count": inspection_result.retry_count,
+            "validation": dict(inspection_result.validation or {}),
         }
         staged_files: list[tuple[Path, Path, dict[str, str]]] = []
-        if inspection_result is not None:
-            entry.update(
-                {
-                    "inspection_status": inspection_result.status,
-                    "confidence": inspection_result.confidence,
-                    "retry_count": inspection_result.retry_count,
-                    "validation": dict(inspection_result.validation or {}),
-                }
+        context_hash = str(inspection_result.context_hash or "")
+        if context_hash:
+            result_name = self._inspection_result_name(
+                table_name,
+                context_hash,
             )
-            context_hash = str(inspection_result.context_hash or "")
-            if context_hash:
-                result_name = self._inspection_result_name(
-                    table_name,
-                    context_hash,
-                )
-                result_path = self.root / result_name
-                rendered_result = json.dumps(
-                    result_to_cache_dict(inspection_result),
-                    ensure_ascii=False,
-                    indent=2,
-                )
-                staged_path, file_spec = self._stage_file(
-                    result_path,
-                    rendered_result,
-                )
-                staged_files.append((staged_path, result_path, file_spec))
-                entry["inspection_variants"][context_hash] = {
-                    "result_name": result_name,
-                    "content_sha256": file_spec["content_sha256"],
-                    "inspection_status": inspection_result.status,
-                    "confidence": inspection_result.confidence,
-                    "resume_eligible": bool(inspection_result.resume_eligible),
-                    "updated_at": _utc_timestamp(),
-                }
-                is_resumable = bool(
-                    inspection_result.status != "blocked"
-                    and inspection_result.confidence
-                    >= self.plan.resolution_policy.min_llm_confidence
-                    and inspection_result.resume_eligible
-                )
-                invalidated_hashes = entry["invalidated_context_hashes"]
-                if is_resumable:
-                    with suppress(ValueError):
-                        invalidated_hashes.remove(context_hash)
-                elif context_hash not in invalidated_hashes:
-                    invalidated_hashes.append(context_hash)
-                    del invalidated_hashes[
-                        :-MAX_CHECKPOINT_INVALIDATIONS_PER_TABLE
-                    ]
-                while (
-                    len(entry["inspection_variants"])
-                    > MAX_CHECKPOINT_VARIANTS_PER_TABLE
-                ):
-                    entry["inspection_variants"].pop(
-                        next(iter(entry["inspection_variants"]))
-                    )
-                if inspection_result.reuse_source == "checkpoint":
-                    resumed_hashes = entry["resumed_context_hashes"]
-                    if context_hash not in resumed_hashes:
-                        resumed_hashes.append(context_hash)
-        else:
-            for key in (
-                "inspection_status",
-                "confidence",
-                "retry_count",
-                "validation",
+            result_path = self.root / result_name
+            rendered_result = json.dumps(
+                result_to_cache_dict(inspection_result),
+                ensure_ascii=False,
+                indent=2,
+            )
+            staged_path, file_spec = self._stage_file(
+                result_path,
+                rendered_result,
+            )
+            staged_files.append((staged_path, result_path, file_spec))
+            entry["inspection_variants"][context_hash] = {
+                "result_name": result_name,
+                "content_sha256": file_spec["content_sha256"],
+                "inspection_status": inspection_result.status,
+                "confidence": inspection_result.confidence,
+                "resume_eligible": bool(inspection_result.resume_eligible),
+                "updated_at": _utc_timestamp(),
+            }
+            is_resumable = bool(
+                inspection_result.status != "blocked"
+                and inspection_result.confidence
+                >= self.plan.resolution_policy.min_llm_confidence
+                and inspection_result.resume_eligible
+            )
+            invalidated_hashes = entry["invalidated_context_hashes"]
+            if is_resumable:
+                with suppress(ValueError):
+                    invalidated_hashes.remove(context_hash)
+            elif context_hash not in invalidated_hashes:
+                invalidated_hashes.append(context_hash)
+                del invalidated_hashes[
+                    :-MAX_CHECKPOINT_INVALIDATIONS_PER_TABLE
+                ]
+            while (
+                len(entry["inspection_variants"])
+                > MAX_CHECKPOINT_VARIANTS_PER_TABLE
             ):
-                if key in previous:
-                    entry[key] = previous[key]
+                entry["inspection_variants"].pop(
+                    next(iter(entry["inspection_variants"]))
+                )
+            if inspection_result.reuse_source == "checkpoint":
+                resumed_hashes = entry["resumed_context_hashes"]
+                if context_hash not in resumed_hashes:
+                    resumed_hashes.append(context_hash)
 
-        yaml_staged_path, yaml_spec = self._stage_file(
-            checkpoint_path,
-            rendered_metadata,
-        )
-        staged_files.append((yaml_staged_path, checkpoint_path, yaml_spec))
-        self._manifest["pending_write"] = {
-            "table": table_name,
-            "entry": entry,
-            "staged_name": yaml_staged_path.name,
-            "content_sha256": yaml_spec["content_sha256"],
-            "files": [spec for _, _, spec in staged_files],
-        }
-        try:
-            self._write_manifest()
-        except BaseException:
-            self._manifest.pop("pending_write", None)
-            for staged_path, _, _ in staged_files:
-                with suppress(OSError):
-                    staged_path.unlink()
-            raise
-        for staged_path, target_path, _ in staged_files:
-            staged_path.replace(target_path)
+        if staged_files:
+            first_file_spec = staged_files[0][2]
+            self._manifest["pending_write"] = {
+                "table": table_name,
+                "entry": entry,
+                "staged_name": first_file_spec["staged_name"],
+                "content_sha256": first_file_spec["content_sha256"],
+                "files": [spec for _, _, spec in staged_files],
+            }
+            try:
+                self._write_manifest()
+            except BaseException:
+                self._manifest.pop("pending_write", None)
+                for staged_path, _, _ in staged_files:
+                    with suppress(OSError):
+                        staged_path.unlink()
+                raise
+            for staged_path, target_path, _ in staged_files:
+                staged_path.replace(target_path)
+
         self._manifest["tables"][table_name] = entry
         self._manifest.pop("pending_write", None)
         self._refresh_manifest_counts(self._manifest)
         self._write_manifest()
-        return checkpoint_path
+
+    def _processed_inspection_result(
+        self,
+        result: TableInspectResult,
+    ) -> TableInspectResult:
+        result_copy = copy.deepcopy(result)
+        table_name = result_copy.table_name
+        existing = dict(self.plan.base_model_metadata.get(table_name) or {})
+        update_model_yaml(
+            self.project,
+            result_copy,
+            dry_run=True,
+            write_scope=self.plan.write_scope,
+            existing_model=existing,
+            path=self._target_path(table_name),
+            resolution_policy=self.plan.resolution_policy,
+            include_model_metadata=True,
+        )
+        return result_copy
 
     def write_inspection_result(self, result: TableInspectResult) -> None:
-        """Write one MID YAML and resumable result after inspection."""
+        """Persist one processed inspection result for cross-run recovery."""
         with self._lock:
-            table_name = result.table_name
-            existing = dict(
-                self.plan.base_model_metadata.get(table_name) or {}
-            )
-            result_copy = copy.deepcopy(result)
-            update = update_model_yaml(
-                self.project,
-                result_copy,
-                dry_run=True,
-                write_scope=self.plan.write_scope,
-                existing_model=existing,
-                path=self._target_path(table_name),
-                resolution_policy=self.plan.resolution_policy,
-                include_model_metadata=True,
-            )
-            metadata = dict(update.get("model_metadata") or existing)
-            self._write_model(
-                table_name,
-                metadata,
-                stage="inspected",
-                inspection_result=result_copy,
+            self._write_inspection_result(
+                self._processed_inspection_result(result)
             )
 
-    def write_final_candidates(
+    def _successful_layer_classifications(
         self,
-        model_metadata: dict[str, dict[str, Any]],
-    ) -> None:
-        """Replace partial YAML with each complete in-memory MID candidate."""
+        inspection_results: list[TableInspectResult],
+    ) -> list[dict[str, Any]]:
+        latest_by_table: dict[str, TableInspectResult] = {}
+        for result in inspection_results:
+            if not isinstance(result, TableInspectResult):
+                continue
+            processed = self._processed_inspection_result(result)
+            table_name = str(processed.table_name or "").strip()
+            if table_name:
+                latest_by_table[table_name] = processed
+
+        rows = []
+        for table_name, result in sorted(latest_by_table.items()):
+            if result.status != "passed":
+                continue
+            inferred_layer = str(result.inferred_layer or "").upper()
+            if not inferred_layer:
+                continue
+            rows.append(
+                {
+                    "table_name": table_name,
+                    "declared_layer": str(result.declared_layer or "").upper(),
+                    "inferred_layer": inferred_layer,
+                    "table_type": str(result.table_type or "").lower(),
+                    "confidence": result.confidence,
+                    "inspection_status": "passed",
+                }
+            )
+        return rows
+
+    def write_layer_classification_report(
+        self,
+        inspection_results: list[TableInspectResult],
+    ) -> Path:
+        """Write one CSV after all table inspections have completed."""
         with self._lock:
-            for table_name, metadata in sorted(model_metadata.items()):
-                if not _is_mid_model(metadata):
-                    continue
-                self._write_model(
-                    table_name,
-                    dict(metadata),
-                    stage="final_candidate",
-                )
+            rows = self._successful_layer_classifications(inspection_results)
+            buffer = io.StringIO(newline="")
+            writer = csv.DictWriter(
+                buffer,
+                fieldnames=LLM_LAYER_CLASSIFICATION_FIELDS,
+                lineterminator="\n",
+            )
+            writer.writeheader()
+            writer.writerows(rows)
+            content = buffer.getvalue()
+            report_path = self.root / LLM_LAYER_CLASSIFICATION_REPORT_NAME
+            self._atomic_write(report_path, content)
+            self._manifest["layer_classification_csv"] = {
+                "path": str(report_path),
+                "row_count": len(rows),
+                "content_sha256": self._content_digest(content),
+                "generated_at": _utc_timestamp(),
+            }
+            self._write_manifest()
+            return report_path
 
     def finish(
         self,
@@ -717,6 +763,9 @@ class GenerateModelCheckpoint:
 
     def report(self) -> dict[str, Any]:
         with self._lock:
+            layer_report = self._manifest.get("layer_classification_csv")
+            if not isinstance(layer_report, dict):
+                layer_report = {}
             return {
                 "enabled": True,
                 "run_id": self.run_id,
@@ -742,10 +791,14 @@ class GenerateModelCheckpoint:
                 "invalidated_variant_count": self._manifest.get(
                     "invalidated_variant_count", 0
                 ),
-                "checkpoint_model_count": self._manifest[
-                    "checkpoint_model_count"
+                "processed_table_count": self._manifest[
+                    "processed_table_count"
                 ],
                 "inspected_table_count": self._manifest[
                     "inspected_table_count"
                 ],
+                "layer_classification_csv_path": layer_report.get("path"),
+                "layer_classification_table_count": layer_report.get(
+                    "row_count", 0
+                ),
             }

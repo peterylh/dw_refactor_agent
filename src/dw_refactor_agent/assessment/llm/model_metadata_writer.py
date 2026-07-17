@@ -332,6 +332,11 @@ def run_generate_model_metadata(
                 result_callback=(
                     checkpoint.write_inspection_result if checkpoint else None
                 ),
+                inspection_complete_callback=(
+                    checkpoint.write_layer_classification_report
+                    if checkpoint
+                    else None
+                ),
             )
             final_model_metadata = _final_model_metadata_with_refinements(
                 generate_plan.base_model_metadata,
@@ -364,8 +369,6 @@ def run_generate_model_metadata(
                     resolution_policy=generate_plan.resolution_policy,
                     dry_run=True,
                 )
-            if checkpoint:
-                checkpoint.write_final_candidates(final_model_metadata)
         except BaseException:
             if checkpoint:
                 checkpoint.close()
@@ -858,6 +861,9 @@ def run_metadata_write(
     expose_layer_hints: bool = True,
     resume_cache: dict[str, Any] | None = None,
     result_callback: (Callable[[TableInspectResult], None] | None) = None,
+    inspection_complete_callback: (
+        Callable[[list[TableInspectResult]], None] | None
+    ) = None,
 ) -> dict[str, Any]:
     """运行项目级 LLM 巡检与模型元数据回写。"""
     write_scope = _validate_write_scope(write_scope)
@@ -938,6 +944,8 @@ def run_metadata_write(
     metric_contexts = inspection.metric_contexts
     metadata_only_contexts = inspection.metadata_only_contexts
     results = inspection.results
+    if inspection_complete_callback is not None:
+        inspection_complete_callback(results)
     yaml_updates, skipped_updates = write_model_updates_from_plan(
         project,
         results,

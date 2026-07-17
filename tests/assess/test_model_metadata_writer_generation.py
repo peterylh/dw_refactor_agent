@@ -1,3 +1,4 @@
+import csv
 import json
 import sys
 from pathlib import Path
@@ -95,8 +96,16 @@ def test_run_metadata_write_reuses_table_inspector(
         writer_module, "run_inspection_pipeline", tracking_pipeline
     )
 
+    completed_table_batches = []
     result = run_metadata_write(
-        isolated_writer_project, api_key="test", dry_run=True
+        isolated_writer_project,
+        api_key="test",
+        dry_run=True,
+        inspection_complete_callback=lambda results: (
+            completed_table_batches.append(
+                [result.table_name for result in results]
+            )
+        ),
     )
 
     updates_by_table = {
@@ -120,6 +129,12 @@ def test_run_metadata_write_reuses_table_inspector(
     assert result["non_atomic_metric_violation_count"] == 2
     assert result["model_update_count"] == 0
     assert result["model_change_count"] == len(result["model_updates"])
+    assert len(completed_table_batches) == 1
+    assert set(completed_table_batches[0]) == {
+        "dwd_order_detail",
+        "dwd_customer",
+        "dws_store_sales_daily",
+    }
     assert len(pipeline_calls) == 1
     assert pipeline_calls[0]["project"] == isolated_writer_project
     assert (
@@ -563,7 +578,7 @@ def test_run_generate_model_metadata_dry_run_llm_uses_generated_model_baseline(
     assert saved["layer"] == "DWS"
 
 
-def test_run_generate_model_metadata_checkpoints_each_completed_table(
+def test_generate_interruption_keeps_sidecar_without_yaml_or_csv(
     tmp_path, monkeypatch
 ):
     import dw_refactor_agent.assessment.llm.model_metadata_writer as writer_module
@@ -613,6 +628,7 @@ def test_run_generate_model_metadata_checkpoints_each_completed_table(
                     "others": ["id", "customer_id"],
                 },
             )
+            result.context_hash = "first-context"
             self.result_callback(result)
             raise RuntimeError("simulated process interruption")
 
@@ -632,18 +648,19 @@ def test_run_generate_model_metadata_checkpoints_each_completed_table(
             dry_run=False,
         )
 
-    checkpoint_model = checkpoint_dir / "dwd_first.yaml"
-    missing_model = checkpoint_dir / "dwd_second.yaml"
     manifest = json.loads(
         (checkpoint_dir / "manifest.json").read_text(encoding="utf-8")
     )
 
-    assert checkpoint_model.exists()
-    assert not missing_model.exists()
+    assert not list(checkpoint_dir.glob("*.yaml"))
     assert not stale_model.exists()
+    assert (
+        checkpoint_dir / "dwd_first.first-context.inspection.json"
+    ).exists()
+    assert not (checkpoint_dir / "llm_layer_classification.csv").exists()
     assert manifest["status"] == "running"
     assert manifest["table_count"] == 2
-    assert manifest["checkpoint_model_count"] == 1
+    assert manifest["processed_table_count"] == 1
     assert manifest["inspected_table_count"] == 1
     assert manifest["tables"]["dwd_first"]["inspection_status"] == "passed"
     assert not (project_dir / "mid" / "models" / "dwd_first.yaml").exists()
@@ -1123,7 +1140,7 @@ def test_run_generate_model_metadata_passes_checkpoint_resume_cache(
     assert generated["checkpoint"]["resumed_from_run_id"] == seed.run_id
 
 
-def test_generate_checkpoint_recovers_journaled_yaml_write(
+def test_generate_checkpoint_recovers_journaled_sidecar_write(
     tmp_path, monkeypatch
 ):
     project = "generate_checkpoint_recovery"
@@ -1149,86 +1166,223 @@ def test_generate_checkpoint_recovers_journaled_yaml_write(
         fail_final_manifest,
     )
     with pytest.raises(OSError, match="simulated manifest interruption"):
-        checkpoint.write_inspection_result(
-            TableInspectResult(
-                table_name="dwd_first",
-                declared_layer="DWD",
-                inferred_layer="DWD",
-                table_type="fact",
-                confidence=0.9,
-                reasoning_steps=[],
-            )
+        inspection_result = TableInspectResult(
+            table_name="dwd_first",
+            declared_layer="DWD",
+            inferred_layer="DWD",
+            table_type="fact",
+            confidence=0.9,
+            reasoning_steps=[],
         )
+        inspection_result.context_hash = "recovery-context"
+        checkpoint.write_inspection_result(inspection_result)
     checkpoint.close()
 
     checkpoint_dir = project_dir / "mid_checkpoints"
     interrupted = json.loads(
         (checkpoint_dir / "manifest.json").read_text(encoding="utf-8")
     )
-    assert (checkpoint_dir / "dwd_first.yaml").exists()
+    assert (
+        checkpoint_dir / "dwd_first.recovery-context.inspection.json"
+    ).exists()
+    assert not list(checkpoint_dir.glob("*.yaml"))
     assert interrupted["pending_write"]["table"] == "dwd_first"
 
     recovered = GenerateModelCheckpoint.recover_existing(project_dir)
 
     assert "pending_write" not in recovered
-    assert recovered["checkpoint_model_count"] == 1
+    assert recovered["processed_table_count"] == 1
     assert recovered["inspected_table_count"] == 1
     assert recovered["tables"]["dwd_first"]["inspection_status"] == "passed"
 
 
-def test_generate_checkpoint_recovers_staged_write_over_old_yaml(
+def test_generate_checkpoint_recovery_discards_legacy_yaml(
     tmp_path, monkeypatch
 ):
-    project = "generate_checkpoint_staged_recovery"
+    project = "generate_checkpoint_legacy_yaml_cleanup"
     project_dir, plan = _checkpoint_project(tmp_path, monkeypatch, project)
     checkpoint = GenerateModelCheckpoint(
         project,
         project_dir=project_dir,
         plan=plan,
     )
-    checkpoint._write_model(
-        "dwd_first",
-        {"version": 2, "name": "dwd_first", "layer": "DWD"},
-        stage="first",
-    )
-    checkpoint_path = project_dir / "mid_checkpoints" / "dwd_first.yaml"
-    old_content = checkpoint_path.read_text(encoding="utf-8")
-    original_replace = Path.replace
-
-    def interrupt_before_yaml_replace(path, target):
-        if path.name.endswith(".pending") and Path(target) == checkpoint_path:
-            raise OSError("simulated yaml replace interruption")
-        return original_replace(path, target)
-
-    with monkeypatch.context() as replace_patch:
-        replace_patch.setattr(Path, "replace", interrupt_before_yaml_replace)
-        with pytest.raises(
-            OSError, match="simulated yaml replace interruption"
-        ):
-            checkpoint._write_model(
-                "dwd_first",
-                {"version": 2, "name": "dwd_first", "layer": "DWS"},
-                stage="second",
-            )
     checkpoint.close()
 
     checkpoint_dir = project_dir / "mid_checkpoints"
-    interrupted = json.loads(
-        (checkpoint_dir / "manifest.json").read_text(encoding="utf-8")
+    checkpoint_path = checkpoint_dir / "dwd_first.yaml"
+    staged_path = checkpoint_dir / ".dwd_first.yaml.legacy.pending"
+    checkpoint_path.write_text("layer: DWD\n", encoding="utf-8")
+    staged_path.write_text("layer: DWS\n", encoding="utf-8")
+    manifest_path = checkpoint_dir / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["pending_write"] = {
+        "table": "dwd_first",
+        "entry": {
+            "target_path": "unused",
+            "stage": "legacy",
+        },
+        "files": [
+            {
+                "staged_name": staged_path.name,
+                "target_name": checkpoint_path.name,
+                "content_sha256": "legacy",
+            }
+        ],
+    }
+    manifest_path.write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2),
+        encoding="utf-8",
     )
-    pending = interrupted["pending_write"]
-    staged_path = checkpoint_dir / pending["staged_name"]
-    assert checkpoint_path.read_text(encoding="utf-8") == old_content
-    assert staged_path.exists()
-    assert pending["content_sha256"]
 
     recovered = GenerateModelCheckpoint.recover_existing(project_dir)
 
-    assert (
-        yaml.safe_load(checkpoint_path.read_text(encoding="utf-8"))["layer"]
-        == "DWS"
+    assert "pending_write" not in recovered
+    assert "dwd_first" not in recovered["tables"]
+    assert not checkpoint_path.exists()
+    assert not staged_path.exists()
+
+
+def test_generate_checkpoint_writes_passed_layer_classification_csv(
+    tmp_path, monkeypatch
+):
+    project = "generate_checkpoint_layer_csv"
+    project_dir, plan = _checkpoint_project(tmp_path, monkeypatch, project)
+    checkpoint = GenerateModelCheckpoint(
+        project,
+        project_dir=project_dir,
+        plan=plan,
     )
-    assert recovered["tables"]["dwd_first"]["revision"] == 2
+    report_path = checkpoint.write_layer_classification_report(
+        [
+            TableInspectResult(
+                table_name="dws_sales",
+                declared_layer="DWD",
+                inferred_layer="DWS",
+                table_type="fact",
+                confidence=0.93,
+                reasoning_steps=[],
+            ),
+            TableInspectResult(
+                table_name="dim_customer",
+                declared_layer="DWD",
+                inferred_layer="DIM",
+                table_type="dimension",
+                confidence=0.97,
+                reasoning_steps=[],
+            ),
+            TableInspectResult(
+                table_name="dwd_warning",
+                declared_layer="DWD",
+                inferred_layer="DWD",
+                table_type="fact",
+                confidence=0.8,
+                reasoning_steps=[],
+                validation={"ambiguous_min_max_aggregation": ["test warning"]},
+            ),
+            TableInspectResult(
+                table_name="dwd_blocked",
+                declared_layer="DWD",
+                inferred_layer="OTHER",
+                table_type="other",
+                confidence=0.0,
+                reasoning_steps=[],
+            ),
+        ]
+    )
+    checkpoint.close()
+
+    with report_path.open(encoding="utf-8", newline="") as report_file:
+        reader = csv.DictReader(report_file)
+        rows = list(reader)
+
+    assert reader.fieldnames == [
+        "table_name",
+        "declared_layer",
+        "inferred_layer",
+        "table_type",
+        "confidence",
+        "inspection_status",
+    ]
+    assert rows == [
+        {
+            "table_name": "dim_customer",
+            "declared_layer": "DWD",
+            "inferred_layer": "DIM",
+            "table_type": "dimension",
+            "confidence": "0.97",
+            "inspection_status": "passed",
+        },
+        {
+            "table_name": "dws_sales",
+            "declared_layer": "DWD",
+            "inferred_layer": "DWS",
+            "table_type": "fact",
+            "confidence": "0.93",
+            "inspection_status": "passed",
+        },
+    ]
+    manifest = json.loads(
+        (project_dir / "mid_checkpoints" / "manifest.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert manifest["layer_classification_csv"]["row_count"] == 2
+    assert not list((project_dir / "mid_checkpoints").glob("*.yaml"))
+
+
+def test_generate_writes_layer_csv_before_later_candidate_failure(
+    tmp_path, monkeypatch
+):
+    import dw_refactor_agent.assessment.llm.model_metadata_writer as writer_module
+
+    project = "generate_layer_csv_before_later_failure"
+    project_dir, _ = _checkpoint_project(tmp_path, monkeypatch, project)
+
+    def fail_after_inspection(*args, **kwargs):
+        kwargs["inspection_complete_callback"](
+            [
+                TableInspectResult(
+                    table_name="dwd_first",
+                    declared_layer="DWD",
+                    inferred_layer="DWS",
+                    table_type="fact",
+                    confidence=0.91,
+                    reasoning_steps=[],
+                )
+            ]
+        )
+        raise RuntimeError("simulated post-inspection failure")
+
+    monkeypatch.setattr(
+        writer_module,
+        "run_metadata_write",
+        fail_after_inspection,
+    )
+
+    with pytest.raises(RuntimeError, match="post-inspection failure"):
+        run_generate_model_metadata(
+            project,
+            api_key="test",
+            dry_run=False,
+        )
+
+    report_path = (
+        project_dir / "mid_checkpoints" / "llm_layer_classification.csv"
+    )
+    with report_path.open(encoding="utf-8", newline="") as report_file:
+        rows = list(csv.DictReader(report_file))
+
+    assert rows == [
+        {
+            "table_name": "dwd_first",
+            "declared_layer": "DWD",
+            "inferred_layer": "DWS",
+            "table_type": "fact",
+            "confidence": "0.91",
+            "inspection_status": "passed",
+        }
+    ]
+    assert not list((project_dir / "mid_checkpoints").glob("*.yaml"))
 
 
 def test_generate_reports_checkpoint_finalization_failure_after_publish(
