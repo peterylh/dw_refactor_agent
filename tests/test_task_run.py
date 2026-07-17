@@ -413,8 +413,16 @@ def _configure_process_plan_project(
         stale_lineage,
         runnable_jobs=task_names,
     )
-    dag_path = lineage_dir / "job_dag.json"
-    stale_dag.save(dag_path)
+    schedule_path = project_dir / "scheduling" / "job_dag.json"
+    schedule_path.parent.mkdir(parents=True)
+    schedule_dependencies = {}
+    for dependency in stale_dag.data_dependencies:
+        schedule_dependencies.setdefault(
+            dependency["downstream_job"], []
+        ).append(dependency["upstream_job"])
+    task_run.ScheduleGraph("demo", task_names, schedule_dependencies).save(
+        schedule_path
+    )
 
     monkeypatch.setattr(config.core, "PROJECT_ROOT", tmp_path)
     monkeypatch.setitem(
@@ -424,6 +432,7 @@ def _configure_process_plan_project(
             "dir": "demo_project",
             "db": "demo_db",
             "qa_db": "demo_db_qa",
+            "execution": {"schedule": "scheduling/job_dag.json"},
         },
     )
     monkeypatch.setattr(task_run, "get_mysql_cmd", lambda _: ["mysql"])
@@ -442,7 +451,7 @@ def _configure_process_plan_project(
     return {
         "project_dir": project_dir,
         "lineage_path": lineage_path,
-        "dag_path": dag_path,
+        "dag_path": schedule_path,
         "stale_lineage": stale_lineage,
         "fresh_lineage": fresh_lineage,
         "extractor_calls": extractor_calls,
@@ -483,6 +492,44 @@ def test_unresolved_process_diagnostic_does_not_block_unrelated_subset(
 
     assert task_run.main() == 0
     assert executed == ["Unrelated_Job"]
+
+
+def test_job_list_is_exact_for_reusable_managed_upstream(
+    monkeypatch,
+    tmp_path,
+    capsys,
+):
+    _configure_process_plan_project(
+        monkeypatch,
+        tmp_path,
+        dataset_type="managed",
+        extracted_dataset_type="managed",
+    )
+    executed = []
+    monkeypatch.setattr(
+        task_run,
+        "_run_job",
+        lambda _date, job_name, *args, **kwargs: executed.append(job_name),
+    )
+    monkeypatch.setattr(
+        task_run.sys,
+        "argv",
+        [
+            "task_run",
+            "--project",
+            "demo",
+            "--etl-dates",
+            "2025-01-15",
+            "--job-list",
+            "Build_Report",
+        ],
+    )
+
+    assert task_run.main() == 0
+    assert executed == ["Build_Report"]
+    output = capsys.readouterr().out
+    assert "Prepare_Sales" in output
+    assert "精确子图省略" in output
 
 
 def test_managed_dataset_diagnostic_does_not_block_selected_consumer():

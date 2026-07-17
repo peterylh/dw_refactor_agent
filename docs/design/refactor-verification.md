@@ -110,6 +110,11 @@ jobs_to_run = 可执行的直接变化 Job
 
 直接变化且可完整比较的 `equivalent` 表是停止边界，未修改下游不重算。`changed` 或 `unknown` 沿下游寻找最近的 `equivalent` 物化表；如果没有，则选择结构可比较的叶子作为观察性 Anchor。
 
+`semantic_boundaries` 记录 Anchor 的证据等级：`authority` 是已确认
+`equivalent` 的停止边界，`observational` 是仍带 `unknown` 风险的可比较叶子。
+`anchor_tables` 是两类边界的实际比较表并集；边界决定“为何在这里比较”，Anchor
+决定“比较哪些表”。
+
 时间窗口沿血缘向上换算不同周期，但只给已经进入 `jobs_to_run` 的 Job 分配 execution values。未选择的上游表从生产读取，不因宽评估范围而被复制或重算。
 
 需要在 QA 中准备的基线 DDL 也只覆盖：最终 Anchor、待运行且不是 Phase 2 新建的目标、ALTER 目标和 rename 的旧表。DDL 文件作为独立 SQL artifact 保存，并由摘要绑定到 plan，避免庞大 SQL 内嵌和静默漂移。
@@ -131,9 +136,17 @@ Shadow manifest 在执行前把每个关系编译为明确的读写位置：
 3. 校验外置 baseline DDL，创建所需基线表；
 4. 按 manifest 预填充必要生产数据；
 5. 应用 DDL changes；
-6. 按 Job DAG 执行 `jobs_to_run`。
+6. 按 plan 内冻结的可信调度 `execution_graph` 执行 `jobs_to_run`。
 
-Job 并发遵守 DAG ready 条件，`parallel` 是全局数据库 Session 上限。失败后不再提交新的下游 Job，已运行任务允许收尾并记录结果。
+Job 并发遵守 DAG ready 条件，`parallel` 是全局数据库 Session 上限。任一 Job 失败只
+阻断依赖它的调度下游，独立分支继续执行；血缘仅用于调度一致性告警和不可复用
+process/temporary 上游校验，不在运行时推导或追加顺序。自读或创建生命周期表的 Job
+在 Job 内串行执行 slice，避免多个日期争用同名 stage 表；这不取消 Job 间并行。
+
+Prefill RowScope 对固定 `DATE_FORMAT(column, format)` 等值谓词识别
+`%Y-%m-%d`、`%Y-%m` 和 `%Y`，并可沿 INNER/LEFT JOIN 中显式的列等值关系传播范围。
+DATE 分区列会归一化为离散日期集合，DATETIME 保持连续区间；动态 format、非等值
+JOIN、RIGHT/FULL JOIN 或无法常量折叠的表达式继续保守返回 unknown。
 
 ## QA 数据库池
 
@@ -171,6 +184,11 @@ Shadow-run 和 Compare 在打开业务数据库连接前重新校验这些关系
 ## Compare 语义
 
 Compare 支持行数和逐行比较。纯表/字段 rename 时，生产侧与 QA 侧可以使用不同表名，并按稳定 `column_id` 生成两侧一一对应的 projection。
+
+Plan 不再分别保存 `compare_anchors` 与扁平 checks。每张 Anchor 表对应一个自包含的
+check group：`scope` 记录 `full_table` 或时间切片的列、周期和值，`methods` 记录
+`count`、`row_compare` 及其排除列等配置。运行时只在内存中将 group 展开为逐方法检查，
+从而保证执行窗口和比较条件来自同一份范围定义。
 
 最终状态只有：
 

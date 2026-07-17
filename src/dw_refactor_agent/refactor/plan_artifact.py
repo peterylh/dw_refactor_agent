@@ -9,6 +9,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from dw_refactor_agent.config import TEXT_ENCODING
+from dw_refactor_agent.execution.schedule_graph import (
+    ScheduleContractError,
+    ScheduleGraph,
+)
 from dw_refactor_agent.lineage.identifiers import identifier_match_key
 from dw_refactor_agent.refactor.artifact_contract import (
     FORMAT_VERSION,
@@ -21,6 +25,9 @@ from dw_refactor_agent.refactor.artifact_contract import (
 )
 from dw_refactor_agent.refactor.qa_pool import validate_qa_identifier
 from dw_refactor_agent.refactor.session import load_manifest
+from dw_refactor_agent.refactor.verification_checks import (
+    validate_verification_checks,
+)
 from dw_refactor_agent.refactor.workspace_snapshot import workspace_fingerprint
 
 _SAFE_TABLE_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_$]*$")
@@ -294,87 +301,42 @@ def _plan_jobs_by_key(jobs_to_run: list) -> dict[str, str]:
     return jobs_by_key
 
 
-def _validate_job_dependencies(
-    plan: dict, jobs_by_key: dict[str, str]
-) -> None:
-    if "job_dependencies" not in plan:
+def _validate_execution_graph(plan: dict, jobs_by_key: dict[str, str]) -> None:
+    graph_data = plan.get("execution_graph")
+    if not isinstance(graph_data, dict):
         raise ArtifactFormatError(
-            "verification plan job_dependencies is required; run analyze again"
+            "verification plan execution_graph is required; run analyze again"
         )
-    dependencies = plan["job_dependencies"]
-    if not isinstance(dependencies, dict):
+    try:
+        graph = ScheduleGraph.from_dict(
+            graph_data, expected_project=plan.get("project")
+        )
+    except ScheduleContractError as exc:
         raise ArtifactFormatError(
-            "verification plan job_dependencies must be a mapping"
-        )
-
-    dependency_keys = {}
-    for raw_job_name in dependencies:
-        if not isinstance(raw_job_name, str) or not raw_job_name.strip():
-            raise ArtifactFormatError(
-                "verification plan job_dependencies keys must be "
-                "non-empty strings"
-            )
-        job_key = identifier_match_key(raw_job_name)
-        if job_key in dependency_keys:
-            raise ArtifactFormatError(
-                "verification plan job_dependencies contains duplicate Job "
-                f"key {raw_job_name!r}"
-            )
-        dependency_keys[job_key] = raw_job_name
-
-    unexpected = set(dependency_keys).difference(jobs_by_key)
-    if unexpected:
-        unexpected_names = sorted(dependency_keys[key] for key in unexpected)
+            f"verification plan execution_graph is invalid: {exc}"
+        ) from exc
+    graph_by_key = {identifier_match_key(job): job for job in graph.jobs}
+    if set(graph_by_key) != set(jobs_by_key):
         raise ArtifactFormatError(
-            "verification plan job_dependencies contains unexpected Job "
-            f"key(s): {unexpected_names!r}"
+            "verification plan execution_graph Jobs must exactly match "
+            "jobs_to_run"
         )
-    missing = set(jobs_by_key).difference(dependency_keys)
-    if missing:
-        missing_names = sorted(jobs_by_key[key] for key in missing)
+    actual_order = [entry["job"] for entry in plan["jobs_to_run"]]
+    positions = {
+        identifier_match_key(job): index
+        for index, job in enumerate(actual_order)
+    }
+    invalid_edges = [
+        (upstream, downstream)
+        for upstream, downstream in graph.edges
+        if positions[identifier_match_key(upstream)]
+        >= positions[identifier_match_key(downstream)]
+    ]
+    if invalid_edges:
         raise ArtifactFormatError(
-            "verification plan job_dependencies is missing Job keys: "
-            f"{missing_names!r}"
+            "verification plan jobs_to_run must follow execution_graph "
+            f"topological order; invalid edges: {invalid_edges!r}"
         )
-
-    for downstream_key, raw_downstream in dependency_keys.items():
-        upstreams = dependencies[raw_downstream]
-        if not isinstance(upstreams, list):
-            raise ArtifactFormatError(
-                "verification plan job_dependencies values must be lists; "
-                f"received {type(upstreams).__name__} for {raw_downstream!r}"
-            )
-        upstream_keys = []
-        seen_upstreams = set()
-        for index, upstream in enumerate(upstreams):
-            if not isinstance(upstream, str) or not upstream.strip():
-                raise ArtifactFormatError(
-                    "verification plan job_dependencies upstream Jobs must "
-                    f"be non-empty strings: {raw_downstream!r}[{index}]"
-                )
-            upstream_key = identifier_match_key(upstream)
-            if upstream_key not in jobs_by_key:
-                raise ArtifactFormatError(
-                    "verification plan job_dependencies references unknown "
-                    f"Job {upstream!r}"
-                )
-            if upstream_key == downstream_key:
-                raise ArtifactFormatError(
-                    "verification plan Job cannot depend on itself: "
-                    f"{raw_downstream!r}"
-                )
-            if upstream_key in seen_upstreams:
-                raise ArtifactFormatError(
-                    "verification plan job_dependencies contains duplicate "
-                    f"upstream Job {upstream!r} for {raw_downstream!r}"
-                )
-            seen_upstreams.add(upstream_key)
-            upstream_keys.append(upstream_key)
-        if upstream_keys != sorted(upstream_keys):
-            raise ArtifactFormatError(
-                "verification plan job_dependencies upstream Jobs must be "
-                f"sorted for {raw_downstream!r}"
-            )
 
 
 def _validate_persisted_plan_schema(plan: dict) -> None:
@@ -410,16 +372,18 @@ def _validate_persisted_plan_schema(plan: dict) -> None:
                 f"verification plan {field} must be a list"
             )
     jobs_by_key = _plan_jobs_by_key(plan["jobs_to_run"])
-    _validate_job_dependencies(plan, jobs_by_key)
+    _validate_execution_graph(plan, jobs_by_key)
     verification = plan.get("verification")
     if not isinstance(verification, dict):
         raise ArtifactFormatError(
             "verification plan verification must be a mapping"
         )
-    if not isinstance(verification.get("checks"), list):
+    try:
+        validate_verification_checks(verification.get("checks"))
+    except ValueError as exc:
         raise ArtifactFormatError(
-            "verification plan verification.checks must be a list"
-        )
+            f"invalid verification plan checks: {exc}"
+        ) from exc
     if not isinstance(plan.get("analysis_snapshot"), dict):
         raise ArtifactFormatError(
             "verification plan analysis_snapshot must be a mapping"

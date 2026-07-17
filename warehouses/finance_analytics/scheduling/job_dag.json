@@ -1,0 +1,125 @@
+{
+  "format_version": 1,
+  "project": "finance_analytics",
+  "jobs": [
+    "ads_customer_by_age_group",
+    "ads_customer_by_geography",
+    "ads_customer_by_segment",
+    "ads_product_summary",
+    "dim_account",
+    "dim_agent",
+    "dim_campaign",
+    "dim_customer",
+    "dim_date",
+    "dim_economic_indicators",
+    "dim_location",
+    "dim_merchant",
+    "dim_product",
+    "dwd_account_events",
+    "dwd_accounts",
+    "dwd_atm_locations",
+    "dwd_branch_locations",
+    "dwd_credit_applications",
+    "dwd_customer_interactions",
+    "dwd_customer_segments_history",
+    "dwd_customers",
+    "dwd_economic_indicators",
+    "dwd_fraud_alerts",
+    "dwd_loan_payments",
+    "dwd_marketing_campaigns",
+    "dwd_merchants",
+    "dwd_products",
+    "dwd_regulatory_reports",
+    "dwd_risk_assessments",
+    "dwd_transactions",
+    "dws_account_daily_snapshot",
+    "dws_account_events",
+    "dws_credit_applications",
+    "dws_customer_interactions",
+    "dws_customer_monthly_summary",
+    "dws_customer_segment_history",
+    "dws_fraud_alerts",
+    "dws_loan_payments",
+    "dws_marketing_campaigns",
+    "dws_regulatory_reports",
+    "dws_risk_assessments",
+    "dws_transactions"
+  ],
+  "dependencies": {
+    "ads_customer_by_age_group": [
+      "dim_customer"
+    ],
+    "ads_customer_by_geography": [
+      "dim_customer"
+    ],
+    "ads_customer_by_segment": [
+      "dim_customer"
+    ],
+    "ads_product_summary": [
+      "dim_product"
+    ],
+    "dim_account": [
+      "dwd_accounts"
+    ],
+    "dim_agent": [
+      "dwd_customer_interactions"
+    ],
+    "dim_campaign": [
+      "dwd_marketing_campaigns"
+    ],
+    "dim_customer": [
+      "dwd_customers"
+    ],
+    "dim_economic_indicators": [
+      "dwd_economic_indicators"
+    ],
+    "dim_location": [
+      "dwd_atm_locations",
+      "dwd_branch_locations"
+    ],
+    "dim_merchant": [
+      "dwd_merchants"
+    ],
+    "dim_product": [
+      "dwd_products"
+    ],
+    "dws_account_daily_snapshot": [
+      "dwd_accounts",
+      "dwd_transactions"
+    ],
+    "dws_account_events": [
+      "dwd_account_events"
+    ],
+    "dws_credit_applications": [
+      "dwd_credit_applications"
+    ],
+    "dws_customer_interactions": [
+      "dwd_customer_interactions"
+    ],
+    "dws_customer_monthly_summary": [
+      "dwd_accounts",
+      "dwd_transactions"
+    ],
+    "dws_customer_segment_history": [
+      "dwd_customer_segments_history"
+    ],
+    "dws_fraud_alerts": [
+      "dwd_fraud_alerts"
+    ],
+    "dws_loan_payments": [
+      "dwd_loan_payments"
+    ],
+    "dws_marketing_campaigns": [
+      "dwd_marketing_campaigns"
+    ],
+    "dws_regulatory_reports": [
+      "dwd_regulatory_reports"
+    ],
+    "dws_risk_assessments": [
+      "dwd_risk_assessments"
+    ],
+    "dws_transactions": [
+      "dwd_transactions"
+    ]
+  }
+}

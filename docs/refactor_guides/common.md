@@ -47,6 +47,12 @@
 
 除非用户明确要求更新这些派生结果。
 
+固定调度 DAG 不属于上述 lineage 派生物。它由 `warehouse.yaml` 的
+`execution.schedule` 指向（例如 `scheduling/job_dag.json`），是 run 与 shadow-run 的
+执行权威。可用 `dw-refactor schedule generate` 首次生成，用 `validate` / `diff` 校验，
+用 `reconcile` 生成保守更新提案；只有显式 `--apply-safe` 才写入可自动确认的新增 Job
+和依赖，删除边及多 Writer 相关依赖仍需人工确认。
+
 ## 搜索与残留判断
 
 修改前后都应使用 `rg` 搜索旧名称，专项指南会说明具体搜索词。
@@ -156,11 +162,14 @@ python -m dw_refactor_agent.refactor.run analyze --manifest warehouses/<project>
 没有 `execution_values` 的 sliced incremental 作业会在 shadow-run dry-run
 或真实执行阶段失败；工具不会默认使用当天日期或全局 driver value 兜底。
 
-`jobs_to_run` 只包含本次直接修改的可执行任务及其下游任务。未修改上游仍可
+`jobs_to_run` 包含本次直接修改的可执行任务、血缘映射出的相关 Writer、最终比较表的
+所有 Writer，以及可信调度 DAG 中连接修改点与最终边界的必要 Job。未修改且可复用的上游仍可
 出现在 `change_analysis.json` 的宽 `affected_scope` 中，但不会因此创建 QA 表
 或参与重算；shadow manifest 会将其数据读取路由到生产库。verification plan
 的最终锚点位于 `verification.anchor_tables`，旧 plan 不再兼容，相关 run 需要
-重新执行 `analyze`。
+重新执行 `analyze`。每张锚点表在 `verification.checks` 中只有一个 group；其中
+`scope` 固化全表或时间切片范围，`methods` 列出 count/row_compare，不再通过独立的
+`compare_anchors` 补充比较条件。
 
 sliced job 或无依赖 job 较多时，可显式开启 shadow-run 全局并发和
 mysql 会话批量复用：
@@ -170,6 +179,8 @@ python -m dw_refactor_agent.refactor.run shadow-run --manifest warehouses/<proje
 ```
 
 `--parallel` 控制 shadow-run 全局 mysql 会话并发上限：无未完成上游依赖的
-ready job 可以并发执行，同一 sliced job 的 slice batch 也共享该上限。
+ready job 可以并发执行，不含跨 slice 状态的 sliced job 也可并发执行 slice batch。
+自读 Job 或 SQL 中创建 process/temporary stage 等生命周期表的 Job 会自动在 Job 内
+串行执行 slice batch，避免固定中间表的 `DROP` / `CREATE` 竞争；不同 ready Job 仍可并行。
 `--batch-size` 控制每个 mysql 会话中串联执行的 slice 数。默认均为 `1`，
 保持串行兼容行为。

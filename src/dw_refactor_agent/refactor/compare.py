@@ -40,6 +40,9 @@ from dw_refactor_agent.refactor.qa_pool import (
     require_slot_ownership,
     validate_qa_identifier,
 )
+from dw_refactor_agent.refactor.verification_checks import (
+    flatten_verification_checks,
+)
 
 DEFAULT_ROW_COMPARE_EXCLUDE_COLUMNS = ["etl_time"]
 
@@ -112,23 +115,6 @@ def get_pymysql_conn(db_name: str, qa: bool = False):
         database=db_name,
         charset="utf8mb4",
     )
-
-
-def _check_with_compare_anchor(check: dict, verification: dict) -> dict:
-    if check.get("partition_col") or check.get("partition_value") is not None:
-        return dict(check)
-
-    table = check.get("table")
-    anchor = (verification.get("compare_anchors") or {}).get(table) or {}
-    time_column = anchor.get("time_column")
-    anchor_value = anchor.get("anchor_time_value")
-    if not time_column or anchor_value is None:
-        return dict(check)
-
-    resolved = dict(check)
-    resolved["partition_col"] = time_column
-    resolved["partition_value"] = anchor_value
-    return resolved
 
 
 def _check_with_target_semantics(check: dict, verification: dict) -> dict:
@@ -475,8 +461,15 @@ def run_checks(
     prod_db = plan["project_db"]
     qa_db = plan["qa_db"]
     verification = plan.get("verification", {})
-    checks = verification.get("checks", [])
     warnings = list(verification.get("warnings") or [])
+    try:
+        checks = flatten_verification_checks(verification.get("checks", []))
+    except ValueError as exc:
+        comparison = _comparison_contract(
+            [], [], method=method, sample=sample, precision=precision
+        )
+        reason = f"invalid verification checks: {exc}"
+        return _terminal_result("blocked", warnings, comparison, reason)
     selected_checks = [
         check for check in checks if method in ("all", check["method"])
     ]
@@ -511,9 +504,7 @@ def run_checks(
     warnings = _ensure_unknown_warnings(warnings, semantic_modes)
 
     filtered = [
-        _check_with_compare_anchor(
-            _check_with_target_semantics(check, verification), verification
-        )
+        _check_with_target_semantics(check, verification)
         for check in selected_checks
     ]
     if not filtered:
@@ -596,6 +587,11 @@ def run_checks(
         verification_status = "failed"
     elif observational_failed:
         verification_status = "inconclusive"
+    elif verification.get("result_cap") == "inconclusive":
+        verification_status = "inconclusive"
+        reason = verification.get("result_cap_reason") or (
+            "verification plan requires schedule reconciliation"
+        )
     elif not comparison["complete"]:
         verification_status = "inconclusive"
         reason = (

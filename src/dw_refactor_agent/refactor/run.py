@@ -22,10 +22,17 @@ import dw_refactor_agent.refactor.change_analysis as change_analysis_module
 import dw_refactor_agent.refactor.shadow_run as shadow_run_module
 from dw_refactor_agent.assessment.assess_middle_layer import assess
 from dw_refactor_agent.config import core as config_core
+from dw_refactor_agent.execution.schedule_cli import add_schedule_parser
+from dw_refactor_agent.execution.schedule_graph import (
+    ScheduleContractError,
+    ScheduleGraph,
+)
+from dw_refactor_agent.lineage.identifiers import identifier_match_key
 from dw_refactor_agent.refactor.artifact_contract import (
     ArtifactFormatError,
     atomic_write_json,
     read_json_object,
+    sha256_json,
 )
 from dw_refactor_agent.refactor.change_analysis import (
     build_change_analysis,
@@ -86,6 +93,22 @@ def _write_json(path: Path, data: dict) -> None:
 def _read_json(path: Path) -> dict:
     path = Path(path)
     return read_json_object(path, path.name)
+
+
+def _load_baseline_schedule(
+    manifest_path: Path, manifest: dict
+) -> ScheduleGraph:
+    payload = _read_json(artifact_path(manifest_path, "baseline_schedule"))
+    expected_digest = manifest.get("baseline_schedule_sha256")
+    actual_digest = sha256_json(payload)
+    if expected_digest != actual_digest:
+        raise ArtifactFormatError(
+            "baseline schedule DAG fingerprint mismatch; start a new "
+            "refactor run"
+        )
+    return ScheduleGraph.from_dict(
+        payload, expected_project=manifest["project"]
+    )
 
 
 def _sorted_nonempty_strings(values) -> list[str]:
@@ -340,7 +363,6 @@ def _verification_plan_has_work(plan: dict) -> bool:
             verification,
             (
                 "anchor_tables",
-                "compare_anchors",
                 "checks",
             ),
         )
@@ -401,7 +423,6 @@ def _start(args) -> int:
             now=_now(),
             git_info=_git_info(repo_root),
         )
-        write_manifest(manifest_path, manifest)
         lineage_path = artifact_path(manifest_path, "baseline_lineage")
         cache_path = artifact_path(manifest_path, "baseline_task_cache")
         lineage_result = build_lineage_artifacts(
@@ -537,6 +558,7 @@ def _build_plan_for_run(
     change_analysis: dict,
     baseline_lineage: dict,
     current_lineage: dict,
+    baseline_schedule: ScheduleGraph,
     partition: str | None,
 ) -> tuple[dict, dict]:
     semantic_resolution = _semantic_resolution_for_run(
@@ -548,15 +570,60 @@ def _build_plan_for_run(
         current_lineage=current_lineage,
     )
     try:
+        current_schedule = ScheduleGraph.load_for_project(
+            manifest["project"], root=repo_root
+        )
+        task_names = {
+            path.stem
+            for path in config.iter_project_task_files(
+                manifest["project"], include_full_refresh=False
+            )
+        }
+        task_keys = {identifier_match_key(job) for job in task_names}
+        schedule_keys = {
+            identifier_match_key(job) for job in current_schedule.jobs
+        }
+        missing_sql = sorted(
+            job
+            for job in current_schedule.jobs
+            if identifier_match_key(job) not in task_keys
+        )
+        unscheduled = sorted(
+            job
+            for job in task_names
+            if identifier_match_key(job) not in schedule_keys
+        )
+        if missing_sql or unscheduled:
+            raise ValueError(
+                "trusted schedule and task SQL universe differ: "
+                f"schedule Jobs without SQL={missing_sql!r}, "
+                f"unscheduled task Jobs={unscheduled!r}"
+            )
         plan = build_verification_plan(
             manifest["project"],
             change_analysis,
             base_ref=manifest.get("base_git", {}).get("head"),
             repo_root=repo_root,
             lineage_data=current_lineage,
+            baseline_lineage_data=baseline_lineage,
+            schedule_graph=current_schedule,
+            baseline_schedule_graph=baseline_schedule,
+            strict_schedule=True,
             partition=partition,
             semantic_resolution=semantic_resolution,
         )
+        if "execution_graph" not in plan:
+            selected_jobs = [
+                job["job"] for job in plan.get("jobs_to_run") or []
+            ]
+            plan["execution_graph"] = {
+                "format_version": 1,
+                "project": manifest["project"],
+                "jobs": selected_jobs,
+                "dependencies": current_schedule.selected_dependencies(
+                    selected_jobs
+                ),
+            }
     except ValueError as exc:
         raise SystemExit(str(exc)) from None
     plan["run_id"] = manifest["run_id"]
@@ -610,6 +677,7 @@ def _analyze(args) -> int:
         baseline_lineage = _read_json(
             artifact_path(manifest_path, "baseline_lineage")
         )
+        baseline_schedule = _load_baseline_schedule(manifest_path, manifest)
         current_lineage = lineage_result["lineage"]
         changed_files = changed_files_since_head(
             repo_root,
@@ -633,6 +701,7 @@ def _analyze(args) -> int:
             change_analysis=change_analysis,
             baseline_lineage=baseline_lineage,
             current_lineage=current_lineage,
+            baseline_schedule=baseline_schedule,
             partition=args.partition,
         )
         change_analysis = _with_rename_mapping(
@@ -766,6 +835,7 @@ def _replan(
         baseline_lineage = _read_json(
             artifact_path(manifest_path, "baseline_lineage")
         )
+        baseline_schedule = _load_baseline_schedule(manifest_path, manifest)
         current_lineage = _read_json(
             artifact_path(manifest_path, "current_lineage")
         )
@@ -784,6 +854,7 @@ def _replan(
             change_analysis=change_analysis,
             baseline_lineage=baseline_lineage,
             current_lineage=current_lineage,
+            baseline_schedule=baseline_schedule,
             partition=partition,
         )
         workspace_digest = _require_snapshot_workspace(
@@ -1140,6 +1211,7 @@ def build_parser() -> argparse.ArgumentParser:
     cleanup_delete.add_argument("--created-before")
     cleanup_delete.add_argument("--yes", action="store_true")
     cleanup_delete.set_defaults(func=_cleanup_delete)
+    add_schedule_parser(subparsers)
     return parser
 
 
@@ -1148,7 +1220,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         return args.func(args)
-    except ArtifactFormatError as exc:
+    except (ArtifactFormatError, ScheduleContractError) as exc:
         raise SystemExit(str(exc)) from None
 
 

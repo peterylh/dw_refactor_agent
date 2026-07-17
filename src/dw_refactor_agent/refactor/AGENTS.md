@@ -131,6 +131,10 @@ change analysis、manifest 固定上下文和用户 semantic intent 都有独立
 
 - `--parallel`：全局 MySQL 并发度，默认 `1`。
 - `--batch-size`：每个 MySQL session 执行的 slice invocation 数，默认 `1`。
+
+ready Job 可以并行；不含跨 slice 状态的普通 Job 也可并行执行 slice batch。自读 Job
+或 SQL 中创建生命周期表（含 process/temporary stage）的 Job 必须在 Job 内串行执行
+slice batch，避免固定中间表发生 `DROP` / `CREATE` 竞争，但不影响不同 ready Job 并行。
 - `--timing-detail` / `--profile`：在结果中记录 invocation 级耗时。
 
 实际执行顺序为：
@@ -141,7 +145,8 @@ change analysis、manifest 固定上下文和用户 semantic intent 都有独立
 4. Phase 1 校验 `baseline_ddl_refs` 并用引用的 SQL 文件创建必要的基线表。
 5. 按 manifest 的 `prefill_actions` 从生产库预填充自读、DDL-only 等必要数据。
 6. Phase 2 应用 `ddl_changes`。
-7. Phase 3 按 DAG 运行 `jobs_to_run`。
+7. Phase 3 按 plan 冻结的 `execution_graph` 运行 `jobs_to_run`；该图来自可信调度 DAG，
+   shadow-run 不再根据运行时血缘或 manifest 追加依赖。
 
 实际执行和 compare 不得 `DROP DATABASE` / `CREATE DATABASE`。QA 账户只需对 DBA 预建
 池成员拥有表级读写/DDL 权限。marker 表
@@ -178,9 +183,11 @@ table、ownership marker；普通对象失败时 marker 必须保留。数据库
 
 ### compare
 
-`compare` 消费 `verification.checks`，支持 `--method count|row_compare|all`、
-`--sample` 和 `--precision`。`verification.compare_anchors` 提供时间列、粒度与锚点值；
-缺少可用时间粒度时，planner 可能生成全表比较 warning。compare 还要求同目录的
+`compare` 消费按表分组的 `verification.checks`，支持
+`--method count|row_compare|all`、`--sample` 和 `--precision`。每个 check group
+包含一个 `scope` 和多个 `methods`；`scope.mode=time_slice` 时直接携带时间列、粒度与
+锚点值，`scope.mode=full_table` 时执行全表比较并由 planner 生成相应 warning。
+不再单独保存 `compare_anchors`。compare 还要求同目录的
 `shadow_run_result.json` 来自 execute 模式、状态 completed，并与当前工作区和 plan 的
 fingerprint 完全一致；校验在打开生产/QA 连接前完成。
 `compare_shadow_results()` 核心 API 自身执行同一 bundle 新鲜度校验，直接 Python 调用也
@@ -291,13 +298,13 @@ artifact schema。
   任意时刻已发布 plan 的 refs 都可读取。
 - `plan.json`：由 `analyze` 生成，是 shadow-run 与 compare 的共同输入。核心字段包括
   `run_id`、`qa_database_pool`、`changes`、`baseline_ddl_refs`、`ddl_changes`、
-  `jobs_to_run` 与 `verification`。`qa_db` 仅是 dry-run/default 路由，实际物理库由领取结果
+  `jobs_to_run`、`execution_graph` 与 `verification`。`qa_db` 仅是 dry-run/default 路由，实际物理库由领取结果
   决定。
   每个 baseline DDL 引用记录相对 `plan.json` 的 `path` 和文件字节的 `sha256`；
   shadow-run / compare 在继续前校验路径、文件存在性和摘要。内嵌 `baseline_ddl`
   的旧 plan 不再兼容，应重新运行 analyze（基线语义已变化时应新建 run）。
-  `verification` 内含最终 `anchor_tables`、`compare_anchors`、checks、block status、
-  warning、`target_semantics`、语义边界和必要的 metadata error。顶层
+  `verification` 内含最终 `anchor_tables`、按表分组且自带 scope/methods 的 checks、
+  block status、warning、`target_semantics`、语义边界和必要的 metadata error。顶层
   `analysis_snapshot` 保存 partition、工作区 fingerprint，以及 baseline/current
   lineage、change analysis、manifest 固定上下文和 semantic intent 的 fingerprints；
   `plan_fingerprint` 覆盖除自身外的完整持久化 plan（DDL 内容由 refs 摘要绑定）。
@@ -324,6 +331,8 @@ analyze inputs 或工作区变化、semantic intent 与 plan 不一致、QA pool
   范围误当执行范围。
 - 修改 SQL 路由、prefill 或调度时覆盖 dry-run、实际执行、self-read、DDL-only、
   sliced incremental、表重命名和大小写混用场景。
+- 修改 RowScope 谓词识别时保持 fail-closed；`DATE_FORMAT` 只识别固定的日/月/年格式，
+  JOIN 范围只沿 INNER/LEFT JOIN 的显式列等值关系传播，无法证明时继续返回 unknown。
 - 修改 compare 时覆盖 anchor partition、全表降级、exclude columns 和 precision。
 - 本地测试遵循根 `AGENTS.md`：使用 `make test` 或显式 conda Python，不运行裸
   `pytest`。至少执行受影响的 focused tests；产物 schema 或公共流程变化时再运行

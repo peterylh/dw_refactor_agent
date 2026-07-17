@@ -15,6 +15,7 @@ verification:
     exclude_columns:
       - etl_time
 execution:
+  schedule: scheduling/job_dag.json
   default_slice:
     param: etl_date
     column: stat_date

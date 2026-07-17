@@ -14,6 +14,8 @@ from sqlglot import exp
 from sqlglot.errors import ErrorLevel
 
 from dw_refactor_agent.config import TEXT_ENCODING
+from dw_refactor_agent.ddl_deriver.ddl_deriver import parse_create_table
+from dw_refactor_agent.execution.schedule_graph import ScheduleGraph
 from dw_refactor_agent.refactor.shadow_rewrite import (
     ReferenceRole,
     RelationRoute,
@@ -143,12 +145,14 @@ class ShadowJob(_RecordMapping):
     outputs: frozenset[str] = field(default_factory=frozenset)
     required_qa_tables: frozenset[str] = field(default_factory=frozenset)
     self_read: bool = False
+    requires_serial_slices: bool = False
 
     _mapping_fields = (
         "context",
         "outputs",
         "required_qa_tables",
         "self_read",
+        "requires_serial_slices",
     )
 
     @classmethod
@@ -163,6 +167,7 @@ class ShadowJob(_RecordMapping):
                 value.get("required_qa_tables") or []
             ),
             self_read=bool(value.get("self_read")),
+            requires_serial_slices=bool(value.get("requires_serial_slices")),
         )
 
 
@@ -174,7 +179,7 @@ class CompiledShadowManifest(_RecordMapping):
     jobs: dict[str, ShadowJob] = field(default_factory=dict)
     prefill_actions: list[PrefillAction] = field(default_factory=list)
     prefilled_tables: set[str] = field(default_factory=set)
-    producers: dict[str, str] = field(default_factory=dict)
+    writers_by_relation: dict[str, set[str]] = field(default_factory=dict)
     phase2_qa_only_tables: set[str] = field(default_factory=set)
     blockers: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
@@ -184,7 +189,7 @@ class CompiledShadowManifest(_RecordMapping):
         "jobs",
         "prefill_actions",
         "prefilled_tables",
-        "producers",
+        "writers_by_relation",
         "phase2_qa_only_tables",
         "blockers",
         "warnings",
@@ -214,7 +219,12 @@ class CompiledShadowManifest(_RecordMapping):
                 for action in value.get("prefill_actions") or []
             ],
             prefilled_tables=set(value.get("prefilled_tables") or []),
-            producers=dict(value.get("producers") or {}),
+            writers_by_relation={
+                str(name): set(writers)
+                for name, writers in (
+                    value.get("writers_by_relation") or {}
+                ).items()
+            },
             phase2_qa_only_tables=set(
                 value.get("phase2_qa_only_tables") or []
             ),
@@ -471,6 +481,17 @@ def _scope_column(relation: ShadowRelation) -> str:
     return catalog.column or "__rows__"
 
 
+def _scope_column_type(relation: ShadowRelation) -> str | None:
+    column = _scope_column(relation)
+    table = parse_create_table(relation.baseline_ddl)
+    if table is None:
+        return None
+    for column_def in table.columns:
+        if _canonical(column_def.name) == _canonical(column):
+            return column_def.data_type
+    return None
+
+
 def _analysis_param_sets(invocations) -> list[dict]:
     if not invocations:
         return [{}]
@@ -510,6 +531,7 @@ def _read_scopes(
         current_name = old_to_current.get(original_name, original_name)
         relation = relations.get(current_name)
         column = _scope_column(relation) if relation else "__rows__"
+        column_type = _scope_column_type(relation) if relation else None
         scope = RowScope.empty(column)
         for statement in _parse_statements(sql_text):
             statement_occurrences = analyze_occurrences(
@@ -524,7 +546,11 @@ def _read_scopes(
             for params in params_sets:
                 scope = scope.union(
                     statement_scope(
-                        statement, original_name, column, params
+                        statement,
+                        original_name,
+                        column,
+                        params,
+                        column_type,
                     ).read_scope
                 )
         scopes[current_name] = scope
@@ -545,6 +571,7 @@ def _existing_mutation_scopes(
         if target not in outputs or target not in relations:
             continue
         column = _scope_column(relations[target])
+        column_type = _scope_column_type(relations[target])
         if merge_type is not None and isinstance(statement, merge_type):
             statement_scope_value = RowScope.unknown(
                 column, "MERGE target rows participate in matching"
@@ -552,7 +579,9 @@ def _existing_mutation_scopes(
         elif isinstance(statement, (exp.Update, exp.Delete)):
             statement_scope_value = RowScope.empty(column)
             for params in params_sets:
-                access = statement_scope(statement, target, column, params)
+                access = statement_scope(
+                    statement, target, column, params, column_type
+                )
                 if access.target_requires_existing:
                     statement_scope_value = statement_scope_value.union(
                         access.read_scope
@@ -707,14 +736,22 @@ def compile_shadow_manifest(
             ),
         )
 
-    producers = {}
+    writers_by_relation = {}
     for job_name, analysis in job_analyses.items():
         for output in analysis.outputs:
-            previous = producers.setdefault(output, job_name)
-            if previous != job_name:
-                blockers.append(
-                    f"{output}: multiple producer jobs: {previous}, {job_name}"
-                )
+            writers_by_relation.setdefault(output, set()).add(job_name)
+
+    graph_data = plan.get("execution_graph")
+    if isinstance(graph_data, dict):
+        execution_graph = ScheduleGraph.from_dict(
+            graph_data, expected_project=plan.get("project")
+        )
+    else:
+        execution_graph = ScheduleGraph(
+            str(plan.get("project") or "shadow"),
+            list(job_analyses),
+            {},
+        )
 
     for job_name, analysis in job_analyses.items():
         primary_output = _canonical(analysis.job.get("target") or job_name)
@@ -760,24 +797,38 @@ def compile_shadow_manifest(
                     "is dropped in Phase 2"
                 )
                 continue
-            producer = producers.get(current_name)
-            if producer == job_name:
+            writers = writers_by_relation.get(current_name, set())
+            if job_name in writers:
                 request_prefill(
                     current_name, scope, f"self-read by {job_name}"
                 )
                 continue
-            if producer is None:
+            preceding_writers = sorted(
+                writer
+                for writer in writers
+                if execution_graph.has_path(writer, job_name)
+            )
+            if not preceding_writers:
                 request_prefill(
                     current_name, scope, f"DDL-only source read by {job_name}"
                 )
                 continue
-            producer_analysis = job_analyses[producer]
-            coverage = producer_analysis.write_coverage_by_output[current_name]
+            coverage = None
+            for writer in preceding_writers:
+                writer_coverage = job_analyses[
+                    writer
+                ].write_coverage_by_output[current_name]
+                coverage = (
+                    writer_coverage
+                    if coverage is None
+                    else coverage.union(writer_coverage)
+                )
             if scope.is_subset_of(coverage) is not True:
                 request_prefill(
                     current_name,
                     scope,
-                    f"read by {job_name} exceeds {producer} write coverage",
+                    f"read by {job_name} exceeds preceding writers "
+                    f"{preceding_writers!r} write coverage",
                 )
         for current_name, scope in analysis.existing_scopes.items():
             request_prefill(
@@ -831,8 +882,13 @@ def compile_shadow_manifest(
             elif occurrence.role is ReferenceRole.DATA_READ:
                 if current in selected:
                     data_routes[original] = RelationRoute(qa_db, display)
-                    producer = producers.get(current)
-                    if producer is not None and producer != job_name:
+                    preceding_writers = {
+                        writer
+                        for writer in writers_by_relation.get(current, set())
+                        if writer != job_name
+                        and execution_graph.has_path(writer, job_name)
+                    }
+                    if preceding_writers:
                         required_ready.add(current)
                 else:
                     data_routes[original] = RelationRoute(
@@ -857,6 +913,7 @@ def compile_shadow_manifest(
             self_read=bool(
                 set(analysis.read_scopes).intersection(analysis.outputs)
             ),
+            requires_serial_slices=bool(_created_relations(analysis.sql_text)),
         )
 
     return CompiledShadowManifest(
@@ -864,7 +921,10 @@ def compile_shadow_manifest(
         jobs=manifest_jobs,
         prefill_actions=prefill_actions,
         prefilled_tables=prefilled_tables,
-        producers=dict(producers),
+        writers_by_relation={
+            table: set(writers)
+            for table, writers in writers_by_relation.items()
+        },
         phase2_qa_only_tables=phase2_only,
         blockers=sorted(set(blockers)),
         warnings=warnings,
@@ -896,6 +956,7 @@ def manifest_summary(
                 "outputs": sorted(job.outputs),
                 "required_qa_tables": sorted(job.required_qa_tables),
                 "self_read": job.self_read,
+                "requires_serial_slices": job.requires_serial_slices,
                 "routes": {
                     "write": route_summary(job.context.write_routes),
                     "schema_read": route_summary(job.context.schema_routes),
@@ -908,7 +969,10 @@ def manifest_summary(
             action.to_dict() for action in manifest.prefill_actions
         ],
         "prefilled_tables": sorted(manifest.prefilled_tables),
-        "producers": dict(manifest.producers),
+        "writers_by_relation": {
+            table: sorted(writers)
+            for table, writers in manifest.writers_by_relation.items()
+        },
         "phase2_qa_only_tables": sorted(manifest.phase2_qa_only_tables),
         "blockers": list(manifest.blockers),
         "warnings": list(manifest.warnings),

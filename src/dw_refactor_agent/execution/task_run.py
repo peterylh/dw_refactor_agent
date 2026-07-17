@@ -14,8 +14,6 @@ import argparse
 import json
 import subprocess
 import sys
-import threading
-from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 from pathlib import Path
 
@@ -31,10 +29,10 @@ from dw_refactor_agent.config import (
     get_model_names_by_layer,
     get_mysql_cmd,
     iter_project_task_files,
-    job_dag_path,
     lineage_data_path,
     python_module_env,
 )
+from dw_refactor_agent.execution.dag_executor import execute_dag
 from dw_refactor_agent.execution.date_window import resolve_etl_dates
 from dw_refactor_agent.execution.invocation import TaskInvocation
 from dw_refactor_agent.execution.model_config import ExecutionConfigError
@@ -43,8 +41,11 @@ from dw_refactor_agent.execution.run_lock import (
     ExecutionRunLockError,
     execution_target_run_lock,
 )
+from dw_refactor_agent.execution.schedule_graph import (
+    ScheduleContractError,
+    ScheduleGraph,
+)
 from dw_refactor_agent.execution.sql_executor import DirectSqlExecutor
-from dw_refactor_agent.execution.thread_pool import shutdown_executor
 from dw_refactor_agent.lineage.identifiers import (
     identifier_match_key,
     short_table_name,
@@ -54,15 +55,18 @@ from dw_refactor_agent.lineage.job_dag import (
     JobDAG,
     job_dag_from_lineage,
 )
+from dw_refactor_agent.lineage.schedule_inference import (
+    validate_schedule_against_lineage,
+)
 
 
-def _refresh_lineage_and_build_job_dag(
+def _refresh_lineage_and_load_schedule(
     project: str,
     runnable_jobs: set[str],
     *,
     no_cache: bool,
-) -> tuple[dict, JobDAG]:
-    """Refresh lineage from current SQL and save its exact Job DAG."""
+) -> tuple[dict, ScheduleGraph, JobDAG, list[dict]]:
+    """Refresh lineage, load the trusted DAG, and validate their agreement."""
     lineage_path = _resolve_lineage_data_file(project)
     command = [
         sys.executable,
@@ -76,7 +80,7 @@ def _refresh_lineage_and_build_job_dag(
     if no_cache:
         command.append("--no-cache")
     print(
-        "刷新 lineage 并生成 DAG"
+        "刷新 lineage 并校验可信 Schedule DAG"
         + (" (禁用 task cache)" if no_cache else " (使用 task cache)")
         + f": {project}"
     )
@@ -97,11 +101,33 @@ def _refresh_lineage_and_build_job_dag(
         raise ExecutionConfigError(
             "lineage extractor did not produce a version 2 payload"
         )
-    dag = job_dag_from_lineage(data, runnable_jobs=runnable_jobs)
-    dag_path = job_dag_path(project)
-    dependency_count = _save_job_dag(dag, dag_path)
-    print(f"  DAG 已保存: {dependency_count} 条边 -> {dag_path}")
-    return data, dag
+    lineage_dag = job_dag_from_lineage(data, runnable_jobs=runnable_jobs)
+    schedule = ScheduleGraph.load_for_project(project)
+    _validate_schedule_job_universe(schedule, runnable_jobs)
+    diagnostics = validate_schedule_against_lineage(schedule, data)
+    return data, schedule, lineage_dag, diagnostics
+
+
+def _validate_schedule_job_universe(
+    schedule: ScheduleGraph, runnable_jobs: set[str]
+) -> None:
+    runnable_by_key = {identifier_match_key(job): job for job in runnable_jobs}
+    schedule_by_key = {identifier_match_key(job): job for job in schedule.jobs}
+    missing_sql = sorted(
+        schedule_by_key[key]
+        for key in set(schedule_by_key) - set(runnable_by_key)
+    )
+    unscheduled = sorted(
+        runnable_by_key[key]
+        for key in set(runnable_by_key) - set(schedule_by_key)
+    )
+    if missing_sql or unscheduled:
+        details = []
+        if missing_sql:
+            details.append(f"schedule Jobs without task SQL: {missing_sql!r}")
+        if unscheduled:
+            details.append(f"task Jobs absent from schedule: {unscheduled!r}")
+        raise ExecutionConfigError("; ".join(details))
 
 
 def _resolve_lineage_data_file(project: str) -> Path:
@@ -130,7 +156,7 @@ def _validate_process_plan_safety(
     dag: JobDAG,
     lineage_data: dict,
 ) -> None:
-    """Fail closed for incomplete or unresolved process-table producers."""
+    """Fail closed for incomplete process or cross-Job temporary inputs."""
     if dag.format_version != 2:
         return
     if lineage_data.get("format_version") != 2:
@@ -140,10 +166,14 @@ def _validate_process_plan_safety(
         )
 
     selected_job_keys = {identifier_match_key(job) for job in job_set}
-    process_tables_by_key = {
-        table_identity_match_key(table["full_name"]): table["full_name"]
+    restricted_tables_by_key = {
+        table_identity_match_key(table["full_name"]): (
+            table["full_name"],
+            table.get("dataset_type"),
+        )
         for table in lineage_data.get("tables") or []
-        if table.get("full_name") and table.get("dataset_type") == "process"
+        if table.get("full_name")
+        and table.get("dataset_type") in {"process", "temporary"}
     }
 
     missing_resolved_producers = []
@@ -156,22 +186,27 @@ def _validate_process_plan_safety(
         ):
             continue
         for dataset in dependency["datasets"]:
-            process_dataset = process_tables_by_key.get(
+            restricted_dataset = restricted_tables_by_key.get(
                 table_identity_match_key(dataset)
             )
-            if process_dataset:
+            if restricted_dataset:
                 missing_resolved_producers.append(
-                    (upstream_job, downstream_job, process_dataset)
+                    (
+                        upstream_job,
+                        downstream_job,
+                        restricted_dataset[0],
+                        restricted_dataset[1],
+                    )
                 )
 
     unresolved_producers = []
     for diagnostic in lineage_data.get("diagnostics") or []:
         if diagnostic.get("code") != "UNRESOLVED_DATASET_PRODUCER":
             continue
-        process_dataset = process_tables_by_key.get(
+        restricted_dataset = restricted_tables_by_key.get(
             table_identity_match_key(diagnostic.get("dataset"))
         )
-        if not process_dataset:
+        if not restricted_dataset:
             continue
         selected_consumers = [
             consumer
@@ -182,7 +217,8 @@ def _validate_process_plan_safety(
             continue
         unresolved_producers.append(
             (
-                process_dataset,
+                restricted_dataset[0],
+                restricted_dataset[1],
                 diagnostic.get("reason"),
                 selected_consumers,
                 list(diagnostic.get("candidate_producer_jobs") or []),
@@ -196,27 +232,31 @@ def _validate_process_plan_safety(
             identifier_match_key(item[1]),
             identifier_match_key(item[0]),
             table_identity_match_key(item[2]),
+            item[3] or "",
         )
     )
     unresolved_producers.sort(
         key=lambda item: (
             table_identity_match_key(item[0]),
             item[1] or "",
-            tuple(identifier_match_key(job) for job in item[2]),
+            item[2] or "",
             tuple(identifier_match_key(job) for job in item[3]),
+            tuple(identifier_match_key(job) for job in item[4]),
         )
     )
     details = [
-        "producer={!r}, consumer={!r}, process dataset={!r}".format(*item)
+        "producer={!r}, consumer={!r}, dataset={!r}, type={!r}".format(*item)
         for item in missing_resolved_producers
     ]
     details.extend(
-        "unresolved process dataset={!r}, reason={!r}, "
+        "unresolved dataset={!r}, type={!r}, reason={!r}, "
         "consumer jobs={!r}, candidate producer jobs={!r}".format(*item)
         for item in unresolved_producers
     )
     raise ExecutionConfigError(
-        "unsafe process-table execution plan: {}".format("; ".join(details))
+        "unsafe process/temporary execution plan: {}".format(
+            "; ".join(details)
+        )
     )
 
 
@@ -260,14 +300,6 @@ def _task_spec(
         sql_file,
         model_name=model_name,
     )
-
-
-def _save_job_dag(dag: JobDAG, path: Path) -> int:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    dag.save(path)
-    if dag.format_version == 2:
-        return len(dag.data_dependencies)
-    return len(dag._edges)
 
 
 def _get_task_files(project: str) -> dict[str, Path]:
@@ -464,76 +496,34 @@ def _resolve_full_refresh_dates(
     return _discover_ods_dates(project, db_name, mysql_cmd)
 
 
-def _run_parallel(
-    etl_date: str,
-    job_set: set,
-    task_files: dict[str, Path],
-    in_degree: dict[str, int],
-    adj: dict[str, list[str]],
-    mysql_cmd: list[str],
-    db_name: str,
+def _run_scheduled_jobs(
+    job_set: set[str],
+    dependencies: dict[str, list[str]],
+    exec_order: list[str],
+    run_job,
+    *,
     parallel: int,
-    planner: ExecutionPlanner,
-    skip_unsupported_history: bool,
-    model_names_by_job: dict[str, str] | None = None,
-) -> None:
-    deg = dict(in_degree)
-    lock = threading.Lock()
-    all_done = threading.Event()
-    failed = threading.Event()
-    total = len(job_set)
-    completed = 0
-
-    def on_complete(job_name: str, future):
-        nonlocal completed
-        if failed.is_set():
-            return
-        exc = future.exception()
-        if exc is not None:
-            print(f"  [{job_name}] [FAIL] {exc}")
-            failed.set()
-            return
-        to_submit = []
-        with lock:
-            completed += 1
-            for dep in adj.get(job_name, []):
-                deg[dep] -= 1
-                if deg[dep] == 0:
-                    to_submit.append(dep)
-            if completed == total:
-                all_done.set()
-        for dep in to_submit:
-            _submit_and_track(dep)
-
-    def _submit_and_track(job_name: str):
-        if failed.is_set():
-            return
-        fut = executor.submit(
-            _run_job,
-            etl_date,
-            job_name,
-            task_files[job_name],
-            mysql_cmd,
-            db_name,
-            planner,
-            skip_unsupported_history,
-            model_names_by_job,
-        )
-        fut.add_done_callback(lambda f, j=job_name: on_complete(j, f))
-
-    executor = ThreadPoolExecutor(max_workers=parallel)
-    try:
-        for job_name in job_set:
-            if deg[job_name] == 0:
-                _submit_and_track(job_name)
-        while not all_done.is_set():
-            if failed.wait(timeout=1.0):
-                break
-            all_done.wait(timeout=1.0)
-    finally:
-        shutdown_executor(executor)
-    if failed.is_set():
-        sys.exit(1)
+) -> bool:
+    results = execute_dag(
+        job_set,
+        dependencies,
+        run_job,
+        parallel=parallel,
+        order=exec_order,
+    )
+    success = True
+    for job_name in exec_order:
+        result = results[job_name]
+        if result.status == "failed":
+            success = False
+            print(f"  [{job_name}] [FAIL] {result.error}")
+        elif result.status == "blocked":
+            success = False
+            print(
+                f"  [{job_name}] [BLOCKED] upstream failed: "
+                f"{list(result.blocked_by)!r}"
+            )
+    return success
 
 
 def main():
@@ -571,9 +561,11 @@ def main():
         "--db-env", default="prod", choices=list(DB_ENV_CONFIG.keys())
     )
     parser.add_argument(
+        "--refresh-lineage",
         "--refresh-dag",
+        dest="refresh_dag",
         action="store_true",
-        help="规划始终刷新当前 SQL lineage; 此选项额外禁用 task cache",
+        help="强制禁用 task cache 刷新当前 SQL lineage",
     )
     parser.add_argument(
         "--parallel", type=int, default=1, help="并行度, 默认 1 (串行)"
@@ -617,14 +609,37 @@ def main():
     task_names = set(task_files.keys())
 
     try:
-        lineage_data, dag = _refresh_lineage_and_build_job_dag(
+        (
+            lineage_data,
+            schedule,
+            lineage_dag,
+            schedule_diagnostics,
+        ) = _refresh_lineage_and_load_schedule(
             project,
             task_names,
             no_cache=args.refresh_dag,
         )
-    except (ExecutionConfigError, ValueError) as e:
+    except (ExecutionConfigError, ScheduleContractError, ValueError) as e:
         print(f"错误: {e}")
         return 1
+
+    for diagnostic in schedule_diagnostics:
+        if diagnostic.get("severity") != "WARNING":
+            continue
+        print(
+            "警告: {code}: {message}".format(
+                code=diagnostic.get("code"),
+                message=diagnostic.get("message"),
+            )
+        )
+
+    task_file_by_key = {
+        identifier_match_key(job): path for job, path in task_files.items()
+    }
+    task_files = {
+        job: task_file_by_key[identifier_match_key(job)]
+        for job in schedule.jobs
+    }
 
     try:
         model_names_by_job = _job_model_names_from_lineage(lineage_data)
@@ -641,7 +656,7 @@ def main():
         job_set = set(task_files.keys())
 
     try:
-        _validate_process_plan_safety(job_set, dag, lineage_data)
+        _validate_process_plan_safety(job_set, lineage_dag, lineage_data)
     except ExecutionConfigError as e:
         print(f"错误: {e}")
         return 1
@@ -651,16 +666,23 @@ def main():
         return 0
 
     try:
-        exec_order = dag.topological_sort(job_set)
-    except ValueError as e:
+        exec_order = schedule.topological_sort(job_set)
+    except (ScheduleContractError, ValueError) as e:
         print(f"错误: {e}")
         sys.exit(1)
+
+    omitted_upstreams = schedule.omitted_upstreams(job_set)
+    for job_name, upstreams in omitted_upstreams.items():
+        print(
+            f"提示: --job-list 精确子图省略 {job_name} 的调度上游: "
+            f"{upstreams!r}"
+        )
 
     print(f"作业执行顺序 ({len(exec_order)} 个):")
     for i, j in enumerate(exec_order, 1):
         print(f"  {i}. {j}")
 
-    in_degree, adj = dag.compute_in_degree(job_set)
+    job_dependencies = schedule.selected_dependencies(job_set)
 
     mysql_cmd = get_mysql_cmd(env)
     execution_target = (
@@ -705,24 +727,23 @@ def main():
             return 0
         try:
             with execution_target_run_lock(*execution_target):
-                for job_name in exec_order:
-                    try:
-                        _run_job_full_refresh(
-                            job_name,
-                            task_files[job_name],
-                            mysql_cmd,
-                            db_name,
-                            planner,
-                            all_dates,
-                            model_names_by_job,
-                        )
-                    except (
-                        subprocess.TimeoutExpired,
-                        RuntimeError,
-                        ExecutionConfigError,
-                    ) as e:
-                        print(f"  {e}")
-                        sys.exit(1)
+                completed = _run_scheduled_jobs(
+                    job_set,
+                    job_dependencies,
+                    exec_order,
+                    lambda job_name: _run_job_full_refresh(
+                        job_name,
+                        task_files[job_name],
+                        mysql_cmd,
+                        db_name,
+                        planner,
+                        all_dates,
+                        model_names_by_job,
+                    ),
+                    parallel=parallel,
+                )
+                if not completed:
+                    return 1
         except ExecutionRunLockError as e:
             print(f"错误: {e}")
             return 1
@@ -754,40 +775,24 @@ def main():
                 print(f"\n{'=' * 60}")
                 print(f"执行日期: {etl_date}  (并行度: {parallel})")
                 print(f"{'=' * 60}")
-                if parallel == 1:
-                    for job_name in exec_order:
-                        try:
-                            _run_job(
-                                etl_date,
-                                job_name,
-                                task_files[job_name],
-                                mysql_cmd,
-                                db_name,
-                                planner,
-                                args.skip_unsupported_history,
-                                model_names_by_job,
-                            )
-                        except (
-                            subprocess.TimeoutExpired,
-                            RuntimeError,
-                            ExecutionConfigError,
-                        ) as e:
-                            print(f"  {e}")
-                            sys.exit(1)
-                else:
-                    _run_parallel(
+                completed = _run_scheduled_jobs(
+                    job_set,
+                    job_dependencies,
+                    exec_order,
+                    lambda job_name, etl_date=etl_date: _run_job(
                         etl_date,
-                        job_set,
-                        task_files,
-                        in_degree,
-                        adj,
+                        job_name,
+                        task_files[job_name],
                         mysql_cmd,
                         db_name,
-                        parallel,
                         planner,
                         args.skip_unsupported_history,
                         model_names_by_job,
-                    )
+                    ),
+                    parallel=parallel,
+                )
+                if not completed:
+                    return 1
     except ExecutionRunLockError as e:
         print(f"错误: {e}")
         return 1

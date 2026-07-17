@@ -55,7 +55,7 @@ def test_shadow_scheduler_rejects_missing_dependency_snapshot(tmp_path):
     }
 
     with pytest.raises(
-        ArtifactFormatError, match="job_dependencies.*run analyze again"
+        ArtifactFormatError, match="execution_graph.*run analyze again"
     ):
         shadow_run_module._job_dependencies_from_plan(plan, tmp_path)
 
@@ -166,9 +166,15 @@ def _claimed_ownership(plan, database=None):
 
 def execute_shadow_plan(plan, *, root, dry_run=False, **kwargs):
     """Exercise the production core with an explicit synthetic claim."""
+    dependencies = plan.pop("job_dependencies", None) or {}
     plan.setdefault(
-        "job_dependencies",
-        {job["job"]: [] for job in plan.get("jobs_to_run") or []},
+        "execution_graph",
+        {
+            "format_version": 1,
+            "project": plan["project"],
+            "jobs": [job["job"] for job in plan.get("jobs_to_run") or []],
+            "dependencies": dependencies,
+        },
     )
     return _execute_shadow_plan(
         plan,
@@ -279,9 +285,15 @@ def _write_fresh_plan_bundle(plan_path, plan):
         _write_json(root / manifest["artifacts"][artifact_name], value)
 
     prepared = deepcopy(plan)
+    dependencies = prepared.pop("job_dependencies", None) or {}
     prepared.setdefault(
-        "job_dependencies",
-        {job["job"]: [] for job in prepared.get("jobs_to_run") or []},
+        "execution_graph",
+        {
+            "format_version": 1,
+            "project": prepared["project"],
+            "jobs": [job["job"] for job in prepared.get("jobs_to_run") or []],
+            "dependencies": dependencies,
+        },
     )
     prepared.setdefault("run_id", manifest["run_id"])
     prepared.setdefault("qa_database_pool", [prepared["qa_db"]])
@@ -640,7 +652,13 @@ def test_run_shadow_plan_persists_failed_job_result(tmp_path, monkeypatch):
                 }
             ],
             "verification": {
-                "checks": [{"table": "ads_sales_dashboard", "method": "count"}]
+                "checks": [
+                    {
+                        "table": "ads_sales_dashboard",
+                        "scope": {"mode": "full_table"},
+                        "methods": [{"method": "count"}],
+                    }
+                ]
             },
             "analysis_snapshot": _analysis_snapshot(),
         },
@@ -1048,8 +1066,14 @@ def test_run_shadow_plan_dry_run_persists_phase_summary(
         ],
         "verification": {
             "checks": [
-                {"table": "dws_inventory_daily", "method": "count"},
-                {"table": "dws_inventory_daily", "method": "row_compare"},
+                {
+                    "table": "dws_inventory_daily",
+                    "scope": {"mode": "full_table"},
+                    "methods": [
+                        {"method": "count"},
+                        {"method": "row_compare"},
+                    ],
+                }
             ]
         },
         "analysis_snapshot": _analysis_snapshot(),
@@ -1198,6 +1222,84 @@ def test_execute_shadow_plan_runs_same_job_slice_batches_in_parallel(
     assert job_result["batch_size"] == 1
 
 
+def test_execute_shadow_plan_serializes_slices_with_created_stage_table(
+    tmp_path, monkeypatch
+):
+    _write_shadow_project(tmp_path, "shop", with_default_slice=True)
+    task_path = tmp_path / "shop" / "mid" / "tasks" / "dws_order.sql"
+    task_path.parent.mkdir(parents=True)
+    task_path.write_text(
+        """\
+DROP TABLE IF EXISTS shop_dm.stage_order;
+CREATE TABLE shop_dm.stage_order AS SELECT @etl_date AS stat_date;
+INSERT INTO shop_dm.dws_order SELECT * FROM shop_dm.stage_order;
+""",
+        encoding="utf-8",
+    )
+    plan = {
+        "project": "shop",
+        "project_db": "shop_dm",
+        "qa_db": "shop_dm_qa",
+        "baseline_ddl": {},
+        "ddl_changes": [],
+        "jobs_to_run": [
+            {
+                "job": "dws_order",
+                "file": "shop/mid/tasks/dws_order.sql",
+                "layer": "DWS",
+                "target": "dws_order",
+                "execution_values": [
+                    "2024-06-01",
+                    "2024-06-02",
+                    "2024-06-03",
+                ],
+            }
+        ],
+        "verification": {"checks": []},
+    }
+    lock = threading.Lock()
+    active = 0
+    max_active = 0
+
+    def fake_run_sql_text(sql_text, db="", qa=False):
+        nonlocal active, max_active
+        with lock:
+            active += 1
+            max_active = max(max_active, active)
+        time.sleep(0.03)
+        with lock:
+            active -= 1
+        return ""
+
+    monkeypatch.setattr(
+        "dw_refactor_agent.refactor.shadow_run._project_root",
+        lambda: tmp_path,
+    )
+    monkeypatch.setattr(
+        "dw_refactor_agent.refactor.shadow_run.run_sql",
+        lambda *args, **kwargs: "",
+    )
+    monkeypatch.setattr(
+        "dw_refactor_agent.refactor.shadow_run.run_sql_text",
+        fake_run_sql_text,
+    )
+
+    result = execute_shadow_plan(plan, root=tmp_path, parallel=2)
+
+    phase_by_name = {phase["name"]: phase for phase in result["phases"]}
+    job_result = phase_by_name["run_jobs"]["jobs"][0]
+    assert result["status"] == "completed"
+    assert max_active == 1
+    assert job_result["invocation_count"] == 3
+    assert "parallelism" not in job_result
+    assert (
+        result["shadow_manifest"]["jobs"]["dws_order"][
+            "requires_serial_slices"
+        ]
+        is True
+    )
+
+
 def test_execute_shadow_plan_skips_downstream_after_upstream_failure(
     tmp_path, monkeypatch
 ):
@@ -1254,9 +1356,11 @@ execution:
                 "target": "dws_order",
             },
         ],
-        "job_dependencies": {
-            "ads_order": ["dws_order"],
-            "dws_order": [],
+        "execution_graph": {
+            "format_version": 1,
+            "project": project,
+            "jobs": ["dws_order", "ads_order"],
+            "dependencies": {"ads_order": ["dws_order"]},
         },
         "verification": {"checks": []},
     }
@@ -1686,7 +1790,7 @@ execution:
     assert "brand_new_sales" in result["phases"][0]["blockers"][0]
 
 
-def test_manifest_dependency_orders_jobs_when_declared_dag_edge_is_missing(
+def test_trusted_schedule_orders_jobs_without_manifest_dependency_inference(
     tmp_path, monkeypatch
 ):
     project = "shadow_manifest_order"
@@ -1728,7 +1832,12 @@ execution:
             }
             for name in ("report", "sales")
         ],
-        "job_dependencies": {},
+        "execution_graph": {
+            "format_version": 1,
+            "project": project,
+            "jobs": ["sales", "report"],
+            "dependencies": {"report": ["sales"]},
+        },
         "verification": {"checks": []},
     }
     executed = []
@@ -1756,7 +1865,7 @@ execution:
 
     assert result["status"] == "completed"
     assert executed == ["sales", "report"]
-    assert run_phase["scheduler"] == "plan+manifest"
+    assert run_phase["scheduler"] == "trusted_schedule"
 
 
 def test_self_reading_job_serializes_parallel_slice_invocations(

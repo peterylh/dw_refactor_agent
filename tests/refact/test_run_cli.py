@@ -36,9 +36,20 @@ def _write_warehouse_config(root, project="shop"):
                 f"database: {project}_dm",
                 f"qa_database: {project}_dm_qa",
                 f"lineage_database: {project}_lineage",
+                "execution:",
+                "  schedule: scheduling/job_dag.json",
             ]
         ),
         encoding="utf-8",
+    )
+    _write_json(
+        warehouse_dir / "scheduling" / "job_dag.json",
+        {
+            "format_version": 1,
+            "project": project,
+            "jobs": [],
+            "dependencies": {},
+        },
     )
 
 
@@ -300,8 +311,10 @@ def test_start_creates_manifest_and_baseline_artifacts(tmp_path, monkeypatch):
     assert (run_root / "manifest.json").exists()
     manifest = json.loads((run_root / "manifest.json").read_text())
     assert manifest["root"] == str(tmp_path.resolve())
+    assert manifest["baseline_schedule_sha256"].startswith("sha256:")
     assert (run_root / "baseline" / "lineage_data.json").exists()
     assert (run_root / "baseline" / "task_lineage_cache.json").exists()
+    assert (run_root / "baseline" / "schedule_dag.json").exists()
     assert (run_root / "baseline" / "assess_result.json").exists()
     baseline_assess = json.loads(
         (run_root / "baseline" / "assess_result.json").read_text()
@@ -309,6 +322,28 @@ def test_start_creates_manifest_and_baseline_artifacts(tmp_path, monkeypatch):
     assert baseline_assess["assessment_mode"] == "full"
     assert baseline_assess["score_semantics"] == "project_global"
     assert baseline_assess["scope"] == {"type": "project"}
+
+
+def test_baseline_schedule_snapshot_rejects_tampering(tmp_path):
+    _write_warehouse_config(tmp_path)
+    manifest_path, manifest = create_run_manifest(
+        tmp_path,
+        "shop",
+        now=datetime(2026, 6, 20, 7, 30, tzinfo=timezone.utc),
+        git_info={"head": "abc123"},
+    )
+    _write_json(
+        manifest_path.parent / "baseline" / "schedule_dag.json",
+        {
+            "format_version": 1,
+            "project": "shop",
+            "jobs": ["unexpected_job"],
+            "dependencies": {},
+        },
+    )
+
+    with pytest.raises(ArtifactFormatError, match="fingerprint mismatch"):
+        run_cli._load_baseline_schedule(manifest_path, manifest)
 
 
 def test_start_rejects_root_without_warehouse_config(tmp_path):
@@ -429,6 +464,7 @@ def test_analyze_refreshes_current_analysis_diff_and_plan(
         lineage_data=None,
         partition=None,
         semantic_resolution=None,
+        **kwargs,
     ):
         assert isinstance(semantic_resolution, SemanticResolution)
         plan_calls.append(
@@ -727,6 +763,7 @@ def test_analyze_reports_partition_requirement_cleanly(tmp_path, monkeypatch):
         lineage_data=None,
         partition=None,
         semantic_resolution=None,
+        **kwargs,
     ):
         raise ValueError(
             "refactor analyze requires --partition for incremental jobs "
@@ -828,6 +865,7 @@ def test_analyze_marks_empty_diff_assessment_not_applicable(
         lineage_data=None,
         partition=None,
         semantic_resolution=None,
+        **kwargs,
     ):
         return {
             "project": project,

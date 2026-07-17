@@ -62,6 +62,15 @@ def _project_input_paths(root: Path, project: str) -> set[Path]:
 
     paths.add(project_dir / "warehouse.yaml")
     paths.add(project_dir / "naming_config.yaml")
+    execution = project_config.get("execution") or {}
+    schedule_path = execution.get("schedule")
+    if schedule_path:
+        candidate = Path(schedule_path)
+        if candidate.is_absolute():
+            raise ValueError(
+                "execution.schedule must be relative to the warehouse directory"
+            )
+        paths.add(project_dir / candidate)
     for file_name in config.BUSINESS_SEMANTICS_FILE_NAMES.values():
         paths.add(project_dir / file_name)
 

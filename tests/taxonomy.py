@@ -96,6 +96,7 @@ TEST_TYPE_BY_FILE = {
     "tests/test_python37_compat.py": "guard",
     "tests/test_python_env_doctor.py": "guard",
     "tests/test_reinit_project.py": "scenario",
+    "tests/test_schedule_dag.py": "unit",
     "tests/test_retail_banking_assets.py": "guard",
     "tests/test_retail_banking_dws_ads_specs.py": "contract",
     "tests/test_retail_banking_schema_compiler.py": "unit",

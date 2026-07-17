@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 
+import pytest
 import sqlglot
 from sqlglot.errors import ErrorLevel
 
@@ -107,6 +108,64 @@ def test_predicate_scope_folds_if_and_boolean_composition():
     )
 
 
+@pytest.mark.parametrize(
+    ("date_format", "expected"),
+    [
+        ("%Y-%m-%d", (date(2025, 2, 18),)),
+        (
+            "%Y-%m",
+            tuple(date(2025, 2, day) for day in range(1, 29)),
+        ),
+        (
+            "%Y",
+            tuple(
+                date(2024, 1, 1) + timedelta(days=offset)
+                for offset in range(366)
+            ),
+        ),
+    ],
+)
+def test_predicate_scope_recognizes_supported_date_format_periods(
+    date_format, expected
+):
+    predicate = _where(
+        "SELECT * FROM t WHERE "
+        f"DATE_FORMAT(stat_date, '{date_format}') = "
+        f"DATE_FORMAT(@etl_date, '{date_format}')"
+    )
+
+    scope = scope_for_predicate(
+        predicate,
+        "stat_date",
+        {"etl_date": "2025-02-18" if date_format != "%Y" else "2024-06-15"},
+        "DATE",
+    )
+
+    assert scope == RowScope.from_points("stat_date", expected)
+
+
+def test_predicate_scope_keeps_date_format_conservative_for_datetime_column():
+    predicate = _where(
+        "SELECT * FROM t WHERE DATE_FORMAT(event_time, '%Y-%m') = '2025-02'"
+    )
+
+    scope = scope_for_predicate(predicate, "event_time", {}, "DATETIME")
+
+    assert scope == RowScope.interval(
+        "event_time", date(2025, 2, 1), date(2025, 3, 1)
+    )
+
+
+def test_predicate_scope_keeps_unrepresentable_date_format_period_unknown():
+    predicate = _where(
+        "SELECT * FROM t WHERE DATE_FORMAT(stat_date, '%Y') = '9999'"
+    )
+
+    scope = scope_for_predicate(predicate, "stat_date", {}, "DATE")
+
+    assert scope.kind is ScopeKind.UNKNOWN
+
+
 def test_unresolved_column_expression_is_unknown_not_empty():
     scope = scope_for_predicate(
         _where("SELECT * FROM t WHERE mystery_bucket(stat_date) = 7"),
@@ -156,3 +215,25 @@ def test_statement_scope_recognizes_self_read_and_existing_row_mutations():
     assert delete_access.read_scope.kind is ScopeKind.EMPTY
     assert delete_access.write_scope.kind is ScopeKind.ALL
     assert delete_access.target_requires_existing is False
+
+
+def test_statement_scope_propagates_date_scope_through_left_join_equality():
+    insert = sqlglot.parse_one(
+        "INSERT INTO report "
+        "SELECT s.store_id FROM store_snapshot s "
+        "LEFT JOIN sales ss "
+        "ON s.store_id = ss.store_id "
+        "AND s.snapshot_date = ss.stat_date "
+        "WHERE s.snapshot_date = CAST(@etl_date AS DATE)",
+        dialect="doris",
+    )
+
+    access = statement_scope(
+        insert,
+        "sales",
+        "stat_date",
+        {"etl_date": "2025-02-18"},
+        "DATE",
+    )
+
+    assert access.read_scope == RowScope.point("stat_date", date(2025, 2, 18))
