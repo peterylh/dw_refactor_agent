@@ -19,6 +19,7 @@ SELECT
 FROM shop_dm.dwd_order_detail
 WHERE order_date BETWEEN CAST(@etl_start_date AS DATE)
     AND CAST(@etl_end_date AS DATE)
+  AND MOD(store_id, 2) = 0
 GROUP BY store_id, order_date
 HAVING COUNT(DISTINCT order_id) <> 0
    AND (
@@ -28,7 +29,8 @@ HAVING COUNT(DISTINCT order_id) <> 0
 
 DELETE FROM shop_dm.dws_store_sales_daily
 WHERE stat_date BETWEEN CAST(@etl_start_date AS DATE)
-    AND CAST(@etl_end_date AS DATE);
+    AND CAST(@etl_end_date AS DATE)
+  AND MOD(store_id, 2) = 0;
 
 INSERT INTO shop_dm.dws_store_sales_daily (
     store_id,

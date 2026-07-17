@@ -40,25 +40,6 @@ class Scenario:
 
 SCENARIOS = (
     Scenario(
-        project="shop",
-        producer_path="mid/tasks/dws_store_sales_daily.sql",
-        consumer_path="mid/tasks/dim_store_metric_snapshot.sql",
-        producer_job="dws_store_sales_daily",
-        consumer_job="dim_store_metric_snapshot",
-        process_table="shop_dm.stage_store_sales_daily",
-        upstream_column="dwd_order_detail.order_id",
-        process_column="stage_store_sales_daily.order_count",
-        target_table="dim_store_metric_snapshot",
-        target_column="store_order_count",
-        companions=(
-            "mid/tasks/full_refresh/dws_store_sales_daily_full_refresh.sql",
-            (
-                "mid/tasks/full_refresh/"
-                "dim_store_metric_snapshot_full_refresh.sql"
-            ),
-        ),
-    ),
-    Scenario(
         project="retail_banking",
         producer_path="mid/tasks/dws_client_transaction_daily.sql",
         consumer_path=("ads/tasks/ads_customer_transaction_kpi_daily.sql"),

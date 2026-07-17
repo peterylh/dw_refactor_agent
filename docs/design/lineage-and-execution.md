@@ -4,7 +4,8 @@
 
 数仓中的依赖不等于“文件名依赖”。一个 Task 可以读取多个表、写入正式表或过程表；不同 Task 也可能使用同名局部过程表。如果只按表名拼接血缘，会产生不存在的跨 Job 路径，并让执行器以错误顺序运行作业。
 
-本设计把 SQL 中可验证的事实先建模为血缘快照，再从快照派生 Job DAG。常规执行和重构验证共享这份依赖语义。
+本设计把 SQL 中可验证的事实建模为血缘快照，并用血缘生成和校验调度 DAG 候选。
+常规执行和重构验证共享项目中固定的可信调度 DAG，不在运行时用血缘替换业务调度。
 
 ## 核心概念
 
@@ -14,7 +15,8 @@
 | Job | 一个 Task SQL 文件对应的逻辑作业，保存输入、输出和源文件 |
 | Edge | 某个 Job 内从源字段或表达式到目标字段/表的直接事实 |
 | Diagnostic | 无法安全解析的事实，例如过程表没有唯一生产者 |
-| Job DAG | 从 Job 输入输出关系派生的执行图，不是原始血缘事实 |
+| Lineage DAG | 从 Job 输入输出关系派生的候选图，用作证据和安全校验 |
+| Schedule DAG | 调度系统的可信 Job 依赖配置，是执行顺序的权威来源 |
 | Slice | 一个增量 Job 的执行参数、数据列和时间周期 |
 
 `managed` Dataset 来自受管 DDL 或 Model；`process` 是普通持久化过程表；`temporary` 受数据库 Session 限制；`external` 只被当前项目读取。Dataset 类型用于描述和安全判断，不代替实际生产者证据。
@@ -71,9 +73,9 @@ hash(Task SQL
 
 只要其中任一项变化，该 Task 就重新解析。最终快照从“本次缓存命中结果 + 本次新解析结果 + 当前 schema”完整组装，而不是在旧快照上打补丁，这样被删除的表、字段和 Task 不会残留。
 
-## Job DAG
+## 血缘候选 DAG 与可信调度 DAG
 
-Job DAG 由血缘快照中的 Job 和已解析数据依赖生成：
+血缘候选 DAG 由快照中的 Job 和已解析数据依赖生成：
 
 - 节点是全部可执行 Job，包括没有依赖的孤立 Job；
 - 边是 `producer -> consumer`，并保留形成依赖的 Dataset 作为证据；
@@ -81,13 +83,21 @@ Job DAG 由血缘快照中的 Job 和已解析数据依赖生成：
 - 多个 Dataset 形成同一对 Job 依赖时合并证据；
 - Job 自读自写不生成自依赖。
 
-拓扑排序使用 Kahn 算法：先选择入度为零的 Job，执行完成后减少下游入度；如果最终仍有节点未输出，说明图中存在环，计划必须失败。
+`dw-refactor schedule generate` 可用候选图初始化固定调度配置；`validate` 和 `diff`
+按可达性比较调度与血缘；`reconcile` 默认只给提案，显式 `--apply-safe` 才自动加入可
+确认的新 Job 和依赖。删除依赖和多 Writer 相关新增边保留人工审核。多个 Writer 不互相
+推导顺序，但读取共享结果的 consumer 候选依赖所有 Writer。
+
+可信调度 DAG 使用 Kahn 算法拓扑排序：先选择入度为零的 Job，执行完成后减少下游
+入度；如果最终仍有节点未输出，说明配置中存在环，计划必须失败。
 
 ## 常规执行计划
 
-常规执行在每次规划时先从当前 SQL 刷新血缘，再立即从同一份快照生成 DAG，避免“新 SQL + 旧 DAG”的混合状态。
+常规执行在每次规划时先从当前 SQL 刷新血缘，再加载 `warehouse.yaml` 中
+`execution.schedule` 指向的固定 DAG。task SQL 与调度 Job 集合必须精确一致；血缘不
+改写执行图，只报告可达性差异并校验不可复用数据集。
 
-执行器结合 DAG 与 Model YAML 中的 `execution` 生成调用：
+执行器结合可信调度 DAG 与 Model YAML 中的 `execution` 生成调用：
 
 - `incremental` Job 按 slice 参数展开一个或多个时间值；
 - `full` Job 只执行一次，不继承项目默认 slice；
@@ -98,16 +108,17 @@ Model 是执行方式的权威来源。Task 名与输出表名可以不同，执
 
 ### 子集执行安全
 
-选择 `--job-list` 子集时，执行器检查两类条件：
+选择 `--job-list` 子集时不会静默加入调度上游；执行器检查两类条件：
 
-1. 已解析的 process Dataset consumer 必须同时包含其 producer；
+1. 已解析的 process/temporary Dataset consumer 必须同时包含其 producer；
 2. 被选 consumer 命中 `not_found` 或 `multiple_candidates` 诊断时禁止执行。
 
 未选择相关 consumer 的其他子图不受影响。检查发生在任何数据库读取或写入之前。
 
 ### 并发与互斥
 
-并发只在 DAG 已就绪的 Job 之间发生。一个 Job 只有在所有已选上游成功后才能进入 ready 队列；任一 Job 失败后不再提交新的下游任务。
+并发只在 DAG 已就绪的 Job 之间发生。一个 Job 只有在所有已选调度上游成功后才能进入
+ready 队列；任一 Job 失败只阻断依赖它的下游，其他独立分支继续。
 
 `parallel` 表示全局数据库 Session 上限，不按“Job 并发 × slice 并发”重复放大。对同一物理 Doris 目标 `(host, port, database)`，整个执行过程持有同一把 advisory file lock，避免不同 checkout 或 worktree 同时写同一目标。
 
@@ -116,7 +127,8 @@ Model 是执行方式的权威来源。Task 名与输出表名可以不同，执
 ## 设计边界
 
 - 血缘负责恢复事实，不决定业务语义是否正确。
-- DAG 是血缘的执行视图，不反向成为血缘的事实来源。
+- 可信调度 DAG 决定执行顺序；血缘候选图不反向成为调度事实。
 - 执行器不根据表名前缀推断层级或物化方式。
-- 解析不完整时允许生成带诊断的血缘快照，但涉及诊断的执行计划必须失败关闭。
+- 解析不完整时允许生成带诊断的血缘快照；涉及已选 process/temporary consumer 的
+  计划失败关闭，普通 managed 依赖差异默认告警。
 - 性能基准用于发现回归，不属于运行时契约。

@@ -5,13 +5,15 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 
-from dw_refactor_agent.config import refactor_runs_dir
+from dw_refactor_agent.config import core, refactor_runs_dir
+from dw_refactor_agent.execution.schedule_graph import ScheduleGraph
 from dw_refactor_agent.refactor.artifact_contract import (
     FORMAT_VERSION,
     ArtifactFormatError,
     atomic_write_json,
     read_json_object,
     require_format_version,
+    sha256_json,
 )
 
 
@@ -23,6 +25,7 @@ def _artifact_paths() -> dict:
     return {
         "baseline_lineage": "baseline/lineage_data.json",
         "baseline_task_cache": "baseline/task_lineage_cache.json",
+        "baseline_schedule": "baseline/schedule_dag.json",
         "baseline_assess": "baseline/assess_result.json",
         "baseline_full_assess": "baseline/assess_result.json",
         "current_lineage": "current/lineage_data.json",
@@ -82,6 +85,18 @@ def create_run_manifest(
     }
     manifest_path = run_root / "manifest.json"
     write_manifest(manifest_path, manifest)
+    rooted_config = core.load_project_config(root).get(project) or {}
+    if (rooted_config.get("execution") or {}).get("schedule"):
+        schedule = ScheduleGraph.load_for_project(
+            project, root=root, project_config=rooted_config
+        )
+        schedule_payload = schedule.to_dict()
+        atomic_write_json(
+            run_root / _artifact_paths()["baseline_schedule"],
+            schedule_payload,
+        )
+        manifest["baseline_schedule_sha256"] = sha256_json(schedule_payload)
+        write_manifest(manifest_path, manifest)
     return manifest_path, manifest
 
 

@@ -1,0 +1,84 @@
+{
+  "format_version": 1,
+  "project": "shop",
+  "jobs": [
+    "ads_customer_rfm",
+    "ads_inventory_alert",
+    "ads_product_topn_daily",
+    "ads_promotion_roi",
+    "ads_sales_dashboard",
+    "ads_store_performance",
+    "dim_store_metric_snapshot",
+    "dwd_customer",
+    "dwd_inventory",
+    "dwd_order_detail",
+    "dwd_order_summary_bad",
+    "dwd_product",
+    "dwd_promotion",
+    "dwd_store",
+    "dws_category_sales_monthly",
+    "dws_customer_order_summary",
+    "dws_inventory_daily",
+    "dws_order_passthrough_daily",
+    "dws_product_sales_daily",
+    "dws_promotion_effect_daily",
+    "dws_store_sales_daily",
+    "dws_store_sales_daily_odd"
+  ],
+  "dependencies": {
+    "ads_customer_rfm": [
+      "dws_customer_order_summary"
+    ],
+    "ads_inventory_alert": [
+      "dwd_product",
+      "dwd_store",
+      "dws_inventory_daily",
+      "dws_product_sales_daily"
+    ],
+    "ads_product_topn_daily": [
+      "dwd_product",
+      "dws_product_sales_daily"
+    ],
+    "ads_promotion_roi": [
+      "dws_promotion_effect_daily"
+    ],
+    "ads_sales_dashboard": [
+      "dwd_order_detail"
+    ],
+    "ads_store_performance": [
+      "dwd_store",
+      "dws_store_sales_daily",
+      "dws_store_sales_daily_odd"
+    ],
+    "dim_store_metric_snapshot": [
+      "dwd_store",
+      "dws_store_sales_daily",
+      "dws_store_sales_daily_odd"
+    ],
+    "dws_category_sales_monthly": [
+      "dwd_order_detail"
+    ],
+    "dws_customer_order_summary": [
+      "dwd_order_detail"
+    ],
+    "dws_inventory_daily": [
+      "dwd_inventory"
+    ],
+    "dws_order_passthrough_daily": [
+      "dwd_order_detail"
+    ],
+    "dws_product_sales_daily": [
+      "dwd_order_detail"
+    ],
+    "dws_promotion_effect_daily": [
+      "dwd_order_detail",
+      "dwd_promotion"
+    ],
+    "dws_store_sales_daily": [
+      "dwd_order_detail"
+    ],
+    "dws_store_sales_daily_odd": [
+      "dwd_order_detail"
+    ]
+  }
+}

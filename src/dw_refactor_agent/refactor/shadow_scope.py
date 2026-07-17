@@ -475,11 +475,112 @@ def _eval_value(
     return False, None
 
 
+_DATE_FORMAT_PERIODS = {
+    "%Y-%m-%d": "day",
+    "%Y-%m": "month",
+    "%Y": "year",
+}
+
+
+def _date_format(node: exp.Expression) -> str | None:
+    if not isinstance(node, exp.TimeToStr):
+        return None
+    format_node = node.args.get("format")
+    if not isinstance(format_node, exp.Literal) or not format_node.is_string:
+        return None
+    value = str(format_node.this)
+    return value if value in _DATE_FORMAT_PERIODS else None
+
+
+def _date_format_value(
+    node: exp.Expression,
+    expected_format: str,
+    params: dict[str, Any],
+) -> tuple[bool, date | None]:
+    node_format = _date_format(node)
+    if node_format is not None:
+        if node_format != expected_format:
+            return False, None
+        node = node.this
+    resolved, value = _eval_value(node, params)
+    if not resolved:
+        return False, None
+    if isinstance(value, datetime):
+        return True, value.date()
+    if isinstance(value, date):
+        return True, value
+    if not isinstance(value, str):
+        return False, None
+    try:
+        return True, datetime.strptime(value, expected_format).date()
+    except ValueError:
+        return False, None
+
+
+def _date_period_bounds(value: date, period: str) -> tuple[date, date]:
+    if period == "day":
+        return value, value + timedelta(days=1)
+    if period == "month":
+        lower = value.replace(day=1)
+        upper = (
+            lower.replace(year=lower.year + 1, month=1)
+            if lower.month == 12
+            else lower.replace(month=lower.month + 1)
+        )
+        return lower, upper
+    lower = value.replace(month=1, day=1)
+    return lower, lower.replace(year=lower.year + 1)
+
+
+def _date_format_scope(
+    predicate: exp.Expression,
+    column: str,
+    params: dict[str, Any],
+    column_type: str | None,
+) -> RowScope | None:
+    if not isinstance(predicate, exp.EQ):
+        return None
+    left = predicate.this
+    right = predicate.expression
+    left_format = _date_format(left)
+    right_format = _date_format(right)
+    if left_format and _column_matches(left.this, column):
+        format_value = left_format
+        value_node = right
+    elif right_format and _column_matches(right.this, column):
+        format_value = right_format
+        value_node = left
+    else:
+        return None
+    resolved, value = _date_format_value(value_node, format_value, params)
+    if not resolved or value is None:
+        return RowScope.unknown(column, predicate.sql(dialect="doris"))
+    try:
+        lower, upper = _date_period_bounds(
+            value, _DATE_FORMAT_PERIODS[format_value]
+        )
+    except (OverflowError, ValueError):
+        return RowScope.unknown(column, predicate.sql(dialect="doris"))
+    if str(column_type or "").upper() in {"DATE", "DATEV2"}:
+        points = tuple(
+            lower + timedelta(days=offset)
+            for offset in range((upper - lower).days)
+        )
+        return RowScope.from_points(column, points)
+    return RowScope.interval(column, lower, upper)
+
+
 def _comparison_scope(
     predicate: exp.Expression,
     column: str,
     params: dict[str, Any],
+    column_type: str | None = None,
 ) -> RowScope:
+    formatted_scope = _date_format_scope(
+        predicate, column, params, column_type
+    )
+    if formatted_scope is not None:
+        return formatted_scope
     left = predicate.this
     right = predicate.expression
     reverse = False
@@ -521,6 +622,7 @@ def scope_for_predicate(
     predicate: exp.Expression,
     column: str,
     params: Optional[dict[str, Any]] = None,
+    column_type: str | None = None,
 ) -> RowScope:
     """Return the rows selected by *predicate* along *column*.
 
@@ -529,20 +631,26 @@ def scope_for_predicate(
     """
     params = params or {}
     if isinstance(predicate, exp.Paren):
-        return scope_for_predicate(predicate.this, column, params)
+        return scope_for_predicate(predicate.this, column, params, column_type)
     if isinstance(predicate, exp.Boolean):
         return (
             RowScope.all(column) if predicate.this else RowScope.empty(column)
         )
     if isinstance(predicate, exp.And):
         return scope_for_predicate(
-            predicate.this, column, params
+            predicate.this, column, params, column_type
         ).intersection(
-            scope_for_predicate(predicate.expression, column, params)
+            scope_for_predicate(
+                predicate.expression, column, params, column_type
+            )
         )
     if isinstance(predicate, exp.Or):
-        return scope_for_predicate(predicate.this, column, params).union(
-            scope_for_predicate(predicate.expression, column, params)
+        return scope_for_predicate(
+            predicate.this, column, params, column_type
+        ).union(
+            scope_for_predicate(
+                predicate.expression, column, params, column_type
+            )
         )
     if isinstance(predicate, exp.If):
         resolved, condition = _eval_value(predicate.this, params)
@@ -555,11 +663,11 @@ def scope_for_predicate(
         )
         if branch is None:
             return RowScope.empty(column)
-        return scope_for_predicate(branch, column, params)
+        return scope_for_predicate(branch, column, params, column_type)
     if isinstance(
         predicate, (exp.EQ, exp.NEQ, exp.GT, exp.GTE, exp.LT, exp.LTE)
     ):
-        return _comparison_scope(predicate, column, params)
+        return _comparison_scope(predicate, column, params, column_type)
     if isinstance(predicate, exp.Between):
         if not _column_matches(predicate.this, column):
             if _contains_column(predicate, column):
@@ -604,11 +712,97 @@ def _same_table(table: exp.Table, name: str) -> bool:
     return _canonical(table.name) == _canonical(name)
 
 
+def _qualified_column_key(column: exp.Column) -> tuple[str, str] | None:
+    if not column.table:
+        return None
+    return _canonical(column.table), _canonical(column.name)
+
+
+def _join_equivalent_predicate(
+    table: str,
+    column: str,
+    where: exp.Where,
+) -> exp.Expression | None:
+    query = where.parent
+    if query is None:
+        return None
+    target_relations = [
+        relation
+        for relation in query.find_all(exp.Table)
+        if _same_table(relation, table)
+    ]
+    if len(target_relations) != 1:
+        return None
+    target_relation = target_relations[0]
+    target_join = next(
+        (
+            join
+            for join in query.args.get("joins") or []
+            if join.this is target_relation
+        ),
+        None,
+    )
+    if target_join is None or str(
+        target_join.args.get("side") or ""
+    ).upper() not in {"", "INNER", "LEFT"}:
+        return None
+    on_clause = target_join.args.get("on")
+    if on_clause is None:
+        return None
+
+    adjacency: dict[tuple[str, str], set[tuple[str, str]]] = {}
+    equality_nodes = (
+        [on_clause]
+        if isinstance(on_clause, exp.EQ)
+        else list(on_clause.find_all(exp.EQ))
+    )
+    for equality in equality_nodes:
+        if not isinstance(equality.this, exp.Column) or not isinstance(
+            equality.expression, exp.Column
+        ):
+            continue
+        left = _qualified_column_key(equality.this)
+        right = _qualified_column_key(equality.expression)
+        if left is None or right is None:
+            continue
+        adjacency.setdefault(left, set()).add(right)
+        adjacency.setdefault(right, set()).add(left)
+
+    target_qualifiers = {
+        _canonical(target_relation.name),
+        _canonical(target_relation.alias_or_name),
+    }
+    frontier = [
+        key
+        for key in adjacency
+        if key[0] in target_qualifiers and key[1] == _canonical(column)
+    ]
+    equivalent_columns = set(frontier)
+    while frontier:
+        current = frontier.pop()
+        for adjacent in adjacency.get(current, set()):
+            if adjacent not in equivalent_columns:
+                equivalent_columns.add(adjacent)
+                frontier.append(adjacent)
+    if not equivalent_columns:
+        return None
+
+    rewritten = where.this.copy()
+    replaced = False
+    for candidate in list(rewritten.find_all(exp.Column)):
+        if _qualified_column_key(candidate) not in equivalent_columns:
+            continue
+        candidate.replace(exp.column(column))
+        replaced = True
+    return rewritten if replaced else None
+
+
 def _predicate_scope(
     statement: exp.Expression,
     table: str,
     column: str,
     params: dict[str, Any],
+    column_type: str | None,
 ) -> RowScope:
     where = statement.find(exp.Where)
     if where is None:
@@ -651,7 +845,15 @@ def _predicate_scope(
                 column,
                 "unqualified partition column is ambiguous across relations",
             )
-    return scope_for_predicate(where.this, column, params)
+    direct_scope = scope_for_predicate(where.this, column, params, column_type)
+    if direct_scope.kind is not ScopeKind.ALL:
+        return direct_scope
+    equivalent_predicate = _join_equivalent_predicate(table, column, where)
+    if equivalent_predicate is None:
+        return direct_scope
+    return scope_for_predicate(
+        equivalent_predicate, column, params, column_type
+    )
 
 
 def statement_scope(
@@ -659,6 +861,7 @@ def statement_scope(
     table: str,
     column: str,
     params: Optional[dict[str, Any]] = None,
+    column_type: str | None = None,
 ) -> StatementScope:
     """Describe one statement's data access to a physical table.
 
@@ -680,11 +883,11 @@ def statement_scope(
             return StatementScope(
                 RowScope.empty(column), RowScope.all(column), False
             )
-        scope = _predicate_scope(statement, table, column, params)
+        scope = _predicate_scope(statement, table, column, params, column_type)
         return StatementScope(scope, scope, True)
 
     if isinstance(statement, exp.Update) and is_target:
-        scope = _predicate_scope(statement, table, column, params)
+        scope = _predicate_scope(statement, table, column, params, column_type)
         return StatementScope(scope, scope, True)
 
     if isinstance(statement, exp.TruncateTable) and is_target:
@@ -694,7 +897,7 @@ def statement_scope(
 
     if isinstance(statement, exp.Insert) and is_target:
         read_scope = (
-            _predicate_scope(statement, table, column, params)
+            _predicate_scope(statement, table, column, params, column_type)
             if sources
             else RowScope.empty(column)
         )
@@ -705,7 +908,7 @@ def statement_scope(
         )
 
     read_scope = (
-        _predicate_scope(statement, table, column, params)
+        _predicate_scope(statement, table, column, params, column_type)
         if sources
         or (
             not is_target

@@ -11,10 +11,8 @@ import threading
 import time
 import uuid
 from concurrent.futures import (
-    FIRST_COMPLETED,
     ThreadPoolExecutor,
     as_completed,
-    wait,
 )
 from copy import deepcopy
 from datetime import datetime, timezone
@@ -25,8 +23,13 @@ if str(_src_root) not in sys.path:
     sys.path.insert(0, str(_src_root))
 
 from dw_refactor_agent.config import PROJECT_ROOT, get_mysql_cmd
+from dw_refactor_agent.execution.dag_executor import execute_dag
 from dw_refactor_agent.execution.model_config import ExecutionConfigError
 from dw_refactor_agent.execution.planner import ExecutionPlanner
+from dw_refactor_agent.execution.schedule_graph import (
+    ScheduleContractError,
+    ScheduleGraph,
+)
 from dw_refactor_agent.execution.sql_executor import ShadowSqlExecutor
 from dw_refactor_agent.execution.thread_pool import shutdown_executor
 from dw_refactor_agent.lineage.identifiers import identifier_match_key
@@ -53,6 +56,9 @@ from dw_refactor_agent.refactor.shadow_manifest import (
     compile_shadow_manifest,
     ensure_compiled_shadow_manifest,
     manifest_summary,
+)
+from dw_refactor_agent.refactor.verification_checks import (
+    flatten_verification_checks,
 )
 
 FINAL_ALTER_JOB_STATES = {"FINISHED", "CANCELLED"}
@@ -83,6 +89,12 @@ class ShadowRunBatchError(ShadowRunSqlError):
     def __init__(self, message: str, invocations: list[dict]):
         super().__init__(message)
         self.invocations = invocations
+
+
+class _ShadowJobFailure(RuntimeError):
+    def __init__(self, result: dict):
+        super().__init__(str(result.get("error") or "shadow Job failed"))
+        self.result = result
 
 
 def _project_root() -> Path:
@@ -436,22 +448,6 @@ def _execute_ddl_statement(statement: str, qa_db: str) -> None:
         known_job_ids_by_ref[(db_name, table_name)] = _job_ids(jobs)
 
 
-def _check_with_compare_anchor(check: dict, verification: dict) -> dict:
-    if check.get("partition_col") or check.get("partition_value") is not None:
-        return dict(check)
-    anchor = (verification.get("compare_anchors") or {}).get(
-        check.get("table")
-    ) or {}
-    time_column = anchor.get("time_column")
-    anchor_value = anchor.get("anchor_time_value")
-    if not time_column or anchor_value is None:
-        return dict(check)
-    resolved = dict(check)
-    resolved["partition_col"] = time_column
-    resolved["partition_value"] = anchor_value
-    return resolved
-
-
 def _plan_anchor_tables(plan: dict) -> list:
     verification = plan.get("verification") or {}
     return list(verification.get("anchor_tables") or [])
@@ -670,12 +666,20 @@ def _job_dependencies_from_plan(
     jobs_by_key = {
         identifier_match_key(job_name): job_name for job_name in job_names
     }
-    job_dependencies = plan.get("job_dependencies")
-    if not isinstance(job_dependencies, dict):
+    execution_graph = plan.get("execution_graph")
+    if not isinstance(execution_graph, dict):
         raise ArtifactFormatError(
-            "verification plan job_dependencies snapshot is required; "
+            "verification plan execution_graph snapshot is required; "
             "run analyze again"
         )
+    try:
+        graph = ScheduleGraph.from_dict(
+            execution_graph, expected_project=plan.get("project")
+        )
+    except ScheduleContractError as exc:
+        raise ArtifactFormatError(
+            f"verification plan execution_graph is invalid: {exc}"
+        ) from exc
     if len(job_names) <= 1:
         return (
             dict.fromkeys(job_names, 0),
@@ -686,7 +690,9 @@ def _job_dependencies_from_plan(
 
     in_degree = dict.fromkeys(job_names, 0)
     adj = {job_name: [] for job_name in job_names}
-    for downstream, upstreams in job_dependencies.items():
+    for downstream, upstreams in graph.selected_dependencies(
+        job_names
+    ).items():
         resolved_downstream = jobs_by_key.get(identifier_match_key(downstream))
         if resolved_downstream is None:
             continue
@@ -696,31 +702,7 @@ def _job_dependencies_from_plan(
                 continue
             adj[resolved_upstream].append(resolved_downstream)
             in_degree[resolved_downstream] += 1
-    return in_degree, adj, "plan", []
-
-
-def _augment_manifest_dependencies(
-    in_degree: dict[str, int],
-    adj: dict[str, list[str]],
-    manifest: CompiledShadowManifest,
-) -> bool:
-    augmented = False
-    for consumer, job_manifest in manifest.jobs.items():
-        if consumer not in in_degree:
-            continue
-        for table in job_manifest.required_qa_tables:
-            producer = manifest.producers.get(table)
-            if (
-                not producer
-                or producer == consumer
-                or producer not in adj
-                or consumer in adj[producer]
-            ):
-                continue
-            adj[producer].append(consumer)
-            in_degree[consumer] += 1
-            augmented = True
-    return augmented
+    return in_degree, adj, "trusted_schedule", []
 
 
 def _skipped_shadow_job_result(
@@ -768,7 +750,11 @@ def _execute_shadow_job(
     invocation_count = 0
     invocation_results = [] if timing_detail else None
     job_timer = _start_timing()
-    invocation_parallel = 1 if job_manifest.self_read else parallel
+    invocation_parallel = (
+        1
+        if job_manifest.self_read or job_manifest.requires_serial_slices
+        else parallel
+    )
 
     _log(f"\n  --- {job_index}/{job_count}: [{layer}] {job_name} ---")
     file_path = root / job_file
@@ -1006,38 +992,22 @@ def _run_shadow_jobs(
     qa_ready_tables: set[str] = set()
     qa_ready_lock = threading.Lock()
     batch_semaphore = threading.Semaphore(parallel)
-    in_degree, adj, scheduler, warnings = _job_dependencies_from_plan(
+    _in_degree, adj, scheduler, warnings = _job_dependencies_from_plan(
         plan,
         root,
     )
-    if _augment_manifest_dependencies(in_degree, adj, manifest):
-        scheduler = f"{scheduler}+manifest"
     job_by_name = {job["job"]: job for job in jobs_to_run}
     index_by_name = {
         job["job"]: index for index, job in enumerate(jobs_to_run, 1)
     }
-    remaining = set(job_by_name)
-    ready = sorted(
-        [
-            job_name
-            for job_name in remaining
-            if in_degree.get(job_name, 0) == 0
-        ],
-        key=lambda job_name: index_by_name[job_name],
-    )
-    running = {}
-    failed = False
-
     phase["scheduler"] = scheduler
     if warnings:
         phase["warnings"] = list(warnings)
         for warning in warnings:
             _log(f"  警告: {warning}")
 
-    def submit_job(executor_pool, job_name: str) -> None:
-        remaining.remove(job_name)
-        future = executor_pool.submit(
-            _execute_shadow_job,
+    def run_job(job_name: str) -> dict:
+        result = _execute_shadow_job(
             job_by_name[job_name],
             job_manifest=manifest.jobs[job_name],
             job_index=index_by_name[job_name],
@@ -1052,81 +1022,50 @@ def _run_shadow_jobs(
             batch_size=batch_size,
             timing_detail=timing_detail,
         )
-        running[future] = job_name
+        if result.get("status") != "success":
+            raise _ShadowJobFailure(result)
+        return result
 
-    executor_pool = ThreadPoolExecutor(max_workers=min(parallel, job_count))
-    try:
-        while ready or running:
-            while ready and not failed:
-                submit_job(executor_pool, ready.pop(0))
-            if not running:
-                break
-            done, _pending = wait(
-                list(running),
-                return_when=FIRST_COMPLETED,
-            )
-            for future in done:
-                job_name = running.pop(future)
-                try:
-                    job_result = future.result()
-                except Exception as exc:
-                    job_result = _finish_timing(
-                        _job_result(
-                            job_by_name[job_name],
-                            "failed",
-                            str(exc),
-                            invocation_count=0,
-                            **_job_batch_kwargs(0, parallel, batch_size),
-                        ),
-                        _start_timing(),
-                    )
-                job_results_by_name[job_name] = job_result
-                if job_result.get("status") != "success":
-                    failed = True
-                    phase["status"] = "failed"
-                    continue
-                if failed:
-                    continue
-                for downstream in sorted(
-                    adj.get(job_name, []),
-                    key=lambda item: index_by_name.get(item, 0),
-                ):
-                    in_degree[downstream] -= 1
-                    if in_degree[downstream] == 0 and downstream in remaining:
-                        ready.append(downstream)
-                ready.sort(key=lambda item: index_by_name[item])
-    finally:
-        shutdown_executor(executor_pool)
-
-    if remaining and not failed:
-        failed = True
+    dependencies = {job_name: [] for job_name in job_by_name}
+    for upstream, downstream_jobs in adj.items():
+        for downstream in downstream_jobs:
+            dependencies[downstream].append(upstream)
+    dag_results = execute_dag(
+        set(job_by_name),
+        dependencies,
+        run_job,
+        parallel=parallel,
+        order=[job["job"] for job in jobs_to_run],
+    )
+    for job_name, dag_result in dag_results.items():
+        if dag_result.status == "success":
+            job_results_by_name[job_name] = dag_result.value
+            continue
         phase["status"] = "failed"
-        skip_reason = "job dependency cycle or unsatisfied dependency"
-        for job_name in sorted(
-            remaining, key=lambda item: index_by_name[item]
+        if dag_result.status == "failed" and isinstance(
+            dag_result.error, _ShadowJobFailure
         ):
-            job_results_by_name[job_name] = _skipped_shadow_job_result(
-                job_by_name[job_name],
-                skip_reason,
-                parallel=parallel,
-                batch_size=batch_size,
-                timing_detail=timing_detail,
+            job_results_by_name[job_name] = dag_result.error.result
+            continue
+        if dag_result.status == "failed":
+            job_results_by_name[job_name] = _finish_timing(
+                _job_result(
+                    job_by_name[job_name],
+                    "failed",
+                    str(dag_result.error),
+                    invocation_count=0,
+                    **_job_batch_kwargs(0, parallel, batch_size),
+                ),
+                _start_timing(),
             )
-
-    if failed:
-        skip_reason = "upstream job failed"
-        for job_name in sorted(
-            remaining, key=lambda item: index_by_name[item]
-        ):
-            if job_name in job_results_by_name:
-                continue
-            job_results_by_name[job_name] = _skipped_shadow_job_result(
-                job_by_name[job_name],
-                skip_reason,
-                parallel=parallel,
-                batch_size=batch_size,
-                timing_detail=timing_detail,
-            )
+            continue
+        job_results_by_name[job_name] = _skipped_shadow_job_result(
+            job_by_name[job_name],
+            "upstream job failed: {}".format(", ".join(dag_result.blocked_by)),
+            parallel=parallel,
+            batch_size=batch_size,
+            timing_detail=timing_detail,
+        )
 
     phase["jobs"] = [
         job_results_by_name[job["job"]]
@@ -1880,22 +1819,9 @@ def _dry_run(
         print(f"  基线: {merge_base[:12]}...")
     print(f"  生产库: {prod_db} -> 验证库: {qa_db}")
     print(f"  锚点: {_plan_anchor_tables(plan)}")
-    verification = plan.get("verification", {})
-    compare_anchors = verification.get("compare_anchors") or {}
-    if compare_anchors:
-        for table in sorted(compare_anchors):
-            anchor = compare_anchors[table] or {}
-            time_column = anchor.get("time_column")
-            anchor_value = anchor.get("anchor_time_value")
-            time_period = anchor.get("time_period")
-            if time_column and anchor_value:
-                print(
-                    f"  对比范围: {table} "
-                    f"WHERE {time_column} = '{anchor_value}' ({time_period})"
-                )
-            else:
-                print(f"  对比范围: {table} 全表")
-    checks = plan.get("verification", {}).get("checks", [])
+    checks = flatten_verification_checks(
+        (plan.get("verification") or {}).get("checks", [])
+    )
     if not _plan_anchor_tables(plan) and not checks:
         print()
         print(
@@ -1993,9 +1919,7 @@ def _dry_run(
 
     if checks:
         print(f"\n--- 校验检查 ({len(checks)} 项) ---")
-        verification = plan.get("verification", {})
-        for raw_check in checks:
-            check = _check_with_compare_anchor(raw_check, verification)
+        for check in checks:
             line = f"  [{check['method']}] {qa_db}.{check['table']}"
             partition_col = check.get("partition_col")
             partition_value = check.get("partition_value")

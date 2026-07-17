@@ -95,7 +95,6 @@ def test_reserved_execution_marker_reference_is_blocked(tmp_path):
             }
         ],
     )
-
     manifest = compile_shadow_manifest(plan, tmp_path, FakePlanner({}))
 
     assert isinstance(manifest, CompiledShadowManifest)
@@ -292,6 +291,75 @@ PARTITION BY RANGE(stat_date) (
     assert truncate["prefill_actions"] == []
 
 
+def test_date_format_month_read_is_covered_by_daily_writer_slices(tmp_path):
+    sales_ddl = """CREATE TABLE dm.sales (
+  stat_date DATE,
+  amount DECIMAL(10, 2)
+) ENGINE=OLAP
+PARTITION BY RANGE(stat_date) (
+  PARTITION p202502 VALUES LESS THAN ("2025-03-01"),
+  PARTITION p_after VALUES LESS THAN (MAXVALUE)
+);"""
+    sales_task = _write_task(
+        tmp_path,
+        "sales",
+        "INSERT INTO dm.sales SELECT * FROM dm.ods_sales "
+        "WHERE stat_date = @etl_date;",
+    )
+    report_task = _write_task(
+        tmp_path,
+        "report",
+        "INSERT INTO dm.report SELECT * FROM dm.sales s "
+        "WHERE DATE_FORMAT(s.stat_date, '%Y-%m') = "
+        "DATE_FORMAT(@etl_date, '%Y-%m');",
+    )
+    february_days = [f"2025-02-{day:02d}" for day in range(1, 29)]
+    plan = _plan(
+        tmp_path,
+        baseline_ddl={"sales": sales_ddl, "report": _ddl("report")},
+        ddl_changes=[],
+        jobs=[
+            {
+                "job": "sales",
+                "target": "sales",
+                "file": sales_task,
+                "execution_values": february_days,
+            },
+            {
+                "job": "report",
+                "target": "report",
+                "file": report_task,
+                "execution_values": ["2025-02-01"],
+            },
+        ],
+    )
+    plan["execution_graph"] = {
+        "format_version": 1,
+        "project": "demo",
+        "jobs": ["sales", "report"],
+        "dependencies": {"report": ["sales"]},
+    }
+    planner = FakePlanner(
+        {
+            "sales": {
+                "materialized": "incremental",
+                "slice_param": "etl_date",
+                "slice_column": "stat_date",
+            },
+            "report": {
+                "materialized": "incremental",
+                "slice_param": "etl_date",
+                "slice_column": "stat_date",
+            },
+        }
+    )
+
+    manifest = compile_shadow_manifest(plan, tmp_path, planner)
+
+    assert manifest["prefill_actions"] == []
+    assert manifest["jobs"]["report"]["required_qa_tables"] == {"sales"}
+
+
 def test_unresolved_relation_role_is_a_compile_blocker(tmp_path):
     task = _write_task(
         tmp_path,
@@ -418,6 +486,12 @@ def test_prefill_does_not_satisfy_downstream_producer_readiness(tmp_path):
             },
         ],
     )
+    plan["execution_graph"] = {
+        "format_version": 1,
+        "project": "demo",
+        "jobs": ["sales", "report"],
+        "dependencies": {"report": ["sales"]},
+    }
     planner = FakePlanner(
         {
             "sales": {
@@ -432,4 +506,4 @@ def test_prefill_does_not_satisfy_downstream_producer_readiness(tmp_path):
 
     assert manifest["prefilled_tables"] == {"sales"}
     assert manifest["jobs"]["report"]["required_qa_tables"] == {"sales"}
-    assert manifest["producers"]["sales"] == "sales"
+    assert manifest["writers_by_relation"]["sales"] == {"sales"}

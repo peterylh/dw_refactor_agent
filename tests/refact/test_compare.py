@@ -52,10 +52,31 @@ class FakeConn:
         self.closed = True
 
 
-def _semantic_verification(checks, modes=None, warnings=None, **values):
+def _semantic_verification(
+    checks, modes=None, warnings=None, scopes=None, **values
+):
     modes = modes or {}
+    scopes = scopes or {}
+    grouped = {}
+    for check in checks:
+        table = check["table"]
+        group = grouped.setdefault(
+            table,
+            {
+                "table": table,
+                "scope": deepcopy(scopes.get(table) or {"mode": "full_table"}),
+                "methods": [],
+            },
+        )
+        for field in ("prod_table", "qa_table", "column_mapping"):
+            if field in check:
+                group[field] = deepcopy(check[field])
+        method = {"method": check["method"]}
+        if "exclude_columns" in check:
+            method["exclude_columns"] = list(check["exclude_columns"])
+        group["methods"].append(method)
     verification = {
-        "checks": checks,
+        "checks": list(grouped.values()),
         "target_semantics": {
             check["table"]: {
                 "resolved_mode": modes.get(check["table"], "equivalent")
@@ -110,7 +131,12 @@ def _write_compare_plan(plan_path, verification):
         "baseline_ddl": {},
         "ddl_changes": [],
         "jobs_to_run": [],
-        "job_dependencies": {},
+        "execution_graph": {
+            "format_version": 1,
+            "project": "shop",
+            "jobs": [],
+            "dependencies": {},
+        },
         "verification": deepcopy(verification),
         "analysis_snapshot": {
             "partition": "2024-12-31",
@@ -175,11 +201,12 @@ def test_run_checks_uses_compare_anchor_for_partition_filter(monkeypatch):
             "qa_db": "shop_dm_qa",
             "verification": _semantic_verification(
                 [{"table": "ads_store_performance", "method": "count"}],
-                compare_anchors={
+                scopes={
                     "ads_store_performance": {
-                        "time_column": "stat_month_date",
-                        "time_period": "M",
-                        "anchor_time_value": "2024-06-01",
+                        "mode": "time_slice",
+                        "column": "stat_month_date",
+                        "period": "M",
+                        "value": "2024-06-01",
                     }
                 },
             ),
@@ -310,10 +337,12 @@ def test_renamed_count_uses_distinct_prod_and_qa_tables(monkeypatch):
                 "method": "count",
             }
         ],
-        compare_anchors={
+        scopes={
             "dim_store": {
-                "time_column": "STAT_DATE",
-                "anchor_time_value": "2024-12-31",
+                "mode": "time_slice",
+                "column": "STAT_DATE",
+                "period": "D",
+                "value": "2024-12-31",
             }
         },
     )
@@ -435,7 +464,13 @@ def test_run_checks_short_circuit_scenarios(monkeypatch):
                     "schema_anchor_reason": (
                         "ADS table definitions must remain unchanged"
                     ),
-                    "checks": [{"table": "ads_final", "method": "count"}],
+                    "checks": [
+                        {
+                            "table": "ads_final",
+                            "scope": {"mode": "full_table"},
+                            "methods": [{"method": "count"}],
+                        }
+                    ],
                 },
             },
             {

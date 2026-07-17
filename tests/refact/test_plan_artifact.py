@@ -30,7 +30,12 @@ def _plan(ddl_by_table):
         "baseline_ddl": ddl_by_table,
         "ddl_changes": [],
         "jobs_to_run": [],
-        "job_dependencies": {},
+        "execution_graph": {
+            "format_version": 1,
+            "project": "demo",
+            "jobs": [],
+            "dependencies": {},
+        },
         "verification": {"checks": []},
         "analysis_snapshot": {
             "partition": None,
@@ -175,75 +180,87 @@ def test_load_persisted_plan_rejects_malformed_core_schema(
         load_persisted_verification_plan(plan_path)
 
 
-@pytest.mark.parametrize("job_dependencies", [None, [], ["prepare_sales"]])
-def test_load_persisted_plan_requires_job_dependency_mapping(
-    tmp_path, job_dependencies
+@pytest.mark.parametrize("execution_graph", [None, [], ["prepare_sales"]])
+def test_load_persisted_plan_requires_execution_graph_mapping(
+    tmp_path, execution_graph
 ):
     plan_path = tmp_path / "verification" / "plan.json"
     plan = _plan({})
-    plan["job_dependencies"] = job_dependencies
+    plan["execution_graph"] = execution_graph
     write_verification_plan(plan_path, plan)
 
-    with pytest.raises(
-        ArtifactFormatError, match="job_dependencies must be a mapping"
-    ):
+    with pytest.raises(ArtifactFormatError, match="execution_graph.*required"):
         load_persisted_verification_plan(plan_path)
 
 
-def test_load_persisted_plan_rejects_missing_job_dependency_snapshot(
+def test_load_persisted_plan_rejects_missing_execution_graph_snapshot(
     tmp_path,
 ):
     plan_path = tmp_path / "verification" / "plan.json"
     plan = _plan({})
-    plan.pop("job_dependencies")
+    plan.pop("execution_graph")
     write_verification_plan(plan_path, plan)
 
     with pytest.raises(
-        ArtifactFormatError, match="job_dependencies.*run analyze again"
+        ArtifactFormatError, match="execution_graph.*run analyze again"
     ):
         load_persisted_verification_plan(plan_path)
 
 
 @pytest.mark.parametrize(
-    "job_dependencies, expected",
+    "execution_graph, expected",
     [
         (
             {
-                "Build_Report": ["Prepare_Sales"],
-                "Prepare_Sales": [],
-                "Unknown": [],
+                "format_version": 1,
+                "project": "demo",
+                "jobs": ["Prepare_Sales", "Build_Report", "Unknown"],
+                "dependencies": {"Build_Report": ["Prepare_Sales"]},
             },
-            "unexpected Job key",
-        ),
-        (
-            {"Build_Report": ["Prepare_Sales"]},
-            "missing Job keys",
+            "exactly match",
         ),
         (
             {
-                "Build_Report": ["Unknown"],
-                "Prepare_Sales": [],
+                "format_version": 1,
+                "project": "demo",
+                "jobs": ["Build_Report"],
+                "dependencies": {},
             },
-            "references unknown Job",
+            "exactly match",
         ),
         (
             {
-                "Build_Report": ["Build_Report"],
-                "Prepare_Sales": [],
+                "format_version": 1,
+                "project": "demo",
+                "jobs": ["Prepare_Sales", "Build_Report"],
+                "dependencies": {"Build_Report": ["Unknown"]},
             },
-            "cannot depend on itself",
+            "unknown upstream Job",
         ),
         (
             {
-                "Build_Report": ["Prepare_Sales", "prepare_sales"],
-                "Prepare_Sales": [],
+                "format_version": 1,
+                "project": "demo",
+                "jobs": ["Prepare_Sales", "Build_Report"],
+                "dependencies": {"Build_Report": ["Build_Report"]},
             },
-            "duplicate upstream Job",
+            "self-edge",
+        ),
+        (
+            {
+                "format_version": 1,
+                "project": "demo",
+                "jobs": ["Prepare_Sales", "Build_Report"],
+                "dependencies": {
+                    "Build_Report": ["Prepare_Sales", "prepare_sales"]
+                },
+            },
+            "duplicate upstream",
         ),
     ],
 )
-def test_load_persisted_plan_validates_job_dependency_membership(
-    tmp_path, job_dependencies, expected
+def test_load_persisted_plan_validates_execution_graph_membership(
+    tmp_path, execution_graph, expected
 ):
     plan_path = tmp_path / "verification" / "plan.json"
     plan = _plan({})
@@ -251,29 +268,29 @@ def test_load_persisted_plan_validates_job_dependency_membership(
         {"job": "Prepare_Sales"},
         {"job": "Build_Report"},
     ]
-    plan["job_dependencies"] = job_dependencies
+    plan["execution_graph"] = execution_graph
     write_verification_plan(plan_path, plan)
 
     with pytest.raises(ArtifactFormatError, match=expected):
         load_persisted_verification_plan(plan_path)
 
 
-def test_load_persisted_plan_requires_sorted_job_dependencies(tmp_path):
+def test_load_persisted_plan_requires_topological_job_order(tmp_path):
     plan_path = tmp_path / "verification" / "plan.json"
     plan = _plan({})
     plan["jobs_to_run"] = [
-        {"job": "Extract_Source"},
-        {"job": "Prepare_Sales"},
         {"job": "Build_Report"},
+        {"job": "Prepare_Sales"},
     ]
-    plan["job_dependencies"] = {
-        "Build_Report": ["Prepare_Sales", "Extract_Source"],
-        "Extract_Source": [],
-        "Prepare_Sales": [],
+    plan["execution_graph"] = {
+        "format_version": 1,
+        "project": "demo",
+        "jobs": ["Prepare_Sales", "Build_Report"],
+        "dependencies": {"Build_Report": ["Prepare_Sales"]},
     }
     write_verification_plan(plan_path, plan)
 
-    with pytest.raises(ArtifactFormatError, match="must be sorted"):
+    with pytest.raises(ArtifactFormatError, match="topological order"):
         load_persisted_verification_plan(plan_path)
 
 
@@ -396,6 +413,68 @@ def test_load_verification_plan_rejects_legacy_embedded_ddl(tmp_path):
     )
 
     with pytest.raises(ValueError, match="legacy.*baseline_ddl.*analyze"):
+        load_verification_plan(plan_path)
+
+
+def test_load_verification_plan_rejects_legacy_flat_checks(tmp_path):
+    plan_path = tmp_path / "plan.json"
+    _write_persisted_plan(
+        plan_path,
+        {
+            "baseline_ddl_refs": {},
+            "verification": {
+                "checks": [{"table": "dws_order", "method": "count"}]
+            },
+        },
+    )
+
+    with pytest.raises(
+        ArtifactFormatError, match="checks.*unsupported fields.*method"
+    ):
+        load_verification_plan(plan_path)
+
+
+@pytest.mark.parametrize(
+    ("checks", "expected"),
+    [
+        (
+            [
+                {
+                    "table": "dws_order",
+                    "scope": {"mode": "full_table"},
+                    "methods": [{"method": "count", "table": "other_table"}],
+                }
+            ],
+            "unsupported fields.*table",
+        ),
+        (
+            [
+                {
+                    "table": "dws_order",
+                    "scope": {
+                        "mode": "full_table",
+                        "column": "stat_date",
+                    },
+                    "methods": [{"method": "count"}],
+                }
+            ],
+            "scope.*unsupported fields.*column",
+        ),
+    ],
+)
+def test_load_verification_plan_rejects_grouped_check_field_injection(
+    tmp_path, checks, expected
+):
+    plan_path = tmp_path / "plan.json"
+    _write_persisted_plan(
+        plan_path,
+        {
+            "baseline_ddl_refs": {},
+            "verification": {"checks": checks},
+        },
+    )
+
+    with pytest.raises(ArtifactFormatError, match=expected):
         load_verification_plan(plan_path)
 
 

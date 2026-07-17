@@ -12,7 +12,7 @@ SELECT
     COALESCE(ss.order_count, 0) AS store_order_count,
     NOW() AS etl_time
 FROM shop_dm.dwd_store s
-LEFT JOIN shop_dm.stage_store_sales_daily ss
+LEFT JOIN shop_dm.dws_store_sales_daily ss
     ON s.store_id = ss.store_id
     AND s.snapshot_date = ss.stat_date
 WHERE IF(@full_refresh = 1, 1=1, s.snapshot_date = CAST(@etl_date AS DATE));

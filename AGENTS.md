@@ -70,7 +70,10 @@
 - `dw_refactor_agent.lineage.import_lineage`：将本地血缘 JSON 快照化导入 Doris lineage 库。
 - `dw_refactor_agent.lineage.lineage_cli`：读取本地血缘 JSON 做表级/字段级查询和 HTML 子图导出。
 - `dw_refactor_agent.lineage.refresh_lineage_html`：刷新项目目录下的字段血缘与作业血缘 HTML。
-- `dw_refactor_agent.lineage.job_dag`：基于血缘边生成可序列化作业 DAG，供执行与重构验证复用。
+- `dw_refactor_agent.lineage.job_dag`：基于血缘构建候选 Job 依赖，用于校验和
+  process/temporary 安全检查；不再作为执行顺序的权威来源。
+- `dw-refactor schedule generate|validate|diff|reconcile`：从血缘生成、校验并保守更新
+  `warehouse.yaml` 的 `execution.schedule` 所指向的可信调度 DAG。
 - `src/dw_refactor_agent/lineage/ddl/`：维护 lineage 库快照表和核心元数据表 DDL。
 
 ## ETL 执行与初始化
@@ -134,9 +137,11 @@ done
 - `--etl-lookback-months`：展开截至 `--etl-end-date` 向前 N 个日历月的闭区间
 - `--etl-end-date`：日期窗口结束日，默认当天
 - `--full-refresh`：全量刷新模式
-- `--job-list`：只执行指定作业；若包含 process dataset consumer，必须同时包含已解析的 producer
+- `--job-list`：精确执行指定作业，不静默补齐调度上游；若包含不可复用的
+  process/temporary consumer，仍必须同时包含已解析的 producer
 - `--db-env`：`prod|test`
-- `--refresh-dag`：禁用 task cache，强制重新提取当前 SQL lineage 后生成 DAG
+- `--refresh-lineage`（兼容别名 `--refresh-dag`）：禁用 task cache，强制重新提取
+  当前 SQL lineage；不会改写可信调度 DAG
 - `--parallel`：并行度
 - `--validate-only`：仅构建并校验完整计划，不执行 SQL
 - `--skip-unsupported-history`：历史补跑时跳过不支持非当天回放的 current-state 作业
@@ -149,9 +154,11 @@ Doris 目标时也会在首个 SQL 写入前互斥，`--validate-only` 不加锁
 绝对目录；默认目录只保证同一执行宿主机内互斥。多执行宿主机必须把该绝对目录放在支持
 `flock` 的共享文件系统上，或由外部调度器保证等价互斥。
 
-每次 `task_run.py` 规划都会先从当前 task SQL 刷新 lineage，再立即从同一份 v2 payload
-生成并保存 Job DAG；正常模式复用 task 级缓存，`--refresh-dag` 强制 `--no-cache`。
-extractor 失败会在任何数据库读取或写入前终止规划。
+每次 `task_run.py` 规划都会先从当前 task SQL 刷新 lineage，再加载
+`execution.schedule` 指向的固定可信 DAG。Job 集合必须与 task SQL 精确一致；lineage
+只做 reachability warning 和 process/temporary 安全校验，不会改写执行顺序。正常模式
+复用 task 级缓存，`--refresh-lineage` 强制 `--no-cache`。extractor 失败会在任何数据库
+读取或写入前终止规划。某个 Job 失败时只阻断可信 DAG 中依赖它的下游，独立分支继续。
 若任一已选 process dataset consumer 的 producer 无法唯一解析（`not_found` 或
 `multiple_candidates`），无论是完整计划还是 `--job-list` 子集都会在 SQL 执行前失败；
 未选择该 consumer 的无关子集不受影响。
@@ -162,8 +169,12 @@ extractor 失败会在任何数据库读取或写入前终止规划。
 # shop 全量刷新
 python -m dw_refactor_agent.execution.task_run --project shop --full-refresh
 
-# finance_analytics 重新生成 DAG 后执行
-python -m dw_refactor_agent.execution.task_run --project finance_analytics --etl-dates 2025-01-15 --refresh-dag
+# finance_analytics 强制刷新 lineage 后按固定调度 DAG 执行
+python -m dw_refactor_agent.execution.task_run --project finance_analytics --etl-dates 2025-01-15 --refresh-lineage
+
+# 首次从 lineage 生成可信调度 DAG；后续默认只生成保守更新提案
+dw-refactor schedule generate --project finance_analytics
+dw-refactor schedule reconcile --project finance_analytics
 ```
 
 ### reinit_project.py

@@ -152,7 +152,8 @@ python -m dw_refactor_agent.lineage.refresh_lineage_html --project finance_analy
 
 ### job_dag.py
 
-基于血缘边构建可序列化作业 DAG，供正常执行与重构验证共用，支持：
+基于血缘边构建可序列化候选作业 DAG，供依赖检查、process/temporary 安全校验和
+调度 DAG 生成工具使用，支持：
 
 - `bfs_downstream()` 下游追踪
 - `topological_sort()` 拓扑排序
@@ -162,6 +163,11 @@ python -m dw_refactor_agent.lineage.refresh_lineage_html --project finance_analy
 生成的 DAG 文件位于：
 
 - `warehouses/{project}/artifacts/lineage/job_dag.json`
+
+该 artifacts 文件不是 run 或 shadow-run 的执行权威。执行器读取项目
+`warehouse.yaml` 的 `execution.schedule`，并以固定可信调度 DAG 排序；血缘差异默认只
+报告 warning。`dw-refactor schedule generate|validate|diff|reconcile` 负责在人工可审阅
+边界内把血缘事实转换为调度配置。
 
 ### lineage DDL
 

@@ -1,4 +1,5 @@
 import ast
+from datetime import date
 from pathlib import Path
 
 import pytest
@@ -8,6 +9,7 @@ import dw_refactor_agent.refactor.verification_plan as verification_plan_module
 from dw_refactor_agent.ddl_deriver.ddl_deriver import ColumnDef, TableDef
 from dw_refactor_agent.ddl_deriver.schema_ids import SchemaIdentityError
 from dw_refactor_agent.execution.planner import ExecutionPlanner
+from dw_refactor_agent.execution.schedule_graph import ScheduleGraph
 from dw_refactor_agent.refactor.semantic_mode import SemanticResolution
 from dw_refactor_agent.refactor.shadow_manifest import (
     compile_shadow_manifest,
@@ -24,6 +26,32 @@ from dw_refactor_agent.refactor.verification_plan import (
 
 TABLE_ID = "91ed8f6a-736d-4896-888e-f9225741b7fa"
 COLUMN_ID = "6bfa89c0-1e30-4f92-a25e-b5a39ab94880"
+_UNSET = object()
+
+
+def _check_group(
+    table,
+    *,
+    scope=None,
+    exclude_columns=_UNSET,
+    prod_table=None,
+    qa_table=None,
+    column_mapping=None,
+):
+    group = {
+        "table": table,
+        "scope": scope or {"mode": "full_table"},
+        "methods": [{"method": "count"}, {"method": "row_compare"}],
+    }
+    if exclude_columns is not _UNSET:
+        group["methods"][1]["exclude_columns"] = exclude_columns
+    if prod_table:
+        group["prod_table"] = prod_table
+    if qa_table:
+        group["qa_table"] = qa_table
+    if column_mapping:
+        group["column_mapping"] = column_mapping
+    return group
 
 
 def _configure_identity_project(tmp_path, monkeypatch, ddl):
@@ -361,12 +389,7 @@ def test_build_verification_plan_uses_baseline_ddl_changes_and_jobs(
     assert "checks" not in plan
     assert plan["verification"]["anchor_tables"] == ["dws_order"]
     assert plan["verification"]["checks"] == [
-        {"table": "dws_order", "method": "count"},
-        {
-            "table": "dws_order",
-            "method": "row_compare",
-            "exclude_columns": ["etl_time", "update_time"],
-        },
+        _check_group("dws_order", exclude_columns=["etl_time", "update_time"])
     ]
 
     config.clear_model_metadata_cache()
@@ -429,24 +452,9 @@ def test_build_verification_plan_writes_row_compare_exclude_columns_from_config(
     )
 
     assert plan["verification"]["checks"] == [
-        {"table": "ads_full_audit", "method": "count"},
-        {
-            "table": "ads_full_audit",
-            "method": "row_compare",
-            "exclude_columns": [],
-        },
-        {"table": "dws_customer", "method": "count"},
-        {
-            "table": "dws_customer",
-            "method": "row_compare",
-            "exclude_columns": ["etl_time"],
-        },
-        {"table": "dws_order", "method": "count"},
-        {
-            "table": "dws_order",
-            "method": "row_compare",
-            "exclude_columns": ["etl_time", "update_time"],
-        },
+        _check_group("ads_full_audit", exclude_columns=[]),
+        _check_group("dws_customer", exclude_columns=["etl_time"]),
+        _check_group("dws_order", exclude_columns=["etl_time", "update_time"]),
     ]
 
     config.clear_model_metadata_cache()
@@ -663,8 +671,7 @@ def test_build_verification_plan_self_anchors_sql_only_task_without_downstream(
         },
     ]
     assert plan["verification"]["checks"] == [
-        {"table": "dws_terminal", "method": "count"},
-        {"table": "dws_terminal", "method": "row_compare"},
+        _check_group("dws_terminal"),
     ]
 
     config.clear_model_metadata_cache()
@@ -732,8 +739,7 @@ def test_build_verification_plan_does_not_self_anchor_when_downstream_anchor_exi
     assert plan["verification"]["data_anchor_status"] == "ready"
     assert "self_anchor_tables" not in plan["verification"]
     assert plan["verification"]["checks"] == [
-        {"table": "ads_final", "method": "count"},
-        {"table": "ads_final", "method": "row_compare"},
+        _check_group("ads_final"),
     ]
 
     config.clear_model_metadata_cache()
@@ -1025,11 +1031,9 @@ PROPERTIES ("replication_num" = "1");"""
     )
 
     assert "partition_info" not in plan
-    assert plan["verification"]["compare_anchors"] == {"dws_order": {}}
     assert "checks" not in plan
     assert plan["verification"]["checks"] == [
-        {"table": "dws_order", "method": "count"},
-        {"table": "dws_order", "method": "row_compare"},
+        _check_group("dws_order"),
     ]
     assert plan["verification"]["warnings"] == [
         {
@@ -1145,13 +1149,17 @@ execution:
         partition="2024-06-15",
     )
 
-    assert plan["verification"]["compare_anchors"] == {
-        "ads_store_performance": {
-            "time_column": "stat_month_date",
-            "time_period": "M",
-            "anchor_time_value": "2024-06-01",
-        }
-    }
+    assert plan["verification"]["checks"] == [
+        _check_group(
+            "ads_store_performance",
+            scope={
+                "mode": "time_slice",
+                "column": "stat_month_date",
+                "period": "M",
+                "value": "2024-06-01",
+            },
+        )
+    ]
     jobs = {job["job"]: job for job in plan["jobs_to_run"]}
     assert jobs["dws_store_sales_daily"]["execution_values"][0] == "2024-06-01"
     assert (
@@ -1336,7 +1344,7 @@ execution:
         "database": "demo_dm",
         "table": "dwd_order_detail",
     }
-    assert "dwd_order_detail" not in summary["producers"]
+    assert "dwd_order_detail" not in summary["writers_by_relation"]
     assert summary["blockers"] == []
 
     config.clear_model_metadata_cache()
@@ -1586,13 +1594,17 @@ execution:
         partition="2024-06-01 03:20:00",
     )
 
-    assert plan["verification"]["compare_anchors"] == {
-        "ads_hourly": {
-            "time_column": "stat_hour",
-            "time_period": "H",
-            "anchor_time_value": "2024-06-01 03:00:00",
-        }
-    }
+    assert plan["verification"]["checks"] == [
+        _check_group(
+            "ads_hourly",
+            scope={
+                "mode": "time_slice",
+                "column": "stat_hour",
+                "period": "H",
+                "value": "2024-06-01 03:00:00",
+            },
+        )
+    ]
     jobs = {job["job"]: job for job in plan["jobs_to_run"]}
     assert jobs["ads_hourly"]["execution_values"] == ["2024-06-01 03:00:00"]
 
@@ -1694,12 +1706,8 @@ grain:
     )
 
     assert "partition_info" not in plan
-    assert plan["verification"]["compare_anchors"] == {
-        "ads_store_performance": {}
-    }
     assert plan["verification"]["checks"] == [
-        {"table": "ads_store_performance", "method": "count"},
-        {"table": "ads_store_performance", "method": "row_compare"},
+        _check_group("ads_store_performance"),
     ]
     assert plan["verification"]["warnings"] == [
         {
@@ -1746,7 +1754,6 @@ def test_build_verification_plan_uses_full_table_compare_without_time_grain(
     )
 
     assert plan["verification"]["data_anchor_status"] == "ready"
-    assert plan["verification"]["compare_anchors"] == {"ads_dashboard": {}}
     assert plan["verification"]["warnings"] == [
         {
             "type": "full_table_compare",
@@ -1758,8 +1765,7 @@ def test_build_verification_plan_uses_full_table_compare_without_time_grain(
         }
     ]
     assert plan["verification"]["checks"] == [
-        {"table": "ads_dashboard", "method": "count"},
-        {"table": "ads_dashboard", "method": "row_compare"},
+        _check_group("ads_dashboard"),
     ]
 
     config.clear_model_metadata_cache()
@@ -2116,9 +2122,14 @@ def test_build_verification_plan_maps_output_tables_to_explicit_job_names(
         ("Prepare_Sales", "dwd_order", "DWD"),
         ("Build_Report", "ads_order", "ADS"),
     ]
-    assert plan["job_dependencies"] == {
-        "Build_Report": ["Prepare_Sales"],
-        "Prepare_Sales": [],
+    assert plan["execution_graph"] == {
+        "format_version": 1,
+        "project": "demo",
+        "jobs": ["Prepare_Sales", "Build_Report"],
+        "dependencies": {
+            "Build_Report": ["Prepare_Sales"],
+            "Prepare_Sales": [],
+        },
     }
 
     config.clear_model_metadata_cache()
@@ -2175,6 +2186,67 @@ def test_explicit_job_mapping_preserves_qualified_dataset_identity(
     )
 
     assert set(entries) == {"build_b"}
+
+
+def test_schedule_writer_mapping_ignores_full_refresh_companion():
+    lineage_data = {
+        "jobs": [
+            {
+                "name": "build_sales",
+                "outputs": ["internal.shop_dm.sales"],
+            },
+            {
+                "name": "build_sales_full_refresh",
+                "outputs": ["internal.shop_dm.sales"],
+            },
+        ]
+    }
+    schedule = ScheduleGraph("shop", ["build_sales"], {})
+
+    writers = verification_plan_module._lineage_writer_jobs_for_tables(
+        "shop",
+        lineage_data,
+        {"sales"},
+        schedule,
+    )
+
+    assert writers == {"build_sales"}
+
+
+def test_lineage_execution_windows_apply_to_all_writers(monkeypatch):
+    jobs = [
+        {"job": "write_even", "target": "shared_daily"},
+        {"job": "write_odd", "target": "shared_daily"},
+    ]
+    monkeypatch.setattr(
+        verification_plan_module,
+        "_table_execution_slice_metadata",
+        lambda *_args: {
+            "param": "etl_date",
+            "time_column": "stat_date",
+            "time_period": "D",
+        },
+    )
+
+    verification_plan_module._apply_execution_values_by_lineage(
+        "shop",
+        jobs,
+        [
+            {
+                "table": "shared_daily",
+                "time_period": "D",
+                "start": date(2024, 6, 15),
+                "end_exclusive": date(2024, 6, 16),
+            }
+        ],
+        [],
+        {"tables": [], "jobs": [], "edges": []},
+    )
+
+    assert [job["execution_values"] for job in jobs] == [
+        ["2024-06-15"],
+        ["2024-06-15"],
+    ]
 
 
 def test_explicit_job_mapping_rejects_multiple_managed_targets(
@@ -2546,19 +2618,12 @@ def test_semantic_rename_checks_keep_prod_qa_and_column_mapping(
     )
 
     assert plan["verification"]["checks"] == [
-        {
-            "table": "dim_store",
-            "prod_table": "dwd_store",
-            "qa_table": "dim_store",
-            "method": "count",
-        },
-        {
-            "table": "dim_store",
-            "prod_table": "dwd_store",
-            "qa_table": "dim_store",
-            "method": "row_compare",
-            "column_mapping": column_mapping,
-        },
+        _check_group(
+            "dim_store",
+            prod_table="dwd_store",
+            qa_table="dim_store",
+            column_mapping=column_mapping,
+        )
     ]
 
 
