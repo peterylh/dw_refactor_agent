@@ -110,11 +110,12 @@ def test_format_lineage_output_statistics_counts_dataset_types_and_warnings():
         "  表数: 4",
         "  数据集类型: managed=1, process=1, temporary=1, external=1",
         "  生产者警告: 2",
+        "  多作业写同一数据集提示: 0",
         "  多输出作业警告: 0",
     ]
 
 
-def test_format_lineage_output_statistics_deduplicates_multiple_producer_warning():
+def test_format_lineage_output_statistics_summarizes_multiple_producers_as_info():
     output = {
         "tables": [],
         "edges": [],
@@ -130,8 +131,9 @@ def test_format_lineage_output_statistics_deduplicates_multiple_producer_warning
         ],
     }
 
-    assert lineage_extractor.format_lineage_output_statistics(output)[-2:] == [
-        "  生产者警告: 1",
+    assert lineage_extractor.format_lineage_output_statistics(output)[-3:] == [
+        "  生产者警告: 0",
+        "  多作业写同一数据集提示: 1",
         "  多输出作业警告: 0",
     ]
 
@@ -163,25 +165,39 @@ def test_format_lineage_output_statistics_counts_multi_output_job_warning():
         "diagnostics": [],
     }
 
-    assert lineage_extractor.format_lineage_output_statistics(output)[-2:] == [
+    assert lineage_extractor.format_lineage_output_statistics(output)[-3:] == [
         "  生产者警告: 0",
+        "  多作业写同一数据集提示: 0",
         "  多输出作业警告: 1",
     ]
 
 
-def test_warn_multiple_producer_datasets_logs_actionable_warning(caplog):
+def test_warn_multiple_producer_datasets_logs_one_informational_summary(
+    caplog,
+):
     jobs = [
         {"name": "job_b", "outputs": ["internal.demo_dm.shared"]},
         {"name": "job_a", "outputs": ["INTERNAL.DEMO_DM.SHARED"]},
+        {"name": "job_c", "outputs": ["internal.demo_dm.other"]},
+        {"name": "job_d", "outputs": ["INTERNAL.DEMO_DM.OTHER"]},
     ]
 
-    with caplog.at_level(logging.WARNING):
+    with caplog.at_level(logging.INFO):
         lineage_extractor.warn_multiple_producer_datasets(jobs)
 
-    assert [record.levelno for record in caplog.records] == [logging.WARNING]
+    assert [record.levelno for record in caplog.records] == [logging.INFO]
     assert [record.getMessage() for record in caplog.records] == [
-        "数据集 internal.demo_dm.shared 由多个作业生产: job_a, job_b"
+        "多作业写同一数据集汇总: 2 个数据集, 涉及 4 个作业"
     ]
+
+
+def test_warn_multiple_producer_datasets_is_silent_without_conflicts(caplog):
+    jobs = [{"name": "job_a", "outputs": ["internal.demo_dm.orders"]}]
+
+    with caplog.at_level(logging.INFO):
+        lineage_extractor.warn_multiple_producer_datasets(jobs)
+
+    assert caplog.records == []
 
 
 def test_warn_jobs_with_multiple_non_process_outputs_is_actionable(caplog):

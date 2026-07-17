@@ -75,7 +75,6 @@ if TYPE_CHECKING:
         format_layer_statistics,
         format_lineage_output_statistics,
         warn_jobs_with_multiple_non_process_outputs,
-        warn_multiple_producer_datasets,
     )
     from dw_refactor_agent.lineage.lineage_schema import (
         build_schema_from_project_ddl,
@@ -394,7 +393,6 @@ def main():
         schema,
         task_results=extraction_result["task_results"],
     )
-    warn_multiple_producer_datasets(output["jobs"])
     warn_jobs_with_multiple_non_process_outputs(
         output["jobs"],
         output["tables"],

@@ -747,9 +747,6 @@ def format_lineage_output_statistics(output):
         for diagnostic in output.get("diagnostics") or []
         if diagnostic.get("reason") != "multiple_candidates"
     )
-    producer_warning_count = (
-        multiple_producer_count + other_producer_diagnostic_count
-    )
     direct_count = sum(
         1 for edge in edges if edge.get("relation_type") == "direct"
     )
@@ -771,19 +768,29 @@ def format_lineage_output_statistics(output):
             f"{dataset_type}={dataset_counts[dataset_type]}"
             for dataset_type in dataset_types
         ),
-        f"  生产者警告: {producer_warning_count}",
+        f"  生产者警告: {other_producer_diagnostic_count}",
+        f"  多作业写同一数据集提示: {multiple_producer_count}",
         f"  多输出作业警告: {multiple_non_process_output_count}",
     ]
 
 
 def warn_multiple_producer_datasets(jobs: Sequence[dict]) -> None:
-    """Log one warning for every dataset written by multiple Jobs."""
-    for warning in find_multiple_producer_datasets(jobs):
-        _BINDINGS.runtime().LOGGER.warning(
-            "数据集 %s 由多个作业生产: %s",
-            warning["dataset"],
-            ", ".join(warning["producer_jobs"]),
-        )
+    """Log one informational summary for datasets with multiple Jobs.
+
+    The legacy name remains available through the extractor facade, but this
+    condition is informational and must not contribute warning records.
+    """
+    datasets = find_multiple_producer_datasets(jobs)
+    if not datasets:
+        return
+    producer_jobs = {
+        job for dataset in datasets for job in dataset["producer_jobs"]
+    }
+    _BINDINGS.runtime().LOGGER.info(
+        "多作业写同一数据集汇总: %d 个数据集, 涉及 %d 个作业",
+        len(datasets),
+        len(producer_jobs),
+    )
 
 
 def warn_jobs_with_multiple_non_process_outputs(
