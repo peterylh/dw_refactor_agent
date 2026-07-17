@@ -20,10 +20,18 @@ from dw_refactor_agent.assessment.llm.metadata_flow import MetadataFlowPlan
 from dw_refactor_agent.assessment.llm.model_metadata_updates import (
     update_model_yaml,
 )
-from dw_refactor_agent.assessment.llm.table_inspector import TableInspectResult
+from dw_refactor_agent.assessment.llm.table_inspector import (
+    TableInspectResult,
+    dict_to_result,
+    result_to_cache_dict,
+)
 from dw_refactor_agent.config import TEXT_ENCODING
 
 MID_LAYERS = {"DWD", "DWS", "DIM"}
+CHECKPOINT_MANIFEST_VERSION = 2
+MAX_CHECKPOINT_VARIANTS_PER_TABLE = 4
+MAX_CHECKPOINT_INVALIDATIONS_PER_TABLE = 8
+INSPECTION_RESULT_SUFFIX = ".inspection.json"
 
 
 class GenerateCheckpointLockError(RuntimeError):
@@ -44,7 +52,7 @@ def _is_mid_model(metadata: dict[str, Any]) -> bool:
 
 
 class GenerateModelCheckpoint:
-    """Persist completed MID candidates without touching formal models."""
+    """Persist and resume completed MID inspections outside formal models."""
 
     def __init__(
         self,
@@ -52,6 +60,7 @@ class GenerateModelCheckpoint:
         *,
         project_dir: Path,
         plan: MetadataFlowPlan,
+        resume_enabled: bool = True,
     ) -> None:
         self.project = project
         self.project_dir = Path(project_dir)
@@ -66,12 +75,24 @@ class GenerateModelCheckpoint:
         self._acquire_process_lock()
         try:
             self._recover_pending_write()
-            self._clear_previous_models()
+            previous_manifest = self._load_existing_manifest()
+            (
+                self._resume_cache,
+                preserved_tables,
+                preserved_result_names,
+                resumed_from_run_id,
+            ) = self._prepare_resume_state(
+                previous_manifest,
+                resume_enabled=resume_enabled,
+            )
+            self._prune_previous_files(preserved_result_names)
             self._manifest: dict[str, Any] = {
-                "version": 1,
+                "version": CHECKPOINT_MANIFEST_VERSION,
                 "project": project,
                 "mode": "generate",
                 "run_id": self.run_id,
+                "resumed_from_run_id": resumed_from_run_id,
+                "resume_enabled": bool(resume_enabled),
                 "status": "running",
                 "published": False,
                 "created_at": _utc_timestamp(),
@@ -81,10 +102,9 @@ class GenerateModelCheckpoint:
                     for metadata in plan.base_model_metadata.values()
                     if _is_mid_model(metadata)
                 ),
-                "checkpoint_model_count": 0,
-                "inspected_table_count": 0,
-                "tables": {},
+                "tables": preserved_tables,
             }
+            self._refresh_manifest_counts(self._manifest)
             self._write_manifest()
         except BaseException:
             self.close()
@@ -144,11 +164,187 @@ class GenerateModelCheckpoint:
         finally:
             checkpoint.close()
 
-    def _clear_previous_models(self) -> None:
+    def resume_cache(self) -> dict[str, Any]:
+        """Return validated inspection variants available to this run."""
+        with self._lock:
+            return copy.deepcopy(self._resume_cache)
+
+    def _mid_table_names(self) -> set[str]:
+        return {
+            table_name
+            for table_name, metadata in self.plan.base_model_metadata.items()
+            if _is_mid_model(metadata)
+        }
+
+    def _prepare_resume_state(
+        self,
+        manifest: dict[str, Any],
+        *,
+        resume_enabled: bool,
+    ) -> tuple[dict[str, Any], dict[str, Any], set[str], str | None]:
+        if not self._manifest_is_resumable(manifest, resume_enabled):
+            return {}, {}, set(), None
+
+        resume_cache: dict[str, Any] = {}
+        preserved_tables: dict[str, Any] = {}
+        preserved_result_names: set[str] = set()
+        tables = manifest.get("tables") or {}
+        for table_name, raw_entry in tables.items():
+            if table_name not in self._mid_table_names():
+                continue
+            if not isinstance(raw_entry, dict):
+                continue
+            variants, rejected_hashes = self._validated_resume_variants(
+                table_name,
+                raw_entry.get("inspection_variants"),
+            )
+            invalidated_hashes = self._normalized_context_hashes(
+                raw_entry.get("invalidated_context_hashes")
+            )
+            for context_hash in rejected_hashes:
+                if context_hash not in invalidated_hashes:
+                    invalidated_hashes.append(context_hash)
+            for context_hash in variants:
+                with suppress(ValueError):
+                    invalidated_hashes.remove(context_hash)
+            invalidated_hashes = invalidated_hashes[
+                -MAX_CHECKPOINT_INVALIDATIONS_PER_TABLE:
+            ]
+            if not variants and not invalidated_hashes:
+                continue
+            variants = dict(
+                list(variants.items())[-MAX_CHECKPOINT_VARIANTS_PER_TABLE:]
+            )
+            cache_variants = {
+                context_hash: {"result": item["result"]}
+                for context_hash, item in variants.items()
+            }
+            resume_cache[table_name] = {
+                "variants": cache_variants,
+                "invalid_context_hashes": invalidated_hashes,
+            }
+            variant_metadata = {
+                context_hash: item["metadata"]
+                for context_hash, item in variants.items()
+            }
+            preserved_result_names.update(
+                str(item["metadata"]["result_name"])
+                for item in variants.values()
+            )
+            preserved_tables[table_name] = {
+                "target_path": str(self._target_path(table_name)),
+                "stage": "resume_candidate",
+                "updated_at": _utc_timestamp(),
+                "revision": int(raw_entry.get("revision") or 0),
+                "inspection_variants": variant_metadata,
+                "invalidated_context_hashes": invalidated_hashes,
+                "resumed_context_hashes": [],
+            }
+        source_run_id = str(manifest.get("run_id") or "") or None
+        if not resume_cache:
+            source_run_id = None
+        return (
+            resume_cache,
+            preserved_tables,
+            preserved_result_names,
+            source_run_id,
+        )
+
+    def _manifest_is_resumable(
+        self,
+        manifest: dict[str, Any],
+        resume_enabled: bool,
+    ) -> bool:
+        return bool(
+            resume_enabled
+            and manifest.get("version") == CHECKPOINT_MANIFEST_VERSION
+            and manifest.get("project") == self.project
+            and manifest.get("mode") == "generate"
+            and isinstance(manifest.get("tables"), dict)
+        )
+
+    def _validated_resume_variants(
+        self,
+        table_name: str,
+        raw_variants: Any,
+    ) -> tuple[dict[str, dict[str, Any]], list[str]]:
+        if not isinstance(raw_variants, dict):
+            return {}, []
+        variants: dict[str, dict[str, Any]] = {}
+        rejected_hashes: list[str] = []
+        for context_hash, raw_metadata in raw_variants.items():
+            context_hash = str(context_hash or "")
+            if not context_hash:
+                continue
+            rejected_hashes.append(context_hash)
+            if not isinstance(raw_metadata, dict):
+                continue
+            result_name = str(raw_metadata.get("result_name") or "")
+            expected_digest = str(raw_metadata.get("content_sha256") or "")
+            result_path = self._safe_root_file(result_name)
+            if (
+                result_path is None
+                or not result_name.endswith(INSPECTION_RESULT_SUFFIX)
+                or not expected_digest
+                or self._file_digest(result_path) != expected_digest
+            ):
+                continue
+            try:
+                payload = json.loads(
+                    result_path.read_text(encoding=TEXT_ENCODING)
+                )
+            except (OSError, ValueError):
+                continue
+            if not isinstance(payload, dict):
+                continue
+            result = dict_to_result(
+                payload,
+                table_name=table_name,
+                declared_layer=str(payload.get("declared_layer") or ""),
+            )
+            if (
+                result.table_name != table_name
+                or result.status == "blocked"
+                or result.confidence
+                < self.plan.resolution_policy.min_llm_confidence
+                or raw_metadata.get("resume_eligible") is False
+            ):
+                continue
+            metadata = dict(raw_metadata)
+            metadata.update(
+                {
+                    "result_name": result_name,
+                    "content_sha256": expected_digest,
+                    "inspection_status": result.status,
+                    "confidence": result.confidence,
+                }
+            )
+            variants[context_hash] = {
+                "result": payload,
+                "metadata": metadata,
+            }
+            rejected_hashes.remove(context_hash)
+        return variants, rejected_hashes
+
+    @staticmethod
+    def _normalized_context_hashes(raw_hashes: Any) -> list[str]:
+        if not isinstance(raw_hashes, list):
+            return []
+        hashes: list[str] = []
+        for raw_hash in raw_hashes:
+            context_hash = str(raw_hash or "")
+            if context_hash and context_hash not in hashes:
+                hashes.append(context_hash)
+        return hashes
+
+    def _prune_previous_files(self, preserved_result_names: set[str]) -> None:
         if not self.root.exists():
             return
         for path in self.root.glob("*.yaml"):
             path.unlink()
+        for path in self.root.glob(f"*{INSPECTION_RESULT_SUFFIX}"):
+            if path.name not in preserved_result_names:
+                path.unlink()
         for path in self.root.glob(".*.pending"):
             path.unlink()
 
@@ -185,6 +381,11 @@ class GenerateModelCheckpoint:
         except OSError:
             return None
 
+    def _safe_root_file(self, name: str) -> Path | None:
+        if not name or Path(name).name != name:
+            return None
+        return self.root / name
+
     def _write_manifest(self) -> None:
         self._manifest["updated_at"] = _utc_timestamp()
         self._atomic_write(
@@ -198,13 +399,59 @@ class GenerateModelCheckpoint:
         if not isinstance(tables, dict):
             tables = {}
             manifest["tables"] = tables
-        manifest["checkpoint_model_count"] = len(tables)
-        manifest["inspected_table_count"] = sum(
-            1
+        active_entries = [
+            item
             for item in tables.values()
             if isinstance(item, dict)
-            and item.get("inspection_status") is not None
+            and item.get("stage") != "resume_candidate"
+        ]
+        manifest["checkpoint_model_count"] = len(active_entries)
+        manifest["inspected_table_count"] = sum(
+            1
+            for item in active_entries
+            if item.get("inspection_status") is not None
         )
+        manifest["resume_candidate_table_count"] = sum(
+            1
+            for item in tables.values()
+            if isinstance(item, dict) and item.get("inspection_variants")
+        )
+        manifest["resume_candidate_variant_count"] = sum(
+            len(item.get("inspection_variants") or {})
+            for item in tables.values()
+            if isinstance(item, dict)
+        )
+        manifest["resumed_table_count"] = sum(
+            1
+            for item in tables.values()
+            if isinstance(item, dict) and item.get("resumed_context_hashes")
+        )
+        manifest["resumed_variant_count"] = sum(
+            len(item.get("resumed_context_hashes") or [])
+            for item in tables.values()
+            if isinstance(item, dict)
+        )
+        manifest["invalidated_variant_count"] = sum(
+            len(item.get("invalidated_context_hashes") or [])
+            for item in tables.values()
+            if isinstance(item, dict)
+        )
+
+    def _pending_file_specs(
+        self,
+        pending: dict[str, Any],
+        table_name: str,
+    ) -> list[dict[str, str]]:
+        raw_files = pending.get("files")
+        if isinstance(raw_files, list):
+            return [item for item in raw_files if isinstance(item, dict)]
+        return [
+            {
+                "staged_name": str(pending.get("staged_name") or ""),
+                "target_name": f"{table_name}.yaml",
+                "content_sha256": str(pending.get("content_sha256") or ""),
+            }
+        ]
 
     def _recover_pending_write(self) -> None:
         manifest = self._load_existing_manifest()
@@ -213,29 +460,31 @@ class GenerateModelCheckpoint:
             return
         table_name = str(pending.get("table") or "")
         entry = pending.get("entry")
-        staged_name = str(pending.get("staged_name") or "")
-        expected_digest = str(pending.get("content_sha256") or "")
-        checkpoint_path = self.root / f"{table_name}.yaml"
-        staged_path = (
-            self.root / staged_name
-            if staged_name and Path(staged_name).name == staged_name
-            else None
-        )
-        if (
-            staged_path is not None
-            and staged_path.exists()
-            and expected_digest
-        ):
-            if self._file_digest(staged_path) == expected_digest:
-                staged_path.replace(checkpoint_path)
-            else:
+        file_specs = self._pending_file_specs(pending, table_name)
+        files_recovered = bool(file_specs)
+        for spec in file_specs:
+            staged_path = self._safe_root_file(
+                str(spec.get("staged_name") or "")
+            )
+            target_path = self._safe_root_file(
+                str(spec.get("target_name") or "")
+            )
+            expected_digest = str(spec.get("content_sha256") or "")
+            if target_path is None or not expected_digest:
+                files_recovered = False
+                continue
+            if self._file_digest(target_path) == expected_digest:
+                continue
+            if (
+                staged_path is not None
+                and self._file_digest(staged_path) == expected_digest
+            ):
+                staged_path.replace(target_path)
+                continue
+            files_recovered = False
+            if staged_path is not None and staged_path.exists():
                 staged_path.unlink()
-        if (
-            table_name
-            and isinstance(entry, dict)
-            and expected_digest
-            and self._file_digest(checkpoint_path) == expected_digest
-        ):
+        if table_name and isinstance(entry, dict) and files_recovered:
             tables = manifest.setdefault("tables", {})
             if isinstance(tables, dict):
                 tables[table_name] = entry
@@ -255,26 +504,43 @@ class GenerateModelCheckpoint:
             return Path(target_path)
         return self.project_dir / "mid" / "models" / f"{table_name}.yaml"
 
+    def _inspection_result_name(
+        self,
+        table_name: str,
+        context_hash: str,
+    ) -> str:
+        if Path(table_name).name != table_name:
+            raise ValueError(f"invalid checkpoint table name: {table_name!r}")
+        return f"{table_name}.{context_hash}{INSPECTION_RESULT_SUFFIX}"
+
+    def _stage_file(
+        self,
+        target_path: Path,
+        content: str,
+    ) -> tuple[Path, dict[str, str]]:
+        staged_path = target_path.with_name(
+            f".{target_path.name}.{uuid4().hex}.pending"
+        )
+        staged_path.write_text(content, encoding=TEXT_ENCODING)
+        return staged_path, {
+            "staged_name": staged_path.name,
+            "target_name": target_path.name,
+            "content_sha256": self._content_digest(content),
+        }
+
     def _write_model(
         self,
         table_name: str,
         metadata: dict[str, Any],
         *,
         stage: str,
-        inspection_status: str | None = None,
-        confidence: float | None = None,
-        retry_count: int | None = None,
-        validation: dict[str, Any] | None = None,
+        inspection_result: TableInspectResult | None = None,
     ) -> Path:
         checkpoint_path = self.root / f"{table_name}.yaml"
         rendered_metadata = yaml.safe_dump(
             metadata,
             allow_unicode=True,
             sort_keys=False,
-        )
-        content_digest = self._content_digest(rendered_metadata)
-        staged_path = checkpoint_path.with_name(
-            f".{checkpoint_path.name}.{uuid4().hex}.pending"
         )
         previous = self._manifest["tables"].get(table_name) or {}
         entry = {
@@ -283,32 +549,109 @@ class GenerateModelCheckpoint:
             "stage": stage,
             "updated_at": _utc_timestamp(),
             "revision": int(previous.get("revision") or 0) + 1,
+            "inspection_variants": dict(
+                previous.get("inspection_variants") or {}
+            ),
+            "invalidated_context_hashes": self._normalized_context_hashes(
+                previous.get("invalidated_context_hashes")
+            ),
+            "resumed_context_hashes": list(
+                previous.get("resumed_context_hashes") or []
+            ),
         }
-        for key, value in (
-            ("inspection_status", inspection_status),
-            ("confidence", confidence),
-            ("retry_count", retry_count),
-            ("validation", validation),
-        ):
-            if value is not None:
-                entry[key] = value
-            elif key in previous:
-                entry[key] = previous[key]
-        staged_path.write_text(rendered_metadata, encoding=TEXT_ENCODING)
+        staged_files: list[tuple[Path, Path, dict[str, str]]] = []
+        if inspection_result is not None:
+            entry.update(
+                {
+                    "inspection_status": inspection_result.status,
+                    "confidence": inspection_result.confidence,
+                    "retry_count": inspection_result.retry_count,
+                    "validation": dict(inspection_result.validation or {}),
+                }
+            )
+            context_hash = str(inspection_result.context_hash or "")
+            if context_hash:
+                result_name = self._inspection_result_name(
+                    table_name,
+                    context_hash,
+                )
+                result_path = self.root / result_name
+                rendered_result = json.dumps(
+                    result_to_cache_dict(inspection_result),
+                    ensure_ascii=False,
+                    indent=2,
+                )
+                staged_path, file_spec = self._stage_file(
+                    result_path,
+                    rendered_result,
+                )
+                staged_files.append((staged_path, result_path, file_spec))
+                entry["inspection_variants"][context_hash] = {
+                    "result_name": result_name,
+                    "content_sha256": file_spec["content_sha256"],
+                    "inspection_status": inspection_result.status,
+                    "confidence": inspection_result.confidence,
+                    "resume_eligible": bool(inspection_result.resume_eligible),
+                    "updated_at": _utc_timestamp(),
+                }
+                is_resumable = bool(
+                    inspection_result.status != "blocked"
+                    and inspection_result.confidence
+                    >= self.plan.resolution_policy.min_llm_confidence
+                    and inspection_result.resume_eligible
+                )
+                invalidated_hashes = entry["invalidated_context_hashes"]
+                if is_resumable:
+                    with suppress(ValueError):
+                        invalidated_hashes.remove(context_hash)
+                elif context_hash not in invalidated_hashes:
+                    invalidated_hashes.append(context_hash)
+                    del invalidated_hashes[
+                        :-MAX_CHECKPOINT_INVALIDATIONS_PER_TABLE
+                    ]
+                while (
+                    len(entry["inspection_variants"])
+                    > MAX_CHECKPOINT_VARIANTS_PER_TABLE
+                ):
+                    entry["inspection_variants"].pop(
+                        next(iter(entry["inspection_variants"]))
+                    )
+                if inspection_result.reuse_source == "checkpoint":
+                    resumed_hashes = entry["resumed_context_hashes"]
+                    if context_hash not in resumed_hashes:
+                        resumed_hashes.append(context_hash)
+        else:
+            for key in (
+                "inspection_status",
+                "confidence",
+                "retry_count",
+                "validation",
+            ):
+                if key in previous:
+                    entry[key] = previous[key]
+
+        yaml_staged_path, yaml_spec = self._stage_file(
+            checkpoint_path,
+            rendered_metadata,
+        )
+        staged_files.append((yaml_staged_path, checkpoint_path, yaml_spec))
         self._manifest["pending_write"] = {
             "table": table_name,
             "entry": entry,
-            "staged_name": staged_path.name,
-            "content_sha256": content_digest,
+            "staged_name": yaml_staged_path.name,
+            "content_sha256": yaml_spec["content_sha256"],
+            "files": [spec for _, _, spec in staged_files],
         }
         try:
             self._write_manifest()
         except BaseException:
             self._manifest.pop("pending_write", None)
-            with suppress(OSError):
-                staged_path.unlink()
+            for staged_path, _, _ in staged_files:
+                with suppress(OSError):
+                    staged_path.unlink()
             raise
-        staged_path.replace(checkpoint_path)
+        for staged_path, target_path, _ in staged_files:
+            staged_path.replace(target_path)
         self._manifest["tables"][table_name] = entry
         self._manifest.pop("pending_write", None)
         self._refresh_manifest_counts(self._manifest)
@@ -316,7 +659,7 @@ class GenerateModelCheckpoint:
         return checkpoint_path
 
     def write_inspection_result(self, result: TableInspectResult) -> None:
-        """Write one MID YAML immediately after its inspection completes."""
+        """Write one MID YAML and resumable result after inspection."""
         with self._lock:
             table_name = result.table_name
             existing = dict(
@@ -338,10 +681,7 @@ class GenerateModelCheckpoint:
                 table_name,
                 metadata,
                 stage="inspected",
-                inspection_status=result_copy.status,
-                confidence=result_copy.confidence,
-                retry_count=result_copy.retry_count,
-                validation=dict(result_copy.validation or {}),
+                inspection_result=result_copy,
             )
 
     def write_final_candidates(
@@ -383,6 +723,25 @@ class GenerateModelCheckpoint:
                 "path": str(self.root),
                 "manifest_path": str(self.manifest_path),
                 "status": self._manifest["status"],
+                "resume_enabled": self._manifest.get("resume_enabled", False),
+                "resumed_from_run_id": self._manifest.get(
+                    "resumed_from_run_id"
+                ),
+                "resume_candidate_table_count": self._manifest.get(
+                    "resume_candidate_table_count", 0
+                ),
+                "resume_candidate_variant_count": self._manifest.get(
+                    "resume_candidate_variant_count", 0
+                ),
+                "resumed_table_count": self._manifest.get(
+                    "resumed_table_count", 0
+                ),
+                "resumed_variant_count": self._manifest.get(
+                    "resumed_variant_count", 0
+                ),
+                "invalidated_variant_count": self._manifest.get(
+                    "invalidated_variant_count", 0
+                ),
                 "checkpoint_model_count": self._manifest[
                     "checkpoint_model_count"
                 ],

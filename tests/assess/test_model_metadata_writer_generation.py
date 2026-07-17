@@ -17,7 +17,11 @@ from dw_refactor_agent.assessment.llm.model_metadata_writer import (
     run_generate_model_metadata,
     run_metadata_write,
 )
-from dw_refactor_agent.assessment.llm.table_inspector import TableInspectResult
+from dw_refactor_agent.assessment.llm.table_inspector import (
+    TableContext,
+    TableInspector,
+    TableInspectResult,
+)
 from tests.assess.model_metadata_writer_test_support import (
     _catalog_payload,
     _configure_project_root,
@@ -682,6 +686,80 @@ def _checkpoint_project(tmp_path, monkeypatch, project):
     return project_dir, _checkpoint_plan(writer_module, project)
 
 
+def _checkpoint_context(table_name="dwd_first"):
+    return TableContext(
+        table_name=table_name,
+        layer="DWD",
+        ddl=f"CREATE TABLE {table_name} (id BIGINT);",
+        etl_sql="SELECT id FROM source_table;",
+        upstream_tables=["source_table"],
+        downstream_tables=[],
+    )
+
+
+def _seed_resumable_checkpoint(
+    project,
+    project_dir,
+    plan,
+    *,
+    resume_eligible=True,
+):
+    context = _checkpoint_context()
+    inspector = TableInspector(api_key="test")
+    result = TableInspectResult(
+        table_name=context.table_name,
+        declared_layer=context.layer,
+        inferred_layer="DWD",
+        table_type="fact",
+        confidence=0.9,
+        reasoning_steps=[],
+    )
+    result.context_hash = inspector._compute_hash(context)
+    result.resume_eligible = resume_eligible
+    checkpoint = GenerateModelCheckpoint(
+        project,
+        project_dir=project_dir,
+        plan=plan,
+    )
+    checkpoint.write_inspection_result(result)
+    checkpoint.close()
+    return checkpoint
+
+
+def _dwd_fact_inspection_response(entity_code="TEST_ENTITY"):
+    return json.dumps(
+        {
+            "choices": [
+                {
+                    "message": {
+                        "content": json.dumps(
+                            {
+                                "inferred_layer": "DWD",
+                                "table_type": "fact",
+                                "confidence": 0.9,
+                                "entities": [
+                                    {
+                                        "code": entity_code,
+                                        "type": "primary",
+                                        "key_columns": ["id"],
+                                    }
+                                ],
+                                "columns": {
+                                    "atomic_metrics": [],
+                                    "derived_metrics": [],
+                                    "calculated_metrics": [],
+                                    "dimensions": [{"name": "id"}],
+                                    "others": [],
+                                },
+                            }
+                        )
+                    }
+                }
+            ]
+        }
+    )
+
+
 def test_generate_checkpoint_rejects_overlapping_project_run(
     tmp_path, monkeypatch
 ):
@@ -744,6 +822,305 @@ def test_generate_checkpoint_records_processed_inspection_status(
     assert manifest["tables"]["dwd_first"]["validation"][
         "resolution_requires_reinspection"
     ]
+
+
+def test_generate_checkpoint_resumes_successful_prompt_variants_only(
+    tmp_path, monkeypatch
+):
+    import dw_refactor_agent.assessment.llm.model_metadata_writer as writer_module
+
+    project = "generate_checkpoint_cross_run_resume"
+    project_dir = _write_catalog_project(
+        tmp_path,
+        monkeypatch,
+        project,
+        catalog=_catalog_payload(),
+        ddl_tables=["dwd_success", "dwd_failed"],
+    )
+    plan = _checkpoint_plan(writer_module, project)
+    base_context = TableContext(
+        table_name="dwd_success",
+        layer="DWD",
+        ddl="CREATE TABLE dwd_success (id BIGINT);",
+        etl_sql="SELECT id FROM source_table;",
+        upstream_tables=["source_table"],
+        downstream_tables=[],
+    )
+    enriched_context = TableContext(
+        table_name="dwd_success",
+        layer="DWD",
+        ddl=base_context.ddl,
+        etl_sql=base_context.etl_sql,
+        upstream_tables=list(base_context.upstream_tables),
+        downstream_tables=[],
+        upstream_metric_groups={
+            "source_table": {
+                "atomic_metrics": [{"name": "source_amount"}],
+            }
+        },
+    )
+    failed_context = TableContext(
+        table_name="dwd_failed",
+        layer="DWD",
+        ddl="CREATE TABLE dwd_failed (id BIGINT);",
+        etl_sql="SELECT id FROM source_table;",
+        upstream_tables=["source_table"],
+        downstream_tables=[],
+    )
+    seed_inspector = TableInspector(api_key="test", max_retries=0)
+    first = GenerateModelCheckpoint(
+        project,
+        project_dir=project_dir,
+        plan=plan,
+    )
+    for context in (base_context, enriched_context):
+        result = TableInspectResult(
+            table_name=context.table_name,
+            declared_layer=context.layer,
+            inferred_layer="DWD",
+            table_type="fact",
+            confidence=0.9,
+            reasoning_steps=[],
+        )
+        result.context_hash = seed_inspector._compute_hash(context)
+        first.write_inspection_result(result)
+    blocked = TableInspectResult(
+        table_name=failed_context.table_name,
+        declared_layer=failed_context.layer,
+        inferred_layer="OTHER",
+        table_type="other",
+        confidence=0.0,
+        reasoning_steps=["transient failure"],
+    )
+    blocked.context_hash = seed_inspector._compute_hash(failed_context)
+    first.write_inspection_result(blocked)
+    first.finish(
+        status="blocked",
+        published=False,
+        validation={"status": "blocked"},
+    )
+
+    second = GenerateModelCheckpoint(
+        project,
+        project_dir=project_dir,
+        plan=plan,
+    )
+    resumed_inspector = TableInspector(
+        api_key="test",
+        max_retries=3,
+        parallelism=1,
+        resume_cache=second.resume_cache(),
+    )
+    api_calls = []
+
+    def successful_api(_prompt):
+        api_calls.append("called")
+        return _dwd_fact_inspection_response("FAILED_ENTITY")
+
+    monkeypatch.setattr(resumed_inspector, "_call_api", successful_api)
+    resumed_inspector.result_callback = second.write_inspection_result
+    results = resumed_inspector.inspect_batch(
+        [base_context, enriched_context, failed_context]
+    )
+
+    assert api_calls == ["called"]
+    assert [result.reuse_source for result in results] == [
+        "checkpoint",
+        "checkpoint",
+        "",
+    ]
+    report = second.report()
+    assert report["resumed_table_count"] == 1
+    assert report["resumed_variant_count"] == 2
+    second.close()
+
+
+def test_generate_checkpoint_invalidates_pre_resolution_disk_cache(
+    tmp_path, monkeypatch
+):
+    project = "generate_checkpoint_post_resolution_block"
+    project_dir, plan = _checkpoint_project(tmp_path, monkeypatch, project)
+    context = _checkpoint_context()
+    cache_file = tmp_path / "inspect.json"
+    first_inspector = TableInspector(
+        api_key="test",
+        cache_file=cache_file,
+        max_retries=0,
+    )
+    original_result = TableInspectResult(
+        table_name=context.table_name,
+        declared_layer=context.layer,
+        inferred_layer="OTHER",
+        table_type="fact",
+        confidence=0.9,
+        reasoning_steps=[],
+    )
+    context_hash = first_inspector._compute_hash(context)
+    original_result.context_hash = context_hash
+    first_inspector._store_cached_result(
+        context.table_name,
+        context_hash,
+        original_result,
+    )
+    first_inspector._save_cache()
+    first_checkpoint = GenerateModelCheckpoint(
+        project,
+        project_dir=project_dir,
+        plan=plan,
+    )
+    first_checkpoint.write_inspection_result(original_result)
+    first_report = first_checkpoint.report()
+    first_checkpoint.close()
+
+    assert first_report["invalidated_variant_count"] == 1
+    second_checkpoint = GenerateModelCheckpoint(
+        project,
+        project_dir=project_dir,
+        plan=plan,
+    )
+    second_resume_cache = second_checkpoint.resume_cache()
+    assert (
+        context_hash
+        in second_resume_cache["dwd_first"]["invalid_context_hashes"]
+    )
+    second_inspector = TableInspector(
+        api_key="test",
+        cache_file=cache_file,
+        max_retries=0,
+        resume_cache=second_resume_cache,
+    )
+    assert second_inspector._compute_hash(context) == context_hash
+    persisted_cache = json.loads(cache_file.read_text(encoding="utf-8"))
+    assert context.table_name not in persisted_cache
+    api_calls = []
+
+    def successful_api(_prompt):
+        api_calls.append("called")
+        return _dwd_fact_inspection_response()
+
+    monkeypatch.setattr(second_inspector, "_call_api", successful_api)
+    second_inspector.result_callback = (
+        second_checkpoint.write_inspection_result
+    )
+    retried_result = second_inspector.inspect_batch([context])[0]
+
+    assert api_calls == ["called"]
+    assert retried_result.reuse_source == ""
+    assert retried_result.status == "passed"
+    assert second_checkpoint.report()["invalidated_variant_count"] == 0
+    second_checkpoint.close()
+
+
+def test_generate_checkpoint_no_cache_discards_resume_variants(
+    tmp_path, monkeypatch
+):
+    project = "generate_checkpoint_no_resume"
+    project_dir, plan = _checkpoint_project(tmp_path, monkeypatch, project)
+    _seed_resumable_checkpoint(project, project_dir, plan)
+
+    forced = GenerateModelCheckpoint(
+        project,
+        project_dir=project_dir,
+        plan=plan,
+        resume_enabled=False,
+    )
+
+    assert forced.resume_cache() == {}
+    assert forced.report()["resume_enabled"] is False
+    assert not list(
+        (project_dir / "mid_checkpoints").glob("*.inspection.json")
+    )
+    forced.close()
+
+
+def test_generate_checkpoint_discards_corrupt_resume_sidecar(
+    tmp_path, monkeypatch
+):
+    project = "generate_checkpoint_corrupt_resume"
+    project_dir, plan = _checkpoint_project(tmp_path, monkeypatch, project)
+    _seed_resumable_checkpoint(project, project_dir, plan)
+    result_path = next(
+        (project_dir / "mid_checkpoints").glob("*.inspection.json")
+    )
+    result_path.write_text("{}", encoding="utf-8")
+
+    recovered = GenerateModelCheckpoint(
+        project,
+        project_dir=project_dir,
+        plan=plan,
+    )
+
+    resume_entry = recovered.resume_cache()["dwd_first"]
+    assert resume_entry["variants"] == {}
+    assert len(resume_entry["invalid_context_hashes"]) == 1
+    assert not result_path.exists()
+    assert recovered.report()["invalidated_variant_count"] == 1
+    recovered.close()
+
+
+def test_generate_checkpoint_retries_non_cacheable_fallback_result(
+    tmp_path, monkeypatch
+):
+    project = "generate_checkpoint_retry_fallback"
+    project_dir, plan = _checkpoint_project(tmp_path, monkeypatch, project)
+    _seed_resumable_checkpoint(
+        project,
+        project_dir,
+        plan,
+        resume_eligible=False,
+    )
+
+    recovered = GenerateModelCheckpoint(
+        project,
+        project_dir=project_dir,
+        plan=plan,
+    )
+
+    resume_entry = recovered.resume_cache()["dwd_first"]
+    assert resume_entry["variants"] == {}
+    assert len(resume_entry["invalid_context_hashes"]) == 1
+    assert recovered.report()["resume_candidate_variant_count"] == 0
+    recovered.close()
+
+
+def test_run_generate_model_metadata_passes_checkpoint_resume_cache(
+    tmp_path, monkeypatch
+):
+    import dw_refactor_agent.assessment.llm.model_metadata_writer as writer_module
+
+    project = "generate_checkpoint_resume_wiring"
+    project_dir, plan = _checkpoint_project(tmp_path, monkeypatch, project)
+    seed = _seed_resumable_checkpoint(project, project_dir, plan)
+    seen = {}
+
+    def fake_metadata_write(*args, **kwargs):
+        seen["resume_cache"] = kwargs.get("resume_cache")
+        return {"model_updates": [], "tables": []}
+
+    monkeypatch.setattr(
+        writer_module,
+        "run_metadata_write",
+        fake_metadata_write,
+    )
+    monkeypatch.setattr(
+        writer_module,
+        "validate_generate_candidate",
+        lambda *args, **kwargs: {
+            "status": "blocked",
+            "errors": [{"code": "test_block"}],
+            "blocked_tables": [],
+        },
+    )
+
+    generated = run_generate_model_metadata(
+        project,
+        api_key="test",
+        dry_run=False,
+    )
+
+    assert set(seen["resume_cache"]) == {"dwd_first"}
+    assert generated["publication"]["status"] == "blocked"
+    assert generated["checkpoint"]["resumed_from_run_id"] == seed.run_id
 
 
 def test_generate_checkpoint_recovers_journaled_yaml_write(

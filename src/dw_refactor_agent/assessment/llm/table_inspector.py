@@ -173,6 +173,9 @@ class TableInspectResult:
     entity: dict[str, Any] = field(default_factory=dict)
     related_entities: list[dict[str, Any]] = field(default_factory=list)
     grain: dict[str, Any] = field(default_factory=dict)
+    context_hash: str = ""
+    reuse_source: str = ""
+    resume_eligible: bool = True
 
     def __post_init__(self) -> None:
         self.confidence = _safe_float(self.confidence)
@@ -902,6 +905,7 @@ def _normalize_validation(value: Any) -> dict[str, list[str]]:
         "inconsistent_upstream_metric_layers",
         AMBIGUOUS_MIN_MAX_WARNING_KEY,
         DDL_COLUMNS_UNAVAILABLE_ERROR_KEY,
+        RESOLUTION_REINSPECTION_ERROR_KEY,
         METRIC_CONTEXT_REINSPECTION_ERROR_KEY,
     ):
         raw_items = value.get(key, []) or []
@@ -1722,6 +1726,7 @@ class TableInspector:
         parallelism: int = 2,
         request_timeout: int = 60,
         min_cacheable_confidence: float = DEFAULT_MIN_CACHEABLE_CONFIDENCE,
+        resume_cache: dict[str, Any] | None = None,
     ):
         self.api_key = api_key
         self.model = model
@@ -1732,12 +1737,15 @@ class TableInspector:
         self.request_timeout = max(1, int(request_timeout))
         self.min_cacheable_confidence = float(min_cacheable_confidence)
         self.cache = {}
+        self.resume_cache = dict(resume_cache or {})
         self._cache_lock = threading.RLock()
         self.progress_callback: Callable[[dict[str, Any]], None] | None = None
         self.result_callback: Callable[[TableInspectResult], None] | None = (
             None
         )
         self._load_cache()
+        if self._purge_invalidated_cache_variants():
+            self._save_cache()
 
     def _load_cache(self):
         with self._cache_lock:
@@ -1757,6 +1765,62 @@ class TableInspector:
                     json.dumps(self.cache, ensure_ascii=False, indent=2),
                     encoding=TEXT_ENCODING,
                 )
+
+    def _purge_invalidated_cache_variants(self) -> bool:
+        """Persistently remove cache entries rejected by generate."""
+        changed = False
+        with self._cache_lock:
+            for table_name, resume_entry in self.resume_cache.items():
+                if not isinstance(resume_entry, dict):
+                    continue
+                invalid_hashes = {
+                    str(value)
+                    for value in (
+                        resume_entry.get("invalid_context_hashes") or []
+                    )
+                    if value
+                }
+                cached_data = self.cache.get(table_name)
+                if not invalid_hashes or not isinstance(cached_data, dict):
+                    continue
+                raw_variants = cached_data.get("variants")
+                variants = (
+                    dict(raw_variants)
+                    if isinstance(raw_variants, dict)
+                    else {}
+                )
+                retained_variants = {
+                    cache_hash: variant
+                    for cache_hash, variant in variants.items()
+                    if cache_hash not in invalid_hashes
+                }
+                current_hash = str(cached_data.get("hash") or "")
+                if current_hash in invalid_hashes:
+                    if not retained_variants:
+                        self.cache.pop(table_name, None)
+                    else:
+                        replacement_hash, replacement = list(
+                            retained_variants.items()
+                        )[-1]
+                        replacement_result = (
+                            replacement.get("result")
+                            if isinstance(replacement, dict)
+                            else None
+                        )
+                        if not isinstance(replacement_result, dict):
+                            self.cache.pop(table_name, None)
+                        else:
+                            self.cache[table_name] = {
+                                "hash": replacement_hash,
+                                "result": replacement_result,
+                                "variants": retained_variants,
+                            }
+                    changed = True
+                    continue
+                if retained_variants != variants:
+                    cached_data["variants"] = retained_variants
+                    changed = True
+        return changed
 
     @staticmethod
     def _cached_result_for_hash(
@@ -1827,7 +1891,6 @@ class TableInspector:
         )
         content = (
             f"{PROMPT_VERSION}|{self.model}|{self.base_url}|temperature=0|"
-            f"max_retries={self.max_retries}|"
             f"{ctx.table_name}|{prompt_layer}|{ctx.ddl}|"
             f"{ctx.etl_sql}|{ctx.upstream_tables}|{ctx.downstream_tables}|"
             f"{upstream_layers}|{downstream_layers}|"
@@ -1838,6 +1901,35 @@ class TableInspector:
             f"{ctx.business_semantics_options}|{ctx.project_context}"
         )
         return hashlib.sha256(content.encode(TEXT_ENCODING)).hexdigest()
+
+    def _restored_result(
+        self,
+        cache: dict[str, Any],
+        ctx: TableContext,
+        current_hash: str,
+        *,
+        source: str,
+    ) -> TableInspectResult | None:
+        cached_result = self._cached_result_for_hash(
+            cache.get(ctx.table_name),
+            current_hash,
+        )
+        if cached_result is None:
+            return None
+        restored_result = dict_to_result(
+            cached_result,
+            table_name=ctx.table_name,
+            declared_layer=ctx.layer,
+        )
+        if (
+            restored_result.status == "blocked"
+            or restored_result.confidence < self.min_cacheable_confidence
+        ):
+            return None
+        restored_result.context_hash = current_hash
+        restored_result.reuse_source = source
+        restored_result.resume_eligible = True
+        return restored_result
 
     def _emit_progress(
         self,
@@ -1896,30 +1988,46 @@ class TableInspector:
     ) -> TableInspectResult:
         current_hash = self._compute_hash(ctx)
 
-        with self._cache_lock:
-            cached_data = self.cache.get(ctx.table_name)
-            cached_result = self._cached_result_for_hash(
-                cached_data,
-                current_hash,
+        restored_result = self._restored_result(
+            self.resume_cache,
+            ctx,
+            current_hash,
+            source="checkpoint",
+        )
+        if restored_result is not None:
+            self._emit_progress(
+                "checkpoint_hit", ctx, progress_context=progress_context
             )
-            if cached_result is not None:
-                restored_result = dict_to_result(
-                    cached_result,
-                    table_name=ctx.table_name,
-                    declared_layer=ctx.layer,
+            return restored_result
+
+        resume_entry = self.resume_cache.get(ctx.table_name) or {}
+        invalid_context_hashes = resume_entry.get("invalid_context_hashes")
+        should_bypass_cache = bool(
+            isinstance(invalid_context_hashes, list)
+            and current_hash in invalid_context_hashes
+        )
+        if should_bypass_cache:
+            self._emit_progress(
+                "checkpoint_retry", ctx, progress_context=progress_context
+            )
+            restored_result = None
+        else:
+            with self._cache_lock:
+                restored_result = self._restored_result(
+                    self.cache,
+                    ctx,
+                    current_hash,
+                    source="cache",
                 )
-                # A transient API/parse failure or validation-blocked result
-                # must not poison future runs or suppress a higher retry
-                # budget. Legacy blocked entries are bypassed as well.
-                if (
-                    restored_result.status != "blocked"
-                    and restored_result.confidence
-                    >= self.min_cacheable_confidence
-                ):
-                    self._emit_progress(
-                        "cache_hit", ctx, progress_context=progress_context
-                    )
-                    return restored_result
+        if restored_result is not None:
+            # A transient API/parse failure or validation-blocked result must
+            # not poison future runs. Retry budget is intentionally excluded
+            # from the semantic context hash so increasing retries only reruns
+            # failed tables.
+            self._emit_progress(
+                "cache_hit", ctx, progress_context=progress_context
+            )
+            return restored_result
 
         ddl_columns = _extract_ddl_column_names(ctx.ddl)
         prompt = build_prompt(ctx)
@@ -2021,6 +2129,9 @@ class TableInspector:
             )
             prompt = build_retry_prompt(ctx, result, ddl_columns)
 
+        result.context_hash = current_hash
+        result.reuse_source = ""
+        result.resume_eligible = not used_retry_fallback
         if (
             not used_retry_fallback
             and result.status != "blocked"

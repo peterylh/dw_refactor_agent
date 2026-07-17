@@ -1683,6 +1683,7 @@ def test_inspect_preserves_warning_when_retry_transport_fails(tmp_path):
 
     assert api.call_count == 2
     assert result.status == "warning"
+    assert result.resume_eligible is False
     assert result.inferred_layer == "DWD"
     assert result.retry_count == 1
     assert "保留上次可用结果" in result.reasoning_steps[-1]
@@ -2710,12 +2711,20 @@ def _assert_cache_hash_includes_context_fields(tmp_path):
         base_url="https://example.test/chat/completions",
         cache_file=tmp_path / "cache.json",
     )
+    higher_retry_budget = TableInspector(
+        api_key="test",
+        cache_file=tmp_path / "cache.json",
+        max_retries=5,
+    )
     assert inspector._compute_hash(dwd_ctx) != other_model._compute_hash(
         dwd_ctx
     )
     assert inspector._compute_hash(dwd_ctx) != other_backend._compute_hash(
         dwd_ctx
     )
+    assert inspector._compute_hash(
+        dwd_ctx
+    ) == higher_retry_budget._compute_hash(dwd_ctx)
 
     base = dict(
         table_name="t1",

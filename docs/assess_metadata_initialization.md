@@ -120,18 +120,33 @@ warehouses/{project}/
 ├── mid/
 └── mid_checkpoints/
     ├── manifest.json
-    └── {table_name}.yaml
+    ├── {table_name}.yaml
+    └── {table_name}.{context_hash}.inspection.json
 ```
 
 每张 MID 表巡检完成后会立即写入对应的检查点 YAML；若后续发生异常或项目级发布校验
 失败，已经完成的 YAML 仍会保留。`manifest.json` 记录完成表数、单表巡检状态以及最终
 发布状态。正式 `mid/models` 仍只在完整候选通过项目级校验后原子发布，检查点不会被
-当作正式模型读取。每次新运行开始时会清理上一轮的检查点 YAML，避免新旧结果混合；
-同一项目只允许一个检查点生成流程运行，重叠运行会立即失败。逐表 YAML 和 manifest
-通过带内容哈希的待写 journal 协调，中断时会明确保留待恢复状态。巡检期间的检查点写入
-错误会终止本次生成；若正式 models 已经原子发布，仅最终 manifest 收尾失败时，命令结果
-仍保留发布成功状态，并将检查点标记为 `finalization_failed`。`--show-progress` 会在
-开始时打印检查点的绝对目录。
+当作正式模型读取。
+
+检查点同时为每个实际 prompt 上下文保存完整巡检结果 sidecar 和内容哈希。下一次使用相同
+项目执行 `generate --llm` 时，会先校验上一轮 manifest、sidecar 内容哈希和当前 prompt
+上下文哈希；校验通过且状态不是 `blocked`、置信度达到当前阈值的结果直接恢复，不再调用
+LLM；因重试请求异常而临时回退到旧结果的单表结果不会进入恢复集。初检与注入上游指标后的
+复检使用不同上下文哈希，可分别恢复；上一轮 `blocked`、缺失、损坏或输入已经变化的表会重新
+巡检。因此项目级发布失败后，保持输入不变重跑时只消耗失败表或失效上下文的 API 调用。
+如果结果在原始 LLM 返回后、generate 分层解析阶段才变为 `blocked`，manifest 会记录该上下文
+哈希的失效标记；下一轮会先从普通 `inspect.json` 中持久删除同哈希 variant，并在当前运行中
+继续绕过该缓存。这样即使后续清理旧失效标记，已经被 generate 拒绝的普通缓存也不会重新
+生效。提高 `--max-retries` 不会使已经成功的检查点失效。
+
+`--no-cache` 会同时禁用普通巡检缓存和跨轮检查点恢复，强制全量重新调用。新运行开始时会
+清理旧的候选 YAML、失败结果和孤立 sidecar，但保留已经校验通过的结果 sidecar 作为恢复源；
+新 manifest 会记录 `resumed_from_run_id`、恢复候选数和实际恢复数。同一项目只允许一个检查点
+生成流程运行，重叠运行会立即失败。逐表 YAML、巡检 sidecar 和 manifest 通过带内容哈希的
+待写 journal 协调，中断时会明确保留待恢复状态。巡检期间的检查点写入错误会终止本次生成；
+若正式 models 已经原子发布，仅最终 manifest 收尾失败时，命令结果仍保留发布成功状态，并将
+检查点标记为 `finalization_failed`。开启默认进度输出时会显示检查点命中；`--quiet` 可关闭。
 
 只想维护业务语义目录时，使用独立入口：
 

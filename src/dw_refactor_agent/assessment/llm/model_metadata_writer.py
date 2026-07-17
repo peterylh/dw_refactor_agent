@@ -205,6 +205,7 @@ def _new_table_inspector(
     parallelism: int = 2,
     request_timeout: int = 60,
     min_cacheable_confidence: float = DEFAULT_MIN_CACHEABLE_CONFIDENCE,
+    resume_cache: dict[str, Any] | None = None,
 ) -> TableInspector:
     kwargs: dict[str, Any] = {
         "model": model,
@@ -214,17 +215,35 @@ def _new_table_inspector(
         "request_timeout": request_timeout,
         "min_cacheable_confidence": min_cacheable_confidence,
     }
+    if resume_cache:
+        kwargs["resume_cache"] = resume_cache
     if base_url:
         kwargs["base_url"] = normalize_chat_completions_url(base_url)
-    try:
-        return TableInspector(api_key, **kwargs)
-    except TypeError as exc:
-        if "unexpected keyword argument" not in str(exc):
-            raise
-        kwargs.pop("base_url", None)
-        kwargs.pop("request_timeout", None)
-        kwargs.pop("min_cacheable_confidence", None)
-        return TableInspector(api_key, **kwargs)
+    compatibility_keywords = (
+        "resume_cache",
+        "base_url",
+        "request_timeout",
+        "min_cacheable_confidence",
+    )
+    while True:
+        try:
+            return TableInspector(api_key, **kwargs)
+        except TypeError as exc:
+            message = str(exc)
+            removed_keyword = next(
+                (
+                    name
+                    for name in compatibility_keywords
+                    if name in kwargs and f"'{name}'" in message
+                ),
+                None,
+            )
+            if (
+                "unexpected keyword argument" not in message
+                or removed_keyword is None
+            ):
+                raise
+            kwargs.pop(removed_keyword)
 
 
 def run_generate_model_metadata(
@@ -276,6 +295,7 @@ def run_generate_model_metadata(
             project,
             project_dir=_project_dir(project),
             plan=generate_plan,
+            resume_enabled=not no_cache,
         )
         if show_progress:
             print(f"冷启动检查点目录: {checkpoint.root}", flush=True)
@@ -308,6 +328,7 @@ def run_generate_model_metadata(
                 include_model_metadata=True,
                 update_catalog=False,
                 expose_layer_hints=expose_layer_hints,
+                resume_cache=checkpoint.resume_cache() if checkpoint else None,
                 result_callback=(
                     checkpoint.write_inspection_result if checkpoint else None
                 ),
@@ -710,6 +731,10 @@ def _format_progress_message(event: dict[str, Any]) -> str:
         return f"{table_label} 开始巡检"
     if event_name == "cache_hit":
         return f"{table_label} 命中缓存，跳过 API"
+    if event_name == "checkpoint_hit":
+        return f"{table_label} 从上一轮检查点恢复，跳过 API"
+    if event_name == "checkpoint_retry":
+        return f"{table_label} 上一轮检查点已失效，重新调用 API"
     if event_name == "api_call":
         return (
             f"{table_label} 调用 DeepSeek "
@@ -831,6 +856,7 @@ def run_metadata_write(
     include_model_metadata: bool = False,
     update_catalog: bool = True,
     expose_layer_hints: bool = True,
+    resume_cache: dict[str, Any] | None = None,
     result_callback: (Callable[[TableInspectResult], None] | None) = None,
 ) -> dict[str, Any]:
     """运行项目级 LLM 巡检与模型元数据回写。"""
@@ -861,6 +887,8 @@ def run_metadata_write(
     cache_file = assess_cache_path(project, "inspect.json")
     if no_cache and cache_file.exists():
         cache_file.unlink()
+    if no_cache:
+        resume_cache = None
 
     inspector = _new_table_inspector(
         api_key=api_key,
@@ -871,6 +899,7 @@ def run_metadata_write(
         parallelism=parallelism,
         request_timeout=request_timeout,
         min_cacheable_confidence=plan.resolution_policy.min_llm_confidence,
+        resume_cache=resume_cache,
     )
     if show_progress:
         inspector.progress_callback = build_progress_callback()
@@ -1042,7 +1071,7 @@ def main() -> None:
     parser.add_argument(
         "--no-cache",
         action="store_true",
-        help="忽略本地缓存，强制重新调用 API",
+        help="忽略本地缓存和冷启动检查点，强制重新调用 API",
     )
     parser.add_argument(
         "--parallel", type=int, default=2, help="LLM 并发调用数，默认 2"
