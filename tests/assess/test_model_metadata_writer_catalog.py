@@ -1002,9 +1002,9 @@ def test_catalog_discovery_keeps_existing_assignment_when_llm_incomplete():
     ("metric_processes", "expected_process"),
     [
         ((), "ACCOUNT_TRANSFER"),
-        (("",), None),
+        (("",), "ACCOUNT_TRANSFER"),
     ],
-    ids=("factless-fallback", "metric-process-required"),
+    ids=("factless-fallback", "blank-metric-inherits-table-process"),
 )
 def test_catalog_discovery_table_process_fallback(
     metric_processes,

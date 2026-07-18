@@ -6,17 +6,17 @@ import re
 from pathlib import Path
 from typing import Any
 
+from dw_refactor_agent.assessment.llm.inspection_contract import (
+    business_process_codes,
+    canonical_semantic_code,
+)
 from dw_refactor_agent.config import TEXT_ENCODING
 
 DEFAULT_SLICE_PERIOD = "D"
 
 
 def _canonical_code(value: Any) -> str:
-    text = str(value or "").strip()
-    if not text:
-        return ""
-    normalized = re.sub(r"[\s\-/]+", "_", text)
-    return re.sub(r"_+", "_", normalized).strip("_").upper()
+    return canonical_semantic_code(value)
 
 
 def _task_facts(
@@ -383,22 +383,15 @@ def _validate_entities(
 
 
 def _inspection_process_codes(inspection: dict[str, Any]) -> list[str]:
-    process_codes = []
     columns = inspection.get("columns") or {}
-    metric_items = []
-    for group in ("atomic_metrics", "derived_metrics", "calculated_metrics"):
-        for metric in columns.get(group) or []:
-            if not isinstance(metric, dict):
-                continue
-            metric_items.append(metric)
-            code = _canonical_code(metric.get("business_process"))
-            if code and code not in process_codes:
-                process_codes.append(code)
-    if not metric_items:
-        table_process = _canonical_code(inspection.get("business_process"))
-        if table_process:
-            process_codes.append(table_process)
-    return process_codes
+    return business_process_codes(
+        inspection.get("business_process"),
+        (
+            columns.get("atomic_metrics") or [],
+            columns.get("derived_metrics") or [],
+            columns.get("calculated_metrics") or [],
+        ),
+    )
 
 
 def _validate_semantics(

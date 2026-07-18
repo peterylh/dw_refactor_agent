@@ -21,6 +21,9 @@ _src_root = Path(__file__).resolve().parents[3]
 if str(_src_root) not in sys.path:
     sys.path.insert(0, str(_src_root))
 
+from dw_refactor_agent.assessment.llm.inspection_contract import (
+    business_process_codes,
+)
 from dw_refactor_agent.assessment.llm.table_inspector import (
     METRIC_CONTEXT_REINSPECTION_ERROR_KEY,
     RESOLUTION_REINSPECTION_ERROR_KEY,
@@ -160,22 +163,14 @@ def _catalog_model_payload(
 
 
 def _business_processes_from_result(result: TableInspectResult) -> list[str]:
-    codes = []
-    metric_groups = (
-        result.atomic_metrics,
-        result.derived_metrics,
-        result.calculated_metrics,
+    return business_process_codes(
+        result.business_process,
+        (
+            result.atomic_metrics,
+            result.derived_metrics,
+            result.calculated_metrics,
+        ),
     )
-    if not any(metric_groups):
-        table_process = _normalize_catalog_code(result.business_process)
-        if table_process:
-            codes.append(table_process)
-    for metrics in metric_groups:
-        for metric in metrics:
-            code = _normalize_catalog_code(metric.get("business_process"))
-            if code and code not in codes:
-                codes.append(code)
-    return codes
 
 
 def _existing_catalog_assignment(

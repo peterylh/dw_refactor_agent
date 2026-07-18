@@ -26,6 +26,7 @@ TEST_TYPE_BY_FILE = {
     "tests/assess/test_business_semantics_catalog.py": "scenario",
     "tests/assess/test_code_quality.py": "unit",
     "tests/assess/test_context_builder.py": "unit",
+    "tests/assess/test_inspection_contract.py": "unit",
     "tests/assess/test_layer_resolution.py": "unit",
     "tests/assess/test_metadata_flow.py": "unit",
     "tests/assess/test_model_design.py": "unit",

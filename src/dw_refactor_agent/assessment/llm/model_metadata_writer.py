@@ -206,6 +206,7 @@ def _new_table_inspector(
     request_timeout: int = 60,
     min_cacheable_confidence: float = DEFAULT_MIN_CACHEABLE_CONFIDENCE,
     resume_cache: dict[str, Any] | None = None,
+    validate_publication_contract: bool = False,
 ) -> TableInspector:
     kwargs: dict[str, Any] = {
         "model": model,
@@ -214,6 +215,7 @@ def _new_table_inspector(
         "parallelism": parallelism,
         "request_timeout": request_timeout,
         "min_cacheable_confidence": min_cacheable_confidence,
+        "validate_publication_contract": validate_publication_contract,
     }
     if resume_cache:
         kwargs["resume_cache"] = resume_cache
@@ -224,6 +226,7 @@ def _new_table_inspector(
         "base_url",
         "request_timeout",
         "min_cacheable_confidence",
+        "validate_publication_contract",
     )
     while True:
         try:
@@ -906,6 +909,7 @@ def run_metadata_write(
         request_timeout=request_timeout,
         min_cacheable_confidence=plan.resolution_policy.min_llm_confidence,
         resume_cache=resume_cache,
+        validate_publication_contract=plan.mode == "generate",
     )
     if show_progress:
         inspector.progress_callback = build_progress_callback()

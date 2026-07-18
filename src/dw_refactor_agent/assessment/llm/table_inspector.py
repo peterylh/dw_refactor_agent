@@ -13,6 +13,9 @@ from typing import Any, Callable
 from urllib.parse import urlparse
 
 from dw_refactor_agent.assessment.llm.context_builder import TableContext
+from dw_refactor_agent.assessment.llm.inspection_contract import (
+    validate_generate_inspection_contract,
+)
 from dw_refactor_agent.assessment.project_facts.entity_metadata import (
     legacy_entity_from_entities,
     legacy_related_entities_from_entities,
@@ -24,7 +27,7 @@ from dw_refactor_agent.assessment.project_facts.time_period import (
 )
 from dw_refactor_agent.config import TEXT_ENCODING
 
-PROMPT_VERSION = "table-inspector-v43"
+PROMPT_VERSION = "table-inspector-v44"
 VALID_LAYERS = {"DWD", "DWS", "DIM", "OTHER"}
 VALID_TABLE_TYPES = {"dimension", "fact", "other"}
 VALID_DIMENSION_ROLES = {"BASE", "ADDT"}
@@ -56,6 +59,13 @@ VALIDATION_ERROR_KEYS = (
     "inconsistent_layer_table_types",
     "inconsistent_layer_sql",
     "inconsistent_upstream_metric_layers",
+    "business_process_missing",
+    "business_process_ambiguous",
+    "duplicate_entity_codes",
+    "entity_key_missing",
+    "grain_entity_unknown",
+    "grain_column_missing",
+    "dimension_primary_entity_invalid",
     DDL_COLUMNS_UNAVAILABLE_ERROR_KEY,
     RESOLUTION_REINSPECTION_ERROR_KEY,
     METRIC_CONTEXT_REINSPECTION_ERROR_KEY,
@@ -548,6 +558,10 @@ def build_retry_prompt(
 - inconsistent_layer_sql 表示 DWD 候选的目标行驱动查询存在 GROUP BY 并压缩目标粒度；必须根据公共聚合粒度重新判断。仅在 JOIN 辅助子查询中聚合以补充日期/属性、主驱动行仍逐行保留时，可以继续返回 DWD。
 - ambiguous_min_max_aggregation 表示代码无法仅凭同名 MIN/MAX 判断它是技术选值还是业务汇总；如果输出是业务统计结果，应归入指标字段并返回 DWS，如果只是保留实体最新/最早技术状态，可继续返回 DWD，并在字段 reason 中说明技术选值依据。
 - inconsistent_upstream_metric_layers 表示 DWD 候选把独立上游指标源中的公共指标 JOIN 到目标分析粒度并继续发布；应返回 DWS/fact 并保留正确的上游指标依赖关系。单一明细来源的逐行透传不属于此错误。
+- business_process_missing / business_process_ambiguous 表示 fact 的表级和字段级业务过程没有共同形成唯一一致 code；字段级 process 为空时可继承唯一表级 code，非空时必须与表级 code 一致，真实多过程且无法确定主过程时保持空并让发布安全阻断。
+- duplicate_entity_codes 表示多个实体复用了同一 code；同一业务实体承担不同角色时必须使用可区分的角色 code，不能由 writer 猜测合并或改名。
+- entity_key_missing 表示 entity 缺少 key_columns 或 key 不在 DDL 中；grain_entity_unknown / grain_column_missing 表示 grain 引用了未声明实体或不存在字段，必须只使用本次 JSON 与 DDL 中真实存在的值。
+- dimension_primary_entity_invalid 表示 dimension 必须返回且仅返回一个 type=primary 的主实体。
 - invalid_base_metrics / invalid_base_metric_tables 中的 base_metric 必须是字段血缘或上游指标分组中真实存在的原子指标列名，不能编造语义标签。COUNT(*) 或 COUNT(事件键)形成的基础计数应归 atomic_metrics；无法验证上游原子指标时，不要虚构 base_metric/base_metric_table。
 - 不要返回 Markdown，不要返回额外解释。
 """
@@ -903,6 +917,13 @@ def _normalize_validation(value: Any) -> dict[str, list[str]]:
         "inconsistent_layer_table_types",
         "inconsistent_layer_sql",
         "inconsistent_upstream_metric_layers",
+        "business_process_missing",
+        "business_process_ambiguous",
+        "duplicate_entity_codes",
+        "entity_key_missing",
+        "grain_entity_unknown",
+        "grain_column_missing",
+        "dimension_primary_entity_invalid",
         AMBIGUOUS_MIN_MAX_WARNING_KEY,
         DDL_COLUMNS_UNAVAILABLE_ERROR_KEY,
         RESOLUTION_REINSPECTION_ERROR_KEY,
@@ -1727,6 +1748,7 @@ class TableInspector:
         request_timeout: int = 60,
         min_cacheable_confidence: float = DEFAULT_MIN_CACHEABLE_CONFIDENCE,
         resume_cache: dict[str, Any] | None = None,
+        validate_publication_contract: bool = False,
     ):
         self.api_key = api_key
         self.model = model
@@ -1738,6 +1760,9 @@ class TableInspector:
         self.min_cacheable_confidence = float(min_cacheable_confidence)
         self.cache = {}
         self.resume_cache = dict(resume_cache or {})
+        self.validate_publication_contract = bool(
+            validate_publication_contract
+        )
         self._cache_lock = threading.RLock()
         self.progress_callback: Callable[[dict[str, Any]], None] | None = None
         self.result_callback: Callable[[TableInspectResult], None] | None = (
@@ -1890,7 +1915,9 @@ class TableInspector:
             ctx.downstream_table_layers,
         )
         content = (
-            f"{PROMPT_VERSION}|{self.model}|{self.base_url}|temperature=0|"
+            f"{PROMPT_VERSION}|publication_contract="
+            f"{self.validate_publication_contract}|"
+            f"{self.model}|{self.base_url}|temperature=0|"
             f"{ctx.table_name}|{prompt_layer}|{ctx.ddl}|"
             f"{ctx.etl_sql}|{ctx.upstream_tables}|{ctx.downstream_tables}|"
             f"{upstream_layers}|{downstream_layers}|"
@@ -2095,6 +2122,14 @@ class TableInspector:
                 validate_layer_sql_consistency(result, ctx),
                 validate_upstream_metric_layer_consistency(result, ctx),
                 validate_metric_relationships(result, ctx),
+                (
+                    validate_generate_inspection_contract(
+                        result,
+                        ddl_columns,
+                    )
+                    if self.validate_publication_contract
+                    else {}
+                ),
             )
             if result.confidence > 0:
                 last_usable_result = result

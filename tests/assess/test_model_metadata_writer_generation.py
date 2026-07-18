@@ -1668,8 +1668,8 @@ def test_run_generate_model_metadata_blocks_dwd_without_task_sql(
         ),
         (
             True,
-            "",
-            "",
+            "ORDER",
+            "ORDER",
             ("ORDER", "REFUND"),
             ("ORDER", "REFUND"),
             "business_process_ambiguous",
@@ -1693,8 +1693,20 @@ def test_run_generate_model_metadata_blocks_dwd_without_task_sql(
             "ACCOUNT_TRANSFER",
             ("",),
             ("ACCOUNT_TRANSFER",),
-            "business_process_missing",
-            "fact inspection did not identify a business process",
+            None,
+            None,
+        ),
+        (
+            True,
+            "ORDER",
+            "ORDER",
+            ("REFUND",),
+            ("ORDER", "REFUND"),
+            "business_process_ambiguous",
+            (
+                "fact inspection identified multiple business processes: "
+                "ORDER, REFUND"
+            ),
         ),
         (
             False,
@@ -1710,7 +1722,8 @@ def test_run_generate_model_metadata_blocks_dwd_without_task_sql(
         "missing",
         "ambiguous",
         "factless-table-process",
-        "unassigned-metric",
+        "blank-metric-inherits-table-process",
+        "conflicting-table-and-metric-process",
         "no-llm",
     ),
 )
