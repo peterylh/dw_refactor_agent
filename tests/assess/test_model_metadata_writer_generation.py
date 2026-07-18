@@ -8,6 +8,7 @@ import yaml
 
 import dw_refactor_agent.config as config
 from dw_refactor_agent.assessment.llm.generation_contract import (
+    infer_execution_mapping,
     validate_generate_candidate,
 )
 from dw_refactor_agent.assessment.llm.model_metadata_checkpoint import (
@@ -1686,6 +1687,353 @@ def test_run_generate_model_metadata_derives_execution_from_task_sql(
             "period": "D",
         },
     }
+
+
+def _execution_asset(tmp_path, table_name, task_sql, ddl_columns):
+    task_path = tmp_path / f"{table_name}.sql"
+    task_path.write_text(task_sql, encoding="utf-8")
+    return {
+        "ddl": {"columns": ddl_columns},
+        "tasks": [{"path": str(task_path), "is_full_refresh": False}],
+    }
+
+
+def test_infer_execution_slice_from_append_snapshot_projection(tmp_path):
+    table_name = "dwd_inventory_snapshot"
+    asset = _execution_asset(
+        tmp_path,
+        table_name,
+        (
+            "INSERT INTO mart.dwd_inventory_snapshot\n"
+            "SELECT inventory_id,\n"
+            "       CAST(@etl_date AS DATE) AS snapshot_date,\n"
+            "       DATEDIFF(@etl_date, last_restock_date) AS age_days\n"
+            "FROM source_inventory\n"
+            "WHERE load_date <= @etl_date;\n"
+        ),
+        [
+            {"name": "inventory_id", "type": "BIGINT"},
+            {"name": "snapshot_date", "type": "DATE"},
+            {"name": "age_days", "type": "INT"},
+        ],
+    )
+
+    assert infer_execution_mapping(table_name, asset, layer="DWD") == {
+        "materialized": "incremental",
+        "full_refresh_strategy": "replay_slices",
+        "slice": {
+            "param": "etl_date",
+            "column": "snapshot_date",
+            "period": "D",
+        },
+    }
+
+
+def test_infer_execution_slice_uses_explicit_insert_columns(tmp_path):
+    table_name = "dws_account_monthly"
+    asset = _execution_asset(
+        tmp_path,
+        table_name,
+        (
+            "INSERT INTO mart.dws_account_monthly "
+            "(stat_month, account_id)\n"
+            "SELECT DATE_FORMAT(@run_month, '%Y-%m'), account_id\n"
+            "FROM source_account;\n"
+        ),
+        [
+            {"name": "account_id", "type": "BIGINT"},
+            {"name": "stat_month", "type": "VARCHAR(7)"},
+        ],
+    )
+
+    assert infer_execution_mapping(table_name, asset, layer="DWS")[
+        "slice"
+    ] == {
+        "param": "run_month",
+        "column": "stat_month",
+        "period": "M",
+    }
+
+
+@pytest.mark.parametrize(
+    ("column_type", "column_name", "parameter_name"),
+    [
+        ("DATEV2", "snapshot_value", "etl_date"),
+        ("DATETIMEV2(3)", "snapshot_value", "etl_time"),
+    ],
+)
+def test_infer_execution_slice_supports_doris_temporal_types(
+    tmp_path,
+    column_type,
+    column_name,
+    parameter_name,
+):
+    table_name = "dwd_temporal_snapshot"
+    asset = _execution_asset(
+        tmp_path,
+        table_name,
+        (
+            f"INSERT INTO mart.{table_name} "
+            f"SELECT id, @{parameter_name} FROM source_table;\n"
+        ),
+        [
+            {"name": "id", "type": "BIGINT"},
+            {"name": column_name, "type": column_type},
+        ],
+    )
+
+    assert infer_execution_mapping(table_name, asset, layer="DWD")[
+        "slice"
+    ] == {
+        "param": parameter_name,
+        "column": column_name,
+        "period": "D",
+    }
+
+
+def test_infer_execution_slice_accepts_consistent_union_branches(tmp_path):
+    table_name = "dwd_snapshot"
+    asset = _execution_asset(
+        tmp_path,
+        table_name,
+        (
+            "INSERT INTO mart.dwd_snapshot "
+            "SELECT id, CAST(@etl_date AS DATE) FROM source_a "
+            "UNION ALL "
+            "SELECT id, CAST(@etl_date AS DATE) FROM source_b;\n"
+        ),
+        [
+            {"name": "id", "type": "BIGINT"},
+            {"name": "snapshot_date", "type": "DATE"},
+        ],
+    )
+
+    assert infer_execution_mapping(table_name, asset, layer="DWD")[
+        "slice"
+    ] == {
+        "param": "etl_date",
+        "column": "snapshot_date",
+        "period": "D",
+    }
+
+
+@pytest.mark.parametrize(
+    ("task_sql", "ddl_columns"),
+    [
+        (
+            "INSERT INTO mart.dwd_snapshot "
+            "SELECT id, source_date FROM source_table "
+            "WHERE source_date = @etl_date;\n",
+            [
+                {"name": "id", "type": "BIGINT"},
+                {"name": "snapshot_date", "type": "DATE"},
+            ],
+        ),
+        (
+            "INSERT INTO mart.dwd_snapshot "
+            "SELECT id, @update_id FROM source_table;\n",
+            [
+                {"name": "id", "type": "BIGINT"},
+                {"name": "updated_id", "type": "BIGINT"},
+            ],
+        ),
+        (
+            "INSERT INTO mart.dwd_snapshot "
+            "SELECT id, @batch_id AS snapshot_date FROM source_table;\n",
+            [
+                {"name": "id", "type": "BIGINT"},
+                {"name": "update_time", "type": "BIGINT"},
+            ],
+        ),
+        (
+            "INSERT INTO mart.dwd_snapshot "
+            "SELECT id, @batch_id FROM source_table;\n",
+            [
+                {"name": "id", "type": "BIGINT"},
+                {"name": "snapshot_date", "type": "DATE"},
+            ],
+        ),
+        (
+            "INSERT INTO mart.dwd_snapshot "
+            "SELECT id, DATE_ADD(@etl_date, INTERVAL 1 DAY) "
+            "FROM source_table;\n",
+            [
+                {"name": "id", "type": "BIGINT"},
+                {"name": "snapshot_date", "type": "DATE"},
+            ],
+        ),
+        (
+            "INSERT INTO mart.dwd_snapshot "
+            "SELECT id, COALESCE(@etl_date, CURRENT_DATE) "
+            "FROM source_table;\n",
+            [
+                {"name": "id", "type": "BIGINT"},
+                {"name": "snapshot_date", "type": "DATE"},
+            ],
+        ),
+        (
+            "INSERT INTO mart.dwd_snapshot "
+            "SELECT id, CAST(@etl_date AS DATE), "
+            "CAST(@etl_date AS DATE) FROM source_table;\n",
+            [
+                {"name": "id", "type": "BIGINT"},
+                {"name": "snapshot_date", "type": "DATE"},
+                {"name": "loaded_date", "type": "DATE"},
+            ],
+        ),
+        (
+            "INSERT INTO mart.dwd_snapshot "
+            "SELECT id, CAST(@etl_date AS DATE) FROM source_table;\n"
+            "INSERT INTO mart.dwd_snapshot "
+            "SELECT id, CAST(@retry_date AS DATE) FROM retry_table;\n",
+            [
+                {"name": "id", "type": "BIGINT"},
+                {"name": "snapshot_date", "type": "DATE"},
+            ],
+        ),
+        (
+            "INSERT INTO mart.dwd_snapshot "
+            "SELECT id, CAST(@etl_date AS DATE) FROM source_a "
+            "UNION ALL "
+            "SELECT id, CAST(@retry_date AS DATE) FROM source_b;\n",
+            [
+                {"name": "id", "type": "BIGINT"},
+                {"name": "snapshot_date", "type": "DATE"},
+            ],
+        ),
+    ],
+    ids=(
+        "source-filter-only",
+        "non-temporal-update-parameter",
+        "alias-does-not-provide-temporal-evidence",
+        "non-temporal-parameter-for-date-column",
+        "date-arithmetic",
+        "coalesce-fallback",
+        "multiple-parameter-derived-targets",
+        "conflicting-target-inserts",
+        "conflicting-union-branches",
+    ),
+)
+def test_infer_execution_slice_rejects_ambiguous_insert_evidence(
+    tmp_path, task_sql, ddl_columns
+):
+    table_name = "dwd_snapshot"
+    asset = _execution_asset(
+        tmp_path,
+        table_name,
+        task_sql,
+        ddl_columns,
+    )
+
+    assert "slice" not in infer_execution_mapping(
+        table_name,
+        asset,
+        layer="DWD",
+    )
+
+
+def test_infer_execution_slice_keeps_delete_binding_priority(tmp_path):
+    table_name = "dwd_snapshot"
+    asset = _execution_asset(
+        tmp_path,
+        table_name,
+        (
+            "DELETE FROM mart.dwd_snapshot "
+            "WHERE snapshot_date = CAST(@delete_date AS DATE);\n"
+            "INSERT INTO mart.dwd_snapshot "
+            "SELECT id, CAST(@insert_date AS DATE) FROM source_table;\n"
+        ),
+        [
+            {"name": "id", "type": "BIGINT"},
+            {"name": "snapshot_date", "type": "DATE"},
+        ],
+    )
+
+    assert infer_execution_mapping(table_name, asset, layer="DWD")[
+        "slice"
+    ] == {
+        "param": "delete_date",
+        "column": "snapshot_date",
+        "period": "D",
+    }
+
+
+def test_infer_execution_treats_whole_table_overwrite_as_full(tmp_path):
+    table_name = "dwd_snapshot"
+    asset = _execution_asset(
+        tmp_path,
+        table_name,
+        (
+            "INSERT OVERWRITE TABLE mart.dwd_snapshot "
+            "SELECT id, CAST(@etl_date AS DATE) FROM source_table;\n"
+        ),
+        [
+            {"name": "id", "type": "BIGINT"},
+            {"name": "snapshot_date", "type": "DATE"},
+        ],
+    )
+
+    execution = infer_execution_mapping(table_name, asset, layer="DWD")
+    assert execution == {
+        "materialized": "full",
+        "full_refresh_strategy": "replace_all",
+    }
+    validation = validate_generate_candidate(
+        {
+            table_name: {
+                "name": table_name,
+                "layer": "DWD",
+                "table_type": "other",
+                "execution": execution,
+            }
+        },
+        {table_name: asset},
+        llm_result=None,
+        catalog={},
+    )
+    assert validation["status"] == "passed"
+
+
+def test_generate_publication_blocks_partition_overwrite_inference(tmp_path):
+    table_name = "dwd_snapshot"
+    asset = _execution_asset(
+        tmp_path,
+        table_name,
+        (
+            "INSERT OVERWRITE TABLE mart.dwd_snapshot "
+            "PARTITION (snapshot_date='2025-01-01') "
+            "SELECT id, CAST(@etl_date AS DATE) FROM source_table;\n"
+        ),
+        [
+            {"name": "id", "type": "BIGINT"},
+            {"name": "snapshot_date", "type": "DATE"},
+        ],
+    )
+    model = {
+        "name": table_name,
+        "layer": "DWD",
+        "table_type": "other",
+        "execution": infer_execution_mapping(table_name, asset, layer="DWD"),
+    }
+    assert "slice" not in model["execution"]
+
+    validation = validate_generate_candidate(
+        {table_name: model},
+        {table_name: asset},
+        llm_result=None,
+        catalog={},
+    )
+
+    assert validation["errors"] == [
+        {
+            "type": "execution_partition_overwrite_unsupported",
+            "table": table_name,
+            "message": (
+                "partition INSERT OVERWRITE requires an explicit execution "
+                "contract"
+            ),
+        }
+    ]
 
 
 def test_run_generate_model_metadata_blocks_unresolved_execution_contract(

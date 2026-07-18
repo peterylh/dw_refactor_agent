@@ -6,6 +6,9 @@ import re
 from pathlib import Path
 from typing import Any
 
+import sqlglot
+from sqlglot import exp
+
 from dw_refactor_agent.assessment.llm.inspection_contract import (
     business_process_codes,
     canonical_semantic_code,
@@ -64,6 +67,17 @@ def _ddl_column_names(asset: dict[str, Any]) -> list[str]:
     ]
 
 
+def _ddl_column_type(
+    asset: dict[str, Any],
+    column_name: str,
+) -> str:
+    wanted = column_name.casefold()
+    for column in (asset.get("ddl") or {}).get("columns") or []:
+        if str(column.get("name") or "").strip().casefold() == wanted:
+            return str(column.get("type") or "").strip()
+    return ""
+
+
 def _target_table_pattern(table_name: str) -> str:
     return (
         r"(?:`?[A-Za-z_][A-Za-z0-9_]*`?\.)*`?" + re.escape(table_name) + r"`?"
@@ -79,6 +93,267 @@ def _has_target_truncate(table_name: str, task_sql: str) -> bool:
             flags=re.IGNORECASE,
         )
     )
+
+
+def _parameter_name(parameter: exp.Parameter) -> str:
+    value = parameter.this
+    if isinstance(value, exp.Var):
+        return str(value.name or "").strip()
+    return str(value or "").strip().lstrip("@")
+
+
+def _temporal_evidence_period(
+    value: str,
+    *,
+    is_type: bool = False,
+) -> str:
+    normalized = str(value or "").strip().casefold()
+    tokens = set(re.findall(r"[a-z]+", normalized))
+    if is_type and re.match(
+        r"^(?:date|datetime|timestamp|time)(?:v2)?(?:\b|\s|\()",
+        normalized,
+    ):
+        return DEFAULT_SLICE_PERIOD
+    if "month" in tokens:
+        return "M"
+    if tokens & {
+        "date",
+        "datetime",
+        "day",
+        "period",
+        "time",
+        "timestamp",
+        "week",
+        "year",
+    }:
+        return DEFAULT_SLICE_PERIOD
+    return ""
+
+
+def _direct_temporal_parameter(
+    projection: exp.Expression,
+) -> tuple[str, str]:
+    while isinstance(projection, (exp.Alias, exp.Paren)):
+        projection = projection.this
+    if isinstance(projection, exp.Parameter):
+        return _parameter_name(projection), ""
+    if isinstance(projection, exp.Cast):
+        target_type = projection.args.get("to")
+        target_sql = (
+            target_type.sql(dialect="doris") if target_type is not None else ""
+        )
+        if isinstance(
+            projection.this, exp.Parameter
+        ) and _temporal_evidence_period(target_sql, is_type=True):
+            return _parameter_name(projection.this), ""
+        return "", ""
+    if isinstance(projection, exp.TsOrDsToDate) and isinstance(
+        projection.this,
+        exp.Parameter,
+    ):
+        return _parameter_name(projection.this), ""
+    if isinstance(projection, exp.TimeToStr) and isinstance(
+        projection.this,
+        exp.Parameter,
+    ):
+        format_expression = projection.args.get("format")
+        if not isinstance(format_expression, exp.Literal):
+            return "", ""
+        date_format = str(format_expression.this or "").casefold()
+        if "%y" not in date_format or "%m" not in date_format:
+            return "", ""
+        period = "D" if "%d" in date_format else "M"
+        return _parameter_name(projection.this), period
+    return "", ""
+
+
+def _temporal_slice_period(
+    column_name: str,
+    column_type: str,
+    parameter_name: str,
+    expression_period: str,
+) -> str:
+    column_period = _temporal_evidence_period(column_name)
+    if not column_period:
+        column_period = _temporal_evidence_period(
+            column_type,
+            is_type=True,
+        )
+    parameter_period = _temporal_evidence_period(parameter_name)
+    if not column_period or not parameter_period:
+        return ""
+    if expression_period:
+        if expression_period != column_period:
+            return ""
+        if parameter_period != expression_period and expression_period != "M":
+            return ""
+        return expression_period
+    return column_period if column_period == parameter_period else ""
+
+
+def _insert_target(
+    statement: exp.Insert,
+) -> tuple[exp.Table | None, list[str]]:
+    target = statement.this
+    if isinstance(target, exp.Schema):
+        table = target.this
+        columns = [
+            str(column.name or "").strip()
+            for column in target.expressions
+            if isinstance(column, exp.Identifier)
+            and str(column.name or "").strip()
+        ]
+    else:
+        table = target
+        columns = []
+    return (table if isinstance(table, exp.Table) else None), columns
+
+
+def _query_selects(query: exp.Expression | None) -> list[exp.Select]:
+    while isinstance(query, (exp.Paren, exp.Subquery)):
+        query = query.this
+    if isinstance(query, exp.Select):
+        return [query]
+    if not isinstance(query, exp.Union):
+        return []
+    selects = []
+    for branch in (query.this, query.expression):
+        while isinstance(branch, (exp.Paren, exp.Subquery)):
+            branch = branch.this
+        if isinstance(branch, exp.Select):
+            selects.append(branch)
+        elif isinstance(branch, exp.Union):
+            selects.extend(_query_selects(branch))
+        else:
+            return []
+    return selects
+
+
+def _insert_selects(statement: exp.Insert) -> list[exp.Select]:
+    return _query_selects(
+        statement.args.get("expression") or statement.args.get("source")
+    )
+
+
+def _select_slice_binding(
+    query: exp.Select,
+    asset: dict[str, Any],
+    target_columns: list[str],
+) -> dict[str, str]:
+    projections = list(query.expressions)
+    if not target_columns or len(target_columns) != len(projections):
+        return {}
+
+    bindings = []
+    for column_name, projection in zip(target_columns, projections):
+        parameter_name, expression_period = _direct_temporal_parameter(
+            projection
+        )
+        if not parameter_name:
+            continue
+        period = _temporal_slice_period(
+            column_name,
+            _ddl_column_type(asset, column_name),
+            parameter_name,
+            expression_period,
+        )
+        if not period:
+            continue
+        bindings.append(
+            {
+                "param": parameter_name,
+                "column": column_name,
+                "period": period,
+            }
+        )
+    return bindings[0] if len(bindings) == 1 else {}
+
+
+def _insert_slice_binding(
+    statement: exp.Insert,
+    asset: dict[str, Any],
+    explicit_columns: list[str],
+) -> dict[str, str]:
+    target_columns = explicit_columns or _ddl_column_names(asset)
+    bindings = [
+        _select_slice_binding(query, asset, target_columns)
+        for query in _insert_selects(statement)
+    ]
+    if not bindings or any(not binding for binding in bindings):
+        return {}
+    identities = {
+        (
+            binding["param"].casefold(),
+            binding["column"].casefold(),
+            binding["period"],
+        )
+        for binding in bindings
+    }
+    return bindings[0] if len(identities) == 1 else {}
+
+
+def _target_overwrite_mode(
+    table_name: str,
+    task_sql: str,
+) -> str:
+    try:
+        statements = sqlglot.parse(task_sql, dialect="doris")
+    except Exception:
+        return ""
+    partitioned = False
+    for statement in statements:
+        if not isinstance(statement, exp.Insert) or not statement.args.get(
+            "overwrite"
+        ):
+            continue
+        target, _explicit_columns = _insert_target(statement)
+        if target is None or target.name.casefold() != table_name.casefold():
+            continue
+        if target.args.get("partition") or statement.args.get("partition"):
+            partitioned = True
+        else:
+            return "full"
+    return "partitioned" if partitioned else ""
+
+
+def _insert_projection_slice_binding(
+    table_name: str,
+    asset: dict[str, Any],
+    task_sql: str,
+) -> dict[str, str]:
+    try:
+        statements = sqlglot.parse(task_sql, dialect="doris")
+    except Exception:
+        return {}
+
+    bindings = []
+    matched_target = False
+    for statement in statements:
+        if not isinstance(statement, exp.Insert):
+            continue
+        target, explicit_columns = _insert_target(statement)
+        if target is None or target.name.casefold() != table_name.casefold():
+            continue
+        matched_target = True
+        binding = _insert_slice_binding(
+            statement,
+            asset,
+            explicit_columns,
+        )
+        if not binding:
+            return {}
+        bindings.append(binding)
+    if not matched_target:
+        return {}
+    identities = {
+        (
+            binding["param"].casefold(),
+            binding["column"].casefold(),
+            binding["period"],
+        )
+        for binding in bindings
+    }
+    return bindings[0] if len(identities) == 1 else {}
 
 
 def _slice_binding(
@@ -118,7 +393,7 @@ def _slice_binding(
                 "period": period,
             }
 
-    return {}
+    return _insert_projection_slice_binding(table_name, asset, task_sql)
 
 
 def infer_execution_mapping(
@@ -137,7 +412,8 @@ def infer_execution_mapping(
         return execution
 
     task_sql = _task_sql(main_tasks)
-    if _has_target_truncate(table_name, task_sql):
+    overwrite_mode = _target_overwrite_mode(table_name, task_sql)
+    if _has_target_truncate(table_name, task_sql) or overwrite_mode == "full":
         return {
             "materialized": "full",
             "full_refresh_strategy": "replace_all",
@@ -150,6 +426,8 @@ def infer_execution_mapping(
             "companion" if full_refresh_tasks else "replay_slices"
         ),
     }
+    if overwrite_mode == "partitioned":
+        return execution
     slice_config = _slice_binding(table_name, asset, task_sql)
     if slice_config:
         execution["slice"] = slice_config
@@ -187,7 +465,19 @@ def _validate_execution(
     strategy = str(execution.get("full_refresh_strategy") or "").lower()
     task_sql = _task_sql(main_tasks)
     has_truncate = _has_target_truncate(table_name, task_sql)
-    expected_materialized = "full" if has_truncate else "incremental"
+    overwrite_mode = _target_overwrite_mode(table_name, task_sql)
+    if overwrite_mode == "partitioned":
+        return [
+            _error(
+                "execution_partition_overwrite_unsupported",
+                table_name,
+                "partition INSERT OVERWRITE requires an explicit execution "
+                "contract",
+            )
+        ]
+    expected_materialized = (
+        "full" if has_truncate or overwrite_mode == "full" else "incremental"
+    )
     if materialized != expected_materialized:
         return [
             _error(
