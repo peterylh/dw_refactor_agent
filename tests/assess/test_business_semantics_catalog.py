@@ -1,3 +1,4 @@
+import pytest
 import yaml
 
 import dw_refactor_agent.config as config
@@ -299,6 +300,12 @@ def test_build_catalog_from_inspection_clusters_llm_processes_and_subjects(
             "data_domain": "04",
             "business_area": "SHOP",
         },
+        {
+            "code": "UNASSIGNED_EVENT",
+            "name": "Unassigned Event",
+            "data_domain": "",
+            "business_area": "",
+        },
     ]
     assert catalog["semantic_subjects"] == [
         {
@@ -306,6 +313,48 @@ def test_build_catalog_from_inspection_clusters_llm_processes_and_subjects(
             "name": "客户",
             "data_domain": "04",
             "business_area": "SHOP",
+        }
+    ]
+
+
+@pytest.mark.parametrize("placeholder", ["-", "/"])
+def test_catalog_process_normalization_matches_publication_contract(
+    tmp_path, monkeypatch, placeholder
+):
+    project = _configure_catalog_project(monkeypatch, tmp_path)
+    fact = {
+        "table_name": "dwd_payment",
+        "declared_layer": "DWD",
+        "inferred_layer": "DWD",
+        "table_type": "fact",
+        "business_process": "订单-支付",
+        "confidence": 0.9,
+        "reasoning_steps": ["支付事实"],
+        "columns": {
+            "atomic_metrics": [
+                {
+                    "name": "pay_amount",
+                    "business_process": placeholder,
+                }
+            ],
+            "derived_metrics": [],
+            "calculated_metrics": [],
+            "dimensions": [],
+            "others": [],
+        },
+    }
+
+    catalog = build_business_semantics_catalog_from_inspection(
+        project,
+        [fact],
+    )
+
+    assert catalog["business_processes"] == [
+        {
+            "code": "订单_支付",
+            "name": "订单 支付",
+            "data_domain": "",
+            "business_area": "",
         }
     ]
 

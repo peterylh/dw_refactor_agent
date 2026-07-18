@@ -145,10 +145,7 @@ def _normalize_catalog_code(value: Any) -> str:
     if not text:
         return ""
     normalized = re.sub(r"[\s\-/]+", "_", text)
-    normalized = re.sub(r"_+", "_", normalized).strip("_")
-    if re.fullmatch(r"[A-Za-z0-9_]+", normalized):
-        return normalized.upper()
-    return text
+    return re.sub(r"_+", "_", normalized).strip("_").upper()
 
 
 def _result_value(result: Any, key: str, default: Any = None) -> Any:
@@ -389,16 +386,16 @@ def build_business_semantics_catalog_from_inspection(
             continue
         process_codes = []
         metric_items = list(_iter_metric_items(result))
-        if not metric_items:
+        for item in metric_items:
+            code = _normalize_catalog_code(item.get("business_process"))
+            if code and code not in process_codes:
+                process_codes.append(code)
+        if not process_codes:
             table_process = _normalize_catalog_code(
                 _result_value(result, "business_process", "")
             )
             if table_process:
                 process_codes.append(table_process)
-        for item in metric_items:
-            code = _normalize_catalog_code(item.get("business_process"))
-            if code and code not in process_codes:
-                process_codes.append(code)
         for code in process_codes:
             _touch_entry(
                 process_by_code,
