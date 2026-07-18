@@ -13,6 +13,22 @@ from dw_refactor_agent.assessment.llm.inspection_contract import (
 from dw_refactor_agent.config import TEXT_ENCODING
 
 DEFAULT_SLICE_PERIOD = "D"
+REINSPECTION_ERROR_TYPES = frozenset(
+    {
+        "business_process_ambiguous",
+        "business_process_missing",
+        "business_process_unknown",
+        "dimension_primary_entity_invalid",
+        "duplicate_entity_codes",
+        "entity_key_missing",
+        "entity_relationship_origin_missing",
+        "entity_relationship_origin_unknown",
+        "grain_column_missing",
+        "grain_entity_unknown",
+        "semantic_subject_missing",
+        "semantic_subject_unknown",
+    }
+)
 
 
 def _canonical_code(value: Any) -> str:
@@ -566,9 +582,19 @@ def validate_generate_candidate(
                     catalog,
                 )
             )
+    reinspection_tables = sorted(
+        {
+            str(error.get("table") or "")
+            for error in errors
+            if error.get("type") in REINSPECTION_ERROR_TYPES
+            and str(error.get("table") or "").casefold() in inspections
+        },
+        key=str.casefold,
+    )
     return {
         "status": "blocked" if errors else "passed",
         "error_count": len(errors),
         "errors": errors,
         "blocked_tables": blocked_tables,
+        "reinspection_tables": reinspection_tables,
     }

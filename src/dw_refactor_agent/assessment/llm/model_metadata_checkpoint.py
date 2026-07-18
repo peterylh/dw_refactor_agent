@@ -237,6 +237,14 @@ class GenerateModelCheckpoint:
                 context_hash: item["metadata"]
                 for context_hash, item in variants.items()
             }
+            active_context_hash = str(
+                raw_entry.get("active_context_hash") or ""
+            )
+            if active_context_hash not in variant_metadata:
+                active_context_hash = next(
+                    reversed(list(variant_metadata)),
+                    "",
+                )
             preserved_result_names.update(
                 str(item["metadata"]["result_name"])
                 for item in variants.values()
@@ -249,6 +257,7 @@ class GenerateModelCheckpoint:
                 "inspection_variants": variant_metadata,
                 "invalidated_context_hashes": invalidated_hashes,
                 "resumed_context_hashes": [],
+                "active_context_hash": active_context_hash,
             }
         source_run_id = str(manifest.get("run_id") or "") or None
         if not resume_cache:
@@ -577,6 +586,9 @@ class GenerateModelCheckpoint:
             "resumed_context_hashes": list(
                 previous.get("resumed_context_hashes") or []
             ),
+            "active_context_hash": str(
+                previous.get("active_context_hash") or ""
+            ),
             "inspection_status": inspection_result.status,
             "confidence": inspection_result.confidence,
             "retry_count": inspection_result.retry_count,
@@ -585,6 +597,7 @@ class GenerateModelCheckpoint:
         staged_files: list[tuple[Path, Path, dict[str, str]]] = []
         context_hash = str(inspection_result.context_hash or "")
         if context_hash:
+            entry["active_context_hash"] = context_hash
             result_name = self._inspection_result_name(
                 table_name,
                 context_hash,
@@ -745,6 +758,42 @@ class GenerateModelCheckpoint:
             self._write_manifest()
             return report_path
 
+    def _invalidate_publication_rejected_variants(
+        self,
+        validation: dict[str, Any],
+    ) -> None:
+        raw_tables = validation.get("reinspection_tables")
+        if not isinstance(raw_tables, list):
+            return
+        entries_by_key = {
+            str(table_name).casefold(): entry
+            for table_name, entry in self._manifest["tables"].items()
+            if isinstance(entry, dict)
+        }
+        for raw_table_name in raw_tables:
+            entry = entries_by_key.get(str(raw_table_name).casefold())
+            if entry is None:
+                continue
+            variants = entry.get("inspection_variants")
+            if not isinstance(variants, dict) or not variants:
+                continue
+            context_hash = str(entry.get("active_context_hash") or "")
+            if context_hash not in variants:
+                context_hash = next(reversed(list(variants)), "")
+            variant = variants.get(context_hash)
+            if not isinstance(variant, dict):
+                continue
+            variant["resume_eligible"] = False
+            variant["updated_at"] = _utc_timestamp()
+            invalidated_hashes = self._normalized_context_hashes(
+                entry.get("invalidated_context_hashes")
+            )
+            if context_hash not in invalidated_hashes:
+                invalidated_hashes.append(context_hash)
+            entry["invalidated_context_hashes"] = invalidated_hashes[
+                -MAX_CHECKPOINT_INVALIDATIONS_PER_TABLE:
+            ]
+
     def finish(
         self,
         *,
@@ -757,6 +806,8 @@ class GenerateModelCheckpoint:
                 self._manifest["status"] = status
                 self._manifest["published"] = bool(published)
                 self._manifest["publication_validation"] = validation
+                self._invalidate_publication_rejected_variants(validation)
+                self._refresh_manifest_counts(self._manifest)
                 self._write_manifest()
         finally:
             self.close()

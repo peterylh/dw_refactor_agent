@@ -1028,6 +1028,138 @@ def test_generate_checkpoint_invalidates_pre_resolution_disk_cache(
     second_checkpoint.close()
 
 
+def test_generate_checkpoint_invalidates_publication_rejected_variant(
+    tmp_path, monkeypatch
+):
+    project = "generate_checkpoint_publication_rejection"
+    project_dir, plan = _checkpoint_project(tmp_path, monkeypatch, project)
+    context = _checkpoint_context()
+    cache_file = tmp_path / "inspect.json"
+    seed_inspector = TableInspector(
+        api_key="test",
+        cache_file=cache_file,
+        max_retries=0,
+    )
+    result = TableInspectResult(
+        table_name=context.table_name,
+        declared_layer=context.layer,
+        inferred_layer="DWD",
+        table_type="fact",
+        confidence=0.9,
+        reasoning_steps=[],
+    )
+    context_hash = seed_inspector._compute_hash(context)
+    result.context_hash = context_hash
+    seed_inspector._store_cached_result(
+        context.table_name,
+        context_hash,
+        result,
+    )
+    seed_inspector._save_cache()
+    first = GenerateModelCheckpoint(
+        project,
+        project_dir=project_dir,
+        plan=plan,
+    )
+    first.write_inspection_result(result)
+    first.finish(
+        status="blocked",
+        published=False,
+        validation={
+            "status": "blocked",
+            "reinspection_tables": ["DWD_FIRST"],
+        },
+    )
+
+    manifest = json.loads(
+        (project_dir / "mid_checkpoints" / "manifest.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    entry = manifest["tables"]["dwd_first"]
+    assert entry["active_context_hash"] == context_hash
+    assert entry["invalidated_context_hashes"] == [context_hash]
+    assert not entry["inspection_variants"][context_hash]["resume_eligible"]
+
+    second = GenerateModelCheckpoint(
+        project,
+        project_dir=project_dir,
+        plan=plan,
+    )
+    resume_cache = second.resume_cache()
+    assert resume_cache["dwd_first"] == {
+        "variants": {},
+        "invalid_context_hashes": [context_hash],
+    }
+    resumed_inspector = TableInspector(
+        api_key="test",
+        cache_file=cache_file,
+        max_retries=0,
+        resume_cache=resume_cache,
+    )
+    persisted_cache = json.loads(cache_file.read_text(encoding="utf-8"))
+    assert context.table_name not in persisted_cache
+    api_calls = []
+
+    def successful_api(_prompt):
+        api_calls.append("called")
+        return _dwd_fact_inspection_response()
+
+    monkeypatch.setattr(resumed_inspector, "_call_api", successful_api)
+    retried = resumed_inspector.inspect_batch([context])[0]
+
+    assert api_calls == ["called"]
+    assert retried.reuse_source == ""
+    second.close()
+
+
+def test_generate_checkpoint_keeps_variant_for_execution_publication_error(
+    tmp_path, monkeypatch
+):
+    project = "generate_checkpoint_execution_rejection"
+    project_dir, plan = _checkpoint_project(tmp_path, monkeypatch, project)
+    context = _checkpoint_context()
+    result = TableInspectResult(
+        table_name=context.table_name,
+        declared_layer=context.layer,
+        inferred_layer="DWD",
+        table_type="fact",
+        confidence=0.9,
+        reasoning_steps=[],
+    )
+    result.context_hash = TableInspector(api_key="test")._compute_hash(context)
+    first = GenerateModelCheckpoint(
+        project,
+        project_dir=project_dir,
+        plan=plan,
+    )
+    first.write_inspection_result(result)
+    first.finish(
+        status="blocked",
+        published=False,
+        validation={
+            "status": "blocked",
+            "errors": [
+                {
+                    "type": "execution_slice_missing",
+                    "table": "dwd_first",
+                }
+            ],
+            "reinspection_tables": [],
+        },
+    )
+
+    second = GenerateModelCheckpoint(
+        project,
+        project_dir=project_dir,
+        plan=plan,
+    )
+
+    assert second.resume_cache()["dwd_first"]["variants"]
+    assert second.resume_cache()["dwd_first"]["invalid_context_hashes"] == []
+    second.close()
+
+
 def test_generate_checkpoint_no_cache_discards_resume_variants(
     tmp_path, monkeypatch
 ):
@@ -1605,6 +1737,7 @@ def test_run_generate_model_metadata_blocks_unresolved_execution_contract(
             ),
         }
     ]
+    assert result["publication"]["validation"]["reinspection_tables"] == []
     assert result["deleted_model_files"] == []
     assert saved["execution"] == {"materialized": "full"}
 
@@ -1788,6 +1921,7 @@ def test_generate_publication_business_process_contract(
     if expected_error is None:
         assert validation["status"] == "passed"
         assert validation["errors"] == []
+        assert validation["reinspection_tables"] == []
         return
     assert validation["status"] == "blocked"
     assert validation["errors"] == [
@@ -1797,6 +1931,9 @@ def test_generate_publication_business_process_contract(
             "message": expected_message,
         }
     ]
+    assert validation["reinspection_tables"] == (
+        [table_name] if llm_enabled else []
+    )
 
 
 def test_generate_publication_requires_complete_llm_mid_coverage(tmp_path):
@@ -1904,6 +2041,7 @@ def test_generate_publication_allows_fact_foreign_entities_without_relationship(
         "error_count": 0,
         "errors": [],
         "blocked_tables": [],
+        "reinspection_tables": [],
     }
 
 
@@ -1958,6 +2096,7 @@ def test_generate_publication_validates_entity_keys_and_grain_references():
         "grain_entity_unknown",
         "grain_column_missing",
     }
+    assert validation["reinspection_tables"] == ["dim_customer"]
 
 
 def test_generate_file_set_publication_rolls_back_on_replace_failure(
