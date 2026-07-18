@@ -3,6 +3,7 @@ import yaml
 
 import dw_refactor_agent.assessment.llm.model_metadata_updates as updates_module
 import dw_refactor_agent.config as config
+from dw_refactor_agent.assessment.llm.context_builder import TableContext
 from dw_refactor_agent.assessment.llm.metadata_flow import (
     catalog_plan_for_discovery,
     catalog_plan_for_generate,
@@ -30,6 +31,366 @@ from tests.assess.model_metadata_writer_test_support import (
     _sample_fact_result,
 )
 from tests.case_matrix import case_matrix
+
+
+def _entity_enrichment_context(
+    table_name,
+    ddl,
+    *,
+    upstream_tables=None,
+    column_lineage=None,
+):
+    return TableContext(
+        table_name=table_name,
+        layer="DWS" if table_name.startswith("dws_") else "DIM",
+        ddl=ddl,
+        etl_sql="",
+        upstream_tables=list(upstream_tables or []),
+        downstream_tables=[],
+        column_lineage=list(column_lineage or []),
+    )
+
+
+def test_related_entity_enrichment_requires_explicit_grain_and_lineage():
+    dimension = TableInspectResult(
+        table_name="dim_accounting_rule",
+        declared_layer="DIM",
+        inferred_layer="DIM",
+        table_type="dimension",
+        confidence=0.9,
+        reasoning_steps=[],
+        entities=[
+            {
+                "code": "ACCOUNTING_RULE",
+                "type": "primary",
+                "key_columns": ["rule_id"],
+            }
+        ],
+    )
+    unrelated_grain = TableInspectResult(
+        table_name="dws_office_activity",
+        declared_layer="DWS",
+        inferred_layer="DWS",
+        table_type="fact",
+        confidence=0.9,
+        reasoning_steps=[],
+        entities=[
+            {
+                "code": "OFFICE",
+                "type": "primary",
+                "key_columns": ["office_id"],
+            }
+        ],
+        grain={"entities": ["OFFICE"]},
+    )
+    ungrained_entity = TableInspectResult(
+        table_name="dws_instruction_activity",
+        declared_layer="DWS",
+        inferred_layer="DWS",
+        table_type="fact",
+        confidence=0.9,
+        reasoning_steps=[],
+        entities=[
+            {
+                "code": "TRANSFER_INSTRUCTION",
+                "type": "primary",
+                "key_columns": ["rule_id"],
+            }
+        ],
+        grain={},
+    )
+    contexts = {
+        "dim_accounting_rule": _entity_enrichment_context(
+            "dim_accounting_rule",
+            (
+                "CREATE TABLE dim_accounting_rule (\n"
+                "  rule_id BIGINT COMMENT '规则ID',\n"
+                "  office_id BIGINT COMMENT '机构ID'\n"
+                ");"
+            ),
+        ),
+        "dws_office_activity": _entity_enrichment_context(
+            "dws_office_activity",
+            "CREATE TABLE dws_office_activity (office_id BIGINT);",
+            upstream_tables=["dwd_transfer"],
+            column_lineage=[
+                {
+                    "source": "dwd_transfer.office_id",
+                    "target": "dws_office_activity.office_id",
+                }
+            ],
+        ),
+        "dws_instruction_activity": _entity_enrichment_context(
+            "dws_instruction_activity",
+            "CREATE TABLE dws_instruction_activity (rule_id BIGINT);",
+            upstream_tables=["dim_accounting_rule"],
+            column_lineage=[
+                {
+                    "source": "dim_accounting_rule.rule_id",
+                    "target": "dws_instruction_activity.rule_id",
+                }
+            ],
+        ),
+    }
+
+    updates_module.enrich_results_with_related_entities(
+        [dimension, unrelated_grain, ungrained_entity],
+        contexts,
+    )
+
+    assert dimension.related_entities == []
+    assert [entity["code"] for entity in dimension.entities] == [
+        "ACCOUNTING_RULE"
+    ]
+
+
+def test_related_entity_enrichment_uses_direct_renamed_column_lineage():
+    dimension = TableInspectResult(
+        table_name="dim_product",
+        declared_layer="DIM",
+        inferred_layer="DIM",
+        table_type="dimension",
+        confidence=0.9,
+        reasoning_steps=[],
+        entities=[
+            {
+                "code": "PRODUCT",
+                "type": "primary",
+                "key_columns": ["product_id"],
+            }
+        ],
+    )
+    grain_result = TableInspectResult(
+        table_name="dws_category_sales",
+        declared_layer="DWS",
+        inferred_layer="DWS",
+        table_type="fact",
+        confidence=0.9,
+        reasoning_steps=[],
+        entities=[
+            {
+                "code": "CATEGORY",
+                "type": "primary",
+                "key_columns": ["category_key"],
+            }
+        ],
+        grain={"entities": ["CATEGORY"]},
+    )
+    contexts = {
+        "dim_product": _entity_enrichment_context(
+            "dim_product",
+            (
+                "CREATE TABLE dim_product (\n"
+                "  product_id BIGINT COMMENT '商品ID',\n"
+                "  category_id BIGINT COMMENT '品类ID'\n"
+                ");"
+            ),
+        ),
+        "dws_category_sales": _entity_enrichment_context(
+            "dws_category_sales",
+            "CREATE TABLE dws_category_sales (category_key BIGINT);",
+            upstream_tables=["dim_product"],
+            column_lineage=[
+                {
+                    "source": "dim_product.category_id",
+                    "target": "dws_category_sales.category_key",
+                }
+            ],
+        ),
+    }
+
+    updates_module.enrich_results_with_related_entities(
+        [dimension, grain_result],
+        contexts,
+    )
+
+    assert dimension.related_entities == [
+        {
+            "code": "CATEGORY",
+            "name": "品类",
+            "key_columns": ["category_id"],
+            "relationship": {
+                "type": "many_to_one",
+                "from_entity": "PRODUCT",
+            },
+        }
+    ]
+
+
+def test_related_entity_enrichment_preserves_composite_key_order():
+    dimension = TableInspectResult(
+        table_name="dim_account_scope",
+        declared_layer="DIM",
+        inferred_layer="DIM",
+        table_type="dimension",
+        confidence=0.9,
+        reasoning_steps=[],
+        entities=[
+            {
+                "code": "ACCOUNT_SCOPE",
+                "type": "primary",
+                "key_columns": ["scope_id"],
+            }
+        ],
+    )
+    grain_result = TableInspectResult(
+        table_name="dws_account_activity",
+        declared_layer="DWS",
+        inferred_layer="DWS",
+        table_type="fact",
+        confidence=0.9,
+        reasoning_steps=[],
+        entities=[
+            {
+                "code": "ACCOUNT",
+                "type": "primary",
+                "key_columns": ["grain_country", "grain_account"],
+            }
+        ],
+        grain={"entities": ["ACCOUNT"]},
+    )
+    contexts = {
+        "dim_account_scope": _entity_enrichment_context(
+            "dim_account_scope",
+            (
+                "CREATE TABLE dim_account_scope (\n"
+                "  scope_id BIGINT COMMENT '范围ID',\n"
+                "  country_id BIGINT COMMENT '国家ID',\n"
+                "  account_id BIGINT COMMENT '账户ID'\n"
+                ");"
+            ),
+        ),
+        "dws_account_activity": _entity_enrichment_context(
+            "dws_account_activity",
+            (
+                "CREATE TABLE dws_account_activity (\n"
+                "  grain_country BIGINT,\n"
+                "  grain_account BIGINT\n"
+                ");"
+            ),
+            upstream_tables=["dim_account_scope"],
+            column_lineage=[
+                {
+                    "source": "dim_account_scope.country_id",
+                    "target": "dws_account_activity.grain_country",
+                },
+                {
+                    "source": "dim_account_scope.account_id",
+                    "target": "dws_account_activity.grain_account",
+                },
+            ],
+        ),
+    }
+
+    updates_module.enrich_results_with_related_entities(
+        [dimension, grain_result],
+        contexts,
+    )
+
+    assert dimension.related_entities[0]["key_columns"] == [
+        "country_id",
+        "account_id",
+    ]
+
+
+def test_related_entity_enrichment_rejects_competing_entity_codes():
+    dimension = TableInspectResult(
+        table_name="dim_transfer_route",
+        declared_layer="DIM",
+        inferred_layer="DIM",
+        table_type="dimension",
+        confidence=0.9,
+        reasoning_steps=[],
+        entities=[
+            {
+                "code": "TRANSFER_ROUTE",
+                "type": "primary",
+                "key_columns": ["route_id"],
+            }
+        ],
+    )
+    grain_results = []
+    contexts = {
+        "dim_transfer_route": _entity_enrichment_context(
+            "dim_transfer_route",
+            (
+                "CREATE TABLE dim_transfer_route (\n"
+                "  route_id BIGINT COMMENT '路径ID',\n"
+                "  office_id BIGINT COMMENT '机构ID',\n"
+                "  region_id BIGINT COMMENT '区域ID'\n"
+                ");"
+            ),
+        )
+    }
+    for suffix in ("FROM", "TO"):
+        table_name = f"dws_transfer_{suffix.casefold()}"
+        grain_results.append(
+            TableInspectResult(
+                table_name=table_name,
+                declared_layer="DWS",
+                inferred_layer="DWS",
+                table_type="fact",
+                confidence=0.9,
+                reasoning_steps=[],
+                entities=[
+                    {
+                        "code": f"OFFICE_{suffix}",
+                        "type": "primary",
+                        "key_columns": ["office_id"],
+                    }
+                ],
+                grain={"entities": [f"OFFICE_{suffix}"]},
+            )
+        )
+        contexts[table_name] = _entity_enrichment_context(
+            table_name,
+            f"CREATE TABLE {table_name} (office_id BIGINT);",
+            upstream_tables=["dim_transfer_route"],
+            column_lineage=[
+                {
+                    "source": "dim_transfer_route.office_id",
+                    "target": f"{table_name}.office_id",
+                }
+            ],
+        )
+
+    region_table = "dws_transfer_to_region"
+    grain_results.append(
+        TableInspectResult(
+            table_name=region_table,
+            declared_layer="DWS",
+            inferred_layer="DWS",
+            table_type="fact",
+            confidence=0.9,
+            reasoning_steps=[],
+            entities=[
+                {
+                    "code": "OFFICE_TO",
+                    "type": "primary",
+                    "key_columns": ["region_id"],
+                }
+            ],
+            grain={"entities": ["OFFICE_TO"]},
+        )
+    )
+    contexts[region_table] = _entity_enrichment_context(
+        region_table,
+        f"CREATE TABLE {region_table} (region_id BIGINT);",
+        upstream_tables=["dim_transfer_route"],
+        column_lineage=[
+            {
+                "source": "dim_transfer_route.region_id",
+                "target": f"{region_table}.region_id",
+            }
+        ],
+    )
+
+    updates_module.enrich_results_with_related_entities(
+        [dimension] + grain_results,
+        contexts,
+    )
+
+    assert dimension.related_entities == []
 
 
 def test_update_model_yaml_table_metadata_scenarios(

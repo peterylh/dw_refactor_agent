@@ -485,18 +485,19 @@ def _grain_key_entity_pairs(
         return []
     grain_entities = _as_string_list(grain.get("entities"))
     if entities:
+        if not grain_entities:
+            return []
         pairs = []
-        wanted = set(grain_entities)
+        wanted = {entity.casefold() for entity in grain_entities}
         for entity in entities:
             if not isinstance(entity, dict):
                 continue
             code = str(entity.get("code") or "").strip()
-            if wanted and code not in wanted:
+            if code.casefold() not in wanted:
                 continue
             for key in _as_string_list(entity.get("key_columns")):
                 pairs.append((key, code))
-        if pairs:
-            return pairs
+        return pairs
 
     keys = _as_string_list(grain.get("keys"))
     time_column = str(grain.get("time_column") or "")
@@ -522,15 +523,38 @@ def _grain_key_entity_pairs(
 
 def _build_grain_entity_index(
     results: list[TableInspectResult],
-) -> dict[str, str]:
-    index: dict[str, str] = {}
+) -> dict[str, list[dict[str, Any]]]:
+    index: dict[str, list[dict[str, Any]]] = {}
     for result in results:
-        if result.status == "blocked":
+        if (
+            result.status == "blocked"
+            or result.table_type != "fact"
+            or str(result.inferred_layer or "").upper() != "DWS"
+        ):
             continue
+        grouped: dict[str, dict[str, Any]] = {}
         for key, entity in _grain_key_entity_pairs(
             result.grain, result.entities
         ):
-            index.setdefault(key, entity)
+            entity_code = str(entity or "").strip()
+            key_column = str(key or "").strip()
+            if not entity_code or not key_column:
+                continue
+            canonical_code = entity_code.casefold()
+            candidate = grouped.setdefault(
+                canonical_code,
+                {
+                    "code": entity_code,
+                    "key_columns": [],
+                },
+            )
+            canonical_keys = {
+                column.casefold() for column in candidate["key_columns"]
+            }
+            if key_column.casefold() not in canonical_keys:
+                candidate["key_columns"].append(key_column)
+        if grouped:
+            index[result.table_name] = list(grouped.values())
     return index
 
 
@@ -586,32 +610,191 @@ def _merge_related_entities(
     return merged
 
 
+def _canonical_table_reference(value: Any) -> str:
+    text = str(value or "").strip().replace("`", "").replace('"', "")
+    return ".".join(
+        part.strip().casefold() for part in text.split(".") if part.strip()
+    )
+
+
+def _split_column_reference(value: Any) -> tuple[str, str]:
+    reference = _canonical_table_reference(value)
+    if "." not in reference:
+        return "", reference
+    table_name, column_name = reference.rsplit(".", 1)
+    return table_name, column_name
+
+
+def _table_reference_matches(
+    reference: str,
+    table_name: str,
+    context: TableContext,
+) -> bool:
+    wanted = _canonical_table_reference(reference)
+    if not wanted:
+        return False
+    identity = _canonical_table_reference(context.table_identity)
+    short_name = _canonical_table_reference(table_name).split(".")[-1]
+    if "." in wanted and "." in identity:
+        return (
+            wanted == identity
+            or wanted.endswith(f".{identity}")
+            or identity.endswith(f".{wanted}")
+        )
+    return wanted.split(".")[-1] == short_name
+
+
+def _context_for_table(
+    contexts: dict[str, TableContext],
+    table_name: str,
+) -> TableContext | None:
+    context = contexts.get(table_name)
+    if context is not None:
+        return context
+    wanted = _canonical_table_reference(table_name)
+    matches = [
+        candidate
+        for name, candidate in contexts.items()
+        if _canonical_table_reference(name) == wanted
+    ]
+    return matches[0] if len(matches) == 1 else None
+
+
+def _direct_grain_key_mapping(
+    dimension_table: str,
+    dimension_context: TableContext,
+    grain_table: str,
+    grain_context: TableContext,
+    grain_keys: list[str],
+    ddl_columns: dict[str, tuple[str, str]],
+) -> tuple[str, ...]:
+    source_columns = []
+    for grain_key in grain_keys:
+        matching_sources = set()
+        wanted_key = grain_key.casefold()
+        for edge in grain_context.column_lineage or []:
+            if not isinstance(edge, dict):
+                continue
+            source_table, source_column = _split_column_reference(
+                edge.get("source")
+            )
+            target_table, target_column = _split_column_reference(
+                edge.get("target")
+            )
+            if (
+                target_column != wanted_key
+                or not _table_reference_matches(
+                    target_table,
+                    grain_table,
+                    grain_context,
+                )
+                or not _table_reference_matches(
+                    source_table,
+                    dimension_table,
+                    dimension_context,
+                )
+                or source_column not in ddl_columns
+            ):
+                continue
+            matching_sources.add(source_column)
+        if len(matching_sources) != 1:
+            return ()
+        source_columns.append(next(iter(matching_sources)))
+    if len(set(source_columns)) != len(source_columns):
+        return ()
+    return tuple(source_columns)
+
+
 def discover_related_entities_from_grain(
     result: TableInspectResult,
     context: TableContext | None,
-    grain_entity_index: dict[str, str],
+    grain_entity_index: dict[str, list[dict[str, Any]]],
+    contexts: dict[str, TableContext] | None = None,
 ) -> list[dict[str, Any]]:
-    """从 DWS grain 使用情况反推维度表承载的层级实体。"""
-    if result.table_type != "dimension" or not result.entity or not context:
+    """从直接字段血缘证明的 DWS grain 反推维度表关联实体。"""
+    if (
+        result.table_type != "dimension"
+        or not result.entity
+        or not context
+        or not contexts
+    ):
         return []
     primary_code = str(result.entity.get("code") or "").strip()
-    primary_keys = set(_as_string_list(result.entity.get("key_columns")))
+    primary_keys = {
+        key.casefold()
+        for key in _as_string_list(result.entity.get("key_columns"))
+    }
     if not primary_code or not primary_keys:
         return []
 
     comments_by_column = _column_comments_from_ddl(context.ddl)
+    ddl_columns = {
+        column.casefold(): (column, comment)
+        for column, comment in comments_by_column.items()
+    }
+    mappings_by_code: dict[
+        str,
+        dict[frozenset[str], tuple[str, ...]],
+    ] = {}
+    display_codes = {}
+    for grain_table, candidates in grain_entity_index.items():
+        grain_context = _context_for_table(contexts, grain_table)
+        if grain_context is None:
+            continue
+        for candidate in candidates:
+            related_code = str(candidate.get("code") or "").strip()
+            canonical_code = related_code.casefold()
+            if not related_code or canonical_code == primary_code.casefold():
+                continue
+            mapping = _direct_grain_key_mapping(
+                result.table_name,
+                context,
+                grain_table,
+                grain_context,
+                _as_string_list(candidate.get("key_columns")),
+                ddl_columns,
+            )
+            if not mapping:
+                continue
+            display_codes.setdefault(canonical_code, related_code)
+            mappings_by_code.setdefault(canonical_code, {}).setdefault(
+                frozenset(mapping),
+                mapping,
+            )
+
+    resolved_mappings = {
+        code: next(iter(mappings.values()))
+        for code, mappings in mappings_by_code.items()
+        if len(mappings) == 1
+    }
+    codes_by_column: dict[str, set[str]] = {}
+    for code, mappings in mappings_by_code.items():
+        for key_columns in mappings.values():
+            for key_column in key_columns:
+                codes_by_column.setdefault(key_column, set()).add(code)
+
     discovered = []
-    for key_column, related_code in sorted(grain_entity_index.items()):
-        if key_column in primary_keys or related_code == primary_code:
+    for canonical_code, key_columns in sorted(resolved_mappings.items()):
+        if any(
+            key_column in primary_keys
+            or len(codes_by_column.get(key_column, set())) != 1
+            for key_column in key_columns
+        ):
             continue
-        if key_column not in comments_by_column:
-            continue
-        comment = comments_by_column.get(key_column, "")
+        actual_columns = [ddl_columns[key][0] for key in key_columns]
+        comment = next(
+            (
+                ddl_columns[key][1]
+                for key in key_columns
+                if ddl_columns[key][1]
+            ),
+            "",
+        )
         discovered.append(
             {
-                "code": related_code,
+                "code": display_codes[canonical_code],
                 "name": _entity_name_from_comment(comment),
-                "key_columns": [key_column],
+                "key_columns": actual_columns,
                 "relationship": {
                     "type": "many_to_one",
                     "from_entity": primary_code,
@@ -633,6 +816,7 @@ def enrich_results_with_related_entities(
             result,
             context,
             grain_entity_index,
+            contexts,
         )
         if discovered:
             result.related_entities = _merge_related_entities(
