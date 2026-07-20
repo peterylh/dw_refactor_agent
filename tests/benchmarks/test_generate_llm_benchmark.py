@@ -557,6 +557,19 @@ def test_project_summary_records_post_retry_only_mismatch(tmp_path):
             "semantic_subjects": [],
         },
     )
+    metric = {"name": "order_count"}
+    entities = [
+        {
+            "code": "STORE",
+            "type": "foreign",
+            "key_columns": ["store_id"],
+        }
+    ]
+    grain = {
+        "entities": ["STORE"],
+        "time_column": "stat_date",
+        "time_period": "D",
+    }
     result = {
         "model_updates": [
             {
@@ -570,19 +583,9 @@ def test_project_summary_records_post_retry_only_mismatch(tmp_path):
                 "name": "opaque_summary",
                 "layer": "DWS",
                 "table_type": "fact",
-                "derived_metrics": [{"name": "order_count"}],
-                "entities": [
-                    {
-                        "code": "STORE",
-                        "type": "foreign",
-                        "key_columns": ["store_id"],
-                    }
-                ],
-                "grain": {
-                    "entities": ["STORE"],
-                    "time_column": "stat_date",
-                    "time_period": "D",
-                },
+                "derived_metrics": [metric],
+                "entities": entities,
+                "grain": grain,
             }
         },
         "planned_catalog_updates": [
@@ -602,21 +605,11 @@ def test_project_summary_records_post_retry_only_mismatch(tmp_path):
                     "status": "blocked",
                     "columns": {
                         "atomic_metrics": [],
-                        "derived_metrics": [{"name": "order_count"}],
+                        "derived_metrics": [metric],
                         "calculated_metrics": [],
                     },
-                    "entities": [
-                        {
-                            "code": "STORE",
-                            "type": "foreign",
-                            "key_columns": ["store_id"],
-                        }
-                    ],
-                    "grain": {
-                        "entities": ["STORE"],
-                        "time_column": "stat_date",
-                        "time_period": "D",
-                    },
+                    "entities": entities,
+                    "grain": grain,
                     "validation": {
                         METRIC_CONTEXT_REINSPECTION_ERROR_KEY: [
                             "upstream metric context reinspection failed"
@@ -656,26 +649,17 @@ def test_project_summary_records_post_retry_only_mismatch(tmp_path):
             "table": "opaque_summary",
         }
     ]
-    assert summary["candidate_model_summary"] == {
+    populated_summary = {
         "model_count": 1,
         "metric_count": 1,
         "metric_table_count": 1,
         "entity_table_count": 1,
         "grain_table_count": 1,
     }
+    assert summary["candidate_model_summary"] == populated_summary
+    assert summary["inspection_summary"] == populated_summary
     assert summary["published_model_summary"] == {
-        "model_count": 0,
-        "metric_count": 0,
-        "metric_table_count": 0,
-        "entity_table_count": 0,
-        "grain_table_count": 0,
-    }
-    assert summary["inspection_summary"] == {
-        "model_count": 1,
-        "metric_count": 1,
-        "metric_table_count": 1,
-        "entity_table_count": 1,
-        "grain_table_count": 1,
+        key: 0 for key in populated_summary
     }
     assert summary["metric_count"] == 1
     assert summary["catalog_summary"]["candidate"][

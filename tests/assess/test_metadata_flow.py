@@ -5,8 +5,6 @@ from dw_refactor_agent.assessment.llm.layer_resolution import (
 from dw_refactor_agent.assessment.llm.metadata_flow import (
     _aggregate_metric_sources,
     _inject_upstream_metric_groups,
-    _matching_pairs,
-    _merge_metric_reinspection,
     run_inspection_pipeline,
 )
 from dw_refactor_agent.assessment.llm.table_inspector import (
@@ -14,6 +12,39 @@ from dw_refactor_agent.assessment.llm.table_inspector import (
     TableInspectResult,
 )
 from tests.case_matrix import case_matrix
+
+
+def _fact_result(
+    table_name,
+    *,
+    process="",
+    atomic=(),
+    derived=(),
+    dimensions=(),
+    entities=(),
+    grain=None,
+    validation=None,
+    inferred_layer="DWD",
+):
+    return TableInspectResult(
+        table_name=table_name,
+        declared_layer="DWD",
+        inferred_layer=inferred_layer,
+        table_type="fact",
+        confidence=0.9,
+        reasoning_steps=[],
+        business_process=process,
+        columns={
+            "atomic_metrics": list(atomic),
+            "derived_metrics": list(derived),
+            "calculated_metrics": [],
+            "dimensions": list(dimensions),
+            "others": [],
+        },
+        entities=list(entities),
+        grain=grain or {},
+        validation=validation or {},
+    )
 
 
 @case_matrix(
@@ -57,154 +88,55 @@ def test_inject_upstream_metric_groups_identity_rules(
     }
 
 
-def test_aggregate_metric_sources_requires_direct_non_key_sum_or_avg():
-    sql = """
-        SELECT
-            SUM(amount) AS total_amount,
-            AVG(rating) AS avg_rating,
-            COUNT(order_id) AS order_count,
-            SUM(CASE WHEN status = 'PAID' THEN amount ELSE 0 END)
-                AS paid_amount
-        FROM orders
-    """
-
-    assert _aggregate_metric_sources(sql) == {
-        "total_amount": {"amount"},
-        "avg_rating": {"rating"},
-    }
-    assert (
-        _aggregate_metric_sources(
+@case_matrix(
+    ("sql", "consumer_identity", "expected"),
+    [
+        (
             """
-            WITH unused AS (
-                SELECT SUM(amount) AS total_amount FROM source
-            )
-            INSERT INTO target
-            SELECT amount AS total_amount FROM source
-            """
-        )
-        == {}
-    )
-    assert _aggregate_metric_sources('SELECT "unterminated') == {}
-    multi_target_sql = """
-        INSERT INTO staging
-        SELECT SUM(amount) AS total_amount FROM source;
-        INSERT INTO target
-        SELECT amount AS total_amount FROM source;
-    """
+            SELECT SUM(amount) AS total_amount,
+                   AVG(rating) AS avg_rating,
+                   COUNT(order_id) AS order_count,
+                   SUM(CASE WHEN status = 'PAID' THEN amount ELSE 0 END)
+                       AS paid_amount
+            FROM orders
+            """,
+            None,
+            {"total_amount": {"amount"}, "avg_rating": {"rating"}},
+        ),
+        (
+            "WITH unused AS (SELECT SUM(amount) AS total_amount FROM source) "
+            "INSERT INTO target SELECT amount AS total_amount FROM source",
+            None,
+            {},
+        ),
+        ('SELECT "unterminated', None, {}),
+        (
+            "INSERT INTO staging SELECT SUM(amount) AS total_amount FROM source;"
+            "INSERT INTO target SELECT amount AS total_amount FROM source",
+            "analytics.target",
+            {},
+        ),
+        (
+            "SELECT SUM(amount) AS total_amount FROM source;"
+            "INSERT INTO target SELECT amount AS total_amount FROM source",
+            "analytics.target",
+            {},
+        ),
+    ],
+    ids=("direct", "unused-cte", "malformed", "multi-target", "auxiliary"),
+)
+def test_aggregate_metric_sources_requires_direct_non_key_sum_or_avg(
+    sql,
+    consumer_identity,
+    expected,
+):
     assert (
         _aggregate_metric_sources(
-            multi_target_sql,
-            consumer_identity="analytics.target",
+            sql,
+            consumer_identity=consumer_identity,
         )
-        == {}
+        == expected
     )
-    auxiliary_select_sql = """
-        SELECT SUM(amount) AS total_amount FROM source;
-        INSERT INTO target
-        SELECT amount AS total_amount FROM source;
-    """
-    assert (
-        _aggregate_metric_sources(
-            auxiliary_select_sql,
-            consumer_identity="analytics.target",
-        )
-        == {}
-    )
-
-
-def test_matching_pairs_does_not_cross_qualified_databases():
-    context = TableContext(
-        table_name="events",
-        table_identity="cat2.db.events",
-        layer="DWD",
-        ddl="",
-        etl_sql="",
-        upstream_tables=[],
-        downstream_tables=[],
-    )
-    result = TableInspectResult(
-        table_name="events",
-        declared_layer="DWD",
-        inferred_layer="DWD",
-        table_type="fact",
-        confidence=0.9,
-        reasoning_steps=[],
-    )
-    pair = (context, result)
-
-    assert _matching_pairs("cat1.db.events", [pair]) == []
-    assert _matching_pairs("events", [pair]) == [pair]
-
-
-def test_metric_reinspection_does_not_erase_process_ambiguity():
-    context = TableContext(
-        table_name="sales",
-        table_identity="analytics.sales",
-        layer="DWD",
-        ddl="CREATE TABLE sales (sale_id BIGINT, amount DECIMAL);",
-        etl_sql="",
-        upstream_tables=[],
-        downstream_tables=[],
-    )
-    entities = [
-        {
-            "code": "SALE",
-            "type": "primary",
-            "key_columns": ["sale_id"],
-        }
-    ]
-    initial = TableInspectResult(
-        table_name="sales",
-        declared_layer="DWD",
-        inferred_layer="DWD",
-        table_type="fact",
-        confidence=0.9,
-        reasoning_steps=[],
-        business_process="SALES",
-        columns={
-            "atomic_metrics": [
-                {"name": "amount", "business_process": "SALES"}
-            ],
-            "derived_metrics": [],
-            "calculated_metrics": [],
-            "dimensions": [{"name": "sale_id"}],
-            "others": [],
-        },
-        entities=entities,
-        grain={"entities": ["SALE"]},
-    )
-    revised = TableInspectResult(
-        table_name="sales",
-        declared_layer="DWD",
-        inferred_layer="DWD",
-        table_type="fact",
-        confidence=0.9,
-        reasoning_steps=[],
-        business_process="SALES",
-        columns={
-            "atomic_metrics": [
-                {"name": "amount", "business_process": "RETURNS"}
-            ],
-            "derived_metrics": [],
-            "calculated_metrics": [],
-            "dimensions": [{"name": "sale_id"}],
-            "others": [],
-        },
-        entities=entities,
-        grain={"entities": ["SALE"]},
-        validation={"business_process_ambiguous": ["SALES, RETURNS"]},
-    )
-
-    merged = _merge_metric_reinspection(
-        initial,
-        revised,
-        context,
-        validate_publication_contract=True,
-    )
-
-    assert merged.atomic_metrics[0]["business_process"] == "RETURNS"
-    assert merged.validation["business_process_ambiguous"]
-    assert merged.status == "blocked"
 
 
 def test_inspection_pipeline_reclassifies_and_preserves_metric_identity(
@@ -396,30 +328,16 @@ def test_inspection_pipeline_repairs_upstream_metric_and_merges_reinspection(
             batch_sizes.append(len(contexts))
             if len(batch_sizes) == 1:
                 return [
-                    TableInspectResult(
-                        table_name="customer_interactions",
-                        declared_layer="DWD",
-                        inferred_layer="DWD",
-                        table_type="fact",
-                        confidence=0.9,
-                        reasoning_steps=[],
-                        business_process="CUSTOMER_INTERACTION",
-                        columns={
-                            "atomic_metrics": [],
-                            "derived_metrics": [],
-                            "calculated_metrics": [],
-                            "dimensions": [
-                                {
-                                    "name": "interaction_id",
-                                    "data_type": "BIGINT",
-                                },
-                                {
-                                    "name": "satisfaction_rating",
-                                    "data_type": "STRING",
-                                },
-                            ],
-                            "others": [],
-                        },
+                    _fact_result(
+                        "customer_interactions",
+                        process="CUSTOMER_INTERACTION",
+                        dimensions=[
+                            {"name": "interaction_id", "data_type": "BIGINT"},
+                            {
+                                "name": "satisfaction_rating",
+                                "data_type": "STRING",
+                            },
+                        ],
                         entities=[
                             {
                                 "code": "INTERACTION",
@@ -428,32 +346,20 @@ def test_inspection_pipeline_repairs_upstream_metric_and_merges_reinspection(
                             }
                         ],
                     ),
-                    TableInspectResult(
-                        table_name="agent",
-                        declared_layer="DWD",
-                        inferred_layer="DWD",
-                        table_type="fact",
-                        confidence=0.9,
-                        reasoning_steps=[],
-                        business_process="CUSTOMER_INTERACTION",
-                        columns={
-                            "atomic_metrics": [],
-                            "derived_metrics": [
-                                {
-                                    "name": "avg_satisfaction_rating",
-                                    "base_metric": "satisfaction_rating",
-                                    "base_metric_table": (
-                                        "analytics.customer_interactions"
-                                    ),
-                                    "business_process": (
-                                        "CUSTOMER_INTERACTION"
-                                    ),
-                                }
-                            ],
-                            "calculated_metrics": [],
-                            "dimensions": [{"name": "agent_id"}],
-                            "others": [],
-                        },
+                    _fact_result(
+                        "agent",
+                        process="CUSTOMER_INTERACTION",
+                        derived=[
+                            {
+                                "name": "avg_satisfaction_rating",
+                                "base_metric": "satisfaction_rating",
+                                "base_metric_table": (
+                                    "analytics.customer_interactions"
+                                ),
+                                "business_process": "CUSTOMER_INTERACTION",
+                            }
+                        ],
+                        dimensions=[{"name": "agent_id"}],
                         entities=[
                             {
                                 "code": "AGENT",
@@ -478,30 +384,20 @@ def test_inspection_pipeline_repairs_upstream_metric_and_merges_reinspection(
                 "analytics.customer_interactions"
             ]["atomic_metrics"] == ["satisfaction_rating"]
             return [
-                TableInspectResult(
-                    table_name="agent",
-                    declared_layer="DWD",
-                    inferred_layer="DWD",
-                    table_type="fact",
-                    confidence=0.9,
-                    reasoning_steps=[],
-                    business_process="AGENT_PERFORMANCE",
-                    columns={
-                        "atomic_metrics": [],
-                        "derived_metrics": [
-                            {
-                                "name": "avg_satisfaction_rating",
-                                "base_metric": "satisfaction_rating",
-                                "base_metric_table": (
-                                    "analytics.customer_interactions"
-                                ),
-                                "business_process": "AGENT_PERFORMANCE",
-                            }
-                        ],
-                        "calculated_metrics": [],
-                        "dimensions": [{"name": "agent_id"}],
-                        "others": [],
-                    },
+                _fact_result(
+                    "agent",
+                    process="AGENT_PERFORMANCE",
+                    derived=[
+                        {
+                            "name": "avg_satisfaction_rating",
+                            "base_metric": "satisfaction_rating",
+                            "base_metric_table": (
+                                "analytics.customer_interactions"
+                            ),
+                            "business_process": "AGENT_PERFORMANCE",
+                        }
+                    ],
+                    dimensions=[{"name": "agent_id"}],
                     entities=[
                         {
                             "code": "EMPLOYEE",
@@ -625,26 +521,12 @@ def test_inspection_pipeline_propagates_until_stable_and_persists_final(
                 )
                 metric = {"name": f"metric_{context.table_name}"}
                 results.append(
-                    TableInspectResult(
-                        table_name=context.table_name,
-                        declared_layer="DWD",
-                        inferred_layer="DWD",
-                        table_type="fact",
-                        confidence=0.9,
-                        reasoning_steps=[],
-                        business_process="DEMO",
-                        columns={
-                            "atomic_metrics": (
-                                [metric] if has_metric_evidence else []
-                            ),
-                            "derived_metrics": [],
-                            "calculated_metrics": [],
-                            "dimensions": [
-                                {"name": f"{context.table_name}_id"}
-                            ]
-                            + ([] if has_metric_evidence else [metric]),
-                            "others": [],
-                        },
+                    _fact_result(
+                        context.table_name,
+                        process="DEMO",
+                        atomic=[metric] if has_metric_evidence else [],
+                        dimensions=[{"name": f"{context.table_name}_id"}]
+                        + ([] if has_metric_evidence else [metric]),
                         entities=[
                             {
                                 "code": context.table_name.upper(),

@@ -2409,7 +2409,8 @@ def test_generate_publication_allows_fact_foreign_entities_without_relationship(
     }
 
 
-def test_generate_publication_allows_factless_bridge_without_process(tmp_path):
+@pytest.mark.parametrize("valid", [True, False], ids=["valid", "invalid"])
+def test_generate_publication_bridge_contract(tmp_path, valid):
     task_path = tmp_path / "bridge_loan_rate.sql"
     task_path.write_text(
         "TRUNCATE TABLE bridge_loan_rate;\n",
@@ -2427,131 +2428,65 @@ def test_generate_publication_allows_factless_bridge_without_process(tmp_path):
             "key_columns": ["rate_id"],
         },
     ]
-
-    validation = validate_generate_candidate(
-        {
-            "bridge_loan_rate": {
-                "name": "bridge_loan_rate",
-                "layer": "DWD",
-                "table_type": "bridge",
-                "execution": {
-                    "materialized": "full",
-                    "full_refresh_strategy": "replace_all",
-                },
-                "entities": entities,
-                "grain": {"entities": ["LOAN", "RATE"]},
-            }
+    selected_entities = entities if valid else entities[:1]
+    grain = {"entities": ["LOAN", "RATE"]} if valid else {"entities": []}
+    process = "" if valid else "LOAN_RATE"
+    metrics = [] if valid else [{"name": "rate_value"}]
+    model = {
+        "name": "bridge_loan_rate",
+        "layer": "DWD",
+        "table_type": "bridge",
+        "execution": {
+            "materialized": "full",
+            "full_refresh_strategy": "replace_all",
         },
+        "entities": selected_entities,
+        "grain": grain,
+    }
+    inspection = {
+        "table_name": "bridge_loan_rate",
+        "status": "passed",
+        "table_type": "bridge",
+        "business_process": process,
+        "entities": selected_entities,
+        "grain": grain,
+        "columns": {
+            "atomic_metrics": metrics,
+            "derived_metrics": [],
+            "calculated_metrics": [],
+        },
+    }
+    if process:
+        model["business_process"] = process
+        model["atomic_metrics"] = metrics
+    validation = validate_generate_candidate(
+        {"bridge_loan_rate": model},
         {
             "bridge_loan_rate": {
                 "ddl": {
                     "columns": [
                         {"name": "loan_id"},
                         {"name": "rate_id"},
-                    ]
-                },
-                "tasks": [{"path": str(task_path), "is_full_refresh": False}],
-            }
-        },
-        llm_result={
-            "tables": [
-                {
-                    "table_name": "bridge_loan_rate",
-                    "status": "passed",
-                    "table_type": "bridge",
-                    "entities": entities,
-                    "grain": {"entities": ["LOAN", "RATE"]},
-                    "columns": {
-                        "atomic_metrics": [],
-                        "derived_metrics": [],
-                        "calculated_metrics": [],
-                    },
-                }
-            ]
-        },
-        catalog={},
-    )
-
-    assert validation == {
-        "status": "passed",
-        "error_count": 0,
-        "errors": [],
-        "blocked_tables": [],
-        "reinspection_tables": [],
-    }
-
-
-def test_generate_publication_blocks_incomplete_bridge_contract(tmp_path):
-    task_path = tmp_path / "bridge_loan_rate.sql"
-    task_path.write_text(
-        "TRUNCATE TABLE bridge_loan_rate;\n",
-        encoding="utf-8",
-    )
-    entity = {
-        "code": "LOAN",
-        "type": "foreign",
-        "key_columns": ["loan_id"],
-    }
-
-    validation = validate_generate_candidate(
-        {
-            "bridge_loan_rate": {
-                "name": "bridge_loan_rate",
-                "layer": "DWD",
-                "table_type": "bridge",
-                "execution": {
-                    "materialized": "full",
-                    "full_refresh_strategy": "replace_all",
-                },
-                "entities": [entity],
-                "grain": {"entities": []},
-                "business_process": "LOAN_RATE",
-                "atomic_metrics": [{"name": "rate_value"}],
-            }
-        },
-        {
-            "bridge_loan_rate": {
-                "ddl": {
-                    "columns": [
-                        {"name": "loan_id"},
                         {"name": "rate_value"},
                     ]
                 },
                 "tasks": [{"path": str(task_path), "is_full_refresh": False}],
             }
         },
-        llm_result={
-            "tables": [
-                {
-                    "table_name": "bridge_loan_rate",
-                    "status": "passed",
-                    "table_type": "bridge",
-                    "business_process": "LOAN_RATE",
-                    "entities": [entity],
-                    "grain": {"entities": []},
-                    "columns": {
-                        "atomic_metrics": [
-                            {
-                                "name": "rate_value",
-                                "business_process": "LOAN_RATE",
-                            }
-                        ],
-                        "derived_metrics": [],
-                        "calculated_metrics": [],
-                    },
-                }
-            ]
-        },
+        llm_result={"tables": [inspection]},
         catalog={},
     )
-
-    assert validation["status"] == "blocked"
-    assert {error["type"] for error in validation["errors"]} >= {
-        "bridge_entities_invalid",
-        "bridge_grain_invalid",
-        "bridge_semantics_invalid",
-    }
-    assert validation["reinspection_tables"] == ["bridge_loan_rate"]
+    if valid:
+        assert validation["status"] == "passed"
+        assert validation["errors"] == []
+    else:
+        assert validation["status"] == "blocked"
+        assert {error["type"] for error in validation["errors"]} >= {
+            "bridge_entities_invalid",
+            "bridge_grain_invalid",
+            "bridge_semantics_invalid",
+        }
+        assert validation["reinspection_tables"] == ["bridge_loan_rate"]
 
 
 def test_generate_publication_validates_entity_keys_and_grain_references():
