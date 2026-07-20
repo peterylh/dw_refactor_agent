@@ -441,6 +441,7 @@ def test_update_model_yaml_grain_entity_scenarios(
         _assert_update_model_yaml_grain_scope_writes_dimension_entity_only,
         _assert_update_model_yaml_grain_scope_removes_placeholder_empty_grain,
         _assert_update_model_yaml_grain_scope_writes_dimension_related_entities,
+        _assert_update_model_yaml_preserves_dimension_unique_and_natural_entities,
         _assert_update_model_yaml_grain_scope_migrates_legacy_entity_fields,
         _assert_update_model_yaml_grain_scope_migrates_existing_legacy_without_result,
         _assert_update_model_yaml_grain_scope_canonicalizes_llm_entities,
@@ -1666,6 +1667,97 @@ def _assert_update_model_yaml_grain_scope_writes_dimension_related_entities(
     assert "related_entities" not in saved
     assert saved["layer"] == "DWD"
     assert saved["table_type"] == "dimension"
+
+
+def _assert_update_model_yaml_preserves_dimension_unique_and_natural_entities(
+    tmp_path, monkeypatch
+):
+    import dw_refactor_agent.assessment.llm.model_metadata_writer as writer_module
+
+    models_dir = tmp_path / "demo" / "mid" / "models"
+    models_dir.mkdir(parents=True)
+    model_path = models_dir / "dim_merchant.yaml"
+    model_path.write_text(
+        yaml.safe_dump(
+            {
+                "version": 2,
+                "name": "dim_merchant",
+                "layer": "DIM",
+                "table_type": "dimension",
+            },
+            allow_unicode=True,
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    _configure_project_root(monkeypatch, tmp_path)
+    monkeypatch.setitem(writer_module.PROJECT_CONFIG, "demo", {"dir": "demo"})
+    result = TableInspectResult(
+        table_name="dim_merchant",
+        declared_layer="DIM",
+        inferred_layer="DIM",
+        table_type="dimension",
+        confidence=0.9,
+        reasoning_steps=[],
+        entities=[
+            {
+                "code": "MERCHANT",
+                "type": "primary",
+                "key_columns": ["merchant_id"],
+            },
+            {
+                "code": "MERCHANT_NATURAL",
+                "type": "unique",
+                "key_columns": ["merchant_code"],
+                "relationship": {},
+            },
+            {
+                "code": "MERCHANT_VERSION",
+                "type": "natural",
+                "key_columns": ["merchant_number"],
+                "relationship": {
+                    "type": "many_to_one",
+                    "from_entity": "MERCHANT",
+                },
+            },
+            {
+                "code": "REGION",
+                "type": "foreign",
+                "key_columns": ["region_id"],
+                "relationship": {},
+            },
+        ],
+    )
+
+    update_model_yaml("demo", result, write_scope="grain")
+    saved = yaml.safe_load(model_path.read_text(encoding="utf-8"))
+
+    assert saved["entities"] == [
+        {
+            "code": "MERCHANT",
+            "type": "primary",
+            "key_columns": ["merchant_id"],
+        },
+        {
+            "code": "MERCHANT_NATURAL",
+            "type": "unique",
+            "key_columns": ["merchant_code"],
+        },
+        {
+            "code": "MERCHANT_VERSION",
+            "type": "natural",
+            "key_columns": ["merchant_number"],
+        },
+        {
+            "code": "REGION",
+            "type": "foreign",
+            "key_columns": ["region_id"],
+            "relationship": {
+                "type": "many_to_one",
+                "from_entity": "MERCHANT",
+            },
+        },
+    ]
 
 
 def _assert_update_model_yaml_grain_scope_migrates_legacy_entity_fields(

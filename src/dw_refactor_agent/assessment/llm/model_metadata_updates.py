@@ -1264,13 +1264,22 @@ def _canonical_entities_for_write(
         if not code or code == primary_code:
             continue
         item = dict(entity)
+        entity_type = str(item.get("type") or "").strip().lower()
+        if entity_type in {"unique", "natural"}:
+            item["type"] = entity_type
+            item.pop("relationship", None)
+            canonical.append(item)
+            continue
         item["type"] = "foreign"
         relationship = item.get("relationship")
         if isinstance(relationship, dict):
             relationship = dict(relationship)
         else:
-            relationship = {"type": "many_to_one"}
-        relationship["from_entity"] = primary_code
+            relationship = {}
+        if not str(relationship.get("type") or "").strip():
+            relationship["type"] = "many_to_one"
+        if not str(relationship.get("from_entity") or "").strip():
+            relationship["from_entity"] = primary_code
         item["relationship"] = relationship
         canonical.append(item)
 
