@@ -185,6 +185,8 @@ def run_inspection_pipeline(
     use_model_metadata_asset_roles: bool = False,
     metric_result_is_eligible: Optional[MetricResultEligibility] = None,
     result_layer_resolver: Optional[ResultLayerResolver] = None,
+    asset_content: Optional[Dict[str, Dict[str, str]]] = None,
+    business_semantics_catalog: Optional[Dict[str, Any]] = None,
 ) -> InspectionResultBundle:
     contexts = build_contexts(
         project,
@@ -194,6 +196,8 @@ def run_inspection_pipeline(
         metric_groups=metric_groups,
         expose_layer_hints=expose_layer_hints,
         use_model_metadata_asset_roles=use_model_metadata_asset_roles,
+        asset_content=asset_content,
+        business_semantics_catalog=business_semantics_catalog,
     )
     # Classify every writable model before building metric phases. In a cold
     # start all mid-layer models can carry the same direct-rule prior, so the

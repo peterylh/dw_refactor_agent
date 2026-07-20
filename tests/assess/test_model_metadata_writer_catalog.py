@@ -566,6 +566,13 @@ def _write_single_writer_project(
             "CREATE TABLE ads_sales_dashboard (id BIGINT);\n",
             encoding="utf-8",
         )
+        ads_task_dir = project_dir / "ads" / "tasks"
+        ads_task_dir.mkdir(parents=True, exist_ok=True)
+        (ads_task_dir / "ads_sales_dashboard.sql").write_text(
+            "TRUNCATE TABLE ads_sales_dashboard;\n"
+            "INSERT INTO ads_sales_dashboard SELECT 1;\n",
+            encoding="utf-8",
+        )
     for table_name, payload in (existing_models or {}).items():
         model_dir = project_dir / "mid" / "models"
         model_dir.mkdir(parents=True, exist_ok=True)

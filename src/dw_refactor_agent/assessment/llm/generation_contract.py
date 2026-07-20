@@ -57,6 +57,9 @@ def _task_facts(
 def _task_sql(tasks: list[dict[str, Any]]) -> str:
     statements = []
     for task in tasks:
+        if "sql" in task:
+            statements.append(str(task.get("sql") or ""))
+            continue
         path = task.get("path")
         if path:
             statements.append(Path(path).read_text(encoding=TEXT_ENCODING))

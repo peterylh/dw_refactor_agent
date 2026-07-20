@@ -36,6 +36,9 @@ from dw_refactor_agent.assessment.llm.metadata_flow import (
     WRITABLE_METADATA_LAYERS,
     MetadataFlowPlan,
 )
+from dw_refactor_agent.assessment.llm.model_metadata_publication import (
+    metadata_publication_lock,
+)
 from dw_refactor_agent.assessment.llm.model_metadata_runtime import (
     project_root,
 )
@@ -1109,13 +1112,14 @@ def update_model_yaml(
                 )
             changed = updated != existing
             if not dry_run and changed:
-                path.parent.mkdir(parents=True, exist_ok=True)
-                path.write_text(
-                    yaml.safe_dump(
-                        updated, allow_unicode=True, sort_keys=False
-                    ),
-                    encoding=TEXT_ENCODING,
-                )
+                with metadata_publication_lock(project):
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_text(
+                        yaml.safe_dump(
+                            updated, allow_unicode=True, sort_keys=False
+                        ),
+                        encoding=TEXT_ENCODING,
+                    )
             update = {
                 "table": result.table_name,
                 "path": str(path),
@@ -1395,11 +1399,12 @@ def update_model_yaml(
         or updated.get("related_entities") != previous_related_entities
     )
     if not dry_run and changed:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(
-            yaml.safe_dump(updated, allow_unicode=True, sort_keys=False),
-            encoding=TEXT_ENCODING,
-        )
+        with metadata_publication_lock(project):
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(
+                yaml.safe_dump(updated, allow_unicode=True, sort_keys=False),
+                encoding=TEXT_ENCODING,
+            )
 
     new_metric_count = 0
     removed_metric_count = 0

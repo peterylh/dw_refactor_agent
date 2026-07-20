@@ -1627,7 +1627,7 @@ def test_run_generate_model_metadata_derives_execution_from_task_sql(
     )
     daily_sql = (
         "SET @etl_date = COALESCE(@etl_date, CURDATE());\n"
-        "TRUNCATE TABLE demo.staging_cleanup;\n"
+        "CREATE TEMPORARY TABLE demo.staging_cleanup (id BIGINT);\n"
         "DELETE FROM demo.{table} "
         "WHERE processing_status = 1 "
         "AND business_date = CAST(@etl_date AS DATE);\n"
@@ -1655,7 +1655,11 @@ def test_run_generate_model_metadata_derives_execution_from_task_sql(
     monkeypatch.setitem(
         config.PROJECT_CONFIG,
         project,
-        {"dir": project, "naming_config": "naming_config.yaml"},
+        {
+            "dir": project,
+            "db": "demo",
+            "naming_config": "naming_config.yaml",
+        },
     )
 
     result = run_generate_model_metadata(project, dry_run=False)
@@ -2067,7 +2071,7 @@ def test_run_generate_model_metadata_blocks_unresolved_execution_contract(
     )
     (task_dir / "dwd_order_detail.sql").write_text(
         "SET @retry_limit = 3;\n"
-        "INSERT INTO demo.dwd_order_detail SELECT 1, CURRENT_DATE;\n",
+        "INSERT INTO dwd_order_detail SELECT 1, CURRENT_DATE;\n",
         encoding="utf-8",
     )
     model_path = project_dir / "mid" / "models" / "dwd_order_detail.yaml"
@@ -2125,21 +2129,19 @@ def test_run_generate_model_metadata_blocks_dwd_without_task_sql(
         }
     ]
     assert result["candidate_model_summary"] == {
-        "model_count": 1,
+        "model_count": 0,
         "metric_count": 0,
         "metric_table_count": 0,
         "entity_table_count": 0,
         "grain_table_count": 0,
-        "layer_counts": {"DWD": 1},
+        "layer_counts": {},
     }
     assert result["published_model_summary"]["model_count"] == 1
     assert result["candidate_catalog_summary"] == {
         "business_process_count": 0,
         "semantic_subject_count": 0,
     }
-    assert result["candidate_models"]["dwd_order_detail"]["execution"] == {
-        "materialized": "incremental"
-    }
+    assert result["candidate_models"] == {}
     assert saved["execution"] == {"materialized": "full"}
 
 
@@ -2623,6 +2625,8 @@ def test_run_generate_model_metadata_uses_asset_role_for_prefixless_base(
     (project_dir / "ods" / "ddl" / "internal" / "demo_dm").mkdir(parents=True)
     (project_dir / "mid" / "ddl").mkdir(parents=True)
     (project_dir / "ads" / "ddl").mkdir(parents=True)
+    (project_dir / "mid" / "tasks").mkdir(parents=True)
+    (project_dir / "ads" / "tasks").mkdir(parents=True)
     (
         project_dir
         / "ods"
@@ -2640,6 +2644,15 @@ def test_run_generate_model_metadata_uses_asset_role_for_prefixless_base(
     )
     (project_dir / "ads" / "ddl" / "order_dashboard.sql").write_text(
         "CREATE TABLE order_dashboard (id BIGINT);\n",
+        encoding="utf-8",
+    )
+    (project_dir / "mid" / "tasks" / "order_detail.sql").write_text(
+        "TRUNCATE TABLE order_detail;\nINSERT INTO order_detail SELECT 1;\n",
+        encoding="utf-8",
+    )
+    (project_dir / "ads" / "tasks" / "order_dashboard.sql").write_text(
+        "TRUNCATE TABLE order_dashboard;\n"
+        "INSERT INTO order_dashboard SELECT 1;\n",
         encoding="utf-8",
     )
     (tmp_path / "naming_config.yaml").write_text(

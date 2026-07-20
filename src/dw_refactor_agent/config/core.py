@@ -137,6 +137,10 @@ def load_warehouse_config(
         raise ValueError(f"fixture 必须是 mapping: {warehouse_file}")
 
     config = {
+        "warehouse_config_path": _relative_to_project(
+            warehouse_file,
+            root,
+        ),
         "dir": _warehouse_relative_path(warehouse_dir, data.get("dir"), root),
         "catalog": catalog,
         "db": str(data.get("db") or data.get("database") or ""),

@@ -24,6 +24,9 @@ if str(_src_root) not in sys.path:
 from dw_refactor_agent.assessment.llm.inspection_contract import (
     business_process_codes,
 )
+from dw_refactor_agent.assessment.llm.model_metadata_publication import (
+    metadata_publication_lock,
+)
 from dw_refactor_agent.assessment.llm.table_inspector import (
     METRIC_CONTEXT_REINSPECTION_ERROR_KEY,
     RESOLUTION_REINSPECTION_ERROR_KEY,
@@ -443,11 +446,12 @@ def update_model_yaml_from_catalog(
 
     changed = updated != previous
     if changed and not dry_run:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(
-            yaml.safe_dump(updated, allow_unicode=True, sort_keys=False),
-            encoding=TEXT_ENCODING,
-        )
+        with metadata_publication_lock(project):
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(
+                yaml.safe_dump(updated, allow_unicode=True, sort_keys=False),
+                encoding=TEXT_ENCODING,
+            )
 
     business_changed = any(
         updated.get(key) != previous.get(key)

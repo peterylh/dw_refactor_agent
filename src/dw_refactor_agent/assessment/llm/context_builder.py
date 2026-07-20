@@ -19,6 +19,9 @@ from dw_refactor_agent.config import (
     load_model_metadata,
     task_path_for_job,
 )
+from dw_refactor_agent.config.semantics import (
+    business_domain_config_from_semantics_catalog,
+)
 from dw_refactor_agent.lineage.view import LineageView
 
 DATA_DOMAIN_LAYERS = {"DWD"}
@@ -278,8 +281,15 @@ def _catalog_option_entries(raw_entries) -> list[dict]:
     return entries
 
 
-def _business_semantics_prompt_options(project: str) -> dict:
-    catalog = load_business_semantics_catalog(project)
+def _business_semantics_prompt_options(
+    project: str,
+    catalog: dict | None = None,
+) -> dict:
+    catalog = (
+        catalog
+        if catalog is not None
+        else load_business_semantics_catalog(project)
+    )
     if not catalog:
         return {}
     options = {}
@@ -294,8 +304,15 @@ def _business_semantics_prompt_options(project: str) -> dict:
     return options
 
 
-def _project_context(project: str) -> str:
-    catalog = load_business_semantics_catalog(project)
+def _project_context(
+    project: str,
+    catalog: dict | None = None,
+) -> str:
+    catalog = (
+        catalog
+        if catalog is not None
+        else load_business_semantics_catalog(project)
+    )
     if not catalog:
         return ""
     return str(catalog.get("project_context") or "").strip()
@@ -559,6 +576,8 @@ def build_contexts(
     metric_groups: dict[str, dict[str, list[str]]] | None = None,
     expose_layer_hints: bool = True,
     use_model_metadata_asset_roles: bool = False,
+    asset_content: dict[str, dict[str, str]] | None = None,
+    business_semantics_catalog: dict | None = None,
 ) -> list[TableContext]:
     """为 DWD/DWS/DIM 层所有表构建分类上下文"""
     use_project_asset_dirs = ddl_dir is None
@@ -613,14 +632,23 @@ def build_contexts(
         ),
         ambiguous_short_names=ambiguous_short_names,
     )
-    business_domain_config = get_business_domain_config(project)
+    business_domain_config = (
+        business_domain_config_from_semantics_catalog(
+            business_semantics_catalog
+        )
+        if business_semantics_catalog is not None
+        else get_business_domain_config(project)
+    )
     business_domain_options = (
         business_domain_config.prompt_options()
         if business_domain_config
         else {}
     )
-    business_semantics_options = _business_semantics_prompt_options(project)
-    project_context = _project_context(project)
+    business_semantics_options = _business_semantics_prompt_options(
+        project,
+        business_semantics_catalog,
+    )
+    project_context = _project_context(project, business_semantics_catalog)
     if not use_project_asset_dirs:
         model_asset_roles = {}
     elif explicit_model_metadata and use_model_metadata_asset_roles:
@@ -630,6 +658,19 @@ def build_contexts(
     else:
         model_asset_roles = _project_model_asset_roles(project)
     contexts = []
+    canonical_asset_content = {
+        _canonical_table_name(table_name): dict(content)
+        for table_name, content in (asset_content or {}).items()
+    }
+
+    def get_asset_content(table_name: str) -> dict[str, str] | None:
+        identity = _canonical_table_name(table_name)
+        content = canonical_asset_content.get(identity)
+        if content is not None:
+            return content
+        return canonical_asset_content.get(
+            _short_table_name(identity).casefold()
+        )
 
     memo = {}
     downstream_publication_feature_cache: dict[str, dict] = {}
@@ -653,19 +694,23 @@ def build_contexts(
             if model_entry
             else _short_table_name(table_name)
         )
-        task_path = (
-            _project_task_path(project, model_table_name)
-            if use_project_task_dirs
-            else _first_directory_file(
-                tasks_dir,
-                f"{model_table_name}.sql",
+        snapshot_content = get_asset_content(model_table_name)
+        if snapshot_content is not None:
+            sql_text = str(snapshot_content.get("etl_sql") or "")
+        else:
+            task_path = (
+                _project_task_path(project, model_table_name)
+                if use_project_task_dirs
+                else _first_directory_file(
+                    tasks_dir,
+                    f"{model_table_name}.sql",
+                )
             )
-        )
-        sql_text = (
-            task_path.read_text(encoding=TEXT_ENCODING)
-            if task_path and task_path.exists()
-            else ""
-        )
+            sql_text = (
+                task_path.read_text(encoding=TEXT_ENCODING)
+                if task_path and task_path.exists()
+                else ""
+            )
         features = _downstream_entity_publication_features(sql_text)
         downstream_publication_feature_cache[canonical_name] = features
         return features
@@ -727,35 +772,40 @@ def build_contexts(
             continue
 
         # Read DDL
-        ddl_path = (
-            _first_project_asset_file(
-                project,
-                "ddl",
-                f"{model_table_name}.sql",
+        snapshot_content = get_asset_content(model_table_name)
+        if snapshot_content is not None:
+            ddl_content = str(snapshot_content.get("ddl") or "")
+            etl_content = str(snapshot_content.get("etl_sql") or "")
+        else:
+            ddl_path = (
+                _first_project_asset_file(
+                    project,
+                    "ddl",
+                    f"{model_table_name}.sql",
+                )
+                if use_project_asset_dirs
+                else _first_directory_file(ddl_dir, f"{model_table_name}.sql")
             )
-            if use_project_asset_dirs
-            else _first_directory_file(ddl_dir, f"{model_table_name}.sql")
-        )
-        ddl_content = (
-            ddl_path.read_text(encoding=TEXT_ENCODING)
-            if ddl_path and ddl_path.exists()
-            else ""
-        )
+            ddl_content = (
+                ddl_path.read_text(encoding=TEXT_ENCODING)
+                if ddl_path and ddl_path.exists()
+                else ""
+            )
 
-        # Read ETL
-        task_path = (
-            _project_task_path(project, model_table_name)
-            if use_project_task_dirs
-            else _first_directory_file(
-                tasks_dir,
-                f"{model_table_name}.sql",
+            # Read ETL
+            task_path = (
+                _project_task_path(project, model_table_name)
+                if use_project_task_dirs
+                else _first_directory_file(
+                    tasks_dir,
+                    f"{model_table_name}.sql",
+                )
             )
-        )
-        etl_content = (
-            task_path.read_text(encoding=TEXT_ENCODING)
-            if task_path and task_path.exists()
-            else ""
-        )
+            etl_content = (
+                task_path.read_text(encoding=TEXT_ENCODING)
+                if task_path and task_path.exists()
+                else ""
+            )
         upstream_tables = sorted(canonical_upstream.get(name, set()))
         downstream_tables = sorted(canonical_downstream.get(name, set()))
         upstream_metric_groups = {}

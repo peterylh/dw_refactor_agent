@@ -34,6 +34,10 @@ from dw_refactor_agent.assessment.llm.layer_resolution import (
 from dw_refactor_agent.assessment.llm.metadata_flow import (
     MetadataFlowPlan,
 )
+from dw_refactor_agent.assessment.llm.model_generation_manifest import (
+    GenerateAssetManifest,
+    build_generate_asset_preflight,
+)
 from dw_refactor_agent.assessment.llm.model_metadata_runtime import (
     project_root,
 )
@@ -111,6 +115,7 @@ class GenerateModelMetadataPlan:
     model_paths: dict[str, Path]
     model_updates: list[dict[str, Any]]
     planned_deleted_model_files: list[str]
+    asset_manifest: GenerateAssetManifest
 
 
 def _catalog_table_assets(project: str) -> dict[str, TableAsset]:
@@ -482,6 +487,7 @@ def _generate_model_mapping(
     *,
     asset: dict[str, Any] | None = None,
     asset_role: str = "",
+    execution_contract: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     mapping = catalog_mapping_for_model(catalog, table_name, {})
     asset_layer = _generate_asset_role_layer(asset_role)
@@ -513,10 +519,14 @@ def _generate_model_mapping(
     )
     layer = resolution.applied_layer
     table_type = resolution.table_type
-    execution = infer_execution_mapping(
-        table_name,
-        asset or {},
-        layer=layer,
+    execution = (
+        dict(execution_contract)
+        if execution_contract is not None
+        else infer_execution_mapping(
+            table_name,
+            asset or {},
+            layer=layer,
+        )
     )
     materialized = str(execution.get("materialized") or "").strip()
     mapping.update(
@@ -589,6 +599,7 @@ def plan_generate_model_metadata(
     *,
     replace_existing_models: bool,
     write_scope: str,
+    asset_manifest: GenerateAssetManifest | None = None,
 ) -> GenerateModelMetadataPlan:
     write_scope = _validate_write_scope(write_scope)
     if write_scope not in {"all", "table", "business"}:
@@ -598,27 +609,37 @@ def plan_generate_model_metadata(
             "generate 冷启动必须替换现有 models，不能读取旧 model YAML"
         )
 
-    model_files = _model_files(project)
-    planned_deleted_model_files = [str(path) for path in model_files]
+    if asset_manifest is None:
+        preflight = build_generate_asset_preflight(project, catalog)
+        if not preflight.passed:
+            error_types = ", ".join(
+                sorted({error["type"] for error in preflight.errors})
+            )
+            raise ValueError(
+                f"generate asset preflight blocked: {error_types}"
+            )
+        asset_manifest = preflight.manifest
+    catalog = asset_manifest.catalog_data()
+
+    planned_deleted_model_files = [
+        str(path if path.is_absolute() else project_root() / path)
+        for path in map(Path, asset_manifest.existing_model_paths)
+    ]
     model_metadata: dict[str, dict[str, Any]] = {}
     model_paths: dict[str, Path] = {}
     model_updates = []
-    for table_name, asset in sorted(
-        _generate_model_table_assets(project).items()
-    ):
-        if not asset.ddl or not asset.ddl.exists:
-            continue
+    for manifest_asset in asset_manifest.assets:
+        table_name = manifest_asset.short_name
+        execution = manifest_asset.execution_contract()
         mapping = _generate_model_mapping(
             catalog,
             table_name,
-            asset=asset,
-            asset_role=_asset_role_from_generate_asset(project, asset),
+            asset_role=manifest_asset.asset_role,
+            execution_contract=execution,
         )
-        path = _generated_model_path_for_table(
-            project,
-            table_name,
-            mapping.get("layer"),
-        )
+        path = Path(manifest_asset.target_model_path)
+        if not path.is_absolute():
+            path = project_root() / path
         existing: dict[str, Any] = {}
         updated = _catalog_model_payload(
             table_name=table_name,
@@ -642,6 +663,7 @@ def plan_generate_model_metadata(
         model_paths=model_paths,
         model_updates=model_updates,
         planned_deleted_model_files=planned_deleted_model_files,
+        asset_manifest=asset_manifest,
     )
 
 
@@ -656,7 +678,17 @@ def _write_generated_model_metadata(
     additional_rendered_files: dict[Path, str] | None = None,
     additional_deleted_files: list[Path] | None = None,
 ) -> tuple[list[dict[str, Any]], list[str]]:
-    existing_model_files = _model_files(project) if delete_existing else []
+    existing_model_files = (
+        [
+            path if path.is_absolute() else project_root() / path
+            for path in map(
+                Path,
+                plan.write_targets.planned_deleted_model_files,
+            )
+        ]
+        if delete_existing
+        else []
+    )
     deleted_model_files: list[str] = []
 
     refinements_by_table = {
@@ -728,6 +760,29 @@ def _write_generated_model_metadata(
             _config.clear_naming_config_cache()
 
     return model_updates, deleted_model_files
+
+
+def _candidate_model_publication_targets(
+    project: str,
+    plan: MetadataFlowPlan,
+    final_model_metadata: dict[str, dict[str, Any]],
+) -> tuple[list[str], list[tuple[str, str]], list[Path]]:
+    table_names = list(final_model_metadata)
+    declared_names = [
+        (table_name, str(metadata.get("name") or ""))
+        for table_name, metadata in final_model_metadata.items()
+    ]
+    paths = []
+    for table_name, metadata in final_model_metadata.items():
+        path = plan.write_targets.model_paths.get(table_name)
+        if path is None:
+            path = _generated_model_path_for_table(
+                project,
+                table_name,
+                metadata.get("layer"),
+            )
+        paths.append(path)
+    return table_names, declared_names, paths
 
 
 def _transactional_publish_files(

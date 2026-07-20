@@ -38,8 +38,17 @@ from dw_refactor_agent.assessment.llm.metadata_flow import (
     catalog_plan_for_refresh,
     run_inspection_pipeline,
 )
+from dw_refactor_agent.assessment.llm.model_generation_manifest import (
+    GenerateAssetManifest,
+    GenerateAssetPreflight,
+    build_generate_asset_preflight,
+    revalidate_generate_asset_manifest,
+)
 from dw_refactor_agent.assessment.llm.model_metadata_checkpoint import (
     GenerateModelCheckpoint,
+)
+from dw_refactor_agent.assessment.llm.model_metadata_publication import (
+    metadata_publication_lock,
 )
 from dw_refactor_agent.assessment.llm.table_inspector import (
     DEFAULT_MIN_CACHEABLE_CONFIDENCE,
@@ -109,6 +118,7 @@ from dw_refactor_agent.assessment.llm.model_metadata_generation import (  # noqa
     GenerateModelMetadataPlan,
     _apply_catalog_assignments_to_generated_models,
     _asset_role_from_generate_asset,
+    _candidate_model_publication_targets,
     _catalog_candidate_from_llm_result,
     _catalog_entries_by_code,
     _catalog_entry_changes,
@@ -306,6 +316,84 @@ def _catalog_metadata_summary(catalog: dict[str, Any]) -> dict[str, int]:
     }
 
 
+def _preflight_blocked_generate_result(
+    project: str,
+    *,
+    preflight: GenerateAssetPreflight,
+    catalog: dict[str, Any],
+    catalog_report: dict[str, Any],
+    write_scope: str,
+    update_catalog: bool,
+    replace_existing_models: bool,
+) -> dict[str, Any]:
+    published_models = load_model_metadata(project)
+    result = {
+        "project": project,
+        "source": "direct_model_generation",
+        "mode": "generate",
+        "write_scope": write_scope,
+        "update_catalog": update_catalog,
+        "replace_existing_models": replace_existing_models,
+        "asset_manifest": preflight.manifest.to_dict(),
+        "planned_deleted_model_files": [],
+        "deleted_model_files": [],
+        "generated_model_count": 0,
+        "model_updates": [],
+        "model_update_count": 0,
+        "model_change_count": 0,
+        "llm_result": None,
+        "inspection_result": None,
+        "candidate_model_summary": _model_metadata_summary({}),
+        "published_model_summary": _model_metadata_summary(published_models),
+        "candidate_catalog_summary": _catalog_metadata_summary(catalog),
+        "published_catalog_summary": _catalog_metadata_summary(catalog),
+        "candidate_models": {},
+        "publication": {
+            "status": "blocked",
+            "published": False,
+            "validation": preflight.validation(),
+        },
+        "checkpoint": {
+            "enabled": False,
+            "status": "not_started",
+        },
+        "flow": {
+            "mode": "generate",
+            "prior_source": "direct_rule",
+            "llm_enabled": False,
+            "base_model_count": 0,
+            "final_model_count": 0,
+        },
+    }
+    result.update(catalog_report)
+    result.update(_empty_catalog_update_report())
+    return result
+
+
+def _current_generate_lineage_data(
+    manifest: GenerateAssetManifest,
+) -> dict[str, Any] | None:
+    try:
+        return load_lineage_data(manifest.project)
+    except FileNotFoundError:
+        return None
+
+
+def _fresh_generate_catalog_snapshot(
+    project: str,
+    *,
+    update_catalog: bool,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    import dw_refactor_agent.config as _config
+
+    _config.clear_business_semantics_cache()
+    return _generate_metadata_catalog_for_plan(
+        project,
+        dry_run=True,
+        update_catalog=update_catalog,
+    )
+
+
 def run_generate_model_metadata(
     project: str,
     *,
@@ -329,16 +417,49 @@ def run_generate_model_metadata(
 
     # Always plan against an in-memory catalog first.  Generate publishes the
     # catalog and models only after the complete candidate passes validation.
-    catalog, catalog_report = _generate_metadata_catalog_for_plan(
+    catalog, catalog_report = _fresh_generate_catalog_snapshot(
         project,
-        dry_run=True,
         update_catalog=update_catalog,
     )
+    preflight = build_generate_asset_preflight(project, catalog)
+    if not preflight.passed:
+        return _preflight_blocked_generate_result(
+            project,
+            preflight=preflight,
+            catalog=catalog,
+            catalog_report=catalog_report,
+            write_scope=write_scope,
+            update_catalog=update_catalog,
+            replace_existing_models=replace_existing_models,
+        )
+    if api_key:
+        try:
+            preflight_lineage_data = load_lineage_data(project)
+        except FileNotFoundError:
+            preflight_lineage_data = None
+        if preflight_lineage_data is not None:
+            preflight = build_generate_asset_preflight(
+                project,
+                catalog,
+                lineage_data=preflight_lineage_data,
+            )
+            if not preflight.passed:
+                return _preflight_blocked_generate_result(
+                    project,
+                    preflight=preflight,
+                    catalog=catalog,
+                    catalog_report=catalog_report,
+                    write_scope=write_scope,
+                    update_catalog=update_catalog,
+                    replace_existing_models=replace_existing_models,
+                )
+    catalog = preflight.manifest.catalog_data()
     base_plan = plan_generate_model_metadata(
         project,
         catalog,
         replace_existing_models=replace_existing_models,
         write_scope=write_scope,
+        asset_manifest=preflight.manifest,
     )
 
     generate_plan = build_generate_plan(
@@ -397,6 +518,9 @@ def run_generate_model_metadata(
                     if checkpoint
                     else None
                 ),
+                lineage_data=preflight.manifest.lineage_data(),
+                asset_content=preflight.manifest.inspection_content(),
+                business_semantics_catalog=catalog,
             )
             final_model_metadata = _final_model_metadata_with_refinements(
                 generate_plan.base_model_metadata,
@@ -438,39 +562,84 @@ def run_generate_model_metadata(
     try:
         publication_validation = validate_generate_candidate(
             final_model_metadata,
-            _generate_model_table_assets(project),
+            preflight.manifest.validation_assets(),
             llm_result=llm_result,
             catalog=candidate_catalog,
         )
-        publication_blocked = publication_validation["status"] == "blocked"
-        should_publish = not dry_run and not publication_blocked
-        catalog_rendered_files: dict[Path, str] = {}
-        catalog_deleted_files: list[Path] = []
-        catalog_written_names: list[str] = []
-        if should_publish:
-            (
-                catalog_rendered_files,
-                catalog_deleted_files,
-                catalog_written_names,
-            ) = _render_generated_catalog_files(
-                project,
-                candidate_catalog,
-                enabled=update_catalog,
-            )
-
-        _strip_internal_model_metadata(llm_result)
-
-        refinement_updates = (llm_result or {}).get("model_updates") or []
-        model_updates, deleted_model_files = _write_generated_model_metadata(
+        (
+            candidate_table_names,
+            candidate_declared_names,
+            candidate_model_paths,
+        ) = _candidate_model_publication_targets(
             project,
             generate_plan,
             final_model_metadata,
-            dry_run=not should_publish,
-            delete_existing=replace_existing_models,
-            refinement_updates=refinement_updates,
-            additional_rendered_files=catalog_rendered_files,
-            additional_deleted_files=catalog_deleted_files,
         )
+        should_publish = False
+        catalog_rendered_files: dict[Path, str] = {}
+        catalog_deleted_files: list[Path] = []
+        catalog_written_names: list[str] = []
+        _strip_internal_model_metadata(llm_result)
+        refinement_updates = (llm_result or {}).get("model_updates") or []
+        model_updates: list[dict[str, Any]]
+        deleted_model_files: list[str]
+        if not dry_run and publication_validation["status"] != "blocked":
+            with metadata_publication_lock(project):
+                current_catalog, _current_catalog_report = (
+                    _fresh_generate_catalog_snapshot(
+                        project,
+                        update_catalog=update_catalog,
+                    )
+                )
+                publication_preflight = revalidate_generate_asset_manifest(
+                    preflight.manifest,
+                    catalog=current_catalog,
+                    candidate_table_names=candidate_table_names,
+                    candidate_declared_names=candidate_declared_names,
+                    rendered_model_paths=candidate_model_paths,
+                    lineage_data=(
+                        _current_generate_lineage_data(preflight.manifest)
+                        if api_key
+                        else None
+                    ),
+                )
+                if not publication_preflight.passed:
+                    publication_validation = publication_preflight.validation()
+                else:
+                    (
+                        catalog_rendered_files,
+                        catalog_deleted_files,
+                        catalog_written_names,
+                    ) = _render_generated_catalog_files(
+                        project,
+                        candidate_catalog,
+                        enabled=update_catalog,
+                    )
+                    model_updates, deleted_model_files = (
+                        _write_generated_model_metadata(
+                            project,
+                            generate_plan,
+                            final_model_metadata,
+                            dry_run=False,
+                            delete_existing=replace_existing_models,
+                            refinement_updates=refinement_updates,
+                            additional_rendered_files=catalog_rendered_files,
+                            additional_deleted_files=catalog_deleted_files,
+                        )
+                    )
+                    should_publish = True
+        if not should_publish:
+            model_updates, deleted_model_files = (
+                _write_generated_model_metadata(
+                    project,
+                    generate_plan,
+                    final_model_metadata,
+                    dry_run=True,
+                    delete_existing=replace_existing_models,
+                    refinement_updates=refinement_updates,
+                )
+            )
+        publication_blocked = publication_validation["status"] == "blocked"
         if checkpoint:
             try:
                 checkpoint.finish(
@@ -527,6 +696,7 @@ def run_generate_model_metadata(
         "write_scope": write_scope,
         "update_catalog": update_catalog,
         "replace_existing_models": replace_existing_models,
+        "asset_manifest": preflight.manifest.to_dict(),
         "planned_deleted_model_files": base_plan.planned_deleted_model_files,
         "deleted_model_files": deleted_model_files,
         "generated_model_count": len(base_plan.model_updates),
@@ -953,6 +1123,9 @@ def run_metadata_write(
     inspection_complete_callback: (
         Callable[[list[TableInspectResult]], None] | None
     ) = None,
+    lineage_data: dict[str, Any] | None = None,
+    asset_content: dict[str, dict[str, str]] | None = None,
+    business_semantics_catalog: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """运行项目级 LLM 巡检与模型元数据回写。"""
     write_scope = _validate_write_scope(write_scope)
@@ -971,14 +1144,22 @@ def run_metadata_write(
             dry_run=dry_run,
         )
     else:
-        base_catalog = load_business_semantics_catalog(project)
+        base_catalog = (
+            business_semantics_catalog
+            if business_semantics_catalog is not None
+            else load_business_semantics_catalog(project)
+        )
         catalog_report = {
             "catalog_initialized": False,
             "catalog_init_written_names": [],
             "planned_catalog_written_names": [],
         }
     catalog_update_report = _empty_catalog_update_report()
-    data = load_lineage_data(project)
+    data = (
+        lineage_data
+        if lineage_data is not None
+        else load_lineage_data(project)
+    )
     cache_file = assess_cache_path(project, "inspect.json")
     if no_cache and cache_file.exists():
         cache_file.unlink()
@@ -1028,6 +1209,8 @@ def run_metadata_write(
                 resolution_policy=plan.resolution_policy,
             )
         ),
+        asset_content=asset_content,
+        business_semantics_catalog=business_semantics_catalog,
         result_layer_resolver=lambda _ctx, result: layer_for_model(
             result,
             existing_model=(plan.base_model_metadata or {}).get(
