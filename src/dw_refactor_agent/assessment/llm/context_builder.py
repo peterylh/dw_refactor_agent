@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 import sqlglot
 import yaml
@@ -11,6 +12,9 @@ from sqlglot import exp
 import dw_refactor_agent.config as config
 from dw_refactor_agent.assessment.project_facts.business_semantics import (
     load_business_semantics_catalog,
+)
+from dw_refactor_agent.assessment.semantic_models import (
+    AssessmentModelSemantics,
 )
 from dw_refactor_agent.config import (
     TEXT_ENCODING,
@@ -184,12 +188,18 @@ class TableContext:
     upstream_metric_groups: dict[str, dict[str, list[str]]] = field(
         default_factory=dict
     )
+    upstream_metric_group_status: dict[str, dict[str, Any]] = field(
+        default_factory=dict
+    )
     downstream_entity_publication_features: dict[str, dict] = field(
         default_factory=dict
     )
     column_lineage: list[dict] = field(default_factory=list)
     declared_data_domain: str = ""
     declared_business_area: str = ""
+    declared_business_semantics_status: dict[str, Any] = field(
+        default_factory=dict
+    )
     project_context: str = ""
     business_domain_options: dict = field(default_factory=dict)
     business_semantics_options: dict = field(default_factory=dict)
@@ -199,6 +209,12 @@ class TableContext:
 class _ModelMetadataEntry:
     table_name: str
     metadata: dict
+
+
+@dataclass(frozen=True)
+class _MetricGroupEvidence:
+    groups: dict[str, dict[str, list[str]]]
+    statuses: dict[str, dict[str, Any]]
 
 
 def _metric_names(value) -> list[str]:
@@ -231,20 +247,21 @@ def _metric_name(item) -> str:
 
 def _load_model_metric_groups(
     project: str,
-) -> dict[str, dict[str, list[str]]]:
+) -> _MetricGroupEvidence:
     metric_groups = {}
+    statuses = {}
 
-    for model_path in iter_project_asset_files(project, "models", "*.yaml"):
-        try:
-            data = (
-                yaml.safe_load(model_path.read_text(encoding=TEXT_ENCODING))
-                or {}
-            )
-        except Exception:
+    for table_name, metadata in load_model_metadata(project).items():
+        view = AssessmentModelSemantics.from_metadata(metadata)
+        section = view.section("metrics")
+        status = view.status("metrics")
+        status_payload = {"status": status}
+        if status == "quarantined":
+            status_payload["reasons"] = list(section.reasons)
+        statuses[table_name] = status_payload
+        data = view.active_payload("metrics")
+        if data is None:
             continue
-        if not isinstance(data, dict):
-            continue
-        table_name = str(data.get("name") or model_path.stem)
         groups = {
             "atomic_metrics": _metric_names(data.get("atomic_metrics")),
             "derived_metrics": _metric_names(data.get("derived_metrics")),
@@ -254,7 +271,7 @@ def _load_model_metric_groups(
         }
         if any(groups.values()):
             metric_groups[table_name] = groups
-    return metric_groups
+    return _MetricGroupEvidence(metric_groups, statuses)
 
 
 def _catalog_option_entries(raw_entries) -> list[dict]:
@@ -359,7 +376,21 @@ def _layer_for_context_table(
 ) -> str:
     entry = model_metadata.get(table_name)
     metadata = entry.metadata if entry else {}
-    return str(metadata.get("layer") or "OTHER").upper()
+    if not metadata:
+        return "OTHER"
+    return AssessmentModelSemantics.from_metadata(metadata).layer or (
+        "QUARANTINED"
+    )
+
+
+def _metric_section_status(metadata: dict) -> dict[str, Any]:
+    view = AssessmentModelSemantics.from_metadata(metadata)
+    section = view.section("metrics")
+    status = view.status("metrics")
+    result = {"status": status}
+    if status == "quarantined":
+        result["reasons"] = list(section.reasons)
+    return result
 
 
 def _canonical_dependency_index(dependencies: dict) -> dict[str, set[str]]:
@@ -415,7 +446,10 @@ def _metadata_asset_roles(
     for table_name, metadata in model_metadata.items():
         if not isinstance(metadata, dict):
             continue
-        layer = str(metadata.get("layer") or "").upper()
+        layer = (
+            AssessmentModelSemantics.from_metadata(metadata).operational_layer
+            or ""
+        )
         if layer == "ODS":
             role = "ods"
         elif layer == "ADS":
@@ -607,11 +641,11 @@ def build_contexts(
     )
     has_lineage_edges = any(upstream.values()) or any(downstream.values())
     target_layers = set(layers or ("DWD", "DWS", "DIM"))
-    metric_groups = (
-        metric_groups
-        if metric_groups is not None
-        else _load_model_metric_groups(project)
-    )
+    loaded_metric_statuses = {}
+    if metric_groups is None:
+        metric_evidence = _load_model_metric_groups(project)
+        metric_groups = metric_evidence.groups
+        loaded_metric_statuses = metric_evidence.statuses
     explicit_model_metadata = model_metadata is not None
     model_metadata = (
         model_metadata
@@ -628,6 +662,13 @@ def build_contexts(
     canonical_metric_groups = _canonical_table_lookup(
         _with_unique_qualified_aliases(
             metric_groups,
+            dependency_table_names,
+        ),
+        ambiguous_short_names=ambiguous_short_names,
+    )
+    canonical_metric_statuses = _canonical_table_lookup(
+        _with_unique_qualified_aliases(
+            loaded_metric_statuses,
             dependency_table_names,
         ),
         ambiguous_short_names=ambiguous_short_names,
@@ -750,7 +791,18 @@ def build_contexts(
         model_table_name = (
             model_entry.table_name if model_entry else short_name
         )
-        layer = str(metadata.get("layer") or "OTHER").upper()
+        model_view = (
+            AssessmentModelSemantics.from_metadata(metadata)
+            if metadata
+            else None
+        )
+        layer = model_view.layer if model_view is not None else "OTHER"
+        if not layer:
+            LOGGER.warning(
+                "Skipping %s because model classification is quarantined",
+                model_table_name,
+            )
+            continue
         fixed_boundary_roles = (
             _model_asset_roles_for_table(
                 model_table_name,
@@ -809,6 +861,7 @@ def build_contexts(
         upstream_tables = sorted(canonical_upstream.get(name, set()))
         downstream_tables = sorted(canonical_downstream.get(name, set()))
         upstream_metric_groups = {}
+        upstream_metric_group_status = {}
         for upstream_table in upstream_tables:
             groups = canonical_metric_groups.get(upstream_table)
             if groups is not None:
@@ -821,6 +874,17 @@ def build_contexts(
                     "are required",
                     _short_table_name(upstream_table),
                 )
+            upstream_entry = canonical_model_metadata.get(upstream_table)
+            if upstream_entry is not None:
+                upstream_metric_group_status[upstream_table] = (
+                    _metric_section_status(upstream_entry.metadata)
+                )
+            else:
+                loaded_status = canonical_metric_statuses.get(upstream_table)
+                if loaded_status is not None:
+                    upstream_metric_group_status[upstream_table] = dict(
+                        loaded_status
+                    )
         downstream_entity_publication_features = {}
         for downstream_table in downstream_tables:
             features = get_downstream_publication_features(downstream_table)
@@ -828,6 +892,23 @@ def build_contexts(
                 downstream_entity_publication_features[downstream_table] = (
                     features
                 )
+
+        business_semantics = (
+            model_view.active_payload("business_semantics")
+            if model_view is not None
+            else {}
+        )
+        business_semantics_status = (
+            {"status": model_view.status("business_semantics")}
+            if model_view is not None
+            else {"status": "missing_model"}
+        )
+        if (
+            model_view is not None
+            and business_semantics_status["status"] == "quarantined"
+        ):
+            section = model_view.section("business_semantics")
+            business_semantics_status["reasons"] = list(section.reasons)
 
         contexts.append(
             TableContext(
@@ -855,20 +936,22 @@ def build_contexts(
                 expose_layer_hints=expose_layer_hints,
                 depth_from_ods=get_depth_from_ods(name),
                 upstream_metric_groups=upstream_metric_groups,
+                upstream_metric_group_status=upstream_metric_group_status,
                 downstream_entity_publication_features=(
                     downstream_entity_publication_features
                 ),
                 column_lineage=(lineage_view.column_lineage_for_table(name)),
                 declared_data_domain=(
-                    str(metadata.get("data_domain") or "")
+                    str((business_semantics or {}).get("data_domain") or "")
                     if layer in DATA_DOMAIN_LAYERS
                     else ""
                 ),
                 declared_business_area=(
-                    str(metadata.get("business_area") or "")
+                    str((business_semantics or {}).get("business_area") or "")
                     if layer in BUSINESS_AREA_LAYERS
                     else ""
                 ),
+                declared_business_semantics_status=(business_semantics_status),
                 project_context=project_context,
                 business_domain_options=business_domain_options,
                 business_semantics_options=business_semantics_options,

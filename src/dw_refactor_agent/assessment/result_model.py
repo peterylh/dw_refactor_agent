@@ -230,10 +230,12 @@ def issues_from_checks(
 def finalize_dimension(
     *,
     dimension: str,
-    score: float,
+    score: float | None,
     checks: list[dict[str, Any]],
     rules: dict[str, dict[str, Any]],
     summary: dict[str, Any] | None = None,
+    coverage: dict[str, Any] | None = None,
+    effective_score: float | None = None,
 ) -> dict[str, Any]:
     numbered_checks = []
     for index, check in enumerate(checks, start=1):
@@ -255,6 +257,33 @@ def finalize_dimension(
     }
     if summary:
         result["summary"] = summary
+    if coverage and coverage.get("quarantined_count"):
+        eligible_count = int(coverage.get("eligible_count") or 0)
+        assessed_count = int(coverage.get("assessed_count") or 0)
+        partially_assessed_count = int(
+            coverage.get("partially_assessed_count") or 0
+        )
+        result["coverage"] = dict(coverage)
+        result["complete"] = False
+        result["status"] = (
+            "not_assessed"
+            if not assessed_count and not partially_assessed_count
+            else "quarantined"
+        )
+        if (
+            not assessed_count
+            and not partially_assessed_count
+            and eligible_count
+        ):
+            result["score"] = None
+            result["effective_score"] = 0.0
+        else:
+            if effective_score is None:
+                raise ValueError(
+                    f"{dimension} must provide a dimension-specific "
+                    "effective_score for partial quarantine"
+                )
+            result["effective_score"] = round(float(effective_score), 1)
     return result
 
 

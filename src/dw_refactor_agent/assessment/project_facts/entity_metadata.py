@@ -4,6 +4,16 @@ from __future__ import annotations
 
 from typing import Any
 
+from dw_refactor_agent.assessment.semantic_models import (
+    AssessmentModelSemantics,
+    CanonicalSemanticPayload,
+)
+from dw_refactor_agent.config import (
+    NotApplicableModelSection,
+    UnavailableModelSection,
+    UnavailableModelSectionUsageError,
+)
+
 VALID_ENTITY_TYPES = {"primary", "unique", "foreign", "natural"}
 
 
@@ -121,10 +131,24 @@ def legacy_related_entities_from_entities(
 def model_entities(metadata: dict[str, Any] | None) -> list[dict[str, Any]]:
     if not isinstance(metadata, dict):
         return []
+    if isinstance(metadata, CanonicalSemanticPayload):
+        semantic_payload = CanonicalSemanticPayload(metadata)
+        return normalize_entities(
+            semantic_payload.get("entities"),
+            semantic_payload.get("entity"),
+            semantic_payload.get("related_entities"),
+        )
+    section = AssessmentModelSemantics.from_metadata(metadata).section(
+        "entities"
+    )
+    if isinstance(section, UnavailableModelSection):
+        raise UnavailableModelSectionUsageError(
+            "entities metadata is quarantined"
+        )
+    if isinstance(section, NotApplicableModelSection):
+        return []
     return normalize_entities(
-        metadata.get("entities"),
-        metadata.get("entity"),
-        metadata.get("related_entities"),
+        section.get("entities"),
     )
 
 
@@ -154,7 +178,7 @@ def defined_entity_codes(model_metadata: dict[str, Any] | None) -> set[str]:
 def grain_entity_codes(metadata: dict[str, Any] | None) -> list[str]:
     if not isinstance(metadata, dict):
         return []
-    grain = metadata.get("grain")
+    grain = _grain_payload(metadata)
     if not isinstance(grain, dict):
         return []
     return as_string_list(grain.get("entities"))
@@ -176,7 +200,7 @@ def entity_key_columns_by_code(
 def grain_key_columns(metadata: dict[str, Any] | None) -> list[str]:
     if not isinstance(metadata, dict):
         return []
-    grain = metadata.get("grain")
+    grain = _grain_payload(metadata)
     if not isinstance(grain, dict):
         return []
 
@@ -197,3 +221,17 @@ def grain_key_columns(metadata: dict[str, Any] | None) -> list[str]:
     if time_column and time_column not in result:
         result.append(time_column)
     return result
+
+
+def _grain_payload(metadata: dict[str, Any]) -> Any:
+    if isinstance(metadata, CanonicalSemanticPayload):
+        semantic_payload = CanonicalSemanticPayload(metadata)
+        return semantic_payload.get("grain")
+    section = AssessmentModelSemantics.from_metadata(metadata).section("grain")
+    if isinstance(section, UnavailableModelSection):
+        raise UnavailableModelSectionUsageError(
+            "grain metadata is quarantined"
+        )
+    if isinstance(section, NotApplicableModelSection):
+        return None
+    return section.get("grain")

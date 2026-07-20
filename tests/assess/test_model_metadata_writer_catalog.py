@@ -12,6 +12,9 @@ from dw_refactor_agent.assessment.llm.model_metadata_writer import (
     run_metadata_write,
 )
 from dw_refactor_agent.assessment.llm.table_inspector import TableInspectResult
+from dw_refactor_agent.assessment.semantic_models import (
+    CanonicalSemanticPayload,
+)
 from tests.assess.model_metadata_writer_test_support import (
     _catalog_payload,
     _configure_project_root,
@@ -969,11 +972,13 @@ def test_catalog_discovery_keeps_existing_assignment_when_llm_incomplete():
         "demo",
         fact_result,
         _catalog_payload(processes=[_order_detail_process()]),
-        {
-            "layer": "DWD",
-            "table_type": "fact",
-            "business_process": "ORDER_DETAIL",
-        },
+        CanonicalSemanticPayload(
+            {
+                "layer": "DWD",
+                "table_type": "fact",
+                "business_process": "ORDER_DETAIL",
+            }
+        ),
     )
 
     assert mapping["business_process"] == "ORDER_DETAIL"
@@ -993,11 +998,13 @@ def test_catalog_discovery_keeps_existing_assignment_when_llm_incomplete():
         "demo",
         dimension_result,
         _catalog_payload(subjects=[_customer_subject()]),
-        {
-            "layer": "DWD",
-            "table_type": "dimension",
-            "semantic_subject": "CUSTOMER",
-        },
+        CanonicalSemanticPayload(
+            {
+                "layer": "DWD",
+                "table_type": "dimension",
+                "semantic_subject": "CUSTOMER",
+            }
+        ),
     )
 
     assert mapping["semantic_subject"] == "CUSTOMER"
@@ -1152,16 +1159,19 @@ def test_run_metadata_write_report_uses_plan_prior(
 
     model_metadata = {
         "dwd_customer": {
+            "version": 2,
             "name": "dwd_customer",
             "layer": "DWD",
             "table_type": "fact",
         },
         "dwd_order_detail": {
+            "version": 2,
             "name": "dwd_order_detail",
             "layer": "DWD",
             "table_type": "fact",
         },
         "dws_store_sales_daily": {
+            "version": 2,
             "name": "dws_store_sales_daily",
             "layer": "DWS",
             "table_type": "fact",

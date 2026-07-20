@@ -39,8 +39,25 @@ def score_reusability(
 
     tables = context.tables
     downstream_map = context.downstream
-    middle = [t for t in tables if t["layer"] in ("DWD", "DWS", "DIM")]
     table_names = scoped_names(scope, "tables")
+    eligible_names = [
+        table["name"]
+        for table in tables
+        if (context.operational_layer(table["name"]) or table.get("layer"))
+        in ("DWD", "DWS", "DIM")
+        and (table_names is None or table["name"] in table_names)
+    ]
+    coverage = context.semantic_coverage(
+        eligible_names,
+        ("classification",),
+    )
+    assessed_names = set(coverage.assessed_names)
+    middle = [
+        table
+        for table in tables
+        if table.get("layer") in ("DWD", "DWS", "DIM")
+        and table["name"] in assessed_names
+    ]
     if table_names is not None:
         middle = [t for t in middle if t["name"] in table_names]
 
@@ -61,6 +78,11 @@ def score_reusability(
     )
 
     avg_score = round(sum(scores) / len(scores), 1) if scores else 0.0
+    effective_score = (
+        round(sum(scores) / len(coverage.eligible_names), 1)
+        if coverage.eligible_names
+        else avg_score
+    )
     avg_reuse = (
         round(sum(downstream_counts) / len(downstream_counts), 2)
         if downstream_counts
@@ -89,4 +111,6 @@ def score_reusability(
             "distribution": dist,
             "target_downstream_count": REUSE_FULL_SCORE_AT,
         },
+        coverage=coverage.as_dict(),
+        effective_score=effective_score,
     )

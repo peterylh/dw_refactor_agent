@@ -377,7 +377,14 @@ def assess(
     dimensions = {key: dimensions[key] for key in dimension_keys}
     selected_weight_total = sum(weights[key] for key in dimension_keys)
     overall_score = round(
-        sum(weights[key] * dimensions[key]["score"] for key in dimension_keys)
+        sum(
+            weights[key]
+            * dimensions[key].get(
+                "effective_score",
+                dimensions[key]["score"],
+            )
+            for key in dimension_keys
+        )
         / selected_weight_total,
         1,
     )
@@ -388,6 +395,15 @@ def assess(
         weights=weights,
         dimensions=dimensions,
     )
+    incomplete_dimensions = [
+        key
+        for key in dimension_keys
+        if dimensions[key].get("complete") is False
+    ]
+    if incomplete_dimensions:
+        result["complete"] = False
+        result["status"] = "quarantined"
+        result["incomplete_dimensions"] = incomplete_dimensions
     if scope:
         result["scope"] = scope
     if scope_plan:

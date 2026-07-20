@@ -2168,6 +2168,7 @@ def test_run_generate_model_metadata_blocks_dwd_without_task_sql(
         "entity_table_count": 0,
         "grain_table_count": 0,
         "layer_counts": {},
+        "quarantined_model_count": 0,
     }
     assert result["published_model_summary"]["model_count"] == 1
     assert result["candidate_catalog_summary"] == {

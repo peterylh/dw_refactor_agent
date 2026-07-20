@@ -42,8 +42,15 @@ from dw_refactor_agent.assessment.project_facts.business_semantics import (
 from dw_refactor_agent.assessment.project_facts.entity_metadata import (
     normalize_entities,
 )
+from dw_refactor_agent.assessment.semantic_models import (
+    AssessmentModelSemantics,
+    CanonicalSemanticPayload,
+)
 from dw_refactor_agent.config import (
     TEXT_ENCODING,
+    UnavailableModelSection,
+    UnavailableModelSectionUsageError,
+    get_execution_contract,
 )
 
 WRITE_SCOPES = {"all", "table", "metrics", "grain", "business"}
@@ -88,21 +95,41 @@ def _catalog_model_payload(
     existing: dict[str, Any],
     mapping: dict[str, Any],
 ) -> dict[str, Any]:
+    if isinstance(existing, CanonicalSemanticPayload):
+        semantic_existing = CanonicalSemanticPayload(existing)
+        existing_execution = {}
+    else:
+        view = AssessmentModelSemantics.from_metadata(
+            existing,
+            source=f"catalog model {table_name}",
+        )
+        unavailable = [
+            section
+            for section in ("classification", "business_semantics")
+            if view.status(section) == "quarantined"
+        ]
+        if unavailable:
+            raise UnavailableModelSectionUsageError(
+                f"catalog model {table_name} has quarantined sections: "
+                f"{', '.join(unavailable)}"
+            )
+        semantic_existing = view.canonical_semantic_mapping()
+        existing_execution = get_execution_contract(view.model)
     layer = str(
         mapping.get("layer")
-        or existing.get("layer")
+        or semantic_existing.get("layer")
         or _layer_from_table_name(table_name)
     ).upper()
     table_type = str(
         mapping.get("table_type")
-        or existing.get("table_type")
+        or semantic_existing.get("table_type")
         or _infer_table_type(table_name, layer)
     ).strip()
     mapped_execution = mapping.get("execution")
     if isinstance(mapped_execution, dict):
         execution_payload = dict(mapped_execution)
     else:
-        execution_payload = dict(existing.get("execution") or {})
+        execution_payload = existing_execution
     materialized = _materialized_for_write(
         execution_payload.get("materialized")
         or mapping.get("materialized")
@@ -218,12 +245,18 @@ def _existing_catalog_assignment(
     table_name: str,
     existing_metadata: dict[str, Any] | None,
     field: str,
-) -> dict[str, Any]:
+) -> dict[str, Any] | UnavailableModelSection:
     existing_mapping = catalog_mapping_for_model(
         catalog,
         table_name,
-        existing_metadata or {},
+        (
+            existing_metadata
+            if existing_metadata
+            else CanonicalSemanticPayload()
+        ),
     )
+    if isinstance(existing_mapping, UnavailableModelSection):
+        return existing_mapping
     if not existing_mapping.get(field):
         return {}
     return {
@@ -313,14 +346,19 @@ def catalog_discovery_model_mapping(
         if catalog_subject:
             mapping["semantic_subject"] = catalog_subject
         else:
-            mapping.update(
-                _existing_catalog_assignment(
-                    catalog=catalog,
-                    table_name=result.table_name,
-                    existing_metadata=existing_metadata,
-                    field="semantic_subject",
-                )
+            existing_assignment = _existing_catalog_assignment(
+                catalog=catalog,
+                table_name=result.table_name,
+                existing_metadata=existing_metadata,
+                field="semantic_subject",
             )
+            if isinstance(existing_assignment, UnavailableModelSection):
+                _record_quarantined_existing_semantics(
+                    result,
+                    existing_assignment,
+                )
+            else:
+                mapping.update(existing_assignment)
         if result.dimension_role:
             mapping["dimension_role"] = result.dimension_role
         if result.dimension_content_type:
@@ -364,17 +402,38 @@ def catalog_discovery_model_mapping(
         if catalog_process:
             mapping["business_process"] = catalog_process
         else:
-            mapping.update(
-                _existing_catalog_assignment(
-                    catalog=catalog,
-                    table_name=result.table_name,
-                    existing_metadata=existing_metadata,
-                    field="business_process",
-                )
+            existing_assignment = _existing_catalog_assignment(
+                catalog=catalog,
+                table_name=result.table_name,
+                existing_metadata=existing_metadata,
+                field="business_process",
             )
+            if isinstance(existing_assignment, UnavailableModelSection):
+                _record_quarantined_existing_semantics(
+                    result,
+                    existing_assignment,
+                )
+            else:
+                mapping.update(existing_assignment)
         return mapping
 
     return mapping
+
+
+def _record_quarantined_existing_semantics(
+    result: TableInspectResult,
+    unavailable: UnavailableModelSection,
+) -> None:
+    result.validation.setdefault(
+        "not_assessed_existing_model_sections",
+        [],
+    ).append(
+        {
+            "status": "quarantined",
+            "section": unavailable.section,
+            "reasons": list(unavailable.reasons),
+        }
+    )
 
 
 def _resolved_results_for_catalog_discovery(
@@ -420,7 +479,7 @@ def update_model_yaml_from_catalog(
     previous = dict(existing)
     updated = _catalog_model_payload(
         table_name=table_name,
-        existing=existing,
+        existing=(existing if existing else CanonicalSemanticPayload()),
         mapping=mapping,
     )
     if write_scope == "table":

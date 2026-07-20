@@ -42,6 +42,7 @@ TEST_TYPE_BY_FILE = {
     "tests/assess/test_rule_framework.py": "unit",
     "tests/assess/test_scoped_assessment_plan.py": "unit",
     "tests/assess/test_scoring_context_interface.py": "unit",
+    "tests/assess/test_semantic_governance.py": "contract",
     "tests/assess/test_shop_model_design_scenarios.py": "scenario",
     "tests/assess/test_table_inspector.py": "unit",
     "tests/benchmarks/test_generate_llm_benchmark.py": "guard",

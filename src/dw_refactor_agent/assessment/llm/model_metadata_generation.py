@@ -65,6 +65,9 @@ from dw_refactor_agent.assessment.project_facts.business_semantics import (
     load_business_semantics_catalog,
     write_initial_business_semantics_catalog,
 )
+from dw_refactor_agent.assessment.semantic_models import (
+    CanonicalSemanticPayload,
+)
 from dw_refactor_agent.config import (
     PROJECT_CONFIG,
     TEXT_ENCODING,
@@ -489,7 +492,11 @@ def _generate_model_mapping(
     asset_role: str = "",
     execution_contract: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    mapping = catalog_mapping_for_model(catalog, table_name, {})
+    mapping = catalog_mapping_for_model(
+        catalog,
+        table_name,
+        CanonicalSemanticPayload(),
+    )
     asset_layer = _generate_asset_role_layer(asset_role)
     mapped_layer = str(mapping.get("layer") or "").upper()
     name_layer = _layer_from_table_name(table_name)
@@ -640,7 +647,7 @@ def plan_generate_model_metadata(
         path = Path(manifest_asset.target_model_path)
         if not path.is_absolute():
             path = project_root() / path
-        existing: dict[str, Any] = {}
+        existing = CanonicalSemanticPayload()
         updated = _catalog_model_payload(
             table_name=table_name,
             existing=existing,

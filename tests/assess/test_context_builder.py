@@ -10,13 +10,22 @@ from dw_refactor_agent.assessment.llm.context_builder import (
 )
 
 MODEL_METADATA = {
-    "dwd_customer": {"name": "dwd_customer", "layer": "DWD"},
-    "dwd_order_detail": {"name": "dwd_order_detail", "layer": "DWD"},
+    "dwd_customer": {"version": 2, "name": "dwd_customer", "layer": "DWD"},
+    "dwd_order_detail": {
+        "version": 2,
+        "name": "dwd_order_detail",
+        "layer": "DWD",
+    },
     "dws_store_sales_daily": {
+        "version": 2,
         "name": "dws_store_sales_daily",
         "layer": "DWS",
     },
-    "ads_sales_dashboard": {"name": "ads_sales_dashboard", "layer": "ADS"},
+    "ads_sales_dashboard": {
+        "version": 2,
+        "name": "ads_sales_dashboard",
+        "layer": "ADS",
+    },
 }
 
 
@@ -62,6 +71,14 @@ def _build_contexts_for_graph(
             return []
 
     monkeypatch.setattr(context_builder_module, "LineageView", FakeLineageView)
+    model_metadata = {
+        name: {
+            "version": 2,
+            "name": name,
+            **metadata,
+        }
+        for name, metadata in model_metadata.items()
+    }
     return build_contexts(
         "test_proj",
         {"tables": [{"name": name} for name in tables]},
@@ -291,7 +308,13 @@ def test_build_contexts_warns_without_parsing_tasks_when_lineage_empty(
         {"tables": [{"name": "dwd_order_clean"}], "edges": []},
         ddl_dir,
         tasks_dir,
-        model_metadata={"dwd_order_clean": {"layer": "DWD"}},
+        model_metadata={
+            "dwd_order_clean": {
+                "version": 2,
+                "name": "dwd_order_clean",
+                "layer": "DWD",
+            }
+        },
     )[0]
 
     assert context.upstream_tables == []
@@ -376,9 +399,17 @@ def test_build_contexts_excludes_fixed_boundaries_with_wrong_declared_layer(
         {"dir": project, "catalog": "internal", "db": "demo"},
     )
     metadata = {
-        "orders": {"name": "orders", "layer": "DWD"},
-        "order_summary": {"name": "order_summary", "layer": "DWS"},
-        "dashboard": {"name": "dashboard", "layer": "DWD"},
+        "orders": {"version": 2, "name": "orders", "layer": "DWD"},
+        "order_summary": {
+            "version": 2,
+            "name": "order_summary",
+            "layer": "DWS",
+        },
+        "dashboard": {
+            "version": 2,
+            "name": "dashboard",
+            "layer": "DWD",
+        },
     }
 
     contexts = build_contexts(
@@ -422,7 +453,9 @@ def test_generate_context_roles_ignore_stale_model_directories(
     contexts = build_contexts(
         project,
         {"tables": [{"name": "orders"}], "edges": []},
-        model_metadata={"orders": {"name": "orders", "layer": "DWD"}},
+        model_metadata={
+            "orders": {"version": 2, "name": "orders", "layer": "DWD"}
+        },
         use_model_metadata_asset_roles=True,
     )
 

@@ -11,6 +11,9 @@ from typing import Any
 
 import yaml
 
+from dw_refactor_agent.assessment.semantic_models import (
+    AssessmentModelSemantics,
+)
 from dw_refactor_agent.config import PROJECT_CONFIG, TEXT_ENCODING
 from dw_refactor_agent.ddl_deriver.ddl_deriver import parse_create_table
 from dw_refactor_agent.lineage.sql_task_facts import extract_task_table_facts
@@ -270,6 +273,12 @@ def _short_table_name(table_name: str) -> str:
     return name.split(".")[-1].strip()
 
 
+def _semantic_layer(metadata: Mapping[str, Any] | None) -> str | None:
+    if not metadata:
+        return None
+    return AssessmentModelSemantics.from_metadata(metadata).layer
+
+
 def _relative_asset_path(project_dir: Path, file_path: Path) -> str:
     try:
         return file_path.relative_to(project_dir).as_posix()
@@ -319,7 +328,7 @@ def _ddl_table_for_naming(
         return None
 
     metadata = model_metadata.get(name, {}) if model_metadata else {}
-    layer = str(metadata.get("layer") or "OTHER").upper()
+    layer = _semantic_layer(metadata) or "OTHER"
     return dict(
         name=name,
         full_name=table_def.full_name,
@@ -347,11 +356,7 @@ def _tables_for_naming(
             else {}
         )
         current = dict(table)
-        current["layer"] = (
-            str(metadata["layer"]).upper()
-            if metadata.get("layer")
-            else "OTHER"
-        )
+        current["layer"] = _semantic_layer(metadata) or "OTHER"
         current_tables.append(current)
 
     if not project_dir:
@@ -585,8 +590,9 @@ def build_asset_catalog(
             declared_name=declared_name,
             metadata=dict(metadata),
         )
-        if metadata.get("layer"):
-            asset.layer = str(metadata["layer"]).upper()
+        semantic_layer = _semantic_layer(metadata)
+        if semantic_layer:
+            asset.layer = semantic_layer
 
     if project_path:
         ddl_dirs = _asset_dirs(project_path, "ddl")
@@ -656,8 +662,9 @@ def build_asset_catalog(
                             _MODEL_ROLE_EXPECTED_LAYERS.get(asset_role, [])
                         ),
                     )
-                    if metadata.get("layer"):
-                        asset.layer = str(metadata["layer"]).upper()
+                    semantic_layer = _semantic_layer(metadata)
+                    if semantic_layer:
+                        asset.layer = semantic_layer
 
         task_facts = []
         if task_dirs:

@@ -63,7 +63,11 @@ def _context(
 ):
     if tables:
         table_models = {
-            table["name"]: {"name": table["name"], "layer": table["layer"]}
+            table["name"]: {
+                "version": 2,
+                "name": table["name"],
+                "layer": table["layer"],
+            }
             for table in tables
             if table.get("name") and table.get("layer")
         }
@@ -75,8 +79,12 @@ def _context(
             }
             for table_name, table_model in table_models.items():
                 metadata = models.setdefault(table_name, {})
+                metadata.setdefault("version", 2)
                 metadata.setdefault("name", table_name)
                 metadata.setdefault("layer", table_model["layer"])
+    for table_name, metadata in (models or {}).items():
+        metadata.setdefault("version", 2)
+        metadata.setdefault("name", table_name)
     return AssessmentContext.from_facts(
         tables=tables or [],
         edges=edges or [],
@@ -1013,7 +1021,7 @@ DISTRIBUTED BY HASH(order_id) BUCKETS 1;
         encoding="utf-8",
     )
     (project_dir / "mid" / "models" / "dws_orders.yaml").write_text(
-        "name: dws_orders\nlayer: DWS\n",
+        "version: 2\nname: dws_orders\nlayer: DWS\n",
         encoding="utf-8",
     )
     (project_dir / "mid" / "tasks" / "dws_missing.sql").write_text(
@@ -1023,7 +1031,13 @@ DISTRIBUTED BY HASH(order_id) BUCKETS 1;
 
     catalog = build_asset_catalog(
         [],
-        {"dws_orders": {"name": "dws_orders", "layer": "DWS"}},
+        {
+            "dws_orders": {
+                "version": 2,
+                "name": "dws_orders",
+                "layer": "DWS",
+            }
+        },
         project_dir,
         edges=[],
         indirect_edges=[],
@@ -1082,7 +1096,7 @@ DISTRIBUTED BY HASH(order_id) BUCKETS 1;
         encoding="utf-8",
     )
     (project_dir / "mid" / "models" / "dws_orders.yaml").write_text(
-        "name: dws_orders\nlayer: DWS\n",
+        "version: 2\nname: dws_orders\nlayer: DWS\n",
         encoding="utf-8",
     )
     (project_dir / "mid" / "tasks" / "dws_orders.sql").write_text(
@@ -1111,7 +1125,13 @@ DROP TABLE IF EXISTS demo.tmp_orders_stage;
                 "transient_sources": ["dws_orders.sql"],
             },
         ],
-        {"dws_orders": {"name": "dws_orders", "layer": "DWS"}},
+        {
+            "dws_orders": {
+                "version": 2,
+                "name": "dws_orders",
+                "layer": "DWS",
+            }
+        },
         project_dir,
         edges=[
             {

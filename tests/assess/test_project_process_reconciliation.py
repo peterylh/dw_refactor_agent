@@ -18,6 +18,9 @@ from dw_refactor_agent.assessment.llm.table_inspector import (
 from dw_refactor_agent.assessment.project_facts.business_semantics import (
     catalog_mapping_for_model,
 )
+from dw_refactor_agent.assessment.semantic_models import (
+    CanonicalSemanticPayload,
+)
 from tests.case_matrix import case_matrix
 
 
@@ -204,11 +207,13 @@ def test_dws_records_composite_sources_and_normalizes_row_counts():
     )
     model = _catalog_model_payload(
         table_name=summary.table_name,
-        existing={
-            "name": summary.table_name,
-            "layer": "DWS",
-            "table_type": "fact",
-        },
+        existing=CanonicalSemanticPayload(
+            {
+                "name": summary.table_name,
+                "layer": "DWS",
+                "table_type": "fact",
+            }
+        ),
         mapping=mapping,
     )
 

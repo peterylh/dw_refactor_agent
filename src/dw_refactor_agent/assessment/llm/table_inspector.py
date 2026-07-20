@@ -513,6 +513,12 @@ def build_prompt(ctx: TableContext) -> str:
 ## 上游指标分组
 {json.dumps(ctx.upstream_metric_groups, ensure_ascii=False, indent=2) if ctx.upstream_metric_groups else "无"}
 
+## 上游指标语义状态
+{json.dumps(ctx.upstream_metric_group_status, ensure_ascii=False, indent=2) if ctx.upstream_metric_group_status else "无"}
+
+## 当前表已声明业务语义状态
+{json.dumps(ctx.declared_business_semantics_status, ensure_ascii=False, indent=2)}
+
 ## 思考步骤
 1. 从键、字段血缘和 ETL 判断输入与输出行粒度，检查所有查询阶段是否发生多行压缩或聚合；对 JOIN 聚合先区分“发布业务指标”和“补充查询属性”。
 2. 判断每行是否表达业务事件、周期状态或参与/成员/责任/归属关系；关系桥不要求必须有日期或状态变化。再检查它是否实际只是决定计价、计算、入账、分类或解释方式的参数配置映射，后者才归参考维度。
@@ -2336,9 +2342,12 @@ class TableInspector:
             f"{ctx.etl_sql}|{ctx.upstream_tables}|{ctx.downstream_tables}|"
             f"{upstream_layers}|{downstream_layers}|"
             f"{ctx.depth_from_ods}|{ctx.upstream_metric_groups}|"
+            f"{ctx.upstream_metric_group_status}|"
             f"{ctx.downstream_entity_publication_features}|"
             f"{ctx.column_lineage}|{ctx.declared_data_domain}|"
-            f"{ctx.declared_business_area}|{ctx.business_domain_options}|"
+            f"{ctx.declared_business_area}|"
+            f"{ctx.declared_business_semantics_status}|"
+            f"{ctx.business_domain_options}|"
             f"{ctx.business_semantics_options}|{ctx.project_context}"
         )
         return hashlib.sha256(content.encode(TEXT_ENCODING)).hexdigest()

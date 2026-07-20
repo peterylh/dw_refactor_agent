@@ -7,7 +7,11 @@ from tests.case_matrix import case_matrix
 
 def _models_from_tables(tables):
     return {
-        table["name"]: {"name": table["name"], "layer": table["layer"]}
+        table["name"]: {
+            "version": 2,
+            "name": table["name"],
+            "layer": table["layer"],
+        }
         for table in tables
         if table.get("name") and table.get("layer")
     }
@@ -17,12 +21,16 @@ def _merge_model_layers(tables, models):
     merged = {
         name: dict(metadata) for name, metadata in (models or {}).items()
     }
+    for name, metadata in merged.items():
+        metadata.setdefault("version", 2)
+        metadata.setdefault("name", name)
     for table in tables:
         name = table.get("name")
         layer = table.get("layer")
         if not name or not layer:
             continue
         metadata = merged.setdefault(name, {})
+        metadata.setdefault("version", 2)
         metadata.setdefault("name", name)
         metadata.setdefault("layer", layer)
     return merged

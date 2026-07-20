@@ -66,10 +66,14 @@ from dw_refactor_agent.assessment.project_facts.business_semantics import (
     load_business_semantics_catalog,
     write_initial_business_semantics_catalog,
 )
+from dw_refactor_agent.assessment.semantic_models import (
+    AssessmentModelSemantics,
+)
 from dw_refactor_agent.config import (
     PROJECT_CONFIG,
     PROJECT_ROOT,  # noqa: F401 - compatibility for callers overriding project roots
     TEXT_ENCODING,
+    UnavailableModelSection,
     assess_cache_path,
     business_semantics_paths,
     load_model_metadata,
@@ -280,20 +284,29 @@ def _metadata_group_count(value: Any) -> int:
 def _model_metadata_summary(
     model_metadata: dict[str, dict[str, Any]],
 ) -> dict[str, Any]:
+    views = {
+        table_name: AssessmentModelSemantics.from_metadata(metadata)
+        for table_name, metadata in model_metadata.items()
+    }
     metric_counts = {
         table_name: sum(
-            _metadata_group_count(metadata.get(group))
+            _metadata_group_count((metrics or {}).get(group))
             for group in (
                 "atomic_metrics",
                 "derived_metrics",
                 "calculated_metrics",
             )
         )
-        for table_name, metadata in model_metadata.items()
+        for table_name, view in views.items()
+        for metrics in [view.active_payload("metrics")]
     }
     layer_counts: dict[str, int] = {}
-    for metadata in model_metadata.values():
-        layer = str(metadata.get("layer") or "MISSING").strip().upper()
+    for view in views.values():
+        layer = view.layer or (
+            "QUARANTINED"
+            if "classification" in view.quarantined_sections
+            else "MISSING"
+        )
         layer_counts[layer] = layer_counts.get(layer, 0) + 1
     return {
         "model_count": len(model_metadata),
@@ -303,15 +316,18 @@ def _model_metadata_summary(
         ),
         "entity_table_count": sum(
             1
-            for metadata in model_metadata.values()
-            if metadata.get("entities")
-            or metadata.get("entity")
-            or metadata.get("related_entities")
+            for view in views.values()
+            if (view.active_payload("entities") or {}).get("entities")
         ),
         "grain_table_count": sum(
-            1 for metadata in model_metadata.values() if metadata.get("grain")
+            1
+            for view in views.values()
+            if (view.active_payload("grain") or {}).get("grain")
         ),
         "layer_counts": dict(sorted(layer_counts.items())),
+        "quarantined_model_count": sum(
+            1 for view in views.values() if view.quarantined_sections
+        ),
     }
 
 
@@ -795,8 +811,21 @@ def run_catalog_metadata_write(
         mapping = catalog_mapping_for_model(
             catalog,
             table_name,
-            load_model_metadata(project).get(table_name, {}),
+            load_model_metadata(project).get(table_name),
         )
+        if isinstance(mapping, UnavailableModelSection):
+            updates.append(
+                {
+                    "table": table_name,
+                    "status": "not_assessed",
+                    "reason": "quarantined",
+                    "section": mapping.section,
+                    "reason_codes": list(mapping.reasons),
+                    "changed": False,
+                    "updated": False,
+                }
+            )
+            continue
         updates.append(
             update_model_yaml_from_catalog(
                 project,

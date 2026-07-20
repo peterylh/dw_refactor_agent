@@ -6,7 +6,6 @@ from dw_refactor_agent.assessment.assessment_context import AssessmentContext
 from dw_refactor_agent.assessment.project_facts.asset_catalog import (
     AssetCatalog,
     TaskAsset,
-    _tables_for_naming,
 )
 from dw_refactor_agent.assessment.result_model import finalize_dimension
 from dw_refactor_agent.assessment.rules.definitions.naming import (
@@ -21,6 +20,9 @@ from dw_refactor_agent.assessment.scoring.config import (
     ATOMIC_METRIC_RULE_NAME,
     DERIVED_METRIC_RULE_NAME,
     NAMING_RULES,
+)
+from dw_refactor_agent.assessment.semantic_models import (
+    semantic_coverage_dict,
 )
 
 
@@ -95,27 +97,60 @@ def _prepare_naming_context(
         naming_tables = [
             dict(
                 name=name,
-                layer=asset.layer,
+                layer=(
+                    assessment_context.model_view(name).layer
+                    if assessment_context.model_view(name) is not None
+                    else asset.layer
+                ),
                 columns=asset.columns,
             )
             for name, asset in catalog.tables.items()
             if asset.ddl
         ]
     else:
-        naming_tables = _tables_for_naming(tables, None, model_metadata)
+        naming_tables = [
+            {
+                **dict(table),
+                "layer": (
+                    assessment_context.model_view(table.get("name")).layer
+                    if assessment_context.model_view(table.get("name"))
+                    is not None
+                    else table.get("layer")
+                ),
+            }
+            for table in tables
+        ]
+
+    eligible_names = [
+        table["name"]
+        for table in naming_tables
+        if (
+            assessment_context.operational_layer(table["name"])
+            or table.get("layer")
+        )
+        in {"DWD", "DWS", "DIM"}
+    ]
+    semantic_models = {
+        name: view.canonical_semantic_mapping()
+        for name in (model_metadata or {})
+        for view in [assessment_context.model_view(name)]
+        if view is not None
+    }
 
     atomic_rule_name = _metric_rule_name(nc, "atomic", "atomic_metrics")
     derived_rule_name = _metric_rule_name(nc, "derived", "derived_metrics")
     return dict(
         nc=nc,
-        models=model_metadata or {},
+        models=semantic_models,
+        assessment_context=assessment_context,
         business_domain_config=business_domain_config,
         assets=catalog,
         middle=[
             table
             for table in naming_tables
-            if table["layer"] in {"DWD", "DWS", "DIM"}
+            if table["name"] in set(eligible_names)
         ],
+        eligible_names=eligible_names,
         atomic_rule_name=atomic_rule_name,
         derived_rule_name=derived_rule_name,
         atomic_rule_label=_metric_rule_label(
@@ -145,24 +180,78 @@ def score_naming_conventions(
         middle = [
             table for table in middle if table.get("name") in table_scope
         ]
+    assessment_context = context["assessment_context"]
+    quarantined_names = set()
+    unavailable_units = 0
+    required_sections = set()
+
+    def run_available(rule_id, table, sections, *, units=1):
+        nonlocal unavailable_units
+        if not runner.is_enabled(rule_id):
+            return
+        required_sections.update(sections)
+        view = assessment_context.model_view(table["name"])
+        unavailable = [
+            section
+            for section in sections
+            if view is not None and view.status(section) == "quarantined"
+        ]
+        if unavailable:
+            quarantined_names.add(table["name"])
+            unavailable_units += max(1, int(units))
+            return
+        checks.extend(runner.run_rules([rule_id], [table], context))
+
     for table in middle:
-        checks.extend(
-            runner.run_rules(
-                [
-                    "NAMING_TABLE_TEMPLATE",
-                    "NAMING_TABLE_MAX_LENGTH",
-                    "NAMING_COLUMN_NAME",
-                    "NAMING_ATOMIC_METRIC",
-                    "NAMING_DERIVED_METRIC",
-                    "NAMING_DWS_ENTITY_ALIGNMENT",
-                    "NAMING_DIM_ENTITY_ALIGNMENT",
-                    "NAMING_DIM_CLASSIFICATION_ALIGNMENT",
-                    "NAMING_SEMANTIC_METADATA_ALIGNMENT",
-                ],
-                [table],
-                context,
-            )
+        view = assessment_context.model_view(table["name"])
+        layer = (
+            (view.layer or view.operational_layer)
+            if view is not None
+            else table.get("layer")
         )
+        table_type = view.table_type if view is not None else None
+        run_available("NAMING_TABLE_TEMPLATE", table, ("classification",))
+        run_available("NAMING_TABLE_MAX_LENGTH", table, ("classification",))
+        run_available(
+            "NAMING_COLUMN_NAME",
+            table,
+            ("classification", "metrics"),
+            units=max(1, len(table.get("columns") or [])),
+        )
+        if layer in {"DWD", "DWS"} and table_type in {None, "fact"}:
+            run_available(
+                "NAMING_ATOMIC_METRIC",
+                table,
+                ("classification", "metrics"),
+            )
+            run_available(
+                "NAMING_DERIVED_METRIC",
+                table,
+                ("classification", "metrics"),
+            )
+        if layer == "DWS":
+            run_available(
+                "NAMING_DWS_ENTITY_ALIGNMENT",
+                table,
+                ("classification", "grain"),
+            )
+        if layer == "DIM":
+            run_available(
+                "NAMING_DIM_ENTITY_ALIGNMENT",
+                table,
+                ("classification", "entities"),
+            )
+            run_available(
+                "NAMING_DIM_CLASSIFICATION_ALIGNMENT",
+                table,
+                ("classification",),
+            )
+        if layer in {"DWD", "DWS"}:
+            run_available(
+                "NAMING_SEMANTIC_METADATA_ALIGNMENT",
+                table,
+                ("classification", "business_semantics"),
+            )
     file_result = _score_file_naming_conventions(
         context["assets"],
         rule_selection,
@@ -173,11 +262,19 @@ def score_naming_conventions(
         check.get("_score_passed", int(check["passed"])) for check in checks
     )
     total_checks = sum(check.get("_score_total", 1) for check in checks)
+    coverage = semantic_coverage_dict(
+        eligible_count=total_checks + unavailable_units,
+        assessed_count=total_checks,
+        quarantined_names=quarantined_names,
+        sections=sorted(required_sections),
+        unit="rule_checks",
+    )
+    score = (
+        round(total_passed / total_checks * 100, 1) if total_checks else 100.0
+    )
     return finalize_dimension(
         dimension="naming",
-        score=round(total_passed / total_checks * 100, 1)
-        if total_checks
-        else 100.0,
+        score=score,
         checks=checks,
         rules=selected_rules(NAMING_RULES, rule_selection),
         summary={
@@ -186,4 +283,8 @@ def score_naming_conventions(
                 total=file_result["total"],
             ),
         },
+        coverage=coverage,
+        # Metric cardinality is withheld, so the only safe lower bound for
+        # a partially assessed naming dimension is zero.
+        effective_score=0.0 if quarantined_names else score,
     )
