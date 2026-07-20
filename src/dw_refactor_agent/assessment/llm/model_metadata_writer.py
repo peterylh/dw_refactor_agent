@@ -179,6 +179,7 @@ from dw_refactor_agent.assessment.llm.model_metadata_updates import (  # noqa: F
     build_metric_contexts,
     business_metadata_for_result,
     discover_related_entities_from_grain,
+    enrich_results_with_project_semantics,
     enrich_results_with_related_entities,
     layer_for_model,
     metadata_warnings_for_result,
@@ -682,12 +683,19 @@ def run_catalog_discovery(
         inspector.progress_callback = build_progress_callback()
 
     model_metadata = load_model_metadata(project)
+    existing_catalog = load_business_semantics_catalog(project)
     inspection = run_inspection_pipeline(
         project,
         data,
         inspector,
         metric_group_builder=metric_groups_for_model,
-        result_enricher=enrich_results_with_related_entities,
+        result_enricher=lambda results, contexts: (
+            enrich_results_with_project_semantics(
+                results,
+                contexts,
+                catalog=existing_catalog,
+            )
+        ),
         base_model_metadata=model_metadata,
         metric_result_is_eligible=lambda result: (
             _metric_result_is_eligible_for_propagation(
@@ -998,7 +1006,13 @@ def run_metadata_write(
         data,
         inspector,
         metric_group_builder=metric_groups_for_model,
-        result_enricher=enrich_results_with_related_entities,
+        result_enricher=lambda results, contexts: (
+            enrich_results_with_project_semantics(
+                results,
+                contexts,
+                catalog=base_catalog,
+            )
+        ),
         base_model_metadata=plan.base_model_metadata,
         metric_groups=plan.metric_groups
         if metric_groups is not None

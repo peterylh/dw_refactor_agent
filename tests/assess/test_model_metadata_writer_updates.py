@@ -393,6 +393,662 @@ def test_related_entity_enrichment_rejects_competing_entity_codes():
     assert dimension.related_entities == []
 
 
+def test_project_semantics_reconciles_unique_process_and_entity_evidence():
+    customer = TableInspectResult(
+        table_name="customer",
+        declared_layer="DIM",
+        inferred_layer="DIM",
+        table_type="dimension",
+        confidence=0.9,
+        reasoning_steps=[],
+        entities=[
+            {
+                "code": "CUSTOMER",
+                "type": "primary",
+                "key_columns": ["customer_id"],
+            }
+        ],
+    )
+    order_detail = TableInspectResult(
+        table_name="order_detail",
+        declared_layer="DWD",
+        inferred_layer="DWD",
+        table_type="fact",
+        confidence=0.9,
+        reasoning_steps=[],
+        business_process="ORDER_SALE",
+        columns={
+            "atomic_metrics": [
+                {
+                    "name": "order_amount",
+                    "business_process": "ORDER_SALE",
+                }
+            ],
+            "derived_metrics": [],
+            "calculated_metrics": [],
+            "dimensions": [{"name": "customer_id"}],
+            "others": [],
+        },
+        entities=[
+            {
+                "code": "ORDER",
+                "type": "primary",
+                "key_columns": ["order_id"],
+            },
+            {
+                "code": "CLIENT",
+                "type": "foreign",
+                "key_columns": ["customer_id"],
+            },
+        ],
+    )
+    store_daily = TableInspectResult(
+        table_name="store_daily",
+        declared_layer="DWS",
+        inferred_layer="DWS",
+        table_type="fact",
+        confidence=0.9,
+        reasoning_steps=[],
+        business_process="STORE_DAILY_SALES",
+        columns={
+            "atomic_metrics": [],
+            "derived_metrics": [
+                {
+                    "name": "daily_order_amount",
+                    "base_metric": "order_amount",
+                    "base_metric_table": "analytics.order_detail",
+                    "business_process": "STORE_DAILY_SALES",
+                }
+            ],
+            "calculated_metrics": [],
+            "dimensions": [{"name": "stat_date"}],
+            "others": [],
+        },
+    )
+    contexts = {
+        "customer": TableContext(
+            table_name="customer",
+            table_identity="analytics.customer",
+            layer="DIM",
+            ddl="CREATE TABLE customer (customer_id BIGINT);",
+            etl_sql="",
+            upstream_tables=[],
+            downstream_tables=["analytics.order_detail"],
+        ),
+        "order_detail": TableContext(
+            table_name="order_detail",
+            table_identity="analytics.order_detail",
+            layer="DWD",
+            ddl=(
+                "CREATE TABLE order_detail "
+                "(order_id BIGINT, customer_id BIGINT);"
+            ),
+            etl_sql="",
+            upstream_tables=["analytics.customer"],
+            downstream_tables=["analytics.store_daily"],
+        ),
+        "store_daily": TableContext(
+            table_name="store_daily",
+            table_identity="analytics.store_daily",
+            layer="DWS",
+            ddl="CREATE TABLE store_daily (daily_order_amount DOUBLE);",
+            etl_sql="",
+            upstream_tables=["analytics.order_detail"],
+            downstream_tables=[],
+            upstream_metric_groups={
+                "analytics.order_detail": {
+                    "atomic_metrics": ["order_amount"],
+                    "derived_metrics": [],
+                    "calculated_metrics": [],
+                }
+            },
+        ),
+    }
+
+    updates_module.reconcile_project_semantics(
+        [customer, order_detail, store_daily],
+        contexts,
+    )
+
+    assert [entity["code"] for entity in order_detail.entities] == [
+        "ORDER",
+        "CUSTOMER",
+    ]
+    assert store_daily.business_process == "ORDER_SALE"
+    assert store_daily.derived_metrics[0]["business_process"] == "ORDER_SALE"
+
+
+def test_project_entity_reconciliation_preserves_ambiguous_roles():
+    office = TableInspectResult(
+        table_name="office",
+        declared_layer="DIM",
+        inferred_layer="DIM",
+        table_type="dimension",
+        confidence=0.9,
+        reasoning_steps=[],
+        entities=[
+            {
+                "code": "OFFICE",
+                "type": "primary",
+                "key_columns": ["office_id"],
+            }
+        ],
+    )
+    route = TableInspectResult(
+        table_name="transfer_route",
+        declared_layer="DWD",
+        inferred_layer="DWD",
+        table_type="bridge",
+        confidence=0.9,
+        reasoning_steps=[],
+        entities=[
+            {
+                "code": "OFFICE_FROM",
+                "type": "foreign",
+                "key_columns": ["from_office_id"],
+            },
+            {
+                "code": "OFFICE_TO",
+                "type": "foreign",
+                "key_columns": ["to_office_id"],
+            },
+        ],
+    )
+    contexts = {
+        "office": TableContext(
+            table_name="office",
+            table_identity="analytics.office",
+            layer="DIM",
+            ddl="CREATE TABLE office (office_id BIGINT);",
+            etl_sql="",
+            upstream_tables=[],
+            downstream_tables=["analytics.transfer_route"],
+        ),
+        "transfer_route": TableContext(
+            table_name="transfer_route",
+            table_identity="analytics.transfer_route",
+            layer="DWD",
+            ddl=(
+                "CREATE TABLE transfer_route "
+                "(from_office_id BIGINT, to_office_id BIGINT);"
+            ),
+            etl_sql="",
+            upstream_tables=["analytics.office"],
+            downstream_tables=[],
+            column_lineage=[
+                {
+                    "source": "analytics.office.office_id",
+                    "target": "analytics.transfer_route.from_office_id",
+                },
+                {
+                    "source": "analytics.office.office_id",
+                    "target": "analytics.transfer_route.to_office_id",
+                },
+            ],
+        ),
+    }
+
+    updates_module.reconcile_project_semantics([office, route], contexts)
+
+    assert [entity["code"] for entity in route.entities] == [
+        "OFFICE_FROM",
+        "OFFICE_TO",
+    ]
+
+
+def test_project_process_reconciliation_requires_all_metric_sources_to_agree():
+    sale = TableInspectResult(
+        table_name="sale",
+        declared_layer="DWD",
+        inferred_layer="DWD",
+        table_type="fact",
+        confidence=0.9,
+        reasoning_steps=[],
+        business_process="SALE",
+    )
+    refund = TableInspectResult(
+        table_name="refund",
+        declared_layer="DWD",
+        inferred_layer="DWD",
+        table_type="fact",
+        confidence=0.9,
+        reasoning_steps=[],
+        business_process="REFUND",
+    )
+    net_sales = TableInspectResult(
+        table_name="net_sales",
+        declared_layer="DWS",
+        inferred_layer="DWS",
+        table_type="fact",
+        confidence=0.9,
+        reasoning_steps=[],
+        business_process="NET_SALES",
+        columns={
+            "atomic_metrics": [],
+            "derived_metrics": [
+                {
+                    "name": "sale_amount",
+                    "base_metric": "amount",
+                    "base_metric_table": "analytics.sale",
+                    "business_process": "NET_SALES",
+                }
+            ],
+            "calculated_metrics": [],
+            "dimensions": [],
+            "others": [],
+        },
+    )
+    contexts = {
+        name: TableContext(
+            table_name=name,
+            table_identity=f"analytics.{name}",
+            layer="DWS" if name == "net_sales" else "DWD",
+            ddl="",
+            etl_sql="",
+            upstream_tables=(
+                ["analytics.sale", "analytics.refund"]
+                if name == "net_sales"
+                else []
+            ),
+            downstream_tables=[],
+            upstream_metric_groups=(
+                {
+                    "analytics.sale": {
+                        "atomic_metrics": ["amount"],
+                        "derived_metrics": [],
+                        "calculated_metrics": [],
+                    },
+                    "analytics.refund": {
+                        "atomic_metrics": ["amount"],
+                        "derived_metrics": [],
+                        "calculated_metrics": [],
+                    },
+                }
+                if name == "net_sales"
+                else {}
+            ),
+        )
+        for name in ("sale", "refund", "net_sales")
+    }
+
+    updates_module.reconcile_project_semantics(
+        [sale, refund, net_sales],
+        contexts,
+    )
+
+    assert net_sales.business_process == "NET_SALES"
+    assert net_sales.derived_metrics[0]["business_process"] == "NET_SALES"
+
+
+def test_project_entity_reconciliation_requires_reachable_dimension():
+    customer = TableInspectResult(
+        table_name="customer",
+        declared_layer="DIM",
+        inferred_layer="DIM",
+        table_type="dimension",
+        confidence=0.9,
+        reasoning_steps=[],
+        entities=[
+            {
+                "code": "CUSTOMER",
+                "type": "primary",
+                "key_columns": ["customer_id"],
+            }
+        ],
+    )
+    loan = TableInspectResult(
+        table_name="loan",
+        declared_layer="DWD",
+        inferred_layer="DWD",
+        table_type="fact",
+        confidence=0.9,
+        reasoning_steps=[],
+        entities=[
+            {
+                "code": "LOAN",
+                "type": "primary",
+                "key_columns": ["loan_id"],
+            },
+            {
+                "code": "BORROWER",
+                "type": "foreign",
+                "key_columns": ["customer_id"],
+            },
+        ],
+    )
+    contexts = {
+        "customer": TableContext(
+            table_name="customer",
+            table_identity="crm.customer",
+            layer="DIM",
+            ddl="CREATE TABLE customer (customer_id BIGINT);",
+            etl_sql="",
+            upstream_tables=[],
+            downstream_tables=[],
+        ),
+        "loan": TableContext(
+            table_name="loan",
+            table_identity="lending.loan",
+            layer="DWD",
+            ddl=("CREATE TABLE loan (loan_id BIGINT, customer_id BIGINT);"),
+            etl_sql="",
+            upstream_tables=["lending.loan_source"],
+            downstream_tables=[],
+        ),
+    }
+
+    updates_module.reconcile_project_semantics([customer, loan], contexts)
+
+    assert [entity["code"] for entity in loan.entities] == [
+        "LOAN",
+        "BORROWER",
+    ]
+
+
+def test_project_dimension_reconciliation_uses_lineage_and_catalog_priority():
+    source = TableInspectResult(
+        table_name="customer_source",
+        declared_layer="DIM",
+        inferred_layer="DIM",
+        table_type="dimension",
+        confidence=0.9,
+        reasoning_steps=[],
+        entities=[
+            {
+                "code": "REGION",
+                "type": "foreign",
+                "key_columns": ["region_id"],
+                "relationship": {
+                    "type": "many_to_one",
+                    "from_entity": "CLIENT",
+                },
+            },
+            {
+                "code": "CLIENT",
+                "type": "primary",
+                "key_columns": ["customer_id"],
+            },
+        ],
+        grain={"entities": ["CLIENT"]},
+    )
+    published = TableInspectResult(
+        table_name="customer_published",
+        declared_layer="DIM",
+        inferred_layer="DIM",
+        table_type="dimension",
+        confidence=0.9,
+        reasoning_steps=[],
+        entities=[
+            {
+                "code": "CUSTOMER",
+                "type": "primary",
+                "key_columns": ["customer_id"],
+            }
+        ],
+        grain={"entities": ["CUSTOMER"]},
+    )
+    contexts = {
+        "customer_source": TableContext(
+            table_name="customer_source",
+            table_identity="analytics.customer_source",
+            layer="DIM",
+            ddl=(
+                "CREATE TABLE customer_source "
+                "(customer_id BIGINT, region_id BIGINT);"
+            ),
+            etl_sql="",
+            upstream_tables=[],
+            downstream_tables=["analytics.customer_published"],
+        ),
+        "customer_published": TableContext(
+            table_name="customer_published",
+            table_identity="analytics.customer_published",
+            layer="DIM",
+            ddl="CREATE TABLE customer_published (customer_id BIGINT);",
+            etl_sql="",
+            upstream_tables=["analytics.customer_source"],
+            downstream_tables=[],
+            column_lineage=[
+                {
+                    "source": "analytics.customer_source.customer_id",
+                    "target": "analytics.customer_published.customer_id",
+                }
+            ],
+        ),
+    }
+
+    updates_module.reconcile_project_semantics(
+        [source, published],
+        contexts,
+        catalog={"semantic_subjects": [{"code": "CUSTOMER"}]},
+    )
+
+    assert source.entities[0]["code"] == "REGION"
+    assert source.entities[0]["relationship"]["from_entity"] == "CUSTOMER"
+    assert source.entities[1]["code"] == "CUSTOMER"
+    assert source.grain["entities"] == ["CUSTOMER"]
+    assert published.entities[0]["code"] == "CUSTOMER"
+
+
+def test_project_dimension_reconciliation_skips_duplicate_target_code():
+    source = TableInspectResult(
+        table_name="customer_source",
+        declared_layer="DIM",
+        inferred_layer="DIM",
+        table_type="dimension",
+        confidence=0.9,
+        reasoning_steps=[],
+        entities=[
+            {
+                "code": "CUSTOMER",
+                "type": "unique",
+                "key_columns": ["alternate_customer_id"],
+            },
+            {
+                "code": "CLIENT",
+                "type": "primary",
+                "key_columns": ["customer_id"],
+            },
+        ],
+        grain={"entities": ["CLIENT"]},
+    )
+    published = TableInspectResult(
+        table_name="customer_published",
+        declared_layer="DIM",
+        inferred_layer="DIM",
+        table_type="dimension",
+        confidence=0.9,
+        reasoning_steps=[],
+        entities=[
+            {
+                "code": "CUSTOMER",
+                "type": "primary",
+                "key_columns": ["customer_id"],
+            }
+        ],
+        grain={"entities": ["CUSTOMER"]},
+    )
+    contexts = {
+        "customer_source": TableContext(
+            table_name="customer_source",
+            table_identity="analytics.customer_source",
+            layer="DIM",
+            ddl=(
+                "CREATE TABLE customer_source "
+                "(customer_id BIGINT, alternate_customer_id BIGINT);"
+            ),
+            etl_sql="",
+            upstream_tables=[],
+            downstream_tables=["analytics.customer_published"],
+        ),
+        "customer_published": TableContext(
+            table_name="customer_published",
+            table_identity="analytics.customer_published",
+            layer="DIM",
+            ddl="CREATE TABLE customer_published (customer_id BIGINT);",
+            etl_sql="",
+            upstream_tables=["analytics.customer_source"],
+            downstream_tables=[],
+            column_lineage=[
+                {
+                    "source": "analytics.customer_source.customer_id",
+                    "target": "analytics.customer_published.customer_id",
+                }
+            ],
+        ),
+    }
+
+    updates_module.reconcile_project_semantics(
+        [source, published],
+        contexts,
+        catalog={"semantic_subjects": [{"code": "CUSTOMER"}]},
+    )
+
+    assert [entity["code"] for entity in source.entities] == [
+        "CUSTOMER",
+        "CLIENT",
+    ]
+    assert any(
+        step.startswith("semantic_reconciliation_skipped:")
+        for step in source.reasoning_steps
+    )
+
+
+def test_project_dwd_process_reconciliation_requires_metric_passthrough():
+    assert not updates_module._is_strict_row_preserving_select(
+        "SELECT event_id, amount FROM sale "
+        "LATERAL VIEW explode(items) t AS item"
+    )
+    assert not updates_module._is_strict_row_preserving_select(
+        "SELECT event_id, amount FROM sale TABLESAMPLE(10 PERCENT)"
+    )
+    assert not updates_module._is_strict_row_preserving_select(
+        "SELECT event_id, amount FROM sale PARTITION(p202607)"
+    )
+    source = TableInspectResult(
+        table_name="sale_source",
+        declared_layer="DWD",
+        inferred_layer="DWD",
+        table_type="fact",
+        confidence=0.9,
+        reasoning_steps=[],
+        business_process="SALE",
+        columns={
+            "atomic_metrics": [{"name": "amount", "business_process": "SALE"}],
+            "derived_metrics": [],
+            "calculated_metrics": [],
+            "dimensions": [{"name": "event_id"}],
+            "others": [],
+        },
+        entities=[
+            {
+                "code": "SALE_EVENT",
+                "type": "primary",
+                "key_columns": ["event_id"],
+            }
+        ],
+        grain={"entities": ["SALE_EVENT"]},
+    )
+    target = TableInspectResult(
+        table_name="sale_detail",
+        declared_layer="DWD",
+        inferred_layer="DWD",
+        table_type="fact",
+        confidence=0.9,
+        reasoning_steps=[],
+        business_process="ORDER_LINE_SALE",
+        columns={
+            "atomic_metrics": [
+                {
+                    "name": "net_amount",
+                    "business_process": "ORDER_LINE_SALE",
+                }
+            ],
+            "derived_metrics": [],
+            "calculated_metrics": [],
+            "dimensions": [{"name": "event_id"}],
+            "others": [],
+        },
+        entities=[
+            {
+                "code": "SALE_EVENT",
+                "type": "primary",
+                "key_columns": ["event_id"],
+            }
+        ],
+        grain={"entities": ["SALE_EVENT"]},
+    )
+    contexts = {
+        "sale_source": TableContext(
+            table_name="sale_source",
+            table_identity="analytics.sale_source",
+            layer="DWD",
+            ddl=(
+                "CREATE TABLE sale_source (event_id BIGINT, amount DECIMAL);"
+            ),
+            etl_sql="",
+            upstream_tables=[],
+            downstream_tables=["analytics.sale_detail"],
+        ),
+        "sale_detail": TableContext(
+            table_name="sale_detail",
+            table_identity="analytics.sale_detail",
+            layer="DWD",
+            ddl=(
+                "CREATE TABLE sale_detail "
+                "(event_id BIGINT, net_amount DECIMAL);"
+            ),
+            etl_sql=(
+                "INSERT INTO sale_detail "
+                "SELECT event_id, amount AS net_amount FROM sale_source"
+            ),
+            upstream_tables=["analytics.sale_source"],
+            downstream_tables=[],
+            upstream_metric_groups={
+                "analytics.sale_source": {
+                    "atomic_metrics": ["amount"],
+                    "derived_metrics": [],
+                    "calculated_metrics": [],
+                }
+            },
+            column_lineage=[
+                {
+                    "source": "analytics.sale_source.amount",
+                    "target": "analytics.sale_detail.net_amount",
+                },
+                {
+                    "source": "analytics.sale_source.event_id",
+                    "target": "analytics.sale_detail.event_id",
+                },
+            ],
+        ),
+    }
+
+    updates_module.reconcile_project_semantics(
+        [source, target],
+        contexts,
+    )
+
+    assert target.business_process == "SALE"
+    assert target.atomic_metrics[0]["business_process"] == "SALE"
+
+    target.business_process = "REFUND"
+    target.atomic_metrics[0]["business_process"] = "REFUND"
+    contexts["sale_detail"].etl_sql = (
+        "INSERT INTO sale_detail "
+        "SELECT event_id, amount AS net_amount FROM sale_source "
+        "WHERE event_type IS NOT NULL"
+    )
+
+    updates_module.reconcile_project_semantics(
+        [source, target],
+        contexts,
+    )
+
+    assert target.business_process == "REFUND"
+    assert target.atomic_metrics[0]["business_process"] == "REFUND"
+
+
 def test_update_model_yaml_table_metadata_scenarios(
     tmp_path_factory, monkeypatch
 ):
