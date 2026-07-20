@@ -5,6 +5,9 @@ from unittest.mock import patch
 
 import pytest
 
+from dw_refactor_agent.assessment.llm.inspection_issues import (
+    InspectionTransportError,
+)
 from dw_refactor_agent.assessment.llm.table_inspector import (
     TableContext,
     TableInspector,
@@ -1677,7 +1680,10 @@ def test_inspect_preserves_warning_when_retry_transport_fails(tmp_path):
     with patch.object(
         inspector,
         "_call_api",
-        side_effect=[response, RuntimeError("transient failure")],
+        side_effect=[
+            response,
+            InspectionTransportError("transient failure"),
+        ],
     ) as api:
         result = inspector.inspect(context)
 

@@ -13,9 +13,44 @@ from dw_refactor_agent.assessment.llm.inspection_contract import (
     business_process_codes,
     canonical_semantic_code,
 )
+from dw_refactor_agent.assessment.llm.inspection_issues import (
+    InspectionIssue,
+    UnknownInspectionIssueError,
+    generation_error_to_issue,
+    issues_to_dicts,
+)
 from dw_refactor_agent.config import TEXT_ENCODING
 
 DEFAULT_SLICE_PERIOD = "D"
+GENERATION_ERROR_TYPES = frozenset(
+    {
+        "bridge_entities_invalid",
+        "bridge_grain_invalid",
+        "bridge_semantics_invalid",
+        "business_process_ambiguous",
+        "business_process_missing",
+        "business_process_unknown",
+        "composite_process_invalid",
+        "dimension_primary_entity_invalid",
+        "duplicate_entity_codes",
+        "entity_key_missing",
+        "entity_relationship_origin_missing",
+        "entity_relationship_origin_unknown",
+        "execution_materialized_mismatch",
+        "execution_partition_overwrite_unsupported",
+        "execution_slice_column_missing",
+        "execution_slice_invalid",
+        "execution_slice_missing",
+        "execution_strategy_invalid",
+        "execution_task_missing",
+        "grain_column_missing",
+        "grain_entity_unknown",
+        "llm_inspection_blocked",
+        "llm_inspection_missing",
+        "semantic_subject_missing",
+        "semantic_subject_unknown",
+    }
+)
 REINSPECTION_ERROR_TYPES = frozenset(
     {
         "business_process_ambiguous",
@@ -446,7 +481,35 @@ def _error(
     table_name: str,
     message: str,
 ) -> dict[str, str]:
+    if error_type not in GENERATION_ERROR_TYPES:
+        raise UnknownInspectionIssueError(
+            f"unregistered generation error type: {error_type!r}"
+        )
     return {"type": error_type, "table": table_name, "message": message}
+
+
+def _generation_issues(
+    errors: list[dict[str, str]],
+    inspections: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    issues = []
+    for error in errors:
+        if error.get("type") == "llm_inspection_blocked":
+            inspection = inspections.get(
+                str(error.get("table") or "").casefold()
+            )
+            raw_issues = (
+                inspection.get("issues")
+                if isinstance(inspection, dict)
+                else None
+            )
+            if isinstance(raw_issues, list) and raw_issues:
+                issues.extend(
+                    InspectionIssue.from_dict(item) for item in raw_issues
+                )
+                continue
+        issues.append(generation_error_to_issue(error))
+    return issues_to_dicts(issues)
 
 
 def _validate_execution(
@@ -1026,6 +1089,7 @@ def validate_generate_candidate(
         "status": "blocked" if errors else "passed",
         "error_count": len(errors),
         "errors": errors,
+        "issues": _generation_issues(errors, inspections),
         "blocked_tables": blocked_tables,
         "reinspection_tables": reinspection_tables,
     }

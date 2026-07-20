@@ -2406,6 +2406,7 @@ def test_generate_publication_allows_fact_foreign_entities_without_relationship(
         "status": "passed",
         "error_count": 0,
         "errors": [],
+        "issues": [],
         "blocked_tables": [],
         "reinspection_tables": [],
     }

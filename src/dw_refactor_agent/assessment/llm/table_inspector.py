@@ -8,13 +8,35 @@ import threading
 import urllib.request
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import dataclass, field
+from http.client import HTTPException
 from pathlib import Path
 from typing import Any, Callable
+from urllib.error import HTTPError
 from urllib.parse import urlparse
 
 from dw_refactor_agent.assessment.llm.context_builder import TableContext
 from dw_refactor_agent.assessment.llm.inspection_contract import (
     validate_generate_inspection_contract,
+)
+from dw_refactor_agent.assessment.llm.inspection_issues import (
+    LEGACY_VALIDATION_ISSUE_CODES,
+    InspectionAuthenticationError,
+    InspectionBoundaryError,
+    InspectionConfigurationError,
+    InspectionContentParseError,
+    InspectionInternalError,
+    InspectionIssue,
+    InspectionRequestRejectedError,
+    InspectionTransportError,
+    IssueEvidence,
+    ParsedInspectionCandidate,
+    RawInspectionResponse,
+    UnknownInspectionIssueError,
+    is_legacy_validation_issue,
+    issue_for_code,
+    issues_from_validation,
+    issues_to_dicts,
+    sort_issues,
 )
 from dw_refactor_agent.assessment.project_facts.entity_metadata import (
     legacy_entity_from_entities,
@@ -87,6 +109,8 @@ ORCHESTRATION_VALIDATION_KEYS = frozenset(
 DEFAULT_DEEPSEEK_CHAT_COMPLETIONS_URL = (
     "https://api.deepseek.com/chat/completions"
 )
+AUTHENTICATION_HTTP_STATUS_CODES = frozenset({401, 403})
+RETRYABLE_HTTP_STATUS_CODES = frozenset({408, 409, 425, 429})
 NON_METRIC_AGGREGATE_FUNCTIONS = {
     "ANY_VALUE",
     "ARBITRARY",
@@ -194,6 +218,9 @@ class TableInspectResult:
         default_factory=_empty_columns
     )
     validation: dict[str, list[str]] = field(default_factory=dict)
+    issues: tuple[InspectionIssue, ...] = field(default_factory=tuple)
+    raw_response: RawInspectionResponse | None = None
+    parsed_candidate: ParsedInspectionCandidate | None = None
     retry_count: int = 0
     first_attempt_inferred_layer: str = ""
     inferred_data_domain: str = ""
@@ -280,6 +307,14 @@ class TableInspectResult:
     @property
     def status(self) -> str:
         """返回 passed/warning/blocked，供回写流程做安全决策。"""
+        unknown_keys = set(self.validation) - set(
+            LEGACY_VALIDATION_ISSUE_CODES
+        )
+        if unknown_keys:
+            raise UnknownInspectionIssueError(
+                "unregistered inspection validation keys: "
+                + ", ".join(sorted(unknown_keys))
+            )
         if self.confidence <= 0:
             return "blocked"
         if any(self.validation.get(key) for key in VALIDATION_ERROR_KEYS):
@@ -802,59 +837,174 @@ def _normalize_columns(raw_columns: Any) -> dict[str, list[dict[str, Any]]]:
     return columns
 
 
-def parse_response(
-    table_name: str, response: dict, declared_layer: str = ""
-) -> TableInspectResult:
-    content = (
-        response.get("choices", [{}])[0]
-        .get("message", {})
-        .get("content", "")
-        .strip()
-    )
-    content = _strip_markdown_json(content)
+def _response_content(response: dict[str, Any]) -> str:
+    if not isinstance(response, dict):
+        raise InspectionContentParseError(
+            "API response envelope must be a JSON object"
+        )
+    choices = response.get("choices")
+    if not isinstance(choices, list) or not choices:
+        raise InspectionContentParseError(
+            "API response envelope has no choices"
+        )
+    first_choice = choices[0]
+    if not isinstance(first_choice, dict):
+        raise InspectionContentParseError(
+            "API response choice must be an object"
+        )
+    message = first_choice.get("message")
+    if not isinstance(message, dict):
+        raise InspectionContentParseError(
+            "API response choice has no message object"
+        )
+    content = message.get("content")
+    if not isinstance(content, str) or not content.strip():
+        raise InspectionContentParseError(
+            "API response message content must be a non-empty string"
+        )
+    return _strip_markdown_json(content)
 
+
+def _parse_failure_result(
+    *,
+    table_name: str,
+    declared_layer: str,
+    raw_response: RawInspectionResponse,
+    error: InspectionContentParseError,
+) -> TableInspectResult:
+    return TableInspectResult(
+        table_name=table_name,
+        declared_layer=str(declared_layer or ""),
+        inferred_layer="OTHER",
+        table_type="other",
+        confidence=0.0,
+        reasoning_steps=[f"JSON 解析失败: {error}"],
+        issues=(error.to_issue(table_name),),
+        raw_response=raw_response,
+    )
+
+
+def parse_response(
+    table_name: str,
+    response: dict,
+    declared_layer: str = "",
+    *,
+    raw_response: RawInspectionResponse | None = None,
+) -> TableInspectResult:
+    if raw_response is None:
+        body = json.dumps(
+            response,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            default=str,
+        )
+        raw_response = RawInspectionResponse.create(
+            table_name=table_name,
+            model="",
+            endpoint="",
+            context_hash="",
+            body=body,
+        )
     try:
+        content = _response_content(response)
         data = json.loads(content)
-        return TableInspectResult(
+        if not isinstance(data, dict):
+            raise InspectionContentParseError(
+                "inspection candidate must be a JSON object"
+            )
+        try:
+            parsed_candidate = ParsedInspectionCandidate.create(
+                table_name=table_name,
+                raw_response_hash=raw_response.content_hash,
+                payload=data,
+            )
+        except (TypeError, ValueError) as error:
+            raise InspectionContentParseError(
+                f"inspection candidate is not losslessly serializable: {error}"
+            ) from error
+    except json.JSONDecodeError as error:
+        parse_error = InspectionContentParseError(str(error))
+        parse_error.__cause__ = error
+        return _parse_failure_result(
             table_name=table_name,
-            declared_layer=str(declared_layer or ""),
-            inferred_layer=_valid_layer(data.get("inferred_layer")),
-            table_type=_valid_table_type(data.get("table_type")),
-            business_process=_valid_business_process(
-                data.get("business_process")
-            ),
-            confidence=_safe_float(data.get("confidence")),
-            reasoning_steps=list(data.get("reasoning_steps", []) or []),
-            columns=_normalize_columns(data.get("columns")),
-            inferred_data_domain=_safe_str(data.get("inferred_data_domain")),
-            inferred_business_area=_safe_str(
-                data.get("inferred_business_area")
-            ).upper(),
-            dimension_role=_valid_dimension_role(data.get("dimension_role")),
-            dimension_content_type=_valid_dimension_content_type(
-                data.get("dimension_content_type")
-            ),
-            entities=normalize_entities(
-                data.get("entities"),
-                data.get("entity"),
-                data.get("related_entities"),
-            ),
-            entity=_safe_dict(data.get("entity")),
-            related_entities=_safe_dict_list(data.get("related_entities")),
-            grain=_normalize_grain(data.get("grain")),
+            declared_layer=declared_layer,
+            raw_response=raw_response,
+            error=parse_error,
         )
-    except json.JSONDecodeError as e:
-        return TableInspectResult(
+    except InspectionContentParseError as error:
+        return _parse_failure_result(
             table_name=table_name,
-            declared_layer=str(declared_layer or ""),
-            inferred_layer="OTHER",
-            table_type="other",
-            confidence=0.0,
-            reasoning_steps=[f"JSON 解析失败: {e}\n原文: {content}"],
+            declared_layer=declared_layer,
+            raw_response=raw_response,
+            error=error,
         )
+
+    return TableInspectResult(
+        table_name=table_name,
+        declared_layer=str(declared_layer or ""),
+        inferred_layer=_valid_layer(data.get("inferred_layer")),
+        table_type=_valid_table_type(data.get("table_type")),
+        business_process=_valid_business_process(data.get("business_process")),
+        confidence=_safe_float(data.get("confidence")),
+        reasoning_steps=_safe_list(data.get("reasoning_steps")),
+        columns=_normalize_columns(data.get("columns")),
+        inferred_data_domain=_safe_str(data.get("inferred_data_domain")),
+        inferred_business_area=_safe_str(
+            data.get("inferred_business_area")
+        ).upper(),
+        dimension_role=_valid_dimension_role(data.get("dimension_role")),
+        dimension_content_type=_valid_dimension_content_type(
+            data.get("dimension_content_type")
+        ),
+        entities=normalize_entities(
+            data.get("entities"),
+            data.get("entity"),
+            data.get("related_entities"),
+        ),
+        entity=_safe_dict(data.get("entity")),
+        related_entities=_safe_dict_list(data.get("related_entities")),
+        grain=_normalize_grain(data.get("grain")),
+        raw_response=raw_response,
+        parsed_candidate=parsed_candidate,
+    )
+
+
+def synchronize_result_issues(
+    result: TableInspectResult,
+) -> tuple[InspectionIssue, ...]:
+    """Rebuild typed issues from the current compatibility validation view."""
+    typed_issues = [
+        issue
+        for issue in result.issues
+        if not is_legacy_validation_issue(issue)
+    ]
+    typed_issues.extend(issues_from_validation(result))
+    if (
+        result.confidence <= 0
+        and result.parsed_candidate is not None
+        and not any(
+            issue.code
+            in {
+                "inspection_transport_failed",
+                "inspection_content_parse_failed",
+            }
+            for issue in typed_issues
+        )
+    ):
+        typed_issues.append(
+            issue_for_code(
+                "inspection_low_confidence",
+                table=result.table_name,
+                path="confidence",
+                items=(result.confidence,),
+            )
+        )
+    result.issues = sort_issues(typed_issues)
+    return result.issues
 
 
 def result_to_dict(result: TableInspectResult) -> dict[str, Any]:
+    current_issues = synchronize_result_issues(result)
     return {
         "table_name": result.table_name,
         "declared_layer": result.declared_layer,
@@ -876,6 +1026,17 @@ def result_to_dict(result: TableInspectResult) -> dict[str, Any]:
         "related_entities": result.related_entities,
         "grain": result.grain,
         "validation": result.validation,
+        "issues": issues_to_dicts(current_issues),
+        "raw_response": (
+            result.raw_response.to_dict()
+            if result.raw_response is not None
+            else None
+        ),
+        "parsed_candidate": (
+            result.parsed_candidate.to_dict()
+            if result.parsed_candidate is not None
+            else None
+        ),
         "status": result.status,
         "retry_count": result.retry_count,
         "first_attempt_inferred_layer": result.first_attempt_inferred_layer,
@@ -1830,6 +1991,7 @@ def validate_inspection_result(
         ),
         orchestration_validation,
     )
+    synchronize_result_issues(result)
     return result
 
 
@@ -2117,19 +2279,67 @@ class TableInspector:
             "temperature": 0.0,
         }
 
-        req = urllib.request.Request(
-            self.base_url,
-            data=json.dumps(data).encode(TEXT_ENCODING),
-            headers=headers,
-            method="POST",
-        )
         try:
+            endpoint = urlparse(self.base_url)
+            endpoint_host = endpoint.hostname
+        except ValueError as error:
+            raise InspectionConfigurationError(
+                "DeepSeek endpoint configuration is invalid"
+            ) from error
+        if endpoint.scheme not in {"http", "https"} or not endpoint_host:
+            raise InspectionConfigurationError(
+                "DeepSeek endpoint configuration is invalid"
+            )
+        try:
+            req = urllib.request.Request(
+                self.base_url,
+                data=json.dumps(data).encode(TEXT_ENCODING),
+                headers=headers,
+                method="POST",
+            )
             with urllib.request.urlopen(
                 req, timeout=self.request_timeout
             ) as response:
-                return response.read().decode(TEXT_ENCODING)
-        except Exception as e:
-            raise RuntimeError(f"DeepSeek API 调用失败: {e}") from e
+                response_body = response.read()
+        except HTTPError as error:
+            status_code = int(error.code)
+            evidence = (
+                IssueEvidence(
+                    kind="http_status",
+                    values=(str(status_code),),
+                ),
+            )
+            if status_code in AUTHENTICATION_HTTP_STATUS_CODES:
+                raise InspectionAuthenticationError(
+                    "DeepSeek API authentication was rejected",
+                    evidence=evidence,
+                ) from error
+            if (
+                400 <= status_code < 500
+                and status_code not in RETRYABLE_HTTP_STATUS_CODES
+            ):
+                raise InspectionRequestRejectedError(
+                    "DeepSeek API request configuration was rejected",
+                    evidence=evidence,
+                ) from error
+            raise InspectionTransportError(
+                "DeepSeek API transport failed",
+                evidence=evidence,
+            ) from error
+        except ValueError as error:
+            raise InspectionConfigurationError(
+                "DeepSeek endpoint configuration is invalid"
+            ) from error
+        except (HTTPException, OSError, TimeoutError) as error:
+            raise InspectionTransportError(
+                "DeepSeek API transport failed"
+            ) from error
+        try:
+            return response_body.decode(TEXT_ENCODING)
+        except UnicodeError as error:
+            raise InspectionContentParseError(
+                f"DeepSeek API 响应不是有效 {TEXT_ENCODING}: {error}"
+            ) from error
 
     def inspect(
         self,
@@ -2195,15 +2405,15 @@ class TableInspector:
             )
             try:
                 resp_str = self._call_api(prompt)
-                resp_json = json.loads(resp_str)
-            except Exception as e:
+            except InspectionBoundaryError as error:
                 result = TableInspectResult(
                     table_name=ctx.table_name,
                     declared_layer=ctx.layer,
                     inferred_layer="OTHER",
                     table_type="other",
                     confidence=0.0,
-                    reasoning_steps=[f"分类异常: {str(e)}"],
+                    reasoning_steps=[f"分类异常: {str(error)}"],
+                    issues=(error.to_issue(ctx.table_name),),
                     retry_count=attempt,
                 )
                 if attempt == 0:
@@ -2217,31 +2427,94 @@ class TableInspector:
                     progress_context=progress_context,
                     attempt=attempt + 1,
                     max_attempts=self.max_retries + 1,
-                    error=str(e),
+                    error=str(error),
                 )
-                if attempt >= self.max_retries:
+                if not error.retryable or attempt >= self.max_retries:
                     if last_usable_result is not None:
+                        failure_issues = result.issues
                         result = last_usable_result
                         used_retry_fallback = True
                         result.retry_count = attempt
                         result.reasoning_steps.append(
-                            f"重试异常，保留上次可用结果: {str(e)}"
+                            f"重试异常，保留上次可用结果: {str(error)}"
+                        )
+                        result.issues = sort_issues(
+                            tuple(result.issues) + tuple(failure_issues)
                         )
                     break
                 continue
+            except Exception as error:
+                internal_error = InspectionInternalError(
+                    f"inspection request boundary failed: {error}",
+                    table_name=ctx.table_name,
+                    stage="parse",
+                    cause=error,
+                )
+                raise internal_error from error
 
-            result = parse_response(ctx.table_name, resp_json, ctx.layer)
+            raw_response = RawInspectionResponse.create(
+                table_name=ctx.table_name,
+                model=self.model,
+                endpoint=self.base_url,
+                context_hash=current_hash,
+                body=resp_str,
+            )
+            try:
+                resp_json = json.loads(resp_str)
+                if not isinstance(resp_json, dict):
+                    raise InspectionContentParseError(
+                        "API response envelope must be a JSON object"
+                    )
+                result = parse_response(
+                    ctx.table_name,
+                    resp_json,
+                    ctx.layer,
+                    raw_response=raw_response,
+                )
+            except json.JSONDecodeError as error:
+                parse_error = InspectionContentParseError(str(error))
+                parse_error.__cause__ = error
+                result = _parse_failure_result(
+                    table_name=ctx.table_name,
+                    declared_layer=ctx.layer,
+                    raw_response=raw_response,
+                    error=parse_error,
+                )
+            except InspectionContentParseError as error:
+                result = _parse_failure_result(
+                    table_name=ctx.table_name,
+                    declared_layer=ctx.layer,
+                    raw_response=raw_response,
+                    error=error,
+                )
+            except Exception as error:
+                internal_error = InspectionInternalError(
+                    f"inspection parser failed: {error}",
+                    table_name=ctx.table_name,
+                    stage="parse",
+                    cause=error,
+                )
+                raise internal_error from error
             result.retry_count = attempt
             if attempt == 0:
                 first_attempt_inferred_layer = result.inferred_layer
             result.first_attempt_inferred_layer = first_attempt_inferred_layer
-            validate_inspection_result(
-                result,
-                ctx,
-                validate_publication_contract=(
-                    self.validate_publication_contract
-                ),
-            )
+            try:
+                validate_inspection_result(
+                    result,
+                    ctx,
+                    validate_publication_contract=(
+                        self.validate_publication_contract
+                    ),
+                )
+            except Exception as error:
+                internal_error = InspectionInternalError(
+                    f"inspection validation failed: {error}",
+                    table_name=ctx.table_name,
+                    stage="local_validation",
+                    cause=error,
+                )
+                raise internal_error from error
             if result.confidence > 0:
                 last_usable_result = result
             elif (
@@ -2251,11 +2524,15 @@ class TableInspector:
                     iter(result.reasoning_steps),
                     "返回结果不可用",
                 )
+                failure_issues = result.issues
                 result = last_usable_result
                 used_retry_fallback = True
                 result.retry_count = attempt
                 result.reasoning_steps.append(
                     f"重试异常，保留上次可用结果: {failure}"
+                )
+                result.issues = sort_issues(
+                    tuple(result.issues) + tuple(failure_issues)
                 )
                 break
             if (
@@ -2309,21 +2586,31 @@ class TableInspector:
             )
             try:
                 result = self.inspect(ctx, progress_context=progress_context)
-            except Exception as e:
-                result = TableInspectResult(
-                    table_name=ctx.table_name,
-                    declared_layer=ctx.layer,
-                    inferred_layer="OTHER",
-                    table_type="other",
-                    confidence=0.0,
-                    reasoning_steps=[f"分类异常: {str(e)}"],
-                )
+            except InspectionInternalError as error:
                 self._emit_progress(
                     "unexpected_error",
                     ctx,
                     progress_context=progress_context,
-                    error=str(e),
+                    error=str(error),
                 )
+                batch_failed.set()
+                raise
+            except Exception as error:
+                self._emit_progress(
+                    "unexpected_error",
+                    ctx,
+                    progress_context=progress_context,
+                    error=str(error),
+                )
+                batch_failed.set()
+                internal_error = InspectionInternalError(
+                    f"inspection worker failed: {error}",
+                    table_name=ctx.table_name,
+                    stage="local_validation",
+                    cause=error,
+                    context="worker",
+                )
+                raise internal_error from error
             if self.result_callback and not batch_failed.is_set():
                 try:
                     self.result_callback(result)
