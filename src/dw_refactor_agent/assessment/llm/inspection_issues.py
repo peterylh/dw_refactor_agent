@@ -431,6 +431,47 @@ class RawInspectionResponse:
             "content_hash": self.content_hash,
         }
 
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "RawInspectionResponse":
+        if not isinstance(data, dict):
+            raise ValueError("raw inspection response must be an object")
+        if set(data) != {
+            "schema_version",
+            "table_name",
+            "model",
+            "endpoint",
+            "context_hash",
+            "body",
+            "content_hash",
+        }:
+            raise ValueError(
+                "raw inspection response fields are incomplete or unknown"
+            )
+        schema_version = data.get("schema_version")
+        if schema_version != RAW_RESPONSE_SCHEMA_VERSION:
+            raise ValueError(
+                f"unsupported raw response schema: {schema_version!r}"
+            )
+        body = data.get("body")
+        if not isinstance(body, str):
+            raise ValueError("raw inspection response body must be a string")
+        content_hash = data.get("content_hash")
+        actual_hash = hashlib.sha256(body.encode(TEXT_ENCODING)).hexdigest()
+        if content_hash != actual_hash:
+            raise ValueError("raw inspection response content hash mismatch")
+        restored = cls.create(
+            table_name=str(data.get("table_name") or ""),
+            model=str(data.get("model") or ""),
+            endpoint=str(data.get("endpoint") or ""),
+            context_hash=str(data.get("context_hash") or ""),
+            body=body,
+        )
+        if restored.endpoint != data.get("endpoint"):
+            raise ValueError(
+                "raw inspection response endpoint is not sanitized"
+            )
+        return restored
+
 
 @dataclass(frozen=True)
 class ParsedInspectionCandidate:
@@ -477,6 +518,35 @@ class ParsedInspectionCandidate:
             "raw_response_hash": self.raw_response_hash,
             "payload": self.payload,
         }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "ParsedInspectionCandidate":
+        if not isinstance(data, dict):
+            raise ValueError("parsed inspection candidate must be an object")
+        if set(data) != {
+            "schema_version",
+            "table_name",
+            "raw_response_hash",
+            "payload",
+        }:
+            raise ValueError(
+                "parsed inspection candidate fields are incomplete or unknown"
+            )
+        schema_version = data.get("schema_version")
+        if schema_version != PARSED_CANDIDATE_SCHEMA_VERSION:
+            raise ValueError(
+                f"unsupported parsed candidate schema: {schema_version!r}"
+            )
+        payload = data.get("payload")
+        if not isinstance(payload, dict):
+            raise ValueError(
+                "parsed inspection candidate payload must be an object"
+            )
+        return cls.create(
+            table_name=str(data.get("table_name") or ""),
+            raw_response_hash=str(data.get("raw_response_hash") or ""),
+            payload=payload,
+        )
 
 
 class InspectionBoundaryError(RuntimeError):

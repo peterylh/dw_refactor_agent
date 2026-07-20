@@ -218,6 +218,8 @@ def _new_table_inspector(
     min_cacheable_confidence: float = DEFAULT_MIN_CACHEABLE_CONFIDENCE,
     resume_cache: dict[str, Any] | None = None,
     validate_publication_contract: bool = False,
+    catalog_snapshot_hash: str = "",
+    asset_manifest_hash: str = "",
 ) -> TableInspector:
     kwargs: dict[str, Any] = {
         "model": model,
@@ -227,6 +229,8 @@ def _new_table_inspector(
         "request_timeout": request_timeout,
         "min_cacheable_confidence": min_cacheable_confidence,
         "validate_publication_contract": validate_publication_contract,
+        "catalog_snapshot_hash": catalog_snapshot_hash,
+        "asset_manifest_hash": asset_manifest_hash,
     }
     if resume_cache:
         kwargs["resume_cache"] = resume_cache
@@ -238,6 +242,8 @@ def _new_table_inspector(
         "request_timeout",
         "min_cacheable_confidence",
         "validate_publication_contract",
+        "catalog_snapshot_hash",
+        "asset_manifest_hash",
     )
     while True:
         try:
@@ -477,6 +483,8 @@ def run_generate_model_metadata(
             project_dir=_project_dir(project),
             plan=generate_plan,
             resume_enabled=not no_cache,
+            catalog_snapshot_hash=preflight.manifest.catalog_snapshot_hash,
+            asset_manifest_hash=preflight.manifest.manifest_hash,
         )
         if show_progress:
             print(f"冷启动检查点目录: {checkpoint.root}", flush=True)
@@ -521,6 +529,10 @@ def run_generate_model_metadata(
                 lineage_data=preflight.manifest.lineage_data(),
                 asset_content=preflight.manifest.inspection_content(),
                 business_semantics_catalog=catalog,
+                catalog_snapshot_hash=(
+                    preflight.manifest.catalog_snapshot_hash
+                ),
+                asset_manifest_hash=preflight.manifest.manifest_hash,
             )
             final_model_metadata = _final_model_metadata_with_refinements(
                 generate_plan.base_model_metadata,
@@ -1126,6 +1138,8 @@ def run_metadata_write(
     lineage_data: dict[str, Any] | None = None,
     asset_content: dict[str, dict[str, str]] | None = None,
     business_semantics_catalog: dict[str, Any] | None = None,
+    catalog_snapshot_hash: str = "",
+    asset_manifest_hash: str = "",
 ) -> dict[str, Any]:
     """运行项目级 LLM 巡检与模型元数据回写。"""
     write_scope = _validate_write_scope(write_scope)
@@ -1177,6 +1191,8 @@ def run_metadata_write(
         min_cacheable_confidence=plan.resolution_policy.min_llm_confidence,
         resume_cache=resume_cache,
         validate_publication_contract=plan.mode == "generate",
+        catalog_snapshot_hash=catalog_snapshot_hash,
+        asset_manifest_hash=asset_manifest_hash,
     )
     if show_progress:
         inspector.progress_callback = build_progress_callback()

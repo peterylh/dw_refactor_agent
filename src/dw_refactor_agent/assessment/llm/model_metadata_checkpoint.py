@@ -16,20 +16,28 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from dw_refactor_agent.assessment.llm.inspection_cache_policy import (
+    ISSUE_SCHEMA_VERSION,
+    PARSER_SCHEMA_VERSION,
+    InspectionCachePolicy,
+    InvalidInspectionCacheError,
+    current_policy_versions,
+)
 from dw_refactor_agent.assessment.llm.metadata_flow import MetadataFlowPlan
 from dw_refactor_agent.assessment.llm.model_metadata_updates import (
     update_model_yaml,
 )
 from dw_refactor_agent.assessment.llm.table_inspector import (
     TableInspectResult,
+    cache_result_digest,
     dict_to_result,
     result_to_cache_dict,
 )
 from dw_refactor_agent.config import TEXT_ENCODING
 
 MID_LAYERS = {"DWD", "DWS", "DIM"}
-CHECKPOINT_MANIFEST_VERSION = 3
-RESUMABLE_CHECKPOINT_MANIFEST_VERSIONS = {2, 3}
+CHECKPOINT_MANIFEST_VERSION = 4
+RESUMABLE_CHECKPOINT_MANIFEST_VERSIONS = {4}
 MAX_CHECKPOINT_VARIANTS_PER_TABLE = 4
 MAX_CHECKPOINT_INVALIDATIONS_PER_TABLE = 8
 INSPECTION_RESULT_SUFFIX = ".inspection.json"
@@ -71,10 +79,14 @@ class GenerateModelCheckpoint:
         project_dir: Path,
         plan: MetadataFlowPlan,
         resume_enabled: bool = True,
+        catalog_snapshot_hash: str = "",
+        asset_manifest_hash: str = "",
     ) -> None:
         self.project = project
         self.project_dir = Path(project_dir)
         self.plan = plan
+        self.catalog_snapshot_hash = str(catalog_snapshot_hash or "")
+        self.asset_manifest_hash = str(asset_manifest_hash or "")
         self.run_id = _checkpoint_run_id()
         self.root = self.project_dir / "mid_checkpoints"
         self.manifest_path = self.root / "manifest.json"
@@ -103,6 +115,9 @@ class GenerateModelCheckpoint:
                 "run_id": self.run_id,
                 "resumed_from_run_id": resumed_from_run_id,
                 "resume_enabled": bool(resume_enabled),
+                **current_policy_versions(),
+                "catalog_snapshot_hash": self.catalog_snapshot_hash,
+                "asset_manifest_hash": self.asset_manifest_hash,
                 "status": "running",
                 "published": False,
                 "created_at": _utc_timestamp(),
@@ -226,7 +241,10 @@ class GenerateModelCheckpoint:
                 list(variants.items())[-MAX_CHECKPOINT_VARIANTS_PER_TABLE:]
             )
             cache_variants = {
-                context_hash: {"result": item["result"]}
+                context_hash: {
+                    "result": item["result"],
+                    "content_sha256": cache_result_digest(item["result"]),
+                }
                 for context_hash, item in variants.items()
             }
             resume_cache[table_name] = {
@@ -274,6 +292,13 @@ class GenerateModelCheckpoint:
         manifest: dict[str, Any],
         resume_enabled: bool,
     ) -> bool:
+        versions = current_policy_versions()
+        policy_versions_present = all(
+            isinstance(manifest.get(name), int)
+            and not isinstance(manifest.get(name), bool)
+            and manifest.get(name) >= 0
+            for name in versions
+        )
         return bool(
             resume_enabled
             and manifest.get("version")
@@ -281,6 +306,12 @@ class GenerateModelCheckpoint:
             and manifest.get("project") == self.project
             and manifest.get("mode") == "generate"
             and isinstance(manifest.get("tables"), dict)
+            and policy_versions_present
+            and manifest.get("parser_schema_version") == PARSER_SCHEMA_VERSION
+            and manifest.get("issue_schema_version") == ISSUE_SCHEMA_VERSION
+            and manifest.get("catalog_snapshot_hash")
+            == self.catalog_snapshot_hash
+            and manifest.get("asset_manifest_hash") == self.asset_manifest_hash
         )
 
     def _validated_resume_variants(
@@ -317,13 +348,42 @@ class GenerateModelCheckpoint:
                 continue
             if not isinstance(payload, dict):
                 continue
-            result = dict_to_result(
-                payload,
-                table_name=table_name,
-                declared_layer=str(payload.get("declared_layer") or ""),
-            )
+            try:
+                cache_policy = InspectionCachePolicy.from_dict(
+                    payload.get("cache_policy")
+                )
+                if not cache_policy.matches_inputs(
+                    context_hash=context_hash,
+                    catalog_snapshot_hash=self.catalog_snapshot_hash,
+                    asset_manifest_hash=self.asset_manifest_hash,
+                ):
+                    continue
+                result = dict_to_result(
+                    payload,
+                    table_name=table_name,
+                    declared_layer=str(payload.get("declared_layer") or ""),
+                )
+            except (
+                InvalidInspectionCacheError,
+                TypeError,
+                ValueError,
+            ):
+                continue
             if (
                 result.table_name != table_name
+                or result.context_hash != context_hash
+                or result.catalog_snapshot_hash != self.catalog_snapshot_hash
+                or result.asset_manifest_hash != self.asset_manifest_hash
+                or result.parsed_candidate is None
+                or result.parsed_candidate.table_name != table_name
+                or (
+                    result.raw_response is not None
+                    and (
+                        result.raw_response.table_name != table_name
+                        or result.parsed_candidate.raw_response_hash
+                        != result.raw_response.content_hash
+                    )
+                )
                 or result.status == "blocked"
                 or result.confidence
                 < self.plan.resolution_policy.min_llm_confidence

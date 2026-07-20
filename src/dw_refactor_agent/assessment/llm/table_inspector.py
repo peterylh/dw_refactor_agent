@@ -15,6 +15,10 @@ from urllib.error import HTTPError
 from urllib.parse import urlparse
 
 from dw_refactor_agent.assessment.llm.context_builder import TableContext
+from dw_refactor_agent.assessment.llm.inspection_cache_policy import (
+    InspectionCachePolicy,
+    InvalidInspectionCacheError,
+)
 from dw_refactor_agent.assessment.llm.inspection_contract import (
     validate_generate_inspection_contract,
 )
@@ -232,6 +236,8 @@ class TableInspectResult:
     related_entities: list[dict[str, Any]] = field(default_factory=list)
     grain: dict[str, Any] = field(default_factory=dict)
     context_hash: str = ""
+    catalog_snapshot_hash: str = ""
+    asset_manifest_hash: str = ""
     reuse_source: str = ""
     resume_eligible: bool = True
 
@@ -1044,9 +1050,51 @@ def result_to_dict(result: TableInspectResult) -> dict[str, Any]:
     }
 
 
+CACHE_RESULT_FIELDS = frozenset(
+    {
+        "cache_policy",
+        "table_name",
+        "declared_layer",
+        "inferred_layer",
+        "table_type",
+        "business_process",
+        "business_process_mode",
+        "business_process_sources",
+        "business_process_conflicts",
+        "inferred_data_domain",
+        "inferred_business_area",
+        "dimension_role",
+        "dimension_content_type",
+        "confidence",
+        "reasoning_steps",
+        "columns",
+        "entities",
+        "entity",
+        "related_entities",
+        "grain",
+        "validation",
+        "issues",
+        "raw_response",
+        "parsed_candidate",
+        "retry_count",
+        "first_attempt_inferred_layer",
+        "context_hash",
+        "catalog_snapshot_hash",
+        "asset_manifest_hash",
+        "resume_eligible",
+    }
+)
+
+
 def result_to_cache_dict(result: TableInspectResult) -> dict[str, Any]:
     """仅保存恢复巡检结果所需字段，派生字段由读取后重新计算。"""
+    current_issues = synchronize_result_issues(result)
     return {
+        "cache_policy": InspectionCachePolicy(
+            context_hash=result.context_hash,
+            catalog_snapshot_hash=result.catalog_snapshot_hash,
+            asset_manifest_hash=result.asset_manifest_hash,
+        ).to_dict(),
         "table_name": result.table_name,
         "declared_layer": result.declared_layer,
         "inferred_layer": result.inferred_layer,
@@ -1067,14 +1115,49 @@ def result_to_cache_dict(result: TableInspectResult) -> dict[str, Any]:
         "related_entities": result.related_entities,
         "grain": result.grain,
         "validation": result.validation,
+        "issues": issues_to_dicts(current_issues),
+        "raw_response": (
+            result.raw_response.to_dict()
+            if result.raw_response is not None
+            else None
+        ),
+        "parsed_candidate": (
+            result.parsed_candidate.to_dict()
+            if result.parsed_candidate is not None
+            else None
+        ),
         "retry_count": result.retry_count,
         "first_attempt_inferred_layer": result.first_attempt_inferred_layer,
+        "context_hash": result.context_hash,
+        "catalog_snapshot_hash": result.catalog_snapshot_hash,
+        "asset_manifest_hash": result.asset_manifest_hash,
+        "resume_eligible": result.resume_eligible,
     }
+
+
+def cache_result_digest(result_data: dict[str, Any]) -> str:
+    content = json.dumps(
+        result_data,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    )
+    return hashlib.sha256(content.encode(TEXT_ENCODING)).hexdigest()
 
 
 def dict_to_result(
     data: dict[str, Any], *, table_name: str = "", declared_layer: str = ""
 ) -> TableInspectResult:
+    if "cache_policy" in data and set(data) != CACHE_RESULT_FIELDS:
+        raise InvalidInspectionCacheError(
+            "inspection cache result fields are incomplete or unknown"
+        )
+    raw_issues = data.get("issues") or []
+    if not isinstance(raw_issues, list):
+        raise ValueError("inspection result issues must be a list")
+    raw_response_data = data.get("raw_response")
+    parsed_candidate_data = data.get("parsed_candidate")
     return TableInspectResult(
         table_name=str(data.get("table_name") or table_name),
         declared_layer=str(data.get("declared_layer") or declared_layer),
@@ -1102,6 +1185,17 @@ def dict_to_result(
         related_entities=_safe_dict_list(data.get("related_entities")),
         grain=_normalize_grain(data.get("grain")),
         validation=_normalize_validation(data.get("validation")),
+        issues=tuple(InspectionIssue.from_dict(issue) for issue in raw_issues),
+        raw_response=(
+            RawInspectionResponse.from_dict(raw_response_data)
+            if raw_response_data is not None
+            else None
+        ),
+        parsed_candidate=(
+            ParsedInspectionCandidate.from_dict(parsed_candidate_data)
+            if parsed_candidate_data is not None
+            else None
+        ),
         retry_count=int(data.get("retry_count", 0) or 0),
         first_attempt_inferred_layer=_valid_layer(
             data.get("first_attempt_inferred_layer")
@@ -1115,44 +1209,27 @@ def dict_to_result(
         dimension_content_type=_valid_dimension_content_type(
             data.get("dimension_content_type")
         ),
+        context_hash=str(data.get("context_hash") or ""),
+        catalog_snapshot_hash=str(data.get("catalog_snapshot_hash") or ""),
+        asset_manifest_hash=str(data.get("asset_manifest_hash") or ""),
+        resume_eligible=bool(data.get("resume_eligible", True)),
     )
 
 
 def _normalize_validation(value: Any) -> dict[str, list[str]]:
     if not isinstance(value, dict):
         return {}
+    unknown_keys = set(value) - set(LEGACY_VALIDATION_ISSUE_CODES)
+    if unknown_keys:
+        raise UnknownInspectionIssueError(
+            "unregistered inspection validation keys: "
+            + ", ".join(sorted(str(key) for key in unknown_keys))
+        )
     normalized = {}
-    for key in (
-        "unknown_columns",
-        "duplicate_columns",
-        "missing_columns",
-        "missing_base_metrics",
-        "missing_base_metric_tables",
-        "invalid_base_metrics",
-        "invalid_base_metric_tables",
-        "ambiguous_base_metrics",
-        "invalid_time_periods",
-        "invalid_metric_expressions",
-        "missing_primary_entities",
-        "inconsistent_layer_table_types",
-        "inconsistent_layer_sql",
-        "inconsistent_upstream_metric_layers",
-        "business_process_missing",
-        "business_process_ambiguous",
-        "composite_process_invalid",
-        "duplicate_entity_codes",
-        "entity_key_missing",
-        "grain_entity_unknown",
-        "grain_column_missing",
-        "dimension_primary_entity_invalid",
-        AMBIGUOUS_MIN_MAX_WARNING_KEY,
-        DDL_COLUMNS_UNAVAILABLE_ERROR_KEY,
-        RESOLUTION_REINSPECTION_ERROR_KEY,
-        METRIC_CONTEXT_REINSPECTION_ERROR_KEY,
-    ):
-        raw_items = value.get(key, []) or []
-        if isinstance(raw_items, list):
-            normalized[key] = [str(item) for item in raw_items]
+    for key, raw_items in value.items():
+        if not isinstance(raw_items, list):
+            raise ValueError(f"inspection validation {key!r} must be a list")
+        normalized[str(key)] = [str(item) for item in raw_items]
     return normalized
 
 
@@ -2009,6 +2086,8 @@ class TableInspector:
         min_cacheable_confidence: float = DEFAULT_MIN_CACHEABLE_CONFIDENCE,
         resume_cache: dict[str, Any] | None = None,
         validate_publication_contract: bool = False,
+        catalog_snapshot_hash: str = "",
+        asset_manifest_hash: str = "",
     ):
         self.api_key = api_key
         self.model = model
@@ -2020,6 +2099,8 @@ class TableInspector:
         self.min_cacheable_confidence = float(min_cacheable_confidence)
         self.cache = {}
         self.resume_cache = dict(resume_cache or {})
+        self.catalog_snapshot_hash = str(catalog_snapshot_hash or "")
+        self.asset_manifest_hash = str(asset_manifest_hash or "")
         self.validate_publication_contract = bool(
             validate_publication_contract
         )
@@ -2036,9 +2117,10 @@ class TableInspector:
         with self._cache_lock:
             if self.cache_file and self.cache_file.exists():
                 try:
-                    self.cache = json.loads(
+                    payload = json.loads(
                         self.cache_file.read_text(encoding=TEXT_ENCODING)
                     )
+                    self.cache = payload if isinstance(payload, dict) else {}
                 except Exception:
                     self.cache = {}
 
@@ -2098,6 +2180,9 @@ class TableInspector:
                             self.cache[table_name] = {
                                 "hash": replacement_hash,
                                 "result": replacement_result,
+                                "content_sha256": str(
+                                    replacement.get("content_sha256") or ""
+                                ),
                                 "variants": retained_variants,
                             }
                     changed = True
@@ -2116,15 +2201,25 @@ class TableInspector:
             return None
         if cached_data.get("hash") == current_hash:
             result = cached_data.get("result")
-            return result if isinstance(result, dict) else None
-        variants = cached_data.get("variants")
-        if not isinstance(variants, dict):
+            digest = cached_data.get("content_sha256")
+        else:
+            variants = cached_data.get("variants")
+            if not isinstance(variants, dict):
+                return None
+            variant = variants.get(current_hash)
+            if not isinstance(variant, dict):
+                return None
+            result = variant.get("result")
+            digest = variant.get("content_sha256")
+        if not isinstance(result, dict) or not isinstance(digest, str):
             return None
-        variant = variants.get(current_hash)
-        if not isinstance(variant, dict):
+        try:
+            actual_digest = cache_result_digest(result)
+        except (TypeError, ValueError):
             return None
-        result = variant.get("result")
-        return result if isinstance(result, dict) else None
+        if digest != actual_digest:
+            return None
+        return result
 
     def _store_cached_result(
         self,
@@ -2133,6 +2228,7 @@ class TableInspector:
         result: TableInspectResult,
     ) -> None:
         result_data = result_to_cache_dict(result)
+        result_digest = cache_result_digest(result_data)
         cached_data = self.cache.get(table_name)
         variants: dict[str, dict[str, Any]] = {}
         if isinstance(cached_data, dict):
@@ -2147,19 +2243,35 @@ class TableInspector:
                 )
             previous_hash = str(cached_data.get("hash") or "")
             previous_result = cached_data.get("result")
-            if previous_hash and isinstance(previous_result, dict):
+            previous_digest = cached_data.get("content_sha256")
+            try:
+                previous_digest_matches = (
+                    isinstance(previous_result, dict)
+                    and isinstance(previous_digest, str)
+                    and previous_digest == cache_result_digest(previous_result)
+                )
+            except (TypeError, ValueError):
+                previous_digest_matches = False
+            if previous_hash and previous_digest_matches:
                 variants.setdefault(
                     previous_hash,
-                    {"result": previous_result},
+                    {
+                        "result": previous_result,
+                        "content_sha256": previous_digest,
+                    },
                 )
 
         variants.pop(current_hash, None)
-        variants[current_hash] = {"result": result_data}
+        variants[current_hash] = {
+            "result": result_data,
+            "content_sha256": result_digest,
+        }
         while len(variants) > MAX_CACHE_VARIANTS_PER_TABLE:
             variants.pop(next(iter(variants)))
         self.cache[table_name] = {
             "hash": current_hash,
             "result": result_data,
+            "content_sha256": result_digest,
             "variants": variants,
         }
 
@@ -2177,6 +2289,8 @@ class TableInspector:
         content = (
             f"{PROMPT_VERSION}|publication_contract="
             f"{self.validate_publication_contract}|"
+            f"catalog_snapshot={self.catalog_snapshot_hash}|"
+            f"asset_manifest={self.asset_manifest_hash}|"
             f"{self.model}|{self.base_url}|temperature=0|"
             f"{ctx.table_name}|{prompt_layer}|{ctx.ddl}|"
             f"{ctx.etl_sql}|{ctx.upstream_tables}|{ctx.downstream_tables}|"
@@ -2198,6 +2312,8 @@ class TableInspector:
         for ctx, result in pairs:
             current_hash = self._compute_hash(ctx)
             result.context_hash = current_hash
+            result.catalog_snapshot_hash = self.catalog_snapshot_hash
+            result.asset_manifest_hash = self.asset_manifest_hash
             if (
                 result.resume_eligible
                 and result.status != "blocked"
@@ -2229,17 +2345,84 @@ class TableInspector:
         )
         if cached_result is None:
             return None
-        restored_result = dict_to_result(
-            cached_result,
-            table_name=ctx.table_name,
-            declared_layer=ctx.layer,
-        )
+        try:
+            cache_policy = InspectionCachePolicy.from_dict(
+                cached_result.get("cache_policy")
+            )
+            if not cache_policy.matches_inputs(
+                context_hash=current_hash,
+                catalog_snapshot_hash=self.catalog_snapshot_hash,
+                asset_manifest_hash=self.asset_manifest_hash,
+            ):
+                return None
+            cached_view = dict_to_result(
+                cached_result,
+                table_name=ctx.table_name,
+                declared_layer=ctx.layer,
+            )
+            if (
+                cached_view.table_name != ctx.table_name
+                or cached_view.context_hash != current_hash
+                or cached_view.catalog_snapshot_hash
+                != self.catalog_snapshot_hash
+                or cached_view.asset_manifest_hash != self.asset_manifest_hash
+                or cached_view.parsed_candidate is None
+                or cached_view.parsed_candidate.table_name != ctx.table_name
+            ):
+                return None
+            if cached_view.raw_response is not None and (
+                cached_view.raw_response.table_name != ctx.table_name
+                or cached_view.parsed_candidate.raw_response_hash
+                != cached_view.raw_response.content_hash
+            ):
+                return None
+            replayed_response = {
+                "choices": [
+                    {
+                        "message": {
+                            "content": json.dumps(
+                                cached_view.parsed_candidate.payload,
+                                ensure_ascii=False,
+                                separators=(",", ":"),
+                            )
+                        }
+                    }
+                ]
+            }
+            restored_result = parse_response(
+                ctx.table_name,
+                replayed_response,
+                ctx.layer,
+                raw_response=cached_view.raw_response,
+            )
+            restored_result.raw_response = cached_view.raw_response
+            restored_result.parsed_candidate = cached_view.parsed_candidate
+            restored_result.retry_count = cached_view.retry_count
+            restored_result.first_attempt_inferred_layer = (
+                cached_view.first_attempt_inferred_layer
+            )
+            validate_inspection_result(
+                restored_result,
+                ctx,
+                validate_publication_contract=(
+                    self.validate_publication_contract
+                ),
+            )
+        except (
+            InvalidInspectionCacheError,
+            UnknownInspectionIssueError,
+            TypeError,
+            ValueError,
+        ):
+            return None
         if (
             restored_result.status == "blocked"
             or restored_result.confidence < self.min_cacheable_confidence
         ):
             return None
         restored_result.context_hash = current_hash
+        restored_result.catalog_snapshot_hash = self.catalog_snapshot_hash
+        restored_result.asset_manifest_hash = self.asset_manifest_hash
         restored_result.reuse_source = source
         restored_result.resume_eligible = True
         return restored_result
@@ -2557,6 +2740,8 @@ class TableInspector:
             )
 
         result.context_hash = current_hash
+        result.catalog_snapshot_hash = self.catalog_snapshot_hash
+        result.asset_manifest_hash = self.asset_manifest_hash
         result.reuse_source = ""
         result.resume_eligible = not used_retry_fallback
         if (

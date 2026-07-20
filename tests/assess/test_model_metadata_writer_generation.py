@@ -23,6 +23,7 @@ from dw_refactor_agent.assessment.llm.table_inspector import (
     TableContext,
     TableInspector,
     TableInspectResult,
+    parse_response,
 )
 from tests.assess.model_metadata_writer_test_support import (
     _catalog_payload,
@@ -721,23 +722,23 @@ def _seed_resumable_checkpoint(
     plan,
     *,
     resume_eligible=True,
+    catalog_snapshot_hash="",
+    asset_manifest_hash="",
 ):
     context = _checkpoint_context()
-    inspector = TableInspector(api_key="test")
-    result = TableInspectResult(
-        table_name=context.table_name,
-        declared_layer=context.layer,
-        inferred_layer="DWD",
-        table_type="fact",
-        confidence=0.9,
-        reasoning_steps=[],
+    inspector = TableInspector(
+        api_key="test",
+        catalog_snapshot_hash=catalog_snapshot_hash,
+        asset_manifest_hash=asset_manifest_hash,
     )
-    result.context_hash = inspector._compute_hash(context)
+    result = _lossless_checkpoint_result(context, inspector)
     result.resume_eligible = resume_eligible
     checkpoint = GenerateModelCheckpoint(
         project,
         project_dir=project_dir,
         plan=plan,
+        catalog_snapshot_hash=catalog_snapshot_hash,
+        asset_manifest_hash=asset_manifest_hash,
     )
     checkpoint.write_inspection_result(result)
     checkpoint.close()
@@ -776,6 +777,18 @@ def _dwd_fact_inspection_response(entity_code="TEST_ENTITY"):
             ]
         }
     )
+
+
+def _lossless_checkpoint_result(context, inspector):
+    result = parse_response(
+        context.table_name,
+        json.loads(_dwd_fact_inspection_response()),
+        context.layer,
+    )
+    result.context_hash = inspector._compute_hash(context)
+    result.catalog_snapshot_hash = inspector.catalog_snapshot_hash
+    result.asset_manifest_hash = inspector.asset_manifest_hash
+    return result
 
 
 def test_generate_checkpoint_rejects_overlapping_project_run(
@@ -892,15 +905,7 @@ def test_generate_checkpoint_resumes_successful_prompt_variants_only(
         plan=plan,
     )
     for context in (base_context, enriched_context):
-        result = TableInspectResult(
-            table_name=context.table_name,
-            declared_layer=context.layer,
-            inferred_layer="DWD",
-            table_type="fact",
-            confidence=0.9,
-            reasoning_steps=[],
-        )
-        result.context_hash = seed_inspector._compute_hash(context)
+        result = _lossless_checkpoint_result(context, seed_inspector)
         first.write_inspection_result(result)
     blocked = TableInspectResult(
         table_name=failed_context.table_name,
@@ -1120,15 +1125,8 @@ def test_generate_checkpoint_keeps_variant_for_execution_publication_error(
     project = "generate_checkpoint_execution_rejection"
     project_dir, plan = _checkpoint_project(tmp_path, monkeypatch, project)
     context = _checkpoint_context()
-    result = TableInspectResult(
-        table_name=context.table_name,
-        declared_layer=context.layer,
-        inferred_layer="DWD",
-        table_type="fact",
-        confidence=0.9,
-        reasoning_steps=[],
-    )
-    result.context_hash = TableInspector(api_key="test")._compute_hash(context)
+    inspector = TableInspector(api_key="test")
+    result = _lossless_checkpoint_result(context, inspector)
     first = GenerateModelCheckpoint(
         project,
         project_dir=project_dir,
@@ -1208,6 +1206,30 @@ def test_generate_checkpoint_discards_corrupt_resume_sidecar(
     recovered.close()
 
 
+def test_generate_checkpoint_safely_invalidates_legacy_manifest(
+    tmp_path, monkeypatch
+):
+    project = "generate_checkpoint_legacy_manifest"
+    project_dir, plan = _checkpoint_project(tmp_path, monkeypatch, project)
+    _seed_resumable_checkpoint(project, project_dir, plan)
+    checkpoint_dir = project_dir / "mid_checkpoints"
+    manifest_path = checkpoint_dir / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["version"] = 3
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    recovered = GenerateModelCheckpoint(
+        project,
+        project_dir=project_dir,
+        plan=plan,
+    )
+
+    assert recovered.resume_cache() == {}
+    assert not list(checkpoint_dir.glob("*.inspection.json"))
+    assert recovered.report()["resumed_from_run_id"] is None
+    recovered.close()
+
+
 def test_generate_checkpoint_retries_non_cacheable_fallback_result(
     tmp_path, monkeypatch
 ):
@@ -1240,7 +1262,18 @@ def test_run_generate_model_metadata_passes_checkpoint_resume_cache(
 
     project = "generate_checkpoint_resume_wiring"
     project_dir, plan = _checkpoint_project(tmp_path, monkeypatch, project)
-    seed = _seed_resumable_checkpoint(project, project_dir, plan)
+    catalog = writer_module.load_business_semantics_catalog(project)
+    preflight = writer_module.build_generate_asset_preflight(
+        project,
+        catalog,
+    )
+    seed = _seed_resumable_checkpoint(
+        project,
+        project_dir,
+        plan,
+        catalog_snapshot_hash=preflight.manifest.catalog_snapshot_hash,
+        asset_manifest_hash=preflight.manifest.manifest_hash,
+    )
     seen = {}
 
     def fake_metadata_write(*args, **kwargs):
