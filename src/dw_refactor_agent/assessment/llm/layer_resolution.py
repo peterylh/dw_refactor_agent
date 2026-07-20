@@ -24,7 +24,7 @@ from dw_refactor_agent.assessment.llm.table_inspector import (
 
 VALID_APPLIED_LAYERS = {"ODS", "DWD", "DWS", "ADS", "DIM"}
 VALID_INFERRED_LAYERS = VALID_APPLIED_LAYERS | {"OTHER"}
-VALID_TABLE_TYPES = {"dimension", "fact", "other"}
+VALID_TABLE_TYPES = {"dimension", "fact", "bridge", "other"}
 FIXED_BOUNDARY_LAYERS = {"ODS", "ADS"}
 DEFAULT_CANDIDATE_LAYERS = ("DWD", "DWS", "DIM")
 

@@ -5,6 +5,9 @@ from unittest.mock import patch
 
 import pytest
 
+from dw_refactor_agent.assessment.llm.inspection_contract import (
+    validate_generate_inspection_contract,
+)
 from dw_refactor_agent.assessment.llm.table_inspector import (
     TableContext,
     TableInspector,
@@ -132,6 +135,97 @@ def test_parse_response_rejects_invalid_table_business_process(
 
     assert parsed.business_process == ""
     assert restored.business_process == ""
+
+
+def test_bridge_response_preserves_relation_contract_without_process():
+    payload = {
+        "inferred_layer": "DWD",
+        "table_type": "bridge",
+        "business_process": "",
+        "confidence": 0.95,
+        "reasoning_steps": ["two entity keys form a factless relation"],
+        "entities": [
+            {
+                "code": "LOAN",
+                "type": "foreign",
+                "key_columns": ["loan_id"],
+            },
+            {
+                "code": "RATE",
+                "type": "foreign",
+                "key_columns": ["rate_id"],
+            },
+        ],
+        "grain": {"entities": ["LOAN", "RATE"]},
+        "columns": {
+            "atomic_metrics": [],
+            "derived_metrics": [],
+            "calculated_metrics": [],
+            "dimensions": [
+                {"name": "loan_id"},
+                {"name": "rate_id"},
+            ],
+            "others": [],
+        },
+    }
+    response = {"choices": [{"message": {"content": json.dumps(payload)}}]}
+
+    result = parse_response(
+        "bridge_loan_rate",
+        response,
+        declared_layer="DWD",
+    )
+
+    assert result.table_type == "bridge"
+    assert result.is_bridge_table is True
+    assert result.is_fact_table is False
+    assert validate_layer_table_type_consistency(result) == {}
+    assert (
+        validate_generate_inspection_contract(
+            result,
+            {"loan_id", "rate_id"},
+        )
+        == {}
+    )
+
+
+def test_bridge_response_requires_complete_relation_contract():
+    result = _inspection_result(
+        table_name="bridge_loan_rate",
+        table_type="bridge",
+        business_process="LOAN_RATE",
+        entities=[
+            {
+                "code": "LOAN",
+                "type": "foreign",
+                "key_columns": ["loan_id"],
+            }
+        ],
+        grain={"entities": []},
+        columns={
+            "atomic_metrics": [
+                {
+                    "name": "rate_value",
+                    "business_process": "LOAN_RATE",
+                }
+            ],
+            "derived_metrics": [],
+            "calculated_metrics": [],
+            "dimensions": [{"name": "loan_id"}],
+            "others": [],
+        },
+    )
+
+    validation = validate_generate_inspection_contract(
+        result,
+        {"loan_id", "rate_value"},
+    )
+
+    assert set(validation) >= {
+        "bridge_entities_invalid",
+        "bridge_grain_invalid",
+        "bridge_semantics_invalid",
+    }
 
 
 def test_validate_response_contract_scenarios():

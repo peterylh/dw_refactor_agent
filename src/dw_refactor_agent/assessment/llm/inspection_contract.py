@@ -42,7 +42,8 @@ def validate_generate_inspection_contract(
 ) -> dict[str, list[str]]:
     """Validate raw LLM semantics that would otherwise fail publication."""
     validation: dict[str, list[str]] = {}
-    if str(result.table_type or "").strip().lower() == "fact":
+    table_type = str(result.table_type or "").strip().lower()
+    if table_type == "fact":
         process_codes = business_process_codes(
             result.business_process,
             (
@@ -71,6 +72,53 @@ def validate_generate_inspection_contract(
     )
     if duplicate_codes:
         validation["duplicate_entity_codes"] = duplicate_codes
+    if table_type == "bridge":
+        distinct_codes = sorted(set(entity_codes))
+        if len(distinct_codes) < 2:
+            validation["bridge_entities_invalid"] = [
+                "bridge inspection requires at least two distinct entities"
+            ]
+        grain_entities = {
+            canonical_semantic_code(code)
+            for code in (result.grain or {}).get("entities") or []
+            if canonical_semantic_code(code)
+        }
+        if set(distinct_codes) != grain_entities:
+            validation["bridge_grain_invalid"] = [
+                "bridge grain.entities must cover every participating entity"
+            ]
+        metric_names = [
+            str(metric.get("name") or "").strip()
+            for metrics in (
+                result.atomic_metrics,
+                result.derived_metrics,
+                result.calculated_metrics,
+            )
+            for metric in metrics
+            if isinstance(metric, dict)
+            and str(metric.get("name") or "").strip()
+        ]
+        process_codes = business_process_codes(
+            result.business_process,
+            (
+                result.atomic_metrics,
+                result.derived_metrics,
+                result.calculated_metrics,
+            ),
+        )
+        if process_codes or metric_names:
+            issues = []
+            if process_codes:
+                issues.append(
+                    "bridge must not declare business_process: "
+                    + ", ".join(process_codes)
+                )
+            if metric_names:
+                issues.append(
+                    "bridge must not declare metrics: "
+                    + ", ".join(sorted(set(metric_names)))
+                )
+            validation["bridge_semantics_invalid"] = issues
 
     ddl_by_name = {
         str(column).strip().casefold()

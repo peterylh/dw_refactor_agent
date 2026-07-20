@@ -27,9 +27,9 @@ from dw_refactor_agent.assessment.project_facts.time_period import (
 )
 from dw_refactor_agent.config import TEXT_ENCODING
 
-PROMPT_VERSION = "table-inspector-v44"
+PROMPT_VERSION = "table-inspector-v45"
 VALID_LAYERS = {"DWD", "DWS", "DIM", "OTHER"}
-VALID_TABLE_TYPES = {"dimension", "fact", "other"}
+VALID_TABLE_TYPES = {"dimension", "fact", "bridge", "other"}
 VALID_DIMENSION_ROLES = {"BASE", "ADDT"}
 VALID_DIMENSION_CONTENT_TYPES = {"INFO", "TAG", "TREE"}
 METRIC_GROUPING_LAYERS = {"DWD", "DWS"}
@@ -61,6 +61,9 @@ VALIDATION_ERROR_KEYS = (
     "inconsistent_upstream_metric_layers",
     "business_process_missing",
     "business_process_ambiguous",
+    "bridge_entities_invalid",
+    "bridge_grain_invalid",
+    "bridge_semantics_invalid",
     "duplicate_entity_codes",
     "entity_key_missing",
     "grain_entity_unknown",
@@ -165,7 +168,7 @@ class TableInspectResult:
     table_name: str
     declared_layer: str
     inferred_layer: str  # "ODS" | "DWD" | "DWS" | "ADS" | "DIM" | "OTHER"
-    table_type: str  # "dimension" | "fact" | "other"
+    table_type: str  # "dimension" | "fact" | "bridge" | "other"
     confidence: float
     reasoning_steps: list[str]
     business_process: str = ""
@@ -216,6 +219,10 @@ class TableInspectResult:
         return self.table_type == "fact"
 
     @property
+    def is_bridge_table(self) -> bool:
+        return self.table_type == "bridge"
+
+    @property
     def atomic_metrics(self) -> list[dict[str, Any]]:
         return self.columns.get("atomic_metrics", [])
 
@@ -250,7 +257,7 @@ class TableInspectResult:
 def build_prompt(ctx: TableContext) -> str:
     prompt = f"""你是一位资深数据仓库架构师和指标治理专家。你的任务是根据给定的表结构、ETL 加工逻辑和血缘关系，完成一次统一巡检:
 1. 客观推断这张表真实应该归属的数仓分层。
-2. 判断它的物理表类型（维度表/事实表/其他）。
+2. 判断它的物理表类型（维度表/事实表/关系桥/其他）。
 3. 识别 entities、grain 元数据候选。
 4. 如果推断层级是 DWD 或 DWS 且你判断它是事实表，则对字段分组识别原子指标、派生指标、衍生指标、维度字段和其他字段。
 
@@ -265,6 +272,7 @@ def build_prompt(ctx: TableContext) -> str:
 - table_type 必须依据行粒度、键约束、聚合位置、时间字段和 JOIN 复用关系判断，不能仅依据表名、字段名或是否包含数值字段。
 - fact: 每行表示可独立识别的事件、明细或周期状态，具有稳定行键、发生/观察时间和可汇总度量；聚合事实还应有明确公共粒度。
 - dimension: 每行围绕稳定实体标识组织描述性属性，并作为查询或 JOIN 上下文被事实模型复用；它本身不承载事件度量。
+- bridge: 每行只表达两个或多个业务实体之间的成员、归属、适用或多对多关系，本身没有独立业务事件、观察时间或可汇总度量。参与实体键共同构成行粒度，且不填写业务过程。
 - other: 保持源行粒度的清洗、标准化或技术中间模型，尚未形成可复用维度发布边界，也不表达可度量事实。
 - 对同一实体键跨时间保留多个版本时，结合版本键、有效期/观察时间以及输出字段职责判断：主要输出描述性属性的是 dimension，主要输出可汇总度量的是 fact；时间字段本身不能决定表类型。
 
@@ -280,7 +288,7 @@ def build_prompt(ctx: TableContext) -> str:
 - 下游生成代理键本身不是硬裁决；但若下游同时保留自然键、没有聚合，当前表又只做实体清洗/属性派生且不表达业务事件或可度量事实，这组证据共同确认下游才是正式维度发布边界，当前表必须返回 DWD/other，不得提前返回 DIM。若当前表承载事件或事实度量，仍应按事实语义判断。
 - 若没有下游实体发布结构特征，稳定实体键 + 以描述性属性为主 + 无事件/度量语义，可以直接构成 DIM 发布边界；不得仅因当前 ETL 是单表逐行标准化或下游引用数为 0 就强制降为 DWD/other。
 - 快照、版本、关系和数值字段本身都不是层级证据；必须结合目标行粒度、是否表达业务事件/公共指标、以及是否作为描述性上下文复用综合判断。
-- 关系模型若每行表达可识别的业务参与或状态关系，可判为 DWD/fact；若只用于解释、计算或匹配的参考映射，则判为 DIM/dimension。不得仅依赖字段词或是否有日期硬裁决。
+- 关系模型若只表达两个或多个实体之间的成员、归属、适用或多对多关系，且没有独立事件、观察时间或可汇总度量，应判为 DWD/bridge；若它表达可识别的业务事件或周期状态，则判为 DWD/fact；若主要用于解释、计算或匹配的参考配置，则判为 DIM/dimension。不得仅依赖字段词或是否有日期硬裁决。
 - 若当前表把独立上游指标源 JOIN 到目标分析粒度并继续发布，应保持 DWS/fact；但直接透传单一明细来源并保持其行粒度时，不能仅因字段已被识别为指标就升级为 DWS。
 - 下游引用数为 0 只能作为边界层弱证据，不能覆盖粒度、聚合和资产目录证据。
 
@@ -294,11 +302,11 @@ def build_prompt(ctx: TableContext) -> str:
 若当前表不是维度表，dimension_role 和 dimension_content_type 都返回空字符串。
 
 ## 业务过程与语义主题边界
-- 顶层 business_process 只适用于事实表或汇总事实表，用来描述整张表发生了什么业务事件/活动；判断依据应是事件动作、事实行、度量字段、时间粒度和可汇总口径，而不是表名里出现的业务名词。
+- 顶层 business_process 只适用于事实表或汇总事实表，用来描述整张表发生了什么业务事件/活动；判断依据应是事件动作、事实行、度量字段、时间粒度和可汇总口径，而不是表名里出现的业务名词。bridge/dimension/other 必须返回空字符串。
 - 必须先依据前述分层和表类型规则独立确定 table_type，再填写 business_process；是否能填写业务过程不能反过来作为判成 fact 的证据。
 - 只要已经独立确定 table_type=fact，就必须判断顶层 business_process。即使表没有指标字段，只要每行能表达明确的事件发生、业务参与关系、状态变化或周期观察事实，也应根据行级业务事实填写唯一的业务过程 code。
 - 稳定实体档案、描述属性、主数据或逐行实体清洗，即使包含状态、日期和外键，也不能为了填写 business_process 而改判 fact；它们仍按既有证据判断为 dimension/other，并返回空字符串。
-- 如果多个过程都成立且无法确定唯一主过程，顶层 business_process 返回空字符串；不得为了通过校验而任选一个。dimension/other 的顶层 business_process 必须返回空字符串。
+- 如果多个过程都成立且无法确定唯一主过程，顶层 business_process 返回空字符串；不得为了通过校验而任选一个。bridge/dimension/other 的顶层 business_process 必须返回空字符串。
 - dimension 表不得为了填充业务过程而生成“实体主语 + 管理/运营”式过程名；若表只表达管理/运营/主数据/资料维护/属性集合，它们更可能是语义主题、业务主题或实体管理域。
 - semantic_subject 表示维度/实体属性表的语义主题，通常对应维表主实体编码；它不是业务过程，也不应被写入指标字段的 business_process。
 - 表名或描述中含有 MANAGEMENT、OPERATION、PROFILE、MASTER、INFO 等模式时，必须先检查是否存在可度量业务事件；没有事件事实和指标时，优先视为语义主题/业务主题，不要归为严格的业务过程。
@@ -429,7 +437,7 @@ def build_prompt(ctx: TableContext) -> str:
 4. 结合上下游 JOIN 与复用关系确认当前表在链路中的发布职责；生成新键或出现日期字段都只能作为辅助证据。
 5. 若下游实体发布结构特征显示下游才生成代理键并保留自然键，检查当前表是否只是实体逐行清洗；满足时当前表应为 DWD/other，而下游才是实体发布边界。
 6. 将下游引用数作为弱证据，并结合资产目录、粒度、聚合和用途判断边界层。
-7. 检查组合一致性：DIM 必须对应 dimension，dimension 必须对应 DIM，DWS 必须对应 fact；DWD 可对应 fact 或 other。
+7. 检查组合一致性：DIM 必须对应 dimension，dimension 必须对应 DIM，DWS 必须对应 fact；bridge 必须对应 DWD；DWD 可对应 fact、bridge 或 other。
 8. 如果 inferred_layer 是 DWD 或 DWS 且表类型为 fact，再按字段语义、DDL 注释、ETL 表达式和业务过程分组；COUNT 和条件聚合必须使用真实字段血缘，不得虚构上游基础指标。
 
 请严格返回 JSON 格式数据，只允许返回下方 JSON schema 中列出的顶层字段: inferred_layer、table_type、business_process、inferred_data_domain、inferred_business_area、dimension_role、dimension_content_type、entities、grain、confidence、reasoning_steps、columns。
@@ -438,7 +446,7 @@ def build_prompt(ctx: TableContext) -> str:
 
 {{
   "inferred_layer": "DWD|DWS|DIM|OTHER",
-  "table_type": "dimension|fact|other",
+  "table_type": "dimension|fact|bridge|other",
   "business_process": "事实表唯一的表级业务过程 code；不适用、无法判断唯一过程时为空字符串",
   "inferred_data_domain": "已确认数据域编号；未提供字典、不适用或不确定时为空字符串",
   "inferred_business_area": "已确认业务板块简写；未提供字典、不适用或不确定时为空字符串",
@@ -553,12 +561,13 @@ def build_retry_prompt(
 - invalid_time_periods 中列出的 time_period 必须改为 D/W/M/Q/Y/S 之一；不要返回中文、英文单词或 1d/1m 等写法。
 - invalid_metric_expressions 中列出的 expression 必须删除 GROUP BY、按...分组、by ... 等粒度说明，只保留指标计算公式。
 - missing_primary_entities 表示 DWD fact 缺少主实体；必须为当前事实行/事件/明细行补充至少一个 type=primary 的 entities 项。
-- inconsistent_layer_table_types 表示层级与物理表职责组合矛盾；DIM 必须返回 dimension，dimension 必须返回 DIM，DWS 必须返回 fact，DWD 只能返回 fact 或 other。
+- inconsistent_layer_table_types 表示层级与物理表职责组合矛盾；DIM 必须返回 dimension，dimension 必须返回 DIM，DWS 必须返回 fact，bridge 必须返回 DWD，DWD 只能返回 fact、bridge 或 other。
 - OTHER/fact 不是合法的中间层组合：ODS/ADS 边界已经固定，贴源清洗后的业务事件、关系、状态或快照事实应在 DWD/DWS 中选择；不要用 OTHER 代替 ODS。
 - inconsistent_layer_sql 表示 DWD 候选的目标行驱动查询存在 GROUP BY 并压缩目标粒度；必须根据公共聚合粒度重新判断。仅在 JOIN 辅助子查询中聚合以补充日期/属性、主驱动行仍逐行保留时，可以继续返回 DWD。
 - ambiguous_min_max_aggregation 表示代码无法仅凭同名 MIN/MAX 判断它是技术选值还是业务汇总；如果输出是业务统计结果，应归入指标字段并返回 DWS，如果只是保留实体最新/最早技术状态，可继续返回 DWD，并在字段 reason 中说明技术选值依据。
 - inconsistent_upstream_metric_layers 表示 DWD 候选把独立上游指标源中的公共指标 JOIN 到目标分析粒度并继续发布；应返回 DWS/fact 并保留正确的上游指标依赖关系。单一明细来源的逐行透传不属于此错误。
 - business_process_missing / business_process_ambiguous 表示 fact 的表级和字段级业务过程没有共同形成唯一一致 code；字段级 process 为空时可继承唯一表级 code，非空时必须与表级 code 一致，真实多过程且无法确定主过程时保持空并让发布安全阻断。
+- bridge_entities_invalid / bridge_grain_invalid 表示关系桥必须包含至少两个不同参与实体，且 grain.entities 必须完整覆盖这些实体；bridge_semantics_invalid 表示关系桥错误携带了 business_process 或指标，必须清空业务过程和三个指标分组。
 - duplicate_entity_codes 表示多个实体复用了同一 code；同一业务实体承担不同角色时必须使用可区分的角色 code，不能由 writer 猜测合并或改名。
 - entity_key_missing 表示 entity 缺少 key_columns 或 key 不在 DDL 中；grain_entity_unknown / grain_column_missing 表示 grain 引用了未声明实体或不存在字段，必须只使用本次 JSON 与 DDL 中真实存在的值。
 - dimension_primary_entity_invalid 表示 dimension 必须返回且仅返回一个 type=primary 的主实体。
@@ -1093,6 +1102,8 @@ def validate_layer_table_type_consistency(
         issues.append(f"DIM/{table_type}: DIM必须与dimension配对")
     if layer == "DWS" and table_type != "fact":
         issues.append(f"DWS/{table_type}: DWS必须与fact配对")
+    if table_type == "bridge" and layer != "DWD":
+        issues.append(f"{layer}/bridge: bridge必须与DWD配对")
     if layer == "OTHER" and table_type == "fact":
         issues.append(
             "OTHER/fact: OTHER不能作为ODS代理；"

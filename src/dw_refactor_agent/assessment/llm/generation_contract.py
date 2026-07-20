@@ -21,6 +21,9 @@ REINSPECTION_ERROR_TYPES = frozenset(
         "business_process_ambiguous",
         "business_process_missing",
         "business_process_unknown",
+        "bridge_entities_invalid",
+        "bridge_grain_invalid",
+        "bridge_semantics_invalid",
         "dimension_primary_entity_invalid",
         "duplicate_entity_codes",
         "entity_key_missing",
@@ -747,6 +750,57 @@ def _validate_semantics(
             )
 
     process = str(metadata.get("business_process") or "").strip()
+    if table_type == "bridge":
+        entity_codes = {
+            _canonical_code(entity.get("code"))
+            for entity in entities
+            if isinstance(entity, dict) and entity.get("code")
+        }
+        if len(entity_codes) < 2:
+            errors.append(
+                _error(
+                    "bridge_entities_invalid",
+                    table_name,
+                    "bridge model requires at least two distinct entities",
+                )
+            )
+        grain_entities = {
+            _canonical_code(code)
+            for code in (metadata.get("grain") or {}).get("entities") or []
+            if _canonical_code(code)
+        }
+        if entity_codes != grain_entities:
+            errors.append(
+                _error(
+                    "bridge_grain_invalid",
+                    table_name,
+                    "bridge grain.entities must cover every entity",
+                )
+            )
+        inspection_processes = (
+            _inspection_process_codes(inspection)
+            if inspection is not None
+            else []
+        )
+        inspection_columns = (
+            inspection.get("columns") or {} if inspection is not None else {}
+        )
+        has_metrics = any(
+            metadata.get(group) or inspection_columns.get(group)
+            for group in (
+                "atomic_metrics",
+                "derived_metrics",
+                "calculated_metrics",
+            )
+        )
+        if process or inspection_processes or has_metrics:
+            errors.append(
+                _error(
+                    "bridge_semantics_invalid",
+                    table_name,
+                    "bridge must not declare business process or metrics",
+                )
+            )
     if table_type == "fact":
         inspected_processes = (
             _inspection_process_codes(inspection)

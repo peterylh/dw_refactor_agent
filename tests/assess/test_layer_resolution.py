@@ -121,3 +121,26 @@ def test_generate_without_llm_falls_back_to_direct_rule():
     assert resolution.table_type == "fact"
     assert resolution.source == "direct_rule"
     assert resolution.validation["candidate"]["source"] == ""
+
+
+def test_generate_accepts_dwd_bridge_candidate():
+    resolution = resolve_layer(
+        LayerResolutionInput(
+            table_name="loan_rate_relation",
+            fallback_layer="DWD",
+            fallback_table_type="other",
+            inspection_result=_inspect_result(
+                table_name="loan_rate_relation",
+                inferred_layer="DWD",
+                table_type="bridge",
+            ),
+            policy=LayerResolutionPolicy(
+                mode="generate",
+                fallback_source="direct_rule",
+            ),
+        )
+    )
+
+    assert resolution.applied_layer == "DWD"
+    assert resolution.table_type == "bridge"
+    assert resolution.source == "table_inspector"
