@@ -757,6 +757,51 @@ def catalog_mapping_for_model(
         mapping.update(_catalog_taxonomy_metadata(catalog, subject))
         return mapping
 
+    business_process_mode = str(
+        metadata.get("business_process_mode") or ""
+    ).strip()
+    business_process_sources = [
+        str(source).strip()
+        for source in metadata.get("business_process_sources") or []
+        if str(source).strip()
+    ]
+    business_processes = [
+        _normalize_catalog_code(code)
+        for code in metadata.get("business_processes") or []
+        if _normalize_catalog_code(code)
+    ]
+    if (
+        business_process_mode == "composite"
+        and layer == "DWS"
+        and (table_type or "fact").lower() == "fact"
+        and len(set(business_process_sources)) >= 2
+        and business_processes
+    ):
+        catalog_codes = []
+        for code in business_processes:
+            process = _entry_by_code(
+                catalog.get("business_processes") or [],
+                code,
+            )
+            if not process:
+                mapping = {"table": short_name}
+                mapping.update(
+                    _existing_catalog_taxonomy_metadata(catalog, metadata)
+                )
+                return mapping
+            catalog_codes.append(str(process.get("code") or "").strip())
+        mapping = {
+            "table": short_name,
+            "layer": layer,
+            "table_type": table_type or "fact",
+            "business_process_mode": "composite",
+            "business_processes": catalog_codes,
+            "business_process_sources": business_process_sources,
+            "materialized": _materialized_for_layer(layer),
+        }
+        mapping.update(_existing_catalog_taxonomy_metadata(catalog, metadata))
+        return mapping
+
     business_process = _normalize_catalog_code(
         metadata.get("business_process")
     )

@@ -38,6 +38,7 @@ STRUCTURAL_VALIDATION_KEYS = BUSINESS_PROCESS_VALIDATION_KEYS | {
     "bridge_entities_invalid",
     "bridge_grain_invalid",
     "bridge_semantics_invalid",
+    "composite_process_invalid",
     "duplicate_entity_codes",
     "entity_key_missing",
     "grain_entity_unknown",

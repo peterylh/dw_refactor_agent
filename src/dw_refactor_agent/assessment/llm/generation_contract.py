@@ -21,6 +21,7 @@ REINSPECTION_ERROR_TYPES = frozenset(
         "business_process_ambiguous",
         "business_process_missing",
         "business_process_unknown",
+        "composite_process_invalid",
         "bridge_entities_invalid",
         "bridge_grain_invalid",
         "bridge_semantics_invalid",
@@ -750,6 +751,9 @@ def _validate_semantics(
             )
 
     process = str(metadata.get("business_process") or "").strip()
+    process_mode = (
+        str(metadata.get("business_process_mode") or "").strip().lower()
+    )
     if table_type == "bridge":
         entity_codes = {
             _canonical_code(entity.get("code"))
@@ -807,7 +811,74 @@ def _validate_semantics(
             if inspection is not None
             else []
         )
-        if inspection is None and not process:
+        inspection_mode = (
+            str(inspection.get("business_process_mode") or "").strip().lower()
+            if inspection is not None
+            else ""
+        )
+        model_sources = {
+            str(source).strip().casefold()
+            for source in metadata.get("business_process_sources") or []
+            if str(source).strip()
+        }
+        inspection_sources = {
+            str(source).strip().casefold()
+            for source in (
+                (inspection or {}).get("business_process_sources") or []
+            )
+            if str(source).strip()
+        }
+        inspection_conflicts = [
+            str(metric).strip()
+            for metric in (
+                (inspection or {}).get("business_process_conflicts") or []
+            )
+            if str(metric).strip()
+        ]
+        model_processes = [
+            _canonical_code(code)
+            for code in metadata.get("business_processes") or []
+            if _canonical_code(code)
+        ]
+        if process_mode == "composite" or inspection_mode == "composite":
+            issues = []
+            if str(metadata.get("layer") or "").upper() != "DWS":
+                issues.append("composite process mode requires DWS")
+            if process:
+                issues.append(
+                    "composite process model must not declare one process"
+                )
+            if process_mode != "composite" or inspection_mode != "composite":
+                issues.append(
+                    "model and inspection must agree on composite process mode"
+                )
+            if len(model_sources) < 2 or model_sources != inspection_sources:
+                issues.append(
+                    "model must preserve all composite contributing sources"
+                )
+            if not model_processes or not inspected_processes:
+                issues.append(
+                    "composite process model requires at least one "
+                    "evidenced business process"
+                )
+            if inspection_conflicts:
+                issues.append(
+                    "inspection has conflicting metric process evidence: "
+                    + ", ".join(sorted(inspection_conflicts))
+                )
+            if set(model_processes) != set(inspected_processes):
+                issues.append(
+                    "model business_processes must match inspected processes"
+                )
+            if issues:
+                errors.append(
+                    _error(
+                        "composite_process_invalid",
+                        table_name,
+                        "; ".join(issues),
+                    )
+                )
+        elif inspection is None and not process:
             errors.append(
                 _error(
                     "business_process_missing",
@@ -853,6 +924,19 @@ def _validate_semantics(
                 f"business_process={process} is absent from catalog",
             )
         )
+    for composite_process in metadata.get("business_processes") or []:
+        if not _catalog_has_code(
+            catalog,
+            "business_processes",
+            composite_process,
+        ):
+            errors.append(
+                _error(
+                    "business_process_unknown",
+                    table_name,
+                    f"business_process={composite_process} is absent from catalog",
+                )
+            )
     return errors
 
 

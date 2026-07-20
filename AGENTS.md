@@ -375,7 +375,8 @@ python -m dw_refactor_agent.assessment.llm.model_metadata_writer --project shop 
 目标表切片 DELETE、ETL 参数和 full-refresh 伴随任务确定性重建 `execution`。所有候选先在
 内存中完成发布校验；执行契约无法闭合、LLM 结果 blocked、实体键无效、实体关系不完整或
 业务过程/语义主题未能写回 catalog 时，结果中的 `publication.status` 为 `blocked`，且不会
-删除或覆盖正式 catalog/models。DWD/DWS 缺少 task SQL、事实表没有且仅有一个业务过程、
+删除或覆盖正式 catalog/models。DWD/DWS 缺少 task SQL、事实表既没有唯一业务过程也不满足
+多指标来源 DWS 的 composite 过程契约、
 grain 引用了未知实体或 DDL 不存在字段时同样阻断。启用 LLM 时，每个 MID 候选都必须有巡检
 结果。generate 的资产和巡检角色来自 DDL/task 与内存候选，不扫描旧 model YAML；校验通过
 后 catalog 与 models 作为同一组暂存文件发布，普通写入异常

@@ -120,6 +120,19 @@ def _catalog_model_payload(
     data_domain = str(mapping.get("data_domain") or "").strip()
     business_area = str(mapping.get("business_area") or "").strip().upper()
     business_process = str(mapping.get("business_process") or "").strip()
+    business_process_mode = str(
+        mapping.get("business_process_mode") or ""
+    ).strip()
+    business_processes = [
+        str(code).strip()
+        for code in mapping.get("business_processes") or []
+        if str(code).strip()
+    ]
+    business_process_sources = [
+        str(source).strip()
+        for source in mapping.get("business_process_sources") or []
+        if str(source).strip()
+    ]
     semantic_subject = str(mapping.get("semantic_subject") or "").strip()
     if layer in DATA_DOMAIN_LAYERS and data_domain:
         updated["data_domain"] = data_domain
@@ -132,17 +145,40 @@ def _catalog_model_payload(
     if table_type == "dimension" and semantic_subject:
         updated["semantic_subject"] = semantic_subject
         updated.pop("business_process", None)
+        updated.pop("business_process_mode", None)
+        updated.pop("business_processes", None)
+        updated.pop("business_process_sources", None)
     elif table_type == "fact":
-        if business_process:
+        if business_process_mode == "composite":
+            updated.pop("business_process", None)
+            updated["business_process_mode"] = "composite"
+            updated["business_process_sources"] = business_process_sources
+            if business_processes:
+                updated["business_processes"] = business_processes
+            else:
+                updated.pop("business_processes", None)
+        elif business_process:
             updated["business_process"] = business_process
+            updated.pop("business_process_mode", None)
+            updated.pop("business_processes", None)
+            updated.pop("business_process_sources", None)
         else:
             updated.pop("business_process", None)
+            updated.pop("business_process_mode", None)
+            updated.pop("business_processes", None)
+            updated.pop("business_process_sources", None)
         updated.pop("semantic_subject", None)
     elif table_type == "dimension":
         updated.pop("business_process", None)
+        updated.pop("business_process_mode", None)
+        updated.pop("business_processes", None)
+        updated.pop("business_process_sources", None)
         updated.pop("semantic_subject", None)
     else:
         updated.pop("business_process", None)
+        updated.pop("business_process_mode", None)
+        updated.pop("business_processes", None)
+        updated.pop("business_process_sources", None)
         updated.pop("semantic_subject", None)
 
     if layer == "DIM":
@@ -290,6 +326,29 @@ def catalog_discovery_model_mapping(
 
     if table_type == "fact":
         processes = _business_processes_from_result(result)
+        if result.business_process_mode == "composite":
+            if not processes:
+                return mapping
+            catalog_processes = [
+                catalog_code
+                for process in processes
+                for catalog_code in [
+                    _catalog_entry_code(
+                        catalog,
+                        "business_processes",
+                        process,
+                    )
+                ]
+                if catalog_code
+            ]
+            if len(catalog_processes) != len(processes):
+                return mapping
+            mapping["business_process_mode"] = "composite"
+            mapping["business_processes"] = catalog_processes
+            mapping["business_process_sources"] = list(
+                result.business_process_sources
+            )
+            return mapping
         catalog_process = (
             _catalog_entry_code(
                 catalog,
@@ -366,6 +425,9 @@ def update_model_yaml_from_catalog(
             "data_domain",
             "business_area",
             "business_process",
+            "business_process_mode",
+            "business_processes",
+            "business_process_sources",
             "semantic_subject",
         ):
             if key not in previous:
@@ -393,6 +455,9 @@ def update_model_yaml_from_catalog(
             "data_domain",
             "business_area",
             "business_process",
+            "business_process_mode",
+            "business_processes",
+            "business_process_sources",
             "semantic_subject",
             "dimension_role",
             "dimension_content_type",
@@ -422,6 +487,9 @@ def update_model_yaml_from_catalog(
         "previous_business_area": previous.get("business_area"),
         "business_area": updated.get("business_area"),
         "business_process": updated.get("business_process"),
+        "business_process_mode": updated.get("business_process_mode"),
+        "business_processes": updated.get("business_processes"),
+        "business_process_sources": updated.get("business_process_sources"),
         "semantic_subject": updated.get("semantic_subject"),
         "dimension_role": updated.get("dimension_role"),
         "dimension_content_type": updated.get("dimension_content_type"),

@@ -52,7 +52,48 @@ def validate_generate_inspection_contract(
                 result.calculated_metrics,
             ),
         )
-        if not process_codes:
+        process_mode = str(
+            getattr(result, "business_process_mode", "") or ""
+        ).strip()
+        process_sources = {
+            str(source).strip().casefold()
+            for source in (
+                getattr(result, "business_process_sources", []) or []
+            )
+            if str(source).strip()
+        }
+        process_conflicts = [
+            str(metric).strip()
+            for metric in (
+                getattr(result, "business_process_conflicts", []) or []
+            )
+            if str(metric).strip()
+        ]
+        if process_mode == "composite":
+            issues = []
+            if str(result.inferred_layer or "").upper() != "DWS":
+                issues.append("composite process mode is only valid for DWS")
+            if str(result.business_process or "").strip():
+                issues.append(
+                    "composite process mode must not declare one table process"
+                )
+            if len(process_sources) < 2:
+                issues.append(
+                    "composite process mode requires two contributing sources"
+                )
+            if not process_codes:
+                issues.append(
+                    "composite process mode requires an evidenced "
+                    "business process"
+                )
+            if process_conflicts:
+                issues.append(
+                    "metrics have conflicting business process evidence: "
+                    + ", ".join(sorted(process_conflicts))
+                )
+            if issues:
+                validation["composite_process_invalid"] = issues
+        elif not process_codes:
             validation["business_process_missing"] = [
                 "fact inspection requires one business process"
             ]

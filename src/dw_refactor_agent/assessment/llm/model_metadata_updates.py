@@ -45,6 +45,7 @@ from dw_refactor_agent.assessment.llm.table_inspector import (
     METRIC_CONTEXT_REINSPECTION_ERROR_KEY,
     RESOLUTION_REINSPECTION_ERROR_KEY,
     TableInspectResult,
+    validate_inspection_result,
 )
 from dw_refactor_agent.assessment.project_facts.business_semantics import (
     _infer_table_type,
@@ -844,6 +845,162 @@ def enrich_results_with_project_semantics(
     """Enrich related entities, then reconcile project-wide semantic codes."""
     enrich_results_with_related_entities(results, contexts)
     reconcile_project_semantics(results, contexts, catalog=catalog)
+    _mark_composite_business_processes(results, contexts)
+    promoted_results = [
+        result
+        for result in results
+        if _promote_count_aggregates_to_atomic(result)
+    ]
+    if promoted_results:
+        for result in promoted_results:
+            context = _context_for_table(contexts, result.table_name)
+            if context is not None:
+                validate_inspection_result(result, context)
+        _reconcile_business_processes(results, contexts, catalog=catalog)
+
+
+def _promote_count_aggregates_to_atomic(
+    result: TableInspectResult,
+) -> bool:
+    """Normalize target-grain row counts that do not have a base metric."""
+    if (
+        result.table_type != "fact"
+        or str(result.inferred_layer or "").upper() != "DWS"
+    ):
+        return False
+    promoted = []
+    remaining = []
+    atomic_names = {
+        str(metric.get("name") or "").strip().casefold()
+        for metric in result.atomic_metrics
+        if isinstance(metric, dict) and str(metric.get("name") or "").strip()
+    }
+    for metric in result.derived_metrics:
+        if (
+            not isinstance(metric, dict)
+            or str(metric.get("base_metric") or "").strip()
+            or not _is_count_aggregate(metric.get("expression"))
+        ):
+            remaining.append(metric)
+            continue
+        name = str(metric.get("name") or "").strip()
+        if not name:
+            remaining.append(metric)
+            continue
+        normalized = {
+            key: metric[key]
+            for key in (
+                "name",
+                "data_type",
+                "business_process",
+                "action",
+                "measure",
+                "description",
+                "reason",
+                "confidence",
+            )
+            if key in metric
+        }
+        normalized["action"] = str(normalized.get("action") or "COUNT").strip()
+        if name.casefold() not in atomic_names:
+            result.columns.setdefault("atomic_metrics", []).append(normalized)
+            atomic_names.add(name.casefold())
+        promoted.append(name)
+    if not promoted:
+        return False
+
+    result.columns["derived_metrics"] = remaining
+    _remove_stale_metric_validation(result, promoted)
+    result.resume_eligible = False
+    message = (
+        "semantic_reconciliation: promoted target-grain count aggregates "
+        "to atomic metrics"
+    )
+    if message not in result.reasoning_steps:
+        result.reasoning_steps.append(message)
+    return True
+
+
+def _is_count_aggregate(expression: Any) -> bool:
+    text = str(expression or "").strip()
+    if not text:
+        return False
+    try:
+        parsed = sqlglot.parse_one(text, read="doris")
+    except sqlglot.errors.SqlglotError:
+        shorthand = re.fullmatch(
+            r"(COUNT\s*\([^()]+\))\s+WHERE\s+(.+)",
+            text,
+            flags=re.IGNORECASE,
+        )
+        if shorthand is None:
+            return False
+        try:
+            count = sqlglot.parse_one(shorthand.group(1), read="doris")
+            predicate = sqlglot.parse_one(shorthand.group(2), read="doris")
+        except sqlglot.errors.SqlglotError:
+            return False
+        forbidden_predicate_nodes = (
+            exp.AggFunc,
+            exp.Window,
+            exp.Select,
+            exp.Subquery,
+        )
+        return isinstance(count, exp.Count) and not any(
+            predicate.find(node_type) is not None
+            for node_type in forbidden_predicate_nodes
+        )
+    if isinstance(parsed, exp.Count):
+        return True
+    if not isinstance(parsed, exp.Sum) or not isinstance(
+        parsed.this, exp.Case
+    ):
+        return False
+    case = parsed.this
+    values = [branch.args.get("true") for branch in case.args.get("ifs") or []]
+    default = case.args.get("default")
+    if default is not None:
+        values.append(default)
+    numeric_values = []
+    for value in values:
+        if not isinstance(value, exp.Literal) or value.is_string:
+            return False
+        try:
+            numeric_values.append(float(value.this))
+        except (TypeError, ValueError):
+            return False
+    return (
+        bool(numeric_values)
+        and 1.0 in numeric_values
+        and set(numeric_values) <= {0.0, 1.0}
+    )
+
+
+def _remove_stale_metric_validation(
+    result: TableInspectResult,
+    metric_names: list[str],
+) -> None:
+    wanted = {name.casefold() for name in metric_names}
+    validation = dict(result.validation or {})
+    for key in (
+        "missing_base_metrics",
+        "missing_base_metric_tables",
+        "invalid_base_metrics",
+        "invalid_base_metric_tables",
+        "ambiguous_base_metrics",
+        "invalid_time_periods",
+        "invalid_metric_expressions",
+    ):
+        remaining = [
+            value
+            for value in validation.get(key) or []
+            if str(value).split(":", 1)[0].strip().casefold() not in wanted
+        ]
+        if remaining:
+            validation[key] = remaining
+        else:
+            validation.pop(key, None)
+    result.validation = validation
 
 
 def reconcile_project_semantics(
@@ -860,6 +1017,213 @@ def reconcile_project_semantics(
     )
     _reconcile_entity_codes(results, contexts)
     _reconcile_business_processes(results, contexts, catalog=catalog)
+
+
+def _mark_composite_business_processes(
+    results: list[TableInspectResult],
+    contexts: dict[str, TableContext],
+) -> None:
+    """Mark DWS facts whose metrics are contributed by multiple sources."""
+    for result in results:
+        if (
+            result.table_type != "fact"
+            or str(result.inferred_layer or "").upper() != "DWS"
+            or str(result.business_process or "").strip()
+            or result.business_process_mode
+        ):
+            continue
+        context = _context_for_table(contexts, result.table_name)
+        if context is None:
+            continue
+        evidence = _contributing_metric_source_evidence(
+            result,
+            context,
+            results,
+            contexts,
+        )
+        if len(evidence) < 2:
+            continue
+        process_evidence = [
+            (source, metrics)
+            for _identity, source, metrics in evidence
+            if source.table_type == "fact"
+            and source.status != "blocked"
+            and str(source.business_process or "").strip()
+        ]
+        if not process_evidence:
+            continue
+        metric_process_evidence: dict[int, set[str]] = {}
+        metrics_by_identity: dict[int, dict[str, Any]] = {}
+        for source, metrics in process_evidence:
+            process = str(source.business_process or "").strip()
+            for metric in metrics:
+                identity = id(metric)
+                metrics_by_identity[identity] = metric
+                metric_process_evidence.setdefault(identity, set()).add(
+                    process
+                )
+        process_conflicts = []
+        for identity, processes in metric_process_evidence.items():
+            metric = metrics_by_identity[identity]
+            current_process = str(metric.get("business_process") or "").strip()
+            if current_process:
+                processes.add(current_process)
+            canonical_processes = {
+                process.casefold() for process in processes if process
+            }
+            if len(canonical_processes) > 1:
+                process_conflicts.append(str(metric.get("name") or "").strip())
+                continue
+            if not current_process and len(canonical_processes) == 1:
+                metric["business_process"] = sorted(
+                    processes,
+                    key=lambda process: (process.casefold(), process),
+                )[0]
+        process_codes = {
+            str(metric.get("business_process") or "").strip().casefold()
+            for group in (
+                result.atomic_metrics,
+                result.derived_metrics,
+                result.calculated_metrics,
+            )
+            for metric in group
+            if isinstance(metric, dict)
+            and str(metric.get("business_process") or "").strip()
+        }
+        if not process_codes and not process_conflicts:
+            continue
+        result.business_process_mode = "composite"
+        result.business_process_sources = [
+            identity for identity, _source, _metrics in evidence
+        ]
+        result.business_process_conflicts = sorted(
+            {metric_name for metric_name in process_conflicts if metric_name},
+            key=str.casefold,
+        )
+        result.resume_eligible = False
+        result.validation = {
+            key: values
+            for key, values in (result.validation or {}).items()
+            if key
+            not in {
+                "business_process_missing",
+                "business_process_ambiguous",
+            }
+        }
+        message = (
+            "semantic_reconciliation: marked multi-source DWS as composite"
+        )
+        if message not in result.reasoning_steps:
+            result.reasoning_steps.append(message)
+
+
+def _contributing_metric_source_evidence(
+    result: TableInspectResult,
+    context: TableContext,
+    results: list[TableInspectResult],
+    contexts: dict[str, TableContext],
+) -> list[tuple[str, TableInspectResult, list[dict[str, Any]]]]:
+    target_metrics = [
+        metric
+        for group in (
+            result.atomic_metrics,
+            result.derived_metrics,
+            result.calculated_metrics,
+        )
+        for metric in group
+        if isinstance(metric, dict) and str(metric.get("name") or "").strip()
+    ]
+    metrics_by_name = {
+        str(metric.get("name") or "").strip().casefold(): metric
+        for metric in target_metrics
+    }
+    references: dict[str, list[dict[str, Any]]] = {}
+    for metric in result.derived_metrics:
+        if not isinstance(metric, dict):
+            continue
+        reference = str(metric.get("base_metric_table") or "").strip()
+        if not reference or (
+            not str(metric.get("base_metric") or "").strip()
+            and not _is_count_aggregate(metric.get("expression"))
+        ):
+            continue
+        references.setdefault(reference, []).append(metric)
+
+    for edge in context.column_lineage or []:
+        if not isinstance(edge, dict):
+            continue
+        source_table, source_column = _split_column_reference(
+            edge.get("source")
+        )
+        target_table, target_column = _split_column_reference(
+            edge.get("target")
+        )
+        if (
+            target_column not in metrics_by_name
+            or (
+                target_table
+                and not _table_reference_matches(
+                    target_table,
+                    result.table_name,
+                    context,
+                )
+            )
+            or not source_table
+        ):
+            continue
+        source = _result_for_table_reference(
+            results,
+            contexts,
+            source_table,
+        )
+        if source is None:
+            continue
+        source_metric_names = {
+            str(metric.get("name") or "").strip().casefold()
+            for group in (
+                source.atomic_metrics,
+                source.derived_metrics,
+                source.calculated_metrics,
+            )
+            for metric in group
+            if isinstance(metric, dict)
+            and str(metric.get("name") or "").strip()
+        }
+        if source_column not in source_metric_names:
+            continue
+        references.setdefault(source_table, []).append(
+            metrics_by_name[target_column]
+        )
+
+    evidence = []
+    seen_identities = set()
+    for reference in sorted(references):
+        source = _result_for_table_reference(results, contexts, reference)
+        if source is None or source is result:
+            continue
+        source_context = _context_for_table(contexts, source.table_name)
+        identity = (
+            source_context.table_identity
+            if source_context is not None and source_context.table_identity
+            else source.table_name
+        )
+        if (
+            identity
+            and not _table_reference_matches(
+                identity,
+                result.table_name,
+                context,
+            )
+            and identity.casefold() not in seen_identities
+        ):
+            metrics = list(
+                {
+                    id(metric): metric for metric in references[reference]
+                }.values()
+            )
+            evidence.append((identity, source, metrics))
+            seen_identities.add(identity.casefold())
+    return sorted(evidence, key=lambda item: item[0].casefold())
 
 
 def _reconcile_business_processes(
@@ -922,6 +1286,8 @@ def _process_reconciliation_is_eligible(
         result.inferred_layer or ""
     ).upper() not in {"DWD", "DWS"}:
         return False
+    if result.business_process_mode == "composite":
+        return False
     blocking_keys = {
         key for key, values in (result.validation or {}).items() if values
     }
@@ -937,6 +1303,17 @@ def _metric_process_source_results(
     results: list[TableInspectResult],
     contexts: dict[str, TableContext],
 ) -> list[TableInspectResult]:
+    sources = []
+    for _identity, source, _metrics in _contributing_metric_source_evidence(
+        result,
+        context,
+        results,
+        contexts,
+    ):
+        if source.table_type != "fact" or source.status == "blocked":
+            return []
+        if source not in sources:
+            sources.append(source)
     references = {
         str(metric.get("base_metric_table") or "").strip()
         for metric in result.derived_metrics
@@ -950,9 +1327,6 @@ def _metric_process_source_results(
         ).items()
         if any(groups.values())
     )
-    if not references:
-        return []
-    sources = []
     for reference in sorted(references):
         source = _result_for_table_reference(
             results,

@@ -27,7 +27,7 @@ from dw_refactor_agent.assessment.project_facts.time_period import (
 )
 from dw_refactor_agent.config import TEXT_ENCODING
 
-PROMPT_VERSION = "table-inspector-v45"
+PROMPT_VERSION = "table-inspector-v47"
 VALID_LAYERS = {"DWD", "DWS", "DIM", "OTHER"}
 VALID_TABLE_TYPES = {"dimension", "fact", "bridge", "other"}
 VALID_DIMENSION_ROLES = {"BASE", "ADDT"}
@@ -62,6 +62,7 @@ VALIDATION_ERROR_KEYS = (
     "inconsistent_upstream_metric_layers",
     "business_process_missing",
     "business_process_ambiguous",
+    "composite_process_invalid",
     "bridge_entities_invalid",
     "bridge_grain_invalid",
     "bridge_semantics_invalid",
@@ -142,6 +143,11 @@ def _valid_business_process(value: Any) -> str:
     return text
 
 
+def _valid_business_process_mode(value: Any) -> str:
+    mode = str(value or "").strip().lower()
+    return mode if mode == "composite" else ""
+
+
 def _format_layered_tables(
     tables: list[str],
     layers: dict[str, str],
@@ -181,6 +187,9 @@ class TableInspectResult:
     confidence: float
     reasoning_steps: list[str]
     business_process: str = ""
+    business_process_mode: str = ""
+    business_process_sources: list[str] = field(default_factory=list)
+    business_process_conflicts: list[str] = field(default_factory=list)
     columns: dict[str, list[dict[str, Any]]] = field(
         default_factory=_empty_columns
     )
@@ -202,6 +211,23 @@ class TableInspectResult:
     def __post_init__(self) -> None:
         self.confidence = _safe_float(self.confidence)
         self.business_process = _valid_business_process(self.business_process)
+        self.business_process_mode = _valid_business_process_mode(
+            self.business_process_mode
+        )
+        self.business_process_sources = list(
+            dict.fromkeys(
+                str(source).strip()
+                for source in self.business_process_sources
+                if str(source).strip()
+            )
+        )
+        self.business_process_conflicts = list(
+            dict.fromkeys(
+                str(metric).strip()
+                for metric in self.business_process_conflicts
+                if str(metric).strip()
+            )
+        )
         self.entities = normalize_entities(
             self.entities,
             self.entity,
@@ -575,7 +601,7 @@ def build_retry_prompt(
 - inconsistent_layer_sql 表示 DWD 候选的目标行驱动查询存在 GROUP BY 并压缩目标粒度；必须根据公共聚合粒度重新判断。仅在 JOIN 辅助子查询中聚合以补充日期/属性、主驱动行仍逐行保留时，可以继续返回 DWD。
 - ambiguous_min_max_aggregation 表示代码无法仅凭同名 MIN/MAX 判断它是技术选值还是业务汇总；如果输出是业务统计结果，应归入指标字段并返回 DWS，如果只是保留实体最新/最早技术状态，可继续返回 DWD，并在字段 reason 中说明技术选值依据。
 - inconsistent_upstream_metric_layers 表示 DWD 候选把独立上游指标源中的公共指标 JOIN 到目标分析粒度并继续发布；应返回 DWS/fact 并保留正确的上游指标依赖关系。单一明细来源的逐行透传不属于此错误。
-- business_process_missing / business_process_ambiguous 表示 fact 的表级和字段级业务过程没有共同形成唯一一致 code；字段级 process 为空时可继承唯一表级 code，非空时必须与表级 code 一致，真实多过程且无法确定主过程时保持空并让发布安全阻断。
+- business_process_missing / business_process_ambiguous 表示 fact 的表级和字段级业务过程没有共同形成唯一一致 code；字段级 process 为空时可继承唯一表级 code，非空时必须与表级 code 一致。真实多过程且无法确定主过程时保持空；系统仅在 DWS 有至少两个上游真实贡献指标时确定性记录 composite 来源，否则继续安全阻断。
 - bridge_entities_invalid / bridge_grain_invalid 表示关系桥必须包含至少两个不同参与实体，且 grain.entities 必须完整覆盖这些实体；bridge_semantics_invalid 表示关系桥错误携带了 business_process 或指标，必须清空业务过程和三个指标分组。
 - duplicate_entity_codes 表示多个实体复用了同一 code；同一业务实体承担不同角色时必须使用可区分的角色 code，不能由 writer 猜测合并或改名。
 - entity_key_missing 表示 entity 缺少 key_columns 或 key 不在 DDL 中；grain_entity_unknown / grain_column_missing 表示 grain 引用了未声明实体或不存在字段，必须只使用本次 JSON 与 DDL 中真实存在的值。
@@ -835,6 +861,9 @@ def result_to_dict(result: TableInspectResult) -> dict[str, Any]:
         "inferred_layer": result.inferred_layer,
         "table_type": result.table_type,
         "business_process": result.business_process,
+        "business_process_mode": result.business_process_mode,
+        "business_process_sources": result.business_process_sources,
+        "business_process_conflicts": result.business_process_conflicts,
         "inferred_data_domain": result.inferred_data_domain,
         "inferred_business_area": result.inferred_business_area,
         "dimension_role": result.dimension_role,
@@ -862,6 +891,9 @@ def result_to_cache_dict(result: TableInspectResult) -> dict[str, Any]:
         "inferred_layer": result.inferred_layer,
         "table_type": result.table_type,
         "business_process": result.business_process,
+        "business_process_mode": result.business_process_mode,
+        "business_process_sources": result.business_process_sources,
+        "business_process_conflicts": result.business_process_conflicts,
         "inferred_data_domain": result.inferred_data_domain,
         "inferred_business_area": result.inferred_business_area,
         "dimension_role": result.dimension_role,
@@ -888,6 +920,15 @@ def dict_to_result(
         inferred_layer=_valid_layer(data.get("inferred_layer")),
         table_type=_valid_table_type(data.get("table_type")),
         business_process=_valid_business_process(data.get("business_process")),
+        business_process_mode=_valid_business_process_mode(
+            data.get("business_process_mode")
+        ),
+        business_process_sources=_safe_list(
+            data.get("business_process_sources")
+        ),
+        business_process_conflicts=_safe_list(
+            data.get("business_process_conflicts")
+        ),
         confidence=_safe_float(data.get("confidence")),
         reasoning_steps=list(data.get("reasoning_steps", []) or []),
         columns=_normalize_columns(data.get("columns")),
@@ -937,6 +978,7 @@ def _normalize_validation(value: Any) -> dict[str, list[str]]:
         "inconsistent_upstream_metric_layers",
         "business_process_missing",
         "business_process_ambiguous",
+        "composite_process_invalid",
         "duplicate_entity_codes",
         "entity_key_missing",
         "grain_entity_unknown",
