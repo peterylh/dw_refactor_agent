@@ -42,6 +42,7 @@ COLUMN_GROUPS = (
 )
 RESOLUTION_REINSPECTION_ERROR_KEY = "resolution_requires_reinspection"
 METRIC_CONTEXT_REINSPECTION_ERROR_KEY = "metric_context_reinspection_failed"
+METRIC_PROPAGATION_ERROR_KEY = "metric_propagation_not_converged"
 DDL_COLUMNS_UNAVAILABLE_ERROR_KEY = "ddl_columns_unavailable"
 AMBIGUOUS_MIN_MAX_WARNING_KEY = "ambiguous_min_max_aggregation"
 VALIDATION_ERROR_KEYS = (
@@ -72,8 +73,16 @@ VALIDATION_ERROR_KEYS = (
     DDL_COLUMNS_UNAVAILABLE_ERROR_KEY,
     RESOLUTION_REINSPECTION_ERROR_KEY,
     METRIC_CONTEXT_REINSPECTION_ERROR_KEY,
+    METRIC_PROPAGATION_ERROR_KEY,
 )
 VALIDATION_WARNING_KEYS = (AMBIGUOUS_MIN_MAX_WARNING_KEY,)
+ORCHESTRATION_VALIDATION_KEYS = frozenset(
+    {
+        METRIC_CONTEXT_REINSPECTION_ERROR_KEY,
+        METRIC_PROPAGATION_ERROR_KEY,
+        RESOLUTION_REINSPECTION_ERROR_KEY,
+    }
+)
 DEFAULT_DEEPSEEK_CHAT_COMPLETIONS_URL = (
     "https://api.deepseek.com/chat/completions"
 )
@@ -1746,6 +1755,42 @@ def _merge_validation(
     return {key: sorted(values) for key, values in merged.items()}
 
 
+def validate_inspection_result(
+    result: TableInspectResult,
+    ctx: TableContext,
+    *,
+    validate_publication_contract: bool = False,
+) -> TableInspectResult:
+    """Rebuild deterministic validation after a result is transformed."""
+    orchestration_validation = {
+        key: list(values)
+        for key, values in (result.validation or {}).items()
+        if key in ORCHESTRATION_VALIDATION_KEYS and values
+    }
+    ddl_columns = _extract_ddl_column_names(ctx.ddl)
+    enrich_metric_relationships(result, ctx)
+    result.validation = _merge_validation(
+        validate_columns(result, ddl_columns),
+        validate_time_periods(result),
+        validate_metric_expressions(result),
+        validate_primary_entities(result),
+        validate_layer_table_type_consistency(result),
+        validate_layer_sql_consistency(result, ctx),
+        validate_upstream_metric_layer_consistency(result, ctx),
+        validate_metric_relationships(result, ctx),
+        (
+            validate_generate_inspection_contract(
+                result,
+                ddl_columns,
+            )
+            if validate_publication_contract
+            else {}
+        ),
+        orchestration_validation,
+    )
+    return result
+
+
 class TableInspector:
     def __init__(
         self,
@@ -1940,6 +1985,32 @@ class TableInspector:
         )
         return hashlib.sha256(content.encode(TEXT_ENCODING)).hexdigest()
 
+    def persist_finalized_results(
+        self,
+        pairs: list[tuple[TableContext, TableInspectResult]],
+    ) -> None:
+        """Persist post-propagation results rather than only raw API output."""
+        cache_changed = False
+        for ctx, result in pairs:
+            current_hash = self._compute_hash(ctx)
+            result.context_hash = current_hash
+            if (
+                result.resume_eligible
+                and result.status != "blocked"
+                and result.confidence >= self.min_cacheable_confidence
+            ):
+                with self._cache_lock:
+                    self._store_cached_result(
+                        ctx.table_name,
+                        current_hash,
+                        result,
+                    )
+                cache_changed = True
+            if self.result_callback:
+                self.result_callback(result)
+        if cache_changed:
+            self._save_cache()
+
     def _restored_result(
         self,
         cache: dict[str, Any],
@@ -2067,7 +2138,6 @@ class TableInspector:
             )
             return restored_result
 
-        ddl_columns = _extract_ddl_column_names(ctx.ddl)
         prompt = build_prompt(ctx)
         result = None
         last_usable_result = None
@@ -2123,23 +2193,11 @@ class TableInspector:
             if attempt == 0:
                 first_attempt_inferred_layer = result.inferred_layer
             result.first_attempt_inferred_layer = first_attempt_inferred_layer
-            enrich_metric_relationships(result, ctx)
-            result.validation = _merge_validation(
-                validate_columns(result, ddl_columns),
-                validate_time_periods(result),
-                validate_metric_expressions(result),
-                validate_primary_entities(result),
-                validate_layer_table_type_consistency(result),
-                validate_layer_sql_consistency(result, ctx),
-                validate_upstream_metric_layer_consistency(result, ctx),
-                validate_metric_relationships(result, ctx),
-                (
-                    validate_generate_inspection_contract(
-                        result,
-                        ddl_columns,
-                    )
-                    if self.validate_publication_contract
-                    else {}
+            validate_inspection_result(
+                result,
+                ctx,
+                validate_publication_contract=(
+                    self.validate_publication_contract
                 ),
             )
             if result.confidence > 0:
@@ -2173,7 +2231,11 @@ class TableInspector:
                 status=result.status,
                 validation=result.validation,
             )
-            prompt = build_retry_prompt(ctx, result, ddl_columns)
+            prompt = build_retry_prompt(
+                ctx,
+                result,
+                _extract_ddl_column_names(ctx.ddl),
+            )
 
         result.context_hash = current_hash
         result.reuse_source = ""
