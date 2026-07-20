@@ -249,6 +249,62 @@ def _new_table_inspector(
             kwargs.pop(removed_keyword)
 
 
+def _metadata_group_count(value: Any) -> int:
+    if isinstance(value, list):
+        return len(value)
+    if isinstance(value, dict):
+        return sum(
+            len(items) if isinstance(items, list) else 1
+            for items in value.values()
+        )
+    return 0
+
+
+def _model_metadata_summary(
+    model_metadata: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    metric_counts = {
+        table_name: sum(
+            _metadata_group_count(metadata.get(group))
+            for group in (
+                "atomic_metrics",
+                "derived_metrics",
+                "calculated_metrics",
+            )
+        )
+        for table_name, metadata in model_metadata.items()
+    }
+    layer_counts: dict[str, int] = {}
+    for metadata in model_metadata.values():
+        layer = str(metadata.get("layer") or "MISSING").strip().upper()
+        layer_counts[layer] = layer_counts.get(layer, 0) + 1
+    return {
+        "model_count": len(model_metadata),
+        "metric_count": sum(metric_counts.values()),
+        "metric_table_count": sum(
+            1 for count in metric_counts.values() if count
+        ),
+        "entity_table_count": sum(
+            1
+            for metadata in model_metadata.values()
+            if metadata.get("entities")
+            or metadata.get("entity")
+            or metadata.get("related_entities")
+        ),
+        "grain_table_count": sum(
+            1 for metadata in model_metadata.values() if metadata.get("grain")
+        ),
+        "layer_counts": dict(sorted(layer_counts.items())),
+    }
+
+
+def _catalog_metadata_summary(catalog: dict[str, Any]) -> dict[str, int]:
+    return {
+        "business_process_count": len(catalog.get("business_processes") or []),
+        "semantic_subject_count": len(catalog.get("semantic_subjects") or []),
+    }
+
+
 def run_generate_model_metadata(
     project: str,
     *,
@@ -437,6 +493,16 @@ def run_generate_model_metadata(
             written_names=catalog_written_names,
         )
 
+    published_model_metadata = (
+        final_model_metadata
+        if should_publish
+        else load_model_metadata(project)
+    )
+    published_catalog = candidate_catalog if should_publish else catalog
+    candidate_model_summary = _model_metadata_summary(final_model_metadata)
+    published_model_summary = _model_metadata_summary(published_model_metadata)
+    candidate_catalog_summary = _catalog_metadata_summary(candidate_catalog)
+    published_catalog_summary = _catalog_metadata_summary(published_catalog)
     changed_updates = [update for update in model_updates if update["changed"]]
     checkpoint_report = (
         checkpoint.report()
@@ -470,6 +536,18 @@ def run_generate_model_metadata(
         "model_change_count": len(changed_updates),
         "llm_result": llm_result,
         "inspection_result": llm_result,
+        "candidate_model_summary": candidate_model_summary,
+        "published_model_summary": published_model_summary,
+        "candidate_catalog_summary": candidate_catalog_summary,
+        "published_catalog_summary": published_catalog_summary,
+        "candidate_models": (
+            {
+                table_name: dict(metadata)
+                for table_name, metadata in final_model_metadata.items()
+            }
+            if publication_blocked or dry_run
+            else {}
+        ),
         "publication": {
             "status": (
                 "blocked"

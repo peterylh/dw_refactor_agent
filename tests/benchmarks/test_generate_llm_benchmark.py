@@ -534,6 +534,14 @@ def test_llm_layers_use_raw_inspection_results_only():
 
 
 def test_project_summary_records_post_retry_only_mismatch(tmp_path):
+    _write_yaml(
+        tmp_path / "business_processes.yaml",
+        {
+            "business_processes": [
+                {"code": "EXISTING"},
+            ]
+        },
+    )
     temp_project = TempProject(
         source_project="demo",
         target_project="opaque",
@@ -557,6 +565,34 @@ def test_project_summary_records_post_retry_only_mismatch(tmp_path):
                 "table_type": "fact",
             }
         ],
+        "candidate_models": {
+            "opaque_summary": {
+                "name": "opaque_summary",
+                "layer": "DWS",
+                "table_type": "fact",
+                "derived_metrics": [{"name": "order_count"}],
+                "entities": [
+                    {
+                        "code": "STORE",
+                        "type": "foreign",
+                        "key_columns": ["store_id"],
+                    }
+                ],
+                "grain": {
+                    "entities": ["STORE"],
+                    "time_column": "stat_date",
+                    "time_period": "D",
+                },
+            }
+        },
+        "planned_catalog_updates": [
+            {
+                "section": "business_processes",
+                "action": "add",
+                "code": "ORDER",
+                "entry": {"code": "ORDER"},
+            }
+        ],
         "llm_result": {
             "tables": [
                 {
@@ -564,6 +600,23 @@ def test_project_summary_records_post_retry_only_mismatch(tmp_path):
                     "first_attempt_inferred_layer": "DWS",
                     "inferred_layer": "DWS",
                     "status": "blocked",
+                    "columns": {
+                        "atomic_metrics": [],
+                        "derived_metrics": [{"name": "order_count"}],
+                        "calculated_metrics": [],
+                    },
+                    "entities": [
+                        {
+                            "code": "STORE",
+                            "type": "foreign",
+                            "key_columns": ["store_id"],
+                        }
+                    ],
+                    "grain": {
+                        "entities": ["STORE"],
+                        "time_column": "stat_date",
+                        "time_period": "D",
+                    },
                     "validation": {
                         METRIC_CONTEXT_REINSPECTION_ERROR_KEY: [
                             "upstream metric context reinspection failed"
@@ -603,6 +656,34 @@ def test_project_summary_records_post_retry_only_mismatch(tmp_path):
             "table": "opaque_summary",
         }
     ]
+    assert summary["candidate_model_summary"] == {
+        "model_count": 1,
+        "metric_count": 1,
+        "metric_table_count": 1,
+        "entity_table_count": 1,
+        "grain_table_count": 1,
+    }
+    assert summary["published_model_summary"] == {
+        "model_count": 0,
+        "metric_count": 0,
+        "metric_table_count": 0,
+        "entity_table_count": 0,
+        "grain_table_count": 0,
+    }
+    assert summary["inspection_summary"] == {
+        "model_count": 1,
+        "metric_count": 1,
+        "metric_table_count": 1,
+        "entity_table_count": 1,
+        "grain_table_count": 1,
+    }
+    assert summary["metric_count"] == 1
+    assert summary["catalog_summary"]["candidate"][
+        "business_process_codes"
+    ] == ["EXISTING", "ORDER"]
+    assert summary["catalog_summary"]["published"][
+        "business_process_codes"
+    ] == ["EXISTING"]
 
 
 def test_runner_script_help_works_without_pythonpath():

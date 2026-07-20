@@ -2124,6 +2124,22 @@ def test_run_generate_model_metadata_blocks_dwd_without_task_sql(
             "message": "DWD execution cannot be inferred without task SQL",
         }
     ]
+    assert result["candidate_model_summary"] == {
+        "model_count": 1,
+        "metric_count": 0,
+        "metric_table_count": 0,
+        "entity_table_count": 0,
+        "grain_table_count": 0,
+        "layer_counts": {"DWD": 1},
+    }
+    assert result["published_model_summary"]["model_count"] == 1
+    assert result["candidate_catalog_summary"] == {
+        "business_process_count": 0,
+        "semantic_subject_count": 0,
+    }
+    assert result["candidate_models"]["dwd_order_detail"]["execution"] == {
+        "materialized": "incremental"
+    }
     assert saved["execution"] == {"materialized": "full"}
 
 

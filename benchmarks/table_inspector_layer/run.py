@@ -766,6 +766,41 @@ def _has_grain(model: Dict[str, Any]) -> bool:
     return bool(model.get("grain"))
 
 
+def _model_summary(models: Dict[str, Dict[str, Any]]) -> Dict[str, int]:
+    return {
+        "model_count": len(models),
+        "metric_count": sum(_metric_count(model) for model in models.values()),
+        "metric_table_count": sum(
+            1 for model in models.values() if _metric_count(model)
+        ),
+        "entity_table_count": sum(
+            1 for model in models.values() if _has_entities(model)
+        ),
+        "grain_table_count": sum(
+            1 for model in models.values() if _has_grain(model)
+        ),
+    }
+
+
+def _inspection_models(result: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+    models: Dict[str, Dict[str, Any]] = {}
+    for item in (result.get("llm_result") or {}).get("tables") or []:
+        if not isinstance(item, dict):
+            continue
+        table_name = str(
+            item.get("table_name") or item.get("table") or ""
+        ).strip()
+        if not table_name:
+            continue
+        columns = item.get("columns")
+        model = dict(columns) if isinstance(columns, dict) else {}
+        for key in ("entities", "entity", "related_entities", "grain"):
+            if key in item:
+                model[key] = item[key]
+        models[table_name] = model
+    return models
+
+
 def _llm_layers(
     result: Dict[str, Any],
     field: str = "inferred_layer",
@@ -827,11 +862,12 @@ def _catalog_codes_from_file(path: Path, key: str) -> List[str]:
     return _catalog_codes(_load_yaml_mapping(path).get(key) or [])
 
 
-def _catalog_codes_from_changes(
+def _candidate_catalog_codes(
+    published_codes: List[str],
     changes: List[Dict[str, Any]],
     section: str,
 ) -> List[str]:
-    codes = []
+    codes = {code.casefold(): code for code in published_codes}
     for change in changes:
         if change.get("section") != section:
             continue
@@ -841,9 +877,14 @@ def _catalog_codes_from_changes(
             else {}
         )
         code = str(entry.get("code") or change.get("code") or "").strip()
-        if code and code not in codes:
-            codes.append(code)
-    return sorted(codes)
+        if not code:
+            continue
+        canonical = code.casefold()
+        if str(change.get("action") or "").strip().lower() == "delete":
+            codes.pop(canonical, None)
+        else:
+            codes[canonical] = code
+    return sorted(codes.values())
 
 
 def _catalog_summary(
@@ -857,44 +898,56 @@ def _catalog_summary(
         or result.get("catalog_updates")
         or []
     )
-    if dry_run:
-        business_process_codes = _catalog_codes_from_changes(
-            changes,
-            "business_processes",
-        )
-        semantic_subject_codes = _catalog_codes_from_changes(
-            changes,
-            "semantic_subjects",
-        )
-    else:
-        business_process_codes = _catalog_codes_from_file(
-            temp_project.target_dir / "business_processes.yaml",
-            "business_processes",
-        )
-        semantic_subject_codes = _catalog_codes_from_file(
-            temp_project.target_dir / "semantic_subjects.yaml",
-            "semantic_subjects",
-        )
+    published_process_codes = _catalog_codes_from_file(
+        temp_project.target_dir / "business_processes.yaml",
+        "business_processes",
+    )
+    published_subject_codes = _catalog_codes_from_file(
+        temp_project.target_dir / "semantic_subjects.yaml",
+        "semantic_subjects",
+    )
+    candidate_process_codes = _candidate_catalog_codes(
+        published_process_codes,
+        changes,
+        "business_processes",
+    )
+    candidate_subject_codes = _candidate_catalog_codes(
+        published_subject_codes,
+        changes,
+        "semantic_subjects",
+    )
 
     expected_process = temp_project.expected_catalog["business_processes"]
     expected_subject = temp_project.expected_catalog["semantic_subjects"]
     process_overlap = sorted(
-        set(business_process_codes) & set(expected_process)
+        set(candidate_process_codes) & set(expected_process)
     )
     subject_overlap = sorted(
-        set(semantic_subject_codes) & set(expected_subject)
+        set(candidate_subject_codes) & set(expected_subject)
     )
     return {
-        "business_process_count": len(business_process_codes),
-        "semantic_subject_count": len(semantic_subject_codes),
+        "business_process_count": len(candidate_process_codes),
+        "semantic_subject_count": len(candidate_subject_codes),
         "expected_business_process_codes": expected_process,
-        "generated_business_process_codes": business_process_codes,
+        "generated_business_process_codes": candidate_process_codes,
         "business_process_overlap_codes": process_overlap,
         "business_process_overlap_count": len(process_overlap),
         "expected_semantic_subject_codes": expected_subject,
-        "generated_semantic_subject_codes": semantic_subject_codes,
+        "generated_semantic_subject_codes": candidate_subject_codes,
         "semantic_subject_overlap_codes": subject_overlap,
         "semantic_subject_overlap_count": len(subject_overlap),
+        "candidate": {
+            "business_process_count": len(candidate_process_codes),
+            "semantic_subject_count": len(candidate_subject_codes),
+            "business_process_codes": candidate_process_codes,
+            "semantic_subject_codes": candidate_subject_codes,
+        },
+        "published": {
+            "business_process_count": len(published_process_codes),
+            "semantic_subject_count": len(published_subject_codes),
+            "business_process_codes": published_process_codes,
+            "semantic_subject_codes": published_subject_codes,
+        },
     }
 
 
@@ -908,13 +961,31 @@ def _summarize_project(
     result: Dict[str, Any],
     dry_run: bool,
 ) -> Dict[str, Any]:
-    generated_models = (
-        _models_from_updates(result)
-        if dry_run
-        else _read_generated_models(temp_project.target_project)
+    published_models = (
+        {} if dry_run else _read_generated_models(temp_project.target_project)
     )
-    if not generated_models:
-        generated_models = _models_from_updates(result)
+    raw_candidate_models = result.get("candidate_models")
+    candidate_models = (
+        {
+            str(table_name): dict(metadata)
+            for table_name, metadata in raw_candidate_models.items()
+            if isinstance(metadata, dict)
+        }
+        if isinstance(raw_candidate_models, dict)
+        else {}
+    )
+    if not candidate_models:
+        candidate_models = published_models or _models_from_updates(result)
+    inspection_models = _inspection_models(result)
+    candidate_model_summary = dict(
+        result.get("candidate_model_summary")
+        or _model_summary(candidate_models)
+    )
+    published_model_summary = dict(
+        result.get("published_model_summary")
+        or _model_summary(published_models)
+    )
+    inspection_summary = _model_summary(inspection_models)
 
     first_attempt_layers = _llm_layers(
         result,
@@ -949,7 +1020,7 @@ def _summarize_project(
         if not expected:
             continue
         expected_layer = str(expected.get("layer") or "OTHER").upper()
-        final_model = generated_models.get(target_table, {})
+        final_model = candidate_models.get(target_table, {})
         final_layer = str(final_model.get("layer") or "MISSING").upper()
         first_attempt_layer = first_attempt_layers.get(target_table, "NOT_RUN")
         post_retry_layer = post_retry_layers.get(target_table, "NOT_RUN")
@@ -990,9 +1061,7 @@ def _summarize_project(
                 mismatches.append(mismatch)
 
     table_count = sum(item["total"] for item in by_expected.values())
-    metric_count = sum(
-        _metric_count(model) for model in generated_models.values()
-    )
+    metric_count = int(candidate_model_summary.get("metric_count") or 0)
     catalog_summary = _catalog_summary(temp_project, result, dry_run=dry_run)
     status_counts = _table_status_counts(result)
     publication = (
@@ -1012,7 +1081,7 @@ def _summarize_project(
         "table_count": table_count,
         "middle_table_count": middle_count,
         "generated_model_count": int(
-            result.get("generated_model_count") or len(generated_models)
+            result.get("generated_model_count") or len(candidate_models)
         ),
         "model_change_count": int(result.get("model_change_count") or 0),
         "model_update_count": int(result.get("model_update_count") or 0),
@@ -1042,15 +1111,18 @@ def _summarize_project(
         "post_retry_confusion": dict(sorted(post_retry_confusion.items())),
         "final_layer_counts": dict(sorted(final_layer_counts.items())),
         "metric_count": metric_count,
-        "metric_table_count": sum(
-            1 for model in generated_models.values() if _metric_count(model)
+        "metric_table_count": int(
+            candidate_model_summary.get("metric_table_count") or 0
         ),
-        "entity_table_count": sum(
-            1 for model in generated_models.values() if _has_entities(model)
+        "entity_table_count": int(
+            candidate_model_summary.get("entity_table_count") or 0
         ),
-        "grain_table_count": sum(
-            1 for model in generated_models.values() if _has_grain(model)
+        "grain_table_count": int(
+            candidate_model_summary.get("grain_table_count") or 0
         ),
+        "inspection_summary": inspection_summary,
+        "candidate_model_summary": candidate_model_summary,
+        "published_model_summary": published_model_summary,
         "mismatches": mismatches,
         "first_attempt_mismatches": first_attempt_mismatches,
         "post_retry_mismatches": post_retry_mismatches,
