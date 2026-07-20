@@ -100,6 +100,7 @@ TEST_TYPE_BY_FILE = {
     "tests/test_execution_planner.py": "unit",
     "tests/test_execution_run_lock.py": "unit",
     "tests/test_makefile_python_resolution.py": "guard",
+    "tests/test_model_governance.py": "contract",
     "tests/test_naming_config.py": "unit",
     "tests/test_process_table_assets.py": "guard",
     "tests/test_project_asset_paths.py": "contract",

@@ -10,6 +10,11 @@ from typing import Optional
 import yaml
 
 from . import core
+from .model_governance import (
+    UnavailableModelSection,
+    get_semantic_layer,
+    validate_model_metadata,
+)
 
 _model_metadata_cache = {}
 _MID_LAYERS = {"DIM", "DWD", "DWS"}
@@ -375,34 +380,54 @@ def model_path_for_table(
 
 
 def load_model_metadata(project: str) -> dict:
-    """Load project models/{table}.yaml table-level metadata."""
+    """Load validated, governance-aware model metadata."""
     if project in _model_metadata_cache:
         return _model_metadata_cache[project]
 
+    metadata = _load_model_metadata_files(project, governed=True)
+    _model_metadata_cache[project] = metadata
+    return metadata
+
+
+def load_raw_model_metadata(project: str) -> dict:
+    """Load lossless YAML documents keyed by project-relative file identity."""
+    return _load_model_metadata_files(project, governed=False)
+
+
+def _load_model_metadata_files(project: str, *, governed: bool) -> dict:
     cfg = core.PROJECT_CONFIG.get(project)
     if not cfg:
-        _model_metadata_cache[project] = {}
         return {}
 
     model_paths = iter_project_asset_files(project, "models", "*.yaml")
     if not model_paths:
-        _model_metadata_cache[project] = {}
         return {}
 
     metadata = {}
     for model_path in model_paths:
-        raw = (
-            yaml.safe_load(model_path.read_text(encoding=core.TEXT_ENCODING))
-            or {}
+        loaded = yaml.safe_load(
+            model_path.read_text(encoding=core.TEXT_ENCODING)
         )
-        if not isinstance(raw, dict):
+        if not governed:
+            try:
+                identity = model_path.relative_to(project_dir(project))
+            except ValueError:
+                identity = model_path
+            metadata[identity.as_posix()] = loaded
             continue
-        name = raw.get("name") or model_path.stem
+        raw = {} if loaded is None else loaded
+        if not isinstance(raw, dict):
+            validate_model_metadata(raw, source=str(model_path))
+        declared_name = raw.get("name")
+        name = (
+            model_path.stem if declared_name in (None, "") else declared_name
+        )
         raw = dict(raw)
         raw["name"] = name
-        metadata[name] = raw
-
-    _model_metadata_cache[project] = metadata
+        metadata[name] = validate_model_metadata(
+            raw,
+            source=str(model_path),
+        )
     return metadata
 
 
@@ -411,12 +436,14 @@ def get_model_metadata(table_name: str, project: str) -> Optional[dict]:
     return load_model_metadata(project).get(short)
 
 
-def get_model_layer(table_name: str, project: str) -> Optional[str]:
+def get_model_layer(
+    table_name: str,
+    project: str,
+) -> Optional[str] | UnavailableModelSection:
     metadata = get_model_metadata(table_name, project)
     if not metadata:
         return None
-    layer = metadata.get("layer")
-    return str(layer).upper() if layer else None
+    return get_semantic_layer(metadata)
 
 
 def get_model_names_by_layer(project: str, layer: str) -> list[str]:
@@ -424,18 +451,26 @@ def get_model_names_by_layer(project: str, layer: str) -> list[str]:
     target_layer = str(layer).upper()
     names = []
     for name, metadata in load_model_metadata(project).items():
-        model_layer = metadata.get("layer")
-        if model_layer and str(model_layer).upper() == target_layer:
+        model_layer = get_semantic_layer(metadata)
+        if isinstance(model_layer, UnavailableModelSection):
+            continue
+        if model_layer == target_layer:
             names.append(name)
     return sorted(names)
 
 
-def determine_layer(table_name: str, project: str = None) -> str:
+def determine_layer(
+    table_name: str,
+    project: str = None,
+) -> str | UnavailableModelSection:
     """Return table layer from explicit model metadata."""
     short = table_name.split(".")[-1]
     if not project:
         return "OTHER"
-    return get_model_layer(short, project) or "OTHER"
+    layer = get_model_layer(short, project)
+    if isinstance(layer, UnavailableModelSection):
+        return layer
+    return layer or "OTHER"
 
 
 def layer_rank(layer_name: str) -> int:
