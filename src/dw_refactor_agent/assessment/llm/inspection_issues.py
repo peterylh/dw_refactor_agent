@@ -839,6 +839,11 @@ def _expression_references_column(value: Any, column_name: str) -> bool:
     )
 
 
+def expression_references_column(value: Any, column_name: str) -> bool:
+    """Return whether a valid SQL expression references an exact column."""
+    return _expression_references_column(value, column_name)
+
+
 def _reference_values(value: Any) -> list[Any]:
     if isinstance(value, (list, tuple)):
         return list(value)
@@ -909,6 +914,18 @@ def _column_reference_sections(
         sections.add("grain")
         paths.append("grain.time_column")
     return sections, sorted(set(paths))
+
+
+def column_reference_sections(
+    result: Any,
+    column_name: str,
+) -> tuple[set[str], list[str]]:
+    """Return formal semantic sections and paths referencing one column."""
+    return _column_reference_sections(
+        result,
+        column_name,
+        _column_occurrences(result, column_name),
+    )
 
 
 def _issue_path(validation_key: str, value: str) -> str:

@@ -5,7 +5,7 @@ import pytest
 
 from dw_refactor_agent.assessment.llm.context_builder import TableContext
 from dw_refactor_agent.assessment.llm.inspection_cache_policy import (
-    DECISION_POLICY_VERSION,
+    INSPECTION_CACHE_SCHEMA_VERSION,
     PARSER_SCHEMA_VERSION,
     current_policy_versions,
 )
@@ -112,7 +112,7 @@ def test_cache_payload_round_trip_preserves_lossless_and_all_validation():
     restored = dict_to_result(payload)
 
     assert payload["cache_policy"] == {
-        "schema_version": 1,
+        "schema_version": INSPECTION_CACHE_SCHEMA_VERSION,
         "context_hash": "context-v1",
         "catalog_snapshot_hash": "catalog-v1",
         "asset_manifest_hash": "assets-v1",
@@ -136,9 +136,10 @@ def test_policy_change_replays_lossless_candidate_without_api(tmp_path):
 
     def make_stale(payload):
         payload["table_type"] = "other"
-        payload["cache_policy"]["decision_policy_version"] = (
-            DECISION_POLICY_VERSION + 1
-        )
+        payload["cache_policy"]["schema_version"] = 1
+        payload["cache_policy"]["recovery_version"] = 0
+        payload.pop("recovered_candidate")
+        payload.pop("repair_audit")
 
     _rewrite_active_result(cache_file, make_stale)
     inspector = _inspector(cache_file)

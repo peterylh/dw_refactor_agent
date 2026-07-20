@@ -42,6 +42,11 @@ from dw_refactor_agent.assessment.llm.inspection_issues import (
     issues_to_dicts,
     sort_issues,
 )
+from dw_refactor_agent.assessment.llm.inspection_recovery import (
+    InspectionRepair,
+    RecoveredInspectionCandidate,
+    recover_inspection_result,
+)
 from dw_refactor_agent.assessment.project_facts.entity_metadata import (
     legacy_entity_from_entities,
     legacy_related_entities_from_entities,
@@ -225,6 +230,8 @@ class TableInspectResult:
     issues: tuple[InspectionIssue, ...] = field(default_factory=tuple)
     raw_response: RawInspectionResponse | None = None
     parsed_candidate: ParsedInspectionCandidate | None = None
+    recovered_candidate: RecoveredInspectionCandidate | None = None
+    repair_audit: tuple[InspectionRepair, ...] = field(default_factory=tuple)
     retry_count: int = 0
     first_attempt_inferred_layer: str = ""
     inferred_data_domain: str = ""
@@ -984,7 +991,28 @@ def synchronize_result_issues(
         for issue in result.issues
         if not is_legacy_validation_issue(issue)
     ]
-    typed_issues.extend(issues_from_validation(result))
+    compatibility_validation = {
+        key: list(values) for key, values in (result.validation or {}).items()
+    }
+    recovery_validation_keys = {
+        "hallucinated_column_reference": "unknown_columns",
+        "column_group_conflict_metric": "duplicate_columns",
+        "column_group_conflict_structure": "duplicate_columns",
+        "missing_ddl_column": "missing_columns",
+    }
+    for issue in typed_issues:
+        validation_key = recovery_validation_keys.get(issue.code)
+        if not validation_key:
+            continue
+        covered_items = set(issue.items)
+        compatibility_validation[validation_key] = [
+            value
+            for value in compatibility_validation.get(validation_key, [])
+            if value not in covered_items
+        ]
+    typed_issues.extend(
+        issues_from_validation(result, compatibility_validation)
+    )
     if (
         result.confidence <= 0
         and result.parsed_candidate is not None
@@ -1043,6 +1071,12 @@ def result_to_dict(result: TableInspectResult) -> dict[str, Any]:
             if result.parsed_candidate is not None
             else None
         ),
+        "recovered_candidate": (
+            result.recovered_candidate.to_dict()
+            if result.recovered_candidate is not None
+            else None
+        ),
+        "repair_audit": [repair.to_dict() for repair in result.repair_audit],
         "status": result.status,
         "retry_count": result.retry_count,
         "first_attempt_inferred_layer": result.first_attempt_inferred_layer,
@@ -1050,7 +1084,7 @@ def result_to_dict(result: TableInspectResult) -> dict[str, Any]:
     }
 
 
-CACHE_RESULT_FIELDS = frozenset(
+CACHE_RESULT_FIELDS_V1 = frozenset(
     {
         "cache_policy",
         "table_name",
@@ -1084,6 +1118,10 @@ CACHE_RESULT_FIELDS = frozenset(
         "resume_eligible",
     }
 )
+CACHE_RESULT_FIELDS = CACHE_RESULT_FIELDS_V1 | {
+    "recovered_candidate",
+    "repair_audit",
+}
 
 
 def result_to_cache_dict(result: TableInspectResult) -> dict[str, Any]:
@@ -1126,6 +1164,12 @@ def result_to_cache_dict(result: TableInspectResult) -> dict[str, Any]:
             if result.parsed_candidate is not None
             else None
         ),
+        "recovered_candidate": (
+            result.recovered_candidate.to_dict()
+            if result.recovered_candidate is not None
+            else None
+        ),
+        "repair_audit": [repair.to_dict() for repair in result.repair_audit],
         "retry_count": result.retry_count,
         "first_attempt_inferred_layer": result.first_attempt_inferred_layer,
         "context_hash": result.context_hash,
@@ -1149,15 +1193,26 @@ def cache_result_digest(result_data: dict[str, Any]) -> str:
 def dict_to_result(
     data: dict[str, Any], *, table_name: str = "", declared_layer: str = ""
 ) -> TableInspectResult:
-    if "cache_policy" in data and set(data) != CACHE_RESULT_FIELDS:
-        raise InvalidInspectionCacheError(
-            "inspection cache result fields are incomplete or unknown"
+    if "cache_policy" in data:
+        cache_policy = InspectionCachePolicy.from_dict(data["cache_policy"])
+        expected_fields = (
+            CACHE_RESULT_FIELDS_V1
+            if cache_policy.schema_version == 1
+            else CACHE_RESULT_FIELDS
         )
+        if set(data) != expected_fields:
+            raise InvalidInspectionCacheError(
+                "inspection cache result fields are incomplete or unknown"
+            )
     raw_issues = data.get("issues") or []
     if not isinstance(raw_issues, list):
         raise ValueError("inspection result issues must be a list")
     raw_response_data = data.get("raw_response")
     parsed_candidate_data = data.get("parsed_candidate")
+    recovered_candidate_data = data.get("recovered_candidate")
+    raw_repair_audit = data.get("repair_audit") or []
+    if not isinstance(raw_repair_audit, list):
+        raise ValueError("inspection repair audit must be a list")
     return TableInspectResult(
         table_name=str(data.get("table_name") or table_name),
         declared_layer=str(data.get("declared_layer") or declared_layer),
@@ -1195,6 +1250,14 @@ def dict_to_result(
             ParsedInspectionCandidate.from_dict(parsed_candidate_data)
             if parsed_candidate_data is not None
             else None
+        ),
+        recovered_candidate=(
+            RecoveredInspectionCandidate.from_dict(recovered_candidate_data)
+            if recovered_candidate_data is not None
+            else None
+        ),
+        repair_audit=tuple(
+            InspectionRepair.from_dict(repair) for repair in raw_repair_audit
         ),
         retry_count=int(data.get("retry_count", 0) or 0),
         first_attempt_inferred_layer=_valid_layer(
@@ -1686,14 +1749,6 @@ def _matching_table_identities(
     if "." in wanted:
         if wanted in canonical_identities:
             return [wanted]
-        short_matches = sorted(
-            identity
-            for identity in canonical_identities
-            if _canonical_short_table_name(identity)
-            == _canonical_short_table_name(wanted)
-        )
-        if len(short_matches) == 1 and "." not in short_matches[0]:
-            return short_matches
         return []
     short_name = _canonical_short_table_name(wanted)
     return sorted(
@@ -1903,36 +1958,6 @@ def _actual_upstream_tables(ctx: TableContext) -> set[str]:
     }
 
 
-def enrich_metric_relationships(
-    result: TableInspectResult, ctx: TableContext
-) -> None:
-    """补齐可唯一判断的派生指标 base_metric_table。"""
-    atomic_metric_tables = _atomic_metric_tables_for_validation(result, ctx)
-    for metric in result.derived_metrics:
-        if str(metric.get("base_metric_table") or "").strip():
-            continue
-        base_metric = str(metric.get("base_metric") or "").strip()
-        if not base_metric:
-            continue
-        candidates = _base_metric_candidate_tables(
-            base_metric,
-            atomic_metric_tables,
-        )
-        if not candidates:
-            known_group_tables = _known_upstream_metric_group_tables(ctx)
-            candidates = [
-                table_name
-                for table_name in _lineage_base_metric_tables(
-                    ctx,
-                    target_metric=str(metric.get("name") or ""),
-                    base_metric=base_metric,
-                )
-                if table_name not in known_group_tables
-            ]
-        if len(candidates) == 1:
-            metric["base_metric_table"] = candidates[0]
-
-
 def validate_metric_relationships(
     result: TableInspectResult, ctx: TableContext
 ) -> dict[str, list[str]]:
@@ -2042,14 +2067,29 @@ def validate_inspection_result(
     validate_publication_contract: bool = False,
 ) -> TableInspectResult:
     """Rebuild deterministic validation after a result is transformed."""
+    recovered = recover_inspection_result(result, ctx)
+    result.__dict__.clear()
+    result.__dict__.update(recovered.__dict__)
+    recovery_validation: dict[str, list[str]] = {}
+    for issue in result.issues:
+        validation_key = {
+            "hallucinated_column_reference": "unknown_columns",
+            "column_group_conflict_metric": "duplicate_columns",
+            "column_group_conflict_structure": "duplicate_columns",
+            "missing_ddl_column": "missing_columns",
+        }.get(issue.code)
+        if validation_key:
+            recovery_validation.setdefault(validation_key, []).extend(
+                issue.items
+            )
     orchestration_validation = {
         key: list(values)
         for key, values in (result.validation or {}).items()
         if key in ORCHESTRATION_VALIDATION_KEYS and values
     }
     ddl_columns = _extract_ddl_column_names(ctx.ddl)
-    enrich_metric_relationships(result, ctx)
     result.validation = _merge_validation(
+        recovery_validation,
         validate_columns(result, ddl_columns),
         validate_time_periods(result),
         validate_metric_expressions(result),

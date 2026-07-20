@@ -10,9 +10,10 @@ from dw_refactor_agent.assessment.llm.inspection_issues import (
     PARSED_CANDIDATE_SCHEMA_VERSION,
 )
 
-INSPECTION_CACHE_SCHEMA_VERSION = 1
+INSPECTION_CACHE_SCHEMA_VERSION = 2
+SUPPORTED_INSPECTION_CACHE_SCHEMA_VERSIONS = frozenset({1, 2})
 PARSER_SCHEMA_VERSION = PARSED_CANDIDATE_SCHEMA_VERSION
-RECOVERY_VERSION = 0
+RECOVERY_VERSION = 1
 DECISION_POLICY_VERSION = 0
 GOVERNANCE_SCHEMA_VERSION = 0
 
@@ -83,7 +84,7 @@ class InspectionCachePolicy:
                 "inspection cache policy fields are incomplete or unknown"
             )
         schema_version = _strict_version(data, "schema_version")
-        if schema_version != INSPECTION_CACHE_SCHEMA_VERSION:
+        if schema_version not in SUPPORTED_INSPECTION_CACHE_SCHEMA_VERSIONS:
             raise InvalidInspectionCacheError(
                 "unsupported inspection cache schema version"
             )
@@ -139,7 +140,8 @@ class InspectionCachePolicy:
     @property
     def requires_policy_replay(self) -> bool:
         return (
-            self.recovery_version != RECOVERY_VERSION
+            self.schema_version != INSPECTION_CACHE_SCHEMA_VERSION
+            or self.recovery_version != RECOVERY_VERSION
             or self.decision_policy_version != DECISION_POLICY_VERSION
             or self.governance_schema_version != GOVERNANCE_SCHEMA_VERSION
         )
