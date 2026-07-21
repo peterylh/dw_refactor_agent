@@ -201,16 +201,14 @@ def test_refresh_activates_requested_quarantine_and_preserves_unrequested():
         transitions["classification"].action,
     ) == ("activate_candidate", True, "preserve_unrequested")
 
-
-def test_refresh_transition_preserves_detailed_quarantine_reasons():
-    decision = _decision(quarantined={"metrics"})
-    plan = plan_refresh_transitions(
+    retained = plan_refresh_transitions(
         {"fact": _quarantined_model()},
-        candidate_decisions=[decision],
+        candidate_decisions=[_decision(quarantined={"metrics"})],
         retention_eligible={"fact": STRUCTURE_SECTIONS},
     )
-    metrics = _transitions_by_section(plan)["metrics"]
-    assert metrics.quarantine_reasons == ("metrics_incomplete",)
+    assert _transitions_by_section(retained)["metrics"].quarantine_reasons == (
+        "metrics_incomplete",
+    )
 
 
 def test_refresh_without_llm_preserves_governance_but_not_stale_active():
@@ -355,6 +353,12 @@ def test_inspection_breaker_rejects_majority_incomplete_and_internal_failure():
         (_report("a"),),
         (issue_for_code("internal_inspection_error", table="a"),),
     )
+    configuration = _inspection(
+        ("a",),
+        run_issues=(
+            issue_for_code("inspection_authentication_failed", table="a"),
+        ),
+    )
     assert (degraded.reasons, degraded.retryable) == (
         ("inspection_service_degraded",),
         True,
@@ -374,6 +378,17 @@ def test_inspection_breaker_rejects_majority_incomplete_and_internal_failure():
         ("internal_or_deterministic_inspection_block",),
         "unknown",
         "",
+    )
+    assert (
+        configuration.status,
+        configuration.reasons,
+        configuration.retry_action,
+        configuration.retryable,
+    ) == (
+        "inspection_failure",
+        ("inspection_configuration_failure",),
+        "fix_configuration",
+        False,
     )
 
 
@@ -397,38 +412,20 @@ def test_inspection_breaker_fail_closes_invalid_typed_candidates():
     }
 
 
-def test_inspection_configuration_failure_preempts_incomplete_set():
-    transition = _inspection(
-        ("a",),
-        run_issues=(
-            issue_for_code("inspection_authentication_failed", table="a"),
-        ),
-    )
-    assert (
-        transition.status,
-        transition.reasons,
-        transition.retry_action,
-        transition.retryable,
-    ) == (
-        "inspection_failure",
-        ("inspection_configuration_failure",),
-        "fix_configuration",
-        False,
-    )
-
-
 @pytest.mark.parametrize(
     (
         "candidate_status",
         "inspection_status",
         "require_complete",
+        "dry_run",
         "expected_status",
     ),
     [
-        ("blocked", "healthy", False, "blocked"),
+        ("blocked", "healthy", False, False, "blocked"),
         (
             "quarantined",
             "inspection_failure",
+            False,
             False,
             "not_published_inspection_failure",
         ),
@@ -436,17 +433,32 @@ def test_inspection_configuration_failure_preempts_incomplete_set():
             "unknown",
             "inspection_failure",
             False,
+            False,
             "not_published_inspection_failure",
         ),
-        ("quarantined", "healthy", True, "not_published_incomplete"),
-        ("quarantined", "healthy", False, "published_with_quarantine"),
-        ("complete", "healthy", False, "published"),
+        (
+            "quarantined",
+            "healthy",
+            True,
+            False,
+            "not_published_incomplete",
+        ),
+        (
+            "quarantined",
+            "healthy",
+            False,
+            False,
+            "published_with_quarantine",
+        ),
+        ("complete", "healthy", False, False, "published"),
+        ("quarantined", "healthy", False, True, "dry_run"),
     ],
 )
 def test_publication_transition_distinguishes_gate_outcomes(
     candidate_status,
     inspection_status,
     require_complete,
+    dry_run,
     expected_status,
 ):
     inspection = plan_inspection_run_transition(
@@ -467,29 +479,15 @@ def test_publication_transition_distinguishes_gate_outcomes(
         candidate_status=candidate_status,
         inspection_transition=inspection,
         require_complete=require_complete,
+        dry_run=dry_run,
     )
     assert transition.status == expected_status
     assert transition.published is expected_status.startswith("published")
+    if dry_run:
+        assert transition.would_publish_status == "published_with_quarantine"
+        assert transition.formal_files_state == "unchanged"
     if candidate_status == "blocked":
         assert transition.candidate_status == "blocked"
-
-
-def test_publication_dry_run_reports_would_publish_without_writing():
-    transition = plan_publication_transition(
-        candidate_status="quarantined",
-        inspection_transition=plan_inspection_run_transition(
-            llm_enabled=False,
-            inspection_targets=("db.fact",),
-            reports=(),
-        ),
-        dry_run=True,
-    )
-    assert (
-        transition.status,
-        transition.would_publish_status,
-        transition.published,
-        transition.formal_files_state,
-    ) == ("dry_run", "published_with_quarantine", False, "unchanged")
 
 
 def test_no_llm_generate_builds_operational_only_v3_quarantine():

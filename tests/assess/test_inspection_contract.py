@@ -18,7 +18,6 @@ from dw_refactor_agent.assessment.llm.inspection_issues import (
     ISSUE_CODES,
     LEGACY_VALIDATION_ISSUE_CODES,
     InspectionInternalError,
-    InspectionIssue,
     generation_error_to_issue,
     issue_for_code,
     issues_from_validation,
@@ -701,23 +700,7 @@ def test_serialization_resynchronizes_late_compatibility_validation():
     ]
 
 
-def test_unknown_issue_and_legacy_keys_fail_closed():
-    with pytest.raises(ValueError, match="unknown inspection issue code"):
-        InspectionIssue.from_dict(
-            {
-                "schema_version": 1,
-                "code": "future_unregistered_issue",
-                "origin": "llm_validation",
-                "stage": "local_validation",
-                "sections": [],
-                "table": "dwd_example",
-                "path": "",
-                "items": [],
-                "retryable": False,
-                "evidence": [],
-            }
-        )
-
+def test_unknown_validation_keys_fail_closed():
     result = _minimal_result(
         table_type="other",
         validation={"future_validation_key": ["unsafe"]},

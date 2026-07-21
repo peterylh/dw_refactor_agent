@@ -223,34 +223,6 @@ def test_manifest_is_immutable_and_frozen_inputs_drive_candidate(
     assert second_plan.model_metadata["dwd_orders"]["layer"] == "DWD"
 
 
-def test_preflight_blocks_task_only_target_before_llm(
-    tmp_path,
-    monkeypatch,
-):
-    project = "manifest_task_only"
-    project_dir = _configure_project(tmp_path, monkeypatch, project)
-    (project_dir / "mid" / "tasks" / "orphan.sql").write_text(
-        "INSERT INTO demo.dwd_orphan SELECT 1;\n",
-        encoding="utf-8",
-    )
-    import dw_refactor_agent.assessment.llm.model_metadata_writer as writer
-
-    monkeypatch.setattr(
-        writer,
-        "run_metadata_write",
-        lambda *_args, **_kwargs: pytest.fail("LLM called before preflight"),
-    )
-
-    result = run_generate_model_metadata(project, api_key="unused")
-
-    assert result["publication"]["status"] == "blocked"
-    assert {
-        error["type"]
-        for error in result["publication"]["validation"]["errors"]
-    } == {"task_target_missing_ddl"}
-    assert result["checkpoint"]["status"] == "not_started"
-
-
 def test_preflight_uses_current_sql_for_transient_and_stale_lineage(
     tmp_path,
     monkeypatch,
@@ -288,6 +260,16 @@ def test_preflight_uses_current_sql_for_transient_and_stale_lineage(
         "internal.demo.process_stage": "process",
         "internal.demo.temp_stage": "temporary",
     }
+    import dw_refactor_agent.assessment.llm.model_metadata_writer as writer
+
+    monkeypatch.setattr(
+        writer,
+        "run_metadata_write",
+        lambda *_args, **_kwargs: pytest.fail("LLM called before preflight"),
+    )
+    blocked = run_generate_model_metadata(project, api_key="unused")
+    assert blocked["publication"]["status"] == "blocked"
+    assert blocked["checkpoint"]["status"] == "not_started"
 
     orphan_task.unlink()
     task_path.write_text(

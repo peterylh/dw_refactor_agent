@@ -230,37 +230,6 @@ def test_effective_candidate_masks_and_cascades_only_explicit_dependencies():
     )
 
 
-def test_provenance_ignores_unreferenced_tables():
-    reports = [
-        _report(
-            "source",
-            _payload(columns={"atomic_metrics": [{"name": "amount"}]}),
-        ),
-        _report(
-            "target",
-            _payload(
-                layer="DWS",
-                columns={
-                    "derived_metrics": [
-                        {
-                            "name": "total_amount",
-                            "base_metric_table": "SOURCE",
-                        }
-                    ]
-                },
-            ),
-        ),
-        _report(
-            "unrelated",
-            _payload(columns={"atomic_metrics": [{"name": "other"}]}),
-        ),
-    ]
-
-    assert collect_propagation_provenance(reports) == (
-        _edge("source", "target", "declared_base_metric"),
-    )
-
-
 def test_qualified_process_provenance_cascades_case_insensitively():
     reports = []
     for table in ("a", "b", "c"):

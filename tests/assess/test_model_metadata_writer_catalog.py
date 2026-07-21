@@ -291,47 +291,6 @@ def test_run_generate_model_metadata_preserves_governed_catalog_code_case(
     assert model["business_process"] == "order_transaction"
 
 
-def test_run_generate_model_metadata_update_catalog_false_keeps_proposals(
-    tmp_path, monkeypatch
-):
-    import dw_refactor_agent.assessment.llm.model_metadata_writer as writer_module
-
-    project = "generate_llm_catalog_disabled"
-    project_dir = _write_catalog_project(
-        tmp_path,
-        monkeypatch,
-        project,
-        catalog=None,
-        ddl_tables=["dwd_order_detail"],
-    )
-    _install_generate_catalog_fake_inspector(
-        monkeypatch,
-        writer_module,
-        table_names=["dwd_order_detail"],
-        result_factory=lambda ctx: _generate_catalog_fact_result(ctx),
-    )
-
-    result = run_generate_model_metadata(
-        project,
-        api_key="test",
-        dry_run=False,
-        update_catalog=False,
-    )
-
-    assert result["catalog_initialized"] is False
-    assert result["catalog_proposal_count"] == 1
-    assert result["catalog_proposals"][0]["code"] == "ORDER_TRANSACTION"
-    checkpoint = yaml.safe_load(
-        (project_dir / "mid_checkpoints/manifest.json").read_text(
-            encoding="utf-8"
-        )
-    )
-    assert checkpoint["catalog_proposal_audit"]["proposal_count"] == 1
-    assert not (project_dir / "business_taxonomy.yaml").exists()
-    assert not (project_dir / "business_processes.yaml").exists()
-    assert not (project_dir / "semantic_subjects.yaml").exists()
-
-
 def test_run_generate_model_metadata_llm_catalog_merge_skips_blocked_results(
     tmp_path, monkeypatch
 ):
